@@ -65,9 +65,13 @@ import { Hono } from 'hono';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
+import { todayMyt } from '../lib/my-time';
+import { attachLineCategories } from '../lib/so-readiness-category';
+import { deriveBranding } from '../lib/so-display-branding';
 import { paginateAll } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
-import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
+import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
+import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
 import { soDeliverableRemaining } from './delivery-orders-mfg';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
@@ -225,54 +229,8 @@ function stateToRegionsFromConfig(
   return [fallback];
 }
 
-/* ── Branding derivation (mirrors the SO list 1:1) ────────────────────────────
-   The Delivery Planning Branding column must show the SAME derived value the SO
-   list shows. Ported VERBATIM from 2990:
-     · normCategory   — the SO list's category normalizer used for item_group +
-                        mfg_products.category.
-     · deriveBranding — the SO list's display mapping. first_item_category drives
-                        it; MATTRESS follows its own branding (house brand →
-                        "2990 Mattress", any other brand shown as-is).
-   Keep in lock-step with the SO list. */
-function normCategory(raw: string): string {
-  const g = (raw ?? '').trim().toUpperCase();
-  if (g.includes('BEDFRAME')) return 'BEDFRAME';
-  if (g.includes('SOFA'))     return 'SOFA';
-  if (g.includes('MATTRESS')) return 'MATTRESS';
-  if (g.includes('ACCESSOR')) return 'ACCESSORY';
-  if (g.includes('SERVICE'))  return 'SERVICE';
-  return 'OTHERS';
-}
-
-/* deriveBranding — the EXACT SO list mapping (ported from 2990):
-     · first item SOFA      → "2990 Sofa"
-     · first item BEDFRAME  → "Bedframe"
-     · first item MATTRESS  → the mattress's OWN brand; the house brand
-                              ("2990" / "2990's") displays as "2990 Mattress",
-                              other brands show as-is; blank brand → "2990 Mattress"
-     · ACCESSORY / OTHERS / SERVICE / no items → ""  (column renders "—") */
-function deriveBranding(firstItemCategory: string | null, firstItemBranding: string | null): string {
-  const cat = firstItemCategory;
-  if (!cat) return '';                       // no items → "—"
-  if (cat === 'SOFA')     return '2990 Sofa';
-  if (cat === 'BEDFRAME') return 'Bedframe';
-  if (cat === 'MATTRESS') {
-    const b = (firstItemBranding ?? '').trim();
-    if (!b || /^2990('?s)?$/i.test(b)) return '2990 Mattress';
-    return b;
-  }
-  return '';                                 // accessory / others / service → none ("—")
-}
-
 export type DeliveryState = 'PENDING_DELIVERY' | 'PENDING_SCHEDULE' | 'OVERDUE' | 'DELIVERED';
 const DELIVERY_STATES: DeliveryState[] = ['PENDING_DELIVERY', 'PENDING_SCHEDULE', 'OVERDUE', 'DELIVERED'];
-
-/* Malaysian "today" (UTC+8), timezone-stable on the Workers UTC runtime. The
-   day boundary must be MYT so days_left / the 3-day overdue window match what
-   the coordinator sees on the floor. */
-function todayMY(): string {
-  return new Date(Date.now() + 8 * 60 * 60 * 1000).toISOString().slice(0, 10);
-}
 
 /* Whole-day difference (target − today) in integer days, both as YYYY-MM-DD. */
 function daysBetween(fromISO: string, toISO: string | null | undefined): number | null {
@@ -299,7 +257,7 @@ function daysBetween(fromISO: string, toISO: string | null | undefined): number 
 
    `readiness` is the summariseReadiness() output; `effectiveDD` is the caller-
    resolved amended_delivery_date ?? customer_delivery_date; `today` is MYT
-   (todayMY()). Pure — no I/O. */
+   (todayMyt()). Pure — no I/O. */
 export function derivePlanningState(input: {
   storedOverride: string | null | undefined;
   status: string | null | undefined;
@@ -428,7 +386,7 @@ const NOT_YOUR_JOB = "You can only update a delivery job assigned to you.";
    ─────────────────────────────────────────────────────────────────────────*/
 deliveryPlanning.get('/', async (c) => {
   const sb = c.get('supabase');
-  const today = todayMY();
+  const today = todayMyt();
 
   /* Per-assignee ROW SCOPE (owner rule): a Driver/Helper sees ONLY the jobs
      assigned to their own name; every dispatcher / ops / management caller keeps
@@ -614,6 +572,8 @@ deliveryPlanning.get('/', async (c) => {
   }
   const resolveLineCat = (code: string | null, group: string): string =>
     (code ? productCategory.get(code) : undefined) ?? normCategory(group);
+  /* isServiceLine's strongest signal onto the step-3 lines — no extra read. See lib/so-readiness-category.ts. */
+  attachLineCategories(linesByDoc.values(), productCategory);
   const MAIN_CATS = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
   /* First MAIN line per doc (catalog-resolved), re-iterating the already
      (doc_no, line_no, created_at)-ordered itemRows. Falls back to the earliest
@@ -1009,13 +969,8 @@ deliveryPlanning.get('/', async (c) => {
       // The latest DO's OWN document date (delivery_orders.do_date), null when
       // this SO has no (non-DRAFT/CANCELLED) DO yet — drives the "DO Date" column.
       do_date: doExecByDoc.get(docNo)?.do_date ?? null,
-      // stock — stock_remark is the correctly-gated label (never "READY (PARTIAL)"
-      // for an acc-only / service-only SO); stock_status mirrors it. Static types
-      // widened to `| null` so ASSR rows (no stock) share this row shape; the SO
-      // runtime VALUES are unchanged.
-      stock_status: (readiness.isFullyReady ? 'READY' : readyToShip ? 'READY (PARTIAL)' : 'PENDING') as string | null,
-      stock_remark: readiness.stockRemark as string | null,
-      is_main_ready: readiness.isMainReady as boolean | null,
+      // stock — the four fields and why they differ: lib/so-readiness-row.ts
+      ...readinessRowFields(readiness),
       // multi-company: readable company code for the shared-queue Company column
       // (HOUZS / 2990). null when unresolved (pre-migration / cold-start).
       company_code: codeMap.get(Number(r.company_id)) ?? null,
@@ -1188,9 +1143,7 @@ deliveryPlanning.get('/', async (c) => {
           arrives_em_warehouse_date: null,
           do_date: leg.jobKind === 'delivery' ? leg.date : null,
           // Stock columns are not meaningful for a Service Case.
-          stock_status: null,
-          stock_remark: null,
-          is_main_ready: null,
+          ...NO_STOCK_ROW,
           // ASSR (service) cases live in public.assr_cases (no scm company_id yet)
           // — no company label on the shared queue.
           company_code: null,
@@ -1350,9 +1303,7 @@ deliveryPlanning.get('/', async (c) => {
         delivery_substatus: null,
         arrives_em_warehouse_date: null,
         do_date: null,
-        stock_status: null,
-        stock_remark: null,
-        is_main_ready: null,
+        ...NO_STOCK_ROW,
         company_code: null,
         region: primaryRegion,
         regions: [...regionSet],
@@ -1488,9 +1439,7 @@ deliveryPlanning.get('/', async (c) => {
           delivery_substatus: null,
           arrives_em_warehouse_date: null,
           do_date: null,
-          stock_status: null,
-          stock_remark: null,
-          is_main_ready: null,
+          ...NO_STOCK_ROW,
           company_code: null,
           region: primaryRegion,
           regions: [...regionSet],
@@ -2597,7 +2546,7 @@ async function scheduleOntoTrip(
 
     /* Find-or-create the trip. tripId given → use it; else find an existing
        PLANNED trip for (lorry, date) or create one. */
-    const tripDate = p.tripDate ?? p.scheduleDate ?? todayMY();
+    const tripDate = p.tripDate ?? p.scheduleDate ?? todayMyt();
     let tripId = p.tripId ?? null;
     if (!tripId && p.lorryId) {
       const { data: found } = await sb.from('trips').select('id, trip_no')
@@ -2850,7 +2799,7 @@ async function scheduleAssrOntoTrip(
     const address = [a?.addr1, a?.addr2, a?.addr3, a?.addr4].filter(Boolean).join(', ') || null;
 
     /* Find-or-create the trip — same rule as scheduleOntoTrip. */
-    const tripDate = p.tripDate ?? p.scheduleDate ?? a?.leg_date ?? todayMY();
+    const tripDate = p.tripDate ?? p.scheduleDate ?? a?.leg_date ?? todayMyt();
     let tripId = p.tripId ?? null;
     if (!tripId && p.lorryId) {
       const { data: found } = await sb.from('trips').select('id, trip_no')

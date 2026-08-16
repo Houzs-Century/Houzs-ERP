@@ -20,6 +20,7 @@
  *   created_by + pic_id resolve to the user with email `OWNER_EMAIL`.
  *   Override via OWNER_EMAIL=… env if you want a different owner.
  */
+import { deriveProjectName } from './lib/project-naming.mjs';
 import { execSync } from "node:child_process";
 import { readFileSync, writeFileSync, unlinkSync } from "node:fs";
 import { join, basename } from "node:path";
@@ -162,15 +163,21 @@ function buildCode(base, takenCodes) {
 }
 
 function buildName(row) {
-  // Canonical project name format. Must match `deriveProjectName()`
-  // in services/projects.ts and the backfill in mig 071 so re-seeds
-  // converge on the same string.
-  //   {state} [{brand}] {organizer | SOLO} @ {venue}
-  const state = (row["STATE"] || "").trim() || "—";
-  const brand = (row["BRAND"] || "").trim() || "—";
-  const organizer = (row["ORGANIZER"] || "").trim() || "SOLO";
-  const venue = (pick(row, "VENUE", "EVENT VENUE") || "").trim() || "—";
-  return `${state} [${brand}] ${organizer} @ ${venue}`;
+  /* The canonical format lives in ONE place now — scripts/lib/project-naming.mjs,
+     pinned to src/services/project-naming.ts by tests/projectNamingMirror.test.ts.
+     It used to be hand-copied here under a comment saying it must match, and it
+     did not: this function had no solo branch, so a row with EVENT TYPE = SOLO
+     and a named ORGANIZER got the organizer in its name from the seed and the
+     literal SOLO from the app — while the SAME row got event_type_id 2 twelve
+     lines below. Re-seeds could not converge, which is what the comment asked
+     for. */
+  return deriveProjectName({
+    state: row["STATE"],
+    brand: row["BRAND"],
+    organizer: row["ORGANIZER"],
+    venue: pick(row, "VENUE", "EVENT VENUE"),
+    event_type_slug: row["EVENT TYPE"],
+  });
 }
 
 function deriveStage(row, startIso, endIso) {

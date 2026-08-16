@@ -1,0 +1,48 @@
+name: Why is there no outbox row (read-only)
+
+# Owner-triggered, 2026-08-16. He created documents in the ERP and they are not
+# in AutoCount, and wants to know, per conversion chain, whether the ERP ever
+# even offered them to the queue.
+#
+# check-autocount-outbox-health.mjs CANNOT answer that: it itemises the failed,
+# pending, skipped and re-queued rows and prints `sent` only as a number in a
+# summary line, never grouped by op — so a chain whose rows all went through is
+# invisible in it, and "not visible there" reads as "never queued". This one
+# prints EVERY row of EVERY status grouped by op, and names every ERP document
+# that has no outbox row at all.
+#
+# SELECT only — no DDL, no writes, no transaction. The verdict is the output,
+# so it exits 0 for every legitimate answer, including an empty queue.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: 'Company id'
+        required: false
+        default: '1'
+      limit:
+        description: 'Documents to list per table (max 200)'
+        required: false
+        default: '40'
+
+concurrency:
+  group: why-no-outbox-row
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: diagnose (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY_ID: "${{ inputs.company_id }}"
+          LIMIT: "${{ inputs.limit }}"
+        run: node scripts/why-no-outbox-row.mjs

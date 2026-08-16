@@ -49,10 +49,12 @@ import {
 import { authedFetch, humanApiError, parseSaveProblems } from '../../vendor/scm/lib/authed-fetch';
 import { SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
 import { useIdempotencyKey } from '../../lib/idempotency';
+import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
 import { completePaymentRetryDraft, paymentRetryNavigationState, writePaymentRetryHandoff } from '../../lib/paymentRetryHandoff';
 import { usePickableStaff } from '../../vendor/scm/lib/admin-queries';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { deriveProcessingDate } from '../../lib/processingDate';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
 import { useAuth } from '../../vendor/scm/lib/auth';
@@ -63,9 +65,12 @@ import { useAuth } from '../../vendor/scm/lib/auth';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues, type AutoVenue } from '../../vendor/scm/lib/venues-queries';
 import {
-  useLocalities, distinctStates, citiesInState, postcodesInCity,
-  countryForState, resolvePostcode, resolveCityState, allCities, allPostcodes,
+  useLocalities, countryForState,
 } from '../../vendor/scm/lib/localities-queries';
+import {
+  useAddressCascade, pickState, pickCity, pickPostcode,
+  cityPlaceholder, postcodePlaceholder,
+} from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
   useSoDropdownOptions, optionsOrFallback, preferredCustomerTypeValue,
@@ -89,7 +94,6 @@ import {
   PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft,
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { formatPhone } from '@2990s/shared/phone';
 import { soDateGuardError, soStockLocationError } from '../../vendor/scm/lib/so-form-validate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
@@ -113,22 +117,6 @@ const newLine = (deliveryDate: string | null = null): DraftLine => ({
 });
 
 const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
-
-/* Coupled-dates rule (spec 3) — given a Delivery date, the Processing date is
-   when procurement should start: ~6 weeks (42 days) before delivery, but never
-   before today (don't buy stock too soon, and never a past date). Returns a
-   local YYYY-MM-DD matching the `today`/date-input format. The caller only
-   invokes this when a Delivery date exists; with no Delivery date BOTH dates
-   stay empty (the order is un-proceeded). */
-const PROCESSING_LEAD_DAYS = 42;
-const deriveProcessingDate = (deliveryDate: string): string => {
-  const today = todayMyt();
-  const d = new Date(`${deliveryDate}T00:00:00`);
-  if (Number.isNaN(d.getTime())) return today;
-  d.setDate(d.getDate() - PROCESSING_LEAD_DAYS);
-  const lead = d.toLocaleDateString('en-CA');
-  return lead < today ? today : lead;
-};
 
 export const SalesOrderNew = () => {
   const navigate = useNavigate();
@@ -592,6 +580,9 @@ export const SalesOrderNew = () => {
   // ── Debtor autocomplete + warehouse lookup ─────────────────────────
   const debtors = useDebtorSearch(debtorName.trim().length >= 2 ? debtorName.trim() : '');
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
+  /* Portalled, because this module has no `.field { position: relative }` and
+     `.card { overflow: hidden }` left 130px of room for a 260px list. */
+  const debtorInputRef = useRef<HTMLInputElement>(null);
   const debtorSuggestions: DebtorSuggestion[] = (debtors.data?.debtors ?? []).filter(
     (d) => (d.debtor_name ?? '').toLowerCase() !== debtorName.trim().toLowerCase(),
   );
@@ -806,41 +797,24 @@ export const SalesOrderNew = () => {
     return out;
   }, [lines]);
 
-  // ── Locality cascades ──────────────────────────────────────────────
+  // ── Locality cascade — shared layer, both directions (address-cascade.ts) ──
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
-  const states  = useMemo(() => distinctStates(locRows), [locRows]);
-  const cities  = useMemo(() => state ? citiesInState(locRows, state) : [], [locRows, state]);
-  const postcodes = useMemo(
-    () => (state && city) ? postcodesInCity(locRows, state, city) : [],
-    [locRows, state, city],
-  );
-  /* REVERSE resolve — when no State is picked yet, the City / Postcode selects
-     offer the full cross-state pool so the operator can choose one FIRST and let
-     the State (→ Sales Location) resolve back from it. With a State picked these
-     fall through to the state-scoped lists above, so the forward cascade is
-     unchanged. */
-  const cityChoices     = useMemo(() => (state ? cities : allCities(locRows)),   [state, cities, locRows]);
-  const postcodeChoices = useMemo(() => ((state && city) ? postcodes : allPostcodes(locRows)), [state, city, postcodes, locRows]);
-  /* Set State from a resolved City — raw setState (NOT the State <select>'s
-     handler) so it does NOT clear the City/Postcode the operator just chose; the
-     existing state→warehouse effect below then fills Sales Location. Never
-     clobbers an already-picked State unless the city unambiguously names a
-     different one. */
-  const applyCityReverse = (nextCity: string) => {
-    if (!nextCity) return;
-    const st = resolveCityState(locRows, nextCity);
-    if (st && st !== state) setState(st);
+  const { cities: cityChoices, postcodes: postcodeChoices } =
+    useAddressCascade(locRows, state, city);
+  /* This form holds the triple as three separate atoms, so each pick writes all
+     three back. The raw setters are deliberate: routing a back-filled State
+     through the State picker's own onChange would clear the City/Postcode the
+     operator just chose, because that handler exists to reset the cascade. The
+     existing state→warehouse effect below then fills Sales Location. */
+  const applyTriple = (next: { state: string; city: string; postcode: string }) => {
+    setState(next.state);
+    setCity(next.city);
+    setPostcode(next.postcode);
   };
-  /* Set State + City from a resolved Postcode (Malaysian postcode → one
-     locality). Raw setters keep the just-entered Postcode intact (no effect
-     loop). */
-  const applyPostcodeReverse = (nextPostcode: string) => {
-    if (!nextPostcode) return;
-    const res = resolvePostcode(locRows, nextPostcode);
-    if (!res) return;
-    if (res.state && res.state !== state) setState(res.state);
-    if (res.city && res.city !== city) setCity(res.city);
-  };
+  const onCityPick = (nextCity: string) =>
+    applyTriple(pickCity(locRows, { state, city, postcode }, nextCity));
+  const onPostcodePick = (nextPostcode: string) =>
+    applyTriple(pickPostcode(locRows, { state, city, postcode }, nextPostcode));
 
   /* Scan address reconcile (fromScan only) — once the locality cascade for the
      scanned State has options, snap the scanned City to a REAL my_localities
@@ -849,19 +823,22 @@ export const SalesOrderNew = () => {
      localities list doesn't contain is dropped (never free-typed into a
      dropdown). Each holder is cleared once consumed so a later manual edit
      isn't clobbered. */
+  /* Both effects bail unless the State (and, for the postcode, the City) is
+     already set, so the lists they read are the state-scoped ones — the same
+     values the old state-only memos held. */
   useEffect(() => {
-    if (!scanCity || !state || cities.length === 0) return;
-    const hit = cities.find((cc) => cc.toLowerCase() === scanCity.trim().toLowerCase());
+    if (!scanCity || !state || cityChoices.length === 0) return;
+    const hit = cityChoices.find((cc) => cc.toLowerCase() === scanCity.trim().toLowerCase());
     if (hit) setCity((prev) => prev || hit);
     setScanCity('');
-  }, [scanCity, state, cities]);
+  }, [scanCity, state, cityChoices]);
   useEffect(() => {
-    if (!scanPostcode || !state || !city || postcodes.length === 0) return;
+    if (!scanPostcode || !state || !city || postcodeChoices.length === 0) return;
     const want = scanPostcode.trim();
-    const hit = postcodes.find((p) => p === want);
+    const hit = postcodeChoices.find((p) => p === want);
     if (hit) setPostcode((prev) => prev || hit);
     setScanPostcode('');
-  }, [scanPostcode, state, city, postcodes]);
+  }, [scanPostcode, state, city, postcodeChoices]);
 
   /* Commander 2026-05-27 (Fix 5) — State → Sales Location cascade. Same
      rule as Edit SO: pick a state, the Sales Location auto-fills with the
@@ -1834,6 +1811,7 @@ export const SalesOrderNew = () => {
             <label className={styles.field} style={{ gridColumn: 'span 3' }}>
               <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Customer Name <span className={styles.req}>*</span></span>
               <input
+                ref={debtorInputRef}
                 className={`${styles.fieldInput} ${editedClass('debtorName', debtorName)}`}
                 value={debtorName}
                 onChange={(e) => { setDebtorName(e.target.value); setShowDebtorSuggest(true); }}
@@ -1842,24 +1820,13 @@ export const SalesOrderNew = () => {
                 placeholder="e.g. Lim Mei Hua"
                 required
               />
-              {showDebtorSuggest && debtorSuggestions.length > 0 && (
-                <ul className={styles.suggestList}>
-                  {debtorSuggestions.slice(0, 8).map((d, i) => (
-                    <li
-                      key={`${d.debtor_code ?? ''}-${i}`}
-                      className={styles.suggestItem}
-                      onMouseDown={() => applyDebtorSuggestion(d)}
-                    >
-                      <div>{d.debtor_name}</div>
-                      {(d.debtor_code || d.phone) && (
-                        <div className={styles.suggestCode}>
-                          {d.debtor_code ?? ''}{d.debtor_code && d.phone ? ' · ' : ''}{formatPhone(d.phone) || ''}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <DebtorSuggestList
+                anchorRef={debtorInputRef}
+                open={showDebtorSuggest}
+                suggestions={debtorSuggestions}
+                onPick={applyDebtorSuggestion}
+                classes={{ list: styles.suggestList, item: styles.suggestItem, code: styles.suggestCode }}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer SO Ref</span>
@@ -2180,7 +2147,7 @@ export const SalesOrderNew = () => {
               <StatePicker
                 value={state}
                 selectClassName={styles.fieldSelect}
-                onChange={(next) => { setState(next); setCity(''); setPostcode(''); }}
+                onChange={(next) => applyTriple(pickState(next))}
               />
             </label>
             <label className={styles.field}>
@@ -2189,9 +2156,9 @@ export const SalesOrderNew = () => {
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={city}
-                  onChange={(v) => { setCity(v); setPostcode(''); applyCityReverse(v); }}
+                  onChange={onCityPick}
                   disabled={loc.isLoading}
-                  placeholder={loc.isLoading ? 'Loading…' : 'Pick city'}
+                  placeholder={loc.isLoading ? 'Loading…' : cityPlaceholder(state)}
                   options={sortByText(cityChoices).map((c) => ({ value: c, label: c }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
@@ -2203,9 +2170,9 @@ export const SalesOrderNew = () => {
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={postcode}
-                  onChange={(v) => { setPostcode(v); applyPostcodeReverse(v); }}
+                  onChange={onPostcodePick}
                   disabled={loc.isLoading}
-                  placeholder={loc.isLoading ? 'Loading…' : 'Pick postcode'}
+                  placeholder={loc.isLoading ? 'Loading…' : postcodePlaceholder(state, city)}
                   options={sortByNumeric(postcodeChoices).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />

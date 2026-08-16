@@ -1,0 +1,53 @@
+# Read-only. Runs every save-path guard's QUESTION against a named sales order
+# and prints the inputs beside each verdict, so a "failed to save" report can be
+# traced to the gate that answered instead of guessed at. Writes nothing.
+name: probe-so-save-gates
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      doc:
+        description: 'SO doc no(s), comma separated, e.g. 2608-020'
+        required: true
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-so-save-gates
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-so-save-gates.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-so-save-gates.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

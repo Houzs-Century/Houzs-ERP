@@ -36,9 +36,12 @@ import { useAuth } from '../../vendor/scm/lib/auth';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
 import { useVenues } from '../../vendor/scm/lib/venues-queries';
 import {
-  useLocalities, distinctStates, citiesInState, postcodesInCity,
-  countryForState,
+  useLocalities, countryForState,
 } from '../../vendor/scm/lib/localities-queries';
+import {
+  useAddressCascade, pickState, pickCity, pickPostcode,
+  cityPlaceholder, postcodePlaceholder,
+} from '../../vendor/scm/lib/address-cascade';
 import { StatePicker } from '../../vendor/scm/components/StatePicker';
 import {
   useSoDropdownOptions, optionsOrFallback,
@@ -46,11 +49,11 @@ import {
 import { useStateWarehouseMappings } from '../../vendor/scm/lib/state-warehouse-queries';
 import { sortByText, sortByNumeric } from '../../vendor/scm/lib/sort-options';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
+import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { SoLineCard, emptySoLine, missingRequiredVariants, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import {
   PaymentsTable, labelToApi, draftMethodFields, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { formatPhone } from '@2990s/shared/phone';
 import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
@@ -204,6 +207,9 @@ export const ConsignmentOrderNew = () => {
   // ── Debtor autocomplete ─────────────────────────────────────────────
   const debtors = useConsignmentDebtorSearch(debtorName.trim().length >= 2 ? debtorName.trim() : '');
   const [showDebtorSuggest, setShowDebtorSuggest] = useState(false);
+  /* SalesOrderDetail's copy of this field was portalled in an earlier pass; this
+     one and ConsignmentOrderDetail's were the twins that pass missed. */
+  const debtorInputRef = useRef<HTMLInputElement>(null);
   const debtorSuggestions: DebtorSuggestion[] = (debtors.data?.debtors ?? []).filter(
     (d) => (d.debtor_name ?? '').toLowerCase() !== debtorName.trim().toLowerCase(),
   );
@@ -299,12 +305,15 @@ export const ConsignmentOrderNew = () => {
 
   // ── Locality cascades ──────────────────────────────────────────────
   const locRows = useMemo(() => loc.data ?? [], [loc.data]);
-  const states  = useMemo(() => distinctStates(locRows), [locRows]);
-  const cities  = useMemo(() => state ? citiesInState(locRows, state) : [], [locRows, state]);
-  const postcodes = useMemo(
-    () => (state && city) ? postcodesInCity(locRows, state, city) : [],
-    [locRows, state, city],
-  );
+  /* Shared address cascade, BOTH directions (address-cascade.ts). Three atoms,
+     so each pick writes all three back — the raw setters keep the value just
+     chosen, which routing through the State picker's handler would clear. */
+  const { cities, postcodes } = useAddressCascade(locRows, state, city);
+  const applyTriple = (next: { state: string; city: string; postcode: string }) => {
+    setState(next.state); setCity(next.city); setPostcode(next.postcode);
+  };
+  const onCityPick = (next: string) => applyTriple(pickCity(locRows, { state, city, postcode }, next));
+  const onPostcodePick = (next: string) => applyTriple(pickPostcode(locRows, { state, city, postcode }, next));
 
   const stateWarehousesQ = useStateWarehouseMappings();
   useEffect(() => {
@@ -598,6 +607,7 @@ export const ConsignmentOrderNew = () => {
             <label className={styles.field} style={{ gridColumn: 'span 3' }}>
               <span className={styles.fieldLabel}>Customer Name *</span>
               <input
+                ref={debtorInputRef}
                 className={styles.fieldInput}
                 value={debtorName}
                 onChange={(e) => { setDebtorName(e.target.value); setShowDebtorSuggest(true); }}
@@ -606,24 +616,13 @@ export const ConsignmentOrderNew = () => {
                 placeholder="e.g. Lim Mei Hua"
                 required
               />
-              {showDebtorSuggest && debtorSuggestions.length > 0 && (
-                <ul className={styles.suggestList}>
-                  {debtorSuggestions.slice(0, 8).map((d, i) => (
-                    <li
-                      key={`${d.debtor_code ?? ''}-${i}`}
-                      className={styles.suggestItem}
-                      onMouseDown={() => applyDebtorSuggestion(d)}
-                    >
-                      <div>{d.debtor_name}</div>
-                      {(d.debtor_code || d.phone) && (
-                        <div className={styles.suggestCode}>
-                          {d.debtor_code ?? ''}{d.debtor_code && d.phone ? ' · ' : ''}{formatPhone(d.phone) || ''}
-                        </div>
-                      )}
-                    </li>
-                  ))}
-                </ul>
-              )}
+              <DebtorSuggestList
+                anchorRef={debtorInputRef}
+                open={showDebtorSuggest}
+                suggestions={debtorSuggestions}
+                onPick={applyDebtorSuggestion}
+                classes={{ list: styles.suggestList, item: styles.suggestItem, code: styles.suggestCode }}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer Ref</span>
@@ -901,7 +900,7 @@ export const ConsignmentOrderNew = () => {
               <span className={styles.fieldLabel}>State</span>
               <StatePicker
                 value={state}
-                onChange={(next) => { setState(next); setCity(''); setPostcode(''); }}
+                onChange={(next) => applyTriple(pickState(next))}
               />
             </label>
             <label className={styles.field}>
@@ -910,9 +909,8 @@ export const ConsignmentOrderNew = () => {
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={city}
-                  onChange={(v) => { setCity(v); setPostcode(''); }}
-                  disabled={!state}
-                  placeholder={state ? 'Pick city' : '— pick state first'}
+                  onChange={onCityPick}
+                  placeholder={cityPlaceholder(state)}
                   options={sortByText(cities).map((c) => ({ value: c, label: c }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
@@ -924,9 +922,8 @@ export const ConsignmentOrderNew = () => {
                 <SearchableSelect
                   className={styles.fieldSelect}
                   value={postcode}
-                  onChange={setPostcode}
-                  disabled={!state || !city}
-                  placeholder={(state && city) ? 'Pick postcode' : '— pick city first'}
+                  onChange={onPostcodePick}
+                  placeholder={postcodePlaceholder(state, city)}
                   options={sortByNumeric(postcodes).map((p) => ({ value: p, label: p }))}
                 />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />

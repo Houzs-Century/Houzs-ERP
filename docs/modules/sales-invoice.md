@@ -209,6 +209,37 @@ re-invoicing.
 moves back to DRAFT; a CANCELLED invoice may only reopen to SENT. An
 **unrecognised persisted** status fails OPEN so a legacy row is never bricked.
 
+### Who sets each status — manual vs automatic (2026-08-16)
+
+DB type is the `scm.sales_invoice_status` ENUM (`DRAFT` added by
+`migrations-pg/0041_scm_sales_invoice_status_draft.sql`); column default `SENT`.
+Unlike the DO and the GRN, **half of this document's statuses are machine-set**:
+
+| Value | Set by | Manual / automatic |
+|---|---|---|
+| `DRAFT` | create with the draft flag | manual |
+| `SENT` | the confirm branch; create-not-draft; **and `recomputePaid` writes it back** when the paid total rolls back to 0 | both |
+| `PARTIALLY_PAID` | `recomputePaid` only | **automatic**, on payment add/delete |
+| `PAID` | `recomputePaid` only | **automatic** |
+| `OVERDUE` | **no writer exists in `backend/src`.** It is a legal target of the transition table and is read by the collection agent, but nothing in this repo computes or writes it. UNKNOWN whether an external job does | — |
+| `CANCELLED` | the status PATCH handler | manual |
+
+`recomputePaid` deliberately refuses to touch a DRAFT or CANCELLED invoice, so a
+payment can never drag a cancelled document back into a live state.
+
+Locks worth knowing: `isIssuedSi` (anything except DRAFT / CANCELLED) freezes
+lines on add / edit / delete / from-DO with
+`This invoice has already been issued to the customer, so its items can no longer
+be changed. Cancel the invoice and reopen it if it is wrong.`, and freezes the
+header fields `invoiceDate` / `currency` / `debtorName` / `debtorCode`. Payments
+on a non-live SI are refused with `SI is cancelled` / `SI is a draft — confirm it
+before recording payments` (`not_payable`).
+
+> `VOID` appears as a UI pill label in `frontend/src/vendor/scm/lib/status-pill.ts`
+> for both SI and PI. **No backend path writes it and it is in no enum** — it is a
+> dead label. The live pill relabelings that DO fire are `SENT` → "Issued",
+> `SUBMITTED` / `POSTED` → "Confirmed", `DISPATCHED` → "Shipped".
+
 ---
 
 ## 4. Database

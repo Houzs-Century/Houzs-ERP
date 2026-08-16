@@ -24,6 +24,10 @@ import { supabaseAuth } from "../middleware/auth";
 import { requireHouzsPerm } from "../lib/houzs-perms";
 import { nextCode, CODE_PREFIX } from "../lib/fleet-code-mint";
 import { activeCompanyId, scopeToCompany } from "../lib/companyScope";
+import { todayMyt } from "../lib/my-time";
+import {
+  dateOrNull, floatOrNull, intOrNull, iso, normPlate, numOrNull, refsOrNull, tsOrNull,
+} from "../lib/fleet-coerce";
 import type { Env, Variables } from "../env";
 import {
   COMPLIANCE_DOC_TYPES,
@@ -84,7 +88,6 @@ const COMPONENT_TYPE_SET = new Set<string>(COMPONENT_TYPES);
 const COMPONENT_POSITION_SET = new Set<string>(COMPONENT_POSITIONS);
 const COMPONENT_EVENT_TYPE_SET = new Set<string>(COMPONENT_EVENT_TYPES);
 
-const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 const DOC_TYPE_SET = new Set<string>(COMPLIANCE_DOC_TYPES);
 const PLAN_COMPONENT_SET = new Set<string>(PLAN_COMPONENTS);
 const MILEAGE_SOURCE_SET = new Set<string>(MILEAGE_SOURCES);
@@ -97,57 +100,6 @@ const FLAT_COL: Partial<Record<ComplianceDocType, "road_tax_expiry" | "insurance
 };
 
 /** Today's calendar date in MYT (UTC+8), where the fleet operates. */
-function todayMyt(): string {
-  return new Date(Date.now() + 8 * 3_600_000).toISOString().slice(0, 10);
-}
-function iso(v: unknown): string | null {
-  if (v == null) return null;
-  const s = String(v).slice(0, 10);
-  return ISO_DATE.test(s) ? s : null;
-}
-function normPlate(p: string | null | undefined): string {
-  return (p ?? "").replace(/\s+/g, "").toUpperCase();
-}
-function dateOrNull(v: unknown): { ok: true; value: string | null } | { ok: false } {
-  if (v === null || v === undefined || v === "") return { ok: true, value: null };
-  const s = String(v).slice(0, 10);
-  return ISO_DATE.test(s) ? { ok: true, value: s } : { ok: false };
-}
-function intOrNull(v: unknown): { ok: true; value: number | null } | { ok: false } {
-  if (v === null || v === undefined || v === "") return { ok: true, value: null };
-  const n = Number(v);
-  if (!Number.isFinite(n) || !Number.isInteger(n) || n < 0) return { ok: false };
-  return { ok: true, value: n };
-}
-/** A non-negative money (cents) or number, allowing null/blank. */
-function numOrNull(v: unknown): { ok: true; value: number | null } | { ok: false } {
-  if (v === null || v === undefined || v === "") return { ok: true, value: null };
-  const n = Number(v);
-  if (!Number.isFinite(n) || n < 0) return { ok: false };
-  return { ok: true, value: n };
-}
-/** A finite float (e.g. GPS lat/lng) or null; no sign/range constraint. */
-function floatOrNull(v: unknown): { ok: true; value: number | null } | { ok: false } {
-  if (v === null || v === undefined || v === "") return { ok: true, value: null };
-  const n = Number(v);
-  if (!Number.isFinite(n)) return { ok: false };
-  return { ok: true, value: n };
-}
-/** An ISO timestamp string or null/blank. Stored as-is (Postgres parses it). */
-function tsOrNull(v: unknown): { ok: true; value: string | null } | { ok: false } {
-  if (v === null || v === undefined || v === "") return { ok: true, value: null };
-  const s = String(v);
-  const t = Date.parse(s);
-  if (Number.isNaN(t)) return { ok: false };
-  return { ok: true, value: s };
-}
-/** A JSON array of R2 keys (strings) or null. Rejects non-arrays. */
-function refsOrNull(v: unknown): { ok: true; value: string[] | null } | { ok: false } {
-  if (v === null || v === undefined || v === "") return { ok: true, value: null };
-  if (!Array.isArray(v)) return { ok: false };
-  const out = v.map((x) => String(x).trim()).filter(Boolean);
-  return { ok: true, value: out.length ? out : null };
-}
 
 type VaultRow = {
   id: string;

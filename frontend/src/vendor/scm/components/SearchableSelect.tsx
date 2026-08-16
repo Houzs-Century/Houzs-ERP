@@ -11,8 +11,9 @@
 // shows when closed (a saved value never blanks); an empty search shows every
 // option, so a short list still just opens-and-picks.
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
+import { useAnchoredPanel, anchoredPanelStyle } from "../../../lib/anchoredPanel";
 
 export type SearchableSelectOption = { value: string; label: string };
 
@@ -65,7 +66,12 @@ export function SearchableSelect({
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [menuPos, setMenuPos] = useState<{ top: number; left: number; width: number } | null>(null);
+  // Pin the portalled menu to the input, tracking scroll/resize, and FLIP it
+  // above when the room below cannot hold it. Portalling alone only escapes the
+  // card's clip — measured on prod's New Sales Order, the City menu still ran
+  // 111px past the bottom of the window, where `position: fixed` puts it out of
+  // reach of any scroll.
+  const menuPos = useAnchoredPanel(wrapRef, open && !disabled, 280);
 
   // The label to show when closed — the selected option's, verbatim.
   const selectedLabel = useMemo(
@@ -95,28 +101,6 @@ export function SearchableSelect({
   }
   const visible = filtered.length > shown ? filtered.slice(0, shown) : filtered;
   const hiddenCount = filtered.length - visible.length;
-
-  // Pin the portalled menu under the input, tracking scroll/resize (escapes
-  // the card's overflow:hidden clip — same idiom as the SKU/fabric pickers).
-  useEffect(() => {
-    if (!open || disabled) {
-      setMenuPos(null);
-      return;
-    }
-    const update = () => {
-      const el = wrapRef.current;
-      if (!el) return;
-      const r = el.getBoundingClientRect();
-      setMenuPos({ top: r.bottom + 4, left: r.left, width: r.width });
-    };
-    update();
-    window.addEventListener("scroll", update, true);
-    window.addEventListener("resize", update);
-    return () => {
-      window.removeEventListener("scroll", update, true);
-      window.removeEventListener("resize", update);
-    };
-  }, [open, disabled]);
 
   return (
     <div ref={wrapRef} style={{ position: "relative" }}>
@@ -148,12 +132,7 @@ export function SearchableSelect({
         createPortal(
           <ul
             style={{
-              position: "fixed",
-              top: menuPos.top,
-              left: menuPos.left,
-              width: menuPos.width,
-              zIndex: 1000,
-              maxHeight: 280,
+              ...anchoredPanelStyle(menuPos),
               overflowY: "auto",
               margin: 0,
               padding: 4,

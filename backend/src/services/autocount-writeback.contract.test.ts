@@ -88,6 +88,10 @@ const CS_CREATE_PO = slice('static string CreatePo(', '// ── conversions');
    #2041/#2043. The slice boundary is unchanged — Convert_ still ends on the
    line before it. */
 const CS_CONVERT = slice('static string Convert_(', '/* OVER-TRANSFER:');
+/* SO -> PO is its own route because a purchase document transferring from a
+   sales order uses its own SDK method. Sliced separately so its keys are
+   contract-checked like the rest — the whole point of layer 1. */
+const CS_SO_TO_PO = slice('static string SoToPo(', 'static void SalesHeader(');
 const CS_SALES_HEADER = slice('static void SalesHeader(', 'static void PurchaseHeader(');
 const CS_PURCHASE_HEADER = slice('static void PurchaseHeader(', '/* Source line keys');
 const CS_DTLKEYS = slice('static long[] DtlKeys(', '// ── cancel');
@@ -114,10 +118,31 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
       'DeliverAddr3', 'DeliverAddr4', 'DeliverContact', 'DeliverPhone1', 'Details',
       'DocDate', 'DocNo', 'InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4', 'Phone',
       'Ref', 'SalesLocation',
+      /* The DELIVERY DATE. AutoCount's sales-order header has no field of its
+         own for it — the SDK puts `DeliveryDate` on the six DETAIL classes and
+         nowhere else — so this book keeps it in the exemption expiry, which is
+         where Inistate writes it too. Owner 2026-08-16. */
+      'SalesExemptionExpiryDate',
     ].sort());
     expect(detailKeys(CS_CREATE_SO)).toEqual(
       ['DeliveryDate', 'Desc2', 'Description', 'ItemCode', 'Location', 'Qty', 'UnitPrice'].sort(),
     );
+  });
+
+  test('/so-to-po', () => {
+    /* FromDocNo and DtlKeys, and DtlKeys is REQUIRED here unlike the four
+       conversions — those may omit it and fall through to every outstanding
+       line on the parent, which a purchase order must never do: the ERP decides
+       what it buys. The per-line keys are the COST the ERP agreed with the
+       supplier, applied after the transfer brought the sales line's own price
+       across. */
+    /* CreditorCode joined this list on 2026-08-15 because the live book refused
+       the route without it: AutoCount defaults a purchase order's payment term
+       FROM THE SUPPLIER, so a PO saved with no creditor died on
+       FK_PO_DisplayTerm - a foreign key naming the TERM, not the supplier. The
+       payload had always carried a creditor; this route simply never read it. */
+    expect(headerKeys(CS_SO_TO_PO)).toEqual(['CreditorCode', 'CreditorName', 'Details', 'DtlKeys', 'FromDocNo']);
+    expect(detailKeys(CS_SO_TO_PO)).toEqual(['DeliveryDate', 'DtlKey', 'Location', 'Qty', 'UnitPrice']);
   });
 
   test('/create-po', () => {
@@ -130,16 +155,35 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
   });
 
   test('the four conversions, and the two header fields only one of them reads', () => {
+    /* DtlKeys joined this list on 2026-08-16 and its presence is the FEATURE.
+       AddPartialTransferDetail takes an ARRAY of line keys and never asks which
+       document they came from, so a target can be built from SEVERAL sources -
+       a DO from several sales orders, an invoice from several DOs, a GRN from
+       several POs, a purchase invoice from several GRNs. The route used to
+       demand FromDocNo unconditionally, which is what made that impossible;
+       FromDocNo is now the FALLBACK, needed only when the ERP does not name the
+       lines itself. */
     expect(headerKeys(CS_CONVERT)).toEqual(
-      ['FromDocNo', 'SupplierDONo', 'SupplierInvoiceNo'].sort(),
+      ['DtlKeys', 'FromDocNo', 'SupplierDONo', 'SupplierInvoiceNo'].sort(),
     );
     /* DtlKeys is optional and read in its own helper: given none, the service
        asks the BOOK which lines are still outstanding (AcSyncService.cs:300-329),
        which is the only authority on that. */
     expect(headerKeys(CS_DTLKEYS)).toEqual(['DtlKeys']);
-    // Shared header handling — identical on the sales and purchase side.
-    expect(headerKeys(CS_SALES_HEADER)).toEqual(['Description', 'DocDate', 'DocNo', 'Ref'].sort());
-    expect(headerKeys(CS_PURCHASE_HEADER)).toEqual(['Description', 'DocDate', 'DocNo', 'Ref'].sort());
+    /* Shared header handling — no longer IDENTICAL on the two sides, and the
+       difference is the point. DisplayTerm is the payment term and is sent only
+       when the ERP has one (ContainsKey): a BLANK term is a foreign key error,
+       not an empty field.
+
+       PurchaseLocation is the purchase-side twin of SalesLocation and exists
+       only here. The sales header's location is proven mandatory
+       (FK_SO_SalesLocation); the purchase one has never been sent at all, and
+       an empty master is a candidate for the "there is no row at position -1"
+       that has failed every /po-to-gr since 2026-08-12. */
+    expect(headerKeys(CS_SALES_HEADER)).toEqual(['Description', 'DisplayTerm', 'DocDate', 'DocNo', 'Ref'].sort());
+    expect(headerKeys(CS_PURCHASE_HEADER)).toEqual(
+      ['Description', 'DisplayTerm', 'DocDate', 'DocNo', 'PurchaseLocation', 'Ref'].sort(),
+    );
   });
 
   test.skip('/cancel takes exactly two fields', () => {
@@ -148,24 +192,52 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
 
   test('/edit — the envelope, the header allow-list, and the line fields', () => {
     expect(headerKeys(CS_EDIT)).toEqual(['DocNo', 'DocType', 'Header', 'Lines'].sort());
-    expect(headerKeys(CS_EDIT, 'h')).toEqual(['DocDate']);
+    /* Two DATE keys read outside the string loop below, and they have to be:
+       that loop assigns through reflection with Str(), and a Nullable<DateTime>
+       property given a string throws inside Set(), which swallows it — the field
+       would look wired and write nothing. */
+    expect(headerKeys(CS_EDIT, 'h')).toEqual(['DocDate', 'SalesExemptionExpiryDate']);
     expect(csEditHeaderAllowList()).toEqual([
       'Agent', 'Attention', 'CreditorName', 'DebtorName', 'DeliverAddr1', 'DeliverAddr2',
       'DeliverAddr3', 'DeliverAddr4', 'DeliverContact', 'DeliverPhone1', 'Description',
       'InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4', 'Note', 'Phone1', 'Ref',
       'Remark1', 'Remark2', 'Remark3', 'Remark4', 'SalesLocation',
     ].sort());
+    /* FurtherDescription and Photos are the photograph field, and they are
+       ALTERNATIVES rather than two fields: the service takes the raw RTF if it
+       is given one, and otherwise renders the JPEGs itself, because the live
+       book stores `\wmetafile8` and a JPEG cannot go in verbatim
+       (docs/autocount-further-description-photos.md section 4.2).
+
+       Both belong in this list precisely BECAUSE they are the dangerous kind of
+       key: FurtherDescription is nvarchar(MAX) and is replaced WHOLESALE, so a
+       payload that reaches it by accident does not truncate or error — it
+       silently destroys whatever photographs the line was holding. This
+       assertion is what makes adding a third way to write it impossible to do
+       quietly. */
     expect(detailKeys(CS_EDIT)).toEqual(
-      ['DeliveryDate', 'Desc2', 'Description', 'DtlKey', 'ItemCode', 'Location', 'Qty', 'UnitPrice'].sort(),
+      ['DeliveryDate', 'Desc2', 'Description', 'DtlKey', 'FurtherDescription', 'ItemCode',
+       'Location', 'Photos', 'Qty', 'UnitPrice'].sort(),
     );
   });
 
-  test('UDF is a free-form dictionary the service writes key-for-key, and swallows a bad key', () => {
+  test('UDF is a free-form dictionary the service writes key-for-key, and NAMES a key that will not land', () => {
     expect(headerKeys(CS_APPLY_UDF)).toEqual(['UDF']);
-    /* THE reason the UDF field NAMES cannot be settled from source: every write
-       goes through Set(), which catches and logs instead of throwing. A key the
-       book does not have is a silent no-op, not an error. */
-    expect(CS_APPLY_UDF).toContain('Set(() => set(k, v));');
+    /* CHANGED 2026-08-16, and the reason is the whole point of this file.
+       This used to assert `Set(() => set(k, v));` — every UDF value written as a
+       STRING through the swallow-and-log helper. That is what lost the Processing
+       Date: PDate is the only DATE-typed UDF column the ERP sends, the string was
+       refused, `Set()` logged `set skipped:` with no key and no route, and the
+       request still answered ok. The keys either side of it in the same payload
+       (VENUE, BRANDING, BALANCE, PAYEMENT) landed, so nothing looked wrong.
+       ApplyUdf now tries the string FIRST — unchanged for every key that works
+       today — and only then a typed value, and it logs the KEY when nothing
+       lands. The two assertions below hold the two halves of that: the string is
+       still the first attempt, and a total failure is still traceable to a field.
+       `Set()` itself is untouched and still guards ~30 other assignments. */
+    expect(CS_APPLY_UDF).toContain('SetUdf(k, v, set);');
+    expect(CS_APPLY_UDF).toContain('shapes.Add("String"); values.Add(v);');
+    expect(CS_APPLY_UDF).toContain('Log("  UDF " + k + " = \'" + v + "\' NOT APPLIED');
     expect(acSyncSource).toContain('static void Set(Action a) { try { a(); } catch (Exception ex) { Log("  set skipped: " + ex.Message); } }');
   });
 
@@ -1085,6 +1157,57 @@ describe('mutation proof — each field is load-bearing', () => {
 
    Re-enable by running the trial against a real AutoCount test book, recording
    what it actually accepts, and deleting the `.skip` one at a time. */
+/* /health has to say WHICH BUILD is answering.
+ *
+ * On 2026-08-15 the question "does the exe on the office host contain commit X"
+ * had no answer anywhere — not from the service, not from this repository. It
+ * was answered from a handoff note instead, and the note was a snapshot three
+ * days old. The claim that followed ("the host is three changes behind") could
+ * not be shown either way; UNKNOWN was the honest verdict and there was no way
+ * to reach a better one.
+ *
+ * Pinned HERE rather than in a C# test because there is no C# test harness: this
+ * file already reads AcSyncService.cs at build time for the payload contract, so
+ * it is the one place that can see the service's source at all. Deleting the
+ * build identity from /health now fails a test instead of quietly restoring the
+ * blind spot. */
+describe('/health reports the build that is answering', () => {
+  test('it returns builtAt and mvid, not just the book name', () => {
+    const health = rawAcSync.slice(
+      rawAcSync.indexOf('static Dictionary<string, object> Health()'),
+      rawAcSync.indexOf('static void Handle(HttpListenerContext ctx)'),
+    );
+    expect(
+      health.length,
+      'Health() was removed or renamed — /health can no longer say which build is running.',
+    ).toBeGreaterThan(0);
+
+    /* The assembly's own file timestamp, NOT a constant somebody has to bump.
+       A hand-maintained version is a fact with an expiry date; this one moves
+       only when the exe is rebuilt, which is exactly the event being detected. */
+    expect(health).toContain('File.GetLastWriteTimeUtc');
+    expect(health).toContain('"builtAt"');
+    /* Unique per compilation — settles "was the rebuild actually swapped in"
+       when two timestamps both look plausible. */
+    expect(health).toContain('ModuleVersionId');
+    expect(health).toContain('"mvid"');
+  });
+
+  test('a host that cannot read its own assembly still answers, with nulls', () => {
+    const health = rawAcSync.slice(
+      rawAcSync.indexOf('static Dictionary<string, object> Health()'),
+      rawAcSync.indexOf('static void Handle(HttpListenerContext ctx)'),
+    );
+    /* /health is the probe that decides whether the host is up at all. It must
+       degrade to a vague answer, never to a 500 — and the keys must still be
+       PRESENT, because an absent key reads as an old build that never had them,
+       which is the confusion this whole change removes. */
+    expect(health).toContain('catch');
+    expect(health).toMatch(/h\["builtAt"\]\s*=\s*null/);
+    expect(health).toMatch(/h\["mvid"\]\s*=\s*null/);
+  });
+});
+
 describe('the skipped assertions stay bounded', () => {
   test('exactly eleven assertions are skipped, and no more', () => {
     const skips = selfSource.match(/\btest\.skip\(/g) ?? [];

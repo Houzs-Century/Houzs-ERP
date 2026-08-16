@@ -16,8 +16,8 @@ tracker is the stronger evidence.
 
 ## Reviewed 2026-07-22 addition (0077 / 0078)
 
-Two further filenames were added: `0077_multicompany_company_id.sql` and
-`0078_multicompany_views.sql`. Commit `7368843b` put them on `main` at
+Two further filenames were added: `0077_multicompany_company_id.sql` [gone] and
+`0078_multicompany_views.sql` [gone]. Commit `7368843b` put them on `main` at
 22:18 +0800 on 2026-07-11 and `d2378e5f` removed them at 22:25 — a seven-minute
 window in which a push-to-`main` deploy could apply and track them.
 
@@ -43,7 +43,7 @@ against `origin/staging` yields the identical 19. Re-run it whenever a migration
 file is deleted, and whenever this manifest is edited.
 
 Files that existed only *inside* a feature branch are correctly excluded —
-`0093_branding_2990.sql` and `0093_restore_timestamp_defaults.sql` were
+`0093_branding_2990.sql` [gone] and `0093_restore_timestamp_defaults.sql` [gone] were
 renumbered before their branch's merge commit, so no deploy ever saw them. This
 is why the derivation walks first-parent tips and not `git log --diff-filter=A`.
 
@@ -55,7 +55,7 @@ Each manifest entry pins:
 
 The SQL remains recoverable with `git cat-file blob <gitBlob>` without placing it
 where the migration runner can execute it. This matters because historical
-`0023_drop_adapted_scm_island.sql` contains `DROP TABLE ... CASCADE` statements.
+`0023_drop_adapted_scm_island.sql` [gone] contains `DROP TABLE ... CASCADE` statements.
 
 ## Gate behaviour
 
@@ -117,7 +117,7 @@ review missed, not a replacement for review.
 ## Renumbers
 
 Migration numbers in this repo are assigned at merge time against whatever
-`main` looks like that minute, so `git mv 0165_x.sql 0167_x.sql` is routine. The
+`main` looks like that minute, so `git mv 0165_x.sql [gone] 0167_x.sql` [gone] is routine. The
 `staging` branch deploys before `main`, so an old number can already be applied
 and tracked in staging when `main` merges the new one. Fail-closed on the
 missing old name would brick staging permanently.

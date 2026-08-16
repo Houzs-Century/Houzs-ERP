@@ -38,7 +38,7 @@
 //     /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Sales.dll" ^
 //     /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Purchase.dll" ^
 //     /r:"C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Accounting.dll" ^
-//     /r:System.Web.Extensions.dll /r:System.Data.dll ^
+//     /r:System.Web.Extensions.dll /r:System.Data.dll /r:System.Drawing.dll ^
 //     /out:AcSyncService.exe AcSyncService.cs
 //
 // Run: AcSyncService.exe   (port from C:\Temp\ac-svc-port.txt, default 8900)
@@ -69,9 +69,12 @@
 //
 // The SQL connection line (__DBLINE__) is injected at build time so the DB
 // password never lives in source control; the API key is read from
-// C:\Temp\ac-svc-key.txt. It now appears in THREE methods — Session, DtlKeys
-// and CreatedLines — so the build step must replace EVERY occurrence, not the
-// first one.
+// C:\Temp\ac-svc-key.txt. That placeholder appears in every method that opens
+// the book directly, and the build step must replace EVERY occurrence, not the
+// first. No count is written here any more: this line said "THREE methods —
+// Session, DtlKeys and CreatedLines" while there were already seven sites,
+// which is the kind of number that goes stale in silence. Grep for it to count
+// them, and deploy-on-host.ps1 refuses to compile if any placeholder survives.
 using System;
 using System.IO;
 using System.Net;
@@ -79,6 +82,9 @@ using System.Text;
 using System.Reflection;
 using System.Collections.Generic;
 using System.Web.Script.Serialization;
+using System.Drawing;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
 
 class AcSyncService {
   const string AC   = @"C:\Program Files\AutoCount\Accounting 2.2";
@@ -139,14 +145,72 @@ class AcSyncService {
     }
   }
 
+  /* One place, because /last-errors reads the same file the catch-all writes.
+     Two copies of a path is how a reader ends up tailing a file nobody is
+     writing to and reporting "no errors". */
+  const string LogPath = @"C:\Temp\ac-sync-service.log";
+
   static void Log(string m) {
-    try { File.AppendAllText(@"C:\Temp\ac-sync-service.log", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss ") + m + "\r\n"); } catch { }
+    try { File.AppendAllText(LogPath, DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss ") + m + "\r\n"); } catch { }
   }
 
   /* Every real payload is one document; the largest sofa order in the cutover
      is tens of KB. Reading an unbounded stream into a string is how a single
      request takes the service down. */
   const int MaxBody = 2 * 1024 * 1024;
+
+  /* WHAT IS ACTUALLY RUNNING ON THIS HOST.
+     Until 2026-08-15 /health answered {ok, book, service} and nothing else, so
+     the question "does the exe on that machine contain commit X" had no answer
+     anywhere: not from this service, not from the repository, not from any
+     document that could be trusted to be current. It was answered by reading a
+     handoff note instead, which is how a reader concluded the host was three
+     changes behind without being able to show it. UNKNOWN was the honest
+     answer and there was no way to reach a better one.
+
+     builtAt is the assembly's own file timestamp. Compare it against the date
+     of the last commit that touched THIS FILE:
+
+       git log -1 --format=%ad --date=short -- backend/scripts/autocount-service/AcSyncService.cs
+
+     builtAt earlier than that date means the host is behind, full stop.
+
+     DELIBERATELY NOT a version constant someone has to bump, and not a git SHA
+     injected at build time. Both are things a person must remember, and this
+     repo's own rule is that a hand-maintained fact is a fact with an expiry
+     date. The timestamp maintains itself: rebuilding the exe moves it, and
+     nothing else can.
+
+     mvid is the module version id, unique per COMPILATION. Two hosts reporting
+     the same mvid are running the same bytes; two builds of identical source
+     differ. It is what settles "did the rebuild actually get swapped in" when a
+     timestamp alone looks plausible.
+
+     Both are read defensively: a single-file compile can run from a location
+     the process cannot stat, and /health failing is worse than /health being
+     vague — it is the probe used to decide whether the host is up at all. */
+  static Dictionary<string, object> Health() {
+    var h = new Dictionary<string, object> {
+      { "ok", true }, { "book", BOOK }, { "service", "AcSyncService" },
+    };
+    try {
+      var asm = Assembly.GetExecutingAssembly();
+      try {
+        var loc = asm.Location;
+        if (!string.IsNullOrEmpty(loc) && File.Exists(loc)) {
+          h["builtAt"] = File.GetLastWriteTimeUtc(loc).ToString("yyyy-MM-ddTHH:mm:ssZ");
+        }
+      } catch { h["builtAt"] = null; }
+      h["mvid"] = asm.ManifestModule.ModuleVersionId.ToString();
+    } catch {
+      /* Report the gap rather than omitting the keys: an absent key reads as an
+         old build that never had them, which is the exact confusion this
+         removes. */
+      h["builtAt"] = null;
+      h["mvid"] = null;
+    }
+    return h;
+  }
 
   static void Handle(HttpListenerContext ctx) {
     var path = ctx.Request.Url.AbsolutePath;
@@ -164,7 +228,7 @@ class AcSyncService {
     /* AFTER the key, deliberately: which account book this is connected to is
        not something to hand an anonymous caller on a public hostname. */
     if (path == "/health") {
-      Json(ctx, 200, new Dictionary<string, object> { { "ok", true }, { "book", BOOK }, { "service", "AcSyncService" } });
+      Json(ctx, 200, Health());
       return;
     }
     if (ctx.Request.HttpMethod != "POST") { Json(ctx, 405, Err("POST only")); return; }
@@ -190,14 +254,136 @@ class AcSyncService {
       case "/create-po": docNo = CreatePo(p); dtlTable = "PODTL"; break;
       case "/so-to-do":  docNo = Convert_("SO", "DO", p); dtlTable = "DODTL"; break;
       case "/po-to-gr":  docNo = Convert_("PO", "GR", p); dtlTable = "GRDTL"; break;
+      case "/so-to-po":  docNo = SoToPo(p); dtlTable = "PODTL"; break;
       case "/do-to-iv":  docNo = Convert_("DO", "IV", p); dtlTable = "IVDTL"; break;
       case "/gr-to-pi":  docNo = Convert_("GR", "PI", p); dtlTable = "PIDTL"; break;
       case "/cancel":    Cancel(p); Json(ctx, 200, Ok(null)); return;
       case "/edit":      Edit(p);   Json(ctx, 200, Ok(null)); return;
       case "/ensure-masters": Json(ctx, 200, EnsureMasters(p)); return;
+      /* READ-ONLY. One SELECT for the column name, one for the value, no writes,
+         no SDK session. See FurtherDescription() for why it exists. */
+      case "/further-description": Json(ctx, 200, FurtherDescription(p)); return;
+      /* READ-ONLY. Two SELECTs, no SDK session. See DocRead() for why. */
+      case "/doc-read": Json(ctx, 200, DocRead(p)); return;
+      /* READ-ONLY, and it reads a FILE rather than the book. See LastErrors(). */
+      case "/last-errors": Json(ctx, 200, LastErrors(p)); return;
+      /* READ-ONLY, one aggregate. See PictureCensus(). */
+      case "/picture-census": Json(ctx, 200, PictureCensus(p)); return;
       default: Json(ctx, 404, Err("unknown route " + path)); return;
     }
     Json(ctx, 200, Ok(docNo, CreatedLines(dtlTable, docNo)));
+  }
+
+  /* ── /further-description — the read that retires a manual instruction sheet ──
+     WHY THIS EXISTS. `docs/autocount-handling-listing.md` is a sheet someone has
+     to carry to the AutoCount machine and run three SELECTs by hand. It exists
+     only because this service exposed no read route at all, and `CLAUDE.md`'s
+     standing rule — never ask a human to run a query, build the check — could
+     not be honoured for the one database no workflow can reach. The listing's
+     own section 8 names this route as the durable fix. This is it.
+
+     IT DISCOVERS THE COLUMN RATHER THAN NAMING IT. The listing's step 1 exists
+     because the SDK calls the field `FurtherDescription` and NOBODY HAS LOOKED
+     at what the column is called. Hard-coding a guess would turn "the column has
+     another name" — a real answer — into a SQL error that reads like a broken
+     service. So step 1 is the first query here, and "no such column" comes back
+     as a successful answer with `column: null`.
+
+     TRUNCATION IS REPORTED, NEVER SILENT. The listing warns that `sqlcmd` cuts a
+     long text column and the reader never sees it happen; that is the failure
+     mode this route must not reproduce. The value is capped, and when it is cut
+     the response says so and gives the full length, so the caller knows the
+     bytes it holds are incomplete.
+
+     READ-ONLY, and mechanically so: two SELECTs on one connection, no SDK
+     session, no transaction, and the table name comes from an ALLOW-LIST rather
+     than from the caller's string. */
+  static readonly string[] DtlTables = { "SODTL", "PODTL", "DODTL", "GRDTL", "IVDTL", "PIDTL" };
+  /* 4 MB of RTF is far past any real Further Description; the cap is here so one
+     pathological row cannot make the service allocate without bound. */
+  const int MaxFurtherDescription = 4 * 1024 * 1024;
+
+  static Dictionary<string, object> FurtherDescription(Dictionary<string, object> p) {
+    var table = Or(Str(p, "Table"), "SODTL").ToUpperInvariant();
+    if (Array.IndexOf(DtlTables, table) < 0)
+      return Err("Table must be one of " + string.Join(", ", DtlTables) + " (got '" + table + "')");
+
+    long dtlKey;
+    if (!long.TryParse(Str(p, "DtlKey"), out dtlKey) || dtlKey <= 0)
+      return Err("DtlKey must be a positive integer");
+
+    __DBLINE__
+    using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+      cn.Open();
+
+      /* Step 1 of the listing. More than one match is not something to pick
+         from — it is the finding, and the caller decides. */
+      var cols = new List<Dictionary<string, object>>();
+      using (var cmd = cn.CreateCommand()) {
+        cmd.CommandText =
+          "SELECT name, system_type_id, max_length FROM sys.columns " +
+          "WHERE object_id = OBJECT_ID(@t) AND name LIKE '%Further%' ORDER BY name";
+        var pt = cmd.CreateParameter(); pt.ParameterName = "@t"; pt.Value = table;
+        cmd.Parameters.Add(pt);
+        using (var rd = cmd.ExecuteReader()) {
+          while (rd.Read()) {
+            cols.Add(new Dictionary<string, object> {
+              { "name", rd.GetString(0) },
+              { "system_type_id", (int) rd.GetByte(1) },
+              { "max_length", (int) rd.GetInt16(2) },
+            });
+          }
+        }
+      }
+
+      if (cols.Count == 0) {
+        /* NOT an error. "The field is stored somewhere else" is the answer the
+           listing asks for when step 1 returns nothing, and a 200 is what makes
+           it readable as an answer instead of an outage. */
+        return new Dictionary<string, object> {
+          { "ok", true }, { "table", table }, { "column", null }, { "columns", cols },
+          { "note", "no column matching %Further% on " + table + " - the field is stored elsewhere" },
+        };
+      }
+      if (cols.Count > 1) {
+        return new Dictionary<string, object> {
+          { "ok", true }, { "table", table }, { "column", null }, { "columns", cols },
+          { "note", "more than one %Further% column - refusing to guess which one holds the description" },
+        };
+      }
+
+      var col = (string) cols[0]["name"];
+      /* The name came out of sys.columns for this very table, so it is not
+         caller input; the DtlKey is still parameterised. */
+      string value = null;
+      var found = false;
+      using (var cmd = cn.CreateCommand()) {
+        cmd.CommandText = "SELECT [" + col + "] FROM [" + table + "] WHERE DtlKey = @k";
+        var pk = cmd.CreateParameter(); pk.ParameterName = "@k"; pk.Value = dtlKey;
+        cmd.Parameters.Add(pk);
+        using (var rd = cmd.ExecuteReader()) {
+          if (rd.Read()) { found = true; if (!rd.IsDBNull(0)) value = rd.GetValue(0).ToString(); }
+        }
+      }
+
+      if (!found)
+        return new Dictionary<string, object> {
+          { "ok", true }, { "table", table }, { "column", col }, { "columns", cols },
+          { "dtlKey", dtlKey }, { "found", false },
+          { "note", "no row with that DtlKey in " + table },
+        };
+
+      var full = value == null ? 0 : value.Length;
+      var truncated = full > MaxFurtherDescription;
+      return new Dictionary<string, object> {
+        { "ok", true }, { "table", table }, { "column", col }, { "columns", cols },
+        { "dtlKey", dtlKey }, { "found", true },
+        { "isNull", value == null },
+        { "length", full },
+        { "truncated", truncated },
+        { "value", truncated ? value.Substring(0, MaxFurtherDescription) : value },
+      };
+    }
   }
 
   /* The DtlKeys of the document we just created, in the order AutoCount stored
@@ -214,6 +400,271 @@ class AcSyncService {
      writing a confidently wrong line identity that would later edit the wrong
      line in a live book. A wrong DtlKey is worse than no DtlKey: no key is
      refused loudly, a wrong key silently edits somebody else's line. */
+  /* ── /doc-read — read a document back out of the book ─────────────────────
+     WHY THIS EXISTS. Every route here WRITES, and until now nothing could say
+     what actually landed. That gap is not academic: `qa-convert.ps1` reported
+     `/po-to-gr` as `status=0 ... (500)` and the body was never read, so the
+     failure has a symptom and no cause. And the owner's standing questions -
+     does an edited processing date reach AutoCount, does a line delivery date,
+     is the convert's Transfer link really there - are all questions about what
+     the book HOLDS, which no amount of checking our own payload can answer.
+
+     IT DISCOVERS THE COLUMNS RATHER THAN NAMING THEM, for the same reason
+     FurtherDescription() does. The wanted list below is what we would LIKE to
+     see; the query asks sys.columns which of them exist on that table and
+     selects only those, reporting the rest in `missingColumns`. So "AutoCount
+     has no such field" comes back as an ANSWER - which is itself the answer to
+     "does payment update into AutoCount" if no payment column exists on the
+     document - instead of a SQL error that reads like a broken service.
+
+     READ-ONLY and mechanically so: SELECTs on one connection, no SDK session,
+     no transaction, and the table names come from a fixed map, never from the
+     caller's string. */
+  static readonly string[] DocTypes = { "SO", "PO", "DO", "GR", "IV", "PI" };
+
+  /* Wanted on the HEADER. DocNo/DocDate/Cancelled are the identity and the
+     state; the rest are the fields the ERP claims to send, so a QA run can
+     prove each one arrived rather than assume it. */
+  static readonly string[] HeaderWanted = {
+    "DocKey", "DocNo", "DocDate", "Cancelled", "DebtorCode", "DebtorName",
+    "CreditorCode", "CreditorName", "Agent", "SalesLocation", "Ref",
+    "Description", "DeliveryDate", "ProcessingDate", "Note",
+    "Remark1", "Remark2", "Remark3", "Remark4", "Attention", "Phone1",
+    "DeliverAddr1", "InvAddr1", "SupplierDONo", "SupplierInvoiceNo",
+    "Total", "OutstandingAmt", "PaymentAmt", "PaymentTerm", "CreditTerm",
+    /* The REAL names, learned by listing sys.columns on 2026-08-15 after the
+       first run reported SO.Agent as missing - which it is, because the column
+       is SalesAgent. A wanted list built from SDK PROPERTY names answers a
+       different question than the one being asked, and "no such column" then
+       reads as "AutoCount cannot hold this" when it only means "not by that
+       name". These are the columns the book actually has. */
+    "SalesAgent", "DisplayTerm", "UDF_PDate", "UDF_UDate", "UDF_PAYEMENT",
+  };
+
+  /* Wanted on the LINES. From* is the whole point of the convert questions:
+     it is where AutoCount records that this line came from another document,
+     and it is what "convert from / convert to" reads. */
+  static readonly string[] DetailWanted = {
+    "DtlKey", "Seq", "ItemCode", "Description", "Desc2", "Qty", "UnitPrice",
+    "Location", "DeliveryDate", "TransferedQty", "Transferable",
+    /* FromDocDtlKey, not FromDtlKey - same lesson as above, same day.
+       FullTransferFromDocList is AutoCount's own summary of every document a
+       line was transferred from, so it is the cheapest single answer to "is
+       the convert-from link there". */
+    "FromDocType", "FromDocNo", "FromDocDtlKey", "FullTransferFromDocList",
+    "EstimatedDeliveryDate", "PrintOut",
+  };
+
+  /* ── /last-errors — the tail of this service's own log ────────────────────
+     WHY. The catch-all in Serve() already writes the FULL exception here, and
+     on 2026-08-15 that is where both open failures turned out to be written:
+
+       ERROR /so-to-po: ForeignKeyException (Constraint Name=FK_PO_DisplayTerm)
+       ERROR /cancel:   TransferedDocNotAllowToCancelException
+
+     Both had been reported for days as "500, no body" and chased as mysteries.
+     The cause was on this machine the whole time, and reaching it cost a remote
+     desktop session, LINQPad, and a person. That is the same argument section 8
+     of the handling listing makes about the account book: if the answer needs a
+     human to go and fetch it, the answer does not get fetched.
+
+     It returns the tail only, and never the whole file: the log carries every
+     request line and grows without bound. */
+  const int MaxLogLines = 400;
+
+  static Dictionary<string, object> LastErrors(Dictionary<string, object> p) {
+    int want = 60;
+    int.TryParse(Str(p, "Lines"), out want);
+    if (want <= 0) want = 60;
+    if (want > MaxLogLines) want = MaxLogLines;
+    var onlyErrors = Bool(p, "OnlyErrors");
+
+    var r = Ok(null);
+    r["path"] = LogPath;
+    if (!File.Exists(LogPath)) { r["exists"] = false; r["lines"] = new List<string>(); return r; }
+    r["exists"] = true;
+
+    string[] all;
+    /* The service is appending to this file while we read it, so share the
+       write handle rather than fighting for it. A locked log must not be able
+       to take the service down. */
+    try {
+      using (var fs = new FileStream(LogPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite))
+      using (var sr = new StreamReader(fs)) {
+        var lines = new List<string>();
+        string ln;
+        while ((ln = sr.ReadLine()) != null) lines.Add(ln);
+        all = lines.ToArray();
+      }
+    } catch (Exception ex) { return Err("could not read the log: " + ex.Message); }
+
+    r["totalLines"] = all.Length;
+    var picked = new List<string>();
+    if (onlyErrors) {
+      /* An ERROR line is followed by its stack, and the stack is the useful
+         half - so take the ERROR line and everything under it up to the next
+         timestamped request line. */
+      for (int i = 0; i < all.Length; i++) {
+        if (all[i].IndexOf(" ERROR ", StringComparison.Ordinal) < 0) continue;
+        for (int j = i; j < all.Length && j < i + 40; j++) {
+          if (j > i && all[j].Length > 4 && all[j].StartsWith("20") && all[j].IndexOf(" ERROR ", StringComparison.Ordinal) < 0) break;
+          picked.Add(all[j]);
+        }
+        picked.Add("---");
+      }
+      if (picked.Count > want) picked = picked.GetRange(picked.Count - want, want);
+    } else {
+      var from = Math.Max(0, all.Length - want);
+      for (int i = from; i < all.Length; i++) picked.Add(all[i]);
+    }
+    r["lines"] = picked;
+    return r;
+  }
+
+  /* ── /picture-census — does ANY line hold more than one picture ───────────
+     THE ONLY REASON THIS MATTERS. FurtherDescription is replaced WHOLESALE -
+     there is no append - so if a line we rewrite holds two pictures and we send
+     one, the second is DESTROYED and nothing says so.
+
+     The photo manifest says one picture per line for all 554 of its rows, but
+     the manifest is the output of an extractor nobody kept, so it cannot rule
+     out that the extractor took only the first. This asks the BOOK instead, in
+     one aggregate over the whole table.
+
+     max_pictures = 1 closes it. Anything higher is a finding, and the composer
+     needs a read-before-write on those lines before it may touch them. */
+  /* VERBATIM on purpose. In a normal C# literal "\p" is not a valid
+     escape and does not compile; @ turns escape processing off, so the marker
+     is exactly the six characters SQL must match. */
+  static readonly string PictMarker = @"{\pict";
+
+  static Dictionary<string, object> PictureCensus(Dictionary<string, object> p) {
+    var table = Or(Str(p, "Table"), "SODTL").ToUpperInvariant();
+    if (Array.IndexOf(DtlTables, table) < 0)
+      return Err("Table must be one of " + string.Join(", ", DtlTables) + " (got '" + table + "')");
+
+    __DBLINE__
+    using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+      cn.Open();
+      var missing = new List<string>();
+      var cols = ExistingColumns(cn, table, new[] { "FurtherDescription" }, missing);
+      if (cols.Count == 0) { var e = Ok(null); e["table"] = table; e["column"] = null; return e; }
+
+      using (var cmd = cn.CreateCommand()) {
+        /* LEN() ignores trailing spaces but the marker is 6 characters of
+           punctuation, so the subtraction is exact. */
+        cmd.CommandText =
+          "SELECT COUNT(*) AS lines_with_a_value, " +
+          "       MAX((LEN(FurtherDescription) - LEN(REPLACE(FurtherDescription, '" + PictMarker + "', ''))) / 6) AS max_pictures, " +
+          "       SUM(CASE WHEN (LEN(FurtherDescription) - LEN(REPLACE(FurtherDescription, '" + PictMarker + "', ''))) / 6 > 1 THEN 1 ELSE 0 END) AS lines_over_one " +
+          "FROM [" + table + "] " +
+          "WHERE FurtherDescription IS NOT NULL AND LEN(FurtherDescription) > 0";
+        cmd.CommandTimeout = 180;
+        using (var rd = cmd.ExecuteReader()) {
+          var r = Ok(null);
+          r["table"] = table;
+          if (rd.Read()) {
+            /* Convert, never GetInt32. LEN() over nvarchar(MAX) returns BIGINT,
+               so the arithmetic that follows is bigint too, and GetInt32 throws
+               "Specified cast is not valid" - which is what the first run of
+               this route did, on the host, against the real table. */
+            r["linesWithAValue"] = rd.IsDBNull(0) ? 0L : System.Convert.ToInt64(rd.GetValue(0));
+            r["maxPictures"]     = rd.IsDBNull(1) ? 0L : System.Convert.ToInt64(rd.GetValue(1));
+            r["linesOverOne"]    = rd.IsDBNull(2) ? 0L : System.Convert.ToInt64(rd.GetValue(2));
+          }
+          return r;
+        }
+      }
+    }
+  }
+
+  static Dictionary<string, object> DocRead(Dictionary<string, object> p) {
+    var docType = Str(p, "DocType").ToUpperInvariant();
+    if (Array.IndexOf(DocTypes, docType) < 0)
+      return Err("DocType must be one of " + string.Join(", ", DocTypes) + " (got '" + docType + "')");
+    var docNo = Str(p, "DocNo");
+    if (string.IsNullOrEmpty(docNo)) return Err("DocNo required");
+
+    var hdrTable = docType;
+    var dtlTable = docType + "DTL";
+
+    __DBLINE__
+    using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+      cn.Open();
+      var missing = new List<string>();
+      var header = ReadOne(cn, hdrTable, HeaderWanted, "DocNo = @d", docNo, missing);
+      if (header == null) return Err("no " + docType + " with DocNo '" + docNo + "'");
+      var lines = ReadMany(cn, dtlTable, DetailWanted,
+                           "DocKey = (SELECT DocKey FROM " + hdrTable + " WHERE DocNo = @d)", docNo, missing);
+      var r = Ok(null);
+      r["docType"] = docType;
+      r["header"] = header;
+      r["lines"] = lines;
+      r["missingColumns"] = missing;
+      return r;
+    }
+  }
+
+  /* Which of `wanted` actually exist on `table`. The ones that do not are
+     APPENDED to `missing` rather than dropped silently: a caller asking "did
+     the processing date update" needs to be told the difference between "it is
+     null" and "there is no such column". */
+  static List<string> ExistingColumns(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, List<string> missing) {
+    var have = new List<string>();
+    using (var cmd = cn.CreateCommand()) {
+      cmd.CommandText = "SELECT name FROM sys.columns WHERE object_id = OBJECT_ID(@t)";
+      var pt = cmd.CreateParameter(); pt.ParameterName = "@t"; pt.Value = table;
+      cmd.Parameters.Add(pt);
+      var all = new List<string>();
+      using (var rd = cmd.ExecuteReader()) while (rd.Read()) all.Add(rd.GetString(0));
+      foreach (var w in wanted) {
+        if (all.Contains(w)) have.Add(w); else missing.Add(table + "." + w);
+      }
+    }
+    return have;
+  }
+
+  static string SelectList(List<string> cols) {
+    var q = new List<string>();
+    foreach (var c in cols) q.Add("[" + c + "]");
+    return string.Join(", ", q.ToArray());
+  }
+
+  static Dictionary<string, object> RowToDict(System.Data.SqlClient.SqlDataReader rd, List<string> cols) {
+    var row = new Dictionary<string, object>();
+    for (int i = 0; i < cols.Count; i++) {
+      var v = rd.IsDBNull(i) ? null : rd.GetValue(i);
+      if (v is DateTime) v = ((DateTime) v).ToString("yyyy-MM-dd HH:mm:ss");
+      else if (v is decimal) v = (double) (decimal) v;
+      row[cols[i]] = v;
+    }
+    return row;
+  }
+
+  static Dictionary<string, object> ReadOne(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, string where, string docNo, List<string> missing) {
+    var cols = ExistingColumns(cn, table, wanted, missing);
+    if (cols.Count == 0) return null;
+    using (var cmd = cn.CreateCommand()) {
+      cmd.CommandText = "SELECT TOP 1 " + SelectList(cols) + " FROM [" + table + "] WHERE " + where;
+      var pd = cmd.CreateParameter(); pd.ParameterName = "@d"; pd.Value = docNo;
+      cmd.Parameters.Add(pd);
+      using (var rd = cmd.ExecuteReader()) return rd.Read() ? RowToDict(rd, cols) : null;
+    }
+  }
+
+  static List<Dictionary<string, object>> ReadMany(System.Data.SqlClient.SqlConnection cn, string table, string[] wanted, string where, string docNo, List<string> missing) {
+    var outp = new List<Dictionary<string, object>>();
+    var cols = ExistingColumns(cn, table, wanted, missing);
+    if (cols.Count == 0) return outp;
+    using (var cmd = cn.CreateCommand()) {
+      cmd.CommandText = "SELECT " + SelectList(cols) + " FROM [" + table + "] WHERE " + where + " ORDER BY [DtlKey]";
+      var pd = cmd.CreateParameter(); pd.ParameterName = "@d"; pd.Value = docNo;
+      cmd.Parameters.Add(pd);
+      using (var rd = cmd.ExecuteReader()) while (rd.Read()) outp.Add(RowToDict(rd, cols));
+    }
+    return outp;
+  }
+
   static List<Dictionary<string, object>> CreatedLines(string dtlTable, string docNo) {
     var hdr = dtlTable.Substring(0, dtlTable.Length - 3);
     var outp = new List<Dictionary<string, object>>();
@@ -262,7 +713,29 @@ class AcSyncService {
   }
 
   // ── create (SO / PO) ──────────────────────────────────────────────────────
+  /* A DOCUMENT NUMBER IS NOT OPTIONAL, and an absent one used to be silent.
+     Str() answers "" for a key that is not there - not null, not an error - so
+     `DocNo = Str(p, "DocNo")` on a payload without one saved a document with a
+     BLANK number and answered {"ok":true,"docNo":"","lines":[]}. That reads as
+     success and is worse than a failure: every route that addresses a document
+     does it BY DocNo, so a blank-numbered document cannot be edited, cannot be
+     converted, and cannot even be CANCELLED through this service. It can only
+     be reached by hand in the AutoCount UI.
+
+     Measured on the live book 2026-08-15, after doing exactly that by accident:
+     SELECT COUNT(*) FROM SO WHERE DocNo IS NULL OR LTRIM(RTRIM(DocNo)) = ''
+     returned 1, and it was the one just created. So the ERP has never done this
+     - it always sends its own number (module guide 7g) - and nothing in the
+     book depends on AutoCount auto-numbering a document for us. Refusing is
+     therefore free, and it converts an unrecoverable silent success into a
+     visible 400. */
+  static void RequireDocNo(Dictionary<string, object> p, string what) {
+    if (string.IsNullOrEmpty(Str(p, "DocNo").Trim()))
+      throw new Exception("DocNo required for " + what + " - the ERP owns document numbering, and a blank number cannot be addressed, edited or cancelled afterwards");
+  }
+
   static string CreateSo(Dictionary<string, object> p) {
+    RequireDocNo(p, "/create-so");
     var s = Session();
     var cmd = AutoCount.Invoicing.Sales.SalesOrder.SalesOrderCommand.Create(s, s.DBSetting);
     var so = cmd.AddNew();
@@ -285,6 +758,12 @@ class AcSyncService {
     so.DeliverAddr4 = Or(Str(p, "DeliverAddr4"), Str(p, "InvAddr4"));
     Set(() => so.DeliverContact = Or(Str(p, "DeliverContact"), Str(p, "DebtorName")));
     Set(() => so.DeliverPhone1 = Or(Str(p, "DeliverPhone1"), Str(p, "Phone")));
+    /* The delivery date, in the field this book keeps it in — see the note in
+       Edit(). Present-and-null blanks it; absent leaves AutoCount's default. */
+    if (p.ContainsKey("SalesExemptionExpiryDate")) {
+      var xd = Date(p, "SalesExemptionExpiryDate");
+      Set(() => so.SalesExemptionExpiryDate = xd);
+    }
     ApplyUdf(p, k => so.UDF[k], (k, v) => so.UDF[k] = v);
     foreach (var od in List(p, "Details")) {
       var it = (Dictionary<string, object>) od;
@@ -316,6 +795,7 @@ class AcSyncService {
   }
 
   static string CreatePo(Dictionary<string, object> p) {
+    RequireDocNo(p, "/create-po");   // same reasoning as CreateSo above
     var s = Session();
     var cmd = AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderCommand.Create(s, s.DBSetting);
     var po = cmd.AddNew();
@@ -351,54 +831,243 @@ class AcSyncService {
   static string Convert_(string fromType, string toType, Dictionary<string, object> p) {
     var s = Session();
     var fromDocNo = Str(p, "FromDocNo");
-    if (string.IsNullOrEmpty(fromDocNo)) throw new Exception("FromDocNo required");
-    var dtlKeys = DtlKeys(p, fromType, fromDocNo);
-    if (dtlKeys.Length == 0) throw new Exception("no transferable lines on " + fromType + " " + fromDocNo);
+    /* MANY SOURCE DOCUMENTS INTO ONE TARGET is native, and this is the only
+       thing that stood in its way. AddPartialTransferDetail takes an ARRAY of
+       line keys and never asks which document they came from, and DtlKeys()
+       already returns an explicit DtlKeys[] verbatim without checking it
+       against FromDocNo. So a payload naming lines from several sales orders
+       already reaches the SDK correctly - the route just refused to accept one,
+       because FromDocNo was demanded unconditionally.
 
-    switch (toType) {
-      case "DO": {
-        var cmd = AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrderCommand.Create(s, s.DBSetting);
-        var doc = cmd.AddNew();
-        doc.AddPartialTransferDetail(fromType, dtlKeys, false);
-        SalesHeader(doc, p);
-        doc.Save();
-        return doc.DocNo;
+       FromDocNo is the FALLBACK lookup key: it is how the outstanding lines are
+       found when the ERP does not name them. When the ERP names them, it has
+       nothing left to say, so it is optional. Owner 2026-08-16: a DO from
+       several SOs, an invoice from several DOs, a GRN from several POs, a
+       purchase invoice from several GRNs - AutoCount does all four. */
+    var explicitKeys = new List<object>(List(p, "DtlKeys")).Count > 0;
+    if (string.IsNullOrEmpty(fromDocNo) && !explicitKeys)
+      throw new Exception("FromDocNo required when DtlKeys is not given - it is how the outstanding lines are found");
+    var dtlKeys = DtlKeys(p, fromType, fromDocNo);
+    if (dtlKeys.Length == 0)
+      throw new Exception("no transferable lines on " + fromType + " " + Or(fromDocNo, "(the given DtlKeys)"));
+
+    /* ONE CALL PER SOURCE DOCUMENT. AddPartialTransferDetail takes an array of
+       line keys, but they must all belong to the SAME source document: handed a
+       mixed array AutoCount answers
+
+         AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+
+       measured on the live book 2026-08-16 with two sales orders in one array.
+
+       Merging several sources into one target is still native - the target
+       accepts the call repeatedly. So the keys are grouped by the document they
+       actually belong to, read from the book rather than taken on trust, and
+       the transfer is invoked once per group. Owner 2026-08-16: a DO from
+       several SOs, an invoice from several DOs, a GRN from several POs, a
+       purchase invoice from several GRNs. */
+    var keysByDoc = KeysBySourceDoc(fromType, dtlKeys);
+
+    /* THE FAILURE HAS TO NAME THE LINES. AutoCount answers a source line it
+       will not take with
+
+         AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+
+       and that sentence names nothing: not the key, not the document, not the
+       reason. Serve's catch-all returns ex.Message alone, so the ERP's outbox
+       row records those eleven words and nothing else. On 2026-08-16
+       HC-DO-2608-001 spent all six of its attempts on it and HC-DO-2608-002
+       five more, and none of the eleven runs produced a single new fact.
+
+       Why the message is so empty HERE in particular: when the ERP names the
+       lines, DtlKeys() returns the supplied list VERBATIM, so neither of the
+       predicates this service otherwise applies -
+
+           h.Cancelled = 'F'    and    (d.Qty - ISNULL(d.TransferedQty,0)) > 0
+
+       - is evaluated for them, and AutoCount is the first thing in the chain to
+       look at those lines at all. So the numbers are read back out of the book
+       and appended to whatever the SDK threw.
+
+       WRAPS THE WHOLE ARM, not just the transfer call. Where the SDK raises
+       this is not established from off the host - AddPartialTransferDetail is
+       where a mixed key array raises it, and Save() is equally able to - so
+       narrowing the catch to the Add would be a guess about the frame, and a
+       wrong guess costs the diagnostic exactly on the runs that need it.
+
+       DELIBERATELY NOT A PRE-FLIGHT REFUSAL. Re-applying those two predicates
+       to the supplied keys and refusing early reads as the obvious fix, and it
+       cannot be justified from off the host: this file compiles nowhere but the
+       office machine, so a predicate even slightly stricter than AutoCount's
+       own would turn working transfers into refusals with nobody able to see it
+       first. Every call below is unchanged, and so are its arguments; only the
+       text a failure carries is better. The worst case is today. */
+    try {
+      switch (toType) {
+        case "DO": {
+          var cmd = AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrderCommand.Create(s, s.DBSetting);
+          var doc = cmd.AddNew();
+          foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false);
+          SalesHeader(doc, p);
+          doc.Save();
+          return doc.DocNo;
+        }
+        case "IV": {
+          var cmd = AutoCount.Invoicing.Sales.Invoice.InvoiceCommand.Create(s, s.DBSetting);
+          var doc = cmd.AddNew();
+          foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false);
+          SalesHeader(doc, p);
+          doc.Save();
+          return doc.DocNo;
+        }
+        case "GR": {
+          var cmd = AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand.Create(s, s.DBSetting);
+          var doc = cmd.AddNew();
+          /* This conversion has failed since 2026-08-12 with
+               IndexOutOfRangeException: There is no row at position -1
+             inside GeneralPurchasePartialTransferDetail..ctor - a master lookup
+             returning -1 and used as an index. The frame names its arguments but
+             not their VALUES, so they go in the log before the call: whichever
+             run fails next, the inputs are on record rather than reconstructed. */
+          Log("  po-to-gr: fromType=" + fromType + " transferMaster=true keys=[" + string.Join(",", Array.ConvertAll(dtlKeys, x => x.ToString())) + "]");
+          // transferMaster MUST be true on the purchase side. That flag copies the
+          // source PO's header master (supplier/currency/terms) onto the target; with
+          // false the GRN is built with no supplier, the purchase detail ctor looks
+          // that row up in the master table, IndexOf returns -1, and Save() dies with
+          // "there is no row at position -1". The sales classes tolerate false, so they
+          // are left alone — DO-011260 and DO-011262 were both created that way.
+          //
+          // This comment said "DO and IV are PROVEN with it" and cited those same two
+          // numbers. Both are DELIVERY ORDER numbers; the IV half had nothing behind it
+          // and /do-to-iv has still never run. Run status does not belong in a comment:
+          // docs/generated/autocount-coverage.md is the one place that states it.
+          foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
+          PurchaseHeader(doc, p);
+          Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
+          doc.Save();
+          return doc.DocNo;
+        }
+        case "PI": {
+          var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
+          var doc = cmd.AddNew();
+          // see the GR case above — purchase side needs transferMaster = true
+          foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
+          PurchaseHeader(doc, p);
+          Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));
+          doc.Save();
+          return doc.DocNo;
+        }
       }
-      case "IV": {
-        var cmd = AutoCount.Invoicing.Sales.Invoice.InvoiceCommand.Create(s, s.DBSetting);
-        var doc = cmd.AddNew();
-        doc.AddPartialTransferDetail(fromType, dtlKeys, false);
-        SalesHeader(doc, p);
-        doc.Save();
-        return doc.DocNo;
-      }
-      case "GR": {
-        var cmd = AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand.Create(s, s.DBSetting);
-        var doc = cmd.AddNew();
-        // transferMaster MUST be true on the purchase side. That flag copies the
-        // source PO's header master (supplier/currency/terms) onto the target; with
-        // false the GRN is built with no supplier, the purchase detail ctor looks
-        // that row up in the master table, IndexOf returns -1, and Save() dies with
-        // "there is no row at position -1". The sales classes tolerate false (DO and
-        // IV are PROVEN with it, DO-011260 / DO-011262) so they are left alone.
-        doc.AddPartialTransferDetail(fromType, dtlKeys, true);
-        PurchaseHeader(doc, p);
-        Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
-        doc.Save();
-        return doc.DocNo;
-      }
-      case "PI": {
-        var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
-        var doc = cmd.AddNew();
-        // see the GR case above — purchase side needs transferMaster = true
-        doc.AddPartialTransferDetail(fromType, dtlKeys, true);
-        PurchaseHeader(doc, p);
-        Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));
-        doc.Save();
-        return doc.DocNo;
-      }
+    } catch (Exception ex) {
+      var why = DescribeSourceKeys(fromType, dtlKeys);
+      Log("  " + fromType + "->" + toType + " refused: " + ex.GetType().FullName + ": " + ex.Message.Trim());
+      Log("  source lines as the book holds them: " + why);
+      /* The SDK's own exception is the INNER one, so /last-errors and the log
+         still carry its type and stack; the message the ERP stores is the one
+         that names the lines. */
+      throw new Exception(
+        ex.Message.Trim() + " || source " + fromType + " lines as the book holds them: " + why, ex);
     }
     throw new Exception("unsupported target " + toType);
+  }
+
+  /* WHAT THE BOOK HOLDS for a set of source line keys, as one line of text.
+     Only ever reached on a failure path, so its cost does not matter - and its
+     OWN failure must never replace the exception it exists to explain, which is
+     why the whole body is wrapped and degrades to a sentence.
+
+     The detail columns go through ExistingColumns, the same way /doc-read's do
+     and for the same reason: a column this book does not carry must cost that
+     FIELD, not the whole explanation, and "no such column" has to read
+     differently from "null". That lesson was bought once already, when a wanted
+     list built from SDK property names reported SO.Agent as missing because the
+     column is called SalesAgent.
+
+     A key that is on no row at all is printed as NOT FOUND rather than left out
+     of the list: an absence is the easiest finding to read straight past. */
+  static string DescribeSourceKeys(string fromType, long[] keys) {
+    try {
+      string dtl, hdr;
+      switch (fromType) {
+        case "SO": dtl = "SODTL"; hdr = "SO"; break;
+        case "PO": dtl = "PODTL"; hdr = "PO"; break;
+        case "DO": dtl = "DODTL"; hdr = "DO"; break;
+        case "GR": dtl = "GRDTL"; hdr = "GR"; break;
+        default: return "unsupported source " + fromType;
+      }
+      if (keys == null || keys.Length == 0) return "(no source line keys were sent)";
+      var seen = new Dictionary<long, string>();
+      var absent = new List<string>();
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        /* DocNo and Cancelled on the header, Qty and TransferedQty on the line,
+           are the four DtlKeys() itself reads, so they are proven to exist on
+           every one of these tables by the query that runs in production today.
+           ItemCode and Transferable are the two that are only WANTED. */
+        var cols = ExistingColumns(cn, dtl,
+          new string[] { "DtlKey", "ItemCode", "Qty", "TransferedQty", "Transferable" }, absent);
+        if (cols.IndexOf("DtlKey") < 0) return dtl + " has no DtlKey column - nothing can be said about these keys";
+        var sel = new List<string>();
+        foreach (var c in cols) sel.Add("d.[" + c + "]");
+        sel.Add("h.[DocNo]");
+        sel.Add("h.[Cancelled]");
+        using (var cmd = cn.CreateCommand()) {
+          var names = new List<string>();
+          for (int i = 0; i < keys.Length; i++) {
+            var nm = "@k" + i;
+            names.Add(nm);
+            var pr = cmd.CreateParameter(); pr.ParameterName = nm; pr.Value = keys[i];
+            cmd.Parameters.Add(pr);
+          }
+          cmd.CommandText =
+            "SELECT " + string.Join(", ", sel.ToArray()) +
+            " FROM [" + dtl + "] d JOIN [" + hdr + "] h ON h.DocKey = d.DocKey" +
+            " WHERE d.DtlKey IN (" + string.Join(", ", names.ToArray()) + ") ORDER BY d.DtlKey";
+          using (var rd = cmd.ExecuteReader()) {
+            while (rd.Read()) {
+              var row = new Dictionary<string, object>();
+              for (int i = 0; i < rd.FieldCount; i++) row[rd.GetName(i)] = rd.IsDBNull(i) ? null : rd.GetValue(i);
+              var k = System.Convert.ToInt64(row["DtlKey"]);
+              seen[k] = k + " on " + hdr + " " + Cell(row, "DocNo") + " [" + Cell(row, "ItemCode") + "]"
+                + " Qty=" + Cell(row, "Qty") + " TransferedQty=" + Cell(row, "TransferedQty")
+                + " Transferable=" + Cell(row, "Transferable") + " docCancelled=" + Cell(row, "Cancelled")
+                + " outstanding=" + Outstanding(row);
+            }
+          }
+        }
+      }
+      var parts = new List<string>();
+      foreach (var k in keys) parts.Add(seen.ContainsKey(k) ? seen[k] : (k + " NOT FOUND in " + dtl));
+      var line = string.Join("; ", parts.ToArray());
+      if (absent.Count > 0) line += " (columns this book does not have: " + string.Join(", ", absent.ToArray()) + ")";
+      return line;
+    } catch (Exception ex) {
+      return "(the book could not be read for these keys: " + ex.Message + ")";
+    }
+  }
+
+  /* One field of a row read by NAME, distinguishing the three answers that get
+     confused with each other: no such column, a null, and a value. */
+  static string Cell(Dictionary<string, object> row, string name) {
+    if (!row.ContainsKey(name)) return "(no " + name + " column)";
+    var v = row[name];
+    return (v == null || v == DBNull.Value) ? "NULL" : System.Convert.ToString(v);
+  }
+
+  /* AutoCount's own outstanding quantity, spelled the way its predicate spells
+     it. A NULL Qty is called out in words because it is the failure that reads
+     as nothing: Qty - ISNULL(TransferedQty,0) > 0 is NULL, never true, so the
+     line is invisible to every outstanding query while looking correct in every
+     list. A purchase line did exactly that on 2026-08-16. */
+  static string Outstanding(Dictionary<string, object> row) {
+    if (!row.ContainsKey("Qty")) return "(no Qty column)";
+    var qty = row["Qty"];
+    if (qty == null || qty == DBNull.Value)
+      return "NULL - a NULL Qty is never outstanding, so this line can never be transferred";
+    var done = row.ContainsKey("TransferedQty") ? row["TransferedQty"] : null;
+    var q = System.Convert.ToDecimal(qty);
+    var t = (done == null || done == DBNull.Value) ? 0m : System.Convert.ToDecimal(done);
+    return (q - t).ToString();
   }
 
   /* OVER-TRANSFER: unreachable by construction, not answered by a handler.
@@ -413,19 +1082,237 @@ class AcSyncService {
      Exception (or a sibling) and the service returns that as an error — the
      failure mode is a refused call, never a silently accepted over-ship. */
 
+  /* SO -> PO, which is NOT one of the four above and cannot use Convert_.
+     AddPartialTransferDetail("SO", keys, ...) is the sales-side primitive; a
+     purchase document transferring FROM a sales order has its own method, one
+     key at a time:
+         AddSOToPOTransferDetail(Int64)      (sdk-api-reference.txt, the
+                                              PurchaseOrder METH list)
+     The ERP only sends this when every purchase line maps 1:1 to a sales line
+     the book already has a key for. A consolidated purchase -- one line serving
+     several customers plus stock, which is a shape Houzs buys in deliberately
+     (mig 0235) -- is sent as a plain /create-po instead, because a transfer
+     would split it or drop the stock quantity. That decision is made ERP-side
+     in scm/shared/po-transfer-shape.ts; this route only executes it.
+
+     DtlKeys is REQUIRED here, unlike the four conversions. Those may omit it
+     and fall through to "every still-outstanding line on the parent", which is
+     a safe default when the two documents are the same document one step on.
+     A purchase order is not: the ERP decides what it buys, and guessing would
+     transfer sales lines nobody ordered from this supplier. */
+  static string SoToPo(Dictionary<string, object> p) {
+    var s = Session();
+    var fromDocNo = Str(p, "FromDocNo");
+    if (string.IsNullOrEmpty(fromDocNo)) throw new Exception("FromDocNo required");
+    var keys = LongList(p, "DtlKeys");
+    if (keys.Length == 0) throw new Exception("DtlKeys required for /so-to-po - the ERP decides which sales lines this purchase order buys");
+
+    /* THE CREDITOR IS NOT OPTIONAL, and leaving it out does not fail where you
+       would look for it. Measured on the live book 2026-08-15:
+
+         ERROR /so-to-po: AutoCount.Data.ForeignKeyException:
+           Foreign Key Error (Constraint Name=FK_PO_DisplayTerm)
+
+       DisplayTerm is the PAYMENT TERM, and AutoCount defaults it FROM THE
+       CREDITOR. This route sent the lines across with AddSOToPOTransferDetail
+       and then called PurchaseHeader, which writes DocDate/DocNo/Ref/
+       Description/UDF and NOT the creditor - so the purchase order reached
+       Save() with no supplier, therefore no term, and the insert died on the
+       term's foreign key rather than on anything mentioning a creditor.
+
+       That is why /create-po passed the same night while /so-to-po did not:
+       CreatePo assigns CreditorCode directly. The payload had always carried
+       one; this route simply dropped it. */
+    var creditor = Str(p, "CreditorCode");
+    if (string.IsNullOrEmpty(creditor))
+      throw new Exception("CreditorCode required for /so-to-po - AutoCount defaults the payment term from the supplier, and without one the save dies on FK_PO_DisplayTerm, which names the term and not the supplier");
+
+    /* EVERY LINE NEEDS A QUANTITY, and it must be checked BEFORE anything is
+       written. Measured on the live book 2026-08-16, reading the PO back the
+       moment it was created:
+
+         PO line 906183: Qty=  TransferedQty=0  Transferable=T
+
+       Qty is NULL. AddSOToPOTransferDetail does NOT carry the sales line's
+       quantity across. AutoCount's outstanding predicate is
+       Qty - ISNULL(TransferedQty, 0) > 0, which is NULL and never true for such
+       a line, so the purchase order saves, looks right in every list, and can
+       never be converted: /po-to-gr answers "no transferable lines on PO" and
+       the failure surfaces a step later on a different document than the one at
+       fault.
+
+       Checked against the PAYLOAD rather than the saved document on purpose -
+       this refuses before a single row is written, and PurchaseOrder exposes no
+       Details collection to walk afterwards anyway. */
+    var qtyByKey = new Dictionary<long, decimal>();
+    foreach (var od in List(p, "Details")) {
+      var itq = od as Dictionary<string, object>;
+      if (itq == null || !itq.ContainsKey("DtlKey")) continue;
+      if (itq.ContainsKey("Qty")) qtyByKey[System.Convert.ToInt64(itq["DtlKey"])] = Dec(itq, "Qty", 0);
+    }
+    foreach (var k in keys) {
+      decimal q;
+      if (!qtyByKey.TryGetValue(k, out q) || q <= 0)
+        throw new Exception("/so-to-po needs a positive Qty in Details for source DtlKey " + k +
+          " - AddSOToPOTransferDetail does not carry the sales quantity across, and a purchase order whose line has no quantity saves but can never be converted");
+    }
+
+    var cmd = AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderCommand.Create(s, s.DBSetting);
+    var po = cmd.AddNew();
+    po.CreditorCode = creditor;
+    Set(() => po.CreditorName = Str(p, "CreditorName"));
+    /* PHASE ONE: transfer, then SAVE. Nothing else.
+
+       AddSOToPOTransferDetail does NOT return a purchase line - it returns an
+       AutoCount.Invoicing.Purchase.TransferSOToPODetail, a transfer INSTRUCTION
+       with a different shape and no Qty at all. Every earlier attempt to set the
+       cost and quantity on it went through Set(), which logs and swallows, so
+       the type mismatch was invisible and the purchase order saved with a NULL
+       Qty. Proven on the live book, from the service's own log:
+
+         set skipped: 'AutoCount.Invoicing.Purchase.TransferSOToPODetail'
+                      does not contain a definition for 'Qty'
+
+       A NULL Qty is fatal in a way that reads as nothing: AutoCount's
+       outstanding predicate is Qty - ISNULL(TransferedQty, 0) > 0, which is NULL
+       and never true, so the document looks correct in every list and can never
+       be converted onward.
+
+       So the overrides are applied in a SECOND pass, after Save, when the
+       purchase lines finally exist and have keys of their own that EditDetail
+       can address. This does not depend on what TransferSOToPODetail exposes,
+       which is deliberate: that type is not in sdk-api-reference.txt and is not
+       being guessed at. */
+    /* THE TYPED PRIMITIVE FIRST, because the untyped one leaves no type behind.
+       Measured on the live book 2026-08-16: every PODTL row this route has ever
+       written carries FromDocNo but FromDocType NULL, while every DODTL row from
+       Convert_ carries both. The reason is in the two signatures —
+
+           AddPartialTransferDetail(String fromDocType, Int64[] keys, Boolean)
+           AddSOToPOTransferDetail(Int64)
+
+       — the first is TOLD the type and records it; the second has nowhere to
+       take one from. AutoCount's own transfer relationship reads that column, so
+       a PO written by the second is linked on one side only.
+
+       transferMaster is FALSE here, unlike the purchase-side conversions. That
+       flag copies the SOURCE document's master, and this source is a SALES
+       order: true would put a debtor onto a purchase document. PurchaseHeader
+       below sets the creditor explicitly, which is what /po-to-gr needed
+       transferMaster for and this route does not.
+
+       FALLING BACK IS THE POINT. AddPartialTransferDetail with a sales type on a
+       purchase document is not in sdk-api-reference.txt as a supported pairing,
+       and this file cannot be compiled or run anywhere but the office host. If
+       it throws, the old call runs and the document is written exactly as it is
+       written today — one-sided link and all. The worst case is what we already
+       have; the best case is the link AutoCount actually reads. */
+    var typedTransfer = false;
+    try {
+      po.AddPartialTransferDetail("SO", keys, false);
+      typedTransfer = true;
+    } catch (Exception ex) {
+      Log("so-to-po: typed AddPartialTransferDetail(\"SO\") refused (" + ex.Message
+        + ") - falling back to AddSOToPOTransferDetail, which leaves FromDocType null");
+    }
+    if (!typedTransfer) foreach (var k in keys) po.AddSOToPOTransferDetail(k);
+    PurchaseHeader(po, p);
+    po.Save();
+    var docNo = po.DocNo;
+
+    /* PHASE TWO: reopen and apply what the ERP agreed with the supplier.
+
+       The transfer brings the SALES price across, and a purchase order owes the
+       COST. Lines are matched by ORDER: AddSOToPOTransferDetail was called once
+       per key, in the order of DtlKeys, so the Nth purchase line answers to the
+       Nth source key. CreatedLines reads them back in DtlKey order, which is
+       creation order. */
+    var made = CreatedLines("PODTL", docNo);
+    if (made.Count != keys.Length)
+      throw new Exception("SO-to-PO transferred " + keys.Length + " line(s) but the saved purchase order has " +
+        made.Count + " - refusing to guess which override belongs to which line");
+
+    var newKeyBySourceKey = new Dictionary<long, long>();
+    for (int i = 0; i < keys.Length; i++)
+      newKeyBySourceKey[keys[i]] = System.Convert.ToInt64(made[i]["DtlKey"]);
+
+    var po2 = AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderCommand.Create(s, s.DBSetting).Edit(docNo);
+    if (po2 == null) throw new Exception("SO-to-PO saved " + docNo + " but it could not be reopened to apply the costs");
+
+    var applied = 0;
+    foreach (var od in List(p, "Details")) {
+      var it = (Dictionary<string, object>) od;
+      if (!it.ContainsKey("DtlKey")) continue;
+      var srcKey = System.Convert.ToInt64(it["DtlKey"]);
+      long newKey;
+      if (!newKeyBySourceKey.TryGetValue(srcKey, out newKey))
+        throw new Exception("/so-to-po was given an override for DtlKey " + srcKey + ", which is not one of the source lines it transferred");
+      var d = po2.EditDetail(newKey);
+      if (d == null) throw new Exception("purchase line " + newKey + " could not be opened to apply its cost");
+
+      /* NOT Set(). Set() swallows, and swallowing is what let a NULL Qty reach
+         the book in the first place. A cost or quantity that fails to apply must
+         fail the request. */
+      if (it.ContainsKey("UnitPrice")) d.UnitPrice = Dec(it, "UnitPrice", 0);
+      if (it.ContainsKey("Qty"))       d.Qty = Dec(it, "Qty", 1);
+      if (it.ContainsKey("Location"))  Set(() => d.Location = Str(it, "Location"));
+      if (it.ContainsKey("DeliveryDate")) { var dd = Date(it, "DeliveryDate"); Set(() => d.DeliveryDate = dd); }
+      applied++;
+    }
+    if (applied > 0) po2.Save();
+    Log("  so-to-po " + docNo + ": " + keys.Length + " transferred, " + applied + " line(s) costed in phase two");
+    return docNo;
+  }
+
+  /* THE ERP'S AMOUNT IS THE AMOUNT, INCLUDING ZERO. Owner 2026-08-16: "我填写
+     多少就多少，我填写 0 就 0". AutoCount disagrees by default - every document
+     class carries EnableZeroNetTotalChecking, and with it on a document whose
+     net total is zero is refused on Save. That check exists for humans typing
+     into the entry screen; here the number came from the ERP deliberately, and
+     a zero-value purchase order is a real thing (free replacement, warranty
+     supply, a line priced later).
+
+     Turned off through Set(): a class that does not expose it must cost the
+     flag, never the document. */
+  static void AllowZeroValue(dynamic doc) {
+    Set(() => doc.EnableZeroNetTotalChecking = false);
+  }
+
   static void SalesHeader(dynamic doc, Dictionary<string, object> p) {
+    AllowZeroValue(doc);
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));
     Set(() => doc.Description = Str(p, "Description"));
+    /* DisplayTerm is the payment term. It is normally defaulted from the
+       debtor/creditor, so it is sent only when the ERP has one to say - the
+       ContainsKey rule, because a blank here is a foreign key error, not an
+       empty field (FK_PO_DisplayTerm, live book 2026-08-15). */
+    if (p.ContainsKey("DisplayTerm")) Set(() => doc.DisplayTerm = Str(p, "DisplayTerm"));
     ApplyUdf(p, k => doc.UDF[k], (k, v) => doc.UDF[k] = v);
   }
 
   static void PurchaseHeader(dynamic doc, Dictionary<string, object> p) {
+    AllowZeroValue(doc);
+    /* The purchase-side twin of SalesLocation, and it has never been sent.
+       FK_SO_SalesLocation proved the sales header needs its location; nothing
+       had tested whether the purchase header does. /create-po saves without it,
+       so it is not a hard foreign key - but the GRN's partial-transfer
+       constructor dies on "there is no row at position -1", which is a master
+       lookup returning -1 and being used as an index, and an empty
+       PurchaseLocation is a candidate for that lookup. Sent when the ERP has
+       one; a blank would be its own foreign key error. */
+    if (p.ContainsKey("PurchaseLocation") && !string.IsNullOrEmpty(Str(p, "PurchaseLocation")))
+      Set(() => doc.PurchaseLocation = Str(p, "PurchaseLocation"));
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));
     Set(() => doc.Description = Str(p, "Description"));
+    /* DisplayTerm is the payment term. It is normally defaulted from the
+       debtor/creditor, so it is sent only when the ERP has one to say - the
+       ContainsKey rule, because a blank here is a foreign key error, not an
+       empty field (FK_PO_DisplayTerm, live book 2026-08-15). */
+    if (p.ContainsKey("DisplayTerm")) Set(() => doc.DisplayTerm = Str(p, "DisplayTerm"));
     ApplyUdf(p, k => doc.UDF[k], (k, v) => doc.UDF[k] = v);
   }
 
@@ -433,6 +1320,60 @@ class AcSyncService {
      decides which lines ship) or we take every outstanding line on the source
      document. Read straight from the book's own detail table so the set always
      matches what AutoCount considers untransferred. */
+  /* The payload's DtlKeys, and NOTHING ELSE. DtlKeys() below falls back to
+     "every outstanding line on the parent" when the list is empty; /so-to-po
+     must not, so it reads the list through this instead. */
+  static long[] LongList(Dictionary<string, object> p, string key) {
+    var outp = new List<long>();
+    foreach (var k in List(p, key)) if (k != null) outp.Add(System.Convert.ToInt64(k));
+    return outp.ToArray();
+  }
+
+  /* Which source document each line key belongs to. Read from the book: a
+     caller naming keys from two documents is legitimate, but AutoCount needs
+     them handed over one document at a time, and only the book knows which is
+     which. */
+  static Dictionary<string, List<long>> KeysBySourceDoc(string fromType, long[] keys) {
+    string dtl, hdr;
+    switch (fromType) {
+      case "SO": dtl = "SODTL"; hdr = "SO"; break;
+      case "PO": dtl = "PODTL"; hdr = "PO"; break;
+      case "DO": dtl = "DODTL"; hdr = "DO"; break;
+      case "GR": dtl = "GRDTL"; hdr = "GR"; break;
+      default: throw new Exception("unsupported source " + fromType);
+    }
+    var outp = new Dictionary<string, List<long>>();
+    __DBLINE__
+    using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+      cn.Open();
+      using (var cmd = cn.CreateCommand()) {
+        var names = new List<string>();
+        for (int i = 0; i < keys.Length; i++) {
+          var nm = "@k" + i;
+          names.Add(nm);
+          var pr = cmd.CreateParameter(); pr.ParameterName = nm; pr.Value = keys[i];
+          cmd.Parameters.Add(pr);
+        }
+        cmd.CommandText =
+          "SELECT h.DocNo, d.DtlKey FROM " + dtl + " d JOIN " + hdr + " h ON h.DocKey = d.DocKey " +
+          "WHERE d.DtlKey IN (" + string.Join(", ", names.ToArray()) + ") ORDER BY d.DtlKey";
+        using (var rd = cmd.ExecuteReader()) {
+          while (rd.Read()) {
+            var no = rd.GetString(0);
+            if (!outp.ContainsKey(no)) outp[no] = new List<long>();
+            outp[no].Add(rd.GetInt64(1));
+          }
+        }
+      }
+    }
+    var found = 0;
+    foreach (var kv in outp) found += kv.Value.Count;
+    if (found != keys.Length)
+      throw new Exception("of " + keys.Length + " line key(s) given, only " + found + " exist on a " + fromType +
+        " - refusing to transfer a set the book does not recognise");
+    return outp;
+  }
+
   static long[] DtlKeys(Dictionary<string, object> p, string fromType, string fromDocNo) {
     var given = List(p, "DtlKeys");
     var outp = new List<long>();
@@ -794,6 +1735,25 @@ class AcSyncService {
     var h = Dict(p, "Header");
     if (h != null) {
       var dt = Date(h, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
+      /* THE DELIVERY DATE, WHICH THIS BOOK KEEPS IN SalesExemptionExpiryDate.
+         Owner 2026-08-16: "就是用我们 delivery date 放进去 sales exemption date
+         而已，一样的东西". AutoCount's sales-order HEADER has no delivery date of
+         its own — SDK line 464 lists DeliveryDate on the six DETAIL classes and
+         nowhere else — so this book uses the exemption expiry for it, and
+         Inistate (the connector the ERP replaces) writes it there.
+
+         Handled HERE and not in the string loop below: that loop reads every key
+         with Str() and assigns through reflection, and a Nullable<DateTime>
+         property given a string throws — inside Set(), which swallows it. The
+         field would have looked wired and written nothing.
+
+         ContainsKey, not HasValue, for the same reason as the line delivery
+         date: present-and-null is how the ERP says BLANK IT, and absent is how
+         it says leave the book's own alone. */
+      if (h.ContainsKey("SalesExemptionExpiryDate")) {
+        var xd = Date(h, "SalesExemptionExpiryDate");
+        Set(() => doc.SalesExemptionExpiryDate = xd);
+      }
       foreach (var key in new string[] { "DebtorName", "CreditorName", "Attention", "Agent", "Ref",
                                          "Description", "SalesLocation", "Phone1",
                                          "InvAddr1", "InvAddr2", "InvAddr3", "InvAddr4",
@@ -880,6 +1840,26 @@ class AcSyncService {
 
       if (it.ContainsKey("Description")) Set(() => d.Description = Str(it, "Description"));
       if (it.ContainsKey("Desc2"))       Set(() => d.Desc2 = Str(it, "Desc2"));
+      /* FurtherDescription — the photograph field. Two shapes, and the second
+         is the one the ERP uses:
+           FurtherDescription : "<rtf>"   verbatim, for probes and for a value
+                                          read back out of the book unchanged
+           Photos : [ { Jpeg, Caption? } ] the JPEGs; this host renders them
+
+         NOT wrapped in Set(). Set() swallows the exception and logs it, which is
+         right for a cosmetic field but wrong here: a silently-skipped write
+         would leave the ERP believing the photographs reached AutoCount when
+         the line still holds whatever it held before. A conversion that fails
+         must fail the whole edit and be visible in the response. */
+      if (it.ContainsKey("FurtherDescription")) {
+        var fd = Str(it, "FurtherDescription");
+        d.FurtherDescription = fd;
+      } else if (it.ContainsKey("Photos")) {
+        int n;
+        var rtf = PhotoRtf(List(it, "Photos"), out n);
+        d.FurtherDescription = rtf;
+        Log("  FurtherDescription: " + n + " picture(s), " + rtf.Length + " chars");
+      }
       if (it.ContainsKey("Qty"))         Set(() => d.Qty = Dec(it, "Qty", 1));
       if (it.ContainsKey("UnitPrice"))   Set(() => d.UnitPrice = Dec(it, "UnitPrice", 0));
       if (it.ContainsKey("Location"))    Set(() => d.Location = Str(it, "Location"));
@@ -895,13 +1875,84 @@ class AcSyncService {
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────
-  static void ApplyUdf(Dictionary<string, object> p, Func<string, object> get, Action<string, string> set) {
+  /* EVERY UDF VALUE WENT IN AS A STRING, AND ONE OF THEM IS NOT A STRING.
+
+     Owner 2026-08-16: editing a sales order's Processing Date does not reach
+     AutoCount. Measured on production the same day (outbox rows for
+     HC-SO-2608-002, run 31943942030):
+
+       create_so  UDF = {VENUE, ToPONo, BRANDING}       <- no PDate, no BALANCE
+       edit       UDF = {..., BALANCE, PAYEMENT}        <- both new on the edit
+       edit       UDF = {PDate "2026-08-16", ...}
+
+     The book holds BALANCE and PAYEMENT as the LAST EDIT sent them and neither
+     was ever sent by the create - so the edit path does apply UDFs. It holds
+     UDF_PDate as the document's own DocDate, which no payload ever sent. So the
+     loss is PER KEY, and PDate is the only key in that payload whose column is a
+     DATE: the fidelity export reads UDF_VENUE / UDF_BRANDING through
+     LTRIM(RTRIM(...)), UDF_BALANCE through ISNULL(...,0) and UDF_PDate through
+     CONVERT(varchar(10), ..., 120), and one of the 2,500 exported values carries
+     a time (SO-010311 = "2026-07-22 01:00:00").
+
+     WHY IT WAS INVISIBLE. `Set()` catches and logs `set skipped: <message>` with
+     no key, no value and no route, and the request still answers {"ok":true}, so
+     the outbox row goes to `sent`. That is the same swallow that hid a NULL Qty
+     on every /so-to-po until the log was read by hand.
+
+     THE LADDER, and why it is a ladder rather than a cast. The SDK's `UDF`
+     member is INHERITED, and sdk-api-reference.txt was dumped with
+     BindingFlags.DeclaredOnly, so the indexer's parameter type is not recorded
+     anywhere we can check and must not be guessed at. So the STRING is still
+     attempted first and unchanged - a key that lands today lands the same way
+     today - and a typed value is only ever tried after the book has already
+     refused the string. Worst case is what happens now, plus a log line that
+     names the field.
+
+     A BLANK STILL BLANKS. Present-and-null arrives as "" and blanks the field
+     (#2218); absent is not in this dictionary at all and leaves the book's own.
+     On a date column "" is not a date either, so the empty string gets the same
+     ladder - null, then DBNull - rather than being swallowed as it is today. */
+  static void ApplyUdf(Dictionary<string, object> p, Func<string, object> get, Action<string, object> set) {
     var udf = Dict(p, "UDF");
     if (udf == null) return;
     foreach (var kv in udf) {
       var k = kv.Key; var v = kv.Value == null ? "" : kv.Value.ToString();
-      Set(() => set(k, v));
+      SetUdf(k, v, set);
     }
+  }
+
+  /* NOT Set(): a UDF that does not land has to say which one. */
+  static void SetUdf(string k, string v, Action<string, object> set) {
+    var shapes = new List<string>();
+    var values = new List<object>();
+    shapes.Add("String"); values.Add(v);
+    if (v.Length == 0) {
+      shapes.Add("null");   values.Add(null);
+      shapes.Add("DBNull"); values.Add(DBNull.Value);
+    } else {
+      decimal dec; DateTime dt;
+      /* Decimal is asked FIRST because it is the narrower test: "0.00" is a
+         number and not a date, while a date is never a decimal. */
+      if (decimal.TryParse(v, System.Globalization.NumberStyles.Number,
+                           System.Globalization.CultureInfo.InvariantCulture, out dec)) {
+        shapes.Add("Decimal"); values.Add(dec);
+      } else if (DateTime.TryParse(v, System.Globalization.CultureInfo.InvariantCulture,
+                                   System.Globalization.DateTimeStyles.None, out dt)) {
+        shapes.Add("DateTime"); values.Add(dt);
+      }
+    }
+    var refused = new List<string>();
+    for (var i = 0; i < values.Count; i++) {
+      try {
+        set(k, values[i]);
+        if (i > 0) Log("  UDF " + k + ": applied as " + shapes[i] + " (" + string.Join("; ", refused.ToArray()) + ")");
+        return;
+      } catch (Exception ex) {
+        refused.Add(shapes[i] + " refused: " + ex.Message);
+      }
+    }
+    Log("  UDF " + k + " = '" + v + "' NOT APPLIED, the account book keeps its own value - "
+        + string.Join(" | ", refused.ToArray()));
   }
   static Dictionary<string, object> Ok(string docNo) {
     var d = new Dictionary<string, object> { { "ok", true } };
@@ -945,6 +1996,124 @@ class AcSyncService {
   static string SafeDesc2(dynamic d) { try { return (string) d.Desc2 ?? ""; } catch { return ""; } }
   static IEnumerable<object> List(Dictionary<string, object> d, string k) { object v; if (d.TryGetValue(k, out v) && v is object[]) return (object[]) v; return new object[0]; }
   static void Set(Action a) { try { a(); } catch (Exception ex) { Log("  set skipped: " + ex.Message); } }
+
+  // ── FurtherDescription: photographs, in the form AutoCount itself writes ───
+  /* WHY THE CONVERSION IS HERE AND NOT IN THE WORKER.
+     Read off the LIVE book on 2026-08-15 (docs/autocount-further-description-
+     photos.md section 4.2): all three sampled SODTL lines store the picture as
+     `\wmetafile8` — a Windows metafile — and none as `\jpegblip` or `\pngblip`.
+     A JPEG therefore cannot go in verbatim. Turning one into a metafile needs
+     GDI, which exists on this host and nowhere in a Cloudflare Worker, so the
+     ERP sends the JPEG bytes and the conversion happens here.
+
+     MM_ANISOTROPIC (8) is not a choice: it is the number IN the keyword
+     `\wmetafile8`, so the bits have to be fetched in that mapping mode for the
+     declaration to be true. */
+  const int MM_ANISOTROPIC = 8;
+  [DllImport("gdi32.dll")] static extern uint GetWinMetaFileBits(IntPtr hemf, uint cbData16, byte[] pData16, int iMapMode, IntPtr hdcRef);
+  [DllImport("gdi32.dll")] static extern bool DeleteEnhMetaFile(IntPtr hemf);
+
+  static byte[] JpegToWmf(byte[] picture, out int widthPx, out int heightPx) {
+    using (var ms = new MemoryStream(picture))
+    using (var src = Image.FromStream(ms)) {
+      widthPx = src.Width; heightPx = src.Height;
+      /* A 1x1 bitmap only exists to lend a screen-compatible HDC: both the
+         metafile and GetWinMetaFileBits need a reference DC, and neither
+         draws on it. */
+      using (var refBmp = new Bitmap(1, 1))
+      using (var refG = Graphics.FromImage(refBmp)) {
+        IntPtr hdc = refG.GetHdc();
+        try {
+          using (var buf = new MemoryStream())
+          using (var mf = new Metafile(buf, hdc, new Rectangle(0, 0, widthPx, heightPx), MetafileFrameUnit.Pixel, EmfType.EmfOnly)) {
+            using (var g = Graphics.FromImage(mf)) g.DrawImage(src, 0, 0, widthPx, heightPx);
+            /* GetHenhmetafile hands OWNERSHIP over; the Metafile must not
+               free it and we must. */
+            IntPtr hemf = mf.GetHenhmetafile();
+            try {
+              uint n = GetWinMetaFileBits(hemf, 0, null, MM_ANISOTROPIC, hdc);
+              if (n == 0) throw new Exception("GetWinMetaFileBits returned a zero size");
+              var wmf = new byte[n];
+              if (GetWinMetaFileBits(hemf, n, wmf, MM_ANISOTROPIC, hdc) == 0) throw new Exception("GetWinMetaFileBits failed to fill the buffer");
+              return wmf;
+            } finally { DeleteEnhMetaFile(hemf); }
+          }
+        } finally { refG.ReleaseHdc(hdc); }
+      }
+    }
+  }
+
+  /* 96 dpi, and it is MEASURED, not assumed: on all three sampled lines
+     picwgoal/1440 against picw gives exactly 96 (3600/1440 in against 240 px,
+     and the same for 2220/148 and 750/50). picw/pich are pixels, the *goal
+     pair is twips. */
+  const int PhotoDpi = 96;
+  static int Twips(int px) { return (int) Math.Round((double) px * 1440.0 / PhotoDpi); }
+
+  static string RtfHex(byte[] b) {
+    var sb = new StringBuilder(b.Length * 2 + b.Length / 32);
+    for (int i = 0; i < b.Length; i++) {
+      sb.Append(b[i].ToString("x2"));
+      if ((i + 1) % 32 == 0) sb.Append('\n');
+    }
+    return sb.ToString();
+  }
+
+  static string RtfEscape(string s) {
+    var sb = new StringBuilder();
+    foreach (char ch in s ?? "") {
+      if (ch == '\\' || ch == '{' || ch == '}') { sb.Append('\\').Append(ch); continue; }
+      if (ch == '\n') { sb.Append("\\par\n"); continue; }
+      if (ch == '\r') continue;
+      if (ch < 0x80) { sb.Append(ch); continue; }
+      sb.Append("\\u").Append(((short) ch).ToString()).Append('?');
+    }
+    return sb.ToString();
+  }
+
+  /* Builds the WHOLE field value from the photographs the ERP holds for one
+     line, in the shape the live book was observed to use: a caption paragraph,
+     then the picture, per photograph.
+
+     THE CAPTION IS NOT DECORATION. Section 4.2 found `Image on 8/12/2024
+     5:01:16 PM` sitting before the {\pict group on every sampled line, so a
+     writer that emitted pictures alone would DESTROY text AutoCount put there.
+     The ERP sends the caption it read back, or we stamp today's.
+
+     The field is ONE string and is replaced wholesale — there is no append — so
+     the caller must send every photograph the line should end up with, not just
+     the new ones. That rule is section 6.3's, and it belongs to the composer;
+     this function only renders what it is given. */
+  static string PhotoRtf(IEnumerable<object> photos, out int converted) {
+    var parts = new List<string>();
+    converted = 0;
+    foreach (var o in photos) {
+      var ph = o as Dictionary<string, object>;
+      if (ph == null) throw new Exception("each entry of Photos must be an object");
+      var b64 = Str(ph, "Jpeg");
+      if (string.IsNullOrEmpty(b64)) throw new Exception("a Photos entry carries no Jpeg");
+      byte[] jpeg;
+      try { jpeg = Convert.FromBase64String(b64); }
+      catch (Exception ex) { throw new Exception("a Photos entry is not valid base64: " + ex.Message); }
+
+      int w, h;
+      var wmf = JpegToWmf(jpeg, out w, out h);
+
+      var caption = ph.ContainsKey("Caption")
+        ? Str(ph, "Caption")
+        : "Image on " + DateTime.Now.ToString("M/d/yyyy h:mm:ss tt");
+      if (!string.IsNullOrEmpty(caption)) parts.Add(RtfEscape(caption));
+
+      parts.Add("{\\pict\\wmetafile8\\picw" + w + "\\pich" + h
+                + "\\picwgoal" + Twips(w) + "\\pichgoal" + Twips(h) + "\n"
+                + RtfHex(wmf) + "}");
+      converted++;
+    }
+    if (parts.Count == 0) throw new Exception("Photos was empty — omit the key instead of sending nothing");
+    return "{\\rtf1\\ansi\\deff0\n{\\fonttbl{\\f0 Arial;}}\n\\viewkind4\\uc1\\pard\\fs20 "
+           + string.Join("\n\\par\n", parts.ToArray())
+           + "\n\\fs20\\par\n}";
+  }
 
   static void Json(HttpListenerContext ctx, int code, Dictionary<string, object> obj) {
     var s = new JavaScriptSerializer().Serialize(obj);

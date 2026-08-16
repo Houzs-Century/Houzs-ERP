@@ -32,6 +32,14 @@ import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-o
    may only shrink. See lib/so-lifecycle-guards.ts. */
 import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
 import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+/* The payment insert core, the Account Sheet rule and the payment column list
+   moved to scm/lib so scan-so.ts's background writer reaches the same rules
+   without importing a 12,000-line router. Re-exported below for the callers
+   that still name this module. */
+import { deriveAccountSheet, PAYMENT_COLS, recordSoPaymentRow, type SoPaymentRowInput } from '../lib/so-payment-row';
+import { reverseSoPayment } from '../../acc/payments';
+export { recordSoPaymentRow };
+export type { SoPaymentRowInput };
 /* Per-compartment fabric-tier Δ (migration 0025) — reconstruct a split sofa
    build's compartment codes from its persisted module lines for the TBC path. */
 import { buildCompartmentsFromModuleLines } from '../lib/compartments-from-module-lines';
@@ -73,7 +81,7 @@ import { splitSofaBuildIntoModuleLines, distributeBuildDiscount } from '../share
    so every surface ranks identically. */
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
-import { soPaidCenti, soOutstandingCenti, soPaidInputsOf } from '../shared/so-outstanding';
+import { soPaidCenti, soBalanceCenti, soPaidInputsOf } from '../shared/so-outstanding';
 /* Task 5 — mint one-shot SKUs at SO create when a line carries an extra add-on
    charge (gated by so_settings.pos_remark_extra_auto_sku). Pure code-resolution
    + row-build lives in the lib; this route batches the DB collision check. */
@@ -207,7 +215,8 @@ import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
 import { snapshotSoLineLinks, planSoLineRelink, applySoLineRelink } from '../lib/so-line-relink';
 import { advanceSoGeneration } from '../lib/so-generation';
 import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer-credits';
-import { summariseReadiness } from '../lib/so-readiness';
+import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
+import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
 import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
@@ -291,6 +300,12 @@ async function queueAcSoEdit(
      "new" appends a duplicate into a live account book. Only the route that
      did the inserting can say, so only the route that did it passes this. */
   newLineIds: string[] = [],
+  /* ERP columns THIS request wrote. Only the header PATCH passes any: a value
+     the operator DELETED and a value that was never there look identical in the
+     saved row, so the composer cannot tell them apart and the route has to say.
+     Absent is the STRICTER direction — nothing is cleared — which is why this
+     one is allowed to be optional where `itemCode` was not. */
+  touchedFields: readonly string[] = [],
 ): Promise<void> {
   await enqueueEdit(c.get('supabase'), {
     companyId: activeCompanyId(c),
@@ -298,8 +313,34 @@ async function queueAcSoEdit(
     docNo,
     retire,
     newLineIds,
+    touchedFields,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
+}
+
+/* -- SO line coverage (the Stock column) ------------------------------------
+   The MRP allocation is GLOBAL by design: a line's coverage depends on what
+   every higher-priority line already claimed, so asking it for ONE order would
+   answer a different question, not the same one faster. It therefore cannot be
+   narrowed — but it also does not DEPEND on the per-line reads that follow it in
+   both handlers below, so it is returned as a promise and awaited ALONGSIDE
+   them instead of in front of them. Same reads, same result, one wait instead
+   of two. `mrp` is handed on to soLineReadySourcePos, which genuinely needs it
+   and so genuinely stays behind it.
+
+   `sb` is `unknown` rather than the file's usual `any`: nothing here does more
+   than hand it straight to computeMrp, so there is no reason to turn the
+   checker off for it. */
+type SoCoverage = { coverage: Map<string, { source: string; po: string | null; eta: string | null }>; mrp: MrpResult | null };
+async function soCoverage(c: any, sb: unknown): Promise<SoCoverage> {
+  /* Best-effort, exactly as before: a failed allocation drops every line to
+     Pending and the page still loads. */
+  try {
+    const mrp = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
+    return { coverage: mrpLineCoverage(mrp), mrp };
+  } catch {
+    return { coverage: new Map(), mrp: null };
+  }
 }
 
 /* The same, for a route whose body runs inside runScmPgCommand: queue only
@@ -639,6 +680,16 @@ function norm(v: unknown): string {
    `X-Client: pos-tablet` header, which a hostile client escaped by simply not
    sending it. That escape is now closed: a caller cannot shed what it never
    sent.
+
+   DOES NOT DEFEND, AND THIS IS THE BIG ONE (Owner 2026-08-16): the SSO door,
+   POST /api/pos/exchange-web-session, mints an ORIGIN-LESS session for the same
+   person. Anyone who can pass the PIN gate can therefore obtain a token that
+   reads as not-POS here, open the ERP web app with it, and price freely on
+   every route below. The owner ruled it: 「进了这个 ERP 就跟这个 ERP 的规矩」 —
+   the amount must be editable in the ERP. So this gate now binds the POS APP,
+   not the tablet and not the person: it holds requests made with the token the
+   PIN door issued, and nothing else. Do not read anything stronger into it, and
+   do not re-tighten that door without an owner ruling reversing this one.
 
    DOES NOT DEFEND — and this is a POLICY boundary, not an oversight: a person
    who knows their own Houzs PASSWORD can log in at the desktop/mobile door,
@@ -1647,16 +1698,22 @@ mfgSalesOrders.get('/', async (c) => {
 
     /* B2C readiness summary per SO (Commander 2026-05-30) — derive the
        "Stock Remark" the operator's existing ERP shows: READY when everything
-       in, READY (PARTIAL) when MAIN done + ACC outstanding, else list the
-       categories still pending. */
+       that must be allocated is in, else SHORT: <the categories still missing>
+       (owner 2026-08-16 — the label must name what is missing, never read READY
+       while something is short). `category` rides along from the catalog map
+       already built above (productCategory, zero extra reads): it is
+       isServiceLine's strongest signal, so a delivery/dispose SKU whose line
+       item_group was saved as 'others' is still recognised as a SERVICE line
+       and cannot masquerade as a short accessory. */
     const readinessByDoc = new Map<string, ReturnType<typeof summariseReadiness>>();
     {
-      const linesByDoc = new Map<string, Array<{ item_group: string | null; item_code: string | null; stock_status: string; cancelled: boolean }>>();
+      const linesByDoc = new Map<string, ReadinessLine[]>();
       for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_group: string; item_code: string | null; stock_status: string; cancelled: boolean }>) {
         const arr = linesByDoc.get(it.doc_no) ?? [];
         arr.push({ item_group: it.item_group, item_code: it.item_code, stock_status: it.stock_status, cancelled: it.cancelled });
         linesByDoc.set(it.doc_no, arr);
       }
+      attachLineCategories(linesByDoc.values(), productCategory);
       for (const [docNo, ls] of linesByDoc) {
         readinessByDoc.set(docNo, summariseReadiness(ls));
       }
@@ -2689,7 +2746,11 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     // Authoritative received-to-date + remaining balance for the detail page
     // and the customer-facing print (so-doc.ts reads paid_centi_total).
     paid_centi_total: paidCentiTotal,
-    balance_centi: soOutstandingCenti(paidInputs),
+    /* SIGNED (owner 2026-08-16) — negative = over-collected, painted red by the
+       detail page, the mobile detail and the SO print. The write-back keeps the
+       CLAMPED `soOutstandingCenti`: a screen can say "you hold RM 250 of his
+       money", AutoCount's UDF_BALANCE cannot. Same inputs, two audiences. */
+    balance_centi: soBalanceCenti(paidInputs),
   };
   /* Owner batch 2026-07 — resolve the salesperson's display name + contact
      phone (scm.staff) so the SO PDF's ORDER DETAILS can print "Salesperson:
@@ -2807,16 +2868,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      link), so genuinely-ordered lines showed "—". Running the MRP allocation
      here keeps the Stock column and the MRP page in lock-step. Best-effort: if
      the allocation fails the page still loads, lines just fall back to Pending. */
-  let coverageMap = new Map<string, { source: string; po: string | null; eta: string | null }>();
-  let mrpForReady: MrpResult | null = null;
-  try {
-    const mrpResult = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
-    coverageMap = mrpLineCoverage(mrpResult);
-    mrpForReady = mrpResult;
-  } catch {
-    coverageMap = new Map();
-  }
-  const [remainingMap, deliveriesMap, shippedTraceMap, readyPosMap] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, cov] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     /* Traceability — the source PO(s) each line's SHIPPED goods came from,
@@ -2825,13 +2877,15 @@ mfgSalesOrders.get('/:docNo', async (c) => {
        keep showing the incoming/source PO even after the line is delivered
        (MRP coverage drops off once the demand is satisfied). */
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
-    /* READY trace (owner 2026-08-01): a READY (allocated, un-shipped) line
-       resolves the PO(s) it WILL draw from — sofa via its stored
-       allocated_batch_no, non-sofa by projecting the SAME FIFO order the
-       engine consumes at DO time over the bucket's open lots, earlier claims
-       first. Read-time derivation, no writes. */
-    soLineReadySourcePos(sb, activeCompanyId(c) ?? null, mrpForReady, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>),
+    soCoverage(c, sb),
   ]);
+  const coverageMap = cov.coverage;
+  /* READY trace (owner 2026-08-01): a READY (allocated, un-shipped) line
+     resolves the PO(s) it WILL draw from — sofa via its stored
+     allocated_batch_no, non-sofa by projecting the SAME FIFO order the
+     engine consumes at DO time over the bucket's open lots, earlier claims
+     first. Read-time derivation, no writes. */
+  const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>);
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
     const deliveries = deliveriesMap.get(it.id) ?? [];
@@ -2966,21 +3020,14 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
   );
   // Coverage from the SAME MRP allocation engine the detail + MRP page use.
   // Best-effort: a failed allocation just drops lines to Pending.
-  let coverageMap = new Map<string, { source: string; po: string | null; eta: string | null }>();
-  let mrpForReady: MrpResult | null = null;
-  try {
-    const mrpResult = await computeMrp(sb, { catFilter: null, whFilter: null, includeUndated: true, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
-    coverageMap = mrpLineCoverage(mrpResult);
-    mrpForReady = mrpResult;
-  } catch {
-    coverageMap = new Map();
-  }
-  const [remainingMap, deliveriesMap, shippedTraceMap, readyPosMap] = await Promise.all([
+  const [remainingMap, deliveriesMap, shippedTraceMap, cov] = await Promise.all([
     soDeliverableRemaining(sb, [docNo]),
     soLineDeliveries(sb, itemRows.map((it) => it.id)),
     soLineShippedSources(sb, itemRows.map((it) => it.id)),
-    soLineReadySourcePos(sb, activeCompanyId(c) ?? null, mrpForReady, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>),
+    soCoverage(c, sb),
   ]);
+  const coverageMap = cov.coverage;
+  const readyPosMap = await soLineReadySourcePos(sb, activeCompanyId(c) ?? null, cov.mrp, itemRows as Array<{ id: string; item_group?: string | null; qty?: number | null; stock_status?: string | null; allocated_batch_no?: string | null }>);
   const items = itemRows.map((it) => {
     const rem = remainingMap.get(it.id);
     const deliveries = deliveriesMap.get(it.id) ?? [];
@@ -7385,7 +7432,10 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     console.warn('[mfg-so] header saved but edit lease was no longer ours to release:', docNo, savedVersion);
   }
 
-  await queueAcSoEdit(c, docNo);
+  /* The header PATCH is the ONE caller that can clear a field, and
+     Object.keys(updates) is exactly the set it wrote — the loop above only adds
+     a key when the request body carried it. */
+  await queueAcSoEdit(c, docNo, [], [], Object.keys(updates));
 
   return c.json({
     ok: true,
@@ -10768,35 +10818,6 @@ mfgSalesOrders.delete('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
 // balance computes from header.local_total_centi − sum(amount_centi).
 //
 // Legacy single-row payment fields on mfg_sales_orders (payment_method,
-/* Account Sheet auto-fill (Loo 2026-06-07) — "where did the money land".
-   Derived from the payment's own method fields whenever the operator didn't
-   type one, so the Detail Listing column stops rendering dashes:
-     merchant / installment → the acquiring bank (merchant_provider)
-     transfer               → the online sub-type (DuitNow / TNG / …)
-     cash                   → 'Cash'
-   A hand-typed value (Finance, backend PaymentsTable) ALWAYS wins — this is
-   a default, not an overwrite. Hoisted `function` so the SO-create deposit
-   paths above can call it too. */
-function deriveAccountSheet(
-  method: string,
-  merchantProvider?: string | null,
-  onlineType?: string | null,
-): string {
-  if (method === 'merchant' || method === 'installment') {
-    return merchantProvider?.trim() || 'Card terminal';
-  }
-  if (method === 'transfer') return onlineType?.trim() || 'Bank transfer';
-  return 'Cash';
-}
-
-// merchant_provider, installment_months, approval_code, payment_date,
-// paid_centi) are NOT touched here — those columns are scheduled for
-// drop in a follow-up migration once live data is migrated.
-const PAYMENT_COLS =
-  'id, so_doc_no, paid_at, method, merchant_provider, installment_months, ' +
-  'online_type, approval_code, amount_centi, account_sheet, slip_key, collected_by, note, ' +
-  'created_at, created_by, version, updated_at';
-
 mfgSalesOrders.get('/:docNo/payments', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
   const { data, error } = await sb
@@ -10850,111 +10871,6 @@ const paymentCreateSchema = z.object({
   uploadSessionId:    z.string().min(1).optional().nullable(),
 });
 
-/* ── recordSoPaymentRow — the factored insert+audit core of
-   POST /:docNo/payments (same pattern as createSalesOrderCore). ONE place
-   derives the method-scoped fields (merchant/installment vs transfer vs cash),
-   auto-fills the Account Sheet, inserts the mfg_sales_order_payments row and
-   appends the ADD_PAYMENT audit entry. The HTTP route keeps its own guards
-   (self-scope, SO existence, overpayment, slip-session resolution + promote)
-   and calls this for the write; the background scan job (scan-so.ts) calls it
-   directly with an R2 key it already owns (scan-jobs/{jobId}/{n}) — payment
-   field derivation is never reimplemented outside this function. */
-export type SoPaymentRowInput = {
-  docNo: string;
-  paidAt: string;
-  method: 'merchant' | 'transfer' | 'cash' | 'installment';
-  merchantProvider?: string | null;
-  installmentMonths?: number | null;
-  onlineType?: string | null;
-  approvalCode?: string | null;
-  amountCenti: number;
-  accountSheet?: string | null;
-  slipKey: string | null;
-  collectedBy?: string | null;
-  note?: string | null;
-  createdBy: string;
-  actorName?: string | null;
-  /* First-deposit marker — the list/detail paid-rollup adds the header
-     deposit_centi on top of the ledger UNLESS an is_deposit row marks the
-     deposit as already booked (migration 0155 semantics). The scan job's
-     first receipt row IS the header deposit, so it sets this. */
-  isDeposit?: boolean;
-  auditSource?: string;
-  auditNote?: string;
-};
-
-export async function recordSoPaymentRow(
-  sb: any,
-  p: SoPaymentRowInput,
-): Promise<{ payment: Record<string, unknown> | null; errorMessage: string | null }> {
-  // Method-scoped fields per the cascade:
-  //   merchant    → merchant_provider + installment_months (0 / null = One-off)
-  //   installment → merchant_provider + installment_months (merchant-like —
-  //                 mirrors the SO-create deposit path, which keeps both)
-  //   transfer    → online_type
-  //   cash        → no extras
-  const merchantLike      = p.method === 'merchant' || p.method === 'installment';
-  const merchantProvider  = merchantLike ? (p.merchantProvider ?? null) : null;
-  // 0 = "One-off" — store as NULL so the integer column carries semantic
-  // "no installment". Anything > 0 is the term in months.
-  const installmentMonths = merchantLike
-    ? (typeof p.installmentMonths === 'number' && p.installmentMonths > 0 ? p.installmentMonths : null)
-    : null;
-  const onlineType        = p.method === 'transfer' ? (p.onlineType ?? null) : null;
-
-  // Multi-company (mig 0061): the payment inherits the SO's company (resolved by
-  // doc_no — this factored writer has no request context). No-op when unresolved.
-  const { data: soCo } = await sb.from('mfg_sales_orders').select('company_id').eq('doc_no', p.docNo).maybeSingle();
-  const companyId = (soCo as { company_id?: number | null } | null)?.company_id ?? null;
-
-  const { data, error } = await sb.from('mfg_sales_order_payments').insert({
-    ...(companyId != null ? { company_id: companyId } : {}),
-    so_doc_no:          p.docNo,
-    paid_at:            p.paidAt,
-    method:             p.method,
-    merchant_provider:  merchantProvider,
-    installment_months: installmentMonths,
-    online_type:        onlineType,
-    approval_code:      p.approvalCode ?? null,
-    amount_centi:       p.amountCenti,
-    /* Account Sheet auto-fill (Loo 2026-06-07) — a hand-typed value wins;
-       blank/whitespace falls back to the method-derived default. */
-    account_sheet:      p.accountSheet?.trim() || deriveAccountSheet(p.method, merchantProvider, onlineType),
-    slip_key:           p.slipKey,
-    collected_by:       p.collectedBy ?? null,
-    note:               p.note ?? null,
-    created_by:         p.createdBy,
-    /* Only set when explicitly asked — the manual route's rows are balance
-       payments and keep the column default (false). */
-    ...(p.isDeposit === true ? { is_deposit: true } : {}),
-  }).select(PAYMENT_COLS).single();
-  if (error) return { payment: null, errorMessage: error.message };
-
-  /* Post-merge stitch — wire ADD_PAYMENT into the PR-D audit ledger.
-     Field-changes list mirrors what the user typed so the History panel
-     can render a readable diff. Best-effort inside recordSoAudit. */
-  await recordSoAudit(sb, {
-    docNo: p.docNo,
-    action: 'ADD_PAYMENT',
-    actorId: p.createdBy,
-    actorName: p.actorName ?? null,
-    ...(p.auditSource ? { source: p.auditSource } : {}),
-    ...(p.auditNote ? { note: p.auditNote } : {}),
-    fieldChanges: [
-      { field: 'paidAt',             from: null, to: p.paidAt },
-      { field: 'method',             from: null, to: p.method },
-      { field: 'amountCenti',        from: null, to: p.amountCenti },
-      ...(merchantProvider  ? [{ field: 'merchantProvider',  from: null, to: merchantProvider  } satisfies FieldChange] : []),
-      ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
-      ...(onlineType        ? [{ field: 'onlineType',        from: null, to: onlineType        } satisfies FieldChange] : []),
-      ...(p.approvalCode    ? [{ field: 'approvalCode',      from: null, to: p.approvalCode    } satisfies FieldChange] : []),
-      ...(p.accountSheet    ? [{ field: 'accountSheet',      from: null, to: p.accountSheet    } satisfies FieldChange] : []),
-    ],
-  });
-
-  return { payment: data as Record<string, unknown>, errorMessage: null };
-}
-
 mfgSalesOrders.post('/:docNo/payments', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   // Audit 2026-06-20 — self-scoped sales may only touch their OWN SO (mirror the line/header guards).
@@ -10997,24 +10913,25 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     }
   }
 
-  /* Spec D6 — server-side overpayment guard. The SO total is authoritative;
-     Σ(ledger) + this payment may never exceed it. Honest error: the client
-     shows the remaining balance. */
-  const { data: soTotalRow, error: totalErr } = await sb
-    .from('mfg_sales_orders').select('total_revenue_centi').eq('doc_no', docNo).maybeSingle();
-  if (totalErr) return c.json({ error: 'lookup_failed', reason: totalErr.message }, 500);
-  const totalCenti = Number((soTotalRow as { total_revenue_centi: number | null } | null)?.total_revenue_centi ?? 0);
-  const { data: paidRows, error: paidErr } = await sb
-    .from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo);
-  if (paidErr) return c.json({ error: 'lookup_failed', reason: paidErr.message }, 500);
-  const paidCenti = (paidRows ?? []).reduce((s, r) => s + Number((r as { amount_centi: number }).amount_centi ?? 0), 0);
-  if (totalCenti > 0 && paidCenti + p.amountCenti > totalCenti) {
-    return c.json({
-      error: 'over_payment',
-      reason: `Payment exceeds the order total. Balance: ${((totalCenti - paidCenti) / 100).toFixed(2)}`,
-      balanceCenti: Math.max(0, totalCenti - paidCenti),
-    }, 400);
-  }
+  /* OVER-COLLECTION IS ALLOWED (owner 2026-08-16). Spec D6's guard used to
+     refuse Σ(ledger) + this payment > total_revenue_centi. It is deleted, not
+     relaxed, and the two reads it needed went with it.
+
+     WHAT THE GUARD ACTUALLY COST. It never stopped an over-collection; it
+     redirected one. Refused at the till, the operator's only way to bank cash
+     already in hand was to go back and re-price the ORDER until the total
+     covered it — which is what happened to HC-SO-2608-002 on 2026-08-16:
+     UPDATE_LINE at 08:26:22 put RM 250 of "Right Drawer" special onto a
+     JAGER-(K) line (unitPriceCenti 0 → 25000), and the RM 2,250 payment landed
+     76 seconds later at 08:27:38, accepted because the total was now exactly
+     425000. The receipt balanced and the customer's order silently grew a
+     drawer he never bought. Refusing money the business is holding does not
+     make the books truer, it makes the ITEMS lie — and an item is what gets
+     manufactured and delivered.
+
+     So the excess is simply recorded, and the balance goes negative (red on
+     the screen: soBalanceCenti). Nothing here touches lines, prices or the
+     order total — a payment is a payment. */
 
   /* Owner 2026-07-13 — the slip is OPTIONAL here, and since 2026-08-13 it is
      optional on EVERY SO path, so this route is no longer the loose end of a
@@ -11275,28 +11192,11 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     }
   }
 
-  /* Overpayment guard (mirror POST) — Σ(other rows) + this row's new amount may
-     not exceed the SO total. Excludes THIS payment from the prior sum. */
-  if (p.amountCenti !== undefined) {
-    const { data: soTotalRow, error: totalErr } = await sb
-      .from('mfg_sales_orders').select('total_revenue_centi').eq('doc_no', docNo).maybeSingle();
-    if (totalErr) return c.json({ error: 'lookup_failed', reason: totalErr.message }, 500);
-    const totalCenti = Number((soTotalRow as { total_revenue_centi: number | null } | null)?.total_revenue_centi ?? 0);
-    const { data: paidRows, error: paidErr } = await sb
-      .from('mfg_sales_order_payments').select('id, amount_centi').eq('so_doc_no', docNo);
-    if (paidErr) return c.json({ error: 'lookup_failed', reason: paidErr.message }, 500);
-    const othersCenti = (paidRows ?? []).reduce(
-      (s, r) => s + (String((r as { id: string }).id) === String(id) ? 0 : Number((r as { amount_centi: number }).amount_centi ?? 0)),
-      0,
-    );
-    if (totalCenti > 0 && othersCenti + nextAmount > totalCenti) {
-      return c.json({
-        error: 'over_payment',
-        reason: `Payment exceeds the order total. Balance: ${((totalCenti - othersCenti) / 100).toFixed(2)}`,
-        balanceCenti: Math.max(0, totalCenti - othersCenti),
-      }, 400);
-    }
-  }
+  /* Over-collection is allowed here too (owner 2026-08-16) — the POST's mirror
+     guard is gone, and a correction that lands above the total must not be
+     refused when the original could not be either. Amending RM 2,000 up to
+     RM 2,250 on a RM 2,000 order is exactly the correction the guard used to
+     push into a line re-price. See the POST for the full note. */
 
   const { data: updated, error: updErr } = await sb
     .from('mfg_sales_order_payments')
@@ -11349,6 +11249,14 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
     fieldChanges: changes,
   });
+
+  /* Same reason as the insert: an edited amount moves the outstanding balance,
+     which is a value AutoCount holds. Unlike the insert this one lives in the
+     route, because the UPDATE above is the route's own and has no shared core.
+     Fires even when only the method changed — recomposing an unchanged BALANCE
+     costs one queued edit, while deciding here which fields matter would put a
+     second opinion about the balance rule next to so-outstanding.ts. */
+  await queueAcSoEdit(c, docNo);
 
   const { staff, ...rest } = updated as unknown as Record<string, unknown> & { staff: { name: string } | null };
   return c.json({ payment: { ...rest, collected_by_name: staff?.name ?? null } });
@@ -11436,6 +11344,15 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     return c.json({ error: 'payment_version_conflict', currentVersion: Number(latest?.version ?? expectedVersion) }, 409);
   }
 
+  /* Accounting-module hook (需求书 §6.3, owner approved 2026-08-16): void the
+     deleted payment's ledger entry. A row that never booked no-ops; a failure
+     is logged, never blocks the delete the operator already made. */
+  const unbooked = await reverseSoPayment(sb, id, docNo);
+  if (!unbooked.ok) {
+    /* eslint-disable-next-line no-console */
+    console.error('[acc] SO payment reversal failed:', id, unbooked.status, unbooked.reason);
+  }
+
   /* Post-merge stitch — DELETE_PAYMENT audit row. Carries the typed reason as a
      field change so it renders in AuditHistoryPanel alongside the amount that
      vanished, rather than sitting in a note nobody opens. */
@@ -11451,6 +11368,12 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
       ...(rowTyped.approval_code ? [{ field: 'approvalCode', from: rowTyped.approval_code, to: null } satisfies FieldChange] : []),
     ],
   });
+
+  /* A deleted payment raises the outstanding balance, so the account book has
+     to be told in the same way an added one does. This is the direction that
+     matters most: a book left showing a settled order after the payment was
+     reversed understates what the customer owes. */
+  await queueAcSoEdit(c, docNo);
 
   return c.json({ ok: true });
 });
@@ -11701,12 +11624,28 @@ mfgSalesOrders.patch('/:docNo/items/:itemId/stock-status', async (c) => {
 
   // Re-aggregate at the SO level. B2C semantic: an SO is ship-able once every
   // MAIN product line (sofa/bedframe/mattress) is READY — accessories pending
-  // are OK ("READY (PARTIAL)"). isShipReady adds a refusal to ship an SO with no stock-bearing lines, where bare isMainReady is vacuously true.
+  // are OK. isShipReady adds a refusal to ship an SO with no stock-bearing lines, where bare isMainReady is vacuously true.
+  //
+  // item_code + the catalog category ride the read (2026-08-16). Without them
+  // this path could not see a SERVICE line at all: it passed item_group alone,
+  // so a delivery-fee SKU saved with item_group 'others' counted as a short
+  // accessory and held the whole order back — while the list endpoint and the
+  // allocation sweep, which do pass the code, disagreed with it on the same SO.
   const { data: allLines } = await sb
     .from('mfg_sales_order_items')
-    .select('item_group, stock_status, cancelled')
+    .select('item_group, item_code, stock_status, cancelled')
     .eq('doc_no', docNo);
-  const liveRows = ((allLines ?? []) as Array<{ item_group: string; stock_status: string; cancelled: boolean }>).filter((l) => !l.cancelled);
+  const liveRows: ReadinessLine[] = ((allLines ?? []) as Array<{ item_group: string; item_code: string | null; stock_status: string; cancelled: boolean }>)
+    .filter((l) => !l.cancelled);
+  /* One bounded catalog read for THIS SO's codes (a single order — tens of rows
+     at most), through the same helper the list and the board use, so
+     isServiceLine gets its strongest signal here too.
+     Refuse on failure, do NOT fall through: this decides whether a line is a
+     SERVICE, i.e. whether it can hold the SO out of READY_TO_SHIP. The line flip
+     above is already committed and the allocation sweep re-derives the header
+     idempotently, so refusing costs the caller a retry, not the edit. */
+  const { error: catErr } = await resolveLineCategories(sb, [liveRows], (q) => scopeToCompany(q, c));
+  if (catErr) return c.json({ error: 'load_failed', reason: catErr.message }, 500);
   const readiness = summariseReadiness(liveRows);
   const allReady = readiness.isShipReady;
 

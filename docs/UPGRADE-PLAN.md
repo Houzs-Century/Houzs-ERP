@@ -97,7 +97,7 @@ On `feat/user-mgmt-uplift`, building on what's there (invites+name/role, forgot-
 - `scripts/apply-postgres-migrations-incremental.mjs` → P0 #3.
 - `src/api/lib/auth-totp.ts` + `rate-limit.ts` → P1 #6/#7.
 - `src/api/lib/kv-cache.ts` (KV SWR) → P1 #8.
-- `migrations-postgres/0150_search_trgm.sql` pattern → already done (our 0001_search_trgm).
+- `migrations-postgres/0150_search_trgm.sql` [renumbered] pattern → already done (our 0001_search_trgm).
 - `scripts/check-bundle-size.mjs` + `.bundle-baseline.json` + workflow → P2 #15.
 - TanStack Table virtualization in their DataGrid → P2 #11.
 - `.github/workflows/deploy.yml` (branch CI + canary + schema check) → P3 #20.

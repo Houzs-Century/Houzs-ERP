@@ -8,16 +8,25 @@
 // the "ask again" that did not exist.
 //
 //   DOC_NO=HC-SO-2608-002              one document
-//   DOC_TYPE=SO|PO|ALL                 every skipped row of that type (default ALL)
+//   DOC_TYPE=SO|PO|DO|GR|IV|PI|ALL     every row of that type in scope (default ALL)
 //   APPLY=1                            write. WITHOUT IT THIS IS A DRY RUN.
 //   INCLUDE_FAILED=1                   also re-send documents AutoCount REFUSED,
 //                                      not only ones the ERP declined to send.
 //                                      Read the warning below before using it.
+//                                      REQUIRED for DO / GR / IV / PI: those four
+//                                      have no create, so the only thing
+//                                      re-sendable about them is a FAILED
+//                                      transfer, and a `skipped` one is one of
+//                                      the three permanent shapes.
 //
 // WHY THIS RUNS UNDER `tsx` AND NOT AS A PLAIN .mjs SCRIPT
 // --------------------------------------------------------
-// The requirement that decides the shape: re-COMPOSE, never resurrect the old
-// payload — the whole point is that the document changed since it was refused.
+// The requirement that decides the shape: for a CREATE, re-compose — never
+// resurrect the old payload, because the whole point is that the document
+// changed since it was refused. (A TRANSFER is the opposite and has been since
+// 2026-08-16: it has no create to compose, its stored payload IS the complete
+// instruction, and re-sending that snapshot is what a retry means. The ladder
+// keeps the two apart; see autocount-requeue.ts's header.)
 // The composer is TypeScript the Worker runs (src/services/autocount-writeback.ts
 // + src/scm/lib/autocount-outbox.ts) and this is a script. Three ways to bridge
 // that, and only one of them keeps a single implementation:
@@ -52,6 +61,8 @@
 // src/scm/lib/autocount-requeue.ts. It runs the real enqueue against the real
 // document and records the write instead of performing it, so DRY RUN and APPLY
 // take the identical code path and can only disagree about whether the row lands.
+// On the transfer path there is nothing to predict at all: the verdict is three
+// recorded columns, and DRY RUN reads exactly the ones APPLY does.
 //
 // Access path: DATABASE_URL, through lib/pgrest-shim.mjs.
 //
@@ -71,7 +82,11 @@
 //      APPLY=1 npx tsx scripts/requeue-autocount-skipped.mjs    (writes)
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
-import { requeueSkipped } from "../src/scm/lib/autocount-requeue.ts";
+import {
+  acRequeueAccepted,
+  requeueSkipped,
+  REQUEUE_DOC_TYPES,
+} from "../src/scm/lib/autocount-requeue.ts";
 import { pgrestShim } from "./lib/pgrest-shim.mjs";
 
 const APPLY = process.env.APPLY === "1" || process.argv.includes("--apply");
@@ -86,11 +101,27 @@ const INCLUDE_FAILED = process.env.INCLUDE_FAILED === "1" || process.argv.includ
 const DOC_NO = (process.env.DOC_NO || "").trim();
 const DOC_TYPE = (process.env.DOC_TYPE || "ALL").trim().toUpperCase();
 
-if (!["ALL", "SO", "PO"].includes(DOC_TYPE)) {
+/* The list comes from the module rather than being typed again here: it is the
+   same set requeueSkipped narrows on, and a copy that fell behind would refuse a
+   scope the ladder supports. */
+const ALLOWED_DOC_TYPES = ["ALL", ...REQUEUE_DOC_TYPES];
+if (!ALLOWED_DOC_TYPES.includes(DOC_TYPE)) {
   console.error(
-    `DOC_TYPE ${JSON.stringify(DOC_TYPE)} is not one of ALL / SO / PO. Only SO and PO have an ` +
-      "AutoCount create to re-attempt; DO / GR / IV / PI are built by transferring a parent's " +
-      "lines and have no create route at all.",
+    `DOC_TYPE ${JSON.stringify(DOC_TYPE)} is not one of ${ALLOWED_DOC_TYPES.join(" / ")}.`,
+  );
+  process.exit(2);
+}
+/* DO / GR / IV / PI have no create at all. Their only re-sendable row is a
+   FAILED transfer — the service refused an instruction the ERP had already
+   composed — and without INCLUDE_FAILED the sweep selects `skipped` only, so the
+   run would report an empty scope and read as "nothing is wrong". Saying so is
+   better than answering a question the operator did not ask. */
+if (["DO", "GR", "IV", "PI"].includes(DOC_TYPE) && !INCLUDE_FAILED) {
+  console.error(
+    `DOC_TYPE=${DOC_TYPE} selects documents that have no AutoCount create, so the only thing that ` +
+      "can be sent again is a transfer AutoCount itself refused. Re-run with INCLUDE_FAILED=1. " +
+      "A SKIPPED row of these types is one of the three permanent shapes (raised with no parent, " +
+      "merged from several sources, or a line subset the ERP cannot name) and no re-send fixes those.",
   );
   process.exit(2);
 }
@@ -124,6 +155,7 @@ const sb = pgrestShim(pg, "scm");
 const HEADLINE = {
   "would-requeue": "WOULD RE-QUEUE",
   requeued: "RE-QUEUED",
+  "requeued-as-recorded": "RE-QUEUED (the recorded transfer, unchanged)",
   "still-refused": "STILL REFUSED",
   "not-recoverable": "not re-queueable here",
   "already-in-autocount": "already in AutoCount",
@@ -149,9 +181,10 @@ try {
   if (!results.length) {
     notice(
       DOC_NO
-        ? `No skipped outbox row for ${DOC_NO}. Nothing was refused for that document, or it was ` +
-            "never enqueued at all (the write-back switch was off when it was saved)."
-        : "No skipped rows in scope. The refusal backlog is empty.",
+        ? `No re-queueable outbox row for ${DOC_NO}. Nothing was refused for that document, it was ` +
+            "never enqueued at all (the write-back switch was off when it was saved), or its only " +
+            "refusal is a FAILED one and INCLUDE_FAILED=1 was not given."
+        : "No rows in scope. The refusal backlog is empty.",
     );
     process.exit(0);
   }
@@ -168,11 +201,16 @@ try {
   const tally = {};
   for (const r of results) tally[r.outcome] = (tally[r.outcome] ?? 0) + 1;
   notice(
-    `${results.length} skipped row(s) examined — ` +
+    `${results.length} row(s) examined — ` +
       Object.entries(tally)
         .map(([k, n]) => `${k} ${n}`)
         .join(" / "),
   );
+
+  /* Counted through the shared predicate, not by naming `requeued`: there are
+     two accepted outcomes since 2026-08-16 and a hard-coded key would report a
+     queued transfer as "nothing was queued". */
+  const acceptedCount = results.filter((r) => acRequeueAccepted(r.outcome)).length;
 
   if (!APPLY) {
     const ready = tally["would-requeue"] ?? 0;
@@ -181,9 +219,9 @@ try {
         ? `DRY RUN — nothing written. ${ready} document(s) would be re-queued. Re-run with apply=1.`
         : "DRY RUN — nothing written, and nothing is ready to re-queue. Fix the causes above first.",
     );
-  } else if (tally.requeued) {
+  } else if (acceptedCount) {
     notice(
-      `${tally.requeued} document(s) queued. They send on the next 5-minute cron sweep; confirm with ` +
+      `${acceptedCount} document(s) queued. They send on the next 5-minute cron sweep; confirm with ` +
         "the 'AutoCount write-back queue — health (read-only)' workflow, which is where a failure " +
         "would show up. Re-running this is safe: a re-queued document is already pending, and this " +
         "reports it as already-queued rather than queueing it twice.",

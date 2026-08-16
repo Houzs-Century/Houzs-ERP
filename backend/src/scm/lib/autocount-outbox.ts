@@ -64,6 +64,9 @@ import {
   composeDescription2,
   composeDetails,
   composeEdit,
+  clearedAcKeys,
+  composePaymentUdf,
+  composeSoToPo,
   acUdfDate,
   acUdfMoney,
   acServiceConfig,
@@ -80,6 +83,7 @@ import {
   type AcCreatedLine,
   type AcRetiredLine,
   type ErpLine,
+  type ErpPaymentRef,
 } from '../../services/autocount-writeback';
 
 /* Re-exported so a route can name the shape it passes to enqueueEdit without
@@ -87,9 +91,12 @@ import {
 export type { AcRetiredLine } from '../../services/autocount-writeback';
 
 import { mastersOf } from './autocount-masters';
+import { soEditHeader } from './so-edit-header';
 /* The reads, and what a FAILED read means. Split out 2026-08-15 for the same
    reason mastersOf was: this file is at the 2,000-line cap. */
-import { AcReadError, readOrThrow, readSoOutstandingCenti } from './autocount-read';
+import {
+  AcReadError, readOrThrow, readSoOutstandingCenti, readSoPaymentRefs, readPoEnqueueShape,
+} from './autocount-read';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -257,7 +264,7 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    the gross total on every edit, and it is the column the cutover's UDF_BALANCE
    landed in, which is exactly what makes it look like the right one. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, po_doc_no, customer_po, customer_so_no, processing_date, total_revenue_centi, deposit_centi, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, po_doc_no, customer_po, customer_so_no, processing_date, customer_delivery_date, total_revenue_centi, deposit_centi, linked_ac_docno';
 /* `cancelled` and `branding` are on THIS list and on no other, because only
    scm.mfg_sales_order_items has them (the other five line tables are
    still to get `cancelled` — docs/autocount-line-retirement-plan.md). Asking
@@ -638,7 +645,9 @@ export async function enqueueSoCreate(
     const salespersonName = await readSalespersonName(
       sb, (header as Record<string, unknown>).salesperson_id);
     const outstandingCenti = await readSoOutstandingCenti(sb, header as Record<string, unknown>);
-    const body = composeCreateSo(header as never, lines, salespersonName, outstandingCenti, { bindings });
+    const paymentRefs = await readSoPaymentRefs(sb, opts.docNo);
+    const body = composeCreateSo(
+      header as never, lines, salespersonName, outstandingCenti, paymentRefs, { bindings });
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
       op: 'create_so',
@@ -729,15 +738,30 @@ export async function enqueuePoCreate(
     const lines = await withLocations(sb, rows, rows.map(soLine));
     const bindings = await bindingsFor(sb, opts.companyId, lines.map((l) => l.item_code), header.supplier_id);
     const { collapsed, details } = composeDetails(lines, { supplierCode: header.creditor_code, bindings });
+
+    /* TRANSFER OR CREATE — po-transfer-shape.ts, which falls back on ANY doubt
+       because a create is today's behaviour and cannot be wrong. */
+    const { shape, sourceRef } = await readPoEnqueueShape(sb, opts.poId);
+
     const body = composeCreatePo(header, lines, { bindings });
+    if (sourceRef) (body as unknown as Record<string, unknown>).Ref = sourceRef;
+
     return await enqueueAcOp(sb, {
       companyId: opts.companyId,
-      op: 'create_po',
+      op: shape.kind === 'transfer' ? 'so_to_po' : 'create_po',
       docType: 'PO',
       docNo: header.po_number,
       docId: opts.poId,
       payload: {
-        body: body as unknown as Record<string, unknown>,
+        /* FromDocNo resolves at DRAIN; composeSoToPo carries the rest. */
+        body: (shape.kind === 'transfer'
+          ? composeSoToPo(shape.dtlKeys, details)
+          : body) as unknown as Record<string, unknown>,
+        /* THE PARENT MUST EXIST FIRST — dispatchOne holds this as `waiting`,
+           without burning an attempt, until the sales order has its number. */
+        ...(shape.kind === 'transfer'
+          ? { fromDoc: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: shape.fromSoDocNo } as AcDocRef }
+          : {}),
         writeback: { table: 'purchase_orders', keyCol: 'id', key: opts.poId },
         lineWriteback: {
           table: 'purchase_order_items',
@@ -1291,6 +1315,9 @@ export async function enqueueEdit(
      * delete route has to say so explicitly, and this is how.
      */
     retire?: AcRetiredLine[];
+    /** ERP columns THIS REQUEST wrote — same contract as `newLineIds`: the
+     *  composer reads the SAVED row and cannot tell a clear from a blank. */
+    touchedFields?: readonly string[];
   },
 ): Promise<boolean> {
   try {
@@ -1299,7 +1326,7 @@ export async function enqueueEdit(
 
     const retired = (opts.retire ?? []).filter((r) => Number.isFinite(Number(r.DtlKey)));
     const composed = opts.docType === 'SO'
-      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds)
+      ? await composeSoState(sb, String(opts.docNo), retired, opts.newLineIds, opts.touchedFields)
       : opts.docType === 'PO'
         ? await composePoState(sb, String(opts.docId ?? opts.docNo), retired)
         : await composeDownstreamState(sb, opts.docType, String(opts.docId ?? opts.docNo), retired);
@@ -1466,7 +1493,7 @@ async function composeDownstreamState(
   };
 }
 
-async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[]) {
+async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = [], newLineIds?: string[], touchedFields: readonly string[] = []) {
   const header = await readOrThrow('mfg_sales_orders header',
     sb.from('mfg_sales_orders').select(SO_HEADER_COLS).eq('doc_no', docNo).maybeSingle());
   if (!header) return null;
@@ -1478,6 +1505,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   const bindings = await bindingsFor(sb, (h.company_id as number | null) ?? null, lines.map((l) => l.item_code));
   const salespersonName = await readSalespersonName(sb, h.salesperson_id);
   const outstandingCenti = await readSoOutstandingCenti(sb, h);
+  const paymentRefs = await readSoPaymentRefs(sb, docNo);
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
@@ -1485,7 +1513,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
     /* LAZY. An edit builds this same state, and composing a create it will
        never send would refuse the edit for the create's reasons — a line with
        no stock location is fatal to a create and irrelevant to an edit. */
-    create: () => composeCreateSo(header as never, lines, salespersonName, outstandingCenti, { bindings }) as unknown as Record<string, unknown>,
+    create: () => composeCreateSo(header as never, lines, salespersonName, outstandingCenti, paymentRefs, { bindings }) as unknown as Record<string, unknown>,
     /* LAZY on purpose. composeEdit REFUSES a line with no AutoCount DtlKey, and
        the caller does not always need an edit: when the create is still sitting
        unsent in the outbox it replaces that create's payload instead, and a
@@ -1493,7 +1521,7 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
        yet. Composing eagerly would refuse that legitimate path. */
     edit: () => composeEdit(
       'SO', String(h.linked_ac_docno ?? docNo),
-      soEditHeader(h, salespersonName, lines, outstandingCenti), lines,
+      soEditHeader(h, salespersonName, lines, outstandingCenti, paymentRefs, touchedFields), lines,
       {
         bindings,
         ...(newLineIds && newLineIds.length ? { newLineIds: new Set(newLineIds) } : {}),
@@ -1528,92 +1556,8 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
 
 // ── drain ───────────────────────────────────────────────────────────────────
 
-/**
- * The SO header fields an EDIT carries.
- *
- * A create sends the salesperson, the sales location, the document date and the
- * three UDFs; an edit used to send none of them, so changing any one of those on
- * a live order never reached AutoCount at all (divergence D8). The account book
- * accepts every one of them on `/edit` — `AcSyncService.Edit()` has them in its
- * allow-list and calls `ApplyUdf` — so this was the ERP declining to speak, not
- * AutoCount refusing to listen.
- *
- * A NULL VALUE IS OMITTED, NEVER SENT. The service's header loop is
- * `ContainsKey`-gated and `Str` turns a present-but-null into `""`, so sending
- * `{Agent: null}` does not mean "unchanged" — it means "blank the salesperson
- * the account book has". The same rule as the line-level Location, one level up.
- *
- * THAT RULE IS NOW APPLIED TO EVERY KEY, WHICH IT WAS NOT. Eight of them —
- * `DebtorName`, `Attention`, `Ref`, `Phone1` and the four `InvAddr` lines —
- * were emitted as `x ?? null` unconditionally while the doc comment above
- * already said they were not, so every edit of a sales order blanked whatever
- * the account book held in those fields wherever the ERP's column was empty.
- * Measured on production 2026-08-14: `ref` is blank on 112 of 115 unpushed
- * orders and `address3` / `address4` on 94 of them (audit finding 10).
- *
- * AN EDIT IS NEVER REFUSED FOR A MISSING AGENT, which is where it parts company
- * with the create. On a create a blank Agent is a foreign-key failure that
- * loses the whole document; here the account book already holds a value and
- * omitting the key leaves it alone. Refusing would strand every legacy order
- * that has no salesperson on either source and gain nothing. `SalesLocation`
- * runs under the same asymmetry — the create falls back to the lines because
- * it MUST send something, the edit simply says nothing.
- */
-function soEditHeader(
-  h: Record<string, unknown>,
-  /** REQUIRED, never optional: it decides whether Agent is sent at all. */
-  salespersonName: string | null,
-  /** REQUIRED, never optional: it decides what BRANDING is, and the header
-   *  column is NULL on every ERP-created order. See `soBranding`. */
-  lines: ErpLine[],
-  /** REQUIRED, never optional: it decides what the account book says a live
-   *  customer still owes. `null` omits the key and keeps the book's own. */
-  outstandingCenti: number | null,
-): Record<string, string | null | Record<string, string>> {
-  const out: Record<string, string | null | Record<string, string>> = present({
-    DebtorName: (h.debtor_name as string) ?? null,
-    Attention: (h.debtor_name as string) ?? null,
-    Ref: (h.ref as string) ?? null,
-    Phone1: (h.phone as string) ?? null,
-    /* The DELIVERY contact, which is not `phone`. On a CREATE the service falls
-       back to Phone when this is absent; on an EDIT nothing falls back, so a
-       changed delivery number never reached the book at all until this key did.
-       Blank still omits — the book keeps whatever it has. */
-    DeliverPhone1: (h.emergency_contact_phone as string) ?? null,
-    ...soInvoiceAddress(h),
-  });
-  const agent = resolveAcAgent((h.agent as string) ?? null, salespersonName);
-  if (agent) out.Agent = agent;
-  const loc = bookSpellingOrOwn((h.sales_location as string) ?? null, LOCATION_MAP);
-  if (loc) out.SalesLocation = loc;
-  if (h.so_date) out.DocDate = String(h.so_date);
-
-  const udf: Record<string, string> = {};
-  /* bookSpelling, NOT bookSpellingOrOwn: BRANDING_MAP is the one allow-list of
-     the four, because the ERP column behind it holds CATEGORIES. */
-  const branding = bookSpelling(soBranding((h.branding as string) ?? null, lines), BRANDING_MAP);
-  if (branding) udf.BRANDING = branding;
-  const venue = bookSpellingOrOwn((h.venue as string) ?? null, VENUE_MAP);
-  if (venue) udf.VENUE = venue;
-  const customerRef = soCustomerRef(h);
-  if (customerRef) udf.ToPONo = customerRef;
-  /* The SO's "Processing date" (owner: 账目日期). Owner 2026-08-12: editing it
-     in the ERP must reach AutoCount. Same omit-when-absent rule as the rest of
-     this function — a cleared date sends nothing rather than blanking the
-     account book's value, which is the conservative half of the pair and the
-     one that cannot destroy data. */
-  const pdate = acUdfDate(h.processing_date as string | null | undefined);
-  if (pdate) udf.PDate = pdate;
-  /* The outstanding balance, and the one UDF whose ZERO must be sent: an order
-     the customer has now settled has to stop showing a debt in the account
-     book, and `acUdfMoney` renders that as "0.00" precisely so this `if` does
-     not drop it. Only a null — the ERP has no answer — omits the key. */
-  const balance = acUdfMoney(outstandingCenti);
-  if (balance != null) udf.BALANCE = balance;
-  if (Object.keys(udf).length) out.UDF = udf;
-
-  return out;
-}
+/* soEditHeader lives in ./so-edit-header — a composer, not IO, and this file
+   has hit its 2,000-line cap three times in one day. */
 
 /**
  * What AutoCount calls each of these products, from the LIVE binding.

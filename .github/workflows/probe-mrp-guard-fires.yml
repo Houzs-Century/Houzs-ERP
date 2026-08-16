@@ -1,0 +1,47 @@
+# Read-only. Settles whether routes/mrp.ts's mrp_load_truncated guard actually
+# fires, by asking pg_stat_statements whether the reads that sit AFTER the throw
+# have executed at all. Writes nothing.
+name: probe-mrp-guard-fires
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+
+concurrency:
+  group: probe-mrp-guard-fires
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-mrp-guard-fires.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-mrp-guard-fires.mjs
+        env:
+          COMPANY: "1"
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
