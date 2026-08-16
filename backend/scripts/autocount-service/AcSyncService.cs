@@ -822,9 +822,25 @@ class AcSyncService {
   static string Convert_(string fromType, string toType, Dictionary<string, object> p) {
     var s = Session();
     var fromDocNo = Str(p, "FromDocNo");
-    if (string.IsNullOrEmpty(fromDocNo)) throw new Exception("FromDocNo required");
+    /* MANY SOURCE DOCUMENTS INTO ONE TARGET is native, and this is the only
+       thing that stood in its way. AddPartialTransferDetail takes an ARRAY of
+       line keys and never asks which document they came from, and DtlKeys()
+       already returns an explicit DtlKeys[] verbatim without checking it
+       against FromDocNo. So a payload naming lines from several sales orders
+       already reaches the SDK correctly - the route just refused to accept one,
+       because FromDocNo was demanded unconditionally.
+
+       FromDocNo is the FALLBACK lookup key: it is how the outstanding lines are
+       found when the ERP does not name them. When the ERP names them, it has
+       nothing left to say, so it is optional. Owner 2026-08-16: a DO from
+       several SOs, an invoice from several DOs, a GRN from several POs, a
+       purchase invoice from several GRNs - AutoCount does all four. */
+    var explicitKeys = new List<object>(List(p, "DtlKeys")).Count > 0;
+    if (string.IsNullOrEmpty(fromDocNo) && !explicitKeys)
+      throw new Exception("FromDocNo required when DtlKeys is not given - it is how the outstanding lines are found");
     var dtlKeys = DtlKeys(p, fromType, fromDocNo);
-    if (dtlKeys.Length == 0) throw new Exception("no transferable lines on " + fromType + " " + fromDocNo);
+    if (dtlKeys.Length == 0)
+      throw new Exception("no transferable lines on " + fromType + " " + Or(fromDocNo, "(the given DtlKeys)"));
 
     switch (toType) {
       case "DO": {
@@ -846,6 +862,13 @@ class AcSyncService {
       case "GR": {
         var cmd = AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
+        /* This conversion has failed since 2026-08-12 with
+             IndexOutOfRangeException: There is no row at position -1
+           inside GeneralPurchasePartialTransferDetail..ctor - a master lookup
+           returning -1 and used as an index. The frame names its arguments but
+           not their VALUES, so they go in the log before the call: whichever
+           run fails next, the inputs are on record rather than reconstructed. */
+        Log("  po-to-gr: fromType=" + fromType + " transferMaster=true keys=[" + string.Join(",", Array.ConvertAll(dtlKeys, x => x.ToString())) + "]");
         // transferMaster MUST be true on the purchase side. That flag copies the
         // source PO's header master (supplier/currency/terms) onto the target; with
         // false the GRN is built with no supplier, the purchase detail ctor looks
@@ -1039,7 +1062,22 @@ class AcSyncService {
     return docNo;
   }
 
+  /* THE ERP'S AMOUNT IS THE AMOUNT, INCLUDING ZERO. Owner 2026-08-16: "我填写
+     多少就多少，我填写 0 就 0". AutoCount disagrees by default - every document
+     class carries EnableZeroNetTotalChecking, and with it on a document whose
+     net total is zero is refused on Save. That check exists for humans typing
+     into the entry screen; here the number came from the ERP deliberately, and
+     a zero-value purchase order is a real thing (free replacement, warranty
+     supply, a line priced later).
+
+     Turned off through Set(): a class that does not expose it must cost the
+     flag, never the document. */
+  static void AllowZeroValue(dynamic doc) {
+    Set(() => doc.EnableZeroNetTotalChecking = false);
+  }
+
   static void SalesHeader(dynamic doc, Dictionary<string, object> p) {
+    AllowZeroValue(doc);
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));
@@ -1053,6 +1091,17 @@ class AcSyncService {
   }
 
   static void PurchaseHeader(dynamic doc, Dictionary<string, object> p) {
+    AllowZeroValue(doc);
+    /* The purchase-side twin of SalesLocation, and it has never been sent.
+       FK_SO_SalesLocation proved the sales header needs its location; nothing
+       had tested whether the purchase header does. /create-po saves without it,
+       so it is not a hard foreign key - but the GRN's partial-transfer
+       constructor dies on "there is no row at position -1", which is a master
+       lookup returning -1 and being used as an index, and an empty
+       PurchaseLocation is a candidate for that lookup. Sent when the ERP has
+       one; a blank would be its own foreign key error. */
+    if (p.ContainsKey("PurchaseLocation") && !string.IsNullOrEmpty(Str(p, "PurchaseLocation")))
+      Set(() => doc.PurchaseLocation = Str(p, "PurchaseLocation"));
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));

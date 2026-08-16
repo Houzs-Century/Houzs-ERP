@@ -150,18 +150,35 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
   });
 
   test('the four conversions, and the two header fields only one of them reads', () => {
+    /* DtlKeys joined this list on 2026-08-16 and its presence is the FEATURE.
+       AddPartialTransferDetail takes an ARRAY of line keys and never asks which
+       document they came from, so a target can be built from SEVERAL sources -
+       a DO from several sales orders, an invoice from several DOs, a GRN from
+       several POs, a purchase invoice from several GRNs. The route used to
+       demand FromDocNo unconditionally, which is what made that impossible;
+       FromDocNo is now the FALLBACK, needed only when the ERP does not name the
+       lines itself. */
     expect(headerKeys(CS_CONVERT)).toEqual(
-      ['FromDocNo', 'SupplierDONo', 'SupplierInvoiceNo'].sort(),
+      ['DtlKeys', 'FromDocNo', 'SupplierDONo', 'SupplierInvoiceNo'].sort(),
     );
     /* DtlKeys is optional and read in its own helper: given none, the service
        asks the BOOK which lines are still outstanding (AcSyncService.cs:300-329),
        which is the only authority on that. */
     expect(headerKeys(CS_DTLKEYS)).toEqual(['DtlKeys']);
-    // Shared header handling — identical on the sales and purchase side.
-    /* DisplayTerm is the payment term, and it is sent only when the ERP has one
-       (ContainsKey): a BLANK term is a foreign key error, not an empty field. */
+    /* Shared header handling — no longer IDENTICAL on the two sides, and the
+       difference is the point. DisplayTerm is the payment term and is sent only
+       when the ERP has one (ContainsKey): a BLANK term is a foreign key error,
+       not an empty field.
+
+       PurchaseLocation is the purchase-side twin of SalesLocation and exists
+       only here. The sales header's location is proven mandatory
+       (FK_SO_SalesLocation); the purchase one has never been sent at all, and
+       an empty master is a candidate for the "there is no row at position -1"
+       that has failed every /po-to-gr since 2026-08-12. */
     expect(headerKeys(CS_SALES_HEADER)).toEqual(['Description', 'DisplayTerm', 'DocDate', 'DocNo', 'Ref'].sort());
-    expect(headerKeys(CS_PURCHASE_HEADER)).toEqual(['Description', 'DisplayTerm', 'DocDate', 'DocNo', 'Ref'].sort());
+    expect(headerKeys(CS_PURCHASE_HEADER)).toEqual(
+      ['Description', 'DisplayTerm', 'DocDate', 'DocNo', 'PurchaseLocation', 'Ref'].sort(),
+    );
   });
 
   test.skip('/cancel takes exactly two fields', () => {
