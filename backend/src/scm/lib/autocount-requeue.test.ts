@@ -6,7 +6,14 @@
 // away, give it back, set linked_ac_docno) and assert on what the composer then
 // does with it.
 import { describe, expect, test, beforeEach } from 'vitest';
-import { requeueSkipped, REQUEUE_NOTE_PREFIX } from './autocount-requeue';
+import {
+  AC_REQUEUE_MEANING,
+  acRequeueAccepted,
+  requeueOutboxRow,
+  requeueSkipped,
+  REQUEUE_NOTE_PREFIX,
+} from './autocount-requeue';
+import { acRowIsRequeueable } from './autocount-outbox-status';
 import { fakeSb, type Row } from './fake-postgrest';
 import { resetWritebackFlagCache } from './autocount-writeback-flag';
 
@@ -362,5 +369,226 @@ describe('a document AutoCount refused is out of scope unless asked for', () => 
     /* The first one queues; the second then sees that live pending row and stands down,
        so one document cannot be queued twice in a single pass. */
     expect(pending(sb)).toHaveLength(1);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+/** The fake client, typed as the one the module takes. ONE cast for the whole
+ *  block rather than `as never` at every call: that pattern is most of this
+ *  file's lint ceiling, and a new section must not add to a number that may
+ *  only fall. */
+const asSb = (sb: unknown) => sb as Parameters<typeof requeueOutboxRow>[0];
+
+// requeueOutboxRow — ONE row, by id, from the AutoCount Sync page's button.
+//
+// The batch tool above chooses its own rows and can only ever pick a terminal
+// one. A button is pointed at whatever the reader is looking at, so this entry
+// point has to answer for the two rows the sweep never sees — `sent` and
+// `pending` — and for a row id that belongs to the other company's books.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('requeueOutboxRow — a SENT row is refused outright', () => {
+  const sendable = () => ({ ...soWithoutLocation(), sales_location: 'KL WAREHOUSE' });
+  const sentRow = (extra: Row = {}) => skippedRow({
+    id: 'sent-1',
+    status: 'sent',
+    attempts: 1,
+    last_error: null,
+    ac_doc_no: 'SO-000451',
+    ...extra,
+  });
+
+  test('the code is already-sent and NOTHING is written', async () => {
+    /* THE ONE THAT MATTERS. `sent` means AutoCount accepted the document and it
+       is in the account book. The C# create has no duplicate guard on the ERP
+       document number, so a second send writes a SECOND document into a live
+       licensed book — and an accepted sales order cannot simply be deleted
+       there. The document below is otherwise perfectly sendable, so nothing but
+       the status refusal is standing between this call and that duplicate. */
+    const sb = world(sendable(), [sentRow()]);
+    const before = JSON.stringify(rows(sb));
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'sent-1', companyId: 1 });
+    expect(r.outcome).toBe('already-sent');
+    expect(JSON.stringify(rows(sb))).toBe(before);
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  test('it refuses BEFORE reading the document, so a missing order cannot change the answer', async () => {
+    /* Ordering is the property, not the verdict: if the status check sat after
+       the document read, an order that had been deleted would answer
+       document-gone and a reader would conclude the send was merely unlucky
+       rather than forbidden. */
+    const sb = fakeSb({
+      app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
+      autocount_outbox: [sentRow()],
+      mfg_sales_orders: [],
+      mfg_sales_order_items: [],
+      supplier_material_bindings: [],
+    }, {}, DEDUPE_IDX);
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'sent-1', companyId: 1 });
+    expect(r.outcome).toBe('already-sent');
+  });
+
+  test('the switch being OFF does not change it either — refused is refused', async () => {
+    const sb = world(sendable(), [sentRow()], 'off');
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'sent-1', companyId: 1 });
+    expect(r.outcome).toBe('already-sent');
+  });
+
+  test('the sentence it answers with never says the word "sent" as a status word', async () => {
+    /* The owner's rule for this page is that no code jargon appears on it. The
+       message must explain the CONSEQUENCE — a second copy in the book — not
+       recite the column value. */
+    const sb = world(sendable(), [sentRow()]);
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'sent-1', companyId: 1 });
+    expect(AC_REQUEUE_MEANING[r.outcome]).toContain('SECOND copy');
+    expect(acRequeueAccepted(r.outcome)).toBe(false);
+  });
+});
+
+describe('requeueOutboxRow — the rest of the by-id ladder', () => {
+  const sendable = () => ({ ...soWithoutLocation(), sales_location: 'KL WAREHOUSE' });
+
+  test('a PENDING row is refused: the sweep is already going to send it', async () => {
+    const sb = world(sendable(), [skippedRow({ id: 'p-1', status: 'pending', last_error: null })]);
+    const before = JSON.stringify(rows(sb));
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'p-1', companyId: 1 });
+    expect(r.outcome).toBe('row-pending');
+    expect(JSON.stringify(rows(sb))).toBe(before);
+  });
+
+  test('ANOTHER COMPANY\'S row is not found, and nothing is written', async () => {
+    /* The SCM client is service-role and bypasses RLS, so the company predicate
+       on the read IS the tenant boundary. Answering "not found" rather than
+       "not yours" is deliberate: confirming that somebody else's id exists is
+       itself a leak. */
+    const sb = world(sendable(), [skippedRow({ id: 'other-1', company_id: 2 })]);
+    const before = JSON.stringify(rows(sb));
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'other-1', companyId: 1 });
+    expect(r.outcome).toBe('row-not-found');
+    expect(JSON.stringify(rows(sb))).toBe(before);
+  });
+
+  test('the SAME row in the caller\'s own company DOES go through', async () => {
+    /* The paired positive half: a scope assertion that only ever checks the
+       negative passes just as happily when the endpoint does nothing at all. */
+    const sb = world(sendable(), [skippedRow({ id: 'other-1', company_id: 1 })]);
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'other-1', companyId: 1 });
+    expect(r.outcome).toBe('requeued');
+    expect(pending(sb)).toHaveLength(1);
+  });
+
+  test('an unknown id is not found', async () => {
+    const sb = world(sendable());
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'no-such-row', companyId: 1 });
+    expect(r.outcome).toBe('row-not-found');
+  });
+
+  test('a SKIPPED row whose cause is fixed is queued, and the old skip is annotated', async () => {
+    const sb = world(sendable());
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'skip-1', companyId: 1 });
+    expect(r.outcome).toBe('requeued');
+    expect(acRequeueAccepted(r.outcome)).toBe(true);
+    expect(r.newRowId).toBe(pending(sb)[0].id);
+    expect(rows(sb).find((x) => x.id === 'skip-1')?.last_error)
+      .toContain(REQUEUE_NOTE_PREFIX);
+  });
+
+  test('a SKIPPED row whose cause is NOT fixed reports the CURRENT blocker', async () => {
+    const sb = world(soWithoutLocation());
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'skip-1', companyId: 1 });
+    expect(r.outcome).toBe('still-refused');
+    expect(r.detail).toContain('MissingLocationError');
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  test('the button needs no includeFailed opt-in — a FAILED row is exactly what it is for', async () => {
+    /* The workflow hides `failed` behind a flag because it sweeps a whole
+       backlog blind. A person pressing a button on one row has already read
+       that row's reason, so the opt-in has nothing left to protect. What DOES
+       still protect them is the sent check above, which the flag never could. */
+    const sb = world(sendable(), [skippedRow({
+      id: 'f-1',
+      status: 'failed',
+      attempts: 6,
+      last_error: 'Gave up after 6 attempts. Last error: Foreign Key Error (Constraint Name=FK_SO_SalesAgent)',
+    })]);
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'f-1', companyId: 1 });
+    expect(r.outcome).toBe('requeued');
+    expect(pending(sb)).toHaveLength(1);
+  });
+
+  test('the re-queued row starts its attempts again — a failed row has spent all six', async () => {
+    /* MAX_ATTEMPTS is 6 and the drain selects `.lt('attempts', MAX_ATTEMPTS)`,
+       so a re-queue that re-opened the dead row would produce a pending row no
+       sweep can ever pick up: queued, visibly waiting, and dead. The reset is
+       structural — the enqueue INSERTS a new row and sets no `attempts` at all,
+       leaving 0277's `attempts integer NOT NULL DEFAULT 0` to supply zero. This
+       asserts the property that matters (the new row has not inherited six),
+       not the mechanism. */
+    const sb = world(sendable(), [skippedRow({ id: 'f-1', status: 'failed', attempts: 6 })]);
+    await requeueOutboxRow(asSb(sb), { rowId: 'f-1', companyId: 1 });
+    const [queued] = pending(sb);
+    expect(queued.attempts ?? 0).toBe(0);
+    expect(rows(sb).find((x) => x.id === 'f-1')?.attempts).toBe(6);
+  });
+
+  test('pressing it TWICE does not queue the document twice', async () => {
+    const sb = world(sendable());
+    const first = await requeueOutboxRow(asSb(sb), { rowId: 'skip-1', companyId: 1 });
+    const second = await requeueOutboxRow(asSb(sb), { rowId: 'skip-1', companyId: 1 });
+    expect(first.outcome).toBe('requeued');
+    /* The old skip now carries the marker, so the ladder recognises its own
+       work rather than composing a second create. */
+    expect(second.outcome).toBe('already-requeued');
+    expect(pending(sb)).toHaveLength(1);
+  });
+
+  test('an edit or a conversion is refused as not-recoverable, not silently ignored', async () => {
+    const sb = world(sendable(), [skippedRow({ id: 'e-1', op: 'edit' })]);
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'e-1', companyId: 1 });
+    expect(r.outcome).toBe('not-recoverable');
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  test('the switch being OFF is named as such, not reported as a composer problem', async () => {
+    const sb = world(sendable(), [skippedRow()], 'off');
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'skip-1', companyId: 1 });
+    expect(r.outcome).toBe('switch-off');
+    expect(pending(sb)).toHaveLength(0);
+  });
+});
+
+describe('the outcome vocabulary is complete and matches its catalogue', () => {
+  test('every outcome the ladder can return has a plain-English sentence', () => {
+    /* A missing entry renders on the owner's page as `undefined`, which is the
+       one thing this whole return shape exists to prevent. The Record type
+       makes the compiler enforce it; this asserts the sentences are real. */
+    for (const [code, sentence] of Object.entries(AC_REQUEUE_MEANING)) {
+      expect(sentence.length, `${code} has no sentence`).toBeGreaterThan(20);
+      /* No jargon on the owner's page: no snake_case column names, no error
+         class names, no hyphenated status keys leaking through. */
+      expect(sentence, `${code} leaks a code identifier`).not.toMatch(/[a-z]+_[a-z]+/);
+      expect(sentence, `${code} names an exception class`).not.toMatch(/[A-Za-z]+Error\b/);
+    }
+  });
+
+  /* The catalogue file itself is pinned against these keys by
+     backend/tests/autocountSyncReasonsCatalogue.test.ts — it lives there because
+     reading a file needs node:fs, which backend/tsconfig.json deliberately does
+     not type for src/ (its `types` is workers-types only). */
+
+  test('acRowIsRequeueable never offers a button on a row the ladder refuses structurally', () => {
+    /* The pure hint and the real gate are two files, so they are pinned
+       together: wherever the button would appear, the ladder must not answer
+       with one of its four permanent noes. */
+    const marker = `${REQUEUE_NOTE_PREFIX} 2026-08-16T00:00:00.000Z -> outbox x] refused, nothing sent (ItemCodeError): y`;
+    expect(acRowIsRequeueable('create_so', 'sent', null)).toBe(false);
+    expect(acRowIsRequeueable('create_so', 'pending', null)).toBe(false);
+    expect(acRowIsRequeueable('create_so', 'skipped', marker)).toBe(false);
+    expect(acRowIsRequeueable('edit', 'skipped', 'refused, nothing sent (KeylessLineError): x')).toBe(false);
+    expect(acRowIsRequeueable('so_to_do', 'skipped', 'no source document to transfer from')).toBe(false);
+    /* And the two it MUST offer, or the button never appears at all. */
+    expect(acRowIsRequeueable('create_so', 'skipped', 'refused, nothing sent (ItemCodeError): x')).toBe(true);
+    expect(acRowIsRequeueable('create_po', 'failed', 'Foreign Key Error (Constraint Name=FK_PO_Creditor)')).toBe(true);
   });
 });
