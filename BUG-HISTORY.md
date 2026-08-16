@@ -73,6 +73,251 @@ class nobody has written yet is covered too.
 
 **Ref:** PR #PRNUM, 2026-08-16.
 
+## BUG CLASS - instrument-blind-spot-as-a-finding: "the search found nothing" written down as "it is not there" [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**The shape** — a query, a reflection run, a join or a grep is pointed at a
+question, comes back empty, and the empty answer is recorded as a FACT about the
+world instead of a fact about the instrument. It then gets a parenthesis that
+makes it unre-checkable — *"reflected off the installed assemblies, NOT guessed"*
+— and everything downstream is built on it.
+
+**Two instances, both found on 2026-08-16/17, both in this one subsystem:**
+
+1. **`BindingFlags.DeclaredOnly`.** The 2026-08-10 reflection dump of the
+   AutoCount 2.2 SDK was taken with `DeclaredOnly`, which SKIPS INHERITED
+   MEMBERS. Every per-subclass listing in
+   `backend/scripts/autocount-service/sdk-api-reference.txt` therefore shows
+   `AddPartialTransferDetail` — declared on `DeliveryOrder` — and shows no
+   `FullTransfer` or `PartialTransfer`, because those live on the base
+   `SalesDocument` / `PurchaseDocument`. `AcSyncService.cs`'s header then stated
+   it as measured fact: *"There is NO TransferTo/CreateFrom API. Every document
+   class exposes exactly one transfer primitive."* Re-reflected with
+   `FlattenHierarchy` against
+   `C:\Program Files\AutoCount\Accounting 2.2\AutoCount.Sales.dll` on
+   `AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrder`, there are **three
+   `FullTransfer` overloads, four `PartialTransfer` overloads**,
+   `IsTransferFromSupported`, and three transfer events. Seven days of work sat
+   on the non-finding, including the argument in the same header that the
+   over-transfer event *"cannot be subscribed"*.
+2. **`DODTL.FromDocDtlKey`.** NULL on all 47,531 rows, so a join through it
+   returned zero rows and the zero read as "no delivery-order line was ever
+   transferred from a sales order".
+
+**Why it hides** — an empty result is indistinguishable from a true negative
+without a POSITIVE CONTROL, and nobody asks for one when the answer is the
+answer they expected. Both of these would have been caught by a single check:
+*"run the same instrument against something I know is there."* Reflecting for
+`Save()` — which every document has and which is also inherited — would have
+returned nothing on 2026-08-10 and exposed the flag in one line.
+
+**The remedy, and it is not "be careful":**
+- **A dump that cannot be re-taken must not be the reference.** `AcSyncService`
+  now re-takes its own: `LogTransferApi` prints every `FullTransfer` /
+  `PartialTransfer` / `AddPartialTransferDetail` overload the loaded assemblies
+  expose, WITH PARAMETER NAMES, once per document class per service start, into
+  `C:\Temp\ac-sync-service.log`. The comment can rot; the log line cannot.
+- **When you record an absence, record the instrument's settings beside it** —
+  the flags, the predicate, the join column. `sdk-api-reference.txt` did say
+  `DeclaredOnly` in its own third paragraph, and the C# comment that quoted it
+  did not carry that word, which is the whole distance between the two.
+- **Say what the search covered, not what exists.** "No `FullTransfer` in a
+  `DeclaredOnly` dump of the subclasses" is true and useful. "There is no
+  transfer API" is neither.
+
+**Ref.** PR for `fix/autocount-documented-transfer-api`, 2026-08-17. Related:
+**BUG CLASS unverified-completeness-claim** and **BUG CLASS optional-param-noop**
+below — all three are a claim about a POPULATION taken from a look at part of it.
+## Every conversion transferred into a document with no debtor, and the SDK's three transfer events reported to nobody [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** `HC-DO-2608-001` and `HC-DO-2608-002` have never entered the account
+book; `HC-SI-2608-001` is blocked behind them. Every attempt answers
+
+```
+AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+```
+
+thrown inside `GeneralSalesPartialTransferDetail..ctor` — eleven words naming no
+key, no document and no reason. Eleven production attempts produced no new fact
+between them.
+
+**What was RULED OUT** (against the live book, 2026-08-16 — do not re-chase
+these): the line data (all four DtlKeys exist on the named sales order,
+`Cancelled=F`, `TransferedQty=0`, `Transferable=T`, `Location=PG` populated, UOM
+matching the item master); a blank `SalesExemptionExpiryDate` (347 sales orders
+with it blank have transferred); `transferMaster=false` (DO-011260 and DO-011262
+were both created with it); a NULL `TransferedPOQty` (36,301 of 46,597
+successfully-transferred lines have it NULL); the sales agent `WEIPIN` (61 orders
+using it have transferred); and the location `PG` (13,835 lines in it have
+transferred). A brand-new minimal order created through `/create-so`
+(`ZZDIAG-SO-2`, keys 906383/906384, no UDFs, no addresses, never edited) also
+fails, so it is not the content and not the editing.
+
+**Root cause — UNKNOWN, and stated as unknown.** What IS established is that the
+call did not match the API the vendor documents, on four counts, and each is
+fixed here:
+
+1. **The order was inverted.** `Convert_` ran
+   `cmd.AddNew()` -> transfer -> `SalesHeader(doc, p)` -> `Save()`. Neither
+   `SalesHeader` nor `PurchaseHeader` sets a debtor or a creditor, so every
+   conversion ran its transfer against a target with NO ACCOUNT; the only reason
+   a GRN had a supplier at all was `transferMaster:true` copying one out of the
+   source inside the SDK. All three vendor pages
+   (`Programmer:Goods_Received_Note_Transfer_from_Purchase_Order`,
+   `Programmer:Sales_Invoice`, `Programmer:Delivery_Order`) set the account and
+   the document date on the target BEFORE calling the transfer.
+   **A contradiction, left standing rather than bridged:** DO-011260 was written
+   on 2026-08-12 through the OLD order and it worked, so "the target has no
+   debtor" cannot on its own be the whole of it. What changed between that
+   document and `HC-DO-2608-001` is that the ERP started naming `DtlKeys`.
+2. **The documented transfer API was believed not to exist** — see the BUG CLASS
+   entry directly above.
+3. **Three events the SDK raises during a transfer were subscribed by nothing.**
+   `OnSalesDocumentTransferConflict`, `ConfirmOverTransferedQtyEvent` and
+   `ShowEditTransferDetailFormEvent`. The header argued the over-transfer one
+   *"cannot be subscribed"* because its `EventArgs` type is not public. It can:
+   .NET's relaxed delegate binding matches a handler declared with `object`
+   parameters to a delegate whose parameters are any reference types, so
+   `Delegate.CreateDelegate` binds one without ever naming the args type. An
+   unhandled conflict is a live candidate for the exception above.
+4. **No pre-flight.** `IsTransferFromSupported()` was never called, and neither
+   was `TransferHelper.CheckAndGetValidPartialTransferItem(fromDocType, keys,
+   dbSetting)` — the vendor's own validator, and the most likely origin of the
+   throw. A `false` from the first and a rejected key from the second are
+   completely different failures and were indistinguishable inside those eleven
+   words.
+
+**Fix.** `backend/scripts/autocount-service/AcSyncService.cs`:
+
+- The vendor's ORDER: `PlanTransfer` -> `AddNew` -> `SetMaster` (debtor/creditor
+  read off the SOURCE header in the book, plus the document date) -> preflights
+  and event subscriptions -> transfer -> the rest of the header -> `Save`.
+- `LogTransferApi` prints every transfer overload the host's assemblies expose,
+  with parameter names, once per document class per service start.
+- `PreflightTransferFromSupported` says plainly in the log when the class refuses
+  transfers at all; `PreflightValidItems` calls the vendor validator BEFORE a
+  document exists, so its throw arrives with the keys still in hand and nothing
+  written. `/so-to-po` gets the SO-specific twin,
+  `CheckAndGetValidSOTransferItem`.
+- The three events are subscribed and **logged only** — nothing answers a
+  confirmation. Answering "yes" to an over-transfer prompt would silently accept
+  shipping more than was ordered. A delegate that RETURNS a value is deliberately
+  not subscribed; its signature is logged instead.
+- `FullTransfer` / `PartialTransfer` are invoked LATE-BOUND, argument by argument
+  against the parameter's own NAME and TYPE in the assembly metadata, and an
+  overload with one parameter the service cannot name is not called at all. This
+  file compiles nowhere but the office host: writing `TransferFrom.SalesOrder`
+  and being wrong costs a failed build, and writing `PartialTransfer`'s decimals
+  in the wrong order and being wrong costs a live account book holding a quantity
+  nobody sent. The `TransferFrom` value is not guessed either — the SDK's own
+  `TransferHelper.DocumentTypeToTransferFrom` converts the doc-type strings the
+  service already holds.
+- `AddPartialTransferDetail` remains, as the fallback everywhere and as the
+  chosen call for a by-line partial (PR #2302's pattern). Worst case is
+  yesterday's behaviour, and the fallback says in the log why it happened.
+
+**Both transfer shapes, and the ERP decides which** (owner, 2026-08-16:
+「你要确保它是可以 partially transfer 跟 fully transfer 的。跟着我们的 ERP 就对了」).
+The decision lives in ONE method, `PlanTransfer`, and reads only what the payload
+SAYS — never what the numbers happen to add up to:
+
+| the payload | the shape | the call |
+|---|---|---|
+| no `DtlKeys` | FULL — the whole source document, every line, full quantity | `FullTransfer(String[], TransferFrom, FullTransferOption)`, which takes an ARRAY of document numbers, so several sources into one target is native |
+| `DtlKeys` | PARTIAL BY LINE — the ERP named the lines it took, and it stays partial even when that set is everything outstanding | `AddPartialTransferDetail`, per source document — the documented call for "these lines, at whatever is outstanding", and the only one whose arguments the ERP sends |
+| `Details[].Qty` | PARTIAL BY QUANTITY — "3 of 5" | `PartialTransfer`, once per line; **refused, never approximated,** if its arguments cannot be bound by name |
+
+**The half the ERP cannot express yet, said plainly rather than papered over.**
+`enqueueConvert` composes `{ DocNo, DocDate?, Ref?, DtlKeys? }` and no per-line
+quantity — `readConvertSourceKeys`'s own comment says *"NOT COVERED, and
+deliberately so: partial QUANTITY on a line"*. Every documented `PartialTransfer`
+overload takes a `Decimal`, so none can be filled from what the service is
+actually told, and a DO shipping 3 of a 5-unit line still writes 5. Registered as
+**D14** in `autocount-writeback.contract.test.ts`, which pins the count. The C#
+half is done and refuses rather than shipping the 5; the ERP half is a payload
+change plus a decision about which quantity is authoritative.
+
+**NOT verified, and it cannot be from this machine.** There is no Windows host,
+no licensed AutoCount assemblies and no C# compiler here, so this change is
+UNCOMPILED and UNRUN. `deploy-on-host.ps1` compiles before it swaps and keeps the
+previous exe, so a build error costs a round trip and not the service. The first
+run on the host is a DISCOVERY run: the log will name the real parameter names of
+every overload, the real `TransferFrom` value, and every member of
+`FullTransferOption` — the facts that make a strongly-typed follow-up possible.
+
+**Test.** `backend/src/services/autocount-writeback.contract.test.ts` parses the
+C# and now asserts the three new payload keys (`FromDocNos`, `Details[].DtlKey`,
+`Details[].Qty`), the new `DocDate` read, and D14. No test can exercise the SDK
+calls: they need the licensed assemblies.
+
+**Ref.** PR for `fix/autocount-documented-transfer-api`, 2026-08-17.
+## The SO Stock Status vocabulary was inverted, and the accessory-only lie was fixed on the wrong half [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Two owner instructions on 2026-08-16, both real, ten hours apart.
+Morning, on an accessory-only SO with one short accessory line: the Stock
+Status cell read `READY (PARTIAL)` while nothing on the order was ready and its
+own ship gate said no — 「只有配件,有一行没齐 → READY (PARTIAL) ← 骗人 /
+明说还缺什么」. Evening, confirmed against worked examples: the vocabulary he
+set is the READY side — `READY`, `PARTIAL`, `BEDFRAME`, `MATTRESS/ACC` — and
+the blank cell is what "nothing is ready" looks like.
+
+**Root cause (traced).** PR #2295 read the morning instruction as "invert the
+vocabulary" and flipped every token to name what was MISSING (`SHORT:
+MATTRESS`). The lie was never in the DIRECTION of the vocabulary. It was one
+`else if`:
+
+```
+} else if (isMainReady) { stockRemark = 'READY (PARTIAL)'; }
+```
+
+`isMainReady = mainCount > 0 ? mainReady === mainCount : true` is **VACUOUSLY
+TRUE when the SO has no MAIN line** — the right convention for an
+accessory-only order and the wrong one for a label. `PARTIAL` asserts "the main
+products are in"; an order with no main line has none, so the branch fired on
+an order where nothing was ready, three lines below an `isShipReady` of false.
+The same rollup's ship gate had ALREADY been written as `mainCount > 0 ?
+isMainReady : isFullyReady` for exactly this reason — the guard existed on the
+gate and was missing on the label, in the same function.
+
+**Fix.** The vocabulary is the READY side again, and the branch carries the
+guard the gate always had: `mainCount > 0 && isMainReady`, so an accessory-only
+order with a short accessory falls through to the (empty) ready list and the
+cell says nothing. The label is the bare word `PARTIAL`, never `READY
+(PARTIAL)` — which keeps #2295's real invariant, that the string never contains
+`READY` while anything is short. Kept from #2295 and untouched: service lines
+COUNTED (`svcCount`) rather than dropped, `isShipReady` as THE gate,
+`is_ship_ready` on the delivery-planning payload, `ReadinessLine.category`
+threaded at all five construction sites, and `lib/so-readiness-row.ts` as the
+single expression of the four board fields — which is why the vocabulary could
+move twice in a day with no board re-growing a copy of it.
+
+`summariseReadiness` now returns `readyCategories` beside `pendingCategories`,
+so the label is a join of a list the caller can also read rather than a string
+only the producer understands, and `MAIN_CATEGORY_ORDER` is the single source
+of both the emission order and `MAIN_CATEGORIES`.
+
+Two consumers moved with it: `ConsignmentOrders.tsx` matched
+`startsWith('SHORT:')` for its amber pill and scored `1000 - s.length` in its
+sort (shorter = closer to ready, correct for a what-is-missing label, backwards
+for a what-is-ready one) — the pill now branches on `remark !== 'READY'` so a
+new token cannot fall through to the neutral slot, and the sort scores
+`READY > PARTIAL > longer ready list > blank`.
+`backend/scripts/check-stock-vs-autocount.mjs` carried a fourth copy of the
+rollup that #2295 never updated, **including the missing `mainCount > 0`
+guard**; it is corrected, and its `canon` now folds AutoCount's stored
+`READY (PARTIAL)` into `PARTIAL` the same way it already folded `ACC/BEDFRAME`
+into `BEDFRAME/ACC`.
+
+**Ref.** this PR, 2026-08-16. Reverses the vocabulary half of PR #2295 and
+keeps its correctness half. `docs/stock-reconciliation.md` §2.1 now describes
+ONE vocabulary and records that `SHORT:`-form remarks were briefly written
+between the morning of 2026-08-16 and this change, so a stored remark or an
+AutoCount export from that window may still carry one.
 ## A Delivery Order line could still be created with no link to the SO line it ships [high]
 
 <!-- area: Delivery, DO, returns -->

@@ -75,10 +75,19 @@ AcSyncService's routes, and the outbox `op` that targets each:
 | `/ensure-masters` | **none** | opens the items and salespeople a document names, BEFORE it is sent. It is called INLINE by the drain (`autocount-outbox.ts:1767-1780`), never queued — 0277's `op` CHECK admits only the eight ops above |
 
 There is deliberately **no create route for DO / GRN / Invoice / Purchase
-Invoice**, and there cannot sensibly be one. The 2.2 SDK's only construction
-primitive for those four is `AddPartialTransferDetail(fromDocType, dtlKeys)` —
-you build one by transferring a SOURCE document's lines — so a parentless one
-cannot be expressed at all. The ERP CAN create all four parentless (a manual
+Invoice**, and there cannot sensibly be one: in the 2.2 SDK you build one of
+those four by transferring a SOURCE document's lines, so a parentless one cannot
+be expressed at all.
+
+> **CORRECTED 2026-08-17.** This paragraph, §7 and §7d each said the SDK's *only*
+> construction primitive is `AddPartialTransferDetail`. That was read off a
+> reflection dump taken with `BindingFlags.DeclaredOnly`, which skips inherited
+> members — and the rest of the transfer API is inherited from `SalesDocument` /
+> `PurchaseDocument`. `FullTransfer` (three overloads) and `PartialTransfer`
+> (four) exist. The conclusion above survives the correction — all of them
+> transfer FROM something, so a parentless document is still inexpressible — but
+> the reason given for it was wrong. See **BUG CLASS
+> instrument-blind-spot-as-a-finding** at the top of `BUG-HISTORY.md`. The ERP CAN create all four parentless (a manual
 GRN with no PO is an explicit owner decision), and each such document is
 recorded as a `skipped` outbox row by `recordParentlessCreate` so the
 divergence is written down rather than silently dropped.
@@ -309,10 +318,11 @@ phantom column silences an entire flow (see `BUG-HISTORY.md`, 2026-08-10).
 
 ## 7. What the ERP can express and AutoCount cannot
 
-The SDK's only transfer primitive is
-`AddPartialTransferDetail(fromDocType, fromDocKeys)` — **ONE source document**.
-The ERP can merge several SOs into one DO, batch several POs into one GRN, and
-so on. Those have no AutoCount shape.
+`AddPartialTransferDetail(fromDocType, fromDocKeys)` takes **ONE source
+document** — a mixed key array answers `InvalidTransferItemException` (measured
+on the live book, 2026-08-16). Merging is done by calling it once per source, or
+natively by `FullTransfer(String[] docNos, …)` when the whole of each source
+moves. Some ERP shapes still have no AutoCount shape at all.
 
 They are written to the outbox with `status = 'skipped'` and the reason in
 `last_error` (`recordConvertSkipped`). Inventing N AutoCount documents would
@@ -740,14 +750,76 @@ The source link per type: `delivery_order_items.so_item_id`,
 `purchase_invoice_items.grn_item_id`. A cancelled parent SO line is not counted
 as one the conversion left behind — nobody will ever transfer it.
 
-**Still open, and NOT fixed by this: partial QUANTITY on a line.**
-`AddPartialTransferDetail(fromDocType, dtlKeys, bool)` takes line keys, not
-quantities, so a DO shipping 2 of a 5-unit line still produces an AutoCount DO of
-5 on that line. Naming the right lines does not fix the wrong number on them. The
-shape of a fix exists — the conversion captures the new document's own `DtlKey`s
-via `lineWriteback`, so a follow-up `/edit` could set each quantity — but it needs
-a DEFERRED compose (the keys do not exist until the convert has drained), which
-`enqueueEdit` cannot express today.
+### 7c1. FULL or PARTIAL — the ERP decides, in ONE place
+
+Owner, 2026-08-16: 「你要确保它是可以 partially transfer 跟 fully transfer 的。
+跟着我们的 ERP 就对了」. Both shapes have to work and the ERP is the authority on
+which one a document is. `PlanTransfer` in `AcSyncService.cs` is the whole of that
+decision, and it reads only what the payload SAYS — never what the numbers happen
+to add up to on the day:
+
+| the payload carries | shape | the SDK call |
+|---|---|---|
+| no `DtlKeys` | **FULL** — the whole source document, every line, full quantity | `FullTransfer(String[], TransferFrom, FullTransferOption)`. It takes an ARRAY of document numbers, so several sources into one target is native and needs no per-document grouping. A new optional `FromDocNos` names them; absent, it is `[FromDocNo]` |
+| `DtlKeys` | **PARTIAL BY LINE** — the ERP named the lines it took | `AddPartialTransferDetail(fromDocType, keys, bool)` once per source document. Not a workaround: it is the documented call for "these lines, at whatever is outstanding", and the only one whose arguments the ERP actually sends |
+| `Details[].Qty` | **PARTIAL BY QUANTITY** — 3 of a 5-unit line | `PartialTransfer(TransferFrom, …, Decimal, …)`, once per line |
+
+A named set is **never promoted to a full transfer** because it happens to equal
+everything outstanding. That equality holds until the next document, and the
+promotion would be the service deciding — the same principle that puts the
+SO -> PO transfer/create decision in `scm/shared/po-transfer-shape.ts` rather
+than in the C#.
+
+**Still open, and NOT fixed by this: the ERP cannot SAY a partial quantity.**
+`enqueueConvert` composes `{ DocNo, DocDate?, Ref?, DtlKeys? }`, and
+`readConvertSourceKeys` resolves line IDENTITY only — its own comment says so.
+Every documented `PartialTransfer` overload takes a `Decimal`, so none of them can
+be filled from what the service is told, and a DO shipping 2 of a 5-unit line
+still produces an AutoCount DO of 5 on that line. Naming the right lines does not
+fix the wrong number on them.
+
+The C# half is done: `PlanTransfer` reads `Details:[{ DtlKey, Qty }]` the moment
+it appears, and `RunTransfer` **refuses** a quantity plan it cannot express rather
+than falling back to the primitive — the fallback ships the whole outstanding
+quantity, and a live account book holding 5 where the ERP said 3 is worse than a
+visible refusal. `FixPartialTransferTransferedQty.FixPartialTransfer` exists in
+`AutoCount.Invoicing.dll` because that bookkeeping goes out of sync easily; the
+service does not call it and must not create the mess it repairs.
+
+The ERP half is a payload change plus a decision about which quantity is
+authoritative, which is why it is registered as divergence **D14** in
+`src/services/autocount-writeback.contract.test.ts` rather than guessed at. The
+earlier idea — capture the target's own `DtlKey`s via `lineWriteback` and set each
+quantity with a follow-up `/edit` — is worse than it looks: it needs a DEFERRED
+compose (the keys do not exist until the convert has drained), and editing a
+transferred line's quantity is exactly what `CheckTransferDetailQtyNotMatch`
+guards against.
+
+### 7c2. What the transfer now REPORTS
+
+Four things `Convert_` never did, added 2026-08-17 and all of them writing to
+`C:\Temp\ac-sync-service.log` (readable through `/last-errors`):
+
+- **The master fields go on FIRST**, matching the vendor's own examples. The
+  debtor / creditor is read off the SOURCE header in the book — the conversion
+  payload has never carried one — and two sources with two different accounts is
+  logged and set to none rather than picked from.
+- **`LogTransferApi`** prints every `FullTransfer` / `PartialTransfer` /
+  `AddPartialTransferDetail` overload the host's assemblies expose, with
+  parameter names, once per document class per service start. A dump nobody can
+  re-take is how the header of that file spent a week asserting the transfer API
+  does not exist.
+- **`IsTransferFromSupported`** as a pre-flight, and
+  `TransferHelper.CheckAndGetValidPartialTransferItem` — the vendor's own
+  validator — called BEFORE the target document exists, so its refusal arrives
+  with the keys still in hand. `/so-to-po` gets the SO-specific twin,
+  `CheckAndGetValidSOTransferItem`.
+- **`OnSalesDocumentTransferConflict`, `ConfirmOverTransferedQtyEvent` and
+  `ShowEditTransferDetailFormEvent` are subscribed** and their arguments read
+  back by reflection. **Log only** — nothing answers a confirmation, because
+  answering "yes" to an over-transfer prompt would silently accept shipping more
+  than was ordered. A delegate that RETURNS a value is not subscribed at all; its
+  signature is logged instead.
 
 ### What naming the lines COSTS, and what a refusal now tells you
 
@@ -789,9 +861,11 @@ arguments are unchanged; only the text a failure carries is better.
 ## 7d. The four documents AutoCount cannot create at all
 
 A DO, GRN, Sales Invoice or Purchase Invoice raised with **no parent** can never
-exist in the account book: `AddPartialTransferDetail` is the SDK's only
-construction primitive for these four, so there is no create route to add and
-none could be added. `recordParentlessCreate` writes a visible `skipped` row for
+exist in the account book: every construction primitive the SDK offers for these
+four — `AddPartialTransferDetail`, `FullTransfer`, `PartialTransfer` — transfers
+FROM a source document, so there is no create route to add and none could be
+added. (This paragraph said `AddPartialTransferDetail` was the only one; see the
+correction under §1.) `recordParentlessCreate` writes a visible `skipped` row for
 every one going forward.
 
 **Measured on production, 2026-08-11** (`backend/scripts/check-parentless-downstream.mjs`,

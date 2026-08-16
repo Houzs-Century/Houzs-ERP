@@ -74,10 +74,12 @@ describe("isShipReady keeps every case that legitimately ships", () => {
   test("all mains READY → ship-ready, accessories pending do not block", () => {
     const r = summariseReadiness([main("READY"), acc("PENDING")]);
     expect(r.isShipReady).toBe(true);
-    /* Ship-able and still short — so the LABEL names the accessory rather than
-       reading "READY (PARTIAL)". The gate and the label answer two different
-       questions; see soReadinessRemark.test.ts. */
-    expect(r.stockRemark).toBe("SHORT: ACCESSORY");
+    /* Ship-able and still short — so the LABEL is the bare word "PARTIAL", not
+       the retired "READY (PARTIAL)": it may not read READY while an accessory
+       is outstanding. The gate and the label answer two different questions;
+       see soReadinessRemark.test.ts. */
+    expect(r.stockRemark).toBe("PARTIAL");
+    expect(r.stockRemark).not.toContain("READY");
   });
 
   test("a pending main blocks", () => {
