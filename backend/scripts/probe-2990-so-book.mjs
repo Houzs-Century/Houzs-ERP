@@ -156,7 +156,7 @@ async function forCompany(CO) {
 
   // ── 1. header status census ────────────────────────────────────────────────
   const census = await sql`
-    SELECT coalesce(s.status,'(null)') AS status, count(*)::int AS n
+    SELECT coalesce(s.status::text,'(null)') AS status, count(*)::int AS n
       FROM scm.mfg_sales_orders s
      WHERE s.company_id = ${CO}::bigint
      GROUP BY 1 ORDER BY 2 DESC`;
@@ -172,19 +172,19 @@ async function forCompany(CO) {
   // ── per-(doc, category) rollup over live orders ────────────────────────────
   const rollup = await sql.unsafe(`
     SELECT s.doc_no,
-           s.status,
+           s.status::text AS status,
            (s.proceeded_at IS NOT NULL) AS proceeded,
            (s.processing_date IS NOT NULL) AS has_processing_date,
            ${CAT_SQL} AS cat,
            count(i.id)::int AS total,
-           (count(i.id) FILTER (WHERE i.stock_status = 'READY'))::int AS ready,
-           (count(i.id) FILTER (WHERE i.stock_status = 'PARTIAL'))::int AS partial,
+           (count(i.id) FILTER (WHERE i.stock_status::text = 'READY'))::int AS ready,
+           (count(i.id) FILTER (WHERE i.stock_status::text = 'PARTIAL'))::int AS partial,
            (count(i.id) FILTER (WHERE i.stock_status IS NULL))::int AS nullst
       FROM scm.mfg_sales_orders s
       LEFT JOIN scm.mfg_sales_order_items i
              ON i.doc_no = s.doc_no AND i.company_id = s.company_id AND i.cancelled = false
      WHERE s.company_id = ${CO}::bigint
-       AND s.status NOT IN (${TERMINAL.map((t) => `'${t}'`).join(',')})
+       AND s.status::text NOT IN (${TERMINAL.map((t) => `'${t}'`).join(',')})
      GROUP BY 1,2,3,4,5
      ORDER BY 1`);
 
@@ -305,7 +305,7 @@ async function dumpOrder(CO, byDoc) {
     note(`      DERIVED stock_remark = ${JSON.stringify(d?.sum?.stockRemark ?? '(not in live set)')}`);
     if (d?.sum) note(`      main ${d.sum.mainReady}/${d.sum.mainCount}   acc ${d.sum.accReady}/${d.sum.accCount}   isShipReady=${d.sum.isShipReady}`);
     const lines = await sql.unsafe(`
-      SELECT i.item_code, i.item_group, i.qty, i.cancelled, i.stock_status, i.stock_qty_ready,
+      SELECT i.item_code, i.item_group, i.qty, i.cancelled, i.stock_status::text AS stock_status, i.stock_qty_ready,
              ${CAT_SQL} AS cat, (i.warehouse_id IS NULL) AS no_wh
         FROM scm.mfg_sales_order_items i
        WHERE i.company_id = ${CO}::bigint AND i.doc_no = '${h.doc_no.replace(/'/g, "''")}'

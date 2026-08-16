@@ -144,13 +144,13 @@ async function main() {
       FROM scm.delivery_order_items d
       JOIN scm.delivery_orders o ON o.id = d.delivery_order_id
      WHERE d.so_item_id IN (SELECT id FROM (${LIVE_LINES}) l)
-       AND upper(coalesce(o.status,'')) NOT IN ('CANCELLED','DRAFT')`;
+       AND upper(coalesce(o.status::text,'')) NOT IN ('CANCELLED','DRAFT')`;
   const NEW_DO = `
     SELECT d.id
       FROM (${LIVE_LINES}) l
       JOIN scm.delivery_order_items d ON d.so_item_id = l.id
       JOIN scm.delivery_orders o ON o.id = d.delivery_order_id
-     WHERE upper(coalesce(o.status,'')) NOT IN ('CANCELLED','DRAFT')`;
+     WHERE upper(coalesce(o.status::text,'')) NOT IN ('CANCELLED','DRAFT')`;
   await count('rows the OLD read keeps (after its JS parent-status filter)',
     `SELECT count(*)::int AS n FROM (${OLD_DO}) t`);
   await count('rows the NEW embedded read returns',
