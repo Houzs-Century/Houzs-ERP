@@ -26,6 +26,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { readScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
+import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { Save, X, CheckSquare, Square, Filter } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
@@ -93,15 +94,19 @@ export const GrnFromPo = () => {
 
   /* Commander 2026-05-31 — "Partially Convert" from the PO list lands here with
      ?poId=<id>, scoping the picker to ONE PO's outstanding lines so the operator
-     isn't hunting through every supplier's PO. No param → the full picker. */
+     isn't hunting through every supplier's PO; ?poId=<id>,<id>,… is the batch
+     convert from the toolbar. Empty set = the full open picker. The name
+     is not spelled here: it comes from lib/convertScope, which the callers also
+     import, so a caller and this page cannot drift apart the way the GRN→PI /
+     SO→DO / DO→SI links had (2026-08-16). `appendToGrn` is declared as the
+     other parameter this screen legitimately takes, so it is not reported as
+     unrecognised. */
   const [searchParams] = useSearchParams();
-  // ?poId=<id> (single convert) or ?poId=<id>,<id>,… (batch convert from the
-  // toolbar) → scope to those POs. Empty set = the full open picker.
-  const poIdFilter = searchParams.get('poId');
-  const poIdSet = useMemo(
-    () => new Set((poIdFilter ?? '').split(',').map((s) => s.trim()).filter(Boolean)),
-    [poIdFilter],
+  const scope = useMemo(
+    () => readConvertScope('poToGrn', searchParams, ['appendToGrn']),
+    [searchParams],
   );
+  const poIdSet = scope.keys;
 
   /* Commander 2026-05-31 — APPEND mode. When a POSTED GRN's edit page sends the
      operator here with ?appendToGrn=<grnId>, this picker no longer feeds the
@@ -574,6 +579,7 @@ export const GrnFromPo = () => {
           </div>
         }
       />
+      <UnrecognisedScopeNotice unknown={scope.unknown} />
       {appendToGrn && (
         <p style={{
           margin: '0 0 var(--space-2)', padding: 'var(--space-1) var(--space-3)',
