@@ -1680,20 +1680,39 @@ umbrella `/api/scm/*` already applies, and it has to be, because this endpoint
 quotes what the licensed account book said about every document the company
 pushed. Same reasoning as `/hr`.
 
-It answers the owner's question in his order: a one-line verdict, then five
-counts (failed / skipped / queued / in AutoCount / re-queued) which are exact and
-whole-company regardless of the row filter, then the list, with every row's
-reason printed IN FULL — the health check clips at 300-400 characters because a
-workflow annotation must, and a page does not.
+It answers the owner's question in his order: a one-line verdict, then the two
+filter strips (which carry the counts), then the list, with every row's reason on
+the row itself.
 
 **Company-scoped on every one of its seven statements.** `company_id` is the
 whole tenant boundary here and an unscoped AutoCount report has already cost this
 project most of a day (#2201).
 
-**READ-ONLY, deliberately.** There is no re-queue button. Re-sending is the
-workflow below and it carries an `includeFailed` opt-in with a warning attached
-(#2189), because a `failed` row WAS sent and the C# create has no duplicate
-guard. Putting that behind a button is a decision the owner has not made.
+#### Rebuilt 2026-08-16 — what the screen is now
+
+The first version put the five counts on TILES and the reason in the ERP's own
+words. The owner reviewed a mockup and asked for four changes; all four are in
+`frontend/src/lib/autocountOutbox.ts`, so both surfaces get them from one place.
+
+| | |
+|---|---|
+| **Two filter strips, counts on the chips** | Status (Everything / Needs attention / Waiting / In AutoCount / Not accepted / Held back / Sent again) and Document (Sales orders / Delivery orders / Invoices / Purchase orders / Goods received / Supplier invoices). Both are `<FilterPills>`, the same component the Sales Order list uses. The tiles are gone: the counts were the only useful thing about them and a tile cannot be clicked. |
+| **The reason, in three parts, inline** | A headline, one sentence, and a **To fix** line, keyed by the server's `reason_kind` (`AC_REASON_COPY`). Never behind a click — that was the owner's specific complaint. A `failed` row gets `AC_FAILED_COPY`, because the server deliberately does not classify those. |
+| **Who was asked** | `acReplySource` labels the quote **AutoCount replied** (the row went through `dispatchOne`), **AutoCount was not asked** (every `skipped` row — all of them are decided at enqueue time or before `callAcService`, so no held-back document has ever reached the account book), or **The last send attempt reported** for a `pending` row, where the note may be either and nothing the server sends tells them apart. |
+| **No coding words** | The page no longer prints the config key, the raw `op` values, the raw state values, or the server's `remedy` strings — those name columns, tables and an SDK primitive. The remedy still ships in the API response and is still what the health-check log prints. The ERP's own note stays behind a collapsed disclosure, and opens by itself when `reason_kind` is `unrecognised`, because that is the one case where it IS the answer. Plurals are spelled out in `AC_DOC_TYPE_PLURAL`, never built by appending an "s" — "Goods received" has none. |
+
+**READ-ONLY, still.** There is no Send again button. Re-sending is the workflow
+below and it carries an `includeFailed` opt-in with a warning attached (#2189),
+because a `failed` row WAS sent and the C# create has no duplicate guard. The
+button ships when the backend re-queue action does; a control that looks live and
+is not is the failure this repo records as *"the button does nothing"*.
+
+**`docType` is no longer sent to the server**, though the endpoint still accepts
+it. The type strip has to carry a count for every type, and a response already
+narrowed to one type makes every other chip read zero — so the type is applied on
+the client (`acRowsOfType` / `acDocTypeCounts`) while `state` and `docNo` stay
+server-side. Consequence, stated on screen when `truncated` is true: the STATUS
+counts are exact and whole-company, the TYPE counts are of the rows loaded.
 
 **Filters are in the URL** (`?state=`, `?docType=`, `?docNo=`) on desktop;
 the mobile shell has no router, so they are component state there.
@@ -1701,8 +1720,11 @@ the mobile shell has no router, so they are component state there.
 ### One taxonomy, three readers
 
 The classification of a `skipped` row lives in
-`backend/src/scm/lib/autocount-outbox-status.ts` — the states, the eight skip
-kinds with their remedies, `REQUEUE_NOTE_PREFIX`, and `MAX_ATTEMPTS`. The route
+`backend/src/scm/lib/autocount-outbox-status.ts` — the states, the nine skip
+kinds with their remedies, `REQUEUE_NOTE_PREFIX`, and `MAX_ATTEMPTS`. (Said
+"eight" until 2026-08-16; `no-autocount-shape` had been added and the sentence
+was not. Re-count rather than trusting this one:
+`grep -c "^    kind:" backend/src/scm/lib/autocount-outbox-status.ts`.) The route
 reads it, `backend/src/scm/lib/autocount-requeue.ts` re-exports the prefix from
 it, and the health script reads its plain-node mirror
 `backend/scripts/lib/autocount-skip-kinds.mjs`, because that script runs under
