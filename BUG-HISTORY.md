@@ -32,15 +32,15 @@ times both arms and prints the slowest single read for exactly this reason.
 **Fix.** `scm/lib/concurrency.ts` — `mapBounded` (bounded, input-order-preserving)
 and `eager` (start now, re-throw at the point of use, so error PRECEDENCE and
 unhandled-rejection safety are both unchanged). In `mrp.ts` the batch loop runs
-`MRP_READ_CONCURRENCY = 6` at a time and the five independent reads are issued as
-one wave, awaited at their original sites. **No read was removed, widened,
+`MRP_READ_CONCURRENCY = 6` at a time and four independent reads are issued as one
+wave, awaited at their original sites. **No read was removed, widened,
 narrowed or re-ordered** — only the moment each is issued. Bounded rather than
 `Promise.all` because Hyperdrive pools a finite number of connections and an
 unbounded fan-out trades latency for instability.
 
 Measured locally with an instrumented PostgREST fake, 2,800 docs, 1 ms per read,
 `origin/main` vs this branch: **reads 56 → 56** (identical — nothing reads less),
-**max in flight 1 → 6**, **critical path 95 ms → 47 ms**. The read count being
+**max in flight 1 → 6**, **critical path 94 ms → 52 ms**. The read count being
 byte-identical is the assertion that matters; it is what stops this becoming
 #2300's bug a second time. Pinned by four tests in `mrp.test.ts` (overlap
 happens, the bound holds, the plan is identical whichever read finishes first, a

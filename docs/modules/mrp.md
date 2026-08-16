@@ -246,13 +246,17 @@ Sequential was how the reads were written, not a property of the problem. Since
   thirds of the engine's round trips — runs `MRP_READ_CONCURRENCY` (6) batches at
   a time. Safe for the reason #2300 already gave for batching at all: the partial
   maps are a union of disjoint key sets.
-- the category walk, both warehouse masters, stock balances and PO supply depend
-  on no earlier result, so they are ISSUED as one wave at the top of `computeMrp`
-  and AWAITED at their original sites.
+- the lead-time base, the category walk, stock balances and PO supply depend on no
+  earlier result, so they are ISSUED as one wave at the top of `computeMrp` and
+  AWAITED at their original sites. The two warehouse masters are independent too
+  and were deliberately LEFT sequential: both discard their read error, and
+  `check-swallowed-reads.mjs` matches that by the `const { data … } = await …`
+  shape at the use site, which hoisting destroys — the report would have gone
+  from 1 swallowed read to 0 while the read stayed just as swallowed.
 
 **No read was removed, widened, narrowed or re-ordered.** Measured with an
 instrumented fake (2,800 docs, 1 ms/read), `origin/main` vs after: reads **56 →
-56**, max in flight **1 → 6**, critical path **95 ms → 47 ms**. Identical read
+56**, max in flight **1 → 6**, critical path **94 ms → 52 ms**. Identical read
 count is the property that matters — it is what keeps this from re-creating the
 #2300 defect. Production wall-clock comes from
 `backend/scripts/probe-mrp-roundtrip-cost.mjs` (workflow

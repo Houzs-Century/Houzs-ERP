@@ -446,7 +446,7 @@ export async function computeMrp(
     companyId != null ? (q as unknown as { eq(c: string, v: unknown): Q }).eq('company_id', companyId) : q;
 
   /* ── ONE WAVE FOR THE READS THAT NEED NOTHING FROM EACH OTHER (2026-08-17) ──
-     Five of this engine's reads depend on no earlier result — they key off the
+     Four of this engine's reads depend on no earlier result — they key off the
      function's own arguments and nothing else — yet they ran strictly one after
      another, each paying a full round trip of latency before the next was even
      issued. They are STARTED here and AWAITED at their original sites below, so
@@ -463,7 +463,19 @@ export async function computeMrp(
 
      Deliberately NOT in this wave: mfg_products by code, the fabric enrichment,
      suppliers and the bindings all read keys derived from the demand rows, and
-     loadCommittedShipments reads the PO rows. Those dependencies are real. */
+     loadCommittedShipments reads the PO rows. Those dependencies are real.
+
+     Also deliberately NOT in this wave: the `warehouses` and
+     `state_warehouse_mappings` masters, which are independent and would have
+     fitted. Both DISCARD their read error today, and check-swallowed-reads.mjs
+     finds that by matching `const { data … } = await …` at the use site — a
+     shape `eager` cannot preserve. Hoisting them took mrp.ts from 1 swallowed
+     read to 0 in that report while the read stayed exactly as swallowed as
+     before, which is the "a checker that cannot match reports a clean run"
+     trap in CLAUDE.md. They are two round trips out of ~105; the finding
+     staying visible is worth more than the two. Fixing the discarded error is
+     a behaviour change (today a failed read blanks the names and the plan
+     continues) and belongs in its own PR. */
   const leadBaseProm = eager(loadLeadTimeBase(
     scoped(sb.from('mrp_category_lead_times').select(LEAD_TIME_SELECT)),
   ));
@@ -472,14 +484,6 @@ export async function computeMrp(
      query that stood at its own site; only the moment it is ISSUED moved. */
   const catRowsProm = eager(paginateAll<{ category: string | null }>((from, to) =>
     scoped(sb.from('mfg_products').select('category')).order('id').range(from, to)));
-  const warehousesProm = eager((async () => (await scoped(sb
-    .from('warehouses')
-    .select('id, code, name')
-    .eq('is_active', true))
-    .order('code')).data as Array<{ id: string; code: string; name: string }> | null)());
-  const stateMappingsProm = eager((async () => (await scoped(
-    sb.from('state_warehouse_mappings').select('state, warehouse_id'),
-  )).data as Array<{ state: string | null; warehouse_id: string | null }> | null)());
   const balancesProm = eager(paginateAll<BalanceRow>((from, to) => {
     let q = scoped(sb.from('inventory_balances').select('product_code, warehouse_id, variant_key, qty'));
     if (whFilter) q = q.eq('warehouse_id', whFilter);
@@ -685,7 +689,11 @@ export async function computeMrp(
     if (c.category) categorySet.add(c.category);
   }
 
-  const warehouses = (await warehousesProm)();
+  const { data: warehouses } = await scoped(sb
+    .from('warehouses')
+    .select('id, code, name')
+    .eq('is_active', true))
+    .order('code');
   const whById = new Map<string, { code: string; name: string }>();
   for (const w of (warehouses ?? []) as Array<{ id: string; code: string; name: string }>) {
     whById.set(w.id, { code: w.code, name: w.name });
@@ -712,7 +720,9 @@ export async function computeMrp(
      read ONCE for the whole computation, not per line. */
   const soWarehouseMasters: SoWarehouseMasters = {
     warehouses: (warehouses ?? []) as Array<{ id: string; code: string; name: string }>,
-    stateMappings: ((await stateMappingsProm)() ?? []) as Array<{ state: string | null; warehouse_id: string | null }>,
+    stateMappings: ((await scoped(
+      sb.from('state_warehouse_mappings').select('state, warehouse_id'),
+    )).data ?? []) as Array<{ state: string | null; warehouse_id: string | null }>,
   };
   /* Stamped onto the row in place — the same enrichment idiom as
      enrichLinesWithFabricSupplierCode above — so every downstream bucket key,
