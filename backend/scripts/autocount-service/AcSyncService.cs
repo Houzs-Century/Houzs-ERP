@@ -755,6 +755,12 @@ class AcSyncService {
     so.DeliverAddr4 = Or(Str(p, "DeliverAddr4"), Str(p, "InvAddr4"));
     Set(() => so.DeliverContact = Or(Str(p, "DeliverContact"), Str(p, "DebtorName")));
     Set(() => so.DeliverPhone1 = Or(Str(p, "DeliverPhone1"), Str(p, "Phone")));
+    /* The delivery date, in the field this book keeps it in — see the note in
+       Edit(). Present-and-null blanks it; absent leaves AutoCount's default. */
+    if (p.ContainsKey("SalesExemptionExpiryDate")) {
+      var xd = Date(p, "SalesExemptionExpiryDate");
+      Set(() => so.SalesExemptionExpiryDate = xd);
+    }
     ApplyUdf(p, k => so.UDF[k], (k, v) => so.UDF[k] = v);
     foreach (var od in List(p, "Details")) {
       var it = (Dictionary<string, object>) od;
@@ -1581,6 +1587,25 @@ class AcSyncService {
     var h = Dict(p, "Header");
     if (h != null) {
       var dt = Date(h, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
+      /* THE DELIVERY DATE, WHICH THIS BOOK KEEPS IN SalesExemptionExpiryDate.
+         Owner 2026-08-16: "就是用我们 delivery date 放进去 sales exemption date
+         而已，一样的东西". AutoCount's sales-order HEADER has no delivery date of
+         its own — SDK line 464 lists DeliveryDate on the six DETAIL classes and
+         nowhere else — so this book uses the exemption expiry for it, and
+         Inistate (the connector the ERP replaces) writes it there.
+
+         Handled HERE and not in the string loop below: that loop reads every key
+         with Str() and assigns through reflection, and a Nullable<DateTime>
+         property given a string throws — inside Set(), which swallows it. The
+         field would have looked wired and written nothing.
+
+         ContainsKey, not HasValue, for the same reason as the line delivery
+         date: present-and-null is how the ERP says BLANK IT, and absent is how
+         it says leave the book's own alone. */
+      if (h.ContainsKey("SalesExemptionExpiryDate")) {
+        var xd = Date(h, "SalesExemptionExpiryDate");
+        Set(() => doc.SalesExemptionExpiryDate = xd);
+      }
       foreach (var key in new string[] { "DebtorName", "CreditorName", "Attention", "Agent", "Ref",
                                          "Description", "SalesLocation", "Phone1",
                                          "InvAddr1", "InvAddr2", "InvAddr3", "InvAddr4",
