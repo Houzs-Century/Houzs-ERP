@@ -240,7 +240,7 @@ not following the rule I set". It is one: two engines, one screen.
 
 ### `stock_status_effective` — the verdict BOTH surfaces answer from
 
-`scm/lib/so-line-effective-stock.ts`. `effectiveLineStockStatus(storedStatus,
+`backend/src/scm/lib/so-line-effective-stock.ts`. `effectiveLineStockStatus(storedStatus,
 liveState)`, a UNION:
 
 | stored | live | effective | why |
