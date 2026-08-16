@@ -1741,12 +1741,68 @@ Optimized:
 - Desktop list: row windowing past 30 rows (PR #430).
 - Cold/warm open: gcTime 30min (#436) + localStorage snapshot (#437) → no spinner.
 - Search: trgm GIN indexes (0104).
+- **Saving is the global sweep.** A create and every line add / edit / delete
+  `await`s `recomputeSoStockAllocation` before answering (five call sites in
+  `routes/mfg-sales-orders.ts`; only the header PATCH is deferred, PR #1982).
+  The sweep is a chain of SERIAL PostgREST round trips, and its cost was set by
+  ID COUNTS rather than row counts. Measured on prod by
+  `probe-so-save-cost` (run 31937764356, 2026-08-16): **123 read round trips**,
+  71 of them one read fetching **83 rows** — because it chunked all 14,169 live
+  SO-line ids 200 at a time. Those reads are now INVERTED: they start from
+  `mfg_sales_order_items` and pull the child rows through a PostgREST `!inner`
+  embed, so no id list is enumerated. **123 → 30 round trips** on today's data (2026-08-16).
+  Equivalence was proved against production by `probe-so-sweep-inversion`, not
+  argued; the read shape is pinned by `tests/soAllocationReadShape.test.ts`,
+  which asserts both the round-trip count and the allocation it produces.
+- **The SO detail's Stock column is a whole MRP run.** `GET /:docNo` and
+  `GET /:docNo/items` both call `computeMrp`, which walks every live SO line and
+  every open PO. It **cannot be narrowed to one order**: a line's coverage
+  depends on what higher-priority lines already claimed, so a single-order run
+  answers a different question. It is now started with, rather than in front of,
+  the three per-line reads beside it (`soCoverage`).
 
 Watch as data grows:
 - The 500-row `limit` on the list — beyond that, page it server-side + push filter/
   counts to the server (don't filter a page client-side).
 - If AR aging (`/outstanding/summary`) gets slow, snapshot it server-side (follow the
   freshness guardrails in `docs/perf-optimization-plan.md` §G9).
+- **What is left of the sweep's 30 round trips is dominated by two paged reads**
+  that scale with live WIP, not with history: the SO headers and their lines.
+  The next honest win there is not another read rewrite — it is moving the
+  remaining four inline call sites onto `scheduleStockAllocationAfterCommand`
+  so the sweep leaves the response path with a real durability guarantee
+  (`lib/stock-allocation-job.ts` SCOPE header).
+- **The MRP inside the detail GET is the next-biggest wait, and it is about to
+  get heavier** — it currently truncates at `MRP_LOAD_CAP` and is being made to
+  read more rows. Loading the Stock column separately from the document is a
+  frontend contract change and belongs in its own PR.
+
+**The AutoCount outbox enqueue stays ON the response path, on purpose.**
+`queueAcSoEdit` → `enqueueEdit` → `composeSoState` adds roughly ten more serial
+round trips to the end of every line write (header, items, locations, bindings,
+salesperson, outstanding, payment refs, the pending-op lookup, the insert), and
+**no caller reads its result** — `enqueueEdit` returns a boolean every call site
+discards, and it never throws. So it could be handed to
+`c.executionCtx.waitUntil` tomorrow. It is not, and the reason is worth writing
+down rather than rediscovering:
+
+- **What breaks if it fails after the response.** The operator has already been
+  told the save succeeded. If the Worker is evicted before the deferred promise
+  settles, the SO is edited in the ERP and **no outbox row exists at all** —
+  not `pending`, not `failed`, nothing. AutoCount keeps the pre-edit order and
+  the ERP has no record that it should not.
+- **Why no existing check catches that.**
+  `backend/scripts/check-autocount-outbox-health.mjs` reads the outbox TABLE. It
+  answers FAILED / PENDING AGE / SKIPPED / SENT. Every one of those is a
+  question about a row that exists; a row that was never written is invisible to
+  all four. Today's inline call at least reaches `noteReadFailure`, which WRITES
+  a row when the compose throws.
+- **The condition that makes deferral safe.** A check that joins the other way —
+  SO mutations in `mfg_so_audit_log` (`CREATE` / `ADD_LINE` / `UPDATE_LINE` /
+  `DELETE_LINE`, human sources) against `autocount_outbox` rows for the same
+  document and window, alerting on a mutation with no row. Build that first,
+  then defer. Until then the ~10 round trips are the price of the failure being
+  visible.
 
 ---
 

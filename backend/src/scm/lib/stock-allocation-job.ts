@@ -254,10 +254,16 @@ export async function drainStockAllocationRecompute(env: Env): Promise<Allocatio
  *
  * WHY THIS EXISTS (owner 2026-08-10, measured). Saving an SO header took 10.6s
  * on production. The write itself (apply_so_header_cas) is milliseconds; the
- * rest was this recompute, which is global by design — it walks 2,784 active
- * SOs and their 14,076 lines through PostgREST's 1000-row pages, ~25-30
- * sequential round trips at roughly 300ms each. That cost does not shrink with
- * `scopeToDocNo`, which narrows the WRITES only.
+ * rest was this recompute, which is global by design — it walks every active SO
+ * and every one of its lines through PostgREST's 1000-row pages, in series.
+ * That cost does not shrink with `scopeToDocNo`, which narrows the WRITES only.
+ *
+ * The "2,784 active SOs / 14,076 lines / ~25-30 sequential round trips at
+ * roughly 300ms each" this paragraph carried until 2026-08-16 was arithmetic,
+ * not a measurement, and it was wrong by a factor of four in the direction that
+ * makes the problem look smaller. `probe-so-save-cost` asked production and got
+ * 123 read round trips, 71 of them ONE read fetching 83 rows. Do not re-quote a
+ * number from here — run the probe; that is what it is for.
  *
  * WHAT YOU GIVE UP. The response returns before the projection settles, so a
  * client that refetches immediately can render READY / PENDING badges one sweep

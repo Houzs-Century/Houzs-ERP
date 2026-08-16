@@ -27,14 +27,15 @@ may branch on. `accepted` is true for exactly one code.
 
 | code | accepted | what happened | what the person should do |
 | --- | --- | --- | --- |
-| `requeued` | **yes** | A fresh attempt was queued and the old row was marked as history. | Nothing. It goes on the next five-minute sweep. |
+| `requeued` | **yes** | A fresh attempt was queued and the old row was marked as history. The document was **re-composed** from the ERP as it stands now, so a correction made since the refusal is in it. Creates only. | Nothing. It goes on the next five-minute sweep. |
+| `requeued-as-recorded` | **yes** | The same, for a **conversion** — but the instruction was queued again *exactly as first recorded*, not rebuilt. A DO / GRN / Invoice / Purchase Invoice has no create to compose: the stored payload (its `DtlKeys`, its parent, its own `DocNo`) **is** the instruction, so a re-send is a retry of that. | Nothing. One thing to know: anything changed on the document *after* it was refused is **not** in what goes out. If you edited it, check the result. |
 | `already-sent` | no | **AutoCount already has this document.** Refused before anything is read or composed. | Nothing, and do not look for a way around it — see §4. |
 | `row-pending` | no | This row is already queued and waiting for the next sweep. | Wait. If the age keeps climbing past about half an hour, the AutoCount host is down. |
 | `already-requeued` | no | Somebody already pressed this. The document is queued or sent under a newer row. | Find the newer row; this one is the record of what happened. |
 | `already-queued` | no | A different live attempt for the same document already exists. | Same — work the live row, not this one. |
 | `already-in-autocount` | no | The ERP document carries a `linked_ac_docno`, so the account book has it under that number (a cutover import, or an earlier send whose row is gone). | Nothing. Creating it again would duplicate it. |
 | `still-refused` | no | The ERP composed it and refused it **again**. `reason` carries the blocker **as it stands now**. | Read `reason` — it may be a *different* cause from the one just fixed. Look it up in §2. |
-| `not-recoverable` | no | An `edit` or a conversion. Neither has a create to re-attempt. | §3 says what to do instead for each. |
+| `not-recoverable` | no | An `edit`, a `cancel`, or a conversion **the ERP itself refused** (a `skipped` one). None of these is fixed by sending it again. | §2 and §6 say what to do instead for each. |
 | `switch-off` | no | `scm.autocount_writeback` is off, so nothing can be queued at all. | Turn it on (Actions → *AutoCount write-back (on/off)*), then press again. |
 | `document-gone` | no | The ERP document behind the row cannot be read. | Nothing to send. If the document should exist, that is the thing to investigate. |
 | `declined` | no | The composer accepted it on the probe and refused on the real run, without writing a reason. | Press once more. If it repeats, it is a code fault, not a data fault. |
@@ -43,9 +44,21 @@ may branch on. `accepted` is true for exactly one code.
 | `would-requeue` | no | **The button never returns this.** It is the DRY RUN's success, from the batch workflow (`requeue-autocount-skipped.yml`), and it means nothing was written. It is in the shared vocabulary so both callers speak one language; a UI that read it as accepted would tell somebody a document had been queued when nothing had. | Nothing — you are reading a workflow log, not the page. Re-run with `apply=1`. |
 
 **The button is only OFFERED where an answer other than a flat no is possible.**
-`can_requeue` on each list row is `true` only for a `create_so` / `create_po`
-row whose state is `failed` or `skipped` and which carries no re-queue marker
-(`acRowIsRequeueable`). It is a hint; the POST re-checks everything.
+`can_requeue` on each list row (`acRowIsRequeueable`) is `true` for:
+
+- a `create_so` / `create_po` row whose state is `failed` **or** `skipped`, and
+- a **transfer** row (`so_to_do`, `po_to_gr`, `do_to_iv`, `gr_to_pi`,
+  `so_to_po`) whose state is `failed` — and never a `skipped` one.
+
+Neither ever carries the re-queue marker. It is a hint; the POST re-checks
+everything.
+
+**Why a conversion's two terminal states get opposite answers** — the rule §6
+sets out in full: `skipped` means the **ERP** refused it, on grounds that are
+properties of the document (no parent, several parents, a line subset it cannot
+name), and no re-send touches any of those. `failed` means the ERP composed it,
+the queue sent it, and the **service** refused — and a service refusal stops
+being true the moment the service is replaced.
 
 ---
 
@@ -67,9 +80,9 @@ why the button exists at all.
 | `desc2-too-long` | A line's Further Description is over AutoCount's 100 characters. AutoCount refuses the whole document rather than truncating, and a truncated specification is a wrong instruction to the factory. | **Yes**, once it fits. | Shorten the special order or the colour text on that line, save, then Send again. |
 | `sofa-collapse` | A sofa build cannot be folded into AutoCount's one line without inventing `Desc2` text. | **Only** after the build itself changes. | Fix the build so it collapses, then save and Send again. |
 | `keyless-line` | An **edit** names a line with no `linked_ac_dtlkey`. Appending it would duplicate the line in the live book, and on a PO a duplicate cannot be removed. | Not by this button — it is an `edit`, so the button answers `not-recoverable`. | Backfill `linked_ac_dtlkey` for the document's lines, then **save the document again**. |
-| `dtlkey-subset` | A conversion took a **strict subset** of the parent's lines and some source line has no `DtlKey`, so the ERP cannot name the subset. Sending it without one would make AutoCount transfer *every* outstanding line — goods moving in the book that did not move here. | Not by this button (a conversion). | Backfill `linked_ac_dtlkey` on the **source** document, then raise this document again. |
+| `dtlkey-subset` | A conversion took a **strict subset** of the parent's lines and some source line has no `DtlKey`, so the ERP cannot name the subset. Sending it without one would make AutoCount transfer *every* outstanding line — goods moving in the book that did not move here. | **No.** The ERP never composed an instruction, so there is nothing to send again — see §6. | Backfill `linked_ac_dtlkey` on the **source** document, then raise this document again. |
 | `no-source-document` | A Delivery Order / GRN / Invoice / Purchase Invoice was created with **no parent**. | **NEVER.** See §4. | Nothing. It stays ERP-only, permanently. |
-| `no-autocount-shape` | A conversion merged **several** source documents into one (a DO from two SOs, a GRN batched from three POs). The ERP records it rather than inventing documents. | Not today. See §5 — the AutoCount service side learned to do this on 2026-08-16, the ERP side has not followed. | Raise the matching document in AutoCount by hand, or split the ERP document. |
+| `no-autocount-shape` | A conversion merged **several** source documents into one (a DO from two SOs, a GRN batched from three POs). The ERP records it rather than inventing documents. | Not today, and **not by Send again** — the ERP composed nothing, so there is nothing to re-send (§6). See §5: the AutoCount service side learned to do this on 2026-08-16, the ERP side has not followed. | Raise the matching document in AutoCount by hand, or split the ERP document. |
 | `edit-before-counterpart` | A downstream document was edited while the conversion that creates it was still queued. That conversion will transfer the **source** document's lines, not this edit. | Not by this button. | Save the document again once the conversion has drained. |
 | `cancelled-before-send` | The document was cancelled in the ERP while its create was still queued, so the create was withdrawn. | No, and nothing is wrong. | Nothing. Neither document ever reached the account book. |
 | `grn-mislinked` | A goods receipt's `linked_ac_docno` is its **purchase order's** AutoCount number, not its own — a cutover convention. Sending a cancel or an edit would name the wrong document in a live book. | No. | The real GR numbers are on the PO in `linked_ac_grn_docnos`; a PO received in several deliveries has several, and choosing is a decision, not a lookup. |
@@ -92,7 +105,7 @@ the diagnosis. The ones seen so far:
 | message (or its shape) | source | trigger | can a re-send ever fix it? | what the person should DO |
 | --- | --- | --- | --- | --- |
 | `Foreign Key Error (Constraint Name=FK_…)` | AutoCount SDK | A master the document names is not in the book — `FK_SO_SalesAgent`, `FK_SODTL_Location`, `FK_PO_Creditor`, `FK_PO_DisplayTerm`. | **Yes, and safely.** A foreign key rejects **before** the insert, so nothing was written and a re-send cannot duplicate. | Fix the named master (assign the salesperson, set the location, give the supplier a code), then Send again. Most of these are now refused *before* sending, as the `missing-*` kinds in §2. |
-| `Invalid transfer item.` (`AutoCount.Invoicing.InvalidTransferItemException`) | AutoCount SDK | `AddPartialTransferDetail` was handed line keys belonging to **more than one source document** in a single array. Measured on the live book 2026-08-16 with two sales orders in one array. | **Not until the AutoCount host is rebuilt.** See §5 — this is fixed in the C# source and the fix is not on the shop-floor machine until somebody deploys it. | **Do not just press Send again** — this is the row that has already burned all six attempts. Rebuild and redeploy `AcSyncService` first (`docs/autocount-service-deploy.md`), confirm with `GET /health`'s `builtAt` / `mvid`, and only then re-send. |
+| `Invalid transfer item.` (`AutoCount.Invoicing.InvalidTransferItemException`) | AutoCount SDK | `AddPartialTransferDetail` was handed line keys belonging to **more than one source document** in a single array. Measured on the live book 2026-08-16 with two sales orders in one array. | **Yes — once the AutoCount host is running the build that fixes it, and not before.** See §5. | **Do not just press Send again** — this row has already burned all six attempts, and until the host is rebuilt a re-send produces the same exception, faster. Rebuild and redeploy `AcSyncService` first (`docs/autocount-service-deploy.md`), confirm with `GET /health`'s `builtAt` / `mvid`, and only then re-send. Send again **does** work on this row (§6): a `failed` conversion is a refusal by the service, not by the document. |
 | `no transferable lines on <type> <docNo>` | `AcSyncService.cs` | The source document has no outstanding lines left — everything on it has already been transferred downstream. | Only if the source really does still have lines. | Check the source document in AutoCount. If it is fully transferred there and not here, the two have diverged and that is the thing to fix. |
 | `of N line key(s) given, only M exist on a <type>` | `AcSyncService.cs` | The ERP named line keys the book does not have on a document of that type. Refuses the whole request rather than transferring a smaller set. | Not until the stored keys are right. | The stored `linked_ac_dtlkey` values are wrong or stale — re-derive them for that document. |
 | `REFUSED: line N of M … carries no DtlKey and does not declare IsNewLine` | `AcSyncService.cs` | An `/edit` reached the service with an unidentifiable line. The ERP normally refuses this earlier as `keyless-line`. | Not until the key is stored. | Backfill `linked_ac_dtlkey`, then save the document again. |
@@ -143,6 +156,14 @@ produces the same exception, faster.
 (`docs/autocount-service-deploy.md`), confirm the host is running the new build
 via `GET /health`'s `builtAt` and `mvid`, and only then Send again.
 
+> **2026-08-16 — the host WAS rebuilt, and Send again then refused it.** The new
+> build went live and answered `/health` with
+> `{"ok":true,"book":"AED_HOUZS","builtAt":"2026-08-16T14:35:08Z","mvid":"a6a91dd5-…"}`,
+> and the re-queue ladder still said *"a conversion refusal is not re-queued
+> here"* — because it treated every conversion refusal as permanently
+> unrecoverable. §6 is the rule that separates the two kinds, and both delivery
+> orders are re-sendable under it.
+
 ### A delivery-order-to-invoice raised with no source delivery order
 
 `reason_kind`: `no-source-document`. Catalogue row: §2.
@@ -184,3 +205,97 @@ needs it, it has to be raised there by hand, against a source document.
    and `no-autocount-shape`'s was wrong from the day it shipped because it was
    copied from a doc comment rather than from the writer. A generated check
    (`audit:`-style) over the reason-producing call sites would close the class.
+4. **The outbox does not record WHICH BUILD refused a row.** `/health` answers
+   `builtAt` and `mvid` and nothing stores either, so "was this refused by a
+   service that no longer exists" is not answerable from `scm.autocount_outbox`.
+   §6 explains why that is not the gate and why it would still be worth
+   recording; the proposal is two columns stamped by the drain.
+5. **Nothing asks the account book whether a `failed` document landed.** The one
+   residual risk on any re-send is a document that was accepted and whose reply
+   was lost. A read-only probe on the ERP's own `DocNo` — which every create and
+   every conversion now sends — would settle it before the queue writes, and
+   would retire the "look in the book first" instruction in §3.
+
+---
+
+## 6. Who refused it — the rule that decides a conversion
+
+**Added 2026-08-16.** Until this date the ladder refused *every* conversion, on
+grounds that read as one reason and are really two:
+
+> a parentless DO / GR / IV / PI can never exist in AutoCount at all, a merged
+> conversion has no AutoCount shape, and a DtlKey-subset refusal is fixed by the
+> line-key backfill and then re-raising the document.
+
+All three of those are true and all three are **still refused**. What the blanket
+rule missed is that each of them is a property of the **document**, and a
+document does not change because somebody rebuilt a Windows box on the shop
+floor. A refusal by the **service** does: it stops being true the moment the
+service is replaced, and rebuilding that host is routine here. Under the blanket
+rule, every host fix needed the outbox edited by hand.
+
+### What the ERP already records, and what it does not
+
+The discriminator is not a new field and is **not somebody asserting it in a
+form**. It is two facts the queue already writes, which agree by construction:
+
+| | who refused it | what the row looks like | re-sendable |
+| --- | --- | --- | --- |
+| `skipped` + `payload` of `{"body":{}}` | **the ERP** | Written by `recordConvertSkipped` — directly for a merged conversion, through `recordParentlessCreate` for a parentless one, and from `readConvertSourceKeys`'s refusal for a DtlKey subset. All three, and nothing else. | **No.** The row never reached the drain, so the service has never seen this document and cannot be what refused it. |
+| `failed` + a composed payload | **the service** | Only `dispatchOne` writes `failed`, and it is reached only from a `pending` row — which for a transfer op is only ever `enqueueConvert`'s success path. | **Yes.** |
+
+**Both conditions are required**, and that is the point rather than a belt-and-
+braces flourish: a `failed` row with an empty payload would be a code path
+nobody has written, and there would be nothing in it to send; a `skipped` row
+carrying a real payload was still never dispatched. Either mismatch is refused.
+
+**And the re-send is the recorded payload, not a rebuild.** Migration 0277 says
+it plainly — the payload is a snapshot of what the save produced, never
+recomposed at drain. For a transfer that snapshot is the *whole* instruction:
+its own `DocNo`, the `DtlKeys` naming which lines moved, the parent to resolve
+`FromDocNo` from, the row to write the AutoCount number back onto. Sending it
+again is a retry in the plainest sense, and no route logic is copied into the
+re-queue tool to do it — which was the third of the original three objections.
+
+### Why `mvid` is not the gate, though it should be recorded
+
+`GET /health` returns `builtAt` and `mvid`, added so "which build refused this"
+is answerable, and the obvious rule is *a refusal recorded against an `mvid`
+that is no longer running is a refusal by a service that no longer exists*. It
+is not the gate here, for three reasons:
+
+1. **Nothing records it.** `callAcService` never probes `/health` and
+   `scm.autocount_outbox` has no column for it, so no existing row carries one —
+   including the two this change exists to recover. A gate that only works for
+   rows written after it shipped is not a gate for the backlog it was built for,
+   and back-filling the field by hand would be exactly the "trust me" flag this
+   rule is supposed to avoid.
+2. **It answers a different question.** `mvid` says the service was *replaced*.
+   It does not say the refusal was the service's: a rebuild does not give a
+   parentless delivery order a parent, so an `mvid`-only gate would happily
+   re-send all three permanent shapes.
+3. **It refuses things it should not.** `AutoCount login failed` and a dropped
+   tunnel are service refusals on the *same* build; an `mvid` gate would hold
+   them back for no reason.
+
+**It is still worth recording** — as information for the person, not as the
+gate. Two columns on the outbox row (`service_mvid`, `service_built_at`),
+stamped by the drain from the same probe, would let the page say *"refused by a
+build that is no longer running"* next to a `failed` row, which is precisely
+what somebody needs to know before pressing Send again on a transfer. Logged as
+open item 4 above.
+
+### What this does NOT claim
+
+`failed` means the service **answered**. It does not prove the account book was
+left untouched: if a document landed and only the reply was lost, a re-send
+writes a second one. That is the identical residual risk the create path already
+carries and documents — see the blockquote at the end of §3 — and it is why the
+message is the diagnosis. A refusal naming a shape AutoCount would not accept
+wrote nothing; an ambiguous transport failure might have. **When it is
+ambiguous, look in the book first.** Open item 5 is what would retire this
+paragraph.
+
+`sent` is refused outright and has no exception of any kind. That refusal now
+lives in the ladder itself and not only in its two callers, so a third caller
+cannot lose it.

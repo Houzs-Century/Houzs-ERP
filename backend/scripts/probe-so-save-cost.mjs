@@ -22,6 +22,12 @@
    If those constants move, this script's arithmetic is wrong; the constants are
    named below so the drift is visible rather than silent.
 
+   UPDATED 2026-08-16. Three of the sweep's reads no longer chunk an id list at
+   all — they are PostgREST `!inner` embeds driven from mfg_sales_order_items, so
+   their cost is the number of SO LINES that have a child row, not the number of
+   ids. Both shapes are computed below and printed side by side, because the
+   saving is only meaningful against today's counts.
+
    Company is deliberately NOT a filter: the sweep is cross-company by design
    (so-stock-allocation.ts says so in its own header), so a per-company count
    would understate it.
@@ -103,30 +109,59 @@ async function main() {
   steps.push(await count('distinct DOs behind them — step 3b',
     `SELECT count(DISTINCT d.delivery_order_id)::int AS n FROM scm.delivery_order_items d
       WHERE d.so_item_id IN (${LIVE_LINE_IDS})`));
+  /* The two counts the INVERTED reads page over: not "how many child rows",
+     but "how many SO LINES have one at all", because that is what PostgREST
+     returns as top-level rows through an `!inner` embed. */
+  steps.push(await count('live SO lines that HAVE a DO line — step 3, inverted',
+    `SELECT count(DISTINCT d.so_item_id)::int AS n FROM scm.delivery_order_items d
+      WHERE d.so_item_id IN (${LIVE_LINE_IDS})`));
+  steps.push(await count('live SO lines with a RECEIVED PO link — step 6b, inverted',
+    `SELECT count(DISTINCT p.so_item_id)::int AS n FROM scm.purchase_order_items p
+      WHERE p.so_item_id IN (${LIVE_LINE_IDS}) AND coalesce(p.received_qty,0) > 0`));
 
-  const [orders, lines, products, sofaLines, boundLines, codes, doItems, dos] = steps;
+  /* doItems (the RAW DO-line count) is measured and printed but not used in the
+     arithmetic below — under the inverted read the cost is the PARENT count,
+     not the child count. It stays because "71 requests for 83 rows" is the
+     whole point and the 83 has to keep being visible. */
+  const [orders, lines, products, sofaLines, boundLines, codes, doItems, dos,
+    doParentLines, poParentLines] = steps;
   const dbMs = steps.reduce((a, s) => a + s.ms, 0);
 
-  note(`\n  the same information, asked as 8 set-based SQL queries, costs ${dbMs} ms of`);
+  note(`\n  the same information, asked as ${steps.length} set-based SQL queries, costs ${dbMs} ms of`);
   note('  database time in total. The database is not the problem.');
 
   /* The sweep does not issue set-based queries. It issues paginated / chunked
      PostgREST requests — one HTTPS round trip each, in series. */
   const linesPerDocChunk = Math.ceil(lines.n / chunksFor(orders.n));
+  /* THREE OF THESE CHANGED SHAPE (2026-08-16). The DO-line read, the bound-PO
+     read and the allocated_batch_no read used to be chunkIn over id lists —
+     71 + 18 + 6 round trips on the day this was first run, for 83 rows, 3,520
+     ids and one column respectively. They are now embedded reads driven from
+     mfg_sales_order_items, so their cost is pagesFor(matching PARENT rows) and
+     the batch column rides in on the line load. If this arithmetic and
+     so-stock-allocation.ts ever disagree again, the code is right and this is
+     stale — that is what this comment is for. */
   const rt = {
     'lock claim + release': 2,
     'mfg_sales_orders (paginateAll)': pagesFor(orders.n),
-    'mfg_sales_order_items by doc_no (chunkIn 200 docs, each paginated)':
+    'mfg_sales_order_items by doc_no (chunkIn 200 docs, each paginated; carries allocated_batch_no)':
       chunksFor(orders.n) * pagesFor(linesPerDocChunk),
     'mfg_products (paginateAll)': pagesFor(products.n),
-    'mfg_sales_order_items allocated_batch_no (chunkIn sofa line ids)': chunksFor(sofaLines.n),
-    'delivery_order_items (chunkIn EVERY live line id)': chunksFor(lines.n),
+    'delivery_order_items (embedded !inner read, paged over the SO lines that HAVE one)':
+      pagesFor(doParentLines.n),
     'delivery_orders (chunkIn DO ids)': chunksFor(dos.n),
     'inventory_balances (chunkIn product codes)': chunksFor(codes.n),
-    'purchase_order_items (chunkIn bedframe/sofa line ids)': chunksFor(boundLines.n),
+    'purchase_order_items (embedded !inner read, paged over the SO lines that HAVE one)':
+      pagesFor(poParentLines.n),
     'v_inventory_lots_open (single call, NOT paginated)': 1,
   };
   const total = Object.values(rt).reduce((a, b) => a + b, 0);
+  /* What the same tree would have cost under the id-chunked shape, so the
+     saving is measured against TODAY's row counts rather than quoted from the
+     day it was made. */
+  const oldOnly = chunksFor(lines.n) + chunksFor(boundLines.n) + chunksFor(sofaLines.n);
+  const newOnly = pagesFor(doParentLines.n) + pagesFor(poParentLines.n);
+  const oldTotal = total - newOnly + oldOnly;
 
   note('\n--- SERIAL Worker->PostgREST round trips in ONE global sweep ---');
   for (const [k, v] of Object.entries(rt).sort((a, b) => b[1] - a[1])) {
@@ -135,9 +170,13 @@ async function main() {
   note(`  ${String(total).padStart(4)}  TOTAL read round trips`);
   note('        (flip UPDATEs, the audit insert and header transitions are on top');
   note('         of this and vary with how much stock moved since the last sweep)');
-  note(`\n  PR #1982 measured 10.0 s of sweep on prod 2026-08-10. Over ${total} round`);
-  note(`  trips that is ${Math.round(10000 / total)} ms per round trip — the figure to sanity-check any`);
-  note('  future claim against.');
+  note(`\n  ${String(oldTotal).padStart(4)}  what the SAME tree would cost under the pre-2026-08-16 id-chunked`);
+  note('        shape, for comparison. The gap is entirely the three reads whose');
+  note('        cost used to be set by an ID COUNT rather than by rows.');
+  note(`\n  PR #1982 measured 10.0 s of sweep on prod 2026-08-10, when the shape above`);
+  note(`  cost ${oldTotal} round trips — ${Math.round(10000 / oldTotal)} ms each. At that rate today's ${total} cost about`);
+  note(`  ${(total * (10000 / oldTotal) / 1000).toFixed(1)} s. That per-round-trip figure is the one to sanity-check any`);
+  note('  future claim against; re-measure it rather than quoting this line.');
 
   /* How often anyone pays it — so the per-save seconds can be turned into
      operator-hours rather than left as an anecdote. */

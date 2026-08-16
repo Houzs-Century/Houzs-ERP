@@ -44,6 +44,141 @@ behaviour. Both defects were invisible to `tsc` and to every existing test,
 which is how the same disease (`?print=1`) got fixed once and recurred here.
 
 **Ref.** PR #2226, fix/so-v2-history-and-activity-time-0813, 2026-08-16.
+## Saving a sales order paid for 71 HTTPS round trips to read 83 rows [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Creating a sales order, and every line add / edit / delete, made
+the salesperson watch a loading state. PR #1982 measured one such save at
+**10.6s on production** and deferred the sweep behind it for the header PATCH
+only; the create route and the three line routes still `await` it.
+
+**Root cause (traced, measured — not derived).** All five routes `await`
+`recomputeSoStockAllocation`, and the SCM client is supabase-js over PostgREST
+HTTPS (`db/supabase.ts`), so every `sb.from(...)` is a full Worker→Supabase
+round trip in series. `probe-so-save-cost` asked production what the sweep
+costs (run `31937764356`, 2026-08-16):
+
+```
+   123  TOTAL read round trips
+    71  delivery_order_items (chunkIn EVERY live line id)
+    18  purchase_order_items (chunkIn bedframe/sofa line ids)
+     6  mfg_sales_order_items allocated_batch_no (chunkIn sofa line ids)
+```
+
+Those 95 were not reading 95 requests' worth of data. `chunkIn` batches an id
+list 200 at a time, so the cost was set by the **id count** — 14,169 live SO
+lines — and not by the rows that exist. The `delivery_order_items` read made
+**71 requests to retrieve 83 rows**. The `allocated_batch_no` pass re-read
+1,123 rows the step-2 select had already fetched, for one extra column.
+
+**Fix.** The three reads are INVERTED: they start FROM `mfg_sales_order_items`
+with the live-SO lens as a one-level embedded filter (the shape `routes/mrp.ts`
+already runs in production) and pull the child rows through a PostgREST
+`!inner` embed, which returns only the SO lines that HAVE a child row — so no
+id list is enumerated at all. `allocated_batch_no` moves into the step-2 select
+that was already reading those rows, keeping its migration-0121 forward-compat
+retry. **123 → 30 serial round trips.**
+
+Equivalence was PROVEN against production before shipping, not argued
+(`probe-so-sweep-inversion`, run `31941756087`):
+
+```
+  delivery_order_items  old 83 rows, new 83 rows — old EXCEPT new = 0, new EXCEPT old = 0
+  purchase_order_items  374 rows                 — old EXCEPT new = 0, new EXCEPT old = 0
+  delivery_order_items.so_item_id -> mfg_sales_order_items  [exactly one FK]
+  purchase_order_items.so_item_id -> mfg_sales_order_items  [exactly one FK]
+```
+
+The FK check is not ceremony: PostgREST resolves an embed from a foreign key,
+so no FK means a 400 in production and the change could not have shipped at
+all. The row comparison is a symmetric difference row by row, never a count —
+`res.count` answered the wrong question three times in
+`jsonb-double-encoding-coe.md`.
+
+The SO detail's Stock column is a whole global `computeMrp` run, and it stays
+one: a line's coverage depends on what higher-priority lines already claimed,
+so a single-order run answers a different question rather than the same one
+faster. What changed is that it no longer BLOCKS the three per-line reads
+beside it — `soCoverage` is awaited alongside them.
+
+**What this did NOT do, deliberately.** The AutoCount outbox enqueue
+(`queueAcSoEdit` → `composeSoState`, ~10 more serial round trips at the end of
+every line write) was left ON the response path. Its result is discarded by
+every caller, so it *could* move to `waitUntil` — but a lost `waitUntil`
+leaves an SO edited in the ERP with no outbox row, and
+`check-autocount-outbox-health` reads the outbox TABLE: it can see a `failed`
+row, and cannot see a row that was never written. Deferring it would create a
+silent-divergence class no check covers, three days after write-back went live.
+The condition under which it becomes safe is stated in the module guide.
+
+**Test.** `tests/soAllocationReadShape.test.ts` runs the real
+`recomputeSoStockAllocation` against a PostgREST-shaped fake that APPLIES the
+predicates (including embedded ones) and counts requests. On a 300-order /
+1,200-line fixture it asserts the same allocation and **20 → 12** SELECT round
+trips; on the parent commit the same file fails with
+`expected 6 to be +0` for `delivery_order_items`.
+
+**Ref.** perf/so-save-roundtrips, 2026-08-16.
+## A rebuilt AutoCount host could not un-refuse the documents it fixed [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The shop-floor AutoCount host was rebuilt on 2026-08-16 and the new
+build verified live (`/health` -> `{"ok":true,"book":"AED_HOUZS","builtAt":
+"2026-08-16T14:35:08Z","mvid":"a6a91dd5-…"}`), which is what `Invalid transfer
+item.` had been waiting for. Pressing **Send again** on the two delivery orders
+that failure had stranded answered:
+
+```
+not re-queueable here: DO HC-DO-2608-002 (so_to_do) — a conversion refusal is not
+re-queued here: a parentless DO / GR / IV / PI can never exist in AutoCount at
+all, a merged conversion has no AutoCount shape, and a DtlKey-subset refusal is
+fixed by the line-key backfill and then re-raising the document.
+```
+
+**Root cause (traced, not guessed).** `requeueOneRow` opened with
+`if (raw.op !== 'create_so' && raw.op !== 'create_po') return not-recoverable`,
+so the op name alone decided it and the row's state was never consulted. The
+three cases the message names are all real and all permanent — but they are
+properties of the **document**, and the guard applied them to a refusal that was
+a property of the **service**. A service refusal stops being true when the
+service is replaced, which is exactly what a host rebuild does, and rebuilds are
+routine here. Every one of them would have needed the outbox edited by hand.
+
+**Proven, not read.** The two states are written by different code and record
+themselves differently, which is what makes them separable at all:
+`recordConvertSkipped` — the single writer behind all three unrecoverable shapes,
+reached directly for a merged conversion, through `recordParentlessCreate` for a
+parentless one, and from `readConvertSourceKeys`'s refusal for a DtlKey subset —
+hard-codes `status: 'skipped'` and `payload: { body: {} }`, and such a row never
+reaches the drain. `failed` is written only by `dispatchOne`, reached only from a
+`pending` row, which for a transfer op is only ever `enqueueConvert`'s success
+path. Both branches were re-read in the source before the fix, and every guard
+below is pinned by a test that FAILS when the guard is deleted (four mutations
+run: drop the status gate -> 7 fail; drop the payload gate -> 1 fails; drop the
+`sent` rung -> 8 fail).
+
+**Fix.** A transfer op (`so_to_do`, `po_to_gr`, `do_to_iv`, `gr_to_pi`,
+`so_to_po`) is re-sendable when — and only when — `status = 'failed'` **and** the
+row carries a composed payload. Both are required: a `failed` row with `{}` has
+nothing to send, a `skipped` row with a payload was still never dispatched. The
+re-send queues the RECORDED payload rather than recomposing, which is what
+retiring the third original objection ("the route logic copied into a script")
+costs: nothing, because 0277 already stores the whole instruction. New outcome
+code `requeued-as-recorded`, because the promise it makes differs from
+`requeued`'s — a change made to the document since the refusal is NOT in it.
+`already-sent` moved INTO the ladder, so a caller that forgets the check cannot
+put a second copy of a document into a live licensed book.
+
+**Also fixed in the same pass.** `requeueSkipped` was selecting its own copy of
+the column list the constant `REQUEUE_ROW_COLS` exists to prevent (they agreed,
+which is how that class survives); `reasonFor` answered every non-`edit` op with
+the conversion sentence, so a `cancel` refusal was told about parentless delivery
+orders.
+
+**Ref.** PR #2327, 2026-08-16. Rule in full, including why the host's `mvid` is
+NOT the gate: `docs/autocount-sync-reasons.md` §6.
 
 ## "Convert to" navigated with a source document and the picker threw it away [high]
 
