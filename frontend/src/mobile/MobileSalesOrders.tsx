@@ -272,7 +272,12 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
     for (const r of rows) {
       if (isCancelled(r)) continue;
       rev += total(r);
-      const b = balance(r); if (b > 0) out += b;
+      /* Signed, matching the server's `aggregates.outstandingCenti` (which sums
+         balance_centi_live straight). Dropping negatives here made the fallback
+         path disagree with the primary one the moment over-collection became
+         possible — the same figure reading differently depending on whether the
+         backend answered with aggregates. */
+      out += balance(r);
     }
     return { rev, out, fullSet: false };
   }, [aggregates, rows]);
@@ -526,9 +531,13 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
             <span><b style={{ color: "var(--ink)" }}>{totalCount}</b> orders</span>
             <span style={{ opacity: .4 }}>·</span>
             <span className="money">{fmtCenti(summary.rev)} rev{summary.fullSet ? "" : " (loaded)"}</span>
-            {summary.out > 0 && <>
+            {/* Non-zero either way — a net over-collection is not "nothing to
+                show", and it is red for the same reason a debt is. */}
+            {summary.out !== 0 && <>
               <span style={{ opacity: .4 }}>·</span>
-              <span className="money" style={{ color: "var(--red)" }}>{fmtCenti(summary.out)} outstanding{summary.fullSet ? "" : " (loaded)"}</span>
+              <span className="money" style={{ color: "var(--red)" }}>
+                {fmtCenti(summary.out)} {summary.out < 0 ? "over-collected" : "outstanding"}{summary.fullSet ? "" : " (loaded)"}
+              </span>
             </>}
           </div>
         )}

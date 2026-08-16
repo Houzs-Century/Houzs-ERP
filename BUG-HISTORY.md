@@ -112,6 +112,183 @@ reader is looking at — including a `sent` one.
 
 **Ref:** this PR, 2026-08-16.
 
+## The delivery date never reached the AutoCount header [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The owner: *"AutoCount 有一个 Sales Exemption Date，怎么没有 update
+进去？"* — and then, when told the ERP has no exemption field: *"这个就是
+delivery date 来的 … 就是用我们 delivery date 放进去 sales exemption date 而已，
+一样的东西."*
+
+**Root cause, and the first answer was wrong.** The first answer was that the
+ERP has no such field, so there is nothing to send. That was true about the
+NAME and false about the THING. AutoCount's sales-order HEADER has no delivery
+date of its own — the SDK lists `DeliveryDate` on the six DETAIL classes and
+nowhere else, which is why an earlier query for `SO.DeliveryDate` returned
+`Error 207: Invalid column name` — so this book keeps the header delivery date
+in `SalesExemptionExpiryDate`, and Inistate, the connector the ERP replaces,
+writes it there.
+
+`mfg_sales_orders.customer_delivery_date` is the value. It was not even being
+READ: `SO_HEADER_COLS` did not list it.
+
+**Fix, four places, because a date needs different handling from a string at
+every one:**
+
+| where | what |
+|---|---|
+| `SO_HEADER_COLS` | read `customer_delivery_date` |
+| `composeCreateSo` | `SalesExemptionExpiryDate` on the payload |
+| `soEditHeader` | the same key, omit-when-absent |
+| `AcSyncService.cs` | apply it on BOTH create and edit |
+
+**The C# is the part that would have failed silently.** `Edit`'s header loop
+reads every key with `Str()` and assigns through reflection; a
+`Nullable<DateTime>` property given a string throws — inside `Set()`, which
+swallows exceptions. Adding the key to that allow-list would have produced a
+field that looks wired and writes nothing. It is handled beside `DocDate`
+instead, which is the existing precedent for a date on that path.
+
+`ContainsKey` rather than `HasValue` on both paths, so present-and-null blanks
+it and absent leaves the book's own — the same rule the line delivery date
+already follows, and the reason `#2218` exists.
+
+Registered as clearable: it is a date with no foreign key behind it, so an
+operator who deletes it has that reach the book.
+
+**Ref.** 2026-08-16, PR #2305.
+## SO-to-PO wrote the source document but not the source TYPE [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The owner asked whether SO-to-PO was working. Read off the live
+book on 2026-08-16, every purchase line this route has ever written:
+
+```
+DocNo                    Seq  Qty  UnitPrice  FromDocType  FromDocNo
+ZZQA-PO-20260816-124548  16   4.0  0.00       NULL         ZZQA-SO-20260816-124548
+ZZQA-PO-20260816-095955  16   4.0  0.00       NULL         ZZQA-SO-20260816-095955
+ZZQA-PO-20260816-014157  16   4.0  5.00       NULL         ZZQA-SO-20260816-014157
+```
+
+`FromDocNo` present, **`FromDocType` NULL** — against every `DODTL` row from
+`Convert_`, which carries both. AutoCount's own transfer relationship reads that
+column, so the link is one-sided and the PO does not show its Transfer From.
+
+**Root cause, and it is visible in the two signatures.**
+
+```
+AddPartialTransferDetail(String fromDocType, Int64[] keys, Boolean transferMaster)
+AddSOToPOTransferDetail(Int64)
+```
+
+The four conversions use the first and are TOLD the type, so they record it.
+SO-to-PO used the second, which has nowhere to take one from. Nothing was
+dropped or mis-set; the type was never available to be written.
+
+`sdk-api-reference.txt` says the detail classes expose no settable `From*`
+fields, so it cannot be patched in afterwards either — the primitive has to
+carry it.
+
+**Fix.** Call the typed primitive first, keeping the untyped one as a fallback.
+`transferMaster` is FALSE here, unlike the purchase-side conversions: that flag
+copies the SOURCE document's master and this source is a SALES order, so true
+would put a debtor onto a purchase document. `PurchaseHeader` sets the creditor
+explicitly, which is what `/po-to-gr` needed `transferMaster` for and this route
+does not.
+
+**Why a fallback rather than a straight swap.** A sales `fromDocType` on a
+purchase document is not listed in the SDK dump as a supported pairing, and this
+file compiles nowhere but the office host. If the typed call throws, the old one
+runs and the document is written exactly as it is today — one-sided link and
+all — with the refusal in `ac-sync-service.log`. The worst case is what we
+already have.
+
+`UnitPrice 0.00` on those rows is NOT part of this: those probes were raised
+from sources priced at zero, which `#2259` made the route carry deliberately.
+
+**Ref.** 2026-08-16, PR #2300.
+## An address typed in AFTER the create reached AutoCount on one side only [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The owner, comparing our documents against the ones Inistate writes
+— Inistate being the connector the ERP replaces: *"address 和 delivery address
+也是你去查看一下 Inistate 开单都会把什么东西输入进去 AutoCount。"* Read off the
+live book on 2026-08-16:
+
+| | InvAddr1 | InvAddr3 | DeliverAddr1 | DeliverAddr3 |
+|---|---|---|---|---|
+| `HC-SO-2608-002` — address typed in by an EDIT | `dsdsd` | `05200 Alor Setar` | **(empty)** | **(empty)** |
+| `HC-SO-2608-003` — address present at CREATE | `gjhghj` | `01560 Kangar` | `gjhghj` | `01560 Kangar` |
+| `SO-013264/5/6` — Inistate's own | filled | filled | identical to Inv | identical to Inv |
+
+**Root cause.** `CreateSo` falls back per line —
+`so.DeliverAddr1 = Or(Str(p,"DeliverAddr1"), Str(p,"InvAddr1"))` — so a document
+created WITH an address gets both copies from the one the ERP sends. `/edit`'s
+header loop is `ContainsKey`-gated and `soEditHeader` only ever emitted
+`InvAddr1..4`, so an address added or changed after the create updated the
+invoice copy and left the delivery copy at whatever the create had put there —
+empty, for an order created without one.
+
+This is the same shape as the delivery-date and the clearing defects before it:
+**the CREATE path fills a field and the EDIT path does not.** Three instances
+now, all in the same function, all found by comparing the book against the ERP
+rather than by reading either alone.
+
+**Fix.** `deliverAddressOf` mirrors `soInvoiceAddress`'s four values onto the
+`DeliverAddr*` keys, built FROM it rather than re-derived so the two copies
+cannot drift — a second implementation of the five-columns-into-four packing is
+exactly how they would. Omit-when-absent still holds on both copies, and
+`clearedAcKeys` now nulls both when an address column is cleared: clearing one
+half would leave the book showing a street on the delivery side that the order
+no longer has.
+
+The mirroring is not a guess about what AutoCount wants — it is what Inistate,
+the system being replaced, already writes.
+
+Also tidied: the extraction that created this file left `export` orphaned above
+the doc comment (`export /**`), which compiles and reads as though the comment
+belongs to the export rather than the function.
+
+The first of the three new cases was observed RED with the mirror removed.
+
+**Ref.** 2026-08-16, PR #2280.
+## Refusing an over-payment pushed the money onto the customer's line items [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner, 2026-08-16: 「我的 payment 是不能超收的…如果我多收 250，
+它不是应该 show balance negative 250 代表我超收吗？但它现在是直接把我的 item
+upgrade 上去，加多了 250 块」. A receipt larger than the outstanding total was
+refused, and the order's line value grew by the excess instead.
+
+**Root cause (traced).** NOT an automatic write — no code path adds a payment's
+excess to a line, and production agrees: price rises whose delta equals a
+payment amount on the same order = 0 across the whole book
+(probe-so-overpay.mjs, run 31938039273 section 5). The guard itself was the
+cause. POST/PATCH /:docNo/payments refused Σ(ledger) + this payment >
+total_revenue_centi, so an operator holding cash the customer had already paid
+had exactly one way to bank it: re-price the ORDER until the total covered it.
+On HC-SO-2608-002 that is the audit trail — UPDATE_LINE at 08:26:22 put RM 250
+of "Right Drawer" special on a JAGER-(K) line (unitPriceCenti 0 -> 25000), and
+the RM 2,250 payment landed 76 seconds later at 08:27:38, accepted because the
+total was now exactly 425000. The order silently grew a drawer nobody sold, and
+an item is what gets manufactured and delivered.
+
+**Fix.** Over-collection is allowed: the guard is deleted from both payment
+routes with the two lookups it needed. so-outstanding.ts gains soBalanceCenti
+(signed) beside soOutstandingCenti (still clamped, because it feeds AutoCount's
+UDF_BALANCE and a licensed ledger is not where a credit belongs); migration 0301
+un-floors the view's balance_centi_live so the list agrees with the detail page.
+Negative renders red on every SO balance surface, and the print flips BALANCE
+DUE to CREDIT BALANCE. Both signed rules refuse to go negative on a ZERO total —
+that is every AutoCount import, 2,687 of prod's 2,824 live orders, so a bare
+total - paid would have reddened 2,121 legacy orders for RM 9.26m nobody
+over-collected.
+
+**Ref.** fix/allow-overcollection-negative-balance, 2026-08-16.
 ## The stock remark said READY (PARTIAL) on an order that could not ship [high]
 
 <!-- area: Sales orders + pricing -->
