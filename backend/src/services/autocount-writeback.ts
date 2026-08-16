@@ -1635,6 +1635,11 @@ export function clearedAcKeys(
      keeps a street that is no longer on the order. */
   if (SO_ADDRESS_FIELDS.some((f) => touched.has(f))) {
     header.push('InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4');
+    /* Both copies, because the ERP holds ONE address and the book holds two.
+       Clearing only the invoice half would leave the delivery half showing a
+       street the order no longer has — the same asymmetry that let an EDITED
+       address reach the book on one side only until 2026-08-16. */
+    header.push('DeliverAddr1', 'DeliverAddr2', 'DeliverAddr3', 'DeliverAddr4');
   }
   const udf: string[] = [];
   for (const [col, key] of Object.entries(CLEARABLE_SO_UDF_FIELDS)) {
