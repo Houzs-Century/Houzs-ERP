@@ -3195,8 +3195,8 @@ export type SoCreateContext = {
      the three-questions header). REQUIRED, not optional, per CLAUDE.md: a
      parameter that DECIDES something must make every call site declare itself,
      because the silent default here is the PERMISSIVE one and an omission would
-     hand free pricing to a caller nobody checked. The HTTP route passes
-     maySetSellingPrice(c); createDraftSalesOrder passes true — the scan job has
+     hand free pricing to a caller nobody checked. The HTTP route answers it with
+     the permission helper; createDraftSalesOrder passes true — the scan job has
      no permissions stash and no person in the request, and its prices are
      transcribed from a handwritten slip rather than authored. */
   pricingAuthority: boolean;
