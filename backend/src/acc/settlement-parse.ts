@@ -46,7 +46,7 @@ export type ParsedRow = {
 };
 
 export type ParseResult =
-  | { ok: true; rows: ParsedRow[]; grossSen: number; feeSen: number; netSen: number; periodFrom: string; periodTo: string }
+  | { ok: true; rows: ParsedRow[]; grossSen: number; feeSen: number; netSen: number; periodFrom: string; periodTo: string; skippedLines: number }
   | { ok: false; reason: string };
 
 /* ── The small mechanical helpers ─────────────────────────────────────────── */
@@ -174,15 +174,18 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
   }
 
   const rows: ParsedRow[] = [];
+  let skipped = 0;
   for (let i = 1; i < lines.length; i += 1) {
     const cells = splitCsvLine(lines[i]);
     const rawDate = cells[idxDate] ?? '';
     const rawGross = cells[idxGross] ?? '';
-    /* Statements end with a totals block whose date cell is blank or says
-       "TOTAL". Those are not transactions — skipped, and only when BOTH the
-       date and the amount fail to read, so a genuinely malformed transaction
-       line still raises below. */
-    if (!rawDate.trim() && toSen(rawGross) == null) continue;
+    /* Statements end with a totals block — a row with no date and the whole
+       statement's amount in the money column (a real MBB export ends
+       `,,TOTAL,6077.00,91.16`). A DATELESS row cannot be a transaction under
+       any reading, so it is skipped; a row that HAS a date it cannot read is a
+       different thing and still raises below. The count is reported, because
+       "skipped some rows" must never be something the operator has to guess. */
+    if (!rawDate.trim()) { skipped += 1; continue; }
 
     const txnDate = toIsoDate(rawDate);
     if (!txnDate) return { ok: false, reason: `Line ${i + 1}: cannot read the date "${rawDate}".` };
@@ -249,5 +252,6 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
     netSen: rows.reduce((s, r) => s + r.netSen, 0),
     periodFrom: dates[0],
     periodTo: dates[dates.length - 1],
+    skippedLines: skipped,
   };
 }

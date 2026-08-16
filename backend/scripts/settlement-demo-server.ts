@@ -1,0 +1,275 @@
+// ----------------------------------------------------------------------------
+// settlement-demo-server — the owner's local test rig for layer 3.
+//
+// DEV ONLY. Nothing in the Worker imports this; it is never deployed.
+//
+// It runs the REAL settlement handlers, the REAL parser, the REAL matcher and
+// the REAL posting engine. The only thing that is not real is the database:
+// tables live in memory (the same `fakeSb` the suites use), so the owner can
+// upload statements, confirm settlements and watch journal entries appear
+// WITHOUT any production credentials and without touching a live book.
+//
+//   npx tsx scripts/settlement-demo-server.ts          (from backend/)
+//
+// Reset the world at any time with POST /api/scm/demo/reset.
+// ----------------------------------------------------------------------------
+
+import { createServer } from 'node:http';
+import { Hono } from 'hono';
+import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
+import { postSoPayment, postSiPayment } from '../src/acc/payments';
+import {
+  settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
+  settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched,
+  settlementIgnoreRow, settlementWatchlist, settlementExport,
+} from '../src/scm/routes/accounting-settlement';
+
+const PORT = Number(process.env.DEMO_PORT ?? 8788);
+const CO = 1;
+
+/* ── The seeded world ─────────────────────────────────────────────────────── */
+
+const CHART: Row[] = [
+  ['320-0000', 'Card Machine Clearing (EDC)', 'ASSET'],
+  ['325-0000', 'Online Payment Clearing', 'ASSET'],
+  ['330-0000', 'Bank — Maybank Current', 'ASSET'],
+  ['331-0000', 'Bank — Hong Leong Current', 'ASSET'],
+  ['335-0000', 'Cash on Hand', 'ASSET'],
+  ['300-0000', 'Trade Debtor', 'ASSET'],
+  ['930-0000', 'Merchant/Gateway Charges', 'EXPENSE'],
+].map(([account_code, account_name, account_type]) => ({
+  account_code, account_name, account_type, parent_code: null, is_active: true, company_id: CO,
+}));
+
+/* MBB carries a unique approval code — the only kind that may auto-match.
+   GHL deliberately does NOT: it is the brief's cautionary tale, and on this rig
+   the owner can see for himself that nothing of GHL's confirms itself. */
+const ACQUIRER_CONFIG: Row[] = [
+  {
+    code: 'MBB', display_name: 'MBB', statement_format: 'CSV', has_unique_ref: true,
+    fee_method: 'stated', date_tolerance_days: 3, is_active: true,
+    column_map: { date: 'Txn Date', ref: 'Approval Code', gross: 'Gross', fee: 'MDR' },
+  },
+  {
+    code: 'GHL', display_name: 'GHL', statement_format: 'CSV', has_unique_ref: false,
+    fee_method: 'gross-minus-net', date_tolerance_days: 3, is_active: true,
+    column_map: { date: 'Date', gross: 'Amount', net: 'Net Credited' },
+  },
+  {
+    code: 'PBB', display_name: 'PBB', statement_format: null, has_unique_ref: null,
+    fee_method: null, date_tolerance_days: 3, is_active: true, column_map: null,
+  },
+];
+
+const COMPANY_LINKS: Row[] = ACQUIRER_CONFIG.map((a) => ({
+  company_id: CO, acquirer_code: a.code,
+  transit_account_code: '320-0000', fee_account_code: '930-0000',
+  bank_account_code: a.code === 'GHL' ? '331-0000' : '330-0000',
+  is_active: true,
+}));
+
+/* The view migration 0301 creates — config joined to this company's link. */
+const acquirerView = (): Row[] => COMPANY_LINKS.map((l) => {
+  const g = ACQUIRER_CONFIG.find((a) => a.code === l.acquirer_code)!;
+  return {
+    company_id: l.company_id, code: g.code, display_name: g.display_name,
+    transit_account_code: l.transit_account_code, fee_account_code: l.fee_account_code,
+    bank_account_code: l.bank_account_code,
+    statement_format: g.statement_format, has_unique_ref: g.has_unique_ref,
+    fee_method: g.fee_method, date_tolerance_days: g.date_tolerance_days,
+    column_map: g.column_map, is_active: Boolean(g.is_active && l.is_active),
+  };
+});
+
+const soPay = (id: string, docNo: string, paidAt: string, sen: number, approval: string | null, provider: string): Row => ({
+  id, so_doc_no: docNo, paid_at: paidAt, amount_centi: sen, approval_code: approval,
+  method: 'merchant', merchant_provider: provider, company_id: CO,
+});
+
+const seed = () => ({
+  accounts: CHART.map((r) => ({ ...r })),
+  acc_account_roles: [] as Row[],
+  acc_acquirer_config: ACQUIRER_CONFIG.map((r) => ({ ...r })),
+  acc_company_acquirers: COMPANY_LINKS.map((r) => ({ ...r })),
+  acc_acquirers: acquirerView(),
+  acc_settlement_batches: [] as Row[],
+  acc_settlement_rows: [] as Row[],
+  acc_settlement_matches: [] as Row[],
+  journal_entries: [] as Row[],
+  journal_entry_lines: [] as Row[],
+  mfg_sales_order_payments: [
+    // ── MBB: these carry approval codes, so the MBB statement auto-matches them.
+    soPay('p1', 'SO-2608-001', '2026-08-01T10:12:00', 100000, 'A1001', 'MBB'),
+    soPay('p2', 'SO-2608-002', '2026-08-01T14:40:00', 250000, 'A1002', 'MBB'),
+    soPay('p3', 'SO-2608-003', '2026-08-02T11:05:00', 60000, 'A1003', 'MBB'),
+    // ── The one-swipe-two-orders case: 600 + 400 = the statement's 1,000 line.
+    soPay('p4', 'SO-2608-004', '2026-08-02T16:20:00', 60000, null, 'MBB'),
+    soPay('p5', 'SO-2608-005', '2026-08-02T16:21:00', 40000, null, 'MBB'),
+    // ── Card money nobody has settled: this is watchlist 1.
+    soPay('p6', 'SO-2607-088', '2026-07-18T09:30:00', 35000, 'A0900', 'MBB'),
+    // ── GHL: no approval codes at all, by nature.
+    soPay('g1', 'SO-2608-010', '2026-08-01T12:00:00', 80000, null, 'GHL'),
+    soPay('g2', 'SO-2608-011', '2026-08-02T13:30:00', 45000, null, 'GHL'),
+  ],
+  sales_invoice_payments: [
+    {
+      id: 'q1', sales_invoice_id: 'INV-2608-777', paid_at: '2026-08-03T09:15:00',
+      amount_centi: 120000, approval_code: 'A1004', method: 'installment',
+      merchant_provider: 'MBB', company_id: CO,
+    },
+  ],
+  /* postSoPayment reads the SO for the company and the customer name. */
+  mfg_sales_orders: [
+    ['SO-2608-001', 'Tan Ah Seng'], ['SO-2608-002', 'Siti Rahman'],
+    ['SO-2608-003', 'Lim Boon Huat'], ['SO-2608-004', 'Kedai Perabot Jaya'],
+    ['SO-2608-005', 'Kedai Perabot Jaya'], ['SO-2607-088', 'Wong Mei Ling'],
+    ['SO-2608-010', 'Raj Kumar'], ['SO-2608-011', 'Nurul Aina'],
+  ].map(([doc_no, customer_name]) => ({ doc_no, customer_name, customer_phone: null, company_id: CO })),
+  sales_invoices: [
+    { id: 'INV-2608-777', invoice_number: 'INV-2608-777', company_id: CO,
+      debtor_code: 'C-0042', debtor_name: 'Syarikat Maju', migrated_no_stock: false },
+  ],
+});
+
+let tables = seed();
+
+/**
+ * Book the card takings the way phase 2A already does in production —
+ * Dr settlement-in-transit / Cr AR, through the REAL `acc/payments.ts`.
+ *
+ * Without this the rig would start with an empty 320-0000 and confirming a
+ * settlement would drive it NEGATIVE, which tells the owner the opposite of
+ * the truth. With it, in-transit starts at the full card takings and the whole
+ * point of the screen becomes visible: every confirmation drains it toward
+ * zero, and what is left is money swiped but not yet received.
+ */
+async function bookTheTakings(): Promise<void> {
+  const sb = client();
+  for (const p of tables.mfg_sales_order_payments) {
+    await postSoPayment(sb, p as never);
+  }
+  for (const p of tables.sales_invoice_payments) {
+    await postSiPayment(sb, p as never);
+  }
+}
+
+const client = () => fakeSb(
+  tables,
+  {},
+  [
+    { table: 'acc_settlement_matches', column: 'payment_id', name: 'acc_settlement_payment_once' },
+    { table: 'acc_settlement_batches', column: 'file_hash', name: 'acc_settlement_batch_once' },
+  ],
+  ['acc_settlement_batches', 'acc_settlement_rows', 'acc_settlement_matches'],
+);
+
+/* PATCH /setup writes to the two real tables; the view is derived, so refresh
+   it after every write exactly as Postgres would. */
+const refreshView = () => {
+  tables.acc_acquirers.length = 0;
+  for (const l of tables.acc_company_acquirers) {
+    const g = tables.acc_acquirer_config.find((a) => a.code === l.acquirer_code);
+    if (!g) continue;
+    tables.acc_acquirers.push({
+      company_id: l.company_id, code: g.code, display_name: g.display_name,
+      transit_account_code: l.transit_account_code, fee_account_code: l.fee_account_code,
+      bank_account_code: l.bank_account_code,
+      statement_format: g.statement_format, has_unique_ref: g.has_unique_ref,
+      fee_method: g.fee_method, date_tolerance_days: g.date_tolerance_days,
+      column_map: g.column_map, is_active: Boolean(g.is_active && l.is_active),
+    });
+  }
+};
+
+/* ── The app: the real handlers, on the real paths ────────────────────────── */
+
+const app = new Hono();
+
+app.use('*', async (c, next) => {
+  c.header('access-control-allow-origin', '*');
+  c.header('access-control-allow-headers', '*');
+  c.header('access-control-allow-methods', 'GET,POST,PATCH,PUT,DELETE,OPTIONS');
+  if (c.req.method === 'OPTIONS') return c.body(null, 204);
+  c.set('supabase' as never, client() as never);
+  c.set('companyId' as never, CO as never);
+  c.set('houzsUser' as never, { name: 'Owner (demo)', permissions_set: ['scm.payment_voucher.post'] } as never);
+  await next();
+  refreshView();
+});
+
+const R = '/api/scm/accounting/settlement';
+app.get(`${R}/setup`, settlementSetup as never);
+app.patch(`${R}/setup/:code`, settlementSetupSave as never);
+app.post(`${R}/batches`, settlementUpload as never);
+app.get(`${R}/batches`, settlementBatches as never);
+app.get(`${R}/batches/:id`, settlementBatchDetail as never);
+app.get(`${R}/batches/:id/export`, settlementExport as never);
+app.post(`${R}/batches/:id/confirm-matched`, settlementConfirmMatched as never);
+app.post(`${R}/rows/:id/confirm`, settlementConfirmRow as never);
+app.post(`${R}/rows/:id/ignore`, settlementIgnoreRow as never);
+app.get(`${R}/watchlist`, settlementWatchlist as never);
+
+/* Demo-only: show what actually reached the ledger, and start over. */
+app.get('/api/scm/demo/ledger', (c) => c.json({
+  entries: tables.journal_entries.map((je) => ({
+    ...je,
+    lines: tables.journal_entry_lines
+      .filter((l) => String(l.journal_entry_id) === String(je.id))
+      .map((l) => ({
+        account_code: l.account_code,
+        account_name: tables.accounts.find((a) => a.account_code === l.account_code)?.account_name ?? l.account_code,
+        debit_sen: l.debit_sen, credit_sen: l.credit_sen, notes: l.notes,
+      })),
+  })),
+  transitBalanceSen: tables.journal_entry_lines
+    .filter((l) => l.account_code === '320-0000')
+    .reduce((s, l) => s + Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0), 0),
+  payments: [...tables.mfg_sales_order_payments, ...tables.sales_invoice_payments],
+  settledPaymentIds: tables.acc_settlement_matches.map((m) => String(m.payment_id)),
+}));
+
+app.post('/api/scm/demo/reset', async (c) => {
+  tables = seed();
+  await bookTheTakings();
+  return c.json({ ok: true });
+});
+
+/* ── node:http bridge (no extra dependency; Hono speaks fetch) ─────────────── */
+
+createServer((req, res) => {
+  const chunks: Buffer[] = [];
+  req.on('data', (chunk: Buffer) => chunks.push(chunk));
+  req.on('end', () => {
+    void (async () => {
+      const headers = new Headers();
+      for (const [k, v] of Object.entries(req.headers)) {
+        if (typeof v === 'string') headers.set(k, v);
+        else if (Array.isArray(v)) headers.set(k, v.join(','));
+      }
+      const method = req.method ?? 'GET';
+      const request = new Request(`http://localhost:${PORT}${req.url ?? '/'}`, {
+        method,
+        headers,
+        body: method === 'GET' || method === 'HEAD' ? undefined : Buffer.concat(chunks),
+      });
+      const response = await app.fetch(request);
+      res.statusCode = response.status;
+      response.headers.forEach((value, key) => res.setHeader(key, value));
+      res.end(Buffer.from(await response.arrayBuffer()));
+    })().catch((err: unknown) => {
+      res.statusCode = 500;
+      res.end(String(err));
+    });
+  });
+}).listen(PORT, () => {
+  void bookTheTakings().then(() => {
+    const transit = tables.journal_entry_lines
+      .filter((l) => l.account_code === '320-0000')
+      .reduce((s, l) => s + Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0), 0);
+    /* eslint-disable-next-line no-console */
+    console.log(
+      `settlement demo API on http://localhost:${PORT} — in-memory database, no production credentials in play\n` +
+      `  card takings booked to settlement-in-transit: RM ${(transit / 100).toFixed(2)} across ${tables.journal_entries.length} entries`,
+    );
+  });
+});

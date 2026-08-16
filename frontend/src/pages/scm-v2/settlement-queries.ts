@@ -133,6 +133,8 @@ export const useSettlementBatch = (batchId: number | null) => useQuery({
 export type UploadResult = {
   batchId: number;
   rows: number;
+  /** Summary/total rows in the file that are not transactions. */
+  skippedLines: number;
   grossSen: number; feeSen: number; netSen: number;
   periodFrom: string; periodTo: string;
   buckets: Record<string, number>;

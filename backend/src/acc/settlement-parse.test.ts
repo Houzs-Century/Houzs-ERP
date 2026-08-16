@@ -74,6 +74,33 @@ describe('parseStatement — refusals are loud and name what is wrong', () => {
     expect((r as { reason: string }).reason).toMatch(/empty|No transaction lines/i);
   });
 
+  /* Found on the demo rig with a realistic MBB export: the file ends
+     `,,TOTAL,6077.00,91.16` — no date, but a perfectly readable amount. The
+     first cut skipped a line only when BOTH failed, so the whole upload was
+     refused for a summary row. A dateless row cannot be a transaction; it is
+     skipped, and COUNTED, so "some rows were dropped" is never a guess. */
+  it('a totals row with a readable amount is skipped and counted, not refused', () => {
+    const r = parseStatement(baseCfg(), CSV(
+      'Txn Date,Approval Code,Card,Gross,MDR',
+      '01/08/2026,A1,VISA ****1234,1000.00,15.00',
+      ',,TOTAL,1000.00,15.00',
+    ));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows).toHaveLength(1);
+    expect(r.skippedLines).toBe(1);
+    expect(r.grossSen).toBe(100000);
+  });
+
+  it('a row that HAS a date it cannot read still stops the parse', () => {
+    const r = parseStatement(baseCfg(), CSV(
+      'Txn Date,Approval Code,Gross,MDR',
+      'yesterday,A1,1000.00,15.00',
+    ));
+    expect(r).toMatchObject({ ok: false });
+    expect((r as { reason: string }).reason).toMatch(/Line 2/);
+  });
+
   it('an unreadable amount stops the parse and names the line', () => {
     const r = parseStatement(baseCfg(), CSV(
       'Txn Date,Approval Code,Gross,MDR',
@@ -105,6 +132,7 @@ describe('parseStatement — the three fee methods', () => {
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(r.rows).toHaveLength(2);
+    expect(r.skippedLines).toBe(1);
     expect(r.rows[0]).toMatchObject({ lineNo: 2, txnDate: '2026-08-01', ref: 'A1', grossSen: 100000, feeSen: 1500, netSen: 98500 });
     expect(r.grossSen).toBe(300000);
     expect(r.feeSen).toBe(4500);

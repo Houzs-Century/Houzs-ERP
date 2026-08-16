@@ -145,6 +145,12 @@ const ReconcileTab = () => {
             Nothing here can auto-match on amount and date alone.
           </div>
         )}
+        {upload.data && (
+          <div style={{ fontSize: 'var(--fs-13)', color: good }}>
+            Read {upload.data.rows} transaction line{upload.data.rows === 1 ? '' : 's'} ({upload.data.periodFrom} → {upload.data.periodTo}), gross {fmt(upload.data.grossSen)}, fee {fmt(upload.data.feeSen)}.
+            {upload.data.skippedLines > 0 && ` ${upload.data.skippedLines} summary line(s) in the file were not transactions and were left out.`}
+          </div>
+        )}
         {upload.isError && (
           <div style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
             <AlertTriangle {...ICON} />

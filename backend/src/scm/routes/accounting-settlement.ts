@@ -253,6 +253,10 @@ export const settlementUpload = guard(async (c) => {
     fileName,
     acquirerCode,
     rows: decisions.length,
+    /* Summary/total rows the file carries that are not transactions. Reported
+       rather than swallowed — the operator should never have to wonder why the
+       file had 6 lines and the batch has 5. */
+    skippedLines: parsed.skippedLines,
     grossSen: parsed.grossSen,
     feeSen: parsed.feeSen,
     netSen: parsed.netSen,
