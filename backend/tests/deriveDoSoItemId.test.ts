@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { fillMissingSoItemIds, DO_LINE_AMBIGUOUS_SO_LINE } from '../src/scm/lib/derive-do-so-item-id';
+import { fillMissingSoItemIds, claimedSoItemIdsOnDo, DO_LINE_AMBIGUOUS_SO_LINE } from '../src/scm/lib/derive-do-so-item-id';
 
 /* The guard that stops a delivery-order line being written with no link to the
    sales-order line it ships. The silent null is the defect (owner 2026-08-14:
@@ -106,5 +106,40 @@ describe('fillMissingSoItemIds', () => {
     expect(adhocDo.ok && adhocDo.derived).toBe(0);
     const allLinked = await fillMissingSoItemIds(fakeSb([]), 'SO-1', [{ itemCode: 'X', qty: 1, soItemId: 's9' }]);
     expect(allLinked.ok && allLinked.derived).toBe(0);
+  });
+});
+
+/* The exclusion list feeding the guard above. Its failure mode is SILENT and it
+   is one level up from the defect this file exists to close: if the read of
+   "which SO lines has this DO already claimed" fails and we call that "nothing
+   claimed", the exclusion empties, the ambiguity disappears with it, and the
+   add path cheerfully pairs a second line on ONE delivery order to an SO line
+   it is already shipping. That is why this reads `error` instead of `data ??
+   []` — the shape check-swallowed-reads.mjs exists to find. */
+describe('claimedSoItemIdsOnDo', () => {
+  test('returns the links the DO already holds, nulls included', async () => {
+    const r = await claimedSoItemIdsOnDo(fakeSb([{ so_item_id: 's1' }, { so_item_id: null }]), 'do-1');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ids).toEqual(['s1', null]);
+  });
+
+  test('a failed read REFUSES rather than reporting an empty claim list', async () => {
+    /* The whole point. `data ?? []` here would report "nothing claimed" for a
+       database that never answered, and the caller would then be free to
+       re-link a line the DO already ships. */
+    const r = await claimedSoItemIdsOnDo(fakeSb(null, { message: 'connection reset' }), 'do-1');
+    expect(r.ok).toBe(false);
+    if (r.ok) return;
+    expect(r.error).toBe('do_lines_unreadable');
+    expect(r.message).toContain('connection reset');
+  });
+
+  test('an empty delivery order is an empty list, not a refusal', async () => {
+    // "No lines yet" is a legitimate answer and must not read as a failure.
+    const r = await claimedSoItemIdsOnDo(fakeSb([]), 'do-1');
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.ids).toEqual([]);
   });
 });
