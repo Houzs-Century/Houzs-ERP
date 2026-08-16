@@ -1749,15 +1749,56 @@ umbrella `/api/scm/*` already applies, and it has to be, because this endpoint
 quotes what the licensed account book said about every document the company
 pushed. Same reasoning as `/hr`.
 
-It answers the owner's question in his order: a one-line verdict, then five
-counts (failed / skipped / queued / in AutoCount / re-queued) which are exact and
-whole-company regardless of the row filter, then the list, with every row's
-reason printed IN FULL — the health check clips at 300-400 characters because a
-workflow annotation must, and a page does not.
+It answers the owner's question in his order: a one-line verdict, then the two
+filter strips (which carry the counts), then the list, with every row's reason on
+the row itself.
 
 **Company-scoped on every one of its seven statements.** `company_id` is the
 whole tenant boundary here and an unscoped AutoCount report has already cost this
 project most of a day (#2201).
+
+#### Rebuilt 2026-08-16 — what the screen is now
+
+The first version put the five counts on TILES and the reason in the ERP's own
+words. The owner reviewed a mockup and asked for five changes; all five live in
+`frontend/src/lib/autocountOutbox.ts`, so both surfaces get them from one place.
+
+| | |
+|---|---|
+| **Two filter strips, counts on the chips** | Status (Everything / Needs attention / Waiting / In AutoCount / Not accepted / Held back / Sent again) and Document (Sales orders / Delivery orders / Invoices / Purchase orders / Goods received / Supplier invoices). Both are `<FilterPills>`, the same component the Sales Order list uses. The tiles are gone: the counts were the only useful thing about them and a tile cannot be clicked. |
+| **The reason, in three parts, inline** | A headline, one sentence, and a **To fix** line, keyed by the server's `reason_kind` (`AC_REASON_COPY`). Never behind a click — that was the owner's specific complaint. A `failed` row gets `AC_FAILED_COPY`, because the server deliberately does not classify those. |
+| **Who was asked** | `acReplySource` labels the quote **AutoCount replied** (the row went through `dispatchOne`), **AutoCount was not asked** (every `skipped` row — all of them are decided at enqueue time or before `callAcService`, so no held-back document has ever reached the account book), or **The last send attempt reported** for a `pending` row, where the note may be either and nothing the server sends tells them apart. |
+| **Send again, per row** | Offered only where the server's `can_requeue` says a re-send can mean anything, and driven by `useAcRequeue` — one hook, both surfaces. |
+| **No coding words** | The page no longer prints the config key, the raw `op` values, the raw state values, or the server's `remedy` strings — those name columns, tables and an SDK primitive. The remedy still ships in the API response and is still what the health-check log prints. The ERP's own note stays behind a collapsed disclosure, and opens by itself when `reason_kind` is `unrecognised`, because that is the one case where it IS the answer. Plurals are spelled out in `AC_DOC_TYPE_PLURAL`, never built by appending an "s" — "Goods received" has none. |
+
+**THE ANSWER TO Send again LANDS ON THE ROW THAT WAS PRESSED**, in all three
+directions it can go, and that is the part worth guarding:
+
+| what came back | what the row shows |
+|---|---|
+| `accepted: true` | the server's sentence, in green, and the page re-reads the queue — an accepted re-send makes a NEW row, so patching the one on screen would be a lie. **The old refusal comes OFF the row at the same moment**, before the re-read lands: *"To fix: go and change it in AutoCount"* on a document that has just been sent back to the queue is a false instruction, and a round trip is long enough to act on it |
+| `accepted: false` | the server's `message`, in amber, plus `reason` verbatim underneath when the composer refused it again, and the old refusal stays — nothing changed. **This is the branch that gets forgotten**, and forgetting it is "the button does nothing" wearing a success path: most refusals ("AutoCount already accepted this one") are the whole reason somebody pressed |
+| the call threw | *"Nothing was sent — the request did not get through: …"*, in red, old refusal kept. A refusal and a throw are different facts |
+
+Not a toast: a toast about `HC-SO-2608-004` is gone by the time the reader has
+found `HC-SO-2608-004`.
+
+**Two vocabularies, both keyed by the outcome code, and neither is a copy of the
+other.** `AC_REQUEUE_MEANING` (server) says WHAT HAPPENED and is printed
+verbatim — it is already plain English, it lives beside the code that produced
+the outcome, and a second dictionary on the page is how the two come to disagree
+about what `already-sent` means. `AC_REQUEUE_TODO` (`frontend/src/lib/autocountOutbox.ts`)
+is the OTHER column of `docs/autocount-sync-reasons.md` §1 — WHAT TO DO NEXT —
+which the API does not carry at all, and it renders as a **To do** line under
+the sentence. A code with no entry shows nothing rather than a bare hyphenated
+key, so a new outcome still reads correctly the day it ships.
+
+**`docType` is no longer sent to the server**, though the endpoint still accepts
+it. The type strip has to carry a count for every type, and a response already
+narrowed to one type makes every other chip read zero — so the type is applied on
+the client (`acRowsOfType` / `acDocTypeCounts`) while `state` and `docNo` stay
+server-side. Consequence, stated on screen when `truncated` is true: the STATUS
+counts are exact and whole-company, the TYPE counts are of the rows loaded.
 
 **IT WAS READ-ONLY UNTIL 2026-08-16.** This paragraph read: *"There is no
 re-queue button … Putting that behind a button is a decision the owner has not
