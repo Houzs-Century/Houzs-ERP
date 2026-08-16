@@ -28,3 +28,10 @@ jobs:
         working-directory: backend
         env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
         run: node scripts/audit-mrp-pairing.mjs
+      # TEMPORARY (branch-only, never proposed to main): lets the independent
+      # re-check of the legacy-'' fallback run against prod from a workflow name
+      # that already exists on the default branch, so nothing has to be merged.
+      - name: legacy '' fallback RE-CHECK (read-only)
+        working-directory: backend
+        env: { DATABASE_URL: "${{ secrets.DATABASE_URL }}" }
+        run: npx tsx scripts/probe-mrp-legacy-fallback-recheck.mjs
