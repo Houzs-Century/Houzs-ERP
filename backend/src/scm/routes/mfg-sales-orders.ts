@@ -656,6 +656,16 @@ function norm(v: unknown): string {
    sending it. That escape is now closed: a caller cannot shed what it never
    sent.
 
+   DOES NOT DEFEND, AND THIS IS THE BIG ONE (Owner 2026-08-16): the SSO door,
+   POST /api/pos/exchange-web-session, mints an ORIGIN-LESS session for the same
+   person. Anyone who can pass the PIN gate can therefore obtain a token that
+   reads as not-POS here, open the ERP web app with it, and price freely on
+   every route below. The owner ruled it: 「进了这个 ERP 就跟这个 ERP 的规矩」 —
+   the amount must be editable in the ERP. So this gate now binds the POS APP,
+   not the tablet and not the person: it holds requests made with the token the
+   PIN door issued, and nothing else. Do not read anything stronger into it, and
+   do not re-tighten that door without an owner ruling reversing this one.
+
    DOES NOT DEFEND — and this is a POLICY boundary, not an oversight: a person
    who knows their own Houzs PASSWORD can log in at the desktop/mobile door,
    get an origin-less session, and price freely. That is the owner's explicit
