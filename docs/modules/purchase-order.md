@@ -226,6 +226,59 @@ they are the only thing preventing a headerless orphan).
 Auth note (same as SO): inside `/api/scm/*`, `user.id` is the caller's **scm.staff
 UUID**; use `houzsUser.id` for the public bigint.
 
+### CAN a Sales Order be converted to a PO right now? The eligibility chain, in order
+
+> Added 2026-08-16 after the owner reported *"my new SO cannot be converted"*.
+> Read this before concluding a line is "not convertible": four independent
+> filters run, three of them SILENT, and the empty state asserts the opposite of
+> what is happening.
+
+`GET /outstanding-so-items` is the only source the desktop picker
+(`pages/scm-v2/PurchaseOrderFromSo.tsx`) and the mobile wizard
+(`mobile/MobileConvertWizard.tsx`) read. A line must survive all four:
+
+| # | Filter | Silent? | What survives |
+|---|---|---|---|
+| 1 | `.eq('cancelled', false)` + company scope + **`.limit(500)`**, ordered `doc_no` DESC | **yes** | at most 500 SO ITEM rows, newest doc numbers first. Newer orders are on the safe side of this cap; older ones fall off it with no message |
+| 2 | SO header status not in `CANCELLED`, `DRAFT`, `ON_HOLD` | **yes** | a **DRAFT SO is never convertible.** This is the honest, common answer to "my new SO cannot be converted": confirm it first |
+| 3 | pooled MRP shortage `> 0` — `shortageBySoItem.get(id) ?? 0` | **yes, and it is the dangerous one** | see below |
+| 4 | client-side: category filter, date-range filter, draft-already-consumed subtraction, one-supplier-per-PO lock (greys rows out, with a visible banner) | no | the visible grid |
+
+**Filter 3 is where lines vanish for a reason nobody can see.** The picker asks
+`computeMrp` for each line's shortage and keeps only `> 0`. That is correct by
+design — a line already covered by stock or an open PO should not be re-ordered.
+But the lookup is `?? 0`, so **a line MRP never planned at all is
+indistinguishable from a line MRP planned and found fully covered.** Both read
+as shortage 0. Both disappear.
+
+And MRP does not plan most lines. `computeMrp`'s demand read is capped at the
+PostgREST server ceiling with a truncation guard that cannot fire, so on
+production company 1 it planned **1,000 of 13,918 demand lines (7.2%)** — an
+arbitrary slice, because the read orders by a uuid. Full trace and the measuring
+run in `docs/modules/mrp.md` §5. So:
+
+- roughly 93% of otherwise-eligible SO lines are absent from the picker;
+- the loss is invisible — no error, no warning, no partial-results banner;
+- `pooledOk` does NOT rescue it. That flag only flips when `computeMrp`
+  **throws**; a truncated-but-successful compute keeps `pooledOk = true`, so the
+  documented fallback (`qty - po_qty_picked > 0`) never engages.
+
+**What the operator sees when nothing is offered** — the grid's `emptyMessage`:
+
+> *"No outstanding SO lines — every line has been converted (or there are no
+> SOs)."*
+
+That sentence is a positive assertion that the work is done, and under filter 3
+it is false. (The picker gets the READ-FAILED case right: `itemsQ.isError`
+renders a different, correct sentence saying the list is incomplete. Truncation
+is not an error, so it takes the wrong branch.)
+
+**Verdict, as of 2026-08-16:** an SO *can* be converted to a PO — the mechanism
+works and is multi-select at line level — but only for a line that is
+(a) confirmed or later, (b) inside the newest 500 item rows, and (c) one of the
+~7% MRP happened to plan. Fixing (c) is PR #2304 (#2300, #2294 alongside);
+**none merged**.
+
 ---
 
 ## 3. Backend
