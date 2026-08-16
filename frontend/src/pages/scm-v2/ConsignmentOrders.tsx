@@ -43,6 +43,9 @@ import {
   useConsignmentOrderDetail,
 } from '../../vendor/scm/lib/consignment-order-queries';
 import { SearchProgress } from '../../components/SearchProgress';
+import {
+  StockRemarkPill, stockRemarkSortFn, stockRemarkSearchValue, stockRemarkExportValue,
+} from '../../components/StockRemarkPill';
 import { ListPager } from '../../components/ListPager';
 import { useLocalStorage } from '../../hooks/useLocalStorage';
 import { useDebouncedSearchTerm, useSearchResultTransition } from '../../hooks/useServerSearch';
@@ -1303,50 +1306,15 @@ const buildAllColumns = (
        on the label text, so a new token inherits the amber slot instead of
        silently falling through to the neutral one. */
     key: 'stock_status', label: 'Stock Status', width: 220, sortable: true, groupable: false,
-    accessor: (r) => {
-      const remark = (r.stock_remark ?? '').trim();
-      if (!remark) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
-      /* Two states only: the blank one returned above, so anything still here
-         is either fully in or partly in. */
-      const isFull = remark === 'READY';
-      /* Partly-in keeps the amber WARNING pair - that hue is the app's
-         intentional warning slot, not a 2990 brand remnant (the interactive
-         burnt-orange accents elsewhere were swept to primary). */
-      const bg = isFull ? 'var(--c-mint, #d4edda)' : 'rgba(232, 107, 58, 0.15)';
-      const fg = isFull ? 'var(--c-green, #1a7a3a)' : '#b0592f';
-      return (
-        <span style={{
-          fontFamily: 'var(--font-sans)',
-          fontSize: 'var(--fs-11)',
-          fontWeight: 700,
-          background: bg,
-          color: fg,
-          padding: '2px 10px',
-          borderRadius: 'var(--radius-pill, 999px)',
-          letterSpacing: 0.5,
-          border: 'none',
-        }}>
-          {remark}
-        </span>
-      );
-    },
-    searchValue: (r) => (r.stock_remark ?? '').toLowerCase(),
-    /* searchValue is lowercased for the search box — export the real remark. */
-    exportValue: (r) => (r.stock_remark ?? '').trim(),
-    sortFn: (a, b) => {
-      /* Sort by how much of the order is in: READY first, then PARTIAL (every
-         MAIN line in — one accessory away from shipping), then the category
-         lists, then blank (nothing in). The label names what IS ready, so a
-         LONGER list means MORE is ready and sorts higher — the inverse of the
-         2026-08-16-morning ordering, which scored a what-is-missing label. */
-      const score = (s: string) => {
-        if (s === 'READY')   return 3000;
-        if (s === 'PARTIAL') return 2000;
-        if (!s)              return 0;
-        return 1000 + s.length;        // longer ready list = more of it is in
-      };
-      return score(b.stock_remark ?? '') - score(a.stock_remark ?? '');
-    },
+    /* The pill, the sort, the search and the export come from
+       components/StockRemarkPill.tsx (2026-08-17). This column is the DESIGN OF
+       RECORD and is unchanged on screen — including #2334's vocabulary and its
+       negative branch; what moved is that the SO list and the delivery-planning
+       board now render THIS instead of two paler imitations of it. */
+    accessor: (r) => <StockRemarkPill remark={r.stock_remark} />,
+    searchValue: (r) => stockRemarkSearchValue(r.stock_remark),
+    exportValue: (r) => stockRemarkExportValue(r.stock_remark),
+    sortFn: (a, b) => stockRemarkSortFn(a.stock_remark, b.stock_remark),
   },
   /* HOUZS category subtotals — Mattress/Sofa burnt, Bedframe green, Acc neutral.
      '—' when zero so commander's eye skims to filled cells. */
