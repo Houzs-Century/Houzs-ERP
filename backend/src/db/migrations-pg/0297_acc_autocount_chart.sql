@@ -1,3 +1,9 @@
+-- REVERSAL: every UPDATE is a keyed, invertible mapping and nothing is deleted.
+-- Run the section-2 VALUES map inverted on scm.journal_entry_lines (new_code ->
+-- old_code), repoint scm.acc_account_roles back to 1100/1200/2000/4000, then
+-- UPDATE scm.accounts SET is_active = TRUE for the legacy codes and DELETE the
+-- 31 template rows inserted for company_id = 1 in section 1.
+--
 -- acc_autocount_chart — phase 1: ONE AutoCount-style chart for every company.
 -- (Owner decision 2026-08-16: unify on the XXX-XXXX numbering the accountant
 -- already knows; company 2's freshly-rebuilt 31-account chart is the template.)

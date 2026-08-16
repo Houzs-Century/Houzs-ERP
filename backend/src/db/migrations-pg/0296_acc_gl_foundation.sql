@@ -1,3 +1,9 @@
+-- REVERSAL: everything here is additive. DROP INDEX scm.acc_je_one_active_source;
+-- ALTER TABLE scm.journal_entries DROP CONSTRAINT acc_je_balanced_totals;
+-- ALTER TABLE scm.journal_entry_lines DROP CONSTRAINT acc_jel_nonneg, DROP CONSTRAINT acc_jel_one_sided;
+-- DROP TABLE scm.acc_account_roles;
+-- DELETE FROM scm.accounts WHERE company_id = 2 AND account_code IN ('1100','1200','2000','4000');
+--
 -- acc_gl_foundation — phase 0 of the accounting module (docs/新ERP会计模块需求书.md).
 -- NOTE: number re-checked against the tree at merge time (repo rule: duplicate
 -- numbers break pg-migrate; gaps are fine).
