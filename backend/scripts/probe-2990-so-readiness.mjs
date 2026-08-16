@@ -139,7 +139,7 @@ async function main() {
            customer_delivery_date::text AS customer_delivery_date, so_date::text AS so_date
       FROM scm.mfg_sales_orders
      WHERE company_id = ${CO}::bigint
-       AND upper(coalesce(status,'')) NOT IN ('CANCELLED','CLOSED','INVOICED')
+       AND upper(coalesce(status::text,'')) NOT IN ('CANCELLED','CLOSED','INVOICED')
      ORDER BY so_date DESC NULLS LAST, doc_no DESC`;
   note(`live-ish SO headers (status not CANCELLED/CLOSED/INVOICED): ${headers.length}`);
 
@@ -149,7 +149,7 @@ async function main() {
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders s ON s.doc_no = i.doc_no AND s.company_id = i.company_id
      WHERE i.company_id = ${CO}::bigint
-       AND upper(coalesce(s.status,'')) NOT IN ('CANCELLED','CLOSED','INVOICED')
+       AND upper(coalesce(s.status::text,'')) NOT IN ('CANCELLED','CLOSED','INVOICED')
      ORDER BY i.doc_no, i.id`;
   note(`lines on those orders (incl. cancelled lines): ${lines.length}`);
 
