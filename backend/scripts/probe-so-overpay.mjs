@@ -224,6 +224,42 @@ async function main() {
     note(`  ${m.so_doc_no}  ${m.at}  line ${rm(m.from_sen)} -> ${rm(m.to_sen)} (delta ${rm(m.delta_sen)})  payment ${rm(m.amount_centi)} on ${m.paid_at}`);
   }
 
+  /* ── 6. Does an SO payment reach the accounting ledger at all? ───────────
+     recordSoPaymentRow calls postSoPayment on every insert, and postSoPayment
+     opens with `select('company_id, customer_name, customer_phone')` on
+     scm.mfg_sales_orders (acc/payments.ts:84). The table's columns are
+     debtor_name / phone. If that read errors the payment is never booked and
+     the failure is only console.error'd, so the count below is the whole
+     story: SOPAY entries vs payment rows recorded since the hook shipped. */
+  note('\n' + '='.repeat(72));
+  note('=== 6. accounting coverage of SO payments (source_type SOPAY)');
+  const cover = await tryQ('journal coverage', () => sql`
+    SELECT
+      (SELECT count(*)::int FROM scm.mfg_sales_order_payments
+        WHERE method <> 'imported')                                   AS bookable_payments,
+      (SELECT count(*)::int FROM scm.journal_entries
+        WHERE source_type = 'SOPAY')                                  AS sopay_entries,
+      (SELECT count(*)::int FROM scm.journal_entries
+        WHERE source_type = 'SIPAY')                                  AS sipay_entries,
+      (SELECT count(*)::int FROM scm.mfg_sales_order_payments
+        WHERE method <> 'imported' AND created_at >= now() - interval '30 days') AS bookable_last_30d,
+      (SELECT count(*)::int FROM scm.journal_entries
+        WHERE source_type = 'SOPAY' AND created_at >= now() - interval '30 days') AS sopay_last_30d`,
+    [{}]);
+  const cv = cover[0] ?? {};
+  note(`bookable SO payment rows (method <> imported) : ${cv.bookable_payments ?? '?'}`);
+  note(`journal_entries source_type = 'SOPAY'          : ${cv.sopay_entries ?? '?'}`);
+  note(`journal_entries source_type = 'SIPAY'          : ${cv.sipay_entries ?? '?'}`);
+  note(`last 30 days — bookable ${cv.bookable_last_30d ?? '?'} vs booked ${cv.sopay_last_30d ?? '?'}`);
+
+  /* And the column that decides it, straight from the catalogue. */
+  const cols = await tryQ('SO column names', () => sql`
+    SELECT column_name FROM information_schema.columns
+     WHERE table_schema = 'scm' AND table_name = 'mfg_sales_orders'
+       AND column_name IN ('customer_name','customer_phone','debtor_name','phone')
+     ORDER BY column_name`);
+  note(`mfg_sales_orders has: ${cols.map((r) => r.column_name).join(', ') || '(none of the four)'}`);
+
   await sql.end({ timeout: 5 });
 }
 
