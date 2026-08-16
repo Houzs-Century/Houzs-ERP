@@ -51,12 +51,22 @@ describe("isShipReady refuses an SO with nothing to ship", () => {
     expect(r.isShipReady).toBe(false);
   });
 
-  test("a service-only SO is NOT ship-ready — service lines carry no inventory", () => {
-    /* A delivery-fee line is skipped by summariseReadiness, so this SO is empty
-       by the same reasoning as the husks even though it has a row. */
+  test("a service-only SO is not confused with an empty one", () => {
+    /* This assertion was INVERTED on 2026-08-16. It used to demand that a
+       service-only SO be un-shippable, on the reasoning that summariseReadiness
+       skipped every service line so the SO "is empty by the same reasoning as
+       the husks even though it has a row". The owner overruled it:
+       「如果它是 service 的单，也应该直接 ready」 — a delivery-only order has
+       nothing to allocate, so it is ready the moment it exists. Service lines
+       are now COUNTED (svcCount) instead of dropped, which is what makes the two
+       cases distinguishable at all: the husk has zero lines, this one has one. */
     const r = summariseReadiness([svc()]);
     expect(r.mainCount + r.accCount).toBe(0);
-    expect(r.isShipReady).toBe(false);
+    expect(r.svcCount).toBe(1);
+    expect(r.isShipReady).toBe(true);
+    /* The husk it must not be mistaken for. */
+    expect(summariseReadiness([]).svcCount).toBe(0);
+    expect(summariseReadiness([]).isShipReady).toBe(false);
   });
 });
 
@@ -64,7 +74,10 @@ describe("isShipReady keeps every case that legitimately ships", () => {
   test("all mains READY → ship-ready, accessories pending do not block", () => {
     const r = summariseReadiness([main("READY"), acc("PENDING")]);
     expect(r.isShipReady).toBe(true);
-    expect(r.stockRemark).toBe("READY (PARTIAL)");
+    /* Ship-able and still short — so the LABEL names the accessory rather than
+       reading "READY (PARTIAL)". The gate and the label answer two different
+       questions; see soReadinessRemark.test.ts. */
+    expect(r.stockRemark).toBe("SHORT: ACCESSORY");
   });
 
   test("a pending main blocks", () => {

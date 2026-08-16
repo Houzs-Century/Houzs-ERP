@@ -1,0 +1,60 @@
+# Read-only. Asks production whether any sales order has collected more money
+# than it is worth, what the balance columns say about it, and whether the
+# excess was absorbed into a line price. Writes nothing.
+name: probe-so-overpay
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company_id to scope to (0 = every company)"
+        required: false
+        default: "0"
+        type: string
+      limit:
+        description: "how many worked examples to print"
+        required: false
+        default: "25"
+        type: string
+
+concurrency:
+  group: probe-so-overpay
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-so-overpay.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          LIMIT: ${{ inputs.limit }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-so-overpay.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          LIMIT: ${{ inputs.limit }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

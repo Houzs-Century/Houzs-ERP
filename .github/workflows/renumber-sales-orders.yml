@@ -1,0 +1,83 @@
+name: Renumber sales orders
+
+# Renames sales orders so a test-row cleanup does not leave a permanent hole in
+# the monthly sequence. doc_no is the PRIMARY KEY and every FK pointing at it is
+# ON UPDATE NO ACTION, so this is copy -> repoint -> delete inside one
+# transaction, not an UPDATE. See backend/scripts/renumber-sales-orders.mjs for
+# the full safety contract.
+#
+# RUN THE DRY-RUN FIRST. It prints every table and column that carries the old
+# number, and flags MENTION rows (the number inside a longer string, e.g. a
+# remark or an R2 object key) which it deliberately does NOT rewrite.
+#
+# To apply, set apply=1 AND paste the SAME pairs string into confirm; they must
+# match exactly or the script refuses.
+on:
+  workflow_dispatch:
+    inputs:
+      pairs:
+        description: "FROM:TO,FROM:TO — e.g. 2990-SO-2608-037:2990-SO-2608-019"
+        required: true
+      confirm:
+        description: "Retype the SAME pairs string — required only when apply=1"
+        required: false
+        default: ""
+      apply:
+        description: "Set to 1 to RENAME (else dry-run report only)"
+        required: false
+        default: "0"
+      target:
+        description: "Destination DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+
+# Never queue behind — or displace — a release.
+concurrency:
+  group: renumber-sales-orders
+  cancel-in-progress: false
+
+jobs:
+  renumber-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/renumber-sales-orders.mjs
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+          PAIRS: ${{ inputs.pairs }}
+          CONFIRM: ${{ inputs.confirm }}
+          APPLY: ${{ inputs.apply }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
+
+  renumber-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      - run: npm ci
+      - run: node scripts/renumber-sales-orders.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          PAIRS: ${{ inputs.pairs }}
+          CONFIRM: ${{ inputs.confirm }}
+          APPLY: ${{ inputs.apply }}
+          NODE_OPTIONS: --dns-result-order=ipv4first

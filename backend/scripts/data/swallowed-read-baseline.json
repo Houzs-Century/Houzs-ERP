@@ -338,7 +338,7 @@
       "catches": 2
     },
     "backend/src/scm/routes/mrp.ts": {
-      "reads": 6,
+      "reads": 1,
       "catches": 0
     },
     "backend/src/scm/routes/outstanding.ts": {

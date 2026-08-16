@@ -65,6 +65,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { convertToLink } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
@@ -858,7 +859,7 @@ export function PurchaseOrdersListV2() {
   // PO (?poId=<id>); the picker pre-ticks the PO's outstanding lines so the
   // operator reviews a ready draft and only Save creates the GRN.
   const goGrnFromPo = (r: PoHeaderRow) =>
-    navigate(`/scm/grns/from-po?poId=${r.id}`);
+    navigate(convertToLink('poToGrn', r.id));
 
   // ── Multi-select bulk convert ──────────────────────────────────────────────
   const toggleSelect = (id: string) =>
@@ -882,7 +883,7 @@ export function PurchaseOrdersListV2() {
     if (selectedIds.size === 0) return;
     const ids = [...selectedIds];
     clearSelection();
-    navigate(`/scm/grns/from-po?poId=${ids.join(",")}`);
+    navigate(convertToLink('poToGrn', ids));
   };
 
   /* Batch supplier-revised date (owner 2026-08-03) — a supplier who pushes a

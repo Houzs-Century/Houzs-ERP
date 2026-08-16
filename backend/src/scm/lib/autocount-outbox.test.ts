@@ -1568,6 +1568,135 @@ describe('the three fields the extract carries and the write-back did not send',
     });
   });
 
+  /* ── CLEARING, which is not the same as never having had a value ──────────
+     Every key above is omitted when the ERP column is empty, and that rule is
+     right for an order that never had a Ref — blanking would destroy what an
+     operator typed into AutoCount. It also made the OPPOSITE intent
+     inexpressible: deleting a value in the ERP produced silence and the book
+     kept the old one. Owner 2026-08-15: "任何情况 ERP update 就是都要跟".
+
+     The composer reads the SAVED row, where both cases are an empty column, so
+     the ROUTE says which fields it wrote — the same contract as newLineIds and
+     for the same reason. */
+  describe('a field the operator DELETED is cleared, not left alone', () => {
+    const linked = (over: Row = {}) =>
+      seed({ linked_ac_docno: 'SO-000021', ...over }, { linked_ac_dtlkey: 991 });
+    const header = (sb: { tables: Record<string, Row[]> }) =>
+      outbox(sb)[0].payload.body.Header as Record<string, unknown>;
+
+    test('an untouched blank field is still OMITTED — the book keeps its own', async () => {
+      const sb = linked({ ref: null });
+      await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
+      expect(header(sb)).not.toHaveProperty('Ref');
+    });
+
+    test('a TOUCHED blank field is sent as an explicit null', async () => {
+      const sb = linked({ ref: null });
+      await enqueueEdit(client(sb), {
+        companyId: 1, docType: 'SO', docNo: 'HC-SO-B', touchedFields: ['ref'],
+      });
+      expect(header(sb)).toHaveProperty('Ref', null);
+    });
+
+    /* Touched and still HAS a value is an ordinary change, not a clear. */
+    test('a touched field that still has a value sends the value', async () => {
+      const sb = linked({ ref: 'PO-778' });
+      await enqueueEdit(client(sb), {
+        companyId: 1, docType: 'SO', docNo: 'HC-SO-B', touchedFields: ['ref'],
+      });
+      expect(header(sb)).toHaveProperty('Ref', 'PO-778');
+    });
+
+    /* THE FOREIGN KEYS ARE NOT CLEARABLE, and this is the case that would lose
+       a document rather than a field: a blank Agent is FK_SO_SalesAgent, not an
+       empty string. Same for the stock location. */
+    test('the salesperson and the stock location are never nulled, even when touched', async () => {
+      const sb = linked();
+      await enqueueEdit(client(sb), {
+        companyId: 1,
+        docType: 'SO',
+        docNo: 'HC-SO-B',
+        touchedFields: ['agent', 'salesperson_id', 'sales_location', 'debtor_name'],
+      });
+      const h = header(sb);
+      expect(h.Agent).not.toBeNull();
+      expect(h.SalesLocation).not.toBeNull();
+      expect(h.DebtorName).not.toBeNull();
+    });
+
+    /* The address is ONE package: soInvoiceAddress folds five ERP columns into
+       four lines, so clearing one re-shuffles the rest and there is no
+       field-by-field answer. Touching any of them sends all four. */
+    test('touching any address column sends all four InvAddr keys', async () => {
+      const sb = linked({ address2: null, address3: null, address4: null });
+      await enqueueEdit(client(sb), {
+        companyId: 1, docType: 'SO', docNo: 'HC-SO-B', touchedFields: ['address2'],
+      });
+      const h = header(sb);
+      for (const k of ['InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4']) {
+        expect(h, k).toHaveProperty(k);
+      }
+    });
+
+    /* A UDF clears with an empty string, not a null: ApplyUdf writes
+       `kv.Value == null ? "" : ...` either way, and "" is what the book stores. */
+    test('a cleared processing date empties the PDate UDF', async () => {
+      const sb = linked({ processing_date: null });
+      await enqueueEdit(client(sb), {
+        companyId: 1, docType: 'SO', docNo: 'HC-SO-B', touchedFields: ['processing_date'],
+      });
+      const udf = (header(sb).UDF ?? {}) as Record<string, string>;
+      expect(udf).toHaveProperty('PDate', '');
+    });
+  });
+
+  /* ── PAYEMENT — the account sheet and approval code the cutover took OUT of
+     this same field. import-ac-outstanding-so.mjs:16 filled
+     mfg_sales_order_payments.account_sheet and .approval_code from
+     SO.UDF_PAYEMENT, and nothing ever wrote it back. The FORMAT is proven in
+     autocountPaymentUdf.roundtrip.test.ts against the cutover's own parser;
+     these two are the WIRING, which is the half that keeps getting missed —
+     the composer carried BALANCE correctly for two days while no payment path
+     ever asked it to. */
+  describe('PAYEMENT — the payment references go back into the field they came from', () => {
+    test('a create carries the account sheet and approval code', async () => {
+      const sb = seed({}, {}, {
+        mfg_sales_order_payments: [
+          { so_doc_no: 'HC-SO-B', amount_centi: 200_00, is_deposit: true, account_sheet: 'MAYBANK', approval_code: '111', paid_at: '2026-08-01', id: 'p1' },
+          { so_doc_no: 'HC-SO-B', amount_centi: 100_00, is_deposit: false, account_sheet: 'CIMB', approval_code: '222', paid_at: '2026-08-02', id: 'p2' },
+        ],
+      });
+      expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).toBe(true);
+      const udf = (outbox(sb)[0].payload.body as Record<string, Record<string, string>>).UDF;
+      expect(udf.PAYEMENT).toBe('(MAYBANK/111) (CIMB/222)');
+    });
+
+    test('an EDIT carries it too, so a reference typed after the create reaches the book', async () => {
+      const sb = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 }, {
+        mfg_sales_order_payments: [
+          { so_doc_no: 'HC-SO-B', amount_centi: 400_00, is_deposit: true, account_sheet: 'Cash', approval_code: null, paid_at: '2026-08-01', id: 'p1' },
+        ],
+      });
+      expect(await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' })).toBe(true);
+      const h = outbox(sb)[0].payload.body.Header as Record<string, Record<string, string>>;
+      expect(h.UDF.PAYEMENT).toBe('(Cash/)');
+    });
+
+    /* OMITTED, NOT BLANKED. An order whose payments carry no reference — every
+       cash sale — must leave the book's own text alone: `Str` turns a
+       present-null into "" and would erase what the cutover put there. */
+    test('payments with no references send no PAYEMENT key', async () => {
+      const sb = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 }, {
+        mfg_sales_order_payments: [
+          { so_doc_no: 'HC-SO-B', amount_centi: 400_00, is_deposit: true, account_sheet: null, approval_code: null, paid_at: '2026-08-01', id: 'p1' },
+        ],
+      });
+      await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
+      const h = outbox(sb)[0].payload.body.Header as Record<string, Record<string, string>>;
+      expect(h.UDF).not.toHaveProperty('PAYEMENT');
+    });
+  });
+
   // ── DeliverPhone1 — 120 of the extract's 13,015 headers carry one
   describe('DeliverPhone1 — the DELIVERY contact, which is not the customer\'s phone', () => {
     /* Two contacts, two columns (owner 2026-08-15). The pairing is the
@@ -1606,16 +1735,27 @@ describe('the three fields the extract carries and the write-back did not send',
     });
   });
 
-  /* Desc2 is AutoCount's Further Description, which the cutover PARSED to get
-     the ERP's variants — so the specification goes back through the ERP's own
-     renderer. The ceiling comes with it: SODTL.Desc2 is nvarchar(100) and the
+  /* Desc2 is the SECOND DESCRIPTION LINE, and the cutover PARSED it to get the
+     ERP's variants — so the specification goes back through the ERP's own
+     renderer.
+
+     It is NOT `FurtherDescription`, and this comment said it was until
+     2026-08-15. They are separate columns on the same detail class
+     (`sdk-api-reference.txt` lists both in every `SET:` list): Desc2 is
+     nvarchar(100) and carries the build text; FurtherDescription is
+     nvarchar(MAX) and carries the PHOTOGRAPHS, which is what
+     `import-so-line-photos.mjs` pulled out at cutover. The names mattered
+     little while nothing wrote FurtherDescription; now that something does,
+     conflating them points a photograph at a 100-character column.
+
+     The ceiling belongs to Desc2 alone: SODTL.Desc2 is nvarchar(100) and the
      book is AT it (longest of the extract's 15,950 values is exactly 100), so a
      richer string can now reach it and SQL Server would take the whole document.
      A refusal nobody can see is indistinguishable from a write-back that quietly
      stopped working, so it lands under its own CLASS NAME — the health check
      buckets on that name, and matching the shared "refused, nothing sent" prefix
      is the mislabelling #2094 already had to undo. */
-  describe('Further Description — the ERP\'s own renderer, and AutoCount\'s 100-character ceiling', () => {
+  describe('Desc2 — the ERP\'s own renderer, and AutoCount\'s 100-character ceiling', () => {
     test('a bedframe carries the colour, the divan, the leg and the gap into Desc2', async () => {
       const sb = seed({}, {
         description2: null,

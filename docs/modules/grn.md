@@ -257,6 +257,32 @@ Status vocabulary: `DRAFT | POSTED | CANCELLED | CLOSED`. Filter buckets
 (`:827-831`) cover only `draft` / `posted` / `cancelled` — **CLOSED has no bucket**,
 so a CLOSED GRN appears under "All" and nowhere else.
 
+**Who sets each, and what it blocks (2026-08-16).** DB type is the
+`scm.grn_status` ENUM (base body in `backend/scripts/scm-schema/2990s-full-schema.sql`,
+`DRAFT` added by `migrations-pg/0043_scm_grn_status_draft.sql`); column default
+is `POSTED`. **Every GRN status move is MANUAL** — nothing derives a GRN status
+from another document. (The reverse is not true: this module is the ONLY writer
+of the PO's `PARTIALLY_RECEIVED` / `RECEIVED`, via `recomputePoReceived`.)
+
+| Value | Set by | Blocks |
+|---|---|---|
+| `DRAFT` | create with `asDraft: true`. Passing `status:'DRAFT'` in the body is refused: `Use asDraft:true to save a GRN as a draft.` | no stock yet |
+| `POSTED` | create-as-posted, or `PATCH /:id/post` — all through the one chokepoint `postGrnAndRollup`, which CASes the flip | this is where the inventory IN lands |
+| `CANCELLED` | `PATCH /:id/cancel` (DRAFT short-circuits; the active branch is atomic) | terminal |
+| `CLOSED` | **nothing in `backend/src` writes it.** Read-only legacy terminal that still blocks a re-post | terminal |
+
+Refusals the operator sees:
+
+| Guard | Message |
+|---|---|
+| confirm a dead GRN | `GRN is <status> — cannot confirm.` (`cannot_confirm`) |
+| re-post a CANCELLED / CLOSED GRN at the chokepoint | `grn_cancelled` / `grn_closed` (409, bare reason) |
+| lost confirm race | `already_posting` (409) |
+| line add / edit / delete on a dead GRN | `This GRN is <status> — its lines can no longer be changed.` (`grn_locked`) |
+| cancel after the stock was consumed downstream | `Received goods were already consumed downstream (shipped / used in production) — cannot reverse this GRN. Make a Purchase Return instead.` (`grn_consumed_downstream`) |
+| the GRN's own downstream lock (any line invoiced or returned) | `GRN has a Purchase Invoice / Return — delete it first to edit` |
+| receiving against a non-live PO | `po_not_receivable` — **error code only, no human sentence.** The payload carries the offending status; the operator sees a bare code |
+
 Migration-number caution: several in-code comments cite the **2990 source repo's**
 numbering, which does not line up with `backend/src/db/migrations-pg/`. Verified
 matches in this module's chain: `0082_scm_fx_landed_cost.sql`,

@@ -1,0 +1,53 @@
+# Read-only. Asks production why a named sales order is absent from MRP, by
+# testing each of MRP's own demand filters against the row rather than
+# reasoning about it from the screen. Writes nothing.
+name: probe-so-not-in-mrp
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      doc:
+        description: 'SO doc no(s), comma separated, e.g. HC-SO-2608-003'
+        required: true
+        default: ""
+        type: string
+
+concurrency:
+  group: probe-so-not-in-mrp
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-so-not-in-mrp.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-so-not-in-mrp.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
