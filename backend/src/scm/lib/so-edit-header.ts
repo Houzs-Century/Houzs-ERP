@@ -37,7 +37,7 @@ const present = (o: Record<string, string | null>): Record<string, string> => {
   return out;
 };
 
-export /**
+/**
  * The SO header fields an EDIT carries.
  *
  * A create sends the salesperson, the sales location, the document date and the
@@ -68,7 +68,25 @@ export /**
  * runs under the same asymmetry — the create falls back to the lines because
  * it MUST send something, the edit simply says nothing.
  */
-function soEditHeader(
+/**
+ * The delivery address an EDIT carries: the same four values as the invoice
+ * address, under the keys the service applies separately.
+ *
+ * Built FROM `soInvoiceAddress` rather than re-derived, so the two copies cannot
+ * drift — a second implementation of the five-columns-into-four packing is
+ * exactly how they would.
+ */
+function deliverAddressOf(h: Record<string, unknown>): Record<string, string | null> {
+  const inv = soInvoiceAddress(h);
+  return {
+    DeliverAddr1: inv.InvAddr1,
+    DeliverAddr2: inv.InvAddr2,
+    DeliverAddr3: inv.InvAddr3,
+    DeliverAddr4: inv.InvAddr4,
+  };
+}
+
+export function soEditHeader(
   h: Record<string, unknown>,
   /** REQUIRED, never optional: it decides whether Agent is sent at all. */
   salespersonName: string | null,
@@ -97,6 +115,23 @@ function soEditHeader(
        Blank still omits — the book keeps whatever it has. */
     DeliverPhone1: (h.emergency_contact_phone as string) ?? null,
     ...soInvoiceAddress(h),
+    /* THE DELIVERY ADDRESS, WHICH THE EDIT NEVER SENT.
+       `CreateSo` falls back per line — `DeliverAddr1 = Or(DeliverAddr1, InvAddr1)`
+       — so a document created WITH an address gets both copies. `/edit`'s header
+       loop is `ContainsKey`-gated and this function only ever emitted `InvAddr*`,
+       so an address added or changed AFTER the create updated the invoice copy
+       and left the delivery copy at whatever the create had put there.
+
+       Measured on the live book 2026-08-16: HC-SO-2608-002, whose address was
+       typed in by an edit, carries InvAddr1 `dsdsd` / InvAddr3 `05200 Alor Setar`
+       against three EMPTY DeliverAddr lines, while HC-SO-2608-003 — same shape,
+       address present at create — has both copies filled.
+
+       The ERP holds ONE address, so the two copies are the same four values.
+       That is also what Inistate does, and Inistate is what this replaces: its
+       own documents (SO-013264/5/6) carry DeliverAddr1-4 identical to
+       InvAddr1-4. */
+    ...deliverAddressOf(h),
   });
   const agent = resolveAcAgent((h.agent as string) ?? null, salespersonName);
   if (agent) out.Agent = agent;
