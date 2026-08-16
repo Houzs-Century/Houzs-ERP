@@ -41,8 +41,11 @@
 > ### Verifications that do not verify what they claim
 >
 > - **Step 1** accepts `/health` as proof of the swap. `/health` answers from
->   CONSTANTS — `deploy-on-host.ps1:215-222` records that exact failure on
->   2026-08-12. **Half of this is fixed as of 2026-08-15**: `/health` now also
+>   CONSTANTS — `deploy-on-host.ps1` records that exact failure on 2026-08-12 in
+>   its section 3 and section 7 comments. (This cited `:215-222` until
+>   2026-08-16, when the rewrite moved the text; grep for
+>   `answers from CONSTANTS` rather than trusting a line number here again.)
+>   **Half of this is fixed as of 2026-08-15**: `/health` now also
 >   returns `builtAt` (the assembly's own file timestamp) and `mvid` (unique per
 >   compilation), so it CAN prove a new binary was swapped in — compare `builtAt`
 >   against `git log -1 --date=short -- backend/scripts/autocount-service/AcSyncService.cs`.
