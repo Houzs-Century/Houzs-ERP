@@ -836,7 +836,14 @@ accounting.get('/control-check', async (c) => {
     if (linesErr) return { role, accountCode, error: linesErr.message };
     let bal = 0;
     const foreign: Foreign[] = [];
-    const family = new Set([expectedSource, `${expectedSource}_REVERSAL`]);
+    /* What LEGITIMATELY moves each control account: the document that books it
+       plus everything that settles it. AR moves on invoices AND on customer
+       payments (SOPAY/SIPAY, phase 2A); AP moves on purchase invoices AND on
+       the payment vouchers that settle them. Anything else on the account is
+       the finding. */
+    const family = role === 'AR'
+      ? new Set(['SI', 'SI_REVERSAL', 'SOPAY', 'SOPAY_REVERSAL', 'SIPAY', 'SIPAY_REVERSAL'])
+      : new Set(['PI', 'PI_REVERSAL', 'PV', 'PV_REVERSAL']);
     for (const l of (lines ?? []) as Array<{ je_no: string; source_type: string; debit_sen: number; credit_sen: number }>) {
       bal += Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0);
       if (!family.has(l.source_type)) {
