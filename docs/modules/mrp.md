@@ -111,6 +111,25 @@ against production on 2026-08-16 for company 2 (2990), the default view returned
 nothing about the missing half — so a real shortage rendered as no shortage.
 Owner: *"明明这个东西没有 ready,可是我的 MRP 却 show 不出来."*
 
+> **HOW BIG IT ACTUALLY IS — measured on production, run 31962771658,
+> 2026-08-16.** The 2990 sample above understates it badly. For **company 1
+> (HOUZS)**:
+>
+> | | live | undated | share |
+> |---|---|---|---|
+> | SO LINES (MRP's demand set) | 13,916 | **11,392** | **81.9%** |
+> | SO HEADERS | 2,724 | 2,207 | 81.0% |
+>
+> **Four fifths of the HOUZS book is behind this default**, which is why the
+> count on the page is not cosmetic. Two further facts from the same run:
+> **0** headers carry the date on a LINE while the header lacks it (so this is
+> genuinely MISSING data, not misplaced — that rules out a family of wrong
+> fixes), and 2,203 of the undated headers are CONFIRMED inside the five days
+> 2026-08-09 .. 2026-08-13, which is a bulk write.
+>
+> **The number for 2990 is still UNKNOWN** — that run died before company 2 ran.
+> Do not quote 81.9% as covering both companies; it is HOUZS.
+
 `MrpResult` therefore carries `undated`, counted ALWAYS — on exactly the rows the
 flag removes, before the `continue` that removes them:
 
@@ -299,6 +318,8 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
 | `backend/scripts/audit-mrp-pairing.mjs` | Read-only production detector — a REPLICA of sections 1-8; update it in the same PR as any allocation-rule change. Section (H) (2026-08-02) additionally enforces the owner's purchasing rule: cancelled/DRAFT POs fully out of the formula, and no over-ordering beyond demand for MATTRESS/BEDFRAME/SOFA (only ACCESSORY may be bought for stock) — reported per PO document with reason codes (STOCK-SLICE / SO-DONE / BUCKET-SPLIT / NO-DEMAND) plus received-but-unowned dead stock per bucket |
 | `backend/src/scm/routes/mrp.test.ts` | Unit tests: R4 legacy pool (general + sofa), D6 flag invariance, D4 SHIPPED, D3 truncation guard, stock assignment, the `undated` tally + `parseIncludeUndated` spellings (2026-08-16) |
 | `backend/scripts/probe-undated-demand.mjs` | Read-only production probe: how much live demand is undated, BOTH companies, with the refutation tests for why. Dispatch via `.github/workflows/probe-undated-demand.yml` |
+| `backend/scripts/lib/undated-demand-queries.mjs` | That probe's SQL, in one home so a test can EXECUTE it. No shebang — a test imports it |
+| `backend/tests-pg/probeUndatedDemandSql.pg.test.ts` | Runs every one of those queries against real Postgres in `backend-postgres`. Exists because the probe's first production dispatch died on unexecuted SQL |
 
 ## 8. Traps
 
