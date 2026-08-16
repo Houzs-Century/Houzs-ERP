@@ -207,6 +207,123 @@ Registered as clearable: it is a date with no foreign key behind it, so an
 operator who deletes it has that reach the book.
 
 **Ref.** 2026-08-16, PR #2305.
+## Every UDF went into AutoCount as a STRING, so the one DATE UDF never landed [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Owner 2026-08-16: editing a sales order's Processing Date does not
+reach AutoCount. `HC-SO-2608-002` holds `processing_date = 2026-08-16` in the
+ERP; the live book still shows `UDF_PDate = 8/13/2026`.
+
+**Root cause (traced).** `ApplyUdf` stringified every value —
+`kv.Value.ToString()` — and wrote it through `Set()`, which catches, logs
+`set skipped: <message>` with no key, no value and no route, and lets the request
+answer `{"ok":true}`. So the outbox row goes to `sent` and nothing anywhere says
+a field was dropped. `PDate` is the only DATE-typed UDF column the ERP sends:
+`export-ac-fidelity-truth.py:106-107` reads `UDF_VENUE` / `UDF_BRANDING` through
+`LTRIM(RTRIM(...))`, `UDF_BALANCE` through `ISNULL(...,0)` and `UDF_PDate`
+through `CONVERT(varchar(10), ..., 120)`, and one exported value carries a time
+(`SO-010311 = "2026-07-22 01:00:00"`).
+
+**What the evidence RULED OUT.** "Create works, edit does not" was the starting
+theory and production refuted it (read-only run 31943942030,
+`why-so-line-not-purchasable.mjs` against the prod outbox):
+
+- `HC-SO-2608-002`'s **create sent no `PDate` at all** — `UDF = {VENUE, ToPONo,
+  BRANDING}` — yet the book holds `UDF_PDate` = that document's own `DocDate`.
+  Nothing the ERP sent put it there. `HC-SO-2608-003` looks "correct" only
+  because its processing date and its `DocDate` are the same day, so it cannot
+  tell the two apart. **The create path has never been shown to write a PDate.**
+- The edit path is NOT the problem either: `BALANCE` and `PAYEMENT` were absent
+  from that document's create payload and present in the book, so they can only
+  have arrived on an edit. The loss is **per key**, not per path.
+- `UDF_PDate` is not merely a copy of `DocDate` in general — of the 13,015
+  headers in `ac-fidelity-so-headers.json.gz`, 5,234 differ from `DocDate` and
+  2,643 are blank.
+
+**Fix.** `ApplyUdf` tries the STRING first and unchanged — every key that lands
+today lands the same way — and only after the book refuses it does it retry with
+a typed value: `null`/`DBNull` for the present-and-null blank (#2218's
+asymmetry is preserved; an absent key is still never touched), `Decimal` for a
+numeric string, `DateTime` for a date. Each attempt is per key, and a key that
+lands on no rung is logged BY NAME with every refusal, instead of one anonymous
+`set skipped:`. `Set()` itself is untouched and still guards ~30 other
+assignments. The contract test's expectation moved with it.
+
+**Not verified here, and it is the reason for the ladder:** C# cannot be
+compiled in this environment, the `UDF` member is INHERITED so
+`sdk-api-reference.txt` (dumped `DeclaredOnly`) does not record the indexer's
+parameter type, and the exact exception has never been read off the host log.
+The string attempt stays first so the worst case is today's behaviour;
+`deploy-on-host.ps1` compiles before it swaps and keeps the previous exe.
+
+**Ref.** fix/processing-date-reaches-autocount, 2026-08-16.
+## Eleven attempts at a delivery-order transfer produced eleven identical, contentless errors [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** `HC-DO-2608-001` (`so_to_do`, FAILED, 6 of 6 attempts) and
+`HC-DO-2608-002` (5 attempts, still pending) will not transfer into the live
+`AED_HOUZS` book. Every attempt recorded the same `last_error`:
+
+```
+ Invalid transfer item.
+```
+
+Eleven runs, no key, no document, no reason, and no way to tell the eleven apart.
+
+**What was actually wrong with the DIAGNOSIS, traced.** Two things, and neither
+of them is the transfer itself.
+
+1. **The probe printed the payload's key NAMES, not its values.**
+   `why-so-line-not-purchasable.mjs` section D dumped an outbox row's header as
+   `header keys: DocNo, DtlKeys` — so `DtlKeys` was known to be present and
+   WHICH keys was never on screen through all eleven attempts.
+
+2. **The service cannot say more than AutoCount said.** When the ERP names the
+   lines, `DtlKeys()` returns the supplied array VERBATIM, so neither predicate
+   this service otherwise applies — `h.Cancelled = 'F'` and
+   `(d.Qty - ISNULL(d.TransferedQty,0)) > 0` — is evaluated for those keys, and
+   AutoCount is the first thing in the chain to look at the lines at all.
+   `Serve`'s catch-all returns `ex.Message` alone, and that message is the eleven
+   words above.
+
+**Fix.**
+
+- The probe prints, for a conversion row, the `DtlKeys` array itself,
+  `FromDocType`, the stored `FromDocNo` and the `FromDocNo` `dispatchOne`
+  resolves at drain from `payload.fromDoc` — which is not in the stored payload
+  at all. `last_error` is no longer clipped at 220 characters.
+- A new section E walks target line -> source line -> source DOCUMENT for every
+  key in the payload and prints the DISTINCT source documents beside that single
+  `FromDocNo`, plus the two silent drops `readConvertSourceKeys` can make.
+- `Convert_` wraps its whole `switch` and, on any failure, appends the book's own
+  numbers per key: document, `Qty`, `TransferedQty`, `Transferable`, the
+  document's `Cancelled`, the outstanding quantity, `NOT FOUND` for a key on no
+  row. Columns go through `ExistingColumns`, so a book missing one loses that
+  field and not the explanation. It DIAGNOSES and does not refuse: a pre-flight
+  predicate stricter than AutoCount's own would turn working transfers into
+  refusals, and this file compiles nowhere but the office host.
+
+**What the probe RULED OUT** (run 31944045963 and 31944185309,
+`why-so-line-not-purchasable.yml` against production, read-only):
+
+| suspicion | refuted by |
+|---|---|
+| the keys span SEVERAL sales orders while `FromDocNo` names one — the mixed-array shape that raises this exact exception | `DISTINCT SOURCE DOCUMENTS: 1` on both. `HC-DO-2608-002` -> `[905348,905349]`, both on `HC-SO-2608-002`, which is what drain resolves. `HC-DO-2608-001` -> `[906306,906307]`, both on `HC-SO-2608-003`, likewise |
+| a DO line with no `so_item_id` is silently dropped, so the key count disagrees with the line count | `lines with no so_item_id: 0` on both; 2 keys for 2 lines each |
+| a source line carries no `linked_ac_dtlkey` | `source lines with NO DtlKey: 0` on both |
+| `/so-to-do` passes the wrong `fromDocType` | it passes `"SO"`, and the same route with the same literal produced `DO-011260` and the `5b-multi` QA transfer on the live book |
+
+**Still UNKNOWN, and honestly so.** WHICH of those four keys the book refuses,
+and why. That needs `SODTL` for keys 905348, 905349, 906306, 906307, and no
+credential in this repository reaches the AutoCount host — `gh api
+repos/hello-houzs/Houzs-ERP/actions/secrets` returns ten secrets, none of them
+`AC_*`, and neither environment carries one. The next attempt on either document
+answers it by itself once the host is rebuilt.
+
+**Ref:** this PR, 2026-08-16.
+
 ## SO-to-PO wrote the source document but not the source TYPE [high]
 
 <!-- area: AutoCount sync + write-back -->
@@ -381,7 +498,6 @@ sites through the new `lib/so-readiness-category.ts`, which also replaced three
 hand-rolled copies of the same chunked catalog read.
 
 **Ref.** PR #2295, fix/so-readiness-says-what-is-missing, 2026-08-16.
-
 ## A PV reversal of a line-less entry posted a zero-line reversal header [medium]
 
 <!-- area: Accounting + GL -->

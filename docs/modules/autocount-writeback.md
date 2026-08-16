@@ -749,6 +749,43 @@ via `lineWriteback`, so a follow-up `/edit` could set each quantity — but it n
 a DEFERRED compose (the keys do not exist until the convert has drained), which
 `enqueueEdit` cannot express today.
 
+### What naming the lines COSTS, and what a refusal now tells you
+
+Naming the lines buys the partial shipment above and gives up the only checking
+this service does on its own. `DtlKeys()` returns a supplied array **verbatim**,
+so neither of the predicates it applies when it chooses the lines itself —
+
+```
+h.Cancelled = 'F'      and      (d.Qty - ISNULL(d.TransferedQty, 0)) > 0
+```
+
+— is ever evaluated for keys the ERP named. AutoCount is then the first thing in
+the chain to look at those lines, and what it says about a line it will not take
+is the whole of:
+
+```
+AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+```
+
+No key, no document, no reason — and `Serve`'s catch-all returns `ex.Message`
+alone, so that sentence is the entire content of the outbox row's `last_error`.
+On 2026-08-16 `HC-DO-2608-001` spent all six attempts on it and `HC-DO-2608-002`
+five more, and the eleven runs produced no fact between them.
+
+`Convert_` now wraps its whole `switch` and, on any failure, reads the source
+lines back out of the book and appends them to the message: per key, the
+document it sits on, `Qty`, `TransferedQty`, `Transferable`, the document's
+`Cancelled`, the outstanding quantity, and `NOT FOUND` for a key on no row at
+all. The columns go through `ExistingColumns` like `/doc-read`'s do, so a book
+without one of them loses that field and not the explanation.
+
+It **diagnoses and does not refuse.** Re-applying those two predicates to the
+supplied keys as a pre-flight reads as the obvious fix and cannot be justified
+from off the host: this file compiles nowhere but the office machine, so a
+predicate even slightly stricter than AutoCount's own would turn working
+transfers into refusals with nobody able to see it first. The calls and their
+arguments are unchanged; only the text a failure carries is better.
+
 ## 7d. The four documents AutoCount cannot create at all
 
 A DO, GRN, Sales Invoice or Purchase Invoice raised with **no parent** can never
@@ -798,6 +835,36 @@ This was the ERP declining to speak.
 `UDF` is nested because that is the only place the service reads it
 (`ApplyUdf` -> `Dict(h, "UDF")`); a flat `SOUDF_*` key at header level is
 silently ignored.
+
+### A UDF VALUE IS NOT ALWAYS A STRING — `PDate` is a date column
+
+Every value in that dictionary is JSON text, and `ApplyUdf` used to write all of
+them as `System.String` through `Set()`. `PDate` is the only DATE-typed column
+the ERP sends and it never landed: the write was refused, `Set()` logged
+`set skipped:` with **no key, no value and no route**, and the request still
+answered `ok`, so the outbox row went to `sent`. Every other key in the same
+payload arrived, so nothing looked wrong.
+
+The column types are the book's own, read out of
+`export-ac-fidelity-truth.py:106-107` — the query that produced the committed
+extract:
+
+| UDF | how the export reads it | therefore |
+|---|---|---|
+| `UDF_VENUE`, `UDF_BRANDING` | `LTRIM(RTRIM(...))` | text |
+| `UDF_BALANCE` | `ISNULL(..., 0)` | numeric |
+| `UDF_PDate` | `CONVERT(varchar(10), ..., 120)` | **date/time** — and one of the 2,500 exported values carries a time (`SO-010311 = "2026-07-22 01:00:00"`) |
+
+`ApplyUdf` now applies each key on a LADDER: the string FIRST and unchanged, so a
+key that lands today lands the same way, and a typed value only after the book
+has refused the string — `null` then `DBNull` for the present-and-null blank,
+`Decimal` for a numeric string, `DateTime` for a date. **A key that lands on no
+rung is logged by NAME with every refusal**, which is the half that was missing:
+a field that looks wired and writes nothing is what this cost. The `""`-blanks /
+absent-leaves-alone asymmetry is unchanged — an absent key is not in the
+dictionary at all.
+
+`Set()` itself is untouched and still guards the ~30 other assignments.
 
 **A field the ERP does not have is OMITTED, never sent as null.** The service's
 header loop is `ContainsKey`-gated and `Str` turns a present-but-null into `""`,
