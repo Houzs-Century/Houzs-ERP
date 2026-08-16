@@ -258,6 +258,32 @@ export async function snapshotSo(
   return currentRevision + 1;
 }
 
+/* ── SoAmendmentApproval — the signature a requested PRICE rides in on ───────
+   `so_amendment_lines.new_unit_price_sen` is written straight from the browser
+   at submit time and is validated nowhere (mig 0080 gives it a bare nullable
+   `integer`; amendment-lines.ts copies `l.newUnitPriceSen` verbatim, unlike
+   itemGroup and remark which it re-reads from the record). It is a REQUEST, not
+   a fact, and the submit gate is deliberately wide — `scm.amendment.create` OR
+   any Sales-org user OR a lane approver (mfg-sales-orders.ts).
+
+   So the thing that makes a requested price payable is not the payload. It is
+   the APPROVE gate: `PATCH /so-amendments/:id/approve-so` checks
+   `scm.amendment.approve_lines` / `approve_delivery` / `approve_so` and a legal
+   status transition before it calls this engine. This value is that gate's
+   receipt, constructed only there, and it is a REQUIRED argument with no
+   default — a future caller cannot inherit price authority by forgetting to
+   think about it, it has to write `null` and take the catalogue behaviour.
+
+   `null` = no approval is being claimed: the requested price is not read at
+   all, and the line re-prices from the catalogue exactly as it did before. */
+export type SoAmendmentApproval = {
+  /** The user the approve gate authenticated. */
+  approvedByUserId: string;
+  /** The permission key that gate demanded, so the audit records which
+   *  signature the price rode in on. */
+  approvalPermission: string;
+};
+
 /* ── applySoAmendment ───────────────────────────────────────────────────────
    The Approve-SO engine. Load the amendment + its line diffs + the SO; snapshot
    the current SO; apply each diff to mfg_sales_order_items carrying ALL variant
@@ -267,13 +293,20 @@ export async function snapshotSo(
 
    Returns the applied revision + the affected SO doc_no. Throws on a hard
    failure (load / write) — the caller (approve-so route) leaves the amendment
-   status unchanged so the operator can retry. */
+   status unchanged so the operator can retry.
+
+   `c`, `concurrency` and `approval` are all REQUIRED-with-an-explicit-empty
+   value rather than optional: each of them DECIDES something (company scope,
+   the optimistic lock, whether a requested price is payable), and CLAUDE.md's
+   rule is that such a parameter must fail to compile when it is forgotten
+   instead of silently taking the old behaviour. */
 export async function applySoAmendment(
   sb: Sb,
   amendmentId: string,
   userId: string | null,
-  c?: Context<any>,
-  concurrency?: { soVersion: number; leaseToken: string },
+  c: Context<any> | undefined,
+  concurrency: { soVersion: number; leaseToken: string } | null,
+  approval: SoAmendmentApproval | null,
 ): Promise<{ soDocNo: string; revision: number }> {
   // (1) Load amendment + lines + SO header.
   const { data: amdRow, error: amdErr } = await sb
@@ -331,7 +364,42 @@ export async function applySoAmendment(
      its siblings. Plain `true` reads a stored 0 as "not provided" and hands the
      sibling a catalogue price anyway, which bills the set several times over. */
   const soIsMigrated = ((soHdrCo as { linked_ac_docno?: string | null } | null)?.linked_ac_docno ?? null) !== null;
-  const amendTrust: TrustSelling = soIsMigrated ? 'including-zero' : false;
+
+  /* THE AMENDMENT HAS TO BE ABLE TO CARRY THE MONEY (owner, 2026-08-16): "Any
+     amount can be edited, unless it is locked. If it has proceeded and a day has
+     passed so it locked, then it goes through Sales Amendment."
+
+     Until this line, it could not. The trust above was `false` for every NATIVE
+     order, so the recompute's operator-price overwrite never ran and
+     `unitToPersistSen` kept the CATALOGUE figure assigned a few lines earlier in
+     mfg-pricing-recompute. An operator typed RM 50, an approver holding
+     scm.amendment.approve_* signed RM 50, and mfg_products.sell_price_sen landed
+     on the order — for every SKU that has a catalogue price. The sanctioned road
+     for changing money on a locked SO was the one road that could not.
+
+     WHY THIS IS NOT "widen the trust flag". trustOperatorSelling exists so a
+     CLIENT cannot author a price, and that concern is real here: the submit
+     route writes new_unit_price_sen straight from the browser, validates nothing,
+     and admits any Sales-org user. What has changed is not the payload's
+     standing — it is that this apply now knows whether a human with approval
+     authority signed it. The trust is read from `approval`, which only the
+     approve-so gate constructs and only after checking the lane permission and
+     the status transition; with `approval === null` the requested price is not
+     even read (see `clientUnit` below) and the catalogue behaviour is unchanged.
+
+     The ceiling is deliberate: an approved amendment now grants exactly the
+     authority the operator would have had on the SAME order before it locked —
+     the direct SO write path already passes `trustOperatorSelling =
+     !(isPosTabletCaller)` (mfg-sales-orders.ts) — and not one unit more. Plain
+     `true`, never 'including-zero', on a native order: a 0 there means "no price
+     was entered", exactly as it does on the unlocked road. */
+  const amendTrust: TrustSelling = soIsMigrated ? 'including-zero' : (approval !== null);
+
+  /* An ADD line is authored NOW, so 'including-zero' must never reach it even on
+     a migrated order — that flag is a statement about a price AutoCount already
+     recorded, and a line typed today has no such history (mfg-pricing-recompute's
+     own note on the flag says so). Same approval gate, plain trust. */
+  const addLineTrust: TrustSelling = approval !== null;
 
   // Config loaded ONCE and threaded into every per-line recompute (the create
   // path's `cachedConfig` — one maintenance_config read for the whole apply).
@@ -419,14 +487,18 @@ export async function applySoAmendment(
       ).toLowerCase();
       const qty = Math.max(1, Number(diff.new_qty ?? 1));
 
-      // Recompute the new line authoritatively (same path as POST /).
+      /* Recompute the new line (same path as POST /). `addLineTrust` is what
+         stops an APPROVED added line being re-priced to the catalogue: this call
+         used to pass no trust at all, so the fourteenth positional argument
+         defaulted to false and the price the approver signed for a brand-new
+         line was discarded on every order, migrated or not. */
       const rec = await recomputeOneLine(sb, {
         itemCode,
         itemGroup,
         qty,
         unitPriceCenti: Number(diff.new_unit_price_sen ?? 0),
         variants: (variants as MfgItemForRecompute['variants']) ?? null,
-      }, cachedConfig, soCompanyId);
+      }, cachedConfig, soCompanyId, { trustOperatorSelling: addLineTrust });
 
       const unit = rec.unit_price_sen;
       const lineTotal = qty * unit;
@@ -520,19 +592,26 @@ export async function applySoAmendment(
     const variants = change === 'SPEC' && diff.new_variants != null
       ? (diff.new_variants as Record<string, unknown>)
       : (row.variants as Record<string, unknown> | null) ?? null;
-    // The operator-authored selling price (if the diff supplies one) is fed as
-    // the client unitPriceCenti; the recompute returns the authoritative figure
-    // (catalog / sofa module price) for a priced line, else carries it through.
-    const clientUnit = diff.new_unit_price_sen != null
+    /* WHOSE number reaches the pricing engine. `new_unit_price_sen` is a REQUEST
+       written from the browser and validated nowhere, so it is read ONLY when an
+       approval is being claimed. Without one the line simply keeps its stored
+       price as the client figure — which on a native order the recompute then
+       replaces with the catalogue figure, exactly as before, and on a migrated
+       order the 'including-zero' protection preserves. That is the property that
+       makes this fix incapable of authoring a price without an approval: with
+       `approval === null` an unvalidated payload number is never even read. */
+    const clientUnit = (approval !== null && diff.new_unit_price_sen != null)
       ? Number(diff.new_unit_price_sen)
       : Number(row.unit_price_centi ?? 0);
 
-    /* amendTrust is 'including-zero' only for a MIGRATED order — see where it is
-       derived. On such an order clientUnit is the AutoCount price (or the
-       operator's explicit new_unit_price_sen when the amendment supplies one),
-       and either way it is the figure the customer agreed to. A SPEC change does
-       not re-price it: if the new spec should cost differently, the amendment
-       carries new_unit_price_sen and that is what persists. */
+    /* amendTrust — see where it is derived. MIGRATED: 'including-zero', so the
+       price AutoCount recorded (or the explicit new_unit_price_sen when the
+       amendment supplies one) survives, zeros included. NATIVE: `true` when an
+       approver signed this amendment, so the approved price persists instead of
+       being normalised to the catalogue; `false` with no approval, which is the
+       behaviour this path had for every native order until 2026-08-16. Either
+       way a SPEC change does not silently re-price: if the new spec should cost
+       differently, the amendment carries new_unit_price_sen. */
     const rec = await recomputeOneLine(sb, {
       itemCode,
       itemGroup,
@@ -747,6 +826,11 @@ export async function applySoAmendment(
       { field: 'revision', from: nextRevision - 1, to: nextRevision },
       { field: 'lines_applied', to: touched.length },
       ...(headerApplied.length > 0 ? [{ field: 'header_applied', to: headerApplied.join(', ') }] : []),
+      /* Which signature made the requested prices payable. Recorded because from
+         2026-08-16 an approved amendment can move MONEY on a locked SO, and the
+         drawer has to be able to say under whose authority — the per-line
+         `..._unit_price_sen` rows below say what moved, this says why it could. */
+      ...(approval ? [{ field: 'price_authority', to: approval.approvalPermission }] : []),
       /* Accountability: the type/department routing this single approval covers.
          The apply stays single-signature — this records WHICH routed fields the
          approver signed for, it does not split the gate. */
