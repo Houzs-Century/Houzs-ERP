@@ -34,7 +34,7 @@
 
 export type AccountRole =
   | 'AR' | 'SALES' | 'INVENTORY' | 'AP'
-  | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS';
+  | 'CASH' | 'BANK_DEFAULT' | 'TRANSIT_EDC' | 'TRANSIT_ONLINE' | 'CUSTOMER_DEPOSITS' | 'OVER_SHORT';
 
 /* Fallback = the unified AutoCount-style chart (phase 1, migration 0297;
    owner decision 2026-08-16). Every company carries these codes, so a company
@@ -49,6 +49,7 @@ export const DEFAULT_ROLE_CODES: Record<AccountRole, string> = {
   TRANSIT_EDC: '320-0000',       // Card Machine Clearing (EDC)
   TRANSIT_ONLINE: '325-0000',    // Online Payment Clearing (FPX/e-wallet)
   CUSTOMER_DEPOSITS: '410-0000', // Customer Deposits (reserved: advance-receipt refinement)
+  OVER_SHORT: '946-0000',        // Cash Over/Short (daily cashup differences)
 };
 
 /* Control accounts (brief §2.4): system-maintained, and a MANUAL journal may

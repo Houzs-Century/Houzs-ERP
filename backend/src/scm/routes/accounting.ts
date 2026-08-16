@@ -30,6 +30,7 @@ import { hasHouzsPerm } from '../lib/houzs-perms';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { backfillSoPayments } from '../../acc/payments';
 import { computeDailyBank } from '../../acc/daily-bank';
+import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -948,4 +949,142 @@ accounting.get('/daily-bank', async (c) => {
   if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
 
   return c.json(computeDailyBank(date, money, transitAccounts, (lines ?? []) as never));
+});
+
+/* ════════════════════════════════════════════════════════════════════════
+   Daily close (cashup, brief 3.5 layer 2)
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* GET /daily-close?date= — system takings per bucket (live) merged with any
+   saved counts. The system side is recomputed on every read: a count sheet
+   must always face today's truth, not the truth at first open. */
+accounting.get('/daily-close', async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const dateQ = c.req.query('date') ?? todayMyt();
+  const date = /^\d{4}-\d{2}-\d{2}$/.test(dateQ) ? dateQ : todayMyt();
+  const sb = c.get('supabase');
+
+  const takings = await systemTakings(sb, co.companyId, date);
+  if (!takings.ok) return c.json({ error: 'load_failed', reason: takings.reason }, 500);
+
+  const { data: savedRaw, error: sErr } = await sb.from('acc_daily_closes')
+    .select('bucket, system_sen, counted_sen, diff_sen, status, notes')
+    .eq('company_id', co.companyId).eq('close_date', date);
+  if (sErr) return c.json({ error: 'load_failed', reason: sErr.message }, 500);
+  const saved = new Map(((savedRaw ?? []) as Array<{ bucket: string; system_sen: number; counted_sen: number | null; status: string; notes: string | null }>)
+    .map((r) => [r.bucket, r]));
+
+  const bucketKeys = [...new Set(['cash', 'transfer', ...takings.buckets.keys(), ...saved.keys()])];
+  const rows = bucketKeys.map((bucket) => {
+    const sys = takings.buckets.get(bucket) ?? 0;
+    const row = saved.get(bucket);
+    const counted = row?.counted_sen ?? null;
+    return {
+      bucket,
+      systemSen: sys,
+      countedSen: counted,
+      diffSen: counted == null ? null : counted - sys,
+      status: row?.status ?? 'DRAFT',
+      notes: row?.notes ?? null,
+    };
+  });
+  return c.json({ date, rows });
+});
+
+/* PUT /daily-close — save counted amounts (draft). Upsert per bucket. */
+accounting.put('/daily-close', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to close the day." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const date = String(body.date ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: 'bad_date' }, 400);
+  const entries = Array.isArray(body.buckets) ? body.buckets : [];
+  const sb = c.get('supabase');
+
+  const takings = await systemTakings(sb, co.companyId, date);
+  if (!takings.ok) return c.json({ error: 'load_failed', reason: takings.reason }, 500);
+
+  for (const e of entries as Array<{ bucket?: string; countedSen?: number | null; notes?: string | null }>) {
+    const bucket = String(e.bucket ?? '').trim();
+    if (!bucket) continue;
+    const counted = e.countedSen == null ? null : Number(e.countedSen);
+    if (counted != null && (!Number.isInteger(counted) || counted < 0)) {
+      return c.json({ error: 'bad_amount', message: `${bucket}: counted amount must be non-negative integer sen` }, 400);
+    }
+    const sys = takings.buckets.get(bucket) ?? 0;
+    /* Refuse to edit a CONFIRMED bucket - the day is closed; corrections go
+       through a manual journal, on the record. */
+    const { data: existing, error: exErr } = await sb.from('acc_daily_closes')
+      .select('id, status').eq('company_id', co.companyId).eq('close_date', date).eq('bucket', bucket).maybeSingle();
+    if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);
+    if (existing && (existing as { status?: string }).status === 'CONFIRMED') {
+      return c.json({ error: 'already_confirmed', message: `${bucket} is confirmed for ${date}` }, 409);
+    }
+    if (existing) {
+      const { error } = await sb.from('acc_daily_closes')
+        .update({ counted_sen: counted, system_sen: sys, notes: e.notes ?? null, updated_at: new Date().toISOString() })
+        .eq('id', (existing as { id: number }).id);
+      if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+    } else {
+      const { error } = await sb.from('acc_daily_closes')
+        .insert({ company_id: co.companyId, close_date: date, bucket, counted_sen: counted, system_sen: sys, notes: e.notes ?? null });
+      if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+    }
+  }
+  return c.json({ ok: true });
+});
+
+/* POST /daily-close/confirm — freeze the day: refresh system figures, mark
+   every saved bucket CONFIRMED, and post the CASH over/short THAT MOMENT
+   (brief 3.5: 对账确认的那一刻就产生分录). Card/transfer differences are
+   settlement timing and belong to layer 3 - recorded, never posted here. */
+accounting.post('/daily-close/confirm', async (c) => {
+  if (!requireGlPost(c)) return c.json({ error: "You don't have permission to close the day." }, 403);
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const date = String(body.date ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return c.json({ error: 'bad_date' }, 400);
+  const sb = c.get('supabase');
+
+  const { data: rowsRaw, error: rErr } = await sb.from('acc_daily_closes')
+    .select('id, bucket, counted_sen, status')
+    .eq('company_id', co.companyId).eq('close_date', date);
+  if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
+  const rows = (rowsRaw ?? []) as Array<{ id: number; bucket: string; counted_sen: number | null; status: string }>;
+  if (rows.length === 0) return c.json({ error: 'nothing_to_confirm', message: 'Save the counted amounts first.' }, 400);
+  const cashRow = rows.find((r) => r.bucket === 'cash');
+  if (cashRow && cashRow.counted_sen == null) {
+    return c.json({ error: 'cash_not_counted', message: 'Count the cash drawer before confirming - the whole point of the close.' }, 400);
+  }
+
+  const takings = await systemTakings(sb, co.companyId, date);
+  if (!takings.ok) return c.json({ error: 'load_failed', reason: takings.reason }, 500);
+
+  const user = c.get('houzsUser') as { name?: string } | undefined;
+  let cashPosting: { status: string; jeNo?: string } | null = null;
+  for (const row of rows) {
+    const sys = takings.buckets.get(row.bucket) ?? 0;
+    if (row.bucket === 'cash' && row.counted_sen != null) {
+      const diff = row.counted_sen - sys;
+      const posted = await postCashOverShort(sb, co.companyId, date, diff);
+      if (!posted.ok) return c.json({ error: 'over_short_failed', reason: posted.reason ?? posted.status }, 500);
+      cashPosting = { status: posted.status, ...(posted.jeNo ? { jeNo: posted.jeNo } : {}) };
+    }
+    const { error } = await sb.from('acc_daily_closes')
+      .update({
+        system_sen: sys,
+        status: 'CONFIRMED',
+        confirmed_by: user?.name ?? null,
+        confirmed_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', row.id);
+    if (error) return c.json({ error: 'confirm_failed', reason: error.message }, 500);
+  }
+  return c.json({ ok: true, confirmed: rows.length, cashPosting });
 });
