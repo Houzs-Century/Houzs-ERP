@@ -29,9 +29,10 @@
 // Routing: /sales-invoices/from-do.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type CSSProperties } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { writeScmHandoff } from '../../lib/scmHandoffStorage';
+import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { ArrowRight, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
@@ -74,18 +75,62 @@ export const SalesInvoiceFromDo = () => {
   const navigate = useNavigate();
   const linesQ = useInvoiceableDoLines();
 
+  /* "Convert to SI" on a Delivery Order lands here with ?doId=<id> so the
+     operator sees the note they were just looking at, not every open DO in the
+     company. The parameter was being constructed by both callers and dropped
+     here until 2026-08-16. No parameter → the full picker, which is what the
+     list toolbar's "From Delivery Order" button wants. */
+  const [searchParams] = useSearchParams();
+  const scope = useMemo(
+    () => readConvertScope('doToSi', searchParams, []),
+    [searchParams],
+  );
+
   // Map<doItemId, { picked, qty }>. Defaults: picked = false; when ticked,
   // qty defaults to the line's remaining.
   const [picks, setPicks] = useState<Record<string, Pick>>({});
   const [dialog, setDialog] = useState<{ title: string; body: string } | null>(null);
 
-  const rows = useMemo<DoRemainingLine[]>(() => linesQ.data ?? [], [linesQ.data]);
+  const allRows = useMemo<DoRemainingLine[]>(() => linesQ.data ?? [], [linesQ.data]);
+  const rows = useMemo<DoRemainingLine[]>(
+    () => (scope.keys.size === 0
+      ? allRows
+      : allRows.filter((r) => scope.keys.has(r.deliveryOrderId))),
+    [allRows, scope.keys],
+  );
 
   const rowById = useMemo(() => {
     const m = new Map<string, DoRemainingLine>();
     for (const r of rows) m.set(r.doItemId, r);
     return m;
   }, [rows]);
+
+  /* Scoped entry pre-ticks the note's remaining lines at full quantity, so the
+     screen is a ready-to-review draft rather than a filtered list to re-tick by
+     hand. Copies GrnFromPo, the one convert that already worked. Nothing is
+     invoiced here — Continue only carries the picks to the New SI form. */
+  const prefilled = useRef(false);
+  useEffect(() => {
+    if (prefilled.current) return;
+    if (scope.keys.size === 0) return;
+    if (linesQ.isLoading) return;
+    prefilled.current = true;
+    const mine = rows.filter((r) => r.remaining > 0);
+    const first = mine[0];
+    // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- mine[0] is typed non-optional without noUncheckedIndexedAccess; an empty scope match is real
+    if (!first) return;
+    // Honour the one-customer-per-invoice lock: tick only the first line's
+    // customer, even if the scope somehow spans two.
+    const lockTo = custKey(first);
+    setPicks(() => {
+      const next: Record<string, Pick> = {};
+      for (const l of mine) {
+        if (custKey(l) !== lockTo) continue;
+        next[l.doItemId] = { picked: true, qty: l.remaining };
+      }
+      return next;
+    });
+  }, [rows, linesQ.isLoading, scope.keys]);
 
   /* The customer locked in by the current picks — the key of the first picked
      line. Null when nothing is picked (every line is selectable). */
@@ -337,6 +382,21 @@ export const SalesInvoiceFromDo = () => {
         quantity is shown. Continuing opens the normal New Sales Invoice form, prefilled for review —
         nothing is invoiced and no revenue is recorded until you click Create on that screen.
       </p>
+      <UnrecognisedScopeNotice unknown={scope.unknown} />
+      {scope.keys.size > 0 && (
+        <p style={{ margin: '0 0 var(--space-2)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+          Showing the invoiceable lines of{' '}
+          <strong>
+            {scope.keys.size === 1
+              ? (rows[0]?.doNumber ?? 'this Delivery Order')
+              : `${scope.keys.size} Delivery Orders`}
+          </strong>{' '}
+          only.{' '}
+          <Link to="/scm/sales-invoices/from-do" style={{ color: 'var(--c-burnt)', textDecoration: 'underline' }}>
+            Show all Delivery Orders
+          </Link>
+        </p>
+      )}
       {lockedCustomerName && (
         <p style={{ margin: '0 0 var(--space-2)', fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
           One customer per Sales Invoice — locked to <strong>{lockedCustomerName}</strong>. Other
@@ -363,7 +423,9 @@ export const SalesInvoiceFromDo = () => {
            work that is still outstanding. */
         emptyMessage={linesQ.isError
           ? "We couldn't load the outstanding lines, so this list is incomplete. That is not the same as there being none left — please refresh and try again."
-          : "No invoiceable Delivery Order lines — every line has been fully invoiced or returned (or there are no Delivery Orders)."}
+          : scope.keys.size > 0
+            ? "Nothing left to invoice on the Delivery Order you came from — every line of it has been fully invoiced or returned. Other Delivery Orders may still have lines; use Show all above."
+            : "No invoiceable Delivery Order lines — every line has been fully invoiced or returned (or there are no Delivery Orders)."}
       />
 
       {dialog && (

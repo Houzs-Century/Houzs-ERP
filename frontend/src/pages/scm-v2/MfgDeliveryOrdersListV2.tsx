@@ -65,6 +65,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { convertToLink } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
@@ -973,8 +974,7 @@ export function MfgDeliveryOrdersListV2() {
       { id: r.id, status: "DELIVERED" },
       { onSuccess: () => setSelected(null) }
     );
-  const doConvertToSi = (r: DoRow) =>
-    navigate(`/scm/sales-invoices/from-do?do=${r.id}`);
+  const doConvertToSi = (r: DoRow) => navigate(convertToLink('doToSi', r.id));
   // Reopen a cancelled DO → LOADED (2990 MfgDeliveryOrdersList "Reopen DO"
   // parity; reuses the status PATCH endpoint).
   const doReopen = async (r: DoRow) => {

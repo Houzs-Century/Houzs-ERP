@@ -57,6 +57,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
+import { convertToLink } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
@@ -601,8 +602,8 @@ export function GoodsReceivedListV2() {
   const goEdit = (r: GrnRow) => navigate(`/scm/grns/${r.id}?edit=1`);
   const goPrint = (r: GrnRow) => navigate(`/scm/grns/${r.id}?print=1`);
   const goFullPage = (r: GrnRow) => navigate(`/scm/grns/${r.id}`);
-  const goConvertToPi = (r: GrnRow) => navigate(`/scm/purchase-invoices/from-grn?grn=${r.id}`);
-  const goConvertToPr = (r: GrnRow) => navigate(`/scm/purchase-returns/new?fromGrn=${r.id}`);
+  const goConvertToPi = (r: GrnRow) => navigate(convertToLink('grnToPi', r.id));
+  const goConvertToPr = (r: GrnRow) => navigate(convertToLink('grnToPr', r.id));
 
   // ─── Multi-select → batch "Print all" ─────────────────────────────────────
   const toggleSelect = (rowId: string) =>
