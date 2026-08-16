@@ -629,7 +629,13 @@ export async function renderSalesOrderInto(
   const paidCenti = typeof header.paid_centi_total === 'number'
     ? header.paid_centi_total
     : payments.reduce((sum, p) => sum + (p.amount_centi || 0), 0);
-  const balanceCenti = Math.max(0, subtotalCenti - paidCenti);
+  /* SIGNED (owner 2026-08-16) — over-collection is allowed, so the print must
+     not floor the excess away and quietly tell the customer he is square when
+     the business is holding RM 250 of his money. Negative flips the LABEL
+     rather than printing "BALANCE DUE −250.00", which reads as a debt with a
+     typo; the figure itself is shown as the positive credit it is. */
+  const balanceCenti = subtotalCenti - paidCenti;
+  const overpaidCenti = balanceCenti < 0 ? -balanceCenti : 0;
   if (ty > 240) { doc.addPage(); ty = margin; }
   const awTopY = ty;
   const totalsX = pageW - margin - 70;
@@ -648,7 +654,12 @@ export async function renderSalesOrderInto(
   doc.setDrawColor(0);
   doc.line(totalsX, ty, pageW - margin, ty);
   doc.setFontSize(11);
-  drawRow('BALANCE DUE', fmtRm(balanceCenti, header.currency), ty + 5, true);
+  drawRow(
+    overpaidCenti > 0 ? 'CREDIT BALANCE' : 'BALANCE DUE',
+    fmtRm(overpaidCenti > 0 ? overpaidCenti : balanceCenti, header.currency),
+    ty + 5,
+    true,
+  );
   ty += 12;
 
   // Expected-deposit line — only shown when the commander has set one
