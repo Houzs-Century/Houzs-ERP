@@ -73,6 +73,96 @@ class nobody has written yet is covered too.
 
 **Ref:** PR #PRNUM, 2026-08-16.
 
+## A Delivery Order line could still be created with no link to the SO line it ships [high]
+
+<!-- area: Delivery, DO, returns -->
+
+**Symptom.** Owner 2026-08-14: MRP told purchasing to buy goods that had already
+shipped. 24 delivery-order lines across 11 sales orders carried
+`so_item_id = NULL`, so a delivered order read as entirely undelivered.
+
+**Root cause (traced).** The rows were repaired by #2185; the hole that wrote
+them was left open. `buildItemRow` takes `so_item_id` straight off the request
+body and defaults it to null, and both body-driven insert paths go through it —
+`POST /` and `POST /:id/items`. Confirmed still present on `main` at
+2026-08-16 before this PR was revived: `so_item_id: (it.soItemId as string |
+undefined) ?? null`, twice, in `delivery-orders-mfg.ts`. The remaining-qty
+guard, the sofa batch guard, the SO header's status flip and MRP's
+delivered-netting all resolve on that column, so a null turns each of them into
+a silent no-op. `POST /from-sos` never had the defect because it derives the
+link itself; PR #1395 fixed the DO-create *page* on 2026-07-29 and lines written
+a week later were still unlinked, because a client fix cannot close a hole that
+lives in the server accepting the omission.
+
+**Fix.** `scm/lib/derive-do-so-item-id.ts`, called on both paths BEFORE anything
+downstream consults the field. Code on the SO and resolvable -> link it; code on
+the SO but ambiguous -> **400**, because only the client knows which line it
+meant and a wrong link credits one line's shipment against another and cannot be
+told from a fact afterwards; code not on the SO -> the null stands, which is the
+ad-hoc line the delivery paths already document. A failed read of the sales
+order REFUSES rather than defaulting to the null it exists to prevent. The
+pairing is imported from `scripts/lib/do-so-item-pairing.mjs` rather than
+mirrored, so the repair script and the runtime guard cannot drift.
+
+**A second swallowed read, found while reviving this.** The add path's own
+"which SO lines has this DO already claimed" query destructured `data` only. On
+a failed read `claimed` became empty, the exclusion silently emptied, and the
+guard reintroduced the very double-link it exists to prevent — one level up from
+the defect being fixed. It now binds `error` and refuses
+(`claimedSoItemIdsOnDo`), which is why `audit:swallowed-reads` reports no gain.
+
+**Test.** `backend/tests/deriveDoSoItemId.test.ts` — the ad-hoc pass-through, the
+never-second-guess-a-stated-link rule, the fail-closed read, the colour-resolved
+pair, and the refusal on ambiguity.
+
+**Ref.** PR #2225, fix/do-line-derive-so-item-id-0814, 2026-08-16. Part one was
+#2185.
+## SO V2 "History" was a button that could never have worked, and Recent activity had no time to show [medium]
+
+<!-- area: Frontend + mobile -->
+
+**Symptom.** Owner on `2990-SO-2608-036`, 2026-08-13: *"点history的时候没有反应"*
+and *"recent activity 加上时间"*. Pressing **History** on the V2 Sales Order
+detail page did nothing at all, and the Recent activity card printed the same
+date on all three rows with no time on any of them.
+
+**Root cause (traced, two independent defects).**
+
+1. *History.* The handler was
+   `navigate(`/scm/sales-orders/${docNo}?tab=history`)` — a navigation to the
+   route the user is ALREADY on, carrying a query parameter no code reads. Both
+   halves are independently fatal, so the button could not have worked on any
+   code path. Verified by enumerating every `params.get("tab")` /
+   `searchParams.get("tab")` consumer in `frontend/src`: the hits are
+   `Settings`, `ServiceSettings`, `Team`, `Projects`, `WarehouseRacks`,
+   `Products` and `MobileApp` — no Sales Order detail page among them. This is
+   the same disease as the dead `?print=1` navigation this file already records;
+   print was fixed and history was left behind.
+2. *Recent activity.* All three rows read `salesOrder.so_date`, which is a
+   Postgres **DATE** column and carries no time of day, so no formatting change
+   could have produced one. Two of the three rows were also inferred rather than
+   recorded — nothing had ever written a "Lines added" or status-change event to
+   that card's source.
+
+**Fix.** History opens the shared `AuditHistoryPanel` over `mfg_so_audit_log`
+with the same `SO_AUDIT_LABELS` vocabulary the V1 detail page uses, so History
+means one thing on both pages. Recent activity reads the same audit entries and
+renders `created_at` through the shared `fmtDateTime`, falling back to the old
+synthesized rows only when an order has no audit entries yet (pre-audit
+history, or the query still loading) — a dateless card being a better answer
+than no card.
+
+**Test.** `frontend/src/pages/scm-v2/so-v2-history-and-activity.test.tsx` mounts
+the real page under a real router with only its data hooks faked, and asserts
+what the operator sees: the drawer appears AND the URL does not change (the old
+handler's only effect was to push the URL already on screen), and the activity
+row carries a clock time. Proven to bite — reverting the page to its pre-fix
+source takes the file from `3 passed` to `2 failed | 1 passed`; the one that
+still passes is the no-audit-entries fallback, which is deliberately the old
+behaviour. Both defects were invisible to `tsc` and to every existing test,
+which is how the same disease (`?print=1`) got fixed once and recurred here.
+
+**Ref.** PR #2226, fix/so-v2-history-and-activity-time-0813, 2026-08-16.
 ## The CO/SO helper twins: two had drifted, and the drifts are bounded by an asserted proof [low]
 
 <!-- area: Sales orders + pricing -->
@@ -4486,10 +4576,27 @@ a bijection exists but choosing one is a coin flip, and the two SO lines can
 differ in what is linked to them. A wrong link is worse than none: it credits
 one line's shipment against another and cannot be told from a fact afterwards.
 
-**Fix, part two — the hole.** Still to do: `buildItemRow` should derive the link
-from `(so_doc_no, item_code)` when a client omits it and refuse only when that
-is ambiguous — the same thing `/from-sos` already does — so no future client
-regression can write this again.
+**Fix, part two — the hole (2026-08-15).** `scm/lib/derive-do-so-item-id.ts`
+reads the link off the sales order before either body-driven insert path can
+write a null, which is what `POST /from-sos` always did and is why that path
+never produced one. Three outcomes, and the middle one is the whole point:
+
+  · code on the SO, resolvable  → link it, no client change required;
+  · code on the SO, ambiguous   → **400**. Only the client knows which line it
+    meant, and a coin flip is worse than a refusal — a wrong link credits one
+    line's shipment against another and cannot be told from a fact afterwards;
+  · code NOT on the SO          → the null stands. That is the ad-hoc line the
+    delivery paths already document. Prod carries none today, but closing a
+    hole is not a licence to break a supported shape.
+
+A failed read of the sales order refuses too, rather than defaulting to the null
+it exists to prevent — the same fail-closed rule `downstream-lock` follows.
+
+The pairing is IMPORTED from `scripts/lib/do-so-item-pairing.mjs`, not mirrored
+into `src` the way `do-shipped-states` / `variant-summary` are, so the repair
+script and the runtime guard cannot drift into two opinions about what a link
+means. Precedent for crossing that boundary: `autocount-sofa-collapse.ts`
+importing `parse-sofa.mjs`.
 
 ## The coverage gate never ran on Windows and reported success without reading a report [high]
 
