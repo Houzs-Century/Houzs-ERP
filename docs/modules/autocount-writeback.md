@@ -1876,9 +1876,13 @@ one row has already read that row's reason. What the flag never protected
 against — a `sent` row — is refused outright, which the flag could not do.
 
 **`can_requeue` on every list row** says whether the button belongs there at all
-(`acRowIsRequeueable`): a `create_so` / `create_po` row whose state is `failed`
-or `skipped` and which carries no re-queue marker. It is a HINT computed by the
-server so the page holds no policy; the POST re-checks everything.
+(`acRowIsRequeueable`), and it is a HINT computed by the server so the page holds
+no policy; the POST re-checks everything. It is true for a `create_so` /
+`create_po` row whose state is `failed` or `skipped`, and — since 2026-08-16 —
+for a TRANSFER row (`so_to_do`, `po_to_gr`, `do_to_iv`, `gr_to_pi`, `so_to_po`)
+whose state is `failed` and never one whose state is `skipped`. Neither ever
+carries the re-queue marker. The asymmetry is the whole rule below: a `skipped`
+transfer was refused by the DOCUMENT and a `failed` one by the SERVICE.
 
 **The answer is a structured outcome, never an exception string** — `accepted`,
 a stable `code`, and a plain-English `message` from `AC_REQUEUE_MEANING`, which
@@ -2019,18 +2023,28 @@ remains the only way to sweep a backlog or to get a DRY RUN.
 | input | |
 |---|---|
 | `doc_no` | one ERP document (`HC-SO-2608-002`) |
-| `doc_type` | `ALL` / `SO` / `PO` when no `doc_no` is given |
+| `doc_type` | `ALL` / `SO` / `PO` / `DO` / `GR` / `IV` / `PI` when no `doc_no` is given |
 | `apply` | `1` writes. Anything else is a DRY RUN |
+| `include_failed` | `1` also re-sends what AutoCount refused. REQUIRED for `DO` / `GR` / `IV` / `PI`: those four have no create, so their only re-sendable row is a `failed` transfer, and the script refuses the scope rather than reporting an empty sweep |
 
-**It re-composes; it never resurrects.** The stored payload of a refusal is `{}`
-and, even when it is not, it is the PRE-FIX document — the whole point is that
-the document changed. The tool calls the same `enqueueSoCreate` /
+**A CREATE re-composes; it never resurrects.** The stored payload of a skipped
+create is `{}` and, even when it is not, it is the PRE-FIX document — the whole
+point is that the document changed. The tool calls the same `enqueueSoCreate` /
 `enqueuePoCreate` the route calls. It runs under `tsx` and imports them from
 `src/`, which is this repo's existing answer to "the logic is TypeScript and the
 script is `.mjs`" (`recompute-2990-so-allocation.mjs` and three others do the
 same, for the same stated reason). A second composer written in `.mjs` is the
 one thing that could put a document into the live book that the real composer
 would have refused.
+
+**A TRANSFER is the exact opposite, and that is not an inconsistency.** It has no
+create to compose, so its recorded payload IS the instruction — 0277's own rule
+that the payload is a snapshot, never recomposed — and re-sending that snapshot
+is what a retry means. It is also why re-sending one copies no route logic into
+this module, which was the third of the three original objections to doing it at
+all. The operator is told which of the two happened: the outcome code is
+`requeued-as-recorded`, not `requeued`, and its sentence says a change made since
+the refusal is not included.
 
 **The DRY RUN is not a prediction.** `captureWrites` hands the real enqueue the
 real client for reads and a recorder for writes, so the dry run executes the
@@ -2041,13 +2055,37 @@ which is the useful part, because clearing one cause usually reveals the next
 (§7m). APPLY probes first and only then writes, so a still-refused document
 never grows the backlog by a duplicate `skipped` row.
 
-**Only the two CREATES are re-queueable, and the rest are reported, not hidden:**
+**What is re-queueable, and the rest are reported, not hidden:**
 
 | op | why |
 |---|---|
-| `create_so` / `create_po` | recoverable here and nowhere else |
+| `create_so` / `create_po` | recoverable here and nowhere else, from either terminal state |
 | `edit` | the document IS in AutoCount, so the documented remedy (fix, then save again) really does re-queue it. Re-composing it here would also silently drop any line `retire` entries the original save carried (§7a), which a `{}` payload cannot recall |
-| conversions | a parentless DO/GR/IV/PI can never exist in AutoCount (§7d), a merged conversion has no shape (§7), and re-expressing a DtlKey-subset refusal would mean copying `enqueueConvert`'s call-site into a script |
+| `cancel` | either the document was withdrawn before it ever reached AutoCount, so there is nothing there to cancel, or the ERP holds the wrong AutoCount number for it (`grn-mislinked`) and a re-send would name the wrong document in a live book |
+| a **`failed`** transfer | RE-QUEUEABLE since 2026-08-16. The ERP composed it, the queue sent it, and the SERVICE refused — a refusal that stops being true when the service is replaced, which a host rebuild does |
+| a **`skipped`** transfer | still refused, and the three shapes are unchanged: a parentless DO/GR/IV/PI can never exist in AutoCount (§7d), a merged conversion has no shape (§7), and a DtlKey-subset refusal is fixed by the line-key backfill and re-raising the document. Every one of them is a property of the DOCUMENT, and no rebuild touches a document |
+
+**THE DISCRIMINATOR IS RECORDED, not asserted.** Two facts the queue already
+writes, which agree by construction and are BOTH required:
+
+- `recordConvertSkipped` hard-codes `status: 'skipped'` and
+  `payload: { body: {} }`, and it is the single writer behind all three
+  unrecoverable shapes. Such a row never reached the drain, so the service has
+  never seen the document and cannot be what refused it.
+- Only `dispatchOne` writes `failed`, and only a `pending` row reaches it —
+  which for a transfer op is only ever `enqueueConvert`'s success path.
+
+Requiring both is what makes it safe against a path nobody has written: a
+`failed` row with an empty payload has nothing to send, and a `skipped` row with
+a real payload was still never dispatched. Nothing here is a human ticking a box.
+The full argument, including why the host's `mvid` is NOT the gate (it answers
+"was the service replaced", which is a different question, and no row records
+it), is `docs/autocount-sync-reasons.md` §6.
+
+**`sent` has no exception and the LADDER holds it**, not only its two callers —
+`requeueOutboxRow` refuses a `sent` row before climbing and `requeueSkipped`'s
+select cannot return one, so the rung inside `requeueOneRow` is unreachable from
+both of today's entry points and is tested directly for exactly that reason.
 
 **Idempotent, by three independent things.** A `skipped` row is written with
 `dedupe_key: null` (`enqueueAcOp`) and 0277's unique index covers only
@@ -2104,7 +2142,7 @@ never be mistaken for a cancel divergence.
 |---|---|
 | `src/scm/lib/downstream-lock.test.ts` | The owner's rule: one live child locks; a cancelled child does not; another document's children do not |
 | `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, the salesperson fallback of §7n end to end (including that `/ensure-masters` is then asked to open that agent), and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document. Also **§7o end to end**, which is where it has to be tested: most of that defect was in the SELECT LIST, and a column list is only exercised by a read. Per field: the value reaches the payload, `mastersOf` is asked to open the master it names, and an edit does not blank what the book holds. **§7q the same way** — the BALANCE off the payments ledger and NOT off the `balance_centi` the fixture deliberately seeds to the gross total, the legacy-deposit rule both ways, `"0.00"` on a settled order, no key at all when the order has no total, `DeliverPhone1` off `emergency_contact_phone` while `Phone` keeps the customer's, and the line delivery date present-and-null on a create against omitted-when-absent on an edit |
-| `src/scm/lib/autocount-requeue.test.ts` | Re-queueing a refusal: a document whose cause is unfixed stays refused (and APPLY adds no second `skipped` row), a fixed one queues a FRESHLY COMPOSED create carrying the location the operator just set, one already in AutoCount is never re-queued, and running twice does not double-queue — with 0277's pending-dedupe index enforced by the fake so the backstop is proved and not asserted. **And the by-id path**: a `sent` row is refused with nothing written, refused BEFORE the document is read (so a deleted order cannot change the answer) and refused with the switch off too; another company's row answers `row-not-found` while the same row in the caller's own company goes through; a `failed` row's replacement starts at zero attempts while the dead row keeps its six |
+| `src/scm/lib/autocount-requeue.test.ts` | Re-queueing a refusal: a document whose cause is unfixed stays refused (and APPLY adds no second `skipped` row), a fixed one queues a FRESHLY COMPOSED create carrying the location the operator just set, one already in AutoCount is never re-queued, and running twice does not double-queue — with 0277's pending-dedupe index enforced by the fake so the backstop is proved and not asserted. **And the by-id path**: a `sent` row is refused with nothing written, refused BEFORE the document is read (so a deleted order cannot change the answer) and refused with the switch off too; another company's row answers `row-not-found` while the same row in the caller's own company goes through; a `failed` row's replacement starts at zero attempts while the dead row keeps its six. **And the transfer path**: a `failed` conversion is queued again with the recorded payload byte for byte (same `DtlKeys`, same parent, same dedupe key) and the old row annotated; each of the three unrecoverable shapes — parentless, merged, DtlKey subset — is refused through BOTH entry points, on the row's status and not on its wording; a `skipped` transfer carrying a real payload is still refused, and a `failed` one with an empty payload is too; and `already-sent` is asserted against the LADDER for all seven ops, which is the only way to reach that rung |
 | `tests/autocountSyncReasonsCatalogue.test.ts` | `docs/autocount-sync-reasons.md` against the code, both directions — every re-queue outcome and every skip kind has a row, and the file describes no outcome the code can no longer return. Also that the `Invalid transfer item.` entry sends the reader to rebuild the AutoCount service rather than to press the button again |
 | `src/scm/shared/so-outstanding.test.ts` | **§7q.** The outstanding-balance rule the SO detail page and the BALANCE UDF now share: the ledger is the paid amount, a legacy header deposit counts once and only when the ledger has no `is_deposit` row, and an overpayment is 0 rather than negative |
 | `src/scm/lib/so-agent.test.ts` | What lands in `mfg_sales_orders.agent` (§7n): a create with a salesperson stamps the NAME, an explicit `body.agent` still wins, a blank one is not a supplied one, and a dead `scm.staff` lookup costs the agent text and never the save |

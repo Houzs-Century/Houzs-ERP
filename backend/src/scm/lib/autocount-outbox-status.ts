@@ -294,6 +294,27 @@ export function acNeedsAttention(
 export const AC_REQUEUEABLE_OPS = ['create_so', 'create_po'] as const;
 
 /**
+ * The operations that have NO create of their own — AutoCount builds their
+ * document by TRANSFERRING a source document's lines, and the payload the ERP
+ * composed is the whole instruction.
+ *
+ * They are re-sendable under a strictly narrower condition than the two creates,
+ * and the condition is the subject of `acRowIsRequeueable` below: only a FAILED
+ * one, never a skipped one. See requeueOneRow for the full argument — the short
+ * version is that a `skipped` transfer row was refused by the DOCUMENT's shape
+ * and a `failed` one was refused by the SERVICE, and only the second of those
+ * stops being true when the shop-floor host is rebuilt.
+ *
+ * `so_to_po` is in this list for the same structural reason the four conversions
+ * are: it is AddSOToPOTransferDetail, it carries a `fromDoc`, and its payload is
+ * a composed transfer. It is written by enqueuePoCreate, which records its own
+ * refusals under `create_po`, so no `skipped` row can ever carry this op.
+ */
+export const AC_TRANSFER_OPS = [
+  'so_to_do', 'po_to_gr', 'do_to_iv', 'gr_to_pi', 'so_to_po',
+] as const;
+
+/**
  * Is a per-row "Send again" button worth OFFERING on this row?
  *
  * A HINT, NOT THE GATE. The gate is requeueOutboxRow (lib/autocount-requeue.ts),
@@ -303,14 +324,17 @@ export const AC_REQUEUEABLE_OPS = ['create_so', 'create_po'] as const;
  * Nothing here is trusted by the write path; this exists only so the page does
  * not put a button on a row whose answer is knowably "no" before it is pressed.
  *
- * The four structural noes, and each is permanent for that row:
+ * The structural noes, and each is permanent for that row:
  *
  *   status pending / sent   there is nothing to re-ask. A pending row is
  *                           already going out and a sent row is in the book.
  *   already re-queued       the marker means somebody asked again; its document
  *                           is queued or sent under a NEWER row.
- *   not a create            an edit is re-queued by saving the document, and a
- *                           conversion has no create to re-attempt at all.
+ *   an edit                 re-queued by saving the document, never from here.
+ *   a SKIPPED transfer      the three shapes that produce one — a parentless
+ *                           DO/GR/IV/PI, a merged conversion, a DtlKey-subset
+ *                           refusal — are properties of the DOCUMENT and no
+ *                           amount of re-sending touches them.
  *
  * Deliberately NOT mirrored into scripts/lib/autocount-skip-kinds.mjs: the
  * health check reports the queue and never re-queues, so a copy there would be
@@ -321,7 +345,12 @@ export function acRowIsRequeueable(
   status: string,
   lastError: string | null | undefined,
 ): boolean {
-  if (!(AC_REQUEUEABLE_OPS as readonly string[]).includes(op)) return false;
   const state = acOutboxState(status, lastError);
-  return state === 'failed' || state === 'skipped';
+  if ((AC_REQUEUEABLE_OPS as readonly string[]).includes(op)) {
+    return state === 'failed' || state === 'skipped';
+  }
+  /* FAILED ONLY. A skipped transfer never left the building, so the service has
+     never seen it and its refusal cannot be a service refusal. */
+  if ((AC_TRANSFER_OPS as readonly string[]).includes(op)) return state === 'failed';
+  return false;
 }

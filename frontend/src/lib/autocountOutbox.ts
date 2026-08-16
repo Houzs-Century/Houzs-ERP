@@ -274,6 +274,8 @@ export const AC_SEND_AGAIN_BUSY_LABEL = "Sending";
  */
 export const AC_REQUEUE_TODO: Record<string, string> = {
   requeued: "Nothing more to do. It goes out with the next five-minute send.",
+  "requeued-as-recorded":
+    "Nothing more to do. One thing to know: this kind is sent exactly as it was first written down, so if you changed the document after it was refused, that change is not in what goes out.",
   "already-sent":
     "Nothing, and do not look for a way round it. A second copy in the account book is worse than this row.",
   "already-in-autocount":

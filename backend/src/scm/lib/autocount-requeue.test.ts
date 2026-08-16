@@ -9,6 +9,7 @@ import { describe, expect, test, beforeEach } from 'vitest';
 import {
   AC_REQUEUE_MEANING,
   acRequeueAccepted,
+  requeueOneRow,
   requeueOutboxRow,
   requeueSkipped,
   REQUEUE_NOTE_PREFIX,
@@ -378,6 +379,9 @@ describe('a document AutoCount refused is out of scope unless asked for', () => 
  *  file's lint ceiling, and a new section must not add to a number that may
  *  only fall. */
 const asSb = (sb: unknown) => sb as Parameters<typeof requeueOutboxRow>[0];
+/** The same, for an outbox row handed straight to the ladder. `SkippedRow` is
+ *  internal, so its shape is named through the function that takes it. */
+const asRow = (row: Row) => row as Parameters<typeof requeueOneRow>[1];
 
 // requeueOutboxRow — ONE row, by id, from the AutoCount Sync page's button.
 //
@@ -590,5 +594,357 @@ describe('the outcome vocabulary is complete and matches its catalogue', () => {
     /* And the two it MUST offer, or the button never appears at all. */
     expect(acRowIsRequeueable('create_so', 'skipped', 'refused, nothing sent (ItemCodeError): x')).toBe(true);
     expect(acRowIsRequeueable('create_po', 'failed', 'Foreign Key Error (Constraint Name=FK_PO_Creditor)')).toBe(true);
+  });
+
+  test('a conversion gets a button when the SERVICE refused it, and never when the ERP did', () => {
+    /* The whole rule in six lines. `failed` is the service's answer and is
+       offered; `skipped` is the document's own shape and never is, whatever the
+       reason says. A conversion has no other state a button could be on. */
+    expect(acRowIsRequeueable('so_to_do', 'failed', 'Invalid transfer item.')).toBe(true);
+    expect(acRowIsRequeueable('po_to_gr', 'failed', 'AutoCount login failed')).toBe(true);
+    expect(acRowIsRequeueable('do_to_iv', 'failed', 'Gave up after 6 attempts. Last error: fetch failed')).toBe(true);
+    expect(acRowIsRequeueable('gr_to_pi', 'failed', 'Invalid transfer item.')).toBe(true);
+    expect(acRowIsRequeueable('so_to_po', 'failed', 'Invalid transfer item.')).toBe(true);
+    for (const reason of [
+      'created with no sales order, so there is no source document to transfer from.',
+      'AutoCount transfers from ONE source document',
+      'this SO -> DO transfers only 2 of the source document\'s lines, and 1 of them carry no AutoCount DtlKey',
+    ]) {
+      expect(acRowIsRequeueable('so_to_do', 'skipped', reason), reason).toBe(false);
+    }
+    /* And a re-queued failed conversion is history, like every other. */
+    expect(acRowIsRequeueable('so_to_do', 'failed',
+      `${REQUEUE_NOTE_PREFIX} 2026-08-16T00:00:00.000Z -> outbox x] Invalid transfer item.`)).toBe(false);
+    expect(acRowIsRequeueable('so_to_do', 'sent', null)).toBe(false);
+    expect(acRowIsRequeueable('so_to_do', 'pending', null)).toBe(false);
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// A CONVERSION: who refused it decides everything.
+//
+// The three shapes the guard names — a parentless DO/GR/IV/PI, a merged
+// conversion, a DtlKey subset the ERP cannot express — are properties of the
+// DOCUMENT and stay refused. A refusal by the SERVICE is not, and stops being
+// true the moment the shop-floor host is rebuilt. The discriminator is recorded:
+// `status`, corroborated by `payload`.
+// ─────────────────────────────────────────────────────────────────────────────
+describe('a conversion the SERVICE refused', () => {
+  /* The payload enqueueConvert composed: the ERP's own DocNo, the DtlKeys naming
+     the subset, the parent to resolve FromDocNo from, and the row to write the
+     AutoCount number back onto. This is the whole instruction — which is why
+     re-sending it copies no route logic into the ladder. */
+  const doPayload = () => ({
+    body: { DocNo: 'HC-DO-2608-002', DtlKeys: [905348, 905349] },
+    fromDoc: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-2608-002' },
+    writeback: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+    lineWriteback: { table: 'delivery_order_items', ids: ['di-1', 'di-2'], codes: [ERP_A, ERP_A] },
+  });
+
+  /* HC-DO-2608-002 as production actually held it on 2026-08-16: six attempts,
+     all answered `Invalid transfer item.` by a build that no longer exists. */
+  const failedConversion = (extra: Row = {}) => ({
+    id: 'conv-1', company_id: 1, op: 'so_to_do', doc_type: 'DO', doc_no: 'HC-DO-2608-002',
+    doc_id: 'do-1', payload: doPayload(), status: 'failed', attempts: 6, dedupe_key: null,
+    last_error: 'Invalid transfer item.',
+    created_at: '2026-08-16T02:00:00Z',
+    ...extra,
+  });
+
+  /* recordConvertSkipped's shape, and it is the SAME shape for all three
+     unrecoverable cases: status `skipped`, payload `{ body: {} }`. Only the
+     reason differs, which is exactly why the reason is not what the gate reads. */
+  const skippedConversion = (reason: string, extra: Row = {}) => ({
+    id: 'conv-skip', company_id: 1, op: 'so_to_do', doc_type: 'DO', doc_no: 'HC-DO-2608-009',
+    doc_id: 'do-9', payload: { body: {} }, status: 'skipped', attempts: 0, dedupe_key: null,
+    last_error: reason,
+    created_at: '2026-08-16T02:00:00Z',
+    ...extra,
+  });
+
+  const convWorld = (outbox: Row[], deliveryOrders: Row[] = [{ id: 'do-1', linked_ac_docno: null }]) => fakeSb({
+    app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
+    autocount_outbox: outbox,
+    delivery_orders: deliveryOrders,
+    mfg_sales_orders: [soWithoutLocation()],
+    mfg_sales_order_items: [soItem()],
+    supplier_material_bindings: [],
+  }, {}, DEDUPE_IDX);
+
+  test('is queued again with the RECORDED instruction, byte for byte', async () => {
+    const sb = convWorld([failedConversion()]);
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'conv-1', companyId: 1 });
+    expect(r.outcome).toBe('requeued-as-recorded');
+    expect(acRequeueAccepted(r.outcome)).toBe(true);
+
+    const [queued] = pending(sb);
+    expect(queued.op).toBe('so_to_do');
+    expect(queued.doc_no).toBe('HC-DO-2608-002');
+    /* NOT recomposed. The DtlKeys naming which lines were shipped, the parent
+       reference and the line-key capture all survive — rebuilding them here
+       would mean copying the delivery-order route into this module. */
+    expect(queued.payload).toEqual(doPayload());
+    /* enqueueConvert's own dedupe key, so 0277's pending index is the backstop
+       under the live-row check rather than a second rule. */
+    expect(queued.dedupe_key).toBe('so_to_do:do-1');
+    /* A failed row has spent all six attempts and the drain selects
+       `.lt('attempts', 6)`, so a re-opened row would be queued and dead. */
+    expect(queued.attempts ?? 0).toBe(0);
+    expect(rows(sb).find((x) => x.id === 'conv-1')?.attempts).toBe(6);
+  });
+
+  test('the old row is annotated so it stops reading as backlog', async () => {
+    const sb = convWorld([failedConversion()]);
+    await requeueOutboxRow(asSb(sb), { rowId: 'conv-1', companyId: 1 });
+    const old = rows(sb).find((x) => x.id === 'conv-1') as Row;
+    expect(old.status).toBe('failed');
+    expect(old.last_error.startsWith(REQUEUE_NOTE_PREFIX)).toBe(true);
+    expect(old.last_error).toContain('Invalid transfer item.');
+  });
+
+  test('the batch sweep reaches it too, and only behind includeFailed', async () => {
+    const sb = convWorld([failedConversion()]);
+    expect(await requeueSkipped(asSb(sb), { docNo: 'HC-DO-2608-002', apply: true })).toEqual([]);
+    const [r] = await requeueSkipped(asSb(sb), {
+      docNo: 'HC-DO-2608-002', apply: true, includeFailed: true,
+    });
+    expect(r.outcome).toBe('requeued-as-recorded');
+    expect(pending(sb)).toHaveLength(1);
+  });
+
+  test('a DRY RUN says it would, and writes nothing', async () => {
+    const sb = convWorld([failedConversion()]);
+    const before = JSON.stringify(rows(sb));
+    const [r] = await requeueSkipped(asSb(sb), { docNo: 'HC-DO-2608-002', includeFailed: true });
+    expect(r.outcome).toBe('would-requeue');
+    expect(JSON.stringify(rows(sb))).toBe(before);
+  });
+
+  test('pressing it twice does not queue the transfer twice', async () => {
+    const sb = convWorld([failedConversion()]);
+    const first = await requeueOutboxRow(asSb(sb), { rowId: 'conv-1', companyId: 1 });
+    const second = await requeueOutboxRow(asSb(sb), { rowId: 'conv-1', companyId: 1 });
+    expect(first.outcome).toBe('requeued-as-recorded');
+    expect(second.outcome).toBe('already-requeued');
+    expect(pending(sb)).toHaveLength(1);
+  });
+
+  test('a document the account book already holds is refused', async () => {
+    /* The duplicate guard, read off the SAME column the drain writes on success
+       and through the payload's own writeback reference. */
+    const sb = convWorld([failedConversion()], [{ id: 'do-1', linked_ac_docno: 'DO-000112' }]);
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'conv-1', companyId: 1 });
+    expect(r.outcome).toBe('already-in-autocount');
+    expect(r.detail).toContain('DO-000112');
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  test('a live row for the same transfer vetoes it', async () => {
+    const sb = convWorld([
+      failedConversion(),
+      failedConversion({ id: 'conv-live', status: 'pending', attempts: 0, last_error: null }),
+    ]);
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'conv-1', companyId: 1 });
+    expect(r.outcome).toBe('already-queued');
+  });
+
+  test('a deleted delivery order is reported, not sent', async () => {
+    const sb = convWorld([failedConversion()], []);
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'conv-1', companyId: 1 });
+    expect(r.outcome).toBe('document-gone');
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  test('an empty payload is refused even though the row says failed', async () => {
+    /* The SECOND recorded fact, and why both are required. `failed` alone would
+       be enough for every row any path writes today; a row that carried it with
+       nothing composed would be a path nobody has written, and there would be
+       nothing in it to send. */
+    const sb = convWorld([failedConversion({ payload: { body: {} } })]);
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'conv-1', companyId: 1 });
+    expect(r.outcome).toBe('not-recoverable');
+    expect(r.detail).toContain('no composed document');
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  test('the switch being OFF stops it, like every other re-send', async () => {
+    const sb = fakeSb({
+      app_config: [{ key: 'scm.autocount_writeback', value: 'off' }],
+      autocount_outbox: [failedConversion()],
+      delivery_orders: [{ id: 'do-1', linked_ac_docno: null }],
+    }, {}, DEDUPE_IDX);
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'conv-1', companyId: 1 });
+    expect(r.outcome).toBe('switch-off');
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  /* THE THREE THE GUARD NAMES. Each is a property of the DOCUMENT: a rebuilt
+     AutoCount host does not give a parentless delivery order a parent, does not
+     give a merged conversion a shape the SDK can express, and does not put a
+     DtlKey on a source line. All three are written by recordConvertSkipped, so
+     all three arrive here as `skipped` with an empty payload — which is what the
+     gate reads, rather than the wording, so a reworded reason cannot let one
+     through. */
+  describe('the three shapes a rebuild does not touch stay refused', () => {
+    const CASES: Array<[string, string]> = [
+      [
+        'a parentless DO / GR / IV / PI',
+        'created with no sales order, so there is no source document to transfer from. AutoCount '
+        + 'builds a DO / GRN / Invoice only by transferring a source document\'s lines',
+      ],
+      [
+        'a merged conversion with no AutoCount shape',
+        'AutoCount transfers from ONE source document, and this delivery order draws on 2',
+      ],
+      [
+        'a DtlKey-subset refusal',
+        'this SO -> DO transfers only 2 of the source document\'s lines, and 1 of them carry no '
+        + 'AutoCount DtlKey, so the ERP cannot name the subset.',
+      ],
+    ];
+
+    for (const [name, reason] of CASES) {
+      test(`${name} is refused by the button`, async () => {
+        const sb = convWorld([skippedConversion(reason)], [{ id: 'do-9', linked_ac_docno: null }]);
+        const before = JSON.stringify(rows(sb));
+        const r = await requeueOutboxRow(asSb(sb), { rowId: 'conv-skip', companyId: 1 });
+        expect(r.outcome).toBe('not-recoverable');
+        /* The words the operator reads still name all three, so the answer is a
+           remedy and not a shrug. */
+        expect(r.detail).toContain('parentless');
+        expect(r.detail).toContain('merged conversion');
+        expect(r.detail).toContain('DtlKey-subset');
+        expect(JSON.stringify(rows(sb))).toBe(before);
+        expect(pending(sb)).toHaveLength(0);
+      });
+
+      test(`${name} is refused by the batch sweep, with and without includeFailed`, async () => {
+        for (const includeFailed of [false, true]) {
+          const sb = convWorld([skippedConversion(reason)], [{ id: 'do-9', linked_ac_docno: null }]);
+          const [r] = await requeueSkipped(asSb(sb), { docType: 'ALL', apply: true, includeFailed });
+          expect(r.outcome, `includeFailed=${includeFailed}`).toBe('not-recoverable');
+          /* The DETAIL as well as the code. Both recorded facts refuse this row
+             independently, so asserting the outcome alone would still pass with
+             one of the two guards deleted — and it is the first one, the status,
+             that carries the argument. These are its words. */
+          expect(r.detail, `includeFailed=${includeFailed}`).toContain('parentless');
+          expect(r.detail).toContain('merged conversion');
+          expect(r.detail).toContain('DtlKey-subset');
+          expect(pending(sb)).toHaveLength(0);
+        }
+      });
+    }
+
+    test('and a skipped conversion is refused even if a payload somehow survives on it', async () => {
+      /* The two recorded facts have to AGREE. `skipped` means the row never
+         reached the drain, so the service has never seen this document and
+         cannot be what refused it — whatever is in the payload column. */
+      const sb = convWorld(
+        [skippedConversion('created with no sales order, so there is no source document to transfer from.',
+          { payload: doPayload() })],
+        [{ id: 'do-9', linked_ac_docno: null }],
+      );
+      const r = await requeueOutboxRow(asSb(sb), { rowId: 'conv-skip', companyId: 1 });
+      expect(r.outcome).toBe('not-recoverable');
+      expect(pending(sb)).toHaveLength(0);
+    });
+  });
+
+  test('a SENT conversion is refused by the button, with nothing written', async () => {
+    const sb = convWorld([failedConversion({ status: 'sent', attempts: 1, last_error: null, ac_doc_no: 'DO-000112' })]);
+    const before = JSON.stringify(rows(sb));
+    const r = await requeueOutboxRow(asSb(sb), { rowId: 'conv-1', companyId: 1 });
+    expect(r.outcome).toBe('already-sent');
+    expect(JSON.stringify(rows(sb))).toBe(before);
+    expect(pending(sb)).toHaveLength(0);
+  });
+
+  test('and the batch sweep cannot even see it — its select is the guard there', async () => {
+    /* Stated as a fact about the sweep rather than assumed: if the select ever
+       widened to include `sent`, this fails and the next test below is what
+       catches the row. */
+    const sb = convWorld([failedConversion({ status: 'sent', attempts: 1, last_error: null })]);
+    const out = await requeueSkipped(asSb(sb), {
+      docNo: 'HC-DO-2608-002', apply: true, includeFailed: true,
+    });
+    expect(out).toEqual([]);
+    expect(pending(sb)).toHaveLength(0);
+  });
+});
+
+/* RULE TWO, WHICH HAS NO EXCEPTION, held by the LADDER and not only by the two
+   callers that keep a `sent` row away from it.
+
+   Neither entry point can reach this rung today — requeueOutboxRow refuses a
+   `sent` row before climbing, and requeueSkipped's select returns only `skipped`
+   and `failed`. That is precisely why it is tested directly: an unreachable
+   guard with no test is a guard the next refactor deletes as dead code, and what
+   it is standing in front of is a SECOND copy of a document in a live licensed
+   account book. Re-sending a `sent` row is the one rule with no exception, so
+   the single answer to "may this document be sent again" has to hold it itself
+   rather than trust every present and future caller to. */
+describe('the ladder itself refuses a document AutoCount already has', () => {
+  const sentRowOf = (op: string, docType: string, docNo: string): Row => ({
+    id: `sent-${op}`, company_id: 1, op, doc_type: docType, doc_no: docNo, doc_id: 'x-1',
+    payload: { body: { DocNo: docNo } }, status: 'sent', attempts: 1, dedupe_key: null,
+    last_error: null, ac_doc_no: 'AC-1', created_at: '2026-08-16T02:00:00Z',
+  });
+
+  /* Every op the ladder will otherwise let through — the two creates and all
+     five transfers. A rung that held for one shape and not another would be the
+     same bug with a smaller blast radius. */
+  const OPS: Array<[string, string, string]> = [
+    ['create_so', 'SO', 'HC-SO-2608-002'],
+    ['create_po', 'PO', 'HC-PO-9'],
+    ['so_to_do', 'DO', 'HC-DO-2608-002'],
+    ['po_to_gr', 'GR', 'HC-GRN-000002'],
+    ['do_to_iv', 'IV', 'HC-INV-000002'],
+    ['gr_to_pi', 'PI', 'HC-PINV-000002'],
+    ['so_to_po', 'PO', 'HC-PO-10'],
+  ];
+
+  for (const [op, docType, docNo] of OPS) {
+    test(`${op}: already-sent, and NOT ONE WRITE`, async () => {
+      const sb = fakeSb({
+        app_config: [{ key: 'scm.autocount_writeback', value: '1' }],
+        autocount_outbox: [sentRowOf(op, docType, docNo)],
+        /* Everything else the ladder could read is present and perfectly
+           sendable, so the status refusal is the only thing standing between
+           this call and a duplicate in the account book. */
+        mfg_sales_orders: [{ ...soWithoutLocation(), doc_no: docNo, sales_location: 'KL WAREHOUSE' }],
+        mfg_sales_order_items: [{ ...soItem(), doc_no: docNo }],
+        purchase_orders: [{ id: 'x-1', company_id: 1, po_number: docNo, po_date: '2026-08-12', supplier_id: 'sup-1', notes: null, linked_ac_docno: null }],
+        suppliers: [{ id: 'sup-1', code: '400-H004', name: 'Supplier' }],
+        purchase_order_items: [],
+        delivery_orders: [{ id: 'x-1', linked_ac_docno: null }],
+        grns: [{ id: 'x-1', linked_ac_docno: null }],
+        sales_invoices: [{ id: 'x-1', linked_ac_docno: null }],
+        purchase_invoices: [{ id: 'x-1', linked_ac_docno: null }],
+        warehouses: [{ id: 'wh-1', code: 'KL', name: 'KL WAREHOUSE' }],
+        supplier_material_bindings: [],
+      }, { purchase_orders: ['creditor_code', 'creditor_name', 'agent', 'ref'] }, DEDUPE_IDX);
+      const before = JSON.stringify(rows(sb));
+
+      const r = await requeueOneRow(asSb(sb), asRow(sentRowOf(op, docType, docNo)), {
+        apply: true, resendingThisRow: true,
+      });
+
+      expect(r.outcome).toBe('already-sent');
+      expect(acRequeueAccepted(r.outcome)).toBe(false);
+      expect(JSON.stringify(rows(sb))).toBe(before);
+      expect(pending(sb)).toHaveLength(0);
+    });
+  }
+
+  test('it refuses BEFORE the write-back switch is consulted, so OFF cannot change the answer', async () => {
+    const sb = fakeSb({
+      app_config: [{ key: 'scm.autocount_writeback', value: 'off' }],
+      autocount_outbox: [sentRowOf('so_to_do', 'DO', 'HC-DO-2608-002')],
+      delivery_orders: [{ id: 'x-1', linked_ac_docno: null }],
+    }, {}, DEDUPE_IDX);
+    const r = await requeueOneRow(asSb(sb), asRow(sentRowOf('so_to_do', 'DO', 'HC-DO-2608-002')), {
+      apply: true, resendingThisRow: true,
+    });
+    expect(r.outcome).toBe('already-sent');
   });
 });
