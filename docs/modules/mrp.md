@@ -161,13 +161,57 @@ the two-demand-sets divergence the audit caught.
   supply; set-level atomicity lives in `so-stock-allocation.ts` 7b (one
   covering batch or PENDING) and `ship-commitment.ts`, NOT here.
 
-## 5. Failure modes — loud on purpose
+### "If the variants are different, will it still match my goods?" (owner, 2026-08-16)
+
+Answered separately for the two kinds of supply, because on `main` today they do
+NOT follow the same rule:
+
+| Supply | Strict on variants today? | Rule |
+|---|---|---|
+| **On-hand STOCK** | **YES.** | The bucket key is `(warehouse \| item_code \| variant_key)` and `stockByKey.get(k)` is an exact lookup. There is no fallback. A unit whose `variant_key` differs is a different thing and does not satisfy the line. |
+| **Open PO supply** | **NO — not yet.** | The legacy `''` pool rule above still applies: a variant-bearing bucket with NO PO of its own folds in the same-warehouse EMPTY-variant PO pool. So a variant-less PO **does** still count as supply for a specific-variant order, and can still hide a real shortage. |
+
+So the strict-variant answer the owner asked for is **half live**. Making the PO
+side strict too (and quarantining an unrecognised `item_group`) is PRs #2294 /
+#2300 — **neither merged as of 2026-08-16**. Until they are, do not tell an
+operator that a differing variant guarantees a separate purchase: it does on
+stock, it does not on an open PO raised before SO→PO carried variants.
+
+## 5. Failure modes — loud on purpose, EXCEPT the one that matters
+
+> **CORRECTED 2026-08-16.** This section, and §8's "capped-with-a-loud-guard.
+> Keep it that way", both asserted that a truncated read fails loudly. On `main`
+> today **it does not, and it cannot.** Read the row below before trusting any
+> MRP number.
 
 | Error | Meaning |
 |-------|---------|
 | `mrp_load_failed: …` | Demand or PO-supply read errored. The PO read used to swallow this and plan with zero supply (phantom shortage rendered as truth) — it throws since 2026-08-01. |
-| `mrp_load_truncated: …` | A read returned `MRP_LOAD_CAP` (5000) rows — the cap is full and the plan would silently ignore rows past it. Raise the cap or page the read; do NOT catch-and-continue. |
+| `mrp_load_truncated: …` | **DEAD CODE on `main`.** The guard fires at `length >= MRP_LOAD_CAP` (5000), but PostgREST answers with at most `db-max-rows` per response and a `.limit()` ABOVE that ceiling does not lift it — it is an upper bound, not a request. The read comes back at the server ceiling (1000), `length >= 5000` is permanently false, and the throw that exists to prevent exactly this can never run. |
 | lead-time load throws | `loadLeadTimeBase` — a swallowed error would zero every lead time (order-by = delivery date). |
+
+**What that means for every number this engine produces.** Measured on
+production company 1 by read-only probe #2279 (workflow run `31941352447`, cited
+in PR #2304): **13,918 demand lines matched the filters and the plan saw 1,000 of
+them — 7.2%.** Because the demand read orders by `id`, a uuid, the surviving
+slice is not "the newest" or "the oldest" — it is an arbitrary 7% spanning the
+whole date range. Any given SO line, new or old, had roughly a 7% chance of being
+planned.
+
+Three consumers inherit this silently, and none of them can tell:
+
+- the **MRP page** itself;
+- the SO detail / drill-down's `stock_state` and the **chip-4 "Incoming PO + ETA"**
+  (`mrpLineCoverage`) — see `docs/modules/sales-order.md` §0.4 and §0.8;
+- the **From-SO purchase-order picker**, which is the expensive one. It filters
+  on `shortageBySoItem.get(id) ?? 0 > 0`, so a line MRP never planned has no map
+  entry, reads as shortage 0, and is treated as fully covered — it silently
+  disappears from the picker. See `docs/modules/purchase-order.md`.
+
+The fix (page every read; make the guard fire on the real ceiling) is PR #2304,
+with #2300 and #2294 in the same area. **As of 2026-08-16 none of the three is
+merged**, so the paragraph above describes production. Re-check with
+`gh pr view 2294 2300 2304` rather than trusting this line.
 
 Advisory consumers (SO drill-down, po-so-coverage, reservations) catch and
 degrade to "no coverage shown"; the MRP page and the agents fail loudly.
@@ -214,7 +258,12 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
 
 - The engine runs in a Worker behind PostgREST: unbounded selects clip at
   ~1000 rows with NO error. Every read here is either bounded-by-codes,
-  chunked (`chunkIn`), or capped-with-a-loud-guard. Keep it that way.
+  chunked (`chunkIn`), or capped-with-a-guard — but **a `.limit(N)` above the
+  server's own `db-max-rows` is not a cap you can detect by counting rows
+  against N.** That is precisely how the demand read came to plan over 7% of the
+  data with a truncation guard sitting right underneath it (§5). A cap is only
+  loud if the number it compares against is the number the server will actually
+  return. Prefer `paginateAll` / `chunkIn` over a bare `.limit()` and a guard.
 - `companyId` is REQUIRED on `computeMrp` (typed `number | null | undefined`,
   key not optional) — see the #710/#712 incident comment at the signature.
 - Status columns are ENUMS in Postgres — any raw SQL must `::text` before

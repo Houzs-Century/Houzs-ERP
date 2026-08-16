@@ -28,6 +28,9 @@ import {
   CO_FINANCE_KEYS, CO_IDENTITY_LOCK_COLS, HEADER, ITEM, MAX_PHOTO_BYTES,
   extFromMime, gateCoFinance, norm,
 } from '../lib/consignment-order-shape';
+import {
+  deriveCountryFromState, deriveSalesLocationFromState, snapshotUnitCostSen,
+} from '../lib/sales-doc-derive';
 import { escapeForOr } from '../lib/postgrest-search';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
@@ -173,20 +176,6 @@ async function loadActiveSofaCombos(sb: any): Promise<SofaComboRow[]> {
 /* ── Country auto-derive — look up my_localities for the state's country.
    Falls back to 'Malaysia' for any non-empty-but-unmatched state (2990 is
    Malaysia-only today). Returns null only for an empty state. ──────────── */
-const deriveCountryFromState = async (
-  sb: any,
-  state: string | null | undefined,
-): Promise<string | null> => {
-  if (!state) return null;
-  const { data } = await sb
-    .from('my_localities')
-    .select('country')
-    .eq('state', state)
-    .limit(1)
-    .maybeSingle();
-  const country = (data as { country?: string } | null)?.country;
-  return country ?? 'Malaysia';
-};
 
 /* Sales/shipping Location (warehouse) follows the customer's State. Returns the
    warehouse code for the state, or null when unmapped.
@@ -197,26 +186,6 @@ const deriveCountryFromState = async (
    warehouse onto Sales Location, or — once both companies map the same state —
    matches two rows, so `.maybeSingle()` errors (PGRST116) into the discarded
    `error` and the field silently stops deriving at all. */
-const deriveSalesLocationFromState = async (
-  sb: any,
-  state: string | null | undefined,
-  c: any,
-): Promise<string | null> => {
-  if (!state) return null;
-  const key = state === 'Wilayah Persekutuan Kuala Lumpur' ? 'Kuala Lumpur' : state;
-  const { data: m } = await scopeToCompany(
-    sb.from('state_warehouse_mappings').select('warehouse_id').eq('state', key), c,
-  ).maybeSingle();
-  const whId = (m as { warehouse_id?: string } | null)?.warehouse_id;
-  if (!whId) return null;
-  const { data: w } = await sb
-    .from('warehouses')
-    .select('name, code')
-    .eq('id', whId)
-    .maybeSingle();
-  const wh = w as { name?: string; code?: string } | null;
-  return warehouseLabel(wh);
-};
 
 const nextDocNo = async (sb: any, c: any): Promise<string> => {
   // Format: CS-YYMM-NNN. max(suffix)+1 (NEVER count+1) so a deleted mid-month
@@ -234,26 +203,6 @@ const nextDocNo = async (sb: any, c: any): Promise<string> => {
    total_cost_centi / category cost columns get populated even when the
    client doesn't snapshot the cost. Explicit client value (>0) →
    mfg_products.cost_price_sen → 0. Returns sen (integer). ─────────────── */
-const snapshotUnitCostSen = async (
-  sb: any,
-  itemCode: string,
-  explicit: number,
-  c: any,
-): Promise<number> => {
-  if (explicit > 0) return explicit;
-  if (!itemCode) return 0;
-  /* `code` is shared across companies, so an unscoped maybeSingle() here either
-     snapshots the OTHER company's cost onto this line or errors (PGRST116) into
-     a silent 0. Same scoping the mfg-SO twin already applies. */
-  const { data } = await scopeToCompany(
-    sb
-      .from('mfg_products')
-      .select('cost_price_sen')
-      .eq('code', itemCode),
-    c,
-  ).maybeSingle();
-  return Number((data as { cost_price_sen?: number } | null)?.cost_price_sen ?? 0);
-};
 
 consignmentOrders.get('/', async (c) => {
   const sb = c.get('supabase');

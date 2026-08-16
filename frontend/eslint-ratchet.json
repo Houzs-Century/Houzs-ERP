@@ -3,7 +3,7 @@
   "totals": {
     "@typescript-eslint/no-explicit-any": 538,
     "@typescript-eslint/no-floating-promises": 787,
-    "@typescript-eslint/no-unnecessary-condition": 1808,
+    "@typescript-eslint/no-unnecessary-condition": 1796,
     "no-restricted-syntax": 140
   },
   "files": {
@@ -408,7 +408,7 @@
     "src/pages/Projects.tsx": {
       "@typescript-eslint/no-explicit-any": 87,
       "@typescript-eslint/no-floating-promises": 17,
-      "@typescript-eslint/no-unnecessary-condition": 80
+      "@typescript-eslint/no-unnecessary-condition": 79
     },
     "src/pages/ResetPassword.tsx": {
       "@typescript-eslint/no-explicit-any": 1
@@ -638,7 +638,7 @@
     },
     "src/pages/scm-v2/MfgSalesOrdersListV2.tsx": {
       "@typescript-eslint/no-floating-promises": 1,
-      "@typescript-eslint/no-unnecessary-condition": 15,
+      "@typescript-eslint/no-unnecessary-condition": 13,
       "no-restricted-syntax": 12
     },
     "src/pages/scm-v2/Mrp.tsx": {
@@ -795,7 +795,7 @@
     },
     "src/pages/scm-v2/SalesOrderDetail.tsx": {
       "@typescript-eslint/no-floating-promises": 14,
-      "@typescript-eslint/no-unnecessary-condition": 46,
+      "@typescript-eslint/no-unnecessary-condition": 37,
       "no-restricted-syntax": 1
     },
     "src/pages/scm-v2/SalesOrderDetailListing.tsx": {

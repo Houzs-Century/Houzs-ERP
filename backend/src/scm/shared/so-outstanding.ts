@@ -57,9 +57,34 @@ export function soPaidCenti(a: SoPaidInputs): number {
 /**
  * What the order still owes, in sen. Never negative — an overpayment is a
  * credit, and AutoCount's own UDF_BALANCE is not where a credit belongs.
+ *
+ * THIS IS THE WRITE-BACK'S RULE, not the screen's. Keep it clamped: it feeds
+ * `readSoOutstandingCenti` → AutoCount `UDF_BALANCE`, a licensed ledger the ERP
+ * must not push a negative into. The SCREEN wants the signed number and calls
+ * `soBalanceCenti` below — that split is the whole point of having two names.
  */
 export function soOutstandingCenti(a: SoPaidInputs): number {
   return Math.max(0, a.totalRevenueCenti - soPaidCenti(a));
+}
+
+/**
+ * The SIGNED balance for a HUMAN — negative means over-collected, and the UI
+ * paints that red (owner 2026-08-16: 「需要可以超收 negative 边红色」).
+ *
+ * WHY THIS IS NOT JUST `total − paid`. `total_revenue_centi` is 0 on 2,687 of
+ * production's 2,824 live orders — every AutoCount-imported one, where the real
+ * figure sits in `local_total_centi` and `recomputeTotals` has never run
+ * (probe-so-overpay, run 31938735652). Those rows carry real payments, so a
+ * bare subtraction would paint 2,121 legacy orders a large angry red for money
+ * that was never over-collected — RM 9.26m of false alarm. A zero total is
+ * "unknown", not "owes nothing", so it answers 0 exactly as it does today and
+ * only a KNOWN total is allowed to go negative. Fixing that 0 is a separate
+ * job (the detail page under-reports those orders' balance today, in the safe
+ * direction); this function must not turn it into a scarier bug in passing.
+ */
+export function soBalanceCenti(a: SoPaidInputs): number {
+  if (!(a.totalRevenueCenti > 0)) return 0;
+  return a.totalRevenueCenti - soPaidCenti(a);
 }
 
 /**

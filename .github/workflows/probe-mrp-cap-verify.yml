@@ -1,0 +1,68 @@
+# Read-only. Independent re-verification of the MRP demand-read truncation
+# claim: re-derives the matching row count and one line's rank a DIFFERENT way
+# (EXISTS / count-of-smaller-ids, no join fan-out possible), and measures what
+# PostgREST actually returns per call via pg_stat_statements. Writes nothing.
+name: probe-mrp-cap-verify
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      doc:
+        description: 'SO doc no, e.g. HC-SO-2608-003'
+        required: true
+        default: ""
+        type: string
+      code:
+        description: 'item code, e.g. JAGER-(K) (blank = skip)'
+        required: false
+        default: ""
+        type: string
+      company:
+        description: "company_id"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: probe-mrp-cap-verify
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-mrp-cap-verify.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          CODE: ${{ inputs.code }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-mrp-cap-verify.mjs
+        env:
+          DOC: ${{ inputs.doc }}
+          CODE: ${{ inputs.code }}
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

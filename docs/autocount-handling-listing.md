@@ -217,8 +217,22 @@ Both live on the host, and `deploy-on-host.ps1` stops rather than guessing:
   port; any other value and the service is unreachable even when it starts.
 
 And two values in `setup.json` that cannot be trusted: it names the book
-`AED_DEMO` (must be `AED_HOUZS`) and the server `192.168.1.198\A2006` (the host
-resolves `.\A2006`). Pass `-Server ".\A2006"` explicitly.
+`AED_DEMO` (must be `AED_HOUZS`) and a server on a subnet the host is not on
+(the host resolves `.\A2006`). Pass `-Server ".\A2006"` explicitly.
+
+> **The exact address is UNRESOLVED, and that is recorded rather than tidied
+> away.** This line said `192.168.1.198\A2006`. The 2026-08-16 deploy transcript
+> read `192.168.1.190\A2006` back from the same file. One of the two is wrong, or
+> the file changed between the readings, and nobody has looked — so neither is
+> written here as fact. Whichever it is, it is unreachable: the host's own
+> addresses that evening were `10.147.17.100` and `192.168.0.104`, and SQL is
+> local to the box. **The next run settles it**: `deploy-on-host.ps1` prints the
+> server it read and now opens the connection before it stops anything, so the
+> address appears in the transcript either way.
+>
+> **Do not "fix" `setup.json`.** It lives at `C:\InistateConnector\setup.json` and
+> belongs to Inistate — the system this ERP is replacing, which is still running.
+> `-Server` is our side of the fix.
 
 ---
 
