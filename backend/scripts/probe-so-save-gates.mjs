@@ -71,6 +71,7 @@ async function main() {
              proceeded_at::text AS proceeded_at,
              customer_delivery_date::text AS customer_delivery_date,
              salesperson_id::text AS salesperson_id,
+             version, updated_at::text AS updated_at,
              local_total_centi, deposit_centi
         FROM scm.mfg_sales_orders WHERE doc_no = ${doc}`;
     if (!heads.length) {
@@ -80,6 +81,7 @@ async function main() {
                proceeded_at::text AS proceeded_at,
                customer_delivery_date::text AS customer_delivery_date,
                salesperson_id::text AS salesperson_id,
+               version, updated_at::text AS updated_at,
                local_total_centi, deposit_centi
           FROM scm.mfg_sales_orders WHERE doc_no LIKE ${'%' + doc + '%'}
          ORDER BY doc_no LIMIT 10`;
@@ -94,6 +96,7 @@ async function main() {
       note(`    delivery_date    ${h.customer_delivery_date ?? '(null)'}`);
       note(`    salesperson_id   ${h.salesperson_id ?? '(null)'}`);
       note(`    total            ${rm(h.local_total_centi)}   deposit ${rm(h.deposit_centi)}`);
+      note(`    version          ${h.version ?? '(null)'}   updated_at ${(h.updated_at ?? '').slice(0, 19)}`);
 
       const lines = await sql`
         SELECT id::text AS id, line_no, item_code, item_group, qty, cancelled,
@@ -177,6 +180,55 @@ async function main() {
       note(`\n    BEDFRAME catalog for company ${h.company_id}: ${bf.length} shown, ${inactive.length} INACTIVE`);
       note(`      (an add-line uses requireActive — an INACTIVE code 409s "unknown item code")`);
       for (const r of inactive.slice(0, 15)) note(`        INACTIVE  ${r.code}  ${r.name ?? ''}`);
+
+      /* ---- WHO MOVED THIS ORDER ----------------------------------------
+         The live refusal is `so_version_conflict` (409): the editor's version
+         no longer matches storage. That is a claim about WRITES, so read the
+         writes. mfg_so_audit_log records actor + source per action, and the
+         status-change table records the header flips that bump `version`.
+
+         A HUMAN actor with source 'web' means someone really did edit it. A
+         null/system actor, or a burst on a schedule, means a sweep is moving
+         the row under the operator — so-stock-allocation.ts re-aggregates the
+         header (READY_TO_SHIP <-> CONFIRMED) and a status write bumps version.
+         Print both, with timestamps, and let the pattern show itself. */
+      const audit = (await section('mfg_so_audit_log', () => sql`
+        SELECT created_at::text AS created_at, action, source,
+               actor_id::text AS actor_id, actor_name_snapshot,
+               status_snapshot, field_changes::text AS field_changes
+          FROM scm.mfg_so_audit_log
+         WHERE so_doc_no = ${h.doc_no}
+         ORDER BY created_at DESC LIMIT 40`)) ?? [];
+      note(`\n    --- mfg_so_audit_log (${audit.length}, newest first) ---`);
+      for (const a of audit) {
+        note(`    ${(a.created_at ?? '').slice(0, 19)}  ${String(a.action ?? '').padEnd(16)}`
+           + ` src=${String(a.source ?? '·').padEnd(8)} actor=${a.actor_name_snapshot ?? (a.actor_id ? a.actor_id.slice(0, 8) : '(SYSTEM/none)')}`
+           + `  status=${a.status_snapshot ?? '·'}`);
+        const fc = String(a.field_changes ?? '');
+        if (fc && fc !== '[]' && fc !== 'null') note(`        ${fc.slice(0, 200)}`);
+      }
+      if (!audit.length) note('    (no audit rows — either nothing wrote it, or the writer does not audit)');
+
+      const statusChanges = (await section('mfg_so_status_changes', () => sql`
+        SELECT created_at::text AS created_at, from_status, to_status,
+               actor_id::text AS actor_id, source
+          FROM scm.mfg_so_status_changes
+         WHERE so_doc_no = ${h.doc_no}
+         ORDER BY created_at DESC LIMIT 30`)) ?? [];
+      note(`\n    --- mfg_so_status_changes (${statusChanges.length}) — each one bumps version ---`);
+      for (const sc of statusChanges) {
+        note(`    ${(sc.created_at ?? '').slice(0, 19)}  ${sc.from_status ?? '·'} -> ${sc.to_status ?? '·'}`
+           + `  src=${sc.source ?? '·'}  actor=${sc.actor_id ? sc.actor_id.slice(0, 8) : '(SYSTEM/none)'}`);
+      }
+
+      /* The version column itself, read LAST so it is the freshest number in
+         the output — if it differs from the header block printed at the top of
+         this same run, something wrote the row DURING the probe, which is the
+         finding all by itself. */
+      const vNow = (await section('version re-read', () => sql`
+        SELECT version, updated_at::text AS updated_at
+          FROM scm.mfg_sales_orders WHERE doc_no = ${h.doc_no}`)) ?? [];
+      for (const v of vNow) note(`\n    version=${v.version}  updated_at=${(v.updated_at ?? '').slice(0, 19)}`);
 
       /* Variant completeness is enforced by the FE only when a processing date
          exists. Say so explicitly — it is the likeliest non-lock refusal for a
