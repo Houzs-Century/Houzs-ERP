@@ -564,6 +564,10 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     const paidNow =
       persistedPayments.reduce((s, p) => s + (p.amount_centi || 0), 0) +
       drafts.reduce((s, dr) => s + (dr.amountCenti || 0), 0);
+    /* This floor STAYS, unlike the displayed balance below (owner 2026-08-16).
+       It seeds an INPUT, and the amount a cashier is about to collect is never
+       negative — an already-over-collected order defaults the next row to 0,
+       not to minus the credit. `amountCenti` is `.nonnegative()` server-side. */
     const outstanding = Math.max(0, grandTotal - paidNow);
     const d = { ...newPaymentDraft(defaultStaffId), amountCenti: outstanding };
     if (isSaved) {
