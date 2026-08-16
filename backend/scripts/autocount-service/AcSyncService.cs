@@ -885,6 +885,20 @@ class AcSyncService {
            not their VALUES, so they go in the log before the call: whichever
            run fails next, the inputs are on record rather than reconstructed. */
         Log("  po-to-gr: fromType=" + fromType + " transferMaster=true keys=[" + string.Join(",", Array.ConvertAll(dtlKeys, x => x.ToString())) + "]");
+        /* ONE KEY AT A TIME on the purchase side. The SDK offers two overloads,
+             AddPartialTransferDetail(String, Int64,   Boolean)
+             AddPartialTransferDetail(String, Int64[], Boolean)
+           and this route has always used the ARRAY one. Every /po-to-gr since
+           2026-08-12 has died inside GeneralPurchasePartialTransferDetail..ctor
+           with "there is no row at position -1" - a lookup returning -1 and
+           used as an index - while the same array form works on the SALES side
+           (SO->DO and DO->IV are both proven).
+
+           The single-key overload is a different code path into the same
+           feature, so it is worth one measured attempt before anything deeper.
+           If it changes nothing the error will be identical and this comment
+           should say so rather than be removed. */
+        foreach (var g in keysByDoc) foreach (var k in g.Value) doc.AddPartialTransferDetail(fromType, k, true);
         // transferMaster MUST be true on the purchase side. That flag copies the
         // source PO's header master (supplier/currency/terms) onto the target; with
         // false the GRN is built with no supplier, the purchase detail ctor looks
@@ -896,7 +910,6 @@ class AcSyncService {
         // numbers. Both are DELIVERY ORDER numbers; the IV half had nothing behind it
         // and /do-to-iv has still never run. Run status does not belong in a comment:
         // docs/generated/autocount-coverage.md is the one place that states it.
-        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
         doc.Save();
