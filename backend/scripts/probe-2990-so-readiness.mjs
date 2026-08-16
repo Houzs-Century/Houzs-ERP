@@ -255,6 +255,49 @@ async function main() {
     note(`  ${pad(s.h.doc_no, 20)} ${pad(s.st, 16)} remark=${pad(s.r.stockRemark, 18)} main ${s.r.mainReady}/${s.r.mainCount} acc ${s.r.accReady}/${s.r.accCount} proceeded_at=${s.h.proceeded_at ?? 'NULL'}`);
   }
 
+  /* ── 6. does the LIST's company-blind line read change the answer? ───────
+     GET /mfg-sales-orders reads the lines it derives stock_remark from with
+     `.in('doc_no', docNos).eq('cancelled', false)` and NO company predicate
+     (routes/mfg-sales-orders.ts:1490-1499). If a doc_no exists in both
+     companies, the other company's lines fold into this SO's remark. Refutable:
+     if no doc_no is shared, this prints 0 and the theory is dead. */
+  note(`\n${'='.repeat(78)}\n=== 6. doc_no collisions across companies (the list's line read carries no company predicate) ===`);
+  const collide = await sql`
+    SELECT doc_no, count(DISTINCT company_id) AS companies,
+           string_agg(DISTINCT company_id::text, ',' ORDER BY company_id::text) AS company_ids
+      FROM scm.mfg_sales_orders
+     GROUP BY doc_no
+    HAVING count(DISTINCT company_id) > 1
+     ORDER BY doc_no
+     LIMIT 50`;
+  note(`doc_no values held by more than one company: ${collide.length}${collide.length === 50 ? ' (capped at 50)' : ''}`);
+  for (const r of collide) note(`  ${pad(r.doc_no, 24)} companies=${r.company_ids}`);
+
+  const bleed = await sql`
+    SELECT s.doc_no, count(*) AS foreign_lines
+      FROM scm.mfg_sales_orders s
+      JOIN scm.mfg_sales_order_items i
+        ON i.doc_no = s.doc_no AND i.company_id <> s.company_id AND i.cancelled = false
+     WHERE s.company_id = ${CO}::bigint
+     GROUP BY s.doc_no
+     ORDER BY count(*) DESC
+     LIMIT 25`;
+  note(`company-${CO} orders whose doc_no also carries lines stamped to ANOTHER company: ${bleed.length}`);
+  for (const r of bleed) note(`  ${pad(r.doc_no, 24)} foreign live lines=${r.foreign_lines}`);
+
+  /* ── 7. how the stored flags are distributed (is PARTIAL in play at all?) ── */
+  note(`\n${'='.repeat(78)}\n=== 7. stored stock_status distribution on company-${CO} live lines ===`);
+  const dist = new Map();
+  for (const l of lines) {
+    if (l.cancelled) continue;
+    const k = `${l.stock_status ?? '(null)'} :: ${normCategory(l.item_group)}${isServiceLine(l) ? '/SERVICE' : ''}`;
+    dist.set(k, (dist.get(k) ?? 0) + 1);
+  }
+  for (const [k, n] of [...dist].sort((a, b) => b[1] - a[1])) {
+    const [st, cat] = k.split(' :: ');
+    note(`  ${pad(st, 12)} ${pad(cat, 20)} ${n}`);
+  }
+
   await sql.end({ timeout: 5 });
 }
 
