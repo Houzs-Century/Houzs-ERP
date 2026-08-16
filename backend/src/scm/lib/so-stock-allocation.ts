@@ -701,9 +701,14 @@ export async function recomputeSoStockAllocation(
          is ship-able when every MAIN product line (sofa/bedframe/mattress) is
          READY — accessories pending don't block ship ("READY (PARTIAL)").
          Auto-regress only when a MAIN line goes back to PENDING. */
+      /* `category` from the SAME catalog pull the needs walk uses (serviceCodes)
+         — isServiceLine's strongest signal, and the pair to the skip at the top
+         of that walk: a SERVICE line skipped there but classified as a short
+         accessory here would wedge the header exactly as before. */
       const readinessLines = docLines.map((l) => ({
         item_group: l.item_group,
         item_code: l.item_code,
+        category: serviceCodes.has(l.item_code) ? 'SERVICE' : null,
         stock_status: targetStatusById.get(l.id) ?? l.stock_status,
       }));
       const r = summariseReadiness(readinessLines);
