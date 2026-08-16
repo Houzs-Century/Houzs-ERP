@@ -87,8 +87,24 @@ const cardOf = (docNo: string) =>
 
 /** Open a card by its always-visible reason line — the line IS the opener. */
 async function openRow(docNo: string) {
-  await userEvent.click(within(cardOf(docNo)).getByRole("button", { expanded: false }));
+  await userEvent.click(within(cardOf(docNo)).getAllByRole("button", { expanded: false })[0]!);
   return cardOf(docNo);
+}
+
+/**
+ * A card's text WITHOUT the collapsed technical block. jsdom applies no
+ * user-agent stylesheet, so a closed `<details>` still contributes everything it
+ * holds to `textContent` — "not on screen" has to be asked structurally. Same
+ * helper, same reasoning, as the desktop suite.
+ */
+const plainTextOf = (el: HTMLElement): string => {
+  const copy = el.cloneNode(true) as HTMLElement;
+  for (const n of copy.querySelectorAll("[data-ac-technical]")) n.remove();
+  return copy.textContent;
+};
+
+async function openSupersededGroup() {
+  await userEvent.click(screen.getByRole("button", { name: /superseded rows?, kept as a record/ }));
 }
 
 const busy = payload({
@@ -175,9 +191,12 @@ describe("MobileAutoCountSync — the reason is on the row here too", () => {
     expect(within(failed).getByText(/FK_SO_SalesAgent/)).toBeTruthy();
   });
 
+  /* Behind the fold since 2026-08-16, on this surface too — see the superseded
+     block at the bottom of this file. Everything it says is unchanged. */
   it("marks a re-queued refusal as history, not an open item", async () => {
     await mount(busy);
-    await screen.findByText("IV-R");
+    await screen.findByText("SO-F");
+    await openSupersededGroup();
     expect(within(cardOf("IV-R")).getByText(/this row is history/i)).toBeTruthy();
     const card = await openRow("IV-R");
     expect(within(card).getByText(/record of the first refusal/i)).toBeTruthy();
@@ -356,5 +375,97 @@ describe("MobileAutoCountSync — a thousand documents", () => {
     }));
     expect(await screen.findByText(/Nothing needs your attention/)).toBeTruthy();
     expect(screen.queryByText(/Try another status/)).toBeNull();
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   THE FOUR THINGS THE OWNER READ OFF THE LIVE PAGE ON 2026-08-16, on the phone.
+
+   Every one of them is a rule in lib/autocountOutbox, so what these assert is
+   that this surface RENDERS the rule rather than carrying its own version of
+   it. A fix landing on the desktop only is the bug class this repo names most
+   often, and a 375 px screen is where a wall of machinery costs most.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("MobileAutoCountSync — the same four fixes, one surface over", () => {
+  const PARENTLESS =
+    "created with no source delivery order, so there is no source document to transfer from. "
+    + "AutoCount builds a DO / GRN / Invoice only by transferring a source document's lines "
+    + "(AddPartialTransferDetail is the SDK's only primitive), so this document cannot be "
+    + "created in the account book at all and will stay ERP-only.";
+
+  const WITH_DUMP =
+    "Gave up after 6 attempts. Last error: Invalid transfer item. || source SO lines as the book "
+    + "holds them: 905348 on SO HC-SO-2608-002 [AK-ULTIMATE MATT (K)] Qty=1.00000000 "
+    + "TransferedQty=0.00000000 Transferable=T docCancelled=F outstanding=1.00000000";
+
+  const both = payload({
+    counts: { pending: 0, sent: 0, failed: 1, skipped: 1, requeued: 0, attention: 2, total: 2 },
+    rows: [
+      row({ id: "iv", doc_no: "HC-IV-2608-004", doc_type: "IV", op: "do_to_iv",
+        status: "skipped", state: "skipped", needs_attention: true,
+        reason_kind: "no-source-document", reason: PARENTLESS }),
+      row({ id: "do2", doc_no: "HC-DO-2608-002", doc_type: "DO", op: "so_to_do",
+        status: "failed", state: "failed", attempts: 6, needs_attention: true,
+        can_requeue: true, reason: WITH_DUMP }),
+    ],
+  });
+
+  it("prints no SDK method name, and keeps the note behind the disclosure", async () => {
+    await mount(both);
+    await screen.findByText("HC-IV-2608-004");
+    const card = await openRow("HC-IV-2608-004");
+    expect(plainTextOf(card)).not.toContain("AddPartialTransferDetail");
+    expect(card.querySelector("[data-ac-technical]")?.textContent)
+      .toContain("AddPartialTransferDetail");
+    /* The distinction he asked for by name is untouched. */
+    expect(within(card).getByText("AutoCount was not asked")).toBeTruthy();
+  });
+
+  it("keeps AutoCount's own sentence and folds the account-book dump", async () => {
+    await mount(both);
+    await screen.findByText("HC-DO-2608-002");
+    const card = await openRow("HC-DO-2608-002");
+    expect(within(card).getByText(/Invalid transfer item\./)).toBeTruthy();
+    expect(plainTextOf(card)).not.toContain("TransferedQty");
+    expect(card.querySelector("[data-ac-technical]")?.textContent).toContain("905348");
+  });
+
+  it("does not order a fix for a field AutoCount never named", async () => {
+    await mount(both);
+    await screen.findByText("HC-DO-2608-002");
+    const card = await openRow("HC-DO-2608-002");
+    expect(within(card).queryByText(/Put right whatever AutoCount named/)).toBeNull();
+    expect(within(card).getByText(/Pass it to whoever looks after the AutoCount link/))
+      .toBeTruthy();
+  });
+
+  it("folds superseded rows out of the list, and shows them when asked", async () => {
+    const withHistory = payload({
+      counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 2, attention: 1, total: 3 },
+      rows: [
+        row({ id: "live", doc_no: "HC-DO-2608-100", status: "failed", state: "failed",
+          needs_attention: true, reason: "Gave up after 6 attempts. Last error: Invalid transfer item." }),
+        row({ id: "h1", doc_no: "HC-DO-2608-001", status: "skipped", state: "requeued",
+          reason: "[re-queued …] refused" }),
+        row({ id: "h2", doc_no: "HC-DO-2608-002", status: "skipped", state: "requeued",
+          reason: "[re-queued …] refused" }),
+      ],
+    });
+    await mount(withHistory);
+    await screen.findByText("HC-DO-2608-100");
+    expect(document.querySelectorAll("[data-ac-row]").length).toBe(1);
+
+    await openSupersededGroup();
+
+    expect(document.querySelectorAll("[data-ac-row]").length).toBe(3);
+    expect(screen.getByText(/nothing here to do/i)).toBeTruthy();
+  });
+
+  it("says its own sentence about a load failure, and quotes the transport under it", async () => {
+    await mount(new Error("AutoCount service responded 502"));
+    expect(await screen.findByText(
+      "The queue could not be read, so nothing below is the current picture.",
+    )).toBeTruthy();
+    expect(screen.getByText("AutoCount service responded 502")).toBeTruthy();
   });
 });
