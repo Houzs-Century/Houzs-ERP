@@ -93,13 +93,23 @@ permissions, locks, and the traps found while working in it:
 [`team-members.md`](modules/team-members.md) ·
 [`global-search.md`](modules/global-search.md) ·
 [`document-traceability.md`](modules/document-traceability.md) ·
+[`document-conversion.md`](modules/document-conversion.md) ·
 [`autocount-writeback.md`](modules/autocount-writeback.md)
 
-Two of these are the authority for a *mechanism* rather than a screen, and are
+Three of these are the authority for a *mechanism* rather than a screen, and are
 easy to miss: **`autocount-writeback.md`** owns how to call the write-back
-service, the master-data foreign-key chain and the payload shapes; and
+service, the master-data foreign-key chain and the payload shapes;
 **`document-traceability.md`** owns the read-time purchase→sales linkage display
-(no writes, no snapshot — do not add one).
+(no writes, no snapshot — do not add one); and **`document-conversion.md`** owns
+the doc→doc conversion grid — which pairs have a "Convert from", which have a
+"Convert to", and which support multi-select.
+
+**Looking for a STATUS?** There is more than one status system per document and
+they are routinely confused. `sales-order.md` §0 is the index: it enumerates the
+five statuses a single Sales Order carries, which ones disagree with each other
+and why, and which lock blocks which action. `delivery-order.md` §4 does the
+same for the DO and disambiguates the three different fields named
+`delivery_state`.
 
 ## 4. AutoCount — more than one channel, running in opposite directions
 
