@@ -196,11 +196,46 @@ async function main() {
           FROM scm.purchase_order_items i
           JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
          WHERE i.company_id = ${CO}::bigint AND i.material_code = ${l.item_code}
-           AND upper(p.status) NOT IN ('CANCELLED','CLOSED','DRAFT')
+           AND upper(p.status::text) NOT IN ('CANCELLED','CLOSED','DRAFT')
          ORDER BY p.po_number`;
       note(`        open PO lines for ${l.item_code}: ${po.length}`);
       for (const q of po) {
         note(`          ${q.po_number}  ${String(q.status).padEnd(12)} qty=${q.qty} recv=${q.received_qty} eta=${q.eta || '-'} so_item=${q.so_item_id ? q.so_item_id.slice(0, 8) : '(unbound)'}`);
+      }
+
+      /* WHO ELSE WANTS THIS UNIT. Both the allocator and MRP walk demand in
+         delivery-date then doc_no order, so an earlier-dated live line takes
+         the on-hand unit first and this line is CORRECTLY pending. */
+      const rivals = await sql`
+        SELECT i.doc_no, s.status, i.qty, i.stock_status,
+               i.warehouse_id::text AS warehouse_id,
+               coalesce(i.line_delivery_date::text, s.customer_delivery_date::text) AS eff_date
+          FROM scm.mfg_sales_order_items i
+          JOIN scm.mfg_sales_orders s
+            ON s.doc_no = i.doc_no AND s.company_id = i.company_id
+         WHERE i.company_id = ${CO}::bigint AND i.item_code = ${l.item_code}
+           AND i.cancelled = false
+           AND upper(s.status::text) NOT IN ${sql(TERMINAL)}
+         ORDER BY eff_date NULLS LAST, i.doc_no`;
+      note(`        competing LIVE demand for ${l.item_code}: ${rivals.length} line(s) (allocation order)`);
+      for (const q of rivals) {
+        const mine = q.doc_no === h.doc_no ? '  <-- THIS ORDER' : '';
+        note(`          ${String(q.eff_date ?? '(no date)').padEnd(12)} ${String(q.doc_no).padEnd(22)} qty=${q.qty} stored=${String(q.stock_status).padEnd(8)} status=${q.status} wh=${(q.warehouse_id ?? 'NULL').slice(0, 8)}${mine}`);
+      }
+
+      /* WHEN did the unit land, vs when this line was last projected. If the
+         movement predates the last allocation trigger the stored PENDING is
+         stale, not correct. */
+      const mv = await sql`
+        SELECT movement_type::text AS movement_type, qty, coalesce(variant_key,'') AS variant_key,
+               source_doc_type, source_doc_no, created_at::text AS created_at
+          FROM scm.inventory_movements
+         WHERE company_id = ${CO}::bigint AND product_code = ${l.item_code}
+         ORDER BY created_at DESC
+         LIMIT 10`;
+      note(`        last ${mv.length} inventory movement(s) for ${l.item_code}:`);
+      for (const q of mv) {
+        note(`          ${q.created_at}  ${String(q.movement_type).padEnd(4)} qty=${String(q.qty).padStart(4)} key=${JSON.stringify(q.variant_key)} src=${q.source_doc_type ?? '-'} ${q.source_doc_no ?? ''}`);
       }
     }
 
@@ -233,7 +268,7 @@ async function main() {
         JOIN scm.mfg_sales_order_items i
           ON i.doc_no = s.doc_no AND i.company_id = s.company_id AND i.cancelled = false
        WHERE s.company_id = ${co}::bigint
-         AND upper(s.status) NOT IN ${sql(TERMINAL)}`;
+         AND upper(s.status::text) NOT IN ${sql(TERMINAL)}`;
     const byDoc = new Map();
     for (const r of rows) {
       const cur = byDoc.get(r.doc_no) ?? { lines: [], gated: r.alloc_gated, hasPd: r.has_processing_date, status: r.status };
@@ -263,6 +298,17 @@ async function main() {
     }
     if (barecat.length > 40) note(`      … ${barecat.length - 40} more`);
   }
+
+  note(`\n${'='.repeat(78)}\nD. Is the allocation projection itself healthy?`);
+  try {
+    const lock = await sql`SELECT * FROM scm.stock_allocation_recompute_lock`;
+    for (const r of lock) note(`  lock: ${JSON.stringify(r)}`);
+  } catch (e) { note(`  lock read failed: ${e.message}`); }
+  try {
+    const q = await sql`SELECT * FROM scm.stock_allocation_recompute_queue`;
+    note(`  queue rows: ${q.length}`);
+    for (const r of q) note(`    ${JSON.stringify(r)}`);
+  } catch (e) { note(`  queue read failed: ${e.message}`); }
 
   await sql.end({ timeout: 5 });
 }
