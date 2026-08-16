@@ -17,7 +17,7 @@
 // The old ledger-style SalesOrderDetail.tsx stays in the tree; App.tsx route
 // swap on /scm/sales-orders/:docNo decides which one users see.
 
-import { Suspense, lazy, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
@@ -48,7 +48,13 @@ import {
   useMfgSalesOrderDetail,
   useUpdateMfgSalesOrderStatus,
   useSalesOrderPayments,
+  useSalesOrderAuditLog,
 } from "../../vendor/scm/lib/sales-order-queries";
+/* The real audit trail — the same drawer and the same vocabulary the V1 detail
+   page uses, so History means one thing across both (owner 2026-08-13). */
+import { AuditHistoryPanel } from "../../components/audit/AuditHistoryPanel";
+import { SO_AUDIT_LABELS } from "./so-audit-labels";
+import { fmtDateTime } from "../../vendor/shared/format";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -654,7 +660,21 @@ function SalesOrderDetailV2ReadOnly() {
       updateStatus.mutate({ docNo: salesOrder.doc_no, status: "cancelled" });
     }
   };
-  const goHistory = () => docNo && navigate(`/scm/sales-orders/${docNo}?tab=history`);
+  /* History (owner 2026-08-13: "点history的时候没有反应").
+     This used to `navigate(\`…/${docNo}?tab=history\`)` — to the route we are
+     ALREADY on, with a param nothing anywhere reads. Two independent reasons
+     for nothing to happen, which is exactly what happened. It is the same
+     disease as the dead `?print=1` this file already records two handlers
+     below; a navigate to a param no one consumes is not a feature, it is a
+     no-op wearing a button.
+
+     Now it opens the real audit drawer — the same AuditHistoryPanel over the
+     same mfg_so_audit_log the V1 detail page uses, so "History" means one
+     thing in both places rather than two. */
+  const [historyOpen, setHistoryOpen] = useState(false);
+  const closeHistory = useCallback(() => setHistoryOpen(false), []);
+  const auditQ = useSalesOrderAuditLog(docNo ?? null);
+  const auditEntries = auditQ.data ?? [];
   const [relMapOpen, setRelMapOpen] = useState(false);
   const goRelationshipMap = () => setRelMapOpen(true);
   // Render + download the SO PDF via the shared jspdf generator (client-side),
@@ -1042,7 +1062,7 @@ function SalesOrderDetailV2ReadOnly() {
             <Button
               variant="ghost"
               icon={<History size={14} />}
-              onClick={goHistory}
+              onClick={() => setHistoryOpen(true)}
             >
               History
             </Button>
@@ -1426,31 +1446,60 @@ function SalesOrderDetailV2ReadOnly() {
                 />
               </AsideCard>
 
+              {/* Owner 2026-08-13: "recent activity 加上时间".
+                  It could not show one. All three rows read `so_date`, which is
+                  a DATE column with no time in it — so every entry restated the
+                  same day, and two of the three ("Lines added", the status row)
+                  were guesses at events nobody had recorded here anyway.
+
+                  The audit log has what the card was pretending to have: real
+                  events, real actors, real timestamps. Same source as the
+                  History drawer this header now opens, so the summary and the
+                  full trail cannot tell different stories. The synthesized rows
+                  remain as the fallback for an order with no audit entries yet
+                  (pre-audit history, or the log still loading) — losing the
+                  card entirely would be a worse answer than a dateless one. */}
               <AsideCard title="Recent activity">
-                <ActivityRow
-                  title={`Order ${statusFor(salesOrder.status).label.toLowerCase()}`}
-                  meta={fmtDate(salesOrder.so_date)}
-                  dot={
-                    statusFor(salesOrder.status).tone === "success"
-                      ? "success"
-                      : "primary"
-                  }
-                />
-                <ActivityRow
-                  title={`Lines added (${items.length})`}
-                  meta={fmtDate(salesOrder.so_date)}
-                  dot="primary"
-                />
-                <ActivityRow
-                  title="Created"
-                  meta={`${fmtDate(salesOrder.so_date)}${
-                    salesOrder.customer_type
-                      ? ` · ${salesOrder.customer_type}`
-                      : ""
-                  }`}
-                  dot="muted"
-                  isLast
-                />
+                {auditEntries.length > 0 ? (
+                  auditEntries.slice(0, 4).map((e, i, shown) => (
+                    <ActivityRow
+                      key={e.id}
+                      title={SO_AUDIT_LABELS.actions[e.action] ?? e.action.replace(/_/g, " ")}
+                      meta={`${fmtDateTime(e.created_at)}${
+                        e.actor_name_snapshot ? ` · ${e.actor_name_snapshot}` : ""
+                      }`}
+                      dot={i === 0 ? "success" : i === shown.length - 1 ? "muted" : "primary"}
+                      isLast={i === shown.length - 1}
+                    />
+                  ))
+                ) : (
+                  <>
+                    <ActivityRow
+                      title={`Order ${statusFor(salesOrder.status).label.toLowerCase()}`}
+                      meta={fmtDate(salesOrder.so_date)}
+                      dot={
+                        statusFor(salesOrder.status).tone === "success"
+                          ? "success"
+                          : "primary"
+                      }
+                    />
+                    <ActivityRow
+                      title={`Lines added (${items.length})`}
+                      meta={fmtDate(salesOrder.so_date)}
+                      dot="primary"
+                    />
+                    <ActivityRow
+                      title="Created"
+                      meta={`${fmtDate(salesOrder.so_date)}${
+                        salesOrder.customer_type
+                          ? ` · ${salesOrder.customer_type}`
+                          : ""
+                      }`}
+                      dot="muted"
+                      isLast
+                    />
+                  </>
+                )}
               </AsideCard>
             </div>
           </DetailAside>
@@ -1487,6 +1536,19 @@ function SalesOrderDetailV2ReadOnly() {
           </button>
         </div>
       </div>
+
+      {/* History drawer — the shared audit panel, same entries the Recent
+          activity card summarises above. */}
+      {historyOpen && (
+        <AuditHistoryPanel
+          recordLabel={salesOrder.doc_no}
+          entityName="Sales order"
+          entries={auditEntries}
+          isLoading={auditQ.isLoading}
+          labels={SO_AUDIT_LABELS}
+          onClose={closeHistory}
+        />
+      )}
 
       {/* Relationship map modal — 5-node graph per Nick's 2026-07-08 handoff */}
       <DocumentRelationshipMapModal
