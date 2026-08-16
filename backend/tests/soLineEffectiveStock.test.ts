@@ -113,8 +113,11 @@ describe('the rollup the owner reads, fed the two ways', () => {
    defect was a surface holding a second opinion, and a green unit test on a
    helper nobody calls is exactly how that ships again. */
 describe('the SO list rolls up the shared rule, not a raw stored column', () => {
-  it('the list readiness rollup calls effectiveLineStockStatus', () => {
-    expect(mfgSalesOrders).toContain('stock_status: effectiveLineStockStatus(');
+  it('the list readiness rollup is fed the effective status, not the stored column', () => {
+    expect(mfgSalesOrders).toContain('const effective = effectiveStockByLine(');
+    expect(mfgSalesOrders).toContain("stock_status: effective.get(it.id) ?? 'PENDING',");
+    // The pre-fix line. If this comes back, the board has its own opinion again.
+    expect(mfgSalesOrders).not.toContain('stock_status: it.stock_status, cancelled:');
   });
 
   it('both line-detail handlers publish the verdict, so the pill cannot compute its own', () => {
