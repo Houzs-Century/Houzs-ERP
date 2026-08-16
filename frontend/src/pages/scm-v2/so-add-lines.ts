@@ -41,7 +41,11 @@ export function patchStagedAdd(
   key: string,
   patch: Partial<SoLineDraft>,
 ): StagedAddLine[] {
-  let changed = false;
+  /* Annotated rather than inferred: TypeScript narrows `let x = false` to the
+     literal `false` and does not track the assignment inside the .map callback,
+     so `changed ? out : list` reads to it — and to no-unnecessary-condition — as
+     always-falsy. The runtime is correct; the declared type is what was wrong. */
+  let changed: boolean = false;
   const out = list.map((row) => {
     if (row.key !== key) return row;
     changed = true;
@@ -61,7 +65,11 @@ export function cascadeStagedDeliveryDate(
   list: StagedAddLine[],
   next: string | null,
 ): StagedAddLine[] {
-  let changed = false;
+  /* Annotated rather than inferred: TypeScript narrows `let x = false` to the
+     literal `false` and does not track the assignment inside the .map callback,
+     so `changed ? out : list` reads to it — and to no-unnecessary-condition — as
+     always-falsy. The runtime is correct; the declared type is what was wrong. */
+  let changed: boolean = false;
   const out = list.map((row) => {
     const d = row.draft;
     if (d.lineDeliveryDateOverridden || (d.lineDeliveryDate ?? null) === next) return row;

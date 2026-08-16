@@ -202,6 +202,14 @@ type SoStatus = typeof STATUS_LIST[number];
 const STATUS_CLASS: Record<string, string> = {
   // DRAFT flow — re-added so a DRAFT SO (scanned / auto-generated, pending
   // operator Confirm) renders the muted grey pill instead of a bare string.
+  /* eslint-disable @typescript-eslint/no-unnecessary-condition -- a CSS module is
+     typed as a total Record<string,string>, so TS calls every `?? ''` here
+     redundant. It is not: a key with no matching class in the .module.css
+     resolves to undefined at runtime and the pill renders `class="undefined"`.
+     The type is the thing that is wrong, and until CSS modules are typed from
+     the stylesheet these guards are the only thing standing between a missing
+     class and a broken status pill. Deleting them to satisfy the rule would
+     trade a lint line for a visual bug. */
   DRAFT:          styles.statusDraft ?? '',
   CONFIRMED:      styles.statusConfirmed ?? '',
   IN_PRODUCTION:  styles.statusInProd ?? '',
@@ -212,6 +220,7 @@ const STATUS_CLASS: Record<string, string> = {
   CLOSED:         styles.statusClosed ?? '',
   CANCELLED:      styles.statusCancelled ?? '',
   RETURNED:       styles.statusReturned ?? '',
+  /* eslint-enable @typescript-eslint/no-unnecessary-condition */
 };
 
 // Owner-preferred status wording — kept identical to the SO list pill
