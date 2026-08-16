@@ -60,11 +60,7 @@ import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useBranding } from "../../hooks/useBranding";
 import { shortCompanyName } from "../../lib/branding";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
-import {
-  useMfgSalesOrdersPaged,
-  useUpdateMfgSalesOrderStatus,
-  useMfgSalesOrderDetail,
-} from "../../vendor/scm/lib/sales-order-queries";
+import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail } from "../../vendor/scm/lib/sales-order-queries";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
