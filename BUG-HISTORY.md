@@ -1,3 +1,116 @@
+## Four refusal classes the AutoCount Sync page could not name, and one needle that matched nothing [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Found while enumerating every reason a row can end up `failed` or
+`skipped` for `docs/autocount-sync-reasons.md` — the catalogue the page's new
+Send-again button reads its sentences from. `AC_SKIP_KINDS` is what turns a
+`skipped` row's raw text into a `reason_kind` and a REMEDY, and for a large
+group of live refusals it produced `unrecognised` with a **null remedy**: the
+page names the problem and offers no next step, on rows whose next step is one
+field on one form.
+
+**Root cause (traced, by reading every writer of a `skipped` reason rather than
+the table).** Three separate holes, and they have the same shape — a needle
+written from something other than the writer.
+
+1. **Three refusal classes had no needle at all.** `noteReadFailure`
+   (`backend/src/scm/lib/autocount-outbox.ts`) writes
+   `refused, nothing sent (${e.name})` for **eight** error classes;
+   `AC_SKIP_KINDS` carried five of them. Missing: `MissingAgentError`,
+   `MissingSalesLocationError`, `MissingCreditorError`. The first is not
+   hypothetical — it is the class written for exactly the failure the live book
+   answered on go-live day, 2026-08-13, `FK_SO_SalesAgent` on HC-SO-2608-001 and
+   -002.
+
+2. **`no-autocount-shape`'s needle matched nothing any code path writes.** It
+   was `'AutoCount has no shape'`, which is a phrase from
+   `recordConvertSkipped`'s own DOC COMMENT. The five call sites that record a
+   merged conversion — `delivery-orders-mfg.ts`, `grns.ts` (twice),
+   `sales-invoices.ts`, `purchase-invoices.ts` — all write
+   `"AutoCount transfers from ONE source document"`. So every merged conversion
+   in the queue has classified as `unrecognised` since the feature shipped.
+
+3. **Four more reasons were never in the table**: the DtlKey-subset refusal
+   (`readConvertSourceKeys`), `cancelled in the ERP before it was written to
+   AutoCount` (`enqueueCancel`), `edited before its AutoCount counterpart
+   existed` (`enqueueEdit`), and the mislinked-GRN refusal (`grnLinkIsReallyAPo`).
+
+This is the same failure as #2094 one turn of the screw further on. That one
+matched the shared PREFIX and so gave three classes the fourth's remedy; this
+one matched a comment, and a phrase nobody writes, and so gave several classes
+no remedy at all. Both come from taking the needle from near the writer instead
+of from the writer.
+
+**Fix.** Eight entries added or corrected in `AC_SKIP_KINDS`
+(`backend/src/scm/lib/autocount-outbox-status.ts`) and in its plain-node mirror
+`backend/scripts/lib/autocount-skip-kinds.mjs`, which
+`autocountOutboxStatus.canonical.test.ts` refereed as usual. Every one of the
+needles was taken from the string the writer actually produces, quoted in the
+same PR into `docs/autocount-sync-reasons.md` beside its trigger, whether a
+re-send can fix it, and what a person should do.
+
+**Not fixed, recorded instead** (`docs/autocount-sync-reasons.md` §5): these
+needles are still strings typed twice with nothing checking them against the
+writers, which is exactly how hole 2 survived from the day it shipped. A
+generated check over the reason-producing call sites is the thing that closes
+the class; a bigger table is not. Also recorded there: `masters-not-opened` can
+never classify, because the route only classifies rows whose status is
+`skipped` and the drain writes that message onto a `failed` row.
+
+**Ref:** this PR, 2026-08-16.
+
+## The AutoCount Sync page could show a refusal and do nothing about it [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Owner's standing complaint about this screen, in its own subtitle:
+*"re-sending a refused document is still the re-queue workflow"*. A `failed` or
+`skipped` row means a document is in the ERP and not in the licensed account
+book; the page named the reason and the remedy, and then the only way to ACT was
+to dispatch a GitHub Action — which the owner cannot do.
+
+**Root cause (not a defect, a deliberate omission that outlived its reason).**
+`backend/src/scm/routes/autocount-outbox.ts` said so in its own header: *"There
+is no re-queue here … Putting that behind a button is a separate decision the
+owner has not made."* The decision has been made. The reason for the caution was
+real and remains real: `AcSyncService`'s create has **no guard against a
+duplicate ERP document number**, so re-sending a document AutoCount has already
+accepted writes a SECOND one into a live licensed book, where a sales order
+cannot simply be deleted. The workflow managed that risk by selecting `skipped`
+rows only and hiding `failed` behind an `includeFailed` opt-in (#2189). Neither
+of those mechanisms can protect a button, which is pointed at whatever row the
+reader is looking at — including a `sent` one.
+
+**Fix.** `POST /api/scm/autocount-outbox/:id/requeue`.
+
+- **The ladder is SHARED, not copied.** `requeueSkipped`'s loop body was
+  extracted into `requeueOneRow` and both callers climb it. Two ladders would be
+  two answers to "may this document be sent again", and the looser one writes the
+  duplicate.
+- **A `sent` row is refused OUTRIGHT**, before the document is read or composed —
+  the refusal the workflow never needed and the opt-in could not express.
+  `pending` is refused too (the sweep is already going to send it), and a row id
+  belonging to another company answers `row-not-found`, identically to an unknown
+  id, because confirming somebody else's id exists is itself a leak.
+- **Authorization is a NEW, NARROWER key.** `scm.autocount.requeue` **or**
+  `settings.manage`; deliberately not `scm.autocount.read`, which is catalogued
+  as the key you hand somebody so they can WATCH the queue. Company resolution
+  is `requireActiveCompanyId` — the strict helper — because the lenient one
+  degrades to "no predicate", which on a write means every company's rows.
+- **The answer is a structured outcome, never an exception string**: `accepted`,
+  a stable `code`, and a plain-English `message` shipped from the server so the
+  page holds no dictionary of its own. `docs/autocount-sync-reasons.md` is the
+  catalogue, pinned to the code by
+  `backend/tests/autocountSyncReasonsCatalogue.test.ts` in both directions.
+- **The attempt counter needed no reset code**, and the reason is worth keeping:
+  a re-queue is an INSERT of a new row, not a re-open of the dead one. A `failed`
+  row sits at `attempts = 6` and the drain selects `.lt('attempts',
+  MAX_ATTEMPTS)`, so re-opening it would produce a `pending` row no sweep can
+  ever pick up — queued, visibly waiting, and dead. The new row sets no
+  `attempts`, so 0277's `DEFAULT 0` supplies it. Asserted rather than assumed.
+
+**Ref:** this PR, 2026-08-16.
 ## Migration 0301 rejected its own rewrite and blocked every production deploy [critical]
 
 **Symptom.** From 2026-08-16 11:16:41Z (#2297 merged) production stopped
@@ -145,6 +258,71 @@ The string attempt stays first so the worst case is today's behaviour;
 `deploy-on-host.ps1` compiles before it swaps and keeps the previous exe.
 
 **Ref.** fix/processing-date-reaches-autocount, 2026-08-16.
+## Eleven attempts at a delivery-order transfer produced eleven identical, contentless errors [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** `HC-DO-2608-001` (`so_to_do`, FAILED, 6 of 6 attempts) and
+`HC-DO-2608-002` (5 attempts, still pending) will not transfer into the live
+`AED_HOUZS` book. Every attempt recorded the same `last_error`:
+
+```
+ Invalid transfer item.
+```
+
+Eleven runs, no key, no document, no reason, and no way to tell the eleven apart.
+
+**What was actually wrong with the DIAGNOSIS, traced.** Two things, and neither
+of them is the transfer itself.
+
+1. **The probe printed the payload's key NAMES, not its values.**
+   `why-so-line-not-purchasable.mjs` section D dumped an outbox row's header as
+   `header keys: DocNo, DtlKeys` — so `DtlKeys` was known to be present and
+   WHICH keys was never on screen through all eleven attempts.
+
+2. **The service cannot say more than AutoCount said.** When the ERP names the
+   lines, `DtlKeys()` returns the supplied array VERBATIM, so neither predicate
+   this service otherwise applies — `h.Cancelled = 'F'` and
+   `(d.Qty - ISNULL(d.TransferedQty,0)) > 0` — is evaluated for those keys, and
+   AutoCount is the first thing in the chain to look at the lines at all.
+   `Serve`'s catch-all returns `ex.Message` alone, and that message is the eleven
+   words above.
+
+**Fix.**
+
+- The probe prints, for a conversion row, the `DtlKeys` array itself,
+  `FromDocType`, the stored `FromDocNo` and the `FromDocNo` `dispatchOne`
+  resolves at drain from `payload.fromDoc` — which is not in the stored payload
+  at all. `last_error` is no longer clipped at 220 characters.
+- A new section E walks target line -> source line -> source DOCUMENT for every
+  key in the payload and prints the DISTINCT source documents beside that single
+  `FromDocNo`, plus the two silent drops `readConvertSourceKeys` can make.
+- `Convert_` wraps its whole `switch` and, on any failure, appends the book's own
+  numbers per key: document, `Qty`, `TransferedQty`, `Transferable`, the
+  document's `Cancelled`, the outstanding quantity, `NOT FOUND` for a key on no
+  row. Columns go through `ExistingColumns`, so a book missing one loses that
+  field and not the explanation. It DIAGNOSES and does not refuse: a pre-flight
+  predicate stricter than AutoCount's own would turn working transfers into
+  refusals, and this file compiles nowhere but the office host.
+
+**What the probe RULED OUT** (run 31944045963 and 31944185309,
+`why-so-line-not-purchasable.yml` against production, read-only):
+
+| suspicion | refuted by |
+|---|---|
+| the keys span SEVERAL sales orders while `FromDocNo` names one — the mixed-array shape that raises this exact exception | `DISTINCT SOURCE DOCUMENTS: 1` on both. `HC-DO-2608-002` -> `[905348,905349]`, both on `HC-SO-2608-002`, which is what drain resolves. `HC-DO-2608-001` -> `[906306,906307]`, both on `HC-SO-2608-003`, likewise |
+| a DO line with no `so_item_id` is silently dropped, so the key count disagrees with the line count | `lines with no so_item_id: 0` on both; 2 keys for 2 lines each |
+| a source line carries no `linked_ac_dtlkey` | `source lines with NO DtlKey: 0` on both |
+| `/so-to-do` passes the wrong `fromDocType` | it passes `"SO"`, and the same route with the same literal produced `DO-011260` and the `5b-multi` QA transfer on the live book |
+
+**Still UNKNOWN, and honestly so.** WHICH of those four keys the book refuses,
+and why. That needs `SODTL` for keys 905348, 905349, 906306, 906307, and no
+credential in this repository reaches the AutoCount host — `gh api
+repos/hello-houzs/Houzs-ERP/actions/secrets` returns ten secrets, none of them
+`AC_*`, and neither environment carries one. The next attempt on either document
+answers it by itself once the host is rebuilt.
+
+**Ref:** this PR, 2026-08-16.
 
 ## SO-to-PO wrote the source document but not the source TYPE [high]
 
