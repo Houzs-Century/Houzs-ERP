@@ -14,6 +14,8 @@
 //  Manual journal (JV)       | operator-entered lines                  | MANUAL      | MANUAL_REVERSAL
 //  SO payment collected      | Dr CASH/BANK/transit / Cr AR            | SOPAY       | SOPAY_REVERSAL
 //  SI payment collected      | Dr CASH/BANK/transit / Cr AR            | SIPAY       | SIPAY_REVERSAL
+//  Daily cash close          | Dr/Cr OVER_SHORT      / Cr/Dr CASH      | CASHUP      | (none — correct by JV)
+//  Acquirer settlement conf. | Dr bank + Dr fee      / Cr transit      | SETTLE      | SETTLE_REVERSAL
 //
 //  Customer-payment debit side, by the sales panel's own method model:
 //    cash                 -> CASH role (335-0000)
@@ -65,6 +67,7 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   MANUAL: 'MANUAL_REVERSAL',
   SOPAY: 'SOPAY_REVERSAL',
   SIPAY: 'SIPAY_REVERSAL',
+  SETTLE: 'SETTLE_REVERSAL',
 };
 
 export type RoleCodes = Record<AccountRole, string>;
@@ -237,4 +240,56 @@ export function customerPaymentLines(
       notes: `Settles ${p.docNo}`,
     },
   ];
+}
+
+/**
+ * Acquirer settlement confirmed (brief §3.5 layer 3) — THE entry 系统3 never
+ * wrote, which is why card fees never reached its P&L:
+ *
+ *     Dr Bank              net    (what actually arrived)
+ *     Dr Merchant charges  fee    (what the acquirer kept — an EXPENSE)
+ *         Cr Settlement-in-transit  gross  (clearing the swipe)
+ *
+ * A zero fee simply drops its line — two lines still balance. A NEGATIVE gross
+ * (a refund or chargeback line on the statement) mirrors every side, so the
+ * refund walks back out of the same three accounts it walked in through
+ * instead of being posted as a strange positive somewhere else.
+ *
+ * Fee SST: the fee is booked whole here. Splitting it into expense + input tax
+ * is phase 5's job (the brief's tax work) and is deliberately NOT faked with a
+ * hardcoded rate.
+ */
+export function settlementLines(
+  accounts: { bankAccountCode: string; feeAccountCode: string; transitAccountCode: string },
+  s: { acquirerCode: string; txnDate: string; ref: string | null; grossSen: number; feeSen: number },
+): RuleLine[] {
+  const refund = s.grossSen < 0;
+  const gross = Math.abs(s.grossSen);
+  const fee = Math.abs(s.feeSen);
+  const net = gross - fee;
+  const tag = `${s.acquirerCode} settlement ${s.txnDate}${s.ref ? ` ref ${s.ref}` : ''}`;
+  const lines: RuleLine[] = [];
+  if (net !== 0) {
+    lines.push({
+      accountCode: accounts.bankAccountCode,
+      debitSen: refund ? 0 : net,
+      creditSen: refund ? net : 0,
+      notes: `Net received — ${tag}`,
+    });
+  }
+  if (fee > 0) {
+    lines.push({
+      accountCode: accounts.feeAccountCode,
+      debitSen: refund ? 0 : fee,
+      creditSen: refund ? fee : 0,
+      notes: `Acquirer fee — ${tag}`,
+    });
+  }
+  lines.push({
+    accountCode: accounts.transitAccountCode,
+    debitSen: refund ? gross : 0,
+    creditSen: refund ? 0 : gross,
+    notes: `Clears in-transit — ${tag}`,
+  });
+  return lines;
 }

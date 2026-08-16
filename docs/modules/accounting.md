@@ -27,6 +27,9 @@ books which entry":
 | Purchase invoice posted | Dr INVENTORY / Cr AP | `PI` | `PI_REVERSAL` |
 | Payment voucher posted | Dr expense legs / Cr bank-or-AP header | `PV` | `PV_REVERSAL` |
 | Manual journal (JV) | operator lines, draft first | `MANUAL` | `MANUAL_REVERSAL` |
+| Customer payment collected | Dr CASH/BANK/transit / Cr AR | `SOPAY` / `SIPAY` | `*_REVERSAL` |
+| Daily cash close | Dr/Cr OVER_SHORT / Cr/Dr CASH | `CASHUP` | (correct by JV) |
+| Acquirer settlement confirmed | Dr bank + Dr fee / Cr transit | `SETTLE` | `SETTLE_REVERSAL` |
 
 Adding an auto-posting document type means: a rule in `rules.ts`, a caller
 that builds its lines through that rule, and a behaviour-lock test — the
@@ -90,6 +93,31 @@ zero-difference self-check tile), AR/AP Aging, and Self-check (layer 1).
 
 **Phase 2B part 2 (2026-08-16): Daily close (layer 2).** GET/PUT /accounting/daily-close + POST /daily-close/confirm: each day each company counts the drawer against the system takings (both sales panels, bucketed cash / transfer / per-acquirer; imported rows never count). Confirming freezes the day (scm.acc_daily_closes, migration 0300) and posts the CASH over/short THAT DAY through the gate (946-0000, source CASHUP, idempotent per company+date); card/transfer differences are settlement timing owned by layer 3 - recorded, never posted here. UI: the Daily close view on the Daily Bank page. Confirmed buckets refuse edits - corrections are manual journals, on the record.
 
+**Phase 2B part 3 (2026-08-16): acquirer settlement reconciliation (layer 3).**
+The layer that empties `320-0000`. The acquirer master follows the owner's
+"define once, all companies share" principle: `scm.acc_acquirer_config` is
+GLOBAL (statement format, unique-ref flag, fee method, date tolerance, column
+map — 决定4, taught once) and `scm.acc_company_acquirers` is the per-company
+link (which bank/transit/fee accounts); migration 0301 splits them and leaves
+`scm.acc_acquirers` behind as a VIEW of the same shape, so every phase-2A
+reader is untouched. Migration 0302 adds `acc_settlement_batches` (one upload,
+UNIQUE on the file's content hash), `acc_settlement_rows` (the four screen
+buckets MATCHED / NEEDS_CONFIRM / UNMATCHED / IGNORED) and
+`acc_settlement_matches` (which payments a line covers — UNIQUE
+`(payment_source, payment_id)`, so the database itself refuses to settle the
+same money twice). `acc/settlement-parse.ts` reads a statement entirely from
+config and REFUSES by name rather than parsing 0 rows (§2.14);
+`acc/settlement-match.ts` auto-matches ONLY on a unique reference — an acquirer
+without one (or one whose 决定4 is still blank) sends every line to a human, and
+the date tolerance comes from the config row, not a literal;
+`acc/settlement.ts` confirms, which POSTS that moment: Dr bank + Dr fee / Cr
+transit, source `SETTLE`, keyed `SETTLE-<row id>`. Ten endpoints under
+`/accounting/settlement/*` (setup read/write, upload, batch list/detail,
+confirm one, confirm-all-matched, ignore, watchlist, CSV export), each carrying
+its own permission check on top of the area guard. Page `/scm/settlement-recon`
+(Finance menu): upload, four piles, multi-select candidates with combo hints,
+the two standing watchlists, Excel-ready export.
+
 SI auto-posts on create/confirm (`lib/post-si-revenue.ts`; resync
 void+reposts on post-issue edits). PI posts on demand + resyncs. PV posts on
 `POST /payment-vouchers/:id/post` and reverses on cancel. All three files own
@@ -102,6 +130,13 @@ This is the parallel-run seam and it stays until the owner retires AutoCount.
 ## 4. Tests
 
 - `backend/src/acc/engine.test.ts` — 22 locks on the gate itself.
+- `backend/src/acc/settlement-parse.test.ts` / `settlement-match.test.ts` /
+  `settlement.test.ts` — the layer-3 rules: a refused file names what is wrong,
+  only a unique reference auto-matches, the tolerance is the configured number,
+  a prorated fee sums exactly, a selection that does not add up is refused, and
+  confirming twice books once.
+- `backend/tests/settlementRoutes.test.ts` — the endpoints, including the 403
+  at this end and the same-file-twice refusal.
 - `backend/src/scm/lib/post-si-revenue.test.ts` — the SI path's 15 locks,
   passing unchanged across the engine rewire (the proof the rewire preserved
   behaviour).

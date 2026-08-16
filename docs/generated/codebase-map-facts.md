@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-135 route modules (40 in `backend/src/routes`, 95 in `backend/src/scm/routes`), 1042 endpoint registrations.
+136 route modules (40 in `backend/src/routes`, 96 in `backend/src/scm/routes`), 1058 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -59,7 +59,8 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/track.ts` | 1 | 44 |
 | `backend/src/routes/udf.ts` | 4 | 251 |
 | `backend/src/routes/users.ts` | 22 | 2282 |
-| `backend/src/scm/routes/accounting.ts` | 15 | 841 |
+| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 558 |
+| `backend/src/scm/routes/accounting.ts` | 31 | 1111 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
@@ -103,7 +104,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1220 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4598 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12021 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12031 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1285 |
@@ -128,7 +129,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/quotes.ts` | 4 | 321 |
 | `backend/src/scm/routes/reports.ts` | 6 | 1252 |
 | `backend/src/scm/routes/sales-analysis.ts` | 2 | 522 |
-| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2672 |
+| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2663 |
 | `backend/src/scm/routes/scan-lorry-invoice.ts` | 1 | 381 |
 | `backend/src/scm/routes/scan-payment.ts` | 1 | 587 |
 | `backend/src/scm/routes/scan-so.ts` | 11 | 4865 |
@@ -164,19 +165,19 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 148 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 295 | `0297_acc_autocount_chart.sql` (0297) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 300 | `0302_acc_settlement.sql` (0302) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1356 files, 552647 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1376 files, 557209 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15128 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 12021 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 12031 |
 | `frontend/src/pages/ServiceCases.tsx` | 8846 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5822 |
@@ -198,7 +199,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 
 ## 4. Frontend desktop routes
 
-143 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+145 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -245,6 +246,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/consignment-returns/from-note` | `frontend/src/pages/scm-v2/ConsignmentReturnFromNote` |
 | `/scm/consignment-returns/new` | `frontend/src/pages/scm-v2/ConsignmentReturnNew` |
 | `/scm/currencies` | `frontend/src/pages/scm-v2/Currencies` |
+| `/scm/daily-bank` | `frontend/src/pages/scm-v2/DailyBank` |
 | `/scm/delivery-maintenance` | `frontend/src/pages/scm-v2/DeliveryMaintenance` |
 | `/scm/delivery-orders` | `frontend/src/pages/scm-v2/MfgDeliveryOrdersListV2` |
 | `/scm/delivery-orders/:id` | `frontend/src/pages/scm-v2/DeliveryOrderDetailV2` |
@@ -325,6 +327,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/sales-orders/new` | `frontend/src/pages/scm-v2/SalesOrderNew` |
 | `/scm/sales-orders/new/from-products` | `frontend/src/pages/scm-v2/SalesOrderNewFromProducts` |
 | `/scm/sales-orders/new/guided` | `frontend/src/pages/scm-v2/SalesOrderNewGuided` |
+| `/scm/settlement-recon` | `frontend/src/pages/scm-v2/SettlementRecon` |
 | `/scm/stock-adjustments` | `frontend/src/pages/scm-v2/StockAdjustments` |
 | `/scm/stock-adjustments/new` | `frontend/src/pages/scm-v2/StockAdjustmentNew` |
 | `/scm/stock-takes` | `frontend/src/pages/scm-v2/StockTakesListV2` |
@@ -353,7 +356,7 @@ Page files by directory:
 |---|---|
 | `frontend/src/pages` | 33 |
 | `frontend/src/pages/MailCenter` | 3 |
-| `frontend/src/pages/scm-v2` | 119 |
+| `frontend/src/pages/scm-v2` | 121 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/team` | 1 |
 

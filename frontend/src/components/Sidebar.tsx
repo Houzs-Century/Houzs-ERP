@@ -64,7 +64,7 @@ import {
   History,
   Wand2,
   CalendarOff,
-  type LucideIcon, Landmark } from "lucide-react";
+  type LucideIcon, Landmark, CreditCard } from "lucide-react";
 import { cn } from "../lib/utils";
 import { booleanRecordPreference, useIdentityPreference } from "../hooks/useIdentityPreference";
 import { useAuth } from "../auth/AuthContext";
@@ -637,6 +637,9 @@ export const NAV_TABS: NavTab[] = [
     children: [
       { to: "/scm/accounting", label: "Accounting", icon: BookOpen, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/daily-bank", label: "Daily Bank", icon: Landmark, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.accounting"] },
+      // The screen that empties settlement-in-transit. Gated on the same GL key
+      // the backend checks (scm.payment_voucher.post) — front and back both.
+      { to: "/scm/settlement-recon", label: "Card Settlement", icon: CreditCard, anyPerm: ["*", "scm.access", "scm.payment_voucher.post"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/payment-vouchers", label: "Payment Vouchers", icon: Wallet, anyPerm: ["*", "scm.access", "scm.payment_voucher.create", "scm.payment_voucher.write", "scm.payment_voucher.post", "scm.payment_voucher.cancel"], anyAccess: ["scm.finance.accounting"] },
       { to: "/scm/outstanding", label: "Outstanding", icon: AlertCircle, anyPerm: ["*", "scm.access"], anyAccess: ["scm.finance.outstanding"] },
       // Delivered-but-not-billed, aged. Sits next to Outstanding and on the

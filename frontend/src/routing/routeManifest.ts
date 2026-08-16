@@ -40,6 +40,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/mrp",
   "/scm/accounting",
   "/scm/daily-bank",
+  "/scm/settlement-recon",
   "/scm/outstanding",
   "/scm/unbilled-deliveries",
   "/scm/currencies",

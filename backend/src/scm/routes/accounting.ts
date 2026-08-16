@@ -32,6 +32,11 @@ import { backfillSoPayments } from '../../acc/payments';
 import { computeDailyBank } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
+import {
+  settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
+  settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched,
+  settlementIgnoreRow, settlementWatchlist, settlementExport,
+} from './accounting-settlement';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
    `hasHouzsPerm` calls, including four that WRITE to the ledger: a hand-written
@@ -61,6 +66,22 @@ import {
 
 export const accounting = new Hono<{ Bindings: Env; Variables: Variables }>();
 accounting.use('*', supabaseAuth);
+
+/* Layer 3 — acquirer settlement reconciliation (brief §3.5). The handlers live
+   in accounting-settlement.ts because it is a feature, not an endpoint; they
+   are registered HERE, one path each, so every one of them appears in the
+   route-capability matrix with its gate. Each handler carries its own
+   permission check (the file's `guard`). */
+accounting.get('/settlement/setup', settlementSetup);
+accounting.patch('/settlement/setup/:code', settlementSetupSave);
+accounting.post('/settlement/batches', settlementUpload);
+accounting.get('/settlement/batches', settlementBatches);
+accounting.get('/settlement/batches/:id', settlementBatchDetail);
+accounting.get('/settlement/batches/:id/export', settlementExport);
+accounting.post('/settlement/batches/:id/confirm-matched', settlementConfirmMatched);
+accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
+accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
+accounting.get('/settlement/watchlist', settlementWatchlist);
 
 /* ════════════════════════════════════════════════════════════════════════
    Helpers
