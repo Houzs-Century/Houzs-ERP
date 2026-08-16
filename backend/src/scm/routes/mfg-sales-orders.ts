@@ -81,7 +81,7 @@ import { splitSofaBuildIntoModuleLines, distributeBuildDiscount } from '../share
    so every surface ranks identically. */
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
-import { soPaidCenti, soOutstandingCenti, soPaidInputsOf } from '../shared/so-outstanding';
+import { soPaidCenti, soBalanceCenti, soPaidInputsOf } from '../shared/so-outstanding';
 /* Task 5 — mint one-shot SKUs at SO create when a line carries an extra add-on
    charge (gated by so_settings.pos_remark_extra_auto_sku). Pure code-resolution
    + row-build lives in the lib; this route batches the DB collision check. */
@@ -2711,7 +2711,11 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     // Authoritative received-to-date + remaining balance for the detail page
     // and the customer-facing print (so-doc.ts reads paid_centi_total).
     paid_centi_total: paidCentiTotal,
-    balance_centi: soOutstandingCenti(paidInputs),
+    /* SIGNED (owner 2026-08-16) — negative = over-collected, painted red by the
+       detail page, the mobile detail and the SO print. The write-back keeps the
+       CLAMPED `soOutstandingCenti`: a screen can say "you hold RM 250 of his
+       money", AutoCount's UDF_BALANCE cannot. Same inputs, two audiences. */
+    balance_centi: soBalanceCenti(paidInputs),
   };
   /* Owner batch 2026-07 — resolve the salesperson's display name + contact
      phone (scm.staff) so the SO PDF's ORDER DETAILS can print "Salesperson:
@@ -10888,24 +10892,25 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     }
   }
 
-  /* Spec D6 — server-side overpayment guard. The SO total is authoritative;
-     Σ(ledger) + this payment may never exceed it. Honest error: the client
-     shows the remaining balance. */
-  const { data: soTotalRow, error: totalErr } = await sb
-    .from('mfg_sales_orders').select('total_revenue_centi').eq('doc_no', docNo).maybeSingle();
-  if (totalErr) return c.json({ error: 'lookup_failed', reason: totalErr.message }, 500);
-  const totalCenti = Number((soTotalRow as { total_revenue_centi: number | null } | null)?.total_revenue_centi ?? 0);
-  const { data: paidRows, error: paidErr } = await sb
-    .from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo);
-  if (paidErr) return c.json({ error: 'lookup_failed', reason: paidErr.message }, 500);
-  const paidCenti = (paidRows ?? []).reduce((s, r) => s + Number((r as { amount_centi: number }).amount_centi ?? 0), 0);
-  if (totalCenti > 0 && paidCenti + p.amountCenti > totalCenti) {
-    return c.json({
-      error: 'over_payment',
-      reason: `Payment exceeds the order total. Balance: ${((totalCenti - paidCenti) / 100).toFixed(2)}`,
-      balanceCenti: Math.max(0, totalCenti - paidCenti),
-    }, 400);
-  }
+  /* OVER-COLLECTION IS ALLOWED (owner 2026-08-16). Spec D6's guard used to
+     refuse Σ(ledger) + this payment > total_revenue_centi. It is deleted, not
+     relaxed, and the two reads it needed went with it.
+
+     WHAT THE GUARD ACTUALLY COST. It never stopped an over-collection; it
+     redirected one. Refused at the till, the operator's only way to bank cash
+     already in hand was to go back and re-price the ORDER until the total
+     covered it — which is what happened to HC-SO-2608-002 on 2026-08-16:
+     UPDATE_LINE at 08:26:22 put RM 250 of "Right Drawer" special onto a
+     JAGER-(K) line (unitPriceCenti 0 → 25000), and the RM 2,250 payment landed
+     76 seconds later at 08:27:38, accepted because the total was now exactly
+     425000. The receipt balanced and the customer's order silently grew a
+     drawer he never bought. Refusing money the business is holding does not
+     make the books truer, it makes the ITEMS lie — and an item is what gets
+     manufactured and delivered.
+
+     So the excess is simply recorded, and the balance goes negative (red on
+     the screen: soBalanceCenti). Nothing here touches lines, prices or the
+     order total — a payment is a payment. */
 
   /* Owner 2026-07-13 — the slip is OPTIONAL here, and since 2026-08-13 it is
      optional on EVERY SO path, so this route is no longer the loose end of a
@@ -11166,28 +11171,11 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     }
   }
 
-  /* Overpayment guard (mirror POST) — Σ(other rows) + this row's new amount may
-     not exceed the SO total. Excludes THIS payment from the prior sum. */
-  if (p.amountCenti !== undefined) {
-    const { data: soTotalRow, error: totalErr } = await sb
-      .from('mfg_sales_orders').select('total_revenue_centi').eq('doc_no', docNo).maybeSingle();
-    if (totalErr) return c.json({ error: 'lookup_failed', reason: totalErr.message }, 500);
-    const totalCenti = Number((soTotalRow as { total_revenue_centi: number | null } | null)?.total_revenue_centi ?? 0);
-    const { data: paidRows, error: paidErr } = await sb
-      .from('mfg_sales_order_payments').select('id, amount_centi').eq('so_doc_no', docNo);
-    if (paidErr) return c.json({ error: 'lookup_failed', reason: paidErr.message }, 500);
-    const othersCenti = (paidRows ?? []).reduce(
-      (s, r) => s + (String((r as { id: string }).id) === String(id) ? 0 : Number((r as { amount_centi: number }).amount_centi ?? 0)),
-      0,
-    );
-    if (totalCenti > 0 && othersCenti + nextAmount > totalCenti) {
-      return c.json({
-        error: 'over_payment',
-        reason: `Payment exceeds the order total. Balance: ${((totalCenti - othersCenti) / 100).toFixed(2)}`,
-        balanceCenti: Math.max(0, totalCenti - othersCenti),
-      }, 400);
-    }
-  }
+  /* Over-collection is allowed here too (owner 2026-08-16) — the POST's mirror
+     guard is gone, and a correction that lands above the total must not be
+     refused when the original could not be either. Amending RM 2,000 up to
+     RM 2,250 on a RM 2,000 order is exactly the correction the guard used to
+     push into a line re-price. See the POST for the full note. */
 
   const { data: updated, error: updErr } = await sb
     .from('mfg_sales_order_payments')
