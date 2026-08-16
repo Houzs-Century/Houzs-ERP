@@ -1727,13 +1727,84 @@ class AcSyncService {
   }
 
   // ── helpers ───────────────────────────────────────────────────────────────
-  static void ApplyUdf(Dictionary<string, object> p, Func<string, object> get, Action<string, string> set) {
+  /* EVERY UDF VALUE WENT IN AS A STRING, AND ONE OF THEM IS NOT A STRING.
+
+     Owner 2026-08-16: editing a sales order's Processing Date does not reach
+     AutoCount. Measured on production the same day (outbox rows for
+     HC-SO-2608-002, run 31943942030):
+
+       create_so  UDF = {VENUE, ToPONo, BRANDING}       <- no PDate, no BALANCE
+       edit       UDF = {..., BALANCE, PAYEMENT}        <- both new on the edit
+       edit       UDF = {PDate "2026-08-16", ...}
+
+     The book holds BALANCE and PAYEMENT as the LAST EDIT sent them and neither
+     was ever sent by the create - so the edit path does apply UDFs. It holds
+     UDF_PDate as the document's own DocDate, which no payload ever sent. So the
+     loss is PER KEY, and PDate is the only key in that payload whose column is a
+     DATE: the fidelity export reads UDF_VENUE / UDF_BRANDING through
+     LTRIM(RTRIM(...)), UDF_BALANCE through ISNULL(...,0) and UDF_PDate through
+     CONVERT(varchar(10), ..., 120), and one of the 2,500 exported values carries
+     a time (SO-010311 = "2026-07-22 01:00:00").
+
+     WHY IT WAS INVISIBLE. `Set()` catches and logs `set skipped: <message>` with
+     no key, no value and no route, and the request still answers {"ok":true}, so
+     the outbox row goes to `sent`. That is the same swallow that hid a NULL Qty
+     on every /so-to-po until the log was read by hand.
+
+     THE LADDER, and why it is a ladder rather than a cast. The SDK's `UDF`
+     member is INHERITED, and sdk-api-reference.txt was dumped with
+     BindingFlags.DeclaredOnly, so the indexer's parameter type is not recorded
+     anywhere we can check and must not be guessed at. So the STRING is still
+     attempted first and unchanged - a key that lands today lands the same way
+     today - and a typed value is only ever tried after the book has already
+     refused the string. Worst case is what happens now, plus a log line that
+     names the field.
+
+     A BLANK STILL BLANKS. Present-and-null arrives as "" and blanks the field
+     (#2218); absent is not in this dictionary at all and leaves the book's own.
+     On a date column "" is not a date either, so the empty string gets the same
+     ladder - null, then DBNull - rather than being swallowed as it is today. */
+  static void ApplyUdf(Dictionary<string, object> p, Func<string, object> get, Action<string, object> set) {
     var udf = Dict(p, "UDF");
     if (udf == null) return;
     foreach (var kv in udf) {
       var k = kv.Key; var v = kv.Value == null ? "" : kv.Value.ToString();
-      Set(() => set(k, v));
+      SetUdf(k, v, set);
     }
+  }
+
+  /* NOT Set(): a UDF that does not land has to say which one. */
+  static void SetUdf(string k, string v, Action<string, object> set) {
+    var shapes = new List<string>();
+    var values = new List<object>();
+    shapes.Add("String"); values.Add(v);
+    if (v.Length == 0) {
+      shapes.Add("null");   values.Add(null);
+      shapes.Add("DBNull"); values.Add(DBNull.Value);
+    } else {
+      decimal dec; DateTime dt;
+      /* Decimal is asked FIRST because it is the narrower test: "0.00" is a
+         number and not a date, while a date is never a decimal. */
+      if (decimal.TryParse(v, System.Globalization.NumberStyles.Number,
+                           System.Globalization.CultureInfo.InvariantCulture, out dec)) {
+        shapes.Add("Decimal"); values.Add(dec);
+      } else if (DateTime.TryParse(v, System.Globalization.CultureInfo.InvariantCulture,
+                                   System.Globalization.DateTimeStyles.None, out dt)) {
+        shapes.Add("DateTime"); values.Add(dt);
+      }
+    }
+    var refused = new List<string>();
+    for (var i = 0; i < values.Count; i++) {
+      try {
+        set(k, values[i]);
+        if (i > 0) Log("  UDF " + k + ": applied as " + shapes[i] + " (" + string.Join("; ", refused.ToArray()) + ")");
+        return;
+      } catch (Exception ex) {
+        refused.Add(shapes[i] + " refused: " + ex.Message);
+      }
+    }
+    Log("  UDF " + k + " = '" + v + "' NOT APPLIED, the account book keeps its own value - "
+        + string.Join(" | ", refused.ToArray()));
   }
   static Dictionary<string, object> Ok(string docNo) {
     var d = new Dictionary<string, object> { { "ok", true } };

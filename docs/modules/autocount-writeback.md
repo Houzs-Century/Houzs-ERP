@@ -799,6 +799,36 @@ This was the ERP declining to speak.
 (`ApplyUdf` -> `Dict(h, "UDF")`); a flat `SOUDF_*` key at header level is
 silently ignored.
 
+### A UDF VALUE IS NOT ALWAYS A STRING — `PDate` is a date column
+
+Every value in that dictionary is JSON text, and `ApplyUdf` used to write all of
+them as `System.String` through `Set()`. `PDate` is the only DATE-typed column
+the ERP sends and it never landed: the write was refused, `Set()` logged
+`set skipped:` with **no key, no value and no route**, and the request still
+answered `ok`, so the outbox row went to `sent`. Every other key in the same
+payload arrived, so nothing looked wrong.
+
+The column types are the book's own, read out of
+`export-ac-fidelity-truth.py:106-107` — the query that produced the committed
+extract:
+
+| UDF | how the export reads it | therefore |
+|---|---|---|
+| `UDF_VENUE`, `UDF_BRANDING` | `LTRIM(RTRIM(...))` | text |
+| `UDF_BALANCE` | `ISNULL(..., 0)` | numeric |
+| `UDF_PDate` | `CONVERT(varchar(10), ..., 120)` | **date/time** — and one of the 2,500 exported values carries a time (`SO-010311 = "2026-07-22 01:00:00"`) |
+
+`ApplyUdf` now applies each key on a LADDER: the string FIRST and unchanged, so a
+key that lands today lands the same way, and a typed value only after the book
+has refused the string — `null` then `DBNull` for the present-and-null blank,
+`Decimal` for a numeric string, `DateTime` for a date. **A key that lands on no
+rung is logged by NAME with every refusal**, which is the half that was missing:
+a field that looks wired and writes nothing is what this cost. The `""`-blanks /
+absent-leaves-alone asymmetry is unchanged — an absent key is not in the
+dictionary at all.
+
+`Set()` itself is untouched and still guards the ~30 other assignments.
+
 **A field the ERP does not have is OMITTED, never sent as null.** The service's
 header loop is `ContainsKey`-gated and `Str` turns a present-but-null into `""`,
 so `{Agent: null}` does not mean "unchanged" — it means "blank the salesperson
