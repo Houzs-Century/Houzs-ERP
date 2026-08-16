@@ -154,17 +154,31 @@ export async function recomputeSoStockAllocation(
     // chunkIn — docNos can exceed 1000 (un-truncated SO set) and lines across
     // them can exceed the 1000-row cap; batch the .in() and page each batch so
     // no SO line is dropped from the allocation walk.
-    const { data: lineRows, error: lineError } = await chunkIn(docNos, (batch, from, to) => sb
+    /* allocated_batch_no rides along in THIS read. It used to be a SECOND,
+       separately chunked pass over the sofa line ids (6 more serial round trips
+       on production, measured 2026-08-16) for a column every one of these rows
+       already carries. Forward-compat (migration 0121) is preserved, not
+       dropped: if the column is not in the schema the read is retried without
+       it and every line's batch reads as unset — which is exactly what the
+       separate pass did on the same error. */
+    const readLines = (cols: string) => chunkIn(docNos, (batch, from, to) => sb
       .from('mfg_sales_order_items')
-      .select('id, doc_no, item_code, item_group, variants, qty, warehouse_id, stock_status, stock_qty_ready, cancelled')
+      .select(cols)
       .in('doc_no', batch)
       .eq('cancelled', false)
       .range(from, to));
+    const LINE_COLS = 'id, doc_no, item_code, item_group, variants, qty, warehouse_id, stock_status, stock_qty_ready, cancelled';
+    const missingBatchCol = (m: string | undefined) => /allocated_batch_no|column .* does not exist/i.test(m ?? '');
+    let { data: lineRows, error: lineError } = await readLines(`${LINE_COLS}, allocated_batch_no`);
+    if (lineError && missingBatchCol(lineError.message)) {
+      ({ data: lineRows, error: lineError } = await readLines(LINE_COLS));
+    }
     if (lineError) throw new Error(`allocation line load failed: ${lineError.message}`);
     const lines = (lineRows ?? []) as Array<{
       id: string; doc_no: string; item_code: string; item_group: string | null;
       variants: VariantAttrs | null; qty: number; warehouse_id: string | null;
       stock_status: string; stock_qty_ready: number | null;
+      allocated_batch_no?: string | null;
     }>;
     if (lines.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
 
@@ -215,43 +229,48 @@ export async function recomputeSoStockAllocation(
     const isBatchedLine = (item_code: string, item_group: string | null) =>
       batchedCodes.has(item_code) || (item_group ?? '').toUpperCase().includes('SOFA');
 
-    /* Read each sofa line's currently-locked batch so we can tell what changed.
-       Forward-compat (migration 0121): allocated_batch_no may not exist yet —
-       read it best-effort; on any error treat every line's batch as unset. */
+    /* Each sofa line's currently-locked batch, so we can tell what changed. It
+       came in on the step-2 read above; only sofa lines are ever looked up. */
     const curBatchByLine = new Map<string, string | null>();
-    const sofaLineIds = lines.filter((l) => isBatchedLine(l.item_code, l.item_group)).map((l) => l.id);
-    if (sofaLineIds.length > 0) {
-      try {
-        const { data: bRows, error: bErr } = await chunkIn<{ id: string; allocated_batch_no: string | null }>(sofaLineIds, (batch, from, to) => sb
-          .from('mfg_sales_order_items')
-          .select('id, allocated_batch_no')
-          .in('id', batch)
-          .range(from, to));
-        if (!bErr) {
-          for (const r of (bRows ?? []) as Array<{ id: string; allocated_batch_no: string | null }>) {
-            curBatchByLine.set(r.id, r.allocated_batch_no ?? null);
-          }
-        } else if (!/allocated_batch_no|column .* does not exist/i.test(bErr.message ?? '')) {
-          throw new Error(`allocation sofa-batch binding load failed: ${bErr.message}`);
-        }
-      } catch (error) {
-        if (!/allocated_batch_no|column .* does not exist/i.test(error instanceof Error ? error.message : String(error))) throw error;
-      }
-    }
+    for (const l of lines) curBatchByLine.set(l.id, l.allocated_batch_no ?? null);
 
     // 3. Compute deliverable_remaining per line — = qty − Σ delivered (via
     //    non-cancelled DOs) + Σ returned (via non-cancelled DRs). Same formula
     //    as soDeliverableRemaining but inlined since we already have line ids.
-    const lineIds = lines.map((l) => l.id);
-    // chunkIn — lineIds can exceed 1000 (un-truncated SO set); batch + page so
-    // delivered qty isn't understated by a dropped DO line.
-    const { data: doLines, error: doLineError } = await chunkIn<{ id: string; so_item_id: string | null; qty: number; delivery_order_id: string }>(lineIds, (batch, from, to) => sb
-      .from('delivery_order_items')
-      .select('id, so_item_id, qty, delivery_order_id')
-      .in('so_item_id', batch)
+    /* INVERTED READ (2026-08-16). This used to chunk EVERY live SO-line id 200
+       at a time into `.in('so_item_id', ...)`: on production that was 71 serial
+       requests to retrieve 83 rows, because the cost is set by the ID COUNT
+       (14,169 live lines) and not by the rows that exist. Asked the other way
+       round — FROM the SO lines, pulling their DO lines through an `!inner`
+       embed — PostgREST returns only the lines that HAVE a DO line, so the same
+       83 rows arrive in one page.
+       Nothing new is invented here: the live-SO lens is the same one-level
+       embedded filter routes/mrp.ts already runs in production, and `!inner` is
+       what narrows the PARENT rows (reports.ts relies on that mechanism for its
+       listings). The FK PostgREST resolves the embed through —
+       delivery_order_items_so_item_id_mfg_sales_order_items_id_fk — was
+       confirmed present, exactly once, by probe-so-sweep-inversion.
+       The predicate is the same one that built `lines` above, so the row set is
+       identical by construction; the probe also proves it against prod. */
+    const { data: doJoinRows, error: doLineError } = await paginateAll<{
+      id: string;
+      do_items: Array<{ id: string; qty: number; delivery_order_id: string }> | null;
+    }>((from, to) => sb
+      .from('mfg_sales_order_items')
+      .select('id, so:mfg_sales_orders!inner(status), do_items:delivery_order_items!inner(id, qty, delivery_order_id)')
+      .eq('cancelled', false)
+      .not('so.status', 'in', SO_TERMINAL_STATES_PGREST)
+      /* Deterministic paging — paginateAll walks .range() windows, and an
+         unordered read can repeat or skip a row between pages. */
+      .order('id')
       .range(from, to));
     if (doLineError) throw new Error(`allocation DO-line load failed: ${doLineError.message}`);
-    const doLineRows = (doLines ?? []) as Array<{ id: string; so_item_id: string | null; qty: number; delivery_order_id: string }>;
+    const doLineRows: Array<{ id: string; so_item_id: string | null; qty: number; delivery_order_id: string }> = [];
+    for (const r of doJoinRows ?? []) {
+      for (const d of r.do_items ?? []) {
+        doLineRows.push({ id: d.id, so_item_id: r.id, qty: d.qty, delivery_order_id: d.delivery_order_id });
+      }
+    }
     const doIds = [...new Set(doLineRows.map((l) => l.delivery_order_id).filter(Boolean))];
     const activeDoIds = new Set<string>();
     const doLineToSoItem = new Map<string, string>();
@@ -439,18 +458,34 @@ export async function recomputeSoStockAllocation(
     const dedicatedReady = new Map<string, number>();
     const boundNeeds = needs.filter((n) => BOUND_GROUPS.has(n.group));
     if (boundNeeds.length > 0) {
-      const lineIds = boundNeeds.map((n) => n.id);
-      const { data: poLinkRows } = await chunkIn<{ so_item_id: string; qty: number; received_qty: number | null }>(
-        lineIds,
-        (batch, from, to) => sb
-          .from('purchase_order_items')
-          .select('so_item_id, qty, received_qty')
-          .in('so_item_id', batch)
-          .range(from, to),
-      );
-      for (const r of (poLinkRows ?? []) as Array<{ so_item_id: string; received_qty: number | null }>) {
-        const got = Number(r.received_qty ?? 0);
-        if (got > 0) dedicatedReady.set(r.so_item_id, (dedicatedReady.get(r.so_item_id) ?? 0) + got);
+      /* INVERTED, for the same reason and by the same shape as the DO-line read
+         above: chunking the 3,520 bedframe/sofa line ids cost 18 serial
+         requests on production. `!inner` on the PO link means only lines that
+         HAVE one come back.
+         `received_qty > 0` is pushed into SQL because the loop below discards
+         everything else anyway (a null received_qty reads as 0 and is skipped),
+         and it is applied to the EMBED so it narrows the parents too.
+         The bound-group narrowing deliberately stays in JS: `group` is compared
+         case-insensitively there, and a SQL predicate that had to reproduce
+         that could answer differently. Reading a superset and intersecting is
+         exact — `dedicatedReady` is only ever consulted for bound line ids. */
+      const boundIds = new Set(boundNeeds.map((n) => n.id));
+      const { data: poLinkRows } = await paginateAll<{
+        id: string; po_items: Array<{ qty: number; received_qty: number | null }> | null;
+      }>((from, to) => sb
+        .from('mfg_sales_order_items')
+        .select('id, so:mfg_sales_orders!inner(status), po_items:purchase_order_items!inner(qty, received_qty)')
+        .eq('cancelled', false)
+        .not('so.status', 'in', SO_TERMINAL_STATES_PGREST)
+        .gt('po_items.received_qty', 0)
+        .order('id')
+        .range(from, to));
+      for (const r of poLinkRows ?? []) {
+        if (!boundIds.has(r.id)) continue;
+        for (const p of r.po_items ?? []) {
+          const got = Number(p.received_qty ?? 0);
+          if (got > 0) dedicatedReady.set(r.id, (dedicatedReady.get(r.id) ?? 0) + got);
+        }
       }
     }
 
