@@ -284,7 +284,7 @@ describe("what to do about each Send again answer", () => {
      "what to do next" — a code with neither would reach the owner as a bare
      hyphenated key, which is what the shared header warns against. */
   const OUTCOMES = [
-    "would-requeue", "requeued", "still-refused", "not-recoverable",
+    "would-requeue", "requeued", "requeued-as-recorded", "still-refused", "not-recoverable",
     "already-in-autocount", "already-queued", "already-requeued", "already-sent",
     "row-pending", "row-not-found", "document-gone", "switch-off", "declined",
     "read-failed",

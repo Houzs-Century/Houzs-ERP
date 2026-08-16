@@ -40,18 +40,71 @@
 //                          a skipped row whose payload is `{}`, and an edit
 //                          missing them leaves those lines live and transferable
 //                          in the account book.
-//   conversions            NOT here, and mostly not possible. A parentless
-//                          DO/GR/IV/PI can never exist in AutoCount at all
-//                          (recordParentlessCreate), a merged conversion has no
-//                          AutoCount shape, and re-expressing the DtlKey-subset
-//                          refusal would mean rebuilding enqueueConvert's
-//                          call-site arguments (from / to / docDate / ref) here
-//                          — the route logic copied into a script, which is the
-//                          drift this module exists to avoid.
+//   transfers              SPLIT BY WHO REFUSED, since 2026-08-16. See below.
 //
 // Those rows are still REPORTED, with why they are not re-queueable, because a
 // tool that silently ignores two thirds of the backlog teaches the operator the
 // backlog is smaller than it is.
+//
+// WHO REFUSED IT — the one question that decides a transfer (2026-08-16)
+// ---------------------------------------------------------------------
+// A transfer op (so_to_do, po_to_gr, do_to_iv, gr_to_pi, so_to_po) used to be
+// refused here unconditionally, on this reasoning: a parentless DO/GR/IV/PI can
+// never exist in AutoCount at all, a merged conversion has no AutoCount shape,
+// and a DtlKey-subset refusal is fixed by the line-key backfill and then
+// re-raising the document.
+//
+// All three of those are true and all three are still refused. What the blanket
+// rule missed is that they are the same KIND of refusal as each other and a
+// different kind from the one that actually filled the queue: they are
+// properties of the DOCUMENT, and a document does not change because somebody
+// rebuilt a Windows box. A refusal by the SERVICE does — it stops being true the
+// moment the service is replaced, and rebuilding the shop-floor host is routine
+// here. Under the blanket rule every host fix needed hand-surgery on the outbox.
+//
+// THE DISCRIMINATOR IS RECORDED, not asserted. It is the row's own `status`,
+// corroborated by its own `payload`, and the two are independent by
+// construction:
+//
+//   skipped + payload {body:{}}   ALL THREE unrecoverable shapes, and nothing
+//                                 else. Every one of them is written by
+//                                 recordConvertSkipped (directly for a merged
+//                                 conversion, through recordParentlessCreate for
+//                                 a parentless one, and from
+//                                 readConvertSourceKeys's `refuse` for the
+//                                 DtlKey subset), which hard-codes
+//                                 `status: 'skipped'` and `payload: {body: {}}`.
+//                                 The row never reached the drain, so the
+//                                 service has never seen this document and
+//                                 cannot be what refused it. REFUSED.
+//   failed  + a composed payload  Only dispatchOne writes `failed`, and it is
+//                                 reached only from a `pending` row, which for a
+//                                 transfer op is only ever written by
+//                                 enqueueConvert's success path. So the ERP
+//                                 composed it, the queue sent it, and the
+//                                 SERVICE answered. RE-SENDABLE.
+//
+// Both conditions are required, and requiring both is what makes this safe
+// against a path nobody has written yet: a `failed` row with an empty payload
+// has nothing to send, and a `skipped` row with a real payload was still never
+// dispatched. Nothing here is a human ticking a box to say "trust me".
+//
+// AND IT RE-SENDS THE RECORDED PAYLOAD, which is why no route logic is copied
+// in here. 0277's own header: the payload is a SNAPSHOT of what the user's save
+// produced, never recomposed at drain. A transfer's snapshot is the complete
+// instruction — DocNo, DtlKeys, fromDoc, writeback, lineWriteback — so sending
+// it again is a RETRY, in the plainest sense, and enqueueConvert's call-site
+// arguments never have to be rebuilt. That is also the reason an empty payload
+// is a second, independent refusal rather than a detail: with `{body:{}}` there
+// is literally nothing to retry.
+//
+// WHAT THIS DOES NOT CLAIM. `failed` means the service ANSWERED; it does not
+// prove the account book was left untouched. If a document landed and only the
+// reply was lost, a re-send writes a second one — the identical residual risk
+// the create path already carries and documents (see includeFailed below, and
+// docs/autocount-sync-reasons.md §3). The message is the diagnosis: a refusal
+// naming a shape AutoCount would not accept wrote nothing, an ambiguous
+// transport failure might have. When it is ambiguous, look in the book first.
 //
 // TWO CALLERS, ONE LADDER. requeueSkipped is the workflow's batch sweep;
 // requeueOutboxRow is the AutoCount Sync page's per-row button. Both go through
@@ -62,15 +115,27 @@
 // document in a live licensed account book.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
-import { enqueuePoCreate, enqueueSoCreate } from './autocount-outbox';
-import { REQUEUE_NOTE_PREFIX } from './autocount-outbox-status';
+import type { AcDocType, AcOp } from '../../services/autocount-writeback';
+import {
+  enqueueAcOp, enqueuePoCreate, enqueueSoCreate,
+  type AcDocRef, type AcOutboxPayload,
+} from './autocount-outbox';
+import { AC_TRANSFER_OPS, REQUEUE_NOTE_PREFIX } from './autocount-outbox-status';
 import { isWritebackEnabled } from './autocount-writeback-flag';
 
 type Sb = SupabaseClient<any, any, any>;
 
-/** The two document types that HAVE a create, and the op that expresses it. */
-const CREATE_OP = { SO: 'create_so', PO: 'create_po' } as const;
-export type RequeueDocType = keyof typeof CREATE_OP;
+/**
+ * The document types a sweep may be narrowed to.
+ *
+ * SO and PO are the two that have an AutoCount CREATE. The other four have no
+ * create at all — they are built by transferring a parent's lines — and they are
+ * in this list because a FAILED transfer is re-sendable (see the header), so a
+ * scope that could not name them would make the batch tool unable to work the
+ * one backlog the button was given for.
+ */
+export const REQUEUE_DOC_TYPES = ['SO', 'PO', 'DO', 'GR', 'IV', 'PI'] as const;
+export type RequeueDocType = (typeof REQUEUE_DOC_TYPES)[number];
 
 /**
  * What a re-queued row's ORIGINAL skip is rewritten to start with.
@@ -88,6 +153,18 @@ export type RequeueOutcome =
   | 'would-requeue'
   /** APPLY: a pending row was written and the old skip was annotated. */
   | 'requeued'
+  /**
+   * APPLY, on a TRANSFER: the recorded instruction was queued again as it was.
+   *
+   * A separate code from `requeued` because it is a different promise about what
+   * will reach the account book. `requeued` re-COMPOSES from the ERP document as
+   * it stands now, so a correction made since the refusal is in it. A transfer
+   * has no create to compose — the payload IS the instruction — so this re-sends
+   * the snapshot, and a change made to the document since is NOT in it. An
+   * operator who has just edited the document is entitled to know which of those
+   * two happened.
+   */
+  | 'requeued-as-recorded'
   /** The composer refuses it again. `detail` is the reason AS IT STANDS NOW. */
   | 'still-refused'
   /** A skip this tool deliberately does not re-attempt (edit, conversion). */
@@ -133,6 +210,10 @@ export type RequeueOutcome =
 export const AC_REQUEUE_MEANING: Record<RequeueOutcome, string> = {
   requeued:
     'Sent back to the queue. It goes to AutoCount on the next five-minute sweep.',
+  'requeued-as-recorded':
+    'Sent back to the queue exactly as it was first recorded. This one is built by transferring the '
+    + 'lines of the document above it, so there is nothing to rebuild — and anything changed on it '
+    + 'since is not included. It goes on the next five-minute sweep.',
   'would-requeue':
     'This document is ready to go. Nothing was written, because this was a rehearsal.',
   'still-refused':
@@ -169,7 +250,7 @@ export const AC_REQUEUE_MEANING: Record<RequeueOutcome, string> = {
  * these: reading it as accepted would tell an operator a document had been
  * queued when nothing was written.
  */
-export const AC_REQUEUE_ACCEPTED: readonly RequeueOutcome[] = ['requeued'];
+export const AC_REQUEUE_ACCEPTED: readonly RequeueOutcome[] = ['requeued', 'requeued-as-recorded'];
 
 /** Did this outcome put the document on its way? */
 export function acRequeueAccepted(outcome: RequeueOutcome): boolean {
@@ -311,6 +392,15 @@ function reasonFor(op: string): string {
       + 'and saving the document again really does re-queue it. Re-composing it from a script would '
       + 'also drop any line RETIREMENTS the original save carried, which a skipped row does not record.';
   }
+  if (op === 'cancel') {
+    return 'a cancel refusal is not re-queued here: either the document was withdrawn before it ever '
+      + 'reached AutoCount, in which case there is nothing to cancel there, or the ERP is holding the '
+      + 'wrong AutoCount number for it and re-sending would name the wrong document in a live book.';
+  }
+  /* THE THREE SHAPES, unchanged and still refused. What is new is only that this
+     sentence is now reached for a SKIPPED transfer and not for a failed one:
+     each of these is a property of the DOCUMENT, and none of them stops being
+     true because the shop-floor service was replaced. */
   return 'a conversion refusal is not re-queued here: a parentless DO / GR / IV / PI can never exist '
     + 'in AutoCount at all, a merged conversion has no AutoCount shape, and a DtlKey-subset refusal '
     + 'is fixed by the line-key backfill and then re-raising the document.';
@@ -338,14 +428,16 @@ async function readCreateTarget(
   return { ok: true, linked: po.linked_ac_docno ?? null, poId: String(po.id) };
 }
 
-/** Any outbox row for the same create that is NOT a skip. */
 /**
- * A create row for this document that is NOT the one we are re-sending, and is
- * not another dead one. Only `pending` and `sent` can make a re-send wrong:
- * pending means the drain is already going to do it, sent means it is in the
- * book. Another `failed` row is just more history.
+ * A row for this document and this OPERATION that is NOT the one we are
+ * re-sending, and is not another dead one. Only `pending` and `sent` can make a
+ * re-send wrong: pending means the drain is already going to do it, sent means
+ * it is in the book. Another `failed` row is just more history.
+ *
+ * Named for the operation rather than for the create since 2026-08-16: a
+ * transfer re-send climbs the same rung, and `op` is already in the predicate.
  */
-async function liveCreateRowOtherThan(
+async function liveRowOtherThan(
   sb: Sb,
   row: SkippedRow,
 ): Promise<{ status: string } | null> {
@@ -378,6 +470,179 @@ async function existingCreateRow(
 }
 
 /**
+ * The COMPOSED instruction a row is carrying, or null when it is not carrying
+ * one. Read only when the row is about to be re-sent.
+ *
+ * Fetched by id here rather than added to REQUEUE_ROW_COLS on purpose: a payload
+ * is a whole document snapshot, and the batch sweep selects up to 200 rows. The
+ * route's list select excludes it for the same reason (autocount-outbox.ts).
+ *
+ * `payload` is jsonb and its static type is a promise the database does not
+ * keep, so every shape check here is a real one — `unknown` rather than the cast
+ * for exactly that reason. Two things legitimately arrive: enqueueConvert's
+ * composed body, and recordConvertSkipped's `{}`. Only the first is an
+ * instruction, so an empty body answers null and the caller has one question to
+ * ask instead of four.
+ *
+ * A row that cannot be RE-READ folds into the same null, and that is the safe
+ * direction: the caller read this row by id a moment ago, so a failure now is a
+ * transient fault, and "do not send" is the right answer to a transient fault
+ * either way.
+ */
+async function readRowPayload(sb: Sb, rowId: string): Promise<AcOutboxPayload | null> {
+  const { data, error } = await sb.from('autocount_outbox')
+    .select('payload').eq('id', rowId).maybeSingle();
+  if (error || !data) return null;
+  const p: unknown = (data as { payload?: unknown }).payload;
+  if (!p || typeof p !== 'object') return null;
+  const body: unknown = (p as { body?: unknown }).body;
+  if (!body || typeof body !== 'object' || !Object.keys(body).length) return null;
+  return p as AcOutboxPayload;
+}
+
+/**
+ * The ERP document a transfer would write its AutoCount number back onto.
+ *
+ * Read through the payload's OWN `writeback` reference — the same table, key
+ * column and key the drain uses to record `linked_ac_docno` on success. Deriving
+ * the target any other way would be a second opinion about which row a re-send
+ * lands on, and the two only have to disagree once.
+ */
+async function readTransferTarget(
+  sb: Sb,
+  ref: AcDocRef,
+): Promise<{ ok: true; linked: string | null } | { ok: false }> {
+  const { data, error } = await sb.from(ref.table)
+    .select(`${ref.keyCol}, linked_ac_docno`).eq(ref.keyCol, ref.key).maybeSingle();
+  if (error || !data) return { ok: false };
+  return { ok: true, linked: (data as { linked_ac_docno?: string | null }).linked_ac_docno ?? null };
+}
+
+interface Verdict {
+  outcome: RequeueOutcome;
+  detail: string;
+  newRowId?: string | null;
+}
+
+/**
+ * MAY THIS TRANSFER BE SENT AGAIN — the rungs a conversion takes, and the ones
+ * it does not share with a create.
+ *
+ * The whole argument is in this module's header. In one line: a transfer is
+ * re-sendable exactly when the QUEUE DISPATCHED IT AND THE SERVICE REFUSED, and
+ * the two recorded facts that say so — `status = 'failed'` and a composed
+ * payload — must BOTH hold. Neither is a human asserting anything; both are
+ * written by the code paths named below and by nothing else.
+ *
+ * There is no probe here and no dry-run recorder, because there is nothing to
+ * compose: the payload is the instruction. `captureWrites` exists to make the
+ * create path's dry run execute the real composer rather than predict it, and a
+ * predicate that reads three columns has nothing to predict.
+ */
+async function transferVerdict(
+  sb: Sb,
+  raw: SkippedRow,
+  status: string,
+  apply: boolean,
+): Promise<Verdict> {
+  /* FACT ONE. Only dispatchOne writes `failed`, and only a `pending` row reaches
+     it — which for a transfer op is only ever enqueueConvert's success path. So
+     `failed` means the service answered, and anything else means it never saw
+     the document. All three unrecoverable shapes land the other side of this
+     line, because recordConvertSkipped hard-codes `status: 'skipped'`. */
+  if (status !== 'failed') {
+    return { outcome: 'not-recoverable', detail: reasonFor(raw.op) };
+  }
+
+  /* FACT TWO, and it is not a formality. recordConvertSkipped also hard-codes
+     `payload: { body: {} }`, so the two facts are written together and agree by
+     construction — which is exactly why BOTH are required. A `failed` row with
+     an empty body would be a path nobody has written yet, and there would be
+     nothing in it to send. */
+  const payload = await readRowPayload(sb, String(raw.id));
+  if (!payload) {
+    return {
+      outcome: 'not-recoverable',
+      detail: 'this row records no composed document. A transfer is re-sent by queueing the '
+        + 'instruction the ERP already built, and there is nothing stored here to send.',
+    };
+  }
+  if (!payload.writeback) {
+    return {
+      outcome: 'not-recoverable',
+      detail: 'this row names no ERP document to write the AutoCount number back onto, so a re-send '
+        + 'could not be checked against the account book and could not be recorded if it landed.',
+    };
+  }
+
+  const target = await readTransferTarget(sb, payload.writeback);
+  if (!target.ok) {
+    return {
+      outcome: 'document-gone',
+      detail: 'the ERP document this row is about could not be read. Nothing to re-queue.',
+    };
+  }
+  /* THE DUPLICATE GUARD, on the same column the drain writes on success. */
+  if (target.linked) {
+    return {
+      outcome: 'already-in-autocount',
+      detail: `it already carries linked_ac_docno ${target.linked}. Transferring it again would `
+        + 'duplicate the document in the live account book.',
+    };
+  }
+
+  /* A `failed` row IS the attempt being re-sent, so the probe must not veto on
+     itself — only on a PENDING or SENT row for the same operation. */
+  const live = await liveRowOtherThan(sb, raw);
+  if (live) {
+    return {
+      outcome: 'already-queued',
+      detail: `a ${live.status} ${raw.op} row for this document already exists. Nothing to add.`,
+    };
+  }
+
+  if (!apply) {
+    return {
+      outcome: 'would-requeue',
+      detail: `APPLY would queue the recorded ${raw.op} instruction again, unchanged.`,
+    };
+  }
+
+  /* A NEW ROW, never a re-opening of the dead one — the same reason the create
+     path gives: a failed row sits at MAX_ATTEMPTS and the drain selects
+     `.lt('attempts', MAX_ATTEMPTS)`, so re-opening it would produce a pending
+     row no sweep can ever pick up. The insert sets no `attempts`, and 0277's
+     `NOT NULL DEFAULT 0` supplies zero.
+     The dedupe key is enqueueConvert's own, so 0277's pending-dedupe index is
+     the backstop under the live-row check above rather than a second rule. */
+  const queued = await enqueueAcOp(sb, {
+    companyId: Number(raw.company_id),
+    op: raw.op as AcOp,
+    docType: raw.doc_type as AcDocType,
+    docNo: raw.doc_no,
+    docId: raw.doc_id,
+    payload,
+    dedupeKey: `${raw.op}:${raw.doc_id ?? raw.doc_no}`,
+  });
+  if (!queued) {
+    return {
+      outcome: 'declined',
+      detail: 'the queue refused the new row. Either another run queued this document first (the '
+        + 'pending-dedupe index refuses the second) or the write-back switch went off in between — '
+        + 're-run this to see which.',
+    };
+  }
+  const newRowId = await findQueuedRowId(sb, raw);
+  await annotate(sb, raw, newRowId);
+  return {
+    outcome: 'requeued-as-recorded',
+    detail: `queued the recorded ${raw.op} instruction again${newRowId ? ` (outbox ${newRowId})` : ''}. `
+      + 'The 5-minute cron sends it.',
+    newRowId,
+  };
+}
+
+/**
  * THE REFUSAL LADDER, for ONE row. Every re-send in this system climbs it.
  *
  * Extracted from requeueSkipped's loop when the ERP grew a per-row "Send again"
@@ -392,8 +657,15 @@ async function existingCreateRow(
  * "is there already a live row for this document" probe must not veto on the
  * row it was asked to re-send. Defaulting it either way silently makes one of
  * the two callers wrong (CLAUDE.md, BUG CLASS optional-param-noop).
+ *
+ * EXPORTED ONLY SO A TEST CAN POINT AT THE LADDER ITSELF. Neither entry point
+ * can hand it a `sent` row — requeueOutboxRow refuses one first and
+ * requeueSkipped's select cannot return one — so the rung that refuses a `sent`
+ * row here is unreachable through them, and an unreachable guard with no test is
+ * a guard nobody knows is still there. Route code must call requeueOutboxRow;
+ * this is not a third entry point.
  */
-async function requeueOneRow(
+export async function requeueOneRow(
   sb: Sb,
   raw: SkippedRow,
   opts: { apply: boolean; resendingThisRow: boolean },
@@ -411,7 +683,25 @@ async function requeueOneRow(
   };
   const say = (outcome: RequeueOutcome, detail: string): RequeueResult => ({ ...base, outcome, detail });
 
-  if (raw.op !== 'create_so' && raw.op !== 'create_po') {
+  const status = String(raw.status ?? '');
+  const isTransfer = (AC_TRANSFER_OPS as readonly string[]).includes(raw.op);
+
+  /* RULE ONE, AND THE ONLY ONE WITH NO EXCEPTION, held by the LADDER and not
+     only by its callers. requeueOutboxRow already refuses a `sent` row before
+     it gets here and requeueSkipped cannot select one — so this rung is
+     unreachable from both of today's entry points, and that is exactly why it
+     belongs here. This function is the single answer to "may this document be
+     sent again"; a third caller that forgot the check, or a `sent` row reaching
+     the batch sweep through a widened select, would otherwise put a SECOND copy
+     of a document into a live licensed account book. The two guards cost one
+     string comparison between them. */
+  if (status === 'sent') {
+    return say('already-sent', 'AutoCount accepted this document and recorded it in the account book. '
+      + 'Sending it again would create a SECOND copy: the AutoCount create has no duplicate guard on '
+      + 'the ERP document number, and an accepted document cannot simply be deleted there.');
+  }
+
+  if (raw.op !== 'create_so' && raw.op !== 'create_po' && !isTransfer) {
     return say('not-recoverable', reasonFor(raw.op));
   }
   if ((raw.last_error ?? '').startsWith(REQUEUE_NOTE_PREFIX)) {
@@ -426,6 +716,11 @@ async function requeueOneRow(
     return say('switch-off', `scm.autocount_writeback is off for company ${companyId}, so an enqueue `
       + 'would return early and write nothing. Turn it on (AutoCount write-back (on/off) workflow) '
       + 'and run this again.');
+  }
+
+  if (isTransfer) {
+    const v = await transferVerdict(sb, raw, status, opts.apply);
+    return { ...base, outcome: v.outcome, detail: v.detail, newRowId: v.newRowId ?? null };
   }
 
   const target = await readCreateTarget(sb, raw);
@@ -445,7 +740,7 @@ async function requeueOneRow(
      probe for the row we are re-sending; a PENDING or SENT row still vetoes,
      which is the case that actually matters. */
   const existing = opts.resendingThisRow
-    ? await liveCreateRowOtherThan(sb, raw)
+    ? await liveRowOtherThan(sb, raw)
     : await existingCreateRow(sb, raw);
   if (existing) {
     return say('already-queued', `a ${existing.status} ${raw.op} row for this document already exists. `
@@ -504,7 +799,8 @@ async function requeueOneRow(
 }
 
 /**
- * Re-attempt the skipped CREATES whose refusal may have been fixed.
+ * Re-attempt the refusals whose cause may have been fixed — the skipped CREATES,
+ * and, behind `includeFailed`, the ones AutoCount itself refused.
  *
  * Read-only unless `apply` is true. Never throws for a document-level problem —
  * every document gets an outcome, because "the tool crashed on row 3" tells an
@@ -513,8 +809,12 @@ async function requeueOneRow(
 export async function requeueSkipped(sb: Sb, opts: RequeueOptions = {}): Promise<RequeueResult[]> {
   const apply = opts.apply === true;
   const includeFailed = opts.includeFailed === true;
+  /* THE SHARED COLUMN LIST, which this entry point was not using — it had its
+     own copy of the same string, which is precisely what the constant was
+     declared to prevent. They happened to agree; the next column added to one
+     of them is what the comment on REQUEUE_ROW_COLS is about. */
   let q = sb.from('autocount_outbox')
-    .select('id, company_id, op, doc_type, doc_no, doc_id, status, last_error')
+    .select(REQUEUE_ROW_COLS)
     .in('status', includeFailed ? ['skipped', 'failed'] : ['skipped'])
     .order('created_at', { ascending: true })
     .limit(opts.limit ?? 200);
