@@ -118,6 +118,11 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
       'DeliverAddr3', 'DeliverAddr4', 'DeliverContact', 'DeliverPhone1', 'Details',
       'DocDate', 'DocNo', 'InvAddr1', 'InvAddr2', 'InvAddr3', 'InvAddr4', 'Phone',
       'Ref', 'SalesLocation',
+      /* The DELIVERY DATE. AutoCount's sales-order header has no field of its
+         own for it — the SDK puts `DeliveryDate` on the six DETAIL classes and
+         nowhere else — so this book keeps it in the exemption expiry, which is
+         where Inistate writes it too. Owner 2026-08-16. */
+      'SalesExemptionExpiryDate',
     ].sort());
     expect(detailKeys(CS_CREATE_SO)).toEqual(
       ['DeliveryDate', 'Desc2', 'Description', 'ItemCode', 'Location', 'Qty', 'UnitPrice'].sort(),
@@ -187,7 +192,11 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
 
   test('/edit — the envelope, the header allow-list, and the line fields', () => {
     expect(headerKeys(CS_EDIT)).toEqual(['DocNo', 'DocType', 'Header', 'Lines'].sort());
-    expect(headerKeys(CS_EDIT, 'h')).toEqual(['DocDate']);
+    /* Two DATE keys read outside the string loop below, and they have to be:
+       that loop assigns through reflection with Str(), and a Nullable<DateTime>
+       property given a string throws inside Set(), which swallows it — the field
+       would look wired and write nothing. */
+    expect(headerKeys(CS_EDIT, 'h')).toEqual(['DocDate', 'SalesExemptionExpiryDate']);
     expect(csEditHeaderAllowList()).toEqual([
       'Agent', 'Attention', 'CreditorName', 'DebtorName', 'DeliverAddr1', 'DeliverAddr2',
       'DeliverAddr3', 'DeliverAddr4', 'DeliverContact', 'DeliverPhone1', 'Description',
@@ -212,12 +221,23 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
     );
   });
 
-  test('UDF is a free-form dictionary the service writes key-for-key, and swallows a bad key', () => {
+  test('UDF is a free-form dictionary the service writes key-for-key, and NAMES a key that will not land', () => {
     expect(headerKeys(CS_APPLY_UDF)).toEqual(['UDF']);
-    /* THE reason the UDF field NAMES cannot be settled from source: every write
-       goes through Set(), which catches and logs instead of throwing. A key the
-       book does not have is a silent no-op, not an error. */
-    expect(CS_APPLY_UDF).toContain('Set(() => set(k, v));');
+    /* CHANGED 2026-08-16, and the reason is the whole point of this file.
+       This used to assert `Set(() => set(k, v));` — every UDF value written as a
+       STRING through the swallow-and-log helper. That is what lost the Processing
+       Date: PDate is the only DATE-typed UDF column the ERP sends, the string was
+       refused, `Set()` logged `set skipped:` with no key and no route, and the
+       request still answered ok. The keys either side of it in the same payload
+       (VENUE, BRANDING, BALANCE, PAYEMENT) landed, so nothing looked wrong.
+       ApplyUdf now tries the string FIRST — unchanged for every key that works
+       today — and only then a typed value, and it logs the KEY when nothing
+       lands. The two assertions below hold the two halves of that: the string is
+       still the first attempt, and a total failure is still traceable to a field.
+       `Set()` itself is untouched and still guards ~30 other assignments. */
+    expect(CS_APPLY_UDF).toContain('SetUdf(k, v, set);');
+    expect(CS_APPLY_UDF).toContain('shapes.Add("String"); values.Add(v);');
+    expect(CS_APPLY_UDF).toContain('Log("  UDF " + k + " = \'" + v + "\' NOT APPLIED');
     expect(acSyncSource).toContain('static void Set(Action a) { try { a(); } catch (Exception ex) { Log("  set skipped: " + ex.Message); } }');
   });
 

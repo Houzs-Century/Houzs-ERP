@@ -105,10 +105,17 @@ export function amendmentEligible(header: SoDetailGateHeader, locked: boolean): 
   return Boolean(header.amendment_eligible) && !locked;
 }
 
-/* deriveBalance — outstanding balance in centi. Prefers the server-stamped
-   balance_centi; otherwise total (local_total ?? total_revenue) minus paid
-   (paid_centi_total, falling back to the sum of the payments ledger), floored
-   at 0. */
+/* deriveBalance — balance in centi, SIGNED: negative means over-collected
+   (owner 2026-08-16). Prefers the server-stamped balance_centi, which GET
+   /:docNo computes with soBalanceCenti and which is already signed; otherwise
+   total (local_total ?? total_revenue) minus paid (paid_centi_total, falling
+   back to the sum of the payments ledger).
+
+   The floor is gone, but only where a total is KNOWN. A zero total means the
+   header has not been recomputed (true of every AutoCount-imported order,
+   where total_revenue_centi is 0), not that the customer owes nothing — so it
+   still answers 0 rather than painting the whole legacy book red. Same rule,
+   and the same reason, as soBalanceCenti on the server. */
 export function deriveBalance(
   header: SoDetailGateHeader,
   payments?: ReadonlyArray<{ amount_centi?: number | null }>,
@@ -117,5 +124,6 @@ export function deriveBalance(
   const total = header.local_total_centi ?? header.total_revenue_centi ?? 0;
   const paid = header.paid_centi_total
     ?? (payments ? payments.reduce((s, p) => s + (p.amount_centi ?? 0), 0) : 0);
-  return Math.max(0, total - paid);
+  if (!(total > 0)) return 0;
+  return total - paid;
 }

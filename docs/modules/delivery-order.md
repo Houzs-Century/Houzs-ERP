@@ -236,6 +236,86 @@ Filter buckets (`:2180-2185`): `open` = DRAFT+LOADED, `in_transit` =
 DISPATCHED+IN_TRANSIT, `delivered` = SIGNED+DELIVERED+INVOICED+COMPLETED,
 `cancelled` = CANCELLED.
 
+### Who moves the DO status, and what each value blocks (2026-08-16)
+
+DB type is the `scm.do_status` ENUM (base body in
+`backend/scripts/scm-schema/2990s-full-schema.sql`; `DRAFT` added by
+`migrations-pg/0040_scm_do_status_draft.sql`). Column default is `LOADED`.
+**Every DO status move is MANUAL** — unlike PO and SI, nothing derives a DO
+status from a child document.
+
+| Value | Set by | What it does / blocks |
+|---|---|---|
+| `DRAFT` | create with `asDraft: true` | Not shipped. A DRAFT DO does NOT count as delivered anywhere — `so-stock-allocation.ts`, `soDeliverableRemaining` and MRP all exclude it (leak guard, audit D5). |
+| `LOADED` | `PATCH /:id/status` ("Mark loaded") | pre-ship |
+| `DISPATCHED` | create not-draft, or `PATCH /:id/status` | **The DRAFT-confirm hop, and the only status that emails the customer.** First entry into any shipped state fires the inventory OUT. |
+| `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD | shipped states; stock has already left |
+| `COMPLETED` | **nothing writes it.** It is in the code vocabulary (`DO_STOCK_OUT_STATES`, the `delivered` filter bucket) but is NOT a member of the `do_status` enum in any schema file or migration — see the bug note below | read-only |
+| `CANCELLED` | `PATCH /:id/status`, atomic branch | **FINAL.** `A cancelled Delivery Order cannot be reactivated — its stock was already returned. Create a new DO to deliver again.` (409 `do_cancelled_final`) |
+
+Refusals the operator sees, in the order they fire:
+
+| Guard | Message |
+|---|---|
+| unknown target (input upper-cased first) | `"<x>" is not a valid Delivery Order status.` (400 `invalid_status`) |
+| shipped → pre-ship | `This Delivery Order has already shipped, so it cannot be moved back to a not-shipped status. Cancel it and create a new Delivery Order instead.` (409) |
+| over-delivery re-check on first ship | `This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.` (409 `over_delivery`) |
+| downstream lock (cancel, header PATCH, line add/edit) | `DO has a Delivery Return / Sales Invoice — delete or cancel it first to edit` (409) |
+| line shrink below consumption | `Cannot reduce qty to <n> — <m> unit(s) have already been invoiced or returned for this line. Cancel the related Invoice / Delivery Return first.` |
+| source-SO gate | `so_not_deliverable` — the SO `is still a draft / has been cancelled / is on hold` |
+
+`delivery_substatus` is a SEPARATE column with its own whitelist (Pending
+Pickup, Done Shipout, Arrives EM Warehouse, Done Delivered, Confirm, House Not
+Ready, Request Hold) — refusal: `delivery_substatus must be one of: … (or
+blank).` It is not part of the lifecycle above.
+
+> **BUG (reported, not fixed): `COMPLETED` is in the code vocabulary but not in
+> the DB enum.** `PATCH /:id/status {status:'COMPLETED'}` passes the app-side
+> whitelist and would be rejected by Postgres. Verified by grepping every
+> `CREATE TYPE` / `ADD VALUE` under `migrations-pg/` and `scripts/scm-schema/`.
+>
+> **BUG (reported, not fixed): the Consignment Note's status PATCH has NO
+> whitelist.** `consignment-notes.ts`'s handler writes `body.status` verbatim —
+> no `DO_STATUSES` check, no shipped→pre-ship guard, case-sensitive — even
+> though it shares the `do_status` enum and the DO handler right beside it was
+> hardened for exactly this. Only Postgres stops a garbage value, and only if
+> the case matches. The same hole is open on `delivery-returns.ts` and
+> `consignment-returns.ts`.
+
+### `delivery_state` means THREE different things — do not read across them
+
+| Field | Where | Values | Computed by |
+|---|---|---|---|
+| SO detail `delivery_state` | `mfg-sales-orders.ts` `GET /:docNo` | `none \| partial \| full` | quantity rollup: `totalDelivered <= 0 ? 'none' : totalRemaining > 0 ? 'partial' : 'full'` |
+| Board `delivery_state` | `delivery-planning.ts` `derivePlanningState` | `PENDING_DELIVERY \| PENDING_SCHEDULE \| OVERDUE \| DELIVERED` | derived per request, see below |
+| `delivery_state` COLUMN | `mfg_sales_orders` / `delivery_orders` (mig 0053) | same four as the board | a STORED manual OVERRIDE, not a cache of the derivation |
+
+**`derivePlanningState` — pure, no I/O, first match wins:**
+
+1. a valid `storedOverride` is returned **immediately**. A manual override beats
+   every fact below it.
+2. `status === 'DELIVERED'` OR (`delivered > 0 && remaining <= 0`) → `DELIVERED`.
+3. `readiness.isShipReady` → `PENDING_SCHEDULE`. (`isShipReady`, never bare
+   `isMainReady` — see `docs/modules/sales-order.md` §0.5.)
+4. else `daysLeft = daysBetween(today, effectiveDD)` where `effectiveDD` is
+   `amended_delivery_date ?? customer_delivery_date`; `daysLeft <= 3` →
+   `OVERDUE`, otherwise `PENDING_DELIVERY`. **A null delivery date can never be
+   OVERDUE** — it always lands `PENDING_DELIVERY`.
+
+Written by `PATCH /delivery-planning/:type/:id/schedule`; cleared by
+`reconcileStopsToBoard` (`scm/lib/tripReconcile.ts`) when a stop is removed —
+the SO side goes through `advanceSoGeneration` so an active edit lease is not
+clobbered. Two callers share the one definition: the board, and the SO list
+(stamped as `planning_state`, alongside the raw override stamped as
+`delivery_state` — so the SO list payload carries BOTH).
+
+**The arrangement stage sits on top of it** (`scm/lib/arrangement-stage.ts`,
+also pure, also first-match-wins): out of `PENDING_SCHEDULE` → `null`; on a live
+(non-CANCELLED) trip → `TIME_ARRANGED`; a confirmed `amended_delivery_date` →
+`PENDING_TIME`; else `PENDING_DATE`. A live stop deliberately DOMINATES a
+missing date. Documented gap: a `type:'so'` schedule for an SO with no DO writes
+no `trip_stop` at all, so it can never read `TIME_ARRANGED`.
+
 ---
 
 ## 5. Stock direction

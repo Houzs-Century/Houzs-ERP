@@ -1,7 +1,12 @@
 import { StrictMode, useCallback, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { MemoryRouter } from "react-router-dom";
 import { DataTable, type Column } from "../src/components/DataTable";
 import { MobileVirtualList } from "../src/mobile/MobileVirtualList";
+import { AutoCountSync } from "../src/pages/AutoCountSync";
+import { MobileAutoCountSync } from "../src/mobile/MobileAutoCountSync";
+import type { AcOutboxResponse, AcOutboxRow } from "../src/lib/autocountOutbox";
 import {
   DataGrid,
   type DataGridColumn,
@@ -134,6 +139,132 @@ function SearchLab() {
   );
 }
 
+// ────────────────────────────────────────────────────────────────────────────
+// AutoCount Sync at the size the owner asked about — "如果我有一千个 sales order
+// 的时候，我不是完蛋？" This is the only harness in the repo that answers that
+// with a NUMBER: the real page, the real rows, at a real row count, in a real
+// browser. `?scenario=autocount-sync&rows=400` renders the desktop page;
+// `&surface=mobile` renders the phone twin. Measure with
+//   document.querySelectorAll("[data-ac-row]")[i].getBoundingClientRect().height
+//
+// The network is stubbed at `fetch` rather than by aliasing the api client:
+// everything above fetch — the cache, the headers, the error path — is then the
+// REAL code, so a row height measured here is a row height the app produces.
+const AC_ROWS = Number(new URLSearchParams(window.location.search).get("rows") ?? 400);
+
+function acRows(total: number): AcOutboxRow[] {
+  return Array.from({ length: total }, (_, i) => {
+    const base = {
+      id: `ob-${i}`,
+      doc_id: null,
+      remedy: null,
+      ac_doc_no: null,
+      created_at: "2026-08-15T00:00:00.000Z",
+      updated_at: "2026-08-15T00:00:00.000Z",
+      sent_at: null as string | null,
+      attempts: 0,
+    };
+    if (i % 5 === 1) {
+      return {
+        ...base,
+        op: "so_to_do",
+        doc_type: "DO",
+        doc_no: `HC-DO-2608-${String(i).padStart(4, "0")}`,
+        status: "skipped",
+        state: "skipped",
+        reason: "refused, nothing sent (MissingLocationError): line 2 carries no warehouse",
+        reason_kind: "missing-location",
+        needs_attention: true,
+        can_requeue: false,
+      };
+    }
+    if (i % 5 === 2) {
+      return {
+        ...base,
+        op: "create_so",
+        doc_type: "SO",
+        doc_no: `HC-SO-2608-${String(i).padStart(4, "0")}`,
+        status: "failed",
+        state: "failed",
+        attempts: 6,
+        reason: "Gave up after 6 attempts. Last error: FK_SO_SalesAgent",
+        reason_kind: null,
+        needs_attention: true,
+        can_requeue: true,
+      };
+    }
+    return {
+      ...base,
+      op: "create_so",
+      doc_type: "SO",
+      doc_no: `HC-SO-2608-${String(i).padStart(4, "0")}`,
+      status: "sent",
+      state: "sent",
+      ac_doc_no: `SO-${String(i).padStart(5, "0")}`,
+      sent_at: "2026-08-15T01:00:00.000Z",
+      reason: null,
+      reason_kind: null,
+      needs_attention: false,
+      can_requeue: false,
+    };
+  });
+}
+
+function acPayload(total: number): AcOutboxResponse {
+  const rows = acRows(total);
+  const failed = rows.filter((r) => r.state === "failed").length;
+  const skipped = rows.filter((r) => r.state === "skipped").length;
+  return {
+    writeback: { value: "1", on: true, scope: "1" },
+    counts: {
+      pending: 0,
+      sent: rows.length - failed - skipped,
+      failed,
+      skipped,
+      requeued: 0,
+      attention: failed + skipped,
+      total: rows.length,
+    },
+    oldest_pending: null,
+    rows,
+    truncated: false,
+    meta: { max_attempts: 6, state_meaning: {}, skip_kinds: [] },
+  };
+}
+
+function stubTheQueue(total: number) {
+  const body = acPayload(total);
+  const real = window.fetch.bind(window);
+  window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.includes("/api/scm/autocount-outbox")) {
+      return Promise.resolve(new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }));
+    }
+    return real(input as RequestInfo, init);
+  }) as typeof window.fetch;
+}
+
+function AutoCountSyncLab({ mobile }: { mobile: boolean }) {
+  const client = useMemo(() => new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  }), []);
+  return (
+    <main
+      data-scenario={mobile ? "autocount-sync-mobile" : "autocount-sync"}
+      style={mobile ? { height: "100vh" } : undefined}
+    >
+      <QueryClientProvider client={client}>
+        <MemoryRouter initialEntries={["/autocount-sync?state=all"]}>
+          {mobile ? <MobileAutoCountSync onBack={() => {}} /> : <AutoCountSync />}
+        </MemoryRouter>
+      </QueryClientProvider>
+    </main>
+  );
+}
+
 function App() {
   const scenario = new URLSearchParams(window.location.search).get("scenario") ?? "health";
   if (scenario === "data-table-desktop") return <DataTableLab />;
@@ -141,7 +272,14 @@ function App() {
   if (scenario === "data-grid") return <DataGridLab />;
   if (scenario === "mobile-virtual-list") return <MobileVirtualListLab />;
   if (scenario === "search") return <SearchLab />;
+  if (scenario === "autocount-sync") {
+    return <AutoCountSyncLab mobile={new URLSearchParams(window.location.search).get("surface") === "mobile"} />;
+  }
   return <main data-scenario="health">ready</main>;
+}
+
+if (new URLSearchParams(window.location.search).get("scenario") === "autocount-sync") {
+  stubTheQueue(AC_ROWS);
 }
 
 createRoot(document.getElementById("root")!).render(
