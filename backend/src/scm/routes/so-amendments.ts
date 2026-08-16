@@ -731,7 +731,18 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
      snapshot upsert is idempotent on (so_doc_no, revision). */
   let applied: { soDocNo: string; revision: number };
   try {
-    applied = await applySoAmendment(sb, id, user.id, c, { soVersion, leaseToken: applyToken });
+    /* The sixth argument is this gate's RECEIPT, and it is what lets the apply
+       persist the unit prices the amendment requested instead of re-pricing them
+       to the catalogue (owner 2026-08-16 — the amendment is the sanctioned road
+       for money on a locked SO). It is constructed HERE and nowhere else,
+       AFTER `hasHouzsPerm(c, approveKey)` above and the transition check: a
+       requested price is client-authored and unvalidated, so what makes it
+       payable is this signature, never the payload. Any other caller of
+       applySoAmendment must pass `null` and gets the catalogue behaviour. */
+    applied = await applySoAmendment(sb, id, user.id, c, { soVersion, leaseToken: applyToken }, {
+      approvedByUserId: String(user.id),
+      approvalPermission: approveKey,
+    });
   } catch (e) {
     await sb.from('mfg_sales_orders').update({
       edit_lease_token: null,

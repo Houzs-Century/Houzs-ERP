@@ -264,7 +264,7 @@ export async function enqueueAcOp(sb: Sb, input: EnqueueInput): Promise<boolean>
    the gross total on every edit, and it is the column the cutover's UDF_BALANCE
    landed in, which is exactly what makes it look like the right one. */
 const SO_HEADER_COLS =
-  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, po_doc_no, customer_po, customer_so_no, processing_date, total_revenue_centi, deposit_centi, linked_ac_docno';
+  'doc_no, so_date, debtor_name, agent, salesperson_id, sales_location, branding, venue, address1, address2, address3, address4, city, postcode, customer_state, phone, emergency_contact_phone, ref, po_doc_no, customer_po, customer_so_no, processing_date, customer_delivery_date, total_revenue_centi, deposit_centi, linked_ac_docno';
 /* `cancelled` and `branding` are on THIS list and on no other, because only
    scm.mfg_sales_order_items has them (the other five line tables are
    still to get `cancelled` — docs/autocount-line-retirement-plan.md). Asking

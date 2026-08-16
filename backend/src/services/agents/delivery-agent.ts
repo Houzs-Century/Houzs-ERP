@@ -50,6 +50,7 @@ import { getSupabaseService } from '../../db/supabase';
 import { paginateAll } from '../../scm/lib/paginate-all';
 import { todayMyt, mytDateOf } from '../../scm/lib/my-time';
 import { summariseReadiness, type ReadinessLine } from '../../scm/lib/so-readiness';
+import { resolveLineCategories } from '../../scm/lib/so-readiness-category';
 import { derivePlanningState, type DeliveryState } from '../../scm/routes/delivery-planning';
 import { soDeliverableRemaining } from '../../scm/routes/delivery-orders-mfg';
 import { readAgentSetting, type ConfigParamRule } from '../agent-console';
@@ -241,6 +242,15 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
     });
     linesByDoc.set(it.doc_no, arr);
   }
+  /* isServiceLine's strongest signal, resolved through the SAME helper the board
+     uses. Agent and board must classify one line identically or their "ready to
+     deliver" pools diverge — the one thing this module promises cannot happen.
+     NOT company-scoped: this job spans both companies (see the pool load above),
+     and the value is only ever read as "is this SERVICE?".
+     Loud on failure, like the pool load: a discarded read would turn delivery
+     fees back into short accessories and silently shrink the ready pool. */
+  const { error: catErr } = await resolveLineCategories(sb, linesByDoc.values());
+  if (catErr) throw new Error(`delivery-agent product category load failed: ${catErr.message}`);
 
   /* Delivery progress per SO (board step 4) — DELIVERED detection. */
   const deliveredByDoc = new Map<string, number>();
