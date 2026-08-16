@@ -41,17 +41,19 @@ export function patchStagedAdd(
   key: string,
   patch: Partial<SoLineDraft>,
 ): StagedAddLine[] {
-  /* Annotated rather than inferred: TypeScript narrows `let x = false` to the
-     literal `false` and does not track the assignment inside the .map callback,
-     so `changed ? out : list` reads to it — and to no-unnecessary-condition — as
-     always-falsy. The runtime is correct; the declared type is what was wrong. */
-  let changed: boolean = false;
-  const out = list.map((row) => {
-    if (row.key !== key) return row;
-    changed = true;
-    return { ...row, draft: { ...row.draft, ...patch } };
-  });
-  return changed ? out : list;
+  /* "Did anything move" is read off the RESULT, not off a flag the callback
+     sets. A `let changed = false` mutated inside .map is invisible to
+     TypeScript's control-flow analysis — it still narrows the variable to the
+     literal `false` at the return, so `changed ? out : list` is reported as
+     always-falsy and the identity check reads as dead code. Annotating the
+     type does not help; CFA narrows from the only assignment it can see.
+     Comparing references is what the caller actually cares about (React
+     bails out of a re-render when the array is the same object), and it is
+     something the compiler can follow. */
+  const out = list.map((row) => (
+    row.key === key ? { ...row, draft: { ...row.draft, ...patch } } : row
+  ));
+  return out.some((row, i) => row !== list[i]) ? out : list;
 }
 
 export function dropStagedAdd(list: StagedAddLine[], key: string): StagedAddLine[] {
@@ -65,18 +67,14 @@ export function cascadeStagedDeliveryDate(
   list: StagedAddLine[],
   next: string | null,
 ): StagedAddLine[] {
-  /* Annotated rather than inferred: TypeScript narrows `let x = false` to the
-     literal `false` and does not track the assignment inside the .map callback,
-     so `changed ? out : list` reads to it — and to no-unnecessary-condition — as
-     always-falsy. The runtime is correct; the declared type is what was wrong. */
-  let changed: boolean = false;
+  /* Same identity rule as patchStagedAdd above — read the change off the
+     result, not off a flag .map mutates. */
   const out = list.map((row) => {
     const d = row.draft;
     if (d.lineDeliveryDateOverridden || (d.lineDeliveryDate ?? null) === next) return row;
-    changed = true;
     return { ...row, draft: { ...d, lineDeliveryDate: next } };
   });
-  return changed ? out : list;
+  return out.some((row, i) => row !== list[i]) ? out : list;
 }
 
 export const stagedAddDrafts = (list: StagedAddLine[]): SoLineDraft[] =>
