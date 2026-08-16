@@ -35,11 +35,11 @@ export const useReverseJournalEntry = () => {
     mutationFn: (id: string) =>
       authedFetch<{ ok: boolean; jeNo?: string; status: string }>(`/accounting/journal-entries/${id}/reverse`, { method: 'POST' }),
     onSuccess: (_, id) => {
-      qc.invalidateQueries({ queryKey: ['journal-entries'] });
-      qc.invalidateQueries({ queryKey: ['journal-entry-detail', id] });
-      qc.invalidateQueries({ queryKey: ['gl-entries'] });
-      qc.invalidateQueries({ queryKey: ['account-balances'] });
-      qc.invalidateQueries({ queryKey: ['control-check'] });
+      void qc.invalidateQueries({ queryKey: ['journal-entries'] });
+      void qc.invalidateQueries({ queryKey: ['journal-entry-detail', id] });
+      void qc.invalidateQueries({ queryKey: ['gl-entries'] });
+      void qc.invalidateQueries({ queryKey: ['account-balances'] });
+      void qc.invalidateQueries({ queryKey: ['control-check'] });
     },
     onError: writeFailedAs('Journal entry not reversed'),
   });

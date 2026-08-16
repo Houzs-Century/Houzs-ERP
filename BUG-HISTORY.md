@@ -1,6 +1,6 @@
 ## A PV reversal of a line-less entry posted a zero-line reversal header [medium]
 
-<!-- area: Accounting / GL -->
+<!-- area: Accounting + GL -->
 
 **Symptom.** Cancelling a Payment Voucher whose journal entry somehow had no
 lines wrote a REVERSAL header carrying the full total against zero lines —
@@ -21,7 +21,7 @@ has no lines and no fallback — fail loud, post nothing (brief §2.14).
 
 ## Company 2's ledger lines were booked to account codes its chart does not contain [medium]
 
-<!-- area: Accounting / GL -->
+<!-- area: Accounting + GL -->
 
 **Symptom.** All six of company 2's journal entries carried account_code
 1200/2000 — codes that exist only in company 1's chart. Company 2's own chart
