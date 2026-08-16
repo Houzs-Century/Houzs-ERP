@@ -1,6 +1,6 @@
 ## Delivery Planning still grouped orders under "READY (PARTIAL)" [high]
 
-<!-- area: Delivery planning + stock readiness -->
+<!-- area: Delivery, DO, returns -->
 
 **Symptom.** The owner, on the accessory-only case: *「只有配件,有一行没齐 →
 READY (PARTIAL) ← 骗人 / 明说还缺什么」*. PR #2295 removed the string from
