@@ -73,6 +73,7 @@ import {
 } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
+import { convertToLink } from "../../lib/convertScope";
 import { buildVariantSummary, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
@@ -784,8 +785,7 @@ export function DeliveryOrderDetailV2() {
     updateStatus.mutate({ id: deliveryOrder.id, status: "DELIVERED" });
   };
   const goConvertToSi = () =>
-    deliveryOrder &&
-    navigate(`/scm/sales-invoices/from-do?do=${deliveryOrder.id}`);
+    deliveryOrder && navigate(convertToLink('doToSi', deliveryOrder.id));
 
   // Render the DO PDF via the SAME generator the list's Export PDF and the V1
   // detail page use (jspdf, client-side). The old `?print=1` navigation was dead

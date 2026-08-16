@@ -35,6 +35,7 @@ import {
   usePostPurchaseReturn,
 } from '../../vendor/scm/lib/purchase-return-queries';
 import { useIdempotencyKey } from '../../lib/idempotency';
+import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { useGrnDetail } from '../../vendor/scm/lib/grn-queries';
 import { usePurchaseOrderDetail, useSuppliers } from '../../vendor/scm/lib/suppliers-queries';
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
@@ -123,6 +124,13 @@ export const PurchaseReturnNew = () => {
   const navigate = useNavigate();
   const notify   = useNotify();
   const [params] = useSearchParams();
+  /* The GRN screens' "Convert to PR" sent ?fromGrn=<id> here while this page has
+     always read `grnId`, so the button opened a blank free-form return with no
+     note attached and said nothing (fixed 2026-08-16 by routing both callers
+     through lib/convertScope). The scope read now goes through the same module,
+     and a parameter this page does not understand is SHOWN rather than dropped
+     — a silent drop is what let that mismatch survive. */
+  const scope    = readConvertScope('grnToPr', params, ['poId']);
   const grnId    = params.get('grnId');
   const poId     = params.get('poId');
 
@@ -326,6 +334,7 @@ export const PurchaseReturnNew = () => {
 
   return (
     <div className="space-y-4">
+      <UnrecognisedScopeNotice unknown={scope.unknown} />
       <PageHeader back
         eyebrow="Procurement"
         title={`New Purchase Return ${sourceTitle}`}
