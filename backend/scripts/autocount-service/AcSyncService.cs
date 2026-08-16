@@ -842,11 +842,27 @@ class AcSyncService {
     if (dtlKeys.Length == 0)
       throw new Exception("no transferable lines on " + fromType + " " + Or(fromDocNo, "(the given DtlKeys)"));
 
+    /* ONE CALL PER SOURCE DOCUMENT. AddPartialTransferDetail takes an array of
+       line keys, but they must all belong to the SAME source document: handed a
+       mixed array AutoCount answers
+
+         AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.
+
+       measured on the live book 2026-08-16 with two sales orders in one array.
+
+       Merging several sources into one target is still native - the target
+       accepts the call repeatedly. So the keys are grouped by the document they
+       actually belong to, read from the book rather than taken on trust, and
+       the transfer is invoked once per group. Owner 2026-08-16: a DO from
+       several SOs, an invoice from several DOs, a GRN from several POs, a
+       purchase invoice from several GRNs. */
+    var keysByDoc = KeysBySourceDoc(fromType, dtlKeys);
+
     switch (toType) {
       case "DO": {
         var cmd = AutoCount.Invoicing.Sales.DeliveryOrder.DeliveryOrderCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.AddPartialTransferDetail(fromType, dtlKeys, false);
+        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false);
         SalesHeader(doc, p);
         doc.Save();
         return doc.DocNo;
@@ -854,7 +870,7 @@ class AcSyncService {
       case "IV": {
         var cmd = AutoCount.Invoicing.Sales.Invoice.InvoiceCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
-        doc.AddPartialTransferDetail(fromType, dtlKeys, false);
+        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), false);
         SalesHeader(doc, p);
         doc.Save();
         return doc.DocNo;
@@ -880,7 +896,7 @@ class AcSyncService {
         // numbers. Both are DELIVERY ORDER numbers; the IV half had nothing behind it
         // and /do-to-iv has still never run. Run status does not belong in a comment:
         // docs/generated/autocount-coverage.md is the one place that states it.
-        doc.AddPartialTransferDetail(fromType, dtlKeys, true);
+        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
         doc.Save();
@@ -890,7 +906,7 @@ class AcSyncService {
         var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
         var doc = cmd.AddNew();
         // see the GR case above — purchase side needs transferMaster = true
-        doc.AddPartialTransferDetail(fromType, dtlKeys, true);
+        foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
         PurchaseHeader(doc, p);
         Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));
         doc.Save();
@@ -1125,6 +1141,51 @@ class AcSyncService {
     var outp = new List<long>();
     foreach (var k in List(p, key)) if (k != null) outp.Add(System.Convert.ToInt64(k));
     return outp.ToArray();
+  }
+
+  /* Which source document each line key belongs to. Read from the book: a
+     caller naming keys from two documents is legitimate, but AutoCount needs
+     them handed over one document at a time, and only the book knows which is
+     which. */
+  static Dictionary<string, List<long>> KeysBySourceDoc(string fromType, long[] keys) {
+    string dtl, hdr;
+    switch (fromType) {
+      case "SO": dtl = "SODTL"; hdr = "SO"; break;
+      case "PO": dtl = "PODTL"; hdr = "PO"; break;
+      case "DO": dtl = "DODTL"; hdr = "DO"; break;
+      case "GR": dtl = "GRDTL"; hdr = "GR"; break;
+      default: throw new Exception("unsupported source " + fromType);
+    }
+    var outp = new Dictionary<string, List<long>>();
+    __DBLINE__
+    using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+      cn.Open();
+      using (var cmd = cn.CreateCommand()) {
+        var names = new List<string>();
+        for (int i = 0; i < keys.Length; i++) {
+          var nm = "@k" + i;
+          names.Add(nm);
+          var pr = cmd.CreateParameter(); pr.ParameterName = nm; pr.Value = keys[i];
+          cmd.Parameters.Add(pr);
+        }
+        cmd.CommandText =
+          "SELECT h.DocNo, d.DtlKey FROM " + dtl + " d JOIN " + hdr + " h ON h.DocKey = d.DocKey " +
+          "WHERE d.DtlKey IN (" + string.Join(", ", names.ToArray()) + ") ORDER BY d.DtlKey";
+        using (var rd = cmd.ExecuteReader()) {
+          while (rd.Read()) {
+            var no = rd.GetString(0);
+            if (!outp.ContainsKey(no)) outp[no] = new List<long>();
+            outp[no].Add(rd.GetInt64(1));
+          }
+        }
+      }
+    }
+    var found = 0;
+    foreach (var kv in outp) found += kv.Value.Count;
+    if (found != keys.Length)
+      throw new Exception("of " + keys.Length + " line key(s) given, only " + found + " exist on a " + fromType +
+        " - refusing to transfer a set the book does not recognise");
+    return outp;
   }
 
   static long[] DtlKeys(Dictionary<string, object> p, string fromType, string fromDocNo) {
