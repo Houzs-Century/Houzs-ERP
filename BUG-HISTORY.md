@@ -118,6 +118,219 @@ number. Both are on a subnet the host is not on, so no conclusion here depends
 on it, and the next run prints the server it read before touching anything.
 
 **Ref.** fix/acsync-deploy-rollback-preflight, 2026-08-16.
+## AutoCount Sync printed a four-part reason on every row, and every row [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Same day the screen was rebuilt (#2323), the owner read it against
+a real backlog: *「这一个东西下面的地方太复杂了，你尽量简单化一点。一个 sales order
+那么宽，那如果我有一千个 sales order 的时候，我不是完蛋？」* Every document with a
+problem printed a headline, a sentence, a **To fix** line and AutoCount's
+verbatim reply, all at once, and the page opened on Everything.
+
+**Root cause, traced.** Not a defect in any one rule — a density decision taken
+against the wrong row count. #2323 was designed and reviewed on a 13-row mockup,
+where four inline parts read well. Measured in `frontend/perf-lab` at 400 rows
+on 2026-08-16, a desktop `not accepted` row was **311.3 px** and a `held back`
+row **233.0 px**, against **79.8 px** for a document already in the account book
+that had nothing to say; mobile at 375 px was **387.1 / 335.5 / 102.0 px**. The
+list also rendered every row: **400 of 400** in the DOM on both surfaces, a page
+scroll height of 66,431 px on desktop. The sales order list is 2,726 documents,
+so the mockup's row count was two orders of magnitude under the real one.
+
+**Fix.** Four changes, all keyed off one new shared helper so the two surfaces
+cannot drift: `acRowDetail(row, reasonCleared)` splits a row into the line that
+is ALWAYS visible and the part behind an opener.
+
+1. The page opens on `AC_DEFAULT_STATE = 'attention'`, not on everything.
+2. A problem row shows the plain-language headline only. The sentence, the
+   **To fix** line and the quoted reply are behind opening that row —
+   `acOpensItself` keeps `reason_kind === 'unrecognised'` open on arrival,
+   because there the quoted note IS the answer.
+3. A `sent` row is `expandable: false` even when it carries a note.
+4. The strips are pinned (`var(--page-header-offset)`, `z-[5]`) and the list is
+   windowed with `<MobileVirtualList>` on both surfaces — the component
+   `DataTable` and eight mobile screens already use, not a second mechanism.
+
+**Measured after, same harness:** desktop **36.5 / 64.3 / 69.8 px** (in
+AutoCount / held back / not accepted, collapsed) with **25** rows in the DOM;
+mobile 375 px **53.5 / 83.8 / 88.5 px** with **20** cards. The two things the
+owner had explicitly asked for are kept, one layer down: the headline is never
+hidden, and *AutoCount replied* / *AutoCount was not asked* stays a labelled
+distinction rather than being flattened.
+
+**One trap found on the way.** `<Button className="h-6">` does nothing.
+`Button` hardcodes `h-9` and `lib/utils.ts`'s `cn` is a plain `join`, not a
+Tailwind merge, so the override loses on stylesheet order — #2323's own
+`className="h-8 …"` had been rendering at 36 px. The row uses the `!` important
+prefix and says why at the site.
+
+**Ref.** 2026-08-16, follow-up to #2323. Harness:
+`frontend/perf-lab` `?scenario=autocount-sync&rows=400` (`&surface=mobile`).
+
+## A Sales Order editor that hit ONE version conflict could never save again [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner 2026-08-16, on his own (non-POS) account: an open SO editor
+stopped being able to save. Not intermittently — permanently. Every Save
+answered "Someone else updated this order while you were editing", including
+saves seconds apart with nobody else on the order. The only way out was to
+leave edit mode or reload, retyping whatever had not been saved.
+
+**Root cause (traced, four parts, each read on `origin/main`).**
+
+1. `advanceSoGeneration` (`backend/src/scm/lib/so-generation.ts:44`) does
+   `version + 1`, and `so-stock-allocation.ts` calls it from the **5-minute
+   cron** (`backend/src/index.ts`) that flips CONFIRMED <-> READY_TO_SHIP. It
+   declines while an edit LEASE is held — but the lease exists only for the
+   duration of a save, so while the operator TYPES the version moves freely.
+   That is legitimate background work.
+2. The Save's first persisted write is the version reservation, which 409s
+   `so_version_conflict` (`mfg-sales-orders.ts:6804`).
+3. The catch in `SalesOrderDetail.tsx` put the sentence in a banner and never
+   touched `loadedVersionRef`, so the next Save re-sent the same stale number.
+4. And the refetch effect is forbidden from healing it —
+   `if (!isEditing || loadedVersionRef.current == null)` deliberately refuses to
+   move the CAS baseline under an in-flight edit. **That guard is correct and
+   stays**: a baseline that advances on its own turns CAS into
+   last-writer-wins. The defect was that it was the ONLY door.
+
+The recovery datum had been arriving the whole time. `soVersionConflict`
+(`mfg-sales-orders.ts:356`) puts the server's real version in the 409 body, and
+`authed-fetch.ts:411` preserves that body verbatim on `err.body`. It is **not**
+discarded — a `grep -rn currentVersion frontend/src` returned only the
+assertions in `authed-fetch.version-conflict.test.ts`. The datum was delivered
+and never opened.
+
+**Fix.** `so-version-conflict.tsx` reads `currentVersion` off `err.body` and the
+editor renders a banner with two doors: *See what changed* (opens the order's
+own history panel; writes nothing) and *Save my changes on top* (adopts the
+server version as the new CAS baseline, then saves). Deliberately NOT a silent
+adopt — that converts a safe refusal into a lost update, which is the exact
+thing CAS exists to prevent — and deliberately not a forced refetch, because
+the edit-mode seed effect re-seeds every line draft from `items` and would throw
+away the very edits the banner promises are still on screen. Same read added to
+the amendment submit path, whose direct-half header PATCH carries the version
+too.
+
+**Not changed, on purpose.** `authed-fetch.version-conflict.test.ts:14` asserts
+the operator-facing sentence does NOT contain `currentVersion`. That assertion
+enforces the house 白话文 rule (`authed-fetch.ts:406`) and relaxing it to "fix"
+this would have leaked internals into a banner. The sentence stays clean AND the
+body gets read; `so-version-conflict.test.tsx` pins both halves against the same
+body string.
+
+**Ref.** feat/so-multi-add-lines, 2026-08-16.
+
+## The SO edit-lease token was forgotten client-side while the server still held it [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Potential: an operator told "This order is being saved on another
+screen" about themselves, for up to five minutes.
+
+**Root cause (traced).** The page-Save catch released the line-write lease with
+`updateHeader.mutateAsync({ completeLineWrites: true, ... }).finally(() => {
+activeLineLeaseRef.current = null; })`. `.finally` clears the client's token
+whether or not the release succeeded. The server's release predicate is
+`.eq('version', clientVersion).eq('edit_lease_token', requestedLeaseToken)`
+(`mfg-sales-orders.ts:6810-6812`) and answers 409 when it matches nothing, so a
+refused or failed release left the server holding a lease the client could no
+longer name; the next Save minted a fresh token, tripped `activeLeaseToken !==
+requestedLeaseToken` (`:6782`) and 409'd `so_edit_lease_conflict` until the
+5-minute TTL (`:7274`, never renewed) expired.
+
+**Honest scope.** The trigger originally proposed for this — a version that goes
+stale between the reserve and the release — could NOT be evidenced: the cron
+declines while the lease is held (`so-generation.ts` `leaseActive`) and the item
+routes never touch `version` (no `version` write anywhere in the
+`POST/PATCH/DELETE /:docNo/items` handlers). So the reachable trigger is a
+release that fails for another reason (transient network, 5xx), not a stale
+version. Fixed as robustness, and recorded here rather than claimed as the
+owner's symptom.
+
+**Fix.** `.finally(...)` -> `.then(clear, keep)`: the token is dropped only when
+the server CONFIRMS the release.
+
+**Ref.** feat/so-multi-add-lines, 2026-08-16.
+
+## "+ Add Line Item" allowed exactly ONE new line per edit session [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner 2026-08-16: on the Sales Order detail page in edit mode he
+clicked "+ Add Line Item", got one new empty line card, **and the button
+vanished**. "It should be able to keep adding lines." He also saw the header
+still reading "LINE ITEMS (2)" with three rows on screen, which made the new
+row look like it had not registered.
+
+**Root cause (traced).** `addingDraft` was a single nullable
+`useState<SoLineDraft | null>`, and the button rendered behind
+`{isEditing && !addingDraft && ...}` — a deliberate Task #80 guard against
+stacking two add-cards, which also made a second line unrequestable. Every
+consumer inherited the cap: the pre-save blank guard, the sofa-mix check, the
+variant-gap check, the save chain's single `commitAddLine`, the amendment ADD
+diff (so on a processing-locked SO a second new line would have vanished at
+submit) and the empty state. The count was `items.length`, which in edit mode
+is wrong in BOTH directions — it misses a staged add, and it keeps a row removed
+this session until the refetch.
+
+**Fix.** `addingDraft` -> `addingDrafts: StagedAddLine[]`, each row carrying its
+own ADD idempotency key (the pattern `lib/idempotency.ts` already documents for
+data-row intents; one shared key across distinct inserts would have the
+middleware replay the first response for all of them). The button now consults
+only `linesLocked`. The header counts rendered cards (`visibleLineCounts`) and
+says how many are unsaved; each staged card is captioned "New line N — not
+saved yet". Logic extracted to `so-add-lines.ts` because
+`SalesOrderDetail.tsx` sits under a file-size ceiling that may only fall.
+
+**Ref.** feat/so-multi-add-lines, 2026-08-16.
+
+## A refused line write aborted the rest of the Save and named nothing [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner: a rejected price edit silently swallowed a line add. The
+banner said only what the price refusal said; the new line was never mentioned
+and never written.
+
+**Root cause (traced).** The page Save chain ran each stage under `Promise.all`
+and let the FIRST rejection reject the whole chain: the sibling writes stayed
+in flight while the catch tore the edit lease down, the later stages never ran,
+and the operator got one message that identified no line.
+
+**Fix.** `runSoLineWrites` settles every stage (`Promise.allSettled` for the
+independent deletes/PATCHes; strictly sequential for the ADDs) and reports every
+refusal by item code, plus what happened to the work that did not go out. The
+ADDs are sequential deliberately: `POST /:docNo/items` is read-modify-write
+twice over — `soMainMixIntroduced` (`mfg-sales-orders.ts:854`) returns
+`mix(after) && !mix(before)` from a read of the current lines, so a sofa and a
+bedframe posted concurrently would BOTH pass the guard that exists to reject
+that pair; and `line_no` is `SELECT max(line_no) ... LIMIT 1` then `+ 1`
+(`:8032`). Adds that landed are dropped from the staging list; the refused ones
+stay on screen.
+
+**Ref.** feat/so-multi-add-lines, 2026-08-16.
+
+## The SO price floor reached the operator in the rule's own words, with no action [low]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** An operator who tripped `so_total_below_original` was shown
+"Changes cannot reduce the bill below the original sales order total." — the
+backend's internal `reason`, describing the RULE and naming no action.
+
+**Root cause (traced).** `so_total_below_original` had **zero** occurrences
+anywhere under `frontend/` — no `ERROR_CODE_MESSAGES` entry in
+`authed-fetch.ts` — so `humanApiError` fell past step 1 (curated code) to step 2
+(echo the server's `reason`). Note the correction to the original report: it was
+not the generic 422 fallback, it was the raw rule text.
+
+**Fix.** A curated entry that says what to DO ("Put the amount back, or have a
+manager approve the lower price first"), in the house style of its neighbours.
+
+**Ref.** feat/so-multi-add-lines, 2026-08-16.
 ## An APPROVED amendment could not carry the price it approved [high]
 
 <!-- area: Sales orders + pricing -->

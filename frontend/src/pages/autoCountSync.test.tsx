@@ -2,10 +2,18 @@
 //
 // What is asserted is the owner's requirement, not the markup: the counts are on
 // something clickable, the two strips filter and the type counts follow the
-// status filter, a refused document says WHY in three plain-language parts on
-// the row, AutoCount's own reply is quoted and labelled with whether AutoCount
-// was ever asked, no machinery vocabulary reaches the screen, and a load failure
-// is said out loud rather than rendered as an empty table.
+// status filter, a refused document says WHY on the row, AutoCount's own reply
+// is quoted and labelled with whether AutoCount was ever asked, no machinery
+// vocabulary reaches the screen, and a load failure is said out loud rather than
+// rendered as an empty table.
+//
+// AND, since 2026-08-16, the four things he asked for after reading it at scale
+// ("一个 sales order 那么宽，那如果我有一千个 sales order 的时候，我不是完蛋？"):
+// the page OPENS on what needs attention, a problem row shows ONE line of
+// reason, a document already in the account book shows nothing to open at all,
+// and several hundred rows do not all go into the page. Those four have their
+// own describe block at the bottom, because they are the ones a future tidy-up
+// is most likely to undo by accident.
 import { cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -81,6 +89,19 @@ async function mount(body: AcOutboxResponse | Error, path = "/autocount-sync") {
 }
 
 const chip = (name: RegExp) => screen.getByRole("button", { name });
+
+/* `data-ac-row`, not `li`: the list is windowed now and the windowing component
+   owns the element that wraps each row. A test that reaches for the wrapper is
+   asserting the virtualiser's markup, which is not this page's contract. */
+const cardOf = (docNo: string) =>
+  screen.getByText(docNo).closest("[data-ac-row]") as HTMLElement;
+
+/** Open a row by its always-visible reason line — the line IS the opener. */
+async function openRow(docNo: string) {
+  const card = cardOf(docNo);
+  await userEvent.click(within(card).getByRole("button", { expanded: false }));
+  return cardOf(docNo);
+}
 
 const rows = [
   row({ id: "f", doc_no: "SO-F", doc_type: "SO", op: "create_so", status: "failed", state: "failed",
@@ -195,20 +216,38 @@ describe("AutoCountSync — the counts are on something you can click", () => {
 });
 
 describe("AutoCountSync — the reason is on the row", () => {
-  it("gives a held-back document a headline, an explanation and a To fix, all inline", async () => {
+  /* THE HEADLINE IS NEVER HIDDEN. He rejected a design where the whole reason
+     sat behind a "Why not" click, and shortening the row must not smuggle that
+     back in — so the headline is on the row, and it is the thing you click. */
+  it("keeps the plain-language headline on a held-back row without any click", async () => {
     await mount(busy);
-    const card = (await screen.findByText("DO-K")).closest("li")!;
-    expect(within(card).getByText(/does not say which warehouse the stock comes from/i)).toBeTruthy();
-    expect(within(card).getByText(/AutoCount will not take a document whose lines carry no warehouse/i)).toBeTruthy();
-    expect(within(card).getByText("To fix")).toBeTruthy();
-    expect(within(card).getByText(/Set the warehouse on that line/)).toBeTruthy();
+    await screen.findByText("DO-K");
+    expect(
+      within(cardOf("DO-K")).getByText(/does not say which warehouse the stock comes from/i),
+    ).toBeTruthy();
+  });
+
+  it("puts the explanation, the To fix line and the machine's words behind opening the row", async () => {
+    await mount(busy);
+    await screen.findByText("DO-K");
+    const card = cardOf("DO-K");
+    expect(within(card).queryByText(/AutoCount will not take a document whose lines carry no warehouse/i)).toBeNull();
+    expect(within(card).queryByText("To fix")).toBeNull();
+    expect(within(card).queryByText("AutoCount was not asked")).toBeNull();
+
+    const opened = await openRow("DO-K");
+
+    expect(within(opened).getByText(/AutoCount will not take a document whose lines carry no warehouse/i)).toBeTruthy();
+    expect(within(opened).getByText("To fix")).toBeTruthy();
+    expect(within(opened).getByText(/Set the warehouse on that line/)).toBeTruthy();
   });
 
   /* The distinction the owner asked for: the ERP refused this one itself, so
-     nothing ever reached the account book. */
+     nothing ever reached the account book. One layer down, not flattened. */
   it("says AutoCount was not asked when the ERP stopped the document itself", async () => {
     await mount(busy);
-    const card = (await screen.findByText("DO-K")).closest("li")!;
+    await screen.findByText("DO-K");
+    const card = await openRow("DO-K");
     expect(within(card).getByText("AutoCount was not asked")).toBeTruthy();
     expect(within(card).getByText(/stopped this before it was ever sent/i)).toBeTruthy();
     expect(within(card).queryByText("AutoCount replied")).toBeNull();
@@ -220,9 +259,10 @@ describe("AutoCountSync — the reason is on the row", () => {
       rows: [row({ status: "failed", state: "failed", needs_attention: true, reason: long })],
       counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, total: 1 },
     }));
-    expect(await screen.findByText("AutoCount replied")).toBeTruthy();
-    expect(screen.getByText(long)).toBeTruthy();
-    expect(screen.getByText(/AutoCount would not take this document/)).toBeTruthy();
+    expect(await screen.findByText(/AutoCount would not take this document/)).toBeTruthy();
+    const card = await openRow("HC-SO-2608-001");
+    expect(within(card).getByText("AutoCount replied")).toBeTruthy();
+    expect(within(card).getByText(long)).toBeTruthy();
   });
 
   it("does not pretend AutoCount answered when nothing came back", async () => {
@@ -230,34 +270,39 @@ describe("AutoCountSync — the reason is on the row", () => {
       rows: [row({ status: "failed", state: "failed", needs_attention: true, reason: null })],
       counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, total: 1 },
     }));
-    expect(await screen.findByText("AutoCount said nothing")).toBeTruthy();
+    await screen.findByText("HC-SO-2608-001");
+    const card = await openRow("HC-SO-2608-001");
+    expect(within(card).getByText("AutoCount said nothing")).toBeTruthy();
   });
 
   /* A refusal nobody has words for yet is a code path that grew a new refusal.
-     The raw note is the answer in that one case, so it is not collapsed. */
-  it("opens the exact note when the refusal has no plain wording yet", async () => {
+     The raw note is the answer in that one case, so THAT row arrives open —
+     shortening every other row must not take this back. */
+  it("arrives open when the refusal has no plain wording yet", async () => {
     await mount(payload({
       rows: [row({ status: "skipped", state: "skipped", needs_attention: true,
         reason: "a refusal class written next month", reason_kind: "unrecognised" })],
       counts: { pending: 0, sent: 0, failed: 0, skipped: 1, requeued: 0, attention: 1, total: 1 },
     }));
     expect(await screen.findByText(/no wording for yet/)).toBeTruthy();
-    const details = screen.getByText("Show the exact note the ERP wrote down").closest("details")!;
-    expect(details.open).toBe(true);
     expect(screen.getByText("a refusal class written next month")).toBeTruthy();
+    expect(screen.getByRole("button", { expanded: true })).toBeTruthy();
   });
 
   it("marks a re-queued refusal as history rather than something to act on", async () => {
     await mount(busy);
-    const card = (await screen.findByText("IV-R")).closest("li")!;
+    await screen.findByText("IV-R");
+    expect(within(cardOf("IV-R")).getByText(/this row is history/i)).toBeTruthy();
+    const card = await openRow("IV-R");
     expect(within(card).getByText(/record of the first refusal/i)).toBeTruthy();
     expect(within(card).queryByText("To fix")).toBeNull();
   });
 
   it("shows what a waiting document is waiting on, without claiming AutoCount said it", async () => {
     await mount(busy);
-    const card = (await screen.findByText("SO-P")).closest("li")!;
-    expect(within(card).getByText("The last send attempt reported")).toBeTruthy();
+    await screen.findByText("SO-P");
+    expect(within(cardOf("SO-P")).getByText("The last send attempt reported")).toBeTruthy();
+    const card = await openRow("SO-P");
     expect(within(card).getByText(/timeout opening the book/)).toBeTruthy();
   });
 
@@ -290,9 +335,11 @@ describe("AutoCountSync — no coding words anywhere", () => {
 
   it("names each operation and each type in words", async () => {
     await mount(busy);
-    expect(await screen.findByText("Delivery order from a sales order")).toBeTruthy();
-    expect(screen.getByText("Goods received from a purchase order")).toBeTruthy();
-    expect(screen.getAllByText("New sales order").length).toBe(2);
+    /* Substring matchers: the operation is one part of the row's single line of
+       detail now, not a fragment of its own. The words are what is asserted. */
+    expect(await screen.findByText(/^Delivery order from a sales order · /)).toBeTruthy();
+    expect(screen.getByText(/^Goods received from a purchase order · /)).toBeTruthy();
+    expect(screen.getAllByText(/^New sales order · /).length).toBe(2);
   });
 
   /* The five tiles are gone. Their subtitles were the only place these phrases
@@ -314,7 +361,9 @@ describe("AutoCountSync — filters and failure", () => {
 
   it("ignores a hand-edited state the server would refuse", async () => {
     await mount(payload(), "/autocount-sync?state=planning");
-    expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox");
+    /* Falls back to the page's DEFAULT, which is the attention filter — not to
+       everything, which is what an unknown value used to land on. */
+    expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=attention");
   });
 
   it("ignores a hand-edited document type rather than filtering to nothing", async () => {
@@ -369,11 +418,12 @@ describe("AutoCountSync — Send again", () => {
 
   it("offers the button only where the server says a re-send can mean something", async () => {
     await mount(busy);
-    const offered = (await screen.findByText("SO-F")).closest("li")!;
+    await screen.findByText("SO-F");
+    const offered = cardOf("SO-F");
     expect(within(offered).getByRole("button", { name: "Send again" })).toBeTruthy();
     /* DO-K is held back and can_requeue is false on it — no button rather than
        a button that always answers no. */
-    const notOffered = screen.getByText("DO-K").closest("li")!;
+    const notOffered = cardOf("DO-K");
     expect(within(notOffered).queryByRole("button", { name: "Send again" })).toBeNull();
   });
 
@@ -439,15 +489,18 @@ describe("AutoCountSync — an accepted re-send stops giving orders about the ol
       new_row_id: "ob-9", reason: null,
     });
     await mount(busy);
-    const card = (await screen.findByText("SO-F")).closest("li")!;
+    await screen.findByText("SO-F");
+    const card = await openRow("SO-F");
     expect(within(card).getByText("To fix")).toBeTruthy();
 
     await userEvent.click(within(card).getByRole("button", { name: "Send again" }));
 
     expect(await screen.findByText(/Sent back to the queue/)).toBeTruthy();
-    const after = screen.getByText("SO-F").closest("li")!;
+    const after = cardOf("SO-F");
+    /* The whole reason goes, opener and all — not just the part behind it. */
     expect(within(after).queryByText("To fix")).toBeNull();
     expect(within(after).queryByText("AutoCount replied")).toBeNull();
+    expect(within(after).queryByText(/AutoCount would not take this document/)).toBeNull();
     /* Replaced by what to do NOW, keyed by the outcome code. */
     expect(within(after).getByText("To do")).toBeTruthy();
     expect(within(after).getByText(/next five-minute send/)).toBeTruthy();
@@ -461,11 +514,77 @@ describe("AutoCountSync — an accepted re-send stops giving orders about the ol
       new_row_id: null, reason: null,
     });
     await mount(busy);
-    const card = (await screen.findByText("SO-F")).closest("li")!;
+    await screen.findByText("SO-F");
+    const card = await openRow("SO-F");
     await userEvent.click(within(card).getByRole("button", { name: "Send again" }));
     expect(await screen.findByText(/AutoCount already accepted this one/)).toBeTruthy();
-    const after = screen.getByText("SO-F").closest("li")!;
+    const after = cardOf("SO-F");
     expect(within(after).getByText("To fix")).toBeTruthy();
     expect(within(after).getByText(/do not look for a way round it/i)).toBeTruthy();
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   The four things the owner asked for on 2026-08-16, after reading the rebuilt
+   page against a real backlog: "这一个东西下面的地方太复杂了，你尽量简单化一点。一个
+   sales order 那么宽，那如果我有一千个 sales order 的时候，我不是完蛋？"
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("AutoCountSync — a thousand documents", () => {
+  const manyRows = (n: number): AcOutboxRow[] =>
+    Array.from({ length: n }, (_, i) => (i % 5 === 0
+      ? row({ id: `x${i}`, doc_no: `SO-${i}`, status: "failed", state: "failed", attempts: 6,
+        needs_attention: true, reason: "Gave up after 6 attempts." })
+      : row({ id: `x${i}`, doc_no: `SO-${i}`, status: "sent", state: "sent",
+        ac_doc_no: `AC-${i}`, sent_at: "2026-08-15T01:00:00.000Z" })));
+
+  it("opens on the documents that need attention, not on everything", async () => {
+    await mount(busy);
+    expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox?state=attention");
+    /* `selector: "span"` picks the heading over the list rather than the chip
+       of the same name — the chip proves the filter EXISTS, the heading proves
+       it is the one in force. */
+    expect(await screen.findByText("Needs attention", { selector: "span" })).toBeTruthy();
+  });
+
+  it("keeps everything one click away", async () => {
+    await mount(busy);
+    await userEvent.click(await screen.findByRole("button", { name: /Everything\s*5/ }));
+    /* No `state` on the query is how the route is asked for everything. */
+    expect(apiGet).toHaveBeenCalledWith("/api/scm/autocount-outbox");
+  });
+
+  /* THE MAJORITY OF A LONG LIST. A document already in the account book has
+     nothing wrong with it and nothing to say, so it says nothing. */
+  it("gives a document already in AutoCount one line and nothing to open", async () => {
+    await mount(busy);
+    await screen.findByText("GR-S");
+    const card = cardOf("GR-S");
+    expect(within(card).queryByRole("button", { expanded: false })).toBeNull();
+    expect(within(card).queryByRole("button", { expanded: true })).toBeNull();
+    expect(within(card).queryByText("To fix")).toBeNull();
+    expect(within(card).queryByText("AutoCount replied")).toBeNull();
+    expect(within(card).getByText(/In the account book as GR-00123/)).toBeTruthy();
+  });
+
+  /* The number the owner actually complained about. 400 rows in the DOM is the
+     page he called unusable; a windowed list mounts the visible slice. */
+  it("does not put several hundred rows into the page at once", async () => {
+    await mount(payload({
+      rows: manyRows(400),
+      counts: { pending: 0, sent: 320, failed: 80, skipped: 0, requeued: 0, attention: 80, total: 400 },
+    }));
+    await screen.findByText("SO-0");
+    const mounted = document.querySelectorAll("[data-ac-row]").length;
+    expect(mounted).toBeGreaterThan(0);
+    expect(mounted).toBeLessThan(400);
+  });
+
+  it("says nothing needs attention rather than telling you to try another filter", async () => {
+    await mount(payload({
+      rows: [],
+      counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 900 },
+    }));
+    expect(await screen.findByText(/Nothing needs your attention/)).toBeTruthy();
+    expect(screen.queryByText(/Try another status/)).toBeNull();
   });
 });

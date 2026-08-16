@@ -1,0 +1,58 @@
+name: probe-pos-flags-govern-erp
+
+# How much of the ERP's catalogue is governed by a POS-owned flag.
+#
+# `scm.mfg_products.pos_active` is the POS catalog's visibility column. One ERP
+# write path reads it — the TBC product swap in mfg-sales-orders.ts refuses with
+# 409 product_inactive — and the HR commission item-KPI picker filters on it. No
+# other SO write path does; they gate on status = 'ACTIVE' alone. So a product
+# the ERP sells can be added to an order, cannot be swapped TO, and can carry no
+# commission KPI.
+#
+# This counts the population before anything is changed, so the fix ships with a
+# measured blast radius instead of a guess.
+#
+# Read-only. See backend/scripts/probe-pos-flags-govern-erp.mjs, whose header
+# also says what this probe deliberately CANNOT answer.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990)"
+        required: false
+        default: "1"
+        type: string
+
+concurrency:
+  group: probe-pos-flags-govern-erp
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Count what the POS flags reach
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-pos-flags-govern-erp.mjs | tee pos-flags.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-pos-flags-govern-erp
+          path: backend/pos-flags.txt
+          retention-days: 14
