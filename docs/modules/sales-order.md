@@ -1457,6 +1457,20 @@ not role (Owner ruling, `mfg-sales-orders.ts` `isPosTabletCaller`):
   server recomputes the authoritative catalog price and **drift-rejects (400)** a
   deviating client price — the anti-tamper non-negotiable. (Empty until the 2990
   POS repoints here.)
+- **The SSO session is NOT a POS session** (Owner ruling 2026-08-16). `POST
+  /api/pos/exchange-web-session` — the token behind
+  `erp.houzscentury.com/#sso=<token>`, i.e. the "open this in Houzs" button on
+  the tablet — mints an **origin-less** session. Between 2026-08-14 and this
+  ruling it carried `origin='pos'` forward, and the salesperson who came through
+  that door could not change a delivery-fee line from 250 to 125 in the ERP: 422
+  `so_total_below_original`. Owner: 「为什么我们要跟着 POS 的规矩?进了这个
+  ERP 就跟这个 ERP 的规矩。在我们 ERP 里编辑,金额就必须能改。」 So the gate
+  below binds **the POS app** — requests made with the token the PIN door issued
+  — and not the tablet, the device or the person. Anyone who can pass the PIN
+  gate can obtain an ERP session and price freely; that is the accepted cost of
+  the ruling, and the per-line audit trail (actorId / actorName on every SO line
+  mutation) is what remains. `scm.so.price_override` is the permission key that
+  could carry this as policy instead, if the owner later wants a narrower hinge.
 - **Every other session** (desktop web ERP, mobile, invite, TOTP): **not POS →
   never drift-rejected.** Owner ruling 2026-07: a salesperson may hand-type the
   price. `recomputeFromSnapshot(..., trustOperatorSelling=true)` — passed on the
