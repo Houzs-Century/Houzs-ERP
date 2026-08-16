@@ -82,6 +82,7 @@ import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAcc
 import { capability } from "../../auth/capabilities";
 import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
+import { soRowBalanceCenti, soBalanceCellClass } from "../../vendor/scm/lib/so-balance-display";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 // Minimal row shape the listing needs. The full SoRow (in MfgSalesOrdersList
@@ -117,6 +118,7 @@ type SoRow = {
      Planning read. Optional so an absent view row falls back, not crashes. */
   paid_total_centi?: number | null;
   balance_centi_live?: number | null;
+  balance_signed_centi?: number | null; // SIGNED; may be NEGATIVE — see lib/so-balance-display.ts
   phone: string | null;
   email: string | null;
   address1: string | null;
@@ -1636,10 +1638,8 @@ export function MfgSalesOrdersListV2() {
       align: "right",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.balance_centi_live ?? r.balance_centi ?? 0,
-      render: (r) => (
-        <span className="font-money text-[13px] text-ink">{fmtRm(r.balance_centi_live ?? r.balance_centi ?? 0)}</span>
-      ),
+      getValue: (r) => soRowBalanceCenti(r),
+      render: (r) => <span className={soBalanceCellClass(soRowBalanceCenti(r))}>{fmtRm(soRowBalanceCenti(r))}</span>,
     },
     // ── Re-added columns (Phase 2) — NON-finance fields that already travel on
     //    the SO list payload (HEADER + server-computed) but were untyped, so no

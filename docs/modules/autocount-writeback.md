@@ -989,7 +989,7 @@ Which ERP column, therefore, matters more than usual, and the trap is live:
 |---|---|
 | `scm.mfg_sales_orders.balance_centi` | **NO.** `recomputeTotals` writes `balance_centi = local_total_centi = total_revenue_centi = grandTotal` on every edit, so it never reflects a payment. It looks right because the cutover's own `UDF_BALANCE` landed in it (`check-migration-fidelity.mjs:95`) — and the first edit of any order overwrote that with the gross total |
 | the view's `balance_centi_live` | close — `local_total - SUM(payments)`, what the SO list, the mobile list and delivery planning render. It MISSES the legacy header deposit that never reached the ledger |
-| **`soOutstandingCenti`** (`scm/shared/so-outstanding.ts`) | **YES.** What `GET /mfg-sales-orders/:docNo` and the customer-facing print show. The rule was lifted out of that route into a shared pure module so the account book and the screen cannot compute different numbers |
+| **`soBalanceCenti`** (`scm/shared/so-outstanding.ts`) | **YES.** What `GET /mfg-sales-orders/:docNo` and the customer-facing print show. The rule was lifted out of that route into a shared pure module so the account book and the screen cannot compute different numbers. Named `soOutstandingCenti` until 2026-08-16; that name now belongs to the FLOORED receivable beside it, and this one is SIGNED |
 
 Paid is the payments ledger PLUS the header `deposit_centi` **only when no
 `is_deposit` ledger row exists** — modern orders write the deposit as a ledger
@@ -1005,10 +1005,18 @@ Three rules the composer keeps:
   `total_revenue_centi` is absent, because zero would declare a real debt settled
   in a licensed ledger. The SO detail page reads the same absence as `0` — it is
   drawing a screen, this is writing a ledger.
-- **Negative is not expressible.** The book holds a negative `UDF_BALANCE` on 47
-  of the 13,015 headers; the ERP clamps at zero on both its own paths (the view's
-  `GREATEST`, the detail route's `Math.max`) and keeps an overpayment as customer
-  credit instead. The write-back sends what the ERP holds.
+- **Negative IS expressible — since 2026-08-16 (SURFACE CHANGE).** This bullet
+  used to read *"Negative is not expressible"*, and the reason it gave was the
+  ERP's own clamp, not the book's: AutoCount already holds a negative
+  `UDF_BALANCE` on 47 of the 13,015 headers. The owner ruled that over-collection
+  is legal 「需要可以超收 negative 边红色」, so `soBalanceCenti` is signed and the
+  write-back sends the negative. **The account book receives the same number the
+  SO detail page shows** — which is the entire point of sharing the rule; sending
+  0 while the screen shows −RM 250 would be this module's own two-columns-one-
+  truth defect in its worst form, a ledger asserting a debt settled while the ERP
+  shows a credit owed. A negative is asserted only when the ERP KNOWS the total
+  (`total_revenue_centi > 0`); see `scm/shared/so-balance.ts` for why, and
+  `soOutstandingCenti` for the floored figure aggregates read instead.
 
 **IT GOES STALE ON A PAYMENT, and that is the open half.** Recording a payment is
 not one of §6's enqueue anchors, so the balance in AutoCount is the one the
@@ -1881,7 +1889,8 @@ never be mistaken for a cancel divergence.
 | `src/scm/lib/downstream-lock.test.ts` | The owner's rule: one live child locks; a cancelled child does not; another document's children do not |
 | `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, the salesperson fallback of §7n end to end (including that `/ensure-masters` is then asked to open that agent), and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document. Also **§7o end to end**, which is where it has to be tested: most of that defect was in the SELECT LIST, and a column list is only exercised by a read. Per field: the value reaches the payload, `mastersOf` is asked to open the master it names, and an edit does not blank what the book holds. **§7q the same way** — the BALANCE off the payments ledger and NOT off the `balance_centi` the fixture deliberately seeds to the gross total, the legacy-deposit rule both ways, `"0.00"` on a settled order, no key at all when the order has no total, `DeliverPhone1` off `emergency_contact_phone` while `Phone` keeps the customer's, and the line delivery date present-and-null on a create against omitted-when-absent on an edit |
 | `src/scm/lib/autocount-requeue.test.ts` | Re-queueing a refusal: a document whose cause is unfixed stays refused (and APPLY adds no second `skipped` row), a fixed one queues a FRESHLY COMPOSED create carrying the location the operator just set, one already in AutoCount is never re-queued, and running twice does not double-queue — with 0277's pending-dedupe index enforced by the fake so the backstop is proved and not asserted |
-| `src/scm/shared/so-outstanding.test.ts` | **§7q.** The outstanding-balance rule the SO detail page and the BALANCE UDF now share: the ledger is the paid amount, a legacy header deposit counts once and only when the ledger has no `is_deposit` row, and an overpayment is 0 rather than negative |
+| `src/scm/shared/so-outstanding.test.ts` | **§7q.** The balance rule the SO detail page and the BALANCE UDF now share: the ledger is the paid amount, a legacy header deposit counts once and only when the ledger has no `is_deposit` row, and an overpayment reads NEGATIVE (`soBalanceCenti`) while the receivable stays 0 (`soOutstandingCenti`) |
+| `src/scm/shared/so-balance.test.ts` | The signed/floored primitive both of the above sit on, and the one condition that keeps the unfloor safe — a total of 0 is *unknown*, never *worth nothing*, so 2,687 cutover orders never render as credits |
 | `src/scm/lib/so-agent.test.ts` | What lands in `mfg_sales_orders.agent` (§7n): a create with a salesperson stamps the NAME, an explicit `body.agent` still wins, a blank one is not a supplied one, and a dead `scm.staff` lookup costs the agent text and never the save |
 | `src/services/autocount-writeback.test.ts` | The master maps, sen -> decimal, Desc2 from variants, sofa parent collapse, `DtlKey` addressing, the client's retryable/not-retryable read of a response, and the agent resolution of §7n including the both-empty refusal and the UUID / "Unassigned" text that must never be opened. Plus §7o's composer half: `bookSpelling` vs `bookSpellingOrOwn`, the address packing, the customer-reference chain, branding off the lines with no `BEDFRAME` pseudo-brand, the sales-location fallback, and the two new refusals (`MissingSalesLocationError`, `MissingCreditorError`) |
 | `src/services/autocount-sofa-collapse.test.ts` | **D9**, driven by 658 real `Desc2` values out of the licensed book (`autocount-sofa-corpus.ts`, generated, CI-guarded). Echo is character-for-character on all 551 decodable builds; parse -> collapse -> parse is stable; the composer is *known* to spell some real builds wrong and **none escape the gate**; every refusal path emits no line at all |

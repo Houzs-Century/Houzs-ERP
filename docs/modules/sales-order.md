@@ -1195,6 +1195,71 @@ receipt-backed draft so it is not booked twice, and the seeded draft still
 carries the key. What changed for that path is only that it no longer needs to
 be an *exemption* from anything.
 
+### Over-collection is LEGAL and the balance goes NEGATIVE, in red (owner ruling 2026-08-16, SURFACE CHANGE)
+
+> Owner, verbatim: *「需要可以超收 negative 边红色」*.
+
+**What it replaces.** `POST /:docNo/payments` and `PATCH
+/:docNo/payments/:id` both carried Spec D6's guard —
+`if (totalCenti > 0 && paid + amount > total) -> 400 over_payment` — so the
+system refused any receipt that took an order past its own total, and the
+balance was floored at 0 everywhere, so a credit could not even be displayed.
+Both guards are **gone**. There is no permission behind them and no server-side
+warning: the person taking the cash is the person who has to record it, so a
+gate would reproduce the refusal for exactly the staff who hit it. The negative
+red balance IS the signal.
+
+**Why the refusal was worse than the thing it refused** (`scm.mfg_so_audit_log`,
+HC-SO-2608-002): RM 4,000 order, RM 2,000 banked, RM 2,250 refused at 08:26 —
+then at 08:26:22 a line's `unitPriceCenti` went 0 → 25000 with a "Right Drawer"
+special worth exactly RM 250, and the same RM 2,250 booked at 08:27:38. The
+guard did not stop the over-collection; it pushed RM 250 of CASH into item
+value, where it corrupts revenue, margin, cost-of-sale and the customer's own
+printed document. Nothing in this change makes that easier: recording a payment
+still writes only `mfg_sales_order_payments`, the audit log and the AutoCount
+outbox, and `tests/soOverCollectionAllowed.test.ts` fails if it ever touches
+`mfg_sales_orders` or a line.
+
+**Two numbers now, and they are not interchangeable.** The rule is
+`scm/shared/so-balance.ts`, mirrored byte-for-byte at
+`frontend/src/vendor/shared/so-balance.ts`:
+
+| | may be negative? | who reads it |
+|---|---|---|
+| **balance** — `soBalanceOf` / `soBalanceCenti` | YES | SO detail `balance_centi`, the list's `balance_signed_centi`, the desktop Payments summary, the mobile SO detail, the SO PDF, AutoCount's `UDF_BALANCE` |
+| **receivable** — `soReceivableOf` / `soOutstandingCenti` | never | the SO list's Outstanding KPI, the view column `balance_centi_live`, delivery planning's release gate, the "outstanding only" row filters |
+
+A credit on one order must never pay down another customer's debt inside an
+aggregate, and a driver asking "what must I still collect" is answered by 0, not
+by a negative. **No aggregate changed in this PR.**
+
+**THE CONDITION, and it is the whole reason this is not a one-line unfloor.**
+A negative is asserted only when `total > 0`. Measured on production 2026-08-16
+(`backend/scripts/probe-so-overpay.mjs`, run 31938486974): **2,739 of 2,824**
+non-cancelled SOs carry `total_revenue_centi = 0` from the AutoCount cutover,
+and 2,687 of those have a positive `local_total_centi`. Subtracting the payments
+ledger from a zero total would paint **2,121** orders that are genuinely OWED
+money (RM 9,260,500 of it) as over-collections — HC-SO-012075 would read
+−RM 9,900 while actually owing RM 22,988. A total of 0 means *unknown*, never
+*worth nothing*.
+
+**The view was deliberately NOT changed.** `scm.mfg_sales_orders_with_payment_totals.balance_centi_live`
+keeps its `GREATEST(..., 0)`: it is the receivable, every one of its consumers
+wants it floored, and recreating that view is what took the SO list down in
+mig 0189 (an empty ACL on a new object, repaired by 0190 + 0191). The list's
+signed figure is stamped by the route instead, from `local_total_centi` and
+`paid_total_centi`, both already in `LIST_COLS`. **No migration in this PR.**
+
+**Where red actually renders:** the desktop SO detail's Payments summary
+(`PaymentsTable.tsx`, `.balanceOutstanding` + a `· OVER-COLLECTED` tag), the
+desktop SO list Balance column (`so-balance-display.ts` → `text-err`), and the
+SO PDF, where the row is drawn in red and relabelled `OVERPAID (CREDIT)` —
+"BALANCE DUE −RM 250" reads as a demand for money we owe the customer. The
+mobile SO detail needed no change: its Balance KPI already renders `#b23a3a` and
+now receives the signed figure through `deriveBalance`. The mobile SO LIST shows
+no per-row balance — it only sums `if (b > 0)`, which is an aggregate and stays
+floored.
+
 ### Delivery fee — every ringgit is a line (owner ruling 2026-08-07)
 
 
@@ -1350,7 +1415,7 @@ Schema: `scm` (vendored 2990 clone, 108 tables). Key tables:
 | `scm.mfg_sales_orders` | SO header (doc_no PK-ish, status, salesperson_id, totals in sen, so_date, delivery_state, amended_delivery_date, company_id) |
 | `scm.mfg_sales_order_items` | SO lines (item_group, stock_status, variants, warehouse_id) |
 | `scm.mfg_sales_order_payments` | payments ledger (so_doc_no FK, method, online_type) |
-| VIEW `scm.mfg_sales_orders_with_payment_totals` | header + `paid_total_centi` + `balance_centi_live` (Σ over payments) — the list reads this |
+| VIEW `scm.mfg_sales_orders_with_payment_totals` | header + `paid_total_centi` + `balance_centi_live` (Σ over payments, `GREATEST(..., 0)`) — the list reads this for its Outstanding KPI. The list's ROW Balance is `balance_signed_centi`, stamped by the route and allowed to go negative |
 
 Indexes that matter here:
 - `idx_msop_doc` on `mfg_sales_order_payments(so_doc_no)` — the payment-totals view's

@@ -25,6 +25,8 @@
 // implementation of a money rule is how the two worlds disagree quietly.
 // ----------------------------------------------------------------------------
 
+import { soBalanceOf, soReceivableOf } from './so-balance';
+
 /** The three reads the rule needs, in sen. */
 export interface SoPaidInputs {
   /** `scm.mfg_sales_orders.total_revenue_centi`. */
@@ -55,11 +57,29 @@ export function soPaidCenti(a: SoPaidInputs): number {
 }
 
 /**
- * What the order still owes, in sen. Never negative — an overpayment is a
- * credit, and AutoCount's own UDF_BALANCE is not where a credit belongs.
+ * The order's SIGNED balance, in sen. NEGATIVE when more has been collected
+ * than the order is worth.
+ *
+ * It used to be `Math.max(0, total - paid)`, and that floor is why the ERP
+ * refused an over-collection instead of showing one — owner's ruling
+ * 2026-08-16: over-collection is legal, the balance goes negative, the negative
+ * shows in red. The condition under which a negative may be asserted at all
+ * lives in `so-balance.ts`, shared byte-for-byte with the frontend so the two
+ * surfaces cannot answer differently.
+ */
+export function soBalanceCenti(a: SoPaidInputs): number {
+  return soBalanceOf(a.totalRevenueCenti, soPaidCenti(a));
+}
+
+/**
+ * What the order still owes, in sen. Never negative.
+ *
+ * The RECEIVABLE, as distinct from the balance above: this is the number that
+ * may be SUMMED across orders or gated on. A credit on one order must not pay
+ * down another customer's debt inside an Outstanding total.
  */
 export function soOutstandingCenti(a: SoPaidInputs): number {
-  return Math.max(0, a.totalRevenueCenti - soPaidCenti(a));
+  return soReceivableOf(a.totalRevenueCenti, soPaidCenti(a));
 }
 
 /**

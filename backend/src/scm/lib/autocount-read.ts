@@ -12,7 +12,7 @@
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { poSourceRef, poTransferShape, type PoTransferShape } from '../shared/po-transfer-shape';
-import { soOutstandingCenti } from '../shared/so-outstanding';
+import { soBalanceCenti } from '../shared/so-outstanding';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -51,6 +51,15 @@ export async function readOrThrow<T>(
  * wrote that as a payments-ledger row, so `total - SUM(payments)` reproduces
  * `UDF_BALANCE` for every imported order by construction.
  *
+ * IT MAY BE NEGATIVE, since 2026-08-16. The owner ruled that over-collection is
+ * legal, so the ERP now holds a credit as a negative balance and the book is
+ * told the same number the screen shows — the whole point of sharing this rule.
+ * The account book can take it: AutoCount's own extract carries a negative
+ * UDF_BALANCE on 47 of its 13,015 SO headers, so a credit is a value that field
+ * already holds, not one this write-back invents. Sending 0 instead would be
+ * the two-columns-one-truth defect this module exists to prevent, in its worst
+ * form — the ledger asserting a debt settled while the ERP shows a credit owed.
+ *
  * A FAILED READ THROWS rather than degrading to zero, and A MISSING TOTAL
  * ANSWERS `null`. Both guard the same trap from opposite sides: zero is not
  * "unknown", it is "this customer owes nothing", and writing it into a live
@@ -76,7 +85,7 @@ export async function readSoOutstandingCenti(
     ledgerPaidCenti += Number(p.amount_centi ?? 0);
     if (p.is_deposit) depositInLedger = true;
   }
-  return soOutstandingCenti({
+  return soBalanceCenti({
     totalRevenueCenti: total,
     headerDepositCenti: Number(h.deposit_centi ?? 0),
     ledgerPaidCenti,

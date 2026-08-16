@@ -11,6 +11,7 @@
 // ----------------------------------------------------------------------------
 
 import { todayMyt } from './dates';
+import { soBalanceOf } from '../../shared/so-balance';
 
 /* Terminal / downstream-carrying statuses — once the SO reaches one of these
    its header + line items are no longer ours to edit (SHIPPED onward once goods
@@ -105,10 +106,16 @@ export function amendmentEligible(header: SoDetailGateHeader, locked: boolean): 
   return Boolean(header.amendment_eligible) && !locked;
 }
 
-/* deriveBalance — outstanding balance in centi. Prefers the server-stamped
-   balance_centi; otherwise total (local_total ?? total_revenue) minus paid
-   (paid_centi_total, falling back to the sum of the payments ledger), floored
-   at 0. */
+/* deriveBalance — the order's SIGNED balance in centi. Prefers the
+   server-stamped balance_centi (GET /mfg-sales-orders/:docNo computes it with
+   the same rule); otherwise total (local_total ?? total_revenue) minus paid
+   (paid_centi_total, falling back to the sum of the payments ledger).
+
+   NEGATIVE when the customer has over-collected — owner 2026-08-16, and the
+   floor that used to sit here is gone. It is `soBalanceOf` and not
+   `Math.max(0, …)` because the condition under which a negative may be claimed
+   at all (a KNOWN positive total) is a rule, shared byte-for-byte with the
+   backend; re-deriving it here is how the two surfaces drift. */
 export function deriveBalance(
   header: SoDetailGateHeader,
   payments?: ReadonlyArray<{ amount_centi?: number | null }>,
@@ -117,5 +124,5 @@ export function deriveBalance(
   const total = header.local_total_centi ?? header.total_revenue_centi ?? 0;
   const paid = header.paid_centi_total
     ?? (payments ? payments.reduce((s, p) => s + (p.amount_centi ?? 0), 0) : 0);
-  return Math.max(0, total - paid);
+  return soBalanceOf(total, paid);
 }

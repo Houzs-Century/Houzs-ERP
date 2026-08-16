@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { soPaidCenti, soOutstandingCenti, soPaidInputsOf } from './so-outstanding';
+import { soPaidCenti, soBalanceCenti, soOutstandingCenti, soPaidInputsOf } from './so-outstanding';
 
 /* WHICH COLUMN is the load-bearing half of this module, not the arithmetic.
    `balance_centi` is the one that looks like the answer — the cutover's own
@@ -14,7 +14,7 @@ describe('the columns the rule reads off a mfg_sales_orders row', () => {
     );
     expect(inputs.totalRevenueCenti).toBe(500_00);
     expect(inputs.headerDepositCenti).toBe(100_00);
-    expect(soOutstandingCenti(inputs)).toBe(400_00);
+    expect(soBalanceCenti(inputs)).toBe(400_00);
   });
 
   test('an absent or non-numeric column reads as 0 rather than NaN', () => {
@@ -40,12 +40,12 @@ describe('what a sales order still owes', () => {
   };
 
   test('nothing paid means the whole total is outstanding', () => {
-    expect(soOutstandingCenti(base)).toBe(500_00);
+    expect(soBalanceCenti(base)).toBe(500_00);
     expect(soPaidCenti(base)).toBe(0);
   });
 
   test('the payments ledger is the paid amount', () => {
-    expect(soOutstandingCenti({ ...base, ledgerPaidCenti: 200_00 })).toBe(300_00);
+    expect(soBalanceCenti({ ...base, ledgerPaidCenti: 200_00 })).toBe(300_00);
   });
 
   /* The one case that needs a rule rather than a sum. Since the SO create path
@@ -63,16 +63,23 @@ describe('what a sales order still owes', () => {
     })).toBe(150_00);
   });
 
-  /* An overpayment is a credit, and `getCustomerCreditBalance` is where the ERP
-     keeps that. Both the view (GREATEST) and the detail route (Math.max) clamp,
-     so the write-back does too rather than inventing a negative balance in a
-     licensed ledger — note that AutoCount's own UDF_BALANCE DOES hold negatives
-     on 47 of the extract's 13,015 headers, and the ERP has no way to say that. */
-  test('an overpaid order is 0, never negative', () => {
+  /* CHANGED 2026-08-16, owner's ruling 「需要可以超收 negative 边红色」. This
+     used to assert `an overpaid order is 0, never negative`, on the reasoning
+     that a licensed ledger is no place to invent a negative — while noting, in
+     the same comment, that AutoCount's own UDF_BALANCE holds negatives on 47 of
+     the extract's 13,015 headers. The book could always say it; only the ERP
+     could not, so the ERP refused the money and an operator put RM 250 of cash
+     into a line price instead. The BALANCE is now signed; the floored figure
+     that aggregates and gates read is `soOutstandingCenti`, right below. */
+  test('an overpaid order reads NEGATIVE — that is the credit', () => {
+    expect(soBalanceCenti({ ...base, ledgerPaidCenti: 900_00 })).toBe(-400_00);
+  });
+
+  test('the RECEIVABLE stays floored at 0, so no aggregate absorbs the credit', () => {
     expect(soOutstandingCenti({ ...base, ledgerPaidCenti: 900_00 })).toBe(0);
   });
 
   test('a zero-total order owes nothing', () => {
-    expect(soOutstandingCenti({ ...base, totalRevenueCenti: 0 })).toBe(0);
+    expect(soBalanceCenti({ ...base, totalRevenueCenti: 0 })).toBe(0);
   });
 });

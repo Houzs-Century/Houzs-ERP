@@ -39,6 +39,7 @@ import { todayMyt, mytDayOf } from '../lib/dates';
    the button and the endpoint cannot disagree about whether the window is open
    (Owner 2026-07-19). */
 import { paymentRowMutable } from '../lib/so-field-policy';
+import { soBalanceOf, soReceivableOf } from '../../shared/so-balance';
 import {
   PAYMENT_METHOD_CODE_TO_VALUE,
   PAYMENT_METHOD_DEFAULT_LABELS,
@@ -564,7 +565,12 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
     const paidNow =
       persistedPayments.reduce((s, p) => s + (p.amount_centi || 0), 0) +
       drafts.reduce((s, dr) => s + (dr.amountCenti || 0), 0);
-    const outstanding = Math.max(0, grandTotal - paidNow);
+    /* soReceivableOf, not soBalanceOf: this is a DEFAULT typed into a money
+       input, and pre-filling a negative would have the operator "confirm" a
+       refund they did not intend. An already-settled order seeds 0 and the
+       operator types the amount — which is exactly how an over-collection is
+       now recorded. */
+    const outstanding = soReceivableOf(grandTotal, paidNow);
     const d = { ...newPaymentDraft(defaultStaffId), amountCenti: outstanding };
     if (isSaved) {
       setSavedDrafts((prev) => [...prev, d]);
@@ -815,7 +821,11 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
   const paidCenti = isSaved
     ? persistedPayments.reduce((sum, p) => sum + (p.amount_centi || 0), 0)
     : drafts.reduce((sum, d) => sum + (d.amountCenti || 0), 0);
-  const balanceCenti = Math.max(0, grandTotal - paidCenti);
+  /* SIGNED since 2026-08-16 (owner: over-collection is legal, the balance goes
+     negative and shows red). The floor that stood here is why the SO detail
+     could not show a credit at all. The seeded amount on a NEW row further up
+     stays floored — you never pre-fill a negative into a money input. */
+  const balanceCenti = soBalanceOf(grandTotal, paidCenti);
 
   const staffNameById = (id: string | null): string | null => {
     if (!id) return null;
@@ -1512,9 +1522,15 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
             <span className={paymentsStyles.summaryLabel}>
               Balance <DollarSign size={12} strokeWidth={1.75} />
             </span>
-            <span className={balanceCenti > 0 ? paymentsStyles.balanceOutstanding : paymentsStyles.balanceClear}>
+            {/* RED on both sides of zero, and for opposite reasons: money still
+                owed, or money collected that the order cannot account for.
+                Green is reserved for exactly settled. */}
+            <span className={balanceCenti !== 0 ? paymentsStyles.balanceOutstanding : paymentsStyles.balanceClear}>
               {fmtRm(balanceCenti, currency)}
-              {grandTotal > 0 && paidCenti >= grandTotal && (
+              {balanceCenti < 0 && (
+                <span style={{ marginLeft: 8, fontSize: 'var(--fs-11)' }}>· OVER-COLLECTED</span>
+              )}
+              {balanceCenti === 0 && grandTotal > 0 && paidCenti >= grandTotal && (
                 <span style={{ marginLeft: 8, fontSize: 'var(--fs-11)' }}>· PAID</span>
               )}
             </span>

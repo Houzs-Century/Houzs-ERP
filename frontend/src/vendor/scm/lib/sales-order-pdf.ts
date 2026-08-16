@@ -23,6 +23,7 @@ import {
   type PdfAction,
 } from './pdf-common';
 import { billToBlock } from './pdf-party-blocks';
+import { soBalanceOf } from '../../shared/so-balance';
 import { loadFabricDescriptionMap, loadFabricSupplierMap } from './supplier-doc-data';
 import { composeSoLineDescription } from './so-line-description';
 import {
@@ -629,7 +630,10 @@ export async function renderSalesOrderInto(
   const paidCenti = typeof header.paid_centi_total === 'number'
     ? header.paid_centi_total
     : payments.reduce((sum, p) => sum + (p.amount_centi || 0), 0);
-  const balanceCenti = Math.max(0, subtotalCenti - paidCenti);
+  /* SIGNED since 2026-08-16 (owner: over-collection is legal). The floor here
+     printed RM 0.00 on a customer's own document while their money sat with us
+     unaccounted for — the one place that silence is least defensible. */
+  const balanceCenti = soBalanceOf(subtotalCenti, paidCenti);
   if (ty > 240) { doc.addPage(); ty = margin; }
   const awTopY = ty;
   const totalsX = pageW - margin - 70;
@@ -648,7 +652,15 @@ export async function renderSalesOrderInto(
   doc.setDrawColor(0);
   doc.line(totalsX, ty, pageW - margin, ty);
   doc.setFontSize(11);
-  drawRow('BALANCE DUE', fmtRm(balanceCenti, header.currency), ty + 5, true);
+  /* RED, and re-labelled, when the customer is in credit: "BALANCE DUE" beside
+     a negative number reads as a demand for money we owe THEM. The colour is
+     reset immediately so nothing after this line inherits it. */
+  if (balanceCenti < 0) doc.setTextColor(184, 51, 31);
+  drawRow(
+    balanceCenti < 0 ? 'OVERPAID (CREDIT)' : 'BALANCE DUE',
+    fmtRm(Math.abs(balanceCenti), header.currency), ty + 5, true,
+  );
+  doc.setTextColor(0);
   ty += 12;
 
   // Expected-deposit line — only shown when the commander has set one

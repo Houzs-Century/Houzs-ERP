@@ -81,7 +81,8 @@ import { splitSofaBuildIntoModuleLines, distributeBuildDiscount } from '../share
    so every surface ranks identically. */
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
-import { soPaidCenti, soOutstandingCenti, soPaidInputsOf } from '../shared/so-outstanding';
+import { soPaidCenti, soBalanceCenti, soPaidInputsOf } from '../shared/so-outstanding';
+import { soBalanceOf } from '../shared/so-balance';
 /* Task 5 — mint one-shot SKUs at SO create when a line carries an extra add-on
    charge (gated by so_settings.pos_remark_extra_auto_sku). Pure code-resolution
    + row-build lives in the lib; this route batches the DB collision check. */
@@ -1426,6 +1427,17 @@ mfgSalesOrders.get('/', async (c) => {
        · isFullyReady     — every non-cancelled line READY (chip column shows "READY")
      We hand the per-row arrays back so the UI doesn't need a second round-trip. */
   const rows = (data ?? []) as Array<{ doc_no?: string } & Record<string, unknown>>;
+  /* SIGNED balance for the list's Balance column (owner 2026-08-16). Additive:
+     the view's `balance_centi_live` keeps its floored meaning for everything
+     that AGGREGATES or GATES on it — the Outstanding KPI below, delivery
+     planning's release gate — and this new field is the one a human reads.
+     Computed here rather than by unfloring the view because recreating that
+     view is what took the SO list down in mig 0189, and because its minuend
+     (local_total_centi) and subtrahend (paid_total_centi) are both already in
+     LIST_COLS. Rule + the total>0 condition: scm/shared/so-balance.ts. */
+  for (const r of rows) {
+    r.balance_signed_centi = soBalanceOf(Number(r.local_total_centi ?? 0), Number(r.paid_total_centi ?? 0));
+  }
   const docNos = rows.map((r) => r.doc_no).filter((x): x is string => !!x);
   if (docNos.length > 0) {
     /* PERF: every per-doc_no enrichment read below only needs `docNos`, so they
@@ -2704,7 +2716,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     // Authoritative received-to-date + remaining balance for the detail page
     // and the customer-facing print (so-doc.ts reads paid_centi_total).
     paid_centi_total: paidCentiTotal,
-    balance_centi: soOutstandingCenti(paidInputs),
+    balance_centi: soBalanceCenti(paidInputs),
   };
   /* Owner batch 2026-07 — resolve the salesperson's display name + contact
      phone (scm.staff) so the SO PDF's ORDER DETAILS can print "Salesperson:
@@ -10881,24 +10893,9 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     }
   }
 
-  /* Spec D6 — server-side overpayment guard. The SO total is authoritative;
-     Σ(ledger) + this payment may never exceed it. Honest error: the client
-     shows the remaining balance. */
-  const { data: soTotalRow, error: totalErr } = await sb
-    .from('mfg_sales_orders').select('total_revenue_centi').eq('doc_no', docNo).maybeSingle();
-  if (totalErr) return c.json({ error: 'lookup_failed', reason: totalErr.message }, 500);
-  const totalCenti = Number((soTotalRow as { total_revenue_centi: number | null } | null)?.total_revenue_centi ?? 0);
-  const { data: paidRows, error: paidErr } = await sb
-    .from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo);
-  if (paidErr) return c.json({ error: 'lookup_failed', reason: paidErr.message }, 500);
-  const paidCenti = (paidRows ?? []).reduce((s, r) => s + Number((r as { amount_centi: number }).amount_centi ?? 0), 0);
-  if (totalCenti > 0 && paidCenti + p.amountCenti > totalCenti) {
-    return c.json({
-      error: 'over_payment',
-      reason: `Payment exceeds the order total. Balance: ${((totalCenti - paidCenti) / 100).toFixed(2)}`,
-      balanceCenti: Math.max(0, totalCenti - paidCenti),
-    }, 400);
-  }
+  /* NO OVERPAYMENT GUARD. Spec D6's `over_payment` 400 stood here and is gone
+     (owner's ruling 2026-08-16); BUG-HISTORY carries the trace and why a
+     warning / permission was rejected in favour of removal. */
 
   /* Owner 2026-07-13 — the slip is OPTIONAL here, and since 2026-08-13 it is
      optional on EVERY SO path, so this route is no longer the loose end of a
@@ -11159,28 +11156,8 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     }
   }
 
-  /* Overpayment guard (mirror POST) — Σ(other rows) + this row's new amount may
-     not exceed the SO total. Excludes THIS payment from the prior sum. */
-  if (p.amountCenti !== undefined) {
-    const { data: soTotalRow, error: totalErr } = await sb
-      .from('mfg_sales_orders').select('total_revenue_centi').eq('doc_no', docNo).maybeSingle();
-    if (totalErr) return c.json({ error: 'lookup_failed', reason: totalErr.message }, 500);
-    const totalCenti = Number((soTotalRow as { total_revenue_centi: number | null } | null)?.total_revenue_centi ?? 0);
-    const { data: paidRows, error: paidErr } = await sb
-      .from('mfg_sales_order_payments').select('id, amount_centi').eq('so_doc_no', docNo);
-    if (paidErr) return c.json({ error: 'lookup_failed', reason: paidErr.message }, 500);
-    const othersCenti = (paidRows ?? []).reduce(
-      (s, r) => s + (String((r as { id: string }).id) === String(id) ? 0 : Number((r as { amount_centi: number }).amount_centi ?? 0)),
-      0,
-    );
-    if (totalCenti > 0 && othersCenti + nextAmount > totalCenti) {
-      return c.json({
-        error: 'over_payment',
-        reason: `Payment exceeds the order total. Balance: ${((totalCenti - othersCenti) / 100).toFixed(2)}`,
-        balanceCenti: Math.max(0, totalCenti - othersCenti),
-      }, 400);
-    }
-  }
+  /* NO OVERPAYMENT GUARD — removed with POST's twin (owner 2026-08-16). Editing
+     a recorded amount UP past the total is the same legal act as recording one. */
 
   const { data: updated, error: updErr } = await sb
     .from('mfg_sales_order_payments')

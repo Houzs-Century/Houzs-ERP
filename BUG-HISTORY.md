@@ -1,3 +1,104 @@
+## An over-collection was refused, so the cash was booked into item value instead [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Owner ruling 2026-08-16, verbatim:** 「需要可以超收 negative 边红色」 —
+over-collection must be ALLOWED, the balance shows NEGATIVE, and the negative
+shows in RED.
+
+**Symptom.** A payment that would take a sales order past its own total was
+refused with `400 over_payment`, and a negative balance could not be displayed
+anywhere even if one existed.
+
+**Root cause (traced, from `scm.mfg_so_audit_log` on the owner's own order
+HC-SO-2608-002 — not from reading the route).** Two independent halves:
+
+1. `mfg-sales-orders.ts` POST `/:docNo/payments` and PATCH
+   `/:docNo/payments/:id` each held Spec D6's guard,
+   `if (totalCenti > 0 && paid + amount > total) -> 400 over_payment`.
+2. every reader of the balance floored it — `GREATEST(local_total − Σpay, 0)` in
+   `scm.mfg_sales_orders_with_payment_totals`, and `Math.max(0, …)` in
+   `soOutstandingCenti`, in `deriveBalance`, in `PaymentsTable`'s summary and in
+   the SO PDF. A credit had nowhere to be represented, let alone shown.
+
+The audit log has the consequence, timestamped:
+
+```
+08-13 10:05:31  CREATE          localTotalCenti 400000   (RM 4,000)
+08-13 10:05:37  ADD_PAYMENT     200000
+08-16 08:26:22  UPDATE_LINE     JAGER-(K)  unitPriceCenti 0 -> 25000,
+                                specialOrderPriceSen 25000,
+                                customSpecials += {"Right Drawer", 25000}
+08-16 08:27:38  ADD_PAYMENT     225000  — ACCEPTED
+```
+
+Before the line edit `200000 + 225000 > 400000` was refused; after it,
+`425000 > 425000` is false, so the money booked. **RM 250 of CASH was recorded
+by inflating the ORDER** — it now sits in revenue, margin, the AutoCount
+document and the customer's own printed copy as a "Right Drawer" that does not
+exist. The guard did not prevent the over-collection; it chose where the error
+would land.
+
+**Fix.**
+
+- **Both guards removed** (not warned, not permissioned). The refusal fell on
+  the person holding the cash, which is precisely who must be able to record it;
+  a permission would have reproduced it for the same staff. The red negative
+  balance is the signal.
+- **One rule, two numbers**, in the new `scm/shared/so-balance.ts` (mirrored
+  byte-for-byte to `frontend/src/vendor/shared/so-balance.ts`, refereed by
+  `so-balance.canonical.test.ts`): `soBalanceOf` is SIGNED and is what a human
+  reads; `soReceivableOf` is floored at 0 and is what anything that SUMS or
+  GATES reads. The five hand-written `total - paid` floors now call one of the
+  two by name.
+- **A negative is asserted only when `total > 0`**, and that condition is the
+  reason this is not a one-line unfloor. Production, 2026-08-16
+  (`backend/scripts/probe-so-overpay.mjs`, GitHub Actions run 31938486974):
+  **2,739 of 2,824** non-cancelled SOs carry `total_revenue_centi = 0` from the
+  AutoCount cutover. Dropping the floor blindly would paint **2,121 orders that
+  are genuinely owed RM 9,260,500** as over-collections (HC-SO-012075 would read
+  −RM 9,900 while actually owing RM 22,988). A total of 0 is *unknown*, not
+  *worth nothing*.
+- **The view was NOT touched.** `balance_centi_live` keeps its `GREATEST(...,0)`
+  — every one of its consumers (the Outstanding KPI, delivery planning's release
+  gate, the "outstanding only" filters) wants the receivable, and recreating
+  that view is what took the SO list down in mig 0189. The list's signed figure
+  is stamped by the route from `local_total_centi` and `paid_total_centi`, both
+  already in `LIST_COLS`. **No migration, and no aggregate moved.**
+- **AutoCount's `UDF_BALANCE` now receives the negative.** The old comment said
+  "negative is not expressible" while recording, four lines earlier, that the
+  book holds one on 47 of its 13,015 headers. It was the ERP that could not say
+  it. Sending 0 while the screen shows −RM 250 would be this module's own
+  two-columns-one-truth defect at its worst.
+- **Red, where it renders:** desktop SO detail Payments summary (`·
+  OVER-COLLECTED`), desktop SO list Balance column, and the SO PDF, relabelled
+  `OVERPAID (CREDIT)` because "BALANCE DUE −RM 250" reads as a demand for money
+  we owe them. Mobile SO detail needed no change (its Balance KPI was already
+  red and now gets the signed value); the mobile SO list draws no per-row
+  balance.
+
+**Tests.** `backend/tests/soOverCollectionAllowed.test.ts` drives the real
+handler over a faked PostgREST client: on `main` the over-payment gets **400
+`over_payment`** with **0** rows written; with this change **201**, **1** row in
+`mfg_sales_order_payments`, and the balance reads **−RM 250.00**. The third case
+is the regression that matters — the route may write the payments ledger, the
+audit log and the outbox, and **must not** touch `mfg_sales_orders` totals or
+any line, which is the mechanism that corrupted HC-SO-2608-002.
+`so-outstanding.test.ts`'s `an overpaid order is 0, never negative` is now `an
+overpaid order reads NEGATIVE` (**0 → −40000** on the same inputs), with the
+floored receivable pinned beside it.
+
+**NOT changed, deliberately:** line prices, specials and `recomputeTotals` —
+nothing here makes writing money into item value any easier; the delivery-
+planning release gate and board balance (still the floored receivable);
+`scm.mv_ar_aging` / `GET /outstanding/summary`, whose `so` module sums
+`local_total_centi` and never saw the clamp; `GET /ar-aging`, which is
+sales-invoice based. **What an accountant should check:** HC-SO-2608-002's
+JAGER-(K) line — the RM 250 "Right Drawer" is cash, not goods, and this PR does
+not unwind it.
+
+**Ref.** fix/allow-overcollection, 2026-08-16.
+
 ## A PV reversal of a line-less entry posted a zero-line reversal header [medium]
 
 <!-- area: Accounting + GL -->
