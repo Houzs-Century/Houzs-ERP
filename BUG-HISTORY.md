@@ -141,6 +141,57 @@ belongs to the export rather than the function.
 The first of the three new cases was observed RED with the mirror removed.
 
 **Ref.** 2026-08-16, PR #2280.
+## The SO pricing envelope asked which DOOR you logged in through, not who you are [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** The same person got two different answers about the same sales
+order depending on which door their token was minted at. A salesperson who
+signed in at the POS PIN door and opened the order in the ERP was refused a
+delivery-fee change from 250 to 125 (`422 so_total_below_original`); the same
+person signing in with their password at the ERP door was allowed it. Owner,
+having now said it three times: 「进了这个 ERP 就跟这个 ERP 的规矩。」
+
+**Root cause (traced).** Twelve behaviours across nine call sites in
+`scm/routes/mfg-sales-orders.ts` hung off ONE expression —
+`isPosTabletCaller(c)` = `c.get('sessionOrigin') === SESSION_ORIGIN_POS`. That
+is a question about the DOOR, and it was being used to answer three questions
+that are not the same question and only one of which the door can answer:
+whether the caller may author a selling price (3 sites), whether the caller may
+reduce a customer's bill (5 emitters), and whether the caller's submitted price
+is a stale catalog cache (4 emitters). Because the ERP door stamps no origin,
+the first two ALSO fell open for every desktop / mobile / invite / TOTP session
+— so the money floor protected nothing anywhere except the tablet. PR #2308
+closed the one path by which a POS-stamped session reached the ERP; that fixed
+the door and left the question.
+
+**Fix.** The two AUTHORITY questions moved to a grantable permission,
+`scm.so.price_authority` (`lib/houzs-perms.ts` `maySetSellingPrice` /
+`mayReduceSoTotal`), so they give the same answer on the tablet and in the ERP.
+The third stays on the origin, renamed `isPosAppClient` to state the question it
+actually answers — drift asks whether the CLIENT computed the price from a
+catalog fetch, which is true of the POS cart app and false of a human typing
+into a form; post-#2308 `/pin-login` is the only writer of the origin, so it
+identifies that client exactly. The new key is OR-ed with the existing
+`scm.so.price_override` so nobody the owner had already trusted with the audited
+hand-override route loses pricing on deploy. The headless scan job has no
+permissions stash and would have failed closed, overwriting an OCR draft's
+transcribed slip prices with catalogue figures, so `SoCreateContext` gained a
+REQUIRED `pricingAuthority` field (CLAUDE.md's decides-something-is-required
+rule) which `createDraftSalesOrder` passes as `true`.
+
+**What this DOES change on deploy, deliberately:** a caller with no origin — an
+ERP or mobile session — no longer prices freely just for being "not POS". Every
+position that does not hold `scm.so.price_authority` or `scm.so.price_override`
+is now held to the money floor in the ERP as well as on the tablet. That is the
+protection the floor was written for, applied for the first time to the surface
+where the money actually moves. Granting it back to a position is one checkbox
+in Team > Positions.
+
+**Ref.** this PR, 2026-08-16. `backend/src/scm/routes/mfg-sales-orders.ts`,
+`backend/src/scm/lib/houzs-perms.ts`, `backend/src/services/permissions.ts`,
+`backend/src/scm/env.ts`, `backend/tests/soPriceAuthorityPermission.test.ts`.
+
 ## Refusing an over-payment pushed the money onto the customer's line items [high]
 
 <!-- area: Sales orders + pricing -->

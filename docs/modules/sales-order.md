@@ -1121,24 +1121,58 @@ id, so a name appeared on screen with nothing behind it.
 columns resolve to one Agent, and why a create with neither is refused rather
 than sent.
 
-### Selling-price authoring — who may set the line price
+### Selling-price authoring — who may set the line price (SURFACE CHANGE 2026-08-16)
 
-The unit selling price is **operator-authored** and the trust gate is by SESSION,
-not role (Owner ruling, `mfg-sales-orders.ts` `isPosTabletCaller`):
-- **POS-tablet session** (`origin='pos'`, minted at `/api/pos/pin-login`): the
-  server recomputes the authoritative catalog price and **drift-rejects (400)** a
-  deviating client price — the anti-tamper non-negotiable. (Empty until the 2990
-  POS repoints here.)
-- **Every other session** (desktop web ERP, mobile, invite, TOTP): **not POS →
-  never drift-rejected.** Owner ruling 2026-07: a salesperson may hand-type the
-  price. `recomputeFromSnapshot(..., trustOperatorSelling=true)` — passed on the
-  create / add-line / patch paths as `!isPosTabletCaller` — persists the operator's
-  entered price instead of normalising a catalog line to `sell_price_sen` (client
-  0 = "not provided" still fills the catalog price). COST stays a server snapshot.
+> Owner ruling, stated three times: 「进了这个 ERP 就跟这个 ERP 的规矩。」
+
+The pricing envelope used to ask ONE question — `sessionOrigin === 'pos'`, the
+DOOR the token was minted at — and derive three answers from it, so the same
+person was refused on the tablet and allowed in the ERP. It now asks **three
+questions separately**, because they are not the same question. The header above
+`isPosAppClient` in `mfg-sales-orders.ts` is the long form.
+
+| # | question | shape | decided by | drives |
+|---|---|---|---|---|
+| 1 | may this PERSON author a selling price? | authority | `maySetSellingPrice` (`scm.so.price_authority`) | `trustOperatorSelling` — 3 recompute call sites |
+| 2 | may this PERSON reduce a customer's bill? | authority | `mayReduceSoTotal` (same key today, own function) | `so_total_below_original` 422 — 5 emitters |
+| 3 | is THIS CLIENT's price a stale cache? | client | `isPosAppClient` (`sessionOrigin === 'pos'`) | `pricing_drift` 400 — 4 emitters |
+
+- **Questions 1 and 2 are the same on every surface.** A holder of
+  `scm.so.price_authority` prices freely and may lower a total from the POS
+  tablet AND from the ERP; a non-holder may do neither, from either. This is the
+  ruling: the answer follows the person, not the door.
+- **`scm.so.price_authority` is a SIBLING of `scm.so.price_override`, not a
+  reuse.** `price_override` opens the audited `/override` route (one line, one
+  `mfg_so_price_overrides` row); widening it silently would have turned every
+  holder of a narrow audited verb into a free-pricing author. Both helpers OR the
+  two keys, so a position already trusted with `price_override` keeps pricing on
+  deploy without a new grant. Held otherwise by Owner + IT Admin via `*`; grant
+  it to a position in **Team > Positions**.
+- **Question 3 stays on the origin deliberately.** Drift means "the price you
+  computed from a catalog fetch has moved — refresh". Only the POS cart /
+  configurator computes a price that way; on the ERP and mobile forms a human
+  TYPES it (`MobileNewSO.tsx` — free input), so a difference is intentional and a
+  400 would be a false refusal. Putting drift on a permission breaks it in BOTH
+  directions: an authorised person's stale cart saves silently at the wrong
+  price, an unauthorised person's typed price 400s. Since #2308,
+  `/api/pos/pin-login` is the ONLY writer of `origin='pos'` and
+  `/exchange-web-session` no longer carries it, so the origin identifies the POS
+  app exactly.
+- **The headless scan job asserts question 1 rather than asking it.**
+  `SoCreateContext.pricingAuthority` is REQUIRED (CLAUDE.md's
+  decides-something-is-required rule); `createDraftSalesOrder` passes `true`
+  because an OCR draft's prices are transcribed off a handwritten slip, and there
+  is no permissions stash and no person in that request to ask. Its
+  `sessionOrigin` stays `undefined`, so it is never drift-rejected either.
+- **`recomputeFromSnapshot`'s trust argument is unchanged**, including
+  `'including-zero'` for migrated documents — only WHO gets `true` moved.
 - **Frontend gate**: `SoLineCard` / `MobileNewSO` `canEditPrice = isAdminLevel ||
-  isHatchSales`; the Houzs bridge (`vendor/scm/lib/auth.ts`) now returns
-  `isHatchSales` true for `sales` (+ `super_admin`), so the price input is editable
-  for salespersons on both surfaces.
+  isHatchSales`; the Houzs bridge (`vendor/scm/lib/auth.ts`) returns
+  `isHatchSales` true for `sales` (+ `super_admin`), so the price input is
+  editable for salespersons on both surfaces. **This is now looser than the
+  server** for a salesperson without `scm.so.price_authority`: the input accepts
+  a lower figure and the save is refused. Surfacing that 422 is tracked with the
+  `authed-fetch.ts` message work, not here.
 
 ### The payment slip is OPTIONAL on every SO path (owner ruling 2026-08-13, SURFACE CHANGE)
 

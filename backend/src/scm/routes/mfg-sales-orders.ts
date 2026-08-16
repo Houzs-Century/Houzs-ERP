@@ -108,7 +108,7 @@ import { monthBoundsMy, rangeBoundsMy, todayMyt, mytDateOf } from '../lib/my-tim
 // (canViewAllSales / isSelfScopedSales removed — replaced by flat permission
 // gates `scm.so.view_all` / `scm.so.attribute_other` against the REAL Houzs
 // caller; see lib/houzs-perms.ts.)
-import { hasHouzsPerm, canViewAllSales, isSalesCaller, canViewScmFinance } from '../lib/houzs-perms';
+import { hasHouzsPerm, canViewAllSales, isSalesCaller, canViewScmFinance, maySetSellingPrice, mayReduceSoTotal } from '../lib/houzs-perms';
 /* The POS session-origin sentinel (mig 0120). Imported rather than re-typed as
    a literal so the value the POS door WRITES and the value this route READS
    cannot drift apart — a typo on either side would silently disarm the pricing
@@ -612,82 +612,76 @@ function norm(v: unknown): string {
   return v === null || v === undefined ? '' : String(v);
 }
 
-/* Pricing trust boundary (Owner 2026-05-31).
-   The selling unit price is operator-authored on the Backend SO form, and the
-   owner ruled the selling price legitimately varies per order. So a Backend /
-   office author may set ANY selling price: the server still recomputes COST,
-   but it PERSISTS the operator's selling figure and never drift-rejects it.
+/* ── THE THREE QUESTIONS THE SO PRICING ENVELOPE ASKS ───────────────────────
+   Owner ruling 2026-08-16, stated three times:
+   「为什么我们要跟着 POS 的规矩?进了这个 ERP 就跟这个 ERP 的规矩。」
 
-   The POS tablet stays on the server-authoritative selling price + >0.5% drift
-   reject — the CLAUDE.md anti-tamper non-negotiable (a tampered POS must never
-   submit a doctored low total). Returns true ONLY for a POS-tablet caller;
-   every Backend / office author returns false and is trusted to price freely.
+   Until this change all three answers came from ONE expression —
+   `sessionOrigin === 'pos'`, the DOOR the token was minted at. That asks
+   neither "which system am I in" nor "who is this", so the same person got a
+   different answer on the tablet and in the ERP. The three are now asked
+   separately, because they are not the same question:
 
-   ── HOUZS IDENTIFICATION (POS cutover, 2026-07) ────────────────────────────
-   2990 keyed this on `scm.staff.role` (POS_TABLET_ROLES = sales /
-   sales_executive / outlet_manager). That lookup is DEAD here, and must NOT be
-   revived against the real caller either:
-     · The SCM auth bridge pins every caller's `user.id` to ONE super_admin
-       system staff row (scm/middleware/auth.ts), so the role read super_admin
-       for everybody and the gate fired for nobody.
-     · Gating on the REAL caller (houzsUser position/department) CANNOT work:
-       2990 could assume role ⇒ device (a `sales` role only ever touched the POS
-       tablet). Houzs breaks that mapping. routes/pos.ts /pin-login mints a
-       session for the SAME public.users row the person signs into desktop and
-       mobile with, and the mobile SO form lets a salesperson TYPE any selling
-       price (MobileNewSO.tsx — the price is a free input). Position-gating
-       would drift-reject live Sales staff on mobile; worse,
-       pmsAccess.SALES_POSITION (/^sales/i) also matches OFFICE authors such as
-       "Sales Director" and "Sales Coordinator" on the desktop SO form.
+     1. May this person author a selling price at all?   AUTHORITY.
+        lib/houzs-perms.ts maySetSellingPrice (scm.so.price_authority).
+        Drives `trustOperatorSelling` on create / add-line / patch.
+     2. May this person reduce a customer's bill?        AUTHORITY.
+        lib/houzs-perms.ts mayReduceSoTotal (same key today, own function).
+        Drives the five `so_total_below_original` 422 floors.
+     3. Is THIS CLIENT's submitted price a stale cache?  CLIENT, not person.
+        `isPosAppClient` below. Drives the four `pricing_drift` 400s.
 
-   ONE PRINCIPAL, THREE DEVICES: the person is identical across all of them, so
-   the POS-ness of a write is a property of the SESSION and nothing else. That
-   is what `sessionOrigin` is (services/auth.ts SessionOrigin, mig 0120): the
-   DOOR the token was minted at, stamped server-side at /api/pos/pin-login.
+   WHY 3 STAYS CLIENT-SHAPED. Drift compares a client-submitted unit price
+   against the server recompute and answers "refresh and try again". That only
+   means anything when the client COMPUTED the price from a catalog it fetched
+   earlier — the POS cart / configurator. On the ERP and mobile SO forms a human
+   TYPES the figure (MobileNewSO.tsx — the price is a free input), so a
+   difference from the catalog is intentional, never staleness, and a 400 there
+   is a false refusal. Putting drift on a permission would break it in BOTH
+   directions: an authorised person's stale cart would save silently at the
+   wrong price, and an unauthorised person's freshly typed price would 400.
+   Post-#2308 the origin answers question 3 exactly — `/pin-login` is the ONLY
+   writer of SESSION_ORIGIN_POS and `/exchange-web-session` no longer carries
+   it — so a token stamped `origin='pos'` is held by the POS app and nothing
+   else. The name below states that question; it is not an authority claim.
 
-   ── THREAT MODEL — READ THIS BEFORE TRUSTING THE GATE ──────────────────────
-   DEFENDS (the 2990 anti-tamper non-negotiable — a tampered POS must never
-   submit a doctored low total): every request bearing a POS-minted token is
-   price-checked, unconditionally. Patching the tablet's JS, replaying its token
-   from curl, or hand-rolling the payload all still carry that token, and the
-   origin rides the session row, not the request — there is no field to strip,
-   spoof or omit. The predecessor of this gate read a self-asserted
-   `X-Client: pos-tablet` header, which a hostile client escaped by simply not
-   sending it. That escape is now closed: a caller cannot shed what it never
-   sent.
+   ANTI-TAMPER, intact for question 3: the origin rides the session row, not the
+   request, so a tampered tablet has no field to strip, spoof or omit. The
+   predecessor of this gate read a self-asserted `X-Client: pos-tablet` header,
+   which a hostile client escaped by simply not sending it.
 
-   DOES NOT DEFEND — and this is a POLICY boundary, not an oversight: a person
-   who knows their own Houzs PASSWORD can log in at the desktop/mobile door,
-   get an origin-less session, and price freely. That is the owner's explicit
-   ruling (selling price varies per order; the mobile SO form is a free price
-   input), not a hole this gate leaks. The gate binds the DEVICE, which is what
-   2990 ever promised; it does not and cannot bind the HUMAN. If office/mobile
-   authoring should also be price-checked, that is a separate owner ruling with
-   a much larger blast radius — do not smuggle it in here.
+   WHAT MOVED, PLAINLY. Questions 1 and 2 no longer fail OPEN for an origin-less
+   session. Before, every desktop / mobile / invite / TOTP caller was trusted to
+   price and to discount purely because they were "not POS"; now they need the
+   key, in the ERP as well as on the tablet — which is what makes "in the ERP,
+   ERP rules" true rather than incidentally true. The one caller that
+   legitimately holds no permissions stash is the headless scan job, and it does
+   NOT reach the permission helpers: SoCreateContext carries an explicit
+   `pricingAuthority` field and createDraftSalesOrder passes true, because an OCR
+   draft's prices come off a handwritten slip — there is no client cache and no
+   person in the request.
 
-   Also undefended, unchanged and out of scope: anyone who can write the
-   `sessions` table or hold the DASHBOARD_API_KEY is already past every gate in
-   this app.
-
-   ── FAIL-OPEN, deliberately ────────────────────────────────────────────────
-   Any session WITHOUT origin='pos' reads as NOT-POS, so no drift check. That
-   covers: every session minted before mig 0120, every desktop/mobile/invite/
-   TOTP login, the DASHBOARD_API_KEY service caller, and the headless scan job.
-   Fail-closed is not an option: each of those is an operator-authored price
-   surface that would 400 on a perfectly legitimate price. Blast radius is
-   therefore exactly the set of callers holding a POS-minted session — until
-   the 2990 POS actually repoints here, that set is EMPTY and this gate is
-   inert by construction. */
+   WHY NOT POSITION-GATE. 2990 keyed this on `scm.staff.role` (POS_TABLET_ROLES
+   = sales / sales_executive / outlet_manager); that lookup is dead here because
+   the SCM auth bridge pins every caller's `user.id` to ONE super_admin staff
+   row, so the role read super_admin for everybody and the gate fired for
+   nobody. Gating on the REAL caller's POSITION is no better —
+   `pmsAccess.SALES_POSITION` (/^sales/i) also matches OFFICE authors such as
+   "Sales Director" and "Sales Coordinator". The grantable permission matrix is
+   the one hinge that separates them and that the owner can move without a
+   deploy. */
 
 /* Structural caller source — satisfied by the real Hono context AND by
-   mfg-sales-orders' SoCreateContext (the headless scan job), exactly like
-   lib/houzs-perms' HouzsUserSource. Only `get('sessionOrigin')` is required:
-   the origin is the ONE fact this gate may consult, and narrowing the
-   parameter to it is what stops a later edit from quietly reaching for a
-   self-asserted header again. */
+   mfg-sales-orders' SoCreateContext, exactly like lib/houzs-perms'
+   HouzsUserSource. Only `get('sessionOrigin')` is required: the origin is the
+   ONE fact this predicate may consult, and narrowing the parameter to it is
+   what stops a later edit from quietly reaching for a self-asserted header. */
 type PosCallerSource = { get(key: 'sessionOrigin'): Variables['sessionOrigin'] };
 
-async function isPosTabletCaller(c: PosCallerSource): Promise<boolean> {
+/** Question 3 — is the caller the POS APP (cart / configurator), whose
+ *  submitted price came from a catalog cache that may have moved since? Never
+ *  an authority claim; see maySetSellingPrice / mayReduceSoTotal for those. */
+export function isPosAppClient(c: PosCallerSource): boolean {
   return c.get('sessionOrigin') === SESSION_ORIGIN_POS;
 }
 
@@ -3191,11 +3185,21 @@ export type SoCreateContext = {
   get(key: 'supabase'): Variables['supabase'];
   get(key: 'user'): { id: string; user_metadata?: unknown };
   get(key: 'houzsUser'): Variables['houzsUser'];
-  /* Session origin (mig 0120) — read ONLY by isPosTabletCaller. The HTTP route
-     forwards the real context var; the headless scan job returns undefined, so
-     an OCR-created draft can never read as a POS caller and can never be
-     drift-rejected (its prices come off a handwritten slip). */
+  /* Session origin (mig 0120) — read ONLY by isPosAppClient, i.e. ONLY to answer
+     "is this the POS cart client". The HTTP route forwards the real context var;
+     the headless scan job returns undefined, so an OCR-created draft can never
+     read as the POS app and can never be drift-rejected (its prices come off a
+     handwritten slip). */
   get(key: 'sessionOrigin'): string | undefined;
+  /* May this caller author the SELLING price on these lines (question 1 — see
+     the three-questions header). REQUIRED, not optional, per CLAUDE.md: a
+     parameter that DECIDES something must make every call site declare itself,
+     because the silent default here is the PERMISSIVE one and an omission would
+     hand free pricing to a caller nobody checked. The HTTP route passes
+     maySetSellingPrice(c); createDraftSalesOrder passes true — the scan job has
+     no permissions stash and no person in the request, and its prices are
+     transcribed from a handwritten slip rather than authored. */
+  pricingAuthority: boolean;
   /* Multi-company (mig 0061): active company from companyContext. Undefined pre-
      migration / cold-start / headless (scan) so the stamping no-ops. */
   get(key: 'companyId'): number | undefined;
@@ -4106,11 +4110,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   // Audit 2026-06-11 C2 — module COST rows, memoized per base_model (the
   // per-line seat size + fabric tier resolution happens inside the recompute).
   const sofaModuleCostRowsMemo = new Map<string, Promise<SofaModuleCostRowLite[] | null>>();
-  /* Owner ruling — a non-POS (web/mobile office/sales) author prices freely, so
-     their hand-entered selling price is persisted as-is (see the trust boundary
-     below + recomputeFromSnapshot). POS tablet callers stay authoritative +
-     drift-rejected. */
-  const trustOperatorSelling = !(await isPosTabletCaller(c));
+  /* Question 1 — may this PERSON author a selling price (three-questions header).
+     A caller who may persists their hand-entered figure as-is; a caller who may
+     not is normalised to the catalog's authoritative price. Decided by the
+     caller, identically on the tablet and in the ERP. */
+  const trustOperatorSelling = c.pricingAuthority;
   const recomputes: Array<RecomputedLine | null> = await Promise.all(items.map(async (it, idx) => {
     const itemCode = String(it.itemCode ?? '');
     if (!itemCode) return null;
@@ -4174,10 +4178,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      `extractSofaComboLookupArgs` is retained for the POS handover path. */
   void extractSofaComboLookupArgs;
 
-  /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). Only the
-     untrusted POS tablet roles are drift-rejected; a Backend / office author
-     sets the selling price freely (the owner ruled it varies per order). */
-  const posTablet = await isPosTabletCaller(c);
+  /* Question 3 — stale CLIENT cache (three-questions header). Only the POS cart
+     client submits a price it computed from a catalog fetch, so only it can be
+     stale; a typed price is intentional and must never 400. */
+  const posTablet = isPosAppClient(c);
   if (posTablet) {
     for (let i = 0; i < recomputes.length; i++) {
       const r = recomputes[i];
@@ -5596,9 +5600,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
 mfgSalesOrders.post('/', async (c) => {
   const out = await createSalesOrderCore({
     req: { json: () => c.req.json() },
-    /* Forwards every key verbatim — including `sessionOrigin`, which the
-       pricing trust boundary reads (see isPosTabletCaller). */
+    /* Forwards every key verbatim — including `sessionOrigin`, which the stale-
+       cache question reads (see isPosAppClient). */
     get: ((key: 'supabase' | 'user' | 'houzsUser' | 'companyId' | 'sessionOrigin') => c.get(key as 'supabase')) as unknown as SoCreateContext['get'],
+    /* Question 1, answered off the REAL caller's permissions — the same answer
+       this person gets on the tablet and in the ERP. */
+    pricingAuthority: maySetSellingPrice(c),
     env: c.env,
     json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
   });
@@ -5648,10 +5655,10 @@ export async function createDraftSalesOrder(
     // downstream typeof guard.
     if (key === 'companyCode') return undefined;
     // There is no session here at all (this runs after the HTTP response, off
-    // waitUntil), so the draft is NOT-POS and is never drift-rejected — its
-    // prices come off a handwritten slip. EXPLICIT branch, not a fallthrough:
-    // the default below returns houzsUser, so an unhandled key would hand
-    // isPosTabletCaller the wrong object entirely.
+    // waitUntil), so the draft is not the POS app and is never drift-rejected —
+    // its prices come off a handwritten slip. EXPLICIT branch, not a
+    // fallthrough: the default below returns houzsUser, so an unhandled key
+    // would hand isPosAppClient the wrong object entirely.
     if (key === 'sessionOrigin') return undefined;
     if (key === 'user') {
       return {
@@ -5665,6 +5672,16 @@ export async function createDraftSalesOrder(
   return createSalesOrderCore({
     req: { json: async () => opts.body },
     get: syntheticGet as unknown as SoCreateContext['get'],
+    /* Question 1 — TRUE, and this is the one place it is asserted rather than
+       asked. There is no person and no permissions stash in this request (the
+       comment above says why), so maySetSellingPrice would fail closed and the
+       recompute would overwrite the slip's prices with catalogue figures on
+       every OCR draft. The prices here were TRANSCRIBED from a handwritten slip
+       the customer already signed, not authored by a caller who might be
+       discounting — so they are kept, exactly as they were before this field
+       existed. The floor (question 2) does not apply at create: there is no
+       original total to fall below yet. */
+    pricingAuthority: true,
     env,
     json: (b, status) => ({ status: status ?? 200, body: b as Record<string, unknown> }),
     /* History attribution — the CREATE audit row shows the salesperson captured
@@ -7978,15 +7995,14 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     sofaModuleCostRowsLite,
     modelOverridesLite,      // migration 0175 — per-Model Δ
     compartmentOverridesLite, // migration 0025 — per-compartment Δ
-    !(await isPosTabletCaller(c)), // owner ruling — non-POS author prices freely
+    maySetSellingPrice(c), // question 1 — may this PERSON author a selling price
   );
-  /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). POS tablet
-     roles are drift-rejected + take the server price; Backend / office authors
-     set the selling price freely.
+  /* Question 3 — stale CLIENT cache (three-questions header). Only the POS cart
+     client can submit a price that went stale; a typed one never does.
      Free Item Campaign (Task 4) — drift check is SKIPPED for a validated free
      line (unit will be forced to 0 below; client always submits 0, so there is
      no meaningful drift to gate on — and the cap check already enforced qty). */
-  const posTablet = await isPosTabletCaller(c);
+  const posTablet = isPosAppClient(c);
   if (posTablet && recomputed.drift && !addLineFreeItem) {
     /* Rollback any PWP claim before rejecting — must not burn a code on drift. */
     if (addLinePwpClaimed) await rollbackSinglePwpClaim(sb, addLinePwpClaimed);
@@ -8338,8 +8354,11 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
     }
   }
 
-  /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). */
-  const posTablet = await isPosTabletCaller(c);
+  /* The three questions (see their header). This handler is the only one that
+     asks all three, and they were one boolean until 2026-08-16. */
+  const posTablet = isPosAppClient(c);        // 3 — stale client cache
+  const mayPrice = maySetSellingPrice(c);     // 1 — author a selling price
+  const mayReduce = mayReduceSoTotal(c);      // 2 — reduce the bill
 
   // Re-derive totals if qty/price/discount changed. PR-D — also pull the
   // human-facing columns (item_code, description, uom) for the audit diff.
@@ -8517,7 +8536,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       sofaModuleCostRowsPatch,
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
-      !posTablet, // owner ruling — non-POS author prices freely
+      mayPrice, // question 1 — may this PERSON author a selling price
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even
@@ -8565,12 +8584,12 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       max:      qty * unit,
     }, 422);
   }
-  /* Total floor (Loo 2026-06-11) — a POS sales caller may never save a line
-     change that lowers the bill below the original sales order total. The
-     header total is Σ line totals, so per line: the new total (0 when
-     cancelling) must be ≥ the stored one. Backend / office roles stay free
-     to discount or correct downward. */
-  if (posTablet) {
+  /* Total floor (Loo 2026-06-11; question 2 since 2026-08-16) — a caller without
+     price authority may never save a line change that lowers the bill below the
+     original sales order total, on the tablet OR in the ERP. The header total is
+     Σ line totals, so per line: the new total (0 when cancelling) must be ≥ the
+     stored one. A holder of the key discounts or corrects downward freely. */
+  if (!mayReduce) {
     const prevLineTotal = prev.cancelled ? 0 : ((prev.qty * prev.unit_price_centi) - prev.discount_centi);
     const cancelledAfter = it.cancelled !== undefined ? Boolean(it.cancelled) : Boolean(prev.cancelled);
     const newLineTotal = cancelledAfter ? 0 : ((qty * unit) - discount);
@@ -8778,11 +8797,12 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
     | { item_code: string; qty: number; unit_price_centi: number; total_centi: number; photo_urls: string[] | null; cancelled?: boolean }
     | null;
 
-  /* Total floor (Loo 2026-06-11) — removing a priced line lowers the bill
-     below the original sales order total, so POS sales callers may not
-     delete one (a cancelled / zero line is fine). Backend roles stay free. */
+  /* Total floor (Loo 2026-06-11; question 2 since 2026-08-16) — removing a
+     priced line lowers the bill below the original sales order total, so a
+     caller without price authority may not delete one (a cancelled / zero line
+     is fine). A holder of the key stays free. */
   if (prevTyped && !prevTyped.cancelled && prevTyped.total_centi > 0
-      && await isPosTabletCaller(c)) {
+      && !mayReduceSoTotal(c)) {
     return c.json({
       error:    'so_total_below_original',
       reason:   'Removing a line would reduce the bill below the original sales order total.',
@@ -9029,11 +9049,12 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
   /* Task 6 — grandfathering: a line carrying variants.freeItem was made free
      at create time and must STAY at RM 0 regardless of any fabric/option delta.
      Treat it as a no-price-change TBC edit (the variant picks still land).
-     Also skip the POS floor check — a zero-priced line can never lower the
-     bill further; the check is meaningless and would compare 0 vs 0. */
+     Also skip the money floor — a zero-priced line can never lower the bill
+     further; the check is meaningless and would compare 0 vs 0. */
   const isFreeItemGrandfathered = isFreeItemLine(prevVariants);
-  const posTablet = await isPosTabletCaller(c);
-  if (!isFreeItemGrandfathered && posTablet && sellingDeltaCenti < 0) {
+  /* Question 2 — may this PERSON reduce the bill (three-questions header). */
+  const mayReduce = mayReduceSoTotal(c);
+  if (!isFreeItemGrandfathered && !mayReduce && sellingDeltaCenti < 0) {
     return c.json({
       error:    'so_total_below_original',
       reason:   'Changes cannot reduce the bill below the original sales order total.',
@@ -9401,7 +9422,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   }
   const newTotal = (qty * unitSen) - discount;
   const prevTotal = Number(prev.total_centi ?? ((qty * Number(prev.unit_price_centi)) - discount));
-  if (newTotal < prevTotal && await isPosTabletCaller(c)) {
+  /* Question 2 — may this PERSON reduce the bill (three-questions header). */
+  if (newTotal < prevTotal && !mayReduceSoTotal(c)) {
     return c.json({
       error:    'so_total_below_original',
       reason:   'Changes cannot reduce the bill below the original sales order total.',
@@ -9900,7 +9922,12 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     rewardComboMatch && rewardCtx ? rewardCtx.comboIds : null,
     specialDefs, moduleCostRows, modelOverridesSwap, compartmentOverridesSwap,
   );
-  const posTablet = await isPosTabletCaller(c);
+  /* Questions 3 and 2 (three-questions header) — one boolean until 2026-08-16.
+     This route does NOT ask question 1: `recomputeFromSnapshot` above is called
+     with no trustOperatorSelling argument, so a sofa exchange has always taken
+     the server's authoritative build price and never the client's. */
+  const posTablet = isPosAppClient(c);
+  const mayReduce = mayReduceSoTotal(c);
   /* Reward swaps skip the drift COMPARISON (the POS configurator prices the
      build at normal selling — it has no voucher awareness); the persisted
      figure is the server's authoritative PWP price either way, so a client
@@ -9934,7 +9961,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   }
   const newBuildTotal = (qty * unit) - discount;
   const oldBuildTotal = oldLines.reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
-  if (posTablet && newBuildTotal < oldBuildTotal) {
+  if (!mayReduce && newBuildTotal < oldBuildTotal) {
     return c.json({
       error: 'so_total_below_original',
       reason: 'Changes cannot reduce the bill below the original sales order total.',

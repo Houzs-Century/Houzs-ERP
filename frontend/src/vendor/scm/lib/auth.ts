@@ -30,9 +30,14 @@ export const isAdminLevel = (role: StaffRole | null | undefined): boolean =>
    (2026-07): a salesperson MAY set the selling price when opening an SO (it
    varies per order — roadshow / negotiated). The Houzs bridge only ever produces
    'super_admin' or 'sales', and both should price freely, so this is now true.
-   Safe against the anti-tamper gate: only a POS-tablet SESSION is drift-rejected
-   server-side (isPosTabletCaller), and a web/mobile author's typed price is
-   persisted by the backend (recomputeFromSnapshot trustOperatorSelling). */
+   Safe against the anti-tamper drift gate: only the POS cart CLIENT is
+   drift-rejected server-side (isPosAppClient), and a typed price is never a
+   stale cache. It is NOT a claim that the save will succeed: since 2026-08-16
+   the backend persists a typed price only for a holder of `scm.so.price_authority`
+   (maySetSellingPrice), and refuses a change that lowers the order total for a
+   non-holder (`so_total_below_original` 422, mayReduceSoTotal) — on the ERP as
+   well as on the tablet. This flag decides whether the INPUT is editable, and it
+   is deliberately looser than the server. */
 export const isHatchSales = (role: StaffRole | null | undefined): boolean =>
   role === 'sales' || role === 'super_admin';
 

@@ -52,6 +52,50 @@ export function hasHouzsPerm(c: HouzsUserSource, perm: string): boolean {
   return hasPermission(grantedFor(c), perm);
 }
 
+/* ── SO PRICING AUTHORITY (owner ruling 2026-08-16) ────────────────────────────
+   「为什么我们要跟着 POS 的规矩?进了这个 ERP 就跟这个 ERP 的规矩。」
+
+   The SO pricing envelope used to ask ONE question — `sessionOrigin === 'pos'`,
+   i.e. which DOOR the token was minted at — and derive three different answers
+   from it. That is the wrong question twice over: it gave the SAME PERSON a
+   different answer on the tablet and in the ERP, and it answered an authority
+   question ("may you") with a device fact ("where did you sign in").
+
+   The two functions below ask the authority question directly, so they return
+   the same answer on every surface. `isPosAppClient` in
+   scm/routes/mfg-sales-orders.ts keeps the origin and keeps the THIRD question,
+   which really is about the client and not the person — see its header.
+
+   BOTH are OR-ed with `scm.so.price_override`. That is not the same key doing
+   two jobs: it is a day-one floor, so that nobody the owner has ALREADY trusted
+   with the audited hand-override route loses pricing on the deploy that lands
+   this. Read the OR as "price_authority, or an authority the owner already
+   granted that strictly implies it".
+
+   FAILS CLOSED. No houzsUser, or a houzsUser with no permissions stash, is not
+   an authority — it is an unknown caller, and an unknown caller may not move a
+   customer's money. The one caller that legitimately has no permissions stash is
+   the headless scan job, and it does NOT come through here: SoCreateContext
+   carries an explicit `pricingAuthority` field instead (see createDraftSalesOrder). */
+
+/** True when the caller may author a Sales Order line's OWN selling price —
+ *  their entered figure is persisted instead of the catalog's authoritative
+ *  `sell_price_sen`. Drives `trustOperatorSelling` on the create, add-line and
+ *  patch recompute paths. */
+export function maySetSellingPrice(c: HouzsUserSource): boolean {
+  return hasHouzsPerm(c, 'scm.so.price_authority') || hasHouzsPerm(c, 'scm.so.price_override');
+}
+
+/** True when the caller may save a Sales Order change that lowers the document
+ *  total below what it was — the money floor (`so_total_below_original`, 422).
+ *  Same grant as maySetSellingPrice today, and deliberately its own function:
+ *  authoring a price and DISCOUNTING an agreed bill are two authorities, and
+ *  splitting the key later is a one-line change here rather than a sweep of
+ *  five call sites. */
+export function mayReduceSoTotal(c: HouzsUserSource): boolean {
+  return hasHouzsPerm(c, 'scm.so.price_authority') || hasHouzsPerm(c, 'scm.so.price_override');
+}
+
 /**
  * True when the caller may see ALL sales-side documents — Sales Orders, Sales
  * Invoices, Delivery Orders, Consignment Orders, Sales Analysis. Two INDEPENDENT

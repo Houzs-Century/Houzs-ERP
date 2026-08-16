@@ -75,6 +75,20 @@ export const PERMISSIONS: PermissionDef[] = [
   // grant individual positions later via the Team > Positions matrix.
   { key: "scm.config.write",        resource: "Supply Chain", verb: "write",  label: "Edit SCM master data",         description: "Edit SCM master data: products, sofa combos, delivery fees, fabric library + tier add-ons, PWP rules, sofa quick picks, special add-ons, Maintenance config, category hero images" },
   { key: "scm.so.price_override",   resource: "Supply Chain", verb: "manage", label: "Override SO line unit price",  description: "Hand-override the unit price on a SCM Sales Order line (audited, admin-level)" },
+  /* DECLARED 2026-08-16 (owner ruling, stated three times: 「进了这个 ERP 就跟这个
+     ERP 的规矩」). The SO pricing envelope used to ask which DOOR the session was
+     minted at — `sessionOrigin === 'pos'` — so the same person got a different
+     answer on the tablet and in the ERP. This key replaces that hinge for the two
+     questions that are really about AUTHORITY: may this person author a selling
+     price, and may this person reduce a customer's bill. It is deliberately a
+     SIBLING of scm.so.price_override rather than a reuse: that key opens the
+     audited /override route (one line, one written mfg_so_price_overrides row),
+     and widening it silently would have made every holder of a narrow audited
+     verb into a free-pricing author. Held today by Owner + IT Admin via `*`, and
+     by price_override holders through the OR in scm/lib/houzs-perms.ts, so no
+     position that can price today loses it on deploy; grant it to a position in
+     Team > Positions. Read by maySetSellingPrice / mayReduceSoTotal. */
+  { key: "scm.so.price_authority",  resource: "Supply Chain", verb: "manage", label: "Author and reduce SO prices",  description: "Set a Sales Order line's own selling price, and save a change that lowers the order's total below its original — on the POS tablet and in the ERP alike" },
   { key: "scm.so.view_all",         resource: "Supply Chain", verb: "read",   label: "View all salespersons' SOs",   description: "View every salesperson's My-Orders board (bypass per-rep attribution scoping)" },
   { key: "scm.so.attribute_other",  resource: "Supply Chain", verb: "manage", label: "Attribute SO to another rep",  description: "Create or edit a SCM Sales Order on behalf of another salesperson (stamp a different salesperson_id)" },
   // Port of 2990 gate #717 — clearing an already-set Processing Date pulls the

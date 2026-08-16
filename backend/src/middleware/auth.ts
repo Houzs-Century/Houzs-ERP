@@ -53,8 +53,12 @@ declare module "hono" {
      *  or undefined (every other door, and every session minted before mig
      *  0120). Server-assigned at mint time and never accepted from the
      *  request, so unlike the `X-Client` header it replaced, a caller can
-     *  neither claim nor shed it. Read by the SO pricing envelope
-     *  (scm/routes/mfg-sales-orders.ts isPosTabletCaller).
+     *  neither claim nor shed it. Read by ONE thing (scm/routes/
+     *  mfg-sales-orders.ts isPosAppClient): whether this request is the POS cart
+     *  client, whose submitted price may be a stale catalog cache. It is NOT an
+     *  authority — since 2026-08-16 whether a caller may author a selling price
+     *  or reduce a bill is `scm.so.price_authority`, so the answer follows the
+     *  person rather than the door.
      *
      *  This is the ONLY channel the origin may be read from inside
      *  /api/scm/*: the SCM auth bridge overwrites `user` with a pinned system

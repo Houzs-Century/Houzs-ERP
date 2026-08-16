@@ -49,9 +49,15 @@ export interface Variables {
   // middleware/auth (which runs before this sub-app) and, unlike `user`, NOT
   // overwritten by the SCM auth bridge — which is the whole point: it is the
   // only per-REQUEST provenance fact that survives into /api/scm/*, and the
-  // only thing here a caller cannot assert about itself. Read by the SO
-  // pricing envelope (routes/mfg-sales-orders.ts isPosTabletCaller). Optional:
-  // undefined = not-POS, the safe direction on every legacy / non-POS session.
+  // only thing here a caller cannot assert about itself. Since 2026-08-16 it
+  // answers exactly ONE question — "is this request the POS cart client, whose
+  // submitted price came from a catalog fetch that may have moved" — read by
+  // routes/mfg-sales-orders.ts isPosAppClient and used only for `pricing_drift`.
+  // It is NOT an authority: whether a caller may author a selling price or
+  // reduce a bill is decided by scm.so.price_authority (lib/houzs-perms.ts
+  // maySetSellingPrice / mayReduceSoTotal), so the same person gets the same
+  // answer on the tablet and in the ERP. Optional: undefined = not the POS app,
+  // which is correct on every legacy / desktop / mobile / headless session.
   sessionOrigin?: string;
   // Multi-company context (Phase 0b) — resolved by middleware/companyContext.ts
   // and consumed by scm/lib/companyScope.ts. companyId is the ACTIVE company for

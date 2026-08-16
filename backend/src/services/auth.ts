@@ -123,10 +123,14 @@ export const AUTHZ_ENVELOPE_VERSION = 1;
 /* Session ORIGIN (mig 0120) — the DOOR a session was minted at. It is NOT a
    property of the person: the same salesperson simultaneously holds a 'pos'
    session on the showroom tablet and an origin-less one on their own phone,
-   both for the SAME public.users row. That is precisely why the POS pricing
-   envelope (scm/routes/mfg-sales-orders.ts isPosTabletCaller) cannot be
-   derived from the user, their position, or their scm.staff role — only from
-   the session.
+   both for the SAME public.users row. That is precisely why the CLIENT question
+   in the SO pricing envelope (scm/routes/mfg-sales-orders.ts isPosAppClient —
+   "is this the POS cart, whose price may be a stale cache") cannot be derived
+   from the user, their position, or their scm.staff role — only from the
+   session. The AUTHORITY questions in that envelope run the other way and are
+   NOT derived from this field: since 2026-08-16 they read
+   `scm.so.price_authority` off the real caller, precisely so the one person
+   above gets the SAME answer on the tablet and on their phone.
 
    WHY IT IS UNFORGEABLE: the value is chosen server-side by whichever route
    calls createSession, and stored on the session row. It never appears in a
@@ -245,8 +249,11 @@ export interface AuthUser {
 }
 
 /** Mint a session. `origin` defaults to undefined -> NULL = an ordinary
- *  office/desktop session that may price freely. Pass SESSION_ORIGIN_POS ONLY
- *  from the POS PIN door; see the SessionOrigin note above.
+ *  office/desktop session, which is NOT the POS cart client and so is never
+ *  drift-checked. It does not follow that such a session "may price freely":
+ *  since 2026-08-16 that is `scm.so.price_authority` on the caller, not a
+ *  property of the door. Pass SESSION_ORIGIN_POS ONLY from the POS PIN door;
+ *  see the SessionOrigin note above.
  *  `ttlSeconds` overrides the default 7-day lifetime — the owner-on-prod
  *  impersonation path (routes/users.ts) mints 1-hour sessions with it. */
 export async function createSession(
