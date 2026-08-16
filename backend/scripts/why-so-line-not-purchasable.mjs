@@ -38,6 +38,43 @@ const sql = postgres(DSN, { ssl: 'require', max: 1, idle_timeout: 20, connect_ti
 const notice = (m) => console.log(`::notice::${m}`);
 const pad = (s, n) => String(s ?? '').slice(0, n).padEnd(n);
 
+
+/**
+ * The outbox rows for a document, newest first, with what each one CARRIED.
+ *
+ * Its own function because it is the only section that works for a document
+ * that is not a sales order, and the first one that needed that was a delivery
+ * order the service refused.
+ */
+async function dumpOutbox() {
+  console.log('');
+  notice('D — the outbox rows for this document, newest first, with what each carried');
+  const rows = await sql`
+    SELECT id, op, status::text AS status, attempts, created_at, sent_at, last_error, payload
+    FROM scm.autocount_outbox
+    WHERE doc_no = ${DOC_NO} AND company_id = ${COMPANY_ID}
+    ORDER BY created_at DESC LIMIT 8`;
+  notice(`  ${rows.length} row(s)`);
+  for (const r of rows) {
+    notice(`  --- ${r.op} ${r.status} attempts=${r.attempts} created=${r.created_at?.toISOString?.() ?? r.created_at} sent=${r.sent_at?.toISOString?.() ?? '(never)'}`);
+    if (r.last_error) notice(`      error: ${String(r.last_error).slice(0, 220)}`);
+    const body = r.payload?.body ?? null;
+    if (!body) { notice('      body: (none)'); continue; }
+    /* The HEADER is where PDate / BALANCE / PAYEMENT live on an edit; a create
+       carries them at the top level. Print whichever shape this row has. */
+    const h = body.Header ?? body;
+    const udf = h.UDF ?? null;
+    notice(`      UDF: ${udf ? JSON.stringify(udf) : '(no UDF key — nothing sent, the book keeps its own)'}`);
+    const keys = Object.keys(h).filter((k) => k !== 'UDF' && k !== 'Details' && k !== 'Lines');
+    notice(`      header keys: ${keys.join(', ') || '(none)'}`);
+    const lines = body.Lines ?? body.Details ?? [];
+    for (const l of lines.slice(0, 4)) {
+      notice(`      line: ${JSON.stringify(l).slice(0, 200)}`);
+    }
+  }
+
+}
+
 async function main() {
   notice(`doc ${DOC_NO}, company ${COMPANY_ID} — READ ONLY`);
 
@@ -45,7 +82,16 @@ async function main() {
     SELECT doc_no, status::text AS status, sales_location, customer_state,
            customer_delivery_date, processing_date, company_id, linked_ac_docno
     FROM scm.mfg_sales_orders WHERE doc_no = ${DOC_NO} AND company_id = ${COMPANY_ID}`;
-  if (!header) { notice(`no such order in company ${COMPANY_ID}`); return; }
+  /* NOT AN EARLY RETURN ANY MORE. Section D reads the OUTBOX, which is keyed by
+     doc_no for every document type, and the one document that most needed it —
+     HC-DO-2608-001, refused by AutoCount with `Invalid transfer item.` — is a
+     DELIVERY ORDER, so the sales-order header read above finds nothing and the
+     probe used to stop right before the only section that could help. */
+  if (!header) {
+    notice(`not a sales order in company ${COMPANY_ID} — skipping A/B/C, going straight to the outbox`);
+    await dumpOutbox();
+    return;
+  }
   notice(`header: status=${header.status} salesLocation=${header.sales_location ?? '(null)'} `
     + `state=${header.customer_state ?? '(null)'} deliveryDate=${header.customer_delivery_date ?? '(null)'} `
     + `processingDate=${header.processing_date ?? '(null)'} linkedAc=${header.linked_ac_docno ?? '(none)'}`);
@@ -125,31 +171,7 @@ async function main() {
      HC-SO-2608-002 disagree with the ERP after an edit that the queue reports as
      sent, and the payload is the only place that separates "we sent the wrong
      thing" from "we sent the right thing and the service dropped it". */
-  console.log('');
-  notice('D — the outbox rows for this document, newest first, with what each carried');
-  const rows = await sql`
-    SELECT id, op, status::text AS status, attempts, created_at, sent_at, last_error, payload
-    FROM scm.autocount_outbox
-    WHERE doc_no = ${DOC_NO} AND company_id = ${COMPANY_ID}
-    ORDER BY created_at DESC LIMIT 8`;
-  notice(`  ${rows.length} row(s)`);
-  for (const r of rows) {
-    notice(`  --- ${r.op} ${r.status} attempts=${r.attempts} created=${r.created_at?.toISOString?.() ?? r.created_at} sent=${r.sent_at?.toISOString?.() ?? '(never)'}`);
-    if (r.last_error) notice(`      error: ${String(r.last_error).slice(0, 220)}`);
-    const body = r.payload?.body ?? null;
-    if (!body) { notice('      body: (none)'); continue; }
-    /* The HEADER is where PDate / BALANCE / PAYEMENT live on an edit; a create
-       carries them at the top level. Print whichever shape this row has. */
-    const h = body.Header ?? body;
-    const udf = h.UDF ?? null;
-    notice(`      UDF: ${udf ? JSON.stringify(udf) : '(no UDF key — nothing sent, the book keeps its own)'}`);
-    const keys = Object.keys(h).filter((k) => k !== 'UDF' && k !== 'Details' && k !== 'Lines');
-    notice(`      header keys: ${keys.join(', ') || '(none)'}`);
-    const lines = body.Lines ?? body.Details ?? [];
-    for (const l of lines.slice(0, 4)) {
-      notice(`      line: ${JSON.stringify(l).slice(0, 200)}`);
-    }
-  }
+  await dumpOutbox();
 
   console.log('');
   notice('READ THE RESULT LIKE THIS:');
