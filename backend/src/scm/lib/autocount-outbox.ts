@@ -101,6 +101,9 @@ import {
 /* The reason a parentless create records, kept beside the needle that
    classifies it and pinned by a test — see acParentlessCreateReason. */
 import { acParentlessCreateReason } from './autocount-outbox-status';
+/* Line identity, split out 2026-08-17 for the same cap reason as the two
+   imports above. Same function, same call site in dispatchOne. */
+import { persistLineKeys } from './autocount-line-keys';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -546,6 +549,71 @@ const SALES_CONVERSION = new Set(
     .filter((op) => CONVERT_TARGET[op] === 'DO' || CONVERT_TARGET[op] === 'IV'),
 );
 
+/** The complement, and derived the same way so the two can never disagree. */
+const PURCHASE_CONVERSION = new Set<string>(
+  Object.keys(CONVERT_TARGET).filter((op) => !SALES_CONVERSION.has(op as never)),
+);
+
+/**
+ * The ERP source tables that carry a supplier of their own.
+ *
+ * THIS LIST IS THE CORRECTION. Until 2026-08-17 the purchase half of divergence
+ * D15 was left open on the recorded grounds that "`grns` and `purchase_invoices`
+ * carry no supplier column, so a creditor means a `grn -> purchase_order ->
+ * supplier` join". That is false, and the DDL this repo already vendors says so
+ * in one line each — `scripts/scm-schema/2990s-full-schema.sql`:
+ *
+ *     CREATE TABLE "grns" (...  "supplier_id" uuid NOT NULL, ...)
+ *     CREATE TABLE "purchase_invoices" (... "supplier_id" uuid NOT NULL, ...)
+ *
+ * Both are NOT NULL, both are written on every insert (`grns.ts`,
+ * `purchase-invoices.ts`) and both are selected by the live list and detail
+ * routes. So there is no join: it is one hop to `suppliers.code`, the same hop
+ * `readPoHeader` already makes for `/create-po`, and therefore the same
+ * vocabulary AutoCount has already accepted as a `CreditorCode`.
+ *
+ * Only the SOURCE tables are listed. The target row carries the same supplier —
+ * the GRN is inserted with the PO's, the PI with the GRN's — but the document
+ * being TRANSFERRED is the authority on whose account it moves, and that is the
+ * row the service's own book fallback reads too.
+ */
+const SUPPLIER_BEARING_SOURCE = new Set<AcLinkTable>(['purchase_orders', 'grns']);
+
+/**
+ * The creditor for a purchase conversion, off the ERP's own source document.
+ *
+ * Returns null on ANY doubt, and null means "say nothing": the body goes out
+ * without an account and the service falls back to reading the creditor off the
+ * source document in the live book. That fallback stays whatever happens here —
+ * it is the only thing that drains a row queued before this existed, and a
+ * lookup that quietly stops being exercised is a lookup someone deletes.
+ */
+async function readConvertCreditor(
+  sb: Sb,
+  from: AcDocRef,
+): Promise<{ CreditorCode: string; CreditorName?: string } | null> {
+  try {
+    if (!SUPPLIER_BEARING_SOURCE.has(from.table)) return null;
+    const { data, error } = await sb.from(from.table)
+      .select('supplier_id').eq(from.keyCol, from.key).maybeSingle();
+    if (error || !data) return null;
+    const supplierId = (data as Record<string, unknown>).supplier_id;
+    if (!supplierId) return null;
+    const { data: sup, error: supErr } = await sb.from('suppliers')
+      .select('code, name').eq('id', String(supplierId)).maybeSingle();
+    if (supErr) return null;
+    const s = sup as { code?: string | null; name?: string | null } | null;
+    const code = s?.code == null ? '' : String(s.code).trim();
+    /* Trimmed and length-checked because "   " is not an account, and
+       AutoCount's own complaint is "Debtor Code is empty." — the service trims
+       the payload for the same reason (AcSyncService.cs, Convert_). */
+    if (!code) return null;
+    return { CreditorCode: code, ...(s?.name ? { CreditorName: String(s.name) } : {}) };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Write a failed compose down instead of dropping it.
  *
@@ -846,6 +914,12 @@ export async function enqueueConvert(
       createdBy: opts.createdBy ?? null,
     });
   }
+  /* THE SUPPLIER, for the two conversions whose target is a purchase document.
+     Resolved here rather than inline below so a null is one branch and not a
+     silent empty spread buried in an object literal. */
+  const creditor = PURCHASE_CONVERSION.has(opts.op)
+    ? await readConvertCreditor(sb, opts.from)
+    : null;
   return enqueueAcOp(sb, {
     companyId: opts.companyId,
     op: opts.op,
@@ -902,14 +976,25 @@ export async function enqueueConvert(
            do: we know the customer, and a payload that states it cannot be
            wrong about which source row the service happened to read.
 
-           SALES SIDE ONLY. The purchase conversions want a CreditorCode and the
-           ERP cannot reach one from here without a new join — `grns` and
-           `purchase_invoices` carry no supplier column, so it is
-           grn -> purchase_order -> supplier — and `po_to_gr` has never once
-           succeeded anyway, for an unrelated reason (`IndexOutOfRangeException:
-           There is no row at position -1`). Those two stay on the service's book
-           fallback and D15 stays open for that half. */
+           BOTH SIDES NOW, AND D15 IS CLOSED. This used to read "SALES SIDE ONLY",
+           on two grounds that were both wrong by 2026-08-17. The first — that a
+           creditor needs a `grn -> purchase_order -> supplier` join because those
+           tables have no supplier column — is refuted by the schema: `grns` and
+           `purchase_invoices` each carry `supplier_id uuid NOT NULL`, so it is
+           one hop (see SUPPLIER_BEARING_SOURCE). The second — that `po_to_gr` has
+           never succeeded anyway — stopped being true at 23:09 that night, when
+           HC-GR-2608-001 and then HC-PI-2608-001 entered the book. The creditor
+           was supplied by hand for that run; this is the line that stops it
+           having to be.
+
+           The service still reads the payload FIRST and the source document in
+           the book second, and that book fallback must stay: it is the only thing
+           that drains a row composed before this line existed. `dispatchOne`
+           carries a drain-time backfill for the same rows, the way #2345 did for
+           `so_to_po` — the drain REPLAYS a stored payload and never recomposes,
+           so fixing the enqueue alone strands everything already queued. */
         ...(SALES_CONVERSION.has(opts.op) ? { DebtorCode: AC_DEBTOR_CODE } : {}),
+        ...(creditor ?? {}),
         ...(source.keys ? { DtlKeys: source.keys } : {}),
       },
       fromDoc: opts.from,
@@ -1705,127 +1790,6 @@ async function mark(sb: Sb, id: string, patch: Record<string, unknown>): Promise
     .eq('id', id);
 }
 
-/**
- * Store the DtlKeys a create/convert returned onto the ERP line rows.
- *
- * VERIFIES BEFORE IT WRITES, and writes nothing at all if the check fails.
- *
- * The zip is by index: the Nth line AutoCount reports is the Nth detail we sent.
- * That is true because AcSyncService returns them ordered by DtlKey, which is
- * creation order, and we created them in payload order. But "true because of a
- * chain of reasoning" is not good enough for line identity — a wrong DtlKey does
- * not fail, it silently edits a DIFFERENT line in a live account book on the
- * next save. A missing key is refused loudly by composeEdit; a wrong one is not
- * refused at all. So the count must match and every ItemCode must match, or the
- * whole batch is abandoned and the document simply keeps NULL keys.
- *
- * Never throws and never changes the outcome of the dispatch: the document IS in
- * AutoCount and the row IS sent. Failing to record identity is a degradation to
- * be logged, not a reason to re-send a document that already exists.
- */
-async function persistLineKeys(
-  sb: Sb,
-  row: AcOutboxRow,
-  target: NonNullable<AcOutboxPayload['lineWriteback']>,
-  lines: AcCreatedLine[],
-): Promise<void> {
-  const label = `[autocount-outbox] ${row.op} ${row.doc_no} line keys`;
-  try {
-    /* Not an error. An AcSyncService built before 2026-08-11 returns no lines,
-       and the service also degrades to an empty array rather than losing the
-       DocNo when its own read-back fails. */
-    if (!lines.length) return;
-
-    if (lines.length !== target.ids.length) {
-      // eslint-disable-next-line no-console
-      console.error(
-        `${label}: NOT STORED — AutoCount reported ${lines.length} line(s), the ERP sent `
-        + `${target.ids.length}. Storing them by position would attach a key to the wrong line.`,
-      );
-      return;
-    }
-
-    const ordered = [...lines].sort((a, b) => a.Seq - b.Seq);
-    const groups = target.ids.map((g) => (Array.isArray(g) ? g : [g]));
-    const norm = (s: string | null | undefined) => String(s ?? '').trim().toUpperCase();
-    for (let i = 0; i < ordered.length; i += 1) {
-      const got = norm(ordered[i].ItemCode);
-      const want = norm(target.codes[i]);
-      /* An older service may omit ItemCode; only a PRESENT and DIFFERENT code
-         is evidence the zip is wrong. */
-      if (got && want && got !== want) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `${label}: NOT STORED — position ${i + 1} is '${ordered[i].ItemCode}' in AutoCount but `
-          + `'${target.codes[i]}' in the ERP. The two line lists do not correspond.`,
-        );
-        return;
-      }
-    }
-
-    /* ItemCode alone stops being an identity check the moment a code repeats,
-       and on a CONVERSION that is the normal case, not an edge one: the ERP
-       never sends a line list for a conversion — AutoCount chooses the source
-       lines itself (AcSyncService.cs:382-411) — so the two orderings are only
-       PRESUMED to line up. A sofa document is the concrete failure: several
-       lines share one code and differ only in the build written into Desc2, so
-       an all-codes-match check passes while the keys land on the wrong lines,
-       and the next edit rewrites somebody else's line in a live book.
-       Desc2 is what tells those lines apart, so where it is available on both
-       sides it must agree too, and a repeated code with no Desc2 to separate it
-       is refused outright rather than guessed. */
-    const dupes = new Set(
-      target.codes.map(norm).filter((c, i, a) => c && a.indexOf(c) !== i),
-    );
-    for (let i = 0; i < ordered.length; i += 1) {
-      const gotD = norm(ordered[i].Desc2);
-      const wantD = norm(target.desc2?.[i]);
-      /* PREFIX-TOLERANT, because AutoCount's own column truncates. SODTL.Desc2
-         is nvarchar(100) and live sofa builds already sit at exactly 100 — the
-         account book cut them itself, before the ERP ever saw them. An equality
-         test would refuse those legitimately-matching lines. A prefix test keeps
-         all the discriminating power that matters here: two different builds of
-         the same model diverge in the first few tokens, not after character
-         100. */
-      const differs = gotD && wantD && !gotD.startsWith(wantD) && !wantD.startsWith(gotD);
-      if (differs) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `${label}: NOT STORED — position ${i + 1} carries Desc2 '${ordered[i].Desc2}' in `
-          + `AutoCount but '${target.desc2?.[i]}' in the ERP. Same ItemCode, different line.`,
-        );
-        return;
-      }
-      if (dupes.has(norm(target.codes[i])) && !(gotD && wantD)) {
-        // eslint-disable-next-line no-console
-        console.error(
-          `${label}: NOT STORED — ItemCode '${target.codes[i]}' appears on more than one line and `
-          + 'position ' + (i + 1) + ' has no Desc2 on both sides to tell them apart. '
-          + 'Storing by position here would be a guess.',
-        );
-        return;
-      }
-    }
-
-    for (let i = 0; i < ordered.length; i += 1) {
-      /* Every ERP row behind this AutoCount line gets the SAME key. For a sofa
-         that is the build's compartments; composeEdit later accepts the build
-         only when all of them still agree on it. */
-      for (const id of groups[i]) {
-        const { error } = await sb.from(target.table)
-          .update({ linked_ac_dtlkey: ordered[i].DtlKey })
-          .eq('id', id);
-        if (error) {
-          // eslint-disable-next-line no-console
-          console.error(`${label}: partial — row ${id} failed: ${error.message}`);
-        }
-      }
-    }
-  } catch (e) {
-    // eslint-disable-next-line no-console
-    console.error(`${label}: not stored:`, e instanceof Error ? e.message : String(e));
-  }
-}
 
 export type DispatchOutcome = 'sent' | 'failed' | 'retry' | 'waiting';
 
@@ -1891,6 +1855,24 @@ export async function dispatchOne(
      already KEYED by the ERP's number. Without it AcSyncService auto-numbers —
      how PO-009968 got a number nobody in this building would say. Guide §7c3b. */
   if (row.op === 'so_to_po' && !body.DocNo && row.doc_no) body.DocNo = row.doc_no;
+
+  /* THE SUPPLIER ON A PURCHASE CONVERSION, for a row composed before D15 was
+     closed. Exactly the `so_to_po` shape twelve lines up and for exactly the
+     reason given there: the drain replays the stored payload and never
+     recomposes, so the enqueue fix alone leaves every `po_to_gr` / `gr_to_pi`
+     row already in the queue going out with no account.
+
+     UNLIKE `so_to_po`, THE ACCOUNT BOOK CAN ALSO ANSWER THIS ONE — the source is
+     a purchase document, so AutoCount holds its creditor and the service falls
+     back to reading it. This is therefore belt-and-braces rather than the only
+     answer, and it is still worth having: a value the ERP STATES cannot be wrong
+     about which row the service happened to read. Best-effort, like its twin —
+     on any doubt `readConvertCreditor` returns null, the body goes unchanged and
+     the service's own fallback is what answers. Guide §7c3. */
+  if (PURCHASE_CONVERSION.has(row.op) && !body.CreditorCode && payload.fromDoc) {
+    const creditor = await readConvertCreditor(sb, payload.fromDoc);
+    if (creditor) Object.assign(body, creditor);
+  }
 
   const attempts = (row.attempts ?? 0) + 1;
 
