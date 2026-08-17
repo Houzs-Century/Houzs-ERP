@@ -771,9 +771,31 @@ export async function enqueuePoCreate(
       docNo: header.po_number,
       docId: opts.poId,
       payload: {
-        /* FromDocNo resolves at DRAIN; composeSoToPo carries the rest. */
+        /* FromDocNo resolves at DRAIN; composeSoToPo carries the rest.
+
+           THE SUPPLIER IS NOT IN "the rest", and that was the defect. Measured
+           on the live host 2026-08-17 09:15 and again at 09:20, the cron's next
+           attempt:
+
+             ERROR /so-to-po: System.Exception: CreditorCode required for
+             /so-to-po - AutoCount defaults the payment term from the supplier,
+             and without one the save dies on FK_PO_DisplayTerm
+
+           composeSoToPo returns { DtlKeys, Details } and nothing else, so the
+           whole master went missing the moment the shape was a transfer —
+           `body` (from composeCreatePo, which DOES carry CreditorCode) is built
+           three lines up and then thrown away on this branch. Same defect as the
+           debtor on the sales side (#2340, #2341): the target document has no
+           account when the SDK is asked to build it.
+
+           NO JOIN IS NEEDED HERE, unlike the GRN and purchase-invoice arms:
+           readPoHeader has already resolved suppliers.code for the binding
+           lookup two lines above, so the value is in hand. */
         body: (shape.kind === 'transfer'
-          ? composeSoToPo(shape.dtlKeys, details)
+          ? { ...composeSoToPo(shape.dtlKeys, details), ...present({
+            CreditorCode: header.creditor_code,
+            CreditorName: header.creditor_name,
+          }) }
           : body) as unknown as Record<string, unknown>,
         /* THE PARENT MUST EXIST FIRST — dispatchOne holds this as `waiting`,
            without burning an attempt, until the sales order has its number. */
@@ -1847,6 +1869,37 @@ export async function dispatchOne(
       return 'waiting';
     }
     body.DocNo = self;
+  }
+
+  /* THE SUPPLIER, FOR A ROW COMPOSED BEFORE ANYONE KNEW IT WAS NEEDED.
+     The enqueue above now puts CreditorCode on the body, but the drain REPLAYS
+     the stored payload — it never recomposes — so every `so_to_po` row already
+     sitting in the queue would keep failing for ever on the service's own guard.
+     There is at least one: HC-SO-2608-001's, retrying every five minutes since
+     2026-08-17 09:15.
+
+     THE ACCOUNT BOOK CANNOT ANSWER THIS ONE, which is where the analogy with the
+     debtor fix stops. For the four conversions the source document in the book
+     HAS the account, so #2340 could read it there. `/so-to-po`'s source is a
+     SALES order: it carries a DebtorCode and no creditor, and the supplier is a
+     purchase decision that exists nowhere in AutoCount until we send it. The
+     authority is the ERP's own purchase order, and the row already points at it
+     — `writeback` is `{ purchase_orders, id, <poId> }` on every row this path
+     has ever written.
+
+     Best-effort by construction: on any doubt the body goes unchanged and the
+     service answers with the named guard, which is a clear error and not a
+     mystery. */
+  if (row.op === 'so_to_po' && !body.CreditorCode && payload.writeback?.table === 'purchase_orders') {
+    try {
+      const po = await readPoHeader(sb, String(payload.writeback.key));
+      if (po?.creditor_code) {
+        body.CreditorCode = po.creditor_code;
+        if (po.creditor_name) body.CreditorName = po.creditor_name;
+      }
+    } catch (e) {
+      console.error('so_to_po: creditor backfill failed:', e instanceof Error ? e.message : String(e));
+    }
   }
 
   const attempts = (row.attempts ?? 0) + 1;

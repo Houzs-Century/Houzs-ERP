@@ -854,6 +854,89 @@ describe('/create-po — the creditor comes from scm.suppliers', () => {
   });
 });
 
+/* ── /so-to-po: the supplier ────────────────────────────────────────────────
+   MEASURED ON THE LIVE HOST 2026-08-17 09:15, and again at 09:20 when the cron
+   tried again:
+
+     ERROR /so-to-po: System.Exception: CreditorCode required for /so-to-po -
+     AutoCount defaults the payment term from the supplier, and without one the
+     save dies on FK_PO_DisplayTerm, which names the term and not the supplier
+
+   `composeSoToPo` returns { DtlKeys, Details } and nothing else, so the whole
+   master went missing the moment `poTransferShape` said `transfer` — `body`,
+   built by `composeCreatePo` three lines earlier and carrying CreditorCode, is
+   thrown away on that branch. Same defect as the debtor on the sales side, in
+   the one place #2340 and #2341 did not reach.
+
+   The seeded fixture takes the CREATE branch (its PO line has no `so_item_id`),
+   so a transfer needs the link built here: a PO line pointing at an SO line
+   that carries a `linked_ac_dtlkey`, with no allocation rows. */
+const soToPoSb = () => {
+  const sb = seeded();
+  sb.tables.mfg_sales_order_items[0].id = 'so-item-1';
+  sb.tables.purchase_order_items[0].so_item_id = 'so-item-1';
+  sb.tables.purchase_order_item_allocations = [];
+  /* The seeded PO line names `wh-kl` and nothing has ever seeded a warehouse to
+     resolve it against, so `withLocations` returned no location and the enqueue
+     refused with MissingLocationError before reaching any of this. Found by the
+     positive control below, which is the entire reason it is written. */
+  sb.tables.warehouses = [{ id: 'wh-kl', code: 'KL', name: 'KL Warehouse' }];
+  return sb;
+};
+
+describe('/so-to-po names the supplier', () => {
+  test('the fixture really does take the TRANSFER branch — otherwise this file proves nothing', async () => {
+    /* A positive control. Every assertion below is about the transfer arm, and
+       the create arm has carried a CreditorCode all along — so a fixture that
+       quietly fell back to `create_po` would pass them while testing the wrong
+       code path entirely. */
+    const sb = soToPoSb();
+    expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' })).toBe(true);
+    expect(sb.tables.autocount_outbox[0].op).toBe('so_to_po');
+  });
+
+  test('the enqueued body carries CreditorCode', async () => {
+    const sb = soToPoSb();
+    await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
+    const stored = (sb.tables.autocount_outbox[0].payload as any).body;
+    expect(stored.CreditorCode, 'the supplier the ERP is buying from').toBe(SUPPLIER.code);
+    expect(stored.CreditorName).toBe(SUPPLIER.name);
+    /* Still the transfer payload, not a create wearing its clothes. */
+    expect(stored.DtlKeys).toEqual([4242]);
+  });
+
+  /* THE ROW ALREADY IN THE QUEUE. `dispatchOne` REPLAYS the stored payload and
+     never recomposes, so fixing the enqueue does nothing for a row queued
+     before it — and there is one, retrying every five minutes since 09:15.
+
+     The account book cannot answer this the way it answers the debtor: this
+     source is a SALES order, which carries a DebtorCode and no creditor, and
+     the supplier exists nowhere in AutoCount until we send it. The authority is
+     the ERP's own purchase order, which the row already points at through
+     `writeback`. */
+  test('a row stored WITHOUT one is backfilled at drain, from the ERP purchase order', async () => {
+    const sb = soToPoSb();
+    await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
+    const row = sb.tables.autocount_outbox[0];
+    // Exactly what the rows queued before today look like.
+    delete (row.payload as any).body.CreditorCode;
+    delete (row.payload as any).body.CreditorName;
+    sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-PARENT-1';
+
+    const body = await wireBody(sb);
+    expect(body.CreditorCode, 'resolved at drain, so no requeue is needed').toBe(SUPPLIER.code);
+  });
+
+  test('the backfill does NOT overwrite a creditor the payload already names', async () => {
+    const sb = soToPoSb();
+    await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
+    (sb.tables.autocount_outbox[0].payload as any).body.CreditorCode = '400-OTHER';
+    sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-PARENT-1';
+    const body = await wireBody(sb);
+    expect(body.CreditorCode).toBe('400-OTHER');
+  });
+});
+
 describe('the four conversions', () => {
   const convert = async (op: any, docType: any, from: any, to: any, docNo: string) => {
     const sb = seeded();
