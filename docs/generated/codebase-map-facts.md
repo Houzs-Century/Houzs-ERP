@@ -63,7 +63,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
-| `backend/src/scm/routes/autocount-outbox.ts` | 2 | 515 |
+| `backend/src/scm/routes/autocount-outbox.ts` | 2 | 598 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1128 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2332 |
@@ -74,7 +74,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-messages.ts` | 2 | 189 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5632 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
-| `backend/src/scm/routes/delivery-planning.ts` | 5 | 2898 |
+| `backend/src/scm/routes/delivery-planning.ts` | 5 | 2915 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1739 |
@@ -90,7 +90,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/fabric-tracking.ts` | 9 | 602 |
 | `backend/src/scm/routes/fleet-maintenance.ts` | 23 | 2096 |
 | `backend/src/scm/routes/free-item-campaigns.ts` | 4 | 114 |
-| `backend/src/scm/routes/grns.ts` | 13 | 3724 |
+| `backend/src/scm/routes/grns.ts` | 13 | 3648 |
 | `backend/src/scm/routes/helpers.ts` | 3 | 188 |
 | `backend/src/scm/routes/hr.ts` | 19 | 1542 |
 | `backend/src/scm/routes/inventory-adjustments.ts` | 1 | 222 |
@@ -106,7 +106,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11988 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
-| `backend/src/scm/routes/mrp.ts` | 1 | 1491 |
+| `backend/src/scm/routes/mrp.ts` | 1 | 1558 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 244 |
 | `backend/src/scm/routes/payment-audit-log.ts` | 1 | 427 |
 | `backend/src/scm/routes/payment-vouchers.ts` | 6 | 1048 |
@@ -121,7 +121,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-consignment-orders.ts` | 10 | 711 |
 | `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1323 |
 | `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1125 |
-| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2541 |
+| `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2455 |
 | `backend/src/scm/routes/purchase-returns.ts` | 13 | 1611 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
@@ -171,7 +171,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1400 files, 565975 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1414 files, 571345 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -189,8 +189,8 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4174 |
-| `backend/src/scm/routes/grns.ts` | 3724 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3711 |
+| `backend/src/scm/routes/grns.ts` | 3648 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3314 |
@@ -371,9 +371,9 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1071 |
 | `frontend/src/mobile/MobileApp.tsx` | 1046 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 298 |
-| `frontend/src/mobile/MobileAutoCountSync.tsx` | 568 |
+| `frontend/src/mobile/MobileAutoCountSync.tsx` | 665 |
 | `frontend/src/mobile/MobileCalendar.tsx` | 792 |
-| `frontend/src/mobile/MobileConvertWizard.tsx` | 1033 |
+| `frontend/src/mobile/MobileConvertWizard.tsx` | 1079 |
 | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2427 |
 | `frontend/src/mobile/MobileFairReport.tsx` | 735 |
 | `frontend/src/mobile/MobileGantt.tsx` | 230 |
@@ -393,7 +393,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileProfile.tsx` | 972 |
 | `frontend/src/mobile/MobileRelationshipMap.tsx` | 275 |
 | `frontend/src/mobile/MobileSODetail.tsx` | 2118 |
-| `frontend/src/mobile/MobileSalesOrders.tsx` | 830 |
+| `frontend/src/mobile/MobileSalesOrders.tsx` | 840 |
 | `frontend/src/mobile/MobileScan.tsx` | 1405 |
 | `frontend/src/mobile/MobileSearch.tsx` | 244 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
