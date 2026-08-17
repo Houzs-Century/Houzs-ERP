@@ -49,7 +49,7 @@ describe('parseStatement — refusals are loud and name what is wrong', () => {
     expect((noFormat as { reason: string }).reason).toMatch(/statement format/i);
 
     const noMap = parseStatement(baseCfg({ column_map: null }), CSV('a,b', '1,2'));
-    expect((noMap as { reason: string }).reason).toMatch(/column mapping/i);
+    expect((noMap as { reason: string }).reason).toMatch(/file layout/i);
 
     const noFee = parseStatement(baseCfg({ fee_method: null }), CSV('a,b', '1,2'));
     expect((noFee as { reason: string }).reason).toMatch(/fee method/i);
@@ -65,7 +65,43 @@ describe('parseStatement — refusals are loud and name what is wrong', () => {
     const r = parseStatement(baseCfg(), CSV('Date,Amount', '2026-08-01,10.00'));
     expect(r).toMatchObject({ ok: false });
     expect((r as { reason: string }).reason).toMatch(/Txn Date/);
-    expect((r as { reason: string }).reason).toMatch(/Found: Date, Amount/);
+    expect((r as { reason: string }).reason).toMatch(/The file has: Date, Amount/);
+  });
+
+  /* Two failures the owner hit on the demo rig, both invisible to him:
+     Excel stamps a BOM on every CSV it saves, which glued itself to the first
+     heading; and the refusal that would have explained it was being replaced
+     with "some details weren't accepted" by the frontend's shared
+     humanApiError, because it contained the word "column". */
+  it('a file Excel re-saved (with a BOM) still reads', () => {
+    const r = parseStatement(baseCfg(), `﻿${CSV(
+      'Txn Date,Approval Code,Gross,MDR',
+      '01/08/2026,A1,1000.00,15.00',
+    )}`);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows).toHaveLength(1);
+  });
+
+  it('every refusal survives the frontend error humaniser', () => {
+    /* The shared humanApiError drops any message that looks like a database
+       internal, or runs past 200 characters. A refusal nobody can read is the
+       silence §2.14 exists to prevent, so the wording is part of the contract. */
+    const swallowed = /violates|constraint|null value|column|relation|syntax|PGRST|error_code|\b\d{5}\b/i;
+    const refusals = [
+      parseStatement(baseCfg({ statement_format: null }), 'x'),
+      parseStatement(baseCfg({ column_map: null }), 'x'),
+      parseStatement(baseCfg({ fee_method: null }), 'x'),
+      parseStatement(baseCfg({ statement_format: 'PDF' }), 'x'),
+      parseStatement(baseCfg(), CSV('Invoice No,Customer,Total', 'INV-1,Ah Seng,250.00')),
+      parseStatement(baseCfg(), CSV('Txn Date,Approval Code,Gross,MDR', 'yesterday,A1,1.00,0.10')),
+    ];
+    for (const r of refusals) {
+      expect(r.ok).toBe(false);
+      const { reason } = r as { reason: string };
+      expect(reason.length).toBeLessThan(200);
+      expect(swallowed.test(reason)).toBe(false);
+    }
   });
 
   it('a header-only file is a failure, not an empty day', () => {

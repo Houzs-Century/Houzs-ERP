@@ -6,7 +6,7 @@
 //   • the four piles carry their counts and a line shows its clue;
 //   • a selection that does not add up cannot be confirmed.
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { AcquirerSetup, SettlementRow } from './settlement-queries';
@@ -33,11 +33,12 @@ const ROW: SettlementRow = {
 };
 
 const confirmMutate = vi.fn();
-let uploadError: { message: string } | null = null;
+const uploadMutateAsync = vi.fn();
+let saveMutate = vi.fn();
 
 vi.mock('./settlement-queries', () => ({
   useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL] }, isLoading: false }),
-  useSaveAcquirerSetup: () => ({ mutate: vi.fn(), isPending: false }),
+  useSaveAcquirerSetup: () => ({ mutate: saveMutate, isPending: false }),
   useSettlementBatches: () => ({ data: { batches: [{ id: 1, acquirer_code: 'MBB', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-03', row_count: 2, gross_sen: 177700, fee_sen: 2600, net_sen: 175100, status: 'OPEN', uploaded_by: null, created_at: '' }] }, isLoading: false }),
   useSettlementBatch: () => ({
     data: {
@@ -48,16 +49,36 @@ vi.mock('./settlement-queries', () => ({
     },
     isLoading: false,
   }),
-  useUploadStatement: () => ({ mutate: vi.fn(), isPending: false, isError: uploadError != null, error: uploadError }),
+  useUploadStatement: () => ({ mutateAsync: uploadMutateAsync, isPending: false }),
   useConfirmSettlementRow: () => ({ mutate: confirmMutate, isPending: false, isError: false, error: null }),
   useConfirmMatched: () => ({ mutate: vi.fn(), isPending: false, data: null }),
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
   useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, recordedNotArrived: [], arrivedNotRecorded: [] }, isLoading: false }),
 }));
 
-import { SettlementRecon } from './SettlementRecon';
+import { SettlementRecon, refusalText } from './SettlementRecon';
 
 const draw = () => render(<MemoryRouter><SettlementRecon /></MemoryRouter>);
+
+/* The bug the owner hit on the local rig: the page showed "Some of the details
+   weren't accepted" instead of the statement's actual problem, because the
+   shared humanApiError treats any message containing "column" as a database
+   internal and replaces it. The server's own sentence is on err.body. */
+describe("refusalText — the server's sentence must reach the operator", () => {
+  test('prefers the raw body over the humanised message', () => {
+    const err = Object.assign(new Error("Some of the details weren't accepted."), {
+      status: 400,
+      body: JSON.stringify({ error: 'unreadable_statement', message: 'Not a MBB statement — no Txn Date heading. The file has: Invoice No, Customer' }),
+    });
+    expect(refusalText(err, 'fallback')).toMatch(/no Txn Date heading/);
+  });
+
+  test('falls back to the humanised message, then to the caller default', () => {
+    expect(refusalText(new Error('plain failure'), 'fallback')).toBe('plain failure');
+    expect(refusalText(Object.assign(new Error(''), { body: 'not json' }), 'fallback')).toBe('fallback');
+    expect(refusalText(null, 'fallback')).toBe('fallback');
+  });
+});
 
 describe('the reconcile tab', () => {
   test('an acquirer with no unique reference is called out before anything is uploaded', () => {
@@ -66,11 +87,10 @@ describe('the reconcile tab', () => {
     expect(screen.getByText(/sends no unique transaction reference/)).toBeTruthy();
   });
 
-  test("a refused statement shows the server's own sentence", () => {
-    uploadError = { message: 'This does not look like a MBB statement: the column Txn Date is not in the file.' };
+  test('several statements can be picked at once', () => {
     draw();
-    expect(screen.getByText(/does not look like a MBB statement/)).toBeTruthy();
-    uploadError = null;
+    expect(screen.getByLabelText('Statement files').hasAttribute('multiple')).toBe(true);
+    expect(screen.getByText(/several files at once/)).toBeTruthy();
   });
 
   test('the four piles carry their counts, and a line shows its clue and its candidates', () => {
@@ -112,5 +132,31 @@ describe('the setup tab', () => {
     fireEvent.click(screen.getByText('Acquirer setup'));
     expect(screen.getAllByText('ready').length).toBe(2);
     expect(screen.getByText(/nothing from GHL can be confirmed automatically/)).toBeTruthy();
+  });
+
+  /* The headings used to be one raw JSON box. An owner cannot be asked to type
+     {"date":"Txn Date",…} — and a typo in it was only discovered at upload. */
+  test('each heading is its own labelled field, seeded from the saved layout', () => {
+    draw();
+    fireEvent.click(screen.getByText('Acquirer setup'));
+    expect((screen.getByLabelText('MBB Date heading') as HTMLInputElement).value).toBe('Txn Date');
+    expect((screen.getByLabelText('MBB Amount heading') as HTMLInputElement).value).toBe('Gross');
+    expect(screen.getByLabelText('MBB Reference heading')).toBeTruthy();
+    expect(screen.getByLabelText('MBB Net heading')).toBeTruthy();
+  });
+
+  test('a required heading left blank is refused HERE, not at upload time', () => {
+    saveMutate = vi.fn();
+    draw();
+    fireEvent.click(screen.getByText('Acquirer setup'));
+    const dateField = screen.getByLabelText('MBB Date heading');
+    fireEvent.change(dateField, { target: { value: '' } });
+    const card = within(dateField.closest('section') as HTMLElement);
+    fireEvent.click(card.getByText('Save'));
+    /* MBB carries a unique reference AND states its fee per line, so those
+       headings are required too — the message names every one still missing,
+       not just the field that was cleared. */
+    expect(card.getByText(/Fill in the Date, Fee, Reference headings/)).toBeTruthy();
+    expect(saveMutate).not.toHaveBeenCalled();
   });
 });

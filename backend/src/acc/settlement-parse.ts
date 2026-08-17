@@ -137,20 +137,26 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
   }
   const map = cfg.column_map ?? null;
   if (!map || !map.date || !map.gross) {
-    return { ok: false, reason: `${cfg.code} has no column mapping configured (at minimum the date and gross-amount columns) — fill in its acquirer setup before uploading.` };
+    return { ok: false, reason: `${cfg.code} has no file layout set up yet (at least the date and amount headings) — fill in its acquirer setup first.` };
   }
   const feeMethod = cfg.fee_method ?? null;
   if (!feeMethod) {
     return { ok: false, reason: `${cfg.code} has no fee method configured (stated / gross-minus-net / prorated-summary) — fill in its acquirer setup before uploading.` };
   }
   if (feeMethod === 'stated' && !map.fee) {
-    return { ok: false, reason: `${cfg.code} states its fee per line, but no fee column is mapped.` };
+    return { ok: false, reason: `${cfg.code} states its fee on each line, but its fee heading has not been set up.` };
   }
   if (feeMethod === 'gross-minus-net' && !map.net) {
-    return { ok: false, reason: `${cfg.code} derives its fee as gross minus net, but no net column is mapped.` };
+    return { ok: false, reason: `${cfg.code} works its fee out as gross minus net, but its net heading has not been set up.` };
   }
 
-  const lines = text.split(/\r\n|\n|\r/).filter((l) => l.trim() !== '');
+  /* Excel writes a UTF-8 byte-order mark at the front of every CSV it saves,
+     and an operator who opens the acquirer's file to look at it and presses
+     save has just added one. Left in place it becomes part of the FIRST
+     heading, so "Txn Date" stops matching "Txn Date" and a perfectly good
+     statement is refused for a reason nobody can see. */
+  const body = text.charCodeAt(0) === 0xfeff ? text.slice(1) : text;
+  const lines = body.split(/\r\n|\n|\r/).filter((l) => l.trim() !== '');
   if (lines.length === 0) return { ok: false, reason: 'The file is empty.' };
 
   const headers = splitCsvLine(lines[0]);
@@ -167,9 +173,14 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
   if (feeMethod === 'stated' && idxFee < 0) missing.push(map.fee as string);
   if (feeMethod === 'gross-minus-net' && idxNet < 0) missing.push(map.net as string);
   if (missing.length) {
+    /* Kept SHORT and free of the words a generic API-error humaniser strips as
+       "database internals" (the frontend's shared humanApiError drops any
+       message containing "column", which silently turned this sentence into
+       "some details weren't accepted" — the exact opposite of §2.14). */
+    const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
     return {
       ok: false,
-      reason: `This does not look like a ${cfg.code} statement: the column${missing.length > 1 ? 's' : ''} ${missing.join(', ')} ${missing.length > 1 ? 'are' : 'is'} not in the file. Found: ${headers.join(', ')}`,
+      reason: `Not a ${cfg.code} statement — no ${clip(missing.join(', '), 50)} heading${missing.length > 1 ? 's' : ''}. The file has: ${clip(headers.join(', '), 90)}`,
     };
   }
 

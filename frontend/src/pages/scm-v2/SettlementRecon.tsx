@@ -50,6 +50,34 @@ const softText: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--
 const danger = 'var(--c-festive-b, #B8331F)';
 const good = 'var(--c-secondary-a, #2F5D4F)';
 
+/**
+ * The server's OWN sentence, not the humanised one.
+ *
+ * authedFetch runs every failure through the shared `humanApiError`, which
+ * drops any message containing "column" / "relation" / "constraint" as a
+ * suspected database internal — and this feature's whole contract is that a
+ * statement it cannot read says WHY ("no Txn Date heading; the file has: …").
+ * That message was being replaced with "some details weren't accepted", which
+ * is precisely the silence §2.14 forbids. The raw body is preserved on the
+ * error object, so read it there and fall back to the humanised text.
+ */
+export const refusalText = (err: unknown, fallback: string): string => {
+  const e = err as { body?: string; message?: string } | null;
+  try {
+    const parsed = JSON.parse(e?.body ?? '') as { message?: string; reason?: string };
+    const own = parsed.message ?? parsed.reason;
+    if (typeof own === 'string' && own.trim()) return own;
+  } catch { /* not JSON — fall through */ }
+  /* An EMPTY message is silence too — fall through to the caller's sentence
+     rather than render a blank red line. */
+  return e?.message?.trim() ? e.message : fallback;
+};
+
+/* The server sends the four piles as a plain tally; a bucket with nothing in it
+   is simply absent, so read it as a lookup rather than a guaranteed key. */
+const bucketCount = (buckets: Record<string, number>, key: SettlementBucket): number =>
+  Number(buckets[key] ?? 0);
+
 const BUCKET_LABEL: Record<SettlementBucket, string> = {
   MATCHED: 'Matched',
   NEEDS_CONFIRM: 'Needs confirming',
@@ -84,30 +112,54 @@ const ReconcileTab = () => {
 
   const acquirers = setup.data?.acquirers ?? [];
   const [code, setCode] = useState('');
-  const [fileName, setFileName] = useState('');
-  const [content, setContent] = useState('');
+  const [files, setFiles] = useState<Array<{ name: string; content: string }>>([]);
   const [summaryFee, setSummaryFee] = useState('');
+  /* One result line per file — a month's statements go up in one go and each
+     one answers for itself, so a single bad file never hides four good ones. */
+  const [results, setResults] = useState<Array<{ name: string; ok: boolean; text: string }>>([]);
+  const [busy, setBusy] = useState(false);
   const chosen = acquirers.find((a) => a.code === code) ?? null;
 
-  const readFile = (file: File | null) => {
-    if (!file) { setFileName(''); setContent(''); return; }
-    setFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = () => setContent(String(reader.result ?? ''));
-    reader.readAsText(file);
+  const readFiles = (picked: FileList | null) => {
+    setResults([]);
+    if (!picked || picked.length === 0) { setFiles([]); return; }
+    void Promise.all([...picked].map(async (f) => ({ name: f.name, content: await f.text() })))
+      .then(setFiles);
   };
 
-  const send = () => {
-    if (!code || !content) return;
-    upload.mutate(
-      {
-        acquirerCode: code,
-        fileName: fileName || 'statement.csv',
-        content,
-        summaryFeeSen: summaryFee.trim() ? Math.round(Number(summaryFee) * 100) : null,
-      },
-      { onSuccess: (r) => { setBatchId(r.batchId); setContent(''); setFileName(''); } },
-    );
+  const send = async () => {
+    if (!code || files.length === 0) return;
+    setBusy(true);
+    setResults([]);
+    const done: Array<{ name: string; ok: boolean; text: string }> = [];
+    let lastBatch: number | null = null;
+    /* Sequential, not parallel: each upload's matching must see the payments
+       the previous one already claimed, or two statements could both take the
+       same money and only the database's unique index would catch it. */
+    for (const f of files) {
+      try {
+        const r = await upload.mutateAsync({
+          acquirerCode: code,
+          fileName: f.name,
+          content: f.content,
+          summaryFeeSen: summaryFee.trim() ? Math.round(Number(summaryFee) * 100) : null,
+        });
+        lastBatch = r.batchId;
+        done.push({
+          name: f.name,
+          ok: true,
+          text: `${r.rows} line${r.rows === 1 ? '' : 's'} (${r.periodFrom} → ${r.periodTo}), gross ${fmt(r.grossSen)}, fee ${fmt(r.feeSen)}`
+            + (r.skippedLines > 0 ? ` · ${r.skippedLines} summary line(s) left out` : '')
+            + ` · matched ${bucketCount(r.buckets, 'MATCHED')}, to confirm ${bucketCount(r.buckets, 'NEEDS_CONFIRM')}, not matched ${bucketCount(r.buckets, 'UNMATCHED')}`,
+        });
+      } catch (err) {
+        done.push({ name: f.name, ok: false, text: refusalText(err, 'The statement could not be read.') });
+      }
+      setResults([...done]);
+    }
+    setBusy(false);
+    setFiles([]);
+    if (lastBatch != null) setBatchId(lastBatch);
   };
 
   return (
@@ -127,17 +179,20 @@ const ReconcileTab = () => {
               </option>
             ))}
           </select>
-          <input type="file" accept=".csv,text/csv" aria-label="Statement file"
-            onChange={(e) => readFile(e.target.files?.[0] ?? null)} style={{ fontSize: 'var(--fs-13)' }} />
+          <input type="file" accept=".csv,text/csv" multiple aria-label="Statement files"
+            onChange={(e) => readFiles(e.target.files)} style={{ fontSize: 'var(--fs-13)' }} />
           {chosen?.fee_method === 'prorated-summary' && (
             <input value={summaryFee} onChange={(e) => setSummaryFee(e.target.value)}
               placeholder="Statement fee total (RM)" aria-label="Statement fee total"
               style={{ padding: '6px 10px', fontSize: 'var(--fs-13)', width: 180 }} />
           )}
-          <button type="button" style={btn(true, !code || !content || upload.isPending)}
-            disabled={!code || !content || upload.isPending} onClick={send}>
-            <Upload {...ICON} /> {upload.isPending ? 'Reading…' : 'Upload'}
+          <button type="button" style={btn(true, !code || files.length === 0 || busy)}
+            disabled={!code || files.length === 0 || busy} onClick={() => { void send(); }}>
+            <Upload {...ICON} /> {busy ? 'Reading…' : `Upload${files.length > 1 ? ` ${files.length} files` : ''}`}
           </button>
+        </div>
+        <div style={softText}>
+          You can pick several files at once — they go up one after another, and each one answers for itself.
         </div>
         {chosen && !chosen.autoMatchable && (
           <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
@@ -145,18 +200,12 @@ const ReconcileTab = () => {
             Nothing here can auto-match on amount and date alone.
           </div>
         )}
-        {upload.data && (
-          <div style={{ fontSize: 'var(--fs-13)', color: good }}>
-            Read {upload.data.rows} transaction line{upload.data.rows === 1 ? '' : 's'} ({upload.data.periodFrom} → {upload.data.periodTo}), gross {fmt(upload.data.grossSen)}, fee {fmt(upload.data.feeSen)}.
-            {upload.data.skippedLines > 0 && ` ${upload.data.skippedLines} summary line(s) in the file were not transactions and were left out.`}
+        {results.map((r) => (
+          <div key={r.name} style={{ fontSize: 'var(--fs-13)', color: r.ok ? good : danger, display: 'flex', gap: 6 }}>
+            {!r.ok && <AlertTriangle {...ICON} />}
+            <span><b>{r.name}</b> — {r.text}</span>
           </div>
-        )}
-        {upload.isError && (
-          <div style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
-            <AlertTriangle {...ICON} />
-            <span>{(upload.error as { message?: string } | null)?.message ?? 'The statement could not be read.'}</span>
-          </div>
-        )}
+        ))}
       </section>
 
       <section className="space-y-2">
@@ -450,6 +499,17 @@ const SetupTab = () => {
   );
 };
 
+/* The five headings a statement can carry. Which of them are REQUIRED depends
+   on the fee method, so the form says so instead of letting the upload be the
+   place where the operator finds out. */
+const HEADING_FIELDS = [
+  { key: 'date', label: 'Date heading', hint: 'e.g. Txn Date' },
+  { key: 'ref', label: 'Reference heading', hint: 'e.g. Approval Code' },
+  { key: 'gross', label: 'Amount heading', hint: 'e.g. Gross' },
+  { key: 'fee', label: 'Fee heading', hint: 'e.g. MDR' },
+  { key: 'net', label: 'Net heading', hint: 'e.g. Net Credited' },
+] as const;
+
 const AcquirerCard = ({ acquirer }: { acquirer: AcquirerSetup }) => {
   const save = useSaveAcquirerSetup();
   const [form, setForm] = useState({
@@ -458,17 +518,23 @@ const AcquirerCard = ({ acquirer }: { acquirer: AcquirerSetup }) => {
     feeMethod: acquirer.fee_method ?? '',
     dateToleranceDays: String(acquirer.date_tolerance_days),
     bankAccountCode: acquirer.bank_account_code ?? '',
-    columnMap: JSON.stringify(acquirer.column_map ?? { date: '', ref: '', gross: '', fee: '', net: '' }, null, 0),
+  });
+  const [headings, setHeadings] = useState<Record<string, string>>(() => {
+    const m = acquirer.column_map ?? {};
+    return Object.fromEntries(HEADING_FIELDS.map((f) => [f.key, m[f.key] ?? '']));
   });
   const [mapError, setMapError] = useState('');
 
+  const requiredHeadings = ['date', 'gross',
+    ...(form.feeMethod === 'stated' ? ['fee'] : []),
+    ...(form.feeMethod === 'gross-minus-net' ? ['net'] : []),
+    ...(form.hasUniqueRef === 'true' ? ['ref'] : []),
+  ];
+
   const submit = () => {
-    let columnMap: Record<string, string> | null = null;
-    try {
-      const parsed = JSON.parse(form.columnMap || '{}') as Record<string, unknown>;
-      columnMap = Object.fromEntries(Object.entries(parsed).map(([k, v]) => [k, String(v ?? '').trim()]).filter(([, v]) => v !== ''));
-    } catch {
-      setMapError('The column names must be valid JSON, e.g. {"date":"Txn Date","gross":"Amount"}');
+    const missing = requiredHeadings.filter((k) => !String(headings[k] ?? '').trim());
+    if (missing.length > 0) {
+      setMapError(`Fill in the ${missing.map((k) => HEADING_FIELDS.find((f) => f.key === k)?.label.replace(' heading', '')).join(', ')} heading${missing.length > 1 ? 's' : ''} — a statement cannot be read without ${missing.length > 1 ? 'them' : 'it'}.`);
       return;
     }
     setMapError('');
@@ -478,7 +544,9 @@ const AcquirerCard = ({ acquirer }: { acquirer: AcquirerSetup }) => {
       hasUniqueRef: form.hasUniqueRef === '' ? null : form.hasUniqueRef === 'true',
       feeMethod: form.feeMethod || null,
       dateToleranceDays: Number(form.dateToleranceDays) || 0,
-      columnMap,
+      columnMap: Object.fromEntries(
+        Object.entries(headings).map(([k, v]) => [k, String(v).trim()]).filter(([, v]) => v !== ''),
+      ),
       bankAccountCode: form.bankAccountCode || null,
     });
   };
@@ -535,10 +603,22 @@ const AcquirerCard = ({ acquirer }: { acquirer: AcquirerSetup }) => {
             onChange={(e) => setForm({ ...form, bankAccountCode: e.target.value })} />
         ))}
       </div>
-      {field('Column names in the file', (
-        <input style={{ ...input, minWidth: 420 }} value={form.columnMap} aria-label={`${acquirer.code} column names`}
-          onChange={(e) => setForm({ ...form, columnMap: e.target.value })} />
-      ))}
+      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)', marginTop: 4 }}>
+        Type each heading exactly as it appears in the first row of {acquirer.display_name}'s file.
+      </div>
+      <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
+        {HEADING_FIELDS.map((f) => {
+          const required = requiredHeadings.includes(f.key);
+          return field(`${f.label}${required ? ' *' : ''}`, (
+            <input
+              style={{ ...input, minWidth: 170, borderColor: required && !headings[f.key] ? danger : undefined }}
+              value={headings[f.key] ?? ''} placeholder={f.hint}
+              aria-label={`${acquirer.code} ${f.label}`}
+              onChange={(e) => setHeadings({ ...headings, [f.key]: e.target.value })}
+            />
+          ));
+        })}
+      </div>
       {mapError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{mapError}</div>}
       {form.hasUniqueRef === 'false' && (
         <div style={{ fontSize: 'var(--fs-12)', color: danger }}>
