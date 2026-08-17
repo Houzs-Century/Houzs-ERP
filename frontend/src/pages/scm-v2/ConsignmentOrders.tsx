@@ -27,6 +27,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { canViewScmCosting } from "../../auth/salesAccess";
+import { brandingLabel } from '../../vendor/shared/so-branding-label';
+import { getBrandingCompanyCode } from '../../lib/branding';
 import type { JSX } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -257,35 +259,27 @@ const liveBalance = (r: SoRow): number => {
 };
 
 /* Branding auto-derive (Commander 2026-05-28, refined PR #266). The Branding
-   column is derived per row — no longer stored free-text. It now FOLLOWS THE
-   FIRST LINE ITEM rather than collapsing to "Mixed" when categories differ.
-   The SO list API hands back the earliest-created line's normalized category
+   column is derived per row — no longer stored free-text. It FOLLOWS THE FIRST
+   LINE ITEM rather than collapsing to "Mixed" when categories differ. The SO
+   list API hands back the earliest-created line's normalized category
    (`first_item_category`) plus that line's own branding (`first_item_branding`,
-   the mattress brand). Rules:
-     · first item SOFA      → "2990 Sofa"
-     · first item BEDFRAME  → "Bedframe"
-     · first item MATTRESS  → the mattress's OWN brand (e.g. "HAPPISLEEP" /
-                              "CARRES" / "2990" / "MyMattress"); falls back to
-                              "2990 Mattress" when the brand is blank
-     · first item ACCESSORY / OTHERS → "2990" (no dedicated furniture brand)
-     · no items             → "" (column renders "—")
+   the mattress brand).
+
+   THE RULE IS NO LONGER WRITTEN HERE. It was, and the copy that used to sit in
+   this spot was the second of two — the backend's
+   scm/lib/so-display-branding.ts held the other, and its comment said this one
+   was "behaviourally identical today, verified 2026-08-15", which is a date,
+   not a guarantee. Both now come from the mirrored shared module, which
+   check-shared-mirrors.mjs --strict keeps identical across the two trees in CI.
+
+   The comment that used to be here also promised `ACCESSORY / OTHERS → "2990"`
+   while the code below it returned "". Owner 2026-08-17: there should be no
+   blank branding — a service order still says "Service". The shared rule can
+   no longer return "" for any input.
+
    Sortable + groupable + filterable via the same derived string. */
-const deriveBranding = (r: SoRow): string => {
-  const cat = r.first_item_category;
-  if (!cat) return '';                       // no items → "—"
-  if (cat === 'SOFA')     return '2990 Sofa';
-  if (cat === 'BEDFRAME') return 'Bedframe';
-  if (cat === 'MATTRESS') {
-    // Mattress brand follows the product's own branding. The 2990 house
-    // brand (stored as "2990" / "2990's") displays as "2990 Mattress";
-    // other brands (HAPPISLEEP, CARRES, MyMattress…) show as-is.
-    // (Commander 2026-05-28: "2990 mattress 而不是 2990".)
-    const b = (r.first_item_branding ?? '').trim();
-    if (!b || /^2990('?s)?$/i.test(b)) return '2990 Mattress';
-    return b;
-  }
-  return '';                                 // accessory / others → none ("—")  (Commander 2026-05-28)
-};
+const deriveBranding = (r: SoRow): string =>
+  brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
 
 const STATUS_CLASS: Record<string, string> = {
   // DRAFT removed in migration 0078 — SOs start at CONFIRMED.

@@ -839,7 +839,12 @@ deliveryPlanning.get('/', async (c) => {
       const code = hasRep ? repCode.get(docNo) : firstItemCode.get(docNo);
       fBranding = (code && productBranding.get(code)) || fBranding;
     }
-    const branding = deriveBranding(fCat, fBranding) || null;
+    /* Company comes PER ROW, not from the caller: this board is a SHARED queue,
+       so labelling a Houzs order "2990 Sofa" because a 2990 user opened it is a
+       WRONG label, not a missing one. The old `|| null` is gone — the rule
+       cannot return blank now (owner 2026-08-17), so it could only restore the
+       empty state. See scm/shared/so-branding-label.ts. */
+    const branding = deriveBranding(fCat, fBranding, codeMap.get(Number(r.company_id)) ?? null);
     const readiness = summariseReadiness(linesByDoc.get(docNo) ?? []);
     const delivered = deliveredByDoc.get(docNo) ?? 0;
     const remaining = remainingByDoc.get(docNo) ?? 0;
@@ -895,7 +900,9 @@ deliveryPlanning.get('/', async (c) => {
       debtor_code: r.debtor_code ?? null,
       debtor_name: r.debtor_name ?? null,
       phone: r.phone ?? null,
-      branding,
+      /* SO rows always carry a real label now; `| null` is union parity for the
+         three non-SO BoardRow kinds (ASSR / DP / project) that pass null. */
+      branding: branding as string | null,
       status,
       delivery_state: state,
       delivery_state_override: stored && (DELIVERY_STATES as string[]).includes(stored) ? stored : null,

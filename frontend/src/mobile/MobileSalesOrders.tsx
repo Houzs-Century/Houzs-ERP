@@ -9,6 +9,8 @@ import { MobileVirtualList } from "./MobileVirtualList";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { confirmSoWithFreshVersion } from "./mobile-so-concurrency";
 import { fmtCenti } from "../lib/scm";
+import { brandingLabel } from "../vendor/shared/so-branding-label";
+import { getBrandingCompanyCode } from "../lib/branding";
 import { resolveSoLocation } from "../lib/soLocation";
 import { formatDate } from "../lib/utils";
 import { SearchProgress } from "../components/SearchProgress";
@@ -24,10 +26,12 @@ type SoRow = {
   sales_location: string | null; warehouse_name: string | null;
   customer_state: string | null; ref: string | null; po_doc_no: string | null;
   customer_so_no: string | null;
-  /* Branding — header `branding`, falling back to `first_item_branding` for
-     mixed / bedframe-only SOs. Already in the list payload (backend
-     mfg-sales-orders.ts select); drives the card brand pill (desktop parity). */
+  /* Branding — header `branding`, falling back to the derived label built from
+     `first_item_category` + `first_item_branding`. All three are already in the
+     list payload (backend mfg-sales-orders.ts:1782/1793); drives the card brand
+     pill (desktop parity). */
   branding: string | null; first_item_branding: string | null;
+  first_item_category: string | null;
   customer_delivery_date: string | null; processing_date: string | null;
   so_date: string | null; created_at: string | null;
   local_total_centi: number | null; total_revenue_centi: number | null; paid_total_centi: number | null;
@@ -63,7 +67,13 @@ const soDate = (r: SoRow) => r.so_date ?? r.created_at ?? null;
    brandOf/brandTone) so both surfaces resolve the same tone from the same
    payload. 2990/SOFA = success, BEDFRAME = accent, AKEMI/blank = neutral, any
    other brand = warning. Mirrored, not paraphrased. */
-const brandOf = (r: SoRow): string => r.branding || r.first_item_branding || "—";
+/* Desktop parity, and the same fix: the trailing `|| "—"` printed a dash on
+   every order whose first line carries no brand TEXT — which is every sofa —
+   while the rule that turns a category into a label lived on other pages. One
+   shared rule now, and it cannot return blank (owner 2026-08-17). */
+const brandOf = (r: SoRow): string =>
+  (r.branding ?? "").trim() ||
+  brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
 const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
   const s = (b || "").toUpperCase();
   if (s.includes("2990") || s.includes("SOFA")) return "success";

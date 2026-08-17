@@ -21,6 +21,19 @@
 // SO list shows. The list handler still carries its inline copy interwoven
 // with its readiness aggregation — consolidating it onto this helper is a
 // follow-up; if you change the rule, change BOTH until then.
+//
+// NOTE (2026-08-17): the two exports here are DIFFERENT rules and always have
+// been, which is worth knowing before you assume a fix to one touched the
+// other.
+//   · deriveBranding (re-exported from ../shared/so-branding-label) maps a
+//     CATEGORY to a display label — "2990 Sofa", "Bedframe", "Service".
+//   · deriveDisplayBrandingByDoc, below, returns the line's RAW branding text
+//     and the literal "BEDFRAME" (upper case, not "Bedframe") for a
+//     bedframe-only order, and omits a doc entirely when nothing resolves.
+// So the Sales Report and the SO detail can show a different string than the
+// SO list for the same order, and a doc missing from the map still renders a
+// dash upstream. That divergence is NOT fixed here — see the PR's deferred
+// list. Only the label rule was made total.
 // ----------------------------------------------------------------------------
 
 import { chunkIn } from './paginate-all';
@@ -35,35 +48,29 @@ const isBlank = (v: string | null | undefined) => v == null || String(v).trim() 
 /**
  * The SO list Branding column, as a pure rule.
  *
- * WHY IT IS HERE AND NOT COPIED. Three surfaces render this same column and
- * must agree: the SO list, Delivery Planning, and the Consignment Orders page.
- * Delivery Planning carried its own copy under a comment reading "Keep in
- * lock-step with the SO list" — an instruction to a human, which is what a
- * shared function is for. (The frontend ConsignmentOrders.tsx copy is
- * behaviourally identical today, verified 2026-08-15; it takes a row rather
- * than two values, so it is left alone until the shared frontend mirror moves
- * with it.)
+ * THE RULE ITSELF NOW LIVES IN ../shared/so-branding-label.ts and this is its
+ * name at the call sites that already had it. Two reasons it moved:
  *
- * MATTRESS is the only branch that reads the second argument: it shows the
- * mattress its OWN brand, except the house brand (stored as "2990" or
- * "2990's"), which displays as "2990 Mattress". Blank brand also reads as the
- * house brand — a mattress with no recorded brand is ours.
+ *  1. IT WAS WRITTEN TWICE. The comment this function used to carry said the
+ *     frontend copy in ConsignmentOrders.tsx was "behaviourally identical
+ *     today, verified 2026-08-15" and left it alone. Two homes and a date is
+ *     not a guarantee; the shared/ directory is mirrored into
+ *     frontend/src/vendor/shared/ and check-shared-mirrors.mjs --strict fails
+ *     CI when the two drift (.github/workflows/ci.yml:151). That copy is now
+ *     deleted and the page imports the mirror.
+ *
+ *  2. IT RETURNED THE EMPTY STRING for ACCESSORY / SERVICE / OTHERS and for an
+ *     order with no readable line — and for ANY raw item_group text, because
+ *     it compared categories with === against normalised values only. Owner
+ *     2026-08-17: a service order still says "Service"; there should be no
+ *     blank branding. The shared rule can no longer return "" for any input
+ *     and so-display-branding.test.ts proves it as a property.
+ *
+ * `companyCode` is new and OPTIONAL: omitted, the labels read exactly as they
+ * did before (the 2990 house-brand wording), so every existing caller keeps
+ * its behaviour until it passes the company it is rendering for.
  */
-export function deriveBranding(
-  firstItemCategory: string | null,
-  firstItemBranding: string | null,
-): string {
-  const cat = firstItemCategory;
-  if (!cat) return '';                       // no items -> em dash in the column
-  if (cat === 'SOFA')     return '2990 Sofa';
-  if (cat === 'BEDFRAME') return 'Bedframe';
-  if (cat === 'MATTRESS') {
-    const b = (firstItemBranding ?? '').trim();
-    if (!b || /^2990('?s)?$/i.test(b)) return '2990 Mattress';
-    return b;
-  }
-  return '';                                 // accessory / others / service -> none
-}
+export { brandingLabel as deriveBranding } from '../shared/so-branding-label';
 
 
 type LineRow = {
