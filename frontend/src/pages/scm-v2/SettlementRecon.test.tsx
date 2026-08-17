@@ -17,7 +17,7 @@ const MBB: AcquirerSetup = {
   transit_account_code: '320-0000', fee_account_code: '930-0000', bank_account_code: '330-0000',
   is_active: true, ready: true, autoMatchable: true,
 };
-const GHL: AcquirerSetup = { ...MBB, code: 'GHL', display_name: 'GHL', has_unique_ref: false, autoMatchable: false };
+const GHL: AcquirerSetup = { ...MBB, code: 'GHL', display_name: 'GHL', has_unique_ref: false, autoMatchable: false, dates_have_no_year: true };
 
 const ROW: SettlementRow = {
   id: 7, line_no: 2, txn_date: '2026-08-03', ref: 'ZZ9',
@@ -91,6 +91,20 @@ describe('the reconcile tab', () => {
     draw();
     expect(screen.getByLabelText('Statement files').hasAttribute('multiple')).toBe(true);
     expect(screen.getByText(/several files at once/)).toBeTruthy();
+  });
+
+  /* Only Hong Leong writes its dates without a year. Showing everyone else a
+     field they cannot answer is how a screen teaches people to ignore it. */
+  test('the statement month is asked only of the acquirer whose file has no year', () => {
+    draw();
+    expect(screen.queryByLabelText('Statement month')).toBeNull();
+
+    fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'GHL' } });
+    expect(screen.getByLabelText('Statement month')).toBeTruthy();
+    expect(screen.getByText(/GHL dates its lines like/)).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'MBB' } });
+    expect(screen.queryByLabelText('Statement month')).toBeNull();
   });
 
   test('the four piles carry their counts, and a line shows its clue and its candidates', () => {

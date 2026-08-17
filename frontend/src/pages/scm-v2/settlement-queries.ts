@@ -17,6 +17,9 @@ export type AcquirerSetup = {
   fee_method: string | null;
   date_tolerance_days: number;
   column_map: Record<string, string> | null;
+  /** Hong Leong writes "16-Aug" with no year anywhere in the file, so its
+      upload has to ask which month the statement covers. Nobody else does. */
+  dates_have_no_year?: boolean;
   transit_account_code: string;
   fee_account_code: string;
   bank_account_code: string | null;

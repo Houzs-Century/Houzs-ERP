@@ -11,7 +11,8 @@
 --      other grantee 0301's copy loop picked up (that is the 0189 failure, and
 --      0190/0191 were the repair). This migration re-grants below for the same
 --      reason.
---   ALTER TABLE scm.acc_acquirer_config DROP COLUMN total_net_label, DROP COLUMN summary_totals;
+--   ALTER TABLE scm.acc_acquirer_config DROP COLUMN total_net_label,
+--     DROP COLUMN summary_totals, DROP COLUMN dates_have_no_year;
 --   DELETE FROM scm.acc_company_acquirers WHERE acquirer_code = 'AEON';
 --   DELETE FROM scm.acc_acquirer_config WHERE code = 'AEON';
 -- No existing row is modified; every new column is nullable or defaulted.
@@ -46,6 +47,13 @@ ALTER TABLE scm.acc_acquirer_config ADD COLUMN total_net_label TEXT;
 --     {"rowLabel":"TOTAL","fee":"Disc. Amt","net":"Net Amount"}
 ALTER TABLE scm.acc_acquirer_config ADD COLUMN summary_totals JSONB;
 
+-- 1c. Whether this acquirer dates its lines with a year at all. Hong Leong does
+--     not — it writes "16-Aug" and nothing in the file says which year — so its
+--     upload has to ask. Config, so the screen asks ONLY where the answer is
+--     needed instead of putting a field nobody understands in front of everyone.
+ALTER TABLE scm.acc_acquirer_config ADD COLUMN dates_have_no_year BOOLEAN NOT NULL DEFAULT FALSE;
+UPDATE scm.acc_acquirer_config SET dates_have_no_year = TRUE WHERE code = 'HLB';
+
 -- 2. What the file said, what the lines came to, and whether the difference has
 --    reached the ledger yet.
 ALTER TABLE scm.acc_settlement_batches
@@ -76,6 +84,7 @@ SELECT
   g.column_map,
   g.total_net_label,
   g.summary_totals,
+  g.dates_have_no_year,
   (g.is_active AND l.is_active) AS is_active
 FROM scm.acc_company_acquirers l
 JOIN scm.acc_acquirer_config g ON g.code = l.acquirer_code;
@@ -110,4 +119,5 @@ ON CONFLICT (code) DO NOTHING;
 INSERT INTO scm.acc_company_acquirers (company_id, acquirer_code)
 SELECT c.company_id, 'AEON' FROM (VALUES (1), (2)) AS c(company_id)
 ON CONFLICT (company_id, acquirer_code) DO NOTHING;
+
 

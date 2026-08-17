@@ -212,17 +212,25 @@ const ReconcileTab = () => {
             <Upload {...ICON} /> {busy ? 'Reading…' : `Upload${files.length > 1 ? ` ${files.length} files` : ''}`}
           </button>
         </div>
-        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <label style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }} htmlFor="settlement-month">
-            Statement month
-          </label>
-          <input id="settlement-month" type="month" value={statementMonth} aria-label="Statement month"
-            onChange={(e) => setStatementMonth(e.target.value)}
-            style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
-          <span style={softText}>
-            Only needed when the file dates a line like &ldquo;05-Jun&rdquo; with no year — then it says which year that is.
-          </span>
-        </div>
+        {/* Asked ONLY of the acquirer whose file needs it. Hong Leong dates a
+            line "16-Aug" with no year anywhere in the statement, so somebody
+            has to say which year that is — and nothing here guesses. Every
+            other acquirer dates its lines in full, and putting a field in
+            front of people who do not need it is how a screen teaches them to
+            ignore the fields that matter. */}
+        {chosen?.dates_have_no_year === true && (
+          <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+            <label style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }} htmlFor="settlement-month">
+              Which month does this statement cover?
+            </label>
+            <input id="settlement-month" type="month" value={statementMonth} aria-label="Statement month"
+              onChange={(e) => setStatementMonth(e.target.value)}
+              style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
+            <span style={softText}>
+              {chosen.display_name} dates its lines like &ldquo;16-Aug&rdquo; with no year, so it has to be told.
+            </span>
+          </div>
+        )}
         <div style={softText}>
           You can pick several files at once — they go up one after another, and each one answers for itself.
         </div>

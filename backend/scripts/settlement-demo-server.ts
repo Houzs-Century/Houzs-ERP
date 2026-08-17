@@ -58,6 +58,7 @@ const ACQUIRER_CONFIG: Row[] = [
     code: 'HLB', display_name: 'HLB', statement_format: 'CSV', has_unique_ref: true,
     fee_method: 'stated', date_tolerance_days: 3, is_active: true,
     column_map: { date: 'DATE', ref: 'INVOICE/AUTHO', gross: 'TRXN AMOUNT', fee: 'MDR', net: 'TRXN NET' },
+    dates_have_no_year: true,
   },
   /* MAYBANK, from the CSV export the owner found on 2026-08-17. Its detail table
      carries NO fee at all — only the gross and an interchange figure — and the
@@ -129,6 +130,7 @@ const acquirerView = (): Row[] => COMPANY_LINKS.map((l) => {
     fee_method: g.fee_method, date_tolerance_days: g.date_tolerance_days,
     column_map: g.column_map, total_net_label: g.total_net_label ?? null,
     summary_totals: g.summary_totals ?? null,
+    dates_have_no_year: g.dates_have_no_year === true,
     is_active: Boolean(g.is_active && l.is_active),
   };
 });
@@ -241,6 +243,7 @@ const refreshView = () => {
       fee_method: g.fee_method, date_tolerance_days: g.date_tolerance_days,
       column_map: g.column_map, total_net_label: g.total_net_label ?? null,
     summary_totals: g.summary_totals ?? null,
+    dates_have_no_year: g.dates_have_no_year === true,
       is_active: Boolean(g.is_active && l.is_active),
     });
   }

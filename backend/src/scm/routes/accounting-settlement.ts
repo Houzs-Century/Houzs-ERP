@@ -74,7 +74,7 @@ export const settlementSetup = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
   const { data, error } = await sb.from('acc_acquirers')
-    .select('code, display_name, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, total_net_label, transit_account_code, fee_account_code, bank_account_code, is_active')
+    .select('code, display_name, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, total_net_label, dates_have_no_year, transit_account_code, fee_account_code, bank_account_code, is_active')
     .eq('company_id', co.companyId).order('code');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const acquirers = ((data ?? []) as Array<Record<string, any>>).map((a) => ({
