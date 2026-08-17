@@ -255,13 +255,14 @@ function daysBetween(fromISO: string, toISO: string | null | undefined): number 
      · OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date − 3 days.
      · PENDING_DELIVERY — NOT ready and not yet inside the 3-day window.
 
-   `readiness` is the summariseReadiness() output; `effectiveDD` is the caller-
-   resolved amended_delivery_date ?? customer_delivery_date; `today` is MYT
-   (todayMyt()). Pure — no I/O. */
+   `readiness` carries ONLY the ship gate — narrowed so no caller can reach for
+   isMainReady, vacuously true on a line-less SO (BUG-HISTORY 2026-08-14, #2186).
+   `effectiveDD` is amended_delivery_date ?? customer_delivery_date; `today` is
+   MYT (todayMyt()). Pure — no I/O. */
 export function derivePlanningState(input: {
   storedOverride: string | null | undefined;
   status: string | null | undefined;
-  readiness: { mainCount: number; isMainReady: boolean; isFullyReady: boolean; isShipReady: boolean };
+  readiness: { isShipReady: boolean };
   delivered: number;
   remaining: number;
   effectiveDD: string | null | undefined;
@@ -274,10 +275,8 @@ export function derivePlanningState(input: {
   const st = String(status ?? '').toUpperCase();
   if (st === 'DELIVERED' || (delivered > 0 && remaining <= 0)) return 'DELIVERED';
 
-  /* "Ready to ship" gate — see summariseReadiness.isShipReady for why bare
-     isMainReady must never be used here. This module derived the rule inline
-     first; it now lives in so-readiness so the auto-allocation sweep and the
-     manual stock toggle share it. */
+  /* "Ready to ship" gate — see summariseReadiness.isShipReady. The narrowed
+     parameter type above is what now keeps the wrong flag out of reach. */
   if (readiness.isShipReady) return 'PENDING_SCHEDULE';
 
   // NOT ready. OVERDUE once we're within 3 days of (or past) the EFFECTIVE
