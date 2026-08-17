@@ -31,4 +31,17 @@ describe('/mine view-all tier', () => {
   test('never regresses to the bare flat-key check that self-scoped directors', () => {
     expect(mineBlock()).not.toMatch(/hasHouzsPerm\(\s*c\s*,\s*'scm\.so\.view_all'\s*\)/);
   });
+
+  /* The ported 2990 view-all branch built its own createClient() for RLS
+     bypass. In Houzs that is not just redundant (`sb` is already the
+     service-role client) — it is WRONG: a raw createClient defaults to the
+     PUBLIC schema, where mfg_sales_orders has no company_id, so the first
+     caller ever to pass the widened gate got
+     `column mfg_sales_orders.company_id does not exist` (500) instead of a
+     board. Every query in /mine must ride `sb` (scm schema). */
+  test('builds no client of its own — a raw createClient defaults to the public schema', () => {
+    // `=\s*createClient(` — the assignment shape of a real call. A bare
+    // substring match would trip on the comment explaining this very bug.
+    expect(mineBlock()).not.toMatch(/=\s*createClient\(/);
+  });
 });
