@@ -33,7 +33,7 @@ import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
 import {
-  poDeadForReceiptSql, pageWithTruncation, parsePoIdScope, explainOutstanding, remainingOf,
+  parsePoIdScope, loadOutstandingPoLines, toOutstandingPoItems,
 } from '../lib/outstanding-po-lines';
 import { checkReceiptCosts, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -1286,165 +1286,28 @@ grns.get('/outstanding-po-items', async (c) => {
      so scoping could only narrow the window and never recover a PO that fell
      outside it. That is the owner's 2026-08-17 zero-row screen. */
   const requestedPoIds = parsePoIdScope(c.req.query('poId'));
-  /* Commander 2026-05-29 — the GRN-from-PO picker now locks to ONE warehouse per
-     GRN (mirrors the supplier-lock pattern) + shows a Warehouse column. Select the
-     parent PO's purchase_location_id so the picker can group/lock by warehouse,
-     and resolve the warehouse code/name in a second round trip (Supabase nested
-     selects can't reach warehouses through the items→po hop cleanly). */
-  /* Cross-company leak fix (owner 2026-08-10 "为什么 houzs 的数据进到去 2990"):
-     this picker returned EVERY company's outstanding PO lines — the AutoCount
-     import raised Houzs POs from a handful to 135 and made the leak visible in
-     2990's GRN picker. The consignment mirror already wrapped with
-     scopeToCompany; do the same here (items carry company_id since mig 0083,
-     fail-closed when the company context can't resolve). */
-  type Row = {
-    id: string; purchase_order_id: string; material_kind: string; material_code: string;
-    material_name: string; supplier_sku: string | null; item_group: string | null; description: string | null;
-    qty: number; received_qty: number; unit_price_centi: number;
-    warehouse_id: string | null; variants: unknown; delivery_date: string | null;
-    // Migration 0180 — per-line supplier-revised delivery dates.
-    supplier_delivery_date_2: string | null;
-    supplier_delivery_date_3: string | null;
-    supplier_delivery_date_4: string | null;
-    po: {
-      id: string; po_number: string; supplier_id: string; status: string;
-      po_date: string; expected_at: string | null; purchase_location_id: string | null;
-      // Migration 0180 — header supplier-revised delivery dates.
-      supplier_delivery_date_2: string | null;
-      supplier_delivery_date_3: string | null;
-      supplier_delivery_date_4: string | null;
-      supplier: { code: string; name: string } | null;
-    };
-  };
-
-  /* PAGED, not capped, and the dead-status filter is pushed into SQL so the read
-     stops walking every draft and cancelled order in history. The `.limit(500)`
-     this replaces sat on the RAW select with BOTH filters running afterwards in
-     JS — see the module header. `.not('po.status','in',…)` on the embedded alias
-     is the idiom mrp.ts:535 already proves in production against this same
-     embed; the exact SUBMITTED / PARTIALLY_RECEIVED set stays the JS gate below,
-     so behaviour is unchanged. */
-  const { data: items, error, truncated } = await pageWithTruncation<Row>((from, to) => {
-    let q = scopeToCompany(
-      sb
-        .from('purchase_order_items')
-        .select(`
-      id, purchase_order_id, material_kind, material_code, material_name, supplier_sku, item_group,
-      description, qty, received_qty, unit_price_centi, warehouse_id, variants, delivery_date,
-      supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-      po:purchase_orders!inner ( id, po_number, supplier_id, status, po_date, expected_at,
-        supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-        purchase_location_id, supplier:suppliers ( code, name ) )
-    `)
-        .not('po.status', 'in', poDeadForReceiptSql()),
-      c,
-    );
-    if (requestedPoIds.length > 0) q = q.in('purchase_order_id', requestedPoIds);
-    /* Order by the line's own key, not the parent's. `purchase_order_id DESC`
-       was a key order masquerading as "newest first", and paging needs a total
-       order to be stable across pages anyway. */
-    return q.order('id').range(from, to);
+  /* The read lives in lib/outstanding-po-lines.ts: paged rather than capped,
+     scoped in SQL, and it reports WHY an empty answer is empty. Both predicates
+     are handed IN — `scopeToCompany` because items carry company_id since mig
+     0083 and it must fail closed when the company context cannot resolve (owner
+     2026-08-10 "为什么 houzs 的数据进到去 2990": this picker used to return every
+     company's lines), and `isReceivablePoStatus` because it is the same predicate
+     the create paths gate on, so the picker cannot offer what they refuse. */
+  const loaded = await loadOutstandingPoLines({
+    sb,
+    scopeQuery: (q) => scopeToCompany(q, c),
+    requestedPoIds,
+    isReceivable: isReceivablePoStatus,
   });
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  // `!== null`, not truthiness: an empty-string message is falsy, so TS cannot
+  // discriminate the union on `if (loaded.error)` and neither can a reader.
+  if (loaded.error !== null) return c.json({ error: 'load_failed', reason: loaded.error }, 500);
+  const { rows, scope } = loaded;
 
-  const candidates = items ?? [];
-  const rows = candidates
-    .filter((r) => isReceivablePoStatus(r.po.status))
-    .filter((r) => remainingOf(r) > 0);
-
-  /* A requested PO that is DRAFT or CANCELLED produced NO candidate rows (the
-     SQL filter dropped it), so its status can only be learned from a header
-     read. Without this, "your PO is a draft" is indistinguishable from "your PO
-     does not exist" — and both used to render as "every line has been
-     received". Scoped requests only; the open picker asks for nothing. */
-  const headerStatuses = new Map<string, { poDocNo: string | null; status: string | null }>();
-  if (requestedPoIds.length > 0) {
-    const missing = requestedPoIds.filter((id) => !candidates.some((r) => r.purchase_order_id === id));
-    if (missing.length > 0) {
-      const { data: hdrs } = await scopeToCompany(
-        sb.from('purchase_orders').select('id, po_number, status'), c,
-      ).in('id', missing);
-      for (const h of (hdrs ?? []) as Array<{ id: string; po_number: string | null; status: string | null }>) {
-        headerStatuses.set(h.id, { poDocNo: h.po_number, status: h.status });
-      }
-    }
-  }
-  const scope = explainOutstanding(
-    requestedPoIds, candidates, headerStatuses, truncated, isReceivablePoStatus,
-  );
-
-  /* Warehouse-lock fix (Agent C 2026-05-31, bug #1 "No outstanding PO lines") —
-     the warehouse a PO line ships into is the LINE's own warehouse_id when set,
-     falling back to the PO header's purchase_location_id (the per-line warehouse
-     OVERRIDES the header — see schema comment on purchase_order_items.warehouse_id).
-     The GRN's warehouse_id is set from this same effective value at create time, so
-     the append-picker's lock (GrnFromPo: r.warehouseLocationId === grn.warehouse_id)
-     only matched when both happened to use the header. When a PO carried only a
-     per-line warehouse (header purchase_location_id NULL), every outstanding line
-     was filtered out → "No outstanding PO lines". Key the lock off the effective
-     warehouse so genuinely-outstanding lines surface. */
-  const effWh = (r: Row): string | null => r.warehouse_id ?? r.po.purchase_location_id ?? null;
-
-  // Resolve each line's effective warehouse code/name in one round trip.
-  const whIds = [...new Set(rows.map((r) => effWh(r)).filter((x): x is string => Boolean(x)))];
-  const whById = new Map<string, { code: string; name: string }>();
-  if (whIds.length > 0) {
-    const { data: whs } = await sb.from('warehouses').select('id, code, name').in('id', whIds);
-    for (const w of (whs ?? []) as Array<{ id: string; code: string; name: string }>) {
-      whById.set(w.id, { code: w.code, name: w.name });
-    }
-  }
-
-  const outstanding = rows.map((r) => {
-    const effWhId = effWh(r);
-    const wh = effWhId ? whById.get(effWhId) ?? null : null;
-    return {
-      poItemId:        r.id,
-      poId:            r.po.id,
-      poDocNo:         r.po.po_number,
-      itemCode:        r.material_code,
-      /* Owner 2026-07-27 — the SUPPLIER's own code, snapshotted on the PO line
-         at raise time (#1189). Carried so the New-GRN line (and the grn_items
-         snapshot it saves) shows the code the supplier's delivery note uses. */
-      supplierSku:     r.supplier_sku ?? null,
-      description:     r.description ?? r.material_name,
-      itemGroup:       r.item_group ?? '',
-      qty:             r.qty,
-      receivedQty:     r.received_qty ?? 0,
-      remainingQty:    r.qty - (r.received_qty ?? 0),
-      unitPriceCenti:  r.unit_price_centi,
-      warehouseId:     r.warehouse_id,
-      variants:        r.variants,
-      /* Delivery-carry — surface the PO line's EFFECTIVE (latest revised)
-         delivery date so it can ride into the converted GRN line (Deliverable
-         5). Migration 0180: MAX over non-null of [delivery_date, _2, _3, _4].
-         supabase-js returns snake_case, and Row types them, so read directly. */
-      deliveryDate:    effectiveDelivery(
-        r.delivery_date,
-        r.supplier_delivery_date_2,
-        r.supplier_delivery_date_3,
-        r.supplier_delivery_date_4,
-      ),
-      supplierId:      r.po.supplier_id,
-      supplierCode:    r.po.supplier?.code ?? '',
-      supplierName:    r.po.supplier?.name ?? '',
-      poDate:          r.po.po_date,
-      /* Migration 0180 — header EFFECTIVE (latest revised) delivery date for the
-         "Expected" column. MAX over non-null of [expected_at, _2, _3, _4]. */
-      expectedAt:      effectiveDelivery(
-        r.po.expected_at,
-        r.po.supplier_delivery_date_2,
-        r.po.supplier_delivery_date_3,
-        r.po.supplier_delivery_date_4,
-      ),
-      /* Warehouse-lock (Deliverable 4) — the line's EFFECTIVE ship-into warehouse
-         (per-line warehouse_id, else PO header purchase_location_id). This is the
-         GRN's receive-into warehouse. One warehouse per GRN. */
-      warehouseLocationId:   effWhId,
-      warehouseLocationCode: wh?.code ?? null,
-      warehouseLocationName: wh?.name ?? null,
-    };
-  });
+  /* The wire shape, including the second round trip that resolves each line's
+     effective warehouse. Lives beside the read, in the same module, so the
+     picker's contract is one file. */
+  const outstanding = await toOutstandingPoItems(sb, rows, effectiveDelivery);
 
   /* `scope` is the WHY behind an empty `items`. Returned as data, not as a
      sentence: the desktop picker and the mobile convert wizard read this same

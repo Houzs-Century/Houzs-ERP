@@ -14,9 +14,13 @@ import {
   explainOutstanding, remainingOf, OUTSTANDING_PAGE, OUTSTANDING_MAX_PAGES,
   type CountableRow,
 } from './outstanding-po-lines';
-// Source text of the GRN router, so the WIRING is asserted too — the old code
-// read fine and was wrong about which rows it had.
+// Source text of BOTH files, so the WIRING is asserted too — the old code read
+// fine and was wrong about which rows it had. The QUERY assertions read this
+// module's own source (that is where the SQL lives); the CALL assertions read the
+// router's (that is where it is reached, and where the predicates are handed in).
+// Splitting them that way is what makes each one fail for exactly one reason.
 import grnRouterSrc from '../routes/grns.ts?raw';
+import libSrc from './outstanding-po-lines.ts?raw';
 
 const row = (poId: string, qty: number, received: number, status = 'SUBMITTED'): CountableRow => ({
   purchase_order_id: poId, qty, received_qty: received,
@@ -89,12 +93,16 @@ describe('MECHANISM 2 — the SQL status filter is the form already proven in pr
     expect(poDeadForReceiptSql()).toBe('("DRAFT","CANCELLED")');
   });
 
-  test('the route uses .not(…in…) on the EMBEDDED alias, not a bare column', () => {
-    expect(grnRouterSrc).toContain(".not('po.status', 'in', poDeadForReceiptSql())");
+  test('the read uses .not(…in…) on the EMBEDDED alias, not a bare column', () => {
+    expect(libSrc).toContain(".not('po.status', 'in', poDeadForReceiptSql())");
   });
 
   test('the JS gate is still the authority on the exact receivable set', () => {
-    expect(grnRouterSrc).toContain('.filter((r) => isReceivablePoStatus(r.po.status))');
+    expect(libSrc).toContain('.filter((r) => isReceivable(r.po.status))');
+  });
+
+  test('the route hands its OWN receivable predicate in, so it stays the authority', () => {
+    expect(grnRouterSrc).toContain('isReceivable: isReceivablePoStatus');
   });
 });
 
@@ -108,8 +116,8 @@ describe('MECHANISM 3 — the ?poId scope reaches SQL', () => {
     expect(parsePoIdScope('')).toEqual([]);
   });
 
-  test('the route applies the scope as a SQL predicate on the line table', () => {
-    expect(grnRouterSrc).toContain("q = q.in('purchase_order_id', requestedPoIds)");
+  test('the read applies the scope as a SQL predicate on the line table', () => {
+    expect(libSrc).toContain("q = q.in('purchase_order_id', requestedPoIds)");
   });
 
   test('the route reads the parameter at all — it used to be browser-only', () => {
@@ -119,8 +127,10 @@ describe('MECHANISM 3 — the ?poId scope reaches SQL', () => {
   test('the window is ordered by the LINE key, not by the parent id', () => {
     // `purchase_order_id DESC` was a key order masquerading as "newest first",
     // and it is not a total order, so pages could overlap or skip.
+    expect(libSrc).not.toContain("order('purchase_order_id', { ascending: false })");
+    expect(libSrc).toContain("q.order('id').range(from, to)");
+    // And it is gone from the router, which is where it used to live.
     expect(grnRouterSrc).not.toContain("order('purchase_order_id', { ascending: false })");
-    expect(grnRouterSrc).toContain("q.order('id').range(from, to)");
   });
 
   test('the old silent cap is gone from this handler', () => {
@@ -139,7 +149,10 @@ describe('MECHANISM 3 — the ?poId scope reaches SQL', () => {
        — which teaches the next person to delete the provenance to get green. */
     const code = handler.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
     expect(code).not.toMatch(/\.limit\(/);
-    expect(code).toContain('pageWithTruncation');
+    expect(code).toContain('loadOutstandingPoLines');
+    // ... and the module it moved to caps nothing either.
+    expect(libSrc.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, ''))
+      .not.toMatch(/\.limit\(/);
   });
 });
 
@@ -220,8 +233,12 @@ describe('THE REPORT — an empty answer must be able to say WHY', () => {
     expect(r.pos[0]!.receivable).toBe(false);
   });
 
-  test('the route hands its OWN predicate in, so picker and converter cannot drift', () => {
-    expect(grnRouterSrc).toContain('requestedPoIds, candidates, headerStatuses, truncated, isReceivablePoStatus');
+  test('the read hands the caller\'s predicate to the report, not a local copy', () => {
+    expect(libSrc).toContain('explainOutstanding(requestedPoIds, candidates, headerStatuses, truncated, isReceivable)');
+  });
+
+  test('the route hands its own COMPANY predicate in — the only tenant boundary', () => {
+    expect(grnRouterSrc).toContain('scopeQuery: (q) => scopeToCompany(q, c)');
   });
 
   test('the route actually returns the scope — a report nobody sends explains nothing', () => {
