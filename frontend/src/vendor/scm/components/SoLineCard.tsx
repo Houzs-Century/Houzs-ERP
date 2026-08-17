@@ -533,7 +533,23 @@ const SoLineCardInner = ({
      offering e.g. a leg height the SKU rejects on save (variant_not_allowed).
      SO-parity (Loo 2026-06-06) — `picked` only exists for a freshly-picked
      product; EDITING a saved line on SO Detail used to render unrestricted.
-     Resolve the pools by item code too so saved lines filter identically. */
+     Resolve the pools by item code too so saved lines filter identically.
+
+     THIS DOES NOT MAKE variant_not_allowed UNREACHABLE, and reading it that way
+     is what left a bedframe refusal with no message for months (2026-08-18).
+     Filtering a picker can only cover fields that HAVE a picker: `totalHeight`
+     is computed below and has no control here, and `size_code` / `compartment`
+     come off the product row, so all three can still refuse on save. The
+     refusal is now rendered for the operator on the error path — see
+     vendor/scm/lib/refusal-detail.ts; do not add a second copy of that
+     wording here.
+
+     `restrictP`/`restrictS` also compare RAW, so a pool value spelled with a
+     curly inch mark (prod's `gaps` pool holds ten of them) matches no
+     maintenance value and the option is silently dropped from the dropdown.
+     The SERVER-side gate folds those spellings now (allowed-options-check.ts
+     `inPool`); these two filters deliberately still do not, because widening
+     them CHANGES WHICH OPTIONS APPEAR — an owner's call, not a bug fix. */
   const allowedByCodeQ = useModelAllowedOptionsByCode(draft.itemCode || undefined);
   const allowOpts = picked?.allowed_options ?? allowedByCodeQ.data ?? null;
   const restrictP = (opts: Array<{ value: string; priceSen: number }>, pool?: string[] | null) =>

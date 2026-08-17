@@ -174,8 +174,14 @@ export const listMfgProductsHandler = async (c: AppContext) => {
           'unit_m3_milli, status, pos_active, one_shot, source_doc_no, included_addons, sku_code, model_id, ' +
           'branding, barcode, sub_assemblies, pieces, seat_height_prices, default_variants, updated_at, ' +
           // Commander 2026-05-29 — surface the Model's allowed_options so the SO
-          // line editor can hide variant choices the SKU doesn't allow (instead
-          // of letting them be picked and failing on save with variant_not_allowed).
+          // line editor can hide variant choices the SKU doesn't allow, which
+          // heads off SOME variant_not_allowed refusals on save. NOT all of
+          // them, and the old wording ("instead of letting them be picked and
+          // failing on save") claimed otherwise: hiding options can only help a
+          // field that has a picker. `total_height` is computed from divan +
+          // leg + gap with no input on the form, and `size_code` /
+          // `compartment` are read off the product row, so those refuse on save
+          // no matter what this select returns (2026-08-18).
           'model:product_models(allowed_options)',
       )
       .eq('status', 'ACTIVE')

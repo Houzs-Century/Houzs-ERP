@@ -21,6 +21,7 @@
 // ---------------------------------------------------------------------------
 
 import { serviceConfirm } from './dialog-service';
+import { describeRefusal } from './refusal-detail';
 // Imported, NOT re-inlined as localStorage.getItem('auth:token'). Houzs stores
 // session-only logins (Remember me unchecked, and the owner's view-as hand-off)
 // in sessionStorage, so a localStorage-only read returns "" for a perfectly
@@ -571,6 +572,23 @@ export function humanApiError(status: number, body: string): string {
       const mapped = ERROR_CODE_MESSAGES[j.error];
       if (mapped) return mapped;
     }
+    // 1b. STRUCTURED REFUSAL — the server named the input, the value AND the
+    //     legal set, and we used to throw all three away. `variant_not_allowed`
+    //     (backend allowed-options-check.ts:81-86) is the one that cost a
+    //     salesperson a bedframe line: no curated entry, no `reason`, no
+    //     `message`, so it fell to the 400 catch-all and told him nothing.
+    //
+    //     Placed AFTER the curated map on purpose. A curated sentence is
+    //     hand-written for the operator and often names the exact box
+    //     (extra_addon_needs_description is the best example in the tree), so it
+    //     must keep winning; this only fires where the alternative is the
+    //     status-code catch-all. And it keys off the body's SHAPE, not a list of
+    //     codes, so the next structured refusal renders without anyone
+    //     remembering to add it here — which is the defect being fixed, not
+    //     just this one instance of it. Anything it cannot say honestly returns
+    //     null and falls through to the generic sentence below, unchanged.
+    const detail = describeRefusal(j);
+    if (detail) return detail;
     // 2. Server reason, but only if it's already a plain sentence (no internals).
     const r = (typeof j.reason === 'string' ? j.reason : typeof j.message === 'string' ? j.message : '') as string;
     // Skip nested JSON blobs (e.g. the raw GoTrue "session_not_found" body the
