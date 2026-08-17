@@ -760,7 +760,10 @@ purchaseReturns.post('/', async (c) => {
   }).filter((r) => Number(r.qty_returned) > 0);
 
   if (itemRows.length === 0) {
-    return c.json({ error: 'no_returnable_qty', message: 'Every line is already fully returned (nothing left to return).' }, 400);
+    /* This is computed from the REQUEST, not from a read: itemRows is the
+       caller's own items filtered to qty_returned > 0. "Every line is already
+       fully returned" named a cause nothing here checked. */
+    return c.json({ error: 'no_returnable_qty', message: 'No line in this request carries a quantity to return. Enter a quantity above zero on at least one line.' }, 400);
   }
 
   /* PR-DRAFT-removal — PR is created POSTED, inventory OUT written inline. */
@@ -1046,7 +1049,10 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
   const lines = allLines
     .map((it) => ({ ...it, _remaining: (it.qty_accepted ?? 0) - (it.returned_qty ?? 0) }))
     .filter((it) => it._remaining > 0);
-  if (lines.length === 0) return c.json({ error: 'nothing_to_return', message: 'GRN is fully returned' }, 400);
+  /* An empty read is evidence that THE QUERY FOUND NOTHING, never that the
+     note is settled — the select is company-scoped and scopeToCompany fails
+     closed (scm/lib/companyScope.ts). Refusing is right; the verdict was not. */
+  if (lines.length === 0) return c.json({ error: 'nothing_to_return', message: 'No returnable lines came back for this GRN. Open it and check its returned balance before treating it as returned in full.' }, 400);
 
   /* Audit gap #7 — on-hand floor before the inventory OUT (soft-waivable via
      confirmShortStock, mirroring the DO ship side). */

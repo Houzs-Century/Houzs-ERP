@@ -476,12 +476,24 @@ export const DeliveryOrderFromSo = () => {
         /* A failed read must NEVER render as the sentence below. "We couldn't
            load the lines" and "there are no lines left to do" are opposite
            facts, and the operator acts on the second one by walking away from
-           work that is still outstanding. */
+           work that is still outstanding.
+
+           NEITHER MAY AN EMPTY ONE (owner 2026-08-17). This screen used to
+           report an empty result as a finished job — "every line has been
+           fully ...". An empty result is only ever evidence that THE QUERY
+           FOUND NOTHING: the read is scoped to the active company and
+           scopeToCompany FAILS CLOSED (scm/lib/companyScope.ts ->
+           .in('company_id', []) returns [] with error: null), PostgREST
+           truncates at db-max-rows without saying so, and a swallowed read
+           error is shaped identically to an empty one. The same claim was
+           removed from the from-PO picker in #2367 and reintroduced five
+           commits later, which is why backend/scripts/check-empty-state-claims.mjs
+           now gates it instead of a comment asking nicely. */
         emptyMessage={linesQ.isError
           ? "We couldn't load the outstanding lines, so this list is incomplete. That is not the same as there being none left — please refresh and try again."
-          : scope.keys.size > 0
-            ? "Nothing left to deliver on the Sales Order you came from — every line of it has been fully delivered. Other orders may still have lines; use Show all above."
-            : "No deliverable Sales Order lines — every line has been fully delivered (or there are no Sales Orders)."}
+          : allRows.length > 0
+            ? `None of the ${allRows.length} deliverable Sales Order line(s) that loaded belong to the order you came from. Use Show all above to see the rest — this says nothing about whether that order still owes goods.`
+            : "This search came back with no deliverable Sales Order lines. That is not the same as everything having been delivered — the list only covers the company you are working in, and lines it cannot see look identical to lines that are done. Open the sales order and check its balance before treating this as nothing left to deliver."}
       />
 
       {dialog && (

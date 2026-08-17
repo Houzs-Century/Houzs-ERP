@@ -822,10 +822,22 @@ function LinesStep({
 
   const noun = target === "si" ? "invoice" : target === "po" ? "purchase" : "deliver";
   if (!lines.length) {
+    /* The GRN arm below was given a counted, per-document reason (#2372). THIS
+       arm — SI, PO and DO — was left saying "Nothing left to {noun} on this
+       document", which is the same claim from the same absence: the read is
+       company-scoped and scopeToCompany fails closed, so [] arrives with
+       error: null whether the work is done or the company could not be
+       resolved. Until this arm carries a line count of its own it has no
+       standing for a verdict, so it reports the read and points at the
+       document's own balance. */
     return (
       <>
         <ChangeSource onClick={onChangeSource} />
-        <Muted>Nothing left to {noun} on this document.</Muted>
+        <Muted>
+          No lines are showing to {noun} on this document. That is not the same as there
+          being nothing left — this list only covers the company you are working in. Open
+          the document and check its balance.
+        </Muted>
       </>
     );
   }
@@ -1056,8 +1068,13 @@ function humanize(msg: string): string {
     qty_exceeds_remaining: "One of the quantities is more than what's left to convert. Refresh and try again.",
     over_remaining: "One of the quantities is more than what's left to convert. Refresh and try again.",
     race_conflict: "Another operator just converted overlapping quantity. Refresh and try again.",
-    nothing_to_invoice: "This Goods Receipt is already fully invoiced.",
-    nothing_to_return: "This Goods Receipt is already fully returned.",
+    /* These three mirror the server's refusal messages, and they carried the
+       same claim it did: a 400 raised because a READ came back empty is not
+       evidence that the document is finished. Kept in step with grns.ts /
+       purchase-invoices.ts / purchase-returns.ts — if they drift, the same
+       document says two different things on two screens. */
+    nothing_to_invoice: "No billable lines came back for this Goods Receipt. Open it and check its invoiced balance before treating it as billed in full.",
+    nothing_to_return: "No returnable lines came back for this Goods Receipt. Open it and check its returned balance before treating it as returned in full.",
     /* migration 0280 — the zero-cost receipt gate. The per-line "Received free"
        tick lives on the desktop receipt screen, so this says where to go rather
        than leaving the operator at a code they cannot act on. */
@@ -1067,7 +1084,7 @@ function humanize(msg: string): string {
     grn_id_required: "Select a Goods Receipt first.",
     warehouse_required: "These Purchase Orders don't share one receive-into warehouse. Fix the PO line warehouses, or receive them per warehouse on the desktop.",
     po_not_receivable: "One of the selected Purchase Orders is no longer open for receipt. Refresh and try again.",
-    nothing_outstanding: "All selected Purchase Order lines are already fully received.",
+    nothing_outstanding: "No outstanding lines came back for the selected Purchase Order(s). Open the order and check its received balance before treating it as received in full.",
     supplier_required: "The selected lines are missing a supplier. Refresh and try again.",
     items_required: "Select at least one line to receive.",
     do_item_not_found: "One of the lines no longer exists. Refresh and try again.",

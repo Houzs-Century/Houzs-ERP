@@ -1459,6 +1459,29 @@ export function acHeadline(d: AcOutboxResponse | null): { tone: AcTone; text: st
       text: `${d.counts.attention} document${d.counts.attention === 1 ? "" : "s"} need${d.counts.attention === 1 ? "s" : ""} your attention — ${bits.join(", ")}. They are in the ERP and not in the account book.`,
     };
   }
+  /* THE COUNTS THEMSELVES CAN BE A FLOOR. The server SAYS SO — it sets
+     `counts_complete: false` when its scan stopped before the end of the queue
+     (scm/routes/autocount-outbox.ts) — and both screens already render a
+     separate banner for it. The HEADLINE ignored it, so the tone-setting line
+     read "Everything is in AutoCount" in green while a note underneath said the
+     numbers were incomplete: two contradictory statements on one screen, and
+     the reassuring one is the one people act on.
+
+     `attention > 0` is answered ABOVE this point and needs no such guard — a
+     floor that is already non-zero is still non-zero. It is only the reassuring
+     verdicts that a partial count cannot support (owner 2026-08-17: no empty
+     state may claim the work is done). */
+  if (!d.counts_complete) {
+    return {
+      tone: "muted",
+      /* Deliberately NOT a repeat of AC_COUNTS_PARTIAL_LINE, which both screens
+         already render beneath this. Saying the same sentence twice is how a
+         reader learns to stop reading either one. */
+      text:
+        "The queue was too long to count in one pass, so this line cannot say whether everything"
+        + " reached AutoCount. Filter to Not accepted or Held back to check the documents that matter.",
+    };
+  }
   if (d.counts.total === 0) {
     return {
       tone: "muted",

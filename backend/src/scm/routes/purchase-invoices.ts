@@ -1787,7 +1787,7 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
   const lines = allLines
     .map((it) => ({ ...it, _remaining: (it.qty_accepted ?? 0) - (it.invoiced_qty ?? 0) - (it.returned_qty ?? 0) }))
     .filter((it) => it._remaining > 0);
-  if (lines.length === 0) return c.json({ error: 'nothing_to_invoice', message: 'GRN is fully invoiced' }, 400);
+  if (lines.length === 0) return c.json({ error: 'nothing_to_invoice', message: 'No billable lines came back for this GRN. Open it and check its invoiced balance before treating it as billed in full.' }, 400); // The expensive one: an operator told a note is fully billed stops looking, and an unlinked line makes a receipt read outstanding while a PI already billed it. Opposite errors, same supplier paid wrong. Report the read; let the note's own balance say what is true.
 
   /* PI discount unification (audit 2026-06-11 M3) — ONE rule on every PI line
      write path: line_total_centi = qty × unit − discount, discount stored.

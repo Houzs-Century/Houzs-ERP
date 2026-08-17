@@ -923,9 +923,18 @@ export const GrnNew = () => {
               : selPoId
                 ? (poQ.isLoading
                     ? 'Loading PO items…'
-                    : lines.length === 0
-                      ? 'No outstanding lines on this PO (all qty already received)'
-                      : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalCenti, currency)}`)
+                    /* The ternary had no error arm and no honest empty arm: a
+                       FAILED PO read and a PO with work left both rendered as
+                       "all qty already received", and the operator receives
+                       nothing against a live order. An empty read proves only
+                       that the query found nothing — the read is company-scoped
+                       and scopeToCompany fails closed (scm/lib/companyScope.ts
+                       -> .in('company_id', []) returns [] with error: null). */
+                    : poQ.isError
+                      ? "We couldn't load this PO's lines — please refresh and try again."
+                      : lines.length === 0
+                        ? 'No outstanding lines came back for this PO. Open the purchase order and check its balance before treating it as received in full.'
+                        : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalCenti, currency)}`)
                 : lines.length === 0
                   ? 'Manual receipt — pick a supplier above, then add items below'
                   : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalCenti, currency)}`}
