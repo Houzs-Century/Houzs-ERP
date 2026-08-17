@@ -33,6 +33,7 @@ import { paymentAuditLog } from "./routes/payment-audit-log";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
 import { soAmendments } from "./routes/so-amendments";
+import { soHandover } from "./routes/so-handover";
 import { poAmendments } from "./routes/po-amendments";
 import { stateWarehouseMappings } from "./routes/state-warehouse-mappings";
 import { deliveryOrdersMfg } from "./routes/delivery-orders-mfg";
@@ -282,6 +283,11 @@ scm.route("/mfg-sales-orders", mfgSalesOrders);
 // layer on inside the handlers.
 scm.use("/so-amendments/*", scmAreaGuard("scm.sales.orders"));
 scm.route("/so-amendments", soAmendments);
+// Salesperson handover (resignation / transfer). SO-centric, so it rides the
+// same L2 area guard; the finer scm.so.attribute_other gate is enforced inside
+// both handlers.
+scm.use("/so-handover/*", scmAreaGuard("scm.sales.orders"));
+scm.route("/so-handover", soHandover);
 // state-warehouse-mappings: cross-area lookup (SO/DO warehouse routing) — left
 // on the coarse gate, see SHARED READ HELPERS note above.
 scm.route("/state-warehouse-mappings", stateWarehouseMappings);

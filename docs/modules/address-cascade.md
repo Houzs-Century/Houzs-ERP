@@ -30,6 +30,10 @@ Rows are maintained through **SO Maintenance → Localities**
 surface. There is no free-text fallback on any document form: a state, city or
 postcode that is not in the table must be added there first.
 
+(That page also hosts the Salesperson Handover section since 2026-08-17 — an
+unrelated tool behind `scm.so.attribute_other`, documented in `so-handover.md`.
+It touches no locality data.)
+
 The table is **not Malaysia-only** — mig 0181 seeded CN and SG rows, so
 `country` is a real dimension and `statesInCountry` / `distinctCountries` exist
 for the country-first surfaces (Warehouse, Supplier, Venue).

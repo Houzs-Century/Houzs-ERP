@@ -884,6 +884,12 @@ Amendments-on-map + clickability (`feat/relmap-clickable-amendment`, §2.3):
   `AmendmentChip` type, `actionable` flag + clickable-logic fix.
 - `frontend/src/pages/scm-v2/SalesOrderDetailV2.tsx`, `SalesOrderDetail.tsx` — pass amendments.
 
+> **2026-08-17, same two files, unrelated surface:** the detail page's Edit
+> affordance is no longer disabled outright on a hard-locked (DO/SI) order —
+> a caller holding `scm.so.attribute_other` can open it to change the
+> Salesperson, and only that field. Every other input stays locked and
+> Override remains the door for addresses and lines. See `so-handover.md`.
+
 ## 5. Sales-side Relationship Maps read the live graph (SO/DO/SI/DR) — audit R8
 
 Distinct surface from the strip above: the bespoke 5/7-node **Relationship Map**

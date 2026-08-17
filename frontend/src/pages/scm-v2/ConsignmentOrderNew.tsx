@@ -670,22 +670,27 @@ export const ConsignmentOrderNew = () => {
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Salesperson</span>
               <span className={styles.selectWrap}>
-                <select
+                <SearchableSelect
                   className={styles.fieldSelect}
+                  ariaLabel="Salesperson"
+                  placeholder="— Pick staff —"
                   value={salespersonId}
-                  onChange={(e) => setSalespersonId(e.target.value)}
+                  onChange={setSalespersonId}
                   disabled={!canChangeSalesperson}
-                >
-                  {!canChangeSalesperson && currentStaff && (
-                    <option value={currentStaff.id ?? ''}>
-                      {currentStaff.name} ({currentStaff.staffCode})
-                    </option>
-                  )}
-                  {canChangeSalesperson && <option value="">— Pick staff —</option>}
-                  {canChangeSalesperson && sortByText(staffList).map((s) => (
-                    <option key={s.id} value={s.id}>{s.name} ({s.staffCode})</option>
-                  ))}
-                </select>
+                  /* A self-scoped author sees ONE option — themselves — exactly
+                     as the native select pinned them before. */
+                  options={canChangeSalesperson
+                    ? sortByText(staffList).map((s) => ({
+                        value: s.id,
+                        label: `${s.name} (${s.staffCode})`,
+                      }))
+                    : currentStaff
+                      ? [{
+                          value: currentStaff.id ?? '',
+                          label: `${currentStaff.name} (${currentStaff.staffCode})`,
+                        }]
+                      : []}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>

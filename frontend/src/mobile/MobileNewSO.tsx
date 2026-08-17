@@ -20,6 +20,7 @@ import {
   hasAmendmentHeaderChanges,
   withFrozenHeaderFieldsReverted,
 } from "../vendor/scm/lib/so-amendment-header";
+import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
 import { LOCKED_STATUSES, procLockActive } from "../vendor/scm/lib/so-detail-gates";
 import {
@@ -2216,18 +2217,27 @@ export function MobileNewSO({
                       user with scm.so.attribute_other can re-pick (desktop parity).
                       Non-admins see a disabled select pinned to themselves. */}
                   <Field label="Salesperson" style={{ flex: 1 }}>
-                    <select
+                    <SearchableSelect
                       className="fld-i"
+                      ariaLabel="Salesperson"
+                      placeholder="— Pick staff —"
                       value={salespersonId}
-                      onChange={(e) => setSalespersonId(e.target.value)}
+                      onChange={setSalespersonId}
                       disabled={!canChangeSalesperson}
-                    >
-                      {!selfStaffMatch && <option value={SELF_SALESPERSON}>{selfDisplayName} (me)</option>}
-                      {!canChangeSalesperson && selfStaffMatch && (
-                        <option value={selfStaffMatch.id}>{selfStaffMatch.name}</option>
-                      )}
-                      {canChangeSalesperson && staffList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
+                      options={[
+                        ...(!selfStaffMatch
+                          ? [{ value: SELF_SALESPERSON, label: `${selfDisplayName} (me)` }]
+                          : []),
+                        ...(canChangeSalesperson
+                          ? staffList
+                              .map((s) => ({ value: s.id, label: s.name }))
+                              .sort((a, b) =>
+                                a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+                          : selfStaffMatch
+                            ? [{ value: selfStaffMatch.id, label: selfStaffMatch.name }]
+                            : []),
+                      ]}
+                    />
                   </Field>
                 </div>
                 <Field label="Customer SO Ref" scanned={scanned("custRef", custRef)}>
