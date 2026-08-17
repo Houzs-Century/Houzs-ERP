@@ -35,7 +35,14 @@
 // contains while recording that it does not.
 // ----------------------------------------------------------------------------
 
-import { findUnlinkedSoItemLines, itemCodeKey, type UnlinkedCandidate } from './do-unlinked-so-lines';
+import {
+  findUnlinkedSoItemLines,
+  itemCodeKey,
+  readParentCodes,
+  type ParentCodes,
+  type UnlinkedCandidate,
+  type UnlinkedScan,
+} from './do-unlinked-so-lines';
 
 export type UnlinkedReturnOffender = {
   lineRef: string;
@@ -45,23 +52,18 @@ export type UnlinkedReturnOffender = {
 };
 
 /** Every item_code on the source Delivery Order's lines. */
-export async function doItemCodesOf(
+export function doItemCodesOf(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   deliveryOrderId: string | null | undefined,
-): Promise<Set<string>> {
-  const id = String(deliveryOrderId ?? '').trim();
-  if (!id) return new Set();
-  const { data } = await sb
-    .from('delivery_order_items')
-    .select('item_code')
-    .eq('delivery_order_id', id);
-  const out = new Set<string>();
-  for (const r of (data ?? []) as Array<{ item_code: string | null }>) {
-    const k = String(r.item_code ?? '').trim().toUpperCase();
-    if (k) out.add(k);
-  }
-  return out;
+): Promise<ParentCodes> {
+  return readParentCodes(sb, {
+    table: 'delivery_order_items',
+    select: 'item_code',
+    codeColumn: 'item_code',
+    parentColumn: 'delivery_order_id',
+    parentId: deliveryOrderId,
+  });
 }
 
 /**
@@ -123,29 +125,29 @@ export async function readGrnMaterialCodes(
   return { codeToReceipt, error: null };
 }
 
-/** Every material_code on the source GRN's lines.
+/** Every material_code on the source GRN's lines — the single-receipt view.
  *
- *  The single-receipt, error-DROPPING view, kept because the Purchase Return and
- *  Delivery Return chains behave exactly this way today and changing them is a
- *  separate decision about a STOCK guard. The money chain does not use it — see
- *  `findUnlinkedPiLines`. */
-export async function grnMaterialCodesOf(
+ *  It used to be the error-DROPPING one, and the note here said so: the stock
+ *  chains "behave exactly this way today and changing them is a separate
+ *  decision". That decision was taken on 2026-08-17 — the same fail-open was
+ *  live in all FOUR parent-set readers, not just the money chain's, so all four
+ *  now go through readParentCodes and return ParentCodes. `ok: false` is refused
+ *  by every caller, never read as "nothing on the parent".
+ *
+ *  Still single-receipt, which is the one thing readGrnMaterialCodes above adds:
+ *  a purchase invoice is line-level multi-receipt, a return is not. */
+export function grnMaterialCodesOf(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   grnId: string | null | undefined,
-): Promise<Set<string>> {
-  const id = String(grnId ?? '').trim();
-  if (!id) return new Set();
-  const { data } = await sb
-    .from('grn_items')
-    .select('material_code')
-    .eq('grn_id', id);
-  const out = new Set<string>();
-  for (const r of (data ?? []) as Array<{ material_code: string | null }>) {
-    const k = String(r.material_code ?? '').trim().toUpperCase();
-    if (k) out.add(k);
-  }
-  return out;
+): Promise<ParentCodes> {
+  return readParentCodes(sb, {
+    table: 'grn_items',
+    select: 'material_code',
+    codeColumn: 'material_code',
+    parentColumn: 'grn_id',
+    parentId: grnId,
+  });
 }
 
 /**
@@ -160,14 +162,20 @@ async function findUnlinked(
   parentId: string | null | undefined,
   parentLabel: string | null | undefined,
   lines: UnlinkedCandidate[],
-  codesOf: () => Promise<Set<string>>,
-): Promise<UnlinkedReturnOffender[]> {
-  if (!String(parentId ?? '').trim()) return [];
-  if (!lines.some((l) => !l.soItemId)) return [];   // nothing unlinked — skip the read
+  codesOf: () => Promise<ParentCodes>,
+): Promise<UnlinkedScan<UnlinkedReturnOffender>> {
+  if (!String(parentId ?? '').trim()) return { ok: true, offenders: [] };
+  // nothing unlinked — skip the read
+  if (!lines.some((l) => !l.soItemId)) return { ok: true, offenders: [] };
   const label = String(parentLabel ?? '').trim() || String(parentId);
-  return findUnlinkedSoItemLines(label, lines, await codesOf()).map((o) => ({
-    lineRef: o.lineRef, itemCode: o.itemCode, qty: o.qty, parentNo: label,
-  }));
+  const codes = await codesOf();
+  if (!codes.ok) return codes;
+  return {
+    ok: true,
+    offenders: findUnlinkedSoItemLines(label, lines, codes.codes).map((o) => ({
+      lineRef: o.lineRef, itemCode: o.itemCode, qty: o.qty, parentNo: label,
+    })),
+  };
 }
 
 export function findUnlinkedDrLines(
@@ -176,7 +184,7 @@ export function findUnlinkedDrLines(
   deliveryOrderId: string | null | undefined,
   doNumber: string | null | undefined,
   lines: UnlinkedCandidate[],
-): Promise<UnlinkedReturnOffender[]> {
+): Promise<UnlinkedScan<UnlinkedReturnOffender>> {
   return findUnlinked(deliveryOrderId, doNumber, lines, () => doItemCodesOf(sb, deliveryOrderId));
 }
 
@@ -186,7 +194,7 @@ export function findUnlinkedPrLines(
   grnId: string | null | undefined,
   grnNumber: string | null | undefined,
   lines: UnlinkedCandidate[],
-): Promise<UnlinkedReturnOffender[]> {
+): Promise<UnlinkedScan<UnlinkedReturnOffender>> {
   return findUnlinked(grnId, grnNumber, lines, () => grnMaterialCodesOf(sb, grnId));
 }
 

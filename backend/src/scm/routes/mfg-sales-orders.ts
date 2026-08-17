@@ -1618,7 +1618,7 @@ mfgSalesOrders.get('/', async (c) => {
     /* Tier 2 downstream-lock — one extra batched read per doc set: pull every
        non-cancelled DO/SI that points back to a listed SO and mark has_children
        on the row. The list grid uses this to hide Edit / Cancel from SOs that
-       are downstream-locked (mirrors computeGrnFlags in routes/grns.ts). */
+       are downstream-locked (mirrors computeGrnFlags in lib/grn-consumption-flags). */
     const [doRowsRes, siRowsRes] = await downstreamProm;
     const doNosBySo = doNosBySalesOrder((doRowsRes.data ?? []) as DeliveryOrderNoRow[]);
     const downstreamDocNos = soDocNosWithDownstream(doRowsRes.data ?? [], siRowsRes.data ?? []);

@@ -30,6 +30,7 @@ import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item
 import { isServiceLine } from '../shared';
 import { findServiceLineCodes, serviceLinesNotReturnableResponse, serviceGuardUnavailableResponse } from '../lib/service-line-guard';
 import { findUnlinkedDrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
+import { unlinkedEditRefusal, unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
@@ -1058,7 +1059,9 @@ deliveryReturns.post('/', async (c) => {
         soItemId: (it.doItemId as string | undefined) ?? null,
       })),
     );
-    if (unlinked.length > 0) return c.json(unlinkedReturnResponse(unlinked, 'delivery'), 409);
+    // Refuses on an unreadable DO too — see unlinkedScanRefusal.
+    const bad = unlinkedScanRefusal(unlinked, (o) => unlinkedReturnResponse(o, 'delivery'));
+    if (bad) return c.json(bad, 409);
   }
 
   /* P1 SO-SKU spec §4.6 — SERVICE lines (delivery fee / dispose / lift) ride
@@ -1589,6 +1592,19 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     const effGroup = (it.itemGroup ?? prev.item_group) as string | null | undefined;
     const effVariants = (it.variants ?? prev.variants) as Record<string, unknown> | null | undefined;
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
+  }
+
+  /* The EDIT half of the back door. A null doItemId cannot be TYPED here ("no DO,
+     no Return") but still ARRIVES — do_item_id is ON DELETE SET NULL — and on such
+     a row the cap above is skipped. See unlinked-line-edit-guard. */
+  {
+    const repoint = await unlinkedEditRefusal(sb, 'delivery-return', {
+      parent: { table: 'delivery_returns', column: 'delivery_order_id', id, companyId: co.companyId },
+      storedLink: (prev as { do_item_id?: string | null }).do_item_id ?? null,
+      storedCode: (prev as { item_code?: string | null }).item_code ?? null,
+      patchCode: it.itemCode,
+    });
+    if (repoint) return c.json(repoint, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('delivery_return_items').update(updates).eq('id', itemId), co.companyId);
