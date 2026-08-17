@@ -315,11 +315,35 @@ the STALE-BRANCH mechanism behind the incidents below:
 > to 0286_*.sql` — and #2121 merged four minutes into that run anyway. **Branch
 > protection does not gate on it.** The required contexts are `backend-typecheck`
 > + `frontend` (`gh api repos/hello-houzs/Houzs-ERP/rules/branches/main`);
-> `migrationNumbers.test.ts` runs in `backend-tests (2)`, which the section below
-> forbids making required, for good reasons that remain good. So this class is
+> `migrationNumbers.test.ts` ran in `backend-tests (2)`, which the section below
+> forbids making required, for good reasons that remain good. So this class was
 > **structurally ungated**, and `gh pr merge --auto` — armed on 12 PRs in 27
 > seconds that morning — merges the moment the two required checks go green,
 > which is exactly what happened.
+>
+> **CLOSED 2026-08-17, and it closed by ACCIDENT three days before anyone
+> noticed.** `migrationNumbers.test.ts` is no longer in the workers shards. It is
+> in the LIGHT project, and `backend-typecheck` — a required context — runs
+> `npm run test:light` (`ci.yml`). So a duplicate number blocks the MERGE today.
+> Nothing was done about it on purpose: `d78d55bf` (#2131, *"perf(ci): 565s ->
+> 106s by not booting a Workers runtime for tests that never use one"*) created
+> the light project on 2026-08-14 and swept this suite into it as one of many.
+> The remedy below was written the day before and stayed marked "not done" for
+> three days while it was in fact done.
+>
+> Verify, do not believe this paragraph:
+> ```
+> grep -n "run: npm run test:light" .github/workflows/ci.yml
+> cd backend && npx vitest list --config vitest.light.config.mts | grep migrationNumbers
+> ```
+>
+> **What is still yours:** that gating is INCIDENTAL. `classifyTests()` decides
+> the split at config time from a regex over the comment-stripped source, so one
+> added string containing `cloudflare:test` or `env.DB` moves the suite back to
+> the shards and silently un-gates it. That is now pinned by the merge-gating
+> test in `backend/tests/classifyTests.test.mjs` — add a suite to its
+> `MUST_GATE_MERGE` list whenever an assertion must stop a merge rather than a
+> deploy.
 >
 > The deploy stayed broken from 13:06Z (#2121 merged) until #2124 landed:
 > `Deploy` runs 31703284503 and 31704506807 both concluded `failure` with the
@@ -330,7 +354,9 @@ the STALE-BRANCH mechanism behind the incidents below:
 > **Two remedies, neither of which is "be careful":**
 > 1. Move the duplicate-number assertion into `backend-typecheck` — the job that
 >    IS a required context — so a collision blocks the merge instead of only the
->    deploy. **Not done. This is the open item.**
+>    deploy. **DONE — see the CLOSED box above. It was already done when this
+>    line still said "Not done", which is the more useful lesson: check the
+>    tree before believing a remedy is outstanding.**
 > 2. Never arm `gh pr merge --auto` on a PR carrying a migration or an
 >    integration batch. Auto-merge structurally cannot wait for a check that is
 >    not required.
