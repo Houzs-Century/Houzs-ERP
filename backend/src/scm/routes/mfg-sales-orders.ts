@@ -5627,7 +5627,7 @@ mfgSalesOrders.post('/recompute-allocation', async (c) => {
 // Status transition with audit row. Reads the prior status, updates, then
 // inserts to mfg_so_status_changes — best-effort (audit failure does NOT
 // roll back the status change).
-mfgSalesOrders.patch('/:docNo/status', async (c) => {
+export const patchMfgSalesOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   /* `processingDate` — the Processing Date a move to IN_PRODUCTION proceeds
      WITH, for a caller proceeding an order that does not carry one yet.
@@ -5645,13 +5645,12 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
      lowercase-persist bug and lets the transition table judge a canonical value. */
   const toStatus = String(body.status).trim().toUpperCase();
 
-  /* TWO boundaries; until 2026-08-18 only the second was here. COMPANY —
-     mfg_sales_orders is ONE cross-company table keyed by a guessable `text
-     PRIMARY KEY` doc_no and the service-role client bypasses RLS, so this
-     predicate is the whole tenant boundary: company 1 could otherwise cancel
-     company 2's order and turn its deposit into a customer credit. STRICT, and
-     on every read AND the UPDATE. SALESPERSON (audit 2026-06-20) — a ROLE filter
-     over colleagues, not tenancy. Trace: docs/modules/sales-order.md. */
+  /* Company scope made STRICT, 2026-08-18. selfScopedSalesBlocked below already
+     refuses a doc outside the active company — that is its step 1, not the
+     salesperson half — but it does so through scopeToCompany, which DEGRADES to
+     NO predicate when the company is unresolved, and only on a READ. This table
+     is cross-company with a guessable `text PRIMARY KEY` doc_no and the client is
+     service-role, so: refuse on unresolved, and predicate the UPDATE too. */
   const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
@@ -5977,7 +5976,8 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
   // The committed response (incl. any pwpVouchers summary) was built inside the
   // command; the effects above are best-effort and never change it.
   return statusResponse;
-});
+};
+mfgSalesOrders.patch('/:docNo/status', patchMfgSalesOrderStatusHandler);
 
 // ── DELETE /mfg-sales-orders/:docNo — discard a DRAFT ───────────────────────
 // Owner 2026-07-20 — a DRAFT (especially a junk scan / OCR draft) had NO way out

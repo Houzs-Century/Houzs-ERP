@@ -4337,7 +4337,7 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
   return c.json({ sent: res.status === 'sent', result: res, to: supplierEmail });
 });
 
-mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
+export const cancelPurchaseOrderHandler = async (c: any) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
 
@@ -4348,10 +4348,8 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur, error: readErr } = await scopeToCompanyId(supabase
-    .from('purchase_orders')
-    .select('id, status, po_number, company_id, total_centi')
-    .eq('id', id), co.companyId)
-    .maybeSingle();
+    .from('purchase_orders').select('id, status, po_number, company_id, total_centi')
+    .eq('id', id), co.companyId).maybeSingle();
   if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const curStatus = (cur as { status: string }).status;
@@ -4453,7 +4451,8 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
   });
 
   return c.json({ purchaseOrder: after ?? { id, status: 'CANCELLED' } });
-});
+};
+mfgPurchaseOrders.patch('/:id/cancel', cancelPurchaseOrderHandler);
 
 /* Reopen — the inverse of cancel (Commander 2026-06-16: "PO cancel 了,不可以
    uncancel 回来吗?"). Only a CANCELLED PO can be reopened; it returns to
