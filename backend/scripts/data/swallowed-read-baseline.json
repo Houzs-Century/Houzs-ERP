@@ -262,7 +262,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-orders-mfg.ts": {
-      "reads": 51,
+      "reads": 50,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-planning.ts": {
