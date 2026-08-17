@@ -3,7 +3,7 @@
   "totals": {
     "@typescript-eslint/no-explicit-any": 538,
     "@typescript-eslint/no-floating-promises": 787,
-    "@typescript-eslint/no-unnecessary-condition": 1796,
+    "@typescript-eslint/no-unnecessary-condition": 1793,
     "no-restricted-syntax": 140
   },
   "files": {
@@ -93,7 +93,7 @@
       "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/components/RouteFallback.tsx": {
-      "@typescript-eslint/no-unnecessary-condition": 8
+      "@typescript-eslint/no-unnecessary-condition": 5
     },
     "src/components/Sidebar.tsx": {
       "@typescript-eslint/no-unnecessary-condition": 2

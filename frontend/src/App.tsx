@@ -20,7 +20,9 @@ import { AssistantPanel } from "./components/AssistantPanel";
 import { AssistantPanelProvider } from "./components/AssistantPanelContext";
 import { BreadcrumbsProvider } from "./hooks/useBreadcrumbs";
 import { PageSkeleton, RouteCrashBoundary } from "./components/RouteFallback";
-import { NewVersionBanner } from "./components/NewVersionBanner";
+// NewVersionBanner is deliberately NOT mounted here — see main.tsx's RootApp.
+// App() is the DESKTOP shell; AuthGate renders MobileApp instead of it, so a
+// mount in this file reaches no mobile screen at all.
 import { IosInstallGuide } from "./components/IosInstallGuide";
 import { AndroidInstallGuide } from "./components/AndroidInstallGuide";
 
@@ -402,7 +404,6 @@ export default function App() {
         <AssistantLauncher />
         <AssistantPanel />
       </AssistantPanelProvider>
-      <NewVersionBanner />
       <IosInstallGuide />
       <AndroidInstallGuide />
       <Layout>

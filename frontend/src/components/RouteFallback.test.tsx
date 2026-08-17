@@ -74,6 +74,7 @@ describe("ChunkReloadBoundary", () => {
     expect(JSON.parse(sessionStorage.getItem(RECOVER_AT_KEY) ?? "{}")).toEqual({
       at: Date.now(),
       buildId: CURRENT_BUILD_ID,
+      kind: "hard",
     });
     expect(reportClientError).not.toHaveBeenCalled();
 
@@ -84,7 +85,7 @@ describe("ChunkReloadBoundary", () => {
       await Promise.resolve();
     });
 
-    expect(screen.getByText("This tab is running an older version of the app.")).toBeTruthy();
+    expect(screen.getByText("This page could not load part of the app.")).toBeTruthy();
     expect(getRegistrations).toHaveBeenCalledTimes(1);
   });
 
@@ -136,6 +137,7 @@ describe("ChunkReloadBoundary", () => {
     expect(JSON.parse(sessionStorage.getItem(RECOVER_AT_KEY) ?? "{}")).toEqual({
       at: Date.now(),
       buildId: CURRENT_BUILD_ID,
+      kind: "hard",
     });
   });
 
@@ -222,6 +224,97 @@ describe("ChunkReloadBoundary", () => {
     expect(getRegistrations).not.toHaveBeenCalled();
   });
 
+  it("records the CHEAP branch as soft, so the slot it spent can still be escalated", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+
+    render(
+      <ChunkReloadBoundary resetKey="/scm/sales-orders/SO-1">
+        <ThrowError message={chunkError()} />
+      </ChunkReloadBoundary>,
+    );
+    await flush();
+
+    expect(JSON.parse(sessionStorage.getItem(RECOVER_AT_KEY) ?? "{}")).toEqual({
+      at: Date.now(),
+      buildId: CURRENT_BUILD_ID,
+      kind: "soft",
+    });
+  });
+
+  it("escalates automatically when a plain reload on THIS build already failed", async () => {
+    // The scenario the flat cooldown got wrong: the probe could not reach the
+    // network (slow link, aborted at 3s) so it answered "unknown" and we spent
+    // the attempt on a plain reload. The old service worker then re-served the
+    // stale shell and the same chunk failed again — the 2026-07-04 shape. With
+    // one flat cooldown the operator got the panel here, on a failure
+    // origin/main would have self-healed. The soft mark buys the second rung.
+    sessionStorage.setItem(
+      RECOVER_AT_KEY,
+      JSON.stringify({ at: Date.now() - 1_000, buildId: CURRENT_BUILD_ID, kind: "soft" }),
+    );
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ChunkReloadBoundary resetKey="/scm/sales-orders/SO-1">
+        <ThrowError message={chunkError()} />
+      </ChunkReloadBoundary>,
+    );
+    await flush();
+
+    expect(screen.getByLabelText("Loading page")).toBeTruthy();
+    expect(getRegistrations).toHaveBeenCalledTimes(1);
+    // Straight to the full recovery — no second probe, the answer is already in.
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(reportClientError).not.toHaveBeenCalled();
+    expect(JSON.parse(sessionStorage.getItem(RECOVER_AT_KEY) ?? "{}")).toEqual({
+      at: Date.now(),
+      buildId: CURRENT_BUILD_ID,
+      kind: "hard",
+    });
+  });
+
+  it("stops after the hard rung — the ladder climbs once, it does not cycle", () => {
+    sessionStorage.setItem(
+      RECOVER_AT_KEY,
+      JSON.stringify({ at: Date.now() - 1_000, buildId: CURRENT_BUILD_ID, kind: "hard" }),
+    );
+
+    render(
+      <ChunkReloadBoundary resetKey="/scm/sales-orders/SO-1">
+        <ThrowError message={chunkError()} />
+      </ChunkReloadBoundary>,
+    );
+
+    expect(screen.getByText("This page could not load part of the app.")).toBeTruthy();
+    expect(getRegistrations).not.toHaveBeenCalled();
+  });
+
+  it("never tells the operator a deploy happened on a word it merely matched", () => {
+    // isStaleChunkError accepts the bare word `preload` on purpose — a wrong
+    // guess costs one reload. The PANEL makes a claim about the world, so it is
+    // gated on the narrow matcher instead. Before this split, an unrelated
+    // render error carrying that word told the operator a newer version was
+    // deployed and invited them to pay a full cache purge for nothing.
+    //
+    // The ladder is spent so the panel is what renders; the point under test is
+    // the WORDS on it, not which rung we are on.
+    sessionStorage.setItem(
+      RECOVER_AT_KEY,
+      JSON.stringify({ at: Date.now() - 1_000, buildId: CURRENT_BUILD_ID, kind: "hard" }),
+    );
+
+    render(
+      <ChunkReloadBoundary resetKey="/scm/products">
+        <ThrowError message="Cannot read properties of undefined (reading 'preload')" />
+      </ChunkReloadBoundary>,
+    );
+
+    expect(screen.getByText("Something went wrong loading this page.")).toBeTruthy();
+    expect(screen.queryByText(/newer version was deployed/)).toBeNull();
+    expect(screen.getByRole("button", { name: "Reload" })).toBeTruthy();
+  });
+
   it("never probes a URL that is not ours, and escalates instead", async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal("fetch", fetchMock);
@@ -252,7 +345,7 @@ describe("ChunkReloadBoundary", () => {
     // The dead end this replaces: the panel said "something went wrong" and
     // nothing else, so the operator could not tell a stranded tab from a broken
     // page and had no reason to believe the button would help.
-    expect(screen.getByText("This tab is running an older version of the app.")).toBeTruthy();
+    expect(screen.getByText("This page could not load part of the app.")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Reload now" })).toBeTruthy();
     expect(getRegistrations).not.toHaveBeenCalled();
     expect(reportClientError).toHaveBeenCalledWith(
@@ -294,7 +387,7 @@ describe("ChunkReloadBoundary", () => {
       </ChunkReloadBoundary>,
     );
 
-    expect(screen.getByText("This tab is running an older version of the app.")).toBeTruthy();
+    expect(screen.getByText("This page could not load part of the app.")).toBeTruthy();
     expect(getRegistrations).not.toHaveBeenCalled();
     expect(reportClientError).toHaveBeenCalledWith(
       expect.objectContaining({ message: "Loading chunk 42 failed" }),
@@ -313,10 +406,33 @@ describe("ChunkReloadBoundary", () => {
       </ChunkReloadBoundary>,
     );
 
-    expect(screen.getByText("This tab is running an older version of the app.")).toBeTruthy();
+    expect(screen.getByText("This page could not load part of the app.")).toBeTruthy();
     expect(getRegistrations).not.toHaveBeenCalled();
     expect(reportClientError).toHaveBeenCalledWith(
       expect.objectContaining({ message: "Importing a module script failed" }),
+      "stale-chunk-persisted",
+    );
+  });
+
+  it("does not reload when the attempt cannot be WRITTEN down either", () => {
+    // Reading storage works, writing does not (private mode, quota). An attempt
+    // we cannot remember is an attempt that repeats forever, so nothing
+    // automatic may run — and the operator staring at the panel is exactly the
+    // case IT is meant to hear about.
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("quota", "QuotaExceededError");
+    });
+
+    render(
+      <ChunkReloadBoundary resetKey="/orders">
+        <ThrowError message="Failed to fetch dynamically imported module" />
+      </ChunkReloadBoundary>,
+    );
+
+    expect(screen.getByText("This page could not load part of the app.")).toBeTruthy();
+    expect(getRegistrations).not.toHaveBeenCalled();
+    expect(reportClientError).toHaveBeenCalledWith(
+      expect.objectContaining({ message: "Failed to fetch dynamically imported module" }),
       "stale-chunk-persisted",
     );
   });

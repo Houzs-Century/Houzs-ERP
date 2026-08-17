@@ -13,9 +13,11 @@ import { DialogProvider } from "./hooks/useDialog";
 import { AuthProvider } from "./auth/AuthContext";
 import { AuthGate } from "./auth/AuthGate";
 import { PwaBanners } from "./components/PwaBanners";
+import { NewVersionBanner } from "./components/NewVersionBanner";
 import { ChunkReloadBoundary } from "./components/RouteFallback";
 import { registerPwa } from "./pwa";
 import { installGlobalErrorReporting } from "./lib/errorReporter";
+import { installChunkFailureWatch } from "./lib/staleBuild";
 import { clearStaleTableSorts } from "./lib/staleSortReset";
 import { consumeCompanyUrlSeed } from "./lib/activeCompany";
 import { QueryClientProvider } from "@tanstack/react-query";
@@ -79,6 +81,14 @@ if (!canonicalTarget) registerPwa();
 // so even a first-render crash is captured. Prod builds only; reporting never
 // changes behaviour (see lib/errorReporter.ts).
 installGlobalErrorReporting();
+/* The other half of that: a dynamic import() that rejects inside an async event
+   handler is CAUGHT by that handler, so it is never an unhandledrejection and
+   installGlobalErrorReporting above cannot see it, and no React boundary sees it
+   either. Vite's preload wrapper is the one place every dynamic import in the
+   build passes through. Installed here, before React mounts, so a failure during
+   boot is not missed. See lib/staleBuild.ts for exactly what is and is not
+   covered. */
+installChunkFailureWatch();
 /* One-shot: drop the persisted table sorts a bug made permanent, so nobody has
    to find the Columns drawer and press Reset on every list page and device.
    Guarded by its own marker — a sort chosen deliberately after this ships is
@@ -201,6 +211,11 @@ function RootApp() {
       <AuthGate>
         <App />
       </AuthGate>
+      {/* OUTSIDE AuthGate, not inside App: AuthGate renders MobileApp INSTEAD of
+          App, so the banner mounted in App() covered the desktop shell only and
+          all 28 lazy mobile screens got no deploy warning whatsoever. One mount
+          here covers both surfaces. */}
+      <NewVersionBanner />
     </AuthProvider>
   );
 }

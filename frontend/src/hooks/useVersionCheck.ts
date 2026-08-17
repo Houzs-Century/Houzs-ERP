@@ -95,8 +95,10 @@ export interface VersionCheckOptions {
     route the tab has NOT visited yet is a chunk that disappears on the next
     deploy — so the operator's odds of being warned before clicking into one
     were poor, and the audit caught five 404-then-reload "flashes" in a single
-    session. Sixty seconds plus a check on every navigation closes most of that
-    window, and each check is one small same-origin GET of index.html. */
+    session. Sixty seconds plus a check on every navigation narrows that window
+    to about one click, and each check is one small same-origin GET of
+    index.html. Cost, since nobody measured it before: an operator making N
+    navigations in a minute now issues N+1 of those GETs instead of 0.2. */
 export function useVersionCheck(
   { routeKey, intervalMs = 60_000 }: VersionCheckOptions,
 ): { updateReady: boolean } {
@@ -147,10 +149,20 @@ export function useVersionCheck(
     };
   }, [intervalMs, updateReady]);
 
-  // A navigation is the moment the tab is about to import a chunk it has never
-  // fetched — exactly where a stranded build turns into a 404 and a reload
-  // under the operator. Checking here means the banner can be up BEFORE they
-  // click the next thing, which the 5-minute poll almost never managed.
+  // Check on every navigation, NOT only on the 60s tick.
+  //
+  // Read the ordering honestly, because an earlier version of this comment did
+  // not: React.lazy starts the dynamic import during the RENDER phase, and this
+  // effect runs after the commit. So the import for the route being entered is
+  // already in flight before checkNow() is even dispatched, and the index.html
+  // round trip lands later still. This check can never save the navigation that
+  // triggered it — it saves the NEXT one.
+  //
+  // That is still the change worth having. The window between a deploy and the
+  // operator's first click into an unvisited chunk was up to five minutes wide;
+  // with a check per navigation a busy operator is warned within one click of
+  // the deploy instead. Making it genuinely pre-import would mean intercepting
+  // the router before render, which is a different and much larger change.
   const mounted = useRef(false);
   useEffect(() => {
     // The polling effect already checks once on mount; without this the very
