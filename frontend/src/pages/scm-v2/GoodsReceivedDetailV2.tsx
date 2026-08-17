@@ -37,7 +37,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { convertToLink } from "../../lib/convertScope";
+import { convertToLink, transferToLabel } from "../../lib/convertScope";
 import { EntityHistoryPanel } from "./EntityHistoryPanel";
 import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
 import { resolveFxRate } from "./fx-rate";
@@ -587,8 +587,8 @@ function GoodsReceivedDetailV2ReadOnly() {
             <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>Print PDF</Button>
             {canCancel && <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>Cancel GRN</Button>}
             {canPost && <Button variant="secondary" icon={<Send size={14} />} onClick={doPost}>Post</Button>}
-            {canConvertToPi && <Button variant="secondary" icon={<Receipt size={14} />} onClick={goConvertToPi}>Convert to PI</Button>}
-            {canConvertToPr && <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={goConvertToPr}>Convert to PR</Button>}
+            {canConvertToPi && <Button variant="secondary" icon={<Receipt size={14} />} onClick={goConvertToPi}>{transferToLabel('pi')}</Button>}
+            {canConvertToPr && <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={goConvertToPr}>{transferToLabel('pr')}</Button>}
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>
           </div>
         </div>
@@ -696,7 +696,7 @@ function GoodsReceivedDetailV2ReadOnly() {
             </button>
           ) : canConvertToPi ? (
             <button type="button" onClick={goConvertToPi} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink">
-              <Receipt size={16} /> Convert to PI
+              <Receipt size={16} /> {transferToLabel('pi')}
             </button>
           ) : (
             <button type="button" onClick={goEdit} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink">

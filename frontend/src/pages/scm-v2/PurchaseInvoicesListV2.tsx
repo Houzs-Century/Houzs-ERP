@@ -21,6 +21,7 @@ import {
   Wallet,
   ArrowRightLeft,
 } from "lucide-react";
+import { transferFromLabel } from '../../lib/convertScope';
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
@@ -992,7 +993,7 @@ export function PurchaseInvoicesListV2() {
             primaryAction={
               <div className="flex items-stretch gap-2">
                 <Button variant="secondary" icon={<ArrowRightLeft size={14} />} onClick={goFromGrn}>
-                  From GRN
+                  {transferFromLabel('grn')}
                 </Button>
                 <div className="flex items-stretch">
                   <Button variant="primary" icon={<Plus size={14} />} onClick={goNewPi} className="rounded-r-none">

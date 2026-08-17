@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
-// convertScope — the ONE place a "Convert to X" link's scope parameter is named.
+// convertScope — the ONE place a transfer link's scope parameter is named, and
+// the ONE place its LABEL is generated.
 //
 // Every conversion in this ERP is a picker page owned by the DESTINATION
 // document (`/scm/grns/from-po`, `/scm/sales-invoices/from-do`, …). A
-// source-side "Convert to X" button navigates to that picker and has to say
+// source-side "Transfer to X" button navigates to that picker and has to say
 // WHICH source document the operator came from, or they land on a global list
 // of everything and hunt for the document they were just looking at.
 //
@@ -11,7 +12,7 @@
 //   1. The caller appended a scope parameter and the picker never read it —
 //      `?do=`, `?grn=`, `?so=` were constructed, navigated with, and discarded.
 //   2. The caller and the destination spelled it differently — the GRN screens
-//      sent `?fromGrn=` while PurchaseReturnNew read `grnId`, so "Convert to
+//      sent `?fromGrn=` while PurchaseReturnNew read `grnId`, so "Transfer to
 //      Purchase Return" always opened blank.
 //
 // Both are invisible at compile time when each site invents its own string. So
@@ -53,9 +54,72 @@ export const CONVERT_LINKS = {
 
 export type ConvertPair = keyof typeof CONVERT_LINKS;
 
-/* Build the "Convert to X" URL. `keys` may be one source key or many — the
-   multi-source form is what the PO list's bulk "Convert to GRN" bar sends, and
-   every picker below understands it. */
+/* ── The LABEL rule (owner-approved 2026-08-17) ────────────────────────────
+   Two sentences generate every transfer label, and nothing else does:
+
+       Transfer from <Source document, full name>      secondary, header
+       Transfer to   <Destination document, full name>  primary, footer
+
+   Three properties are deliberate, and each was a defect before:
+
+   - **Full document names, never abbreviations.** `SI` / `PI` / `PR` / `GRN` /
+     `DO` / `SO` do not appear on a button. They stay in document NUMBERS,
+     which is where an abbreviation identifies something.
+   - **Always SINGULAR.** The button names the source TYPE, not how many were
+     picked. A picker that accepts ten sales orders still reads "Transfer from
+     Sales Order" — the old plural ("one or more Purchase Orders") described
+     the widget, not the document.
+   - **Generated, never written out.** Twenty hand-written literals is how
+     desktop and mobile came to word the SAME operation differently — one used
+     the abbreviation, one the full name. Call the helpers; a new pair cannot be
+     added with an inconsistent label. */
+export const TRANSFER_DOC = {
+  so:  'Sales Order',
+  po:  'Purchase Order',
+  do:  'Delivery Order',
+  si:  'Sales Invoice',
+  dr:  'Delivery Return',
+  grn: 'Goods Received',
+  pi:  'Purchase Invoice',
+  pr:  'Purchase Return',
+  co:  'Consignment Order',
+  cn:  'Consignment Note',
+  cr:  'Consignment Return',
+  pco: 'Purchase Consignment Order',
+  pcr: 'Consignment Receive',
+} as const;
+
+export type TransferDoc = keyof typeof TRANSFER_DOC;
+
+/** The label for the SOURCE-side action: "Transfer to <destination>". */
+export const transferToLabel = (destination: TransferDoc): string =>
+  `Transfer to ${TRANSFER_DOC[destination]}`;
+
+/** The label for the DESTINATION-side action: "Transfer from <source>". */
+export const transferFromLabel = (source: TransferDoc): string =>
+  `Transfer from ${TRANSFER_DOC[source]}`;
+
+/* Every transfer flow this ERP recognises, as source → destination. This is the
+   VOCABULARY table, not a capability table: a row here says what the pair is
+   CALLED, not that both buttons exist. `docs/modules/document-conversion.md` §2
+   is the capability grid, and §9 records which of these have no button yet. */
+export const TRANSFER_FLOWS: readonly { from: TransferDoc; to: TransferDoc }[] = [
+  { from: 'so',  to: 'do'  },
+  { from: 'so',  to: 'po'  },
+  { from: 'do',  to: 'si'  },
+  { from: 'do',  to: 'dr'  },
+  { from: 'po',  to: 'grn' },
+  { from: 'po',  to: 'pr'  },
+  { from: 'grn', to: 'pi'  },
+  { from: 'grn', to: 'pr'  },
+  { from: 'co',  to: 'cn'  },
+  { from: 'cn',  to: 'cr'  },
+  { from: 'pco', to: 'pcr' },
+] as const;
+
+/* Build the transfer URL. `keys` may be one source key or many — the
+   multi-source form is what the PO list's bulk "Transfer to Goods Received" bar
+   sends, and every picker below understands it. */
 export function convertToLink(pair: ConvertPair, keys: string | readonly string[]): string {
   const { path, param } = CONVERT_LINKS[pair];
   const list = (typeof keys === 'string' ? [keys] : keys)
@@ -68,7 +132,7 @@ export function convertToLink(pair: ConvertPair, keys: string | readonly string[
 export type ConvertScope = {
   /* The source keys this screen was scoped to. EMPTY means "no scope was
      asked for" — the full, global picker, which is a legitimate entry point
-     (the list toolbar's plain "From PO" button). */
+     (the list toolbar's unscoped "Transfer from Purchase Order" button). */
   keys: Set<string>;
   /* Parameters in the URL that this screen does not understand. Non-empty
      means a caller is talking to this screen in a language it does not speak,
@@ -76,7 +140,7 @@ export type ConvertScope = {
   unknown: string[];
 };
 
-/* Read the scope a "Convert to X" link carried.
+/* Read the scope a transfer link carried.
  *
  * `alsoKnown` is REQUIRED, not optional, and that is the repo rule about a
  * parameter that DECIDES something: it decides whether a parameter counts as

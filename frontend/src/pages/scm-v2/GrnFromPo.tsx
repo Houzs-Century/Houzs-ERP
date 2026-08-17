@@ -183,7 +183,8 @@ export const GrnFromPo = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [items, draftQtyById, category, dateField, dateFrom, dateTo, poIdSet, appendGrn]);
 
-  /* Commander 2026-05-31 — "Convert to GR 应该进入 Draft 状态，不要直接 Create."
+  /* Commander 2026-05-31, on the PO → Goods Received transfer —
+     "应该进入 Draft 状态，不要直接 Create."
      When the operator converts ONE PO from the list (?poId=<id>), land here with
      that PO's outstanding lines PRE-TICKED at their full remaining qty, so the
      screen is a ready-to-review draft (mirrors the DO→SI convert). They eyeball

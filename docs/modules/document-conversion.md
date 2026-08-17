@@ -13,6 +13,17 @@
 > generated artifact, which cannot go stale:
 > `npm --prefix backend run gen:route-locator`.
 
+> **THE BUTTONS WERE RENAMED ON 2026-08-17.** Every user-visible "Convert
+> to X" / "Convert from X" is now **"Transfer to `<Document>`"** /
+> **"Transfer from `<Document>`"**, generated from one table — the rule and the
+> full label list are in **§9.6**, what changed is in **§9.8**.
+>
+> **§1–§8 below still use the OLD names**, deliberately: they are the dated
+> record of the audit that produced the grid, and rewriting a dated finding makes
+> it untrustworthy. Read "Convert to SI" in §2 as today's "Transfer to Sales
+> Invoice". The abbreviations `CF` / `CT` still mean the destination-side and
+> source-side entry point.
+
 ---
 
 ## 1. The shape of the system, in one paragraph
@@ -334,11 +345,13 @@ Sizes are relative build cost, not priority.
 > 'convert to' / 'convert from'? I think unifying everything to transfer from /
 > transfer to would be better, wouldn't it?"*
 >
-> **This is an AUDIT. Nothing has been renamed.** Read with
-> `docs/transfer-from-to-vocabulary.md`, which surveys the LINEAGE COLUMNS from
-> the same question a few hours earlier. This section is the layered
-> rename-cost view that survey does not carry, and it **corrects two liveness
-> claims in it** — see §9.7.
+> **The owner approved the naming rule on 2026-08-17 and STAGE 1 HAS SHIPPED.**
+> §9.1–§9.5 are the audit that sized the work; §9.6 is the approved rule and the
+> staging; §9.8 records exactly what Stage 1 changed and what it deliberately did
+> not. Read with `docs/transfer-from-to-vocabulary.md`, which surveys the LINEAGE
+> COLUMNS from the same question a few hours earlier — this section is the layered
+> rename-cost view that survey does not carry, and it **corrects three liveness
+> claims in it** (§9.7).
 
 ### 9.1 The answer, before the inventory
 
@@ -456,48 +469,89 @@ this tree. A tree-wide replace would silently damage all three:
 Also: `SupplierDetail.tsx`'s *"a follow-up to convert to a single request"* is a
 refactor note about code.
 
-### 9.6 Recommendation — staged, ranked by value per unit of risk
+### 9.6 The approved rule (owner, 2026-08-17)
 
-**Do this first, and it can ship alone:**
+**Two sentences generate every transfer label, and nothing else does.** They live
+in `frontend/src/lib/convertScope.tsx` as `transferToLabel()` /
+`transferFromLabel()` over one `TRANSFER_DOC` table — not as string literals,
+because twenty hand-written literals is exactly how desktop came to say "Convert
+to GRN" while mobile said "Convert to Goods Receipt" for one operation:
 
-- **Stage 0 — free the word (PREREQUISITE, and it is a bug fix).** Relabel
-  `PurchaseOrderDetailV2`'s line column from "Transfer to" to **"To
-  Warehouse"**, matching what `StockTransferNew` / `StockTransferDetail` already
-  call the same concept. One string. Until this lands, any unification of the
-  document vocabulary onto "transfer" makes the PO screen actively ambiguous.
-  **Size: XS.** This is the §9.7 finding and belongs in its own PR with a
-  `BUG-HISTORY.md` entry.
+```
+Transfer from <Source document, full name>        secondary · header action row
+Transfer to   <Destination document, full name>   primary   · footer action bar
+```
 
-- **Stage 1 — user-visible copy only.** Rename the ~20 Layer-A strings to
-  **"Transfer To <Doc>"** / **"Transfer From <Doc>"**, and settle the two
-  desktop/mobile disagreements while in there (desktop says "Convert to GRN",
-  mobile says "Convert to Goods Receipt"; `DeliveryOrderNewV2`'s badge says
-  "Converted from" while the DO listing column says "Transfer From (SO)" for the
-  same relationship). Keep the `(SO)` / `(DO)` parenthetical — it is what keeps
-  the label unambiguous against Stock Transfer. **Size: S.** Reversible, no
-  migration, no API change. This is the whole of what the owner sees.
+Three properties, each of which was a real defect before:
 
-**Then, only if he wants it:**
+- **Full document names. Abbreviations never appear on a button** — `SI`, `PI`,
+  `PR`, `GRN`, `DO`, `SO` stay in document NUMBERS, where an abbreviation
+  actually identifies something.
+- **Always SINGULAR.** The button names the source *type*, not the count.
+  Picking ten sales orders still reads "Transfer from Sales Order". The old
+  plural ("one or more Purchase Orders") described the widget.
+- **`Deliver` and `Mark signed` leave the primary slot together.** `Deliver`
+  becomes "Transfer to Delivery Order" — it names the document produced, not the
+  physical act. `Mark signed` is NOT a transfer (it changes that document's own
+  status), so it stays *secondary* beside Edit and Print and the primary slot
+  goes to the transfer. This is what the owner spotted: the sales order reported
+  a `Delivered` STATUS while the delivery order offered a `Mark signed` ACTION.
+  **Statuses report; buttons act.**
 
-- **Stage 2 — identifiers (Layer D).** `convertToLink` → `transferToLink`, and
-  so on. **Size: M**, noisy diff, zero user-visible effect. Worth it only as
-  part of touching those files anyway.
-- **Stage 3 — API response fields (Layer E).** `converted_po_nos` →
-  `transferred_po_nos`. **Size: M**, and it must land backend + desktop + mobile
-  together or the SO list's PO chips go blank. Low value.
+#### The 20 labels
 
-**Never:**
+| flow | on the source (primary, footer) | on the destination (secondary, header) |
+|---|---|---|
+| Sales Order → Delivery Order | Transfer to Delivery Order | Transfer from Sales Order |
+| Sales Order → Purchase Order | Transfer to Purchase Order | Transfer from Sales Order |
+| Delivery Order → Sales Invoice | Transfer to Sales Invoice | Transfer from Delivery Order |
+| Delivery Order → Delivery Return | Transfer to Delivery Return | Transfer from Delivery Order |
+| Purchase Order → Goods Received | Transfer to Goods Received | Transfer from Purchase Order |
+| Goods Received → Purchase Invoice | Transfer to Purchase Invoice | Transfer from Goods Received |
+| Goods Received → Purchase Return | Transfer to Purchase Return | Transfer from Goods Received |
+| Consignment Order → Consignment Note | Transfer to Consignment Note | Transfer from Consignment Order |
+| Consignment Note → Consignment Return | Transfer to Consignment Return | Transfer from Consignment Note |
+| Purchase Consignment Order → Receive | Transfer to Consignment Receive | Transfer from Consignment Order |
 
-- **Layers B, C, F** need no work — B and C do not carry the word, and F already
-  uses the owner's preferred one.
-- **Layer G** is AutoCount's, not ours.
+An 11th pair exists in the code and is NOT in the approved twenty: **Purchase
+Order → Purchase Return** (`poToPr`, the PO detail's "Raise Return"). It is
+labelled by the same rule — "Transfer to Purchase Return" — and named in
+`TRANSFER_FLOWS` so it cannot drift; flag it if the owner wants it worded
+differently.
 
-**The honest summary for the owner:** unifying on "transfer from / transfer to"
-is the right call, it matches AutoCount and the database, and **the whole
-user-visible half is one small PR** — provided the PO line column stops using
-the same words for a warehouse first.
+#### Staging
 
-### 9.7 Found while auditing — reported, not fixed here
+| stage | scope | state |
+|---|---|---|
+| **0** | free the word — the PO line column that meant a warehouse (§9.3) | **SHIPPED** with Stage 1; it is the `BUG-HISTORY.md` entry |
+| **1** | user-visible copy: buttons, titles, toasts, confirms, empty states | **SHIPPED** — see §9.8 |
+| **2** | code identifiers — `convertTo…` → `transferTo…` (Layer D) | not started; internal, mechanical, noisy diff |
+| **3** | route paths, only with redirects (Layer B) | **likely a no-op** — no SPA route carries a `convert` segment, and the pickers already read `from-so` / `from-po` / `from-grn` / `from-do`. The only endpoint carrying the word is `POST /mfg-purchase-orders/:id/convert-from-so`, which §7 records has zero frontend callers |
+
+#### Do NOT touch, and say so in every PR
+
+- **`transfer_to` (the database column)** — already the target name. Renaming it
+  is a migration plus a write-back contract change for no gain (Layer F).
+- **AutoCount's `TransferTo` / `TransferFrom`** — not ours, and already correct
+  (Layer G). They are read by reflection against `AutoCount.Sales.dll`.
+
+Both are listed here so nobody "finishes the job" later by renaming them.
+
+#### Six of the twenty have no button to relabel
+
+Named so the next person adds them with the right label; **this is feature work
+the owner has not commissioned, and Stage 1 did not build any of it.** From §2:
+
+| missing | which half |
+|---|---|
+| Delivery Order → Delivery Return | no "Transfer to" on the DO |
+| Purchase Consignment Order → Receive | no "Transfer to" on the order |
+| Purchase Consignment Receive → Return | no "Transfer to" on the receive |
+| Goods Received → Purchase Return | no "Transfer from" picker page (`/scm/purchase-returns/from-grn` does not exist) |
+| Sales Order → Purchase Order | no "Transfer to" on the SO list or SO detail — only PO-side `?edit=1` and the MRP page |
+| Sales Order → Delivery Order (bulk) | exists only on the Delivery Planning board, not on the SO list |
+
+### 9.7 Found while auditing — one fixed here, two doc corrections
 
 1. **`PurchaseOrderDetailV2`'s "Transfer to" column shows a warehouse** (§9.3).
    A label using the document-lineage vocabulary for a warehouse, on the default
@@ -524,6 +578,67 @@ the same words for a warehouse first.
    three "Transfer To" labels from *exempt dead code* into *in-scope live copy*,
    and because `SalesOrderDetail`'s "Transfer To" column is one an operator sees
    on every SO edit. **Corrected in that file by this PR** — text only.
+### 9.8 What Stage 1 actually changed
+
+The measurable assertion, which is in the PR as an `enumeration` block:
+`git grep -c "Convert to\|Convert from" -- frontend/src` returns **nothing** (exit 1).
+
+**Changed — 33 files under `frontend/src`.** Every label now comes from the generator, so the words
+exist in exactly one place:
+
+- **Source-side (primary):** GRN detail ×3 and GRN list ×2 → "Transfer to
+  Purchase Invoice" / "Transfer to Purchase Return"; PO detail ×2 and PO list →
+  "Transfer to Goods Received"; DO detail and DO list → "Transfer to Sales
+  Invoice"; the SO list's `Deliver` and Delivery Planning's row action + bulk bar
+  → "Transfer to Delivery Order"; the mobile wizard's four screen titles.
+- **Destination-side (secondary):** the six list toolbars ("Transfer from
+  Purchase Order / GRN / Sales Order ×2 / Delivery Order ×2") and the seven
+  New-form pickers (Consignment Note, Consignment Return, Delivery Return ×2,
+  PC Receive, PC Return, Purchase Invoice, Sales Invoice), plus the mobile
+  wizard's sub-line — which also **lost its plural**.
+- **Toasts, confirms and pending states** on Delivery Planning: "Transfer
+  complete" / "Nothing transferred" / "Transfer failed" / "Transferring…" /
+  "Transfer N sales orders to Delivery Order?".
+- **`DeliveryOrderDetailV2`'s transfer became `variant="primary"`** and
+  `Mark signed` stayed secondary, per the rule above.
+
+**Deliberately NOT changed, and each for a reason:**
+
+1. **`From SOs:` — it is not a label, it is a stored data contract.** The spec
+   asked for it to go. It cannot go in a copy PR: `mfg-purchase-orders.ts` WRITES
+   `` notes: `From SOs: ${docNos.join(', ')}` `` into `purchase_orders.notes` at
+   raise time, and **three** regexes parse it back
+   (`/^\s*From SOs?:\s*(.+)$/im` in `backend/src/scm/routes/document-flow.ts`,
+   `frontend/src/pages/scm-v2/po-relationship-map.ts` and
+   `frontend/src/vendor/scm/lib/purchase-order-pdf.ts`). For POs with no per-line
+   `so_item_id` it is the **only** SO→PO linkage there is, so rewording it
+   silently drops that provenance from the Relationship Map, `po-so-coverage` and
+   the PO PDF for every row already in production. The parser already tolerates
+   `From SO:` as well as `From SOs:`, so a singular WRITER is safe — but that is
+   a data-format decision with a backfill question attached, not copy. **Left for
+   the owner to rule on.**
+2. **Provenance COLUMNS and detail fields** — "From SO", "From DO", "From PO",
+   "From GRN" on the lists, and the nine screens already reading "Transfer From
+   (SO)" / "Transfer To (DO)". These display a document NUMBER, which the rule
+   explicitly leaves abbreviated, and the parenthetical is what keeps them
+   unambiguous against Stock Transfer. Renaming ~15 column headers is a wider
+   copy change than the approved twenty; §5(a) of the sibling survey ("one
+   column, four labels") is the real defect there and is still open.
+3. **Column `key`s**, including `PurchaseOrderDetailV2`'s `transferTo` —
+   `DataTable` persists visibility, order and width per `tableId` in
+   localStorage, so renaming a key silently resets operators' saved layouts.
+   Stage 2 material, with a migration for the stored keys.
+4. **`backend/src/scm/routes/grns.ts` and the picker guards / empty-state
+   messages** — owned by the agent fixing transfer BEHAVIOUR concurrently. Where
+   an empty state is both wrongly worded AND factually wrong (the "every line has
+   been received" message), it is theirs, not this PR's.
+5. **The `convertScope.tsx` / `MobileConvertWizard.tsx` filenames and every
+   `convertTo…` identifier** — Stage 2.
+
+**Three senses of "convert" were left alone on purpose** (§9.5): unit/currency/
+date conversion, the "Fabric Converter" tool, and `governance.ts`'s "Convert to
+firm order". A tree-wide replace would have corrupted all three.
+
 
 ---
 

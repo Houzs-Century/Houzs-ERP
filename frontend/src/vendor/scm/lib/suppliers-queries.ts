@@ -858,7 +858,7 @@ export function useCreatePisFromGrnItems() {
     factual error under it and one real half:
 
     THE ERROR — this hook has TWO live callers, not one. PurchaseOrderFromSo.tsx
-    (routed at /scm/purchase-orders/from-so) is the "Convert from SO" / "Add Line
+    (routed at /scm/purchase-orders/from-so) is the "Transfer from Sales Order" / "Add Line
     Item" picker, and it is an ordinary route-level form: ONE post per mount, and
     it navigates to the PO on success. Its mount IS one intent, so a per-mount
     useIdempotencyKey() is correct there — the same shape as the other 17. That
@@ -905,7 +905,7 @@ export function useCreatePosFromSoItems() {
          ({ itemCode: supplierId }); wins over the main-supplier binding. */
       supplierByCode?: Record<string, string>;
       /* Commander 2026-05-29 — when set, APPEND the picked lines to this existing
-         PO (the "Convert from SO" / "Add Line Item" picker scoped to a PO)
+         PO (the "Transfer from Sales Order" / "Add Line Item" picker scoped to a PO)
          instead of creating new POs. */
       targetPoId?: string;
       /* Commander 2026-05-31 — converts raised from the MRP page are
