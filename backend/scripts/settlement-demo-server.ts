@@ -52,8 +52,14 @@ const ACQUIRER_CONFIG: Row[] = [
     fee_method: 'stated', date_tolerance_days: 3, is_active: true,
     column_map: { date: 'DATE', ref: 'INVOICE/AUTHO', gross: 'TRXN AMOUNT', fee: 'MDR', net: 'TRXN NET' },
   },
+  /* GHL's export DOES carry a unique id (gateway_tx_id) — but the owner
+     confirmed on 2026-08-17 that the code the till captures is NOT that id, so
+     there is nothing shared to match on and `has_unique_ref` is FALSE. The
+     acquirer is not the obstacle; the till is. Capturing the gateway id at the
+     point of sale would make GHL auto-matchable, and that is a sales-module
+     change for the owner to decide, not something this module may assume. */
   {
-    code: 'GHL', display_name: 'GHL', statement_format: 'CSV', has_unique_ref: true,
+    code: 'GHL', display_name: 'GHL', statement_format: 'CSV', has_unique_ref: false,
     fee_method: 'stated', date_tolerance_days: 3, is_active: true,
     column_map: { date: 'tx_create_date', ref: 'gateway_tx_id', gross: 'tx_amount', fee: 'merchant_mdr_amount', net: 'net_amount' },
   },
