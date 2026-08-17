@@ -162,6 +162,12 @@ const ReconcileTab = () => {
     setBusy(true);
     setResults([]);
     const done: Array<{ name: string; ok: boolean; text: string }> = [];
+    /* A file that was REFUSED stays selected. Half of these refusals end with
+       "…and upload it again" — and clearing the picker made that impossible:
+       the operator answered the question the message asked, pressed Upload, and
+       found the button dead because the file it was talking about had been
+       thrown away. Only the ones that got through are cleared. */
+    const rejected: Array<{ name: string; content: string }> = [];
     let lastBatch: number | null = null;
     /* Sequential, not parallel: each upload's matching must see the payments
        the previous one already claimed, or two statements could both take the
@@ -185,12 +191,13 @@ const ReconcileTab = () => {
             + ` · matched ${bucketCount(r.buckets, 'MATCHED')}, to confirm ${bucketCount(r.buckets, 'NEEDS_CONFIRM')}, not matched ${bucketCount(r.buckets, 'UNMATCHED')}`,
         });
       } catch (err) {
+        rejected.push(f);
         done.push({ name: f.name, ok: false, text: refusalText(err, 'The statement could not be read.') });
       }
       setResults([...done]);
     }
     setBusy(false);
-    setFiles([]);
+    setFiles(rejected);
     if (lastBatch != null) setBatchId(lastBatch);
   };
 
@@ -220,7 +227,9 @@ const ReconcileTab = () => {
           )}
           <button type="button" style={btn(true, !code || files.length === 0 || busy)}
             disabled={!code || files.length === 0 || busy} onClick={() => { void send(); }}>
-            <Upload {...ICON} /> {busy ? 'Reading…' : `Upload${files.length > 1 ? ` ${files.length} files` : ''}`}
+            <Upload {...ICON} /> {busy ? 'Reading…'
+              : results.some((r) => !r.ok) && files.length > 0 ? `Try again (${files.length})`
+              : `Upload${files.length > 1 ? ` ${files.length} files` : ''}`}
           </button>
         </div>
         {/* Asked ONLY of the acquirer whose file needs it. Hong Leong dates a
