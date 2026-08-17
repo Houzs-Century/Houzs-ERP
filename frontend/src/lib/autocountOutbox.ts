@@ -34,6 +34,28 @@
 // names. Everything a reader sees now comes from a map in this file. Where the
 // exact technical note still matters — an unrecognised refusal — it is shown as
 // a QUOTE of what a machine wrote, never as the page's own voice.
+//
+// AND THAT WAS NOT ENOUGH, 2026-08-16, read off the LIVE page. Quoting a machine
+// is not the same as making it readable, and two of the strings the queue
+// actually carries proved it:
+//
+//   • the ERP's own skip note for a parentless invoice was an English sentence
+//     ending "(AddPartialTransferDetail is the SDK's only primitive)" — the very
+//     identifier that had been taken out of this file's copy hours earlier,
+//     arriving through the SERVER instead;
+//   • a not-accepted delivery order's note was AutoCount's eleven-word refusal
+//     followed by a per-line dump of the account book — `Qty=1.00000000
+//     TransferedQty=0.00000000 Transferable=T docCancelled=F`, four lines of it.
+//     Genuinely valuable, to an engineer. Not to a warehouse clerk.
+//
+// So the rule is now structural rather than a promise about wording, and it is
+// `acWhatWasSaid` below: NOTHING THE SERVER WROTE IS EVER THE PAGE'S OWN VOICE.
+// It appears only under the label saying who wrote it, and the part a reader
+// cannot act on — everything after the AutoCount service's own `||`, or the
+// whole note where this file already has plain words for the row — goes behind a
+// collapsed technical disclosure. The plain-language HEADLINE is untouched by
+// all of this: it is on the row, always, unclicked. That was the owner's earlier
+// complaint and moving machinery must never quietly re-take it.
 // ----------------------------------------------------------------------------
 import { useCallback, useState } from "react";
 
@@ -313,8 +335,19 @@ export interface AcRequeueNote {
   text: string;
   /** What to do next, from AC_REQUEUE_TODO. Null for a code with no entry. */
   todo: string | null;
-  /** The ERP's own words, when it refused the document a second time. */
+  /**
+   * The ERP's own words, when it refused the document a second time — and, on a
+   * throw, whatever the transport said.
+   *
+   * A QUOTE, never spliced into `text`. The throw branch used to read
+   * `the request did not get through: ${e.message}`, which makes the page's own
+   * sentence and a machine's string one sentence and puts whatever a fetch layer
+   * produced into the page's voice. Same rule as the row: the page says the
+   * plain part, the machine is quoted under it.
+   */
   quote: string | null;
+  /** The quote's own machinery, behind the technical disclosure. */
+  quoteTechnical: string | null;
   /**
    * The document is on its way again, so the OLD refusal on this row is no
    * longer true and comes off it.
@@ -357,6 +390,7 @@ export function useAcRequeue(onAccepted: () => void) {
       setSendingId(rowId);
       try {
         const r = await requeueAcOutboxRow(rowId);
+        const quoted = r.reason === null ? null : acSplitMachineText(r.reason);
         setNotes((prev) => ({
           ...prev,
           [rowId]: {
@@ -366,7 +400,8 @@ export function useAcRequeue(onAccepted: () => void) {
             tone: r.accepted ? "good" : "wait",
             text: r.message,
             todo: acRequeueTodo(r.code),
-            quote: r.reason,
+            quote: quoted?.said ?? null,
+            quoteTechnical: quoted?.detail ?? null,
             clearsReason: r.accepted,
           },
         }));
@@ -376,11 +411,16 @@ export function useAcRequeue(onAccepted: () => void) {
           ...prev,
           [rowId]: {
             tone: "bad",
-            text: `Nothing was sent — the request did not get through: ${e instanceof Error ? e.message : String(e)}`,
+            /* THE PAGE'S OWN SENTENCE, WHOLE. What the transport said is quoted
+               under it rather than pasted into it — a fetch layer's string is
+               not this page's voice, and on a bad day it is a status line and a
+               URL. */
+            text: "Nothing was sent — the request never got through.",
             /* No dictionary entry: there is no code, because the server never
                answered. The sentence above already says the only thing true. */
             todo: null,
-            quote: null,
+            quote: e instanceof Error ? e.message : String(e),
+            quoteTechnical: null,
             /* The old refusal still stands — nothing was sent. */
             clearsReason: false,
           },
@@ -638,6 +678,13 @@ export const AC_REASON_COPY: Record<string, AcReasonCopy> = {
       "This document was built from more than one earlier document at once, and AutoCount has no way to record that as a single document.",
     toFix: "Enter it in AutoCount by hand. Sending it again will not help.",
   },
+  "mixed-source-lines": {
+    headline: "Part of this invoice was never delivered on the document it follows",
+    explain:
+      "Some lines came across from the delivery order and some were added to the invoice on their own. AutoCount can only carry across the lines that came from the delivery order, so the invoice in the account book would be worth less than the one the customer holds.",
+    toFix:
+      "Raise the delivered lines from the delivery order, and the lines added on their own as a separate invoice. Sending it again will not help.",
+  },
   unrecognised: AC_UNRECOGNISED_COPY,
 };
 
@@ -654,8 +701,30 @@ export const AC_FAILED_COPY: AcReasonCopy = {
   headline: "AutoCount would not take this document",
   explain:
     "It was offered to the account book and came back refused, or it ran out of tries. AutoCount's own words are quoted below.",
+  /*
+   * IT DOES NOT ORDER ANYBODY TO FIX A FIELD, because half the time there is no
+   * field. This line read "Put right whatever AutoCount named, in AutoCount,
+   * then save the document in the ERP again so it is offered afresh" until
+   * 2026-08-16, when the owner read it on a delivery order whose whole refusal
+   * was `Invalid transfer item.` — eleven words naming no field, no line and no
+   * document. Worse, the lines HAD been measured against the live book that same
+   * day and were correct on every count the book keeps
+   * (docs/autocount-sync-reasons.md §4). The page was sending him to repair
+   * something provably not broken, which is worse than saying nothing.
+   *
+   * So it says both halves and lets the reader see which one he is in. There is
+   * no code here deciding that: the server classifies `skipped` rows and
+   * deliberately does not classify `failed` ones, and pattern-matching
+   * AutoCount's message on this side to pick a branch would be the third opinion
+   * this whole file exists to avoid. Words can hold an honest either/or; a guess
+   * dressed as a branch cannot.
+   */
   toFix:
-    "Put right whatever AutoCount named, in AutoCount, then save the document in the ERP again so it is offered afresh.",
+    "Read AutoCount's own words below. If they name something on the document — a customer, an item, a"
+    + " salesperson, a warehouse — put that right in AutoCount and save the document here again. If they"
+    + " name nothing you can act on, that is the answer and not a gap in it: there is nothing on this"
+    + " document for you to change. Pass it to whoever looks after the AutoCount link, with the document"
+    + " number, and leave the row alone.",
 };
 
 /**
@@ -709,6 +778,102 @@ export const AC_REPLY_LABEL: Record<AcReplySource, string> = {
 /** The sentence that goes where a quote would, when there is no quote. */
 export const AC_NOT_ASKED_NOTE = "The ERP stopped this before it was ever sent.";
 
+// ── the machine's words, split into the part a person can use ───────────────
+
+/**
+ * WHERE THE AUTOCOUNT SERVICE ENDS ITS SENTENCE AND STARTS ITS EVIDENCE.
+ *
+ * `AcSyncService.cs` appends its own diagnosis to whatever the SDK threw:
+ *
+ *     ex.Message.Trim() + " || source " + fromType + " lines as the book holds
+ *     them: " + why
+ *
+ * (`backend/scripts/autocount-service/AcSyncService.cs`, in the transfer arm.)
+ * That `||` is therefore a SEPARATOR the writer put there on purpose, not a
+ * pattern guessed at on this side — which is the whole difference between
+ * splitting a string and classifying a row. Nothing here reads what is on
+ * either side of it.
+ *
+ * The evidence is worth having. On 2026-08-16 it is the only thing that refuted
+ * the "two sales orders in one array" diagnosis for HC-DO-2608-001 and -002
+ * (docs/autocount-sync-reasons.md §4). It is also four lines of
+ * `Qty=1.00000000 TransferedQty=0.00000000 Transferable=T docCancelled=F`, and
+ * the person who opens this page is checking whether a delivery went out.
+ */
+export const AC_MACHINE_DETAIL_MARK = " || ";
+
+/** What goes on screen, and what goes behind the technical disclosure. */
+export interface AcMachineText {
+  /** The machine's own sentence. Stays in view, quoted and attributed. */
+  said: string;
+  /** Its evidence. Behind the disclosure, or null when it wrote none. */
+  detail: string | null;
+}
+
+export function acSplitMachineText(text: string): AcMachineText {
+  const at = text.indexOf(AC_MACHINE_DETAIL_MARK);
+  if (at < 0) return { said: text, detail: null };
+  return {
+    said: text.slice(0, at).trim(),
+    detail: text.slice(at + AC_MACHINE_DETAIL_MARK.length).trim(),
+  };
+}
+
+/** What the collapsed block is called, so nobody opens it expecting an answer. */
+export const AC_TECHNICAL_LABEL = "Technical detail, for whoever looks after the AutoCount link";
+
+/**
+ * WHO SPOKE, WHAT STAYS ON SCREEN, AND WHAT GOES BEHIND THE DISCLOSURE.
+ *
+ * The label is untouched by any of this: "AutoCount replied" and "AutoCount was
+ * not asked" are different facts that change what the reader does, the owner
+ * asked for the distinction by name, and flattening it would be tidying away the
+ * thing he wanted. What moves is only the machinery under it.
+ *
+ * Two branches, and the split is on WHO WROTE THE NOTE, never on what it says:
+ *
+ * - **The ERP wrote it** and this file already has plain words for that row —
+ *   the headline, the sentence and the To fix line are all saying the same thing
+ *   in the reader's language, so the raw note adds nothing he can act on and
+ *   everything he cannot. It goes behind the disclosure whole. This is the
+ *   parentless-invoice row: its note was an English sentence carrying an SDK
+ *   method name, and no amount of rewording the server makes an internal note
+ *   into page copy.
+ * - **Anybody else, or the ERP with no plain words yet** — AutoCount's own
+ *   answer, a retry note, an `unrecognised` refusal. There the machine's
+ *   sentence IS the diagnosis and nothing may take it off the screen; only the
+ *   evidence after the service's own `||` moves.
+ *
+ * @param pageHasItsOwnWords does this file have plain-language copy for the row
+ *   that says what the note says? REQUIRED, and not derived here: it is a fact
+ *   about `acRowDetail`'s own dictionary, and a default either way would silently
+ *   pick a branch for every future caller. Passing `false` is the safe direction
+ *   — it shows more, never less.
+ */
+export interface AcSaid {
+  /** WHO wrote it. Never null, never merged into the text. */
+  label: string;
+  /** The ERP stopped it itself, so nothing ever reached the account book. */
+  notAsked: boolean;
+  /** In view, quoted. Null when the whole note is machinery. */
+  said: string | null;
+  /** Behind the collapsed disclosure. Null when there is nothing to put there. */
+  technical: string | null;
+  /** Nothing was written down at all — which is itself worth printing. */
+  silent: boolean;
+}
+
+export function acWhatWasSaid(row: AcOutboxRow, pageHasItsOwnWords: boolean): AcSaid {
+  const source = acReplySource(row.state, row.reason);
+  const base = { label: AC_REPLY_LABEL[source], notAsked: source === "erp" };
+  if (row.reason === null) return { ...base, said: null, technical: null, silent: true };
+  if (source === "erp" && pageHasItsOwnWords) {
+    return { ...base, said: null, technical: row.reason, silent: false };
+  }
+  const { said, detail } = acSplitMachineText(row.reason);
+  return { ...base, said, technical: detail, silent: false };
+}
+
 // ── how much of a row is on screen before anybody clicks ────────────────────
 
 /** The one line a re-sent refusal gets. The rest of it is behind the opener. */
@@ -741,8 +906,16 @@ export interface AcRowDetail {
   line: string | null;
   /** Behind the opener: the sentence and the To fix line. */
   copy: AcReasonCopy | null;
-  /** Behind the opener: who was asked, and their words verbatim. */
-  showSaid: boolean;
+  /**
+   * Behind the opener: who was asked, what they said, and — one level further
+   * in — the machinery. Null when nothing was written down and nobody spoke.
+   *
+   * A SHAPE, not a boolean, since 2026-08-16. It used to be `showSaid: boolean`
+   * and each surface then reached into the row and rebuilt the answer itself,
+   * which is exactly how the desktop and the phone come to disagree about one
+   * row. Both now render this.
+   */
+  said: AcSaid | null;
   /** Behind the opener: why a re-sent refusal is not something to act on. */
   showRequeuedNote: boolean;
   /** Whether the row has an opener at all. */
@@ -761,6 +934,15 @@ export function acRowDetail(row: AcOutboxRow, reasonCleared: boolean): AcRowDeta
     && (copy !== null || (row.reason !== null && row.state !== "sent"));
   const showRequeuedNote = !reasonCleared && row.state === "requeued";
   const expandable = copy !== null || showSaid || showRequeuedNote;
+  /* DOES THIS FILE ALREADY SAY, IN THE READER'S WORDS, WHAT THE NOTE SAYS? The
+     unrecognised copy is excluded on purpose: it does NOT explain the row, it
+     says nobody has written an explanation yet and points at the quote as the
+     whole answer. Treating it as plain words would hide the only thing the row
+     has. A re-queued row counts — AC_REQUEUED_LINE and AC_REQUEUED_NOTE say all
+     of it, and the note under it is the first refusal's machinery. */
+  const said = showSaid
+    ? acWhatWasSaid(row, (copy !== null && copy !== AC_UNRECOGNISED_COPY) || showRequeuedNote)
+    : null;
   const line = copy !== null
     ? copy.headline
     : showRequeuedNote
@@ -768,11 +950,106 @@ export function acRowDetail(row: AcOutboxRow, reasonCleared: boolean): AcRowDeta
       /* No plain-language copy exists for this one — a pending row carrying its
          last attempt's note is the case — so the line says WHO spoke and the
          words themselves stay behind the opener. */
-      : showSaid
-        ? AC_REPLY_LABEL[acReplySource(row.state, row.reason)]
+      : said !== null
+        ? said.label
         : null;
-  return { line, copy, showSaid, showRequeuedNote, expandable };
+  return { line, copy, said, showRequeuedNote, expandable };
 }
+
+// ── history is not a task list ──────────────────────────────────────────────
+
+/**
+ * A row whose document has already been sent again under a NEWER row.
+ *
+ * It is a record. Nothing on it can be worked, `can_requeue` is false on it, and
+ * `acReasonCopy` deliberately gives it no To fix line — the server has said so
+ * three separate ways. The one thing left saying otherwise was its POSITION:
+ * mixed in with live rows, at the same size, in the same list.
+ */
+export const acIsSuperseded = (row: AcOutboxRow): boolean => row.state === "requeued";
+
+export interface AcRowSplit {
+  /** The rows that are somebody's job. These are the list. */
+  live: AcOutboxRow[];
+  /** The rows that are a record. Folded away unless the reader asks. */
+  superseded: AcOutboxRow[];
+}
+
+/**
+ * Split the loaded rows into work and record.
+ *
+ * Owner, 2026-08-16, reading the live page: fifteen rows, SIX of them "already
+ * sent again, this row is history", with HC-DO-2608-001 and HC-DO-2608-002 each
+ * appearing twice. Nearly half a screen of documents that are already in
+ * AutoCount or already queued, sitting between him and the ones that are not.
+ * The table is append-only, so this only gets worse — every refusal that is ever
+ * put right leaves one of these behind forever.
+ *
+ * @param state the filter in force. When it IS `requeued` the reader has
+ *   ASKED for the history, so it is the list and nothing is folded. Required
+ *   rather than defaulted: a caller that forgot it would fold away the very rows
+ *   the Sent again chip exists to show, and answer the chip with an empty page.
+ */
+export function acSplitSuperseded(rows: AcOutboxRow[], state: AcFilterState): AcRowSplit {
+  if (state === "requeued") return { live: rows, superseded: [] };
+  return {
+    live: rows.filter((r) => !acIsSuperseded(r)),
+    superseded: rows.filter(acIsSuperseded),
+  };
+}
+
+/**
+ * What the folded group is called.
+ *
+ * Both forms written out. `row` + "s" is right here and wrong six lines up in
+ * AC_DOC_TYPE_PLURAL ("GOODS RECEIVEDS"), and a rule applied only where it
+ * happens to work is not a rule anybody can follow.
+ */
+export function acSupersededHeading(n: number): string {
+  return n === 1
+    ? "1 superseded row, kept as a record"
+    : `${n} superseded rows, kept as a record`;
+}
+
+export const AC_SUPERSEDED_NOTE =
+  "Each of these was refused once and has already been sent again. Their documents are queued or"
+  + " in AutoCount under a newer row, so there is nothing here to do — they are kept so the refusal"
+  + " that happened can still be found.";
+
+/**
+ * What the list says when the filter matched rows and every one is history.
+ *
+ * Not `acEmptyLine`'s "try another status": there IS something here, it is
+ * folded, and telling somebody to go elsewhere while six rows sit under the
+ * message is the kind of small lie that makes a screen untrustworthy.
+ */
+export const AC_ONLY_SUPERSEDED_LINE =
+  "Nothing live here. Everything the filters matched has already been sent again, and is folded"
+  + " below.";
+
+/**
+ * The folded group, FOLDED on arrival, on both surfaces.
+ *
+ * A hook rather than a `useState(false)` in each file, for the reason
+ * `useAcExpandedRows` gives one screen up: a default that differs between the
+ * desktop and the phone is one of the two surfaces quietly deciding history is
+ * work again, and nothing would fail.
+ */
+export function useAcSupersededGroup() {
+  const [open, setOpen] = useState(false);
+  const toggle = useCallback(() => { setOpen((v) => !v); }, []);
+  return { open, toggle };
+}
+
+/**
+ * The page's own sentence when the queue cannot be read at all.
+ *
+ * Shared because both surfaces say it, and separated from whatever the
+ * transport reported for the same reason the re-queue throw was: the error text
+ * is QUOTED under this line, not spliced into it.
+ */
+export const AC_LOAD_FAILED_LINE =
+  "The queue could not be read, so nothing below is the current picture.";
 
 /**
  * The one row that arrives OPEN.

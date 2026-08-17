@@ -6,7 +6,9 @@
 // with a string it made up locally.
 //
 //   stock_status   a STATUS: 'READY' | 'PENDING'. TWO values. There is no third.
-//   stock_remark   the LABEL: '' | 'READY' | 'SHORT: <categories>' — what is MISSING.
+//   stock_remark   the LABEL: '' | 'READY' | 'PARTIAL' | 'BEDFRAME/ACC' — what
+//                  IS ready. summariseReadiness owns the vocabulary; never
+//                  build a string here.
 //   is_main_ready  every MAIN line allocated. VACUOUSLY TRUE when the SO has no
 //                  main line at all, so it is NOT a shipping gate. Kept because
 //                  published consumers read it.
@@ -19,9 +21,11 @@
 // it built a second vocabulary inline, kept emitting the retired string as
 // stock_status, and DeliveryPlanningBoard groups on exactly that field. So the
 // board printed a "READY (PARTIAL)" group header over rows whose own cell read
-// "SHORT: ACCESSORY" — the corrected label and the retired one, one screen, same
-// moment. One rule expressed twice is the repeat offender here; this is the one
-// expression.
+// the corrected label — the retired string and its replacement, one screen,
+// same moment. One rule expressed twice is the repeat offender here; this is
+// the one expression. It is why the vocabulary could move AGAIN the same day
+// (the label is the READY side once more, "PARTIAL" without the "READY ")
+// without any board re-growing a copy of it.
 //
 // A row with no stock to be ready for (ASSR jobs, delivery-planning jobs,
 // project setup/dismantle) spreads NO_STOCK_ROW so it cannot answer these

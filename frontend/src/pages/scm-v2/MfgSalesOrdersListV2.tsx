@@ -40,6 +40,7 @@ import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
 import { SoListPoCell, SoSourceChips, SoStockPill } from "../../components/SoSourceChips";
+import { StockRemarkPill, stockRemarkSortScore } from "../../components/StockRemarkPill";
 import { SoListDoCell } from "../../components/SoListDoCell";
 import { StockAdjChip } from "../../components/DocumentLinesExpansion";
 import { StatCard } from "../../components/StatCard";
@@ -1669,13 +1670,12 @@ export function MfgSalesOrdersListV2() {
       key: "stock_status",
       group: "Logistics",
       label: "Stock Status",
-      width: "150px",
+      width: "170px",
       defaultHidden: true,
-      disableSort: true,
-      getValue: (r) => r.stock_remark ?? "",
-      render: (r) => (
-        <span className="text-[12.5px] text-ink-secondary">{r.stock_remark || "—"}</span>
-      ),
+      disableSort: true,                       // client-side; sortValue orders it
+      getValue: (r) => r.stock_remark ?? "",   // raw remark for CSV + the funnel
+      sortValue: (r) => stockRemarkSortScore(r.stock_remark),  // fullest first
+      render: (r) => <StockRemarkPill remark={r.stock_remark} />,  // was grey text
     },
     {
       key: "processing_date",

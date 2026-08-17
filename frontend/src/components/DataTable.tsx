@@ -75,9 +75,9 @@ export interface Column<T> {
   /** Optional custom header content (e.g. a select-all checkbox). When set,
    *  it replaces the label + sort affordance for this column. */
   renderHeader?: () => ReactNode;
-  /** Provide a raw value for CSV export and client-side sorting. Columns
-   *  without this are skipped during export and can't be sorted. */
+  /** Raw value for CSV export, the funnel and sorting; without it a column is skipped by export and cannot be sorted. `sortValue` overrides the ORDER only, where alphabetical is the wrong priority (Stock Status) — CSV and the funnel stay on `getValue`, so omitting it sorts exactly as it did before `sortValue` existed. */
   getValue?: (row: T) => string | number | boolean | null | undefined;
+  sortValue?: (row: T) => string | number | boolean | null | undefined;
   /** For cells that hold SEVERAL values (a service case can be both Bedframe
    *  and Mattress). The funnel then lists each value on its own line, counts
    *  it against every row that carries it, and a row matches when ANY of its
@@ -1929,7 +1929,7 @@ function DataTableInner<T>({
     // across the full dataset — leave it alone. A `disableSort` column is
     // NOT server-sortable, so sort the loaded page in memory instead.
     if (serverSort && !col.disableSort) return filteredRows;
-    const getter = col.getValue;
+    const getter = col.sortValue ?? col.getValue;  // display order != priority order
     const mul = sort.dir === "asc" ? 1 : -1;
     // Stable-ish copy — Array.prototype.sort is stable in modern engines.
     const copy = filteredRows.slice();

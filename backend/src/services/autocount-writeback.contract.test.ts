@@ -51,6 +51,10 @@ import {
   dispatchOne,
   type AcOutboxRow,
 } from '../scm/lib/autocount-outbox';
+/* The account every ERP sales document goes to in this book. Imported rather
+   than typed as '300-C002' so the assertion follows the constant if it ever
+   moves — a hand-copied literal is how a test ends up proving yesterday. */
+import { AC_DEBTOR_CODE } from './autocount-writeback';
 import { resetWritebackFlagCache } from '../scm/lib/autocount-writeback-flag';
 
 /* ?raw hands back the WORKING TREE bytes, which on Windows are CRLF. Normalise,
@@ -162,10 +166,51 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
        several POs, a purchase invoice from several GRNs. The route used to
        demand FromDocNo unconditionally, which is what made that impossible;
        FromDocNo is now the FALLBACK, needed only when the ERP does not name the
-       lines itself. */
+       lines itself.
+
+       THREE KEYS JOINED ON 2026-08-17, and each is one half of the owner's
+       「partially transfer 跟 fully transfer 都要可以」. `PlanTransfer` is the ONE
+       place that decides the shape and it decides it from the payload alone:
+
+         DtlKeys absent   -> FULL, over FromDocNos ?? [FromDocNo]. `FromDocNos`
+                             is new and is the multi-source WHOLE-document case:
+                             the documented FullTransfer takes an ARRAY of
+                             document numbers, so it needs no grouping.
+         DtlKeys present  -> PARTIAL BY LINE, at each line's outstanding qty.
+         Details[].Qty    -> PARTIAL BY QUANTITY. NOTHING SENDS THIS YET; see
+                             divergence D14. The service reads it so the ERP can
+                             say "3 of 5" without another C# deploy, and refuses
+                             rather than shipping 5 when it cannot express it.
+
+       DocDate is read here as well as in SalesHeader/PurchaseHeader because the
+       vendor's examples set the document date on the target BEFORE the transfer
+       and this service set it after.
+
+       THE FOUR ACCOUNT KEYS JOINED ON 2026-08-17 AND THEY ARE THE FIX, not a
+       tidy-up. PROVEN on the live host: a conversion whose target has no
+       DebtorCode when the transfer runs is refused —
+       `AppException: Debtor Code is empty.` from FullTransfer, and the
+       contentless `Invalid transfer item.` from AddPartialTransferDetail. That
+       is what kept HC-DO-2608-001, HC-DO-2608-002 and HC-SI-2608-001 out of the
+       account book for a week. `cmd.AddNew()` creates the target empty and
+       neither SalesHeader nor PurchaseHeader has ever set an account.
+
+       The service reads them PAYLOAD-FIRST and falls back to the SOURCE
+       document's own header in the book. Both halves are load-bearing: the
+       payload half is what divergence D15 is about, and the book half is what
+       makes the outbox rows queued BEFORE that payload change drain at all.
+       Written out per side in the C# rather than through a ternary precisely so
+       this assertion can see all four names. */
     expect(headerKeys(CS_CONVERT)).toEqual(
-      ['DtlKeys', 'FromDocNo', 'SupplierDONo', 'SupplierInvoiceNo'].sort(),
+      ['CreditorCode', 'CreditorName', 'DebtorCode', 'DebtorName',
+       'Details', 'DocDate', 'DtlKeys', 'FromDocNo', 'FromDocNos',
+       'SupplierDONo', 'SupplierInvoiceNo'].sort(),
     );
+    /* The per-line pair, and it is a PAIR: a Qty with no DtlKey is refused, and
+       so is a named key with no Qty while its siblings carry one. A line that
+       fell through with no number would silently move its whole outstanding
+       quantity, which is the exact defect the quantity exists to prevent. */
+    expect(detailKeys(CS_CONVERT)).toEqual(['DtlKey', 'Qty']);
     /* DtlKeys is optional and read in its own helper: given none, the service
        asks the BOOK which lines are still outstanding (AcSyncService.cs:300-329),
        which is the only authority on that. */
@@ -584,6 +629,18 @@ export const DIVERGENCES: Divergence[] = [
      a failed read into an empty line list — it throws, logs, and writes a
      'skipped' outbox row instead of composing. Proven by 'a line read that
      fails composes NOTHING' below, which takes the column away again. */
+  {
+    id: 'D14', flow: 'the four conversions', field: 'Details[].DtlKey + Details[].Qty',
+    service: 'reads a per-line quantity as of 2026-08-17 (PlanTransfer), which is what turns a conversion into a PARTIAL BY QUANTITY transfer. Given none it transfers each named line at its OUTSTANDING quantity, so a DO shipping 3 of a 5-unit sales-order line still writes 5 into the account book. Given a Qty it uses the documented PartialTransfer, and if that call cannot be bound it REFUSES rather than falling back to the primitive, which would ship the 5.',
+    erp: 'never sends it. enqueueConvert composes { DocNo, DocDate?, Ref?, DtlKeys? } and readConvertSourceKeys resolves LINE IDENTITY only — its own doc comment says "NOT COVERED, and deliberately so: partial QUANTITY on a line". So partial SHIPMENT (a subset of lines) reaches AutoCount correctly and partial QUANTITY does not, and the two look identical from the ERP side.',
+    severity: 'high',
+  },
+  {
+    id: 'D15', flow: 'the four conversions', field: 'DebtorCode / CreditorCode',
+    service: 'MUST have an account on the target before the transfer runs, and this is PROVEN, not inferred: on the live host at 2026-08-17 00:55 the same conversion went from `AppException: Debtor Code is empty.` to `FullTransfer OK` on that assignment alone, and HC-DO-2608-001, HC-DO-2608-002 and HC-SI-2608-001 entered the book. cmd.AddNew() creates the target empty and neither SalesHeader nor PurchaseHeader sets one. The service now reads all four keys, payload first.',
+    erp: 'HALF CLOSED 2026-08-17. enqueueConvert now sends DebtorCode on the two SALES conversions (so_to_do, do_to_iv), asserted by "the SALES conversions put the debtor on the wire" below. The PURCHASE half is still open: grns and purchase_invoices carry no supplier column, so a CreditorCode would mean a grn -> purchase_order -> supplier join, and po_to_gr has never once succeeded anyway (IndexOutOfRangeException: There is no row at position -1). Those two rely on the service reading the creditor off the source document in the book. Keep that fallback whatever happens to this entry: it is the only thing that drains an outbox row composed before any of this.',
+    severity: 'medium',
+  },
 ];
 
 // ── layer 2: the wire body, whole, for all eight routes ─────────────────────
@@ -857,6 +914,49 @@ describe('the four conversions', () => {
     expect(Object.keys(body)).not.toContain('SupplierInvoiceNo');
   });
 
+  /* THE ACCOUNT ON THE WIRE. Not a whole-body assertion — the four above are
+     that, and all four are skipped and stale — but a live check of the one key
+     whose absence cost a week of delivery orders.
+
+     PROVEN on the AutoCount host 2026-08-17 00:55: a conversion whose target
+     has no DebtorCode when the transfer runs is refused, and the two SDK calls
+     report it differently (`AppException: Debtor Code is empty.` from
+     FullTransfer, the contentless `Invalid transfer item.` from
+     AddPartialTransferDetail). The service reads the payload first and falls
+     back to the source document in the book; this asserts the payload half. */
+  test('the SALES conversions put the debtor on the wire, and the purchase ones do not', async () => {
+    for (const [op, docType, from, to, docNo] of [
+      ['so_to_do', 'DO',
+        { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'SO-2608-011' },
+        { table: 'delivery_orders', keyCol: 'id', key: 'do-uuid-1' }, 'DO-2608-009'],
+      ['do_to_iv', 'IV',
+        { table: 'delivery_orders', keyCol: 'id', key: 'do-uuid-1' },
+        { table: 'sales_invoices', keyCol: 'id', key: 'si-uuid-1' }, 'SI-2608-002'],
+    ] as Array<[any, any, any, any, string]>) {
+      const body = await convert(op, docType, from, to, docNo);
+      expect(body.DebtorCode, `${op} must name the customer`).toBe(AC_DEBTOR_CODE);
+    }
+
+    /* The purchase side is NOT symmetrical and the asymmetry is deliberate:
+       `grns` and `purchase_invoices` carry no supplier column, so a creditor
+       here would mean a new join, and `po_to_gr` has never once succeeded for
+       an unrelated reason. Those two stay on the service's book fallback, which
+       is why D15 is still on the register. Asserted so that changing it is a
+       decision someone makes on purpose. */
+    for (const [op, docType, from, to, docNo] of [
+      ['po_to_gr', 'GR',
+        { table: 'purchase_orders', keyCol: 'id', key: 'po-uuid-1' },
+        { table: 'grns', keyCol: 'id', key: 'grn-uuid-1' }, 'GRN-2608-003'],
+      ['gr_to_pi', 'PI',
+        { table: 'grns', keyCol: 'id', key: 'grn-uuid-1' },
+        { table: 'purchase_invoices', keyCol: 'id', key: 'pi-uuid-1' }, 'PI-2608-002'],
+    ] as Array<[any, any, any, any, string]>) {
+      const body = await convert(op, docType, from, to, docNo);
+      expect(Object.keys(body), `${op} has no creditor to send yet`).not.toContain('CreditorCode');
+      expect(Object.keys(body), `${op} must not send a DEBTOR either`).not.toContain('DebtorCode');
+    }
+  });
+
   test('a conversion whose parent has no AutoCount number waits, and posts nothing', async () => {
     const sb = seeded();
     await enqueueConvert(sb as never, {
@@ -991,12 +1091,31 @@ describe('the divergence register', () => {
   test('the count is pinned — a new divergence has to be written down to land', () => {
     /* If this fails you have either found an eleventh or fixed one of the ten.
        Both are good news; update the list and the module guide's prose together
-       — 7b for D9/D10, 7d2 for D8, 7q for the extract's own fields.
+       — 7b for D9/D10, 7c1 for D14, 7c3 for D15, 7d2 for D8, 7q for the
+       extract's own fields.
 
        Started at thirteen. D11 and D13 were struck off when #1855 fixed them,
        and D3 (the line delivery date) on 2026-08-15 — all three were plain bugs,
-       not decisions; the ten that remain each need one. */
-    expect(DIVERGENCES).toHaveLength(10);
+       not decisions; the ones that remain each need one.
+
+       D14 was ADDED on 2026-08-17. It is not new behaviour — the service has
+       always transferred a line at its outstanding quantity — it is a gap that
+       had never been written down anywhere a check could see it, and the owner
+       asked for both transfer shapes the day before. The C# half is done: the
+       decision lives in one place (PlanTransfer) and a quantity it cannot
+       express is refused, not approximated. The ERP half is a payload change
+       and a decision about where the shipped quantity comes from, which is not
+       a test author's to make.
+
+       D15 was ADDED on 2026-08-17, the morning after D14 and for a harder
+       reason: it is the PROVEN cause of a week-long production outage, measured
+       on the host rather than argued from source. It is a divergence and not
+       just a bug because the service now works around it — reading the account
+       out of the account book — and that workaround must not become invisible.
+       When enqueueConvert starts sending the account, strike D15 and say so in
+       §7c3; do not quietly delete the fallback with it, because it is the only
+       thing that drains a row queued before the change. */
+    expect(DIVERGENCES).toHaveLength(12);
     expect(DIVERGENCES.filter((d) => d.severity === 'critical').map((d) => d.id))
       .toEqual(['D9', 'D10']);
     // The struck ids are not reused: a register is a ledger, not a list.

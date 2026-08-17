@@ -175,8 +175,9 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
     /* THE NEEDLE WAS WRONG AND MATCHED NOTHING, corrected 2026-08-16. It read
        'AutoCount has no shape', which is a phrase from recordConvertSkipped's
        own DOC COMMENT — no code path has ever written it into last_error. The
-       five places that record a merged conversion (delivery-orders-mfg.ts,
-       grns.ts twice, sales-invoices.ts, purchase-invoices.ts) all write
+       places that record a merged conversion (delivery-orders-mfg.ts,
+       grns.ts twice, sales-invoices.ts, purchase-invoices.ts, and
+       lib/si-autocount-source.ts since 2026-08-17) all write
        "AutoCount transfers from ONE source document", so every merged
        conversion in the queue has been classified `unrecognised` since the
        feature shipped. A needle taken from the comment beside the writer
@@ -185,6 +186,18 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
     kind: 'no-autocount-shape',
     needle: 'AutoCount transfers from ONE source document',
     remedy: 'merged conversion (several sources -> one document) — must be worked by hand in AutoCount',
+  },
+  {
+    /* ADDED 2026-08-17 with the fix to POST /sales-invoices. The ERP lets an
+       invoice carry a standalone line beside its delivered ones; AutoCount
+       builds the invoice by transferring the delivery order's lines, so the
+       standalone half would simply not be there — an invoice in the book worth
+       less than the one the customer holds. Its own class because its remedy is
+       its own: split the document, which is nothing like backfilling a key. */
+    kind: 'mixed-source-lines',
+    needle: 'came from no source document',
+    remedy:
+      'part of this document was not delivered on the source — raise the delivered lines from the Delivery Order and the rest as a separate invoice',
   },
   {
     kind: 'dtlkey-subset',
@@ -214,6 +227,38 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
 
 /** The key given to a skip whose wording this module does not recognise. */
 export const AC_SKIP_UNRECOGNISED = 'unrecognised';
+
+/**
+ * The reason written for a document AutoCount has no way to hold: a Delivery
+ * Order, Goods Received, Invoice or Purchase Invoice raised with no parent.
+ * Called by recordParentlessCreate (autocount-outbox.ts).
+ *
+ * HERE, beside the needle that classifies it, for a reason bought on
+ * 2026-08-16. This sentence used to end "(AddPartialTransferDetail is the SDK's
+ * only primitive)" and the owner read that identifier off the live AutoCount
+ * Sync page — the same string he had had removed from the page's own copy a few
+ * hours earlier. It came back through the SERVER, because the reason lived in
+ * the writer and nothing checked what the reason said. Sitting next to
+ * `no-source-document`'s needle, the pair is checkable and it is checked:
+ * backend/tests/autocountSyncReasonsCatalogue.test.ts asserts both that the
+ * sentence still contains the needle and that it names no SDK method, class or
+ * column.
+ *
+ * A REASON IS READ BY THE OWNER. The SDK explanation is not lost — it is in
+ * recordParentlessCreate's doc comment and in docs/autocount-sync-reasons.md §4,
+ * where engineers read it. Not mirrored into scripts/lib/autocount-skip-kinds.mjs
+ * on purpose: the health check READS reasons and never writes one, so a copy
+ * there would be a second home with no second reader (same argument as
+ * acRowIsRequeueable below).
+ *
+ * @param missing what the ERP document is missing, in the operator's words.
+ */
+export function acParentlessCreateReason(missing: string): string {
+  return `created with ${missing}, so there is no source document to transfer from. `
+    + 'AutoCount builds a delivery order, a goods received or an invoice only by carrying '
+    + 'an earlier document into it, so this document cannot be created in the account book '
+    + 'at all and will stay ERP-only.';
+}
 
 /**
  * Is this skip's reason the annotation the re-queue tool leaves behind?

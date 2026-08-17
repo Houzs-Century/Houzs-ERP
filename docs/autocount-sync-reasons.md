@@ -19,6 +19,48 @@ code and not in this file.
 
 ---
 
+## 0. Where a string is allowed to appear on the page
+
+**Added 2026-08-16, after the owner read two of them on the live screen.** Until
+then this file pinned the CODES and said nothing about the SENTENCES, and both
+defects lived in a sentence: every check was green while the screen was wrong.
+
+A row's note — `last_error`, surfaced as `reason` — has three possible homes, and
+which one it lands in is decided by `acWhatWasSaid`
+(`frontend/src/lib/autocountOutbox.ts`), on **who wrote the note**, never on what
+it says. Pattern-matching the text on the page side would be the third opinion
+§2's classifier exists to prevent.
+
+| where | what goes there | who decides the words |
+| --- | --- | --- |
+| **The headline, on the row, never behind a click** | one plain-language line: `AC_REASON_COPY[reason_kind].headline`, or `AC_FAILED_COPY.headline`, or `AC_REQUEUED_LINE` | the page |
+| **Behind opening the row** | the sentence, the **To fix** line, and — under the label saying WHO spoke — the machine's own sentence | the page, except the quote |
+| **Behind a second, collapsed, labelled disclosure** | everything a reader cannot act on: the account book's per-line dump (whatever follows `AcSyncService`'s own ` \|\| ` separator), and the ERP's whole internal note where the page already says the same thing in plain words | nobody — it is verbatim |
+
+**Nothing the server wrote is ever the page's own voice.** Two rules follow, and
+both were bought:
+
+1. **A reason is read by the owner.** `acParentlessCreateReason`
+   (`autocount-outbox-status.ts`) used to end *"(AddPartialTransferDetail is the
+   SDK's only primitive)"* and that identifier reached the screen through the
+   server hours after being removed from the page's copy. The sentence now lives
+   beside its own needle and `backend/tests/autocountSyncReasonsCatalogue.test.ts`
+   asserts both halves: no SDK method, class or column, and the needle still
+   present. The SDK explanation stays in §4 below, where engineers read it.
+2. **Rewording a writer does not clean a queue.** `scm.autocount_outbox` is
+   append-only and `last_error` is never rewritten — the re-queue marker is
+   *prepended* (`isRequeuedNote`). Every row written before a wording change keeps
+   the old words for good, which is why the fix has to be in how the page RENDERS
+   a note and not only in what the writer produces.
+
+**A superseded row is a record, not a task.** `requeued` rows are folded out of
+the list under *"N superseded rows, kept as a record"* on both surfaces
+(`acSplitSuperseded`) — except under the **Sent again** filter, where the reader
+asked for them and they are the list. The status counts on the chips are
+untouched: they are the server's, exact and whole-company.
+
+---
+
 ## 1. What "Send again" answers — the re-queue outcome codes
 
 `POST /api/scm/autocount-outbox/:id/requeue` always answers with
@@ -82,6 +124,7 @@ why the button exists at all.
 | `keyless-line` | An **edit** names a line with no `linked_ac_dtlkey`. Appending it would duplicate the line in the live book, and on a PO a duplicate cannot be removed. | Not by this button — it is an `edit`, so the button answers `not-recoverable`. | Backfill `linked_ac_dtlkey` for the document's lines, then **save the document again**. |
 | `dtlkey-subset` | A conversion took a **strict subset** of the parent's lines and some source line has no `DtlKey`, so the ERP cannot name the subset. Sending it without one would make AutoCount transfer *every* outstanding line — goods moving in the book that did not move here. | **No.** The ERP never composed an instruction, so there is nothing to send again — see §6. | Backfill `linked_ac_dtlkey` on the **source** document, then raise this document again. |
 | `no-source-document` | A Delivery Order / GRN / Invoice / Purchase Invoice was created with **no parent**. | **NEVER.** See §4. | Nothing. It stays ERP-only, permanently. |
+| `mixed-source-lines` | The document carries lines that came from **no source document** beside lines that did — the ERP allows a standalone line on an invoice, AutoCount's transfer would produce one MISSING them and understate the revenue in the book. | **No.** Nothing was composed, and re-asking would not change the document's shape. | Raise the delivered lines from the Delivery Order and the standalone lines as their own invoice. |
 | `no-autocount-shape` | A conversion merged **several** source documents into one (a DO from two SOs, a GRN batched from three POs). The ERP records it rather than inventing documents. | Not today, and **not by Send again** — the ERP composed nothing, so there is nothing to re-send (§6). See §5: the AutoCount service side learned to do this on 2026-08-16, the ERP side has not followed. | Raise the matching document in AutoCount by hand, or split the ERP document. |
 | `edit-before-counterpart` | A downstream document was edited while the conversion that creates it was still queued. That conversion will transfer the **source** document's lines, not this edit. | Not by this button. | Save the document again once the conversion has drained. |
 | `cancelled-before-send` | The document was cancelled in the ERP while its create was still queued, so the create was withdrawn. | No, and nothing is wrong. | Nothing. Neither document ever reached the account book. |
@@ -223,9 +266,10 @@ needs it, it has to be raised there by hand, against a source document.
 1. **The ERP still refuses merged conversions the AutoCount service now
    accepts.** As of 2026-08-16 `AcSyncService` groups transfer keys by source
    document and invokes the transfer once per group, so a DO from several SOs is
-   native on that side. The five ERP call sites that record a merged conversion
+   native on that side. The SIX ERP call sites that record a merged conversion
    (`delivery-orders-mfg.ts`, `grns.ts` ×2, `sales-invoices.ts`,
-   `purchase-invoices.ts`) still write a `skipped` row. Whether the ERP should
+   `purchase-invoices.ts`, and `scm/lib/si-autocount-source.ts` since
+   2026-08-17) still write a `skipped` row. Whether the ERP should
    follow is an owner decision, not a cleanup — until it is made, §2's
    `no-autocount-shape` row is accurate.
 2. **`masters-not-opened` never classifies.** The route only runs
