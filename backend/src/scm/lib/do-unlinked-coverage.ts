@@ -141,12 +141,21 @@ export async function netDeliveredBySoItem(
   // .toUpperCase() compare, and a missing parent (orphan) is excluded exactly
   // as before (its id used to be absent from the delivery_orders lookup, so
   // it never entered activeDoIds) — the delivered sum is byte-identical.
-  const { data: doLines } = await paginateAll<LinkedRow>((from, to) => sb
+  /* THE ERROR IS BOUND AND THROWN, which the version of this read that lived in
+     the route was not. supabase-js does not throw: with only `data` destructured,
+     "the query failed" and "nothing is delivered" arrive as the same empty array
+     — and on THIS read that silence means every line reads as undelivered, which
+     is the exact false reading (goods shipped, order still owing, MRP re-orders)
+     this module exists to end. Failing loudly is the honest option: the callers
+     are already wrapped, and a planning page that errors is recoverable in a way
+     that a planning page confidently reporting phantom demand is not. */
+  const { data: doLines, error: linkedErr } = await paginateAll<LinkedRow>((from, to) => sb
     .from('delivery_order_items')
     .select('id, so_item_id, qty, parent:delivery_orders(status)')
     .in('so_item_id', soLines.map((l) => l.id))
     .order('id')
     .range(from, to));
+  if (linkedErr) throw new Error(`delivered-sum read failed: ${linkedErr.message ?? String(linkedErr)}`);
   // DO line id → SO item id (only for active DOs), used to trace returns.
   const doLineToSoItem = new Map<string, string>();
   const deliveredBySoItem = new Map<string, number>();
