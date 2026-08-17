@@ -48,6 +48,15 @@ describe('no request value reaches a date column uncoerced', () => {
       'write:supplier_delivery_date_2',
       'write:trip_date',
       'write:voucher_date',
+      /* the three shapes a rewrite of the derivation pass LOST or never had.
+         `for (const l of body.lines)` bound the head twice and the derived
+         binding lost the tie; the destructured head beside it kept working,
+         which is what made the hole read as covered. `.push()` builds the row
+         array by mutation, so the declaration holds no columns. */
+      'write:line_delivery_date',
+      'write:due_date',
+      'write:ship_date',
+      'write:expected_delivery_date',
       'payload:updates',
     ].sort());
   });

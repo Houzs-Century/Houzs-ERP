@@ -33,8 +33,11 @@
  *     or `return`), through ANY wrapper call (`stampCompany(rows, c)` is the
  *     house shape at ~46 sites — only a COERCER wrapper also discharges the
  *     field-map obligation), or through the declaration of a variable used that
- *     way, however that variable was built. Response-shaping objects
- *     (reports.ts, search.ts) are not writes and are not scanned.
+ *     way, however that variable was built — including one built by MUTATION,
+ *     `const rows = []; rows.push({ … }); .insert(rows)`, whose declaration
+ *     initializer is an empty literal and holds no columns at all. Response-
+ *     shaping objects (reports.ts, search.ts) are not writes and are not
+ *     scanned.
  *
  *  3. NAMED DATE WRITES. `voucher_date: X` inside such a literal, or
  *     `updates.voucher_date = X` / `updates['voucher_date'] = X` on such a
@@ -232,8 +235,21 @@ function requestDerivedNames(src: ts.SourceFile): RequestInfo {
     bindings.push({ name, scope, pos: at.getStart(src), from, derived: seeded || (!!from && isRequestSource(from)) });
   };
 
+  /* A for-of head is a VariableDeclaration too, and the ForOfStatement branch
+     below already binds it FROM THE ITERATED EXPRESSION. Binding it a second
+     time here would add a same-scope duplicate with no initializer — and
+     `resolveBinding` breaks a same-scope tie on the LARGER pos, which the `l`
+     token always has over the `for` keyword. So the derived binding lost every
+     time and `for (const l of body.lines)` read as a value from nowhere.
+     Destructured heads were unaffected only because the `else if
+     (node.initializer)` arm skips a pattern that has none, which is exactly what
+     made the hole look covered. */
+  const isForOfHead = (d: ts.VariableDeclaration): boolean =>
+    !!d.parent && ts.isVariableDeclarationList(d.parent)
+    && !!d.parent.parent && ts.isForOfStatement(d.parent.parent);
+
   const visit = (node: ts.Node): void => {
-    if (ts.isVariableDeclaration(node)) {
+    if (ts.isVariableDeclaration(node) && !isForOfHead(node)) {
       const scope = enclosingFunction(node);
       /* `let body: Record<string, unknown>;` then `body = await c.req.json()` in
          a try/catch is the house shape for a 400-on-bad-JSON handler — there is
@@ -286,10 +302,13 @@ function requestDerivedNames(src: ts.SourceFile): RequestInfo {
     }
     if (ts.isForOfStatement(node) && ts.isVariableDeclarationList(node.initializer)) {
       const scope = enclosingFunction(node);
+      /* The seed flag is carried here too, because this branch is now the ONLY
+         one that binds a for-of head: `for (const patch of …)` must not become
+         less derived than it was when the declaration branch also saw it. */
       for (const d of node.initializer.declarations) {
-        if (ts.isIdentifier(d.name)) add(d.name.text, node, scope, node.expression, false);
+        if (ts.isIdentifier(d.name)) add(d.name.text, node, scope, node.expression, REQUEST_SEED_NAMES.has(d.name.text));
         else for (const el of d.name.elements) {
-          if (ts.isBindingElement(el) && ts.isIdentifier(el.name)) add(el.name.text, node, scope, node.expression, false);
+          if (ts.isBindingElement(el) && ts.isIdentifier(el.name)) add(el.name.text, node, scope, node.expression, REQUEST_SEED_NAMES.has(el.name.text));
         }
       }
     }
@@ -583,6 +602,32 @@ export function scanFile(file: string, rel: string): Finding[] {
     return g.some((x) => x.text === wanted && x.pos < here);
   };
 
+  /* A row array built by MUTATION: `const rows = []; … rows.push({ … }); …
+     .insert(rows)`. Following the declaration finds the empty literal and stops,
+     so every column in it was invisible — the same class as the `updates.col =`
+     path, which is already tracked, in the array shape instead of the object
+     shape. Keyed by DECLARATION, so two different `rows` in one file stay
+     apart. */
+  const pushedInto = new Map<ts.VariableDeclaration, ts.Expression[]>();
+  const collectPushes = (node: ts.Node): void => {
+    if (ts.isCallExpression(node)) {
+      const callee = unwrap(node.expression);
+      if (ts.isPropertyAccessExpression(callee) && (callee.name.text === 'push' || callee.name.text === 'unshift')) {
+        const target = unwrap(callee.expression);
+        if (ts.isIdentifier(target)) {
+          const d = resolveDecl(target);
+          if (d) {
+            const list = pushedInto.get(d) ?? [];
+            for (const a of node.arguments) list.push(a);
+            pushedInto.set(d, list);
+          }
+        }
+      }
+    }
+    ts.forEachChild(node, collectPushes);
+  };
+  collectPushes(src);
+
   /* (2) everything that reaches an insert/update/upsert/rpc */
   const payloadLiterals = new Set<ts.ObjectLiteralExpression>();
   /** decl node → the identifier uses that send it */
@@ -609,9 +654,11 @@ export function scanFile(file: string, rel: string): Finding[] {
            `const row = { … }` is a row, and the columns live inside the
            callback. Stopping at "is it an object literal?" is what let
            po-amendments.ts's line insert pass as a non-payload. */
-        if (d.initializer && !takenPayloads.has(d)) {
+        if (!takenPayloads.has(d)) {
           takenPayloads.add(d);
-          takePayload(d.initializer, wrapped);
+          if (d.initializer) takePayload(d.initializer, wrapped);
+          /* and the rows pushed into it after that initializer ran */
+          for (const p of pushedInto.get(d) ?? []) takePayload(p, wrapped);
         }
       }
       return;

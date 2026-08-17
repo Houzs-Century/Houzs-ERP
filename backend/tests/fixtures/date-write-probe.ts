@@ -99,6 +99,54 @@ export async function unsafeInferredParam(p: z.infer<typeof tripSchema>) {
   await sb.from('trips').insert({ trip_no: 'T1', trip_date: p.tripDate ?? todayMyt() });
 }
 
+/* ── UNSAFE 8: a for-of head bound to a SIMPLE IDENTIFIER ─────────────────── */
+/* `for (const l of body.lines)` — the shape the docstring has always advertised,
+   and the one the scope-correct rewrite silently lost: the head is a
+   VariableDeclaration as well as a for-of head, so it was bound TWICE, and the
+   initializer-less duplicate shadowed the derived one. It survived review because
+   the DESTRUCTURED head (UNSAFE 9) kept working, so the shape read as covered.
+   Both arms are pinned here: the assignment onto a payload variable and the
+   inline object literal. */
+export async function unsafeForOfSimpleName(body: { lines?: Array<Record<string, unknown>> }) {
+  for (const l of body.lines ?? []) {
+    const patch: Record<string, unknown> = {};
+    patch.line_delivery_date = (l.deliveryDate as string) ?? null;
+    await sb.from('mfg_sales_order_items').update(patch).eq('id', l.id);
+    await sb.from('mfg_sales_order_items').update({ due_date: (l.dueDate as string) ?? null }).eq('id', l.id);
+  }
+}
+
+/* ── UNSAFE 9: the DESTRUCTURED for-of head, kept as the counter-case ──────── */
+export async function unsafeForOfDestructured(body: { lines?: Array<Record<string, unknown>> }) {
+  for (const { shipDate, id } of body.lines ?? []) {
+    await sb.from('mfg_sales_order_items').update({ ship_date: (shipDate as string) ?? null }).eq('id', id);
+  }
+}
+
+/* ── UNSAFE 10: a row array built by .push(), inserted afterwards ─────────── */
+/* takePayload followed the accumulator's DECLARATION, whose initializer is `[]`,
+   so nothing in the pushed rows was ever looked at. ~505 `.push({` sites in
+   backend/src make this a house construction, not a corner. */
+export async function unsafePushedRows(body: { lines?: Array<Record<string, unknown>> }) {
+  const rows: Array<Record<string, unknown>> = [];
+  for (const { deliveryDate, id } of body.lines ?? []) {
+    rows.push({ so_id: id, expected_delivery_date: (deliveryDate as string) ?? null });
+  }
+  await sb.from('mfg_sales_order_items').insert(rows);
+}
+
+/* ── SAFE: the same two shapes over a DATABASE read ───────────────────────── */
+/* The counter-case for UNSAFE 8 and 10 both: identical syntax, stored data. */
+export async function safeForOfOverDbRead() {
+  const { data } = await sb.from('purchase_order_items').select('*').eq('po_id', 1);
+  const rows: Array<Record<string, unknown>> = [];
+  for (const l of (data ?? []) as Array<Record<string, unknown>>) {
+    rows.push({ grn_id: 'X', delivery_date: l.delivery_date ?? null });
+    await sb.from('grn_items').update({ received_date: l.received_date ?? null }).eq('id', l.id);
+  }
+  await sb.from('grn_items').insert(rows);
+}
+
 /* ── SAFE: the coercion itself ────────────────────────────────────────────── */
 export async function safeCoerced(body: Record<string, unknown>) {
   await sb.from('purchase_orders').update({
