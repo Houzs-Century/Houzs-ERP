@@ -653,6 +653,10 @@ export function planCommand(command) {
 //
 // Trailing whitespace and surrounding blank lines are normalised away; GitHub
 // bodies arrive CRLF and editors trim differently.
+//
+// AND THE LINE NUMBER IS DROPPED. See below — it is the same argument as the
+// sort, for the same reason, and it is the fix for the gate's one recurring
+// false failure.
 // ---------------------------------------------------------------------------
 
 export function normalizeOutput(text) {
@@ -662,20 +666,103 @@ export function normalizeOutput(text) {
   return lines;
 }
 
+/**
+ * A leading `path:NNN:` coordinate, as emitted by `git grep -n` and `grep -rn`.
+ *
+ * WHY THIS IS STRIPPED BEFORE DIFFING — the false failure it removes.
+ *
+ * The HOW_TO in the runner, the worked example in CLAUDE.md and the
+ * pull_request_template all show `git grep -n`, so authors write `-n` and their
+ * pasted block embeds a LINE NUMBER for every member of the population. The
+ * populations this repo enumerates live in files like `mfg-sales-orders.ts`
+ * (~12,000 lines) and `Projects.tsx` (~15,000), which are touched constantly.
+ * Any unrelated merge into the branch shifts those numbers, and the gate then
+ * went red on a PR whose diff had not changed a single member of the
+ * population — only its COORDINATES. The author's remedy was to regenerate the
+ * block by hand and push again, which proves nothing and costs a CI round.
+ *
+ * The claim under test is "this is the whole population". A line number is not
+ * a member of the population, it is where the member happens to sit today. So
+ * it is dropped on BOTH sides, exactly like output ORDER above: every real
+ * difference stays visible and only the meaningless one goes.
+ *
+ * WHAT STILL FAILS, which is the whole point:
+ *   · a member ADDED     — one more entry in the multiset
+ *   · a member REMOVED   — one fewer
+ *   · a member whose TEXT changed
+ *   · a member that moved to a DIFFERENT FILE — the path is kept, so the key
+ *     changes and the diff fails. Only movement WITHIN a file is forgiven.
+ * Both directions are pinned in the tests ("a call site that is ADDED still
+ * FAILS", "a call site that merely MOVES now PASSES").
+ *
+ * WHY NOT REFUSE `-n` INSTEAD, which was the other candidate: it would turn
+ * every enumeration block already written in this repo — and the example this
+ * repo's own documentation tells authors to copy — into a COMMAND_REFUSED
+ * failure. That is more red, of exactly the shape being removed here, and it
+ * would also throw away a number a human reviewer genuinely wants when reading
+ * the block. Normalising keeps the proof AND the readability; refusing keeps
+ * neither.
+ *
+ * The path must be non-empty and colon-free, and the digits must be FOLLOWED by
+ * a colon. `grep -c` output (`path:12`, no trailing colon) therefore does not
+ * match, and must not: there the number is the population's SIZE and is the
+ * entire claim.
+ */
+const LEADING_COORDINATE = /^([^:\n]+):(\d+):/;
+
+/** `path:56:  foo()` -> `path:  foo()`. Anything else is returned unchanged. */
+export function stripLineNumber(line) {
+  return String(line ?? '').replace(LEADING_COORDINATE, '$1:');
+}
+
+/** `56:  foo()` -> `  foo()`. NOT applied to the diff — it is used only to
+ *  DIAGNOSE a leftover mismatch, because a bare number with no path in front of
+ *  it cannot be told apart from content that merely starts with digits. */
+const BARE_COORDINATE = /^\d+:/;
+
+function sameMultiset(a, b) {
+  if (a.length !== b.length) return false;
+  const x = [...a].sort();
+  const y = [...b].sort();
+  return x.every((v, i) => v === y[i]);
+}
+
 export function diffOutput(pasted, actual) {
   const want = normalizeOutput(pasted);
   const got = normalizeOutput(actual);
 
-  const counts = new Map();
-  for (const l of want) counts.set(l, (counts.get(l) ?? 0) + 1);
+  // Keyed on the coordinate-free line, but the ORIGINAL text is what gets
+  // reported: an author chasing a real mismatch still wants the line number
+  // that is in front of them.
+  const pool = new Map();
+  for (const l of want) {
+    const k = stripLineNumber(l);
+    const bucket = pool.get(k);
+    if (bucket) bucket.push(l);
+    else pool.set(k, [l]);
+  }
+
   const extra = [];
   for (const l of got) {
-    const n = counts.get(l) ?? 0;
-    if (n > 0) counts.set(l, n - 1);
+    const bucket = pool.get(stripLineNumber(l));
+    if (bucket && bucket.length) bucket.shift();
     else extra.push(l);
   }
   const missing = [];
-  for (const [l, n] of counts) for (let i = 0; i < n; i++) missing.push(l);
+  for (const bucket of pool.values()) missing.push(...bucket);
+
+  /* The one coordinate shape normalisation cannot reach: `grep -n pattern
+     onefile` prints `NNN:text` with no path, and a bare leading number is
+     indistinguishable from content that starts with digits, so stripping it
+     unconditionally could hide a real change. Instead the gate still FAILS and
+     says precisely what happened, which turns a baffling diff into a one-line
+     fix. */
+  const bareExtra = extra.map((l) => l.replace(BARE_COORDINATE, ''));
+  const bareMissing = missing.map((l) => l.replace(BARE_COORDINATE, ''));
+  const coordinatesOnly =
+    extra.length > 0 &&
+    (extra.some((l) => BARE_COORDINATE.test(l)) || missing.some((l) => BARE_COORDINATE.test(l))) &&
+    sameMultiset(bareExtra, bareMissing);
 
   return {
     ok: extra.length === 0 && missing.length === 0,
@@ -685,6 +772,9 @@ export function diffOutput(pasted, actual) {
     extra: extra.sort(),
     /** In the pasted list but NOT in the tree — invented, moved or deleted. */
     missing: missing.sort(),
+    /** Every leftover difference is a bare `NNN:` line number and nothing else.
+     *  The population did not change; the command just did not print a path. */
+    coordinatesOnly,
   };
 }
 

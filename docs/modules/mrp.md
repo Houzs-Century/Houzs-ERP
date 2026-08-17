@@ -286,10 +286,72 @@ Three consumers inherit this silently, and none of them can tell:
   entry, reads as shortage 0, and is treated as fully covered — it silently
   disappears from the picker. See `docs/modules/purchase-order.md`.
 
-The fix (page every read; make the guard fire on the real ceiling) is PR #2304,
-with #2300 and #2294 in the same area. **As of 2026-08-16 none of the three is
-merged**, so the paragraph above describes production. Re-check with
-`gh pr view 2294 2300 2304` rather than trusting this line.
+> **CORRECTED 2026-08-17.** The paragraph that stood here said "**As of
+> 2026-08-16 none of the three is merged**, so the paragraph above describes
+> production." That is now false in a way worth spelling out, because two of the
+> three were closed rather than merged and a reader chasing them would find
+> nothing. Verified with `gh pr view 2300 2304 2294 --json state,mergedAt`:
+>
+> | PR | state | landed |
+> |---|---|---|
+> | **#2300** | **MERGED** | 2026-08-16T14:13:24Z — this is the fix that shipped |
+> | #2304 | CLOSED | never merged; superseded by #2300 |
+> | #2294 | CLOSED | never merged; its variant-strictness half rode in on #2300 |
+>
+> So **§5's truncation description above is HISTORY, not production.** Every
+> multi-row read pages since #2300, the `MRP_LOAD_CAP` guard is deleted rather
+> than re-tuned, and the plan covers every open demand row. Read §5 as the
+> account of a fixed defect — it is kept because the trap it documents (a
+> `.limit(N)` above `db-max-rows` is not a cap you can detect by counting rows)
+> is still live advice for any new read.
+>
+> The §4 table's "Open PO supply — **NO, not yet**" row is likewise stale:
+> #2300 removed both legacy-`''` fallbacks, general and sofa. Supply now matches
+> demand on the full variant key on BOTH sides.
+
+### What #2300 cost, and what 2026-08-17 gave back
+
+#2300 bought correctness with latency, and said so: *"roughly a dozen round trips
+to on the order of a hundred ... They are sequential."* The owner reported the
+result on 2026-08-16 — MRP 5,162 ms, and the **Sales Order list 5,272 ms**, which
+is not a coincidence: `computeMrp` runs **once per SO list load** (§1), so that
+page can never be faster than this one.
+
+Sequential was how the reads were written, not a property of the problem. Since
+2026-08-17 they run **bounded-concurrent** (`scm/lib/concurrency.ts`):
+
+- the `soDeliverableRemaining` batch loop — ~14 batches, ~5 reads each, i.e. two
+  thirds of the engine's round trips — runs `MRP_READ_CONCURRENCY` (6) batches at
+  a time. Safe for the reason #2300 already gave for batching at all: the partial
+  maps are a union of disjoint key sets.
+- the lead-time base, the category walk, stock balances and PO supply depend on no
+  earlier result, so they are ISSUED as one wave at the top of `computeMrp` and
+  AWAITED at their original sites. The two warehouse masters are independent too
+  and were deliberately LEFT sequential: both discard their read error, and
+  `check-swallowed-reads.mjs` matches that by the `const { data … } = await …`
+  shape at the use site, which hoisting destroys — the report would have gone
+  from 1 swallowed read to 0 while the read stayed just as swallowed.
+
+**No read was removed, widened, narrowed or re-ordered.** Measured with an
+instrumented fake (2,800 docs, 1 ms/read), `origin/main` vs after: reads **56 →
+56**, max in flight **1 → 6**, critical path **94 ms → 52 ms**. Identical read
+count is the property that matters — it is what keeps this from re-creating the
+#2300 defect. Production wall-clock comes from
+`backend/scripts/probe-mrp-roundtrip-cost.mjs` (workflow
+`probe-mrp-roundtrip-cost`), which times a sequential and a concurrent arm
+against prod and **refuses to report a saving unless both arms read an identical
+row set**.
+
+Two things that follow, and are worth knowing before tuning anything here:
+
+- **`MRP_READ_CONCURRENCY` is a bound, not a target.** The reads go through
+  Hyperdrive's pooled connections; an unbounded fan-out trades latency for pool
+  exhaustion, which is the owner's "must not destabilise" rule failing expensively.
+  Re-run the probe before moving it.
+- **Compute completely, ship narrowly does NOT apply to the allocation.** The plan
+  is pooled and global — a correct allocation cannot be computed from one page of
+  sales orders — so no amount of pagination on a CONSUMER reduces what this engine
+  must read. That is the constraint #2300 exists to protect.
 
 Advisory consumers (SO drill-down, po-so-coverage, reservations) catch and
 degrade to "no coverage shown"; the MRP page and the agents fail loudly.
@@ -330,7 +392,9 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
 | `backend/src/scm/lib/ship-commitment.ts` | Commitment deduction/add-back contract (`applyCommittedSupply`) |
 | `backend/src/scm/routes/po-so-coverage.ts` | PO->SO precedence (delivered lock > stored link > MRP floating) |
 | `backend/scripts/audit-mrp-pairing.mjs` | Read-only production detector — a REPLICA of sections 1-8; update it in the same PR as any allocation-rule change. Section (H) (2026-08-02) additionally enforces the owner's purchasing rule: cancelled/DRAFT POs fully out of the formula, and no over-ordering beyond demand for MATTRESS/BEDFRAME/SOFA (only ACCESSORY may be bought for stock) — reported per PO document with reason codes (STOCK-SLICE / SO-DONE / BUCKET-SPLIT / NO-DEMAND) plus received-but-unowned dead stock per bucket |
-| `backend/src/scm/routes/mrp.test.ts` | Unit tests: R4 legacy pool (general + sofa), D6 flag invariance, D4 SHIPPED, D3 truncation guard, stock assignment, the `undated` tally + `parseIncludeUndated` spellings (2026-08-16) |
+| `backend/src/scm/lib/concurrency.ts` | `mapBounded` / `eager` — the bounded read wave (2026-08-17). `eager` is what keeps error PRECEDENCE identical when a read is hoisted, and stops an un-awaited rejection killing the request |
+| `backend/src/scm/routes/mrp.test.ts` | Unit tests: R4 legacy pool (general + sofa), D6 flag invariance, D4 SHIPPED, D3 truncation guard, stock assignment, the `undated` tally + `parseIncludeUndated` spellings (2026-08-16), and the read wave (overlap happens, the bound holds, the plan is order-independent, a failed read still throws `mrp_load_failed`) |
+| `backend/scripts/probe-mrp-roundtrip-cost.mjs` | Read-only production probe: times a sequential and a bounded-concurrent arm over the same read shapes, and asserts both read an identical row set before reporting any saving |
 | `backend/scripts/probe-undated-demand.mjs` | Read-only production probe: how much live demand is undated, BOTH companies, with the refutation tests for why. Dispatch via `.github/workflows/probe-undated-demand.yml` |
 | `backend/scripts/lib/undated-demand-queries.mjs` | That probe's SQL, in one home so a test can EXECUTE it. No shebang — a test imports it |
 | `backend/tests-pg/probeUndatedDemandSql.pg.test.ts` | Runs every one of those queries against real Postgres in `backend-postgres`. Exists because the probe's first production dispatch died on unexecuted SQL |

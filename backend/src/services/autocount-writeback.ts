@@ -1683,12 +1683,29 @@ export function clearedAcKeys(
  *
  * `DtlKeys` and `Details` are index-aligned by construction: both come from the
  * same decision, which refused unless every line mapped 1:1.
+ *
+ * THE ERP NUMBERS THIS DOCUMENT — divergence D5, closed here 2026-08-17 and the
+ * last route it was open on. The first `/so-to-po` that ever succeeded landed as
+ * `PO-009968` while the ERP calls the same purchase order `HC-PO-2608-001`
+ * (host log, 2026-08-17 10:15), because this function returned `{ DtlKeys,
+ * Details }` and nothing else. Every other type already carries its own number
+ * into the book — `enqueueConvert` closed D5 for the four conversions and
+ * `composeCreatePo` has always sent one — so the purchase order was the single
+ * document in the chain whose two sides could not be reconciled by anyone.
+ *
+ * `docNo` is REQUIRED and it is the FIRST parameter, not an option. It decides
+ * the document's identity in the account book, and an optional one would mean
+ * every caller that says nothing silently reverts to AutoCount's counter with no
+ * compile error — which is exactly how this stayed open (CLAUDE.md, "a parameter
+ * that DECIDES something is required, never optional").
  */
 export function composeSoToPo(
+  docNo: string,
   dtlKeys: readonly number[],
   details: readonly AcDetail[],
-): { DtlKeys: number[]; Details: Array<Record<string, unknown>> } {
+): { DocNo: string; DtlKeys: number[]; Details: Array<Record<string, unknown>> } {
   return {
+    DocNo: docNo,
     DtlKeys: [...dtlKeys],
     Details: details.map((d, i) => ({
       DtlKey: dtlKeys[i],

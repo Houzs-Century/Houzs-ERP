@@ -132,7 +132,7 @@ describe('computeMrp — supply must match demand on the FULL variant key', () =
       delivery_return_items: [],
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     expect(res.skus).toHaveLength(1); // no phantom '' row — '' has no demand
     const row = res.skus[0]!;
     expect(row.itemCode).toBe('BF-100');
@@ -159,7 +159,7 @@ describe('computeMrp — supply must match demand on the FULL variant key', () =
       purchase_order_items: [poLine('PO-LEGACY', 5, null, '2026-10-01')],
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     expect(res.skus).toHaveLength(1);
     const row = res.skus[0]!;
     expect(row.variantKey).toBe('fabriccode=red');
@@ -181,7 +181,7 @@ describe('computeMrp — supply must match demand on the FULL variant key', () =
       purchase_order_items: [poLine('PO-LEGACY', 5, null, '2026-10-01')],
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     const row = res.skus[0]!;
     expect(row.variantKey).toBe('');
     expect(row.poOutstanding).toBe(5);
@@ -199,7 +199,7 @@ describe('computeMrp — supply must match demand on the FULL variant key', () =
       purchase_order_items: [poLine('PO-BLUE', 9, { fabricCode: 'BLUE' }, '2026-10-01')],
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     const red = res.skus.find((s) => s.variantKey === 'fabriccode=red')!;
     expect(red.poOutstanding).toBe(0);
     expect(red.shortage).toBe(4);
@@ -223,7 +223,7 @@ describe('computeMrp — supply must match demand on the FULL variant key', () =
       purchase_order_items: [matPo],
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     expect(res.skus).toHaveLength(1);
     const row = res.skus[0]!;
     expect(row.itemCode).toBe('MAT-100');
@@ -261,7 +261,7 @@ describe('computeMrp — supply must match demand on the FULL variant key', () =
       ],
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     // TWO buckets, not one: the null-group line did not join 'fabriccode=red'.
     expect(res.skus.map((s) => s.variantKey).sort()).toEqual(['', 'fabriccode=red']);
 
@@ -303,7 +303,7 @@ describe('mrpStockAssignment — assigned-vs-free split (owner 2026-07-25, dead-
       delivery_return_items: [],
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     const row = res.skus[0]!;
     expect(row.stock).toBe(10);
     expect(row.lines[0]!.source).toBe('stock');
@@ -341,7 +341,7 @@ describe('mrpStockAssignment — assigned-vs-free split (owner 2026-07-25, dead-
       delivery_return_items: [],
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     const asg = mrpStockAssignment(res);
     const key = stockAssignmentKey('W1', 'BF-100', 'fabriccode=red');
     expect(asg.get(key)).toBeUndefined(); // no demand → no assignment
@@ -421,7 +421,7 @@ describe('computeMrp — sofa supply matches on the full variant key too', () =>
       purchase_order_items: [sofaPoLine('PO-LEGACY-SOFA', 5, null, '2026-10-01')],
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     expect(res.skus).toHaveLength(0); // SOFA never lands in the general rows
     expect(res.sofaSets).toHaveLength(1);
     const set = res.sofaSets[0]!;
@@ -446,7 +446,7 @@ describe('computeMrp — sofa supply matches on the full variant key too', () =>
       ],
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     expect(res.sofaSets).toHaveLength(1);
     const set = res.sofaSets[0]!;
     expect(set.orderedQty).toBe(5);       // own pool only
@@ -464,7 +464,7 @@ describe('computeMrp — sofa supply matches on the full variant key too', () =>
       purchase_order_items: [sofaPoLine('PO-LEGACY-SOFA', 5, null, '2026-10-01')],
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     const set = res.sofaSets[0]!;
     expect(set.variantKey).toBe('');
     expect(set.orderedQty).toBe(5);
@@ -685,7 +685,7 @@ describe('computeMrp — SHIPPED no longer creates demand (audit D4)', () => {
       so: { debtor_name: 'Acme', status: 'SHIPPED', so_date: '2026-07-01', customer_delivery_date: '2026-12-01', processing_date: null, customer_state: null },
     };
     const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: [shipped] });
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     expect(res.skus).toHaveLength(0);
     expect(res.totals.shortageUnits).toBe(0);
   });
@@ -715,7 +715,7 @@ describe('computeMrp — every multi-row read is paged past PostgREST\'s 1000-ro
     }));
     const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: flood });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     expect(res.skus).toHaveLength(2500);
     expect(res.totals.skuCount).toBe(2500);
     expect(res.totals.shortageUnits).toBe(2500); // no supply anywhere → all short
@@ -732,7 +732,7 @@ describe('computeMrp — every multi-row read is paged past PostgREST\'s 1000-ro
     }));
     const sb = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: flood });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     const tail = res.skus.find((s) => s.itemCode === 'BF-1499');
     expect(tail).toBeDefined();
     expect(tail!.lines[0]).toMatchObject({ soItemId: 'si-01499', soDocNo: 'SO-1499', source: 'shortage' });
@@ -750,7 +750,7 @@ describe('computeMrp — every multi-row read is paged past PostgREST\'s 1000-ro
       purchase_order_items: poFlood,
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     const row = res.skus[0]!;
     expect(row.qtyNeeded).toBe(1500);
     expect(row.poOutstanding).toBe(1500);
@@ -771,7 +771,7 @@ describe('computeMrp — every multi-row read is paged past PostgREST\'s 1000-ro
       inventory_balances: balances,
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     const row = res.skus[0]!;
     expect(row.stock).toBe(7);
     expect(row.shortage).toBe(0);
@@ -794,7 +794,7 @@ describe('computeMrp — every multi-row read is paged past PostgREST\'s 1000-ro
       })),
     });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     const last = res.skus.find((s) => s.itemCode === 'BF-1399')!;
     expect(last.mainSupplierCode).toBe('S1399');
     expect(last.mainSupplierName).toBe('Supplier 1399');
@@ -810,7 +810,149 @@ describe('computeMrp — every multi-row read is paged past PostgREST\'s 1000-ro
     products.push({ code: 'ZZ-LAST', name: 'Last', category: 'ACCESSORY' });
     const sb = fakeSb({ ...BASE_TABLES, mfg_products: products });
 
-    const res = await computeMrp(sb as any, opts);
+    const res = await computeMrp(asSb(sb), opts);
     expect(res.categories).toEqual(['ACCESSORY', 'BEDFRAME']);
+  });
+});
+
+/* ── The read wave (2026-08-17) ────────────────────────────────────────────────
+   PR #2300 made this engine correct by paging every read and said, in its own
+   body, what that cost: "roughly a dozen round trips to on the order of a
+   hundred ... They are sequential." The owner then reported the MRP page and the
+   SO list (which calls computeMrp once per load) as very laggy — ~5.2s each on
+   prod company 1.
+
+   Most of those round trips are independent, so they now run bounded-concurrent.
+   Three things have to stay true for that to be a performance change rather than
+   a behaviour change, and none of them is visible by reading the diff:
+
+     1. reads actually OVERLAP — otherwise the restructure silently reverted and
+        every other test here still passes;
+     2. the overlap is BOUNDED — an unbounded fan-out exhausts Hyperdrive's pool
+        and trades latency for instability (the owner's standing rule);
+     3. the ANSWER does not depend on which read finishes first — the real hazard
+        concurrency introduces, and the one a timing-based test would miss.
+
+   The fake below resolves asynchronously (the shipped one resolves on a
+   microtask) so that overlap is observable at all. */
+/* The backend tsconfig targets Workers and does not declare `process`, so reach
+   it through globalThis with an explicit shape. The test ASSERTS it is present
+   rather than skipping when it is not — a guard that silently turns the check
+   off is how a test comes to pass over nothing. */
+type UnhandledHost = {
+  on(event: 'unhandledRejection', listener: (e: unknown) => void): void;
+  off(event: 'unhandledRejection', listener: (e: unknown) => void): void;
+};
+const unhandledHost = (globalThis as { process?: UnhandledHost }).process;
+
+/* ONE cast site for the fake client. computeMrp's `sb` is untyped, so every
+   call would otherwise write its own `as any` — the tests below add none. */
+type SbArg = Parameters<typeof computeMrp>[0];
+const asSb = (fake: unknown): SbArg => fake as SbArg;
+
+function instrumentedSb(tables: Record<string, Row[]>, delayFor: (table: string) => number) {
+  const stats = { reads: 0, maxInFlight: 0 };
+  let inFlight = 0;
+  const inner = fakeSb(tables);
+  return {
+    stats,
+    sb: {
+      from(table: string) {
+        const q = (inner as unknown as { from: (t: string) => Record<string, unknown> }).from(table);
+        const origThen = (q as { then: (...a: unknown[]) => unknown }).then.bind(q);
+        (q as Record<string, unknown>).then = (onF: (v: unknown) => unknown, onR?: (e: unknown) => unknown) => {
+          stats.reads++;
+          inFlight++;
+          stats.maxInFlight = Math.max(stats.maxInFlight, inFlight);
+          return new Promise((resolve) => setTimeout(resolve, delayFor(table)))
+            .then(() => { inFlight--; })
+            .then(() => origThen(onF, onR));
+        };
+        return q;
+      },
+    },
+  };
+}
+
+describe('computeMrp — the read wave overlaps, stays bounded, and cannot change the answer', () => {
+  // 600 open docs → 3 batches of 200 in the soDeliverableRemaining loop, which
+  // is where ~two thirds of the engine's round trips live.
+  const manyDocs = (): Row[] => Array.from({ length: 600 }, (_, i) => ({
+    ...demandRed(1), id: `si-${String(i).padStart(5, '0')}`, doc_no: `SO-${i}`, item_code: `BF-${i}`,
+  }));
+
+  test('independent reads run concurrently — they no longer wait for one another', async () => {
+    const { sb, stats } = instrumentedSb({ ...BASE_TABLES, mfg_sales_order_items: manyDocs() }, () => 1);
+    await computeMrp(asSb(sb), opts);
+    // Before this change every read waited for the previous one, so the honest
+    // reading of maxInFlight was exactly 1. If this assertion ever fails again
+    // at 1, the engine has gone back to sequential and the page is slow again.
+    expect(stats.maxInFlight).toBeGreaterThan(1);
+  });
+
+  test('concurrency stays within the declared bound (pool safety)', async () => {
+    const { sb, stats } = instrumentedSb({ ...BASE_TABLES, mfg_sales_order_items: manyDocs() }, () => 1);
+    await computeMrp(asSb(sb), opts);
+    // MRP_READ_CONCURRENCY is 6. The wave at the top of computeMrp fires a fixed
+    // handful alongside it, so the ceiling asserted here is deliberately loose —
+    // what it forbids is an UNBOUNDED fan-out that scales with the data (600 docs
+    // would put 3 batches + their inner reads in flight and keep climbing as the
+    // book grows).
+    expect(stats.maxInFlight).toBeLessThanOrEqual(16);
+  });
+
+  test('the plan is identical whichever read finishes first', async () => {
+    const tables = {
+      ...BASE_TABLES,
+      mfg_sales_order_items: [demandRed(10)],
+      purchase_order_items: [poLine('PO-1', 4, { fabricCode: 'RED' }, '2026-11-01')],
+      inventory_balances: [{ product_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 3 }],
+      warehouses: [{ id: 'W1', code: 'W1', name: 'Main', is_active: true }],
+      mfg_products: [{ id: 'p1', code: 'BF-100', name: 'Baron Bedframe', category: 'BEDFRAME' }],
+    };
+    // Arm 1: the supply reads come back LAST. Arm 2: they come back FIRST.
+    const slowSupply = instrumentedSb(tables, (t) =>
+      t === 'purchase_order_items' || t === 'inventory_balances' ? 12 : 0);
+    const fastSupply = instrumentedSb(tables, (t) =>
+      t === 'purchase_order_items' || t === 'inventory_balances' ? 0 : 12);
+
+    const a = await computeMrp(asSb(slowSupply.sb), opts);
+    const b = await computeMrp(asSb(fastSupply.sb), opts);
+    // `asOf` is a wall-clock stamp taken per run, so it differs between any two
+    // calls and always did. Everything the page RENDERS is compared — and when
+    // this was first run, asOf was the only field that differed at all.
+    const { asOf: _a, ...planA } = a;
+    const { asOf: _b, ...planB } = b;
+    expect(planA).toEqual(planB);
+    // And the arithmetic is still right, not merely stable: 10 needed, 3 in
+    // stock, 4 on an open PO, 3 short.
+    expect(a.skus[0]).toMatchObject({ qtyNeeded: 10, stock: 3, poOutstanding: 4, shortage: 3 });
+  });
+
+  test('a failing read still throws mrp_load_failed, not an unhandled rejection', async () => {
+    // Hoisting reads into a wave is exactly where an un-awaited rejection would
+    // escape as an unhandled rejection and kill the request instead of returning
+    // the route's 500. eager() is what prevents that; this is the pin.
+    const seen: unknown[] = [];
+    const onUnhandled = (e: unknown) => seen.push(e);
+    expect(unhandledHost).toBeDefined();
+    unhandledHost!.on('unhandledRejection', onUnhandled);
+    try {
+      const broken = {
+        from: (table: string) => {
+          const q = fakeSb({ ...BASE_TABLES, mfg_sales_order_items: [demandRed(1)] }).from(table) as unknown as Record<string, unknown>;
+          if (table === 'inventory_balances') {
+            q.then = (onF: (v: unknown) => unknown) =>
+              Promise.resolve({ data: null, error: { message: 'balances exploded' } }).then(onF);
+          }
+          return q;
+        },
+      };
+      await expect(computeMrp(asSb(broken), opts)).rejects.toThrow(/mrp_load_failed: balances exploded/);
+      await new Promise((r) => setTimeout(r, 20));
+    } finally {
+      unhandledHost!.off('unhandledRejection', onUnhandled);
+    }
+    expect(seen).toEqual([]);
   });
 });
