@@ -60,6 +60,409 @@ which is why `limit=3000` and the default returned byte-identical payloads.
 
 **Ref.** PR (2026-08-17), following #2300.
 
+## A read-only probe shipped with its SQL never executed, and died on the one company that mattered less [med]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** First production dispatch of `probe-undated-demand` (run
+31962771658, 2026-08-16) printed sections A–C for company 1, then:
+
+```
+FAIL subquery uses ungrouped column "h.created_at" from outer query
+##[error]Process completed with exit code 1
+```
+
+**Root cause, traced.** Two independent faults, and the second is the expensive
+one.
+
+1. **The SQL was never executed before it shipped.** A correlated subquery sat
+   beside a `GROUP BY` and referenced the raw `h.created_at` that the grouping
+   had already collapsed into `date_trunc('month', ...)`. Postgres refuses that.
+   `node --check` cannot see inside a SQL string, typecheck cannot, and the
+   Worker-pool vitest suite has no Postgres — so "it parses" was the only
+   evidence the probe had. Per CLAUDE.md a `workflow_dispatch` workflow cannot
+   be dispatched until it is on the default branch, which made production the
+   FIRST execution of every statement in it.
+
+2. **One company's failure cost the other company's answer.** `main()` looped
+   `for (const [id] of COMPANIES) await perCompany(id)` with no per-company
+   guard, so the throw in company 1 aborted the process before company 2 (2990)
+   ran at all. The output showed HOUZS numbers and nothing else — and a company
+   that was never read looks exactly like a company with no data. The 81.9%
+   figure was reported onward as covering "both companies"; it covers HOUZS.
+
+**Fix.** The SQL moved to `backend/scripts/lib/undated-demand-queries.mjs` —
+ONE home, no shebang because a test imports it — and
+`backend/tests-pg/probeUndatedDemandSql.pg.test.ts` EXECUTES every exported
+query against CI's real postgres:16 (`backend-postgres`), enumerating them from
+the module so a query added later cannot slip past untested. The month query is
+now a CTE. Each company runs in its own `try/catch`; failures are collected,
+printed, and carried to a non-zero exit, and the summary says **NOT MEASURED**
+rather than letting an unread company read as zero.
+
+**Proof the test bites:** restoring the original query fails the suite with the
+identical production error — `PostgresError: subquery uses ungrouped column
+"h.created_at" from outer query`, 5 failed / 4 passed, exit 1 — and restoring
+the CTE returns 9 passed, exit 0.
+
+**Ref.** 2026-08-17. Lesson: **an unrunnable check is an unwritten check.** The
+probe followed every rule in CLAUDE.md's read-only-probe section — one
+statement, no writes, own concurrency group, manual trigger — and still burned a
+production dispatch, because none of those rules say *execute the SQL somewhere
+first*. Where a thing can only run in production, find the nearest real engine
+and run it there: this repo already had one in CI and nobody had used it for a
+script. Second lesson: **a loop over N subjects needs N error boundaries**, or
+the first failure silently redefines the scope of the answer.
+
+## Half the MRP demand was hidden by default and the page never said so [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** The owner, 2026-08-16: *"明明这个东西没有 ready,可是我的 MRP 却 show
+不出来,呈现不出来."* Orders he named — `2990-SO-2608-019 / 020 / 021 / 022` — carry
+`stock_state: "shortage"` on every line, genuinely short with no stock and no PO,
+and appeared nowhere on the MRP page.
+
+**Root cause, traced against production, not guessed.** Measured from the browser
+with a real session, same moment, one query parameter apart:
+
+| | default | `?includeUndated=true` |
+|---|---|---|
+| SO item ids in the response | **82** | **163** |
+| sofa sets | 44 | 104 |
+| sofa sets SHORT | **8** | **68** |
+| shortage SKUs | 9 | 21 |
+
+`GET /api/scm/mrp` hides demand with no delivery date by default — deliberate,
+and still right: an undated line is not orderable yet (Commander 2026-05-29) and
+this page is the ordering worklist. Audit D6 (2026-08-01) had already made the
+flag DISPLAY-ONLY, so the allocation was never wrong. **What was wrong is that
+the page rendered the surviving half and said nothing about the other half**, so
+a shortage the operator had never seen read as a shortage that did not exist.
+36 of 84 live 2990 orders (43%) have no delivery date at all.
+
+**A second, smaller fault in the same handler:** the parser was
+`c.req.query('includeUndated') === 'true'`, so **`?includeUndated=1` was silently
+ignored** — verified against production, it returned the default 82/44/8. A
+truthy-looking value that does nothing is the **optional-param-noop** class: the
+caller believes it asked, and nothing contradicts it.
+
+**Fix.** `computeMrp` now returns `undated { lines, shortageUnits, sofaSets,
+sofaShortageUnits, hidden }`, counted on exactly the rows the flag removes and
+never feeding the allocation. `Mrp.tsx` renders an unmissable count with a
+one-click **Show them**, and `hidden` comes from the SERVER so a request that was
+not honoured still reads true. `parseIncludeUndated` accepts
+true/1/yes/on / false/0/no/off in either case and **throws on anything else**
+(400) instead of collapsing onto false. The DEFAULT is unchanged — flipping it is
+the owner's call and one line.
+
+**Allocation deliberately untouched**, and pinned by test: every dated row's
+`source / poNumber / poEta / shortageQty / stockQty / qty` and every bucket's
+`stock / poOutstanding` are identical under both flag values. The counting test
+also fails if anyone re-introduces the flag into the demand filter — the D6
+divergence — because the tally would then no longer equal the removed set.
+
+**Ref.** 2026-08-17. Lesson: **a filter the operator cannot see is a lie the
+system tells quietly.** The allocation had been audited, corrected and made
+provably consistent; none of that mattered while the page removed 81 of 163 lines
+without a word. When a view narrows what it shows, the narrowing must be a
+visible fact, not a default nobody reviews.
+
+## A conversion payload named no customer, so the service had to look one up [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The ERP half of the outage fixed in #2340. A conversion whose target
+carries no `DebtorCode` when the transfer runs is refused by AutoCount — PROVEN
+on the host, 2026-08-17 00:55 — and `enqueueConvert` composed
+`{ DocNo, DocDate?, Ref?, DtlKeys? }` with no account in it at all.
+
+**Root cause (traced).** Nothing chose to omit it. The conversion payload was
+designed around "the target inherits everything from the source", which is true
+of the LINES and false of the master: `cmd.AddNew()` creates the target empty and
+the transfer will not run against an empty account. The ERP has always known the
+customer — every sales document in this book goes to `AC_DEBTOR_CODE` — and
+simply never said so.
+
+**Fix.** `enqueueConvert` sends `DebtorCode: AC_DEBTOR_CODE` on the two SALES
+conversions. The set is DERIVED from `CONVERT_TARGET` rather than hand-listed, so
+a fifth conversion joins it on its own if its target is a sales document; a
+second hand-written list of ops is the duplicated-list bug this repo keeps
+paying for.
+
+**The purchase half is deliberately NOT done**, and the reason is cost, not
+principle: `scm.grns` and `scm.purchase_invoices` carry no supplier column, so a
+`CreditorCode` here needs a `grn -> purchase_order -> supplier` join, and
+`po_to_gr` has never once succeeded anyway — it fails earlier, on
+`IndexOutOfRangeException: There is no row at position -1`. Both purchase
+conversions stay on the service's book fallback. Divergence **D15** stays on the
+register for that half, dropped from `high` to `medium`.
+
+**KEEP THE BOOK FALLBACK.** #2340 made the service read the account off the
+source document when the payload names none, and this change does not retire it:
+it is the only thing that drains an outbox row composed before today, and it is
+the whole purchase side. A lookup that quietly stops being exercised is a lookup
+someone deletes.
+
+**Test.** `autocount-writeback.contract.test.ts` — "the SALES conversions put the
+debtor on the wire, and the purchase ones do not". Verified to FAIL when the
+change is reverted (`expected undefined to be '300-C002'`), because a new
+assertion that passes against both trees is not a test.
+
+**Not fixed here, and worth someone's attention:** the four whole-body conversion
+assertions in that file are all `test.skip` and have rotted — `SO -> DO` still
+carries the comment *"No `DtlKeys` on purpose"*, which stopped being true when the
+ERP started naming lines. The skip fence counts them (11) but nothing checks what
+they claim.
+
+**Ref.** PR for `feat/convert-payload-carries-the-account`, 2026-08-17.
+Follows #2340.
+## A desktop invoice raised FROM a delivery order was recorded as having no delivery order [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** `HC-SI-2608-001` sits `skipped` in `scm.autocount_outbox` reading
+"created with no source Delivery Order", and a skipped TRANSFER row is not
+re-queueable (`acRowIsRequeueable`) — so the invoice can never reach the account
+book even once the transfer itself is fixed. The owner raised it from a delivery
+order, on desktop, and is right to expect it linked.
+
+**Root cause (traced, not guessed).** `POST /sales-invoices` called
+`recordParentlessCreate` **unconditionally**, with `missing: 'no source Delivery
+Order'` — a fact the handler never tested. The same handler accepts a source on
+both halves of the document: `deliveryOrderId` on the header (stored as
+`sales_invoices.delivery_order_id`) and `doItemId` per line (stored as
+`sales_invoice_items.do_item_id`), and the desktop flow sends both —
+`SalesInvoiceFromDo.tsx` navigates to `?fromDo=`, and `SalesInvoiceNew.tsx`
+posts `deliveryOrderId: fromDo` plus a `doItemId` on every prefilled line. So
+every desktop from-DO invoice was filed as ERP-only and never enqueued. Mobile
+went through `POST /sales-invoices/from-dos`, which resolves the source DOs and
+enqueues `do_to_iv` — **the repo's named recurring bug class, one surface
+wired.** Of the four `recordParentlessCreate` call sites, this was the only one
+whose claim was neither checked (as `delivery-orders-mfg.ts` checks `soDocNo`)
+nor argued (as `grns.ts` argues that a hand-typed receipt must not transfer).
+
+**Fix.** `scm/lib/si-autocount-source.ts` decides it from what was WRITTEN — the
+persisted line links, then the header link — so any future caller of `POST /`
+gets the right answer without passing anything. One source DO with every line
+linked queues `do_to_iv`; several sources record the merged-conversion skip in
+the same words `/from-dos` uses (that phrase is the classifier's needle); a
+linked line beside a standalone line is refused as the new `mixed-source-lines`
+kind, because AutoCount's transfer would produce an invoice missing the
+standalone half and understate revenue in a live book; only a genuine no-source
+invoice is recorded parentless. The route delegates in 13 lines, so the
+over-ceiling file did not grow.
+
+**Chosen deliberately.** The alternative was pointing the desktop page at
+`POST /from-dos`. That route takes `{ picks }` and copies the DO header
+verbatim, so it would discard everything the operator edited on the create form
+— prices, dates, address, payment drafts. Fixing the server also fixes every
+future caller rather than one page.
+
+**What this does NOT fix.** `HC-SI-2608-001` itself. It already carries a
+`skipped` transfer row, and the re-queue ladder refuses those by design. Whether
+to cancel and re-raise it through the from-DO flow, or enter it in AutoCount by
+hand, is the owner's call.
+
+**Found in passing, not fixed.** `POST /purchase-invoices` has the same shape —
+it accepts `grn_item_id` per line (the `?grnId=` draft path) and calls
+`recordParentlessCreate` unconditionally. Whether that is the SI defect or the
+GRN's deliberate refusal is a judgement about hand-typed quantities that needs
+the owner; it is not a silent gap any more.
+
+**Test.** `backend/tests/salesInvoiceAutoCountSource.test.ts` drives the exported
+handler through a fake PostgREST client and asserts the queued row. Verified to
+FAIL on the pre-fix code — six of its eight tests, the first with
+`expected 'skipped' to be 'pending'`. Plus a branch anchor in
+`autocountWritebackCells.test.ts` so the record cannot become unconditional
+again.
+
+**Ref.** PR #2337, fix/invoice-from-do-enqueue, 2026-08-17.
+## The conversion target had no DebtorCode when the transfer ran — PROVEN on the host [critical]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** `HC-DO-2608-001` and `HC-DO-2608-002` spent a week outside the
+account book, `HC-SI-2608-001` blocked behind them, every attempt answering
+`AutoCount.Invoicing.InvalidTransferItemException: Invalid transfer item.` —
+eleven words naming no key, no document and no reason.
+
+**Root cause (PROVEN, on the live host, 2026-08-17 00:42–00:56).** The target
+document has **no `DebtorCode`** when the transfer is attempted. `cmd.AddNew()`
+creates it empty and `SalesHeader(doc, p)` never set one at all. Three
+compile-and-deploy iterations on the AutoCount machine, verbatim from
+`C:\Temp\ac-sync-service.log`:
+
+```
+00:42:42  trying FullTransfer from=HC-SO-2608-002 tf=SalesOrder
+00:42:42  FullTransfer refused: AppException: Debtor Code is empty.
+          - falling back to AddPartialTransferDetail
+00:50:13  target debtor before transfer = []
+00:55:30  target debtor before transfer = [300-C002]
+00:55:30  trying FullTransfer from=HC-SO-2608-002 tf=SalesOrder
+00:55:30  FullTransfer OK
+```
+
+then, by direct SQL against the book:
+
+```
+DO  HC-DO-2608-001  300-C002  F
+DO  HC-DO-2608-002  300-C002  F
+IV  HC-SI-2608-001  300-C002  F
+```
+
+The `00:50:13` line is the load-bearing one: `SalesHeader` had already been moved
+BEFORE the transfer by then, and the document was still empty. Only the explicit
+assignment filled it. `AddPartialTransferDetail` reports this condition as the
+contentless `Invalid transfer item.`; `FullTransfer` names it — which is the
+second time in two days that the documented call's error message was worth more
+than the primitive's.
+
+**The contradiction from the previous entry is RESOLVED, not standing.**
+`DO-011260` succeeded on 2026-08-12 under the old ordering. It was created by
+`qa-convert.ps1`, whose payload carries a debtor. Nothing about "the old order
+worked once" survives that.
+
+**This also corrects the entry directly below**, which says *"Root cause —
+UNKNOWN, and stated as unknown"* and ships four changes on the grounds that the
+call did not match the vendor's. Three of those four were right and one of them
+— setting the account before the transfer — was the fix; the write-up simply
+could not know which, from a machine with no AutoCount on it. It is left in place
+rather than edited: what it was honest about not knowing is the record.
+
+**Fix.**
+
+- `SetMaster` assigns the account before the transfer and then **reads it back
+  off the document**, logging `target debtor before transfer = [...]` — the
+  host's own string, byte for byte, because it is what the operator greps. It
+  reads back rather than logging what it assigned because an "applied" line
+  written from the value we passed in would have agreed with the `00:50:13`
+  failure.
+- The account comes from the **payload first** (`DebtorCode` / `DebtorName`,
+  `CreditorCode` / `CreditorName`) and from the **SOURCE document's header in the
+  book** second. The book fallback is not politeness: every row already queued in
+  `scm.autocount_outbox` was composed without an account, and without it none of
+  them drains. The ERP not sending one is registered as divergence **D15**.
+- Sales arms now call `SalesHeader(doc, p)` BEFORE the transfer — the shape
+  proven at `00:55:30`, DocNo included, since all three documents carry the ERP's
+  own numbers.
+- An empty account after all that logs a **WARNING naming this bug** instead of
+  running silently into the contentless exception.
+
+**NOT symmetrical on the purchase side, and that is deliberate.**
+`PurchaseHeader` still runs AFTER the transfer. With `transferMaster: true` the
+transfer copies the source PO's master over the target, so a header applied first
+would be partly overwritten; and `/po-to-gr` has never once succeeded, so there
+is no run to compare against in either direction. Only the explicit
+`CreditorCode` assignment is carried across. **Unverified — it needs the host.**
+
+**A second finding, not fixed here.** `FullTransfer` is the call proven against
+this book, and no production payload reaches it. `readConvertSourceKeys` returns
+`{ keys }` whenever every source line *has* a `linked_ac_dtlkey`, **whether or not
+the conversion is partial**, so `PlanTransfer` always sees named lines and always
+picks `AddPartialTransferDetail`. Inferring "whole" from a row count is exactly
+the decision this service must not make — a wrong guess over-transfers into a
+live book — so the fix is the ERP saying which it is. `RunTransfer` now logs the
+choice and the reason on every conversion so that path cannot fail silently
+again. See `docs/modules/autocount-writeback.md` §7c3.
+
+**Test.** `backend/src/services/autocount-writeback.contract.test.ts` asserts the
+four account keys are read and pins D15. No test can exercise the SDK call: it
+needs the licensed assemblies.
+
+**Ref.** PR for `fix/autocount-debtor-before-transfer`, 2026-08-17. Follows #2336.
+Host build that proved it: `builtAt 2026-08-16T16:52:49Z`,
+`mvid 58ee4929-7966-407a-a122-5539290014f1`; pre-patch source backed up at
+`C:\Temp\acbuild-0816b\AcSyncService.cs.bak`.
+## The SO board and the drill-down answered stock from two different engines, and the stale one won [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner 2026-08-16, reported as two bugs: *"why does 2608-002 and 003
+show READY in status when the item is pending and there is no incoming PO"* and
+*"why is my Stock Status not following the rule I set?"*. Live on production,
+`GET /api/scm/mfg-sales-orders/:docNo`: `2990-SO-2608-002`'s mattress line
+carried STORED `stock_status = PENDING` and LIVE `stock_state = "stock"` — the
+goods were in the warehouse — while the header rolled up to short.
+`2990-SO-2608-003`'s bedframe was genuinely short with a covering PO and an ETA,
+and its label was correct.
+
+> The strings he quoted (`SHORT: MATTRESS`) belong to the one-day #2295 window;
+> #2334 restored the what-IS-ready vocabulary hours later, so the same order now
+> shows a BLANK cell. The WORDING was never this defect — #2334 fixed that. What
+> is left, and what this entry is about, is that the label was being fed a stale
+> input, and that the board and the drill-down read different inputs entirely.
+
+**Root cause (traced, one bug wearing two faces).** The label rule
+(`so-readiness.ts`, the owner's own ruling the same day) was fine and is
+untouched. Its INPUT was stale, and the two surfaces read different inputs:
+
+1. *Two engines, one screen.* The list rolled up the STORED per-line
+   `stock_status`; the drill-down pill rendered the LIVE `stock_state` from
+   `computeMrp`. `soLineStockPill` says READY when EITHER says so, so the same
+   order read READY on the drill and short on the board — which is exactly the
+   "status says ready while the item is pending" half of the report. This half
+   is INDEPENDENT of the label vocabulary and survived #2334 untouched.
+2. *`ok: true` for work that did not happen.* `recomputeSoStockAllocation` is
+   the only writer of the stored column. It claims a single-flight lease, and on
+   losing that race returned `{ ok: true, reason:
+   'another_recompute_in_progress' }`. All ~34 best-effort triggers write `await
+   recomputeSoStockAllocation(sb)` and discard the result, and a best-effort
+   trigger writes NO queue row — so the five-minute cron found nothing pending
+   and returned `completed: true`. It was a backstop for the four durable call
+   sites, never a repair loop. Two GRNs posted close together therefore left the
+   second one's lines stale DETERMINISTICALLY, not on a crash — and goods
+   arriving is precisely when the operator looks.
+3. *One value, three renderings.* `stock_remark` was drawn as a designed
+   mint/amber pill on `ConsignmentOrders.tsx`, as grey `text-ink-secondary` body
+   text on `MfgSalesOrdersListV2.tsx` (the column the owner actually has on
+   screen), and with a third pair of hard-coded hexes on
+   `DeliveryPlanningBoard.tsx`. That is why he described it as the system
+   "writing words" rather than as a warning appearing. Same class as the
+   `READY (PARTIAL)` leak, and #2334 had already had to hand-carry a vocabulary
+   change into ConsignmentOrders' private copy while the other two kept theirs.
+
+**Fix.** `scm/lib/so-line-effective-stock.ts` — ONE union verdict over (stored,
+live), which is the rule the drill-down pill already rendered. The list rolls it
+up; both line-detail handlers stamp it as `stock_status_effective`; the desktop
+and mobile pills prefer that field. It costs no extra query: the list handler
+already awaits one `computeMrp` for the source-PO union, and `mrpLineCoverage` is
+a pure flatten. `null` live state is REQUIRED, not optional, and means "stored
+value stands" — so a failed MRP fails soft to the old behaviour exactly.
+`recomputeSoStockAllocation` now enqueues its own retry row whenever a sweep it
+entered did not finish (lock skip, throw, or headers left under an edit lease),
+which turns the existing cron into a real repair loop for all ~38 triggers;
+`queuedForRetry: false` is logged at error level when even that row cannot be
+written. `components/StockRemarkPill.tsx` is now the one renderer for all three
+surfaces, carrying #2334's colours (including its deliberate negative branch:
+anything not exactly `READY` is amber, so a new token cannot read as fine), its
+sort direction and the export value; `DataTable` gained an optional `sortValue`
+so the SO list can order by how much of the order is IN while its CSV and column
+funnel keep the real words. The label vocabulary is NOT touched by this PR.
+
+**NOT fixed, and stated so in the module guide:** a Worker that dies BEFORE
+reaching the recompute still leaves no row and no retry. Only a queue write
+inside the source write's own transaction covers that — the `runScmPgCommand`
+conversion the SCOPE header in `stock-allocation-job.ts` already describes.
+Allocation is still not durable in general.
+
+**Test.** `backend/tests/soLineEffectiveStock.test.ts` (the union rule, both
+reported orders reproduced, and source assertions that the list and both detail
+handlers go through it), `backend/tests/stockAllocationSkipLeavesTrace.test.ts`
+(a lock skip leaves a durable row and says so; a finishing sweep leaves none),
+`frontend/src/components/StockRemarkPill.test.tsx` (a not-ready remark paints as
+a warning, an unknown token cannot render as fine, the sort leads with the
+fullest orders). The backend suite asserts NO label strings — only that the two
+feeds disagree and that the ship gate flips — so a third vocabulary ruling cannot
+break it. Each was proved to bite by reverting the source.
+
+**Measurement.** `backend/scripts/probe-so-stock-status-stale.mjs` +
+`.github/workflows/probe-so-stock-status-stale.yml` count the live lines showing
+PENDING while stock sits in their own bucket, as a floor/ceiling bracket. NOT YET
+DISPATCHED — per CLAUDE.md a `workflow_dispatch` workflow is not shipped until it
+has run once and reported success.
+
+**Ref.** PR #TBD, fix/so-stock-status-one-source, 2026-08-17.
 ## AutoCount Sync printed the machine's own words as the page's plain language [medium]
 
 <!-- area: AutoCount sync + write-back -->

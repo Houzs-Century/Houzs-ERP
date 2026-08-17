@@ -370,6 +370,41 @@ export type MrpResult = {
   sofaSets: SofaSet[];
   /** Commitments with no open PO supply left to deduct from — see the type. */
   unmatchedCommitments: UnmatchedCommitment[];
+  /* How much of the demand this run walked has NO delivery date, counted
+     ALWAYS — whether or not `includeUndated` let it into `skus[]`/`sofaSets[]`
+     above. Same filter scope as those arrays (category + warehouse), so it is
+     the honest denominator for the rows on screen.
+
+     This exists because the omission was SILENT. `includeUndated=false` is a
+     display filter with a real reason behind it (undated demand is not orderable
+     yet, Commander 2026-05-29), but the page rendered the surviving half with
+     nothing saying a half had been removed — so a shortage the operator had
+     never seen read as a shortage that did not exist. Owner, 2026-08-16:
+     "明明这个东西没有 ready,可是我的 MRP 却 show 不出来". Measured on production
+     the same day: 82 of 163 live 2990 SO-item ids were absent by default, and
+     the short-sofa count went 8 -> 68 with the flag on.
+
+     A count is not a filter: nothing here feeds the allocation (audit D6).
+
+     The two paths are counted SEPARATELY and must stay that way: section 7
+     honours `catFilter`, section 8 is SOFA-by-construction and ignores it, so a
+     blended total would overstate every non-sofa tab by the whole sofa book.
+     Read `lines` on the general views and `sofaSets` on the sofa view. */
+  undated: {
+    /** Undated rows in the general (non-sofa) path — category + warehouse filtered. */
+    lines: number;
+    /** Units of `lines` the allocation could not cover. */
+    shortageUnits: number;
+    /** Undated sofa SETS (section 8 counts sets, not component lines).
+        NOT category-filtered — see above. */
+    sofaSets: number;
+    /** Units of `sofaSets` the allocation could not cover. */
+    sofaShortageUnits: number;
+    /** TRUE when this run OMITTED them from `skus[]` / `sofaSets[]`. The
+        response states what it DID, so a caller whose flag was not honoured
+        (see parseIncludeUndated) can see that from the answer alone. */
+    hidden: boolean;
+  };
   totals: {
     skuCount: number;
     shortageSkuCount: number;
@@ -945,6 +980,14 @@ export async function computeMrp(
   // earliest-delivery SO line claims stock first, then the earliest-ETA PO; what
   // remains is shortage. A line already on a PO is covered naturally because that
   // PO is in the supply pool — no special "own pick" handling needed.
+  /* Undated demand tally — incremented on the SAME rows the flag would drop, so
+     it cannot drift from what is (not) rendered. Written next to the `continue`
+     it explains; read into `undated` at the bottom. */
+  let undatedLines = 0;
+  let undatedShortageUnits = 0;
+  let undatedSofaSets = 0;
+  let undatedSofaShortageUnits = 0;
+
   const skus: MrpSku[] = [];
   for (const [k, bucket] of demandByKey.entries()) {
     const { whId, code, vlabel, rows } = bucket;
@@ -1029,8 +1072,15 @@ export async function computeMrp(
       /* Audit D6 — the allocation above ALWAYS runs (undated rows sort last, so
          they only ever consume what dated rows left behind); visibility is the
          only thing the flag controls. A hidden row's consumption stands so the
-         one allocation is identical for every caller. */
-      if (!includeUndated && !isDatedLine(r)) continue;
+         one allocation is identical for every caller.
+
+         COUNTED BEFORE THE `continue`, and unconditionally: the tally has to
+         describe the rows the flag removes, which is only knowable here. */
+      if (!isDatedLine(r)) {
+        undatedLines += 1;
+        undatedShortageUnits += need;
+        if (!includeUndated) continue;
+      }
       qtyNeeded += eff;
 
       // need>0 → still uncovered (SHORT). need==0 → covered by a pooled PO
@@ -1195,8 +1245,13 @@ export async function computeMrp(
       const ordered = eff - need;                     // covered by pooled stock+PO
 
       /* Audit D6 — same rule as section 7: the allocation above always runs;
-         the flag only controls whether the (undated) set is rendered. */
-      if (!includeUndated && !isDatedLine(d)) continue;
+         the flag only controls whether the (undated) set is rendered. Counted
+         before the `continue` for the same reason as section 7. */
+      if (!isDatedLine(d)) {
+        undatedSofaSets += 1;
+        undatedSofaShortageUnits += need;
+        if (!includeUndated) continue;
+      }
 
       sofaSets.push({
         variantKey: variantKeyOf(d.item_group, v),
@@ -1250,6 +1305,13 @@ export async function computeMrp(
     skus,
     sofaSets,
     unmatchedCommitments,
+    undated: {
+      lines: undatedLines,
+      shortageUnits: undatedShortageUnits,
+      sofaSets: undatedSofaSets,
+      sofaShortageUnits: undatedSofaShortageUnits,
+      hidden: !includeUndated,
+    },
     totals: {
       skuCount: skus.length,
       shortageSkuCount: skus.filter((s) => s.shortage > 0).length,
@@ -1431,6 +1493,39 @@ export function mrpReverseCoverage(result: MrpResult): Map<string, PoCoverageAss
   return map;
 }
 
+/* The accepted spellings of `?includeUndated`. Absent = the documented default
+   (false). Present-and-unrecognised THROWS — it is never quietly false.
+
+   `=== 'true'` was the whole parser until 2026-08-16, and `?includeUndated=1`
+   — verified against production that day — returned the default plan with no
+   error, no warning and no field saying so: 82 SO-item ids instead of 163, 8
+   short sofa sets instead of 68. That is CLAUDE.md's optional-param-noop trap
+   in its worst shape, because the caller BELIEVED it had asked. A boolean that
+   silently collapses every unrecognised value onto the safe-looking side is not
+   a default, it is a lie with a default's manners. */
+const UNDATED_TRUE = new Set(['true', '1', 'yes', 'on']);
+const UNDATED_FALSE = new Set(['false', '0', 'no', 'off']);
+
+export class InvalidQueryFlag extends Error {
+  constructor(readonly param: string, readonly value: string) {
+    super(
+      `${param}: "${value}" is not a boolean. Use one of ` +
+      `${[...UNDATED_TRUE].join(' / ')} (on) or ${[...UNDATED_FALSE].join(' / ')} (off), ` +
+      `or omit the parameter.`,
+    );
+    this.name = 'InvalidQueryFlag';
+  }
+}
+
+/** Exported for `mrp.test.ts` — the spellings are the contract, so they get a test. */
+export function parseIncludeUndated(raw: string | undefined): boolean {
+  if (raw === undefined) return false;              // omitted = documented default
+  const v = raw.trim().toLowerCase();
+  if (UNDATED_TRUE.has(v)) return true;
+  if (UNDATED_FALSE.has(v)) return false;
+  throw new InvalidQueryFlag('includeUndated', raw);
+}
+
 mrp.get('/', async (c) => {
   const sb = c.get('supabase');
   const category = c.req.query('category');
@@ -1443,7 +1538,17 @@ mrp.get('/', async (c) => {
   // (2026-08-01) the flag is display-only: the allocation itself always runs
   // over the full demand set (undated last), so this page, the SO drill-down
   // and the PO Assigned-SO column read ONE identical allocation.
-  const includeUndated = c.req.query('includeUndated') === 'true';
+  //
+  // What is hidden is REPORTED either way — `result.undated` — so the page can
+  // never again render half the demand with nothing saying so.
+  let includeUndated: boolean;
+  try {
+    includeUndated = parseIncludeUndated(c.req.query('includeUndated'));
+  } catch (e) {
+    // 400, not a silent false: a caller that asked wrongly must be told, or it
+    // reads the default plan as the whole plan.
+    return c.json({ error: 'bad_request', reason: e instanceof Error ? e.message : String(e) }, 400);
+  }
   try {
     const result = await computeMrp(sb, { catFilter, whFilter, includeUndated, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
     return c.json(result);

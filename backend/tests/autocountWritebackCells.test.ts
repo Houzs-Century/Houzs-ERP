@@ -8,6 +8,7 @@ import rawPi from '../src/scm/routes/purchase-invoices.ts?raw';
 import rawSoAmend from '../src/scm/routes/so-amendments.ts?raw';
 import rawPoAmend from '../src/scm/routes/po-amendments.ts?raw';
 import rawOutbox from '../src/scm/lib/autocount-outbox.ts?raw';
+import rawSiSource from '../src/scm/lib/si-autocount-source.ts?raw';
 import rawWriteback from '../src/services/autocount-writeback.ts?raw';
 import rawService from '../scripts/autocount-service/AcSyncService.cs?raw';
 
@@ -36,6 +37,7 @@ const PI = lf(rawPi);
 const SO_AMEND = lf(rawSoAmend);
 const PO_AMEND = lf(rawPoAmend);
 const OUTBOX = lf(rawOutbox);
+const SI_SOURCE = lf(rawSiSource);
 const WRITEBACK = lf(rawWriteback);
 const SERVICE = lf(rawService);
 
@@ -206,10 +208,27 @@ describe('the create-side holes', () => {
       .toContain('recordParentlessCreate(sb, {');
     expect(between(GRN, 'await recordGrnCreate(sb,', 'const movementErrors = postRes && postRes.ok'))
       .toContain('recordParentlessCreate(sb, {');
+    /* SI DELEGATES, because it is the one of the four that has to CHECK first.
+       POST /sales-invoices accepts a source delivery order on both halves of
+       the document (`deliveryOrderId` on the header, `doItemId` per line), so
+       the unconditional call that used to sit here asserted a fact it never
+       tested and filed every desktop from-DO invoice as ERP-only. The record
+       still exists — one file down, on the branch that established it. */
     expect(between(SI, 'await recordSiCreate(sb,', '/* LEAK GUARD (DRAFT) — a DRAFT SI must NOT post'))
-      .toContain('recordParentlessCreate(sb, {');
+      .toContain('recordSiAutoCountSource(sb, {');
     expect(between(PI, 'await recordPiCreate(sb,', '/* LEAK GUARD (DRAFT) — a DRAFT PI commits nothing'))
       .toContain('recordParentlessCreate(sb, {');
+  });
+
+  test('the SI record is CONDITIONAL — it sits on the branch where no line has a source', () => {
+    /* The defect was never the record; it was an unconditional call claiming
+       "no source Delivery Order" beside a handler that accepts one. An anchor
+       on the branch is what stops it becoming unconditional again. */
+    const noSource = between(SI_SOURCE, 'if (doIds.size === 0) {', "return 'parentless';");
+    expect(noSource).toContain('recordParentlessCreate(sb, {');
+    // And the other side of the same decision: a real single source is QUEUED.
+    expect(SI_SOURCE).toContain("op: 'do_to_iv'");
+    expect(SI_SOURCE).toContain('enqueueConvert(sb, {');
   });
 
   test('the parentless-create record rides an op the outbox CHECK constraint admits', () => {

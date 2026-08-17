@@ -266,6 +266,7 @@ describe("the refusal, in three parts", () => {
       "missing-agent", "missing-sales-location", "missing-creditor",
       "compose-failed", "masters-not-opened", "no-source-document", "no-autocount-shape",
       "dtlkey-subset", "cancelled-before-send", "edit-before-counterpart", "grn-mislinked",
+      "mixed-source-lines",
       "unrecognised",
     ]) {
       expect(AC_REASON_COPY[kind], kind).toBeTruthy();

@@ -24,6 +24,17 @@
    NOT DURABLE IN GENERAL. Do not read the word "durable" in this file as
    covering the whole surface — it covers four entry points.
 
+   NARROWED, NOT CLOSED, 2026-08-17. `recomputeSoStockAllocation` now enqueues
+   its OWN retry row whenever a sweep it actually ENTERED did not finish — a
+   lost single-flight race, a throw, or a header left un-advanced under an edit
+   lease. So the cron below IS now a repair loop for those outcomes, on all ~38
+   triggers rather than the durable four. The gap that remains is the one this
+   header was written about and it is unchanged: if the Worker dies BEFORE the
+   recompute is reached, there is still no row and still no retry, because only
+   a queue write inside the source write's own transaction can cover that. Four
+   entry points have it. Converting the rest still means moving each route onto
+   `runScmPgCommand` first.
+
    THIRTY-THREE of those thirty-four are `await`ed inline, so the operator's
    request pays for the whole global sweep. ONE — the SO header PATCH — is
    DEFERRED via `deferAllocationRecompute` below. Deferred is NOT a durability
@@ -43,6 +54,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { getSupabaseService } from '../../db/supabase';
 import type { Env } from '../env';
 import { recomputeSoStockAllocation } from './so-stock-allocation';
+import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { deferScmAfterCommit } from './pg-supabase-transaction';
 
 const JOB_KEY = 'GLOBAL';
@@ -97,24 +109,11 @@ export type AllocationDrainResult = {
   reason?: string;
 };
 
-/**
- * Persist the invalidation in the caller's transaction.
- *
- * `attempts` / `deferrals` / `state` are DELIBERATELY not in the payload. This
- * is an upsert on the singleton row, so listing them would reset the failure
- * counter on every new mutation and a permanently broken job could never reach
- * its terminal state. On first INSERT the column defaults apply; on conflict
- * only the columns named here are overwritten.
- */
-export async function enqueueStockAllocationRecompute(sb: any, reason: string): Promise<void> {
-  const { error } = await sb.from('stock_allocation_recompute_queue').upsert({
-    job_key: JOB_KEY,
-    request_token: crypto.randomUUID(),
-    requested_at: new Date().toISOString(),
-    reason,
-  }, { onConflict: 'job_key' });
-  if (error) throw new Error(`Stock-allocation enqueue failed: ${error.message}`);
-}
+/* The enqueue moved to lib/stock-allocation-queue.ts on 2026-08-17 so that
+   so-stock-allocation.ts can write its own retry row without closing an import
+   cycle. Re-exported here because this is where callers look for it, and there
+   must go on being exactly ONE enqueue. */
+export { enqueueStockAllocationRecompute };
 
 /**
  * Claim and drain the singleton projection job. The random request_token

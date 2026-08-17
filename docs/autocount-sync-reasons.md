@@ -124,6 +124,7 @@ why the button exists at all.
 | `keyless-line` | An **edit** names a line with no `linked_ac_dtlkey`. Appending it would duplicate the line in the live book, and on a PO a duplicate cannot be removed. | Not by this button — it is an `edit`, so the button answers `not-recoverable`. | Backfill `linked_ac_dtlkey` for the document's lines, then **save the document again**. |
 | `dtlkey-subset` | A conversion took a **strict subset** of the parent's lines and some source line has no `DtlKey`, so the ERP cannot name the subset. Sending it without one would make AutoCount transfer *every* outstanding line — goods moving in the book that did not move here. | **No.** The ERP never composed an instruction, so there is nothing to send again — see §6. | Backfill `linked_ac_dtlkey` on the **source** document, then raise this document again. |
 | `no-source-document` | A Delivery Order / GRN / Invoice / Purchase Invoice was created with **no parent**. | **NEVER.** See §4. | Nothing. It stays ERP-only, permanently. |
+| `mixed-source-lines` | The document carries lines that came from **no source document** beside lines that did — the ERP allows a standalone line on an invoice, AutoCount's transfer would produce one MISSING them and understate the revenue in the book. | **No.** Nothing was composed, and re-asking would not change the document's shape. | Raise the delivered lines from the Delivery Order and the standalone lines as their own invoice. |
 | `no-autocount-shape` | A conversion merged **several** source documents into one (a DO from two SOs, a GRN batched from three POs). The ERP records it rather than inventing documents. | Not today, and **not by Send again** — the ERP composed nothing, so there is nothing to re-send (§6). See §5: the AutoCount service side learned to do this on 2026-08-16, the ERP side has not followed. | Raise the matching document in AutoCount by hand, or split the ERP document. |
 | `edit-before-counterpart` | A downstream document was edited while the conversion that creates it was still queued. That conversion will transfer the **source** document's lines, not this edit. | Not by this button. | Save the document again once the conversion has drained. |
 | `cancelled-before-send` | The document was cancelled in the ERP while its create was still queued, so the create was withdrawn. | No, and nothing is wrong. | Nothing. Neither document ever reached the account book. |
@@ -265,9 +266,10 @@ needs it, it has to be raised there by hand, against a source document.
 1. **The ERP still refuses merged conversions the AutoCount service now
    accepts.** As of 2026-08-16 `AcSyncService` groups transfer keys by source
    document and invokes the transfer once per group, so a DO from several SOs is
-   native on that side. The five ERP call sites that record a merged conversion
+   native on that side. The SIX ERP call sites that record a merged conversion
    (`delivery-orders-mfg.ts`, `grns.ts` ×2, `sales-invoices.ts`,
-   `purchase-invoices.ts`) still write a `skipped` row. Whether the ERP should
+   `purchase-invoices.ts`, and `scm/lib/si-autocount-source.ts` since
+   2026-08-17) still write a `skipped` row. Whether the ERP should
    follow is an owner decision, not a cleanup — until it is made, §2's
    `no-autocount-shape` row is accurate.
 2. **`masters-not-opened` never classifies.** The route only runs

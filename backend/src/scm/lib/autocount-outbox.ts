@@ -52,6 +52,7 @@ import {
   LOCATION_MAP,
   BRANDING_MAP,
   VENUE_MAP,
+  AC_DEBTOR_CODE,
   AC_PURCHASE_AGENT,
   bookSpelling,
   bookSpellingOrOwn,
@@ -532,6 +533,20 @@ const CONVERT_TARGET: Record<'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi', 
 };
 
 /**
+ * The two conversions whose target is a SALES document, and therefore the two
+ * that need a DebtorCode on the payload.
+ *
+ * Derived from CONVERT_TARGET rather than listed again: a fifth conversion
+ * added to that map joins this set on its own if its target is a sales one,
+ * and the alternative — a second hand-written list of ops — is the duplicated
+ * -list bug this repo keeps paying for.
+ */
+const SALES_CONVERSION = new Set(
+  (Object.keys(CONVERT_TARGET) as Array<keyof typeof CONVERT_TARGET>)
+    .filter((op) => CONVERT_TARGET[op] === 'DO' || CONVERT_TARGET[op] === 'IV'),
+);
+
+/**
  * Write a failed compose down instead of dropping it.
  *
  * Same rule as recordConvertSkipped: an operation the ERP will not send is
@@ -855,6 +870,30 @@ export async function enqueueConvert(
            same reason: the target keeps the transfer's own posting date. */
         ...(opts.docDate ? { DocDate: opts.docDate } : {}),
         ...(opts.ref ? { Ref: opts.ref } : {}),
+        /* THE CUSTOMER, AND THE TRANSFER DOES NOT HAPPEN WITHOUT ONE.
+           PROVEN on the AutoCount host 2026-08-17 00:55: a conversion whose
+           target carries no DebtorCode when the transfer runs is refused —
+           `AppException: Debtor Code is empty.` from FullTransfer, and the
+           contentless `Invalid transfer item.` from AddPartialTransferDetail,
+           which is what kept HC-DO-2608-001, HC-DO-2608-002 and HC-SI-2608-001
+           out of the book for a week. `cmd.AddNew()` creates the target empty
+           and `SalesHeader` never set one.
+
+           #2340 made the service fall back to reading the account off the
+           SOURCE document in the book, and that fallback has to stay — it is
+           the only thing that drains an outbox row composed before this line
+           existed. But it is a lookup the ERP should not be making the service
+           do: we know the customer, and a payload that states it cannot be
+           wrong about which source row the service happened to read.
+
+           SALES SIDE ONLY. The purchase conversions want a CreditorCode and the
+           ERP cannot reach one from here without a new join — `grns` and
+           `purchase_invoices` carry no supplier column, so it is
+           grn -> purchase_order -> supplier — and `po_to_gr` has never once
+           succeeded anyway, for an unrelated reason (`IndexOutOfRangeException:
+           There is no row at position -1`). Those two stay on the service's book
+           fallback and D15 stays open for that half. */
+        ...(SALES_CONVERSION.has(opts.op) ? { DebtorCode: AC_DEBTOR_CODE } : {}),
         ...(source.keys ? { DtlKeys: source.keys } : {}),
       },
       fromDoc: opts.from,
