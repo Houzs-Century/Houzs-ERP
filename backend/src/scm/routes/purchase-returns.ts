@@ -30,6 +30,7 @@ import {
 } from '../shared/so-line-display';
 import { recomputePoReceived, resolvePoBatchByItem } from './grns';
 import { findUnlinkedPrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
+import { unlinkedEditRefusal, unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
@@ -684,7 +685,9 @@ purchaseReturns.post('/', async (c) => {
         soItemId: (it.grnItemId as string | undefined) ?? null,
       })),
     );
-    if (unlinked.length > 0) return c.json(unlinkedReturnResponse(unlinked, 'purchase'), 409);
+    // Refuses on an unreadable GRN too — see unlinkedScanRefusal.
+    const bad = unlinkedScanRefusal(unlinked, (o) => unlinkedReturnResponse(o, 'purchase'));
+    if (bad) return c.json(bad, 409);
   }
 
   /* Audit gap #7 — REJECT a GRN-linked over-return with the SAME 409 the
@@ -1329,9 +1332,29 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
   if (!co.ok) return c.json(co.refusal, 409);
   /* The child is stamped with the active company; the parent it hangs off must
      be this company's too, or a line lands on another company's return. */
-  const { data: parent } = await scopeToCompanyId(sb.from('purchase_returns').select('id').eq('id', prId), co.companyId).maybeSingle();
+  /* grn_id rides along on the ownership read (same row, no extra query) — the
+     unlinked guard below needs the GRN this return names. */
+  const { data: parent } = await scopeToCompanyId(sb.from('purchase_returns').select('id, grn_id').eq('id', prId), co.companyId).maybeSingle();
   if (!parent) return c.json(NOT_THIS_COMPANY, 404);
   { const lock = await prLineLock(sb, prId); if (lock) return c.json(lock, 409); }
+
+  /* The add-a-line half of the back door the CREATE path has closed since
+     2026-08-04 — this path never had it, so the create-path refusal could be
+     walked around in ONE save by adding the line afterwards. */
+  {
+    const unlinked = await findUnlinkedPrLines(
+      sb, (parent as { grn_id?: string | null } | null)?.grn_id ?? null, null,
+      [{
+        lineRef: 'add',
+        itemCode: String(it.materialCode ?? ''),
+        qty: Number(it.qty ?? 1),
+        soItemId: (it.grnItemId as string | undefined) ?? null,
+      }],
+    );
+    const bad = unlinkedScanRefusal(unlinked, (o) => unlinkedReturnResponse(o, 'purchase'));
+    if (bad) return c.json(bad, 409);
+  }
+
   const qtyReturned = Number(it.qty ?? 1);
   const unitPriceCenti = Number(it.unitPriceCenti ?? 0);
   const lineRefund = qtyReturned * unitPriceCenti;
@@ -1510,6 +1533,18 @@ export const patchPurchaseReturnItemHandler = async (c: any) => {
       requested: qtyReturned, ownPriorDraw: prevQty, what: 'GRN line',
     });
     if (capLock) return c.json(capLock, 409);
+  }
+
+  /* The EDIT half of the same back door: the cap above and adjustGrnReturnedQty
+     below are both gated on grnItemId. See unlinked-line-edit-guard. */
+  {
+    const repoint = await unlinkedEditRefusal(sb, 'purchase-return', {
+      parent: { table: 'purchase_returns', column: 'grn_id', id: prId, companyId: co.companyId },
+      storedLink: grnItemId,
+      storedCode: (prev as { material_code: string | null }).material_code,
+      patchCode: it.materialCode,
+    });
+    if (repoint) return c.json(repoint, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_return_items').update(updates).eq('id', itemId), co.companyId);

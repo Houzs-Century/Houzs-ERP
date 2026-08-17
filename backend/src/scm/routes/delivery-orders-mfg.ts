@@ -55,6 +55,7 @@ import { loadCommittedShipments } from '../lib/committed-shipments';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { findOverDeliveredSoItems } from '../lib/do-over-delivery';
 import { findUnlinkedSoLines, unlinkedSoLinesResponse } from '../lib/do-unlinked-so-lines';
+import { unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
@@ -2823,7 +2824,7 @@ deliveryOrdersMfg.get('/', async (c) => {
   /* Tier 2 downstream-lock — one extra batched read per doc set: pull every
      non-cancelled DR/SI that points back to a listed DO and stamp has_children
      on the row. The list grid uses this to hide Edit / Cancel actions on DOs
-     that are downstream-locked (mirrors computeGrnFlags in routes/grns.ts). */
+     that are downstream-locked (mirrors computeGrnFlags in lib/grn-consumption-flags). */
   const rows = (data ?? []) as unknown as Array<{ id: string } & Record<string, unknown>>;
   const childIds = new Set<string>();
   /* DISPLAY-ONLY transfer-to columns (audit R8): the SI number(s) each DO was
@@ -3419,10 +3420,8 @@ deliveryOrdersMfg.post('/', async (c) => {
         qty: Number(it.qty ?? 0),
         soItemId: (it.soItemId as string | null) ?? null,
       })));
-    if (unlinked.length > 0) {
-      markIdempotencyNoWrite(c);
-      return c.json(unlinkedSoLinesResponse(unlinked), 409);
-    }
+    const bad = unlinkedScanRefusal(unlinked, unlinkedSoLinesResponse);
+    if (bad) { markIdempotencyNoWrite(c); return c.json(bad, 409); }
   }
 
   /* Sofa batch guard (Wei Siang 2026-06-01) — a sofa set with NO production PO
@@ -4742,7 +4741,8 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
       qty: Number(it.qty ?? 0),
       soItemId: (it.soItemId as string | null) ?? null,
     }]);
-    if (unlinked.length > 0) return c.json(unlinkedSoLinesResponse(unlinked), 409);
+    const bad = unlinkedScanRefusal(unlinked, unlinkedSoLinesResponse);
+    if (bad) return c.json(bad, 409);
   }
 
   /* Sofa batch guard — a sofa line with no production PO has no dye-lot batch

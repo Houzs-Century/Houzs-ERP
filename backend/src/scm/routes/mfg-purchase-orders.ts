@@ -531,7 +531,7 @@ mfgPurchaseOrders.get('/', async (c) => {
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
-  /* Tier 2 downstream-lock (mirror computeGrnFlags in routes/grns.ts) — one
+  /* Tier 2 downstream-lock (mirror computeGrnFlags in lib/grn-consumption-flags) — one
      extra query: pull the distinct purchase_order_ids that have any non-
      cancelled GRN, then stamp has_children on every PO row. The list grid uses
      this to hide Edit / Cancel from POs that are downstream-locked. */
