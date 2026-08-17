@@ -262,15 +262,35 @@ export const useCreateMfgSalesOrder = () => {
   });
 };
 
+/* `expectedStatus` is the server's compare-and-set on the status column: the
+   backend refuses with 409 `so_version_conflict` when it does not equal the
+   row's CURRENT status. So it must carry the status the operator was LOOKING
+   at, and the caller is the only thing that holds it.
+
+   It is REQUIRED, not optional, because it decides whether the CAS runs at all
+   (see CLAUDE.md, "a parameter that DECIDES something is required"). Pass an
+   explicit `null` where a surface genuinely does not know the current status —
+   the backend then skips the status half and the version CAS alone guards the
+   write.
+
+   IT MUST NOT BE READ BACK OUT OF THE QUERY CACHE. `onMutate` below paints the
+   TARGET status onto the detail + list caches, and react-query runs `onMutate`
+   BEFORE `mutationFn` — so a mutationFn that read the cache read its own
+   optimistic write and sent `expectedStatus === status`. Every transition off
+   a warm detail cache therefore failed the CAS and returned 409, which the
+   operator saw as "Status update failed — Someone else updated this order
+   while you were editing" on the very first click, with nobody else involved.
+   Cancel SO on the detail page was 100% reproducible; the list buttons happened
+   to work only because a cold detail cache made `onMutate`'s paint a no-op.
+   Pinned by sales-order-status-expected.test.tsx. */
 export const useUpdateMfgSalesOrderStatus = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ docNo, status }: { docNo: string; status: string }) => {
+    mutationFn: async ({ docNo, status, expectedStatus }: { docNo: string; status: string; expectedStatus: string | null }) => {
       const version = await resolveLoadedSoVersion(qc, docNo);
-      const cached = qc.getQueryData<{ salesOrder?: { status?: string } }>(['mfg-sales-order-detail', docNo]);
       return authedFetch<{ salesOrder: unknown; version: number }>(`/mfg-sales-orders/${docNo}/status`, {
         method: 'PATCH',
-        body: JSON.stringify({ status, version, expectedStatus: cached?.salesOrder?.status }),
+        body: JSON.stringify({ status, version, expectedStatus: expectedStatus ?? undefined }),
       });
     },
     onMutate: async ({ docNo, status }) => {

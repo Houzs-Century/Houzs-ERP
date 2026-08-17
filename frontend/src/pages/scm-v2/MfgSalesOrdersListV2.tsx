@@ -1170,7 +1170,7 @@ export function MfgSalesOrdersListV2() {
   const goFullPage = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}`);
   const doConfirm = (r: SoRow) =>
     updateStatus.mutate(
-      { docNo: r.doc_no, status: "confirmed" },
+      { docNo: r.doc_no, status: "confirmed", expectedStatus: r.status },
       { onSuccess: () => setSelected(null) }
     );
   const doDeliver = (r: SoRow) => navigate(convertToLink('soToDo', r.doc_no));
@@ -1186,7 +1186,7 @@ export function MfgSalesOrdersListV2() {
     )
       return;
     updateStatus.mutate(
-      { docNo: r.doc_no, status: "CONFIRMED" },
+      { docNo: r.doc_no, status: "CONFIRMED", expectedStatus: r.status },
       {
         onSuccess: () => setSelected(null),
         onError: (e) =>

@@ -657,7 +657,11 @@ function SalesOrderDetailV2ReadOnly() {
         `Cancel sales order ${salesOrder.doc_no}? This cannot be undone.`
       )
     ) {
-      updateStatus.mutate({ docNo: salesOrder.doc_no, status: "cancelled" });
+      updateStatus.mutate({
+        docNo: salesOrder.doc_no,
+        status: "cancelled",
+        expectedStatus: salesOrder.status,
+      });
     }
   };
   /* History (owner 2026-08-13: "点history的时候没有反应").

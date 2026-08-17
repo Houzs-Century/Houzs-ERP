@@ -1734,7 +1734,7 @@ export const SalesOrderDetail = () => {
       body: "The SO will stop proceeding — it won't appear in MRP / PO / DO conversion, and line edits lock. You can Reopen it later.",
       confirmLabel: 'Cancel SO', danger: true,
     }))) return;
-    updateStatus.mutate({ docNo: header.doc_no, status: 'CANCELLED' });
+    updateStatus.mutate({ docNo: header.doc_no, status: 'CANCELLED', expectedStatus: header.status });
   };
   /* Discard draft (owner 2026-07-20) — hard-delete a junk DRAFT (esp. a bad
      scan/OCR draft) instead of burning a doc number on confirm→cancel. Behind the
@@ -2043,7 +2043,7 @@ export const SalesOrderDetail = () => {
                   body: 'This turns the draft into a live, confirmed sales order — it will appear in MRP / PO / DO flows and KPIs.',
                   confirmLabel: 'Confirm Order',
                 }))) return;
-                updateStatus.mutate({ docNo: header.doc_no, status: 'CONFIRMED' });
+                updateStatus.mutate({ docNo: header.doc_no, status: 'CONFIRMED', expectedStatus: header.status });
               }}
               disabled={updateStatus.isPending || deleteDraft.isPending}>
               <span>{updateStatus.isPending ? 'Confirming…' : 'Confirm Order'}</span>
@@ -2082,7 +2082,7 @@ export const SalesOrderDetail = () => {
                 if (reason == null) return;
                 // Audit the override via a status change row (we re-affirm the
                 // current status with an OVERRIDE notes prefix).
-                updateStatus.mutate({ docNo: header.doc_no, status: header.status });
+                updateStatus.mutate({ docNo: header.doc_no, status: header.status, expectedStatus: header.status });
                 setUnlockOverride(true);
               } else {
                 setUnlockOverride(false);
