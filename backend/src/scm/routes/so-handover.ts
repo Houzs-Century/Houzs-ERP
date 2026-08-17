@@ -153,10 +153,15 @@ soHandover.post('/apply', async (c) => {
   const skipped: Array<{ docNo: string; reason: string }> = [];
 
   for (const docNo of docNos) {
-    const { data: beforeRow } = await scopeToCompanyId(
+    const { data: beforeRow, error: readError } = await scopeToCompanyId(
       sb.from('mfg_sales_orders').select('doc_no, salesperson_id, agent, status').eq('doc_no', docNo),
       co.companyId,
     ).maybeSingle();
+    /* A FAILED read and an order that is genuinely not here are different
+       facts, and only one of them is the operator's to act on. Reporting a
+       dropped connection as "Not found in this company" would send them looking
+       for a company mix-up that never happened. */
+    if (readError) { skipped.push({ docNo, reason: `Could not be read: ${readError.message}` }); continue; }
     if (!beforeRow) { skipped.push({ docNo, reason: 'Not found in this company.' }); continue; }
     const before = beforeRow as unknown as Record<string, unknown>;
 
