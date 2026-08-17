@@ -54,6 +54,8 @@ import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
+import { doPendingItemCodesOf, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
+import { unlinkedCheckUnavailableResponse } from '../lib/do-unlinked-so-lines';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
@@ -495,29 +497,28 @@ async function checkSiOverRemaining(
    the DO with Pending qty); a manual line for an item NOT on the DO, or one whose
    DO line is already fully invoiced (remaining 0), is left alone. Returns the
    offending item codes (empty = nothing to block, and no DB round-trip when there
-   are no unlinked lines — the common from-DO path is all-linked). */
+   are no unlinked lines — the common from-DO path is all-linked).
+
+   The pending-code read moved to doPendingItemCodesOf (unlinked-line-edit-guard)
+   so this path and the line PATCH — which had no check at all — cannot drift
+   apart on what "shadow" means, and so a failed DO read is REPORTED rather than
+   read as "nothing pending" (which silently cleared the very line this exists
+   to refuse). `ok: false` is not "all clear". */
 async function unlinkedFromDoOffenders(
   sb: any,
   doId: string,
   lines: Array<Record<string, unknown>>,
-): Promise<string[]> {
+): Promise<{ ok: true; codes: string[] } | { ok: false; reason: string }> {
   const unlinked = lines.filter((l) => !l.doItemId && l.itemCode);
-  if (unlinked.length === 0) return [];
-  const { data: doItemRows } = await sb.from('delivery_order_items')
-    .select('id, item_code').eq('delivery_order_id', doId);
-  const rows = (doItemRows ?? []) as Array<{ id: string; item_code: string | null }>;
-  if (rows.length === 0) return [];
-  const remainingMap = await doRemainingByItemId(sb, rows.map((r) => r.id));
-  const pendingCodes = new Set<string>();
-  for (const r of rows) {
-    if (r.item_code && (remainingMap.get(r.id) ?? 0) > 0) pendingCodes.add(r.item_code.trim().toUpperCase());
-  }
+  if (unlinked.length === 0) return { ok: true, codes: [] };
+  const pending = await doPendingItemCodesOf(sb, doId);
+  if (!pending.ok) return pending;
   const offenders = new Set<string>();
   for (const l of unlinked) {
     const code = String(l.itemCode).trim().toUpperCase();
-    if (pendingCodes.has(code)) offenders.add(String(l.itemCode));
+    if (pending.codes.has(code)) offenders.add(String(l.itemCode));
   }
-  return [...offenders];
+  return { ok: true, codes: [...offenders] };
 }
 
 /* ── Invoice price vs the AGREED ORDER price — WARN, never block ───────────
@@ -1003,11 +1004,13 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
     const fromDoId = (body.deliveryOrderId as string | undefined) ?? null;
     if (fromDoId) {
       const shadow = await unlinkedFromDoOffenders(sb, fromDoId, items);
-      if (shadow.length > 0) {
+      // A guard that could not read the DO must refuse, not permit.
+      if (!shadow.ok) return c.json(unlinkedCheckUnavailableResponse(shadow.reason), 409);
+      if (shadow.codes.length > 0) {
         return c.json({
           error: 'unlinked_do_line',
-          message: `These items are still pending on the source Delivery Order and must be added through "Add from Delivery Order" so the delivered quantity is tracked: ${shadow.join(', ')}.`,
-          itemCodes: shadow,
+          message: `These items are still pending on the source Delivery Order and must be added through "Add from Delivery Order" so the delivered quantity is tracked: ${shadow.codes.join(', ')}.`,
+          itemCodes: shadow.codes,
         }, 409);
       }
     }
@@ -1795,11 +1798,13 @@ salesInvoices.post('/:id/items', async (c) => {
     const fromDoId = (header as { delivery_order_id?: string | null }).delivery_order_id ?? null;
     if (fromDoId && !it.doItemId) {
       const shadow = await unlinkedFromDoOffenders(sb, fromDoId, [it]);
-      if (shadow.length > 0) {
+      // A guard that could not read the DO must refuse, not permit.
+      if (!shadow.ok) return c.json(unlinkedCheckUnavailableResponse(shadow.reason), 409);
+      if (shadow.codes.length > 0) {
         return c.json({
           error: 'unlinked_do_line',
-          message: `${shadow.join(', ')} is still pending on the source Delivery Order — add it through "Add from Delivery Order" so the delivered quantity is tracked.`,
-          itemCodes: shadow,
+          message: `${shadow.codes.join(', ')} is still pending on the source Delivery Order — add it through "Add from Delivery Order" so the delivered quantity is tracked.`,
+          itemCodes: shadow.codes,
         }, 409);
       }
     }
@@ -1863,11 +1868,14 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
+  /* The source DO this invoice names, read on the gate query below (same row,
+     no extra round-trip) and used by the unlinked re-point guard further down. */
+  let siFromDoId: string | null = null;
   {
     /* The gate for the whole handler: every line write below keys on
        (itemId, sales_invoice_id), so proving the INVOICE is ours proves the
        chain. Unscoped, the status gate below read the OTHER company's status. */
-    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status').eq('id', id), co.companyId).maybeSingle();
+    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status, delivery_order_id').eq('id', id), co.companyId).maybeSingle();
     if (!hd) return c.json(NOT_THIS_COMPANY, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before editing lines.' }, 409);
@@ -1876,6 +1884,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     if (hd && isIssuedSi((hd as { status: string }).status)) {
       return c.json({ error: 'invoice_issued', message: SI_ISSUED_LINE_MESSAGE }, 409);
     }
+    siFromDoId = (hd as { delivery_order_id?: string | null } | null)?.delivery_order_id ?? null;
   }
 
   if (it.itemCode !== undefined) {
@@ -1939,6 +1948,23 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     const effGroup = (it.itemGroup ?? prev.item_group) as string | null | undefined;
     const effVariants = (it.variants ?? prev.variants) as Record<string, unknown> | null | undefined;
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
+  }
+
+  /* The EDIT half of FIX 3, which until now guarded only the two INSERT paths.
+     The over-invoice cap above is gated on `prev.do_item_id`, so re-typing an
+     unlinked line's item code to one still Pending on the source DO bills those
+     delivered goods a second time — the delivery's Pending pool never moves, and
+     the resync below re-posts the revenue and re-enqueues the invoice to
+     AutoCount. Same narrow rule as the insert paths (a fully-invoiced DO line is
+     still left alone), same shared implementation as the sibling chains. */
+  {
+    const repoint = await unlinkedEditRefusal(sb, 'sales-invoice', {
+      parentId: siFromDoId,
+      storedLink: (prev as { do_item_id?: string | null }).do_item_id ?? null,
+      storedCode: (prev as { item_code?: string | null }).item_code ?? null,
+      patchCode: it.itemCode,
+    });
+    if (repoint) return c.json(repoint, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').update(updates).eq('id', itemId), co.companyId);

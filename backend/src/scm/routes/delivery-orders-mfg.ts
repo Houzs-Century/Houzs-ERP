@@ -54,7 +54,7 @@ import { loadIncomingLines, subtractOutstanding, allocateExpectedBatches } from 
 import { loadCommittedShipments } from '../lib/committed-shipments';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
 import { findOverDeliveredSoItems } from '../lib/do-over-delivery';
-import { findUnlinkedSoLines, unlinkedSoLinesResponse } from '../lib/do-unlinked-so-lines';
+import { findUnlinkedSoLines, unlinkedSoLinesResponse, unlinkedCheckUnavailableResponse } from '../lib/do-unlinked-so-lines';
 import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
@@ -3419,9 +3419,14 @@ deliveryOrdersMfg.post('/', async (c) => {
         qty: Number(it.qty ?? 0),
         soItemId: (it.soItemId as string | null) ?? null,
       })));
-    if (unlinked.length > 0) {
+    // A guard that could not read the SO must refuse, not permit.
+    if (!unlinked.ok) {
       markIdempotencyNoWrite(c);
-      return c.json(unlinkedSoLinesResponse(unlinked), 409);
+      return c.json(unlinkedCheckUnavailableResponse(unlinked.reason), 409);
+    }
+    if (unlinked.offenders.length > 0) {
+      markIdempotencyNoWrite(c);
+      return c.json(unlinkedSoLinesResponse(unlinked.offenders), 409);
     }
   }
 
@@ -4742,7 +4747,9 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
       qty: Number(it.qty ?? 0),
       soItemId: (it.soItemId as string | null) ?? null,
     }]);
-    if (unlinked.length > 0) return c.json(unlinkedSoLinesResponse(unlinked), 409);
+    // A guard that could not read the SO must refuse, not permit.
+    if (!unlinked.ok) return c.json(unlinkedCheckUnavailableResponse(unlinked.reason), 409);
+    if (unlinked.offenders.length > 0) return c.json(unlinkedSoLinesResponse(unlinked.offenders), 409);
   }
 
   /* Sofa batch guard — a sofa line with no production PO has no dye-lot batch

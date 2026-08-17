@@ -30,6 +30,8 @@ import {
 } from '../shared/so-line-display';
 import { recomputePoReceived, resolvePoBatchByItem } from './grns';
 import { findUnlinkedPrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
+import { unlinkedCheckUnavailableResponse } from '../lib/do-unlinked-so-lines';
+import { unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
@@ -684,7 +686,9 @@ purchaseReturns.post('/', async (c) => {
         soItemId: (it.grnItemId as string | undefined) ?? null,
       })),
     );
-    if (unlinked.length > 0) return c.json(unlinkedReturnResponse(unlinked, 'purchase'), 409);
+    // A guard that could not read the GRN must refuse, not permit.
+    if (!unlinked.ok) return c.json(unlinkedCheckUnavailableResponse(unlinked.reason), 409);
+    if (unlinked.offenders.length > 0) return c.json(unlinkedReturnResponse(unlinked.offenders, 'purchase'), 409);
   }
 
   /* Audit gap #7 — REJECT a GRN-linked over-return with the SAME 409 the
@@ -1323,9 +1327,34 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
   if (!co.ok) return c.json(co.refusal, 409);
   /* The child is stamped with the active company; the parent it hangs off must
      be this company's too, or a line lands on another company's return. */
-  const { data: parent } = await scopeToCompanyId(sb.from('purchase_returns').select('id').eq('id', prId), co.companyId).maybeSingle();
+  /* grn_id rides along on the ownership read (same row, no extra query) — the
+     unlinked guard below needs the GRN this return names. */
+  const { data: parent } = await scopeToCompanyId(sb.from('purchase_returns').select('id, grn_id').eq('id', prId), co.companyId).maybeSingle();
   if (!parent) return c.json(NOT_THIS_COMPANY, 404);
   { const lock = await prLineLock(sb, prId); if (lock) return c.json(lock, 409); }
+
+  /* The add-a-line half of the back door the CREATE path (POST /) has closed
+     since 2026-08-04 — and this path never had it, so the create-path refusal
+     could be walked around in a single save by adding the line afterwards. An
+     unlinked line sends the stock OUT while grn_items.returned_qty stays put,
+     so the same goods can be returned again. Refused only when the named GRN
+     already contains that material; a genuinely manual return line still passes. */
+  {
+    const unlinked = await findUnlinkedPrLines(
+      sb,
+      (parent as { grn_id?: string | null } | null)?.grn_id ?? null,
+      null,
+      [{
+        lineRef: 'add',
+        itemCode: String(it.materialCode ?? ''),
+        qty: Number(it.qty ?? 1),
+        soItemId: (it.grnItemId as string | undefined) ?? null,
+      }],
+    );
+    if (!unlinked.ok) return c.json(unlinkedCheckUnavailableResponse(unlinked.reason), 409);
+    if (unlinked.offenders.length > 0) return c.json(unlinkedReturnResponse(unlinked.offenders, 'purchase'), 409);
+  }
+
   const qtyReturned = Number(it.qty ?? 1);
   const unitPriceCenti = Number(it.unitPriceCenti ?? 0);
   const lineRefund = qtyReturned * unitPriceCenti;
@@ -1504,6 +1533,30 @@ export const patchPurchaseReturnItemHandler = async (c: any) => {
       requested: qtyReturned, ownPriorDraw: prevQty, what: 'GRN line',
     });
     if (capLock) return c.json(capLock, 409);
+  }
+
+  /* The EDIT half of the same back door. Both the cap directly above and the
+     adjustGrnReturnedQty consumption below are gated on `grnItemId`, so
+     re-typing an unlinked line's material code to one the named GRN contains
+     sends that receipt's goods out while its returned_qty never moves — and the
+     same goods can be returned again. Runs on the POST-edit code and only while
+     the stored link is NULL; the rule is shared with the sibling chains. */
+  {
+    /* `error` is BOUND, and that is load-bearing rather than tidy: a discarded
+       failure here yields a null grn_id, a null parent reads as "this return
+       names no GRN", and the guard below returns "allowed" — re-opening the
+       exact door this block closes. Refuse instead. */
+    const { data: prHdr, error: prHdrErr } = await scopeToCompanyId(
+      sb.from('purchase_returns').select('grn_id').eq('id', prId), co.companyId,
+    ).maybeSingle();
+    if (prHdrErr) return c.json(unlinkedCheckUnavailableResponse(prHdrErr.message), 409);
+    const repoint = await unlinkedEditRefusal(sb, 'purchase-return', {
+      parentId: (prHdr as { grn_id?: string | null } | null)?.grn_id ?? null,
+      storedLink: grnItemId,
+      storedCode: (prev as { material_code: string | null }).material_code,
+      patchCode: it.materialCode,
+    });
+    if (repoint) return c.json(repoint, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_return_items').update(updates).eq('id', itemId), co.companyId);

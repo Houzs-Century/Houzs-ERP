@@ -85,10 +85,6 @@
       "reads": 8,
       "catches": 0
     },
-    "backend/src/scm/lib/do-unlinked-so-lines.ts": {
-      "reads": 1,
-      "catches": 0
-    },
     "backend/src/scm/lib/doc-no.ts": {
       "reads": 2,
       "catches": 0
@@ -125,10 +121,6 @@
       "reads": 5,
       "catches": 0
     },
-    "backend/src/scm/lib/grn-unlinked-po-lines.ts": {
-      "reads": 1,
-      "catches": 0
-    },
     "backend/src/scm/lib/inventory-movements.ts": {
       "reads": 2,
       "catches": 0
@@ -159,10 +151,6 @@
     },
     "backend/src/scm/lib/recost.ts": {
       "reads": 12,
-      "catches": 0
-    },
-    "backend/src/scm/lib/return-unlinked-lines.ts": {
-      "reads": 2,
       "catches": 0
     },
     "backend/src/scm/lib/sales-doc-derive.ts": {
@@ -398,7 +386,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/sales-invoices.ts": {
-      "reads": 30,
+      "reads": 29,
       "catches": 0
     },
     "backend/src/scm/routes/scan-payment.ts": {

@@ -32,6 +32,8 @@ import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurren
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
+import { unlinkedCheckUnavailableResponse } from '../lib/do-unlinked-so-lines';
+import { unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 import { checkReceiptCosts, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
@@ -1669,7 +1671,9 @@ grns.post('/', async (c) => {
         soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
       })),
     );
-    if (unlinked.length > 0) return c.json(unlinkedPoLinesResponse(unlinked), 409);
+    // A guard that could not read the PO must refuse, not permit.
+    if (!unlinked.ok) return c.json(unlinkedCheckUnavailableResponse(unlinked.reason), 409);
+    if (unlinked.offenders.length > 0) return c.json(unlinkedPoLinesResponse(unlinked.offenders), 409);
   }
 
   const headerWarehouseId = await resolveReceiveWarehouse(
@@ -3033,7 +3037,9 @@ grns.post('/:id/items', async (c) => {
         soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
       }],
     );
-    if (unlinked.length > 0) return c.json(unlinkedPoLinesResponse(unlinked), 409);
+    // A guard that could not read the PO must refuse, not permit.
+    if (!unlinked.ok) return c.json(unlinkedCheckUnavailableResponse(unlinked.reason), 409);
+    if (unlinked.offenders.length > 0) return c.json(unlinkedPoLinesResponse(unlinked.offenders), 409);
   }
 
   const parsedAdd = parseLineNumbers({
@@ -3255,7 +3261,9 @@ grns.patch('/:id/items/:itemId', async (c) => {
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
      stock door: an added line writes its IN immediately, but a cancelled GRN's
      reversal never runs again → ghost stock forever. Mirror prLineLock. */
-  const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status').eq('id', grnId), co.companyId).maybeSingle();
+  /* purchase_order_id rides along on the gate read (same row, no extra query) —
+     the unlinked re-point guard below needs the PO this receipt names. */
+  const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status, purchase_order_id').eq('id', grnId), co.companyId).maybeSingle();
   if (!grnGate) return c.json(NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
   if (grnGateStatus === 'CANCELLED' || grnGateStatus === 'CLOSED') {
@@ -3310,6 +3318,23 @@ grns.patch('/:id/items/:itemId', async (c) => {
       });
       if (capLock) return c.json({ ...capLock, poItemId }, 409);
     }
+  }
+
+  /* The EDIT half of the same back door the create/add paths already close.
+     The cap directly above is gated on `poItemId`, and recomputePoReceived below
+     sums by that same link — so re-typing an unlinked line's material code to
+     one the named PO orders receives the PO's goods while its received_qty never
+     moves, and the delivery can be received again. Runs on the POST-edit code
+     and only while the stored link is NULL; the rule itself lives in
+     unlinked-line-edit-guard, shared with the three sibling chains. */
+  {
+    const repoint = await unlinkedEditRefusal(sb, 'grn', {
+      parentId: (grnGate as { purchase_order_id?: string | null } | null)?.purchase_order_id ?? null,
+      storedLink: (prev as { purchase_order_item_id: string | null }).purchase_order_item_id,
+      storedCode: (prev as { material_code: string | null }).material_code,
+      patchCode: it.materialCode,
+    });
+    if (repoint) return c.json(repoint, 409);
   }
 
   const unit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : (prev as { unit_price_centi: number }).unit_price_centi;
