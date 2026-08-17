@@ -170,16 +170,25 @@ export const GrnFromPo = () => {
   const effRemaining = (r: OutstandingPoItem): number =>
     r.remainingQty - (draftQtyById.get(r.poItemId) ?? 0);
 
+  /* THE SCREEN'S OWN NARROWING, split out so the empty state can tell it apart
+     from the toolbar and from the unsaved draft. Three different causes with
+     three different fixes: clear a filter, go back and save the draft, or drop
+     the PO scope. Folded together, a row the SCOPE dropped was reported as a row
+     the operator's own draft had already taken. */
+  const scopedRows = useMemo(() => items.filter((r) => {
+    if (poIdSet.size > 0 && !poIdSet.has(r.poId)) return false;
+    // Append mode — only this GRN's supplier (and warehouse, if the GRN is
+    // warehouse-bound) so the receipt stays one-supplier / one-warehouse.
+    if (appendGrn) {
+      if (appendGrn.supplier_id && r.supplierId !== appendGrn.supplier_id) return false;
+      if (appendGrn.warehouse_id && r.warehouseLocationId !== appendGrn.warehouse_id) return false;
+    }
+    return true;
+  }), [items, poIdSet, appendGrn]);
+
   // ── Filtered rows fed to the grid ────────────────────────────────────
   const rows = useMemo(() => {
-    return items.filter((r) => {
-      if (poIdSet.size > 0 && !poIdSet.has(r.poId)) return false;
-      // Append mode — only this GRN's supplier (and warehouse, if the GRN is
-      // warehouse-bound) so the receipt stays one-supplier / one-warehouse.
-      if (appendGrn) {
-        if (appendGrn.supplier_id && r.supplierId !== appendGrn.supplier_id) return false;
-        if (appendGrn.warehouse_id && r.warehouseLocationId !== appendGrn.warehouse_id) return false;
-      }
+    return scopedRows.filter((r) => {
       if (effRemaining(r) <= 0) return false;
       if (category !== 'all' && (r.itemGroup ?? '').toLowerCase() !== category) return false;
       if (dateFrom || dateTo) {
@@ -191,9 +200,10 @@ export const GrnFromPo = () => {
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, draftQtyById, category, dateField, dateFrom, dateTo, poIdSet, appendGrn]);
+  }, [scopedRows, draftQtyById, category, dateField, dateFrom, dateTo]);
 
-  /* Commander 2026-05-31 — "Convert to GR 应该进入 Draft 状态，不要直接 Create."
+  /* Commander 2026-05-31, on the PO → Goods Received transfer —
+     "应该进入 Draft 状态，不要直接 Create."
      When the operator converts ONE PO from the list (?poId=<id>), land here with
      that PO's outstanding lines PRE-TICKED at their full remaining qty, so the
      screen is a ready-to-review draft (mirrors the DO→SI convert). They eyeball
@@ -651,16 +661,23 @@ export const GrnFromPo = () => {
         /* AN EMPTY RESULT MUST SAY WHY IT IS EMPTY. This used to be one sentence
            — "every line has been received (or there are no outstanding POs)" —
            covering five different situations and asserting the work was DONE in
-           all of them. The owner hit it on a PO that had never been received. The
-           reasons now live in one shared module so the mobile wizard cannot
-           disagree with this screen. */
+           all of them. The owner hit it on a PO that had never been received.
+
+           An empty result is only ever evidence that THE QUERY FOUND NOTHING;
+           "everything is received" is a stronger claim this page has no standing
+           to make, since the read is scoped to the active company and fails
+           closed when that company cannot be resolved. The reasons now live in
+           one shared module (which keeps #2367's wording for the unscoped case)
+           so the mobile wizard cannot disagree with this screen. */
         emptyMessage={outstandingEmptyReason({
           isError: itemsQ.isError,
           isLoading: itemsQ.isLoading,
           scope: serverScope,
           serverRowCount: items.length,
+          scopedRowCount: scopedRows.length,
           visibleRowCount: rows.length,
           filtersActive: category !== 'all' || Boolean(dateFrom) || Boolean(dateTo),
+          poScopeActive: poIdSet.size > 0,
         }) ?? ''}
       />
 

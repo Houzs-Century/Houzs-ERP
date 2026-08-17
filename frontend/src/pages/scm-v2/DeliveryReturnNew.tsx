@@ -18,6 +18,7 @@
 // prefill convenience (mirrors DeliveryOrderNew's ?fromSo).
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -310,7 +311,7 @@ export const DeliveryReturnNew = () => {
             <div className={styles.actions}>
               {/* Pull lines from a Delivery Order — mirrors New GRN's "From Purchase Order". */}
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/delivery-returns/from-do')}>
-                <ArrowRightLeft {...ICON} /> From Delivery Order
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('do')}
               </Button>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/delivery-returns')}>
                 <X {...ICON} /> Cancel
@@ -531,7 +532,7 @@ export const DeliveryReturnNew = () => {
             }}>
               <span>Every return line must be picked from a delivered Delivery Order — start from a DO.</span>
               <Button variant="primary" size="md" onClick={() => navigate('/scm/delivery-returns/from-do')}>
-                <ArrowRightLeft {...ICON} /> Pick from a Delivery Order
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('do')}
               </Button>
             </div>
           )}

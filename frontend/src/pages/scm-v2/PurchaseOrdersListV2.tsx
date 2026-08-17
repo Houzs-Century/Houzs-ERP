@@ -65,7 +65,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { convertToLink } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
@@ -595,7 +595,7 @@ function DetailDrawer({
                         icon={<CheckCircle2 size={14} />}
                         onClick={onConvertGrn}
                       >
-                        Convert to GRN
+                        {transferToLabel('grn')}
                       </Button>
                     )}
                   </>
@@ -855,7 +855,7 @@ export function PurchaseOrdersListV2() {
   const goEdit = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}?edit=1`);
   const goPrint = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}?print=1`);
   const goFullPage = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}`);
-  // Convert to GRN routes to the reviewable From-PO picker pre-scoped to this
+  // Transfer to Goods Received routes to the reviewable From-PO picker pre-scoped to this
   // PO (?poId=<id>); the picker pre-ticks the PO's outstanding lines so the
   // operator reviews a ready draft and only Save creates the GRN.
   const goGrnFromPo = (r: PoHeaderRow) =>
@@ -1247,7 +1247,7 @@ export function PurchaseOrdersListV2() {
                   icon={<ArrowRightLeft size={14} />}
                   onClick={goFromSo}
                 >
-                  From Sales Order
+                  {transferFromLabel('so')}
                 </Button>
                 <div className="flex items-stretch">
                   <Button

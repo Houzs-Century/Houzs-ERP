@@ -105,7 +105,7 @@ Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
 | Method | Path | Line | Purpose |
 |--------|------|------|---------|
 | GET | `/` | `:833` | List. `?page=` opts into pagination + `statusCounts`. |
-| GET | `/outstanding-po-items` | `:998` | PO lines with `qty - received_qty > 0` on SUBMITTED / PARTIALLY_RECEIVED POs; the from-PO picker. Takes **`?poId=a,b,c`** (server-side scope) and returns **`scope`** beside `items` — see §2a. |
+| GET | `/outstanding-po-items` | `:1283` | PO lines with `qty - received_qty > 0` on SUBMITTED / PARTIALLY_RECEIVED POs; the from-PO picker. **Reads the FULL set** since 2026-08-17. Takes **`?poId=a,b,c`** (server-side scope) and returns **`scope`** beside `items` — see §2a. |
 | GET | `/:id` | `:1173` | Header + items + convert/lock flags + per-line source PO + per-line downstream. |
 | GET | `/:id/linked` | `:1229` | Parent PO + downstream PIs + PRs. |
 | POST | `/` | `:1268` | Create. `asDraft: true` → DRAFT; otherwise created POSTED and immediately posted (`:1471`). |
@@ -600,6 +600,43 @@ lists**, and structurally so:
 - `grnLineDownstream` fans out over every line id on the page, not every GRN.
 - The legacy unpaginated path still `.limit(500)` (`:856`) and is what
   `GrnNew.tsx` reaches through the PO hook.
+- **`GET /outstanding-po-items` used to be one of those caps and was the worse
+  kind.** Until 2026-08-17 it read `.order('purchase_order_id', {ascending:
+  false}).limit(500)` and applied BOTH of its filters afterwards in JS.
+  `purchase_order_id` is a **uuid**, so that ordering is arbitrary rather than
+  newest-first, and the 500 was an arbitrary SAMPLE of the company's PO lines —
+  spent mostly on lines that were never candidates. Measured against production
+  on 2026-08-17 (workflow *Why is a PO not receivable (read-only)*, run
+  32028603860, company HOUZS): **875 PO lines, 356 genuinely outstanding, and
+  the picker could see only 188 of them — 168 outstanding lines were
+  unreachable through the screen that exists to receive them.** It now filters
+  the dead parent statuses in the QUERY (`.not('po.status','in','("DRAFT","CANCELLED")')`
+  through the `!inner` embed, which bounds the read to open work) and **pages**
+  rather than capping, so nothing is dropped without an error. Raising the number
+  would not have fixed it: PostgREST caps a response at 1000 rows whatever
+  `.limit()` says. Only the remaining-qty test stays in JS, because it compares
+  two COLUMNS and PostgREST has no filter for that. The read lives in
+  `backend/src/scm/lib/outstanding-po-lines.ts`, where
+  `outstanding-po-lines.test.ts` pins the three properties that keep it honest
+  — no `.limit()`, the status filter in the query, and a total sort order — and
+  §2a records the rest of that module's contract, including the `scope` block an
+  empty grid needs in order to say something true.
+
+  **On the two modules.** #2367 (main) and this branch fixed the same read in
+  parallel, as `outstanding-po-items.ts` and `outstanding-po-lines.ts`. Only the
+  `-lines` module survives: keeping both would have left a suite whose header
+  says *"three properties this must keep"* asserting them about code with no
+  callers. Its three assertions were carried over as **behavioural** tests of
+  `loadOutstandingPoLines` (a recording PostgREST stand-in), which is strictly
+  more than the source-text form they replaced.
+
+  **What that probe RULED OUT**, both of which read as likely from the code and
+  would have sent the next person down the wrong path:
+
+  | theory | why it is false |
+  |---|---|
+  | the PO carries a status the picker does not open | the detail screen's "Submitted" is a rendered label, but the column really is `SUBMITTED`. The status gate passed. |
+  | the SO-to-PO conversion did not stamp `company_id`, and the fail-closed scope dropped the lines | header `company_id = 1`, both lines `company_id = 1`. Table-wide, **0** `purchase_order_items` disagree with their PO header and **0** are NULL. The conversion stamps correctly. |
 - Free-text search cannot reach supplier name or PO number (`:886-893`) because
   those are embedded resources.
 - `postGrnAndRollup` does a lot inside one request: PO recount, movement write,

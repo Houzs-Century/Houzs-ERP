@@ -92,7 +92,7 @@ export const PurchaseOrderFromSo = () => {
   const navigate = useNavigate();
   const itemsQ   = useOutstandingSoItems();
 
-  /* Commander 2026-05-29 — when opened from a PO ("Convert from SO" / "Add Line
+  /* Commander 2026-05-29 — when opened from a PO ("Transfer from Sales Order" / "Add Line
      Item"), ?poId scopes this picker to that PO: it locks to the PO's supplier
      and, on save, APPENDS the picked SO lines to that PO (instead of creating
      new POs), then returns to the PO. */
@@ -436,7 +436,7 @@ export const PurchaseOrderFromSo = () => {
   // ── Add to PO ────────────────────────────────────────────────────────
   // Commander 2026-05-29 — two modes:
   //   • PO-scoped (?poId): APPEND the picked lines straight to that PO, then
-  //     return to the PO detail page (Convert from SO / Add Line Item).
+  //     return to the PO detail page (Transfer from Sales Order / Add Line Item).
   //   • Default: stash the picks + feed the New PO form (/scm/purchase-orders/new).
   const onSave = () => {
     if (pickedCount === 0) { setDialog({ title: 'Nothing picked', body: 'Tick at least one SO line first.' }); return; }

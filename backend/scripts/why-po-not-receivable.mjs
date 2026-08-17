@@ -8,9 +8,10 @@
 // Two screens of the same ERP contradict each other about one document, so one
 // of them is wrong and this prints the inputs that say which.
 //
-// The picker is `GET /outstanding-po-items` (scm/routes/grns.ts). Its read is
-// ONE PostgREST statement followed by TWO JavaScript filters, and every one of
-// those steps can silently drop a line:
+// ANSWERED, and the read has since been FIXED — see the note below before you
+// read a verdict off this script. The picker is `GET /outstanding-po-items`
+// (scm/routes/grns.ts, read now in scm/lib/outstanding-po-lines.ts). It USED to
+// be one PostgREST statement followed by TWO JavaScript filters:
 //
 //   SELECT ... FROM scm.purchase_order_items poi
 //   JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id  -- `po:...!inner`
@@ -21,14 +22,21 @@
 //   .filter(po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED')
 //   .filter(qty - (received_qty ?? 0) > 0)
 //
-// So this evaluates the gates ONE AT A TIME and NAMES the one that drops each
-// line, rather than reporting "not there". The window gate is the one no code
-// comment mentions: `purchase_order_id` is a uuid, so `ORDER BY ... DESC` is
-// effectively random with respect to age, and `LIMIT 500` therefore takes an
-// ARBITRARY 500-row sample of the company's PO lines — not the newest 500.
-// Section C sizes that window against the real outstanding population, which is
-// the only way to tell "your line is not outstanding" apart from "your line was
-// outside the sample".
+// It evaluates the gates ONE AT A TIME and NAMES the one that drops each line,
+// rather than reporting "not there". On its first dispatch (run 32028603860)
+// that named the WINDOW gate, which no code comment mentioned:
+// `purchase_order_id` is a uuid, so `ORDER BY ... DESC` is random with respect
+// to age and `LIMIT 500` took an ARBITRARY sample. For company HOUZS: 875 PO
+// lines, 356 outstanding, and the picker could see 188 of them.
+//
+// >>> THE WINDOW GATE NO LONGER EXISTS. PR #2367 (2026-08-17) moved the status
+// >>> filter into the statement and replaced the cap with paginateAll. The gate
+// >>> is kept here as an INFORMATIONAL section — a probe that keeps reporting a
+// >>> gate the code has dropped is a stale fact that gets believed, and this
+// >>> repo has paid for that repeatedly. `HISTORICAL_LIMIT` below is thus the
+// >>> HISTORICAL cap, used only to show what it WOULD have hidden. Section F is
+// >>> the live one: it evaluates the CURRENT read and says whether the picker
+// >>> returns this document's lines today.
 //
 // NOTHING IS WRITTEN. One connection, SELECTs only, no DDL, no transaction.
 //
@@ -49,8 +57,12 @@ const DOC_NO = process.env.DOC_NO || 'HC-PO-2608-001';
    the owner's session would have been on. An explicit value overrides. */
 const COMPANY_IN = String(process.env.COMPANY_ID ?? '').trim();
 
-/* The route's own constants, restated so a change there is a change here. */
-const PICKER_LIMIT = 500;
+/* HISTORICAL. The cap the read carried until PR #2367 removed it. Kept so the
+   window section can still show what it WOULD have hidden; it is no longer a
+   gate and must not be reported as one. */
+const HISTORICAL_LIMIT = 500;
+/* Live. RECEIVABLE_PO_STATUSES in scm/routes/grns.ts — a change there is a
+   change here. */
 const OPEN_STATUSES = ['SUBMITTED', 'PARTIALLY_RECEIVED'];
 
 const sql = postgres(DSN, { ssl: 'require', max: 1, idle_timeout: 20, connect_timeout: 60 });
@@ -141,11 +153,13 @@ async function main() {
         + `${w ? ` -> ${w.code} / ${w.name} (company_id ${w.company_id ?? '(NULL)'})` : ''}`);
     }
 
-    /* ── The window, measured before the per-line verdicts need it ──────────
-       ORDER BY purchase_order_id DESC over a UUID column: the sort key is the
-       random uuid, not a date, so "the first 500" is an arbitrary sample of the
-       company's PO lines rather than the newest ones. Rank this PO's lines in
-       that ordering by counting how many rows sort strictly ahead of them. */
+    /* ── The HISTORICAL window, measured before the verdicts need it ────────
+       ORDER BY purchase_order_id DESC over a UUID column: the sort key was the
+       random uuid, not a date, so "the first 500" was an arbitrary sample of
+       the company's PO lines rather than the newest ones. Rank this PO's lines
+       in that ordering by counting how many rows sort strictly ahead of them.
+       REMOVED FROM THE CODE by PR #2367 — reported below as history, never as
+       a live verdict. */
     const [{ ahead }] = await sql`
       SELECT count(*)::int AS ahead
       FROM scm.purchase_order_items poi
@@ -161,12 +175,12 @@ async function main() {
     /* Every line of one PO shares the sort key, so they occupy positions
        [ahead+1 .. ahead+ties] as a block. Inside the window iff the block
        STARTS before the cut; wholly outside iff it starts at or after it. */
-    const windowHolds = ahead < PICKER_LIMIT;
-    const windowHoldsAll = ahead + ties <= PICKER_LIMIT;
+    const windowHeld = ahead < HISTORICAL_LIMIT;
+    const windowHeldAll = ahead + ties <= HISTORICAL_LIMIT;
 
     console.log('');
-    notice('B2 — the gates of GET /outstanding-po-items, one at a time');
-    notice(`  gate WINDOW inputs: ${ahead} row(s) sort ahead of this PO, ${ties} row(s) share its sort key, limit ${PICKER_LIMIT}`);
+    notice('B2 — the LIVE gates of GET /outstanding-po-items, one at a time');
+    notice(`  (the window gate is gone since PR #2367; its inputs are printed under B3 as history)`);
     for (const l of lines) {
       const drops = [];
       /* GATE 1 EXISTS is true by construction here — the line came out of this
@@ -176,11 +190,6 @@ async function main() {
       }
       /* GATE 3 INNER JOIN — po:purchase_orders!inner. The parent resolves by
          construction here (we read the lines through its id). */
-      if (!windowHolds) {
-        drops.push(`GATE 4 500-ROW WINDOW — ${ahead} rows sort ahead of this PO, so it falls outside LIMIT ${PICKER_LIMIT}`);
-      } else if (!windowHoldsAll) {
-        drops.push(`GATE 4 500-ROW WINDOW — PARTIAL: the block spans positions ${ahead + 1}..${ahead + ties} across the ${PICKER_LIMIT} cut`);
-      }
       if (!OPEN_STATUSES.includes(String(po.status))) {
         drops.push(`GATE 5 PO STATUS — ${po.status} is not one of ${OPEN_STATUSES.join(' / ')}`);
       }
@@ -188,12 +197,19 @@ async function main() {
       if (!(bal > 0)) {
         drops.push(`GATE 6 REMAINING QTY — qty ${l.qty} - received ${l.received_qty ?? 0} = ${bal}, not > 0`);
       }
-      notice(`  ${l.material_code}: ${drops.length ? `DROPPED BY ${drops.join(' ; ALSO ')}` : 'PASSES EVERY GATE — the picker should show this line'}`);
+      notice(`  ${l.material_code}: ${drops.length ? `DROPPED BY ${drops.join(' ; ALSO ')}` : 'PASSES EVERY LIVE GATE — the picker returns this line'}`);
     }
 
-    /* ── C — the window against the real outstanding population ───────────── */
+    /* ── B3 — the gate that USED to fire here, kept as history ────────────── */
     console.log('');
-    notice(`C — the picker's ${PICKER_LIMIT}-row window against company ${ACTIVE}'s real outstanding population`);
+    notice('B3 — HISTORY: the window gate PR #2367 removed');
+    notice(`  ${ahead} row(s) sorted ahead of this PO, ${ties} shared its sort key, cap was ${HISTORICAL_LIMIT}`);
+    notice(`  under the OLD read this document would have been: ${
+      windowHeld ? (windowHeldAll ? 'inside the window' : 'split across the cut') : 'OUTSIDE the window — invisible to the picker'}`);
+
+    /* ── C — what the old window cost, against the real population ────────── */
+    console.log('');
+    notice(`C — HISTORY: what the ${HISTORICAL_LIMIT}-row window cost company ${ACTIVE}`);
     const [pop] = await sql`
       SELECT count(*)::int AS total_lines
       FROM scm.purchase_order_items poi
@@ -213,7 +229,7 @@ async function main() {
         JOIN scm.purchase_orders p ON p.id = poi.purchase_order_id
         WHERE poi.company_id = ${ACTIVE}
         ORDER BY poi.purchase_order_id DESC
-        LIMIT ${PICKER_LIMIT}
+        LIMIT ${HISTORICAL_LIMIT}
       )
       SELECT count(*)::int AS window_rows,
              count(*) FILTER (
@@ -223,9 +239,9 @@ async function main() {
       FROM win`;
     notice(`  purchase_order_items in this company (joined to a live PO): ${pop.total_lines}`);
     notice(`  genuinely OUTSTANDING lines (open status + balance > 0):    ${openAll.outstanding}`);
-    notice(`  rows the picker's window actually reads:                    ${inWin.window_rows} (limit ${PICKER_LIMIT})`);
-    notice(`  OUTSTANDING lines the picker can SEE inside that window:    ${inWin.outstanding_in_window}`);
-    notice(`  outstanding lines the window HIDES:                         ${openAll.outstanding - inWin.outstanding_in_window}`);
+    notice(`  rows the OLD window read:                                   ${inWin.window_rows} (cap ${HISTORICAL_LIMIT})`);
+    notice(`  OUTSTANDING lines the OLD window could see:                 ${inWin.outstanding_in_window}`);
+    notice(`  outstanding lines it HID (0 today — the cap is gone):       ${openAll.outstanding - inWin.outstanding_in_window}`);
 
     /* ── D — the company stamp on this document's own rows, then table-wide ── */
     console.log('');
@@ -271,15 +287,55 @@ async function main() {
           + `qty_received=${g.qty_received} qty_accepted=${g.qty_accepted} poItem=${g.purchase_order_item_id}`);
       }
     }
+
+    /* ── F — WHAT THE CURRENT READ RETURNS ────────────────────────────────
+       The sections above evaluate gates one at a time, which is how you find a
+       cause; this one runs the whole live statement and asks the only question
+       the operator has. It is the SQL equivalent of what
+       scm/lib/outstanding-po-lines.ts now issues: company scope, the `!inner`
+       parent join, the status filter IN THE QUERY, the (purchase_order_id, id)
+       total order, no cap — then the remaining-qty test the JS still applies
+       because PostgREST cannot compare two columns.
+
+       It is a REPLICA and says so. It cannot prove PostgREST translates
+       `.not('po.status','in',…)` across the embed the way this JOIN predicate does;
+       only the running endpoint proves that. What it does prove is that the
+       rows exist and satisfy every condition the new read asks for, which is
+       the half a replica can get right. */
+    console.log('');
+    notice('F — LIVE: what the CURRENT read returns for this document');
+    const visible = await sql`
+      SELECT poi.id, poi.material_code
+      FROM scm.purchase_order_items poi
+      JOIN scm.purchase_orders p ON p.id = poi.purchase_order_id
+      WHERE poi.company_id = ${ACTIVE}
+        AND p.status::text IN ${sql(OPEN_STATUSES)}
+        AND poi.qty - COALESCE(poi.received_qty, 0) > 0
+        AND poi.purchase_order_id = ${po.id}::uuid
+      ORDER BY poi.purchase_order_id DESC, poi.id`;
+    notice(`  lines of ${po.po_number} the picker now returns: ${visible.length} of ${lines.length}`);
+    for (const v of visible) notice(`    ${v.material_code} (${v.id})`);
+    const [{ n: allVisible }] = await sql`
+      SELECT count(*)::int AS n
+      FROM scm.purchase_order_items poi
+      JOIN scm.purchase_orders p ON p.id = poi.purchase_order_id
+      WHERE poi.company_id = ${ACTIVE}
+        AND p.status::text IN ${sql(OPEN_STATUSES)}
+        AND poi.qty - COALESCE(poi.received_qty, 0) > 0`;
+    notice(`  company-wide, the picker now returns ${allVisible} outstanding line(s)`);
+    notice(`  VERDICT: ${
+      visible.length === lines.filter((l) => Number(l.qty ?? 0) - Number(l.received_qty ?? 0) > 0).length
+        ? 'every line of this document with a balance is now reachable'
+        : 'SOME line with a balance is still not reachable — read B2 for which gate'}`);
   }
 
   console.log('');
   notice('READ THE RESULT LIKE THIS:');
   notice('  DROPPED BY GATE 2 -> the conversion mis-stamped company_id; the conversion is the bug and the rows need repair');
-  notice('  DROPPED BY GATE 4 -> the picker read an arbitrary 500-row sample; C says how many outstanding lines it hides');
   notice('  DROPPED BY GATE 5 -> the PO carries a status the picker does not open; decide which status a converted PO should carry');
   notice('  DROPPED BY GATE 6 -> it really is received; the detail screen is the one that is wrong');
-  notice('  PASSES EVERY GATE -> the server would have returned it, and the loss is client-side in GrnFromPo.tsx');
+  notice('  PASSES EVERY LIVE GATE -> the server returns it; any remaining loss is client-side in GrnFromPo.tsx');
+  notice('  B3/C are HISTORY — the window they describe was removed by PR #2367 and is not a verdict');
 }
 
 main()

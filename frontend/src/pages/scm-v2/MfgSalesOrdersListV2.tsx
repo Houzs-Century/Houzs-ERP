@@ -69,7 +69,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { convertToLink } from "../../lib/convertScope";
+import { convertToLink, transferToLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { ItemGroupPill } from "../../vendor/scm/lib/category-badges";
@@ -718,13 +718,16 @@ function DetailDrawer({
                 if (s === "confirmed") {
                   // ABSENT, not disabled, for anyone who may not operate a DO.
                   if (!canDeliver) return null;
+                  /* Was "Deliver" until 2026-08-17: the SO already reports a
+                     "Delivered" STATUS, so an action of the same name blurred
+                     the two. Statuses report; buttons act. */
                   return (
                     <Button
                       variant="primary"
                       icon={<Truck size={14} />}
                       onClick={onDeliver}
                     >
-                      Deliver
+                      {transferToLabel('do')}
                     </Button>
                   );
                 }

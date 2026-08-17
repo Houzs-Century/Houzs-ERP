@@ -1271,6 +1271,7 @@ grns.get('/', async (c) => {
      - `?poId=a,b,c` scopes to those POs — IN SQL
      - line item must have qty - received_qty > 0 — in JS, because PostgREST
        cannot compare two columns
+   Shape mirrors the GET /outstanding-so-items pattern on mfgPurchaseOrders.
    Also returns `scope`, the facts an EMPTY answer needs in order to say
    something true. See lib/outstanding-po-lines.ts for the three mechanisms
    that used to make an unreceived PO read as fully received.
@@ -1281,6 +1282,16 @@ grns.get('/', async (c) => {
    2026-05-28, same class as the PO-from-SO shadowing.) */
 grns.get('/outstanding-po-items', async (c) => {
   const sb = c.get('supabase');
+  /* ONE AUTHORITY FOR THIS READ. #2367 landed the same truncation fix on main as
+     `lib/outstanding-po-items.ts` while this branch landed it as
+     `lib/outstanding-po-lines.ts`. Keeping both would have left the module whose
+     header says "three properties this must keep" with ZERO callers — its tests
+     would go on passing about code the endpoint no longer runs, which is the
+     disarmed-tripwire failure this repo already pays for. The `-lines` module is
+     the superset (it also pushes `?poId=` into SQL and reports WHY an empty
+     answer is empty), so `-items` was deleted in the merge and every assertion
+     its suite made was carried into `outstanding-po-lines.test.ts` as a
+     BEHAVIOURAL test of `loadOutstandingPoLines`, not a source-text one. */
   /* The scope the operator arrived with. Applied in SQL, not in the browser:
      the old code filtered `?poId=` client-side over an already-truncated list,
      so scoping could only narrow the window and never recover a PO that fell

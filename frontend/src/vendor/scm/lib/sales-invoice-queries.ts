@@ -200,7 +200,7 @@ export const useConvertDosToSi = () => {
   });
 };
 
-/* Append a DO's lines into an EXISTING invoice (Detail "Convert from DO"). */
+/* Append a DO's lines into an EXISTING invoice (Detail "Transfer from Delivery Order"). */
 export const useAppendDoToSalesInvoice = () => {
   const qc = useQueryClient();
   return useMutation({

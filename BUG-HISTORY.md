@@ -107,6 +107,174 @@ window against production to measure what it hid, and every one of its queries
 is EXECUTED against real Postgres by `tests-pg/probeTransferCensusSql.pg.test.ts`
 — the last probe died on unparsed SQL on its first dispatch. **Ref** PR
 #PLACEHOLDER, 2026-08-17.
+## A purchase order that landed in AutoCount under AutoCount's own number could not be sent again by ANY path [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** `HC-PO-2608-001` reached the live book as `PO-009968`. #2365 fixed
+the cause — the SO-to-PO transfer arm built the body with `composeCreatePo` and
+then threw it away, so no `DocNo` went with the transfer and AutoCount named the
+document itself. `PO-009968` was then cancelled in `AED_HOUZS` with the owner's
+explicit approval (`POST /cancel {"DocType":"PO","DocNo":"PO-009968"}` ->
+`{"ok":true}`; `SELECT DocNo, Cancelled FROM PO WHERE DocNo='PO-009968'` ->
+`Cancelled = T`; nothing downstream, `TransferedQty = 0` on both lines). The ERP
+still recorded the order as being in AutoCount, and re-sending it turned out to
+be impossible through every tool that exists.
+
+**Root cause (traced through the three guards, not guessed).**
+`purchase_orders.linked_ac_docno` still held `PO-009968`, and the three paths
+that could re-send all read it:
+
+- `enqueuePoCreate` (`scm/lib/autocount-outbox.ts:752`) —
+  `if (header.linked_ac_docno) return false;`
+- `enqueueEdit` (`:1441`) — `if (!composed.linkedAcDocNo) return false;`, so
+  CLEARING the column does not make an ERP-side save re-send it either. An edit
+  of an unlinked document is a silent no-op.
+- `requeueOneRow` (`scm/lib/autocount-requeue.ts:703`) refuses a `sent` row
+  outright, and `requeueSkipped`'s select is `.in('status',
+  ['skipped','failed'])` — it can never return one. So the "re-queue a refused
+  document" workflow reports nothing to do for a document that WAS sent.
+
+`PATCH /:id/confirm` is the fourth door and it short-circuits on an
+already-`SUBMITTED` PO before it reaches `enqueuePoCreate`. All four guards are
+correct: each of them exists to stop a SECOND copy of a document reaching a
+licensed account book, where an accepted document cannot simply be deleted. What
+was missing was any way to express the one case where a re-send IS right — the
+counterpart was cancelled by a human.
+
+**Fix.** `backend/scripts/reraise-hc-po-2608-001.mjs` +
+`.github/workflows/reraise-hc-po-2608-001.yml`. Scoped to ONE document by
+constant (a `DOC_NO` that is not `HC-PO-2608-001` exits 2), and the `UPDATE`
+carries `AND linked_ac_docno = 'PO-009968'` so the only value it can erase is
+the one it was told about. Any other value stops the run. It clears the link and
+then calls the REAL `enqueuePoCreate` — imported from `src/` and driven through
+`scripts/lib/pgrest-shim.mjs`, never re-implemented — because clearing alone
+leaves the document unlinked AND unqueued, which is worse than the state it
+started in. `MODE=plan` by default; apply needs
+`CONFIRM="PO-009968 IS CANCELLED IN AUTOCOUNT"`, which is the fact the script
+cannot check for itself: it has one connection and it is to the ERP's Postgres.
+
+**The verification asserts the defect, not the row count.** On a fresh
+connection it re-reads `linked_ac_docno` and requires SQL `NULL` (an empty string
+reads identically in a report and is not the same value), then reads the queued
+row's `payload->'body'->>'DocNo'` and requires it to equal `HC-PO-2608-001`.
+That field's absence is what produced `PO-009968`, so its presence in the queued
+body is the only pre-drain evidence that the fix carried.
+
+**Still unproven, deliberately.** Whether the document lands in `AED_HOUZS`
+under `HC-PO-2608-001` is not knowable from the ERP — a `sent` outbox row means
+AutoCount answered, not that the book holds the number expected. And a PO does
+NOT record its sales source in `FromDocType`: `PODTL` uses `FromSODtlKey` /
+`FromSODocList`, and on the cancelled `PO-009968` the line keys `905345` /
+`905346` were written correctly while `FromSODocList` was EMPTY, where
+AutoCount's own POs carry e.g. `SO-013000`. Whether the new send fills it in is
+open.
+
+**Ref.** PR #2369, 2026-08-17.
+## A purchase-order column labelled "Transfer to" showed a WAREHOUSE, one click from a "Transfer To (GRN)" that meant the next document [medium]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** Found while auditing the convert/transfer vocabulary for the
+owner's question 2026-08-17, not reported from the floor. On the default
+purchase-order screen (`/scm/purchase-orders/:id`, `PurchaseOrderDetailV2`) the
+line grid carried a column headed **"Transfer to"** whose value was the
+destination **warehouse name**. Add `?edit=1` to the SAME url and the inline
+editor (`PurchaseOrderDetail`) heads a table **"Transfer To (GRN)"**, meaning the
+downstream goods-received note. One document, one route, two meanings for the
+same two words, one click apart.
+
+**Root cause (traced, not guessed).** Two vocabularies grew independently and
+met in this module. `getValue` on the column is
+`warehouseNameById.get(l.warehouse_id)` — it never read a document. Meanwhile
+nine other live screens use "Transfer From/To (`<Doc>`)" for document lineage,
+which is also what AutoCount's SDK calls a conversion (`TransferFrom` is a
+first-class SDK type; `SalesDocument.FullTransfer` / `PartialTransfer` are the
+primitives) and what the mirror column `sales_orders.transfer_to` holds. So the
+warehouse column was the outlier, and nothing flagged it because a label is not
+type-checked against the value it renders.
+
+Verified live, not assumed: `PurchaseOrderDetail` is NOT dead code — it is the
+inline editor, lazily imported by `PurchaseOrderDetailV2` and rendered whenever
+`?edit=1` lands on the route. `git grep -n 'import("./PurchaseOrderDetail")' -- frontend/src`
+is the check. (`docs/transfer-from-to-vocabulary.md` had recorded it, and two
+sibling editors, as dead; that came from looking for a route in `App.tsx`, which
+cannot see a lazy `import()` inside a sibling page. Corrected in that file.)
+
+**Fix.** The column is relabelled **"To Warehouse"**, matching what
+`StockTransferNew` / `StockTransferDetail` already call the same concept, which
+frees "Transfer to" for the document sense the rest of the system now uses. The
+column `key` stays `transferTo` deliberately: `DataTable` persists column
+visibility, order and width per `tableId` in localStorage, so renaming the key
+would silently reset every operator's saved layout for that grid. The key is
+listed for the identifier stage instead.
+
+**Ref.** PR for the owner-approved transfer-vocabulary Stage 1, 2026-08-17.
+Audit and staging in `docs/modules/document-conversion.md` §9.
+
+## The GRN picker sorted by a UUID and cut at 500, hiding 168 of 356 outstanding PO lines [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** Owner 2026-08-17: he could not convert `HC-PO-2608-001` to a goods
+received note. Two screens of his own ERP contradicted each other about one
+document. The purchase order detail showed 2 lines (`9028-1A(LHF)`,
+`9028-2A(RHF)`), each `Ordered 1 / Received 0 / Balance 1`, `Submitted ·
+awaiting supplier delivery`, receipt progress `0 / 2`. The picker at
+`/scm/grns/from-po?poId=…` showed `0 OF 0 ROWS` and "No outstanding PO lines —
+every line has been received (or there are no outstanding POs)."
+
+**Root cause (traced, not guessed).** `GET /outstanding-po-items`
+(`scm/routes/grns.ts`) read
+`.order('purchase_order_id', { ascending: false }).limit(500)` and applied BOTH
+of its filters AFTERWARDS in JavaScript. `purchase_order_id` is a **uuid**, so
+that ordering is not "newest first" — it is arbitrary. The 500 was therefore an
+arbitrary SAMPLE of the company's PO lines, spent mostly on lines that were
+never candidates, and a brand-new purchase order was as likely to fall outside
+it as any other.
+
+Proved by querying production, not by reading the handler: a read-only probe
+(`backend/scripts/why-po-not-receivable.mjs`, workflow *Why is a PO not
+receivable (read-only)*, run 32028603860) evaluated each gate separately and
+named the one that fired. For company HOUZS: **875 PO lines, 356 genuinely
+outstanding, and the window let the picker see only 188 of those 356 — 168
+outstanding lines were unreachable through the screen that exists to receive
+them.** `HC-PO-2608-001` had **567 rows sorting ahead of it**, so both lines
+fell outside the cut.
+
+**Two theories the probe RULED OUT, both plausible from reading the code:**
+- *The status.* The rendered "Submitted" is a label, not the column. The column
+  really is `SUBMITTED`; the status gate passed.
+- *The company stamp.* The scope added on 2026-08-10 fails closed, and the PO
+  came from the SO-to-PO conversion, so a missing `company_id` would have looked
+  exactly like this. It is not missing: header `company_id = 1`, both lines
+  `company_id = 1`, and table-wide **0** `purchase_order_items` disagree with
+  their header and **0** are NULL. The conversion stamps correctly.
+
+**Fix.** The parent-status filter moves INTO the statement
+(`.in('po.status', RECEIVABLE_PO_STATUSES)` through the `!inner` embed, which
+bounds the read to open work) and `.limit(500)` becomes `paginateAll` with a
+`(purchase_order_id, id)` total order, so nothing is dropped without an error.
+Raising the number would not have fixed it — PostgREST caps a response at 1000
+rows whatever `.limit()` says, which only moves the same silent truncation
+further away. The handler's hand-written copy of the status pair is deleted in
+favour of `RECEIVABLE_PO_STATUSES` (`grns.ts:191`), which it had been
+duplicating. Only the remaining-qty test stays in JS: it compares two COLUMNS,
+and PostgREST has no filter for that.
+
+**The empty state was a second, independent bug and is fixed too.** "Every line
+has been received" was asserted as fact from an absence of rows. The read is
+company-scoped and **fails closed**, so a fail-closed scope rendered as a
+cheerful all-done, and the operator acts on that by walking away from work that
+is still outstanding. `GrnFromPo.tsx` already had honest wording for the ERROR
+case two lines above and none for the empty one. Three states now read
+differently — failed read, rows loaded but filtered out, nothing returned — and
+only the middle one says anything about received work.
+`grnFromPoEmptyState.test.tsx` pins all three; three of its five tests fail
+against the old copy (the other two are the paired controls that stop the
+negative assertions passing on a blank page).
+
+**Ref.** PR #2365, 2026-08-17. Probe: PR #2364.
 
 ## AutoCount Sync listed one row per SEND and called the count documents, so one sales order appeared four times [medium]
 
