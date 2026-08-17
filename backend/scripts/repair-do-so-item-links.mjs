@@ -74,14 +74,23 @@ async function main() {
     process.exit(1);
   }
 
-  const APPLY = process.env.APPLY === 'true' && process.env.CONFIRM === CONFIRM_PHRASE;
-  if (process.env.APPLY === 'true' && !APPLY) {
-    console.log(`APPLY requested but CONFIRM did not match "${CONFIRM_PHRASE}" — running DRY-RUN instead.\n`);
+  /* A MISMATCHED CONFIRM EXITS; it does not quietly demote to a dry-run. The
+     operator who typed APPLY=true asked for a write, and answering a different
+     question while printing "DRY-RUN" reads as "there was nothing to do" — the
+     same silence-as-success shape this whole repair exists to end. Exit 2 so a
+     wrapper can tell "refused" from "ran and found nothing" (exit 0). */
+  if (process.env.APPLY === 'true' && process.env.CONFIRM !== CONFIRM_PHRASE) {
+    console.error(`APPLY requested but CONFIRM did not match "${CONFIRM_PHRASE}". Nothing was written.`);
+    console.error(`Re-run with:  APPLY=true CONFIRM="${CONFIRM_PHRASE}" node backend/scripts/repair-do-so-item-links.mjs`);
+    process.exit(2);
   }
+  const APPLY = process.env.APPLY === 'true';
 
   const pg = postgres(url, { ssl: 'require', prepare: false, max: 1 });
   let restored = 0;
   let refusedTotal = 0;
+  /** Every link this run committed, re-read on a FRESH connection at the end. */
+  const applied = [];
 
   try {
     console.log(`\nDO->SO LINE-LINK REPAIR — ${APPLY ? 'APPLY (writes will be COMMITTED)' : 'DRY-RUN (nothing will be written)'}\n`);
@@ -165,6 +174,7 @@ async function main() {
               throw new Error(`${soDocNo}: ${r.doItemId} was re-linked by another session mid-repair — rolled back`);
             }
             console.log(`    LINK     ${r.itemCode} x${r.qty} -> ${r.soItemId}`);
+            if (APPLY) applied.push(r);
           }
 
           /* VERIFY before committing: no SO line may now read as over-delivered.
@@ -201,8 +211,51 @@ async function main() {
     if (!APPLY && restored > 0) {
       console.log(`\nRe-run with:  APPLY=true CONFIRM="${CONFIRM_PHRASE}" node backend/scripts/repair-do-so-item-links.mjs`);
     }
+    if (APPLY && applied.length > 0) await verifyOnFreshConnection(url, applied);
   } finally {
     await pg.end({ timeout: 5 });
+  }
+}
+
+/* THE SESSION THAT WROTE IS THE WORST WITNESS THAT THE WRITE LANDED. Re-open a
+   SECOND connection and assert what the rows now ARE — the exact so_item_id on
+   each repaired line, and that no Sales-Order line has become over-delivered.
+   A row count would not do: this repair's failure mode is a link pointing at
+   the WRONG line, which counts exactly the same as a link pointing at the right
+   one. Throws on any mismatch, so a bad apply ends loudly instead of printing a
+   success line the operator would believe. */
+async function verifyOnFreshConnection(url, applied) {
+  const pg2 = postgres(url, { ssl: 'require', prepare: false, max: 1 });
+  try {
+    const rows = await pg2`
+      SELECT id, so_item_id FROM scm.delivery_order_items
+       WHERE id IN ${pg2(applied.map((a) => a.doItemId))}`;
+    const now = new Map(rows.map((r) => [r.id, r.so_item_id]));
+    const wrong = applied.filter((a) => now.get(a.doItemId) !== a.soItemId);
+    if (wrong.length > 0) {
+      throw new Error(
+        `post-apply verify FAILED — ${wrong.length} line(s) do not carry the link this run wrote: ` +
+        wrong.map((w) => `${w.doItemId} expected ${w.soItemId} got ${now.get(w.doItemId) ?? 'NULL'}`).join('; '),
+      );
+    }
+    const over = await pg2`
+      SELECT s.doc_no, s.item_code, s.qty AS ordered, SUM(di.qty) AS delivered
+        FROM scm.mfg_sales_order_items s
+        JOIN scm.delivery_order_items di ON di.so_item_id = s.id
+        JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
+       WHERE s.id IN ${pg2(applied.map((a) => a.soItemId))}
+         AND s.cancelled = false AND d.status::text <> 'CANCELLED'
+       GROUP BY s.doc_no, s.item_code, s.qty
+      HAVING SUM(di.qty) > s.qty`;
+    if (over.length > 0) {
+      throw new Error(
+        'post-apply verify FAILED — over-delivered after repair: ' +
+        over.map((o) => `${o.doc_no} ${o.item_code} ${o.delivered}/${o.ordered}`).join('; '),
+      );
+    }
+    notice(`Verified on a fresh connection: ${applied.length} link(s) present, no line over-delivered.`);
+  } finally {
+    await pg2.end({ timeout: 5 });
   }
 }
 
