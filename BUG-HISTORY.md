@@ -91,7 +91,7 @@ first real test of this file is its next `deploy-on-host.ps1` run, which compile
 before it swaps and keeps a hash-verified rollback; that guard already caught the
 `GoodsReceivedNote` typo and left the running service untouched.
 
-**Ref.** PR #2372, 2026-08-17.
+**Ref.** PR #2373, 2026-08-17.
 
 ## Three more ways one goods receipt could be billed twice — and the confirm that clamped instead of refusing [high]
 
