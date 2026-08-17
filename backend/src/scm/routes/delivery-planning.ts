@@ -839,7 +839,19 @@ deliveryPlanning.get('/', async (c) => {
       const code = hasRep ? repCode.get(docNo) : firstItemCode.get(docNo);
       fBranding = (code && productBranding.get(code)) || fBranding;
     }
-    const branding = deriveBranding(fCat, fBranding) || null;
+    /* PER ROW, not per caller: Delivery Planning is a SHARED queue — a Houzs
+       dispatcher sees 2990 orders and vice versa — so the company that decides
+       the label is the ORDER's, never the active one. codeMap (line 818) is the
+       same lookup the row's own company_code field uses below. Labelling a
+       Houzs order "2990 Sofa" because a 2990 user opened the board would be a
+       wrong label, not just a missing one.
+
+       No `|| null` any more: the rule cannot return blank (owner 2026-08-17),
+       so the only thing that fallback could still do is put the empty state
+       back. For a SALES ORDER row this is now always a real label — the
+       `as string | null` at the property below is union parity, not this value
+       going soft (same idiom as row_type / ref / job_kind above). */
+    const branding = deriveBranding(fCat, fBranding, codeMap.get(Number(r.company_id)) ?? null);
     const readiness = summariseReadiness(linesByDoc.get(docNo) ?? []);
     const delivered = deliveredByDoc.get(docNo) ?? 0;
     const remaining = remainingByDoc.get(docNo) ?? 0;
@@ -895,7 +907,12 @@ deliveryPlanning.get('/', async (c) => {
       debtor_code: r.debtor_code ?? null,
       debtor_name: r.debtor_name ?? null,
       phone: r.phone ?? null,
-      branding,
+      /* SO rows always carry a real label now. The union keeps `| null` for the
+         THREE non-SO row kinds that share BoardRow (line ~1035) and pass
+         branding: null — ASSR service cases, DP jobs and project windows. None
+         is a sales order and none has a product category, so what those should
+         read is the owner's call, not a label to invent here (PR deferred). */
+      branding: branding as string | null,
       status,
       delivery_state: state,
       delivery_state_override: stored && (DELIVERY_STATES as string[]).includes(stored) ? stored : null,

@@ -59,7 +59,8 @@ import { ListErrorPanel, SearchPendingPanel, SearchProgress } from "../../compon
 import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useBranding } from "../../hooks/useBranding";
-import { shortCompanyName } from "../../lib/branding";
+import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
+import { brandingLabel } from "../../vendor/shared/so-branding-label";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail } from "../../vendor/scm/lib/sales-order-queries";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
@@ -100,6 +101,12 @@ type SoRow = {
   ref: string | null;
   branding: string | null;
   first_item_branding: string | null;
+  /* Stamped by the SAME list handler as first_item_branding
+     (backend/src/scm/routes/mfg-sales-orders.ts:1782) and always has been —
+     this type just never declared it, which is why this page could not apply
+     the label rule the Consignment Orders page applied to the identical
+     payload. */
+  first_item_category: string | null;
   status: string;
   local_total_centi: number;
   /* Stored snapshots — NOT the truth, and never read without the live
@@ -226,9 +233,21 @@ const refOf = (r: SoRow): string =>
 
 // Branding badge tone. Spec: 2990 SOFA = success (green), AKEMI = neutral,
 // BEDFRAME = accent (bedframe-only SOs, derived server-side), other brands =
-// warning (amber). Falls back to first_item_branding when the header brand is
-// blank (mixed-line SOs / bedframe-only SOs).
-const brandOf = (r: SoRow): string => r.branding || r.first_item_branding || "—";
+// warning (amber).
+//
+// brandOf USED TO END IN `|| "—"`, and that dash is the owner's complaint
+// (2026-08-17): "by right 不应该会有空的 branding 的". It fired far more often
+// than "an SO with no items" — the backend hands this list the first line's
+// CATEGORY and that line's OWN branding text, and for a sofa the branding text
+// is normally null (sofas carry no per-line brand; the label is the rule's job).
+// So this list printed "—" for orders the Consignment Orders page, reading the
+// SAME two fields, printed "2990 Sofa" for. The rule was applied on one page
+// out of four that had it available.
+//
+// It now goes through the one shared rule, which cannot return blank.
+const brandOf = (r: SoRow): string =>
+  (r.branding ?? "").trim() ||
+  brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
 const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
   const s = (b || "").toUpperCase();
   if (s.includes("2990") || s.includes("SOFA")) return "success";
