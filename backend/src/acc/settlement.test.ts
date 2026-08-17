@@ -15,7 +15,7 @@ import { describe, it, expect } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow,
-  postStatementCharge, postBatchReceipt,
+  postStatementCharge, postBatchReceipt, undoBatchReceipt,
 } from './settlement';
 
 const CHART: Row[] = ['320-0000', '330-0000', '930-0000'].map((code) => ({
@@ -50,12 +50,15 @@ const world = (over: Record<string, Row[]> = {}) => fakeSb(
     acc_settlement_batches: [{ ...BATCH }],
     acc_settlement_rows: [{ ...SETTLEMENT_ROW }],
     acc_settlement_matches: [],
+    acc_settlement_receipts: [],
     journal_entries: [],
     journal_entry_lines: [],
     ...over,
   },
   {},
   [{ table: 'acc_settlement_matches', column: 'payment_id', name: 'acc_settlement_payment_once' }],
+  /* These carry integer ids in Postgres, and the code keys documents on them. */
+  ['acc_settlement_batches', 'acc_settlement_rows', 'acc_settlement_matches', 'acc_settlement_receipts'],
 );
 
 const ONE_PAYMENT = [{ source: 'SOPAY' as const, id: 'p1', docNo: 'SO-2608-001', amountSen: 100000 }];
@@ -202,11 +205,11 @@ describe('confirmSettlementRow — reconciling the card machine books the FEE, a
   });
 });
 
-describe('postBatchReceipt — the money actually arrives', () => {
-  it('books Dr bank / Cr in-transit on the BANK date, once, and stamps the batch', async () => {
+describe('postBatchReceipt — the money actually arrives, in one credit or several', () => {
+  it('books Dr bank / Cr in-transit on the BANK date, and records the credit', async () => {
     const sb = world();
-    const r = await postBatchReceipt(sb, 1, 1, '2026-08-07');
-    expect(r).toMatchObject({ ok: true, status: 'posted', amountSen: 98500 });
+    const r = await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07', userName: 'Ah Chew' });
+    expect(r).toMatchObject({ ok: true, status: 'posted', amountSen: 98500, outstandingSen: 0 });
 
     const lines = sb.tables.journal_entry_lines;
     expect(lines).toHaveLength(2);
@@ -214,16 +217,56 @@ describe('postBatchReceipt — the money actually arrives', () => {
     expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 98500 });
     /* Dated by the bank, four days after the swipe — the whole point of
        splitting the entry in two. */
-    expect(sb.tables.journal_entries[0]).toMatchObject({
-      source_type: 'SETTLEBANK', source_doc_no: 'SETTLEBANK-1', entry_date: '2026-08-07',
+    expect(sb.tables.journal_entries[0]).toMatchObject({ source_type: 'SETTLEBANK', entry_date: '2026-08-07' });
+    expect(sb.tables.acc_settlement_receipts[0]).toMatchObject({
+      batch_id: 1, received_on: '2026-08-07', amount_sen: 98500,
+      je_no: sb.tables.journal_entries[0].je_no, created_by: 'Ah Chew',
     });
-    expect(sb.tables.acc_settlement_batches[0]).toMatchObject({
-      received_on: '2026-08-07', receipt_je_no: sb.tables.journal_entries[0].je_no,
-    });
+  });
 
-    const again = await postBatchReceipt(sb, 1, 1, '2026-08-07');
-    expect(again).toMatchObject({ ok: true, status: 'already_posted' });
-    expect(sb.tables.journal_entries).toHaveLength(1);
+  /* The owner: "我实际收到的钱可能是多笔的哦". Hong Leong pays a multi-day
+     statement one credit per trading day; two of his landed together on 18/06,
+     RM 7,261.65 and RM 1,788.28. */
+  it('takes several credits for one statement, and only then calls it square', async () => {
+    const sb = world();
+    const first = await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07', amountSen: 60000 });
+    expect(first).toMatchObject({ ok: true, receivedSen: 60000, outstandingSen: 38500 });
+
+    const second = await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-08', amountSen: 38500 });
+    expect(second).toMatchObject({ ok: true, receivedSen: 98500, outstandingSen: 0 });
+
+    expect(sb.tables.acc_settlement_receipts).toHaveLength(2);
+    expect(sb.tables.journal_entries.filter((e) => e.source_type === 'SETTLEBANK')).toHaveLength(2);
+    /* Two entries, two dates, two doc numbers — a second credit is never read
+       as a repeat of the first. */
+    expect(new Set(sb.tables.journal_entries.map((e) => e.source_doc_no)).size).toBe(2);
+    expect(sb.tables.journal_entry_lines.filter((l) => l.account_code === '330-0000')
+      .reduce((s, l) => s + Number(l.debit_sen), 0)).toBe(98500);
+
+    const third = await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-09', amountSen: 100 });
+    expect(third).toMatchObject({ ok: false, status: 'fully_received' });
+  });
+
+  /* Two terminals under one merchant can credit the same amount on the same
+     day. Keyed on the batch alone, the second would look like a repeat. */
+  it('two identical credits on the same day both post', async () => {
+    const sb = world({ acc_settlement_batches: [{ ...BATCH, net_sen: 100000, stated_net_sen: 100000 }] });
+    await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07', amountSen: 50000 });
+    await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07', amountSen: 50000 });
+    expect(sb.tables.journal_entries).toHaveLength(2);
+    expect(sb.tables.journal_entry_lines.filter((l) => l.account_code === '330-0000')
+      .reduce((s, l) => s + Number(l.debit_sen), 0)).toBe(100000);
+  });
+
+  /* Money the statement does not explain belongs to another statement. Taking
+     it here would drive this acquirer's in-transit negative. */
+  it('refuses a credit bigger than the statement still owes, naming both numbers', async () => {
+    const sb = world();
+    const r = await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07', amountSen: 120000 });
+    expect(r).toMatchObject({ ok: false, status: 'over_receipt' });
+    expect((r as { reason: string }).reason).toMatch(/985\.00.*1200\.00|985\.00/);
+    expect(sb.tables.journal_entries).toHaveLength(0);
+    expect(sb.tables.acc_settlement_receipts).toHaveLength(0);
   });
 
   /* What the acquirer SAYS it is paying wins over what its lines add up to —
@@ -233,31 +276,51 @@ describe('postBatchReceipt — the money actually arrives', () => {
     const sb = world({
       acc_settlement_batches: [{ ...BATCH, net_sen: 592800, stated_net_sen: 567384, adjustment_sen: 25416 }],
     });
-    const r = await postBatchReceipt(sb, 1, 1, '2026-08-10');
+    const r = await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-10' });
     expect(r).toMatchObject({ ok: true, amountSen: 567384 });
     expect(sb.tables.journal_entry_lines.find((l) => l.account_code === '330-0000')).toMatchObject({ debit_sen: 567384 });
   });
 
   it('refuses a date it was not given, rather than stamping today', async () => {
     const sb = world();
-    expect(await postBatchReceipt(sb, 1, 1, '')).toMatchObject({ ok: false, status: 'bad_date' });
+    expect(await postBatchReceipt(sb, 1, 1, { receivedOn: '' })).toMatchObject({ ok: false, status: 'bad_date' });
     expect(sb.tables.journal_entries).toHaveLength(0);
   });
 
   it('names a batch that is not there', async () => {
     const sb = world();
-    expect(await postBatchReceipt(sb, 1, 404, '2026-08-07')).toMatchObject({ ok: false, status: 'not_found' });
+    expect(await postBatchReceipt(sb, 1, 404, { receivedOn: '2026-08-07' })).toMatchObject({ ok: false, status: 'not_found' });
   });
 
   it('an unconfigured receiving bank books to the company default rather than nowhere', async () => {
     const sb = world({ acc_acquirers: [{ ...ACQUIRER, bank_account_code: null }] });
-    expect(await postBatchReceipt(sb, 1, 1, '2026-08-07')).toMatchObject({ ok: true });
+    expect(await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07' })).toMatchObject({ ok: true });
     expect(sb.tables.journal_entry_lines.find((l) => l.debit_sen === 98500)).toMatchObject({ account_code: '330-0000' });
+  });
+
+  /* A credit keyed against the wrong statement, or on the wrong day. The way
+     out of the ledger is a journal, not a delete. */
+  it('undoing a credit reverses its entry and puts the money back in transit', async () => {
+    const sb = world();
+    await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07' });
+    const receiptId = Number(sb.tables.acc_settlement_receipts[0].id);
+
+    const undone = await undoBatchReceipt(sb, 1, receiptId);
+    expect(undone).toMatchObject({ ok: true, status: 'undone' });
+    expect(sb.tables.acc_settlement_receipts).toHaveLength(0);
+    expect(sb.tables.journal_entries.find((e) => e.source_type === 'SETTLEBANK_REVERSAL')).toBeTruthy();
+    expect(balance(sb, '330-0000')).toBe(0);
+    expect(balance(sb, '320-0000')).toBe(0);   // the credit and its contra cancel
+
+    /* And the statement is receivable again — the fix for "that credit was
+       actually the other company's" is to record it where it belongs. */
+    const redo = await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-11' });
+    expect(redo).toMatchObject({ ok: true, amountSen: 98500 });
   });
 
   /* THE WHOLE LOOP, on the owner's own numbers. The customer's 1,000.00 was
      booked to in-transit against AR when it was collected (phase 2A). The card
-     machine is reconciled on the 3rd; the money lands on the 7th. */
+     machine is reconciled on the 3rd; the money lands in two credits. */
   it('reconciling then receiving takes settlement-in-transit to exactly zero', async () => {
     const sb = world({
       journal_entry_lines: [
@@ -273,7 +336,10 @@ describe('postBatchReceipt — the money actually arrives', () => {
     expect(balance(sb, '320-0000')).toBe(98500);
     expect(balance(sb, '930-0000')).toBe(1500);
 
-    await postBatchReceipt(sb, 1, 1, '2026-08-07');
+    await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-07', amountSen: 40000 });
+    expect(balance(sb, '320-0000')).toBe(58500);   // half-paid is not paid
+
+    await postBatchReceipt(sb, 1, 1, { receivedOn: '2026-08-08', amountSen: 58500 });
     expect(balance(sb, '320-0000')).toBe(0);
     expect(balance(sb, '330-0000')).toBe(98500);
   });

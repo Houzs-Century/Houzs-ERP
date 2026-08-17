@@ -47,22 +47,29 @@ What is on the branch:
   是隔几天收到的。应该是先对卡机报告，然后 match 了就会去 match bank statement).
   Reconciling the card machine and receiving the money are days apart, so they
   are two entries: confirming a line books the FEE only (Dr fee / Cr transit,
-  `SETTLE`, dated by the transaction), and marking the batch received books the
-  payout (Dr bank / Cr transit, `SETTLEBANK-<batch id>`, dated by the BANK
-  statement, for `stated_net_sen ?? net_sen`). In between, in-transit holds
-  exactly what the acquirer still owes. AR is still knocked off by the full
-  gross at the swipe — his constraint: 顾客还款确定到时是记录6000哦，不然knock
-  off 不到. The statement-level charge (AEON's subvention fee) now credits
-  in-transit too, not the bank. Layer 4 will supply the received date
-  automatically; nothing asks for it at upload time, which is the one moment
-  he cannot know it.
-- **Eleven endpoints** `/accounting/settlement/*` registered one path each in
+  `SETTLE`, dated by the transaction), and each payout credit books Dr bank /
+  Cr transit, dated by the BANK statement. In between, in-transit holds exactly
+  what the acquirer still owes. AR is still knocked off by the full gross at the
+  swipe — his constraint: 顾客还款确定到时是记录6000哦，不然knock off 不到. The
+  statement-level charge (AEON's subvention fee) now credits in-transit too, not
+  the bank. Layer 4 will supply the credits automatically; nothing asks for a
+  payout date at upload time, which is the one moment he cannot know it.
+- **`scm.acc_settlement_receipts` — one statement, one or more credits** (his
+  second correction the same day: 我实际收到的钱可能是多笔的哦). HLB pays a
+  multi-day statement one credit per trading day, MBB one per trading date, PBB
+  one advice for three days. Each credit is its own row and its own entry
+  (`SETTLEBANK-<batch>-<receipt>`, so two identical credits on one day both
+  post); the statement is square only when they add up to `stated_net_sen ??
+  net_sen`; an overshoot is refused with both numbers named; a wrong credit is
+  UNDONE by reversing its entry. Partly in the bank never reads as in the bank.
+- **Thirteen endpoints** `/accounting/settlement/*` registered one path each in
   `routes/accounting.ts` (the route-capability audit only follows top-level
   `app.route`/`scm.route`, so a sub-router would have hidden them); handlers in
   `routes/accounting-settlement.ts`, each behind its own permission check.
 - **Page `/scm/settlement-recon`** (Finance menu, "Card Settlement"): upload,
   four piles, multi-select candidates with combo hints, the "money arrived in
-  the bank" step on the open statement, two watchlists, CSV export, and an
+  the bank" step on the open statement (with the credits banked so far), two
+  watchlists, CSV export, and an
   **Acquirer setup tab that is where 决定4 gets typed in**.
 - **"Paid, not yet in the bank"** — the detail list he asked for (我需要看到说顾
   客还钱了，但是还没收款或还没对账。我要明细的), with WHO keyed each payment in

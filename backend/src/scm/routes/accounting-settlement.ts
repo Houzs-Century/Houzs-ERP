@@ -34,7 +34,7 @@ import { parseStatement, type StatementColumnMap } from '../../acc/settlement-pa
 import { matchStatement, recordedNotArrived, type PaymentCandidate } from '../../acc/settlement-match';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge,
-  postBatchReceipt,
+  postBatchReceipt, loadBatchReceipts, undoBatchReceipt,
 } from '../../acc/settlement';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -277,18 +277,56 @@ export const settlementUpload = guard(async (c) => {
   });
 });
 
-/* GET /batches — the upload history, newest first. */
+const BATCH_COLUMNS =
+  'id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, status, created_at';
+
+/** What a statement promised to pay: its own stated total, else its lines. */
+const payableOf = (b: { stated_net_sen?: number | null; net_sen?: number | null }) =>
+  Number(b.stated_net_sen ?? b.net_sen ?? 0);
+
+/* GET /batches — the upload history, newest first, each carrying how much of
+   its payout has actually arrived. Derived from the receipts on every read
+   (§2.3: no caches), because "one statement, one credit" is not true — Hong
+   Leong pays a multi-day statement one credit per day. */
 export const settlementBatches = guard(async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
   const { data, error } = await sb.from('acc_settlement_batches')
-    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, received_on, receipt_je_no, status, uploaded_by, created_at')
+    .select(`${BATCH_COLUMNS}, uploaded_by`)
     .eq('company_id', co.companyId)
     .order('created_at', { ascending: false })
     .limit(100);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  return c.json({ batches: data ?? [] });
+
+  const { data: recRaw, error: rcErr } = await sb.from('acc_settlement_receipts')
+    .select('batch_id, received_on, amount_sen').eq('company_id', co.companyId);
+  if (rcErr) return c.json({ error: 'load_failed', reason: rcErr.message }, 500);
+
+  const got = new Map<number, { sen: number; count: number; lastOn: string | null }>();
+  for (const r of (recRaw ?? []) as Array<{ batch_id: number; received_on: string; amount_sen: number }>) {
+    const at = got.get(Number(r.batch_id)) ?? { sen: 0, count: 0, lastOn: null };
+    at.sen += Number(r.amount_sen ?? 0);
+    at.count += 1;
+    const on = String(r.received_on ?? '').slice(0, 10);
+    if (!at.lastOn || on > at.lastOn) at.lastOn = on;
+    got.set(Number(r.batch_id), at);
+  }
+
+  const batches = ((data ?? []) as Array<Record<string, any>>).map((b) => {
+    const at = got.get(Number(b.id)) ?? { sen: 0, count: 0, lastOn: null };
+    const payable = payableOf(b);
+    return {
+      ...b,
+      received_sen: at.sen,
+      receipt_count: at.count,
+      /* The day it was FULLY received, and null while any of it is still out —
+         "partly in the bank" must not read as "in the bank". */
+      received_on: at.sen === payable && payable !== 0 ? at.lastOn : null,
+      outstanding_sen: payable - at.sen,
+    };
+  });
+  return c.json({ batches });
 });
 
 /* GET /batches/:id — the four piles, with live candidates for the pile that
@@ -302,11 +340,15 @@ export const settlementBatchDetail = guard(async (c) => {
   const sb = c.get('supabase');
 
   const { data: batch, error: bErr } = await sb.from('acc_settlement_batches')
-    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, received_on, receipt_je_no, status, created_at')
+    .select(BATCH_COLUMNS)
     .eq('id', batchId).eq('company_id', co.companyId).maybeSingle();
   if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
   if (!batch) return c.json({ error: 'not_found' }, 404);
   const b = batch as { acquirer_code: string; period_from: string; period_to: string };
+
+  /* Every credit recorded against this statement, and what is still out. */
+  const paid = await loadBatchReceipts(sb, co.companyId, batchId);
+  if (!paid.ok) return c.json({ error: 'load_failed', reason: paid.reason }, 500);
 
   const { data: rowsRaw, error: rErr } = await sb.from('acc_settlement_rows')
     .select('id, line_no, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, match_reason, confirmed_at, posted_je_no, notes')
@@ -362,8 +404,14 @@ export const settlementBatchDetail = guard(async (c) => {
   const tally = { MATCHED: 0, NEEDS_CONFIRM: 0, UNMATCHED: 0, IGNORED: 0 } as Record<string, number>;
   for (const r of stored) tally[r.bucket] = (tally[r.bucket] ?? 0) + 1;
 
+  const payable = payableOf(batch as Record<string, number | null>);
   return c.json({
-    batch,
+    batch: {
+      ...batch,
+      received_sen: paid.receivedSen,
+      outstanding_sen: payable - paid.receivedSen,
+      receipts: paid.receipts,
+    },
     acquirer: { code: acq.acquirer.code, hasUniqueRef: acq.acquirer.has_unique_ref, dateToleranceDays: acq.acquirer.date_tolerance_days },
     buckets: tally,
     rows,
@@ -470,12 +518,13 @@ export const settlementConfirmMatched = guard(async (c) => {
   });
 });
 
-/* POST /batches/:id/received — "the money is in the bank, on this day".
+/* POST /batches/:id/received — "this much money is in the bank, on this day".
    The second half of the owner's two-step (2026-08-17: 先对卡机报告，然后
    match 了就会去 match bank statement). Reconciling the card machine booked the
-   fee; this books the payout, dated by the bank statement, and empties what the
-   acquirer still owed. Layer 4 will call the same function with the date it
-   reads off the bank statement — this endpoint is how a human does it today. */
+   fee; this books ONE credit of the payout, dated by the bank statement. A
+   statement may be paid in several (他: 我实际收到的钱可能是多笔的哦), so the
+   amount is optional and defaults to whatever is still outstanding. Layer 4
+   will call the same function with what it reads off the bank statement. */
 export const settlementBatchReceived = guard(async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -487,14 +536,38 @@ export const settlementBatchReceived = guard(async (c) => {
   if (!DAY.test(receivedOn)) {
     return c.json({ error: 'bad_date', message: 'Give the date the money reached the bank, as it reads on the bank statement.' }, 400);
   }
+  if (body.amountSen != null && !Number.isFinite(Number(body.amountSen))) {
+    return c.json({ error: 'bad_amount', message: 'Give the amount of this credit, as it reads on the bank statement.' }, 400);
+  }
 
-  const r = await postBatchReceipt(c.get('supabase'), co.companyId, batchId, receivedOn);
+  const r = await postBatchReceipt(c.get('supabase'), co.companyId, batchId, {
+    receivedOn,
+    amountSen: body.amountSen == null ? null : Number(body.amountSen),
+    bankRef: body.bankRef == null ? null : String(body.bankRef),
+    note: body.note == null ? null : String(body.note),
+    userName: (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null,
+  });
   if (!r.ok) {
     const status = r.status === 'not_found' ? 404
-      : ['bad_date', 'nothing_to_receive', 'acquirer_unavailable'].includes(r.status) ? 409
+      : ['bad_date', 'bad_amount', 'nothing_to_receive', 'fully_received', 'over_receipt', 'acquirer_unavailable'].includes(r.status) ? 409
       : 500;
     return c.json({ error: r.status, message: r.reason }, status);
   }
+  return c.json(r);
+});
+
+/* POST /receipts/:id/undo — take one credit back off the statement.
+   A wrong date or a credit that belonged to another statement is corrected by
+   REVERSING its entry, not by deleting history: the money goes back into
+   settlement-in-transit, where it was. */
+export const settlementReceiptUndo = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const receiptId = Number(c.req.param('id'));
+  if (!Number.isInteger(receiptId)) return c.json({ error: 'bad_id' }, 400);
+
+  const r = await undoBatchReceipt(c.get('supabase'), co.companyId, receiptId);
+  if (!r.ok) return c.json({ error: r.status, message: r.reason }, r.status === 'not_found' ? 404 : 500);
   return c.json(r);
 });
 
@@ -619,12 +692,24 @@ export const settlementInTransit = guard(async (c) => {
     .select('id, batch_id, confirmed_at, fee_sen').eq('company_id', co.companyId);
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
   const { data: batchRaw, error: bErr } = await sb.from('acc_settlement_batches')
-    .select('id, received_on, adjustment_sen, adjustment_je_no').eq('company_id', co.companyId);
+    .select('id, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no').eq('company_id', co.companyId);
   if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+  const { data: recRaw, error: rcErr } = await sb.from('acc_settlement_receipts')
+    .select('batch_id, amount_sen').eq('company_id', co.companyId);
+  if (rcErr) return c.json({ error: 'load_failed', reason: rcErr.message }, 500);
 
-  type BatchRow = { id: number; received_on: string | null; adjustment_sen: number | null; adjustment_je_no: string | null };
+  type BatchRow = { id: number; net_sen: number | null; stated_net_sen: number | null; adjustment_sen: number | null; adjustment_je_no: string | null };
   const batches = (batchRaw ?? []) as BatchRow[];
-  const paidBatch = new Set(batches.filter((b) => Boolean(b.received_on)).map((b) => Number(b.id)));
+  /* How much of each statement's payout has actually landed. A statement is
+     out of transit only when its credits ADD UP to what it promised — being
+     paid in several is normal, and half-paid is not paid. */
+  const receivedByBatch = new Map<number, number>();
+  for (const r of (recRaw ?? []) as Array<{ batch_id: number; amount_sen: number }>) {
+    receivedByBatch.set(Number(r.batch_id), (receivedByBatch.get(Number(r.batch_id)) ?? 0) + Number(r.amount_sen ?? 0));
+  }
+  const paidBatch = new Set(batches
+    .filter((b) => payableOf(b) !== 0 && (receivedByBatch.get(Number(b.id)) ?? 0) === payableOf(b))
+    .map((b) => Number(b.id)));
   const rowInfo = new Map(((rowRaw ?? []) as Array<{ id: number; batch_id: number; confirmed_at: string | null; fee_sen: number | null }>)
     .map((r) => [Number(r.id), {
       confirmed: Boolean(r.confirmed_at),
@@ -642,7 +727,7 @@ export const settlementInTransit = guard(async (c) => {
      对应两张订单), so the fee is split across them in proportion to their
      amounts — and the last share takes the rounding, so the split adds back to
      the fee exactly rather than leaving a sen adrift from the ledger. */
-  const feeShare = new Map<string, number>();
+  const outOfTransit = new Map<string, number>();
   const byRow = new Map<number, typeof matches>();
   for (const m of matches) {
     const list = byRow.get(Number(m.settlement_row_id));
@@ -661,21 +746,37 @@ export const settlementInTransit = guard(async (c) => {
       into.set(key, (into.get(key) ?? 0) + share);
     });
   };
-  for (const [rowId, list] of byRow) spread(rowInfo.get(rowId)?.feeSen ?? 0, list, feeShare);
+  for (const [rowId, list] of byRow) {
+    /* Only a CONFIRMED line's fee has actually left the account. */
+    const row = rowInfo.get(rowId);
+    if (row?.confirmed === true) spread(row.feeSen, list, outOfTransit);
+  }
 
-  /* And the charge the STATEMENT made that no transaction explains (AEON's
-     subvention fee): once it is booked it has left in-transit too, so it comes
-     off the same way — spread across the payments of that batch that are still
-     sitting there. Left out, this list would read 254.16 higher than the
-     account it is supposed to be the readable form of. */
+  /* Two more things that have left in-transit without belonging to any single
+     payment, spread across the batch's payments so that this list and the
+     320-0000 balance cannot tell different stories:
+       • the charge the STATEMENT made that no transaction explains (AEON's
+         subvention fee), once it is booked;
+       • the credits that have ALREADY landed for a statement that is only
+         part-paid — normal, since one statement is often paid in several.
+     A fully-paid batch is skipped: its payments left the list entirely. */
+  const matchesByBatch = new Map<number, typeof matches>();
+  for (const m of matches) {
+    const batchId = rowInfo.get(Number(m.settlement_row_id))?.batchId;
+    if (batchId == null) continue;
+    const list = matchesByBatch.get(batchId);
+    if (list) list.push(m);
+    else matchesByBatch.set(batchId, [m]);
+  }
   for (const b of batches) {
-    const adjustment = Number(b.adjustment_sen ?? 0);
-    if (adjustment === 0 || !b.adjustment_je_no || paidBatch.has(Number(b.id))) continue;
-    const stillHere = matches.filter((m) => {
-      const row = rowInfo.get(Number(m.settlement_row_id));
-      return row?.confirmed === true && row.batchId === Number(b.id);
-    });
-    if (stillHere.length > 0) spread(adjustment, stillHere, feeShare);
+    const id = Number(b.id);
+    if (paidBatch.has(id)) continue;
+    const list = matchesByBatch.get(id);
+    if (!list || list.length === 0) continue;
+    const adjustment = b.adjustment_je_no ? Number(b.adjustment_sen ?? 0) : 0;
+    const alreadyPaid = receivedByBatch.get(id) ?? 0;
+    if (adjustment !== 0) spread(adjustment, list, outOfTransit);
+    if (alreadyPaid !== 0) spread(alreadyPaid, list, outOfTransit);
   }
 
   const days = (a: string, b: string) =>
@@ -698,9 +799,11 @@ export const settlementInTransit = guard(async (c) => {
         paymentId: p.id,
         docNo: p.docNo,
         paidOn: p.paidOn,
-        /* Still in transit for this payment: the gross until it is reconciled,
-           the net afterwards — the fee left the account on confirmation. */
-        amountSen: state === 'RECONCILED_NOT_PAID' ? p.amountSen - (feeShare.get(key) ?? 0) : p.amountSen,
+        /* Still in transit for this payment: what the customer paid, less
+           everything that has already left the account on its behalf — its
+           fee once the line is confirmed, its share of a booked statement
+           charge, and its share of any credit that has already landed. */
+        amountSen: p.amountSen - (outOfTransit.get(key) ?? 0),
         approvalCode: p.approvalCode,
         recordedById: p.recordedById ?? null,
         ageDays: days(p.paidOn, to),

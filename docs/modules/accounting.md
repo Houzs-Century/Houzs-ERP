@@ -118,27 +118,37 @@ the date tolerance comes from the config row, not a literal;
 先对卡机报告，然后 match 了就会去 match bank statement). Reconciling the card
 machine and receiving the money are days apart, so the ledger keeps them apart:
 confirming a line books the FEE only (Dr fee / Cr transit, source `SETTLE`,
-keyed `SETTLE-<row id>`, dated by the transaction); marking the batch received
-books the payout (Dr bank / Cr transit, source `SETTLEBANK`, keyed
-`SETTLEBANK-<batch id>`, dated by the BANK statement, for `stated_net_sen ??
-net_sen`). In between, settlement-in-transit holds exactly what the acquirer
-still owes — the fee is already lost and is no longer receivable. The customer
-side never changes: AR is knocked off by the full gross at the swipe (owner:
-顾客还款确定到时是记录6000哦，不然knock off 不到). A fee-free line confirms with
-no entry at all. Migration 0304 adds `received_on`/`receipt_je_*` to the batch;
-layer 4 (bank reconciliation) will call the same function with the date it reads
-off the bank statement, which is why the operator is never asked for a payout
+keyed `SETTLE-<row id>`, dated by the transaction). In between, settlement-in-
+transit holds exactly what the acquirer still owes — the fee is already lost and
+is no longer receivable. The customer side never changes: AR is knocked off by
+the full gross at the swipe (owner: 顾客还款确定到时是记录6000哦，不然knock off
+不到). A fee-free line confirms with no entry at all.
+
+**One statement, one or more credits** (owner, same day: 我实际收到的钱可能是多笔
+的哦). Hong Leong pays a multi-day statement one credit per trading day, Maybank
+credits each trading date separately, and Public Bank goes the other way — one
+advice covering three days. So each credit is a row in
+`scm.acc_settlement_receipts` (migration 0304) with its own date, amount and
+entry: Dr bank / Cr transit, source `SETTLEBANK`, keyed
+`SETTLEBANK-<batch id>-<receipt id>` (per receipt, so two identical credits on
+one day both post), dated by the BANK statement. A statement is "in the bank"
+only when its credits add up to `stated_net_sen ?? net_sen`; a credit that would
+overshoot is refused with both numbers named, because that money belongs to
+another statement. `undoBatchReceipt` REVERSES a credit's entry rather than
+deleting it. Layer 4 (bank reconciliation) will write these same rows from the
+bank statement itself, which is why the operator is never asked for a payout
 date at upload time — that is the one moment he cannot know it.
 
-Eleven endpoints under `/accounting/settlement/*` (setup read/write, upload,
-batch list/detail, confirm one, confirm-all-matched, received, ignore,
-watchlist, in-transit, CSV export), each carrying its own permission check on
-top of the area guard. Page `/scm/settlement-recon` (Finance menu): upload, four
-piles, multi-select candidates with combo hints, the "money arrived in the bank"
-step, the paid-not-yet-in-the-bank detail list (three states — the acquirer has
-not reported it / waiting to be confirmed / reconciled but not paid — each
-naming who keyed the payment in), the two standing watchlists, Excel-ready
-export.
+Thirteen endpoints under `/accounting/settlement/*` (setup read/write, upload,
+batch list/detail, confirm one, confirm-all-matched, received, receipt undo,
+ignore, watchlist, in-transit, CSV export), each carrying its own permission
+check on top of the area guard. Page `/scm/settlement-recon` (Finance menu):
+upload, four piles, multi-select candidates with combo hints, the credits-
+received step with its list of credits banked so far, the paid-not-yet-in-the-
+bank detail list (three states — the acquirer has not reported it / waiting to
+be confirmed / reconciled but not paid — each naming who keyed the payment in,
+and each showing what is STILL owed on it after fees, statement charges and
+part-payments), the two standing watchlists, Excel-ready export.
 
 SI auto-posts on create/confirm (`lib/post-si-revenue.ts`; resync
 void+reposts on post-issue edits). PI posts on demand + resyncs. PV posts on

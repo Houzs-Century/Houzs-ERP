@@ -28,7 +28,7 @@
 // are pure. This file is the only one here that reads or writes.
 // ----------------------------------------------------------------------------
 
-import { postJournal } from './engine';
+import { postJournal, reverseJournal } from './engine';
 import { resolveRoles, settlementLines, settlementReceiptLines, statementChargeLines } from './rules';
 import type { PaymentCandidate } from './settlement-match';
 
@@ -384,45 +384,103 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
  * advice) shows the credit, and only now does the ledger move it out of
  * settlement-in-transit and into the bank.
  *
- * The amount is what the STATEMENT SAID IT WOULD PAY — stated_net_sen when the
- * acquirer prints a payable total, otherwise the sum of its own lines. It is
- * not re-derived from what has been confirmed so far, because a payout is not
- * partial: the acquirer pays the batch, and if the bank credit disagrees with
- * this number the difference is a real problem for a human to look at, not
- * something to quietly absorb.
+ * ONE STATEMENT, ONE OR MORE CREDITS (owner, 2026-08-17: "我实际收到的钱可能是
+ * 多笔的哦"). His files prove it both ways: Hong Leong pays a multi-day
+ * statement one credit per trading day (two landed together on 18/06, 7,261.65
+ * and 1,788.28), Maybank credits each trading date separately, and Public Bank
+ * goes the other way — one advice covering the 7th, 8th and 9th. So each credit
+ * is its own row with its own date, amount and entry, and the statement is only
+ * square when they add up to what it said it would pay.
  *
- * Idempotent through the gate (source SETTLEBANK, keyed on the batch), so
- * pressing it twice books once. Layer 4 will call this with the date it reads
- * off the bank statement; until then the operator types it.
+ * What it said it would pay is `stated_net_sen` when the acquirer prints a
+ * payable total, otherwise the sum of its own lines. A credit that would take
+ * the total PAST that is refused with both numbers named: money the statement
+ * does not explain belongs to another statement, and quietly absorbing it here
+ * would drive that acquirer's in-transit negative — the exact symptom this
+ * layer exists to make impossible.
  */
+export type ReceiptInput = {
+  receivedOn: string;
+  /** This credit. Omitted = whatever the statement still has outstanding. */
+  amountSen?: number | null;
+  bankRef?: string | null;
+  note?: string | null;
+  userName?: string | null;
+};
+
+/** Every credit recorded against a batch, oldest first, with what is left. */
+export async function loadBatchReceipts(
+  sb: any,
+  companyId: number,
+  batchId: number,
+): Promise<{ ok: true; receipts: Array<Record<string, any>>; receivedSen: number } | { ok: false; reason: string }> {
+  const { data, error } = await sb
+    .from('acc_settlement_receipts')
+    .select('id, batch_id, received_on, amount_sen, bank_ref, note, je_no, created_by, created_at')
+    .eq('company_id', companyId)
+    .eq('batch_id', batchId)
+    .order('received_on');
+  if (error) return { ok: false, reason: error.message };
+  const receipts = (data ?? []) as Array<Record<string, any>>;
+  return { ok: true, receipts, receivedSen: receipts.reduce((s, r) => s + Number(r.amount_sen ?? 0), 0) };
+}
+
 export async function postBatchReceipt(
   sb: any,
   companyId: number,
   batchId: number,
-  receivedOn: string,
-): Promise<{ ok: true; status: 'posted' | 'already_posted'; jeNo?: string; amountSen: number } | { ok: false; status: string; reason: string }> {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(receivedOn ?? ''))) {
+  input: ReceiptInput,
+): Promise<
+  | { ok: true; status: 'posted'; jeNo?: string; amountSen: number; receivedSen: number; payableSen: number; outstandingSen: number }
+  | { ok: false; status: string; reason: string }
+> {
+  const receivedOn = String(input.receivedOn ?? '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(receivedOn)) {
     return { ok: false, status: 'bad_date', reason: 'Give the date the money reached the bank, as it reads on the bank statement (YYYY-MM-DD).' };
   }
 
   const { data: batchRaw, error } = await sb
     .from('acc_settlement_batches')
-    .select('id, acquirer_code, period_to, net_sen, stated_net_sen, received_on, receipt_je_no')
+    .select('id, acquirer_code, period_to, net_sen, stated_net_sen')
     .eq('id', batchId).eq('company_id', companyId).maybeSingle();
   if (error) return { ok: false, status: 'load_failed', reason: error.message };
   if (!batchRaw) return { ok: false, status: 'not_found', reason: `batch ${batchId} not found` };
   const batch = batchRaw as {
     acquirer_code: string; period_to: string | null;
     net_sen: number | null; stated_net_sen: number | null;
-    received_on: string | null; receipt_je_no: string | null;
   };
 
-  const amountSen = Number(batch.stated_net_sen ?? batch.net_sen ?? 0);
-  if (amountSen === 0) {
+  const payableSen = Number(batch.stated_net_sen ?? batch.net_sen ?? 0);
+  if (payableSen === 0) {
     return { ok: false, status: 'nothing_to_receive', reason: 'This statement pays nothing — there is no receipt to book.' };
   }
-  if (batch.receipt_je_no) {
-    return { ok: true, status: 'already_posted', jeNo: batch.receipt_je_no, amountSen };
+
+  const already = await loadBatchReceipts(sb, companyId, batchId);
+  if (!already.ok) return { ok: false, status: 'load_failed', reason: already.reason };
+  const outstanding = payableSen - already.receivedSen;
+  if (outstanding === 0) {
+    return {
+      ok: false,
+      status: 'fully_received',
+      reason: `This statement is already fully received — ${(payableSen / 100).toFixed(2)} across ${already.receipts.length} credit(s). If the bank shows more, it belongs to another statement.`,
+    };
+  }
+
+  /* Told nothing, take the rest: the ordinary case is one credit for the whole
+     payout, and the operator should not have to retype a number the statement
+     already knows. */
+  const amountSen = input.amountSen == null ? outstanding : Math.round(Number(input.amountSen));
+  if (!Number.isFinite(amountSen) || amountSen === 0) {
+    return { ok: false, status: 'bad_amount', reason: 'Give the amount of this credit, as it reads on the bank statement.' };
+  }
+  /* Past what the statement promised — refused with both numbers, never
+     absorbed. Same sign test both ways so a clawback batch behaves. */
+  if (Math.abs(amountSen) > Math.abs(outstanding) || Math.sign(amountSen) !== Math.sign(outstanding)) {
+    return {
+      ok: false,
+      status: 'over_receipt',
+      reason: `${batch.acquirer_code} still owes ${(outstanding / 100).toFixed(2)} on this statement, and this credit is ${(amountSen / 100).toFixed(2)}. Record only what this statement paid — the rest belongs to another one.`,
+    };
   }
 
   const acq = await loadAcquirer(sb, companyId, batch.acquirer_code);
@@ -439,30 +497,97 @@ export async function postBatchReceipt(
     console.error(`[acc/settlement] ${batch.acquirer_code} has no receiving bank account configured — payout booked to ${bankAccount}; fill in the acquirer setup (决定4)`);
   }
 
+  /* The row first, so the entry can be keyed on it: two credits of the same
+     amount on the same day are a real thing (two terminals, one merchant), and
+     keying the entry on the batch would make the second one look like a repeat
+     of the first and silently book nothing. */
+  const { data: rowRaw, error: insErr } = await sb.from('acc_settlement_receipts').insert({
+    batch_id: batchId,
+    company_id: companyId,
+    received_on: receivedOn,
+    amount_sen: amountSen,
+    bank_ref: input.bankRef ?? null,
+    note: input.note ?? null,
+    created_by: input.userName ?? null,
+  }).select('id').single();
+  if (insErr) return { ok: false, status: 'save_failed', reason: insErr.message };
+  const receiptId = Number((rowRaw as { id: number }).id);
+
   const posted = await postJournal(sb, {
     companyId,
     /* The bank's date, never the statement's: this entry exists because the
        bank says the money is there on this day. */
     entryDate: receivedOn,
     sourceType: 'SETTLEBANK',
-    sourceDocNo: `SETTLEBANK-${batchId}`,
+    sourceDocNo: `SETTLEBANK-${batchId}-${receiptId}`,
     narration: `${batch.acquirer_code} payout received ${receivedOn} — ${(Math.abs(amountSen) / 100).toFixed(2)}`,
     lines: settlementReceiptLines(
       { bankAccountCode: bankAccount, transitAccountCode: acq.acquirer.transit_account_code },
       { acquirerCode: batch.acquirer_code, receivedOn, amountSen },
     ),
   });
-  if (!posted.ok) return { ok: false, status: posted.status, reason: posted.reason ?? 'the posting gate refused the entry' };
-
-  const { error: upErr } = await sb.from('acc_settlement_batches').update({
-    received_on: receivedOn,
-    receipt_je_no: posted.jeNo,
-    receipt_je_id: posted.jeId,
-    receipt_posted_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  }).eq('id', batchId);
-  if (upErr) {
-    return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (entry ${posted.jeNo} DID post — try again to finish stamping the batch)` };
+  if (!posted.ok) {
+    /* The entry did not post, so the credit must not survive as a row that
+       says money arrived with nothing in the ledger behind it. */
+    await sb.from('acc_settlement_receipts').delete().eq('id', receiptId);
+    return { ok: false, status: posted.status, reason: posted.reason ?? 'the posting gate refused the entry' };
   }
-  return { ok: true, status: posted.status === 'already_posted' ? 'already_posted' : 'posted', jeNo: posted.jeNo, amountSen };
+
+  const { error: upErr } = await sb.from('acc_settlement_receipts').update({
+    je_no: posted.jeNo,
+    je_id: posted.jeId,
+    posted_at: new Date().toISOString(),
+  }).eq('id', receiptId);
+  if (upErr) {
+    return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (entry ${posted.jeNo} DID post — the credit is recorded, only its entry number is missing)` };
+  }
+
+  const receivedSen = already.receivedSen + amountSen;
+  return {
+    ok: true,
+    status: 'posted',
+    jeNo: posted.jeNo,
+    amountSen,
+    receivedSen,
+    payableSen,
+    outstandingSen: payableSen - receivedSen,
+  };
+}
+
+/**
+ * Undo ONE credit — the wrong date, the wrong amount, or a credit that turned
+ * out to belong to another statement.
+ *
+ * The way out of the ledger is a journal, not a delete: the entry is reversed
+ * through the engine (source SETTLEBANK, contra SETTLEBANK_REVERSAL) and only
+ * then does the row go, so the money is put back into settlement-in-transit
+ * where it was and the history of the correction survives.
+ */
+export async function undoBatchReceipt(
+  sb: any,
+  companyId: number,
+  receiptId: number,
+): Promise<{ ok: true; status: 'undone'; jeNo?: string } | { ok: false; status: string; reason: string }> {
+  const { data: rowRaw, error } = await sb
+    .from('acc_settlement_receipts')
+    .select('id, batch_id, amount_sen, received_on, je_no')
+    .eq('id', receiptId).eq('company_id', companyId).maybeSingle();
+  if (error) return { ok: false, status: 'load_failed', reason: error.message };
+  if (!rowRaw) return { ok: false, status: 'not_found', reason: `credit ${receiptId} not found` };
+  const row = rowRaw as { batch_id: number; amount_sen: number; received_on: string; je_no: string | null };
+
+  const reversed = await reverseJournal(sb, {
+    sourceType: 'SETTLEBANK',
+    sourceDocNo: `SETTLEBANK-${row.batch_id}-${receiptId}`,
+    companyId,
+    entryDate: isoDay(row.received_on),
+    narration: (orig) => `Reversal of ${orig.je_no} — that credit was not this statement's`,
+  });
+  if (!reversed.ok) return { ok: false, status: reversed.status, reason: reversed.reason ?? 'the reversal was refused' };
+
+  const { error: delErr } = await sb.from('acc_settlement_receipts').delete().eq('id', receiptId);
+  if (delErr) {
+    return { ok: false, status: 'delete_failed', reason: `${delErr.message} (the entry WAS reversed — press undo again to finish removing the credit)` };
+  }
+  return { ok: true, status: 'undone', ...(reversed.status === 'reversed' ? { jeNo: reversed.jeNo } : {}) };
 }

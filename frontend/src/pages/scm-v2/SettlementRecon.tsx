@@ -16,11 +16,11 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCheck, Download, Landmark, Upload } from 'lucide-react';
+import { AlertTriangle, CheckCheck, Download, Landmark, Undo2, Upload } from 'lucide-react';
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
-  useSettlementWatchlist, useInTransit, useMarkBatchReceived,
+  useSettlementWatchlist, useInTransit, useMarkBatchReceived, useUndoReceipt,
   type AgeBucket,
   type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch,
 } from './settlement-queries';
@@ -290,7 +290,9 @@ const ReconcileTab = () => {
                 {/* Not a status badge but the answer to the only question that
                     matters about a settled statement: has the money come? */}
                 <td style={{ ...cell, color: b.received_on ? good : danger }}>
-                  {b.received_on ?? 'not yet'}
+                  {b.received_on ?? ((b.received_sen ?? 0) !== 0
+                    ? `${fmt(b.received_sen)} of ${fmt(b.stated_net_sen ?? b.net_sen)}`
+                    : 'not yet')}
                 </td>
                 <td style={cell}>
                   <button type="button" style={btn(batchId === b.id)} onClick={() => setBatchId(b.id)}>Open</button>
@@ -404,47 +406,98 @@ const BatchView = ({ batchId }: { batchId: number }) => {
 
 const BatchReceipt = ({ batch, unconfirmedLines }: { batch: SettlementBatch; unconfirmedLines: number }) => {
   const receive = useMarkBatchReceived();
+  const undo = useUndoReceipt();
   const [on, setOn] = useState('');
-  const expected = batch.stated_net_sen ?? batch.net_sen;
+  const [amount, setAmount] = useState('');
 
-  if (batch.received_on) {
-    return (
-      <div style={{
-        padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', border: `1px solid ${good}`,
-        background: 'rgba(47,93,79,0.08)', fontSize: 'var(--fs-13)',
-      }}>
-        <b>{fmt(expected)} reached the bank on {batch.received_on}.</b>
-        <div style={softText}>
-          {batch.receipt_je_no ? `Booked as ${batch.receipt_je_no}: into the bank, out of settlement-in-transit. ` : ''}
-          This statement owes you nothing more.
-        </div>
-      </div>
-    );
-  }
+  const payable = batch.stated_net_sen ?? batch.net_sen;
+  const receipts = batch.receipts ?? [];
+  const received = batch.received_sen ?? receipts.reduce((s, r) => s + r.amount_sen, 0);
+  const outstanding = batch.outstanding_sen ?? payable - received;
+  const done = outstanding === 0 && payable !== 0;
+
+  const send = () => {
+    /* Blank = the rest of it. The ordinary payout is one credit for the whole
+       statement, and nobody should retype a number the statement knows. */
+    const typed = amount.trim() ? Math.round(Number(amount) * 100) : null;
+    receive.mutate({ batchId: batch.id, receivedOn: on, amountSen: typed }, {
+      onSuccess: () => { setOn(''); setAmount(''); },
+    });
+  };
 
   return (
     <div style={{
-      padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--c-ink)',
-      fontSize: 'var(--fs-13)', display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap',
-    }}>
-      <b>{batch.acquirer_code} still owes {fmt(expected)}.</b>
-      <label htmlFor={`recv-${batch.id}`} style={{ fontWeight: 600 }}>Money arrived in the bank on</label>
-      <input id={`recv-${batch.id}`} type="date" value={on} aria-label="Money arrived in the bank on"
-        onChange={(e) => setOn(e.target.value)} style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
-      <button type="button" style={btn(true, !on || receive.isPending)} disabled={!on || receive.isPending}
-        onClick={() => receive.mutate({ batchId: batch.id, receivedOn: on })}>
-        <Landmark {...ICON} /> {receive.isPending ? 'Posting…' : 'Money received'}
-      </button>
-      <div style={{ ...softText, flexBasis: '100%' }}>
-        Take the date off the bank statement, not the acquirer&rsquo;s statement — this entry is what makes the books
-        agree with the bank. {unconfirmedLines > 0
-          ? `${unconfirmedLines} line(s) here are still unconfirmed, so their fees are not booked yet; the payout can still be recorded, but this acquirer will not come to zero until they are done.`
-          : 'Every line is reconciled, so this empties the acquirer.'}
-      </div>
+      padding: 'var(--space-3)', borderRadius: 'var(--radius-md)',
+      border: `1px solid ${done ? good : 'var(--c-ink)'}`,
+      background: done ? 'rgba(47,93,79,0.08)' : undefined,
+      fontSize: 'var(--fs-13)',
+    }} className="space-y-2">
+      <b>
+        {done
+          ? `${fmt(payable)} reached the bank${receipts.length > 1 ? ` in ${receipts.length} credits` : ''}. This statement owes you nothing more.`
+          : `${batch.acquirer_code} still owes ${fmt(outstanding)}${received !== 0 ? ` of ${fmt(payable)}` : ''}.`}
+      </b>
+
+      {/* Every credit already recorded. One statement can be paid in several —
+          Hong Leong pays a multi-day statement one credit per trading day. */}
+      {receipts.length > 0 && (
+        <table style={table}>
+          <thead>
+            <tr style={headRow}>
+              <th style={cell}>Arrived in the bank</th><th style={num}>Amount</th>
+              <th style={cell}>Journal</th><th style={cell}>Recorded by</th><th style={cell} />
+            </tr>
+          </thead>
+          <tbody>
+            {receipts.map((r) => (
+              <tr key={r.id}>
+                <td style={cell}>{r.received_on}</td>
+                <td style={num}>{fmt(r.amount_sen)}</td>
+                <td style={cell}>{r.je_no ?? '—'}</td>
+                <td style={cell}>{r.created_by ?? '—'}</td>
+                <td style={cell}>
+                  <button type="button" style={btn(false, undo.isPending)} disabled={undo.isPending}
+                    onClick={() => undo.mutate(r.id)}
+                    title="Take this credit back off the statement — its entry is reversed">
+                    <Undo2 {...ICON} /> Undo
+                  </button>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+
+      {!done && (
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+          <label htmlFor={`recv-${batch.id}`} style={{ fontWeight: 600 }}>Money arrived in the bank on</label>
+          <input id={`recv-${batch.id}`} type="date" value={on} aria-label="Money arrived in the bank on"
+            onChange={(e) => setOn(e.target.value)} style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
+          <input id={`amt-${batch.id}`} value={amount} aria-label="Amount of this credit"
+            onChange={(e) => setAmount(e.target.value)}
+            placeholder={`Amount (blank = ${fmt(outstanding)})`}
+            style={{ padding: '5px 8px', fontSize: 'var(--fs-13)', width: 200 }} />
+          <button type="button" style={btn(true, !on || receive.isPending)} disabled={!on || receive.isPending}
+            onClick={send}>
+            <Landmark {...ICON} /> {receive.isPending ? 'Posting…' : 'Money received'}
+          </button>
+        </div>
+      )}
+
+      {!done && (
+        <div style={softText}>
+          Take the date and the amount off the BANK statement, not the acquirer&rsquo;s — this entry is what makes the
+          books agree with the bank. One statement is often paid in several credits; record each one as it lands.
+          {unconfirmedLines > 0
+            ? ` ${unconfirmedLines} line(s) here are still unconfirmed, so their fees are not booked yet; the payout can still be recorded, but this acquirer will not come to zero until they are done.`
+            : ' Every line is reconciled, so the last credit empties the acquirer.'}
+        </div>
+      )}
+
       {receive.isError && (
-        <div style={{ color: danger, flexBasis: '100%', display: 'flex', gap: 6 }}>
+        <div style={{ color: danger, display: 'flex', gap: 6 }}>
           <AlertTriangle {...ICON} />
-          <span>{refusalText(receive.error, 'The receipt was not posted.')}</span>
+          <span>{refusalText(receive.error, 'The credit was not posted.')}</span>
         </div>
       )}
     </div>

@@ -55,7 +55,7 @@ function harness(tables: Record<string, Row[]>, perms: readonly string[] = [GL_P
     {
       accounts: CHART, acc_account_roles: [],
       acc_acquirers: [MBB], acc_acquirer_config: [], acc_company_acquirers: [],
-      acc_settlement_batches: [], acc_settlement_rows: [], acc_settlement_matches: [],
+      acc_settlement_batches: [], acc_settlement_rows: [], acc_settlement_matches: [], acc_settlement_receipts: [],
       mfg_sales_order_payments: [], sales_invoice_payments: [],
       journal_entries: [], journal_entry_lines: [],
       ...tables,
@@ -65,7 +65,7 @@ function harness(tables: Record<string, Row[]>, perms: readonly string[] = [GL_P
       { table: 'acc_settlement_matches', column: 'payment_id', name: 'acc_settlement_payment_once' },
       { table: 'acc_settlement_batches', column: 'file_hash', name: 'acc_settlement_batch_once' },
     ],
-    ['acc_settlement_batches', 'acc_settlement_rows', 'acc_settlement_matches'],
+    ['acc_settlement_batches', 'acc_settlement_rows', 'acc_settlement_matches', 'acc_settlement_receipts'],
   );
   const app = new Hono();
   app.use('*', async (c, next) => {
@@ -249,7 +249,35 @@ describe('POST /settlement/batches/:id/received — the money arrives', () => {
     /* The statement's net: 1,777.00 gross less 26.00 of fees. */
     expect(lines.find((l) => l.account_code === '330-0000')).toMatchObject({ debit_sen: 175100 });
     expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 175100 });
-    expect(sb.tables.acc_settlement_batches[0]).toMatchObject({ received_on: '2026-08-05' });
+    expect(sb.tables.acc_settlement_receipts[0]).toMatchObject({ batch_id: up.batchId, received_on: '2026-08-05', amount_sen: 175100 });
+  });
+
+  /* "我实际收到的钱可能是多笔的哦" — Hong Leong pays a multi-day statement one
+     credit per trading day. Half-paid is not paid, and the list says so. */
+  test('a statement paid in two credits only leaves the list when they add up', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+
+    const first = await post(app, `/settlement/batches/${up.batchId}/received`, { receivedOn: '2026-08-05', amountSen: 100000 });
+    expect(first.status).toBe(200);
+    expect(await first.json()).toMatchObject({ receivedSen: 100000, outstandingSen: 75100 });
+
+    const listed = await (await app.request('/settlement/batches')).json() as { batches: Array<Record<string, unknown>> };
+    /* Partly in the bank must not read as in the bank. */
+    expect(listed.batches[0]).toMatchObject({ received_sen: 100000, outstanding_sen: 75100, received_on: null, receipt_count: 1 });
+
+    const tooMuch = await post(app, `/settlement/batches/${up.batchId}/received`, { receivedOn: '2026-08-06', amountSen: 90000 });
+    expect(tooMuch.status).toBe(409);
+    expect(await tooMuch.json()).toMatchObject({ error: 'over_receipt' });
+
+    await post(app, `/settlement/batches/${up.batchId}/received`, { receivedOn: '2026-08-06', amountSen: 75100 });
+    const done = await (await app.request('/settlement/batches')).json() as { batches: Array<Record<string, unknown>> };
+    expect(done.batches[0]).toMatchObject({ outstanding_sen: 0, received_on: '2026-08-06', receipt_count: 2 });
+
+    const detail = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { batch: { receipts: unknown[]; outstanding_sen: number } };
+    expect(detail.batch.receipts).toHaveLength(2);
+    expect(detail.batch.outstanding_sen).toBe(0);
   });
 
   test('a date it was not given is refused rather than assumed', async () => {
@@ -288,7 +316,7 @@ describe('GET /settlement/in-transit — whose money is still out there', () => 
     const after = await read();
     expect(after.lines).toHaveLength(0);
     expect(after.totalSen).toBe(0);
-    expect(sb.tables.acc_settlement_batches[0].receipt_je_no).toBeTruthy();
+    expect(sb.tables.acc_settlement_receipts[0].je_no).toBeTruthy();
   });
 
   /* AEON's subvention fee has left in-transit too once it is booked, so it must
@@ -310,6 +338,24 @@ describe('GET /settlement/in-transit — whose money is still out there', () => 
     /* The swipe itself is booked by phase 2A, not here, so what this suite can
        compare is the movement: everything taken out of in-transit so far is
        exactly what the list says is no longer owed. */
+    expect(body.totalSen).toBe(100000 + transit);
+  });
+
+  /* A statement paid in instalments takes its payments down as it goes — the
+     list and the account move together, never in steps of a whole statement. */
+  test('a part-paid statement shows what is still owed on it', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    await post(app, `/settlement/batches/${up.batchId}/received`, { receivedOn: '2026-08-05', amountSen: 50000 });
+
+    const body = await (await app.request('/settlement/in-transit')).json() as { totalSen: number; lines: Array<{ amountSen: number; state: string }> };
+    /* 1,000.00 swiped, 15.00 fee booked, 500.00 of the payout landed. */
+    expect(body.lines[0]).toMatchObject({ state: 'RECONCILED_NOT_PAID', amountSen: 100000 - 1500 - 50000 });
+
+    const transit = sb.tables.journal_entry_lines
+      .filter((l) => l.account_code === '320-0000')
+      .reduce((s, l) => s + Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0), 0);
     expect(body.totalSen).toBe(100000 + transit);
   });
 });

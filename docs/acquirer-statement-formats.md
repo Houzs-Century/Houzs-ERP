@@ -24,9 +24,22 @@ know it:
 1. **Reconcile the card machine.** Match each line to the payments behind it and
    confirm. That books the FEE only (Dr merchant charges / Cr settlement-in-
    transit). What is left in transit is exactly what the acquirer still owes.
-2. **Record the payout.** When the bank statement shows the credit, enter its
-   date on the batch. That books Dr bank / Cr settlement-in-transit for the net
-   the statement said it would pay, and the acquirer comes to zero.
+2. **Record the payout — every credit of it.** When the bank statement shows a
+   credit, enter its date and amount on the statement. Each one books Dr bank /
+   Cr settlement-in-transit on its own day. The statement is square only when
+   its credits add up to what it said it would pay; a credit that would overshoot
+   is refused, because that money belongs to another statement.
+
+   The owner again, on the first version of step 2: **我实际收到的钱可能是多笔的
+   哦.** He is right, and the files say so three different ways:
+
+   | Acquirer | How the payout actually arrives |
+   |---|---|
+   | HLB | one credit per TRADING DAY — two landed together on 18/06 at 14:36, RM 7,261.65 (for 16/06) and RM 1,788.28 (for 17/06) |
+   | MBB | one credit per trading date (`CR/CARD SALES ... DATED DDMMYYYY`), so a fortnight's statement arrives as a fortnight of credits |
+   | PBB | the other way round — one advice of 10 Aug paid for trading on the 7th, 8th and 9th |
+
+   A credit keyed wrongly is undone by REVERSING its entry, not by deleting it.
 
 The customer's side is untouched by either step: AR is knocked off by the full
 gross when the card is swiped (owner: 顾客还款确定到时是记录6000哦，不然knock

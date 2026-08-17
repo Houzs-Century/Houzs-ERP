@@ -34,16 +34,22 @@ const ROW: SettlementRow = {
 
 const confirmMutate = vi.fn();
 const receivedMutate = vi.fn();
+const undoMutate = vi.fn();
 const uploadMutateAsync = vi.fn();
 let saveMutate = vi.fn();
 
 vi.mock('./settlement-queries', () => ({
   useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL] }, isLoading: false }),
   useSaveAcquirerSetup: () => ({ mutate: saveMutate, isPending: false }),
-  useSettlementBatches: () => ({ data: { batches: [{ id: 1, acquirer_code: 'MBB', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-03', row_count: 2, gross_sen: 177700, fee_sen: 2600, net_sen: 175100, stated_net_sen: null, adjustment_sen: 0, adjustment_je_no: null, received_on: null, receipt_je_no: null, status: 'OPEN', uploaded_by: null, created_at: '' }] }, isLoading: false }),
+  useSettlementBatches: () => ({ data: { batches: [{ id: 1, acquirer_code: 'MBB', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-03', row_count: 2, gross_sen: 177700, fee_sen: 2600, net_sen: 175100, stated_net_sen: null, adjustment_sen: 0, adjustment_je_no: null, received_on: null, received_sen: 60000, outstanding_sen: 115100, receipt_count: 1, status: 'OPEN', uploaded_by: null, created_at: '' }] }, isLoading: false }),
   useSettlementBatch: () => ({
     data: {
-      batch: { id: 1, acquirer_code: 'MBB', net_sen: 175100, stated_net_sen: null, adjustment_sen: 0, adjustment_je_no: null, received_on: null, receipt_je_no: null },
+      batch: {
+        id: 1, acquirer_code: 'MBB', net_sen: 175100, stated_net_sen: null,
+        adjustment_sen: 0, adjustment_je_no: null, received_on: null,
+        received_sen: 60000, outstanding_sen: 115100,
+        receipts: [{ id: 9, received_on: '2026-08-05', amount_sen: 60000, bank_ref: null, note: null, je_no: 'JE-2608-0007', created_by: 'Ah Chew' }],
+      },
       acquirer: { code: 'MBB', hasUniqueRef: true, dateToleranceDays: 3 },
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 1, UNMATCHED: 0, IGNORED: 0 },
       rows: [ROW],
@@ -55,6 +61,7 @@ vi.mock('./settlement-queries', () => ({
   useConfirmMatched: () => ({ mutate: vi.fn(), isPending: false, data: null }),
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
   useMarkBatchReceived: () => ({ mutate: receivedMutate, isPending: false, isError: false, error: null }),
+  useUndoReceipt: () => ({ mutate: undoMutate, isPending: false }),
   useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, recordedNotArrived: [], arrivedNotRecorded: [] }, isLoading: false }),
   useInTransit: () => ({ data: { from: '2026-02-17', to: '2026-08-17', totalSen: 357900, ageing: { MBB: { '0-7': { count: 1, sen: 230000 } }, GHL: { 'over-30': { count: 1, sen: 29400 } } }, lines: [
     { acquirerCode: 'MBB', source: 'SOPAY', paymentId: 'm1', docNo: 'SO-2608-040', paidOn: '2026-08-14', amountSen: 230000, approvalCode: '861777', recordedBy: 'Siti at the KL till', recordedById: 'u1', ageDays: 3, state: 'MATCHED_NOT_POSTED' },
@@ -125,13 +132,40 @@ describe('the reconcile tab', () => {
   test('an open statement asks for the bank date as its own step, and posts it', () => {
     draw();
     fireEvent.click(screen.getByText('Open'));
-    expect(screen.getByText(/MBB still owes/)).toBeTruthy();
+    /* One credit of 600.00 has landed against a 1,751.00 statement, so what it
+       says is what is STILL owed, not the whole net. */
+    expect(screen.getByText(/MBB still owes RM 1,151\.00 of RM 1,751\.00/)).toBeTruthy();
 
     const post = screen.getByText('Money received') as HTMLButtonElement;
     expect(post.disabled).toBe(true);          // no date, nothing to post
     fireEvent.change(screen.getByLabelText('Money arrived in the bank on'), { target: { value: '2026-08-07' } });
     fireEvent.click(screen.getByText('Money received'));
-    expect(receivedMutate).toHaveBeenCalledWith({ batchId: 1, receivedOn: '2026-08-07' });
+    /* Amount left blank = the rest of it; the operator never retypes a number
+       the statement already knows. */
+    expect(receivedMutate).toHaveBeenCalledWith(
+      { batchId: 1, receivedOn: '2026-08-07', amountSen: null },
+      expect.anything(),
+    );
+  });
+
+  /* The owner: "我实际收到的钱可能是多笔的哦". Every credit is its own row,
+     with its own entry, and any one of them can be taken back off. */
+  test('the credits already banked are listed, and one can be undone', () => {
+    draw();
+    fireEvent.click(screen.getByText('Open'));
+    expect(screen.getByText('2026-08-05')).toBeTruthy();
+    expect(screen.getByText('JE-2608-0007')).toBeTruthy();
+
+    fireEvent.change(screen.getByLabelText('Amount of this credit'), { target: { value: '1151.00' } });
+    fireEvent.change(screen.getByLabelText('Money arrived in the bank on'), { target: { value: '2026-08-08' } });
+    fireEvent.click(screen.getByText('Money received'));
+    expect(receivedMutate).toHaveBeenCalledWith(
+      { batchId: 1, receivedOn: '2026-08-08', amountSen: 115100 },
+      expect.anything(),
+    );
+
+    fireEvent.click(screen.getByText('Undo'));
+    expect(undoMutate).toHaveBeenCalledWith(9);
   });
 
   test('the four piles carry their counts, and a line shows its clue and its candidates', () => {

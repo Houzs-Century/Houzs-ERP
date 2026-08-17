@@ -22,7 +22,7 @@ import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched,
   settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
-  settlementBatchReceived,
+  settlementBatchReceived, settlementReceiptUndo,
 } from '../src/scm/routes/accounting-settlement';
 
 const PORT = Number(process.env.DEMO_PORT ?? 8788);
@@ -150,6 +150,7 @@ const seed = () => ({
   acc_settlement_batches: [] as Row[],
   acc_settlement_rows: [] as Row[],
   acc_settlement_matches: [] as Row[],
+  acc_settlement_receipts: [] as Row[],
   journal_entries: [] as Row[],
   journal_entry_lines: [] as Row[],
   mfg_sales_order_payments: [
@@ -230,7 +231,7 @@ const client = () => fakeSb(
     { table: 'acc_settlement_matches', column: 'payment_id', name: 'acc_settlement_payment_once' },
     { table: 'acc_settlement_batches', column: 'file_hash', name: 'acc_settlement_batch_once' },
   ],
-  ['acc_settlement_batches', 'acc_settlement_rows', 'acc_settlement_matches'],
+  ['acc_settlement_batches', 'acc_settlement_rows', 'acc_settlement_matches', 'acc_settlement_receipts'],
 );
 
 /* PATCH /setup writes to the two real tables; the view is derived, so refresh
@@ -279,6 +280,7 @@ app.get(`${R}/batches/:id`, settlementBatchDetail as never);
 app.get(`${R}/batches/:id/export`, settlementExport as never);
 app.post(`${R}/batches/:id/confirm-matched`, settlementConfirmMatched as never);
 app.post(`${R}/batches/:id/received`, settlementBatchReceived as never);
+app.post(`${R}/receipts/:id/undo`, settlementReceiptUndo as never);
 app.post(`${R}/rows/:id/confirm`, settlementConfirmRow as never);
 app.post(`${R}/rows/:id/ignore`, settlementIgnoreRow as never);
 app.get(`${R}/watchlist`, settlementWatchlist as never);

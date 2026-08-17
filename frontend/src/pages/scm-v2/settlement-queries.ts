@@ -66,6 +66,17 @@ export type SettlementRow = {
   clue: string | null;
 };
 
+/** One credit of a payout, as the BANK shows it. */
+export type SettlementReceipt = {
+  id: number;
+  received_on: string;
+  amount_sen: number;
+  bank_ref: string | null;
+  note: string | null;
+  je_no: string | null;
+  created_by: string | null;
+};
+
 export type SettlementBatch = {
   id: number;
   acquirer_code: string;
@@ -81,10 +92,17 @@ export type SettlementBatch = {
   /** lines net minus stated net: a charge the transactions do not explain. */
   adjustment_sen: number;
   adjustment_je_no: string | null;
-  /** The day the payout actually reached the bank. Null = still with the
-      acquirer, which is the honest state, not a missing field. */
+  /** How much of the payout has actually landed, across however many credits
+      it came in — one statement is often paid in several (owner: 我实际收到的钱
+      可能是多笔的哦). */
+  received_sen?: number;
+  receipt_count?: number;
+  outstanding_sen?: number;
+  /** The day it was FULLY received; null while any of it is still out, so
+      "partly in the bank" can never read as "in the bank". */
   received_on: string | null;
-  receipt_je_no: string | null;
+  /** Only on the batch DETAIL: every credit recorded against this statement. */
+  receipts?: SettlementReceipt[];
   status: string;
   uploaded_by: string | null;
   created_at: string;
@@ -209,15 +227,32 @@ export const useConfirmMatched = () => {
 export const useMarkBatchReceived = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ batchId, receivedOn }: { batchId: number; receivedOn: string }) =>
-      authedFetch<{ ok: boolean; status: string; jeNo?: string; amountSen: number }>(
+    mutationFn: ({ batchId, receivedOn, amountSen }: { batchId: number; receivedOn: string; amountSen?: number | null }) =>
+      authedFetch<{ ok: boolean; status: string; jeNo?: string; amountSen: number; receivedSen: number; outstandingSen: number }>(
         `/accounting/settlement/batches/${batchId}/received`,
-        { method: 'POST', body: JSON.stringify({ receivedOn }) },
+        { method: 'POST', body: JSON.stringify({ receivedOn, amountSen }) },
       ),
     onSuccess: () => {
       invalidateAfterPosting(qc);
       void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
     },
+  });
+};
+
+/** Take one credit back off a statement — the wrong date, the wrong amount, or
+    money that turned out to belong to another statement. Reverses its entry. */
+export const useUndoReceipt = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (receiptId: number) =>
+      authedFetch<{ ok: boolean; status: string; jeNo?: string }>(
+        `/accounting/settlement/receipts/${receiptId}/undo`, { method: 'POST', body: '{}' },
+      ),
+    onSuccess: () => {
+      invalidateAfterPosting(qc);
+      void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
+    },
+    onError: writeFailedAs('Credit not removed'),
   });
 };
 
