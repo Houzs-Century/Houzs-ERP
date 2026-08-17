@@ -18,6 +18,7 @@ import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
+import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
@@ -705,14 +706,10 @@ purchaseInvoices.get('/', async (c) => {
     countBase().in('status', PI_STATUS_BUCKETS.paid),
     countBase().in('status', PI_STATUS_BUCKETS.cancelled),
   ]);
-  const statusCounts = {
-    all: allC.count ?? 0,
-    draft: draftC.count ?? 0,
-    posted: postedC.count ?? 0,
-    partial: partialC.count ?? 0,
-    paid: paidC.count ?? 0,
-    cancelled: cancelledC.count ?? 0,
-  };
+  // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
+  const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, partial: partialC, paid: paidC, cancelled: cancelledC });
+  if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
+  const statusCounts = counted.counts;
 
   const purchaseInvoices = await attachPiAssignedSos(sb, c, (data ?? []) as Array<{ id: string; grn_id?: string | null }>);
   return c.json({ purchaseInvoices, total, page, pageSize, statusCounts });

@@ -70,6 +70,7 @@ import {
 } from '../lib/source-po-trace';
 export { soLineShippedSources, resolveDoSources } from '../lib/source-po-trace';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
+import { readStatusCounts } from '../lib/status-counts';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, scopeToAllowedCompanies, activeCompanyId, stampCompany, companyDocPrefix, docPrefixForCode, companyCodeMap,
@@ -2695,15 +2696,16 @@ function soNotDeliverableResponse(offender: { docNo: string; status: string }) {
   };
 }
 
-/* Filter-pill bucket → the raw delivery_orders.status values it covers. Single
-   source of truth for BOTH the status-count queries and the list `status`
-   filter. open / in_transit / delivered are MULTI-status buckets; cancelled is
-   1:1. The FE sends the BUCKET NAME as `status`; a raw DB status still works
-   (backward-compatible fallback). */
+/* Filter-pill bucket → the raw delivery_orders.status values it covers. Single source of truth for BOTH the status-count
+   queries and the list `status` filter; the FE sends the BUCKET NAME (a raw DB status still works). EVERY VALUE IS AN ENUM
+   MEMBER AND EVERY MEMBER IS IN A BUCKET — pinned by tests/statusBucketsEnumMembership.test.mjs. COMPLETED sat in `delivered`
+   until 2026-08-17 and is NOT a member: the tab 500'd (`22P02 invalid input value for enum do_status`) and its COUNT failed to
+   a silent 0 — measured in prod that day, company 1 `all:27 delivered:0` with 25 DOs in no tab, company 2 `all:36 delivered:0`
+   with 12. COMPLETED stays in shared/do-shipped-states.ts on purpose: those sets compare a status already in hand, in JS, where an impossible value is inert. This map is the one copy Postgres has to PARSE, which is why only this one was fatal. */
 const DO_STATUS_BUCKETS: Record<string, string[]> = {
   open: ['DRAFT', 'LOADED'],
   in_transit: ['DISPATCHED', 'IN_TRANSIT'],
-  delivered: ['SIGNED', 'DELIVERED', 'INVOICED', 'COMPLETED'],
+  delivered: ['SIGNED', 'DELIVERED', 'INVOICED'],
   cancelled: ['CANCELLED'],
 };
 
@@ -2739,6 +2741,7 @@ deliveryOrdersMfg.get('/', async (c) => {
   let page = 0;
   let pageSize = 50;
   let statusCounts: { all: number; open: number; in_transit: number; delivered: number; cancelled: number } | undefined;
+  let countError: string | null = null; // held, not returned here, so the LIST read's own error still wins the report
 
   if (!paginate) {
     /* --- LEGACY PATH (unchanged) --- */
@@ -2810,15 +2813,12 @@ deliveryOrdersMfg.get('/', async (c) => {
       countBase().in('status', DO_STATUS_BUCKETS.delivered),
       countBase().in('status', DO_STATUS_BUCKETS.cancelled),
     ]);
-    statusCounts = {
-      all: allC.count ?? 0,
-      open: openC.count ?? 0,
-      in_transit: transitC.count ?? 0,
-      delivered: deliveredC.count ?? 0,
-      cancelled: cancelledC.count ?? 0,
-    };
+    // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
+    const counted = readStatusCounts({ all: allC, open: openC, in_transit: transitC, delivered: deliveredC, cancelled: cancelledC });
+    if (counted.ok) statusCounts = counted.counts; else countError = counted.reason;
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (countError) return c.json({ error: 'status_counts_failed', reason: countError }, 500);
 
   /* Tier 2 downstream-lock — one extra batched read per doc set: pull every
      non-cancelled DR/SI that points back to a listed DO and stamp has_children

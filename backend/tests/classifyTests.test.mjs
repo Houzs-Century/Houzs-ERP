@@ -224,7 +224,16 @@ test("the real backend tree classifies, and the split is not degenerate", async 
 
    So the protection is stated here rather than left to a side effect. Adding a
    suite to this list is a claim that its assertion must stop a MERGE. */
-const MUST_GATE_MERGE = ["tests/migrationNumbers.test.ts"];
+const MUST_GATE_MERGE = [
+  "tests/migrationNumbers.test.ts",
+  /* A bucket holding a label that is not in the enum makes the tab 500 AND its
+     count fall silently to 0 — 37 delivery orders were unreachable in
+     production on 2026-08-17 with every number on screen looking settled. It is
+     a merge gate for the same reason the duplicate-number test is: nothing
+     downstream catches it, and the deploy is perfectly healthy while the list
+     lies. */
+  "tests/statusBucketsEnumMembership.test.mjs",
+];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {
   const { light, workers } = await classifyTests(backendRoot);

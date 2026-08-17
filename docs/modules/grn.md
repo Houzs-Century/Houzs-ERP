@@ -254,8 +254,15 @@ authoritative in-code lists are `HEADER` (`grns.ts:529-534`) and `ITEM` (`:535-5
 | `scm.purchase_invoice_items` / `scm.purchase_return_items` | Downstream: they draw on `grn_item_id`, which is what moves `invoiced_qty` / `returned_qty`. |
 
 Status vocabulary: `DRAFT | POSTED | CANCELLED | CLOSED`. Filter buckets
-(`:827-831`) cover only `draft` / `posted` / `cancelled` — **CLOSED has no bucket**,
-so a CLOSED GRN appears under "All" and nowhere else.
+(`GRN_STATUS_BUCKETS`): `draft` = DRAFT, `posted` = POSTED+CLOSED, `cancelled` =
+CANCELLED.
+
+> **FIXED 2026-08-17.** CLOSED was in NO bucket, so a CLOSED GRN appeared under
+> "All" and nowhere else. It files under `posted` because of what the STOCK did:
+> a CLOSED GRN was posted first, so its inventory IN stands — a CANCELLED one had
+> its receipt reversed. `GoodsReceivedListV2`'s `statusFor()` already bucketed it
+> as `posted` by fallback and now says so explicitly. Membership both ways is
+> pinned by `backend/tests/statusBucketsEnumMembership.test.mjs`.
 
 **Who sets each, and what it blocks (2026-08-16).** DB type is the
 `scm.grn_status` ENUM (base body in `backend/scripts/scm-schema/2990s-full-schema.sql`,
@@ -269,7 +276,7 @@ of the PO's `PARTIALLY_RECEIVED` / `RECEIVED`, via `recomputePoReceived`.)
 | `DRAFT` | create with `asDraft: true`. Passing `status:'DRAFT'` in the body is refused: `Use asDraft:true to save a GRN as a draft.` | no stock yet |
 | `POSTED` | create-as-posted, or `PATCH /:id/post` — all through the one chokepoint `postGrnAndRollup`, which CASes the flip | this is where the inventory IN lands |
 | `CANCELLED` | `PATCH /:id/cancel` (DRAFT short-circuits; the active branch is atomic) | terminal |
-| `CLOSED` | **nothing in `backend/src` writes it.** Read-only legacy terminal that still blocks a re-post | terminal |
+| `CLOSED` | **nothing in `backend/src` writes it.** Read-only legacy terminal that still blocks a re-post. Filed under the `posted` filter bucket since 2026-08-17 — its stock IN stands | terminal |
 
 Refusals the operator sees:
 

@@ -62,6 +62,7 @@ import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
 import { fetchOutstandingPoItems, type OutstandingPoItemRow, type OutstandingPoItemsClient } from '../lib/outstanding-po-items';
 import { escapeForOr } from '../lib/postgrest-search';
+import { readStatusCounts } from '../lib/status-counts';
 import { recordEntityAudit, assertAuditWritable, auditUnavailableBody, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
@@ -1046,13 +1047,13 @@ function computeGrnFlags(items: Array<{ qty_accepted?: number | null; invoiced_q
   return { has_children: hasChildren, fully_invoiced: fullyInvoiced, fully_returned: fullyReturned };
 }
 
-/* Filter-pill bucket → the raw grns.status values it covers. Single source of
-   truth for BOTH the status-count queries and the list `status` filter. All
-   three buckets are 1:1 today, but the FE sends the BUCKET NAME as `status`; a
-   raw DB status still works (backward-compatible fallback). */
+/* Filter-pill bucket → the raw grns.status values it covers. Single source of truth for BOTH the status-count queries and
+   the list `status` filter; the FE sends the BUCKET NAME (a raw DB status still works). EVERY VALUE IS AN ENUM MEMBER AND
+   EVERY MEMBER IS IN A BUCKET — pinned by tests/statusBucketsEnumMembership.test.mjs. CLOSED joined `posted` on 2026-08-17
+   out of NO bucket (it counted in `all`, showed in no tab); `posted` because its stock IN stands where a CANCELLED GRN's was reversed, and it is the bucket GoodsReceivedListV2's statusFor() already fell back to. */
 const GRN_STATUS_BUCKETS: Record<string, string[]> = {
   draft: ['DRAFT'],
-  posted: ['POSTED'],
+  posted: ['POSTED', 'CLOSED'],
   cancelled: ['CANCELLED'],
 };
 
@@ -1076,6 +1077,7 @@ grns.get('/', async (c) => {
   let page = 0;
   let pageSize = 50;
   let statusCounts: { all: number; draft: number; posted: number; cancelled: number } | undefined;
+  let countError: string | null = null; // held, not returned here, so the LIST read's own error still wins the report
 
   if (!paginate) {
     /* --- LEGACY PATH (unchanged) --- */
@@ -1140,14 +1142,12 @@ grns.get('/', async (c) => {
       countBase().in('status', GRN_STATUS_BUCKETS.posted),
       countBase().in('status', GRN_STATUS_BUCKETS.cancelled),
     ]);
-    statusCounts = {
-      all: allC.count ?? 0,
-      draft: draftC.count ?? 0,
-      posted: postedC.count ?? 0,
-      cancelled: cancelledC.count ?? 0,
-    };
+    // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
+    const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, cancelled: cancelledC });
+    if (counted.ok) statusCounts = counted.counts; else countError = counted.reason;
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (countError) return c.json({ error: 'status_counts_failed', reason: countError }, 500);
 
   // Commander 2026-05-29 — the GRN list grid needs a money column (AutoCount's
   // GRN list shows Sub-Total / Total). The Total is the STORED header total_centi
