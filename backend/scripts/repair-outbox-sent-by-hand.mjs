@@ -34,7 +34,18 @@
    (requeueOneRow's `if (status === 'sent')`), and writing linked_ac_docno closes
    it a second, independent time at transferVerdict's own guard.
 
-   WHAT THIS WRITES, per document, and nothing else:
+   FIVE ROWS, THREE DOCUMENTS — measured, not assumed. The first PLAN dispatch
+   (run 31985282257, 2026-08-17) refused because it expected one outbox row per
+   document and found five. Both delivery orders carry TWO `so_to_do` rows: the
+   original, annotated `[re-queued 2026-08-16T15:12…]` when somebody pressed
+   Send again yesterday, and the fresh row that press inserted, which then
+   failed with `Invalid transfer item.` on all six attempts. Only the fresh one
+   is live. The annotated predecessor is already inert — the marker is its own
+   rung on the ladder (`already-requeued`, checked before status or payload) —
+   so this repair leaves it exactly as it is. Nothing was ever sent for that
+   row, and `annotate` declined to move its status for precisely that reason.
+
+   WHAT THIS WRITES, per LIVE row, and nothing else:
 
      scm.autocount_outbox   status = 'sent', ac_doc_no, sent_at, last_error
                             prefixed with the repair marker, updated_at
@@ -98,6 +109,15 @@ if (APPLY && process.env.CONFIRM !== CONFIRM_PHRASE) {
 /** Prefix on the repaired row's `last_error`. Deliberately not `[re-queued`,
  *  which acOutboxState reads as a re-queue marker on skipped/failed rows. */
 const REPAIR_NOTE_PREFIX = '[sent by hand, outbox repaired';
+
+/** What annotate() writes on a skip the re-queue tool has replaced. Its own
+ *  rung: requeueOneRow answers `already-requeued` to any row carrying it,
+ *  before status or payload are looked at, and acOutboxState maps it to
+ *  `requeued` so the page files the row as history. Copied as a STRING because
+ *  the definition is TypeScript in backend/src and this is plain node; the
+ *  string is the wire format both sides already agree on. */
+const REQUEUE_NOTE_PREFIX = '[re-queued';
+const isSettledPredecessor = (r) => String(r.last_error ?? '').startsWith(REQUEUE_NOTE_PREFIX);
 
 /* THE THREE, and the whole list. Every field is a measurement from the account
    book or a column name from DOWNSTREAM in scm/lib/autocount-outbox.ts, not
@@ -228,15 +248,33 @@ async function main() {
       + 'Deal with that first — this repair will not race it.');
   }
 
+  const superseded = rows.filter(isSettledPredecessor);
+  if (superseded.length) {
+    note(`\n=== SUPERSEDED PREDECESSORS — settled already, left exactly as they are ===`);
+    for (const r of superseded) note(`  ${pad(r.doc_no, 18)} ${pad(r.id, 38)} ${r.status} + the re-queue marker`);
+    note(`  requeueOneRow answers 'already-requeued' to a row carrying that marker, before it looks at`);
+    note(`  anything else, and acOutboxState reads it as 'requeued' so the page counts it as history.`);
+    note(`  Nothing was ever sent FOR these rows, so marking them 'sent' would be the lie annotate()`);
+    note(`  declined to tell when it left their status alone.`);
+  }
+
   const work = [];
   const doneAlready = [];
   for (const spec of planned) {
     const mine = rows.filter((r) => r.doc_no === spec.docNo && r.op === spec.op);
-    if (mine.length !== 1) {
-      refuse(`${spec.docNo}: expected exactly one ${spec.op} outbox row, found ${mine.length}`);
+    /* ONE LIVE ROW PER DOCUMENT, not one row. Both delivery orders carry a
+       re-queued predecessor as well: the button was pressed on 2026-08-16
+       15:12, which annotated the original and inserted a fresh row, and that
+       fresh row is the one that then failed. The predecessor is already inert
+       — the marker is its own rung on the ladder — so the live row is the one
+       WITHOUT it, and there must be exactly one. */
+    const live = mine.filter((r) => !isSettledPredecessor(r));
+    if (live.length !== 1) {
+      refuse(`${spec.docNo}: expected exactly one live ${spec.op} outbox row, found ${live.length} `
+        + `(${mine.length} row(s) in total, ${mine.length - live.length} already superseded)`);
       continue;
     }
-    const row = mine[0];
+    const row = live[0];
     if (row.doc_type !== spec.docType) {
       refuse(`${spec.docNo}: outbox doc_type is ${row.doc_type}, expected ${spec.docType}`);
       continue;
@@ -389,19 +427,24 @@ async function main() {
       }
     }
 
-    /* The window is closed exactly when NO row for these documents is in a
-       state the ladder will re-send from. Asserted over every row, not only the
-       ones written, because a row this run never touched can still hold one. */
-    const live = await check`
-      SELECT doc_no, id::text AS id, status FROM scm.autocount_outbox
+    /* THE WINDOW IS CLOSED when every row for these documents is refused by one
+       of requeueOneRow's two unconditional rungs: `status === 'sent'` (no
+       exception, checked by the ladder AND by both entry points) or the
+       re-queue marker on last_error (`already-requeued`, checked before status
+       or payload). Asserted over EVERY row, not only the ones written — a row
+       this run never touched can still be re-sendable. */
+    const open = await check`
+      SELECT doc_no, id::text AS id, status, left(coalesce(last_error, ''), 30) AS note_head
+        FROM scm.autocount_outbox
        WHERE company_id = ${CO} AND doc_no = ANY(${work.map((w) => w.spec.docNo)})
-         AND status <> 'sent'`;
-    if (live.length) {
-      wrong.push(`${live.length} outbox row(s) for these documents are still not 'sent': `
-        + live.map((r) => `${r.doc_no}/${r.status}`).join(', '));
+         AND status <> 'sent'
+         AND coalesce(last_error, '') NOT LIKE ${`${REQUEUE_NOTE_PREFIX}%`}`;
+    if (open.length) {
+      wrong.push(`${open.length} outbox row(s) for these documents are neither 'sent' nor superseded, so `
+        + `the ladder can still re-send them: ${open.map((r) => `${r.doc_no}/${r.id}/${r.status}`).join(', ')}`);
     } else {
-      note(`  no non-sent outbox row remains for these documents — the "Send again" rung that refuses`);
-      note(`  a 'sent' row has no exception, so the duplicate-send window is closed on all of them.`);
+      note(`  every outbox row for these documents is now either 'sent' or carries the re-queue marker,`);
+      note(`  and requeueOneRow refuses both of those before it reads anything else. Window closed.`);
     }
 
     if (wrong.length) {
