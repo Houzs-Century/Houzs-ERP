@@ -173,7 +173,15 @@ export type OutstandingPoRow = {
   id: string; purchase_order_id: string; material_kind: string; material_code: string;
   material_name: string; supplier_sku: string | null; item_group: string | null;
   description: string | null;
-  qty: number; received_qty: number; unit_price_centi: number;
+  /* `received_qty` is `number | null`, not `number`. The column is NOT NULL in
+     the schema dump, but that dump is the 2990 SOURCE system's and is already
+     known to be behind production, and the value arrives through an UNTYPED
+     supabase-js client — so a hand-written `number` here is a promise nothing
+     checks. Declaring it nullable is what makes the `?? 0` guards below load-
+     bearing instead of "unnecessary conditions" the linter offers to delete;
+     CLAUDE.md's lint section describes exactly that trap. It also matches
+     `remainingOf` and `CountableRow`, which already type it this way. */
+  qty: number; received_qty: number | null; unit_price_centi: number;
   warehouse_id: string | null; variants: unknown; delivery_date: string | null;
   // Migration 0180 — per-line supplier-revised delivery dates.
   supplier_delivery_date_2: string | null;
