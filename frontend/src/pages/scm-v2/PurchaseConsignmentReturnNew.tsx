@@ -15,6 +15,7 @@
 // Purchase Consignment Order, OR free manual entry. Numbering is PCT-…
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -321,7 +322,7 @@ export const PurchaseConsignmentReturnNew = () => {
         actions={
           <div className={styles.actions}>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-consignment-returns/from-receive')}>
-              <ArrowRightLeft {...ICON} /> From Purchase Consignment Receive
+              <ArrowRightLeft {...ICON} /> {transferFromLabel('pcr')}
             </Button>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-consignment-returns')}>
               <X {...ICON} /> Cancel

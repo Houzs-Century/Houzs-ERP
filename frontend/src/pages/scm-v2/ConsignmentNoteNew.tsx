@@ -20,6 +20,7 @@
 // numbering is CN-YYMM-NNN.
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -363,7 +364,7 @@ export const ConsignmentNoteNew = () => {
           <>
             <div className={styles.actions}>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/consignment-notes/from-order')}>
-                <ArrowRightLeft {...ICON} /> From Consignment Order
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('co')}
               </Button>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/consignment-notes')}>
                 <X {...ICON} /> Cancel

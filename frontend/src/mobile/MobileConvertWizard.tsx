@@ -7,6 +7,7 @@ import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { fmtCenti } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
+import { transferToLabel, transferFromLabel } from "../lib/convertScope";
 import "./mobile.css";
 
 /* ---------------------------------------------------------------------------
@@ -60,20 +61,25 @@ type SourceKind = "so" | "do" | "po";
    • hasLinePicker  — SO→DO/PO, DO→SI pick lines + qty.
    • no line picker — GRN receives every PO line (whole-PO convert).
 
-   The spec (#convert) titles the screen "Convert to {target}" (convertTitle);
-   `docTitle` is the plain document name reused by the create button + error
-   notify. */
+   The screen title is the owner-approved "Transfer to <destination>", and both
+   it and the sub-line come from `transferToLabel` / `transferFromLabel` in
+   `lib/convertScope` rather than from literals here — desktop and mobile
+   wording each other is exactly what the shared generator exists to stop
+   (mobile used the full document name while desktop used the abbreviation, for
+   the same operation). `docTitle` is the plain document name reused by the create button +
+   error notify, and stays as-is: "Create Goods Receipt" is the English, while
+   the TRANSFER label is "Goods Received" per the approved table. */
 const META: Record<
   ConvertTarget,
   {
-    convertTitle: string; docTitle: string;
+    transferTitle: string; fromTitle: string; docTitle: string;
     eyebrow: string; source: SourceKind; sourceNoun: string; hasLinePicker: boolean;
   }
 > = {
-  do: { convertTitle: "Convert to Delivery Order", docTitle: "Delivery Order", eyebrow: "Logistics", source: "so", sourceNoun: "Sales Order", hasLinePicker: true },
-  si: { convertTitle: "Convert to Sales Invoice", docTitle: "Sales Invoice", eyebrow: "Finance", source: "do", sourceNoun: "Delivery Order", hasLinePicker: true },
-  grn: { convertTitle: "Convert to Goods Receipt", docTitle: "Goods Receipt", eyebrow: "Procurement", source: "po", sourceNoun: "Purchase Order", hasLinePicker: false },
-  po: { convertTitle: "Convert to Purchase Order", docTitle: "Purchase Order", eyebrow: "Procurement", source: "so", sourceNoun: "Sales Order", hasLinePicker: true },
+  do: { transferTitle: transferToLabel("do"), fromTitle: transferFromLabel("so"), docTitle: "Delivery Order", eyebrow: "Logistics", source: "so", sourceNoun: "Sales Order", hasLinePicker: true },
+  si: { transferTitle: transferToLabel("si"), fromTitle: transferFromLabel("do"), docTitle: "Sales Invoice", eyebrow: "Finance", source: "do", sourceNoun: "Delivery Order", hasLinePicker: true },
+  grn: { transferTitle: transferToLabel("grn"), fromTitle: transferFromLabel("po"), docTitle: "Goods Receipt", eyebrow: "Procurement", source: "po", sourceNoun: "Purchase Order", hasLinePicker: false },
+  po: { transferTitle: transferToLabel("po"), fromTitle: transferFromLabel("so"), docTitle: "Purchase Order", eyebrow: "Procurement", source: "so", sourceNoun: "Sales Order", hasLinePicker: true },
 };
 
 // ── Money / helpers ────────────────────────────────────────────────────────
@@ -560,13 +566,13 @@ export function MobileConvertWizard({
           <span style={{ fontSize: 11, color: "#767b6e" }}>Step {step} of 2 · {stepLabel}</span>
         </div>
         <div className="ey" style={{ color: "#a16a2e", marginTop: 6 }}>{meta.eyebrow}</div>
-        <div className="scr-title" style={{ marginTop: 2 }}>{meta.convertTitle}</div>
+        <div className="scr-title" style={{ marginTop: 2 }}>{meta.transferTitle}</div>
         <div className="tnum" style={{ fontSize: 11.5, color: "#767b6e", marginTop: 3 }}>
           {/* Spec sub-line: "From {{source_doc_no}}" once a source is chosen;
-              before that, the invitation to pick one. */}
-          {sourceLabel
-            ? `From ${sourceLabel}`
-            : `Convert from ${meta.source === "po" ? "one or more Purchase Orders" : `a ${meta.sourceNoun}`}`}
+              before that, the invitation to pick one. The invitation is SINGULAR
+              even where the picker takes several sources — it names the source
+              document TYPE, not the count (owner rule, 2026-08-17). */}
+          {sourceLabel ? `From ${sourceLabel}` : meta.fromTitle}
         </div>
         {/* Step-progress bar (spec markup): filled brand segments up to the current step. */}
         <div style={{ display: "flex", gap: 5, marginTop: 11 }}>

@@ -17,6 +17,7 @@
 // invoice detail.
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { newIdempotencyKey, useIdempotencyKey } from '../../lib/idempotency';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
@@ -463,7 +464,7 @@ export const SalesInvoiceNew = () => {
             {/* Pull lines from a Delivery Order — mirrors the purchase-side New forms. */}
             {!createdInvoice && (
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/sales-invoices/from-do')}>
-                <ArrowRightLeft {...ICON} /> From Delivery Order
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('do')}
               </Button>
             )}
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/sales-invoices')}>

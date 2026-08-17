@@ -8,7 +8,7 @@
 // from DeliveryPlanning.tsx so it can be reused UNCHANGED in two places:
 //
 //   1. DeliveryPlanning.tsx  — the full board: all 4 state tabs, every bulk
-//      action (Convert to DO, Schedule), region chips, expand, multiselect.
+//      action (Transfer to Delivery Order, Schedule), region chips, expand, multiselect.
 //   2. Trips.tsx "To schedule" panel — the SAME board LOCKED to
 //      state=PENDING_SCHEDULE (no state-tab row), still with the full column
 //      set, region chips, expandable line-item detail and multiselect wired to
@@ -522,7 +522,7 @@ export type DeliveryPlanningBoardProps = {
   lorries: LorryRow[];
   msgStatuses?: Record<string, { success: boolean; http_code: number | null; created_at: string }>;
 
-  /* Extra buttons rendered at the right of the bulk bar (Convert to DO,
+  /* Extra buttons rendered at the right of the bulk bar (Transfer to Delivery Order,
      Schedule, …). The page injects them since they open page-owned drawers. */
   bulkExtras?: ReactNode;
 
@@ -1240,7 +1240,7 @@ export function DeliveryPlanningBoard({
       {/* Compact bulk-edit bar — appears once one or more rows are ticked.
           "<N> selected · Set [field] → [value] [Apply]" mass-writes one field
           across every selected SO via useScheduleDelivery; the value control's
-          TYPE follows the chosen field. Page-specific actions (Convert to DO,
+          TYPE follows the chosen field. Page-specific actions (Transfer to Delivery Order,
           Schedule) are injected via `bulkExtras` on the right. */}
       {selectedKeys.size > 0 && (
         <div className={styles.bulkBar}>

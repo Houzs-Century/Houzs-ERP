@@ -51,7 +51,7 @@ export const PurchaseInvoiceFromGrn = () => {
 
   const [picks, setPicks] = useState<Record<string, { picked: boolean; qty: number }>>({});
 
-  /* "Convert to PI" on a GRN lands here with ?grnId=<id> so the operator sees
+  /* "Transfer to Purchase Invoice" on a GRN lands here with ?grnId=<id> so the operator sees
      the note they were just looking at, not every outstanding note in the
      company. The parameter was being constructed by both callers and dropped
      here until 2026-08-16. No parameter → the full picker, which is what the

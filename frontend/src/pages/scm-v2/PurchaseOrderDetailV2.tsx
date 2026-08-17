@@ -75,7 +75,7 @@ import { PoLineAllocationsModal } from "../../components/scm-v2/PoLineAllocation
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { convertToLink } from "../../lib/convertScope";
+import { convertToLink, transferToLabel } from "../../lib/convertScope";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -767,8 +767,17 @@ function PurchaseOrderDetailV2ReadOnly() {
       ),
     },
     {
+      /* Labelled "Transfer to" until 2026-08-17, which was the one place the
+         document-lineage words named a WAREHOUSE. Once every conversion button
+         says "Transfer to <Document>", that label meant two different things on
+         one screen — and `?edit=1` on this same route heads a table "Transfer To
+         (GRN)" meaning the downstream document. Now matches what
+         StockTransferNew/Detail already call it: "To Warehouse".
+         The `key` stays `transferTo`: it is persisted in the operator's saved
+         column layout, so renaming it would silently reset their columns. It is
+         listed for the identifier stage in docs/modules/document-conversion.md §9. */
       key: "transferTo",
-      label: "Transfer to",
+      label: "To Warehouse",
       width: "132px",
       getValue: (l) => (l.warehouse_id ? warehouseNameById.get(l.warehouse_id) ?? "" : ""),
       render: (l) => {
@@ -1055,7 +1064,7 @@ function PurchaseOrderDetailV2ReadOnly() {
             )}
             {canConvertToGrn && (
               <Button variant="secondary" icon={<Package size={14} />} onClick={goGrnFromPo}>
-                Convert to GRN
+                {transferToLabel('grn')}
               </Button>
             )}
             {/* Raise amendment — a live (confirmed, non-cancelled) PO can be
@@ -1338,7 +1347,7 @@ function PurchaseOrderDetailV2ReadOnly() {
               onClick={goGrnFromPo}
               className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink"
             >
-              <Package size={16} /> Convert to GRN
+              <Package size={16} /> {transferToLabel('grn')}
             </button>
           ) : (
             <button

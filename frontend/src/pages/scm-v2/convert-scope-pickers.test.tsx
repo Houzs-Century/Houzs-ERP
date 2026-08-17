@@ -1,4 +1,4 @@
-/* The "Convert to X" buttons that navigated and scoped nothing (2026-08-16).
+/* The "Transfer to X" buttons that navigated and scoped nothing (2026-08-16).
  *
  * These are not "does the page call useSearchParams" assertions — each test
  * MOUNTS the real picker under a real router at the real URL its real caller
@@ -63,7 +63,7 @@ const TWO_DOS = [
   doLine({ doItemId: "i-2", deliveryOrderId: "do-2", doNumber: "HC-DO-0002" }),
 ];
 
-describe('DO → SI: "Convert to SI" lands on the note you came from', () => {
+describe('DO → SI: "Transfer to Sales Invoice" lands on the note you came from', () => {
   it("shows only the scoped Delivery Order, not the whole company's", () => {
     invoiceableDoLines.mockReturnValue(loaded(TWO_DOS));
     at(convertToLink("doToSi", "do-1"), <SalesInvoiceFromDo />);
@@ -155,7 +155,7 @@ const TWO_GRNS = [
   grnLine({ grnItemId: "g-2", grnId: "grn-2", grnDocNo: "HC-GR-0002" }),
 ];
 
-describe('GRN → PI: "Convert to PI" lands on the note you came from', () => {
+describe('GRN → PI: "Transfer to Purchase Invoice" lands on the note you came from', () => {
   it("shows only the scoped note", () => {
     outstandingGrnItems.mockReturnValue(loaded(TWO_GRNS));
     at(convertToLink("grnToPi", "grn-1"), <PurchaseInvoiceFromGrn />);

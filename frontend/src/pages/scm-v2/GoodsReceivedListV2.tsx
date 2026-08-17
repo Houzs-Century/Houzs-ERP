@@ -57,7 +57,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { convertToLink } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
@@ -370,14 +370,14 @@ function DetailDrawer({
                   if (!row.fully_invoiced) {
                     return (
                       <Button variant="primary" icon={<Receipt size={14} />} onClick={onConvertToPi}>
-                        Convert to PI
+                        {transferToLabel('pi')}
                       </Button>
                     );
                   }
                   if (!row.fully_returned) {
                     return (
                       <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={onConvertToPr}>
-                        Convert to PR
+                        {transferToLabel('pr')}
                       </Button>
                     );
                   }
@@ -847,7 +847,7 @@ export function GoodsReceivedListV2() {
             primaryAction={
               <div className="flex items-stretch gap-2">
                 <Button variant="secondary" icon={<ArrowRightLeft size={14} />} onClick={goFromPo}>
-                  From Purchase Order
+                  {transferFromLabel('po')}
                 </Button>
                 <div className="flex items-stretch">
                   <Button variant="primary" icon={<Plus size={14} />} onClick={goNewGrn} className="rounded-r-none">
