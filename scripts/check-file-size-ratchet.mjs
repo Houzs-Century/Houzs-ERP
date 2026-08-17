@@ -12,6 +12,8 @@
 // loosened is just a suggestion:
 //   · a new file over the cap FAILS, an existing big file is grandfathered
 //   · shrinking always passes and never needs a manifest edit to stay green
+//   · an over-ceiling file may be EDITED: net-zero and net-negative diffs land,
+//     +1 does not, and the report never calls a touched file untouched
 //   · --update can only LOWER a ceiling, never raise one to clear a violation
 //   · raising a ceiling by hand is caught against the merge base
 import assert from 'node:assert/strict';
@@ -23,6 +25,7 @@ import {
   ceilingFor,
   verdict,
   lowerCeilings,
+  classifyViolations,
   findRaisedCeilings, uncommittedSourcePaths } from './lib/file-size-ratchet.mjs';
 
 test('a new file over the cap fails; under the cap it needs no entry', () => {
@@ -107,6 +110,13 @@ test('generated headers are recognised only in the first few lines', () => {
   assert.equal(isGeneratedHeader(['import x from "y";']), false);
 });
 
+/* ── classifyViolations: who pays ──────────────────────────────────────────
+   These used to re-implement the charge rule inline, with their own `filter`
+   over `touched` and `atBase`. That is a test of a copy: the production rule
+   lived in check-file-size.mjs among the git shell-outs and had NO test on it,
+   so it could have drifted from these assertions without one of them going red.
+   They now call the shipped function. */
+
 test('a violation in a file the change does not touch is reported, not charged', () => {
   /* 2026-08-14: grns.ts went 109 lines over on main — file-size is not one of
      the ruleset's required checks, so the PR that grew it merged red. Every
@@ -118,12 +128,10 @@ test('a violation in a file the change does not touch is reported, not charged',
   ];
   const ceilings = { 'a/untouched.ts': 3482, 'a/mine.ts': 2100 };
   const v = verdict(measured, ceilings, 2000);
-  const touched = new Set(['a/mine.ts']);
-  const mine = v.violations.filter((x) => touched.has(x.path));
-  const inherited = v.violations.filter((x) => !touched.has(x.path));
-  assert.deepEqual(mine.map((x) => x.path), ['a/mine.ts']);
-  assert.deepEqual(inherited.map((x) => x.path), ['a/untouched.ts']);
-  assert.equal(inherited[0].over, 109, 'the inherited violation still carries its numbers — silence would let the tree drift');
+  const c = classifyViolations(v.violations, new Set(['a/mine.ts']), new Map([['a/mine.ts', 2100]]));
+  assert.deepEqual(c.charged.map((x) => x.path), ['a/mine.ts']);
+  assert.deepEqual(c.untouched.map((x) => x.path), ['a/untouched.ts']);
+  assert.equal(c.untouched[0].over, 109, 'the inherited violation still carries its numbers — silence would let the tree drift');
 });
 
 test('a touched file already over its ceiling passes if this change SHRANK it', () => {
@@ -136,13 +144,83 @@ test('a touched file already over its ceiling passes if this change SHRANK it', 
   assert.equal(v.violations.length, 1, 'still a violation — the debt is real and stays reported');
 
   const touched = new Set(['a/big.ts']);
-  const atBase = new Map([['a/big.ts', 3591]]);
-  const charged = v.violations.filter((x) => touched.has(x.path) && x.lines > (atBase.get(x.path) ?? -1));
-  assert.deepEqual(charged, [], 'shrinking a file already over its ceiling is not chargeable');
+  const shrank = classifyViolations(v.violations, touched, new Map([['a/big.ts', 3591]]));
+  assert.deepEqual(shrank.charged, [], 'shrinking a file already over its ceiling is not chargeable');
+  assert.deepEqual(shrank.touchedNotGrown.map((x) => x.delta), [-5], 'and the report says by how much');
 
-  const grew = new Map([['a/big.ts', 3500]]);
-  const chargedGrew = v.violations.filter((x) => touched.has(x.path) && x.lines > (grew.get(x.path) ?? -1));
-  assert.equal(chargedGrew.length, 1, 'growing it further is charged from the first line');
+  const grew = classifyViolations(v.violations, touched, new Map([['a/big.ts', 3500]]));
+  assert.equal(grew.charged.length, 1, 'growing it further is charged from the first line');
+  assert.equal(grew.charged[0].delta, 86);
+});
+
+test('a NET-ZERO diff on an over-ceiling file lands — the rule is growth, not debt', () => {
+  /* The shape the gate has to get right, and the one it explained worst. On
+     2026-08-17 a four-line correctness fix to grns.ts was reported as
+     `over by 170` — the file's whole inherited debt — and reverted, when the
+     charge was four lines. Same size in and out is not growth. */
+  const v = verdict([{ path: 'a/big.ts', lines: 3648 }], { 'a/big.ts': 3482 }, 2000);
+  const c = classifyViolations(v.violations, new Set(['a/big.ts']), new Map([['a/big.ts', 3648]]));
+  assert.deepEqual(c.charged, [], 'a net-zero edit of an over-ceiling file is not charged');
+  assert.equal(c.touchedNotGrown.length, 1);
+  assert.equal(c.touchedNotGrown[0].delta, 0);
+  assert.equal(c.touchedNotGrown[0].over, 166, 'the debt is still REPORTED — it just is not this author\'s bill');
+});
+
+test('ONE added line over the ceiling still fails — the door does not open', () => {
+  /* The half of the rule that must never soften. If a net-non-positive diff is
+     free, the only thing standing between this repo and unbounded growth is that
+     +1 is charged, so it is pinned on its own. */
+  const v = verdict([{ path: 'a/big.ts', lines: 3649 }], { 'a/big.ts': 3482 }, 2000);
+  const c = classifyViolations(v.violations, new Set(['a/big.ts']), new Map([['a/big.ts', 3648]]));
+  assert.equal(c.charged.length, 1);
+  assert.equal(c.charged[0].delta, 1);
+  assert.deepEqual(c.touchedNotGrown, []);
+});
+
+test('growing a file that was UNDER its ceiling at the base is charged', () => {
+  /* max(ceiling, sizeAtBase) is the allowance, and when the file sat below its
+     ceiling the ceiling is the binding half. Shrinking-then-growing back past
+     the ceiling must not be laundered by the base comparison. */
+  const v = verdict([{ path: 'a/big.ts', lines: 3500 }], { 'a/big.ts': 3482 }, 2000);
+  const c = classifyViolations(v.violations, new Set(['a/big.ts']), new Map([['a/big.ts', 3400]]));
+  assert.equal(c.charged.length, 1, 'over the ceiling AND grown — charged');
+});
+
+test('a file with no size at the merge base is charged in full', () => {
+  /* Added or renamed on this branch: there is nothing to have grown FROM, so
+     the whole file is this change\'s doing. Silently passing it is how a new
+     3,000-line module walks in behind a rename. */
+  const v = verdict([{ path: 'a/new.ts', lines: 2400 }], {}, 2000);
+  const c = classifyViolations(v.violations, new Set(['a/new.ts']), new Map());
+  assert.equal(c.charged.length, 1);
+  assert.equal(c.charged[0].wasAtBase, null);
+  assert.equal(c.charged[0].delta, null, 'no delta to report, and the message must say why');
+});
+
+test('an unresolvable merge base charges EVERYTHING, touched or not', () => {
+  /* A gate that cannot tell whose fault it is must not let anything through —
+     the same rule as the three refusals in check-file-size.mjs. */
+  const v = verdict(
+    [{ path: 'a/one.ts', lines: 3600 }, { path: 'a/two.ts', lines: 2400 }],
+    { 'a/one.ts': 3482 },
+    2000,
+  );
+  const c = classifyViolations(v.violations, null, null);
+  assert.equal(c.charged.length, 2);
+  assert.deepEqual(c.untouched, []);
+  assert.deepEqual(c.touchedNotGrown, []);
+});
+
+test('a touched-but-shrunk file is NOT reported as untouched', () => {
+  /* The reporting bug this bucket exists to kill. Measured 2026-08-18 on
+     origin/main: deleting four blank lines from grns.ts passed the gate, and the
+     pass printed the file under "OVER CEILING, but not touched by this change".
+     Telling an author the gate never saw their edit is how a correct edit gets
+     re-litigated. */
+  const v = verdict([{ path: 'a/big.ts', lines: 3644 }], { 'a/big.ts': 3482 }, 2000);
+  const c = classifyViolations(v.violations, new Set(['a/big.ts']), new Map([['a/big.ts', 3648]]));
+  assert.deepEqual(c.untouched, [], 'a file in the diff is never in the untouched bucket');
+  assert.deepEqual(c.touchedNotGrown.map((x) => x.path), ['a/big.ts']);
 });
 
 /* ── uncommittedSourcePaths ────────────────────────────────────────────────
