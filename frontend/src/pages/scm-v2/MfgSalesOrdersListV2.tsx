@@ -59,7 +59,8 @@ import { ListErrorPanel, SearchPendingPanel, SearchProgress } from "../../compon
 import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useBranding } from "../../hooks/useBranding";
-import { shortCompanyName } from "../../lib/branding";
+import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
+import { brandingLabel } from "../../vendor/shared/so-branding-label";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail } from "../../vendor/scm/lib/sales-order-queries";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
@@ -99,7 +100,7 @@ type SoRow = {
   po_doc_no: string | null;
   ref: string | null;
   branding: string | null;
-  first_item_branding: string | null;
+  first_item_branding: string | null; first_item_category: string | null;
   status: string;
   local_total_centi: number;
   /* Stored snapshots — NOT the truth, and never read without the live
@@ -225,10 +226,9 @@ const refOf = (r: SoRow): string =>
   r.po_doc_no || r.customer_so_no || r.ref || "—";
 
 // Branding badge tone. Spec: 2990 SOFA = success (green), AKEMI = neutral,
-// BEDFRAME = accent (bedframe-only SOs, derived server-side), other brands =
-// warning (amber). Falls back to first_item_branding when the header brand is
-// blank (mixed-line SOs / bedframe-only SOs).
-const brandOf = (r: SoRow): string => r.branding || r.first_item_branding || "—";
+// BEDFRAME = accent, other brands = warning (amber). brandOf's old `|| "—"`
+// dashed every sofa; the one shared rule cannot return blank (owner 2026-08-17).
+const brandOf = (r: SoRow): string => (r.branding ?? "").trim() || brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
 const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
   const s = (b || "").toUpperCase();
   if (s.includes("2990") || s.includes("SOFA")) return "success";
