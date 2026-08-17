@@ -188,6 +188,7 @@ import {
   soDatePairCascadeColumns,
   soDatePairRefusal,
 } from '../shared/so-processing-date';
+import { changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -616,19 +617,8 @@ async function soProcessingDateProblemsForDoc(
   });
 }
 
-/* Owner 2026-05-31 — Identity + value columns a downstream DO / SI snapshots.
-   These are frozen on the SO header once a non-cancelled child exists; payment,
-   remark and scheduling columns are intentionally NOT in this set so the shop
-   can still record payment after delivery. Keyed by DB column name. */
-const SO_IDENTITY_LOCK_COLS = new Set<string>([
-  'debtor_code', 'debtor_name', 'agent', 'sales_location', 'ref', 'po_doc_no',
-  'venue', 'venue_id', 'branding', 'address1', 'address2', 'address3', 'address4',
-  'phone', 'currency', 'so_date', 'customer_id', 'customer_state', 'customer_po',
-  'customer_po_id', 'customer_po_date', 'customer_po_image_b64', 'customer_so_no',
-  'hub_id', 'hub_name', 'ship_to_address', 'bill_to_address', 'install_to_address',
-  'email', 'customer_type', 'salesperson_id', 'city', 'postcode', 'building_type',
-  'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
-]);
+/* The identity lock (which columns freeze once a DO / SI exists, and why
+   `salesperson_id` no longer does) lives in shared/so-identity-lock.ts. */
 
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 const SO_PROCESSING_LOCK_COLS = soProcessingLockColumns();
@@ -6701,7 +6691,14 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
 
   /* `agent` follows a reassigned salesperson; a PATCH naming `agent` still wins.
      scm/lib/so-agent.ts says why this must precede the read below. */
+  const agentBeforeFollow = updates['agent'];
   await followSalespersonToAgent(sb as never, updates, body);
+  /* Did `agent` change ONLY because it followed the salesperson? `agent` is an
+     identity-locked column, so without this the 2026-08-17 salesperson unlock
+     would be dead on arrival: reassigning a delivered SO writes the new rep's
+     name into `agent` too and the lock below would 409 on THAT instead. A
+     client-authored `agent` is untouched by the follow and stays locked. */
+  const agentFollowedSalesperson = updates['agent'] !== agentBeforeFollow;
   /* A PATCH is a real mutation only when at least one recognised, normalised
      field differs from storage. Compare before validation or derivation so an
      unchanged phone/dropdown/date cannot demand a version, bump it, or fire a
@@ -7219,9 +7216,19 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      not falsely trip the lock — only a genuine change to a locked field blocks. */
   if (before) {
     const beforeRow = before as unknown as Record<string, unknown>;
-    const changedLocked = [...SO_IDENTITY_LOCK_COLS].filter(
-      (col) => col in updates && norm(updates[col]) !== norm(beforeRow[col]),
-    );
+    /* Re-attribution gate (Owner 2026-08-17). CREATE has always checked
+       `scm.so.attribute_other` before stamping someone else's id; the header
+       PATCH mapped salespersonId straight through and leaned on the SO Detail
+       page disabling the select. That is a courtesy, not a control — the scope
+       check only proves the SO is the caller's OWN, so a self-scoped
+       salesperson could hand their own order to anybody. Server-side now. */
+    if (salespersonReattributed(updates, beforeRow) && !hasHouzsPerm(c, 'scm.so.attribute_other')) {
+      return c.json({
+        error: 'forbidden_attribute_other',
+        message: 'Changing the salesperson on a Sales Order needs the "attribute to another salesperson" permission.',
+      }, 403);
+    }
+    const changedLocked = changedIdentityLockCols(updates, beforeRow, { agentFollowedSalesperson });
     if (changedLocked.length > 0) {
       const lock = await soHasDownstream(sb, docNo);
       if (lock) {
