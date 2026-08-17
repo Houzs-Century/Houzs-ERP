@@ -124,7 +124,11 @@ const REPAIRS = [
 
 const ALLOWED_DOCS = new Set(REPAIRS.map((r) => r.docNo));
 
-const only = (process.env.DOC || '').trim();
+/* `all` and empty both mean all three. Anything else must be one of the three
+   BY NAME — a repair that can be pointed at an arbitrary document is a worse
+   hazard than the one it fixes. */
+const raw = (process.env.DOC || '').trim();
+const only = raw.toLowerCase() === 'all' ? '' : raw;
 if (only && !ALLOWED_DOCS.has(only)) {
   bad(`DOC="${only}" is not one of the three this repair knows: ${[...ALLOWED_DOCS].join(', ')}`);
   process.exit(2);
@@ -194,7 +198,7 @@ async function main() {
            payload #>> '{writeback,table}'  AS wb_table,
            payload #>> '{writeback,keyCol}' AS wb_keycol,
            payload #>> '{writeback,key}'    AS wb_key,
-           coalesce(payload #> '{body}', 'null'::jsonb) = '{}'::jsonb AS body_empty
+           coalesce(payload #> '{body}', '{}'::jsonb) = '{}'::jsonb AS body_empty
       FROM scm.autocount_outbox
      WHERE company_id = ${CO} AND doc_no = ANY(${docNos})
      ORDER BY doc_no, created_at`;

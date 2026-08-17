@@ -40,12 +40,15 @@ on:
         required: false
         default: ""
         type: string
+      # `all` rather than an empty option: a choice list cannot carry one, and
+      # the GitHub `x && '' || y` ternary collapses an empty branch back to y,
+      # so the sentinel is spelled out and the script resolves it.
       doc:
-        description: "narrow to ONE of the three, or leave blank for all three"
-        required: false
-        default: ""
+        description: "all three, or narrow to ONE of them"
+        required: true
+        default: "all"
         type: choice
-        options: ["", HC-DO-2608-001, HC-DO-2608-002, HC-SI-2608-001]
+        options: [all, HC-DO-2608-001, HC-DO-2608-002, HC-SI-2608-001]
       company:
         description: "company_id (1 = HOUZS)"
         required: false
