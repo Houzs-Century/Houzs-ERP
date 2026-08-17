@@ -514,7 +514,9 @@ purchaseConsignmentReturns.post('/', async (c) => {
   }).filter((r) => Number(r.qty_returned) > 0);
 
   if (itemRows.length === 0) {
-    return c.json({ error: 'no_returnable_qty', message: 'Every line is already fully returned (nothing left to return).' }, 400);
+    /* Computed from the REQUEST, not from a read — see the same guard in
+       purchase-returns.ts. */
+    return c.json({ error: 'no_returnable_qty', message: 'No line in this request carries a quantity to return. Enter a quantity above zero on at least one line.' }, 400);
   }
 
   // PC Return is created POSTED. The inventory OUT is booked by the resync below.
@@ -732,7 +734,7 @@ export const createPcReturnFromPcReceiveHandler = async (c: Context<{ Bindings: 
   const lines = allLines
     .map((it) => ({ ...it, _remaining: (it.qty_accepted ?? 0) - (it.returned_qty ?? 0) }))
     .filter((it) => it._remaining > 0);
-  if (lines.length === 0) return c.json({ error: 'nothing_to_return', message: 'Receive is fully returned' }, 400);
+  if (lines.length === 0) return c.json({ error: 'nothing_to_return', message: 'No returnable lines came back for this receive. Open it and check its returned balance before treating it as returned in full.' }, 400);
 
   const totalRefund = lines.reduce((s, it) => s + (it._remaining * it.unit_price_centi), 0);
 

@@ -1866,7 +1866,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
     supplier_delivery_date_4?: string | null;
   }>).filter((it) => it.qty - (it.received_qty ?? 0) > 0);
 
-  if (itemList.length === 0) return c.json({ error: 'nothing_outstanding', message: 'All PO items are already fully received' }, 400);
+  if (itemList.length === 0) return c.json({ error: 'nothing_outstanding', message: 'No outstanding lines came back for this PO. Open it and check its received balance before treating it as received in full.' }, 400); // Refusing is right; the VERDICT was not. This read is company-scoped and scopeToCompany fails closed, so [] arrives with error: null whether the order is settled or the company could not be resolved. Five siblings in purchase-returns / purchase-consignment-* were reworded with it; audit:empty-state-claims keeps them honest.
 
   /* Warehouse-required guard (audit gap #6) — this batch-convert never set a
      header warehouse and relied on postGrnAndRollup's defaultWarehouseId
