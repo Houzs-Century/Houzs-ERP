@@ -48,6 +48,7 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
+import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { pvLines } from '../../acc/rules';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -337,7 +338,7 @@ export const createPaymentVoucherHandler = async (c: any) => {
     (pvNumber) => sb.from('payment_vouchers').insert({
       company_id:          activeCompanyId(c), // multi-company: stamp the active company
       pv_number:           pvNumber,
-      voucher_date:        (body.voucherDate as string) ?? todayMyt(),
+      voucher_date:        dateOrNull(body.voucherDate) ?? todayMyt(),
       payee_name:          payeeName,
       supplier_id:         (body.supplierId as string | undefined) ?? null,
       credit_account_code: creditAccountCode,

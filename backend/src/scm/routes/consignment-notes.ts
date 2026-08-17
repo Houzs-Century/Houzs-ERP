@@ -31,6 +31,7 @@ import { buildVariantSummary } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { defaultWarehouseId, writeMovements, resolveWarehouseLotBatches } from '../lib/inventory-movements';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
@@ -444,7 +445,7 @@ function buildItemRow(
     line_margin_centi: lineTotal - lineCost,
     variants,
     notes: (it.notes as string) ?? null,
-    line_delivery_date: (it.lineDeliveryDate as string | null) ?? null,
+    line_delivery_date: dateOrNull(it.lineDeliveryDate),
     line_delivery_date_overridden: Boolean(it.lineDeliveryDateOverridden ?? false),
   };
 }
@@ -708,9 +709,9 @@ consignmentNotes.post('/', async (c) => {
     consignment_so_doc_no: (body.consignmentSoDocNo as string) ?? (body.soDocNo as string) ?? null,
     debtor_code: (body.debtorCode as string) ?? null,
     debtor_name: debtorName,
-    do_date: (body.doDate as string) ?? todayMyt(),
-    expected_delivery_at: (body.expectedDeliveryAt as string) ?? (body.customerDeliveryDate as string) ?? null,
-    customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
+    do_date: dateOrNull(body.doDate) ?? todayMyt(),
+    expected_delivery_at: dateOrNull(body.expectedDeliveryAt) ?? dateOrNull(body.customerDeliveryDate),
+    customer_delivery_date: dateOrNull(body.customerDeliveryDate),
     driver_id: (body.driverId as string) ?? null,
     driver_name: (body.driverName as string) ?? null,
     vehicle: (body.vehicle as string) ?? null,
@@ -811,6 +812,9 @@ consignmentNotes.patch('/:id', async (c) => {
       updates[to] = body[from];
     }
   }
+  /* A cleared date input posts "" and this loop wrote it through to a date
+     column, which Postgres rejects and 500s the save. */
+  coerceEmptyDates(updates);
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
   /* Header is locked once a Consignment Return exists. */
@@ -920,6 +924,7 @@ consignmentNotes.patch('/:id/items/:itemId', async (c) => {
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
   }
+  coerceEmptyDates(updates);
   if (it.lineDeliveryDate !== undefined) updates['line_delivery_date_overridden'] = true;
   if (it.lineDeliveryDateOverridden !== undefined) updates['line_delivery_date_overridden'] = Boolean(it.lineDeliveryDateOverridden);
   {

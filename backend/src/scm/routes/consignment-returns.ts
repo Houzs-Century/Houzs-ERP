@@ -27,6 +27,7 @@ import { buildVariantSummary } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { defaultWarehouseId, writeMovements, resolveWarehouseLotBatches, resolveWarehouseLotCosts } from '../lib/inventory-movements';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
@@ -650,7 +651,7 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
     consignment_do_id: (body.consignmentDoId as string) ?? (body.deliveryOrderId as string) ?? null,
     debtor_code: (body.debtorCode as string) ?? null,
     debtor_name: (body.debtorName ?? body.customerName) as string,
-    return_date: (body.returnDate as string) ?? todayMyt(),
+    return_date: dateOrNull(body.returnDate) ?? todayMyt(),
     reason: (body.reason as string) ?? null,
     address1: (body.address1 as string) ?? null,
     address2: (body.address2 as string) ?? null,
@@ -886,6 +887,9 @@ consignmentReturns.patch('/:id', async (c) => {
       updates[to] = body[from];
     }
   }
+  /* A cleared date input posts "" and this loop wrote it through to a date
+     column, which Postgres rejects and 500s the save. */
+  coerceEmptyDates(updates);
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
   const { data, error } = await scopeToCompanyId(sb.from('consignment_delivery_returns').update(updates).eq('id', id), co.companyId).select('id').maybeSingle();

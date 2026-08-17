@@ -32,6 +32,7 @@ import {
   deriveCountryFromState, deriveSalesLocationFromState, snapshotUnitCostSen,
 } from '../lib/sales-doc-derive';
 import { escapeForOr } from '../lib/postgrest-search';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
@@ -690,7 +691,7 @@ consignmentOrders.post('/', async (c) => {
   // Compute totals + category breakdown
   let mattressSofa = 0, bedframe = 0, accessories = 0, others = 0, total = 0, totalCost = 0;
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0;
-  const headerDeliveryDate = (body.customerDeliveryDate as string | null | undefined) ?? null;
+  const headerDeliveryDate = dateOrNull(body.customerDeliveryDate);
 
   const cachedConfig = await loadMaintenanceConfig(sb);
   const cachedSpecialAddons = await loadSpecialAddons(sb);
@@ -803,13 +804,13 @@ consignmentOrders.post('/', async (c) => {
     }
     const hasExplicitLineDate = it.lineDeliveryDate !== undefined && it.lineDeliveryDate !== null;
     const lineDeliveryDate = hasExplicitLineDate
-      ? (it.lineDeliveryDate as string | null)
+      ? dateOrNull(it.lineDeliveryDate)
       : headerDeliveryDate;
     const lineDeliveryDateOverridden = hasExplicitLineDate
       ? (it.lineDeliveryDateOverridden === undefined ? true : Boolean(it.lineDeliveryDateOverridden))
       : Boolean(it.lineDeliveryDateOverridden ?? false);
     return {
-      line_date: (it.lineDate as string) ?? todayMyt(),
+      line_date: dateOrNull(it.lineDate) ?? todayMyt(),
       debtor_code: (body.debtorCode as string) ?? null,
       debtor_name: body.debtorName,
       agent: (body.agent as string) ?? null,
@@ -859,7 +860,7 @@ consignmentOrders.post('/', async (c) => {
     company_id: activeCompanyId(c), // multi-company: stamp the active company
     doc_no: docNo,
     transfer_to: (body.transferTo as string) ?? null,
-    so_date: (body.soDate as string) ?? todayMyt(),
+    so_date: dateOrNull(body.soDate) ?? todayMyt(),
     branding: (body.branding as string) ?? null,
     debtor_code: (body.debtorCode ?? body.customerCode as string) ?? null,
     debtor_name: customerName,
@@ -902,12 +903,12 @@ consignmentOrders.post('/', async (c) => {
       ? (normalizePhone(body.emergencyContactPhone) ?? body.emergencyContactPhone)
       : null,
     emergency_contact_relationship: (body.emergencyContactRelationship as string) ?? null,
-    target_date: (body.targetDate as string) ?? null,
+    target_date: dateOrNull(body.targetDate),
     customer_id: orderCustomerId,
     customer_state: (body.customerState as string) ?? null,
     customer_country: customerCountrySnapshot,
-    customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
-    processing_date: (body.processingDate as string) ?? null,
+    customer_delivery_date: dateOrNull(body.customerDeliveryDate),
+    processing_date: dateOrNull(body.processingDate),
     customer_so_no: (body.customerSoNo as string) ?? null,
     customer_po: (body.customerPo as string) ?? null,
     hub_id: (body.hubId as string) ?? null,
@@ -918,7 +919,7 @@ consignmentOrders.post('/', async (c) => {
     installment_months: typeof body.installmentMonths === 'number' ? body.installmentMonths : null,
     merchant_provider:  (body.merchantProvider as string) ?? null,
     approval_code:      (body.approvalCode as string) ?? null,
-    payment_date:       (body.paymentDate as string) ?? null,
+    payment_date:       dateOrNull(body.paymentDate),
     /* Clamp >= 0 (the /mfg-sales-orders create path this was cloned from does;
        this copy didn't) — the header deposit is added on top of the ledger in
        the CO list's paid rollup, so a negative value would deflate it. */
@@ -1138,8 +1139,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
     ['customerPoDate', 'customer_po_date'], ['customerPoImageB64', 'customer_po_image_b64'],
     ['customerSoNo', 'customer_so_no'],
     ['hubId', 'hub_id'], ['hubName', 'hub_name'],
-    ['customerDeliveryDate', 'customer_delivery_date'],
-    ['processingDate', 'processing_date'],
+    ['customerDeliveryDate', 'customer_delivery_date'], ['processingDate', 'processing_date'],
     ['linkedDoDocNo', 'linked_do_doc_no'],
     ['shipToAddress', 'ship_to_address'], ['billToAddress', 'bill_to_address'],
     ['installToAddress', 'install_to_address'],
@@ -1284,7 +1284,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
     }
   }
 
-  const { data, error } = await scopeToCompanyId(sb.from('consignment_sales_orders').update(updates).eq('doc_no', docNo), co.companyId).select('doc_no').maybeSingle();
+  const { data, error } = await scopeToCompanyId(sb.from('consignment_sales_orders').update(coerceEmptyDates(updates)).eq('doc_no', docNo), co.companyId).select('doc_no').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
@@ -1591,14 +1591,14 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   const lineCost = unitCost * qty;
   const hasExplicitLineDate = it.lineDeliveryDate !== undefined && it.lineDeliveryDate !== null;
   const lineDeliveryDate = hasExplicitLineDate
-    ? (it.lineDeliveryDate as string | null)
+    ? dateOrNull(it.lineDeliveryDate)
     : (header.customer_delivery_date as string | null) ?? null;
   const lineDeliveryDateOverridden = hasExplicitLineDate
     ? (it.lineDeliveryDateOverridden === undefined ? true : Boolean(it.lineDeliveryDateOverridden))
     : Boolean(it.lineDeliveryDateOverridden ?? false);
   const row = {
     doc_no: docNo,
-    line_date: (it.lineDate as string) ?? todayMyt(),
+    line_date: dateOrNull(it.lineDate) ?? todayMyt(),
     debtor_code: header.debtor_code,
     debtor_name: header.debtor_name,
     agent: header.agent,
@@ -1799,14 +1799,14 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   }
 
   if (it.lineDeliveryDate !== undefined) {
-    updates['line_delivery_date'] = it.lineDeliveryDate as string | null;
+    updates['line_delivery_date'] = dateOrNull(it.lineDeliveryDate);
     updates['line_delivery_date_overridden'] = true;
   }
   if (it.lineDeliveryDateOverridden !== undefined) {
     updates['line_delivery_date_overridden'] = Boolean(it.lineDeliveryDateOverridden);
   }
 
-  const { error } = await scopeToCompanyId(sb.from('consignment_sales_order_items').update(updates).eq('id', itemId), co.companyId);
+  const { error } = await scopeToCompanyId(sb.from('consignment_sales_order_items').update(coerceEmptyDates(updates)).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   await recomputeTotals(sb, docNo);
 

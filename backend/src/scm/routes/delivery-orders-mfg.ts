@@ -24,6 +24,7 @@ import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shar
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { allocateAcrossBuckets } from '../lib/bucket-cost-allocation';
 import { doHasDownstream } from '../lib/downstream-lock';
 import { claimedSoItemIdsOnDo, fillMissingSoItemIds } from '../lib/derive-do-so-item-id';
@@ -3476,11 +3477,11 @@ deliveryOrdersMfg.post('/', async (c) => {
        `?? null` does NOT catch it (nullish only), so "" reached the date column
        and Postgres rejected it ("invalid input syntax for type date"). This was
        masked until the sofa drop-ship guard stopped hard-blocking before the insert. */
-    do_date: emptyDate(body.doDate) ?? todayMyt(),
-    expected_delivery_at: emptyDate(body.expectedDeliveryAt) ?? emptyDate(body.customerDeliveryDate),
-    customer_delivery_date: emptyDate(body.customerDeliveryDate),
+    do_date: dateOrNull(body.doDate) ?? todayMyt(),
+    expected_delivery_at: dateOrNull(body.expectedDeliveryAt) ?? dateOrNull(body.customerDeliveryDate),
+    customer_delivery_date: dateOrNull(body.customerDeliveryDate),
     /* Mig 0053 (port of 2990 0199) — sea-freight DO-execution column. */
-    arrives_em_warehouse_date: emptyDate(body.arrivesEmWarehouseDate),
+    arrives_em_warehouse_date: dateOrNull(body.arrivesEmWarehouseDate),
     driver_id: (body.driverId as string) ?? null,
     driver_name: (body.driverName as string) ?? null,
     vehicle: (body.vehicle as string) ?? null,
@@ -3671,13 +3672,6 @@ deliveryOrdersMfg.post('/', async (c) => {
    Shared by POST / (bulk create) and POST /:id/items (single add). Computes
    line_total / line_cost / margin so recomputeTotals can roll them up.
    `lineNo` (0165) = the DO's listing position; omit/null for un-numbered. */
-/** Empty-string dates ("" from an unfilled input) become null; a real date passes
- *  through trimmed. Postgres date columns reject "" but accept null. */
-function emptyDate(v: unknown): string | null {
-  const s = String(v ?? '').trim();
-  return s === '' ? null : s;
-}
-
 /* `commitment` is NEVER read off the request body — it is passed in by the route
    from planShipCommitments, so a client cannot claim a binding the ledger has
    not earned (it decides which receipt gets to net this OUT). */
@@ -3724,7 +3718,7 @@ function buildItemRow(
     line_suffix: (it.lineSuffix as string | null) ?? null,
     special_order_price_sen: Number(it.specialOrderPriceSen ?? 0),
     notes: (it.notes as string) ?? null,
-    line_delivery_date: (it.lineDeliveryDate as string | null) ?? null,
+    line_delivery_date: dateOrNull(it.lineDeliveryDate),
     line_delivery_date_overridden: Boolean(it.lineDeliveryDateOverridden ?? false),
     /* REC P4 (mig 0118) — the SOURCE rack this line ships from. Null = let the
        dispatch chokepoint auto-pick the rack holding this product. */
@@ -4462,6 +4456,10 @@ deliveryOrdersMfg.patch('/:id', async (c) => {
       updates[to] = body[from];
     }
   }
+  /* A cleared date input posts "" and this loop wrote it through to a date
+     column, which Postgres rejects and 500s the save. The create path above has
+     guarded this since the sofa drop-ship incident; the PATCH never did. */
+  coerceEmptyDates(updates);
 
   /* Whitelist the HC "Remark 4" delivery sub-status to the known values (blank /
      null always clears it) — mirrors the Delivery Planning /fields route, so the
@@ -5054,6 +5052,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
   }
+  coerceEmptyDates(updates);
   /* Mig 0230 — stamp the delta's binding. Only ever SET, never cleared: an
      existing marker records what an earlier shipment already did, and unsetting
      it would orphan an OUT the receipt is still going to net. */

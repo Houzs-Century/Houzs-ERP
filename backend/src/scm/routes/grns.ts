@@ -6,6 +6,7 @@ import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '../lib/inventory-movements';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
 import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
@@ -1719,7 +1720,7 @@ grns.post('/', async (c) => {
     purchase_order_id: (body.purchaseOrderId as string | undefined) ?? null,
     supplier_id: body.supplierId,
     warehouse_id: headerWarehouseId,
-    received_at: (body.receivedAt as string) ?? todayMyt(),
+    received_at: dateOrNull(body.receivedAt) ?? todayMyt(),
     delivery_note_ref: (body.deliveryNoteRef as string) ?? null,
     currency: grnFx.currency,
     exchange_rate: grnFx.exchange_rate,
@@ -1758,7 +1759,7 @@ grns.post('/', async (c) => {
       /* Migration 0101 — GRN line money: qty_received * unit - discount. */
       // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
       line_total_centi: Math.max(0, (qtyReceived * unitPriceCenti) - discountCenti),
-      delivery_date: (it.deliveryDate as string | undefined) ?? null,
+      delivery_date: dateOrNull(it.deliveryDate),
       unit_cost_centi: Number(it.unitCostCenti ?? 0),
       notes: (it.notes as string | undefined) ?? null,
       /* Commander 2026-05-29 — persist the line category + variant selections so
@@ -2880,9 +2881,8 @@ grns.patch('/:id', async (c) => {
 
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   for (const [from, to] of [
-    ['supplierId', 'supplier_id'], ['receivedAt', 'received_at'],
-    ['deliveryNoteRef', 'delivery_note_ref'], ['warehouseId', 'warehouse_id'],
-    ['notes', 'notes'], ['currency', 'currency'],
+    ['supplierId', 'supplier_id'], ['receivedAt', 'received_at'], ['notes', 'notes'],
+    ['deliveryNoteRef', 'delivery_note_ref'], ['warehouseId', 'warehouse_id'], ['currency', 'currency'],
   ] as const) {
     if (body[from] !== undefined) updates[to] = body[from];
   }
@@ -2930,7 +2930,7 @@ grns.patch('/:id', async (c) => {
     }
   }
   const { data, error } = await scopeToCompanyId(sb.from('grns')
-    .update(updates).eq('id', id), co.companyId).select(HEADER).maybeSingle();
+    .update(coerceEmptyDates(updates)).eq('id', id), co.companyId).select(HEADER).maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   /* maybeSingle, not single: the company predicate can legitimately match zero
      rows, and `single()` would turn that into a 500 rather than the 404 that
@@ -3095,7 +3095,7 @@ grns.post('/:id/items', async (c) => {
     description: (it.description as string) ?? null,
     description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
     uom: (it.uom as string) ?? 'UNIT',
-    delivery_date: (it.deliveryDate as string) ?? null,
+    delivery_date: dateOrNull(it.deliveryDate),
     /* migration 0280 — see the create path: this insert is a whitelist too. */
     ...zeroCostAckColumns(it, user.id),
   };
@@ -3411,7 +3411,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', entityId: grnId, action: 'UPDATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return c.json(auditUnavailableBody(), 409);
 
-  const { error } = await scopeToCompanyId(sb.from('grn_items').update(updates).eq('id', itemId), co.companyId);
+  const { error } = await scopeToCompanyId(sb.from('grn_items').update(coerceEmptyDates(updates)).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row.

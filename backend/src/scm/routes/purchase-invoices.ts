@@ -5,6 +5,7 @@ import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { qtyCapRefusal } from '../lib/qty-cap';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { buildVariantSummary, isServiceLine } from '../shared';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import {
@@ -56,9 +57,8 @@ purchaseInvoices.use('*', supabaseAuth);
    No DELETE: this module never hard-deletes an invoice. */
 const PI_AUDIT_FIELDS: Array<[string, string]> = [
   ['supplierId', 'supplier_id'], ['supplierInvoiceRef', 'supplier_invoice_ref'],
-  ['invoiceDate', 'invoice_date'], ['dueDate', 'due_date'],
-  ['currency', 'currency'], ['notes', 'notes'],
-  ['exchangeRate', 'exchange_rate'],
+  ['invoiceDate', 'invoice_date'], ['dueDate', 'due_date'], ['currency', 'currency'],
+  ['notes', 'notes'], ['exchangeRate', 'exchange_rate'],
 ];
 
 /* CREATE was added after the post/payment/cancel/header pass, and it is recorded
@@ -1144,8 +1144,8 @@ purchaseInvoices.post('/', async (c) => {
     supplier_id: body.supplierId,
     purchase_order_id: (body.purchaseOrderId as string) ?? null,
     grn_id: (body.grnId as string) ?? null,
-    invoice_date: (body.invoiceDate as string) ?? todayMyt(),
-    due_date: (body.dueDate as string) ?? null,
+    invoice_date: dateOrNull(body.invoiceDate) ?? todayMyt(),
+    due_date: dateOrNull(body.dueDate),
     currency: piCurrency,
     exchange_rate: piExchangeRate,
     subtotal_centi: subtotal,
@@ -1725,7 +1725,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
   const firstNext = await mintMonthlyDocNo(sb, 'purchase_invoices', 'invoice_number', `${cp}PI-${yymm}`);
   let counter = parseInt(firstNext.slice(`${cp}PI-${yymm}-`.length), 10) - 1;
 
-  const invoiceDate = body.invoiceDate ?? todayMyt();
+  const invoiceDate = dateOrNull(body.invoiceDate) ?? todayMyt();
   const created: Array<{ id: string; invoiceNumber: string; supplierId: string; grnCount: number; lineCount: number }> = [];
 
   /* PI discount unification (audit 2026-06-11 M3) — ONE rule on every PI line
@@ -1751,7 +1751,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       // grn_item_id is the authoritative linkage.
       grn_id: bucket.grnIds[0]!,
       invoice_date: invoiceDate,
-      due_date: body.dueDate ?? null,
+      due_date: dateOrNull(body.dueDate),
       currency: bucket.currency,
       exchange_rate: bucket.exchangeRate,
       subtotal_centi: subtotal,
@@ -2078,8 +2078,7 @@ purchaseInvoices.patch('/:id', async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   /* exchangeRate is in PI_AUDIT_FIELDS but NOT written here — it is derived from
-     the currency below, so this loop skips it and the derived value is folded
-     into the audit patch after. */
+     the currency below, so the loop skips it and the audit patch folds it in. */
   for (const [from, to] of PI_AUDIT_FIELDS) {
     if (from === 'exchangeRate') continue;
     if (body[from] !== undefined) updates[to] = body[from];
@@ -2128,7 +2127,8 @@ purchaseInvoices.patch('/:id', async (c) => {
       piRateChanged = true;
     }
   }
-  const { data, error } = await sb.from('purchase_invoices').update(updates).eq('id', id).select(HEADER).single();
+  /* "" -> NULL: an unfilled date input would otherwise fail this whole UPDATE. */
+  const { data, error } = await sb.from('purchase_invoices').update(coerceEmptyDates(updates)).eq('id', id).select(HEADER).single();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff the NORMALISED values actually written, not the raw body: currency is
