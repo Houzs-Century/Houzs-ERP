@@ -144,25 +144,29 @@ batch list/detail, confirm one, confirm-all-matched, received, receipt undo,
 ignore, watchlist, in-transit, CSV export), each carrying its own permission
 check on top of the area guard.
 
-**Two pages, because it is two jobs on two days** (owner, 2026-08-17, on the one
-page that carried both: 就感觉很多东西挤在一页…就一页对卡机报告，对了没有问题就去
-对bank statement 或daily transaction report):
+**Two pages, named by the owner** (2026-08-17: 就不能分成 merchant
+reconciliation, bank statement reconciliation 吗？) — because it is two jobs on
+two days:
 
-- `/scm/settlement-recon` — **Card Settlement**: upload, the four piles,
-  multi-select candidates with combo hints, the two standing watchlists, the
-  acquirer setup tab (决定4), Excel-ready export. Its statement list answers only
-  its own question — how many lines are still open. It books fees; it never
-  books the bank.
-- `/scm/settlement-bank` — **Card Money In**: the statements already read off a
-  card machine and still owed money, each with the credits banked against it so
-  far, a date+amount box for the next one, and an undo; plus the
-  paid-not-yet-in-the-bank detail (three states — the acquirer has not reported
-  it / waiting to be confirmed / reconciled but not paid — each naming who keyed
-  the payment in, and each showing what is STILL owed after fees, statement
-  charges and part-payments). This is the screen layer 4 will feed from the bank
-  statement.
+- `/scm/merchant-recon` — **Merchant reconciliation** (step 1 of 2): the
+  MERCHANT statement against what the ERP recorded. Tabs: Statements (upload,
+  the four piles, candidates with combo hints, CSV export), Problems (the two
+  standing watchlists), Merchant setup (决定4). Its list answers only its own
+  question — how many lines are still open. It books fees; it never books the
+  bank.
+- `/scm/bank-recon` — **Bank statement reconciliation** (step 2 of 2): the BANK
+  statement against what the merchants owe. Tabs: Money to come in (the
+  statements still owed money, the credits banked against each, a date+amount
+  box for the next one, undo), Still with the merchants (the in-transit detail —
+  three states, each naming who keyed the payment in, each showing what is STILL
+  owed after fees, statement charges and part-payments). This is the screen
+  layer 4 will feed from the bank statement file.
 
-Each links to the other where the work hands over. What they share is
+On both, working a statement REPLACES the list rather than stacking under it —
+the owner on the version that stacked: 就感觉很多东西挤在一页. Each page links to
+the other where the work hands over, and says where the other one stands when it
+matters (an unreconciled statement is flagged on the bank side; a fully
+reconciled one offers the button that records its money). What they share is
 presentation only (`settlement-ui.ts`); every rule stays on the server, so the
 two screens cannot drift into two answers.
 

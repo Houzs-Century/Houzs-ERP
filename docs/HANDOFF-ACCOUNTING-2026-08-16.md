@@ -66,14 +66,15 @@ What is on the branch:
   `routes/accounting.ts` (the route-capability audit only follows top-level
   `app.route`/`scm.route`, so a sub-router would have hidden them); handlers in
   `routes/accounting-settlement.ts`, each behind its own permission check.
-- **TWO pages, one per job** (his third correction: 就感觉很多东西挤在一页…就一
-  页对卡机报告，对了没有问题就去对bank statement 或daily transaction report).
-  `/scm/settlement-recon` "Card Settlement" = upload, four piles, candidates
-  with combo hints, watchlists, and the **Acquirer setup tab where 决定4 gets
-  typed in**. `/scm/settlement-bank` "Card Money In" = the statements still owed
-  money, the credits banked against each, the date+amount box for the next one,
-  undo, and the paid-not-yet-in-the-bank detail. Each links to the other; shared
-  presentation only (`settlement-ui.ts`), never shared rules.
+- **TWO pages, named by him** (就不能分成 merchant reconciliation, bank
+  statement reconciliation 吗？ — after 就感觉很多东西挤在一页).
+  `/scm/merchant-recon` **Merchant reconciliation** = Statements (upload, four
+  piles, candidates, export) · Problems (the two watchlists) · Merchant setup
+  (决定4). `/scm/bank-recon` **Bank statement reconciliation** = Money to come in
+  (statements still owed, the credits banked against each, date+amount for the
+  next, undo) · Still with the merchants (the in-transit detail). On both,
+  opening a statement REPLACES the list. Each links to the other and reports
+  where the other stands. Shared presentation only (`settlement-ui.ts`).
 - **"Paid, not yet in the bank"** — the detail list he asked for (我需要看到说顾
   客还钱了，但是还没收款或还没对账。我要明细的), with WHO keyed each payment in
   (我还要看到谁记录这笔的) and three states: the acquirer has not reported it /
@@ -99,8 +100,8 @@ No database and no credentials needed — there is a rig:
    exports with merchant/card numbers replaced. All five acquirers are already
    configured from those files, plus `wrong-file.csv` for the refusal.
 4. Walk him through, in the order the work happens: upload → the auto-matched
-   pile → "confirm all matched" (fee only) → **Money into the bank** (the
-   second page) → record a credit, then a second one → try one bigger than the
+   pile → "confirm all matched" (fee only) → **Bank statement reconciliation**
+   (the second page) → record a credit, then a second one → try one bigger than the
    statement (it must refuse, naming both numbers) → Undo one → "Paid, not yet
    in the bank" (three states, ageing, who keyed it in) → back to page one for
    the watchlists and a wrong file (it must refuse by name, keeping the file

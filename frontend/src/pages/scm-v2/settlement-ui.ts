@@ -1,11 +1,11 @@
 // The presentation atoms the two settlement screens share.
 //
-// Two screens, because the work is two jobs on two different days (owner,
-// 2026-08-17: 就一页对卡机报告，对了没有问题就去对bank statement 或daily
-// transaction report):
+// Two screens, because the work is two jobs on two different days, and the
+// owner named them himself (2026-08-17: 就不能分成 merchant reconciliation,
+// bank statement reconciliation 吗？):
 //
-//   /scm/settlement-recon — reconcile the CARD MACHINE report;
-//   /scm/settlement-bank  — record the money the BANK actually received.
+//   /scm/merchant-recon — the MERCHANT statement vs what the ERP recorded;
+//   /scm/bank-recon     — the BANK statement vs what those merchants owe.
 //
 // They are one feature, so they must not drift into looking like two products.
 // Everything that decides how they LOOK lives here; everything that decides

@@ -71,8 +71,8 @@ const ScmPurchaseOrderDetailV2 = lazy(() => import("./pages/scm-v2/PurchaseOrder
 const ScmMrpV2 = lazy(() => import("./pages/scm-v2/Mrp").then((m) => ({ default: m.Mrp })));
 const ScmAccountingV2 = lazy(() => import("./pages/scm-v2/Accounting").then((m) => ({ default: m.Accounting })));
 const ScmDailyBank = lazy(() => import("./pages/scm-v2/DailyBank").then((m) => ({ default: m.DailyBank })));
-const ScmSettlementRecon = lazy(() => import("./pages/scm-v2/SettlementRecon").then((m) => ({ default: m.SettlementRecon })));
-const ScmSettlementBank = lazy(() => import("./pages/scm-v2/SettlementBank").then((m) => ({ default: m.SettlementBank })));
+const ScmMerchantRecon = lazy(() => import("./pages/scm-v2/MerchantRecon").then((m) => ({ default: m.MerchantRecon })));
+const ScmBankRecon = lazy(() => import("./pages/scm-v2/BankRecon").then((m) => ({ default: m.BankRecon })));
 const ScmOutstandingV2 = lazy(() => import("./pages/scm-v2/Outstanding").then((m) => ({ default: m.Outstanding })));
 const ScmUnbilledDeliveriesV2 = lazy(() => import("./pages/scm-v2/UnbilledDeliveriesV2").then((m) => ({ default: m.UnbilledDeliveriesV2 })));
 const ScmFabricTrackingV2 = lazy(() => import("./pages/scm-v2/FabricTracking").then((m) => ({ default: m.FabricTracking })));
@@ -627,8 +627,8 @@ export default function App() {
         <Route path="/scm/mrp" element={<ScmGuard area="scm.procurement.mrp"><Scm2990Shell><ScmMrpV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/accounting" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmAccountingV2 /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/daily-bank" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmDailyBank /></Scm2990Shell></ScmGuard>} />
-        <Route path="/scm/settlement-recon" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSettlementRecon /></Scm2990Shell></ScmGuard>} />
-        <Route path="/scm/settlement-bank" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmSettlementBank /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/merchant-recon" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmMerchantRecon /></Scm2990Shell></ScmGuard>} />
+        <Route path="/scm/bank-recon" element={<ScmGuard area="scm.finance.accounting"><Scm2990Shell><ScmBankRecon /></Scm2990Shell></ScmGuard>} />
         <Route path="/scm/outstanding" element={<ScmGuard area="scm.finance.outstanding"><Scm2990Shell><ScmOutstandingV2 /></Scm2990Shell></ScmGuard>} />
         {/* Delivered-but-not-billed, aged. Same area key as Outstanding — it is the
             money answer to the question that page's DO tab asks with a status flag. */}

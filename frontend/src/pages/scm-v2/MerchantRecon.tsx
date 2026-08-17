@@ -1,27 +1,33 @@
 // ----------------------------------------------------------------------------
-// Acquirer settlement reconciliation (accounting phase 2B; brief §3.5 layer 3).
+// MERCHANT RECONCILIATION — the merchant (card machine) statement against what
+// the ERP recorded. Accounting phase 2B, brief §3.5 layer 3.
 //
-// "对账 ＝ 把「在途结算款」这个科目清干净的过程" — this screen exists to empty
-// 320-0000. Upload the acquirer's statement, sort its lines into FOUR piles,
-// and confirm. Confirming posts the FEE immediately (Dr merchant charges / Cr
-// in-transit) — the single thing 系统3 never did, so its card fees never reached
-// the P&L.
+// The owner named the two halves of this work himself: "就不能分成 merchant
+// reconciliation, bank statement reconciliation 吗？" So:
 //
-// STEP ONE OF TWO, and only step one. The money itself arrives days later and
-// is recorded on its own screen, /scm/settlement-bank (SettlementBank.tsx) —
-// the owner asked for the split in these words: "就一页对卡机报告，对了没有问题
-// 就去对bank statement 或daily transaction report". Nothing here books the bank.
+//   here (/scm/merchant-recon)  — the MERCHANT statement vs the ERP's payments
+//   /scm/bank-recon             — the BANK statement vs what the merchants owe
 //
-// The screen deliberately keeps 系统3's skeleton — four piles, bulk-confirm the
-// auto-matched, a candidate list with clues, two standing watchlists, an export
-// — and adds what it lacked: per-acquirer CONFIG instead of hardcoded quirks,
-// no auto-confirm without a unique reference, and a loud refusal for a file it
-// cannot read.
+// This screen books FEES and nothing else (Dr merchant charges / Cr settlement-
+// in-transit, the moment a line is confirmed) — the single thing 系统3 never did,
+// so its card fees never reached the P&L. It never books the bank: the money
+// arrives days later and that is the other screen's job.
+//
+// "对账 ＝ 把「在途结算款」这个科目清干净的过程" — between the two screens,
+// 320-0000 empties.
+//
+// ONE THING AT A TIME. Working a statement replaces the list rather than piling
+// under it; the version that piled drew this: "就感觉很多东西挤在一页".
+//
+// 系统3's skeleton is kept where it was right — four piles, bulk-confirm the
+// auto-matched, candidates with clues — and given what it lacked: per-acquirer
+// CONFIG instead of hardcoded quirks, no auto-confirm without a unique
+// reference, and a loud refusal for a file it cannot read.
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, ArrowRight, CheckCheck, Download, Upload } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, ArrowRight, CheckCheck, Download, Upload } from 'lucide-react';
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
@@ -41,24 +47,24 @@ import { PageHeader } from '../../components/Layout';
 const bucketCount = (buckets: Record<string, number>, key: SettlementBucket): number =>
   Number(buckets[key] ?? 0);
 
-export const SettlementRecon = () => {
-  const [tab, setTab] = useState<'reconcile' | 'watchlists' | 'setup'>('reconcile');
+export const MerchantRecon = () => {
+  const [tab, setTab] = useState<'statements' | 'problems' | 'setup'>('statements');
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance" title="Card settlement reconciliation" />
+      <PageHeader eyebrow="Finance · step 1 of 2" title="Merchant reconciliation" />
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <button type="button" style={btn(tab === 'reconcile')} onClick={() => setTab('reconcile')}>Reconcile</button>
-        <button type="button" style={btn(tab === 'watchlists')} onClick={() => setTab('watchlists')}>Watchlists</button>
-        <button type="button" style={btn(tab === 'setup')} onClick={() => setTab('setup')}>Acquirer setup</button>
+        <button type="button" style={btn(tab === 'statements')} onClick={() => setTab('statements')}>Statements</button>
+        <button type="button" style={btn(tab === 'problems')} onClick={() => setTab('problems')}>Problems</button>
+        <button type="button" style={btn(tab === 'setup')} onClick={() => setTab('setup')}>Merchant setup</button>
         <span style={{ flex: 1 }} />
-        {/* Step two lives on its own screen. The link is here so the next job
-            is one click away, not a hunt through the menu. */}
-        <Link to="/scm/settlement-bank" style={{ ...btn(), textDecoration: 'none' }}>
-          Money into the bank <ArrowRight {...ICON} />
+        {/* Step two is its own screen; the link is here so the next job is one
+            click away, not a hunt through the menu. */}
+        <Link to="/scm/bank-recon" style={{ ...btn(), textDecoration: 'none' }}>
+          Bank statement reconciliation <ArrowRight {...ICON} />
         </Link>
       </div>
-      {tab === 'reconcile' && <ReconcileTab />}
-      {tab === 'watchlists' && <WatchlistTab />}
+      {tab === 'statements' && <ReconcileTab />}
+      {tab === 'problems' && <WatchlistTab />}
       {tab === 'setup' && <SetupTab />}
     </div>
   );
@@ -152,13 +158,14 @@ const ReconcileTab = () => {
     if (lastBatch != null) setBatchId(lastBatch);
   };
 
+  /* ONE THING AT A TIME. A statement being worked replaces the upload row and
+     the list instead of stacking under them — the owner's complaint about the
+     screen that did stack them: "就感觉很多东西挤在一页". */
+  if (batchId != null) return <BatchView batchId={batchId} onBack={() => setBatchId(null)} />;
+
   return (
     <div className="space-y-4">
-      <section className="space-y-2" style={{
-        padding: 'var(--space-4)', border: '1px solid var(--c-line, rgba(34,31,32,0.2))',
-        borderRadius: 'var(--radius-md)',
-      }}>
-        <b>Upload a settlement statement</b>
+      <section className="space-y-2">
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
           <select value={code} onChange={(e) => setCode(e.target.value)} aria-label="Acquirer"
             style={{ padding: '6px 10px', fontSize: 'var(--fs-13)' }}>
@@ -191,20 +198,13 @@ const ReconcileTab = () => {
             ignore the fields that matter. */}
         {chosen?.dates_have_no_year === true && (
           <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-            <label style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }} htmlFor="settlement-month">
-              Which month does this statement cover?
-            </label>
+            <label style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }} htmlFor="settlement-month">Statement month</label>
             <input id="settlement-month" type="month" value={statementMonth} aria-label="Statement month"
               onChange={(e) => setStatementMonth(e.target.value)}
               style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
-            <span style={softText}>
-              {chosen.display_name} dates its lines like &ldquo;16-Aug&rdquo; with no year, so it has to be told.
-            </span>
+            <span style={softText}>{chosen.display_name} dates its lines like &ldquo;16-Aug&rdquo;, with no year.</span>
           </div>
         )}
-        <div style={softText}>
-          You can pick several files at once — they go up one after another, and each one answers for itself.
-        </div>
         {/* Nothing here asks when the money arrived, on purpose. Uploading is
             the moment the operator has the CARD MACHINE report and nothing
             else; the payout comes days later and the bank statement is what
@@ -212,8 +212,7 @@ const ReconcileTab = () => {
             reconciled. (Owner, 2026-08-17: 全部卡机都是隔几天收到的。) */}
         {chosen && !chosen.autoMatchable && (
           <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
-            {chosen.display_name} sends no unique transaction reference — every line will wait for you to confirm it.
-            Nothing here can auto-match on amount and date alone.
+            {chosen.display_name} sends no unique reference — every line waits for you to confirm it.
           </div>
         )}
         {results.map((r) => (
@@ -225,8 +224,9 @@ const ReconcileTab = () => {
       </section>
 
       <section className="space-y-2">
-        <b>Statements</b>
-        {(batches.data?.batches ?? []).length === 0 && <div style={softText}>Nothing uploaded yet.</div>}
+        {(batches.data?.batches ?? []).length === 0
+          ? <div style={softText}>Nothing uploaded yet. Pick a merchant statement above.</div>
+          : <div style={softText}>Several files can go up at once — each one answers for itself.</div>}
         <table style={table}>
           <thead>
             <tr style={headRow}>
@@ -254,22 +254,20 @@ const ReconcileTab = () => {
                     : `${b.open_count} of ${b.row_count} still open`}
                 </td>
                 <td style={cell}>
-                  <button type="button" style={btn(batchId === b.id)} onClick={() => setBatchId(b.id)}>Open</button>
+                  <button type="button" style={btn()} onClick={() => setBatchId(b.id)}>Open</button>
                 </td>
               </tr>
             ))}
           </tbody>
         </table>
       </section>
-
-      {batchId != null && <BatchView batchId={batchId} />}
     </div>
   );
 };
 
 /* ── One statement, four piles ────────────────────────────────────────────── */
 
-const BatchView = ({ batchId }: { batchId: number }) => {
+const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void }) => {
   const q = useSettlementBatch(batchId);
   const confirmAll = useConfirmMatched();
   const [pile, setPile] = useState<SettlementBucket>('NEEDS_CONFIRM');
@@ -295,9 +293,13 @@ const BatchView = ({ batchId }: { batchId: number }) => {
   };
 
   return (
-    <section className="space-y-3" style={{
-      padding: 'var(--space-4)', border: '1px solid var(--c-ink)', borderRadius: 'var(--radius-md)',
-    }}>
+    <section className="space-y-3">
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <button type="button" style={btn()} onClick={onBack}><ArrowLeft {...ICON} /> All statements</button>
+        <b>{batch ? `${batch.acquirer_code} · ${batch.file_name}` : 'Loading…'}</b>
+        {batch && <span style={softText}>{batch.period_from} → {batch.period_to} · net {fmt(batch.net_sen)}</span>}
+      </div>
+
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
         {(['MATCHED', 'NEEDS_CONFIRM', 'UNMATCHED', 'IGNORED'] as SettlementBucket[]).map((b) => (
           <button key={b} type="button" style={btn(pile === b)} onClick={() => setPile(b)}>
@@ -324,12 +326,10 @@ const BatchView = ({ batchId }: { batchId: number }) => {
           background: batch.adjustment_je_no ? 'rgba(47,93,79,0.08)' : 'rgba(184,51,31,0.08)',
           fontSize: 'var(--fs-13)',
         }}>
-          <b>Merchant charge on the statement, not on any transaction: {fmt(Math.abs(batch.adjustment_sen))}</b>
+          <b>Merchant charge on no transaction: {fmt(Math.abs(batch.adjustment_sen))}</b>
           <div style={softText}>
-            The lines come to {fmt(batch.net_sen)}, and {batch.acquirer_code} says it is paying {fmt(batch.stated_net_sen ?? 0)}.
-            {batch.adjustment_je_no
-              ? ` Booked as ${batch.adjustment_je_no}: into merchant charges, out of what ${batch.acquirer_code} still owes.`
-              : ` Not booked yet — confirm the batch and it posts into merchant charges, out of what ${batch.acquirer_code} still owes, because that money is never coming.`}
+            Lines come to {fmt(batch.net_sen)}; {batch.acquirer_code} says it is paying {fmt(batch.stated_net_sen ?? 0)}.
+            {batch.adjustment_je_no ? ` Booked as ${batch.adjustment_je_no}.` : ' Confirm the statement and it books.'}
           </div>
         </div>
       )}
@@ -343,12 +343,6 @@ const BatchView = ({ batchId }: { batchId: number }) => {
           {confirmAll.data.failed.map((f) => <div key={f.rowId}>{f.rowId ? `Line ${f.rowId}: ` : ''}{f.reason}</div>)}
         </div>
       )}
-
-      <div style={softText}>
-        Confirming a line posts its FEE straight away — into merchant charges, out of what the acquirer owes you.
-        The rest stays owed until the money actually reaches the bank, which is the step above. Nothing is left
-        &ldquo;for next period&rdquo;.
-      </div>
 
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the statement…</div>}
       {!q.isLoading && shown.length === 0 && <div style={softText}>This pile is empty.</div>}
@@ -371,7 +365,7 @@ const HandOff = ({ batch, openLines }: { batch: SettlementBatch; openLines: numb
     return (
       <div style={softText}>
         {openLines} line(s) still need a decision. Once they are done, {batch.acquirer_code} owes {fmt(payable)} —
-        record it on <Link to="/scm/settlement-bank">Money into the bank</Link> when it arrives.
+        record it on <Link to="/scm/bank-recon">bank statement reconciliation</Link> when it arrives.
       </div>
     );
   }
@@ -383,8 +377,8 @@ const HandOff = ({ batch, openLines }: { batch: SettlementBatch; openLines: numb
           : `Every line is reconciled. ${batch.acquirer_code} owes ${fmt(outstanding)}.`}
       </b>
       {outstanding !== 0 && (
-        <Link to="/scm/settlement-bank" style={{ ...btn(true), textDecoration: 'none' }}>
-          Record the money <ArrowRight {...ICON} />
+        <Link to="/scm/bank-recon" style={{ ...btn(true), textDecoration: 'none' }}>
+          Match the bank statement <ArrowRight {...ICON} />
         </Link>
       )}
     </div>
@@ -729,4 +723,4 @@ const AcquirerCard = ({ acquirer }: { acquirer: AcquirerSetup }) => {
   );
 };
 
-export default SettlementRecon;
+export default MerchantRecon;

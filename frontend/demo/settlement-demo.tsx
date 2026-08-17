@@ -22,8 +22,8 @@ import '../src/index.css';
 import '../src/vendor/design-system/tokens.css';
 import { ToastProvider } from '../src/hooks/useToast';
 import { DialogProvider } from '../src/hooks/useDialog';
-import { SettlementRecon } from '../src/pages/scm-v2/SettlementRecon';
-import { SettlementBank } from '../src/pages/scm-v2/SettlementBank';
+import { MerchantRecon } from '../src/pages/scm-v2/MerchantRecon';
+import { BankRecon } from '../src/pages/scm-v2/BankRecon';
 import { fmtCenti } from '../src/vendor/shared/format';
 
 // authedFetch refuses to run without a token; the demo server ignores it.
@@ -131,8 +131,8 @@ const Harness = () => {
         {/* Both real screens, on their real paths, so the hand-off between
             them is exercised too: reconcile here, then "Money into the bank". */}
         <Routes key={resetAt}>
-          <Route path="/scm/settlement-bank" element={<SettlementBank />} />
-          <Route path="*" element={<SettlementRecon />} />
+          <Route path="/scm/bank-recon" element={<BankRecon />} />
+          <Route path="*" element={<MerchantRecon />} />
         </Routes>
       </main>
       <LedgerPanel />

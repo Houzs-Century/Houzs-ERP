@@ -55,9 +55,9 @@ vi.mock('./settlement-queries', () => ({
   ] }, isLoading: false }),
 }));
 
-import { SettlementBank } from './SettlementBank';
+import { BankRecon } from './BankRecon';
 
-const draw = () => render(<MemoryRouter><SettlementBank /></MemoryRouter>);
+const draw = () => render(<MemoryRouter><BankRecon /></MemoryRouter>);
 
 describe('the statements waiting for money', () => {
   test('lists what is still owed, and hides the settled ones until asked', () => {
@@ -118,7 +118,7 @@ describe('the statements waiting for money', () => {
 describe('paid, not yet in the bank', () => {
   test('names the document, the age, who keyed it in and where the money is', () => {
     draw();
-    fireEvent.click(screen.getByText('Paid, not yet in the bank'));
+    fireEvent.click(screen.getByText('Still with the merchants'));
 
     expect(screen.getByText('RM 3,579.00')).toBeTruthy();          // sitting with acquirers
     expect(screen.getByText('SO-2608-040')).toBeTruthy();          // named to the document
@@ -132,7 +132,7 @@ describe('paid, not yet in the bank', () => {
 
   test('ages it by acquirer so a stale balance cannot hide', () => {
     draw();
-    fireEvent.click(screen.getByText('Paid, not yet in the bank'));
+    fireEvent.click(screen.getByText('Still with the merchants'));
     expect(screen.getByText('over 30 days')).toBeTruthy();
     // 46 days on GHL — the number the operator is meant to chase.
     expect(screen.getByText('46')).toBeTruthy();

@@ -5,8 +5,8 @@
 //   • a statement the server refused shows the server's sentence, verbatim;
 //   • the four piles carry their counts and a line shows its clue;
 //   • a selection that does not add up cannot be confirmed;
-//   • the money side is NOT here — it is SettlementBank.test.tsx, because the
-//     owner asked for the two jobs to be two screens.
+//   • the money side is NOT here — it is BankRecon.test.tsx, because the owner
+//     asked for the two jobs to be two screens.
 
 import { fireEvent, render, screen, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
@@ -63,10 +63,10 @@ vi.mock('./settlement-queries', () => ({
   useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, recordedNotArrived: [], arrivedNotRecorded: [] }, isLoading: false }),
 }));
 
-import { SettlementRecon } from './SettlementRecon';
+import { MerchantRecon } from './MerchantRecon';
 import { refusalText } from './settlement-ui';
 
-const draw = () => render(<MemoryRouter><SettlementRecon /></MemoryRouter>);
+const draw = () => render(<MemoryRouter><MerchantRecon /></MemoryRouter>);
 
 /* The bug the owner hit on the local rig: the page showed "Some of the details
    weren't accepted" instead of the statement's actual problem, because the
@@ -92,13 +92,13 @@ describe('the reconcile tab', () => {
   test('an acquirer with no unique reference is called out before anything is uploaded', () => {
     draw();
     fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'GHL' } });
-    expect(screen.getByText(/sends no unique transaction reference/)).toBeTruthy();
+    expect(screen.getByText(/sends no unique reference/)).toBeTruthy();
   });
 
   test('several statements can be picked at once', () => {
     draw();
     expect(screen.getByLabelText('Statement files').hasAttribute('multiple')).toBe(true);
-    expect(screen.getByText(/several files at once/)).toBeTruthy();
+    expect(screen.getByText(/Several files can go up at once/)).toBeTruthy();
   });
 
   /* Only Hong Leong writes its dates without a year. Showing everyone else a
@@ -159,7 +159,7 @@ describe('the reconcile tab', () => {
 describe('the setup tab', () => {
   test('names which acquirers are ready, and warns where nothing can auto-confirm', () => {
     draw();
-    fireEvent.click(screen.getByText('Acquirer setup'));
+    fireEvent.click(screen.getByText('Merchant setup'));
     expect(screen.getAllByText('ready').length).toBe(2);
     expect(screen.getByText(/nothing from GHL can be confirmed automatically/)).toBeTruthy();
   });
@@ -168,7 +168,7 @@ describe('the setup tab', () => {
      {"date":"Txn Date",…} — and a typo in it was only discovered at upload. */
   test('each heading is its own labelled field, seeded from the saved layout', () => {
     draw();
-    fireEvent.click(screen.getByText('Acquirer setup'));
+    fireEvent.click(screen.getByText('Merchant setup'));
     expect((screen.getByLabelText('MBB Date heading') as HTMLInputElement).value).toBe('Txn Date');
     expect((screen.getByLabelText('MBB Amount heading') as HTMLInputElement).value).toBe('Gross');
     expect(screen.getByLabelText('MBB Reference heading')).toBeTruthy();
@@ -178,7 +178,7 @@ describe('the setup tab', () => {
   test('a required heading left blank is refused HERE, not at upload time', () => {
     saveMutate = vi.fn();
     draw();
-    fireEvent.click(screen.getByText('Acquirer setup'));
+    fireEvent.click(screen.getByText('Merchant setup'));
     const dateField = screen.getByLabelText('MBB Date heading');
     fireEvent.change(dateField, { target: { value: '' } });
     const card = within(dateField.closest('section') as HTMLElement);

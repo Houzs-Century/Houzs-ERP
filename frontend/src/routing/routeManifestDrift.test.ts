@@ -44,8 +44,8 @@ const allMobile: MobileDestination[] = [
 
 describe("executable route contract", () => {
   it("matches every canonical staff page mounted by App.tsx, with no extras", () => {
-    // 144 since 2026-08-17: /scm/settlement-bank, step two of settlement — the money the bank received.
-    // 143 since 2026-08-16: /scm/settlement-recon, acquirer settlement reconciliation (accounting phase 2B layer 3).
+    // 144 since 2026-08-17: /scm/bank-recon, step two — the bank statement against what the merchants owe.
+    // 143 since 2026-08-16: /scm/merchant-recon, the merchant statement against the ERP (accounting phase 2B layer 3).
     // 142 since 2026-08-16: /scm/daily-bank, the Daily Bank board (accounting phase 2B).
     // 141 since 2026-08-15: /autocount-sync, the AutoCount write-back queue.
     // (140 since 2026-08-03: /scm/dp-orders, the DP Order list.)

@@ -171,7 +171,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1382 files, 560216 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1382 files, 560214 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -232,6 +232,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/amendments` | `frontend/src/pages/scm-v2/Amendments` |
 | `/scm/amendments/:id` | `frontend/src/pages/scm-v2/AmendmentDetailV2` |
 | `/scm/auto-schedule` | `frontend/src/pages/scm-v2/AutoSchedule` |
+| `/scm/bank-recon` | `frontend/src/pages/scm-v2/BankRecon` |
 | `/scm/categories` | `frontend/src/pages/scm-v2/Categories` |
 | `/scm/consignment` | `frontend/src/pages/ScmSubgroupHub` |
 | `/scm/consignment-notes` | `frontend/src/pages/scm-v2/ConsignmentNotes` |
@@ -278,6 +279,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/inventory/stock-card/:productCode` | `frontend/src/pages/scm-v2/StockCard` |
 | `/scm/lorry-capacity` | `frontend/src/pages/scm-v2/LorryCapacity` |
 | `/scm/maintenance` | `frontend/src/pages/scm-v2/Products` |
+| `/scm/merchant-recon` | `frontend/src/pages/scm-v2/MerchantRecon` |
 | `/scm/mrp` | `frontend/src/pages/scm-v2/Mrp` |
 | `/scm/outstanding` | `frontend/src/pages/scm-v2/Outstanding` |
 | `/scm/payment-vouchers` | `frontend/src/pages/scm-v2/PaymentVouchers` |
@@ -327,8 +329,6 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/sales-orders/new` | `frontend/src/pages/scm-v2/SalesOrderNew` |
 | `/scm/sales-orders/new/from-products` | `frontend/src/pages/scm-v2/SalesOrderNewFromProducts` |
 | `/scm/sales-orders/new/guided` | `frontend/src/pages/scm-v2/SalesOrderNewGuided` |
-| `/scm/settlement-bank` | `frontend/src/pages/scm-v2/SettlementBank` |
-| `/scm/settlement-recon` | `frontend/src/pages/scm-v2/SettlementRecon` |
 | `/scm/stock-adjustments` | `frontend/src/pages/scm-v2/StockAdjustments` |
 | `/scm/stock-adjustments/new` | `frontend/src/pages/scm-v2/StockAdjustmentNew` |
 | `/scm/stock-takes` | `frontend/src/pages/scm-v2/StockTakesListV2` |

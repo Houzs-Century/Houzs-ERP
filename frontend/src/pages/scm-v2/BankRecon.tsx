@@ -1,12 +1,13 @@
 // ----------------------------------------------------------------------------
-// Card payouts into the bank — STEP TWO of settlement (brief §3.5 layer 3).
+// BANK STATEMENT RECONCILIATION — what the BANK actually received against what
+// the merchants owe. Step two of settlement (brief §3.5 layer 3).
 //
-// Its own screen because it is its own job, on its own day. The owner, looking
-// at the one page that carried both: "怎么说呢，就感觉很多东西挤在一页…就一页对
-// 卡机报告，对了没有问题就去对bank statement 或daily transaction report."
+// Its own screen because it is its own job, on its own day, and the owner named
+// it himself: "就不能分成 merchant reconciliation, bank statement reconciliation
+// 吗？"
 //
-//   /scm/settlement-recon  — reconcile the CARD MACHINE report (fees post there)
-//   here                   — record the money the BANK actually received
+//   /scm/merchant-recon — the MERCHANT statement vs the ERP's payments (fees)
+//   here                — the BANK statement vs what those merchants owe
 //
 // Nothing on this screen touches the card-machine side, and nothing on that one
 // touches the bank. What links them is settlement-in-transit: reconciling takes
@@ -20,7 +21,7 @@
 
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Download, Landmark, Undo2 } from 'lucide-react';
+import { AlertTriangle, ArrowLeft, Download, Landmark, Undo2 } from 'lucide-react';
 import {
   useSettlementBatches, useSettlementBatch, useMarkBatchReceived, useUndoReceipt, useInTransit,
   type AgeBucket, type SettlementBatch,
@@ -33,17 +34,17 @@ import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 
-export const SettlementBank = () => {
+export const BankRecon = () => {
   const [tab, setTab] = useState<'money' | 'transit'>('money');
   return (
     <div className="space-y-4">
-      <PageHeader eyebrow="Finance" title="Card money into the bank" />
+      <PageHeader eyebrow="Finance · step 2 of 2" title="Bank statement reconciliation" />
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <button type="button" style={btn(tab === 'money')} onClick={() => setTab('money')}>Waiting for money</button>
-        <button type="button" style={btn(tab === 'transit')} onClick={() => setTab('transit')}>Paid, not yet in the bank</button>
+        <button type="button" style={btn(tab === 'money')} onClick={() => setTab('money')}>Money to come in</button>
+        <button type="button" style={btn(tab === 'transit')} onClick={() => setTab('transit')}>Still with the merchants</button>
         <span style={{ flex: 1 }} />
-        <Link to="/scm/settlement-recon" style={{ ...btn(), textDecoration: 'none' }}>
-          ← Card machine reconciliation
+        <Link to="/scm/merchant-recon" style={{ ...btn(), textDecoration: 'none' }}>
+          <ArrowLeft {...ICON} /> Merchant reconciliation
         </Link>
       </div>
       {tab === 'money' && <WaitingForMoney />}
@@ -66,12 +67,14 @@ const WaitingForMoney = () => {
   const shown = showSettled ? [...owed, ...settled] : owed;
   const total = owed.reduce((s, b) => s + outstandingOf(b), 0);
 
+  /* ONE THING AT A TIME: working a statement replaces the list. */
+  if (batchId != null) return <BatchReceipts batchId={batchId} onBack={() => setBatchId(null)} />;
+
   return (
     <div className="space-y-3">
       <div style={softText}>
-        Each statement below has been read off the card machine and is waiting for the money. Take the date and the
-        amount off the BANK statement (or the daily transaction report) and record each credit as it lands — one
-        statement is often paid in several.
+        Take the date and the amount off the BANK statement or the daily transaction report. One merchant statement
+        is often paid in several credits — record each as it lands.
       </div>
 
       <div style={{
@@ -80,7 +83,7 @@ const WaitingForMoney = () => {
         display: 'flex', gap: 'var(--space-5)', alignItems: 'baseline', flexWrap: 'wrap',
       }}>
         <div>
-          <div style={softText}>Still owed on statements you have already read</div>
+          <div style={softText}>Owed by the merchants on statements already reconciled</div>
           <div style={{ fontSize: 'var(--fs-24, 22px)', fontWeight: 700 }}>{fmt(total)}</div>
         </div>
         <div style={softText}>{owed.length} statement{owed.length === 1 ? '' : 's'}</div>
@@ -95,7 +98,7 @@ const WaitingForMoney = () => {
       {batches.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
       {!batches.isLoading && owed.length === 0 && !showSettled && (
         <div style={{ fontSize: 'var(--fs-13)', color: good }}>
-          Every statement you have reconciled has been paid in full. Nothing to record here.
+          Every merchant statement you have reconciled has been paid in full.
         </div>
       )}
 
@@ -105,7 +108,7 @@ const WaitingForMoney = () => {
             <tr style={headRow}>
               <th style={cell}>Acquirer</th><th style={cell}>Statement</th><th style={cell}>Period</th>
               <th style={num}>It should pay</th><th style={num}>Received</th><th style={num}>Still owed</th>
-              <th style={cell}>Card machine</th><th style={cell} />
+              <th style={cell}>Merchant recon</th><th style={cell} />
             </tr>
           </thead>
           <tbody>
@@ -130,7 +133,7 @@ const WaitingForMoney = () => {
                     {open > 0 ? `${open} line(s) still open` : `${b.confirmed_count ?? 0} line(s) reconciled`}
                   </td>
                   <td style={cell}>
-                    <button type="button" style={btn(batchId === b.id)} onClick={() => setBatchId(b.id)}>Open</button>
+                    <button type="button" style={btn()} onClick={() => setBatchId(b.id)}>Open</button>
                   </td>
                 </tr>
               );
@@ -138,15 +141,13 @@ const WaitingForMoney = () => {
           </tbody>
         </table>
       )}
-
-      {batchId != null && <BatchReceipts batchId={batchId} />}
     </div>
   );
 };
 
 /* ── One statement: the credits banked against it, and the next one ───────── */
 
-const BatchReceipts = ({ batchId }: { batchId: number }) => {
+const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => void }) => {
   const q = useSettlementBatch(batchId);
   const receive = useMarkBatchReceived();
   const undo = useUndoReceipt();
@@ -174,13 +175,15 @@ const BatchReceipts = ({ batchId }: { batchId: number }) => {
 
   return (
     <section className="space-y-3" style={{ ...panel(done ? 'good' : 'plain'), border: '1px solid var(--c-ink)' }}>
-      <b>
-        {batch.acquirer_code} · {batch.file_name}
-        {' — '}
-        {done
-          ? `${fmt(payable)} is all in${receipts.length > 1 ? `, across ${receipts.length} credits` : ''}.`
-          : `${fmt(outstanding)} still to come${received !== 0 ? ` of ${fmt(payable)}` : ''}.`}
-      </b>
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <button type="button" style={btn()} onClick={onBack}><ArrowLeft {...ICON} /> All statements</button>
+        <b>{batch.acquirer_code} · {batch.file_name}</b>
+        <span>
+          {done
+            ? `${fmt(payable)} is all in${receipts.length > 1 ? `, across ${receipts.length} credits` : ''}.`
+            : `${fmt(outstanding)} still to come${received !== 0 ? ` of ${fmt(payable)}` : ''}.`}
+        </span>
+      </div>
 
       {receipts.length > 0 && (
         <table style={table}>
@@ -230,7 +233,7 @@ const BatchReceipts = ({ batchId }: { batchId: number }) => {
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
           {openLines} line(s) on this statement are still unconfirmed, so their fees are not in the books yet.
           The money can still be recorded, but{' '}
-          <Link to="/scm/settlement-recon">finish the card machine side</Link> or this acquirer will not come to zero.
+          <Link to="/scm/merchant-recon">finish the merchant reconciliation</Link> or this acquirer will not come to zero.
         </div>
       )}
 
@@ -281,9 +284,8 @@ const InTransitTab = () => {
   return (
     <div className="space-y-3">
       <div style={softText}>
-        The customer has paid and the money has not reached the bank yet. This is the same money as the
-        settlement-in-transit balance on the trial balance — here it is named to the document, so you can see
-        WHOSE it is rather than just how much.
+        The customer has paid and the money has not reached the bank yet — the same money as the
+        settlement-in-transit balance, named to the document so you can see WHOSE it is.
       </div>
 
       <div style={{
@@ -292,7 +294,7 @@ const InTransitTab = () => {
         display: 'flex', gap: 'var(--space-5)', alignItems: 'baseline', flexWrap: 'wrap',
       }}>
         <div>
-          <div style={softText}>Sitting with the acquirers right now</div>
+          <div style={softText}>Sitting with the merchants right now</div>
           <div style={{ fontSize: 'var(--fs-24, 22px)', fontWeight: 700 }}>{fmt(data?.totalSen)}</div>
         </div>
         <div style={softText}>{lines.length} payment{lines.length === 1 ? '' : 's'}</div>
