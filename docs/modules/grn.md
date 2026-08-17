@@ -439,6 +439,22 @@ convert wizard and the from-PO batch receive — in `vendor/scm/lib/authed-fetch
 alongside the sofa hard stops, which is what keeps desktop and mobile saying the
 same thing.
 
+**The refusal RELEASES the idempotency key, and it has to say so out loud.**
+All four zero-cost exits answer through `refuseZeroCostReceipt(c, body,
+{ nothingWritten })` (`lib/zero-cost-receipt-guard.ts`), which calls
+`markIdempotencyNoWrite(c)` (`middleware/idempotency.ts`). Without that the two
+remedies above were unreachable: `GrnNew` sends one `Idempotency-Key` per
+mount, the refused submit CLAIMED that key against its payload hash, and the
+corrected payload then came back 409 `idempotency_key_reused` — so the only way
+to act on "enter the unit price" was a page reload that threw the whole receipt
+away. The marker is never inferred from the 409 status, because a status cannot
+prove a rollback, which is why `nothingWritten` is a required argument and not a
+default. The three single-document routes pass `true`; `POST /from-po-items`
+passes `created.length === 0`, because it raises one GRN per supplier bucket and
+an earlier bucket can have committed its document, its stock IN and its
+AutoCount conversion before a later one was refused. Pinned by
+`backend/tests/grnZeroCostReleasesIdempotencyKey.test.ts`.
+
 **The header PATCH is the exception**: it is NOT gated by `grnHasDownstream`. A
 GRN with a downstream PI can still have its header edited, including a warehouse
 change that physically relocates stock — that path is gated only by

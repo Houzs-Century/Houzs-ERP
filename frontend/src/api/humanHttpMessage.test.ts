@@ -35,12 +35,16 @@ describe("humanHttpMessage", () => {
         JSON.stringify({ error: "idempotency_unavailable", message: "fallback" }),
       ),
     ).toMatch(/nothing was sent/i);
+    /* Both pre-handler refusals: nothing ran, the form has already minted a
+       fresh key (lib/idempotency.ts), so the instruction is RETRY. It used to
+       say "refresh", which is the reported bug — refreshing throws away the
+       correction the operator had just typed to get past the refusal. */
     expect(
       humanHttpMessage(
         409,
         JSON.stringify({ error: "idempotency_key_reused", message: "fallback" }),
       ),
-    ).toMatch(/different details/i);
+    ).toMatch(/nothing was saved.*press save again/i);
     expect(
       humanHttpMessage(
         400,
@@ -58,7 +62,7 @@ describe("humanHttpMessage", () => {
         409,
         JSON.stringify({ error: "idempotency_key_conflict", message: "fallback" }),
       ),
-    ).toMatch(/another operation/i);
+    ).toMatch(/nothing was saved.*press save again/i);
     expect(
       humanHttpMessage(
         413,

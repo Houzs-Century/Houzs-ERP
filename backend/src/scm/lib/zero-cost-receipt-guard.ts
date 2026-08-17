@@ -45,6 +45,8 @@
    fake price, which is strictly worse than a recorded zero — so an operator who
    really is receiving something free ticks it, and grn_items.zero_cost_ack
    keeps that decision next to the line that carries it. */
+import type { Context } from 'hono';
+import { markIdempotencyNoWrite } from '../../middleware/idempotency';
 import { isServiceLine } from '../shared/service-sku';
 
 /** One receipt line, as the guard needs to see it. `unitCostSen` is the LANDED
@@ -155,6 +157,35 @@ export function zeroCostReceiptResponse(lines: UncostedReceiptLine[]) {
     ackField: 'zeroCostAck',
     lines,
   };
+}
+
+/* ── Answering the refusal, so the operator can actually act on it ──────────
+   The remedy above is "enter the unit price, then confirm again", and for a
+   caller sending an Idempotency-Key that was IMPOSSIBLE until 2026-08-17. The
+   middleware claims the key against the exact request hash, so the refused
+   submit owned it for the WRONG payload; the corrected one no longer matched
+   and came back 409 idempotency_key_reused ("This request key was already used
+   for different data"). The only recovery was a page reload, which threw the
+   whole receipt away — a guard whose entire point is "fix this and retry" had
+   made retrying impossible.
+
+   markIdempotencyNoWrite is the ONE signal that releases a claim, and the
+   middleware refuses to infer it from a 4xx on purpose: several legacy routes
+   return a 4xx after one or more non-transactional writes, so a status cannot
+   prove a rollback. Only the route knows, which is why `nothingWritten` is a
+   REQUIRED argument rather than a default — every zero-cost exit has to state
+   what it left behind, and the batch receive genuinely cannot say `true`: it
+   raises one GRN per supplier bucket, and an earlier bucket can have committed
+   its document, its stock IN and its AutoCount conversion before a later one
+   is refused. Releasing the key there would let the corrected resubmit receive
+   those goods a SECOND time. */
+export function refuseZeroCostReceipt(
+  c: Context,
+  body: ReturnType<typeof zeroCostReceiptResponse> | Record<string, unknown>,
+  proof: { nothingWritten: boolean },
+): Response {
+  if (proof.nothingWritten) markIdempotencyNoWrite(c);
+  return c.json(body, 409);
 }
 
 /* What has this company actually paid for these SKUs? Read from the ledger the

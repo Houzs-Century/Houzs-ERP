@@ -32,7 +32,7 @@ import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurren
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
-import { checkReceiptCosts, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
+import { checkReceiptCosts, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
@@ -1809,7 +1809,7 @@ grns.post('/', async (c) => {
   if (postRes && !postRes.ok && postRes.zeroCost) {
     await sb.from('grn_items').delete().eq('grn_id', h.id);
     await sb.from('grns').delete().eq('id', h.id);
-    return c.json(postRes.zeroCost, 409);
+    return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });
   }
   // Migration 0101 — populate header money rollups from the inserted lines.
   // (Money only — no stock — so it's safe to run for a draft too.)
@@ -2047,7 +2047,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
   if (!postRes.ok && postRes.zeroCost) {
     await sb.from('grn_items').delete().eq('grn_id', h.id);
     await sb.from('grns').delete().eq('id', h.id);
-    return c.json(postRes.zeroCost, 409);
+    return refuseZeroCostReceipt(c, postRes.zeroCost, { nothingWritten: true });
   }
   // Migration 0101 — populate header money rollups from the inserted lines.
   await recomputeGrnTotals(sb, h.id);
@@ -2152,7 +2152,7 @@ export const postGrnHandler = async (c: any) => {
        the operator has to know which ones need a price off the supplier's
        goods-received document. Nothing was written, so the GRN is still DRAFT
        and re-confirmable once the prices are in. */
-    if (res.zeroCost) return c.json(res.zeroCost, 409);
+    if (res.zeroCost) return refuseZeroCostReceipt(c, res.zeroCost, { nothingWritten: true });
     if (res.status === 409) {
       const { data: now } = await scopeToCompanyId(sb.from('grns')
         .select('id, status, posted_at, total_centi').eq('id', id), co.companyId).maybeSingle();
@@ -2486,7 +2486,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   // single-doc paths return. Reported before the over-receipt 409 only because
   // a missing cost is the one the operator can fix from the paperwork in hand.
   if (zeroCostRefusal) {
-    return c.json({ ...zeroCostRefusal, created }, 409);
+    return refuseZeroCostReceipt(c, { ...zeroCostRefusal, created }, { nothingWritten: created.length === 0 });
   }
 
   // If any bucket over-received (race), surface a 409 with the add-line error
