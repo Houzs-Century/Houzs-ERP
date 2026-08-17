@@ -327,8 +327,211 @@ Sizes are relative build cost, not priority.
 
 ---
 
+## 9. Vocabulary — is it "Convert to/from" or "Transfer to/from"?
+
+> Added 2026-08-17, for the owner's question: *"I want a system-wide audit — are
+> the words 'transfer to' and 'transfer from' used consistently? Or is it
+> 'convert to' / 'convert from'? I think unifying everything to transfer from /
+> transfer to would be better, wouldn't it?"*
+>
+> **This is an AUDIT. Nothing has been renamed.** Read with
+> `docs/transfer-from-to-vocabulary.md`, which surveys the LINEAGE COLUMNS from
+> the same question a few hours earlier. This section is the layered
+> rename-cost view that survey does not carry, and it **corrects two liveness
+> claims in it** — see §9.7.
+
+### 9.1 The answer, before the inventory
+
+**The owner's instinct is right, and the reason is stronger than consistency:
+"transfer" is the word the accounting book already uses for this operation, and
+"convert" is the ERP's own invention.**
+
+Three independent layers already say "transfer", and they were not coordinated:
+
+| layer | evidence | word |
+|---|---|---|
+| the AutoCount SDK | `TransferFrom` is a **first-class SDK type**; the primitives are `SalesDocument.FullTransfer(String[], TransferFrom, …)` and `PartialTransfer(TransferFrom, …)`, plus `IsTransferFromSupported()` / `IsFullTransfered()` / `TransferFromToDocumentType(TransferFrom)`. Dumped by reflection off the installed 2.2 assemblies and recorded in `backend/scripts/autocount-service/AcSyncService.cs` + `sdk-api-reference.txt`. | **transfer** |
+| the data layer | `sales_orders.transfer_to`, fed from `o.TransferTo` in `backend/src/services/acSnapshot.ts`; `backend/src/services/assr.ts` calls it *"AutoCount's own SO → DO transfer chain"* and uses it as the EXACT SO→DO linkage | **transfer** |
+| the UI, in part | **nine live screens** already label document lineage **"Transfer From (SO)"**, **"Transfer To (DO)"**, **"Transfer From (Order)"**, **"Transfer From (Receive)"**, **"Transfer To:"**, **"Transfer To (GRN)"** — six routed straight from `App.tsx`, three reached through the `?edit=1` forward (§9.7). See §9.4 layer A | **transfer** |
+
+So the proposal does **not** introduce a new word. It picks the word that
+AutoCount, the mirror columns and roughly half the UI already use, and retires
+the one the ERP invented. That is a much easier decision than a taste call.
+
+**One precondition, and it is a real blocker for a blind rename.** The word is
+currently OCCUPIED on one live screen by a different meaning — see §9.3. Free
+that first, or the unification creates the ambiguity it is meant to remove.
+
+### 9.2 Does `transfer_to` mean the same thing as "Convert to"? — YES for the mirror, NO for the ERP's own column
+
+This was the load-bearing question. It resolves into **four different things
+wearing one name**, and they must not be treated alike:
+
+| the thing | what it holds | same concept as "Convert to"? |
+|---|---|---|
+| `sales_orders.transfer_to` (the AutoCount **mirror** table) and `ac_snapshot_sales_orders.transfer_to` | the DO document number this SO became, straight from AutoCount's `TransferTo`. `assr.ts` reads it as the SO→DO linkage and filters `XS`-prefixed values as *"AutoCount's cancelled-transfer artifacts"* | **YES — exactly.** It is the NOUN (the document produced) for the same relationship "Convert to DO" is the VERB of. Unifying is clean. |
+| `mfg_sales_orders.transfer_to` (**the ERP's own** SO table) | free text. Written at create from `body.transferTo`, patchable, selected into the header payload — and **no live frontend reader**: `git grep -n "\.transfer_to\b" -- frontend/src` returns nothing, and the only frontend occurrence is a type field | **NO — it holds nothing.** A dead column whose name already claims the word. |
+| `transfer_to_grns` | a **derived** forward PO → GRN list, reverse-scanned from `grns.purchase_order_id` in `mfg-purchase-orders.ts`. An API response field, not a column | yes in meaning, but it is computed per request |
+| `inventory_movement_type = 'TRANSFER'` | stock moved between warehouses | **NO — different concept entirely.** §9.3 |
+
+**PROVEN — the semantic is document lineage, not a branch or stock movement.**
+AutoCount's transfer family is the document-conversion family: its members are
+`SO→DO`, `PO→GR`, `DO→IV`, `GR→PI`, and the ERP's outbox ops are named for
+exactly those pairs (`so_to_do`, `po_to_gr`, `do_to_iv`, `gr_to_pi`). Nothing in
+the SDK dump ties `TransferTo` to a warehouse or an inter-company hand-off.
+**The recommendation does not flip.**
+
+### 9.3 Is a THIRD concept already using "transfer"? — Yes, stock movement. It collides in exactly ONE place, and that place is live.
+
+Stock Transfer is a real document type here (`scm.stock_transfers`,
+`/scm/stock-transfers`, `fn_stock_transfer_apply`). **At the phrase level it
+mostly does NOT collide**, because it words itself differently:
+
+| stock movement says | document lineage says |
+|---|---|
+| "New Stock Transfer", "Post Transfer", "Transfer Date", "Total Transfers" — *transfer as a NOUN, the document* | "Transfer From (SO)", "Transfer To (DO)" — *always with the source/target document type in parentheses* |
+| **"From Warehouse" / "To Warehouse"** for the endpoints — columns `from_warehouse_id` / `to_warehouse_id` | never mentions a warehouse |
+| `'Transfer to warehouse ' \|\| …` in mig 0192's audit note, and `consignment-loaner.ts`'s "transfer to warehouse N" — *always qualified by the word warehouse* | — |
+
+So the two senses are separated by grammar, and the owner's proposal is
+compatible with both. **Except once:**
+
+> **`frontend/src/pages/scm-v2/PurchaseOrderDetailV2.tsx` renders a PO line
+> column keyed `transferTo` and labelled `"Transfer to"` whose value is
+> `warehouseNameById.get(l.warehouse_id)` — the destination WAREHOUSE.**
+
+That screen is the read-only PO detail at `/scm/purchase-orders/:id` — the
+default view, the most-seen PO surface. And one click away, the SAME route with
+`?edit=1` forwards to `PurchaseOrderDetail.tsx`, which heads a table
+**"Transfer To (GRN)"** meaning the downstream GRN. **So the PO module already
+shows the operator both meanings of "Transfer to", on one document, one click
+apart.** This is not a hypothetical collision introduced by the rename; it is
+live on `main` today, and it is the one thing that must be fixed BEFORE a
+unification rather than after. See §9.7.
+
+### 9.4 The inventory, by layer
+
+Counts are **matching LINES** from `git grep -ci` over `backend/src` +
+`frontend/src` at `6bf96a954` (2026-08-17). Re-run the commands rather than
+trusting the numbers:
+
+```
+Convert to      52 lines / 31 files          convertTo      73 / 13
+Convert from    16 lines /  9 files          convertFrom     0 /  0
+Transfer to     14 lines / 11 files          transferTo      7 /  5
+Transfer from   24 lines / 18 files          transferFrom    0 /  0
+                                             transfer_to    30 / 17
+                                             transfer_from   0 /  0
+```
+
+`convertFrom`, `transferFrom` and `transfer_from` are at **zero** — the "from"
+direction has never been an identifier anywhere. Every "from" link in this
+system is stored as a source FK (`so_doc_no`, `grn_id`, …) and named for the
+document, which is why there is nothing to rename on that side.
+
+| # | Layer | What is in it | Rename cost | Verdict |
+|---|---|---|---|---|
+| **A** | **user-visible copy** | ~16 "Convert to/from …" strings (11 desktop buttons/menu items, 4 mobile wizard titles, 1 mobile sub-line) plus the Delivery Planning toast/confirm family ("Convert failed", "Convert N sales orders to delivery orders?", "Converted N …", "Converting…", "Convert N to DO"), `ConsignmentOrders`' "Nothing to be converted", and `DeliveryOrderNewV2`'s **"⇄ Converted from"** provenance badge. Against them, **10 lineage label sites across the 9 live screens** already saying "Transfer From/To" (the 11th match, `PurchaseOrderDetailV2`'s, is the warehouse outlier of §9.3; a 12th is a comment in `ConsignmentReturns.tsx` recording a column that was deliberately dropped). | **S** — string literals + their tests | **DO IT.** All of the value, none of the risk. |
+| **B** | **route paths / URL segments** | **NOTHING TO RENAME.** No SPA route carries a `convert` segment, and the only routes carrying `transfer` are the three stock-transfer ones. The pickers are already named for the *direction and source*: `/from-so`, `/from-po`, `/from-grn`, `/from-do`, `/from-note`, `/from-order`, `/from-receive`, `/from-pc-order`. One backend endpoint carries the word: `POST /mfg-purchase-orders/:id/convert-from-so` — and §7 records it has **zero frontend callers**. | **zero** | **SKIP.** No bookmark breaks, no redirects needed. |
+| **C** | **query-string parameter names** | `convertScope.tsx` standardises on `poId`, `grnId`, `doId`, `soDocNo` — every one names the SOURCE DOCUMENT, not the operation. The vocabulary question does not reach this layer. | **zero** | **SKIP.** Already neutral. |
+| **D** | **TypeScript identifiers / component + file names** | `convertToLink` (42), `enqueueConvert` (42), `recordConvertSkipped` (27), `readConvertScope` (21), `convertScope` (20), `MobileConvertWizard` (15), `confirmOverConvert` (13), `soLineOverConvertRefusal` (12), `findOverConvertOffender` (12), `CONVERT_LINKS`, `ConvertTarget`, `convertTitle`, `PoConvertContext`, … plus `convertScope.tsx` / `MobileConvertWizard.tsx` / `convert-scope-pickers.test.tsx` as filenames | **M** — mechanical but a large, noisy diff across the money routes and the outbox | **LATER, or never.** Internal-only. Buys consistency for readers, not for the owner. |
+| **E** | **API response fields** | `converted_po_nos` (assembled in `mfg-sales-orders.ts`, read by `soPoChips.ts`, `SoSourceChips.tsx`, `MobileSalesOrders.tsx`, `MfgSalesOrdersListV2.tsx`, `mobile/source-chips.tsx`) and `transfer_to_grns`. Neither is a column. | **M** — must land backend + desktop + mobile in ONE PR or a list silently renders empty | **LATER.** Real breakage risk for no user-visible gain. |
+| **F** | **database columns** | `sales_orders.transfer_to`, `ac_snapshot_sales_orders.transfer_to`, `mfg_sales_orders.transfer_to`, `consignment` `transfer_to`. **Already the owner's preferred word** — there is nothing to rename TOWARDS "transfer". | **zero** | **SKIP — already correct.** The one open question is whether to DROP the dead `mfg_sales_orders.transfer_to`; that is a separate decision, not a rename. |
+| **G** | **AutoCount-facing field names** | `TransferTo`, `TransferFrom`, `FromDocNo`, `FromDocType`, `FromSODtlKey`, `FullTransferFromDocList` | **not ours** | **NEVER.** Confirmed: these are AutoCount's own SDK and schema names, read by reflection against `AutoCount.Sales.dll`. Renaming them breaks the write-back. |
+
+### 9.5 Three false-positive classes a blind `sed` would corrupt
+
+"Convert" is also the correct English word for three unrelated operations in
+this tree. A tree-wide replace would silently damage all three:
+
+1. **Unit / currency / date conversion.** `scan-so.ts` — *"convert to
+   YYYY-MM-DD"*; `assistant.ts` — *"convert to RM when you state them"*;
+   `fabric-tier-addon.ts` — *"convert to the order's unit"*.
+2. **"Fabric Converter"** — a live product tool (`FabricTracking.tsx`,
+   `Products.tsx`), and the `scm.fabric_trackings` indexes built for it. Not a
+   document conversion at all.
+3. **Agent governance** — `governance.ts`'s `neverAutonomous: 'Convert to firm
+   order'`, about a demand signal, not a document.
+
+Also: `SupplierDetail.tsx`'s *"a follow-up to convert to a single request"* is a
+refactor note about code.
+
+### 9.6 Recommendation — staged, ranked by value per unit of risk
+
+**Do this first, and it can ship alone:**
+
+- **Stage 0 — free the word (PREREQUISITE, and it is a bug fix).** Relabel
+  `PurchaseOrderDetailV2`'s line column from "Transfer to" to **"To
+  Warehouse"**, matching what `StockTransferNew` / `StockTransferDetail` already
+  call the same concept. One string. Until this lands, any unification of the
+  document vocabulary onto "transfer" makes the PO screen actively ambiguous.
+  **Size: XS.** This is the §9.7 finding and belongs in its own PR with a
+  `BUG-HISTORY.md` entry.
+
+- **Stage 1 — user-visible copy only.** Rename the ~20 Layer-A strings to
+  **"Transfer To <Doc>"** / **"Transfer From <Doc>"**, and settle the two
+  desktop/mobile disagreements while in there (desktop says "Convert to GRN",
+  mobile says "Convert to Goods Receipt"; `DeliveryOrderNewV2`'s badge says
+  "Converted from" while the DO listing column says "Transfer From (SO)" for the
+  same relationship). Keep the `(SO)` / `(DO)` parenthetical — it is what keeps
+  the label unambiguous against Stock Transfer. **Size: S.** Reversible, no
+  migration, no API change. This is the whole of what the owner sees.
+
+**Then, only if he wants it:**
+
+- **Stage 2 — identifiers (Layer D).** `convertToLink` → `transferToLink`, and
+  so on. **Size: M**, noisy diff, zero user-visible effect. Worth it only as
+  part of touching those files anyway.
+- **Stage 3 — API response fields (Layer E).** `converted_po_nos` →
+  `transferred_po_nos`. **Size: M**, and it must land backend + desktop + mobile
+  together or the SO list's PO chips go blank. Low value.
+
+**Never:**
+
+- **Layers B, C, F** need no work — B and C do not carry the word, and F already
+  uses the owner's preferred one.
+- **Layer G** is AutoCount's, not ours.
+
+**The honest summary for the owner:** unifying on "transfer from / transfer to"
+is the right call, it matches AutoCount and the database, and **the whole
+user-visible half is one small PR** — provided the PO line column stops using
+the same words for a warehouse first.
+
+### 9.7 Found while auditing — reported, not fixed here
+
+1. **`PurchaseOrderDetailV2`'s "Transfer to" column shows a warehouse** (§9.3).
+   A label using the document-lineage vocabulary for a warehouse, on the default
+   PO screen, one `?edit=1` away from a "Transfer To (GRN)" that means the
+   downstream document. Genuine live ambiguity; Stage 0 above.
+
+2. **`docs/transfer-from-to-vocabulary.md` calls three live files dead.** Its
+   §5(b) says *"Two dead files still carry the phrase and neither is imported:
+   `GoodsReceivedDetail.tsx` … and `SalesOrderDetail.tsx`"*, and its §4(a) says
+   `SalesOrderDetail.tsx` is a file *"which nothing imports (`App.tsx` routes the
+   `*V2` twin)"*. **All three V1 detail pages are LIVE**, lazily imported by
+   their own V2 twins and rendered whenever `?edit=1` lands on the route — the
+   inline editors the Edit button opens:
+
+   | V1 file | mounted by | reached at |
+   |---|---|---|
+   | `SalesOrderDetail.tsx` | `SalesOrderDetailV2.tsx` | `/scm/sales-orders/:id?edit=1` |
+   | `GoodsReceivedDetail.tsx` | `GoodsReceivedDetailV2.tsx` | `/scm/grns/:id?edit=1` |
+   | `PurchaseOrderDetail.tsx` | `PurchaseOrderDetailV2.tsx` | `/scm/purchase-orders/:id?edit=1` |
+
+   The grep behind the "dead" claim looked at `App.tsx` routing only and could
+   not see a lazy `import()` inside a sibling page — CLAUDE.md's *"a checker
+   that cannot match reports a clean run"*. It matters here because it moves
+   three "Transfer To" labels from *exempt dead code* into *in-scope live copy*,
+   and because `SalesOrderDetail`'s "Transfer To" column is one an operator sees
+   on every SO edit. **Corrected in that file by this PR** — text only.
+
+---
+
 ## See also
 
+- `docs/transfer-from-to-vocabulary.md` — the lineage-column survey and its
+  three rename options; §9 above is the layered cost view and corrects its
+  liveness claims
 - `docs/modules/sales-order.md` §0 — every status on an SO and what moves it
 - `docs/modules/purchase-order.md` — the SO → PO eligibility chain, and why a
   line silently vanishes from the From-SO picker
