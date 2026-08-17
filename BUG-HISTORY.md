@@ -54,7 +54,7 @@ exist on this side — which means `composeEdit` will refuse an edit of these
 three until somebody backfills the keys from the book. A refused edit is the
 safe direction; a wrong DtlKey silently rewrites a different line in a live book.
 
-**Ref.** PR #PRNUM, 2026-08-17.
+**Ref.** PR #2343, 2026-08-17.
 
 ## Nineteen scripts nothing reached, and a blanket "do not run" would have been wrong for six of them [low]
 
