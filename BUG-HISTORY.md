@@ -1,3 +1,101 @@
+## One bad area tag on `main` turned `audit:bug-index` into a repo-wide CI blackout [high]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** 2026-08-17, 04:00–05:00Z: five of five PR-branch CI runs red, on
+four unrelated branches, with the identical message —
+`BUG-INDEX: "Cancelled and unconfirmed events…" carries <!-- area: PMS My
+Pending lanes -->, which is not an area.` Three of the four branches
+(`fix/pair-stockin-tile`, `fix/floorplan-card`,
+`refactor/planning-state-narrow-readiness-0815`) had no connection to the entry
+at all. The only green run in the window was the repair branch itself.
+
+**Root cause (traced, not guessed).** `gen-bug-index.mjs` validated the
+`<!-- area: -->` tag with an unconditional `process.exit(1)` the moment it saw
+one that named no area. Three facts turn that into a blackout:
+
+1. `audit:bug-index` runs inside `backend-typecheck`, which IS a required status
+   check, so the failure blocks the merge;
+2. the tag lives in `BUG-HISTORY.md` — the ONE file the working agreement makes
+   every code PR append to — so once a bad tag merges it is in everybody's tree;
+3. the exit happened before the generator wrote anything, so nobody could
+   regenerate their way out either.
+
+Commit `6c9f8cbd` landed the bad tag at 04:00:21Z. Repair PR #2351 (merged
+04:59:53Z) touches only `BUG-HISTORY.md`. Fifty-nine minutes of blocked merges
+for a typo three of the four blocked authors never wrote.
+
+The assumption is recorded, in writing, in the test that guarded this file:
+*"a malformed tag is in the diff of whoever wrote it"*
+(`derivedDocsDoNotDeadlock.test.mjs`). It is false for exactly the reason the
+same file already gives for content DRIFT, four lines above it — the ledger is
+shared, and merges are serial. The drift half had learned the lesson; the tag
+half predated it.
+
+**Fix.** A bad tag is now REPORTED in full on every run and CHARGED only to the
+change that introduced it — matched by ENTRY (title + tag) against
+`BUG-HISTORY.md` at the merge base, not by counting tag strings, so the entry
+NAMED is the one actually added. Inherited tags fall back to the keyword guess,
+so the index still builds and the author can still regenerate. An unresolvable
+merge base charges everything, because a gate that cannot tell whose fault it is
+must not let anything through. Same rule, same wording, as
+`check-file-size.mjs`'s inherited-ceiling handling.
+
+**Proof.** Four behavioural tests in `derivedDocsDoNotDeadlock.test.mjs`, each
+building a throwaway git repo: inherited tag exits 0 and still writes the index;
+an introduced tag exits 1; with the tag broken on the base AND a second added
+here, exit 1 names only the new one; no merge base charges everything.
+
+**Ref.** PR (this one), 2026-08-17.
+
+## `completeness-claim` failed on LINE NUMBERS, so an unrelated merge turned a PR red with nothing in it changed [medium]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** A PR whose diff had not touched a single member of the population
+it enumerated went red on `completeness-claim` after merging `main`. The
+author's only remedy was to regenerate the ```enumeration block by hand and push
+again — proving nothing, costing a CI round, and (worse) training people to
+treat a red completeness gate as noise. Compounded by finding #3 below: on
+2026-08-16 the reaction to one such failure was to DELETE a legitimate
+enumeration block out of another agent's PR.
+
+**Root cause (traced, not guessed).** The gate re-runs the pasted command and
+diffs its output as a multiset (`diffOutput`, `scripts/lib/completeness-claim.mjs`).
+CLAUDE.md, the runner's own `HOW_TO` and the pull_request_template all show
+`git grep -n`, so authors write `-n` and every pasted line carries a
+`path:NNN:` COORDINATE. The populations this repo enumerates live in
+`mfg-sales-orders.ts` (11,988 lines) and `Projects.tsx` (15,128) — files touched
+constantly. Any merge into the branch shifts those numbers, every line of the
+pasted block mismatches, and the gate reports the stale-enumeration shape for a
+population that did not change. The membership was identical; only its
+coordinates moved, and the diff was comparing coordinates.
+
+**Fix.** A leading `path:NNN:` is normalised to `path:` on BOTH sides before the
+diff (`stripLineNumber`). Same argument as the pre-existing sort: the diff
+already drops output ORDER because `rg` walks in parallel and order carries no
+meaning — a line number carries no membership either. What the gate still fails
+on is unchanged and pinned by tests in both directions: a site ADDED, REMOVED,
+RETEXTED, or moved to a DIFFERENT FILE all fail (the path is kept), and two
+sites in one file stay two entries in the multiset. `grep -c` output (`path:12`,
+no trailing colon) is deliberately NOT matched — there the number IS the
+population's size.
+
+Rejected alternative: refusing `-n` in an enumeration command. It would turn
+every block already written here, and the example this repo's own documentation
+tells authors to copy, into a `COMMAND_REFUSED` failure — more red of exactly
+the shape being removed — and it throws away a number the human reviewer wants.
+
+The one coordinate shape left is a BARE `NNN:` from `grep -n pattern onefile`: a
+leading number with no path cannot be told apart from content, so the gate still
+FAILS and now names the cause and the one-line fix instead of showing two lists
+that look identical.
+
+**Proof it still bites.** `node --test scripts/check-completeness-claim.test.mjs`
+— 52 pass / 0 fail with the fix; with `stripLineNumber` reverted to the identity,
+47 pass / **5 fail**, exit 1.
+
+**Ref.** PR (this one), 2026-08-17.
 ## An unknown area tag in a bug entry turned a required check red and blocked every merge [medium]
 
 <!-- area: Repo tooling: tests, ratchets, generators -->
