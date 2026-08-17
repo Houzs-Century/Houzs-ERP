@@ -2048,17 +2048,7 @@ mfgSalesOrders.get('/mine', async (c) => {
         'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
         'proceeded_at, total_revenue_centi, line_count, deposit_centi',
       )
-      /* DRAFT is INCLUDED on this board (2026-08-17), unlike the MTD aggregates
-         above. The board sits directly under the /pos/sales-stats KPI cards,
-         which count a draft toward the month, and the two disagreeing is what
-         the POS had to paper over with a "27 orders count toward the totals
-         above but are not shown here" banner. The owner wants a started order
-         visible and worked, not hidden.
-         The MTD aggregates still exclude DRAFT — those are money reports and a
-         draft earns no commission. This one is a work queue.
-         Change this together with the /pos/sales-stats predicate, or the two
-         drift apart again. */
-      .not('status', 'in', '("CANCELLED","ON_HOLD")'),
+      .not('status', 'in', '("CANCELLED","ON_HOLD")'), // DRAFT shown on purpose — pairs with /pos/sales-stats; BUG-HISTORY 2026-08-17
     c,
   );
   /* Company scope is NOT optional here (owner 2026-08-10 cross-company audit).
