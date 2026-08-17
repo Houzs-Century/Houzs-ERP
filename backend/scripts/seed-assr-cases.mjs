@@ -1,4 +1,14 @@
 #!/usr/bin/env node
+/* ALREADY RUN — DO NOT RE-RUN.
+   
+   Written for a one-shot seed and executed in 2026-05. It is kept for the record of
+   what was done to production, not as a tool.
+   
+   It seeded ASSR cases from a specific spreadsheet export. Re-running it duplicates every case it created.
+   
+   Nothing in this repository reaches it: no npm script, no workflow, no doc,
+   no import. That is deliberate now — it used to be an accident, and an
+   unreferenced script whose NAME still reads as runnable is an invitation. */
 /**
  * Seed ASSR cases from the Farra sheet of HC Delivery Updated.xlsx.
  *

@@ -1,3 +1,12 @@
+/* SPENT PROBE — kept for the record, not as a tool.
+   
+   This was a probe for which Supabase pooler port answered, during the Singapore project move.
+   It answered its question at the time and nothing reaches it now: no npm
+   script, no workflow, no doc, no import.
+   
+   It is read-only, so running it is not dangerous — but it probes an
+   environment that has since moved, so what it prints is unlikely to mean
+   what its output says it means. */
 // Test BOTH poolers of the SG project directly: session (5432) and transaction
 // (6543, what Hyperdrive uses). If 6543 hangs/fails while 5432 works, the
 // transaction pooler is the problem (saturated/disabled) and Hyperdrive should

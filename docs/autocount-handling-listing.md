@@ -1,5 +1,10 @@
 # Handling Listing — read one Further Description out of the AutoCount book
 
+> **MERGE NOTE 2026-08-16.** Two owner rulings from 2026-08-15 landed on this
+> file from different branches. Both are true and they answer different
+> questions, so both are kept — the scope ruling first, then the status of the
+> sheet itself. Neither was chosen over the other.
+
 > ## OWNER RULING 2026-08-15 — this is the ONLY iNiState gap that is in scope
 >
 > The decompiled `InistateConnector` handles several things our write-back does
@@ -50,6 +55,16 @@
 > `AED_HOUZS`, and `/ensure-masters` answering 200 — so the running exe now
 > carries the read route below, and the rollback sits beside it as
 > `C:\Temp\AcSyncService.prev.exe`.
+
+> **OWNER, 2026-08-15: not needed.** Asked what remained across the whole
+> cleanup, he answered *"autocount的不需要"* — so the deploy below is NOT
+> being chased, and nobody should treat it as outstanding work. The route is
+> merged and harmless: it is read-only, and the office host does not run it
+> until someone deploys. Left in the source rather than reverted, because the
+> next person who needs this answer should find the route already written
+> instead of re-deriving the sheet.
+>
+> **UPDATE 2026-08-15 — this sheet is now the FALLBACK, not the channel.**
 >
 > Section 8 below said the durable fix was a read-only route on `AcSyncService`
 > and that it should be the first thing added the next time that file was

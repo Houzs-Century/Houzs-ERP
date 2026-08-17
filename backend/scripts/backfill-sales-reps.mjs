@@ -1,4 +1,14 @@
 #!/usr/bin/env node
+/* ALREADY RUN — DO NOT RE-RUN.
+   
+   Written for a one-shot data backfill and executed in 2026-07. It is kept for the record of
+   what was done to production, not as a tool.
+   
+   It gave every ACTIVE Sales-department user a sales_reps row. Running it again on a roster that has since changed would re-create rows for people who were deliberately removed.
+   
+   Nothing in this repository reaches it: no npm script, no workflow, no doc,
+   no import. That is deliberate now — it used to be an accident, and an
+   unreferenced script whose NAME still reads as runnable is an invitation. */
 /**
  * One-shot backfill: give every ACTIVE Sales-department user a sales_reps row.
  *

@@ -53,7 +53,10 @@
     "audit:company-scope": "node scripts/check-company-scope.mjs --strict",
     "test:coverage": "npm run test:coverage:light && npm run test:coverage:workers",
     "test:coverage:light": "vitest run --config vitest.light.config.mts --coverage",
-    "test:coverage:workers": "vitest run --coverage"
+    "test:coverage:workers": "vitest run --coverage",
+    "audit:phone-country": "node scripts/find-wrong-country-phones.mjs",
+    "audit:sales-org": "node scripts/list-sales.mjs",
+    "audit:overpaid-pi": "node scripts/report-overpaid-purchase-invoices.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",

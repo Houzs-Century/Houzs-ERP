@@ -1,3 +1,12 @@
+/* SPENT PROBE — kept for the record, not as a tool.
+   
+   This was a one-off check that supabase-js could reach the Houzs project at all.
+   It answered its question at the time and nothing reaches it now: no npm
+   script, no workflow, no doc, no import.
+   
+   It is read-only, so running it is not dangerous — but it probes an
+   environment that has since moved, so what it prints is unlikely to mean
+   what its output says it means. */
 // One-off: verify supabase-js / PostgREST can reach the Houzs Supabase using
 // the keys in .dev.vars. Confirms the foundation for the 2990's SCM port.
 //   node scripts/test-supabase-rest.mjs

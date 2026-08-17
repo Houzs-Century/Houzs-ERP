@@ -1,3 +1,12 @@
+/* SPENT PROBE — kept for the record, not as a tool.
+   
+   This was an EXPLAIN probe on the inbox/overview queries, run once to confirm an index was being used.
+   It answered its question at the time and nothing reaches it now: no npm
+   script, no workflow, no doc, no import.
+   
+   It is read-only, so running it is not dangerous — but it probes an
+   environment that has since moved, so what it prints is unlikely to mean
+   what its output says it means. */
 // Sanity: confirm the hot inbox/overview-style queries now use index scans.
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
