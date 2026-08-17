@@ -12,38 +12,45 @@ import {
   AC_FAILED_COPY,
   AC_FILTER_STATES,
   AC_FILTER_STATE_LABEL,
-  AC_ONLY_SUPERSEDED_LINE,
+  AC_EARLIER_SENDS_NOTE,
+  AC_ONLY_REPLACED_LINE,
   AC_REASON_COPY,
+  AC_REPLACED_GROUP_NOTE,
+  AC_REPLACED_LINE,
+  AC_REPLACED_NOTE,
   AC_REPLY_LABEL,
-  AC_REQUEUED_LINE,
-  AC_REQUEUED_NOTE,
   AC_REQUEUE_TODO,
+  AC_SEND_AGAIN_LABEL,
+  AC_STATE_LABEL,
   AC_STATE_PLAIN_MEANING,
-  AC_SUPERSEDED_NOTE,
   AC_TECHNICAL_LABEL,
   AC_UNRECOGNISED_COPY,
   acAge,
   acDocTypeCounts,
   acDocTypePlural,
+  acDocumentKey,
+  acEarlierSendsHeading,
   acEmptyLine,
+  acGroupByDocument,
+  acGroupsOfType,
   acHeadline,
+  acListCountLine,
   acListTitle,
   acOpLabel,
   acOpensItself,
   acReasonCopy,
+  acReplacedHeading,
   acReplySource,
   acRequeueTodo,
   acRowDetail,
   acRowKind,
   acRowStandsAt,
   acRowStatusLine,
-  acRowsOfType,
   acSplitMachineText,
-  acSplitSuperseded,
+  acSplitReplaced,
   acStateCount,
   acStateLabel,
   acStateTone,
-  acSupersededHeading,
   acWhatWasSaid,
   acWritebackLine,
   buildAcOutboxQs,
@@ -62,6 +69,7 @@ const payload = (over: Partial<AcOutboxResponse> = {}): AcOutboxResponse => ({
   oldest_pending: null,
   rows: [],
   truncated: false,
+  counts_complete: true,
   meta: { max_attempts: 6, state_meaning: {}, skip_kinds: [] },
   ...over,
 });
@@ -350,15 +358,15 @@ describe("who said it", () => {
 });
 
 describe("the type strip counts", () => {
-  const rows = [
-    row({ id: "1", doc_type: "SO" }),
-    row({ id: "2", doc_type: "SO" }),
-    row({ id: "3", doc_type: "DO" }),
-    row({ id: "4", doc_type: "GR" }),
-  ];
+  const groups = acGroupByDocument([
+    row({ id: "1", doc_type: "SO", doc_no: "SO-1" }),
+    row({ id: "2", doc_type: "SO", doc_no: "SO-2" }),
+    row({ id: "3", doc_type: "DO", doc_no: "DO-1" }),
+    row({ id: "4", doc_type: "GR", doc_no: "GR-1" }),
+  ]);
 
   it("counts every type it offers, including the ones at zero", () => {
-    const c = acDocTypeCounts(rows);
+    const c = acDocTypeCounts(groups);
     expect(c.all).toBe(4);
     expect(c.SO).toBe(2);
     expect(c.DO).toBe(1);
@@ -372,8 +380,8 @@ describe("the type strip counts", () => {
   });
 
   it("filters to a type, and an empty type means every type", () => {
-    expect(acRowsOfType(rows, "SO")).toHaveLength(2);
-    expect(acRowsOfType(rows, "")).toHaveLength(4);
+    expect(acGroupsOfType(groups, "SO")).toHaveLength(2);
+    expect(acGroupsOfType(groups, "")).toHaveLength(4);
   });
 
   /* The status chips take the SERVER's numbers, which are exact and cover the
@@ -424,7 +432,7 @@ describe("the words", () => {
     expect(acRowStatusLine(row({ state: "pending", attempts: 0 }), 6)).toMatch(/Not tried yet/);
     expect(acRowStatusLine(row({ state: "failed", attempts: 1 }), 6)).toBe("Tried 1 time, then stopped");
     expect(acRowStatusLine(row({ state: "skipped" }), 6)).toBe("Held back on purpose");
-    expect(acRowStatusLine(row({ state: "requeued" }), 6)).toMatch(/Already sent again/);
+    expect(acRowStatusLine(row({ state: "requeued" }), 6)).toMatch(/Replaced by a newer send/);
     expect(acRowStatusLine(row({ state: "something-new" }), 6)).toBe("");
   });
 });
@@ -584,12 +592,12 @@ describe("acRowDetail — the headline stays, the rest goes behind the opener", 
     expect(d.expandable).toBe(true);
   });
 
-  it("marks a re-sent refusal as history and keeps the why-not out of the way", () => {
+  it("marks a replaced refusal as a record and keeps the why-not out of the way", () => {
     const d = acRowDetail(row({ state: "requeued", reason: "[re-queued …] ItemCodeError" }), false);
-    expect(d.line).toBe(AC_REQUEUED_LINE);
+    expect(d.line).toBe(AC_REPLACED_LINE);
     expect(d.copy).toBeNull();
     expect(d.showRequeuedNote).toBe(true);
-    expect(AC_REQUEUED_NOTE).toMatch(/record of the first refusal/);
+    expect(AC_REPLACED_NOTE).toMatch(/record of the first refusal/);
   });
 
   /* An accepted re-send takes the WHOLE reason off, opener included: "To fix:
@@ -832,46 +840,254 @@ describe("the To fix line for a refusal AutoCount did not explain", () => {
 });
 
 /* ───────────────────────────────────────────────────────────────────────────
-   HALF THE LIST WAS HISTORY. Fifteen rows on the live page, SIX of them
-   "already sent again, this row is history", with two delivery orders appearing
-   twice. A superseded row is a record, not a task.
-   ─────────────────────────────────────────────────────────────────────────── */
-describe("superseded rows are a record, not the list", () => {
-  const live = row({ id: "a", doc_no: "HC-DO-2608-001", state: "failed", needs_attention: true });
-  const old1 = row({ id: "b", doc_no: "HC-DO-2608-001", state: "requeued" });
-  const old2 = row({ id: "c", doc_no: "HC-DO-2608-002", state: "requeued" });
-  const mixed = [old1, live, old2];
+   ONE ROW PER DOCUMENT, NOT ONE ROW PER SEND.
 
-  it("takes them out of the list every filter except their own", () => {
-    for (const s of ["all", "attention", "pending", "sent", "failed", "skipped"] as const) {
-      const split = acSplitSuperseded(mixed, s);
-      expect(split.live.map((r) => r.id), s).toEqual(["a"]);
-      expect(split.superseded.map((r) => r.id), s).toEqual(["b", "c"]);
+   Owner, 2026-08-16, reading the live page: "为什么在 AutoCount 里面一张 Sales
+   Order 会出现两次呢?" Under In AutoCount / Sales orders, HC-SO-2608-002 took FOUR
+   of the six rows — three changes at 16/08 4:30-4:31pm and the create at 15/08
+   1:25am — while AED_HOUZS holds exactly one of it, verified by direct SQL.
+
+   Nothing was duplicated. scm.autocount_outbox is append-only and writes one row
+   per intended operation (migration 0277), so a document that is created and
+   then edited three times IS four rows, for good. The list was the wrong unit.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("one row per document", () => {
+  /** His four rows, in the order the route returns them: newest first. */
+  const HC_SO_2608_002: AcOutboxRow[] = [
+    row({ id: "s4", op: "edit", doc_no: "HC-SO-2608-002", state: "sent", status: "sent",
+      ac_doc_no: "SO-00002", created_at: "2026-08-16T08:31:40.000Z" }),
+    row({ id: "s3", op: "edit", doc_no: "HC-SO-2608-002", state: "sent", status: "sent",
+      ac_doc_no: "SO-00002", created_at: "2026-08-16T08:31:05.000Z" }),
+    row({ id: "s2", op: "edit", doc_no: "HC-SO-2608-002", state: "sent", status: "sent",
+      ac_doc_no: "SO-00002", created_at: "2026-08-16T08:30:12.000Z" }),
+    row({ id: "s1", op: "create_so", doc_no: "HC-SO-2608-002", state: "sent", status: "sent",
+      ac_doc_no: "SO-00002", created_at: "2026-08-14T17:25:00.000Z" }),
+  ];
+
+  /** The other two sales orders that made up his six rows. */
+  const others: AcOutboxRow[] = [
+    row({ id: "o1", doc_no: "HC-SO-2608-003", state: "sent", status: "sent",
+      ac_doc_no: "SO-00003", created_at: "2026-08-16T02:00:00.000Z" }),
+    row({ id: "o2", doc_no: "HC-SO-2608-004", state: "sent", status: "sent",
+      ac_doc_no: "SO-00004", created_at: "2026-08-16T01:00:00.000Z" }),
+  ];
+
+  /* THE DEFECT, AS A NUMBER. Six rows, three documents. */
+  it("renders one sales order once, however many times it was sent", () => {
+    const rows = [...HC_SO_2608_002, ...others];
+    expect(rows).toHaveLength(6);
+    const groups = acGroupByDocument(rows);
+    expect(groups).toHaveLength(3);
+    expect(groups.filter((g) => g.docNo === "HC-SO-2608-002")).toHaveLength(1);
+  });
+
+  /* AND THE COUNT UNDER THE STRIPS AGREES WITH THE LIST. "6 of 17 documents"
+     over six rows for three documents was the other half of what he read. */
+  it("counts the documents on screen, not the sends", () => {
+    const groups = acGroupByDocument([...HC_SO_2608_002, ...others]);
+    expect(acDocTypeCounts(groups).SO).toBe(3);
+    expect(acDocTypeCounts(groups).all).toBe(3);
+    expect(acListCountLine(groups.length, 3)).toBe("3 of 3 documents");
+    expect(acListCountLine(1, 1)).toBe("1 of 1 document");
+  });
+
+  it("draws the row from the NEWEST send, whatever order they arrive in", () => {
+    /* Shuffled on purpose: the route orders created_at descending and this must
+       not depend on it, because `current` is what the whole row is drawn from. */
+    const shuffled = [HC_SO_2608_002[2]!, HC_SO_2608_002[0]!, HC_SO_2608_002[3]!, HC_SO_2608_002[1]!];
+    const g = acGroupByDocument(shuffled)[0]!;
+    expect(g.current.id).toBe("s4");
+    expect(g.sends.map((r) => r.id)).toEqual(["s4", "s3", "s2", "s1"]);
+    expect(g.earlier.map((r) => r.id)).toEqual(["s3", "s2", "s1"]);
+  });
+
+  /* THE SEND HISTORY IS THE AUDIT TRAIL AND NOTHING IS DROPPED. A year later
+     "what did we tell AutoCount, when, and what did it answer" has to still be
+     answerable — 0277's own reason for existing. */
+  it("keeps every send, behind the document", () => {
+    const g = acGroupByDocument(HC_SO_2608_002)[0]!;
+    expect(g.sends).toHaveLength(4);
+    expect(g.earlier).toHaveLength(3);
+    expect(new Set(g.sends.map((r) => r.id)).size).toBe(4);
+  });
+
+  it("names the fold in both forms, written out", () => {
+    expect(acEarlierSendsHeading(1)).toBe("1 earlier send for this document");
+    expect(acEarlierSendsHeading(3)).toBe("3 earlier sends for this document");
+    expect(acEarlierSendsHeading(1)).not.toContain("sends");
+    expect(AC_EARLIER_SENDS_NOTE).toMatch(/record of what/i);
+  });
+
+  /* A DOCUMENT NUMBER IS NOT A DOCUMENT. The six types are independent
+     sequences and the same number can legitimately belong to two of them;
+     folding those together would LOSE a document, which is worse than showing
+     one twice. This is why the key is the pair, matching the table's own
+     autocount_outbox_doc_idx (company_id, doc_type, doc_no). */
+  it("keeps two types carrying one number apart", () => {
+    const groups = acGroupByDocument([
+      row({ id: "so", doc_type: "SO", doc_no: "2608-002" }),
+      row({ id: "do", doc_type: "DO", doc_no: "2608-002" }),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(acDocumentKey(groups[0]!.current)).not.toBe(acDocumentKey(groups[1]!.current));
+  });
+
+  /* A document carries several OPS — 0277 admits eight — and they are the same
+     document. Grouping on the op as well would put the create and its edits on
+     separate rows, which is the defect with an extra step. */
+  it("folds a create and its edits into one document", () => {
+    const groups = acGroupByDocument([
+      row({ id: "e", op: "edit", doc_no: "HC-SO-2608-002" }),
+      row({ id: "c", op: "create_so", doc_no: "HC-SO-2608-002" }),
+    ]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.sends).toHaveLength(2);
+  });
+
+  it("keeps the server's order — the newest document first", () => {
+    const groups = acGroupByDocument([
+      row({ id: "b", doc_no: "SO-B", created_at: "2026-08-16T00:00:00.000Z" }),
+      row({ id: "a", doc_no: "SO-A", created_at: "2026-08-15T00:00:00.000Z" }),
+    ]);
+    expect(groups.map((g) => g.docNo)).toEqual(["SO-B", "SO-A"]);
+  });
+
+  /* A send with no timestamp still has to land somewhere, and the safe place is
+     LAST: a null created_at must never take over the row and decide what the
+     document's state is. */
+  it("does not let an undated send draw the row", () => {
+    const g = acGroupByDocument([
+      row({ id: "undated", state: "skipped", created_at: null }),
+      row({ id: "dated", state: "sent", created_at: "2026-08-15T00:00:00.000Z" }),
+    ])[0]!;
+    expect(g.current.id).toBe("dated");
+  });
+
+  it("has nothing to fold for a document sent once", () => {
+    const g = acGroupByDocument([row({ id: "only" })])[0]!;
+    expect(g.earlier).toEqual([]);
+    expect(g.current.id).toBe("only");
+  });
+
+  it("answers an empty queue with no documents rather than one empty one", () => {
+    expect(acGroupByDocument([])).toEqual([]);
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   "SENT AGAIN" WAS AN INSTRUCTION, AND THE ROW MEANT THE OPPOSITE.
+
+   Owner, 2026-08-16: "你写 Send Again，明明都已经进去了，为什么还要 Send Again？"
+   The badge carried the same two words as the BUTTON on the same screen, on
+   seven of seventeen rows — exactly the rows where pressing it is the one thing
+   a reader must not do. The state is not an action; it is something that has
+   already happened to the record.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("the replaced state does not read as an instruction", () => {
+  it("no longer wears the button's words", () => {
+    expect(AC_STATE_LABEL.requeued).toBe("Replaced");
+    expect(AC_FILTER_STATE_LABEL.requeued).toBe("Replaced");
+    /* The button is unchanged and still says Send again — which is the whole
+       reason the badge may not. */
+    expect(AC_SEND_AGAIN_LABEL).toBe("Send again");
+    for (const s of [AC_STATE_LABEL.requeued, AC_FILTER_STATE_LABEL.requeued]) {
+      expect(s.toLowerCase()).not.toContain("send again");
     }
   });
 
-  /* The Sent again chip exists to show exactly these. Folding them there would
-     answer the chip with an empty page. */
-  it("leaves them as the list when the reader asked for them by name", () => {
-    const split = acSplitSuperseded(mixed, "requeued");
-    expect(split.live).toEqual(mixed);
-    expect(split.superseded).toEqual([]);
+  /* THE ROW'S OWN BODY HAS TO AGREE WITH THE BADGE. It said "Already sent
+     again ... this row is history" under a badge saying "Sent again", which is
+     the same instruction twice. */
+  it("says the same thing on the badge, the line and the status", () => {
+    const replaced = row({ state: "requeued", reason: "[re-queued …] refused" });
+    expect(acRowStatusLine(replaced, 6)).toBe("Replaced by a newer send");
+    expect(acRowDetail(replaced, false).line).toBe(AC_REPLACED_LINE);
+    expect(AC_REPLACED_LINE).toMatch(/^Replaced by a newer send/);
+    for (const s of [AC_REPLACED_LINE, AC_REPLACED_NOTE, acRowStatusLine(replaced, 6)]) {
+      expect(s.toLowerCase()).not.toContain("send again");
+    }
   });
 
-  it("loses nothing — every row is on exactly one side", () => {
-    const split = acSplitSuperseded(mixed, "all");
-    expect(split.live.length + split.superseded.length).toBe(mixed.length);
+  /* It has to say what to DO, and the answer is nothing. "This row is history"
+     left the reader to work that out. */
+  it("says there is nothing to do rather than leaving it to be inferred", () => {
+    expect(AC_REPLACED_LINE).toMatch(/nothing to do/i);
+    expect(AC_REPLACED_NOTE).toMatch(/not something to act on/i);
+    expect(AC_STATE_PLAIN_MEANING.requeued).toMatch(/nothing to do here/i);
+  });
+
+  /* No coding vocabulary, which is the display contract in
+     docs/autocount-sync-reasons.md §0 — "requeued", "re-queue" and the marker
+     are the server's words and stay there. */
+  it("uses none of the machinery's words for it", () => {
+    for (const s of [
+      AC_STATE_LABEL.requeued, AC_FILTER_STATE_LABEL.requeued, AC_REPLACED_LINE,
+      AC_REPLACED_NOTE, AC_REPLACED_GROUP_NOTE, AC_ONLY_REPLACED_LINE,
+      AC_STATE_PLAIN_MEANING.requeued, acReplacedHeading(2),
+    ]) {
+      expect(s).not.toMatch(/re-?queue/i);
+      expect(s).not.toMatch(/supersede/i);
+      expect(s).not.toMatch(/\brow\b/i);
+    }
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   HALF THE LIST WAS HISTORY. Fifteen rows on the live page, SIX of them
+   replaced refusals, with two delivery orders appearing twice. A replaced
+   document is a record, not a task.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("replaced documents are a record, not the list", () => {
+  const live = row({ id: "a", doc_no: "HC-DO-2608-001", doc_type: "DO", state: "failed",
+    needs_attention: true, created_at: "2026-08-16T05:00:00.000Z" });
+  const old1 = row({ id: "b", doc_no: "HC-DO-2608-001", doc_type: "DO", state: "requeued",
+    created_at: "2026-08-16T01:00:00.000Z" });
+  const old2 = row({ id: "c", doc_no: "HC-DO-2608-002", doc_type: "DO", state: "requeued",
+    created_at: "2026-08-16T02:00:00.000Z" });
+  const mixed = acGroupByDocument([old1, live, old2]);
+
+  /* GROUPING ALONE FIXES HALF OF THIS. HC-DO-2608-001's refusal and the row it
+     was replaced by are ONE document, so the record is folded under the live row
+     rather than beside it, and only HC-DO-2608-002 — which has nothing newer —
+     is a record in its own right. */
+  it("puts a replaced send under its own document rather than beside it", () => {
+    expect(mixed).toHaveLength(2);
+    const first = mixed[0]!;
+    expect(first.docNo).toBe("HC-DO-2608-001");
+    expect(first.current.id).toBe("a");
+    expect(first.earlier.map((r) => r.id)).toEqual(["b"]);
+  });
+
+  it("takes the records out of the list under every filter except their own", () => {
+    for (const s of ["all", "attention", "pending", "sent", "failed", "skipped"] as const) {
+      const split = acSplitReplaced(mixed, s);
+      expect(split.live.map((g) => g.docNo), s).toEqual(["HC-DO-2608-001"]);
+      expect(split.replaced.map((g) => g.docNo), s).toEqual(["HC-DO-2608-002"]);
+    }
+  });
+
+  /* The Replaced chip exists to show exactly these. Folding them there would
+     answer the chip with an empty page. */
+  it("leaves them as the list when the reader asked for them by name", () => {
+    const split = acSplitReplaced(mixed, "requeued");
+    expect(split.live).toEqual(mixed);
+    expect(split.replaced).toEqual([]);
+  });
+
+  it("loses nothing — every document is on exactly one side", () => {
+    const split = acSplitReplaced(mixed, "all");
+    expect(split.live.length + split.replaced.length).toBe(mixed.length);
   });
 
   it("counts them in words, both forms written out", () => {
-    expect(acSupersededHeading(1)).toBe("1 superseded row, kept as a record");
-    expect(acSupersededHeading(6)).toBe("6 superseded rows, kept as a record");
-    /* Not `row` + "s" — the same shortcut that produced "GOODS RECEIVEDS". */
-    expect(acSupersededHeading(1)).not.toContain("rows");
+    expect(acReplacedHeading(1)).toBe("1 replaced document, kept as a record");
+    expect(acReplacedHeading(6)).toBe("6 replaced documents, kept as a record");
+    /* Not `document` + "s" — the same shortcut that produced "GOODS RECEIVEDS". */
+    expect(acReplacedHeading(1)).not.toContain("documents");
   });
 
   it("says why they are kept rather than implying they were missed", () => {
-    expect(AC_SUPERSEDED_NOTE).toMatch(/nothing here to do/i);
-    expect(AC_ONLY_SUPERSEDED_LINE).toMatch(/Nothing live here/i);
+    expect(AC_REPLACED_GROUP_NOTE).toMatch(/nothing here to do/i);
+    expect(AC_ONLY_REPLACED_LINE).toMatch(/Nothing live here/i);
   });
 });

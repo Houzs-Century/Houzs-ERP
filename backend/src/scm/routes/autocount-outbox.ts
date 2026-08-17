@@ -127,40 +127,89 @@ export const REQUEUED_LIKE = `${REQUEUE_NOTE_PREFIX}%`;
 
 type Row = Record<string, unknown>;
 
-interface CountQuery {
-  count: number | null;
+/**
+ * WHAT IDENTIFIES A DOCUMENT: its TYPE and its NUMBER, together.
+ *
+ * Not `doc_no` alone — 0277's CHECK admits six types and the same number can
+ * legitimately belong to two of them. Not `doc_id` — it is nullable and
+ * deliberately untyped ("ERP row id as text ... an outbox row must survive its
+ * document being reworked"), so it cannot be the key of anything. The pair is
+ * the table's OWN answer: `autocount_outbox_doc_idx` is
+ * `(company_id, doc_type, doc_no)`, created by 0277 to answer "has this document
+ * been written to AutoCount, and as what". `company_id` is not in the key here
+ * because every statement in this handler already carries it as a predicate.
+ *
+ * The separator is a NUL, which a Postgres `text` value cannot contain, so no
+ * pair of real values can collide on the joined string.
+ */
+export const acDocKey = (docType: unknown, docNo: unknown): string =>
+  `${String(docType ?? '')}\u0000${String(docNo ?? '')}`;
+
+/**
+ * How far the count scan will read before it stops claiming to be complete.
+ *
+ * PAGE is a PostgREST page: Supabase caps a single read at its own `db-max-rows`
+ * (unset here as far as this code can tell, and a cap it cannot see is exactly
+ * the kind of silent truncation that turns a count into a lie), so the scan
+ * pages explicitly rather than asking for everything and trusting the answer.
+ * MAX is where it gives up and SAYS so — `counts_complete: false` — instead of
+ * reporting an undercount as a fact. The queue held 17 rows on 2026-08-16, four
+ * days after the write-back went live; MAX is the point at which this needs to
+ * become a `count(distinct …)` in SQL rather than a scan.
+ */
+const AC_DOC_SCAN_PAGE = 1000;
+export const AC_DOC_SCAN_MAX = 20_000;
+
+interface ScanResult {
+  rows: Row[];
+  /** False when MAX was reached, so the rows are a prefix and not the set. */
+  complete: boolean;
   error: { message?: string } | null;
 }
 
-/**
- * Just enough of the PostgREST builder for the five counts below.
- *
- * Structural rather than `any`: each count only ever NARROWS, so the shape it
- * needs is two filters and a thenable — and naming it means a builder that
- * forgets to return itself fails to compile instead of silently dropping a
- * predicate. Dropping a predicate here is a cross-company count.
- */
-interface CountBuilder extends PromiseLike<CountQuery> {
-  eq(col: string, val: unknown): CountBuilder;
-  like(col: string, pattern: string): CountBuilder;
+/** Just enough of the PostgREST builder for the two scans below. */
+interface ScanBuilder extends PromiseLike<{ data: unknown; error: { message?: string } | null }> {
+  like(col: string, pattern: string): ScanBuilder;
+  range(from: number, to: number): ScanBuilder;
 }
 
 /**
- * One company-scoped exact count. `head: true` means Postgres counts and returns
- * no rows, so the five tiles at the top of the page cost five counts and not one
- * download of the whole append-only history.
+ * One company-scoped scan that answers WHICH DOCUMENTS, not how many rows.
+ *
+ * This replaced six `count: 'exact', head: true` queries on 2026-08-17, and the
+ * reason is the defect the owner reported: `HC-SO-2608-002` occupied four of the
+ * six rows under *In AutoCount → Sales orders* while the account book holds
+ * exactly one of it. Every number on that screen was a count of SENDS printed
+ * under the word "documents". A row count cannot be turned into a document count
+ * after the fact, and PostgREST has no `count(distinct …)`, so the identity has
+ * to come back with the rows.
+ *
+ * It costs TWO reads where the counts used to cost six, because it no longer
+ * asks a separate question per state: the state is derived from the row, by
+ * `acOutboxState`, the same function the list and the health check already use.
  */
-async function countRows(
+async function scanDocs(
   c: Context<{ Bindings: Env; Variables: Variables }>,
-  build: (q: CountBuilder) => CountBuilder,
-): Promise<CountQuery> {
+  columns: string,
+  narrow: (q: ScanBuilder) => ScanBuilder,
+): Promise<ScanResult> {
   const sb = c.get('supabase');
-  const base = sb.from('autocount_outbox').select('id', { count: 'exact', head: true });
-  /* The company predicate goes on BEFORE the caller's narrowing, so no caller
-     can forget it — there is no un-scoped builder to hand out. */
-  const scoped = scopeToCompany(base, c) as unknown as CountBuilder;
-  const { count, error } = await build(scoped);
-  return { count: count ?? null, error: error ?? null };
+  const out: Row[] = [];
+  for (let from = 0; from < AC_DOC_SCAN_MAX; from += AC_DOC_SCAN_PAGE) {
+    const base = sb.from('autocount_outbox').select(columns);
+    /* The company predicate goes on BEFORE the caller's narrowing, so no caller
+       can forget it — there is no un-scoped builder to hand out. */
+    const scoped = scopeToCompany(base, c) as unknown as ScanBuilder;
+    const { data, error } = await narrow(scoped).range(from, from + AC_DOC_SCAN_PAGE - 1);
+    if (error) return { rows: [], complete: false, error };
+    /* A null body is PostgREST's answer to a read that produced nothing AND to
+       one that failed; `error` above already separated those, so this is the
+       empty case. */
+    const page = (data as Row[] | null) ?? [];
+    out.push(...page);
+    if (page.length < AC_DOC_SCAN_PAGE) return { rows: out, complete: true, error: null };
+  }
+  return { rows: out, complete: false, error: null };
 }
 
 /** One outbox row, as the page reads it: the record plus what it MEANS. */
@@ -272,7 +321,14 @@ export const listAutocountOutboxHandler = async (
   }
   const flagValue = ((flagRow as { value?: string } | null)?.value ?? null);
 
-  /* A re-queued row is HISTORY, not backlog — and that is true of a FAILED row
+  /* THE NUMBERS ARE DOCUMENTS, NOT SENDS — since 2026-08-17, and this is the
+     defect the owner reported: `HC-SO-2608-002` took four of the six rows under
+     *In AutoCount → Sales orders* while `AED_HOUZS` holds exactly one of it.
+     The queue is append-only and one document accumulates a send per operation,
+     so "17 documents" was 17 SENDS over fewer documents, and the page said
+     "documents".
+
+     A re-queued row is HISTORY, not backlog — and that is true of a FAILED row
      as well as a skipped one. The table is append-only and neither is ever
      deleted, so without this split the original refusal sits on the page
      forever, sending someone to fix what is already fixed and already queued.
@@ -280,41 +336,65 @@ export const listAutocountOutboxHandler = async (
      opt-in: #2220 taught acOutboxState that rule but these counts kept their
      own, so the tiles went on reporting two re-queued FAILED rows as
      "2 documents need attention" while the rows underneath rendered Re-queued
-     — the same self-contradiction #2220 fixed, one component further up. */
-  const [pending, sent, failedTotal, skippedTotal, requeuedFailed, requeuedSkipped] = await Promise.all([
-    countRows(c, (q) => q.eq('status', 'pending')),
-    countRows(c, (q) => q.eq('status', 'sent')),
-    countRows(c, (q) => q.eq('status', 'failed')),
-    countRows(c, (q) => q.eq('status', 'skipped')),
-    countRows(c, (q) => q.eq('status', 'failed').like('last_error', REQUEUED_LIKE)),
-    countRows(c, (q) => q.eq('status', 'skipped').like('last_error', REQUEUED_LIKE)),
+     — the same self-contradiction #2220 fixed, one component further up. That
+     rule is no longer restated here: the state comes from `acOutboxState`, the
+     one function the list, the health check and this block now share. */
+  const [allRows, requeuedRows] = await Promise.all([
+    scanDocs(c, 'id, doc_type, doc_no, status', (q) => q),
+    /* `last_error` is NEVER downloaded. All this needs from it is whether the
+       re-queue marker is on the front, and the LIKE answers that in Postgres —
+       the notes are up to several hundred characters of the account book's own
+       per-line dump, and a count has no use for one of them. */
+    scanDocs(c, 'id', (q) => q.like('last_error', REQUEUED_LIKE)),
   ]);
 
-  const firstError = [pending, sent, failedTotal, skippedTotal, requeuedFailed, requeuedSkipped]
-    .find((r) => r.error);
-  if (firstError) {
-    return c.json({ error: 'load_failed', reason: firstError.error?.message ?? 'count failed' }, 500);
-  }
-  /* A count that came back NULL is NOT zero. PostgREST answers a failed count
-     with a null, and rendering that as 0 would tell the owner "nothing is stuck"
-     on the strength of a query that did not run — the exact shape CLAUDE.md
-     calls a verdict computed over nothing. */
-  const missing = [pending, sent, failedTotal, skippedTotal, requeuedFailed, requeuedSkipped]
-    .some((r) => r.count === null);
-  if (missing) {
-    return c.json({ error: 'load_failed', reason: 'the queue counts could not be read' }, 500);
+  const scanError = [allRows, requeuedRows].find((r) => r.error);
+  if (scanError) {
+    return c.json({ error: 'load_failed', reason: scanError.error?.message ?? 'count failed' }, 500);
   }
 
-  const nPending = pending.count as number;
-  const nSent = sent.count as number;
-  const nFailedTotal = failedTotal.count as number;
-  const nSkippedTotal = skippedTotal.count as number;
-  /* OUTSTANDING = terminal minus already-asked-again, per state. `Math.max`
-     because the two counts are separate statements against a live table: a row
-     re-queued between them would otherwise produce a negative tile. */
-  const nRequeued = (requeuedFailed.count as number) + (requeuedSkipped.count as number);
-  const nFailed = Math.max(0, nFailedTotal - (requeuedFailed.count as number));
-  const nSkipped = Math.max(0, nSkippedTotal - (requeuedSkipped.count as number));
+  const requeuedIds = new Set(requeuedRows.rows.map((r) => String(r.id ?? '')));
+  /* One entry per DOCUMENT, holding the states its sends are in. A document is
+     counted under a chip when at least one of its sends is in that state, which
+     is exactly what the list under that chip would show it for — the list is
+     filtered by status and then grouped by document on the page. Two chips can
+     legitimately count the same document: one that arrived and was later edited
+     into a refusal IS in the account book AND does need attention. */
+  const statesPerDoc = new Map<string, Set<string>>();
+  for (const r of allRows.rows) {
+    const key = acDocKey(r.doc_type, r.doc_no);
+    /* The marker itself stands in for the note it prefixes. The LIKE above is
+       what matched, so `isRequeuedNote` is true of this row by construction, and
+       passing the prefix asks the shared classifier rather than restating it. */
+    const state = acOutboxState(
+      String(r.status ?? ''),
+      requeuedIds.has(String(r.id ?? '')) ? REQUEUE_NOTE_PREFIX : null,
+    );
+    const seen = statesPerDoc.get(key);
+    if (seen) seen.add(state);
+    else statesPerDoc.set(key, new Set([state]));
+  }
+
+  const docsIn = (...states: string[]): number => {
+    let n = 0;
+    for (const seen of statesPerDoc.values()) {
+      if (states.some((s) => seen.has(s))) n += 1;
+    }
+    return n;
+  };
+
+  const nPending = docsIn('pending');
+  const nSent = docsIn('sent');
+  const nFailed = docsIn('failed');
+  const nSkipped = docsIn('skipped');
+  const nRequeued = docsIn('requeued');
+  const nAttention = docsIn('failed', 'skipped');
+  const nTotal = statesPerDoc.size;
+  /* A COUNT THAT DID NOT SEE EVERY ROW MUST NOT READ AS A FACT. The scan stops
+     at AC_DOC_SCAN_MAX and says so rather than reporting the prefix it managed
+     to read as the whole company — the shape CLAUDE.md calls a verdict computed
+     over nothing. The page prints one extra sentence when this is false. */
+  const countsComplete = allRows.complete && requeuedRows.complete;
 
   /* The oldest pending row, because a climbing age is the early warning that the
      tunnel is down and the dead-lettering has started — MAX_ATTEMPTS on a
@@ -393,6 +473,11 @@ export const listAutocountOutboxHandler = async (
       on: scope !== 'off',
       scope: scope === 'off' ? 'off' : scope === 'all' ? 'all' : scope.join(','),
     },
+    /* EVERY ONE OF THESE IS A COUNT OF DOCUMENTS. They no longer sum to the
+       total and must not be made to: a document with an arrival and a later
+       refusal is counted by `sent` and by `failed`, because both are true of it
+       and both chips would list it. `total` is the number of distinct documents,
+       which is what the "N of M documents" line under the strips reads. */
     counts: {
       pending: nPending,
       sent: nSent,
@@ -401,12 +486,10 @@ export const listAutocountOutboxHandler = async (
       skipped: nSkipped,
       requeued: nRequeued,
       /* The owner's question, as one number. */
-      attention: nFailed + nSkipped,
-      /* TOTAL is every row ever written, so it takes the TERMINAL counts, not
-         the outstanding ones — otherwise re-queued rows vanish from the total
-         while still being listed underneath it. */
-      total: nPending + nSent + nFailedTotal + nSkippedTotal,
+      attention: nAttention,
+      total: nTotal,
     },
+    counts_complete: countsComplete,
     oldest_pending: oldestRaw
       ? {
         doc_type: String(oldestRaw.doc_type ?? ''),

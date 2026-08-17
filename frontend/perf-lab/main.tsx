@@ -147,10 +147,60 @@ function SearchLab() {
 // `&surface=mobile` renders the phone twin. Measure with
 //   document.querySelectorAll("[data-ac-row]")[i].getBoundingClientRect().height
 //
+// `&state=` and `&docType=` put the DESKTOP page into a filter (the phone has no
+// router and starts on Needs attention, as the app does — click a chip). The
+// stub narrows its rows by `state` exactly as the route does, so a filter in the
+// lab shows what the same filter shows in the app. `&rows=10&state=sent` is the
+// screen the four repeated HC-SO-2608-002 sends below were taken from.
+//
 // The network is stubbed at `fetch` rather than by aliasing the api client:
 // everything above fetch — the cache, the headers, the error path — is then the
 // REAL code, so a row height measured here is a row height the app produces.
 const AC_ROWS = Number(new URLSearchParams(window.location.search).get("rows") ?? 400);
+
+/**
+ * THE SCREEN THE OWNER READ, 2026-08-16: *"为什么在 AutoCount 里面一张 Sales Order
+ * 会出现两次呢?"*
+ *
+ * Under **In AutoCount → Sales orders** he had SIX rows and `HC-SO-2608-002` was
+ * FOUR of them — three "Change to the sales order" at 16/08 4:30-4:31pm and the
+ * original "New sales order" at 15/08 1:25am. `AED_HOUZS` holds exactly one
+ * `HC-SO-2608-002`; nothing was duplicated. `scm.autocount_outbox` is
+ * append-only and writes one row per intended operation, so an ordinary document
+ * that is created and then edited three times is four rows for good.
+ *
+ * These four are prepended to every lab run, so the repetition is in the fixture
+ * whatever `?rows=` says. `?scenario=autocount-sync&rows=10&state=sent` puts six
+ * sales orders in AutoCount on screen — his six — and they must render as THREE
+ * cards.
+ *
+ * Timestamps are DESCENDING, matching the route's `created_at` order, because
+ * that ordering is what decides which send draws the card.
+ */
+const AC_REPEATED_SENDS: AcOutboxRow[] = [
+  { op: "edit", createdAt: "2026-08-16T08:31:40.000Z", sentAt: "2026-08-16T08:31:55.000Z" },
+  { op: "edit", createdAt: "2026-08-16T08:31:05.000Z", sentAt: "2026-08-16T08:31:20.000Z" },
+  { op: "edit", createdAt: "2026-08-16T08:30:12.000Z", sentAt: "2026-08-16T08:30:30.000Z" },
+  { op: "create_so", createdAt: "2026-08-14T17:25:00.000Z", sentAt: "2026-08-14T17:25:18.000Z" },
+].map((s, i) => ({
+  id: `ob-dup-${i}`,
+  op: s.op,
+  doc_type: "SO",
+  doc_no: "HC-SO-2608-002",
+  doc_id: null,
+  status: "sent",
+  state: "sent",
+  attempts: 0,
+  reason: null,
+  reason_kind: null,
+  remedy: null,
+  needs_attention: false,
+  can_requeue: false,
+  ac_doc_no: "SO-00002",
+  created_at: s.createdAt,
+  updated_at: s.sentAt,
+  sent_at: s.sentAt,
+}));
 
 function acRows(total: number): AcOutboxRow[] {
   return Array.from({ length: total }, (_, i) => {
@@ -261,29 +311,58 @@ function acRows(total: number): AcOutboxRow[] {
 }
 
 function acPayload(total: number): AcOutboxResponse {
-  const rows = acRows(total);
-  const failed = rows.filter((r) => r.state === "failed").length;
-  const skipped = rows.filter((r) => r.state === "skipped").length;
-  const requeued = rows.filter((r) => r.state === "requeued").length;
+  const rows = [...AC_REPEATED_SENDS, ...acRows(total)];
+  /* COUNTS ARE DOCUMENTS, because the route's are. A lab whose counts were rows
+     would render a page that agrees with itself and disagrees with production —
+     which is the defect this fixture exists to reproduce, not to hide. Distinct
+     `doc_type + doc_no`, the same key acGroupByDocument and the backend's
+     acDocKey use. */
+  const docsWhere = (p: (r: AcOutboxRow) => boolean): number =>
+    new Set(rows.filter(p).map((r) => `${r.doc_type}/${r.doc_no}`)).size;
+  const failed = docsWhere((r) => r.state === "failed");
+  const skipped = docsWhere((r) => r.state === "skipped");
   return {
     writeback: { value: "1", on: true, scope: "1" },
     counts: {
-      pending: 0,
-      sent: rows.length - failed - skipped - requeued,
+      pending: docsWhere((r) => r.state === "pending"),
+      sent: docsWhere((r) => r.state === "sent"),
       failed,
       skipped,
-      requeued,
+      requeued: docsWhere((r) => r.state === "requeued"),
       /* Re-queued rows are NOT attention — their documents went through under a
          newer row. Counting them here is the phantom-failure bug #2189 left
          behind, and the lab must not reproduce a shape the server cannot send. */
-      attention: failed + skipped,
-      total: rows.length,
+      attention: docsWhere((r) => r.state === "failed" || r.state === "skipped"),
+      total: docsWhere(() => true),
     },
     oldest_pending: null,
     rows,
     truncated: false,
+    counts_complete: true,
     meta: { max_attempts: 6, state_meaning: {}, skip_kinds: [] },
   };
+}
+
+/**
+ * The route's own state narrowing, so `&state=sent` in the lab shows what
+ * `?state=sent` shows in the app.
+ *
+ * The stub used to answer every request with every row, which was harmless while
+ * nothing on the page depended on the filter and is not harmless now: the six
+ * rows the owner counted were under a FILTER, and a lab that cannot be put into
+ * that filter cannot reproduce his screen. The counts stay whole-company, as the
+ * route's do.
+ */
+function acRowsForState(rows: AcOutboxRow[], state: string): AcOutboxRow[] {
+  switch (state) {
+    case "attention": return rows.filter((r) => r.needs_attention);
+    case "pending": return rows.filter((r) => r.state === "pending");
+    case "sent": return rows.filter((r) => r.state === "sent");
+    case "failed": return rows.filter((r) => r.state === "failed");
+    case "skipped": return rows.filter((r) => r.state === "skipped");
+    case "requeued": return rows.filter((r) => r.state === "requeued");
+    default: return rows;
+  }
 }
 
 function stubTheQueue(total: number) {
@@ -292,13 +371,28 @@ function stubTheQueue(total: number) {
   window.fetch = ((input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url.includes("/api/scm/autocount-outbox")) {
-      return Promise.resolve(new Response(JSON.stringify(body), {
+      const state = new URL(url, window.location.origin).searchParams.get("state") ?? "all";
+      const answer = { ...body, rows: acRowsForState(body.rows, state) };
+      return Promise.resolve(new Response(JSON.stringify(answer), {
         status: 200,
         headers: { "Content-Type": "application/json" },
       }));
     }
     return real(input as RequestInfo, init);
   }) as typeof window.fetch;
+}
+
+/**
+ * `&state=` and `&docType=` are handed to the page, so the lab can be put into
+ * the exact filter a screenshot was taken in. Defaults to `all`, which is what
+ * this harness measured before either was readable.
+ */
+function acLabEntry(): string {
+  const lab = new URLSearchParams(window.location.search);
+  const p = new URLSearchParams({ state: lab.get("state") ?? "all" });
+  const docType = lab.get("docType");
+  if (docType) p.set("docType", docType);
+  return `/autocount-sync?${p.toString()}`;
 }
 
 function AutoCountSyncLab({ mobile }: { mobile: boolean }) {
@@ -311,7 +405,7 @@ function AutoCountSyncLab({ mobile }: { mobile: boolean }) {
       style={mobile ? { height: "100vh" } : undefined}
     >
       <QueryClientProvider client={client}>
-        <MemoryRouter initialEntries={["/autocount-sync?state=all"]}>
+        <MemoryRouter initialEntries={[acLabEntry()]}>
           {mobile ? <MobileAutoCountSync onBack={() => {}} /> : <AutoCountSync />}
         </MemoryRouter>
       </QueryClientProvider>
