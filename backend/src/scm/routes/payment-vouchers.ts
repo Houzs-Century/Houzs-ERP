@@ -438,7 +438,15 @@ paymentVouchers.patch('/:id', async (c) => {
     if (!v) return c.json({ error: 'credit_account_required' }, 400);
     updates.credit_account_code = v;
   }
-  if (body.voucherDate !== undefined) updates.voucher_date = body.voucherDate;
+  /* voucher_date is `date NOT NULL DEFAULT current_date` (mig 0081), and the
+     detail form sends this key on every save — cleared, DateField emits "".
+     NULL would trade one 500 for another, so a blank is refused by NAME here,
+     exactly as payeeName and creditAccountCode above are. */
+  if (body.voucherDate !== undefined) {
+    const d = dateOrNull(body.voucherDate);
+    if (!d) return c.json({ error: 'voucher_date_required' }, 400);
+    updates.voucher_date = d;
+  }
   if (body.supplierId !== undefined) updates.supplier_id = (body.supplierId as string | null) || null;
   if (body.notes !== undefined) updates.notes = (body.notes as string | null) ?? null;
   // PV→PI settlement (0202) — purpose is editable while DRAFT.

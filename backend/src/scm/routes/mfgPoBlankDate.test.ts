@@ -56,8 +56,19 @@ const CALLER = {
   created_at: '',
 } as unknown as User;
 
+/* Imported HERE, at module scope, and not inside patch(). mfg-purchase-orders
+   is ~4,700 lines and pulls a large graph behind it; awaited inside the test
+   body, that transform+evaluate is charged against testTimeout, so the suite
+   passes alone and times out at 5000ms in the full 345-file run where every
+   worker is competing for the same CPU. Reproduced deterministically with
+   `vitest run --config vitest.light.config.mts --testTimeout=1000`: before this
+   change, `Test timed out in 1000ms` at the first `it`; after it, green.
+   A top-level await runs during COLLECTION, which no test timeout bounds.
+   The vi.mock factory above is hoisted over this and only reads `sb` when
+   getSupabaseService() is CALLED, which is per-request, so the order holds. */
+const { mfgPurchaseOrders } = await import('./mfg-purchase-orders');
+
 async function patch(body: Record<string, unknown>) {
-  const { mfgPurchaseOrders } = await import('./mfg-purchase-orders');
   const app = new Hono<{ Bindings: Env; Variables: Variables }>();
   app.use('*', async (c, next) => {
     c.set('user', CALLER);

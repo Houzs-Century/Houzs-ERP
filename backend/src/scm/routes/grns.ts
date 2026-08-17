@@ -2305,7 +2305,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   const firstNext = await mintMonthlyDocNo(sb, 'grns', 'grn_number', `${cp}GRN-${yymm}`);
   let counter = parseInt(firstNext.slice(`${cp}GRN-${yymm}-`.length), 10) - 1;
 
-  const receivedAt = body.receivedDate ?? todayMyt();
+  const receivedAt = dateOrNull(body.receivedDate) ?? todayMyt(); // "" is not undefined: nullish left it for Postgres, and a failed bucket here is dropped silently
   const created: Array<{ id: string; grnNumber: string; purchaseOrderId: string; poNumber: string; lineCount: number; posted?: boolean; postError?: string; movementErrors?: string[]; recountError?: string }> = [];
   // Track any bucket rolled back by the post-insert over-receipt verification so
   // we can surface a 409 with the same error shape the add-line path uses.

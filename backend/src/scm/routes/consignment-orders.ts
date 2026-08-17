@@ -1294,7 +1294,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
     /* A cascaded clear has no body value to read — the header column was set to
        null above, so the lines must follow it, or MRP keeps ordering by a line
        date the header no longer holds. */
-    const newDate = coCascadedDeliveryClear ? null : (body['customerDeliveryDate'] as string | null);
+    const newDate = coCascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']); // header coerced, lines did not: the cascade 500'd after the header committed
     await scopeToCompanyId(sb.from('consignment_sales_order_items')
       .update({ line_delivery_date: newDate })
       .eq('doc_no', docNo), co.companyId)

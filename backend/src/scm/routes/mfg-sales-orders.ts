@@ -5176,7 +5176,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     /* Split payment — book EVERY validated row. Best-effort like the single
        path (the header already carries the Σ, so a ledger hiccup never blocks
        the order); rows are schema-validated so nothing is silently dropped. */
-    const paidAt = (body.paymentDate as string) ?? todayMyt();
+    const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // header coerces the same key; uncoerced here the swallowed insert lost the deposit row
     for (let i = 0; i < posPayments.length; i++) {
       const p = posPayments[i]!;
       const merchantLike = p.method === 'merchant' || p.method === 'installment';
@@ -5279,7 +5279,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       const installmentMonths = merchantLike
         && typeof body.installmentMonths === 'number' && body.installmentMonths > 0
         ? body.installmentMonths : null;
-      const paidAt = (body.paymentDate as string) ?? todayMyt();
+      const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // same as the split-payment row above
       const { error: depErr } = await sb.from('mfg_sales_order_payments').insert({
         company_id:         companyId, // multi-company: match the SO's company
         so_doc_no:          docNo,
@@ -7253,9 +7253,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     p_apply_warehouse: Boolean(reboundWarehouseId),
     p_warehouse_id: reboundWarehouseId,
     p_apply_delivery_date: body['customerDeliveryDate'] !== undefined || cascadedDeliveryClear,
-    p_delivery_date: cascadedDeliveryClear
-      ? null
-      : (body['customerDeliveryDate'] as string | null | undefined) ?? null,
+    p_delivery_date: cascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']),
     // mig 0164 — the customer upsert inside the RPC is company-scoped. Omitting
     // this resolves every re-customer against HOUZS.
     p_company_id: activeCompanyId(c) ?? null,

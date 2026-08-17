@@ -20,7 +20,15 @@ import { isDateColumn } from '../src/scm/lib/date-coerce';
    whole save — which is exactly what PATCH /api/scm/mfg-purchase-orders/<id>
    was doing in production on 2026-08-17 with supplierDeliveryDate2/3/4 = "".
 
-   A failure here is not a test to relax: extend DATE_COLUMN_RE. */
+   A failure here is not a test to relax: extend DATE_COLUMN_RE.
+
+   WHAT THIS FILE DOES NOT DO, stated because believing otherwise already cost
+   five missed sites: it pins the VOCABULARY only. It never asserts that any
+   route calls the coercion, so it passes green on a completely unfixed tree —
+   copied onto a clean origin/main with zero route fixes, it does. The test that
+   answers "does the code that writes a date column actually coerce what the
+   browser sent" is tests/dateWriteCoercion.test.ts, and that one is red on
+   unpatched main (79 findings) and green here. */
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const MIGRATIONS = path.resolve(here, '../src/db/migrations-pg');

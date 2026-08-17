@@ -224,7 +224,13 @@ test("the real backend tree classifies, and the split is not degenerate", async 
 
    So the protection is stated here rather than left to a side effect. Adding a
    suite to this list is a claim that its assertion must stop a MERGE. */
-const MUST_GATE_MERGE = ["tests/migrationNumbers.test.ts"];
+const MUST_GATE_MERGE = [
+  "tests/migrationNumbers.test.ts",
+  /* The blank-date gate. Its whole reason to exist is that the previous
+     version of it passed on an unfixed tree, so a merge that reintroduces an
+     uncoerced date write has to be STOPPED, not reported after the fact. */
+  "tests/dateWriteCoercion.test.ts",
+];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {
   const { light, workers } = await classifyTests(backendRoot);
