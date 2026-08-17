@@ -19,7 +19,8 @@ import { AlertTriangle, CheckCheck, Download, Upload } from 'lucide-react';
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
-  useSettlementWatchlist,
+  useSettlementWatchlist, useInTransit,
+  type AgeBucket,
   type AcquirerSetup, type SettlementRow, type SettlementBucket,
 } from './settlement-queries';
 import { fmtCenti } from '../../vendor/shared/format';
@@ -86,16 +87,18 @@ const BUCKET_LABEL: Record<SettlementBucket, string> = {
 };
 
 export const SettlementRecon = () => {
-  const [tab, setTab] = useState<'reconcile' | 'watchlists' | 'setup'>('reconcile');
+  const [tab, setTab] = useState<'reconcile' | 'transit' | 'watchlists' | 'setup'>('reconcile');
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance" title="Card settlement reconciliation" />
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
         <button type="button" style={btn(tab === 'reconcile')} onClick={() => setTab('reconcile')}>Reconcile</button>
+        <button type="button" style={btn(tab === 'transit')} onClick={() => setTab('transit')}>Paid, not yet in the bank</button>
         <button type="button" style={btn(tab === 'watchlists')} onClick={() => setTab('watchlists')}>Watchlists</button>
         <button type="button" style={btn(tab === 'setup')} onClick={() => setTab('setup')}>Acquirer setup</button>
       </div>
       {tab === 'reconcile' && <ReconcileTab />}
+      {tab === 'transit' && <InTransitTab />}
       {tab === 'watchlists' && <WatchlistTab />}
       {tab === 'setup' && <SetupTab />}
     </div>
@@ -118,6 +121,13 @@ const ReconcileTab = () => {
      file. The operator answers that; the system never guesses which year money
      belongs to. */
   const [statementMonth, setStatementMonth] = useState('');
+  /* The day the acquirer's money actually reached the bank, off its payment
+     advice. Public Bank's advice of 10 Aug paid for trading on the 7th, 8th and
+     9th, so dating the bank leg by the swipe would show money in the account
+     days before it was there — and across a month end, in a month that never
+     received it. Left blank, the entry keeps the statement line's own date,
+     which is right for an acquirer that pays same-day. */
+  const [paidOn, setPaidOn] = useState('');
   /* One result line per file — a month's statements go up in one go and each
      one answers for itself, so a single bad file never hides four good ones. */
   const [results, setResults] = useState<Array<{ name: string; ok: boolean; text: string }>>([]);
@@ -164,6 +174,7 @@ const ReconcileTab = () => {
           content: f.content,
           summaryFeeSen: summaryFee.trim() ? Math.round(Number(summaryFee) * 100) : null,
           statementMonth: statementMonth || null,
+          paidOn: paidOn || null,
         });
         lastBatch = r.batchId;
         done.push({
@@ -231,6 +242,23 @@ const ReconcileTab = () => {
             </span>
           </div>
         )}
+        {/* The acquirer does not pay on the day the card is swiped. Public Bank's
+            advice of 10 Aug paid for trading on the 7th, 8th and 9th — so the
+            bank leg is dated by the PAYOUT, and the days in between sit in
+            settlement-in-transit where they belong. Left blank for an acquirer
+            that pays same-day, the entry keeps the statement's own date. */}
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }} htmlFor="settlement-paid-on">
+            Money reached the bank on
+          </label>
+          <input id="settlement-paid-on" type="date" value={paidOn} aria-label="Money reached the bank on"
+            onChange={(e) => setPaidOn(e.target.value)}
+            style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
+          <span style={softText}>
+            From the acquirer&rsquo;s payment advice. The bank entry is dated by this, so the books agree with the
+            bank statement — leave it blank if this acquirer pays the same day.
+          </span>
+        </div>
         <div style={softText}>
           You can pick several files at once — they go up one after another, and each one answers for itself.
         </div>
@@ -478,10 +506,141 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
         </div>
       )}
 
+      {!row.confirmed_at && (
+        <div style={softText}>
+          &ldquo;Set aside&rdquo; just moves this line out of the working list — it books nothing and the
+          money stays in settlement-in-transit. Use it for a line you have looked at and decided to
+          deal with another way; you can put it back at any time.
+        </div>
+      )}
+
       {confirm.isError && (
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
           {(confirm.error as { message?: string } | null)?.message ?? 'The line was not confirmed.'}
         </div>
+      )}
+    </div>
+  );
+};
+
+/* ── Paid by the customer, not yet in the bank ─────────────────────────────
+   The owner asked for this in these words: he needs to see that a customer HAS
+   paid while the money has not arrived or been reconciled, in DETAIL, not as a
+   balance. It is the brief's 在途结算款账龄 (§3.7) and it is the readable form
+   of the 320-0000 balance — same money, named to the document. */
+
+const IN_TRANSIT_STATE: Record<string, string> = {
+  NOT_ON_A_STATEMENT: 'The acquirer has not reported it yet',
+  MATCHED_NOT_POSTED: 'On a statement, waiting to be confirmed',
+};
+
+const AGE_BUCKETS: AgeBucket[] = ['0-7', '8-14', '15-30', 'over-30'];
+
+const InTransitTab = () => {
+  const q = useInTransit();
+  const data = q.data;
+  const lines = data?.lines ?? [];
+
+  const exportCsv = () => {
+    downloadCSV('paid-not-yet-in-the-bank.csv', toCSV(lines, [
+      { key: 'acq', label: 'Acquirer', getValue: (l) => l.acquirerCode },
+      { key: 'doc', label: 'Document', getValue: (l) => l.docNo },
+      { key: 'paid', label: 'Customer paid on', getValue: (l) => l.paidOn },
+      { key: 'age', label: 'Days', getValue: (l) => l.ageDays },
+      { key: 'amt', label: 'Amount', getValue: (l) => (l.amountSen / 100).toFixed(2) },
+      { key: 'auth', label: 'Approval', getValue: (l) => l.approvalCode ?? '' },
+      { key: 'state', label: 'Status', getValue: (l) => IN_TRANSIT_STATE[l.state] ?? l.state },
+    ]));
+  };
+
+  return (
+    <div className="space-y-3">
+      <div style={softText}>
+        The customer has paid and the money has not reached the bank yet. This is the same money as the
+        settlement-in-transit balance on the trial balance — here it is named to the document, so you can see
+        WHOSE it is rather than just how much.
+      </div>
+
+      <div style={{
+        padding: 'var(--space-4)', borderRadius: 'var(--radius-md)',
+        background: 'rgba(47, 93, 79, 0.10)', border: '1px solid var(--c-secondary-a, #2F5D4F)',
+        display: 'flex', gap: 'var(--space-5)', alignItems: 'baseline', flexWrap: 'wrap',
+      }}>
+        <div>
+          <div style={softText}>Sitting with the acquirers right now</div>
+          <div style={{ fontSize: 'var(--fs-24, 22px)', fontWeight: 700 }}>{fmt(data?.totalSen)}</div>
+        </div>
+        <div style={softText}>{lines.length} payment{lines.length === 1 ? '' : 's'}</div>
+        <span style={{ flex: 1 }} />
+        <button type="button" style={btn()} onClick={exportCsv} disabled={lines.length === 0}>
+          <Download {...ICON} /> Export
+        </button>
+      </div>
+
+      {/* Ageing by acquirer — how long each one has been holding the money. */}
+      {data && Object.keys(data.ageing).length > 0 && (
+        <table style={table}>
+          <thead>
+            <tr style={headRow}>
+              <th style={cell}>Acquirer</th>
+              {AGE_BUCKETS.map((b) => <th key={b} style={num}>{b === 'over-30' ? 'over 30 days' : `${b} days`}</th>)}
+              <th style={num}>Total</th>
+            </tr>
+          </thead>
+          <tbody>
+            {Object.entries(data.ageing).map(([acq, buckets]) => {
+              const total = Object.values(buckets).reduce((s, b) => s + b.sen, 0);
+              return (
+                <tr key={acq} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' }}>
+                  <td style={cell}><span className={styles.codeChip}>{acq}</span></td>
+                  {AGE_BUCKETS.map((b) => {
+                    /* A bucket with nothing in it is simply absent from the
+                       server's tally, so this is a lookup, not a guaranteed key. */
+                    const inBucket = buckets[b];
+                    return (
+                      <td key={b} style={{ ...num, color: b === 'over-30' && inBucket ? danger : undefined }}>
+                        {inBucket ? fmt(inBucket.sen) : '—'}
+                      </td>
+                    );
+                  })}
+                  <td style={{ ...num, fontWeight: 700 }}>{fmt(total)}</td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+
+      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
+      {!q.isLoading && lines.length === 0 && (
+        <div style={{ fontSize: 'var(--fs-13)', color: good }}>
+          Nothing outstanding — every card payment recorded has reached the bank.
+        </div>
+      )}
+
+      {lines.length > 0 && (
+        <table style={table}>
+          <thead>
+            <tr style={headRow}>
+              <th style={cell}>Acquirer</th><th style={cell}>Document</th>
+              <th style={cell}>Customer paid on</th><th style={num}>Days</th>
+              <th style={num}>Amount</th><th style={cell}>Approval</th><th style={cell}>Where it is</th>
+            </tr>
+          </thead>
+          <tbody>
+            {lines.map((l) => (
+              <tr key={`${l.source}:${l.paymentId}`} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' }}>
+                <td style={cell}><span className={styles.codeChip}>{l.acquirerCode}</span></td>
+                <td style={cell}>{l.docNo}</td>
+                <td style={cell}>{l.paidOn}</td>
+                <td style={{ ...num, color: l.ageDays > 14 ? danger : undefined, fontWeight: l.ageDays > 14 ? 700 : undefined }}>{l.ageDays}</td>
+                <td style={num}>{fmt(l.amountSen)}</td>
+                <td style={cell}>{l.approvalCode ?? '—'}</td>
+                <td style={cell}>{IN_TRANSIT_STATE[l.state] ?? l.state}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
       )}
     </div>
   );
@@ -614,8 +773,11 @@ const AcquirerCard = ({ acquirer }: { acquirer: AcquirerSetup }) => {
     });
   };
 
-  const field = (label: string, node: React.ReactNode) => (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--fs-12)' }}>
+  /* `key` matters for the heading fields below, which are rendered from a list —
+     without it React cannot tell one input from the next and reuses the wrong
+     DOM node when the required-field marks change. */
+  const field = (label: string, node: React.ReactNode, key?: string) => (
+    <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--fs-12)' }}>
       <span style={{ color: 'var(--c-ink-soft, #777)' }}>{label}</span>
       {node}
     </label>
@@ -679,7 +841,7 @@ const AcquirerCard = ({ acquirer }: { acquirer: AcquirerSetup }) => {
               aria-label={`${acquirer.code} ${f.label}`}
               onChange={(e) => setHeadings({ ...headings, [f.key]: e.target.value })}
             />
-          ));
+          ), f.key);
         })}
       </div>
       {mapError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{mapError}</div>}

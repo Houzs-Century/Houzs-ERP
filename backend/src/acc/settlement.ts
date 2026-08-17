@@ -168,11 +168,11 @@ export async function postStatementCharge(
 ): Promise<{ ok: true; status: 'posted' | 'already_posted' | 'nothing_to_post'; jeNo?: string } | { ok: false; status: string; reason: string }> {
   const { data: batchRaw, error } = await sb
     .from('acc_settlement_batches')
-    .select('id, acquirer_code, period_to, adjustment_sen, adjustment_je_no')
+    .select('id, acquirer_code, period_to, paid_on, adjustment_sen, adjustment_je_no')
     .eq('id', batchId).eq('company_id', companyId).maybeSingle();
   if (error) return { ok: false, status: 'load_failed', reason: error.message };
   if (!batchRaw) return { ok: false, status: 'not_found', reason: `batch ${batchId} not found` };
-  const batch = batchRaw as { acquirer_code: string; period_to: string | null; adjustment_sen: number | null; adjustment_je_no: string | null };
+  const batch = batchRaw as { acquirer_code: string; period_to: string | null; paid_on: string | null; adjustment_sen: number | null; adjustment_je_no: string | null };
 
   const adjustment = Number(batch.adjustment_sen ?? 0);
   if (adjustment === 0) return { ok: true, status: 'nothing_to_post' };
@@ -185,7 +185,10 @@ export async function postStatementCharge(
 
   const posted = await postJournal(sb, {
     companyId,
-    entryDate: isoDay(batch.period_to) || isoDay(new Date().toISOString()),
+    /* Dated by the payout for the same reason the transaction lines are: this
+       charge is money the bank did not receive, so it belongs on the day the
+       rest of that payout landed. */
+    entryDate: isoDay(batch.paid_on) || isoDay(batch.period_to) || isoDay(new Date().toISOString()),
     sourceType: 'SETTLEADJ',
     sourceDocNo: `SETTLEADJ-${batchId}`,
     narration: `${batch.acquirer_code} statement charge with no transaction behind it — ${(Math.abs(adjustment) / 100).toFixed(2)}`,
@@ -237,14 +240,14 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
 
   const { data: rowRaw, error: rowErr } = await sb
     .from('acc_settlement_rows')
-    .select('id, company_id, acquirer_code, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at, posted_je_no')
+    .select('id, batch_id, company_id, acquirer_code, txn_date, ref, gross_sen, fee_sen, net_sen, bucket, confirmed_at, posted_je_no')
     .eq('id', rowId)
     .eq('company_id', companyId)
     .maybeSingle();
   if (rowErr) return { ok: false, status: 'load_failed', reason: rowErr.message };
   if (!rowRaw) return { ok: false, status: 'not_found', reason: `settlement line ${rowId} not found` };
   const row = rowRaw as {
-    id: number; acquirer_code: string; txn_date: string; ref: string | null;
+    id: number; batch_id: number; acquirer_code: string; txn_date: string; ref: string | null;
     gross_sen: number; fee_sen: number; net_sen: number; bucket: string;
     confirmed_at: string | null; posted_je_no: string | null;
   };
@@ -277,6 +280,18 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
 
   const acq = await loadAcquirer(sb, companyId, row.acquirer_code);
   if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
+
+  /* THE DATE THE BANK LEG TAKES (owner decision, 2026-08-17). An acquirer does
+     not pay on the day the card is swiped — Public Bank's advice of 10 Aug
+     covered batches settled on the 7th, 8th and 9th. Dating the entry by the
+     swipe would put money in the bank account days before it is there, and
+     across a month end it would show in a month that never received it. When
+     the batch knows its payout day, that is the entry's date; the gap sits in
+     settlement-in-transit, which is the account that exists for it. */
+  const { data: batchRaw } = await sb.from('acc_settlement_batches')
+    .select('paid_on').eq('id', row.batch_id).maybeSingle();
+  const paidOn = isoDay((batchRaw as { paid_on?: string | null } | null)?.paid_on ?? '');
+  const entryDate = /^\d{4}-\d{2}-\d{2}$/.test(paidOn) ? paidOn : isoDay(row.txn_date);
 
   /* Which bank the net lands in is 决定4 information. Until the owner supplies
      it the company's default bank carries it — and says so, every time, rather
@@ -322,9 +337,7 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
 
   const posted = await postJournal(sb, {
     companyId,
-    /* The statement's transaction date drives the entry (§2.5: the document's
-       own date, never "the day the button was pressed"). */
-    entryDate: isoDay(row.txn_date),
+    entryDate,
     sourceType: 'SETTLE',
     sourceDocNo: `SETTLE-${row.id}`,
     narration: `${row.acquirer_code} settlement ${isoDay(row.txn_date)}${row.ref ? ` ref ${row.ref}` : ''} — ${chosen.map((p) => p.docNo).filter(Boolean).join(', ') || 'card payments'}`,

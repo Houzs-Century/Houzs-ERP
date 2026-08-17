@@ -21,7 +21,7 @@ import { postSoPayment, postSiPayment } from '../src/acc/payments';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched,
-  settlementIgnoreRow, settlementWatchlist, settlementExport,
+  settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
 } from '../src/scm/routes/accounting-settlement';
 
 const PORT = Number(process.env.DEMO_PORT ?? 8788);
@@ -160,7 +160,10 @@ const seed = () => ({
     soPay('m1', 'SO-2608-040', '2026-08-14T14:05:00', 230000, '861777', 'MBB'),
     soPay('m2', 'SO-2608-041', '2026-08-01T16:30:00', 389900, '002825', 'MBB'),
     // Card money nobody has settled — this is watchlist 1.
-    soPay('m3', 'SO-2607-088', '2026-07-18T09:30:00', 35000, 'A0900', 'MBB'),
+    soPay('m3', 'SO-2608-042', '2026-08-15T10:40:00', 100000, '536320', 'MBB'),   // T41AX  Amex
+    soPay('m4', 'SO-2608-043', '2026-08-15T15:55:00', 258800, '969745', 'MBB'),   // DVS04E debit
+    // Card money nobody has settled — this is watchlist 1.
+    soPay('m5', 'SO-2607-088', '2026-07-18T09:30:00', 35000, 'A0900', 'MBB'),
     soPay('h1', 'SO-2608-020', '2026-08-16T11:15:00', 180000, '663554', 'HLB'),
     soPay('h2', 'SO-2608-021', '2026-08-16T13:40:00', 59400, '674234', 'HLB'),
     soPay('h3', 'SO-2608-022', '2026-08-16T15:02:00', 120000, '014723', 'HLB'),
@@ -188,7 +191,8 @@ const seed = () => ({
     ['SO-2608-020', 'Chong Wei Ming'], ['SO-2608-021', 'Faridah Hassan'],
     ['SO-2608-022', 'Kedai Tilam Sejahtera'], ['SO-2608-023', 'Ng Choon Hoe'],
     ['SO-2608-030', 'Ooi Sze Ling'], ['SO-2608-040', 'Chan Wai Keong'],
-    ['SO-2608-041', 'Nurhaliza Yusof'], ['SO-2607-088', 'Wong Mei Ling'],
+    ['SO-2608-041', 'Nurhaliza Yusof'], ['SO-2608-042', 'Lim Chee Keong'],
+    ['SO-2608-043', 'Sarah Abdullah'], ['SO-2607-088', 'Wong Mei Ling'],
   ].map(([doc_no, customer_name]) => ({ doc_no, customer_name, customer_phone: null, company_id: CO })),
   sales_invoices: [
     { id: 'INV-2608-777', invoice_number: 'INV-2608-777', company_id: CO,
@@ -276,6 +280,7 @@ app.post(`${R}/batches/:id/confirm-matched`, settlementConfirmMatched as never);
 app.post(`${R}/rows/:id/confirm`, settlementConfirmRow as never);
 app.post(`${R}/rows/:id/ignore`, settlementIgnoreRow as never);
 app.get(`${R}/watchlist`, settlementWatchlist as never);
+app.get(`${R}/in-transit`, settlementInTransit as never);
 
 /* Demo-only: show what actually reached the ledger, and start over. */
 app.get('/api/scm/demo/ledger', (c) => c.json({

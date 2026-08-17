@@ -186,6 +186,10 @@ export const settlementUpload = guard(async (c) => {
     gross_sen: parsed.grossSen,
     fee_sen: parsed.feeSen,
     net_sen: parsed.netSen,
+    /* The day the money reached the bank, from the acquirer's payment advice.
+       Null keeps the old behaviour: the entry takes the statement line's date,
+       which is right for an acquirer that pays same-day. */
+    paid_on: DAY.test(String(body.paidOn ?? '')) ? String(body.paidOn) : null,
     stated_net_sen: parsed.statedNetSen,
     adjustment_sen: parsed.adjustmentSen,
     uploaded_by: (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null,
@@ -282,7 +286,7 @@ export const settlementBatches = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
   const { data, error } = await sb.from('acc_settlement_batches')
-    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, status, uploaded_by, created_at')
+    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, paid_on, status, uploaded_by, created_at')
     .eq('company_id', co.companyId)
     .order('created_at', { ascending: false })
     .limit(100);
@@ -301,7 +305,7 @@ export const settlementBatchDetail = guard(async (c) => {
   const sb = c.get('supabase');
 
   const { data: batch, error: bErr } = await sb.from('acc_settlement_batches')
-    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, status, created_at')
+    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, paid_on, status, created_at')
     .eq('id', batchId).eq('company_id', co.companyId).maybeSingle();
   if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
   if (!batch) return c.json({ error: 'not_found' }, 404);
@@ -550,6 +554,90 @@ export const settlementWatchlist = guard(async (c) => {
     recordedNotArrived: recorded.sort((a, b) => b.ageDays - a.ageDays),
     arrivedNotRecorded: stranded,
     clean: recorded.length === 0 && stranded.length === 0,
+  });
+});
+
+/* GET /in-transit — WHOSE money is sitting in settlement-in-transit, line by
+   line (the brief's 在途结算款账龄, §3.7 — "刷卡多久还没到账，按收单行分").
+   The owner asked for it in these words: he needs to see that a customer has
+   paid but the money has not arrived or been reconciled yet, in DETAIL, not as
+   a balance. Two states, because they mean different things:
+     • not on any statement yet  — the acquirer has not reported it
+     • matched, not yet posted   — reported, waiting to be confirmed
+   Live from the payments and the match table; nothing cached (§2.3), so this
+   list and the 320-0000 balance can never tell different stories. */
+export const settlementInTransit = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+  const to = DAY.test(c.req.query('to') ?? '') ? (c.req.query('to') as string) : todayMyt();
+  const from = DAY.test(c.req.query('from') ?? '')
+    ? (c.req.query('from') as string)
+    : new Date(Date.parse(`${to}T00:00:00Z`) - 180 * 86_400_000).toISOString().slice(0, 10);
+
+  const { data: acqRaw, error: aErr } = await sb.from('acc_acquirers')
+    .select('code, display_name, date_tolerance_days')
+    .eq('company_id', co.companyId).eq('is_active', true).order('code');
+  if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
+
+  /* Which payments a settlement line has claimed, and whether that line has
+     actually reached the ledger yet. */
+  const { data: matchRaw, error: mErr } = await sb.from('acc_settlement_matches')
+    .select('payment_source, payment_id, settlement_row_id').eq('company_id', co.companyId);
+  if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
+  const { data: rowRaw, error: rErr } = await sb.from('acc_settlement_rows')
+    .select('id, confirmed_at, posted_je_no').eq('company_id', co.companyId);
+  if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
+  const postedRow = new Map(((rowRaw ?? []) as Array<{ id: number; confirmed_at: string | null; posted_je_no: string | null }>)
+    .map((r) => [Number(r.id), Boolean(r.confirmed_at && r.posted_je_no)]));
+  const claim = new Map<string, boolean>();
+  for (const m of (matchRaw ?? []) as Array<{ payment_source: string; payment_id: string; settlement_row_id: number }>) {
+    claim.set(`${m.payment_source}:${m.payment_id}`, postedRow.get(Number(m.settlement_row_id)) === true);
+  }
+
+  const days = (a: string, b: string) =>
+    Math.round(Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / 86_400_000);
+
+  const lines: Array<Record<string, unknown>> = [];
+  for (const a of (acqRaw ?? []) as Array<{ code: string; display_name: string; date_tolerance_days: number }>) {
+    const got = await loadPaymentCandidates(sb, co.companyId, a, from, to);
+    if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
+    for (const p of got.payments) {
+      const state = claim.get(`${p.source}:${p.id}`);
+      if (state === true) continue; // already in the bank, out of transit
+      lines.push({
+        acquirerCode: a.code,
+        source: p.source,
+        paymentId: p.id,
+        docNo: p.docNo,
+        paidOn: p.paidOn,
+        amountSen: p.amountSen,
+        approvalCode: p.approvalCode,
+        ageDays: days(p.paidOn, to),
+        state: state === false ? 'MATCHED_NOT_POSTED' : 'NOT_ON_A_STATEMENT',
+      });
+    }
+  }
+  lines.sort((x, y) => Number(y.ageDays) - Number(x.ageDays));
+
+  /* Ageing, by acquirer — the shape the brief asks for, and the one that makes
+     a stale balance impossible to miss. */
+  const buckets = (n: number) => (n <= 7 ? '0-7' : n <= 14 ? '8-14' : n <= 30 ? '15-30' : 'over-30');
+  const byAcquirer: Record<string, Record<string, { count: number; sen: number }>> = {};
+  for (const l of lines) {
+    const a = String(l.acquirerCode);
+    const b = buckets(Number(l.ageDays));
+    ((byAcquirer[a] ??= {})[b] ??= { count: 0, sen: 0 });
+    byAcquirer[a][b].count += 1;
+    byAcquirer[a][b].sen += Number(l.amountSen);
+  }
+
+  return c.json({
+    from,
+    to,
+    totalSen: lines.reduce((s, l) => s + Number(l.amountSen), 0),
+    ageing: byAcquirer,
+    lines,
   });
 });
 

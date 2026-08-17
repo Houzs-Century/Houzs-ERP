@@ -35,7 +35,7 @@ import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
 import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched,
-  settlementIgnoreRow, settlementWatchlist, settlementExport,
+  settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
 } from './accounting-settlement';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -82,6 +82,7 @@ accounting.post('/settlement/batches/:id/confirm-matched', settlementConfirmMatc
 accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
 accounting.get('/settlement/watchlist', settlementWatchlist);
+accounting.get('/settlement/in-transit', settlementInTransit);
 
 /* ════════════════════════════════════════════════════════════════════════
    Helpers

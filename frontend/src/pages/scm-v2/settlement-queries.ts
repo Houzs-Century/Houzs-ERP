@@ -81,6 +81,8 @@ export type SettlementBatch = {
   /** lines net minus stated net: a charge the transactions do not explain. */
   adjustment_sen: number;
   adjustment_je_no: string | null;
+  /** The day the money reached the bank, from the acquirer payment advice. */
+  paid_on: string | null;
   status: string;
   uploaded_by: string | null;
   created_at: string;
@@ -158,6 +160,8 @@ export const useUploadStatement = () => {
       summaryFeeSen?: number | null;
       /** YYYY-MM — only needed when the file's dates carry no year. */
       statementMonth?: string | null;
+      /** YYYY-MM-DD — the day the acquirer paid it into the bank. */
+      paidOn?: string | null;
     }) =>
       authedFetch<UploadResult>(`/accounting/settlement/batches`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['settlement-batches'] }); },
@@ -216,6 +220,42 @@ export type Watchlist = {
   recordedNotArrived: Array<SettlementCandidate & { ageDays: number; acquirerCode: string }>;
   arrivedNotRecorded: Array<{ id: number; acquirer_code: string; txn_date: string; ref: string | null; gross_sen: number; notes: string | null }>;
 };
+
+export type AgeBucket = '0-7' | '8-14' | '15-30' | 'over-30';
+
+export type InTransitLine = {
+  acquirerCode: string;
+  source: 'SOPAY' | 'SIPAY';
+  paymentId: string;
+  docNo: string;
+  paidOn: string;
+  amountSen: number;
+  approvalCode: string | null;
+  ageDays: number;
+  /** NOT_ON_A_STATEMENT — the acquirer has not reported it yet.
+   *  MATCHED_NOT_POSTED — reported and matched, waiting to be confirmed. */
+  state: 'NOT_ON_A_STATEMENT' | 'MATCHED_NOT_POSTED';
+};
+
+export type InTransit = {
+  from: string;
+  to: string;
+  totalSen: number;
+  /** acquirer -> age bucket -> total. A bucket with nothing in it is ABSENT,
+      so the type is Partial: the screen has to ask before it reads. */
+  ageing: Record<string, Partial<Record<AgeBucket, { count: number; sen: number }>>>;
+  lines: InTransitLine[];
+};
+
+/** Whose money is sitting in settlement-in-transit, line by line — the customer
+    paid, and it has not reached the bank yet. */
+export const useInTransit = () => useQuery({
+  queryKey: ['settlement-in-transit'],
+  queryFn: () => authedFetch<InTransit>(`/accounting/settlement/in-transit`),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
 
 export const useSettlementWatchlist = (params: { from?: string; to?: string; acquirer?: string } = {}) => {
   const qs = new URLSearchParams();
