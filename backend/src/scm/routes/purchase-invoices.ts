@@ -5,8 +5,8 @@ import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { qtyCapRefusal } from '../lib/qty-cap';
-import { buildVariantSummary, isServiceLine } from '../shared';
-import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
+import { buildVariantSummary } from '../shared';
+import { normalizeAllocationMethod } from '../lib/landed-allocation';
 import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
@@ -31,6 +31,12 @@ import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
 import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { refuseMigratedSources } from '../lib/migrated-chain';
+/* Extracted 2026-08-17 to make room for the guards in this file. Mechanical
+   blocks only — every guard stayed, because the unlinked-line suite proves them
+   per HANDLER against this router's own source text. */
+import { recomputePiTotals, reallocatePiCharges } from '../lib/pi-money-rollups';
+import { PI_AUDIT_FIELDS, loadPiAuditMeta, recordPiCreate } from '../lib/pi-audit-trail';
+import { attachPiAssignedSos } from '../lib/pi-assigned-sos';
 
 /* ERP -> AutoCount Purchase Invoice edit. AcSyncService.cs:446 is `case "PI"`.
    See queueAcDoEdit for the shape. */
@@ -46,36 +52,6 @@ async function queueAcPiEdit(c: any, id: string, retire: AcRetiredLine[] = []): 
 
 export const purchaseInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoices.use('*', supabaseAuth);
-
-/* ── Audit trail (migration 0139 / lib/entity-audit) ───────────────────────────
-   Action vocabulary for this module:
-     POST   — DRAFT -> POSTED. The AP liability is booked (Dr Inventory / Cr
-              Payables) and the GRN lines are consumed.
-     CANCEL — status -> CANCELLED (the document event).
-     REVERSE— the AP/GL contra that follows a cancel (the LEDGER event), kept
-              apart from the CANCEL for the same reason payment-vouchers keeps
-              them apart: a reversal that FAILED must be visible as such.
-     UPDATE — header edits and payments.
-   No DELETE: this module never hard-deletes an invoice. */
-const PI_AUDIT_FIELDS: Array<[string, string]> = [
-  ['supplierId', 'supplier_id'], ['supplierInvoiceRef', 'supplier_invoice_ref'],
-  ['invoiceDate', 'invoice_date'], ['dueDate', 'due_date'],
-  ['currency', 'currency'], ['notes', 'notes'],
-  ['exchangeRate', 'exchange_rate'],
-];
-
-/* CREATE was added after the post/payment/cancel/header pass, and it is recorded
-   LATE for a reason. All three create paths write the header first and DELETE it
-   again — on a failed line insert, and again when the post-insert over-invoice
-   re-verification finds this PI would over-bill a GRN line. A CREATE row emitted
-   at insert time would describe an invoice that never existed, against a GRN
-   whose invoiced_qty never moved. recordPiCreate re-reads the persisted row
-   rather than echoing the payload, which makes that ordering self-enforcing: a
-   rolled-back header reads back as nothing and no row is written.
-
-   The line vocabulary lives in lib/entity-audit-fields (imported above) — the
-   camelCase half is what AUDIT_FINANCE_FIELDS gates on and needs a test that can
-   import it without dragging Hono along. */
 
 const HEADER =
   'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_centi, tax_centi, total_centi, paid_centi, status, notes, posted_at, created_at, created_by, updated_at';
@@ -135,75 +111,6 @@ async function coveredGrnIds(
   return { ids: out, error: null };
 }
 
-/* The PI's identity for an audit row written from a LINE handler, which has the
-   line in hand but not the parent. Best-effort by design: the writer is
-   fail-open, so an unresolved doc number costs the row its human key and
-   nothing else. */
-async function loadPiAuditMeta(
-  sb: Variables['supabase'],
-  piId: string,
-): Promise<{ docNo: string | null; companyId: number | null; status: string | null }> {
-  try {
-    const { data } = await sb.from('purchase_invoices')
-      .select('invoice_number, company_id, status').eq('id', piId).maybeSingle();
-    const row = (data ?? null) as { invoice_number?: string | null; company_id?: number | null; status?: string | null } | null;
-    return { docNo: row?.invoice_number ?? null, companyId: row?.company_id ?? null, status: row?.status ?? null };
-  } catch {
-    return { docNo: null, companyId: null, status: null };
-  }
-}
-
-/**
- * Record the CREATE of a PI that has SURVIVED its handler.
- *
- * Reads the row back rather than taking the caller's payload: the doc number is
- * minted server-side, the currency and exchange rate are resolved server-side,
- * the totals come off the lines — and a header a compensating branch already
- * deleted reads back as nothing, so this cannot write a CREATE row for an
- * invoice that was rolled back.
- */
-async function recordPiCreate(
-  sb: Variables['supabase'],
-  actor: Variables['houzsUser'],
-  fallbackCompanyId: number | null | undefined,
-  piId: string,
-  lineCount: number,
-  note?: string,
-): Promise<void> {
-  let row: Record<string, unknown> | null = null;
-  try {
-    const { data } = await sb.from('purchase_invoices')
-      .select('id, invoice_number, status, company_id, supplier_id, supplier_invoice_ref, ' +
-        'purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, total_centi')
-      .eq('id', piId).maybeSingle();
-    row = (data ?? null) as Record<string, unknown> | null;
-  } catch { /* best-effort */ }
-  if (!row) return; // rolled back (or unreadable): a CREATE row here would be a lie
-  await recordEntityAudit(sb, {
-    entityType: 'PURCHASE_INVOICE',
-    entityId: piId,
-    entityDocNo: (row.invoice_number as string | null) ?? null,
-    action: 'CREATE',
-    actor,
-    companyId: (row.company_id as number | null) ?? fallbackCompanyId,
-    statusSnapshot: (row.status as string | null) ?? null,
-    note,
-    fieldChanges: compactChanges([
-      fieldChange('status', null, row.status ?? null),
-      fieldChange('supplierId', null, row.supplier_id ?? null),
-      fieldChange('supplierInvoiceRef', null, row.supplier_invoice_ref ?? null),
-      fieldChange('purchaseOrderId', null, row.purchase_order_id ?? null),
-      fieldChange('grnId', null, row.grn_id ?? null),
-      fieldChange('invoiceDate', null, row.invoice_date ?? null),
-      fieldChange('dueDate', null, row.due_date ?? null),
-      fieldChange('currency', null, row.currency ?? null),
-      fieldChange('exchangeRate', null, row.exchange_rate ?? null),
-      /* INTEGER SEN, straight off the column. */
-      fieldChange('totalCenti', null, row.total_centi ?? null),
-      fieldChange('lineCount', null, lineCount),
-    ]),
-  });
-}
 
 const nextNum = async (sb: any, prefix: string, c: any): Promise<string> => {
   const d = new Date();
@@ -212,172 +119,6 @@ const nextNum = async (sb: any, prefix: string, c: any): Promise<string> => {
   return mintMonthlyDocNo(sb, 'purchase_invoices', 'invoice_number', `${p}${prefix}-${yymm}`);
 };
 
-/* ── Recompute PI header money rollups (mirror recomputeGrnTotals) ─────────
-   Sum line_total_centi across purchase_invoice_items → write subtotal_centi,
-   then total_centi = subtotal + tax_centi (PI carries a stored tax that GRN
-   does NOT, so we ADD it into total here). paid_centi is untouched — Balance
-   (total - paid) is derived in the UI; payment recording stays on /payment.
-
-   Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
-   recomputeTotals (mfg-sales-orders.ts), which carries the full rationale.
-   See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
-async function recomputePiTotals(sb: any, piId: string) {
-  const [itemsRes, headerRes] = await Promise.all([
-    sb.from('purchase_invoice_items').select('line_total_centi').eq('purchase_invoice_id', piId),
-    sb.from('purchase_invoices').select('tax_centi').eq('id', piId).maybeSingle(),
-  ]);
-  /* Neither read's error was looked at, and `?? []` / `?? 0` cannot tell a failed
-     read from a real empty/zero: a blip on the ITEMS read wrote total_centi ZERO
-     on an invoice the supplier is owed for, and a blip on the HEADER read wrote a
-     total silently SHORT by the tax. Both are what this AP figure is paid from.
-     The ERROR is the signal, never the emptiness: a genuinely line-less PI, and a
-     PI that genuinely carries no tax, both resolve error === null and MUST still
-     fall through. Neither of these two is more urgent than the other, so both
-     abort before any write rather than half-writing from the half we trust. */
-  if (itemsRes.error) {
-    /* eslint-disable-next-line no-console */
-    console.error('[pi-recompute] item read failed — header left unchanged:', piId, itemsRes.error.message);
-    return;
-  }
-  if (headerRes.error) {
-    /* eslint-disable-next-line no-console */
-    console.error('[pi-recompute] tax read failed — header left unchanged:', piId, headerRes.error.message);
-    return;
-  }
-  const subtotal = (itemsRes.data ?? []).reduce((s: number, r: any) => s + (r.line_total_centi ?? 0), 0);
-  const tax = (headerRes.data as { tax_centi?: number } | null)?.tax_centi ?? 0;
-  const { error: updErr } = await sb.from('purchase_invoices').update({
-    subtotal_centi: subtotal,
-    total_centi: subtotal + tax,
-    updated_at: new Date().toISOString(),
-  }).eq('id', piId);
-  if (updErr) {
-    /* eslint-disable-next-line no-console */
-    console.error('[pi-recompute] header update failed — totals left STALE:', piId, updErr.message);
-  }
-}
-
-/* ── PI-level landed freight ("平摊") — reallocatePiCharges ──────────────────
-   Migration 0082 added purchase_invoice_items.allocated_charge_centi and recost.ts
-   folds it into the FIFO lot cost — but until now NO write path ever filled it, so
-   the column sat at 0 forever and freight billed on the SUPPLIER'S INVOICE (the
-   normal shape for RMB / cross-border sourcing, where freight arrives on the PI
-   rather than the GRN) raised the PI total and the AP but never reached inventory:
-   COGS understated permanently. PurchaseInvoiceNew already ships the picker, sends
-   allocationMethod, and its preview names this function as the authoritative
-   splitter — this is that function.
-
-   POOL = PI-NATIVE service lines only (grn_item_id IS NULL). A service line COPIED
-   DOWN from the GRN by /from-grn keeps its grn_item_id, and that charge was ALREADY
-   capitalised into the lot at receive time (grn_items.allocated_charge_centi, which
-   recost re-adds separately) — pooling it again here would capitalise the same
-   freight twice. This is what "each capitalises EXACTLY ONCE" means in recost.ts.
-
-   Allocated across ALL goods lines, mirroring the GRN allocator. A goods line with
-   no grn_item_id owns no lot, so its share simply doesn't capitalise — the goods
-   aren't in inventory to carry it.
-
-   Pure-on-empty: no native service line ⇒ pool 0 ⇒ allocation 0 everywhere ⇒ the
-   column stays 0 and every existing PI recosts byte-for-byte as before.
-
-   METHOD IS NOT PERSISTED: scm.purchase_invoices has no allocation_method column
-   (0082 added one to grns only). The create paths pass the operator's choice; a
-   later line edit has nothing to read it back from and re-splits by QTY. The pool
-   still sums exactly either way — only the basis degrades. Persisting it needs a
-   migration + a column. */
-async function reallocatePiCharges(
-  sb: any,
-  piId: string,
-  method: ReturnType<typeof normalizeAllocationMethod> = 'QTY',
-  companyId?: number | null,
-): Promise<void> {
-  try {
-    const [headRes, itemsRes] = await Promise.all([
-      sb.from('purchase_invoices').select('exchange_rate').eq('id', piId).maybeSingle(),
-      sb.from('purchase_invoice_items')
-        .select('id, grn_item_id, material_code, item_group, qty, unit_price_centi, line_total_centi, allocated_charge_centi')
-        .eq('purchase_invoice_id', piId),
-    ]);
-    /* `?? 1` means "already MYR", so a failed read on an RMB/USD PI allocates the
-       freight pool at rate 1 and writes an allocated_charge_centi wrong by the
-       whole FX factor onto every goods line — which recost then capitalises into
-       the lot. The itemsRes read below fails closed (items = [] returns), but this
-       one silently invents an exchange rate. Returning matches this function's own
-       contract, stated in the catch: the PI's lines are already committed, a
-       hiccup logs + skips and the split re-converges on the next line write. A PI
-       that genuinely carries no rate resolves error === null and correctly uses 1. */
-    if (headRes.error) {
-      /* eslint-disable-next-line no-console */
-      console.error('[reallocatePiCharges] PI rate read failed — charge split left unchanged:', piId, headRes.error.message);
-      return;
-    }
-    const piRate = (headRes.data as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
-    const items = (itemsRes.data ?? []) as Array<{
-      id: string; grn_item_id: string | null; material_code: string; item_group: string | null;
-      qty: number | null; unit_price_centi: number | null; line_total_centi: number | null;
-      allocated_charge_centi: number | null;
-    }>;
-    if (items.length === 0) return;
-
-    /* Drop GRN-copied service lines BEFORE the allocator sees them: it classifies
-       by item_group/code alone and would otherwise pool a charge the GRN already
-       capitalised. They are not goods either, so removing them leaves the goods
-       basis untouched. */
-    const visible = items.filter((it) =>
-      !(it.grn_item_id && isServiceLine({ itemGroup: it.item_group, itemCode: it.material_code })));
-
-    // CBM basis needs each goods line's product volume; one round trip, default 0
-    // (the allocator falls back to QTY when the CBM Σ is 0).
-    const m3ByCode = new Map<string, number>();
-    const codes = [...new Set(visible.map((it) => it.material_code).filter(Boolean))];
-    if (codes.length > 0) {
-      // Company-scoped: `code` is shared, and the other company's volume would
-      // shift every goods line's share of the landed charge.
-      let volQ = sb.from('mfg_products').select('code, unit_m3_milli').in('code', codes);
-      if (companyId != null) volQ = volQ.eq('company_id', companyId);
-      const { data: prods } = await volQ;
-      for (const p of (prods ?? []) as Array<{ code: string; unit_m3_milli: number | null }>) {
-        m3ByCode.set(p.code, Number(p.unit_m3_milli ?? 0));
-      }
-    }
-
-    const alloc = allocateLandedCharges(
-      visible.map((it) => ({
-        id: it.id,
-        itemGroup: it.item_group ?? null,
-        materialCode: it.material_code,
-        qty: Number(it.qty ?? 0),
-        // Pool by the SERVICE line's line total; allocate ONTO the goods lines.
-        amountCenti: Number(it.line_total_centi ?? 0),
-        unitPriceCenti: Number(it.unit_price_centi ?? 0),
-        unitM3Milli: m3ByCode.get(it.material_code) ?? 0,
-      })),
-      method,
-      piRate,
-    );
-
-    /* Write the computed value (incl. resetting to 0) so a removed / re-split
-       charge is reflected — but only when there's something to reconcile, so a
-       plain goods-only PI issues no writes at all. Lines the allocator didn't
-       return (the service lines themselves) are forced to 0: recost re-adds the
-       charge of ANY line carrying a grn_item_id, so a row that used to be goods and
-       was later retyped as freight would otherwise keep injecting a stale charge. */
-    const anyToReset = items.some((it) => Number(it.allocated_charge_centi ?? 0) !== 0);
-    if (alloc.chargePoolMyr > 0 || anyToReset) {
-      const allocById = new Map(alloc.goods.map((g) => [g.id, g.allocatedChargeCenti]));
-      await Promise.all(items.map((it) => {
-        const next = allocById.get(it.id) ?? 0;
-        if (Number(it.allocated_charge_centi ?? 0) === next) return null;
-        return sb.from('purchase_invoice_items').update({ allocated_charge_centi: next }).eq('id', it.id);
-      }).filter(Boolean));
-    }
-  } catch (e) {
-    // Best-effort (audit-DLQ pattern): the PI's own lines already committed; a
-    // freight-split hiccup logs + skips and re-converges on the next line write.
-    // eslint-disable-next-line no-console
-    console.error('[reallocatePiCharges] failed:', piId, e);
-  }
-}
 
 /* ── Self-heal GRN invoiced counter (live-count model, mirrors recomputeSoPicked
    / recomputePoReceived) ────────────────────────────────────────────────────
@@ -618,90 +359,6 @@ const PI_STATUS_BUCKETS: Record<string, string[]> = {
   cancelled: ['CANCELLED'],
 };
 
-/* Collapsed "Assigned SO" column (owner 2026-07-31): a PI inherits its parent
-   PO's Assigned SO(s). Resolve the parent PO through the SAME chain the per-line
-   drill-down uses (pi.grn_id → grns.purchase_order_id → PO), so the list row and
-   its expansion never disagree, then batch the coverage for the whole page in
-   ONE pass (computeMrp runs once). Fail-soft: on any error the rows still return,
-   just without the column populated. */
-async function attachPiAssignedSos(
-  sb: any,
-  c: any,
-  rows: Array<{ id: string; grn_id?: string | null } & Record<string, unknown>>,
-): Promise<Array<Record<string, unknown>>> {
-  try {
-    const grnIds = [...new Set(rows.map((r) => r.grn_id).filter((x): x is string => !!x))];
-    const poByGrn = new Map<string, string>();
-    for (let k = 0; k < grnIds.length; k += 300) {
-      const chunk = grnIds.slice(k, k + 300);
-      if (chunk.length === 0) continue;
-      const { data: grnRows } = await scopeToCompany(
-        sb.from('grns').select('id, purchase_order_id'), c,
-      ).in('id', chunk);
-      for (const g of (grnRows ?? []) as Array<{ id: string; purchase_order_id: string | null }>) {
-        if (g.purchase_order_id) poByGrn.set(g.id, g.purchase_order_id);
-      }
-    }
-    const poIds = [...poByGrn.values()];
-    /* Each PI's OWN line codes (header ≡ ∪(drill lines), 2026-08-02): the drill
-       matches assignments into the PI's lines by material_code, so the header
-       cells roll up ONLY those SKUs — a partial-billing PI must not inherit
-       its parent PO's whole assignment history. */
-    const piIds = rows.map((r) => r.id).filter(Boolean);
-    const codesByPi = new Map<string, Set<string>>();
-    for (let k = 0; k < piIds.length; k += 300) {
-      const chunk = piIds.slice(k, k + 300);
-      if (chunk.length === 0) continue;
-      const { data: piLines } = await sb.from('purchase_invoice_items')
-        .select('purchase_invoice_id, material_code')
-        .in('purchase_invoice_id', chunk);
-      for (const l of (piLines ?? []) as Array<{ purchase_invoice_id: string; material_code: string | null }>) {
-        const code = (l.material_code ?? '').trim();
-        if (!code) continue;
-        const set = codesByPi.get(l.purchase_invoice_id) ?? new Set<string>();
-        set.add(code);
-        codesByPi.set(l.purchase_invoice_id, set);
-      }
-    }
-    /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped the goods,
-       per CODE via the SAME pi → grn → PO chain, filtered to the PI's codes. */
-    const [originsByPo, deliveredByPoCode] = await Promise.all([
-      resolvePoSoCoveragePerSkuForPos(sb, c, poIds),
-      resolveDeliveredByCodeForPos(sb, c, poIds),
-    ]);
-    return rows.map((r) => {
-      const poId = r.grn_id ? poByGrn.get(r.grn_id) : undefined;
-      const piCodes = codesByPi.get(r.id) ?? new Set<string>();
-      const origins = (poId ? originsByPo.get(poId) ?? [] : [])
-        .filter((o) => piCodes.has(o.itemCode));
-      const summary = summarizeOrigins(origins);
-      const doAgg = new Map<string, DeliveredDo>();
-      if (poId) {
-        const byCode = deliveredByPoCode.get(poId);
-        if (byCode) {
-          for (const code of piCodes) {
-            for (const d of byCode.get(code) ?? []) {
-              const prev = doAgg.get(d.doNo);
-              if (prev) prev.qty += d.qty;
-              else doAgg.set(d.doNo, { ...d });
-            }
-          }
-        }
-      }
-      return {
-        ...r,
-        assigned_sos: summary.assignedSos,
-        assigned_so_linked: summary.sourceLinked,
-        /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s) —
-           rolled up over the SAME code-filtered origins (header ≡ ∪(lines)). */
-        assigned_so_provenance: summary.provenanceSos,
-        delivered_dos: [...doAgg.values()].sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true })),
-      };
-    });
-  } catch {
-    return rows.map((r) => ({ ...r, assigned_sos: [], assigned_so_linked: false, assigned_so_provenance: [], delivered_dos: [] }));
-  }
-}
 
 purchaseInvoices.get('/', async (c) => {
   const sb = c.get('supabase');
