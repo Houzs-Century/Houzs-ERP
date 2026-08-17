@@ -32,6 +32,9 @@ import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurren
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
+import {
+  parsePoIdScope, loadOutstandingPoLines, toOutstandingPoItems,
+} from '../lib/outstanding-po-lines';
 import { checkReceiptCosts, refuseZeroCostReceipt, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
@@ -60,7 +63,6 @@ import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers'
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
-import { fetchOutstandingPoItems, type OutstandingPoItemRow, type OutstandingPoItemsClient } from '../lib/outstanding-po-items';
 import { escapeForOr } from '../lib/postgrest-search';
 import { recordEntityAudit, assertAuditWritable, auditUnavailableBody, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
@@ -1262,12 +1264,17 @@ grns.get('/', async (c) => {
 
 /* ── GET /outstanding-po-items ──────────────────────────────────────────
    Returns a flat list of PO line items with remaining qty > 0. Used by
-   the multi-select "GRN from POs (line-level)" picker at /grns/from-po.
+   the multi-select "GRN from POs (line-level)" picker at /grns/from-po,
+   and by the mobile convert wizard.
    Filters:
-     - parent PO status must be SUBMITTED or PARTIALLY_RECEIVED (in the QUERY)
-     - line item must have qty - received_qty > 0 (in JS — PostgREST cannot
-       compare two columns, so this one cannot move into the statement)
+     - parent PO status must be SUBMITTED or PARTIALLY_RECEIVED — IN SQL
+     - `?poId=a,b,c` scopes to those POs — IN SQL
+     - line item must have qty - received_qty > 0 — in JS, because PostgREST
+       cannot compare two columns
    Shape mirrors the GET /outstanding-so-items pattern on mfgPurchaseOrders.
+   Also returns `scope`, the facts an EMPTY answer needs in order to say
+   something true. See lib/outstanding-po-lines.ts for the three mechanisms
+   that used to make an unreceived PO read as fully received.
 
    IMPORTANT (route ordering): this STATIC path MUST be registered before
    the `/:id` param route below — otherwise Hono matches `/:id` first and
@@ -1275,95 +1282,48 @@ grns.get('/', async (c) => {
    2026-05-28, same class as the PO-from-SO shadowing.) */
 grns.get('/outstanding-po-items', async (c) => {
   const sb = c.get('supabase');
-  /* The read — company scope, the status filter, and the pagination that
-     replaced a `.limit(500)` over a UUID ordering — lives in scm/lib so it can
-     be tested without a Hono context. RECEIVABLE_PO_STATUSES (`:191`) is passed
-     in rather than re-listed: this handler used to duplicate that pair. */
-  /* Cast on the CLIENT only. supabase-js's builder generics are deep enough
-     that structurally matching them here is `TS2589: excessively deep`; the ROW
-     type stays honest, which is the half that matters (see the nullability note
-     in outstanding-po-items.ts). */
-  const { data, error } = await fetchOutstandingPoItems(
-    sb as unknown as OutstandingPoItemsClient, c, RECEIVABLE_PO_STATUSES,
-  );
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const rows = data ?? [];
-  type Row = OutstandingPoItemRow;
-
-  /* Warehouse-lock fix (Agent C 2026-05-31, bug #1 "No outstanding PO lines") —
-     the warehouse a PO line ships into is the LINE's own warehouse_id when set,
-     falling back to the PO header's purchase_location_id (the per-line warehouse
-     OVERRIDES the header — see schema comment on purchase_order_items.warehouse_id).
-     The GRN's warehouse_id is set from this same effective value at create time, so
-     the append-picker's lock (GrnFromPo: r.warehouseLocationId === grn.warehouse_id)
-     only matched when both happened to use the header. When a PO carried only a
-     per-line warehouse (header purchase_location_id NULL), every outstanding line
-     was filtered out → "No outstanding PO lines". Key the lock off the effective
-     warehouse so genuinely-outstanding lines surface. */
-  const effWh = (r: Row): string | null => r.warehouse_id ?? r.po.purchase_location_id ?? null;
-
-  // Resolve each line's effective warehouse code/name in one round trip.
-  const whIds = [...new Set(rows.map((r) => effWh(r)).filter((x): x is string => Boolean(x)))];
-  const whById = new Map<string, { code: string; name: string }>();
-  if (whIds.length > 0) {
-    const { data: whs } = await sb.from('warehouses').select('id, code, name').in('id', whIds);
-    for (const w of (whs ?? []) as Array<{ id: string; code: string; name: string }>) {
-      whById.set(w.id, { code: w.code, name: w.name });
-    }
-  }
-
-  const outstanding = rows.map((r) => {
-    const effWhId = effWh(r);
-    const wh = effWhId ? whById.get(effWhId) ?? null : null;
-    return {
-      poItemId:        r.id,
-      poId:            r.po.id,
-      poDocNo:         r.po.po_number,
-      itemCode:        r.material_code,
-      /* Owner 2026-07-27 — the SUPPLIER's own code, snapshotted on the PO line
-         at raise time (#1189). Carried so the New-GRN line (and the grn_items
-         snapshot it saves) shows the code the supplier's delivery note uses. */
-      supplierSku:     r.supplier_sku ?? null,
-      description:     r.description ?? r.material_name,
-      itemGroup:       r.item_group ?? '',
-      qty:             r.qty,
-      receivedQty:     r.received_qty ?? 0,
-      remainingQty:    r.qty - (r.received_qty ?? 0),
-      unitPriceCenti:  r.unit_price_centi,
-      warehouseId:     r.warehouse_id,
-      variants:        r.variants,
-      /* Delivery-carry — surface the PO line's EFFECTIVE (latest revised)
-         delivery date so it can ride into the converted GRN line (Deliverable
-         5). Migration 0180: MAX over non-null of [delivery_date, _2, _3, _4].
-         supabase-js returns snake_case, and Row types them, so read directly. */
-      deliveryDate:    effectiveDelivery(
-        r.delivery_date,
-        r.supplier_delivery_date_2,
-        r.supplier_delivery_date_3,
-        r.supplier_delivery_date_4,
-      ),
-      supplierId:      r.po.supplier_id,
-      supplierCode:    r.po.supplier?.code ?? '',
-      supplierName:    r.po.supplier?.name ?? '',
-      poDate:          r.po.po_date,
-      /* Migration 0180 — header EFFECTIVE (latest revised) delivery date for the
-         "Expected" column. MAX over non-null of [expected_at, _2, _3, _4]. */
-      expectedAt:      effectiveDelivery(
-        r.po.expected_at,
-        r.po.supplier_delivery_date_2,
-        r.po.supplier_delivery_date_3,
-        r.po.supplier_delivery_date_4,
-      ),
-      /* Warehouse-lock (Deliverable 4) — the line's EFFECTIVE ship-into warehouse
-         (per-line warehouse_id, else PO header purchase_location_id). This is the
-         GRN's receive-into warehouse. One warehouse per GRN. */
-      warehouseLocationId:   effWhId,
-      warehouseLocationCode: wh?.code ?? null,
-      warehouseLocationName: wh?.name ?? null,
-    };
+  /* ONE AUTHORITY FOR THIS READ. #2367 landed the same truncation fix on main as
+     `lib/outstanding-po-items.ts` while this branch landed it as
+     `lib/outstanding-po-lines.ts`. Keeping both would have left the module whose
+     header says "three properties this must keep" with ZERO callers — its tests
+     would go on passing about code the endpoint no longer runs, which is the
+     disarmed-tripwire failure this repo already pays for. The `-lines` module is
+     the superset (it also pushes `?poId=` into SQL and reports WHY an empty
+     answer is empty), so `-items` was deleted in the merge and every assertion
+     its suite made was carried into `outstanding-po-lines.test.ts` as a
+     BEHAVIOURAL test of `loadOutstandingPoLines`, not a source-text one. */
+  /* The scope the operator arrived with. Applied in SQL, not in the browser:
+     the old code filtered `?poId=` client-side over an already-truncated list,
+     so scoping could only narrow the window and never recover a PO that fell
+     outside it. That is the owner's 2026-08-17 zero-row screen. */
+  const requestedPoIds = parsePoIdScope(c.req.query('poId'));
+  /* The read lives in lib/outstanding-po-lines.ts: paged rather than capped,
+     scoped in SQL, and it reports WHY an empty answer is empty. Both predicates
+     are handed IN — `scopeToCompany` because items carry company_id since mig
+     0083 and it must fail closed when the company context cannot resolve (owner
+     2026-08-10 "为什么 houzs 的数据进到去 2990": this picker used to return every
+     company's lines), and `isReceivablePoStatus` because it is the same predicate
+     the create paths gate on, so the picker cannot offer what they refuse. */
+  const loaded = await loadOutstandingPoLines({
+    sb,
+    scopeQuery: (q) => scopeToCompany(q, c),
+    requestedPoIds,
+    isReceivable: isReceivablePoStatus,
   });
+  // `!== null`, not truthiness: an empty-string message is falsy, so TS cannot
+  // discriminate the union on `if (loaded.error)` and neither can a reader.
+  if (loaded.error !== null) return c.json({ error: 'load_failed', reason: loaded.error }, 500);
+  const { rows, scope } = loaded;
 
-  return c.json({ items: outstanding });
+  /* The wire shape, including the second round trip that resolves each line's
+     effective warehouse. Lives beside the read, in the same module, so the
+     picker's contract is one file. */
+  const outstanding = await toOutstandingPoItems(sb, rows, effectiveDelivery);
+
+  /* `scope` is the WHY behind an empty `items`. Returned as data, not as a
+     sentence: the desktop picker and the mobile convert wizard read this same
+     endpoint, so the wording belongs to each surface and the facts belong here. */
+  return c.json({ items: outstanding, scope });
 });
 
 /* Per-GRN-line downstream breakdown — for each GRN item id, the documents it was

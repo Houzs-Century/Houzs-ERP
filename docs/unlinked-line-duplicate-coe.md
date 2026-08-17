@@ -120,6 +120,77 @@ anything, and refusing it would push operators back to the workaround that
 created this. What is refused is narrower and exact: **delivering what the order
 asked for while recording that the order did not ask for it.**
 
+## 5a. The sixth guard, reviewed — three more ways to the same payment
+
+*2026-08-17. The GRN -> Purchase Invoice guard was written, then read back by
+three independent reviews before it shipped. All three agreed the PREDICATE was
+right — it refuses the double-bill shape and lets a freight or service line
+through — and all three found the same thing wrong with its REACH. A guard on the
+right rule in the wrong places is the "four guards read as a closed chain"
+mistake one layer down, so the findings are recorded here rather than only in the
+commit.*
+
+**1. It was checked against ONE receipt, and an invoice covers several.**
+A purchase invoice is line-level multi-receipt by design — owner 2026-08-06,
+recorded in migration `0267_grn_outstanding_line_level.sql`: *"the PI header's
+`grn_id` is only the PRIMARY note ref, while the authoritative linkage is per
+line"*. `/from-grn-items` buckets picks by `supplier|currency|rate` and stamps
+`grn_id: bucket.grnIds[0]`. The guard read that one ref, so an invoice covering
+two notes accepted a hand-typed line for the SECOND note's material — not on note
+one, therefore "genuinely ad-hoc", therefore allowed — while note two's line kept
+reading fully outstanding. The refused shape, one note over. The receipt set is
+now the header ref UNION every receipt reachable through the invoice's own linked
+lines, which is the walk `purchase-invoices.ts` already does twice for READS.
+
+**2. The line PATCH had no guard, and the shipped UI drives it.**
+`PATCH /:id/items/:itemId` maps `materialCode -> material_code` and never touches
+`grn_item_id`. So the shape assembles in two legal steps: add a line for a
+material the receipt does NOT contain (correctly allowed), then edit that line's
+product to one it DOES. Neither the qty cap nor the invoiced-qty recount fires,
+because both read the STORED link, which is still null — while the invoice total,
+the AP re-post and the AutoCount edit all move. **The same edit-path gap exists on
+every sibling chain**: `grns.ts`, `purchase-returns.ts`, `delivery-returns.ts` and
+`sales-invoices.ts` all map an item code in a line PATCH whose handler calls no
+unlinked guard. Only the PI one is closed here, because only that one bills money;
+the other four are §8.
+
+**3. The guard's own read FAILED OPEN.**
+An empty parent-code set is an unconditional pass (`do-unlinked-so-lines.ts`:
+`if (ordered.size === 0) return [];`), and the read that filled it dropped its
+error. A statement timeout therefore answered *"nothing to find"* and let the line
+through in silence — the same fail-open that `piLocked`, in the very same router,
+was explicitly fixed for: *"A failed read must never read as an absence when the
+absence is what authorises the write."* `findUnlinkedPiLines` now returns a
+verdict and every call site refuses with 500 `unlinked_check_failed`.
+
+**4. Not an unlinked line at all: the DRAFT confirm never re-checked the cap.**
+Both over-invoice re-sums exclude DRAFT invoices — correct, because a draft
+consumes nothing — on the strength of a comment claiming *"The cap is re-checked
+at confirm (recomputeGrnInvoiced clamps to qty_accepted), so a DRAFT that would
+over-bill is caught the moment it's confirmed"*. It was not. `recomputeGrnInvoiced`
+CLAMPS (`Math.min(accepted, inv)`) and is contractually *"best-effort, never
+throws"*, so it cannot refuse anything. Two clerks each drafting an invoice for
+all 12 units of a 12-unit receipt line both confirmed, both posted AP, and the
+clamp left `invoiced_qty` reading 12 of 12 — **every counter a reconciliation
+reads said the receipt was billed exactly once.** `PATCH /:id/post` now runs
+`verifyGrnLinesNotOverInvoiced` with the draft being confirmed COUNTED, before the
+`DRAFT -> POSTED` flip and again after it (reverting to DRAFT if a concurrent
+confirm won the race). That is the owner's per-line invariant — Σ(billed so far) +
+this bill <= received qty — and **not** an "already invoiced" flag: a receipt line
+still bills legitimately across several invoices, and every partial passes.
+
+**And the refusal message was wrong twice.** It told the operator to *"Pick those
+items from the Goods Receipt"* — on the invoice DETAIL editor, where it fires
+most, there is no receipt-line picker and the add payload cannot carry a
+`grnItemId`. A dead-ended operator retypes the code until it stops matching, which
+IS the double bill. It also promised a freight or service line was *"unaffected"*
+full stop, which is false when the receipt carries its own service line. Both
+corrected, and the receipt is now named by its NUMBER rather than its uuid.
+
+**The lesson, added to §9 as #5.** A guard is three things — a predicate, a set of
+call sites, and a failure mode — and reviewing only the first is how a correct
+rule ships with a hole in it.
+
 ## 6. Remediation — an owner action, in the app, not in SQL
 
 `2990-DO-2607-005` is the one to cancel: it is the unlinked duplicate, so
@@ -185,7 +256,8 @@ FIFO lot ledger on every SKU the DO touched.
 | Cancelling `2990-DO-2607-005` | Wei Siang | In the app. Reverses the second deduction and closes the stock discrepancy. |
 | Whether `so_doc_no` should become a real foreign key | Wei Siang | The free-text header is what let the label and the lines disagree. The guard now stops the harmful case, but the underlying column still permits a header that names an SO no line belongs to. |
 | ~~Accessory lines (pillows, 500 at a time) not showing an SO on screen~~ | — | **SHIPPED #1588.** PO / GRN / Purchase Invoice collapse an accessory line's per-order list to `N orders · M deliveries · see Stock Movement`. The counts stay deliberately — a blank cell would read as "unassigned", which is the same under-statement that hid this incident. The LINKS are untouched; only the presentation changed. |
-| ~~No guard on `delivery_return_items.do_item_id` or `purchase_return_items.grn_item_id`~~ | — | **SHIPPED.** `lib/return-unlinked-lines.ts` applies the same narrow rule to both return chains. A production scan on 2026-08-04 found **zero** affected rows on either, so these are preventative — which is the argument for adding them, not against: the cost is one query on a path already doing several, and the cost of not having it on the delivery side was three weeks of an invisible double deduction. **All four links in the chain are now guarded.** |
+| ~~No guard on `delivery_return_items.do_item_id` or `purchase_return_items.grn_item_id`~~ | — | **SHIPPED.** `lib/return-unlinked-lines.ts` applies the same narrow rule to both return chains. A production scan on 2026-08-04 found **zero** affected rows on either, so these are preventative — which is the argument for adding them, not against: the cost is one query on a path already doing several, and the cost of not having it on the delivery side was three weeks of an invisible double deduction. **All four links THIS ROW ENUMERATES are guarded.** (This sentence read "All four links in the chain" until 2026-08-17, and that wording is what let the GRN -> Purchase Invoice hole below sit unnoticed: four guards were mistaken for a closed chain. There were six.) |
+| ~~GRN -> Purchase INVOICE had no guard at all~~ | — | **SHIPPED 2026-08-17.** The row above said "All four links in the chain are now guarded", and that was true of the four it enumerated — but it was read as "the chain is closed", and it was not: the receiving chain's BILLING half was never done. `purchase-invoices.ts` contained the word `unlinked` **zero** times while its five siblings averaged five. `purchase_invoices.grn_id` names a GRN, `purchase_invoice_items.grn_item_id` is nullable (legitimately — a PI-native freight or service line has no receipt line), and every cap and recount in that router filters NULL links out first. So a hand-added GOODS line billed the receipt while `grn_items.invoiced_qty` never moved, the GRN line still read fully outstanding, and a second Purchase Invoice billed the same delivery — both posting AP and both enqueueing to AutoCount. This one costs MONEY rather than stock: the supplier is paid twice. Closed by `findUnlinkedPiLines` on **all three** paths that can reach the shape, plus a cap re-check at confirm — see §5a for what the first version of that guard still let through. |
 | Neither return module has a `docs/modules/` guide | Wei Siang | `delivery-returns.ts` and `purchase-returns.ts` were touched to add the guards above and have no module guide to update, which CLAUDE.md calls "the gap to close, not a licence to explore". Recorded rather than silently skipped. |
 
 ## 9. Lessons
@@ -202,3 +274,13 @@ FIFO lot ledger on every SKU the DO touched.
    "Ad-hoc" meant *not on the order*; it was reachable as *on the order but not
    linked*. When exempting a case from a guard, state which case in the
    predicate, not only in the comment.
+5. **A guard is a predicate, a set of call sites, AND a failure mode.** The sixth
+   guard's predicate was right on the day it was written and it still had three
+   holes: it was checked against one parent where the document has several, one
+   handler that could reach the shape had no call site at all, and its own read
+   failed OPEN so a database blip answered "nothing to find". Review all three, or
+   the correct rule ships with a hole in it. (§5a.)
+6. **A comment that claims a check exists is not a check.** "The cap is re-checked
+   at confirm" was in the source for weeks, load-bearing, and false — the function
+   it named clamps and never throws. When a note says another function enforces
+   something, open that function.

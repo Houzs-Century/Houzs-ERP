@@ -858,7 +858,7 @@ predicate even slightly stricter than AutoCount's own would turn working
 transfers into refusals with nobody able to see it first. The calls and their
 arguments are unchanged; only the text a failure carries is better.
 
-### 7c3. The target needs an ACCOUNT before the transfer — PROVEN (D15)
+### 7c3. The target needs an ACCOUNT before the transfer — PROVEN; D15 CLOSED
 
 **This is the cause of the week the delivery orders spent outside the account
 book**, and it was measured on the host on 2026-08-17, not argued from source.
@@ -905,29 +905,43 @@ debtor.
    than logging what it assigned: moving `SalesHeader` earlier *looked* like the
    fix and the document was still empty.
 3. **The sales and purchase arms are NOT symmetrical, on purpose.** On the sales
-   side `SalesHeader` now runs BEFORE the transfer — that is the shape proven at
-   `00:55:30`. On the purchase side `PurchaseHeader` still runs AFTER it: with
-   `transferMaster: true` the transfer copies the source PO's master (supplier,
-   currency, `DisplayTerm`) over the target, so a header applied first would be
-   partly overwritten, and `/po-to-gr` has never once succeeded, so there is no
-   run to compare against. Only the explicit `CreditorCode` assignment is carried
-   across. **Unverified on the purchase side** — it needs the host.
+   side `SalesHeader` runs BEFORE the transfer — the shape proven at `00:55:30`.
+   On the purchase side `PurchaseHeader` runs **on both sides of it**: once
+   inside the transfer primitive and once after. The trailing call is what makes
+   the ERP's `DocNo`, `DisplayTerm`, `Ref`, `Description` and `PurchaseLocation`
+   the values that survive, because the transfer copies the SOURCE document's
+   master over the target. It is idempotent on this path — every field is a plain
+   property assignment through `Set()`, and a conversion payload carries no UDF
+   at all, so `ApplyUdf` returns on its first line.
 
-**Half closed 2026-08-17 (D15).** `enqueueConvert` now sends `DebtorCode` on the
-two SALES conversions — `so_to_do` and `do_to_iv` — from `AC_DEBTOR_CODE`, the
-one account every ERP sales document goes to in this book, and the contract test
-asserts it on the wire.
+   > **CORRECTED 2026-08-17 (evening).** This bullet used to say
+   > `PurchaseHeader` "still runs AFTER it" and that the shape was **unverified
+   > on the purchase side**. Both halves are now settled by the host, and the
+   > correction is in the opposite direction from a tidy-up: the header runs
+   > twice, deliberately.
 
-The PURCHASE half is still open, for two reasons that are both about cost rather
-than principle: `scm.grns` and `scm.purchase_invoices` carry no supplier column,
-so a `CreditorCode` here means a `grn -> purchase_order -> supplier` join; and
-`po_to_gr` has never once succeeded anyway, failing earlier on
-`IndexOutOfRangeException: There is no row at position -1`. Both purchase
-conversions therefore rely on the service reading the creditor off the source
-document in the book.
+**CLOSED 2026-08-17 (D15, struck).** `enqueueConvert` sends the account on all
+four conversions: `DebtorCode` from `AC_DEBTOR_CODE` on the two sales ones, and
+`CreditorCode` / `CreditorName` on the two purchase ones, read off the SOURCE
+document's supplier. `dispatchOne` backfills the creditor at drain for rows
+queued before the change, exactly as §7c3a does for `so_to_po` — the drain
+replays a stored payload and never recomposes.
 
-**Keep the book fallback whatever happens to D15.** It is the only thing that
-drains an outbox row composed before any of this, and a lookup that quietly
+**The purchase half was open on two grounds and BOTH were wrong.** They are
+written out here because each was recorded as a fact and neither was checked:
+
+| what was recorded | what is true |
+|---|---|
+| "`scm.grns` and `scm.purchase_invoices` carry no supplier column, so a `CreditorCode` means a `grn -> purchase_order -> supplier` join" | both declare `supplier_id uuid NOT NULL` (`backend/scripts/scm-schema/2990s-full-schema.sql`), both are written on every insert and selected by the live list and detail routes. **One hop**, the same hop `readPoHeader` already makes for `/create-po` |
+| "`po_to_gr` has never once succeeded anyway" | true when written, false eight hours later: `HC-GR-2608-001` at 23:09, then `HC-PI-2608-001` |
+
+The join was never built because it was never needed, and the second reason made
+nobody go and look at the first. The contract test's fake PostgREST enforces that
+schema dump, so if the column really were missing the creditor assertions would
+fail with `42703` rather than pass.
+
+**Keep the book fallback even though D15 is struck.** It is the only thing that
+answers when the ERP's own lookup returns nothing, and a lookup that quietly
 stops being exercised is a lookup someone deletes.
 
 #### 7c3a. `/so-to-po` — the same defect, and the book cannot fix this one
@@ -1117,6 +1131,70 @@ enumerated, and the service cannot tell the two apart from a row count without
 becoming the thing that decides. The fix is the ERP saying which it is — see
 §7c1's table — not an inference here. `RunTransfer` logs the choice and the
 reason on every conversion so a failure on that path is not another mystery.
+
+#### 7c4. The purchase arms use FullTransfer, and it CANNOT take a subset (D16)
+
+**This is the price of the fix above, and it is unpaid.** What actually moved
+`/po-to-gr` was not the creditor alone: it was calling the typed three-argument
+`FullTransfer(String[], TransferFrom, FullTransferOption)` directly, with
+`AddPartialTransferDetail` demoted to a `catch` fallback. Host log, verbatim:
+
+```
+23:09:04  transfer: AddPartialTransferDetail per source document - the ERP named 2 line(s) and no quantity, so FullTransfer (which would move every outstanding line) is not used
+23:09:04  target creditor before transfer = [400-H004]
+23:09:04  trying purchase FullTransfer from=HC-PO-2608-001 tf=PurchaseOrder
+23:09:04  purchase FullTransfer OK
+```
+
+The first line contradicts the third on purpose: `RunTransfer` decides the shape
+and says "not FullTransfer", and the primitive it then calls tries FullTransfer
+first. **FullTransfer moves every outstanding line on the source.** On this run
+the ERP had named 2 lines and the PO had exactly those 2 outstanding, so the sets
+were equal and nothing was over-received. A real partial receipt — 2 of 5 lines —
+would write all 5 into `AED_HOUZS`.
+
+That is the mirror image of D14. There the ERP cannot express a partial
+*quantity*; here it expresses a partial *line set* correctly and the service
+overrides it. Registered as **D16**, severity high, because the cost lands in a
+licensed account book.
+
+**It is deliberately not "fixed" by refusing.** Refusing returns `/po-to-gr` to
+the state it spent a week in. Closing it needs the host, and there are two
+candidates, neither of which can be chosen from here:
+
+- retry `AddPartialTransferDetail` now that the target has a creditor. The
+  `IndexOutOfRangeException` was blamed on `transferMaster: false` and that
+  explanation is refuted (below); if the real cause was the empty account, the
+  primitive may simply work now. **Never retested.**
+- compare the named keys against the source's outstanding lines before allowing
+  FullTransfer, and fall through to the primitive when they differ.
+
+Two enum spellings to keep straight, because one of them cost a build:
+`AutoCount.Invoicing.Purchase.TransferFrom.GoodsReceive**N**ote` has **no `d`**,
+while the SDK class three namespace segments away is `GoodsReceivedNote`. The
+members are `PurchaseRequest, RequestForQuotation, PurchaseOrder,
+PurchaseInvoice, GoodsReceiveNote, SalesOrder, PurchaseConsignment,
+PurchaseConsignmentReturn`.
+
+**`transferMaster: false` was never the cause — CORRECTED.**
+
+`Convert_`'s GR arm carried, for five days, the explanation that
+`IndexOutOfRangeException: There is no row at position -1` came from
+`transferMaster: false` building a GRN with no supplier, so the purchase detail
+constructor's master lookup returned `-1`. **The host log refutes it.** Every
+failed attempt logged the flag as `true` and threw anyway:
+
+```
+2026-08-16 09:54:26   po-to-gr: fromType=PO transferMaster=true keys=[906268]
+2026-08-16 09:54:26 ERROR /po-to-gr: System.IndexOutOfRangeException: There is no row at position -1.
+```
+
+The flag was never the cause. The cause is §7c3's cause — the target had no
+account before the transfer — and the low-level primitive reports that as a
+contentless throw where `FullTransfer` names it. `transferMaster` stays `true`
+because that is what has been running and what ran on the build that worked, not
+because it fixes anything. The refuted sentence is pinned by a contract-test
+assertion so it cannot quietly return.
 
 ## 7d. The four documents AutoCount cannot create at all
 
