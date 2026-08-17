@@ -549,6 +549,7 @@ const InTransitTab = () => {
       { key: 'age', label: 'Days', getValue: (l) => l.ageDays },
       { key: 'amt', label: 'Amount', getValue: (l) => (l.amountSen / 100).toFixed(2) },
       { key: 'auth', label: 'Approval', getValue: (l) => l.approvalCode ?? '' },
+      { key: 'who', label: 'Recorded by', getValue: (l) => l.recordedBy ?? '' },
       { key: 'state', label: 'Status', getValue: (l) => IN_TRANSIT_STATE[l.state] ?? l.state },
     ]));
   };
@@ -624,7 +625,8 @@ const InTransitTab = () => {
             <tr style={headRow}>
               <th style={cell}>Acquirer</th><th style={cell}>Document</th>
               <th style={cell}>Customer paid on</th><th style={num}>Days</th>
-              <th style={num}>Amount</th><th style={cell}>Approval</th><th style={cell}>Where it is</th>
+              <th style={num}>Amount</th><th style={cell}>Approval</th>
+              <th style={cell}>Recorded by</th><th style={cell}>Where it is</th>
             </tr>
           </thead>
           <tbody>
@@ -636,6 +638,7 @@ const InTransitTab = () => {
                 <td style={{ ...num, color: l.ageDays > 14 ? danger : undefined, fontWeight: l.ageDays > 14 ? 700 : undefined }}>{l.ageDays}</td>
                 <td style={num}>{fmt(l.amountSen)}</td>
                 <td style={cell}>{l.approvalCode ?? '—'}</td>
+                <td style={cell}>{l.recordedBy ?? '—'}</td>
                 <td style={cell}>{IN_TRANSIT_STATE[l.state] ?? l.state}</td>
               </tr>
             ))}

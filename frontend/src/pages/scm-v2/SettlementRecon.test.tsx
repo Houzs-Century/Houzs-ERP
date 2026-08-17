@@ -55,8 +55,8 @@ vi.mock('./settlement-queries', () => ({
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
   useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, recordedNotArrived: [], arrivedNotRecorded: [] }, isLoading: false }),
   useInTransit: () => ({ data: { from: '2026-02-17', to: '2026-08-17', totalSen: 259400, ageing: { MBB: { '0-7': { count: 1, sen: 230000 } }, GHL: { 'over-30': { count: 1, sen: 29400 } } }, lines: [
-    { acquirerCode: 'MBB', source: 'SOPAY', paymentId: 'm1', docNo: 'SO-2608-040', paidOn: '2026-08-14', amountSen: 230000, approvalCode: '861777', ageDays: 3, state: 'MATCHED_NOT_POSTED' },
-    { acquirerCode: 'GHL', source: 'SOPAY', paymentId: 'g9', docNo: 'SO-2607-001', paidOn: '2026-07-02', amountSen: 29400, approvalCode: null, ageDays: 46, state: 'NOT_ON_A_STATEMENT' },
+    { acquirerCode: 'MBB', source: 'SOPAY', paymentId: 'm1', docNo: 'SO-2608-040', paidOn: '2026-08-14', amountSen: 230000, approvalCode: '861777', recordedBy: 'Siti at the KL till', recordedById: 'u1', ageDays: 3, state: 'MATCHED_NOT_POSTED' },
+    { acquirerCode: 'GHL', source: 'SOPAY', paymentId: 'g9', docNo: 'SO-2607-001', paidOn: '2026-07-02', amountSen: 29400, approvalCode: null, recordedBy: null, recordedById: null, ageDays: 46, state: 'NOT_ON_A_STATEMENT' },
   ] }, isLoading: false }),
 }));
 
@@ -155,6 +155,8 @@ describe('paid, not yet in the bank', () => {
     expect(screen.getByText('SO-2608-040')).toBeTruthy();          // named to the document
     expect(screen.getByText('On a statement, waiting to be confirmed')).toBeTruthy();
     expect(screen.getByText('The acquirer has not reported it yet')).toBeTruthy();
+    // Who keyed it in — money sitting for weeks is a question for a person.
+    expect(screen.getByText('Siti at the KL till')).toBeTruthy();
   });
 
   test('ages it by acquirer so a stale balance cannot hide', () => {

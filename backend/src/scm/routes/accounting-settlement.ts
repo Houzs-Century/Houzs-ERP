@@ -613,12 +613,28 @@ export const settlementInTransit = guard(async (c) => {
         paidOn: p.paidOn,
         amountSen: p.amountSen,
         approvalCode: p.approvalCode,
+        recordedById: p.recordedById ?? null,
         ageDays: days(p.paidOn, to),
         state: state === false ? 'MATCHED_NOT_POSTED' : 'NOT_ON_A_STATEMENT',
       });
     }
   }
   lines.sort((x, y) => Number(y.ageDays) - Number(x.ageDays));
+
+  /* WHO KEYED IT IN. The owner asked to see this: money sitting in transit for
+     weeks is a question for a person, and "which of my staff recorded it" is the
+     first thing he needs in order to ask it. Resolved in ONE lookup for the
+     whole list rather than a query per line — and a name that cannot be
+     resolved shows as blank rather than as a raw uuid nobody can read. */
+  const staffIds = [...new Set(lines.map((l) => l.recordedById).filter((v): v is string => typeof v === 'string' && v !== ''))];
+  const nameOf = new Map<string, string>();
+  if (staffIds.length > 0) {
+    const { data: staffRaw } = await sb.from('staff').select('id, name').in('id', staffIds);
+    for (const s of (staffRaw ?? []) as Array<{ id: string; name: string | null }>) {
+      if (s.name) nameOf.set(String(s.id), s.name);
+    }
+  }
+  for (const l of lines) l.recordedBy = nameOf.get(String(l.recordedById ?? '')) ?? null;
 
   /* Ageing, by acquirer — the shape the brief asks for, and the one that makes
      a stale balance impossible to miss. */

@@ -231,6 +231,9 @@ export type InTransitLine = {
   paidOn: string;
   amountSen: number;
   approvalCode: string | null;
+  /** Who keyed the payment in — resolved to a name, null when unresolvable. */
+  recordedBy: string | null;
+  recordedById: string | null;
   ageDays: number;
   /** NOT_ON_A_STATEMENT — the acquirer has not reported it yet.
    *  MATCHED_NOT_POSTED — reported and matched, waiting to be confirmed. */

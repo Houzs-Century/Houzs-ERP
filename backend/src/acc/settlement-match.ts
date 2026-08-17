@@ -31,6 +31,10 @@ export type PaymentCandidate = {
   amountSen: number;
   approvalCode: string | null;
   customerName: string | null;
+  /** Who keyed the payment in — the till's `collected_by`, falling back to
+      whoever created the row. A uuid here; the name is resolved once, in bulk,
+      by whichever screen shows it. */
+  recordedById?: string | null;
 };
 
 export type MatchBucket = 'MATCHED' | 'NEEDS_CONFIRM' | 'UNMATCHED' | 'IGNORED';
