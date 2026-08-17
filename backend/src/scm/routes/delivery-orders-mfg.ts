@@ -2146,21 +2146,23 @@ export async function soDeliverableRemaining(
   //    mains → accessories → services, sofa modules left-to-right). The bulk
   //    insert gives every line the same created_at, so the timestamp can't
   //    recover the persisted order once routine updates relocate rows.
-  const { data: soItems } = await paginateAll<Record<string, unknown>>((from, to) => sb
-    .from('mfg_sales_order_items')
+  /* CHUNKED on doc_no — paginateAll bounds the ROWS back; the doc numbers go OUT in the URL
+     unbounded. One SO's lines stay in one batch and the walk below re-derives their order
+     regardless ("the walk MUST run per doc"), so the split is invisible downstream. */
+  const { data: soItems } = await chunkIn<Record<string, unknown>>([...new Set(soDocNos)], (batch, from, to) => sb.from('mfg_sales_order_items')
     .select(
       'id, doc_no, debtor_code, debtor_name, item_code, item_group, description, description2, ' +
       'uom, qty, unit_price_centi, unit_cost_centi, discount_centi, variants, ' +
       'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
       'custom_specials, line_suffix, special_order_price_sen',
     )
-    .in('doc_no', soDocNos)
+    .in('doc_no', batch)
     .eq('cancelled', false)
     .order('line_no', { ascending: true, nullsFirst: false })
     .order('created_at')
     .order('id')
     .range(from, to));
-  const rawLines = (soItems ?? []) as Array<Record<string, unknown> & { id: string; doc_no: string; item_code: string; qty: number }>;
+  const rawLines = soItems as Array<Record<string, unknown> & { id: string; doc_no: string; item_code: string; qty: number }>;
   if (rawLines.length === 0) return out;
 
   /* THE CUSTOMER IS A PROPERTY OF THE SALES ORDER, NOT OF ITS LINES.
@@ -2175,11 +2177,10 @@ export async function soDeliverableRemaining(
      drift). Stamp the HEADER's debtor on every line — one order, one customer. */
   const headerDebtor = new Map<string, { code: string | null; name: string | null }>();
   {
-    const { data: soHeads } = await sb
-      .from('mfg_sales_orders')
-      .select('doc_no, debtor_code, debtor_name')
-      .in('doc_no', [...new Set(rawLines.map((l) => l.doc_no))]);
-    for (const h of (soHeads ?? []) as Array<{ doc_no: string; debtor_code: string | null; debtor_name: string | null }>) {
+    /* chunkIn: unbounded at BOTH ends before; unpaged, the 1001st header silently
+       dropped, swapping the header debtor for the drifted line copy above. */
+    const { data: soHeads } = await chunkIn<{ doc_no: string; debtor_code: string | null; debtor_name: string | null }>([...new Set(rawLines.map((l) => l.doc_no))], (batch, from, to) => sb.from('mfg_sales_orders').select('doc_no, debtor_code, debtor_name').in('doc_no', batch).order('doc_no').range(from, to));
+    for (const h of soHeads) {
       headerDebtor.set(h.doc_no, { code: h.debtor_code ?? null, name: h.debtor_name ?? null });
     }
   }
@@ -2218,12 +2219,11 @@ export async function soDeliverableRemaining(
   const returnedBySoItem = new Map<string, number>();
   const activeDoLineIds = [...doLineToSoItem.keys()];
   if (activeDoLineIds.length > 0) {
-    const { data: drLines } = await sb
-      .from('delivery_return_items')
-      .select('do_item_id, qty_returned, parent:delivery_returns(status)')
-      .in('do_item_id', activeDoLineIds);
-    const drLineRows = (drLines ?? []) as Array<{ do_item_id: string | null; qty_returned: number; parent: { status: string | null } | null }>;
-    for (const l of drLineRows) {
+    /* CHUNKED + PAGED, mirroring the delivered hop: one DO-LINE uuid per shipped line of
+       every order in the batch, all in one URL. Under-reading is the bad direction here —
+       a dropped return leaves the order no longer asking for goods that came back. */
+    const { data: drLines } = await chunkIn<{ do_item_id: string | null; qty_returned: number; parent: { status: string | null } | null }>(activeDoLineIds, (batch, from, to) => sb.from('delivery_return_items').select('do_item_id, qty_returned, parent:delivery_returns(status)').in('do_item_id', batch).order('id').range(from, to));
+    for (const l of drLines) {
       if (!l.do_item_id || !l.parent) continue;
       if ((l.parent.status ?? '').toUpperCase() === 'CANCELLED') continue;
       const soItemId = doLineToSoItem.get(l.do_item_id);

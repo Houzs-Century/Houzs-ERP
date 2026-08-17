@@ -47,7 +47,7 @@
 
 import type { Env } from '../../types';
 import { getSupabaseService } from '../../db/supabase';
-import { paginateAll } from '../../scm/lib/paginate-all';
+import { paginateAll, chunkIn } from '../../scm/lib/paginate-all';
 import { todayMyt, mytDateOf } from '../../scm/lib/my-time';
 import { summariseReadiness, type ReadinessLine } from '../../scm/lib/so-readiness';
 import { resolveLineCategories } from '../../scm/lib/so-readiness-category';
@@ -220,18 +220,24 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
   if (docNos.length === 0) return { today, regionCfg, pool: [] };
 
   /* Per-line readiness (same select shape as the board's step 3). */
-  const { data: itemRowsRaw } = await paginateAll<{
+  /* chunkIn, not paginateAll: `docNos` above is every live SO in the tenant (the
+     read that built it has no date bound), and paginateAll bounds the response
+     while re-sending that whole doc list in every page's URL. Batching on doc_no
+     keeps each order's lines together, and the readiness map below is keyed by
+     doc_no, so nothing about the result moves. */
+  const { data: itemRowsRaw } = await chunkIn<{
     doc_no: string; item_group: string | null; item_code: string | null;
     stock_status: string | null; cancelled: boolean | null;
-  }>((from, to) =>
+  }>(docNos, (batch, from, to) =>
     sb.from('mfg_sales_order_items')
       .select('doc_no, item_group, item_code, stock_status, cancelled')
-      .in('doc_no', docNos)
+      .in('doc_no', batch)
       .eq('cancelled', false)
+      .order('doc_no')
       .range(from, to),
   );
   const linesByDoc = new Map<string, ReadinessLine[]>();
-  for (const it of (itemRowsRaw ?? [])) {
+  for (const it of itemRowsRaw) {
     if (!it.doc_no) continue;
     const arr = linesByDoc.get(it.doc_no) ?? [];
     arr.push({

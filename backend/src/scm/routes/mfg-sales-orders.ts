@@ -103,7 +103,7 @@ import {
 } from '../lib/companyScope';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
-import { paginateAll } from '../lib/paginate-all';
+import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { soConvertedPoNumbers } from '../lib/so-converted-po';
 /* "A PO is already out for this SO" — the second road to the same soft lock
    (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
@@ -1399,16 +1399,15 @@ mfgSalesOrders.get('/', async (c) => {
        off now; each is awaited at its original use-site below, so results and
        error propagation are unchanged. This was the SO list's dominant cost
        (~390ms desktop / ~650ms mobile, almost all serial DB latency). */
+    /* chunkIn on every `docNos` read below — the LEGACY arm reads `.limit(500)`, so each URL carried 500 doc numbers (~9.5KB). All feed doc-keyed maps. */
     const payRowsProm = (async () =>
-      (await sb
-        .from('mfg_sales_order_payments')
-        .select('so_doc_no, method, online_type')
-        .in('so_doc_no', docNos)).data ?? [])();
+      (await chunkIn(docNos, (batch, from, to) => sb.from('mfg_sales_order_payments')
+        .select('so_doc_no, method, online_type').in('so_doc_no', batch).order('so_doc_no').range(from, to))).data)();
     // DO No. rides this read rather than a query of its own — the list's cost
     // is round-trips, not rows (see so-delivery-order-nos.ts).
     const downstreamProm = Promise.all([
-      sb.from('delivery_orders').select('so_doc_no, do_number, do_date, created_at').in('so_doc_no', docNos).neq('status', 'CANCELLED'),
-      sb.from('sales_invoices').select('so_doc_no').in('so_doc_no', docNos).neq('status', 'CANCELLED'),
+      chunkIn(docNos, (batch, from, to) => sb.from('delivery_orders').select('so_doc_no, do_number, do_date, created_at').in('so_doc_no', batch).neq('status', 'CANCELLED').order('so_doc_no').range(from, to)),
+      chunkIn(docNos, (batch, from, to) => sb.from('sales_invoices').select('so_doc_no').in('so_doc_no', batch).neq('status', 'CANCELLED').order('so_doc_no').range(from, to)),
     ]);
     const deliverableProm = soDeliverableRemaining(sb, docNos);
     const lifecycleProm = Promise.all([
@@ -1418,10 +1417,8 @@ mfgSalesOrders.get('/', async (c) => {
     const whRowsProm = (async () =>
       (await sb.from('warehouses').select('id, code, name')).data ?? [])();
     const baseRowsProm = (async () =>
-      (await sb
-        .from('mfg_sales_orders')
-        .select('doc_no, delivery_state, amended_delivery_date')
-        .in('doc_no', docNos)).data ?? [])();
+      (await chunkIn(docNos, (batch, from, to) => sb.from('mfg_sales_orders')
+        .select('doc_no, delivery_state, amended_delivery_date').in('doc_no', batch).order('doc_no').range(from, to))).data)();
     /* PO No. column (owner 2026-07-24): the system Purchase Order numbers this
        SO was converted into. Its own SO-line→PO-item→PO chain, independent of
        every other enrichment above, so it rides the same concurrent wave.
@@ -1450,12 +1447,15 @@ mfgSalesOrders.get('/', async (c) => {
        the mattress brand source for the first-item rule below; item_code lets
        us fall back to mfg_products.branding when a mattress line's own branding
        is blank; created_at drives the first-line pick. */
-    const { data: itemRows } = await paginateAll<{ id: string; doc_no: string; item_group: string | null; stock_status: string | null; cancelled: boolean; branding: string | null; item_code: string | null; warehouse_id: string | null; created_at: string; qty: number | null; allocated_batch_no: string | null }>((from, to) => sb
+    /* chunkIn, not paginateAll: the latter bounded the ROWS and re-sent all 500 doc numbers
+       in every page's URL. Splitting on doc_no keeps each SO's lines together and ordered
+       as before, so the "first line per doc_no" rule below picks the same row. */
+    const { data: itemRows } = await chunkIn<{ id: string; doc_no: string; item_group: string | null; stock_status: string | null; cancelled: boolean; branding: string | null; item_code: string | null; warehouse_id: string | null; created_at: string; qty: number | null; allocated_batch_no: string | null }>(docNos, (batch, from, to) => sb
       .from('mfg_sales_order_items')
       // id / qty / allocated_batch_no ride along for the source-PO union below
       // (per-line shipped trace + READY projection — the drill's exact inputs).
       .select('id, doc_no, item_group, stock_status, cancelled, branding, item_code, warehouse_id, created_at, qty, allocated_batch_no')
-      .in('doc_no', docNos)
+      .in('doc_no', batch)
       .eq('cancelled', false)
       .order('doc_no')
       .order('line_no', { ascending: true, nullsFirst: false })
@@ -1464,7 +1464,7 @@ mfgSalesOrders.get('/', async (c) => {
     /* Per-line SHIPPED source trace for the whole page — the same resolver call
        the drill makes per SO, batched once (chunked internally). Fired now so it
        overlaps the remaining enrichment reads; awaited at the union below. */
-    const shippedTraceProm = soLineShippedSources(sb, (itemRows ?? []).map((it) => it.id));
+    const shippedTraceProm = soLineShippedSources(sb, itemRows.map((it) => it.id));
     const agg = new Map<string, Map<string, { total: number; ready: number }>>();
     /* Branding auto-derive (Commander 2026-05-28, refined PR #266): the SO list
        grid derives its Branding pill from the SO's FIRST line item — no longer
@@ -1495,7 +1495,7 @@ mfgSalesOrders.get('/', async (c) => {
       if (g.includes('SERVICE')) return 'SERVICE'; // SO-SKU spec P2 — synced with normCat below
       return 'OTHERS';
     };
-    for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_group: string; stock_status: string; cancelled: boolean; branding: string | null; item_code: string | null; warehouse_id: string | null; created_at: string | null }>) {
+    for (const it of itemRows as unknown as Array<{ doc_no: string; item_group: string; stock_status: string; cancelled: boolean; branding: string | null; item_code: string | null; warehouse_id: string | null; created_at: string | null }>) {
       let perGroup = agg.get(it.doc_no);
       if (!perGroup) { perGroup = new Map(); agg.set(it.doc_no, perGroup); }
       const g = (it.item_group ?? '').trim().toUpperCase() || 'OTHERS';
@@ -1559,7 +1559,7 @@ mfgSalesOrders.get('/', async (c) => {
     const repCat = new Map<string, string>();
     const repBranding = new Map<string, string | null>();
     const repCode = new Map<string, string | null>();
-    for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_group: string; branding: string | null; item_code: string | null }>) {
+    for (const it of itemRows as unknown as Array<{ doc_no: string; item_group: string; branding: string | null; item_code: string | null }>) {
       if (repCat.has(it.doc_no)) continue;
       const cat = resolveLineCat(it.item_code, it.item_group);
       if (MAIN_CATS.has(cat)) {
@@ -1578,7 +1578,7 @@ mfgSalesOrders.get('/', async (c) => {
        brand. Non-branded ACCESSORY / SERVICE / OTHERS lines carry no brand and
        may legitimately ride along, so they don't disqualify. */
     const resolvedCatsByDoc = new Map<string, Set<string>>();
-    for (const it of (itemRows ?? []) as Array<{ doc_no: string; item_group: string; item_code: string | null }>) {
+    for (const it of itemRows as unknown as Array<{ doc_no: string; item_group: string; item_code: string | null }>) {
       let s = resolvedCatsByDoc.get(it.doc_no);
       if (!s) { s = new Set(); resolvedCatsByDoc.set(it.doc_no, s); }
       s.add(resolveLineCat(it.item_code, it.item_group));
@@ -1601,7 +1601,7 @@ mfgSalesOrders.get('/', async (c) => {
     const paymentMethods = new Map<string, Set<string>>();
     {
       const payRows = await payRowsProm;
-      for (const p of (payRows ?? []) as Array<{ so_doc_no: string; method: string | null; online_type: string | null }>) {
+      for (const p of payRows as unknown as Array<{ so_doc_no: string; method: string | null; online_type: string | null }>) {
         const m = (p.method ?? '').trim().toLowerCase();
         let label: string;
         if (m === 'cash') label = 'Cash';
@@ -1620,8 +1620,8 @@ mfgSalesOrders.get('/', async (c) => {
        on the row. The list grid uses this to hide Edit / Cancel from SOs that
        are downstream-locked (mirrors computeGrnFlags in routes/grns.ts). */
     const [doRowsRes, siRowsRes] = await downstreamProm;
-    const doNosBySo = doNosBySalesOrder((doRowsRes.data ?? []) as DeliveryOrderNoRow[]);
-    const downstreamDocNos = soDocNosWithDownstream(doRowsRes.data ?? [], siRowsRes.data ?? []);
+    const doNosBySo = doNosBySalesOrder(doRowsRes.data as unknown as DeliveryOrderNoRow[]);
+    const downstreamDocNos = soDocNosWithDownstream(doRowsRes.data, siRowsRes.data);
 
     /* B2C readiness summary per SO (Commander 2026-05-30) — derive the
        "Stock Remark" the operator's existing ERP shows: READY, PARTIAL
@@ -1637,7 +1637,7 @@ mfgSalesOrders.get('/', async (c) => {
        §0.4). No query: the union below already awaits this MRP run. */
     const mrpForList = await mrpForListProm;
     const readinessByDoc = new Map<string, ReturnType<typeof summariseReadiness>>();
-    const linesByDoc = readinessLinesByDoc(itemRows ?? [], mrpForList ? mrpLineCoverage(mrpForList) : null);
+    const linesByDoc = readinessLinesByDoc(itemRows, mrpForList ? mrpLineCoverage(mrpForList) : null);
     attachLineCategories(linesByDoc.values(), productCategory);
     for (const [docNo, ls] of linesByDoc) readinessByDoc.set(docNo, summariseReadiness(ls));
 
@@ -1697,7 +1697,7 @@ mfgSalesOrders.get('/', async (c) => {
     const amendedDDByDoc = new Map<string, string | null>();
     {
       const baseRows = await baseRowsProm;
-      for (const b of (baseRows ?? []) as Array<{ doc_no: string | null; delivery_state?: string | null; deliveryState?: string | null; amended_delivery_date?: string | null; amendedDeliveryDate?: string | null }>) {
+      for (const b of baseRows as unknown as Array<{ doc_no: string | null; delivery_state?: string | null; deliveryState?: string | null; amended_delivery_date?: string | null; amendedDeliveryDate?: string | null }>) {
         if (!b.doc_no) continue;
         overrideByDoc.set(b.doc_no, b.deliveryState ?? b.delivery_state ?? null);
         amendedDDByDoc.set(b.doc_no, b.amendedDeliveryDate ?? b.amended_delivery_date ?? null);
@@ -1714,7 +1714,7 @@ mfgSalesOrders.get('/', async (c) => {
        other POs finally show "谁的货" instead of a dash. */
     const sourceUnionByDoc = await (async () => {
       try {
-        const pageItems = (itemRows ?? []) as Array<{ id: string; doc_no: string; item_group: string | null; item_code: string | null; stock_status: string | null; qty: number | null; allocated_batch_no: string | null }>;
+        const pageItems = itemRows as unknown as Array<{ id: string; doc_no: string; item_group: string | null; item_code: string | null; stock_status: string | null; qty: number | null; allocated_batch_no: string | null }>;
         const [shippedByItem, readyByItem] = await Promise.all([
           shippedTraceProm,
           (async () => soLineReadySourcePos(sb, activeCompanyId(c) ?? null, await mrpForListProm, pageItems))(),
@@ -2090,14 +2090,14 @@ mfgSalesOrders.get('/mine', async (c) => {
      floor-rule preview), so they ride the same fetch. */
   const itemsByDoc = new Map<string, Array<{ id: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_centi: number; discount_centi: number; total_centi: number; variants: unknown; remark: string | null }>>();
   if (docNos.length > 0) {
-    const { data: itemRows } = await sb
+    /* chunkIn — `docNos` is this board's whole page (LIMIT 300) and the read had neither batching nor paging, so past the 1000-row cap a later order's drawer rendered empty. */
+    const { data: itemRows } = await chunkIn<{ id: string; doc_no: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_centi: number; discount_centi: number; total_centi: number; variants: unknown; remark: string | null }>(docNos, (batch, from, to) => sb
       .from('mfg_sales_order_items')
       .select('id, doc_no, item_code, item_group, description, qty, unit_price_centi, discount_centi, total_centi, variants, remark')
-      .in('doc_no', docNos)
-      .eq('cancelled', false)
-      .order('line_no', { ascending: true, nullsFirst: false })
-      .order('created_at', { ascending: true });
-    for (const it of (itemRows ?? []) as Array<{ id: string; doc_no: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_centi: number; discount_centi: number; total_centi: number; variants: unknown; remark: string | null }>) {
+      .in('doc_no', batch).eq('cancelled', false)
+      .order('doc_no').order('line_no', { ascending: true, nullsFirst: false })
+      .order('created_at', { ascending: true }).range(from, to));
+    for (const it of itemRows) {
       const arr = itemsByDoc.get(it.doc_no) ?? [];
       arr.push({ id: it.id, item_code: it.item_code, item_group: it.item_group ?? null, description: it.description, qty: it.qty, unit_price_centi: it.unit_price_centi, discount_centi: it.discount_centi, total_centi: it.total_centi, variants: it.variants, remark: it.remark ?? null });
       itemsByDoc.set(it.doc_no, arr);
@@ -2113,11 +2113,11 @@ mfgSalesOrders.get('/mine', async (c) => {
   const paidLedgerByDoc = new Map<string, number>();
   const depositInLedger = new Set<string>();
   if (docNos.length > 0) {
-    const { data: payRows } = await sb
+    const { data: payRows } = await chunkIn<{ so_doc_no: string; amount_centi: number; is_deposit?: boolean | null }>(docNos, (batch, from, to) => sb
       .from('mfg_sales_order_payments')
       .select('so_doc_no, amount_centi, is_deposit')
-      .in('so_doc_no', docNos);
-    for (const p of (payRows ?? []) as Array<{ so_doc_no: string; amount_centi: number; is_deposit?: boolean | null }>) {
+      .in('so_doc_no', batch).order('so_doc_no').range(from, to));
+    for (const p of payRows) {
       paidLedgerByDoc.set(p.so_doc_no, (paidLedgerByDoc.get(p.so_doc_no) ?? 0) + (p.amount_centi ?? 0));
       if (p.is_deposit) depositInLedger.add(p.so_doc_no);
     }

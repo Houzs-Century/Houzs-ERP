@@ -68,7 +68,13 @@ import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
 import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
-import { paginateAll } from '../lib/paginate-all';
+/* chunkIn on EVERY read here that filters by a doc-no / DO-id / trip-id set:
+   this board's anchor read has no date bound and no limit (`docNos` is "every SO
+   needing delivery"), and paginateAll bounds the rows coming BACK while re-sending
+   the same unbounded filter in each page's URL. wrangler tail, 2026-08-18: the
+   board 500'd in BOTH tenants, the 100-order one included. The reads still on
+   paginateAll are the ones carrying no such filter. */
+import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
 import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
@@ -310,10 +316,10 @@ async function applyDeliveryRowScope<T extends { row_type: string; so_doc_no: st
   const tripCrewById = new Map<string, CrewAssignment>();
   const tripIds = [...new Set([...maps.dpTripIdByKey.values()].filter((x): x is string => !!x))];
   if (tripIds.length > 0) {
-    const { data: tripRows } = await sb.from('trips')
+    const { data: tripRows } = await chunkIn<Record<string, unknown>>(tripIds, (batch, from, to) => sb.from('trips')
       .select('id, driver_id, helper_1_id, helper_2_id')
-      .in('id', tripIds);
-    for (const t of (tripRows ?? []) as Array<Record<string, unknown>>) {
+      .in('id', batch).order('id').range(from, to));
+    for (const t of tripRows) {
       const id = String(t.id ?? '');
       if (!id) continue;
       tripCrewById.set(id, {
@@ -482,13 +488,12 @@ deliveryPlanning.get('/', async (c) => {
      view). Adding any of those here will 500 the Delivery Planning board. */
   const liveBalanceByDoc = new Map<string, number>();
   {
-    const { data: balRows } = await paginateAll<{ doc_no: string | null; balance_centi_live: number | null }>((from, to) =>
+    const { data: balRows } = await chunkIn<{ doc_no: string | null; balance_centi_live: number | null }>(docNos, (batch, from, to) =>
       sb.from('mfg_sales_orders_with_payment_totals')
         .select('doc_no, balance_centi_live')
-        .in('doc_no', docNos)
-        .range(from, to),
+        .in('doc_no', batch).order('doc_no').range(from, to),
     );
-    for (const b of (balRows ?? [])) {
+    for (const b of balRows) {
       if (b.doc_no != null && b.balance_centi_live != null) {
         liveBalanceByDoc.set(String(b.doc_no), Number(b.balance_centi_live));
       }
@@ -502,14 +507,14 @@ deliveryPlanning.get('/', async (c) => {
         Ordered (doc_no, line_no, created_at ASC) — IDENTICAL to the SO list's
         item fetch so the FIRST line we see per doc_no is its earliest-created
         one; that drives the SO-list-matching Branding derivation below. */
-  const { data: itemRowsRaw } = await paginateAll<{
+  const { data: itemRowsRaw } = await chunkIn<{
     doc_no: string; item_group: string | null; item_code: string | null;
     stock_status: string | null; cancelled: boolean | null; warehouse_id: string | null;
     branding: string | null; created_at: string | null;
-  }>((from, to) =>
+  }>(docNos, (batch, from, to) =>
     sb.from('mfg_sales_order_items')
       .select('doc_no, item_group, item_code, stock_status, cancelled, warehouse_id, branding, created_at')
-      .in('doc_no', docNos)
+      .in('doc_no', batch)
       .eq('cancelled', false)
       .order('doc_no')
       .order('line_no', { ascending: true, nullsFirst: false })
@@ -524,7 +529,7 @@ deliveryPlanning.get('/', async (c) => {
   const firstBranding = new Map<string, string | null>();
   const firstItemCode = new Map<string, string | null>();
   const allCodes = new Set<string>();
-  for (const it of (itemRowsRaw ?? [])) {
+  for (const it of itemRowsRaw) {
     const dn = it.doc_no;
     if (!dn) continue;
     const arr = linesByDoc.get(dn) ?? [];
@@ -580,7 +585,7 @@ deliveryPlanning.get('/', async (c) => {
   const repCat = new Map<string, string>();
   const repBranding = new Map<string, string | null>();
   const repCode = new Map<string, string | null>();
-  for (const it of (itemRowsRaw ?? [])) {
+  for (const it of itemRowsRaw) {
     const dn = it.doc_no;
     if (!dn || repCat.has(dn)) continue;
     const cat = resolveLineCat(it.item_code, it.item_group ?? '');
@@ -620,7 +625,7 @@ deliveryPlanning.get('/', async (c) => {
     // the planning grid "DO Date" column. From the SAME latest-DO lookup as crew.
     do_date: string | null;
   };
-  const { data: doRowsRaw } = await paginateAll<{
+  const { data: doRowsRaw } = await chunkIn<{
     id: string; do_number: string | null; so_doc_no: string | null; status: string | null;
     // driver_id — the DO header's quick-field driver, one half of the row-scope
     // assignment (the crew snapshot below carries the rest). dual-read camelCase.
@@ -638,11 +643,10 @@ deliveryPlanning.get('/', async (c) => {
     shipoutDate?: string | null; customerDeliveredDate?: string | null;
     etaArrivingPort?: string | null; deliverySubstatus?: string | null;
     arrivesEmWarehouseDate?: string | null;
-  }>((from, to) =>
+  }>(docNos, (batch, from, to) =>
     sb.from('delivery_orders')
       .select('id, do_number, so_doc_no, status, driver_id, delivery_state, customer_delivery_date, do_date, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date')
-      .in('so_doc_no', docNos)
-      .range(from, to),
+      .in('so_doc_no', batch).order('id').range(from, to),
   );
   const doByDoc = new Map<string, Array<{ id: string; doNumber: string; status: string }>>();
   /* DO header driver_id by DO id — half the row-scope assignment (crew ids are
@@ -652,7 +656,7 @@ deliveryPlanning.get('/', async (c) => {
      same DO whose crew is shown (the last in doByDoc). null when no DO. */
   const doExecByDoc = new Map<string, DoExecOut>();
   const doIds: string[] = [];
-  for (const d of (doRowsRaw ?? [])) {
+  for (const d of doRowsRaw) {
     const st = (d.status ?? '').toUpperCase();
     if (st === 'DRAFT' || st === 'CANCELLED') continue;  // exclude uncommitted / voided
     const dn = d.so_doc_no ?? '';
@@ -715,9 +719,9 @@ deliveryPlanning.get('/', async (c) => {
         /* ONE widened read serves both maps. The dp_no rule is unchanged — the
            filter that used to live in the query (`dp_no IS NOT NULL`) now lives
            in take(), same rows either way. */
-        const byDo = await sb.from('trip_stops')
-          .select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', doIds);
-        const stopRows = ((byDo as { data?: StopRow[] }).data ?? []);
+        const { data: stopRows } = await chunkIn<StopRow>(doIds, (batch, from, to) => sb.from('trip_stops')
+          .select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', batch)
+          .order('do_id').range(from, to));
         take(stopRows.filter((s) => s.dp_no != null));
 
         /* Resolve the stops' trips (bounded .in) and keep only live ones —
@@ -728,10 +732,10 @@ deliveryPlanning.get('/', async (c) => {
           .map((s) => (s.tripId ?? s.trip_id) as string | null)
           .filter((x): x is string => !!x))];
         if (tripIds.length) {
-          const { data: tripRowsRaw } = await sb.from('trips')
-            .select('id, trip_no, trip_date, status').in('id', tripIds);
+          const { data: tripRowsRaw } = await chunkIn<Record<string, unknown>>(tripIds, (batch, from, to) => sb.from('trips')
+            .select('id, trip_no, trip_date, status').in('id', batch).order('id').range(from, to));
           const liveTripById = new Map<string, { id: string; trip_no: string | null; trip_date: string | null }>();
-          for (const t of (tripRowsRaw ?? []) as Array<{
+          for (const t of tripRowsRaw as Array<{
             id: string; trip_no?: string | null; tripNo?: string | null;
             trip_date?: string | null; tripDate?: string | null; status?: string | null;
           }>) {
@@ -773,7 +777,7 @@ deliveryPlanning.get('/', async (c) => {
      above carries only NAMES, for display). Only consulted when self-scoped. */
   const crewIdsByDo = new Map<string, { driverIds: string[]; helperIds: string[] }>();
   if (doIds.length > 0) {
-    const { data: crewRows } = await paginateAll<{
+    const { data: crewRows } = await chunkIn<{
       do_id: string;
       driver_1_id: string | null; driver_2_id: string | null;
       helper_1_id: string | null; helper_2_id: string | null;
@@ -781,13 +785,12 @@ deliveryPlanning.get('/', async (c) => {
       driver_2_name: string | null;
       helper_1_name: string | null; helper_2_name: string | null; lorry_plate: string | null;
       driver1Id?: string | null; driver2Id?: string | null; helper1Id?: string | null; helper2Id?: string | null;
-    }>((from, to) =>
+    }>(doIds, (batch, from, to) =>
       sb.from('delivery_order_crew')
         .select('do_id, driver_1_id, driver_2_id, helper_1_id, helper_2_id, driver_1_name, driver_1_ic, driver_1_contact, driver_2_name, helper_1_name, helper_2_name, lorry_plate')
-        .in('do_id', doIds)
-        .range(from, to),
+        .in('do_id', batch).order('do_id').range(from, to),
     );
-    for (const cr of (crewRows ?? [])) {
+    for (const cr of crewRows) {
       crewIdsByDo.set(cr.do_id, {
         driverIds: [cr.driver1Id ?? cr.driver_1_id, cr.driver2Id ?? cr.driver_2_id].filter((x): x is string => !!x),
         helperIds: [cr.helper1Id ?? cr.helper_1_id, cr.helper2Id ?? cr.helper_2_id].filter((x): x is string => !!x),
@@ -1180,13 +1183,12 @@ deliveryPlanning.get('/', async (c) => {
   try {
     const assrCaseIds = [...new Set(assrOrders.map((o) => o.assr_id).filter((x): x is number => x != null))];
     if (assrCaseIds.length) {
-      const { data: stopsRaw } = await sb.from('trip_stops')
-        .select('assr_case_id, stop_type, trip_id').in('assr_case_id', assrCaseIds);
-      const stops = (stopsRaw ?? []) as Array<{ assr_case_id: number; stop_type: string; trip_id: string }>;
+      const { data: stops } = await chunkIn<{ assr_case_id: number; stop_type: string; trip_id: string }, number>(assrCaseIds, (batch, from, to) => sb.from('trip_stops')
+        .select('assr_case_id, stop_type, trip_id').in('assr_case_id', batch).order('assr_case_id').range(from, to));
       if (stops.length) {
         const tripIds = [...new Set(stops.map((s) => s.trip_id).filter(Boolean))];
-        const { data: tripsRaw } = await sb.from('trips').select('id, driver_id, lorry_id').in('id', tripIds);
-        const trips = (tripsRaw ?? []) as Array<{ id: string; driver_id: string | null; lorry_id: string | null }>;
+        const { data: trips } = await chunkIn<{ id: string; driver_id: string | null; lorry_id: string | null }>(tripIds,
+          (batch, from, to) => sb.from('trips').select('id, driver_id, lorry_id').in('id', batch).order('id').range(from, to));
         const tripById = new Map(trips.map((t) => [String(t.id), t]));
         const driverIds = [...new Set(trips.map((t) => t.driver_id).filter((x): x is string => !!x))];
         const lorryIds = [...new Set(trips.map((t) => t.lorry_id).filter((x): x is string => !!x))];
@@ -1582,18 +1584,17 @@ deliveryPlanning.get('/geo', async (c) => {
         (every dispatcher/ops caller) skips this entirely. */
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
   if (scope.mode !== 'all' && docNos.length > 0) {
-    const { data: doRows } = await paginateAll<{
+    const { data: doRows } = await chunkIn<{
       id: string; so_doc_no: string | null; status: string | null;
       driver_id: string | null; driverId?: string | null;
-    }>((from, to) =>
+    }>(docNos, (batch, from, to) =>
       sb.from('delivery_orders')
         .select('id, so_doc_no, status, driver_id')
-        .in('so_doc_no', docNos)
-        .range(from, to),
+        .in('so_doc_no', batch).order('id').range(from, to),
     );
     const latestDoByDoc = new Map<string, { id: string; driverId: string | null }>();
     const scopeDoIds: string[] = [];
-    for (const d of (doRows ?? [])) {
+    for (const d of doRows) {
       const st = (d.status ?? '').toUpperCase();
       if (st === 'DRAFT' || st === 'CANCELLED') continue;
       const dn = d.so_doc_no ?? '';
@@ -1603,13 +1604,12 @@ deliveryPlanning.get('/geo', async (c) => {
     }
     const crewByDoId = new Map<string, { driverIds: Array<string | null>; helperIds: Array<string | null> }>();
     if (scopeDoIds.length > 0) {
-      const { data: crewRows } = await paginateAll<Record<string, unknown>>((from, to) =>
+      const { data: crewRows } = await chunkIn<Record<string, unknown>>(scopeDoIds, (batch, from, to) =>
         sb.from('delivery_order_crew')
           .select('do_id, driver_1_id, driver_2_id, helper_1_id, helper_2_id')
-          .in('do_id', scopeDoIds)
-          .range(from, to),
+          .in('do_id', batch).order('do_id').range(from, to),
       );
-      for (const cr of (crewRows ?? [])) {
+      for (const cr of crewRows) {
         crewByDoId.set(String(cr.do_id ?? cr.doId ?? ''), {
           driverIds: [(cr.driver1Id ?? cr.driver_1_id) as string | null, (cr.driver2Id ?? cr.driver_2_id) as string | null],
           helperIds: [(cr.helper1Id ?? cr.helper_1_id) as string | null, (cr.helper2Id ?? cr.helper_2_id) as string | null],
@@ -1643,21 +1643,21 @@ deliveryPlanning.get('/geo', async (c) => {
   /* 3. Line items → set counts (the packer's derivation: catalog category
         first, item_group fallback, deriveSetCount) + the per-order primary
         warehouse for the depot vote. */
-  const { data: itemRows } = await paginateAll<{
+  const { data: itemRows } = await chunkIn<{
     doc_no: string; item_group: string | null; item_code: string | null;
     qty: number | null; cancelled: boolean | null;
     warehouse_id: string | null; warehouseId?: string | null;
-  }>((from, to) =>
+  }>(docNos, (batch, from, to) =>
     scopeToAllowedCompanies(
       sb.from('mfg_sales_order_items')
         .select('doc_no, item_group, item_code, qty, cancelled, warehouse_id')
-        .in('doc_no', docNos)
+        .in('doc_no', batch)
         .eq('cancelled', false),
       c,
-    ).range(from, to),
+    ).order('doc_no').range(from, to),
   );
   const geoCodes = new Set<string>();
-  for (const it of (itemRows ?? [])) if (it.item_code) geoCodes.add(it.item_code);
+  for (const it of itemRows) if (it.item_code) geoCodes.add(it.item_code);
   const geoProductCategory = new Map<string, string>();
   {
     const codeList = [...geoCodes];
@@ -1672,7 +1672,7 @@ deliveryPlanning.get('/geo', async (c) => {
   }
   const setLinesByDoc = new Map<string, SetLine[]>();
   const primaryWhByDoc = new Map<string, string>();
-  for (const it of (itemRows ?? [])) {
+  for (const it of itemRows) {
     const dn = String(it.doc_no ?? '');
     if (!dn) continue;
     const cat = (it.item_code ? geoProductCategory.get(it.item_code) : undefined) ?? normCategory(it.item_group ?? '');
