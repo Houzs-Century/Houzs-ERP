@@ -1713,6 +1713,14 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // Agreement / Quotation on its own timeline (Super Admin / weisiang).
   if (f.pending_agreement) { pendingOr.push(AGREEMENT_PENDING); pendingBinds.push(dueToday); }
   if (pendingOr.length) {
+    // Only CONFIRMED events generate anyone's pending work (owner 2026-08-17:
+    // "why event on status cancelled and pending appear in my pending task??
+    // ... make sure these 2 status event not appear on my pending task").
+    // Measured at the time of the report: 22 lane items sat on cancelled
+    // events and 24 on unconfirmed ('pending'-status) ones. Applied to the
+    // whole OR-block so every lane — role, title, approver, logistic,
+    // director, defect — inherits it; NULL/legacy status still shows.
+    where.push(`COALESCE(p.status, 'confirmed') NOT IN ('cancelled', 'pending')`);
     where.push(`(${pendingOr.join("\n      OR ")})`);
     binds.push(...pendingBinds);
   }

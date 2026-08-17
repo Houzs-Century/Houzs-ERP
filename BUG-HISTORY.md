@@ -1,3 +1,51 @@
+## Cancelled and unconfirmed events kept generating everyone's My Pending work [medium]
+
+<!-- area: PMS My Pending lanes -->
+
+**Symptom.** Owner 2026-08-17: "why event on status cancelled and pending appear
+in my pending task??" — past events (e.g. a cancelled REX Johor show that ended
+2026-08-16) surfaced in the purchaser's My Pending as an incomplete Stock Out
+Transfer Record. Measured at report time: 22 lane items sat on cancelled events
+and 24 on unconfirmed ('pending'-status) ones, across every lane.
+
+**Root cause (traced).** `listProjects` assembles the `pendingOr` lanes (role /
+title / approver / logistic / director / defect) and pushes them into WHERE with
+no gate on the PROJECT's own status. Every lane predicate looks only at
+checklist rows + due dates, so a cancelled event's untouched checklist kept
+qualifying forever — and the DUE_GATE (`due <= today`) means a PAST event always
+qualifies, which is why they "suddenly" pile up after the end date passes.
+
+**Fix.** One `COALESCE(p.status,'confirmed') NOT IN ('cancelled','pending')`
+pushed alongside the OR-block, so every lane inherits it and NULL-status legacy
+rows stay visible. Only confirmed events generate pending work.
+
+**Ref.** 2026-08-17, same PR as the N/A-gate entry below.
+
+## The purchaser could not N/A her own gated tasks — the approval key gated the wrong verb [medium]
+
+<!-- area: PMS checklist status / approvals -->
+
+**Symptom.** Owner 2026-08-17: "user sim cannot click N/A on her task please
+allowed her to click N/A." Sim (Purchaser) clicking N/A on Exchange List /
+Stock In / Stock Out rows got 403 `Requires stock_transfer.approve`.
+
+**Root cause (traced).** POST `/checklist/:itemId/status` required the item's
+`required_perm` approval key for EVERY status transition on a gated row. All
+three PURCHASER document rows are gated (`stock_transfer.approve` /
+`stock_in.approve` / `projects.approve`), while the purchaser-lane design
+(2026-08-11) explicitly expects the purchaser to N/A them when an event needs
+none — the gate and the lane contradicted each other, and since only approvers
+held the keys, the flood could only be cleared by Peter/Kris clicking N/A on
+the purchaser's behalf.
+
+**Fix.** The approval key now gates only the decision-equivalent transitions
+('done' / 'blocked'). 'na' and its undo ('pending') fall through to the
+existing role-badge gate, so the badged function (or projects.write) may N/A
+their own document rows; the approver brand scope still applies whenever the
+caller holds the key.
+
+**Ref.** 2026-08-17, same PR as the cancelled/pending-lane entry above.
+
 ## /so-to-po sent no supplier, because the transfer branch threw the whole master away [high]
 
 <!-- area: AutoCount sync + write-back -->
