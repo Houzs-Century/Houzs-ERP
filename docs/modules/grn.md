@@ -105,7 +105,7 @@ Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
 | Method | Path | Line | Purpose |
 |--------|------|------|---------|
 | GET | `/` | `:833` | List. `?page=` opts into pagination + `statusCounts`. |
-| GET | `/outstanding-po-items` | `:998` | PO lines with `qty - received_qty > 0` on SUBMITTED / PARTIALLY_RECEIVED POs; the from-PO picker. |
+| GET | `/outstanding-po-items` | `:998` | PO lines with `qty - received_qty > 0` on SUBMITTED / PARTIALLY_RECEIVED POs; the from-PO picker. Takes **`?poId=a,b,c`** (server-side scope) and returns **`scope`** beside `items` — see §2a. |
 | GET | `/:id` | `:1173` | Header + items + convert/lock flags + per-line source PO + per-line downstream. |
 | GET | `/:id/linked` | `:1229` | Parent PO + downstream PIs + PRs. |
 | POST | `/` | `:1268` | Create. `asDraft: true` → DRAFT; otherwise created POSTED and immediately posted (`:1471`). |
@@ -115,6 +115,58 @@ Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
 | PATCH | `/:id/cancel` | `:2033` | → CANCELLED; reverses the receipt. |
 | PATCH | `/:id` | `:2210` | Header edit — **can move stock** (warehouse relocation, see §5). **Company-scoped on BOTH halves** since #2086, 2026-08-13. |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2363` / `:2569` / `:2839` | Line CRUD — each re-syncs inventory on a POSTED GRN. |
+
+## 2a. The from-PO picker's read, and why an empty grid must name its cause
+
+*Added 2026-08-17, with the fix for the owner's zero-row screen.*
+
+He opened the picker scoped to one PO, got **0 rows**, and was told *"every line
+has been received"*. The PO had never been received. Three mechanisms, all
+silent, and the full trace is in `BUG-HISTORY.md`:
+
+1. `.limit(500)` sat on the **raw** `purchase_order_items` select with BOTH
+   filters running afterwards in JS, so the window was spent on every PO line in
+   the company — received, draft or not.
+2. It was ordered by `purchase_order_id DESC` — a uuid key order, not a date one.
+3. `?poId=` was applied **in the browser**, to the already-truncated list, so
+   scoping could only narrow the window and never recover a PO outside it.
+
+**What the endpoint does now** (`backend/src/scm/lib/outstanding-po-lines.ts`):
+
+| | |
+|---|---|
+| the read | **paged** via `pageWithTruncation`, not capped. Not `paginateAll`: that returns `{data, error}` and so cannot report that it stopped early, which is the whole distinction this endpoint got wrong. Ceiling `OUTSTANDING_MAX_PAGES × OUTSTANDING_PAGE`; hitting it sets `scope.truncated`. |
+| dead statuses | filtered **in SQL**, `.not('po.status','in',…)` on the embedded alias — the form `mrp.ts:535` already proves in production on this same table and embed. Only DRAFT + CANCELLED (`PO_DEAD_FOR_RECEIPT`). |
+| the exact receivable set | still the **JS** gate, `isReceivablePoStatus` in `grns.ts` — the SINGLE predicate the create paths share. The lib holds **no copy**; `explainOutstanding` takes it as a REQUIRED parameter so the picker cannot offer a line the converter then refuses. |
+| `?poId=` | a **SQL predicate** on `purchase_order_id`. A scoped read is exact and bounded by one PO's line count. |
+| ordering | the line's own `id` — paging needs a total order. |
+
+**The response carries `scope`**, which is the WHY behind an empty `items`:
+`requestedPoIds`, `pos[]` (each with `poDocNo`, `status`, `receivable`,
+`candidateLines`, `outstandingLines`), `unknownPoIds`, `truncated`, `scanned`. A
+requested PO that is DRAFT or CANCELLED yields no candidate rows, so the handler
+does a second header read to learn its status — without it, *"your PO is a
+draft"* and *"your PO does not exist"* collapse into one answer, and both used to
+render as *"every line has been received"*.
+
+**The rule this establishes, for every picker: AN EMPTY RESULT MUST SAY WHY IT IS
+EMPTY, and must never claim a completion it has not verified.**
+`frontend/src/lib/outstandingEmptyReason.ts` turns `scope` plus the two
+client-side causes (toolbar filters, unsaved-draft subtraction) into one of eight
+sentences, and only the two that VERIFIED completion may claim it —
+`outstandingEmptyReason.test.ts` asserts that property by enumerating every
+branch, not by reviewing the wording. Desktop `GrnFromPo.tsx` and
+`MobileConvertWizard.tsx` share it; the mobile wizard had the same bug because it
+fetched the unscoped endpoint and filtered client-side.
+
+**`useOutstandingPoItems(poIds)` takes its scope as a REQUIRED argument** (pass
+`[]` for the open picker), per CLAUDE.md's rule about a parameter that decides
+something: optional, every forgetful caller silently gets the unscoped read,
+which is the looser direction and is exactly how this shipped.
+
+To measure what the cap hid on production: Actions →
+**probe-transfer-census** (read-only), which replays the old window at any
+`LIMIT` and counts the outstanding lines and whole POs it could not reach.
 
 **`PATCH /:id` was unscoped on both its read and its UPDATE until 2026-08-13**
 (PR #2086; BUG-HISTORY, *"The writes the read-hardening audit left"*). The GET at

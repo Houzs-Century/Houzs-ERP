@@ -13,6 +13,7 @@ import { idempotentInit } from '../../../lib/idempotency';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import type { OriginAssignment } from './flow-queries';
+import type { OutstandingScope } from '../../../lib/outstandingEmptyReason';
 
 export type SupplierStatus = 'ACTIVE' | 'INACTIVE' | 'BLOCKED';
 export type Currency = 'MYR' | 'RMB' | 'USD' | 'SGD';
@@ -744,12 +745,31 @@ export type OutstandingPoItem = {
   warehouseLocationName: string | null;
 };
 
-export function useOutstandingPoItems() {
+/**
+ * `poIds` is REQUIRED, not optional, per CLAUDE.md's rule about a parameter that
+ * decides something — it decides whether the server reads ONE Purchase Order or
+ * every one in the company. An optional one defaults every forgetful caller to
+ * the unscoped read, which is the LOOSER direction and is exactly the shape that
+ * produced the owner's 2026-08-17 zero-row screen: the scope existed in the URL,
+ * was never sent to the server, and was applied in the browser to an
+ * already-truncated list. Pass `[]` for the open "From PO" picker.
+ *
+ * Returns the whole payload, `scope` included. That block is the WHY behind an
+ * empty `items` and dropping it is how "your PO is a draft" became "every line
+ * has been received" — see `lib/outstandingEmptyReason.ts`.
+ */
+export function useOutstandingPoItems(poIds: string[]) {
+  const scopeParam = [...poIds].sort().join(',');
   return useQuery({
-    queryKey: ['grns', 'outstanding-po-items'],
-    queryFn: () => authedFetch<{ items: OutstandingPoItem[] }>(
-      `/grns/outstanding-po-items`,
-    ).then((r) => r.items),
+    // The scope is part of the identity of this read now that the SERVER applies
+    // it; without it in the key, a scoped and an unscoped picker share a cache
+    // entry and one shows the other's rows.
+    queryKey: ['grns', 'outstanding-po-items', scopeParam],
+    queryFn: () => authedFetch<{ items: OutstandingPoItem[]; scope?: OutstandingScope }>(
+      scopeParam
+        ? `/grns/outstanding-po-items?poId=${encodeURIComponent(scopeParam)}`
+        : `/grns/outstanding-po-items`,
+    ),
     staleTime: 30_000,
   });
 }

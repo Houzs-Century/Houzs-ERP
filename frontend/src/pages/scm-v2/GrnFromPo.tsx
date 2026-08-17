@@ -27,6 +27,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { readScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
+import { outstandingEmptyReason } from '../../lib/outstandingEmptyReason';
 import { Save, X, CheckSquare, Square, Filter } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
@@ -90,7 +91,6 @@ export type GrnFromPoPick = OutstandingPoItem & { _pickQty: number };
 
 export const GrnFromPo = () => {
   const navigate = useNavigate();
-  const itemsQ   = useOutstandingPoItems();
 
   /* Commander 2026-05-31 — "Partially Convert" from the PO list lands here with
      ?poId=<id>, scoping the picker to ONE PO's outstanding lines so the operator
@@ -107,6 +107,12 @@ export const GrnFromPo = () => {
     [searchParams],
   );
   const poIdSet = scope.keys;
+
+  /* The scope now goes to the SERVER. It used to be applied here, in the
+     browser, over a list the server had already capped at 500 raw PO lines —
+     so scoping could only narrow that window and never recover a PO which fell
+     outside it. That is the owner's 2026-08-17 zero-row screen. */
+  const itemsQ = useOutstandingPoItems(useMemo(() => [...poIdSet], [poIdSet]));
 
   /* Commander 2026-05-31 — APPEND mode. When a POSTED GRN's edit page sends the
      operator here with ?appendToGrn=<grnId>, this picker no longer feeds the
@@ -134,7 +140,11 @@ export const GrnFromPo = () => {
   // In-app result dialog (validation only now — the grid feeds the form).
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
 
-  const items = useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
+  const items = useMemo(() => itemsQ.data?.items ?? [], [itemsQ.data]);
+  /* The WHY behind an empty grid. Older cached payloads have no `scope`, so it
+     is nullable and `outstandingEmptyReason` treats null as "I cannot name a
+     scoped reason" rather than as "nothing is scoped". */
+  const serverScope = itemsQ.data?.scope ?? null;
 
   /* The New GRN form stashes its current draft (grnNewDraft) before sending us
      here. Build a per-poItemId drafted-qty map so the same PO line can't be
@@ -602,7 +612,14 @@ export const GrnFromPo = () => {
           Reviewing{' '}
           <code>
             {poIdSet.size === 1
-              ? (items.find((r) => poIdSet.has(r.poId))?.poDocNo ?? 'this PO')
+              /* Prefer the server's `scope`, which names the PO even when it has
+                 no outstanding lines. Reading the doc number off `items` alone
+                 fell back to the anonymous "this PO" in exactly the case the
+                 operator most needs it named — the empty one. That is the banner
+                 in the owner's 2026-08-17 screenshot. */
+              ? (serverScope?.pos[0]?.poDocNo
+                  ?? items.find((r) => poIdSet.has(r.poId))?.poDocNo
+                  ?? 'this PO')
               : `${poIdSet.size} POs`}
           </code>
           {' '}— outstanding lines are pre-filled. Adjust qty, then Save to create the GRN.{' '}
@@ -631,13 +648,20 @@ export const GrnFromPo = () => {
         toolbar={toolbar}
         groupBanner={false}
         isLoading={itemsQ.isLoading}
-        /* A failed read must NEVER render as the sentence below. "We couldn't
-           load the lines" and "there are no lines left to do" are opposite
-           facts, and the operator acts on the second one by walking away from
-           work that is still outstanding. */
-        emptyMessage={itemsQ.isError
-          ? "We couldn't load the outstanding lines, so this list is incomplete. That is not the same as there being none left — please refresh and try again."
-          : "No outstanding PO lines — every line has been received (or there are no outstanding POs)."}
+        /* AN EMPTY RESULT MUST SAY WHY IT IS EMPTY. This used to be one sentence
+           — "every line has been received (or there are no outstanding POs)" —
+           covering five different situations and asserting the work was DONE in
+           all of them. The owner hit it on a PO that had never been received. The
+           reasons now live in one shared module so the mobile wizard cannot
+           disagree with this screen. */
+        emptyMessage={outstandingEmptyReason({
+          isError: itemsQ.isError,
+          isLoading: itemsQ.isLoading,
+          scope: serverScope,
+          serverRowCount: items.length,
+          visibleRowCount: rows.length,
+          filtersActive: category !== 'all' || Boolean(dateFrom) || Boolean(dateTo),
+        }) ?? ''}
       />
 
       {dialog && (

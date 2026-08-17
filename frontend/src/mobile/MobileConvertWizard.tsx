@@ -382,7 +382,16 @@ export function MobileConvertWizard({
     enabled: target === "grn" && selectedPoIds.length > 0,
     queryKey: ["convert-grn-lines", [...selectedPoIds].sort().join(",")],
     queryFn: async () => {
-      const res = await authedFetch<{ items?: OutstandingPoLine[] }>(`/grns/outstanding-po-items`);
+      /* Scope the READ, not the result. This used to fetch the unscoped list and
+         filter by `selectedPoIds` here — and that list was capped at 500 raw PO
+         lines server-side, so a selected PO outside the window silently produced
+         zero lines (the owner's 2026-08-17 desktop screen, same endpoint, same
+         mechanism). The server now applies `?poId=` in SQL. The JS filter below
+         is kept as a belt-and-braces narrowing, not as the scope. */
+      const scoped = [...selectedPoIds].map((x) => str(x)).sort().join(',');
+      const res = await authedFetch<{ items?: OutstandingPoLine[] }>(
+        `/grns/outstanding-po-items?poId=${encodeURIComponent(scoped)}`,
+      );
       const set = new Set(selectedPoIds.map((x) => str(x)));
       return (res.items ?? [])
         .filter((r) => set.has(str(r.poId)))

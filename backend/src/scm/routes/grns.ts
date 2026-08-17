@@ -32,6 +32,9 @@ import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurren
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
+import {
+  poDeadForReceiptSql, pageWithTruncation, parsePoIdScope, explainOutstanding, remainingOf,
+} from '../lib/outstanding-po-lines';
 import { checkReceiptCosts, zeroCostAckColumns, ZERO_COST_RECEIPT_ERROR, type ReceiptCostLine } from '../lib/zero-cost-receipt-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked, crossCompanySourceRefusal,
@@ -1261,12 +1264,16 @@ grns.get('/', async (c) => {
 
 /* ── GET /outstanding-po-items ──────────────────────────────────────────
    Returns a flat list of PO line items with remaining qty > 0. Used by
-   the multi-select "GRN from POs (line-level)" picker at /grns/from-po.
+   the multi-select "GRN from POs (line-level)" picker at /grns/from-po,
+   and by the mobile convert wizard.
    Filters:
-     - parent PO status must be SUBMITTED or PARTIALLY_RECEIVED
-     - line item must have qty - received_qty > 0
-     - limit 500 so the picker doesn't choke
-   Shape mirrors the GET /outstanding-so-items pattern on mfgPurchaseOrders.
+     - parent PO status must be SUBMITTED or PARTIALLY_RECEIVED — IN SQL
+     - `?poId=a,b,c` scopes to those POs — IN SQL
+     - line item must have qty - received_qty > 0 — in JS, because PostgREST
+       cannot compare two columns
+   Also returns `scope`, the facts an EMPTY answer needs in order to say
+   something true. See lib/outstanding-po-lines.ts for the three mechanisms
+   that used to make an unreceived PO read as fully received.
 
    IMPORTANT (route ordering): this STATIC path MUST be registered before
    the `/:id` param route below — otherwise Hono matches `/:id` first and
@@ -1274,6 +1281,11 @@ grns.get('/', async (c) => {
    2026-05-28, same class as the PO-from-SO shadowing.) */
 grns.get('/outstanding-po-items', async (c) => {
   const sb = c.get('supabase');
+  /* The scope the operator arrived with. Applied in SQL, not in the browser:
+     the old code filtered `?poId=` client-side over an already-truncated list,
+     so scoping could only narrow the window and never recover a PO that fell
+     outside it. That is the owner's 2026-08-17 zero-row screen. */
+  const requestedPoIds = parsePoIdScope(c.req.query('poId'));
   /* Commander 2026-05-29 — the GRN-from-PO picker now locks to ONE warehouse per
      GRN (mirrors the supplier-lock pattern) + shows a Warehouse column. Select the
      parent PO's purchase_location_id so the picker can group/lock by warehouse,
@@ -1285,23 +1297,6 @@ grns.get('/outstanding-po-items', async (c) => {
      2990's GRN picker. The consignment mirror already wrapped with
      scopeToCompany; do the same here (items carry company_id since mig 0083,
      fail-closed when the company context can't resolve). */
-  const { data: items, error } = await scopeToCompany(
-    sb
-      .from('purchase_order_items')
-      .select(`
-      id, purchase_order_id, material_kind, material_code, material_name, supplier_sku, item_group,
-      description, qty, received_qty, unit_price_centi, warehouse_id, variants, delivery_date,
-      supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-      po:purchase_orders!inner ( id, po_number, supplier_id, status, po_date, expected_at,
-        supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-        purchase_location_id, supplier:suppliers ( code, name ) )
-    `),
-    c,
-  )
-    .order('purchase_order_id', { ascending: false })
-    .limit(500);
-  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-
   type Row = {
     id: string; purchase_order_id: string; material_kind: string; material_code: string;
     material_name: string; supplier_sku: string | null; item_group: string | null; description: string | null;
@@ -1322,9 +1317,61 @@ grns.get('/outstanding-po-items', async (c) => {
     };
   };
 
-  const rows = ((items ?? []) as unknown as Row[])
-    .filter((r) => r.po.status === 'SUBMITTED' || r.po.status === 'PARTIALLY_RECEIVED')
-    .filter((r) => r.qty - (r.received_qty ?? 0) > 0);
+  /* PAGED, not capped, and the dead-status filter is pushed into SQL so the read
+     stops walking every draft and cancelled order in history. The `.limit(500)`
+     this replaces sat on the RAW select with BOTH filters running afterwards in
+     JS — see the module header. `.not('po.status','in',…)` on the embedded alias
+     is the idiom mrp.ts:535 already proves in production against this same
+     embed; the exact SUBMITTED / PARTIALLY_RECEIVED set stays the JS gate below,
+     so behaviour is unchanged. */
+  const { data: items, error, truncated } = await pageWithTruncation<Row>((from, to) => {
+    let q = scopeToCompany(
+      sb
+        .from('purchase_order_items')
+        .select(`
+      id, purchase_order_id, material_kind, material_code, material_name, supplier_sku, item_group,
+      description, qty, received_qty, unit_price_centi, warehouse_id, variants, delivery_date,
+      supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
+      po:purchase_orders!inner ( id, po_number, supplier_id, status, po_date, expected_at,
+        supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
+        purchase_location_id, supplier:suppliers ( code, name ) )
+    `)
+        .not('po.status', 'in', poDeadForReceiptSql()),
+      c,
+    );
+    if (requestedPoIds.length > 0) q = q.in('purchase_order_id', requestedPoIds);
+    /* Order by the line's own key, not the parent's. `purchase_order_id DESC`
+       was a key order masquerading as "newest first", and paging needs a total
+       order to be stable across pages anyway. */
+    return q.order('id').range(from, to);
+  });
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+
+  const candidates = items ?? [];
+  const rows = candidates
+    .filter((r) => isReceivablePoStatus(r.po.status))
+    .filter((r) => remainingOf(r) > 0);
+
+  /* A requested PO that is DRAFT or CANCELLED produced NO candidate rows (the
+     SQL filter dropped it), so its status can only be learned from a header
+     read. Without this, "your PO is a draft" is indistinguishable from "your PO
+     does not exist" — and both used to render as "every line has been
+     received". Scoped requests only; the open picker asks for nothing. */
+  const headerStatuses = new Map<string, { poDocNo: string | null; status: string | null }>();
+  if (requestedPoIds.length > 0) {
+    const missing = requestedPoIds.filter((id) => !candidates.some((r) => r.purchase_order_id === id));
+    if (missing.length > 0) {
+      const { data: hdrs } = await scopeToCompany(
+        sb.from('purchase_orders').select('id, po_number, status'), c,
+      ).in('id', missing);
+      for (const h of (hdrs ?? []) as Array<{ id: string; po_number: string | null; status: string | null }>) {
+        headerStatuses.set(h.id, { poDocNo: h.po_number, status: h.status });
+      }
+    }
+  }
+  const scope = explainOutstanding(
+    requestedPoIds, candidates, headerStatuses, truncated, isReceivablePoStatus,
+  );
 
   /* Warehouse-lock fix (Agent C 2026-05-31, bug #1 "No outstanding PO lines") —
      the warehouse a PO line ships into is the LINE's own warehouse_id when set,
@@ -1399,7 +1446,10 @@ grns.get('/outstanding-po-items', async (c) => {
     };
   });
 
-  return c.json({ items: outstanding });
+  /* `scope` is the WHY behind an empty `items`. Returned as data, not as a
+     sentence: the desktop picker and the mobile convert wizard read this same
+     endpoint, so the wording belongs to each surface and the facts belong here. */
+  return c.json({ items: outstanding, scope });
 });
 
 /* Per-GRN-line downstream breakdown — for each GRN item id, the documents it was
