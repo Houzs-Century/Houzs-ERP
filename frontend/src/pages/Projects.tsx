@@ -680,11 +680,10 @@ function composeEventName(p: {
 
 // Default project-name format used by the create form.
 //   "{state} [{brand}] {organizer | SOLO} @ {venue}"
-// SOLO is event-type-driven: when the event type is "solo", the
-// organizer slot is the literal "SOLO" regardless of whether an
-// organizer was picked (a solo event is by definition not organised
-// by anyone). For non-solo event types, the chosen organizer fills
-// the slot; if empty, it's omitted.
+// A picked organizer always fills the slot — solo events included (owner
+// 2026-08-17, IOI Mall Damansara: the calendar said SOLO while the Excel
+// organizer column said MALL MGMT). "SOLO" appears only when no organizer is
+// chosen. Mirrors deriveProjectName in backend/src/services/project-naming.ts.
 function composeDefaultProjectName(p: {
   state?: string | null;
   brand?: string | null;
@@ -697,7 +696,7 @@ function composeDefaultProjectName(p: {
   const organizer = (p.organizer || "").trim();
   const venue = (p.venue || "").trim();
   const isSolo = (p.event_type_slug || "").toLowerCase() === "solo";
-  const orgSlot = isSolo ? "SOLO" : organizer;
+  const orgSlot = organizer || (isSolo ? "SOLO" : "");
 
   const head: string[] = [];
   // State leads the name UPPERCASE (owner 2026-07-24): the 2026-07-22 canonical
