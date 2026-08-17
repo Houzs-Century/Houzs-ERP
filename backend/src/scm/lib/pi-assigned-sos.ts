@@ -31,9 +31,17 @@ export async function attachPiAssignedSos(
     for (let k = 0; k < grnIds.length; k += 300) {
       const chunk = grnIds.slice(k, k + 300);
       if (chunk.length === 0) continue;
-      const { data: grnRows } = await scopeToCompany(
+      /* BIND THE ERROR. Fail-soft is the contract here (the rows still return,
+         just without the columns) and it stays — but an empty chunk from a failed
+         read is indistinguishable from a GRN with no parent PO, and the column
+         then reads as "no Assigned SO" rather than "we could not tell". */
+      const { data: grnRows, error: grnErr } = await scopeToCompany(
         sb.from('grns').select('id, purchase_order_id'), c,
       ).in('id', chunk);
+      if (grnErr) {
+        /* eslint-disable-next-line no-console */
+        console.error('[pi-assigned-sos] GRN parent read failed — Assigned SO column will be short:', grnErr.message);
+      }
       for (const g of (grnRows ?? []) as Array<{ id: string; purchase_order_id: string | null }>) {
         if (g.purchase_order_id) poByGrn.set(g.id, g.purchase_order_id);
       }
@@ -48,9 +56,13 @@ export async function attachPiAssignedSos(
     for (let k = 0; k < piIds.length; k += 300) {
       const chunk = piIds.slice(k, k + 300);
       if (chunk.length === 0) continue;
-      const { data: piLines } = await sb.from('purchase_invoice_items')
+      const { data: piLines, error: lineErr } = await sb.from('purchase_invoice_items')
         .select('purchase_invoice_id, material_code')
         .in('purchase_invoice_id', chunk);
+      if (lineErr) {
+        /* eslint-disable-next-line no-console */
+        console.error('[pi-assigned-sos] PI line-code read failed — Assigned SO column will be short:', lineErr.message);
+      }
       for (const l of (piLines ?? []) as Array<{ purchase_invoice_id: string; material_code: string | null }>) {
         const code = (l.material_code ?? '').trim();
         if (!code) continue;

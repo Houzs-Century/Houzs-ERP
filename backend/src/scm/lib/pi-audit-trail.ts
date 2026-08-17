@@ -50,8 +50,16 @@ export async function loadPiAuditMeta(
   piId: string,
 ): Promise<{ docNo: string | null; companyId: number | null; status: string | null }> {
   try {
-    const { data } = await sb.from('purchase_invoices')
+    /* BIND THE ERROR. The row stays fail-open — an unresolved doc number costs an
+       audit row its human key and nothing else — but a failed read and an invoice
+       that is genuinely gone are different facts, and only one of them is worth
+       looking into. */
+    const { data, error } = await sb.from('purchase_invoices')
       .select('invoice_number, company_id, status').eq('id', piId).maybeSingle();
+    if (error) {
+      /* eslint-disable-next-line no-console */
+      console.error('[pi-audit] meta read failed — audit row loses its doc number:', piId, error.message);
+    }
     const row = (data ?? null) as { invoice_number?: string | null; company_id?: number | null; status?: string | null } | null;
     return { docNo: row?.invoice_number ?? null, companyId: row?.company_id ?? null, status: row?.status ?? null };
   } catch {
@@ -78,10 +86,19 @@ export async function recordPiCreate(
 ): Promise<void> {
   let row: Record<string, unknown> | null = null;
   try {
-    const { data } = await sb.from('purchase_invoices')
+    /* BIND THE ERROR, and keep the `!row` behaviour. `!row` is load-bearing — a
+       header a compensating branch already deleted reads back as nothing, and no
+       CREATE row must be written for it — but a FAILED read reaches the same
+       `!row` and silently loses the audit trail of an invoice that does exist.
+       Same outcome, no longer silent. */
+    const { data, error } = await sb.from('purchase_invoices')
       .select('id, invoice_number, status, company_id, supplier_id, supplier_invoice_ref, ' +
         'purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, total_centi')
       .eq('id', piId).maybeSingle();
+    if (error) {
+      /* eslint-disable-next-line no-console */
+      console.error('[pi-audit] CREATE read-back failed — no CREATE row for this invoice:', piId, error.message);
+    }
     row = (data ?? null) as Record<string, unknown> | null;
   } catch { /* best-effort */ }
   if (!row) return; // rolled back (or unreadable): a CREATE row here would be a lie

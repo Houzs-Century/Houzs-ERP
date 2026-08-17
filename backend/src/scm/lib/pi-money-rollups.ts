@@ -102,7 +102,15 @@ export async function reallocatePiCharges(
   sb: any,
   piId: string,
   method: ReturnType<typeof normalizeAllocationMethod> = 'QTY',
-  companyId?: number | null,
+  /* The KEY is required and the absent VALUE is still expressible. `companyId?:`
+     let a caller say nothing, and saying nothing here is spelled the same as
+     "every company" — the volume read below keys on `code`, which is SHARED, so
+     the other company's cubic metres would shift every goods line's share of the
+     landed charge. Invisible while this function lived in routes/; the
+     decision-param gate only scans src/scm/lib and src/scm/shared, so moving it
+     here is what surfaced it. Every one of the seven call sites already passes
+     `activeCompanyId(c)`, so runtime is unchanged. */
+  companyId: number | null | undefined,
 ): Promise<void> {
   try {
     const [headRes, itemsRes] = await Promise.all([
@@ -148,7 +156,16 @@ export async function reallocatePiCharges(
       // shift every goods line's share of the landed charge.
       let volQ = sb.from('mfg_products').select('code, unit_m3_milli').in('code', codes);
       if (companyId != null) volQ = volQ.eq('company_id', companyId);
-      const { data: prods } = await volQ;
+      /* BIND THE ERROR. Unbound, a failed volume read blanked every m3 and the
+         allocator silently fell back to the QTY basis — a different split of the
+         same freight pool, written into allocated_charge_centi and capitalised by
+         recost into the FIFO lot. The fallback stays (this function is
+         best-effort by contract) but it stops being silent. */
+      const { data: prods, error: volErr } = await volQ;
+      if (volErr) {
+        /* eslint-disable-next-line no-console */
+        console.error('[reallocatePiCharges] product volume read failed — CBM basis degrades to QTY:', piId, volErr.message);
+      }
       for (const p of (prods ?? []) as Array<{ code: string; unit_m3_milli: number | null }>) {
         m3ByCode.set(p.code, Number(p.unit_m3_milli ?? 0));
       }
