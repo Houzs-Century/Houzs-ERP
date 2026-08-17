@@ -493,6 +493,24 @@ class AcSyncService {
        line was transferred from, so it is the cheapest single answer to "is
        the convert-from link there". */
     "FromDocType", "FromDocNo", "FromDocDtlKey", "FullTransferFromDocList",
+    /* THE PURCHASE ORDER KEEPS ITS SALES SOURCE IN ITS OWN TWO COLUMNS, and
+       asking PODTL for FromDocType alone is asking the wrong question. Measured
+       in the committed live-book extract (backend/scripts/data/
+       ac-fidelity-po-lines.json.gz, AED_HOUZS read-only 2026-08-11, the query at
+       export-ac-fidelity-truth.py:144): 10,338 of 18,148 non-cancelled PODTL
+       rows, over 7,467 of 9,080 purchase orders, carry a FromSODtlKey, and
+       10,314 of those also carry a FromSODocList. Not one of them was written by
+       this service — they are AutoCount's OWN "transfer from Sales Order",
+       raised in its UI before the cutover. The ERP already treats FromSODtlKey
+       as the one line-to-line link AutoCount populates (backfill-po-ac-dtlkey.mjs,
+       repair-dedication-from-autocount.mjs).
+
+       So the four names above are the DOWNSTREAM shape — DODTL / IVDTL / GRDTL /
+       PIDTL, where FromDocDtlKey is NULL throughout this book and only the
+       document-level pair is real. On a PO it is the other way round: the LINE
+       key is the populated one. Reading both is what makes "is the convert-from
+       link there" answerable on either side. */
+    "FromSODtlKey", "FromSODocList",
     "EstimatedDeliveryDate", "PrintOut",
   };
 
@@ -704,6 +722,55 @@ class AcSyncService {
       using (var rd = cmd.ExecuteReader()) while (rd.Read()) outp.Add(RowToDict(rd, cols));
     }
     return outp;
+  }
+
+  /* ── "convert from", read back off the purchase order we just wrote ───────
+     THE QUESTION THIS ANSWERS, in the owner's words 2026-08-17:
+     「他的 documentation convert from 的那个有做到没有?」
+
+     Nobody has ever looked at the right columns. Every report on this route has
+     read FromDocType / FromDocNo, found the type blank, and concluded the link
+     was half-written — but on a PURCHASE ORDER those are not the columns
+     AutoCount populates for a sales source. Its own UI writes FromSODtlKey and
+     FromSODocList, on 10,338 of this book's 18,148 non-cancelled PODTL rows.
+     Whether AddSOToPOTransferDetail writes them too is UNKNOWN as this is
+     written, and it is one SELECT away — so the SELECT runs on every /so-to-po
+     and the next request settles it, with no human, no remote desktop and no
+     query pasted into a chat window (CLAUDE.md: build the check).
+
+     All six lineage fields, per line, and the columns go through
+     ExistingColumns so a book that lacks one reports "no such column" instead of
+     "null". Read-only, and wrapped: a diagnostic must never cost a purchase
+     order that is already saved. */
+  static void LogPoSourceLink(string docNo) {
+    if (string.IsNullOrEmpty(docNo)) return;
+    try {
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        var missing = new List<string>();
+        var wanted = new string[] {
+          "DtlKey", "FromSODtlKey", "FromSODocList", "FromDocType", "FromDocNo", "FromDocDtlKey",
+        };
+        var lines = ReadMany(cn, "PODTL", wanted,
+          "DocKey = (SELECT DocKey FROM [PO] WHERE DocNo = @d)", docNo, missing);
+        if (missing.Count > 0)
+          Log("  so-to-po source link: PODTL has no " + string.Join(", ", missing.ToArray()) +
+              " in this book - the absence is the column, not the value");
+        if (lines.Count == 0) { Log("  so-to-po source link: no PODTL rows read back for " + docNo); return; }
+        foreach (var row in lines) {
+          var bits = new List<string>();
+          foreach (var w in wanted) {
+            if (!row.ContainsKey(w)) continue;
+            var v = row[w];
+            bits.Add(w + "=" + (v == null ? "NULL" : v.ToString().Trim()));
+          }
+          Log("  so-to-po source link " + docNo + ": " + string.Join("  ", bits.ToArray()));
+        }
+      }
+    } catch (Exception ex) {
+      Log("  so-to-po source link could not be read: " + ex.Message);
+    }
   }
 
   static List<Dictionary<string, object>> CreatedLines(string dtlTable, string docNo) {
@@ -1399,6 +1466,55 @@ class AcSyncService {
     } catch (Exception ex) { Log("  SDK api dump failed: " + ex.Message); }
   }
 
+  /* ── what the PURCHASE side can NAME as a source, and what it ACCEPTS ─────
+     These are two different questions and answering the first as if it were the
+     second is what produced the /so-to-po refusal on 2026-08-17:
+
+       so-to-po: typed AddPartialTransferDetail("SO") refused
+                 (FromDocType must be RQ.)
+
+     AutoCount.Invoicing.Purchase.TransferFrom is documented as carrying a
+     SalesOrder member, so a sales-order source IS expressible in the purchase
+     namespace - and PurchaseOrderPartialTransferDetail still enumerates exactly
+     one accepted fromDocType, RQ, and says so in the message. The enum is the
+     NAMESPACE's vocabulary (every purchase target shares it, and
+     TransferHelper.Create / LoadWantToFullTransferData take it); which subset a
+     given TARGET accepts is validated inside that target's own
+     *PartialTransferDetail constructor. The two do not disagree.
+
+     What is written above is READ OFF A LOG LINE AND A DOC PAGE, so this method
+     re-takes it from the assemblies themselves, once per process: every member
+     of the enum, the doc-type string the vendor's own TransferFromToDocumentType
+     maps it to, and what DocumentTypeToTransferFrom does with "SO". Costs one
+     reflection pass, writes nothing, and turns the paragraph above into a fact
+     the next reader can check instead of a claim they have to believe. */
+  static bool LoggedPurchaseVocab;
+
+  static void LogPurchaseTransferVocabulary() {
+    if (LoggedPurchaseVocab) return;
+    LoggedPurchaseVocab = true;
+    try {
+      var t = typeof(AutoCount.Invoicing.Purchase.TransferFrom);
+      foreach (var name in Enum.GetNames(t)) {
+        var v = Enum.Parse(t, name);
+        string docType;
+        try {
+          docType = AutoCount.Invoicing.Purchase.TransferHelper.TransferFromToDocumentType(
+            (AutoCount.Invoicing.Purchase.TransferFrom) v);
+        } catch (Exception ex) { docType = "<threw " + ex.GetType().Name + ">"; }
+        Log("  purchase TransferFrom." + name + " = " + Convert.ToInt64(v) + " -> docType '" + docType + "'");
+      }
+    } catch (Exception ex) { Log("  purchase TransferFrom enum could not be read: " + ex.Message); }
+    try {
+      var tf = AutoCount.Invoicing.Purchase.TransferHelper.DocumentTypeToTransferFrom("SO");
+      Log("  purchase DocumentTypeToTransferFrom(\"SO\") = " + tf +
+          " - the vocabulary CAN name a sales source; whether a given target ACCEPTS it is the target's own check");
+    } catch (Exception ex) {
+      Log("  purchase DocumentTypeToTransferFrom(\"SO\") THREW " + ex.GetType().FullName + ": " + ex.Message.Trim() +
+          " - then the purchase side cannot even name a sales source and AddSOToPOTransferDetail is the only door");
+    }
+  }
+
   /* IsTransferFromSupported - the pre-flight this service never made.
      FALSE means the document CLASS will not be built by transfer at all, which
      is a different failure from a source line being rejected, and the two are
@@ -1901,6 +2017,21 @@ class AcSyncService {
      A purchase order is not: the ERP decides what it buys, and guessing would
      transfer sales lines nobody ordered from this supplier. */
   static string SoToPo(Dictionary<string, object> p) {
+    /* THE ERP NUMBERS THIS DOCUMENT TOO — divergence D5, and this route was the
+       last one it was open on. Measured on the live book 2026-08-17 10:15, the
+       first /so-to-po that ever succeeded:
+
+         so-to-po PO-009968: 2 transferred, 2 line(s) costed in phase two
+
+       while the ERP calls that same purchase order HC-PO-2608-001. Every other
+       type already carries our number — HC-SO-2608-001/2/3, HC-DO-2608-001/2,
+       HC-SI-2608-001 are all in AED_HOUZS under those numbers — so the purchase
+       order was the one document in the chain whose two sides no one could
+       reconcile. The same RequireDocNo the two CREATE routes carry, for the same
+       reason written out above it: a document AutoCount numbered for us can only
+       be addressed through linked_ac_docno, and the paperwork says something
+       else. */
+    RequireDocNo(p, "/so-to-po");
     var s = Session();
     var fromDocNo = Str(p, "FromDocNo");
     if (string.IsNullOrEmpty(fromDocNo)) throw new Exception("FromDocNo required");
@@ -1960,6 +2091,16 @@ class AcSyncService {
     var cmd = AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderCommand.Create(s, s.DBSetting);
     var po = cmd.AddNew();
     po.CreditorCode = creditor;
+    /* DIRECTLY, not through PurchaseHeader's Set(). PurchaseHeader further down
+       does apply a DocNo the payload carries — that is not new — but it does it
+       inside Set(), which LOGS AND SWALLOWS. A DocNo that failed to apply would
+       leave AutoCount's own number on the document and answer ok, which is the
+       defect this route already paid for once with a NULL Qty. Assigned here it
+       is a plain assignment on a fresh document, exactly as CreatePo does it,
+       and BEFORE the transfer — the vendor's order for master fields, and the
+       order proven on the sales side at 00:55:30. PurchaseHeader re-assigns the
+       same string later, which is a no-op. */
+    po.DocNo = Str(p, "DocNo");
     Set(() => po.CreditorName = Str(p, "CreditorName"));
     /* PHASE ONE: transfer, then SAVE. Nothing else.
 
@@ -1992,8 +2133,36 @@ class AcSyncService {
            AddSOToPOTransferDetail(Int64)
 
        — the first is TOLD the type and records it; the second has nowhere to
-       take one from. AutoCount's own transfer relationship reads that column, so
-       a PO written by the second is linked on one side only.
+       take one from.
+
+       CORRECTED 2026-08-17, and the correction is the point. This block used to
+       end "AutoCount's own transfer relationship reads that column, so a PO
+       written by the second is linked on one side only." That sentence was
+       reasoning from the SALES side's shape, and it was never measured on a
+       purchase order. THE ANSWER, when the typed call was finally made, was that
+       AutoCount refuses a sales type here at all:
+
+         so-to-po: typed AddPartialTransferDetail("SO") refused
+                   (FromDocType must be RQ.)
+
+       Into a PurchaseOrder the general primitive accepts exactly ONE source, and
+       that is the vendor's design rather than an oversight: SO -> PO is shipped
+       as a PARALLEL mechanism everywhere in this SDK, never as a member of the
+       general transfer family — AddSOToPOTransferDetail beside
+       AddPartialTransferDetail, CheckAndGetValidSOTransferItem beside
+       CheckAndGetValidPartialTransferItem, GetOverTransferTableForSOToPO beside
+       GetOverTransferTable, plus GetPendingTransferredPOQtyFromSOSQL,
+       IsSODtlPartialTransferedToPO and QueryTransferedSODTL_That_XferToPO
+       (sdk-api-reference.txt). AO -> PO is shipped the same way.
+
+       AND THE LINK IS RECORDED IN THE PURCHASE SIDE'S OWN COLUMNS. PODTL carries
+       FromSODtlKey and FromSODocList, and in this book they are populated on
+       10,338 of 18,148 non-cancelled lines over 7,467 of 9,080 purchase orders —
+       every one of them written by AutoCount's own UI, not by us
+       (ac-fidelity-po-lines.json.gz, AED_HOUZS 2026-08-11). FromDocType is the
+       DOWNSTREAM tables' column. So "FromDocType is NULL on a PO" is not by
+       itself evidence of a missing link; the two columns that would be are the
+       ones this service has never read. It reads them now, below.
 
        transferMaster is FALSE here, unlike the purchase-side conversions. That
        flag copies the SOURCE document's master, and this source is a SALES
@@ -2001,12 +2170,12 @@ class AcSyncService {
        below sets the creditor explicitly, which is what /po-to-gr needed
        transferMaster for and this route does not.
 
-       FALLING BACK IS THE POINT. AddPartialTransferDetail with a sales type on a
-       purchase document is not in sdk-api-reference.txt as a supported pairing,
-       and this file cannot be compiled or run anywhere but the office host. If
-       it throws, the old call runs and the document is written exactly as it is
-       written today — one-sided link and all. The worst case is what we already
-       have; the best case is the link AutoCount actually reads. */
+       THE TYPED CALL STAYS, and so does the fallback. It is one throw from a
+       constructor before anything is added to the document — which is why the
+       10:15 run still produced a correct two-line purchase order — and it is the
+       measurement that keeps "must be RQ" a re-taken fact rather than a sentence
+       in a comment. If a later AutoCount build accepts it, the log says so on
+       the first request. The worst case is what already works. */
     /* THE SAME DIAGNOSTICS THE FOUR CONVERSIONS NOW GET. This route shares
        their failure mode - it transfers sales lines into a purchase document
        through the same SDK machinery - and it had the same blind spots: no
@@ -2021,6 +2190,7 @@ class AcSyncService {
        Details[].Qty, which phase two below applies line by line. A consolidated
        purchase never reaches this route. */
     LogTransferApi(po);
+    LogPurchaseTransferVocabulary();
     PreflightTransferFromSupported(po);
     SubscribeTransferDiagnostics(po);
     /* The SO-SPECIFIC validator, not the general one Convert_ uses. SO -> PO is
@@ -2044,12 +2214,25 @@ class AcSyncService {
       typedTransfer = true;
     } catch (Exception ex) {
       Log("so-to-po: typed AddPartialTransferDetail(\"SO\") refused (" + ex.Message
-        + ") - falling back to AddSOToPOTransferDetail, which leaves FromDocType null");
+        + ") - falling back to AddSOToPOTransferDetail. That leaves PODTL.FromDocType null,"
+        + " which is the DOWNSTREAM tables' column; the purchase side's own link is"
+        + " FromSODtlKey / FromSODocList and LogPoSourceLink below reports whether it landed");
     }
     if (!typedTransfer) foreach (var k in keys) po.AddSOToPOTransferDetail(k);
     PurchaseHeader(po, p);
     po.Save();
     var docNo = po.DocNo;
+    /* DID THE NUMBER WE SENT SURVIVE? Read off the saved document rather than
+       trusting the assignment: `po.DocNo` is what the entity holds, and AutoCount
+       is entitled to renumber on Save through a DocNoFormat. The mismatch is
+       LOGGED, not thrown — the purchase order exists either way and the ERP must
+       be told the number the book actually gave it, exactly as CreatedLines'
+       catch argues. Throwing here would lose the DocNo of a document that is
+       already in a live account book. */
+    if (!string.Equals(docNo, Str(p, "DocNo"), StringComparison.Ordinal))
+      Log("  so-to-po: the ERP asked for DocNo '" + Str(p, "DocNo") + "' and the book saved '" + docNo +
+          "' - the two systems will disagree on this document's number until someone looks");
+    LogPoSourceLink(docNo);
 
     /* PHASE TWO: reopen and apply what the ERP agreed with the supplier.
 

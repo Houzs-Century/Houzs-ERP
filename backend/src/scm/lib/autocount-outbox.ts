@@ -780,9 +780,13 @@ export async function enqueuePoCreate(
            `body`, built three lines up by composeCreatePo and carrying the
            creditor, is thrown away on this branch. No join is needed to fix it:
            readPoHeader resolved suppliers.code for the binding lookup above.
-           Guide §7c3a. */
+           Guide §7c3a.
+
+           NEITHER WAS THE NUMBER: `DocNo` went out with the same throw-away, so
+           the first successful /so-to-po landed as `PO-009968` and not
+           `HC-PO-2608-001`. Divergence D5, closed — guide §7c3b. */
         body: (shape.kind === 'transfer'
-          ? { ...composeSoToPo(shape.dtlKeys, details), ...present({
+          ? { ...composeSoToPo(header.po_number, shape.dtlKeys, details), ...present({
             CreditorCode: header.creditor_code,
             CreditorName: header.creditor_name,
           }) }
@@ -1882,6 +1886,11 @@ export async function dispatchOne(
       console.error('so_to_po: creditor backfill failed:', e instanceof Error ? e.message : String(e));
     }
   }
+  /* THE ERP'S OWN NUMBER, for a row composed before D5 was closed here. Same
+     replay problem as the creditor above, cheaper answer: the outbox row is
+     already KEYED by the ERP's number. Without it AcSyncService auto-numbers —
+     how PO-009968 got a number nobody in this building would say. Guide §7c3b. */
+  if (row.op === 'so_to_po' && !body.DocNo && row.doc_no) body.DocNo = row.doc_no;
 
   const attempts = (row.attempts ?? 0) + 1;
 

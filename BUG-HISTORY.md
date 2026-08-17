@@ -49,6 +49,327 @@ is *"Replaced by a newer send"*, so the badge, the one-line status and the
 headline all say one thing and say what to DO (nothing) rather than what the
 record IS. A test asserts none of those strings contains the button's words, and
 none contains `re-queue`, `supersede` or `row`. **Ref** PR #PLACEHOLDER, 2026-08-17.
+## SO-to-PO succeeded, and the purchase order took AutoCount's number [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** `/so-to-po` worked for the first time on 2026-08-17. Host log,
+verbatim:
+
+```
+10:15:13 /so-to-po   HC-SO-2608-001
+10:15:13 so-to-po: typed AddPartialTransferDetail("SO") refused (FromDocType must be RQ.)
+         - falling back to AddSOToPOTransferDetail, which leaves FromDocType null
+10:15:14   so-to-po PO-009968: 2 transferred, 2 line(s) costed in phase two
+```
+
+The purchase order is in `AED_HOUZS` as **`PO-009968`**. The ERP calls it
+`HC-PO-2608-001`. Owner: 「那 Numbering 你要处理掉啊，怎么可以不一样 Numbering
+呢？」
+
+**Root cause (traced, not guessed).** `composeSoToPo` returned
+`{ DtlKeys, Details }` and no `DocNo`. `composeCreatePo` has always sent one and
+`enqueueConvert` closed divergence **D5** for the four conversions, so the
+transfer arm of `enqueuePoCreate` was the only path in the system still letting
+AutoCount number a document — the same throw-away that lost `CreditorCode` two
+entries down. It was left open deliberately ("one variable at a time on a route
+that has never succeeded"); that reason expired at 10:15.
+
+**Fix — three places, because the first alone fixes nothing already queued.**
+
+| | |
+|---|---|
+| `composeSoToPo` | takes `docNo` as its FIRST, REQUIRED argument and returns `DocNo`. Required rather than optional on the standing rule: an optional one means every caller that says nothing silently keeps AutoCount's counter, with no compile error |
+| `dispatchOne` | backfills `body.DocNo` from `row.doc_no` for rows composed before today. The drain REPLAYS and never recomposes. Cheaper than the creditor backfill beside it — the outbox row is already KEYED by the ERP number, so there is no join |
+| `AcSyncService.SoToPo` | the same `RequireDocNo` the two create routes carry, and `po.DocNo` assigned DIRECTLY rather than through `PurchaseHeader`'s `Set()`, which logs and swallows. It also re-reads the saved `DocNo` and logs a disagreement |
+
+Deploy the backend FIRST — also the automatic order, since `main` deploys the
+Worker and the host binary is a manual `deploy-on-host.ps1`. `RequireDocNo`
+refuses a payload without a number and the backfill that guarantees one is
+backend-side.
+
+**`PO-009968` is not repaired by this and must not be read as if it were.**
+Nothing here renames a document already in a live account book; the SDK offers no
+rename and `DocNo` is the document's identity. The owner chooses between
+cancelling it and letting the ERP re-raise `HC-PO-2608-001` (clear
+`linked_ac_docno` first or `enqueuePoCreate` skips the row), or leaving one
+purchase order reconciled through `linked_ac_docno`. Written up in guide §7c3b.
+
+**Test.** Five in `autocount-writeback.contract.test.ts`, and each half was
+verified to FAIL when reverted: dropping `DocNo` from `composeSoToPo` gives
+`expected undefined to be 'PO-2608-004'` on the enqueue test, dropping the drain
+line gives the same on the backfill test, and removing the C# guard fails layer 1
+plus the refusal test. D5 leaves the divergence register; the count assertion
+moves 12 → 11 and `not.toContain('D5')` keeps the id from being reused.
+
+**Ref.** this PR, 2026-08-17. Follows #2340, #2341 and the `/so-to-po` creditor
+fix.
+
+## "FromDocType is null on the PO" was measured on the wrong columns [medium]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The same run refused the typed primitive:
+
+```
+so-to-po: typed AddPartialTransferDetail("SO") refused (FromDocType must be RQ.)
+```
+
+so `PODTL.FromDocType` is null and the purchase order was reported — here, in the
+module guide and in `#2300` — as recording its sales source on one side only.
+Owner: 「他的 documentation convert from 的那个有做到没有?」
+
+**What the evidence actually says.** Three findings, and the third contradicts
+the symptom rather than explaining it.
+
+1. **PROVEN, host log.** Into a `PurchaseOrder` the general
+   `AddPartialTransferDetail(fromDocType, keys, bool)` accepts **`RQ` and nothing
+   else** — that message is `PurchaseOrderPartialTransferDetail`'s own validation
+   and it enumerates exactly one type. `#2302`'s sales-side fix has no purchase
+   equivalent.
+2. **`AutoCount.Invoicing.Purchase.TransferFrom` carrying `SalesOrder = 5` does
+   NOT contradict that.** The enum is the NAMESPACE's vocabulary, shared by every
+   purchase target and taken by `TransferHelper.Create` /
+   `LoadWantToFullTransferData`; which subset a target accepts is validated in
+   that target's own `*PartialTransferDetail` constructor. The SDK's surface says
+   the same structurally — `SO → PO` ships as a PARALLEL mechanism in five
+   separate places (`AddSOToPOTransferDetail`, `CheckAndGetValidSOTransferItem`,
+   `GetOverTransferTableForSOToPO`, `GetPendingTransferredPOQtyFromSOSQL`,
+   `IsSODtlPartialTransferedToPO`), never as a member of the general family, and
+   `AO → PO` ships the same way.
+3. **A purchase order keeps its sales link in `FromSODtlKey` / `FromSODocList`,
+   which nobody had looked at.** Measured in the committed live-book extract
+   `backend/scripts/data/ac-fidelity-po-lines.json.gz` (`AED_HOUZS` read-only
+   2026-08-11, query at `export-ac-fidelity-truth.py:144`): **10,338 of 18,148**
+   non-cancelled `PODTL` rows, over **7,467 of 9,080** purchase orders, carry a
+   `FromSODtlKey`, and 10,314 also carry a `FromSODocList` — all written by
+   AutoCount's own UI, none by this service. The ERP has depended on it since the
+   cutover (`backfill-po-ac-dtlkey.mjs`, `repair-dedication-from-autocount.mjs`:
+   "the one line-to-line link AutoCount populates"). It is the OPPOSITE shape
+   from the downstream tables, where `FromDocDtlKey` is NULL on every row and
+   only the document-level pair is real.
+
+So `FromDocType` is the wrong column to judge a purchase order by, and it is the
+only one anyone has measured. **This entry does not claim the link is fine.**
+
+**STILL UNKNOWN, and said so rather than bridged.** Whether
+`AddSOToPOTransferDetail` populates those two columns the way AutoCount's UI
+does. No credential in this repository reaches the AutoCount host, so the
+question is answered where the answer lives instead of being guessed at or handed
+to the owner as a query:
+
+- `LogPoSourceLink` reads all six lineage fields off the purchase order the route
+  has just saved and writes them to `ac-sync-service.log`.
+- `FromSODtlKey` / `FromSODocList` joined `DetailWanted`, so `/doc-read` returns
+  them too — the service has been answering "is the convert-from link there" from
+  a column list that could not contain the answer.
+- `LogPurchaseTransferVocabulary` dumps the `TransferFrom` enum, each member's
+  `TransferFromToDocumentType`, and `DocumentTypeToTransferFrom("SO")`, once per
+  process, so finding 2 stops being a claim and becomes a log line.
+
+**The next `/so-to-po` on the host settles it.** If the columns come back empty
+the link really is missing, and the remedy is NOT a payload change:
+`sdk-api-reference.txt:467` shows `PurchaseOrderDetail` exposes no settable
+`From*` at all.
+
+**The typed call and the fallback both stay.** The refusal is one throw from a
+constructor before anything reaches the document — which is why the 10:15 run
+still produced a correct two-line purchase order — and re-making it every time is
+what keeps "must be RQ" a measurement rather than a comment. Worst case remains
+today's behaviour, which works.
+
+**Ref.** this PR, 2026-08-17. Corrects the `#2300` entry below, which read
+`FromDocType` NULL as a one-sided link on the strength of the SALES side's shape.
+## MRP's ~100 reads ran one at a time, and the Sales Order list paid the same bill [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner 2026-08-16: "When I open MRP and open Sales Orders, the data
+volume is so large that the system is very laggy." Measured from the browser
+against prod with a real session: `GET /api/scm/mrp` **5,162 ms** for company 1
+(512 ms for company 2), `GET /api/scm/mfg-sales-orders` **5,272 ms**. The two
+numbers being within 2% of each other is the clue the first investigation
+missed.
+
+**Root cause (traced).** Not payload size, and not the Sales Order list. Both
+surfaces run the same engine: `computeMrp` is called **once per SO list load**
+(`mfg-sales-orders.ts`, the `source_po_union` READY projection), so the list can
+never be faster than the MRP page no matter what it sends.
+
+PR #2300 (2026-08-16) correctly stopped MRP planning over 7% of the demand by
+paging every read, and stated the price in its own body: *"roughly a dozen round
+trips to on the order of a hundred ... They are sequential."* Sequential was how
+they were written, not a property of the problem. Two thirds of those round trips
+were the `soDeliverableRemaining` batch loop — ~2,800 open docs / 200 = ~14
+batches, each ~5 reads, awaited one batch at a time — while the batches are
+provably independent: #2300's own reasoning for batching is that "merging the
+partial maps is a union of disjoint key sets". Five further reads (the category
+walk, both warehouse masters, stock balances, PO supply) depend on no earlier
+result and still waited their turn.
+
+Refutation that was available and not taken: a read whose own SQL time dominated
+would mean the cost was that query, not the count. `probe-mrp-roundtrip-cost.mjs`
+times both arms and prints the slowest single read for exactly this reason.
+
+**Fix.** `scm/lib/concurrency.ts` — `mapBounded` (bounded, input-order-preserving)
+and `eager` (start now, re-throw at the point of use, so error PRECEDENCE and
+unhandled-rejection safety are both unchanged). In `mrp.ts` the batch loop runs
+`MRP_READ_CONCURRENCY = 6` at a time and four independent reads are issued as one
+wave, awaited at their original sites. **No read was removed, widened,
+narrowed or re-ordered** — only the moment each is issued. Bounded rather than
+`Promise.all` because Hyperdrive pools a finite number of connections and an
+unbounded fan-out trades latency for instability.
+
+Measured locally with an instrumented PostgREST fake, 2,800 docs, 1 ms per read,
+`origin/main` vs this branch: **reads 56 → 56** (identical — nothing reads less),
+**max in flight 1 → 6**, **critical path 94 ms → 52 ms**. The read count being
+byte-identical is the assertion that matters; it is what stops this becoming
+#2300's bug a second time. Pinned by four tests in `mrp.test.ts` (overlap
+happens, the bound holds, the plan is identical whichever read finishes first, a
+failing read still throws `mrp_load_failed` rather than an unhandled rejection)
+and eleven in `concurrency.test.ts`. Production wall-clock is
+`probe-mrp-roundtrip-cost.mjs` + its workflow, which times both arms against prod
+and refuses to report a saving unless both arms read an identical row set.
+
+**Also found, not a defect.** The Sales Order list needed no pagination work: it
+has had a server-side paginated contract since before this report — server-side
+search (8 fields + phone), status filter, `so_date` window, a 6-column sort
+whitelist, full-book status counts and full-book money aggregates — and both the
+desktop and mobile surfaces always send `page`. The owner's 5,272 ms sample was
+taken against the bare URL, which selects the LEGACY `.limit(500)` branch that no
+frontend call site reaches any more. There is no `limit` query param at all,
+which is why `limit=3000` and the default returned byte-identical payloads.
+
+**Ref.** PR (2026-08-17), following #2300.
+## One bad area tag on `main` turned `audit:bug-index` into a repo-wide CI blackout [high]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** 2026-08-17, 04:00–05:00Z: five of five PR-branch CI runs red, on
+four unrelated branches, with the identical message —
+`BUG-INDEX: "Cancelled and unconfirmed events…" carries <!-- area: PMS My
+Pending lanes -->, which is not an area.` Three of the four branches
+(`fix/pair-stockin-tile`, `fix/floorplan-card`,
+`refactor/planning-state-narrow-readiness-0815`) had no connection to the entry
+at all. The only green run in the window was the repair branch itself.
+
+**Root cause (traced, not guessed).** `gen-bug-index.mjs` validated the
+`<!-- area: -->` tag with an unconditional `process.exit(1)` the moment it saw
+one that named no area. Three facts turn that into a blackout:
+
+1. `audit:bug-index` runs inside `backend-typecheck`, which IS a required status
+   check, so the failure blocks the merge;
+2. the tag lives in `BUG-HISTORY.md` — the ONE file the working agreement makes
+   every code PR append to — so once a bad tag merges it is in everybody's tree;
+3. the exit happened before the generator wrote anything, so nobody could
+   regenerate their way out either.
+
+Commit `6c9f8cbd` landed the bad tag at 04:00:21Z. Repair PR #2351 (merged
+04:59:53Z) touches only `BUG-HISTORY.md`. Fifty-nine minutes of blocked merges
+for a typo three of the four blocked authors never wrote.
+
+The assumption is recorded, in writing, in the test that guarded this file:
+*"a malformed tag is in the diff of whoever wrote it"*
+(`derivedDocsDoNotDeadlock.test.mjs`). It is false for exactly the reason the
+same file already gives for content DRIFT, four lines above it — the ledger is
+shared, and merges are serial. The drift half had learned the lesson; the tag
+half predated it.
+
+**Fix.** A bad tag is now REPORTED in full on every run and CHARGED only to the
+change that introduced it — matched by ENTRY (title + tag) against
+`BUG-HISTORY.md` at the merge base, not by counting tag strings, so the entry
+NAMED is the one actually added. Inherited tags fall back to the keyword guess,
+so the index still builds and the author can still regenerate. An unresolvable
+merge base charges everything, because a gate that cannot tell whose fault it is
+must not let anything through. Same rule, same wording, as
+`check-file-size.mjs`'s inherited-ceiling handling.
+
+**Proof.** Four behavioural tests in `derivedDocsDoNotDeadlock.test.mjs`, each
+building a throwaway git repo: inherited tag exits 0 and still writes the index;
+an introduced tag exits 1; with the tag broken on the base AND a second added
+here, exit 1 names only the new one; no merge base charges everything.
+
+**Ref.** PR (this one), 2026-08-17.
+
+## `completeness-claim` failed on LINE NUMBERS, so an unrelated merge turned a PR red with nothing in it changed [medium]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** A PR whose diff had not touched a single member of the population
+it enumerated went red on `completeness-claim` after merging `main`. The
+author's only remedy was to regenerate the ```enumeration block by hand and push
+again — proving nothing, costing a CI round, and (worse) training people to
+treat a red completeness gate as noise. Compounded by finding #3 below: on
+2026-08-16 the reaction to one such failure was to DELETE a legitimate
+enumeration block out of another agent's PR.
+
+**Root cause (traced, not guessed).** The gate re-runs the pasted command and
+diffs its output as a multiset (`diffOutput`, `scripts/lib/completeness-claim.mjs`).
+CLAUDE.md, the runner's own `HOW_TO` and the pull_request_template all show
+`git grep -n`, so authors write `-n` and every pasted line carries a
+`path:NNN:` COORDINATE. The populations this repo enumerates live in
+`mfg-sales-orders.ts` (11,988 lines) and `Projects.tsx` (15,128) — files touched
+constantly. Any merge into the branch shifts those numbers, every line of the
+pasted block mismatches, and the gate reports the stale-enumeration shape for a
+population that did not change. The membership was identical; only its
+coordinates moved, and the diff was comparing coordinates.
+
+**Fix.** A leading `path:NNN:` is normalised to `path:` on BOTH sides before the
+diff (`stripLineNumber`). Same argument as the pre-existing sort: the diff
+already drops output ORDER because `rg` walks in parallel and order carries no
+meaning — a line number carries no membership either. What the gate still fails
+on is unchanged and pinned by tests in both directions: a site ADDED, REMOVED,
+RETEXTED, or moved to a DIFFERENT FILE all fail (the path is kept), and two
+sites in one file stay two entries in the multiset. `grep -c` output (`path:12`,
+no trailing colon) is deliberately NOT matched — there the number IS the
+population's size.
+
+Rejected alternative: refusing `-n` in an enumeration command. It would turn
+every block already written here, and the example this repo's own documentation
+tells authors to copy, into a `COMMAND_REFUSED` failure — more red of exactly
+the shape being removed — and it throws away a number the human reviewer wants.
+
+The one coordinate shape left is a BARE `NNN:` from `grep -n pattern onefile`: a
+leading number with no path cannot be told apart from content, so the gate still
+FAILS and now names the cause and the one-line fix instead of showing two lists
+that look identical.
+
+**Proof it still bites.** `node --test scripts/check-completeness-claim.test.mjs`
+— 52 pass / 0 fail with the fix; with `stripLineNumber` reverted to the identity,
+47 pass / **5 fail**, exit 1.
+
+**Ref.** PR (this one), 2026-08-17.
+## An unknown area tag in a bug entry turned a required check red and blocked every merge [medium]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** From 2026-08-17, every open pull request failed `backend-typecheck`
+— a REQUIRED context — with a message about a document none of them had
+touched: `BUG-INDEX: "The card-style task block showed a dead Approve button on
+al" carries <!-- area: PMS checklist status / approvals -->, which is not an
+area.` `main` itself was red, so nothing could land behind it.
+
+**Root cause (traced, not guessed).** #2363 hand-wrote its own area tag instead
+of taking one of the seventeen `gen-bug-index.mjs` accepts. That script refuses
+an unknown area rather than falling back to its keyword guess, and the refusal
+is deliberate — "a typo that silently reverts to guessing is the failure this
+tag exists to remove" is its own error text. What it did not anticipate is
+WHERE it runs: `audit:bug-index` sits inside `backend-typecheck`, so a one-line
+typo in a Markdown comment is a repo-wide merge stop. Confirmed by running
+`npm --prefix backend run audit:bug-index` against a clean `origin/main`
+checkout: exit 1, with `main` carrying the tag at `BUG-HISTORY.md:404`.
+
+**Fix.** Retagged that entry to `Projects + PMS + fair report`, the area three
+other PMS entries already carry. The entry's text is unchanged.
+
+**Not fixed here, and worth someone's judgement:** the author of #2363 could
+not have been told. The tag is validated only by a job that runs after the
+merge, so the check that fails is the one nobody could act on before landing —
+the actor who can fix it and the actor it fails are different people. Either
+the validation belongs on the PR that writes the tag, or the area list belongs
+somewhere the writer reads.
+
+**Ref.** PR #2364, 2026-08-17.
 
 ## The /mine view-all branch queried the wrong schema, so the first director to use it got a 500 [high]
 
@@ -448,6 +769,27 @@ is 42/332, not 5-of-46. Corrected in place with the command to re-measure.
 duplicate `check-migration-numbers.mjs` enforcing an already-enforced assertion
 is the "ONE RULE, MANY HAND COPIES" shape the 2026-08-15 handoff names; the
 useful protection was on the CLASSIFICATION, not on the rule.
+
+**Ref.** 2026-08-17.
+
+## The card-style task block showed a dead Approve button on already-approved items [low]
+
+<!-- area: Projects + PMS + fair report -->
+
+**Symptom.** Owner 2026-08-17: "i cant click approve" — on an APPROVED Stock In
+Transfer Record (approved by the Owner account that same day), the expanded
+task card still showed an enabled Approve button that did nothing when clicked.
+
+**Root cause (traced).** Two rules collided. The 2026-08-08 idempotence guard
+makes re-approving an approved item a silent backend no-op (correct). The
+2026-08-10 per-decision toggle (hide the button that repeats the current
+decision, keep the one that reverses it) was applied to the table DocRow but
+NOT to the card-style block with the "Management remark" input — so that block
+kept rendering an enabled Approve whose click was swallowed by the guard, which
+reads as a broken button. Same class as the 08-10 report, one render site missed.
+
+**Fix.** Same toggle applied to the card block: approved → Reject only,
+rejected → Approve only, undecided → both.
 
 **Ref.** 2026-08-17.
 
@@ -6193,6 +6535,42 @@ required check partly because of it. Expect a recurrence on the next
 **Ref** — #2143. Gate under test: itself.
 
 =======
+## Solo events said SOLO on the calendar while their organizer column said MALL MGMT [low]
+
+<!-- area: Projects + PMS + fair report -->
+
+**Symptom.** Owner, on the Excel export (2026-08-17): three same-event rows at
+IOI Mall Damansara — two named "… MALL MGMT @ IOI MALL DAMANSARA", one named
+"… SOLO @ …", all three with organizer = MALL MGMT. "on calender show solo but
+in excel mall mgt for name organizer."
+
+**Root cause, two layers.**
+
+1. `deriveProjectName` (and the frontend mirror `composeDefaultProjectName`)
+   deliberately forced the name's organizer slot to the literal "SOLO" for
+   solo-type events **even when an organizer was picked** — the comment said so
+   in bold. The owner's own data disagreed: 38 solo projects carry
+   "KAI HAO (KL, CHEN)" in their names.
+2. Editing the organizer field later never touched the name, so a project
+   created before the organizer was known kept "SOLO" forever.
+
+Nine production projects had the mismatch (SOLO in the name; MALL MGMT /
+KAI HAO / VINCENT in the organizer column).
+
+**Fix.** Data: the nine names were rewritten live from the organizer column
+(sweep now returns zero). Code: a picked organizer always fills the name slot —
+"SOLO" is only the empty-organizer fallback — and a PATCH that changes the
+organizer swaps the name's slot too, but ONLY when the current name still
+carries the old organizer or the SOLO placeholder, so a hand-written custom
+name is never clobbered. The project CODE keeps its SOLO segment: it is the
+immutable identity and reads as the event type there.
+
+**The class, for next time.** When a derived label disagrees with the field it
+was derived from, check whether the derivation was ever re-run — a label
+written once is a snapshot, not a view.
+
+**Ref** — 2026-08-17, `fix/solo-name-organizer`.
+
 ## Defect-review region routing was a UI hint, not a rule — either reviewer could stamp any state [low]
 
 **Symptom.** Owner, on a Sarawak project: "sabah sarawak defect under shukor ya

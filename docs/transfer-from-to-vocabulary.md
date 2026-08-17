@@ -46,6 +46,27 @@ AutoCount records lineage on the **TARGET document's DETAIL rows**:
 | `FromDocNo` | the same four | that document's number |
 | `FromDocDtlKey` | the same four | the source LINE — **NULL throughout this book** |
 | `FullTransferFromDocList` | `DODTL` | the full list where one target row draws on several sources |
+| `FromSODtlKey` | **`PODTL`** | the source SALES-ORDER LINE — **populated**, see below |
+| `FromSODocList` | **`PODTL`** | that sales order's number |
+
+**ADDED 2026-08-17. The last two rows are the correction, and this section was
+wrong without them** — it said AutoCount puts lineage in ONE place, and a
+purchase order is the exception in both directions. `SO → PO` is not a member of
+AutoCount's general transfer family at all (its own `AddSOToPOTransferDetail`,
+its own validator, its own over-transfer table — see
+`docs/modules/autocount-writeback.md` §7c3c), and it records the link in the two
+columns above rather than in `FromDocType` / `FromDocNo`.
+
+**And it is the LINE key that is populated here, which is the opposite of the
+four tables above.** Measured in `backend/scripts/data/ac-fidelity-po-lines.json.gz`
+(`AED_HOUZS` read-only 2026-08-11, query at `export-ac-fidelity-truth.py:144`):
+**10,338 of 18,148** non-cancelled `PODTL` rows, over **7,467 of 9,080** purchase
+orders, carry a `FromSODtlKey`; 10,314 also carry a `FromSODocList`. The ERP has
+depended on this since the cutover — `backfill-po-ac-dtlkey.mjs` and
+`repair-dedication-from-autocount.mjs` both call it "the one line-to-line link
+AutoCount populates". So the sentence below about line-level lineage being
+unusable is true of `DODTL` / `IVDTL` / `GRDTL` / `PIDTL` and **false of
+`PODTL`**.
 
 **Reported from a live-book measurement taken 2026-08-16 by the session that
 raised this question — NOT re-measured by this survey:** 47,531 `DODTL` rows

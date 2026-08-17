@@ -960,21 +960,152 @@ that names it.
 nowhere in AutoCount until we send it. The authority is the ERP's own purchase
 order, which the outbox row already points at through `payload.writeback`.
 
-**Reading the service log for this route.** The request line identifies a
-`/so-to-po` call by its **source sales order**, not by the purchase order —
-`composeSoToPo` sends no `DocNo`, so `Or(DocNo, FromDocNo)` falls through to
-`FromDocNo`. A reader who takes `HC-SO-2608-001` there for a PO number will
-search for a document that does not exist.
+**Reading the service log for this route, and the date that changes it.** Up to
+2026-08-17 the request line identified a `/so-to-po` call by its **source sales
+order**, not by the purchase order — `composeSoToPo` sent no `DocNo`, so
+`Or(DocNo, FromDocNo)` fell through to `FromDocNo`. From the D5 fix below it
+names the **purchase order**. Both shapes are in `ac-sync-service.log` and the
+date is what tells them apart:
+
+```
+10:15:14  /so-to-po  HC-SO-2608-001   before — the SOURCE sales order
+...       /so-to-po  HC-PO-2608-001   after  — the purchase order
+```
+
 `backend/scripts/which-so-is-so-to-po-retrying.mjs` (Actions → *Which SO is
 so_to_po retrying (read-only)*) prints, per row, the sales order the QUEUE names
 beside the one the purchase order's own lines imply, and flags a disagreement —
 which would be a mislinked `so_item_id`, not a bookkeeping mismatch.
 
-**Still open on this route:** the transfer arm sends no `DocNo` either, so the
-first `/so-to-po` that succeeds takes an AutoCount auto-number rather than the
-ERP's — divergence **D5**, closed for the four conversions and never for this
-one. Left alone deliberately: the route has never succeeded, and one variable at
-a time is what isolated the debtor.
+#### 7c3b. The purchase order took AutoCount's number — D5, closed 2026-08-17
+
+The route succeeded for the first time on 2026-08-17 and produced exactly what
+D5 predicts. From the host log, verbatim:
+
+```
+10:15:13 /so-to-po   HC-SO-2608-001
+10:15:14   so-to-po PO-009968: 2 transferred, 2 line(s) costed in phase two
+```
+
+`PO-009968` is AutoCount's own counter. The ERP calls that purchase order
+`HC-PO-2608-001`, and every other type in the chain already carries the ERP's
+number into `AED_HOUZS` — `HC-SO-2608-001/2/3`, `HC-DO-2608-001/2`,
+`HC-SI-2608-001`. Owner: 「那 Numbering 你要处理掉啊，怎么可以不一样 Numbering
+呢？」
+
+Same cause as the creditor in §7c3a and the same two halves, plus a third on the
+service side:
+
+| | |
+|---|---|
+| `composeSoToPo` | takes the number as its **first, required** argument and returns `DocNo`. Required, not optional: a caller that says nothing would silently keep AutoCount's counter with no compile error |
+| `dispatchOne` | backfills `body.DocNo` from `row.doc_no` for anything already queued. Cheaper than the creditor's backfill — the outbox row is already KEYED by the ERP's purchase-order number, so there is no join |
+| `AcSyncService.SoToPo` | carries the same `RequireDocNo` the two create routes carry, and assigns `po.DocNo` **directly** rather than through `PurchaseHeader`'s `Set()`, which logs and swallows. It also compares the saved `DocNo` against the one asked for and logs a disagreement |
+
+**Deploy the backend first.** It is also the automatic order — merging to `main`
+deploys the Worker, and the host binary is a manual `deploy-on-host.ps1` — but it
+matters here: `RequireDocNo` refuses a payload without a number, and the backfill
+that guarantees one is backend-side.
+
+**`PO-009968` KEEPS ITS NUMBER.** Nothing in this fix renames a document that is
+already in a live account book, and nothing should: the SDK's `DocNo` is the
+document's identity and `AcSyncService` has no rename path. The purchase order is
+otherwise correct — 2 lines, both costed. **The owner decides** between two
+options, and neither is ours to take:
+
+1. **Cancel `PO-009968` in AutoCount and let the ERP re-raise `HC-PO-2608-001`.**
+   Clean numbering, at the cost of a cancelled document in the book and a
+   `linked_ac_docno` to clear on the ERP row first, or the enqueue skips it
+   (`enqueuePoCreate` returns early on a linked PO).
+2. **Leave it.** One purchase order in the book whose number does not match the
+   paperwork, reconciled through `linked_ac_docno` as everything did before D5
+   was closed anywhere.
+
+#### 7c3c. What the PURCHASE side accepts as a source type, and where a PO keeps its sales link
+
+The owner's question: 「他的 documentation convert from 的那个有做到没有?」 On the
+sales side it is complete — `DODTL` / `IVDTL` carry `FromDocType` + `FromDocNo`
+and `SO → DO → Invoice` reads correctly in AutoCount. On the purchase side the
+answer turned out to be about a **different pair of columns**, and until
+2026-08-17 nobody had looked at them.
+
+**1. The general primitive into a `PurchaseOrder` accepts `RQ` and nothing else.
+PROVEN**, host log 2026-08-17, verbatim:
+
+```
+so-to-po: typed AddPartialTransferDetail("SO") refused (FromDocType must be RQ.)
+```
+
+That is `PurchaseOrderPartialTransferDetail`'s own validation, and it enumerates
+exactly one type. So `#2302`'s sales-side fix — pass the type and the SDK records
+it — has no purchase-side equivalent, and the fallback
+`AddSOToPOTransferDetail(Int64)` takes no type argument at all.
+
+**2. The `TransferFrom` enum disagreeing with that message is not a
+contradiction; the two are about different gates.**
+`AutoCount.Invoicing.Purchase.TransferFrom` carries `SalesOrder = 5`, so the
+purchase namespace *can name* a sales source. That enum is the **namespace's**
+vocabulary — every purchase target shares it, and `TransferHelper.Create` /
+`LoadWantToFullTransferData` take it — while **which subset a given target
+accepts is validated inside that target's own `*PartialTransferDetail`
+constructor.** The SDK's own surface says the same thing structurally: SO → PO is
+shipped as a **parallel** mechanism, never as a member of the general transfer
+family.
+
+| general transfer | its SO → PO twin |
+|---|---|
+| `PurchaseOrder.AddPartialTransferDetail(String, Int64[], Boolean)` | `PurchaseOrder.AddSOToPOTransferDetail(Int64)` |
+| `Purchase.TransferHelper.CheckAndGetValidPartialTransferItem(String, Int64[], DBSetting)` | `.CheckAndGetValidSOTransferItem(Int64, DBSetting)` |
+| `PartialTransferHelper.GetOverTransferTable(...)` | `.GetOverTransferTableForSOToPO(...)` |
+| `DocumentTransferHelper.GetPartialPendingTransferredQtySQL(...)` | `.GetPendingTransferredPOQtyFromSOSQL(...)` |
+| `.IsPODetailPartialTransfered(...)` | `.IsSODtlPartialTransferedToPO(...)` |
+
+(`AO → PO` is shipped the same way — `AddAOToPOTransferDetail`,
+`CheckAndGetValidAOTransferItem`, `GetOverTransferTableForAOToPO`. Two examples
+of one pattern, not one coincidence. Source: `sdk-api-reference.txt`.)
+
+`LogPurchaseTransferVocabulary` now re-takes this from the assemblies on the
+first `/so-to-po` of each process — every enum member, the doc-type string
+`TransferFromToDocumentType` maps it to, and what `DocumentTypeToTransferFrom("SO")`
+answers — so the paragraph above stops being a claim the next reader has to
+believe.
+
+**3. A purchase order records its sales source in `FromSODtlKey` /
+`FromSODocList`, not in `FromDocType`.** This is the part every earlier report
+got wrong, including this guide. Measured in the committed live-book extract
+(`backend/scripts/data/ac-fidelity-po-lines.json.gz`, `AED_HOUZS` read-only
+2026-08-11, query at `export-ac-fidelity-truth.py:144`):
+
+| | |
+|---|---|
+| non-cancelled `PODTL` rows | 18,148 |
+| carrying a `FromSODtlKey` | **10,338** |
+| also carrying a `FromSODocList` | 10,314 |
+| purchase orders with at least one linked line | **7,467** of 9,080 |
+
+Not one of those was written by this service — they are AutoCount's own
+*Transfer from Sales Order*, raised in its UI before the cutover. The ERP already
+depends on it: `backfill-po-ac-dtlkey.mjs` and `repair-dedication-from-autocount.mjs`
+both call `PODTL.FromSODtlKey` "the one line-to-line link AutoCount populates".
+It is the **opposite** shape from the downstream tables, where `FromDocDtlKey` is
+NULL throughout this book and only the document-level pair is real (see
+`docs/transfer-from-to-vocabulary.md` §2).
+
+**So "`FromDocType` is NULL on the PO" is not, by itself, evidence of a missing
+link** — and it is the only thing anyone has measured. **UNKNOWN, and one SELECT
+away:** whether `AddSOToPOTransferDetail` populates `FromSODtlKey` /
+`FromSODocList` the way AutoCount's UI does. Nothing in this repo can reach the
+book to ask (no `AC_*` secret exists), so the question is answered where the
+answer lives: `LogPoSourceLink` reads all six lineage fields off the purchase
+order the route just saved and writes them to `ac-sync-service.log`, and
+`FromSODtlKey` / `FromSODocList` joined `DetailWanted`, so `/doc-read` returns
+them too. **The next `/so-to-po` on the host settles it with no human.**
+
+If they come back empty, the link really is missing and the remedy is a new
+question — the SDK exposes no settable `From*` on `PurchaseOrderDetail`
+(`sdk-api-reference.txt:467`), so it would not be a payload change. If they come
+back populated, the purchase side is already at the sales side's standard, by a
+different column, and the register entry closes.
 
 **And a second thing this exposed.** `FullTransfer` is the call PROVEN against
 this book, and today's production payloads never reach it: `readConvertSourceKeys`
