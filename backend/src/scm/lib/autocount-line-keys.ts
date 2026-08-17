@@ -35,7 +35,15 @@ export interface LineKeyRowLabel {
   doc_no: string;
 }
 
-type Sb = { from: (t: string) => any };
+/* The same `SupabaseClient<any, any, any>` alias `autocount-outbox` passes in,
+   narrowed to the one method used here. It stays `any` for the SAME reason the
+   original does: `schema.pg.ts` covers none of the SCM tables, so a precise
+   return type would be invented rather than derived, and a hand-written shape
+   that is subtly wrong is worse than an honest `any` — it makes the compiler
+   agree with a fiction. CLAUDE.md's remedy is drizzle-kit pull, not a cast.
+   Written at the site with its reason rather than as a ratchet number. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any -- the SCM tables have no generated types; see the note above
+type Sb = { from: (table: string) => any };
 
 /**
  * Store the DtlKeys a create/convert returned onto the ERP line rows.
