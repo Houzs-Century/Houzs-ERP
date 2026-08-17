@@ -1652,8 +1652,7 @@ grns.post('/', async (c) => {
      That boundary is load-bearing twice over: every refusal at or above one of
      these nine answers through refuseWithoutWriting (lib/no-write-refusal.ts),
      RELEASING the idempotency claim so the operator can correct and press Save
-     again instead of reloading and losing what they typed. Pinned by
-     tests/grnPreWriteRefusalsReleaseKey.test.ts. */
+     again rather than reload and lose it. Pinned by tests/grnPreWriteRefusalsReleaseKey.test.ts. */
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', action: 'CREATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 
