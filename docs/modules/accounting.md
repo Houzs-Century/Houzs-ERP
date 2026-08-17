@@ -149,26 +149,34 @@ reconciliation, bank statement reconciliation 吗？) — because it is two jobs
 two days:
 
 - `/scm/merchant-recon` — **Merchant reconciliation** (step 1 of 2): the
-  MERCHANT statement against what the ERP recorded. Tabs: Statements (upload,
-  the four piles, candidates with combo hints, CSV export), Problems (the two
-  standing watchlists), Merchant setup (决定4). Its list answers only its own
-  question — how many lines are still open. It books fees; it never books the
-  bank.
+  MERCHANT statement against what the ERP recorded. It books fees; it never
+  books the bank. Two tabs only — To reconcile, Merchant setup (决定4) — and the
+  first shows ONLY what is not matched yet (owner: 应该就只会显示还没对上的
+  transaction 吧): the reports with lines still to decide, split into the two
+  kinds of problem (`to_choose_count` — a choice he can make; `no_record_count`
+  — the report has it and no sale in the ERP does), and underneath, the card
+  payments the sales team keyed in that no report has reported yet. A report
+  whose lines are all decided leaves the screen, saying where it went. Opening
+  one shows its open lines and nothing else; one checkbox brings the finished
+  lines back. The four buckets still exist in the data and in the CSV export —
+  the screen shows the work instead of a pile switcher.
 - `/scm/bank-recon` — **Bank statement reconciliation** (step 2 of 2): the BANK
-  statement against what the merchants owe. Tabs: Money to come in (the
-  statements still owed money, the credits banked against each, a date+amount
-  box for the next one, undo), Still with the merchants (the in-transit detail —
-  three states, each naming who keyed the payment in, each showing what is STILL
-  owed after fees, statement charges and part-payments). This is the screen
-  layer 4 will feed from the bank statement file.
+  statement against what the merchants owe. **GATED**: a report appears here
+  only once every one of its lines is decided (owner: 核对完了没有问题才会显示去
+  bank statement 的 reconciliation) — the ones not ready are counted and NAMED
+  rather than silently missing, and the record-a-credit box is withheld from a
+  report that goes back to undecided. Tabs: Money to come in (the reports still
+  owed money, the credits banked against each, a date+amount box for the next
+  one, undo), Still with the merchants (the in-transit detail — three states,
+  each naming who keyed the payment in, each showing what is STILL owed after
+  fees, statement charges and part-payments). This is the screen layer 4 will
+  feed from the bank statement file.
 
 On both, working a statement REPLACES the list rather than stacking under it —
 the owner on the version that stacked: 就感觉很多东西挤在一页. Each page links to
-the other where the work hands over, and says where the other one stands when it
-matters (an unreconciled statement is flagged on the bank side; a fully
-reconciled one offers the button that records its money). What they share is
-presentation only (`settlement-ui.ts`); every rule stays on the server, so the
-two screens cannot drift into two answers.
+the other where the work hands over. What they share is presentation only
+(`settlement-ui.ts`); every rule stays on the server, so the two screens cannot
+drift into two answers.
 
 SI auto-posts on create/confirm (`lib/post-si-revenue.ts`; resync
 void+reposts on post-issue edits). PI posts on demand + resyncs. PV posts on

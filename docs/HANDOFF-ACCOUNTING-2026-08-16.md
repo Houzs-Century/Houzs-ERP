@@ -66,15 +66,17 @@ What is on the branch:
   `routes/accounting.ts` (the route-capability audit only follows top-level
   `app.route`/`scm.route`, so a sub-router would have hidden them); handlers in
   `routes/accounting-settlement.ts`, each behind its own permission check.
-- **TWO pages, named by him** (就不能分成 merchant reconciliation, bank
-  statement reconciliation 吗？ — after 就感觉很多东西挤在一页).
-  `/scm/merchant-recon` **Merchant reconciliation** = Statements (upload, four
-  piles, candidates, export) · Problems (the two watchlists) · Merchant setup
-  (决定4). `/scm/bank-recon` **Bank statement reconciliation** = Money to come in
-  (statements still owed, the credits banked against each, date+amount for the
-  next, undo) · Still with the merchants (the in-transit detail). On both,
-  opening a statement REPLACES the list. Each links to the other and reports
-  where the other stands. Shared presentation only (`settlement-ui.ts`).
+- **TWO pages, named by him, in HIS flow** (就不能分成 merchant
+  reconciliation, bank statement reconciliation 吗？). His words for the flow:
+  系统先抓 sales 输入的收款 → 上传 merchant report 去核对 → 核对完了没有问题才会
+  显示去 bank statement 的 reconciliation → 期间给他看「还没收到钱的」和
+  「merchant report 有但找不到 transaction 的」。So:
+  `/scm/merchant-recon` shows ONLY what is not matched yet (应该就只会显示还没
+  对上的 transaction 吧) — reports with lines to decide, split into "to choose"
+  vs "no sale in the ERP", plus the sales-team payments no report has reported.
+  `/scm/bank-recon` is GATED on the first being clean: an unreconciled report is
+  not listed there at all, only counted and named. Opening anything replaces the
+  list. Shared presentation only (`settlement-ui.ts`).
 - **"Paid, not yet in the bank"** — the detail list he asked for (我需要看到说顾
   客还钱了，但是还没收款或还没对账。我要明细的), with WHO keyed each payment in
   (我还要看到谁记录这笔的) and three states: the acquirer has not reported it /

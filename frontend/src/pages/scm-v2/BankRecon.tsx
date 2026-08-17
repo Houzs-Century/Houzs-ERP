@@ -62,8 +62,14 @@ const WaitingForMoney = () => {
 
   const all = batches.data?.batches ?? [];
   const outstandingOf = (b: SettlementBatch) => b.outstanding_sen ?? payableOf(b) - (b.received_sen ?? 0);
-  const owed = all.filter((b) => outstandingOf(b) !== 0);
-  const settled = all.filter((b) => outstandingOf(b) === 0);
+  /* THE GATE (owner: 核对完了没有问题才会显示去 bank statement 的
+     reconciliation). A merchant report whose lines are not all decided does not
+     appear here at all — its fees are not in the books, so its net is not yet
+     the truth. It is counted, and named, so nothing disappears silently. */
+  const ready = all.filter((b) => (b.open_count ?? 0) === 0);
+  const notReady = all.filter((b) => (b.open_count ?? 0) > 0);
+  const owed = ready.filter((b) => outstandingOf(b) !== 0);
+  const settled = ready.filter((b) => outstandingOf(b) === 0);
   const shown = showSettled ? [...owed, ...settled] : owed;
   const total = owed.reduce((s, b) => s + outstandingOf(b), 0);
 
@@ -73,9 +79,15 @@ const WaitingForMoney = () => {
   return (
     <div className="space-y-3">
       <div style={softText}>
-        Take the date and the amount off the BANK statement or the daily transaction report. One merchant statement
-        is often paid in several credits — record each as it lands.
+        Take the date and the amount off the BANK statement or the daily transaction report. One merchant report is
+        often paid in several credits — record each as it lands.
       </div>
+      {notReady.length > 0 && (
+        <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
+          {notReady.length} merchant report{notReady.length === 1 ? ' is' : 's are'} not here yet — finish{' '}
+          <Link to="/scm/merchant-recon">merchant reconciliation</Link> first ({notReady.map((b) => b.acquirer_code).join(', ')}).
+        </div>
+      )}
 
       <div style={{
         padding: 'var(--space-4)', borderRadius: 'var(--radius-md)',
@@ -107,18 +119,12 @@ const WaitingForMoney = () => {
           <thead>
             <tr style={headRow}>
               <th style={cell}>Acquirer</th><th style={cell}>Statement</th><th style={cell}>Period</th>
-              <th style={num}>It should pay</th><th style={num}>Received</th><th style={num}>Still owed</th>
-              <th style={cell}>Merchant recon</th><th style={cell} />
+              <th style={num}>It should pay</th><th style={num}>Received</th><th style={num}>Still owed</th><th style={cell} />
             </tr>
           </thead>
           <tbody>
             {shown.map((b) => {
               const left = outstandingOf(b);
-              /* A statement whose lines are not all reconciled can still be
-                 paid — the money is the money — but the screen says so, because
-                 its fees are not in the books yet and this acquirer will not
-                 come to zero until they are. */
-              const open = b.open_count ?? 0;
               return (
                 <tr key={b.id} style={rowLine}>
                   <td style={cell}><span className={styles.codeChip}>{b.acquirer_code}</span></td>
@@ -128,9 +134,6 @@ const WaitingForMoney = () => {
                   <td style={num}>{(b.received_sen ?? 0) === 0 ? '—' : fmt(b.received_sen)}</td>
                   <td style={{ ...num, fontWeight: left === 0 ? undefined : 700, color: left === 0 ? good : undefined }}>
                     {left === 0 ? 'all in' : fmt(left)}
-                  </td>
-                  <td style={{ ...cell, color: open > 0 ? danger : undefined }}>
-                    {open > 0 ? `${open} line(s) still open` : `${b.confirmed_count ?? 0} line(s) reconciled`}
                   </td>
                   <td style={cell}>
                     <button type="button" style={btn()} onClick={() => setBatchId(b.id)}>Open</button>
@@ -213,7 +216,7 @@ const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => voi
         </table>
       )}
 
-      {!done && (
+      {!done && openLines === 0 && (
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
           <label htmlFor={`recv-${batchId}`} style={{ fontWeight: 600 }}>Money arrived in the bank on</label>
           <input id={`recv-${batchId}`} type="date" value={on} aria-label="Money arrived in the bank on"
@@ -229,11 +232,13 @@ const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => voi
         </div>
       )}
 
+      {/* The list already refuses to show an unreconciled report; this is the
+          same rule at the second gate, for a report that was opened and then
+          re-opened for edits on the other screen. */}
       {openLines > 0 && (
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
-          {openLines} line(s) on this statement are still unconfirmed, so their fees are not in the books yet.
-          The money can still be recorded, but{' '}
-          <Link to="/scm/merchant-recon">finish the merchant reconciliation</Link> or this acquirer will not come to zero.
+          {openLines} line(s) on this report are back to undecided. Finish{' '}
+          <Link to="/scm/merchant-recon">merchant reconciliation</Link> before recording money against it.
         </div>
       )}
 

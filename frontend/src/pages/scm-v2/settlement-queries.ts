@@ -92,9 +92,14 @@ export type SettlementBatch = {
   /** lines net minus stated net: a charge the transactions do not explain. */
   adjustment_sen: number;
   adjustment_je_no: string | null;
-  /** How much of the payout has actually landed, across however many credits
-      it came in — one statement is often paid in several (owner: 我实际收到的钱
-      可能是多笔的哦). */
+  /** How far the merchant side got: lines confirmed, lines still open, and
+      the two kinds of open — one you can decide, one nobody recorded. */
+  confirmed_count?: number;
+  open_count?: number;
+  to_choose_count?: number;
+  no_record_count?: number;
+  /** How much of the payout has landed, across however many credits it came
+      in — one statement is often paid in several. */
   received_sen?: number;
   receipt_count?: number;
   outstanding_sen?: number;

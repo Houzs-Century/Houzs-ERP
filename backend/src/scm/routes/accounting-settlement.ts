@@ -309,11 +309,19 @@ export const settlementBatches = guard(async (c) => {
   const { data: rowTally, error: rtErr } = await sb.from('acc_settlement_rows')
     .select('batch_id, bucket, confirmed_at').eq('company_id', co.companyId);
   if (rtErr) return c.json({ error: 'load_failed', reason: rtErr.message }, 500);
-  const reconciled = new Map<number, { confirmed: number; open: number }>();
+  const reconciled = new Map<number, { confirmed: number; open: number; toChoose: number; noRecord: number }>();
   for (const r of (rowTally ?? []) as Array<{ batch_id: number; bucket: string; confirmed_at: string | null }>) {
-    const at = reconciled.get(Number(r.batch_id)) ?? { confirmed: 0, open: 0 };
+    const at = reconciled.get(Number(r.batch_id)) ?? { confirmed: 0, open: 0, toChoose: 0, noRecord: 0 };
     if (r.confirmed_at) at.confirmed += 1;
-    else if (r.bucket !== 'IGNORED') at.open += 1;
+    else if (r.bucket !== 'IGNORED') {
+      at.open += 1;
+      /* The two kinds of "not matched yet", which the operator chases in two
+         different ways: one is a decision he can make, the other is a payment
+         nobody recorded (his second list — merchant report 有但是找不到相对应的
+         transaction 的是那几笔). */
+      if (r.bucket === 'UNMATCHED') at.noRecord += 1;
+      else at.toChoose += 1;
+    }
     reconciled.set(Number(r.batch_id), at);
   }
 
@@ -329,12 +337,14 @@ export const settlementBatches = guard(async (c) => {
 
   const batches = ((data ?? []) as Array<Record<string, any>>).map((b) => {
     const at = got.get(Number(b.id)) ?? { sen: 0, count: 0, lastOn: null };
-    const done = reconciled.get(Number(b.id)) ?? { confirmed: 0, open: 0 };
+    const done = reconciled.get(Number(b.id)) ?? { confirmed: 0, open: 0, toChoose: 0, noRecord: 0 };
     const payable = payableOf(b);
     return {
       ...b,
       confirmed_count: done.confirmed,
       open_count: done.open,
+      to_choose_count: done.toChoose,
+      no_record_count: done.noRecord,
       received_sen: at.sen,
       receipt_count: at.count,
       /* The day it was FULLY received, and null while any of it is still out —

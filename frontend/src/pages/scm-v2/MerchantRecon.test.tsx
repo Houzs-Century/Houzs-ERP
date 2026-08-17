@@ -34,6 +34,13 @@ const ROW: SettlementRow = {
   clue: 'No single payment matches; 1 pair(s) of payments add up to this amount',
 };
 
+/* A line already dealt with: off the screen unless he asks for it. */
+const DONE_ROW: SettlementRow = {
+  ...ROW, id: 8, line_no: 1, ref: 'A1', bucket: 'MATCHED', match_reason: 'ref',
+  confirmed_at: '2026-08-17T02:00:00Z', posted_je_no: 'JE-2608-0011',
+  candidates: [], comboHints: [], clue: null,
+};
+
 const confirmMutate = vi.fn();
 const uploadMutateAsync = vi.fn();
 let saveMutate = vi.fn();
@@ -41,7 +48,7 @@ let saveMutate = vi.fn();
 vi.mock('./settlement-queries', () => ({
   useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL] }, isLoading: false }),
   useSaveAcquirerSetup: () => ({ mutate: saveMutate, isPending: false }),
-  useSettlementBatches: () => ({ data: { batches: [{ id: 1, acquirer_code: 'MBB', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-03', row_count: 2, gross_sen: 177700, fee_sen: 2600, net_sen: 175100, stated_net_sen: null, adjustment_sen: 0, adjustment_je_no: null, received_on: null, received_sen: 0, outstanding_sen: 175100, receipt_count: 0, confirmed_count: 1, open_count: 1, status: 'OPEN', uploaded_by: null, created_at: '' }] }, isLoading: false }),
+  useSettlementBatches: () => ({ data: { batches: [{ id: 1, acquirer_code: 'MBB', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-03', row_count: 2, gross_sen: 177700, fee_sen: 2600, net_sen: 175100, stated_net_sen: null, adjustment_sen: 0, adjustment_je_no: null, received_on: null, received_sen: 0, outstanding_sen: 175100, receipt_count: 0, confirmed_count: 1, open_count: 2, to_choose_count: 1, no_record_count: 1, status: 'OPEN', uploaded_by: null, created_at: '' }] }, isLoading: false }),
   useSettlementBatch: () => ({
     data: {
       batch: {
@@ -52,7 +59,7 @@ vi.mock('./settlement-queries', () => ({
       },
       acquirer: { code: 'MBB', hasUniqueRef: true, dateToleranceDays: 3 },
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 1, UNMATCHED: 0, IGNORED: 0 },
-      rows: [ROW],
+      rows: [ROW, DONE_ROW],
     },
     isLoading: false,
   }),
@@ -60,7 +67,9 @@ vi.mock('./settlement-queries', () => ({
   useConfirmSettlementRow: () => ({ mutate: confirmMutate, isPending: false, isError: false, error: null }),
   useConfirmMatched: () => ({ mutate: vi.fn(), isPending: false, data: null }),
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
-  useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, recordedNotArrived: [], arrivedNotRecorded: [] }, isLoading: false }),
+  useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, arrivedNotRecorded: [], recordedNotArrived: [
+    { source: 'SOPAY', id: 'w1', acquirerCode: 'MBB', docNo: 'SO-2607-088', paidOn: '2026-07-18', amountSen: 35000, approvalCode: 'A0900', ageDays: 29 },
+  ] }, isLoading: false }),
 }));
 
 import { MerchantRecon } from './MerchantRecon';
@@ -95,10 +104,21 @@ describe('the reconcile tab', () => {
     expect(screen.getByText(/sends no unique reference/)).toBeTruthy();
   });
 
-  test('several statements can be picked at once', () => {
+  test('several reports can be picked at once', () => {
     draw();
     expect(screen.getByLabelText('Statement files').hasAttribute('multiple')).toBe(true);
-    expect(screen.getByText(/Several files can go up at once/)).toBeTruthy();
+  });
+
+  /* His answer to "what should this screen open on": 应该就只会显示还没对上的
+     transaction 吧. Both kinds of not-matched, named, on the landing view. */
+  test('the landing shows only what is not matched yet, from both sides', () => {
+    draw();
+    // a report with lines still to decide, split by which kind of problem
+    expect(screen.getByText('1 to choose · 1 with no sale in the ERP')).toBeTruthy();
+    // and the payments the sales team keyed in that no report has reported
+    expect(screen.getByText('Card payments no merchant report has reported yet (1)')).toBeTruthy();
+    expect(screen.getByText('SO-2607-088')).toBeTruthy();
+    expect(screen.getByText('A0900')).toBeTruthy();
   });
 
   /* Only Hong Leong writes its dates without a year. Showing everyone else a
@@ -123,19 +143,27 @@ describe('the reconcile tab', () => {
     expect(screen.queryByLabelText('Money reached the bank on')).toBeNull();
   });
 
-  test('the four piles carry their counts, and a line shows its clue and its candidates', () => {
+  /* Opening a report shows the lines still to decide and NOTHING else — the
+     upload row, the other reports and the finished lines are all gone. */
+  test('a report opens on the lines still to decide, with its clue and candidates', () => {
     draw();
-    fireEvent.click(screen.getByText('Open'));
-    expect(screen.getByText(/Matched \(1\)/)).toBeTruthy();
-    expect(screen.getByText(/Needs confirming \(1\)/)).toBeTruthy();
-    expect(screen.getByText(/Not matched \(0\)/)).toBeTruthy();
+    fireEvent.click(screen.getByText('Reconcile'));
+    expect(screen.getByText('1 line(s) still to decide')).toBeTruthy();
     expect(screen.getByText(/pair\(s\) of payments add up/)).toBeTruthy();
     expect(screen.getByText('SO-2608-001')).toBeTruthy();
+    // the list it came from is off the screen
+    expect(screen.queryByLabelText('Statement files')).toBeNull();
+    // and the counts are still stated, so nothing is hidden
+    expect(screen.getByText('1 done · 0 set aside')).toBeTruthy();
+    // the finished line is not on screen until he asks for it
+    expect(screen.queryByText('JE-2608-0011')).toBeNull();
+    fireEvent.click(screen.getByLabelText('Show lines already decided'));
+    expect(screen.getByText('JE-2608-0011')).toBeTruthy();
   });
 
   test('a part-selection cannot be confirmed; the pair that adds up can', () => {
     draw();
-    fireEvent.click(screen.getByText('Open'));
+    fireEvent.click(screen.getByText('Reconcile'));
     const confirm = screen.getByText('Confirm and post') as HTMLButtonElement;
     expect(confirm.disabled).toBe(true);
 

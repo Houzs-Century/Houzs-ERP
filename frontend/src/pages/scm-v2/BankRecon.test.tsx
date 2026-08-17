@@ -28,14 +28,22 @@ const OWED: SettlementBatch = {
 const SETTLED: SettlementBatch = {
   ...OWED, id: 2, acquirer_code: 'MBB', file_name: 'mbb-aug.csv',
   net_sen: 227700, received_sen: 227700, outstanding_sen: 0, receipt_count: 1,
-  received_on: '2026-08-18', confirmed_count: 0, open_count: 1,
+  received_on: '2026-08-18', confirmed_count: 1, open_count: 0,
+};
+/* THE GATE: a report whose lines are not all decided does not belong on this
+   screen at all (owner: 核对完了没有问题才会显示去 bank statement 的
+   reconciliation). */
+const NOT_READY: SettlementBatch = {
+  ...OWED, id: 3, acquirer_code: 'AEON', file_name: 'aeon-aug.csv',
+  net_sen: 592800, received_sen: 0, outstanding_sen: 592800, receipt_count: 0,
+  received_on: null, confirmed_count: 0, open_count: 2,
 };
 
 const receivedMutate = vi.fn();
 const undoMutate = vi.fn();
 
 vi.mock('./settlement-queries', () => ({
-  useSettlementBatches: () => ({ data: { batches: [OWED, SETTLED] }, isLoading: false }),
+  useSettlementBatches: () => ({ data: { batches: [OWED, SETTLED, NOT_READY] }, isLoading: false }),
   useSettlementBatch: () => ({
     data: {
       batch: {
@@ -74,13 +82,15 @@ describe('the statements waiting for money', () => {
     expect(screen.getByText('all in')).toBeTruthy();
   });
 
-  /* The money can be recorded whatever the card-machine side is doing, but a
-     statement nobody has reconciled must say so — its fees are not booked. */
-  test('says how far the card machine side got, for each statement', () => {
+  /* A report that is not reconciled is NOT here — and the screen says so by
+     name, so "where did AEON go" is never a question. */
+  test('a report that is not reconciled yet is kept off this screen, and named', () => {
     draw();
+    expect(screen.queryByText('aeon-aug.csv')).toBeNull();
+    expect(screen.getByText(/1 merchant report is not here yet/)).toBeTruthy();
+    expect(screen.getByText(/AEON/)).toBeTruthy();
     fireEvent.click(screen.getByLabelText('Show statements already settled'));
-    expect(screen.getByText('4 line(s) reconciled')).toBeTruthy();
-    expect(screen.getByText('1 line(s) still open')).toBeTruthy();
+    expect(screen.queryByText('aeon-aug.csv')).toBeNull();
   });
 
   test('a statement shows its credits, takes another, and can undo one', () => {

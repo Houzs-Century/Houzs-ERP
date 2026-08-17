@@ -48,13 +48,12 @@ const bucketCount = (buckets: Record<string, number>, key: SettlementBucket): nu
   Number(buckets[key] ?? 0);
 
 export const MerchantRecon = () => {
-  const [tab, setTab] = useState<'statements' | 'problems' | 'setup'>('statements');
+  const [tab, setTab] = useState<'work' | 'setup'>('work');
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance · step 1 of 2" title="Merchant reconciliation" />
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <button type="button" style={btn(tab === 'statements')} onClick={() => setTab('statements')}>Statements</button>
-        <button type="button" style={btn(tab === 'problems')} onClick={() => setTab('problems')}>Problems</button>
+        <button type="button" style={btn(tab === 'work')} onClick={() => setTab('work')}>To reconcile</button>
         <button type="button" style={btn(tab === 'setup')} onClick={() => setTab('setup')}>Merchant setup</button>
         <span style={{ flex: 1 }} />
         {/* Step two is its own screen; the link is here so the next job is one
@@ -63,20 +62,32 @@ export const MerchantRecon = () => {
           Bank statement reconciliation <ArrowRight {...ICON} />
         </Link>
       </div>
-      {tab === 'statements' && <ReconcileTab />}
-      {tab === 'problems' && <WatchlistTab />}
+      {tab === 'work' && <ReconcileTab />}
       {tab === 'setup' && <SetupTab />}
     </div>
   );
 };
 
-/* ── Reconcile: upload a statement, then work its four piles ───────────────── */
+/* ── The work queue: ONLY what is not matched yet ─────────────────────────────
+   The owner, asked what this screen should open on: "应该就只会显示还没对上的
+   transaction 吧". So it shows exactly that, from both sides at once:
+
+     • statements with lines still to decide — the merchant says it, and either
+       nobody in the ERP recorded it or a human has to choose which payment;
+     • card money the sales team DID record that no statement has reported yet.
+
+   A statement whose lines are all decided leaves this screen entirely. Where it
+   goes is the bank statement reconciliation, and it can only go there once it
+   is clean — his rule: 核对完了没有问题才会显示去 bank statement 的
+   reconciliation. */
 
 const ReconcileTab = () => {
   const setup = useAcquirerSetup();
   const batches = useSettlementBatches();
+  const watchlist = useSettlementWatchlist();
   const upload = useUploadStatement();
   const [batchId, setBatchId] = useState<number | null>(null);
+  const [showDone, setShowDone] = useState(false);
 
   const acquirers = setup.data?.acquirers ?? [];
   const [code, setCode] = useState('');
@@ -158,10 +169,17 @@ const ReconcileTab = () => {
     if (lastBatch != null) setBatchId(lastBatch);
   };
 
-  /* ONE THING AT A TIME. A statement being worked replaces the upload row and
-     the list instead of stacking under them — the owner's complaint about the
-     screen that did stack them: "就感觉很多东西挤在一页". */
+  /* ONE THING AT A TIME. Working a statement replaces everything else. */
   if (batchId != null) return <BatchView batchId={batchId} onBack={() => setBatchId(null)} />;
+
+  const all = batches.data?.batches ?? [];
+  const open = all.filter((b) => (b.open_count ?? 0) > 0);
+  const cleared = all.filter((b) => (b.open_count ?? 0) === 0);
+  /* Card money the sales team recorded that no statement has reported. Held
+     back until the watchlist has answered, so an empty list never reads as
+     "nothing outstanding" when it means "not loaded". */
+  const waiting = watchlist.data?.recordedNotArrived ?? [];
+  const waitingSen = waiting.reduce((s, p) => s + p.amountSen, 0);
 
   return (
     <div className="space-y-4">
@@ -169,7 +187,7 @@ const ReconcileTab = () => {
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
           <select value={code} onChange={(e) => setCode(e.target.value)} aria-label="Acquirer"
             style={{ padding: '6px 10px', fontSize: 'var(--fs-13)' }}>
-            <option value="">Which acquirer?</option>
+            <option value="">Which merchant?</option>
             {acquirers.filter((a) => a.is_active).map((a) => (
               <option key={a.code} value={a.code} disabled={!a.ready}>
                 {a.display_name}{a.ready ? '' : ' — not set up yet'}
@@ -187,15 +205,12 @@ const ReconcileTab = () => {
             disabled={!code || files.length === 0 || busy} onClick={() => { void send(); }}>
             <Upload {...ICON} /> {busy ? 'Reading…'
               : results.some((r) => !r.ok) && files.length > 0 ? `Try again (${files.length})`
-              : `Upload${files.length > 1 ? ` ${files.length} files` : ''}`}
+              : `Upload merchant report${files.length > 1 ? ` (${files.length} files)` : ''}`}
           </button>
         </div>
-        {/* Asked ONLY of the acquirer whose file needs it. Hong Leong dates a
+        {/* Asked ONLY of the merchant whose file needs it. Hong Leong dates a
             line "16-Aug" with no year anywhere in the statement, so somebody
-            has to say which year that is — and nothing here guesses. Every
-            other acquirer dates its lines in full, and putting a field in
-            front of people who do not need it is how a screen teaches them to
-            ignore the fields that matter. */}
+            has to say which year that is — and nothing here guesses. */}
         {chosen?.dates_have_no_year === true && (
           <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
             <label style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }} htmlFor="settlement-month">Statement month</label>
@@ -205,11 +220,6 @@ const ReconcileTab = () => {
             <span style={softText}>{chosen.display_name} dates its lines like &ldquo;16-Aug&rdquo;, with no year.</span>
           </div>
         )}
-        {/* Nothing here asks when the money arrived, on purpose. Uploading is
-            the moment the operator has the CARD MACHINE report and nothing
-            else; the payout comes days later and the bank statement is what
-            tells him. That step is on the statement itself, once its lines are
-            reconciled. (Owner, 2026-08-17: 全部卡机都是隔几天收到的。) */}
         {chosen && !chosen.autoMatchable && (
           <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
             {chosen.display_name} sends no unique reference — every line waits for you to confirm it.
@@ -223,63 +233,134 @@ const ReconcileTab = () => {
         ))}
       </section>
 
+      {/* 1. The reports that still need decisions. */}
       <section className="space-y-2">
-        {(batches.data?.batches ?? []).length === 0
-          ? <div style={softText}>Nothing uploaded yet. Pick a merchant statement above.</div>
-          : <div style={softText}>Several files can go up at once — each one answers for itself.</div>}
-        <table style={table}>
-          <thead>
-            <tr style={headRow}>
-              <th style={cell}>Acquirer</th><th style={cell}>File</th><th style={cell}>Period</th>
-              <th style={num}>Lines</th><th style={num}>Gross</th><th style={num}>Fee</th><th style={num}>Net</th>
-              <th style={cell}>Reconciled</th><th style={cell} />
-            </tr>
-          </thead>
-          <tbody>
-            {(batches.data?.batches ?? []).map((b) => (
-              <tr key={b.id} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' }}>
-                <td style={cell}><span className={styles.codeChip}>{b.acquirer_code}</span></td>
-                <td style={cell}>{b.file_name}</td>
-                <td style={cell}>{b.period_from} → {b.period_to}</td>
-                <td style={num}>{b.row_count}</td>
-                <td style={num}>{fmt(b.gross_sen)}</td>
-                <td style={num}>{fmt(b.fee_sen)}</td>
-                <td style={num}>{fmt(b.net_sen)}</td>
-                {/* How far THIS screen's job has got. Whether the money came
-                   is the other screen's question, deliberately not answered
-                   twice in two places. */}
-                <td style={{ ...cell, color: (b.open_count ?? 0) === 0 ? good : danger }}>
-                  {(b.open_count ?? 0) === 0
-                    ? 'all lines done'
-                    : `${b.open_count} of ${b.row_count} still open`}
-                </td>
-                <td style={cell}>
-                  <button type="button" style={btn()} onClick={() => setBatchId(b.id)}>Open</button>
-                </td>
+        <b>Merchant reports still to reconcile</b>
+        {open.length === 0 && !batches.isLoading && (
+          <div style={{ fontSize: 'var(--fs-13)', color: good }}>
+            Nothing to reconcile — every merchant report you have uploaded is done.
+          </div>
+        )}
+        {open.length > 0 && (
+          <table style={table}>
+            <thead>
+              <tr style={headRow}>
+                <th style={cell}>Merchant</th><th style={cell}>Report</th><th style={cell}>Period</th>
+                <th style={num}>Lines</th><th style={cell}>What is left</th><th style={cell} />
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {open.map((b) => (
+                <tr key={b.id} style={rowLine}>
+                  <td style={cell}><span className={styles.codeChip}>{b.acquirer_code}</span></td>
+                  <td style={cell}>{b.file_name}</td>
+                  <td style={cell}>{b.period_from} → {b.period_to}</td>
+                  <td style={num}>{b.row_count}</td>
+                  {/* The two kinds of "not matched yet", named: one is a choice
+                      he can make, the other is a payment nobody recorded. */}
+                  <td style={{ ...cell, color: danger }}>
+                    {[(b.to_choose_count ?? 0) > 0 ? `${b.to_choose_count} to choose` : null,
+                      (b.no_record_count ?? 0) > 0 ? `${b.no_record_count} with no sale in the ERP` : null]
+                      .filter(Boolean).join(' · ') || `${b.open_count} to decide`}
+                  </td>
+                  <td style={cell}>
+                    <button type="button" style={btn(true)} onClick={() => setBatchId(b.id)}>Reconcile</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        {/* Done, and therefore not on this screen's list — but say so, and say
+            where they went, so "it disappeared" never has to be a question. */}
+        {cleared.length > 0 && (
+          <div style={softText}>
+            {cleared.length} report{cleared.length === 1 ? '' : 's'} fully reconciled —{' '}
+            <Link to="/scm/bank-recon">bank statement reconciliation</Link> carries them now.{' '}
+            <button type="button" style={{ ...btn(), padding: '2px 8px' }} onClick={() => setShowDone(!showDone)}>
+              {showDone ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        )}
+        {showDone && cleared.length > 0 && (
+          <table style={table}>
+            <tbody>
+              {cleared.map((b) => (
+                <tr key={b.id} style={rowLine}>
+                  <td style={cell}><span className={styles.codeChip}>{b.acquirer_code}</span></td>
+                  <td style={cell}>{b.file_name}</td>
+                  <td style={cell}>{b.period_from} → {b.period_to}</td>
+                  <td style={num}>{fmt(b.net_sen)}</td>
+                  <td style={{ ...cell, color: good }}>{b.confirmed_count} line(s) done</td>
+                  <td style={cell}>
+                    <button type="button" style={btn()} onClick={() => setBatchId(b.id)}>Open</button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </section>
+
+      {/* 2. The other side of "not matched yet": the ERP has it, no report does.
+             His words: 我还没收到钱的是那几笔. */}
+      <section className="space-y-2">
+        <b>{`Card payments no merchant report has reported yet (${waiting.length})`}</b>
+        <div style={softText}>
+          Keyed in by the sales team; the merchant has not put them on a report. {fmt(waitingSen)} in total.
+        </div>
+        {watchlist.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
+        {!watchlist.isLoading && waiting.length === 0 && (
+          <div style={{ fontSize: 'var(--fs-13)', color: good }}>
+            Every card payment recorded is on a merchant report.
+          </div>
+        )}
+        {waiting.length > 0 && (
+          <table style={table}>
+            <thead>
+              <tr style={headRow}>
+                <th style={cell}>Merchant</th><th style={cell}>Document</th><th style={cell}>Customer paid on</th>
+                <th style={num}>Days</th><th style={num}>Amount</th><th style={cell}>Approval</th>
+              </tr>
+            </thead>
+            <tbody>
+              {waiting.map((p) => (
+                <tr key={`${p.source}:${p.id}`} style={rowLine}>
+                  <td style={cell}><span className={styles.codeChip}>{p.acquirerCode}</span></td>
+                  <td style={cell}>{p.docNo}</td>
+                  <td style={cell}>{p.paidOn}</td>
+                  <td style={{ ...num, color: p.ageDays > 14 ? danger : undefined, fontWeight: p.ageDays > 14 ? 700 : undefined }}>{p.ageDays}</td>
+                  <td style={num}>{fmt(p.amountSen)}</td>
+                  <td style={cell}>{p.approvalCode ?? '—'}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
       </section>
     </div>
   );
 };
 
-/* ── One statement, four piles ────────────────────────────────────────────── */
+/* ── One statement: the lines still to decide ─────────────────────────────────
+   Lines already decided are OFF this screen by default — "只会显示还没对上的".
+   The counts stay in view so nothing is hidden, and one checkbox brings the
+   finished lines back for a look. */
 
 const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void }) => {
   const q = useSettlementBatch(batchId);
   const confirmAll = useConfirmMatched();
-  const [pile, setPile] = useState<SettlementBucket>('NEEDS_CONFIRM');
+  const [showDone, setShowDone] = useState(false);
 
   const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
   const batch = q.data?.batch ?? null;
-  const buckets = q.data?.buckets ?? {};
-  const shown = rows.filter((r) => r.bucket === pile);
+  const openRows = rows.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED');
+  const doneRows = rows.filter((r) => r.confirmed_at || r.bucket === 'IGNORED');
   const unconfirmedMatched = rows.filter((r) => r.bucket === 'MATCHED' && !r.confirmed_at).length;
+  const shown = showDone ? [...openRows, ...doneRows] : openRows;
 
   const exportCsv = () => {
-    downloadCSV(`settlement-batch-${batchId}.csv`, toCSV(rows, [
+    downloadCSV(`merchant-report-${batchId}.csv`, toCSV(rows, [
       { key: 'line', label: 'Line', getValue: (r) => r.line_no },
       { key: 'date', label: 'Date', getValue: (r) => r.txn_date },
       { key: 'ref', label: 'Reference', getValue: (r) => r.ref ?? '' },
@@ -295,46 +376,47 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
   return (
     <section className="space-y-3">
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <button type="button" style={btn()} onClick={onBack}><ArrowLeft {...ICON} /> All statements</button>
+        <button type="button" style={btn()} onClick={onBack}><ArrowLeft {...ICON} /> All reports</button>
         <b>{batch ? `${batch.acquirer_code} · ${batch.file_name}` : 'Loading…'}</b>
         {batch && <span style={softText}>{batch.period_from} → {batch.period_to} · net {fmt(batch.net_sen)}</span>}
       </div>
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        {(['MATCHED', 'NEEDS_CONFIRM', 'UNMATCHED', 'IGNORED'] as SettlementBucket[]).map((b) => (
-          <button key={b} type="button" style={btn(pile === b)} onClick={() => setPile(b)}>
-            {BUCKET_LABEL[b]} ({buckets[b] ?? 0})
-          </button>
-        ))}
+        <b style={{ fontSize: 'var(--fs-13)' }}>
+          {openRows.length === 0 ? 'Every line is decided.' : `${openRows.length} line(s) still to decide`}
+        </b>
+        <span style={softText}>
+          {`${rows.filter((r) => r.confirmed_at).length} done · ${rows.filter((r) => r.bucket === 'IGNORED').length} set aside`}
+        </span>
         <span style={{ flex: 1 }} />
-        <button type="button" style={btn(true, unconfirmedMatched === 0 || confirmAll.isPending)}
-          disabled={unconfirmedMatched === 0 || confirmAll.isPending}
-          onClick={() => confirmAll.mutate(batchId)}>
-          <CheckCheck {...ICON} /> Confirm all matched ({unconfirmedMatched})
-        </button>
+        {unconfirmedMatched > 0 && (
+          <button type="button" style={btn(true, confirmAll.isPending)} disabled={confirmAll.isPending}
+            onClick={() => confirmAll.mutate(batchId)}>
+            <CheckCheck {...ICON} /> Confirm the {unconfirmedMatched} matched by reference
+          </button>
+        )}
+        {doneRows.length > 0 && (
+          <label style={{ ...softText, display: 'flex', gap: 6, alignItems: 'center' }}>
+            <input type="checkbox" checked={showDone} aria-label="Show lines already decided"
+              onChange={(e) => setShowDone(e.target.checked)} />
+            Show the {doneRows.length} already decided
+          </label>
+        )}
         <button type="button" style={btn()} onClick={exportCsv}><Download {...ICON} /> Export</button>
       </div>
 
       {/* The charge the STATEMENT makes that no transaction on it explains —
           AEON's subvention fee. Shown whether or not it is booked yet, because
-          an unbooked one means the bank balance in the books is wrong by
-          exactly this much. */}
+          an unbooked one means in-transit is holding money that is never coming. */}
       {batch && batch.adjustment_sen !== 0 && (
-        <div style={{
-          padding: 'var(--space-3)', borderRadius: 'var(--radius-md)',
-          border: `1px solid ${batch.adjustment_je_no ? good : danger}`,
-          background: batch.adjustment_je_no ? 'rgba(47,93,79,0.08)' : 'rgba(184,51,31,0.08)',
-          fontSize: 'var(--fs-13)',
-        }}>
+        <div style={panel(batch.adjustment_je_no ? 'good' : 'danger')}>
           <b>Merchant charge on no transaction: {fmt(Math.abs(batch.adjustment_sen))}</b>
           <div style={softText}>
             Lines come to {fmt(batch.net_sen)}; {batch.acquirer_code} says it is paying {fmt(batch.stated_net_sen ?? 0)}.
-            {batch.adjustment_je_no ? ` Booked as ${batch.adjustment_je_no}.` : ' Confirm the statement and it books.'}
+            {batch.adjustment_je_no ? ` Booked as ${batch.adjustment_je_no}.` : ' Confirm the report and it books.'}
           </div>
         </div>
       )}
-
-      {batch && <HandOff batch={batch} openLines={rows.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED').length} />}
 
       {confirmAll.data && (
         <div style={{ fontSize: 'var(--fs-13)', color: confirmAll.data.failed.length ? danger : good }}>
@@ -344,18 +426,18 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
         </div>
       )}
 
-      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the statement…</div>}
-      {!q.isLoading && shown.length === 0 && <div style={softText}>This pile is empty.</div>}
+      {batch && <HandOff batch={batch} openLines={openRows.length} />}
+
+      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the report…</div>}
       {shown.map((r) => <SettlementLine key={r.id} row={r} />)}
     </section>
   );
 };
 
-/* ── Where this statement goes next ───────────────────────────────────────────
-   The hand-off between the two screens, and the whole reason they are two: this
-   one is finished when the card machine's lines are reconciled. Whether the
-   money came is a different question asked on a different day, and the answer
-   is not repeated here — one fact, one place. */
+/* ── Where this report goes next ──────────────────────────────────────────────
+   The hand-off, and the owner's rule about it: 核对完了没有问题才会显示去 bank
+   statement 的 reconciliation. Until every line is decided, this says what is
+   left; after that, it says what the merchant owes and offers the next step. */
 
 const HandOff = ({ batch, openLines }: { batch: SettlementBatch; openLines: number }) => {
   const payable = payableOf(batch);
@@ -364,8 +446,8 @@ const HandOff = ({ batch, openLines }: { batch: SettlementBatch; openLines: numb
   if (openLines > 0) {
     return (
       <div style={softText}>
-        {openLines} line(s) still need a decision. Once they are done, {batch.acquirer_code} owes {fmt(payable)} —
-        record it on <Link to="/scm/bank-recon">bank statement reconciliation</Link> when it arrives.
+        {openLines} line(s) still need a decision. Bank statement reconciliation opens for this report once they
+        are done.
       </div>
     );
   }
@@ -507,66 +589,6 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
           {(confirm.error as { message?: string } | null)?.message ?? 'The line was not confirmed.'}
         </div>
       )}
-    </div>
-  );
-};
-
-/* ── The two standing watchlists ──────────────────────────────────────────── */
-
-const WatchlistTab = () => {
-  const q = useSettlementWatchlist();
-  const w = q.data;
-  return (
-    <div className="space-y-4">
-      <div style={softText}>
-        These two lists are what bank reconciliation (phase 4) will refuse to open until they are empty.
-      </div>
-      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
-      {w?.clean && <div style={{ fontSize: 'var(--fs-13)', color: good }}>Nothing outstanding between {w.from} and {w.to}.</div>}
-
-      <section className="space-y-1">
-        <b>Recorded, not arrived</b>
-        <div style={softText}>Card money the ERP recorded that no statement has settled yet.</div>
-        <table style={table}>
-          <thead><tr style={headRow}>
-            <th style={cell}>Acquirer</th><th style={cell}>Document</th><th style={cell}>Paid</th>
-            <th style={num}>Age (days)</th><th style={num}>Amount</th>
-          </tr></thead>
-          <tbody>
-            {(w?.recordedNotArrived ?? []).map((p) => (
-              <tr key={`${p.source}:${p.id}`}>
-                <td style={cell}><span className={styles.codeChip}>{p.acquirerCode}</span></td>
-                <td style={cell}>{p.docNo}</td>
-                <td style={cell}>{p.paidOn}</td>
-                <td style={{ ...num, color: p.ageDays > 14 ? danger : undefined }}>{p.ageDays}</td>
-                <td style={num}>{fmt(p.amountSen)}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
-
-      <section className="space-y-1">
-        <b>Arrived, not recorded</b>
-        <div style={softText}>Money the acquirer says it sent that has no sale behind it in the ERP.</div>
-        <table style={table}>
-          <thead><tr style={headRow}>
-            <th style={cell}>Acquirer</th><th style={cell}>Date</th><th style={cell}>Reference</th>
-            <th style={num}>Amount</th><th style={cell}>Note</th>
-          </tr></thead>
-          <tbody>
-            {(w?.arrivedNotRecorded ?? []).map((r) => (
-              <tr key={r.id}>
-                <td style={cell}><span className={styles.codeChip}>{r.acquirer_code}</span></td>
-                <td style={cell}>{String(r.txn_date).slice(0, 10)}</td>
-                <td style={cell}>{r.ref ?? '—'}</td>
-                <td style={num}>{fmt(r.gross_sen)}</td>
-                <td style={cell}>{r.notes ?? ''}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </section>
     </div>
   );
 };
