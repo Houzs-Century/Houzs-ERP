@@ -633,6 +633,26 @@ All under `backend/src/scm/routes/mfg-sales-orders.ts`. Auth: inside `/api/scm/*
 `user.id` is the caller's **scm.staff UUID** (bridge-pinned); use `houzsUser.id` for
 the public bigint or you get a 500 (uuid-in-int column).
 
+### Who owns the order — `salesperson_id` (owner 2026-08-17)
+
+Two changes to the header PATCH, both because a resigning rep's orders have to
+reach their replacement (*"如果第一个销售人员PIC辞职…"*):
+
+- **`salesperson_id` is no longer identity-locked.** It used to freeze once a
+  non-cancelled DO / SI existed — collateral, since those documents snapshot the
+  customer, the addresses and the money, never who sold it. Everything else in
+  the lock set stays frozen. The set, the rule, and the `agent` carve-out that
+  makes the unlock actually work, now live in
+  `backend/src/scm/shared/so-identity-lock.ts`.
+- **Moving it needs `scm.so.attribute_other`, enforced server-side** (403
+  `forbidden_attribute_other`). CREATE always checked that permission; the PATCH
+  relied on the SO Detail page disabling the select, which the scope check does
+  not substitute for — that only proves the order is the caller's own.
+
+On a hard-locked order the page-level Edit button now opens for a caller who may
+re-attribute, with the Salesperson field as the only live control. Bulk handover
+(a resignation is fifty orders) has its own routes and guide: **`so-handover.md`**.
+
 Paginated contract (`?page=`) returns `{ salesOrders, total, page, pageSize,
 statusCounts, aggregates }`. `statusCounts` carries `all` plus ONE lowercase
 bucket per `SO_STATUSES` vocabulary entry (draft / confirmed / in_production /

@@ -29,9 +29,22 @@ export const SO_IDENTITY_LOCK_COLS: ReadonlySet<string> = new Set<string>([
     change from null. */
 const norm = (v: unknown): string => (v === null || v === undefined ? '' : String(v));
 
+/** The header PATCH's refusal when a caller without `scm.so.attribute_other`
+    tries to move an order to someone else.
+
+    CREATE has always checked that permission before stamping another person's
+    id; the PATCH mapped `salespersonId` straight through and leaned on the SO
+    Detail page disabling the select. That is a courtesy, not a control — the
+    route's scope check only proves the order is the caller's OWN, so a
+    self-scoped salesperson could hand their own order to anybody. */
+export const ATTRIBUTE_OTHER_REFUSAL = {
+  error: 'forbidden_attribute_other',
+  message: 'Changing the salesperson on a Sales Order needs the "attribute to another salesperson" permission.',
+} as const;
+
 /** True when this patch genuinely moves the order to a different salesperson
     (not a UI re-send of the same id). The caller turns that into the
-    `scm.so.attribute_other` permission check. */
+    `scm.so.attribute_other` permission check above. */
 export function salespersonReattributed(
   updates: Record<string, unknown>,
   beforeRow: Record<string, unknown>,

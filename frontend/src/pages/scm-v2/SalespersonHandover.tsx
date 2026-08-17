@@ -97,7 +97,11 @@ export function SalespersonHandover() {
     try {
       for (let i = 0; i < docNos.length; i += size) {
         const batch = docNos.slice(i, i + size);
-        const res = await authedFetch<ApplyResult>("/so-handover/apply", {
+        /* Typed PARTIAL on purpose: this is the wire, not a local object. The
+           `?? []` below is the guard that keeps a shape surprise from throwing
+           inside the loop and abandoning the batches that follow — declaring the
+           response fully-populated would make that guard read as dead code. */
+        const res = await authedFetch<Partial<ApplyResult>>("/so-handover/apply", {
           method: "POST",
           body: JSON.stringify({ fromStaffId: fromId, toStaffId: toId, docNos: batch }),
         });
@@ -123,13 +127,15 @@ export function SalespersonHandover() {
 
   async function loadPreviewSilently(staffId: string) {
     try {
-      const next = await authedFetch<Preview>(
+      const next = await authedFetch<Partial<Preview>>(
         `/so-handover/preview?from=${encodeURIComponent(staffId)}`,
       );
       /* Shape-check before replacing a list the operator is looking at: this
          refresh runs right after a write, and swapping a good list for a
          half-shaped payload would blank the screen at the worst moment. */
-      if (Array.isArray(next?.orders)) setPreview(next);
+      if (Array.isArray(next.orders) && typeof next.total === "number") {
+        setPreview(next as Preview);
+      }
     } catch {
       /* The handover result is what matters here; a failed refresh must not
          overwrite it with an error the operator cannot act on. */
