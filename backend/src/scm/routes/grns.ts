@@ -60,6 +60,7 @@ import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers'
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll } from '../lib/paginate-all';
+import { fetchOutstandingPoItems, type OutstandingPoItemRow, type OutstandingPoItemsClient } from '../lib/outstanding-po-items';
 import { escapeForOr } from '../lib/postgrest-search';
 import { recordEntityAudit, assertAuditWritable, auditUnavailableBody, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
@@ -1263,9 +1264,9 @@ grns.get('/', async (c) => {
    Returns a flat list of PO line items with remaining qty > 0. Used by
    the multi-select "GRN from POs (line-level)" picker at /grns/from-po.
    Filters:
-     - parent PO status must be SUBMITTED or PARTIALLY_RECEIVED
-     - line item must have qty - received_qty > 0
-     - limit 500 so the picker doesn't choke
+     - parent PO status must be SUBMITTED or PARTIALLY_RECEIVED (in the QUERY)
+     - line item must have qty - received_qty > 0 (in JS — PostgREST cannot
+       compare two columns, so this one cannot move into the statement)
    Shape mirrors the GET /outstanding-so-items pattern on mfgPurchaseOrders.
 
    IMPORTANT (route ordering): this STATIC path MUST be registered before
@@ -1274,57 +1275,20 @@ grns.get('/', async (c) => {
    2026-05-28, same class as the PO-from-SO shadowing.) */
 grns.get('/outstanding-po-items', async (c) => {
   const sb = c.get('supabase');
-  /* Commander 2026-05-29 — the GRN-from-PO picker now locks to ONE warehouse per
-     GRN (mirrors the supplier-lock pattern) + shows a Warehouse column. Select the
-     parent PO's purchase_location_id so the picker can group/lock by warehouse,
-     and resolve the warehouse code/name in a second round trip (Supabase nested
-     selects can't reach warehouses through the items→po hop cleanly). */
-  /* Cross-company leak fix (owner 2026-08-10 "为什么 houzs 的数据进到去 2990"):
-     this picker returned EVERY company's outstanding PO lines — the AutoCount
-     import raised Houzs POs from a handful to 135 and made the leak visible in
-     2990's GRN picker. The consignment mirror already wrapped with
-     scopeToCompany; do the same here (items carry company_id since mig 0083,
-     fail-closed when the company context can't resolve). */
-  const { data: items, error } = await scopeToCompany(
-    sb
-      .from('purchase_order_items')
-      .select(`
-      id, purchase_order_id, material_kind, material_code, material_name, supplier_sku, item_group,
-      description, qty, received_qty, unit_price_centi, warehouse_id, variants, delivery_date,
-      supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-      po:purchase_orders!inner ( id, po_number, supplier_id, status, po_date, expected_at,
-        supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-        purchase_location_id, supplier:suppliers ( code, name ) )
-    `),
-    c,
-  )
-    .order('purchase_order_id', { ascending: false })
-    .limit(500);
+  /* The read — company scope, the status filter, and the pagination that
+     replaced a `.limit(500)` over a UUID ordering — lives in scm/lib so it can
+     be tested without a Hono context. RECEIVABLE_PO_STATUSES (`:191`) is passed
+     in rather than re-listed: this handler used to duplicate that pair. */
+  /* Cast on the CLIENT only. supabase-js's builder generics are deep enough
+     that structurally matching them here is `TS2589: excessively deep`; the ROW
+     type stays honest, which is the half that matters (see the nullability note
+     in outstanding-po-items.ts). */
+  const { data, error } = await fetchOutstandingPoItems(
+    sb as unknown as OutstandingPoItemsClient, c, RECEIVABLE_PO_STATUSES,
+  );
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-
-  type Row = {
-    id: string; purchase_order_id: string; material_kind: string; material_code: string;
-    material_name: string; supplier_sku: string | null; item_group: string | null; description: string | null;
-    qty: number; received_qty: number; unit_price_centi: number;
-    warehouse_id: string | null; variants: unknown; delivery_date: string | null;
-    // Migration 0180 — per-line supplier-revised delivery dates.
-    supplier_delivery_date_2: string | null;
-    supplier_delivery_date_3: string | null;
-    supplier_delivery_date_4: string | null;
-    po: {
-      id: string; po_number: string; supplier_id: string; status: string;
-      po_date: string; expected_at: string | null; purchase_location_id: string | null;
-      // Migration 0180 — header supplier-revised delivery dates.
-      supplier_delivery_date_2: string | null;
-      supplier_delivery_date_3: string | null;
-      supplier_delivery_date_4: string | null;
-      supplier: { code: string; name: string } | null;
-    };
-  };
-
-  const rows = ((items ?? []) as unknown as Row[])
-    .filter((r) => r.po.status === 'SUBMITTED' || r.po.status === 'PARTIALLY_RECEIVED')
-    .filter((r) => r.qty - (r.received_qty ?? 0) > 0);
+  const rows = data ?? [];
+  type Row = OutstandingPoItemRow;
 
   /* Warehouse-lock fix (Agent C 2026-05-31, bug #1 "No outstanding PO lines") —
      the warehouse a PO line ships into is the LINE's own warehouse_id when set,
