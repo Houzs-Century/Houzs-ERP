@@ -105,7 +105,7 @@ Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
 | Method | Path | Line | Purpose |
 |--------|------|------|---------|
 | GET | `/` | `:833` | List. `?page=` opts into pagination + `statusCounts`. |
-| GET | `/outstanding-po-items` | `:1276` | PO lines with `qty - received_qty > 0` on SUBMITTED / PARTIALLY_RECEIVED POs; the from-PO picker. **Reads the FULL set** since 2026-08-17 — see §9. |
+| GET | `/outstanding-po-items` | `:1283` | PO lines with `qty - received_qty > 0` on SUBMITTED / PARTIALLY_RECEIVED POs; the from-PO picker. **Reads the FULL set** since 2026-08-17. Takes **`?poId=a,b,c`** (server-side scope) and returns **`scope`** beside `items` — see §2a. |
 | GET | `/:id` | `:1173` | Header + items + convert/lock flags + per-line source PO + per-line downstream. |
 | GET | `/:id/linked` | `:1229` | Parent PO + downstream PIs + PRs. |
 | POST | `/` | `:1268` | Create. `asDraft: true` → DRAFT; otherwise created POSTED and immediately posted (`:1471`). |
@@ -115,6 +115,107 @@ Three layers as in `docs/modules/sales-order.md` §1. GRN specifics:
 | PATCH | `/:id/cancel` | `:2033` | → CANCELLED; reverses the receipt. |
 | PATCH | `/:id` | `:2210` | Header edit — **can move stock** (warehouse relocation, see §5). **Company-scoped on BOTH halves** since #2086, 2026-08-13. |
 | POST/PATCH/DELETE | `/:id/items[/:itemId]` | `:2363` / `:2569` / `:2839` | Line CRUD — each re-syncs inventory on a POSTED GRN. |
+
+## 2a. The from-PO picker's read, and why an empty grid must name its cause
+
+*Added 2026-08-17, with the fix for the owner's zero-row screen.*
+
+He opened the picker scoped to one PO, got **0 rows**, and was told *"every line
+has been received"*. The PO had never been received. Three mechanisms, all
+silent, and the full trace is in `BUG-HISTORY.md`:
+
+1. `.limit(500)` sat on the **raw** `purchase_order_items` select with BOTH
+   filters running afterwards in JS, so the window was spent on every PO line in
+   the company — received, draft or not.
+2. It was ordered by `purchase_order_id DESC` — a uuid key order, not a date one.
+3. `?poId=` was applied **in the browser**, to the already-truncated list, so
+   scoping could only narrow the window and never recover a PO outside it.
+
+**What the endpoint does now** (`backend/src/scm/lib/outstanding-po-lines.ts`):
+
+| | |
+|---|---|
+| the read | **paged** via `pageWithTruncation`, not capped. Not `paginateAll`: that returns `{data, error}` and so cannot report that it stopped early, which is the whole distinction this endpoint got wrong. Ceiling `OUTSTANDING_MAX_PAGES × OUTSTANDING_PAGE`; hitting it sets `scope.truncated`. |
+| dead statuses | filtered **in SQL**, `.not('po.status','in',…)` on the embedded alias — the form `mrp.ts:535` already proves in production on this same table and embed. Only DRAFT + CANCELLED (`PO_DEAD_FOR_RECEIPT`). |
+| the exact receivable set | still the **JS** gate, `isReceivablePoStatus` in `grns.ts` — the SINGLE predicate the create paths share. The lib holds **no copy**; `explainOutstanding` takes it as a REQUIRED parameter so the picker cannot offer a line the converter then refuses. |
+| `?poId=` | a **SQL predicate** on `purchase_order_id`. A scoped read is exact and bounded by one PO's line count. |
+| ordering | the line's own `id` — paging needs a total order. |
+
+**The response carries `scope`**, which is the WHY behind an empty `items`:
+`requestedPoIds`, `pos[]` (each with `poDocNo`, `status`, `receivable`,
+`candidateLines`, `outstandingLines`), `unknownPoIds`, `truncated`, `scanned`. A
+requested PO that is DRAFT or CANCELLED yields no candidate rows, so the handler
+does a second header read to learn its status — without it, *"your PO is a
+draft"* and *"your PO does not exist"* collapse into one answer, and both used to
+render as *"every line has been received"*.
+
+**The rule this establishes, for every picker: AN EMPTY RESULT MUST SAY WHY IT IS
+EMPTY, and must never claim a completion it has not verified.**
+`frontend/src/lib/outstandingEmptyReason.ts` turns `scope` plus the two
+client-side causes (toolbar filters, unsaved-draft subtraction) into one of eight
+sentences, and only the two that VERIFIED completion may claim it —
+`outstandingEmptyReason.test.ts` asserts that property by enumerating every
+branch, not by reviewing the wording. Desktop `GrnFromPo.tsx` and
+`MobileConvertWizard.tsx` share it; the mobile wizard had the same bug because it
+fetched the unscoped endpoint and filtered client-side.
+
+**`useOutstandingPoItems(poIds)` takes its scope as a REQUIRED argument** (pass
+`[]` for the open picker), per CLAUDE.md's rule about a parameter that decides
+something: optional, every forgetful caller silently gets the unscoped read,
+which is the looser direction and is exactly how this shipped.
+
+To measure what the cap hid on production: Actions →
+**probe-transfer-census** (read-only), which replays the old window at any
+`LIMIT` and counts the outstanding lines and whole POs it could not reach.
+
+## 2b. Two open gaps this module carries, RECORDED not changed
+
+*Added 2026-08-17. Both are for the owner to decide; neither was touched.*
+
+**1. Two DRAFT GRNs can coexist on one PO line, and that is deliberate.** A DRAFT
+GRN commits nothing — `recomputePoReceived` excludes DRAFT rows from a PO line's
+`received_qty` (`grns.ts`), so the line stays fully outstanding and the picker
+keeps offering it. That is what makes a draft a draft, and it is also what lets
+two people draft a receipt for the same delivery. The confirm transition is a
+compare-and-swap on the observed status, so only ONE of them can post; the loser
+gets `already_posting` 409. The exposure is therefore duplicated WORK, not
+duplicated stock. Refusing the second draft was considered and NOT done: it would
+break the legitimate case (one person drafts, another revises) and there is no
+report of it happening.
+
+**2. `purchase_order_item_id` on `grn_items` is nullable with NO unique index**,
+and the same is true of `grn_item_id` on `purchase_invoice_items` and
+`purchase_return_items`. Every once-only rule on these chains is a running tally
+recounted in application code — `received_qty`, `invoiced_qty`, `returned_qty` —
+read-then-write, with no database constraint behind it. `grns.ts` says so in its
+own words: *"with no DB unique index behind it to reject the second write (unlike
+DO/DR, which have one)"*. The unlinked-line guards close the operator-facing door
+(`grn-unlinked-po-lines.ts`, `return-unlinked-lines.ts`); a concurrent-write race
+is held only by the CAS and the post-insert verifiers. Counting how much of this
+shape is already in production is what `probe-transfer-census` is for.
+
+Two corrections to this paragraph, both made 2026-08-17 when the BILLING side of
+this chain was guarded. *"Two of those verifiers swallow their read errors on
+purpose"* was true of `verifyGrnLinesNotOverInvoiced`; its three reads now bind
+them, and each caller chooses — the CREATE paths log and proceed (they ran their
+own pre-check moments earlier), the CONFIRM refuses, because there the pre-check is
+the only check. And the sentence gave the impression the operator-facing door was
+fully closed, which it was not: `purchase_invoice_items` had NO unlinked-line guard
+at all until that day, so a hand-added goods line billed a receipt while
+`invoiced_qty` stayed put and a second invoice billed the same delivery. That is
+the money version of this shape, and it is closed on all three write paths — see
+`docs/unlinked-line-duplicate-coe.md` §5a.
+
+**3. On this side of the chain the same edit-path door is still open.**
+`PATCH /grns/:id/items/:itemId` rewrites a line's `material_code` and never calls
+`findUnlinkedPoLines`, so a receipt line added for a material the PO does not carry
+(correctly allowed) can afterwards be retyped onto one it does — the refused shape,
+assembled in two legal steps, with `purchase_order_item_id` still null so
+`recomputePoReceived` never counts it. The identical gap is on
+`purchase-returns.ts`, `delivery-returns.ts` and `sales-invoices.ts`. Only the
+Purchase Invoice edit path was closed on 2026-08-17, because only that chain bills
+money; these four move stock. RECORDED, not changed, for the owner to rank —
+`docs/modules/document-conversion.md` §10.4 G5 carries the same list.
 
 **`PATCH /:id` was unscoped on both its read and its UPDATE until 2026-08-13**
 (PR #2086; BUG-HISTORY, *"The writes the read-hardening audit left"*). The GET at
@@ -531,15 +632,25 @@ lists**, and structurally so:
   32028603860, company HOUZS): **875 PO lines, 356 genuinely outstanding, and
   the picker could see only 188 of them — 168 outstanding lines were
   unreachable through the screen that exists to receive them.** It now filters
-  the parent status in the QUERY (`.in('po.status', RECEIVABLE_PO_STATUSES)`
-  through the `!inner` embed, which bounds the read to open work) and pages with
-  `paginateAll`, so nothing is dropped without an error. Raising the number
+  the dead parent statuses in the QUERY (`.not('po.status','in','("DRAFT","CANCELLED")')`
+  through the `!inner` embed, which bounds the read to open work) and **pages**
+  rather than capping, so nothing is dropped without an error. Raising the number
   would not have fixed it: PostgREST caps a response at 1000 rows whatever
   `.limit()` says. Only the remaining-qty test stays in JS, because it compares
-  two COLUMNS and PostgREST has no filter for that. The read now lives in
-  `backend/src/scm/lib/outstanding-po-items.ts`, where
-  `outstanding-po-items.test.ts` pins the three properties that keep it honest
-  — no `.limit()`, the status filter in the query, and a total sort order.
+  two COLUMNS and PostgREST has no filter for that. The read lives in
+  `backend/src/scm/lib/outstanding-po-lines.ts`, where
+  `outstanding-po-lines.test.ts` pins the three properties that keep it honest
+  — no `.limit()`, the status filter in the query, and a total sort order — and
+  §2a records the rest of that module's contract, including the `scope` block an
+  empty grid needs in order to say something true.
+
+  **On the two modules.** #2367 (main) and this branch fixed the same read in
+  parallel, as `outstanding-po-items.ts` and `outstanding-po-lines.ts`. Only the
+  `-lines` module survives: keeping both would have left a suite whose header
+  says *"three properties this must keep"* asserting them about code with no
+  callers. Its three assertions were carried over as **behavioural** tests of
+  `loadOutstandingPoLines` (a recording PostgREST stand-in), which is strictly
+  more than the source-text form they replaced.
 
   **What that probe RULED OUT**, both of which read as likely from the code and
   would have sent the next person down the wrong path:
