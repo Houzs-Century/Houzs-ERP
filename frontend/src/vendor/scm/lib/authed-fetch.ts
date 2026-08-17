@@ -37,7 +37,6 @@ import {
 import { companyHeader } from '../../../lib/activeCompany';
 import { abortableDelay, combineAbortSignals } from '../../../lib/abort';
 import { reportServerFailure, reportAccessDenied } from '../../../lib/errorReporter';
-import { rotateIdempotencyKeyAfterRefusal } from '../../../lib/idempotency';
 
 // `||` not `??`: the CI build inlines VITE_API_URL as an EMPTY STRING when the
 // repo var is unset, and `'' ?? default` keeps `''`. PROD fallback is now
@@ -389,19 +388,6 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
   if (!res.ok) {
     let body = '';
     try { body = await res.text(); } catch { /* ignore */ }
-    /* The key is dead — let the form mint a fresh one so the operator can
-       correct and press Save again instead of reloading and losing everything
-       they typed. Only the two pre-handler refusals qualify; lib/idempotency.ts
-       carries the proof, and every other outcome deliberately keeps the key so
-       a write that may have committed still replays. */
-    rotateIdempotencyKeyAfterRefusal(
-      // Headers-shape agnostic: idempotentInit hands us a plain object today,
-      // but a caller passing a Headers instance must not silently lose the key
-      // and re-open the dead end.
-      new Headers(init?.headers).get('Idempotency-Key') ?? undefined,
-      res.status,
-      body,
-    );
     /* REPORT IT. reportServerFailure and reportAccessDenied have existed in
        errorReporter.ts since they were written and were called from NOWHERE — a
        grep across the whole frontend returns only their definitions. So every
@@ -475,16 +461,19 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
   // re-read this if a surface ever needs a subject-specific line.
   idempotency_in_flight:
     "This is already going through — give it a moment, then refresh to check. Please don't send it again.",
-  /* Both of these are answered BEFORE the handler runs, so nothing was written
-     and the form has already minted a fresh key by the time this text is read
-     (rotateIdempotencyKeyAfterRefusal, lib/idempotency.ts). Telling the
-     operator to REFRESH was the wrong instruction and the whole reported bug:
-     refreshing threw away everything they had just typed to correct the
-     refusal that got them here. Pressing Save again now works. */
+  /* NEVER reword this into "nothing was saved, press Save again". The
+     middleware returns this code purely because the payload's hash differs
+     from the claim's, and the claim may hold a COMMITTED 201 (the body's
+     `completed_status` says which) — so this sentence cannot promise a clean
+     slate, and an instruction to resubmit books a second GRN, a second stock
+     IN and a second AutoCount enqueue. Refreshing is what SURFACES the
+     document that may already exist. A refusal that genuinely wrote nothing
+     never reaches here: the route releases the claim (markIdempotencyNoWrite)
+     and the corrected resubmit just works. */
   idempotency_key_reused:
-    'Nothing was saved. Your details are still here — press Save again.',
+    'An earlier submission with different details already finished under this request key. Refresh and check what was recorded before sending it again.',
   idempotency_key_conflict:
-    'Nothing was saved. Your details are still here — press Save again.',
+    'This request key is already owned by another operation. Refresh and try again.',
   idempotency_unavailable:
     "We couldn't safely record this yet. Nothing was sent — wait a moment and try again.",
   idempotency_outcome_unknown:

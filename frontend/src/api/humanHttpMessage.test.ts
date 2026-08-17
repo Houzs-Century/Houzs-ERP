@@ -35,16 +35,17 @@ describe("humanHttpMessage", () => {
         JSON.stringify({ error: "idempotency_unavailable", message: "fallback" }),
       ),
     ).toMatch(/nothing was sent/i);
-    /* Both pre-handler refusals: nothing ran, the form has already minted a
-       fresh key (lib/idempotency.ts), so the instruction is RETRY. It used to
-       say "refresh", which is the reported bug — refreshing throws away the
-       correction the operator had just typed to get past the refusal. */
-    expect(
-      humanHttpMessage(
-        409,
-        JSON.stringify({ error: "idempotency_key_reused", message: "fallback" }),
-      ),
-    ).toMatch(/nothing was saved.*press save again/i);
+    /* key_reused is answered on a payload-hash mismatch ALONE, so the claim it
+       collided with may hold a COMMITTED 201. The copy therefore sends the
+       operator to CHECK — a refresh is what surfaces the document that may
+       already exist. "Nothing was saved, press Save again" was tried and
+       reverted on 2026-08-18: it turns a retype into a second document. */
+    const reused = humanHttpMessage(
+      409,
+      JSON.stringify({ error: "idempotency_key_reused", message: "fallback" }),
+    );
+    expect(reused).toMatch(/refresh and check/i);
+    expect(reused).not.toMatch(/nothing was saved|press save again/i);
     expect(
       humanHttpMessage(
         400,
@@ -62,7 +63,7 @@ describe("humanHttpMessage", () => {
         409,
         JSON.stringify({ error: "idempotency_key_conflict", message: "fallback" }),
       ),
-    ).toMatch(/nothing was saved.*press save again/i);
+    ).toMatch(/another operation/i);
     expect(
       humanHttpMessage(
         413,

@@ -4,20 +4,28 @@ import { AUTH_TOKEN_KEY } from "./authToken";
 import { idempotentInit, useIdempotencyKey } from "./idempotency";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 
-/* Both halves of the rotation rule, driven through the REAL fetch layer rather
-   than by calling the rotate helper by hand — the whole point of the fix is
-   that none of the 27 create forms has to remember it, so a test that poked the
-   helper directly would still pass with the wiring removed.
+/* Driven through the REAL fetch layer, because the property under test is what
+   the OPERATOR ends up doing, and that is decided by the key the next request
+   carries plus the sentence on the screen.
 
-   The fake server below is the middleware contract in miniature
+   The fake server is the middleware contract in miniature
    (backend/src/middleware/idempotency.ts): a claim is (key -> request hash +
-   stored response); an identical payload REPLAYS; a different payload under a
-   claimed key is refused with idempotency_key_reused; and a route may release
-   its own claim by proving it wrote nothing (markIdempotencyNoWrite). `writes`
-   counts business writes, which is the figure that decides whether money was
-   booked twice. */
+   stored response); an identical payload REPLAYS; a claim whose handler has not
+   answered yet is in_flight; a DIFFERENT payload against a FINISHED claim is
+   idempotency_key_reused, carrying the status that claim finished with; and a
+   route may release its own claim by proving it wrote nothing
+   (markIdempotencyNoWrite). `writes` counts business writes, which is the
+   figure that decides whether a document was booked twice.
 
-type Claim = { hash: string; status: number; body: string };
+   THE ONE THAT MATTERS. `idempotency_key_reused` is answered on a hash mismatch
+   ALONE, so it is also what a caller gets after a COMMITTED 201. A first
+   attempt at this bug had the client rotate its key on that code and told the
+   operator "nothing was saved, press Save again" — which books a second GRN, a
+   second stock IN and a second AutoCount enqueue. The dead end is fixed on the
+   SERVER, by the route releasing its own claim; the client's job is to not
+   invent a release it cannot prove. */
+
+type Claim = { hash: string; status: number | null; body: string };
 type SaveResult = { ok: boolean; message: string };
 
 function fakeServer(options: { releaseClaimOnRefusal: boolean }) {
@@ -54,11 +62,16 @@ function fakeServer(options: { releaseClaimOnRefusal: boolean }) {
     }
     const existing = claims.get(key);
     if (existing) {
+      // Status before hash — the middleware's own order since 2026-08-18.
+      if (existing.status === null) {
+        return new Response(JSON.stringify({ error: "idempotency_in_flight" }), { status: 409 });
+      }
       if (existing.hash !== raw) {
         return new Response(
           JSON.stringify({
             error: "idempotency_key_reused",
-            message: "This request key was already used for different data.",
+            completed_status: existing.status,
+            message: "An earlier submission under this key already finished with different data.",
           }),
           { status: 409 },
         );
@@ -68,7 +81,7 @@ function fakeServer(options: { releaseClaimOnRefusal: boolean }) {
         headers: { "Idempotent-Replay": "true" },
       });
     }
-    claims.set(key, { hash: raw, status: 0, body: "" });
+    claims.set(key, { hash: raw, status: null, body: "" });
     const out = handler(payload);
     // markIdempotencyNoWrite: only a route that PROVED it wrote nothing.
     if (out.status === 409 && options.releaseClaimOnRefusal) claims.delete(key);
@@ -92,6 +105,12 @@ async function save(key: string, unitPrice: number): Promise<SaveResult> {
   }
 }
 
+function serveWith(server: ReturnType<typeof fakeServer>) {
+  vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) =>
+    Promise.resolve(server.respond(init as RequestInit)),
+  );
+}
+
 beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();
@@ -111,9 +130,7 @@ describe("useIdempotencyKey", () => {
 
   test("a rejected submit, corrected and resubmitted, SAVES — the route released its claim", async () => {
     const server = fakeServer({ releaseClaimOnRefusal: true });
-    vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) =>
-      Promise.resolve(server.respond(init as RequestInit)),
-    );
+    serveWith(server);
     const { result } = renderHook(() => useIdempotencyKey());
     const key = result.current;
 
@@ -133,14 +150,48 @@ describe("useIdempotencyKey", () => {
     expect(server.state.lastWrittenPrice).toBe(88_00);
   });
 
-  test("a route that keeps its claim is recovered by rotation, not by a page reload", async () => {
-    // The client half standing alone: this server never releases a claim, so
-    // the corrected payload comes back idempotency_key_reused — the dead end
-    // staff hit. The form must become usable again WITHOUT losing its state.
+  test("a CHANGED payload after a committed write cannot book a second document", async () => {
+    /* THE BLOCKER, as a test. The operator saved, then edited the lines and
+       pressed Save again — a real sequence on GrnNew, which stays mounted after
+       success. The server answers idempotency_key_reused, and that code says
+       nothing about whether the earlier request wrote; here it did. If the
+       client rotates on it, this second intent gets a fresh key and books a
+       SECOND GRN. The key must not move, and pressing Save again must keep
+       being refused rather than quietly succeeding. */
+    const server = fakeServer({ releaseClaimOnRefusal: true });
+    serveWith(server);
+    const { result } = renderHook(() => useIdempotencyKey());
+    const key = result.current;
+
+    await act(async () => {
+      expect((await save(key, 88_00)).ok).toBe(true);
+    });
+    expect(server.state.writes).toBe(1);
+
+    let refusal: SaveResult = { ok: true, message: "" };
+    await act(async () => {
+      refusal = await save(result.current, 99_00);
+    });
+    expect(refusal.ok).toBe(false);
+    expect(result.current).toBe(key);
+    expect(server.state.writes).toBe(1);
+
+    // ... and again, because a stubborn operator is the realistic one.
+    await act(async () => {
+      expect((await save(result.current, 99_00)).ok).toBe(false);
+    });
+    expect(result.current).toBe(key);
+    expect(server.state.writes).toBe(1);
+  });
+
+  test("a route that keeps its claim sends the operator to CHECK, and never rotates the key", async () => {
+    /* The client half standing alone: this server never releases a claim, so
+       the corrected payload comes back idempotency_key_reused. The recovery is
+       the SERVER releasing (the test above); what the client owes the operator
+       here is a sentence that does not promise a clean slate — because from the
+       client's side this is indistinguishable from the committed case above. */
     const server = fakeServer({ releaseClaimOnRefusal: false });
-    vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) =>
-      Promise.resolve(server.respond(init as RequestInit)),
-    );
+    serveWith(server);
     const { result } = renderHook(() => useIdempotencyKey());
     const firstKey = result.current;
 
@@ -152,17 +203,10 @@ describe("useIdempotencyKey", () => {
       refusal = await save(result.current, 88_00);
     });
     expect(refusal.ok).toBe(false);
-    // The copy must not say "refresh" — refreshing is what loses the typing.
-    expect(refusal.message).toMatch(/press Save again/i);
-    expect(result.current).not.toBe(firstKey);
+    expect(refusal.message).toMatch(/refresh and check/i);
+    expect(refusal.message).not.toMatch(/press save again|nothing was saved/i);
+    expect(result.current).toBe(firstKey);
     expect(server.state.writes).toBe(0);
-
-    // Save pressed again on the same screen, everything still typed in.
-    await act(async () => {
-      expect((await save(result.current, 88_00)).ok).toBe(true);
-    });
-    expect(server.state.writes).toBe(1);
-    expect(server.state.lastWrittenPrice).toBe(88_00);
   });
 
   test("a SUCCEEDED write still replays on retry — the key must not rotate on success", async () => {
@@ -170,9 +214,7 @@ describe("useIdempotencyKey", () => {
        (a refetch on bad signal), the operator re-presses, and the second submit
        must replay the first response rather than book a second document. */
     const server = fakeServer({ releaseClaimOnRefusal: true });
-    vi.spyOn(globalThis, "fetch").mockImplementation((_url, init) =>
-      Promise.resolve(server.respond(init as RequestInit)),
-    );
+    serveWith(server);
     const { result } = renderHook(() => useIdempotencyKey());
     const key = result.current;
 
@@ -185,38 +227,5 @@ describe("useIdempotencyKey", () => {
 
     expect(result.current).toBe(key);
     expect(server.state.writes).toBe(1);
-  });
-
-  test("in-flight and unconfirmed outcomes NEVER rotate — the write may have landed", async () => {
-    const answers = [
-      { status: 409, body: { error: "idempotency_in_flight" } },
-      { status: 503, body: { error: "idempotency_outcome_unknown" } },
-      { status: 503, body: { error: "idempotency_unavailable" } },
-    ];
-    let next = 0;
-    vi.spyOn(globalThis, "fetch").mockImplementation(() => {
-      const a = answers[Math.min(next++, answers.length - 1)]!;
-      return Promise.resolve(new Response(JSON.stringify(a.body), { status: a.status }));
-    });
-    const { result } = renderHook(() => useIdempotencyKey());
-    const key = result.current;
-
-    for (let i = 0; i < answers.length; i += 1) {
-      await act(async () => {
-        expect((await save(result.current, 88_00)).ok).toBe(false);
-      });
-      expect(result.current).toBe(key);
-    }
-  });
-
-  test("a network failure NEVER rotates — aborting a fetch does not abort the Worker", async () => {
-    vi.spyOn(globalThis, "fetch").mockRejectedValue(new TypeError("Failed to fetch"));
-    const { result } = renderHook(() => useIdempotencyKey());
-    const key = result.current;
-
-    await act(async () => {
-      expect((await save(result.current, 88_00)).ok).toBe(false);
-    });
-    expect(result.current).toBe(key);
   });
 });

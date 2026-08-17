@@ -26,7 +26,6 @@ import {
   requestIdFromResponse,
 } from "../lib/requestCorrelation";
 import { abortableDelay, abortReason, combineAbortSignals } from "../lib/abort";
-import { rotateIdempotencyKeyAfterRefusal } from "../lib/idempotency";
 
 export { requestIdFromError } from "../lib/requestCorrelation";
 
@@ -144,16 +143,18 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
   // operator it failed invites the double-submit the key exists to prevent.
   idempotency_in_flight:
     "This is already going through — give it a moment, then refresh to check. Please don't send it again.",
-  /* Both of these are answered BEFORE the handler runs, so nothing was
-     written and the form has already minted a fresh key by the time this text
-     is read (rotateIdempotencyKeyAfterRefusal, lib/idempotency.ts). Telling
-     the operator to REFRESH was the wrong instruction and the whole reported
-     bug: refreshing threw away everything they had just typed to correct the
-     refusal that got them here. Pressing Save again now works. */
+  /* NEVER reword this into "nothing was saved, press Save again". The
+     middleware returns this code purely because the payload's hash differs
+     from the claim's, and the claim may hold a COMMITTED 201 (the body's
+     `completed_status` says which) — so this sentence cannot promise a clean
+     slate, and an instruction to resubmit books a second document. Refreshing
+     is what SURFACES the document that may already exist. A refusal that
+     genuinely wrote nothing never reaches here: the route releases the claim
+     (markIdempotencyNoWrite) and the corrected resubmit just works. */
   idempotency_key_reused:
-    "Nothing was saved. Your details are still here — press Save again.",
+    "An earlier submission with different details already finished under this request key. Refresh and check what was recorded before sending it again.",
   idempotency_key_conflict:
-    "Nothing was saved. Your details are still here — press Save again.",
+    "This request key is already owned by another operation. Refresh and try again.",
   idempotency_unavailable:
     "We couldn't safely record this yet. Nothing was sent — wait a moment and try again.",
   idempotency_outcome_unknown:
@@ -424,10 +425,8 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
   const retries = method === "GET" ? GET_RETRIES : 0;
   const isGet = method === "GET";
   // Whether THIS request carried an idempotency key decides what we may honestly
-  // tell the operator when it times out — see the two messages below. The key
-  // itself is also what a dead-key refusal has to be reported against.
-  const idemKey = new Headers(opts?.headers).get("Idempotency-Key") ?? undefined;
-  const hasIdemKey = idemKey !== undefined;
+  // tell the operator when it times out — see the two messages below.
+  const hasIdemKey = new Headers(opts?.headers).has("Idempotency-Key");
 
   for (let attempt = 0; ; attempt++) {
     const ctrl = new AbortController();
@@ -476,13 +475,6 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
       // HTTP answer (500, 4xx) is a real result — surfaced as-is so genuine
       // errors fail fast and are never masked.
       if (e instanceof HttpError) {
-        /* The key is dead — let the form mint a fresh one so the operator can
-           correct and press Save again instead of reloading and losing
-           everything they typed. Only the two pre-handler refusals qualify;
-           lib/idempotency.ts carries the proof, and every other outcome
-           deliberately keeps the key so a write that may have committed still
-           replays rather than repeating. */
-        rotateIdempotencyKeyAfterRefusal(idemKey, e.status, e.rawBody);
         if (e.status === 503 && method === "GET" && attempt < retries) {
           await abortableDelay(600 + attempt * 1200, opts?.signal);
           continue;

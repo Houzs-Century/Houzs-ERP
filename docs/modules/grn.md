@@ -540,21 +540,40 @@ convert wizard and the from-PO batch receive — in `vendor/scm/lib/authed-fetch
 alongside the sofa hard stops, which is what keeps desktop and mobile saying the
 same thing.
 
-**The refusal RELEASES the idempotency key, and it has to say so out loud.**
-All four zero-cost exits answer through `refuseZeroCostReceipt(c, body,
-{ nothingWritten })` (`lib/zero-cost-receipt-guard.ts`), which calls
-`markIdempotencyNoWrite(c)` (`middleware/idempotency.ts`). Without that the two
-remedies above were unreachable: `GrnNew` sends one `Idempotency-Key` per
-mount, the refused submit CLAIMED that key against its payload hash, and the
-corrected payload then came back 409 `idempotency_key_reused` — so the only way
-to act on "enter the unit price" was a page reload that threw the whole receipt
-away. The marker is never inferred from the 409 status, because a status cannot
-prove a rollback, which is why `nothingWritten` is a required argument and not a
-default. The three single-document routes pass `true`; `POST /from-po-items`
-passes `created.length === 0`, because it raises one GRN per supplier bucket and
-an earlier bucket can have committed its document, its stock IN and its
-AutoCount conversion before a later one was refused. Pinned by
-`backend/tests/grnZeroCostReleasesIdempotencyKey.test.ts`.
+**Every refusal that precedes a write RELEASES the idempotency key.** `GrnNew`
+sends one `Idempotency-Key` per mount, so a refused submit CLAIMS that key
+against the payload it was refused for — and the corrected payload then no
+longer matches it. Until 2026-08-18 that meant the two remedies above were
+unreachable: acting on "enter the unit price" produced 409
+`idempotency_key_reused`, and the only way out was a page reload that threw the
+whole receipt away. Every deterministic refusal in `grns.ts` had the same dead
+end, not just the zero-cost one — `warehouse_required`, `qty_exceeds_remaining`,
+`po_not_receivable`, `grn_locked`, the child and consumed locks.
+
+Every refusal at or above one of this file's nine audit pre-flights now answers
+through `refuseWithoutWriting(c, body, status)`
+(`backend/src/scm/lib/no-write-refusal.ts`), which calls
+`markIdempotencyNoWrite(c)` (`backend/src/middleware/idempotency.ts`) and makes
+the middleware DELETE the claim. The pre-flights are the boundary because they
+already sit "strictly before the handler's FIRST mutating call"; the zero-cost
+exits, which sit past a write, keep the narrower
+`refuseZeroCostReceipt(c, body, { nothingWritten })` wrapper, where
+`nothingWritten` is a required argument: the three single-document routes pass
+`true` (each deletes its `grn_items` and `grns` rows first), and
+`POST /from-po-items` passes `created.length === 0`, because it raises one GRN
+per supplier bucket and an earlier bucket can have committed its document, its
+stock IN and its AutoCount conversion before a later one was refused.
+
+**The release is never inferred from the status**, because several routes here
+return a 4xx after a partial write. And the client must never infer it either:
+the middleware answers `idempotency_key_reused` on a payload-hash mismatch
+alone, so that code is also what a caller gets after a COMMITTED 201 — the body
+carries `completed_status` saying which. A changed payload sent while the first
+request is still running answers `idempotency_in_flight`. The operator copy for
+`key_reused` therefore says refresh and check, never "press Save again".
+Pinned by `backend/tests/grnPreWriteRefusalsReleaseKey.test.ts` (no pre-write
+refusal missed) and `backend/tests/idempotencyRefusalRelease.test.ts` (the
+release, the replay-after-success and the collision answers, at runtime).
 
 **The header PATCH is the exception**: it is NOT gated by `grnHasDownstream`. A
 GRN with a downstream PI can still have its header edited, including a warehouse
