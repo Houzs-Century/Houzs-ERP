@@ -21,7 +21,7 @@
 // ----------------------------------------------------------------------------
 
 import { postJournal } from './engine';
-import { resolveRoles, settlementLines } from './rules';
+import { resolveRoles, settlementLines, statementChargeLines } from './rules';
 import type { PaymentCandidate } from './settlement-match';
 
 export type AcquirerRow = {
@@ -150,6 +150,60 @@ export async function loadSettledKeys(
     keys.add(`${r.payment_source}:${r.payment_id}`);
   }
   return { ok: true, keys };
+}
+
+/**
+ * Book the charge a STATEMENT makes that none of its transactions explain.
+ *
+ * Idempotent through the gate (source SETTLEADJ, keyed on the batch), so
+ * confirming a batch repeatedly books it once. A zero adjustment books nothing
+ * — the ordinary case, since most acquirers pay exactly what their lines say.
+ */
+export async function postStatementCharge(
+  sb: any,
+  companyId: number,
+  batchId: number,
+): Promise<{ ok: true; status: 'posted' | 'already_posted' | 'nothing_to_post'; jeNo?: string } | { ok: false; status: string; reason: string }> {
+  const { data: batchRaw, error } = await sb
+    .from('acc_settlement_batches')
+    .select('id, acquirer_code, period_to, adjustment_sen, adjustment_je_no')
+    .eq('id', batchId).eq('company_id', companyId).maybeSingle();
+  if (error) return { ok: false, status: 'load_failed', reason: error.message };
+  if (!batchRaw) return { ok: false, status: 'not_found', reason: `batch ${batchId} not found` };
+  const batch = batchRaw as { acquirer_code: string; period_to: string | null; adjustment_sen: number | null; adjustment_je_no: string | null };
+
+  const adjustment = Number(batch.adjustment_sen ?? 0);
+  if (adjustment === 0) return { ok: true, status: 'nothing_to_post' };
+  if (batch.adjustment_je_no) return { ok: true, status: 'already_posted', jeNo: batch.adjustment_je_no };
+
+  const acq = await loadAcquirer(sb, companyId, batch.acquirer_code);
+  if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
+  const roles = await resolveRoles(sb, companyId);
+  const bankAccount = acq.acquirer.bank_account_code || roles.BANK_DEFAULT;
+
+  const posted = await postJournal(sb, {
+    companyId,
+    entryDate: isoDay(batch.period_to) || isoDay(new Date().toISOString()),
+    sourceType: 'SETTLEADJ',
+    sourceDocNo: `SETTLEADJ-${batchId}`,
+    narration: `${batch.acquirer_code} statement charge with no transaction behind it — ${(Math.abs(adjustment) / 100).toFixed(2)}`,
+    lines: statementChargeLines(
+      { bankAccountCode: bankAccount, feeAccountCode: acq.acquirer.fee_account_code },
+      { acquirerCode: batch.acquirer_code, statementDate: isoDay(batch.period_to), adjustmentSen: adjustment },
+    ),
+  });
+  if (!posted.ok) return { ok: false, status: posted.status, reason: posted.reason ?? 'the posting gate refused the entry' };
+
+  const { error: upErr } = await sb.from('acc_settlement_batches').update({
+    adjustment_je_no: posted.jeNo,
+    adjustment_je_id: posted.jeId,
+    adjustment_posted_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }).eq('id', batchId);
+  if (upErr) {
+    return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (entry ${posted.jeNo} DID post — try again to finish stamping the batch)` };
+  }
+  return { ok: true, status: posted.status === 'already_posted' ? 'already_posted' : 'posted', jeNo: posted.jeNo };
 }
 
 export type ConfirmInput = {

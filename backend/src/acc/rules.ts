@@ -68,6 +68,7 @@ export const REVERSAL_SOURCE: Record<string, string> = {
   SOPAY: 'SOPAY_REVERSAL',
   SIPAY: 'SIPAY_REVERSAL',
   SETTLE: 'SETTLE_REVERSAL',
+  SETTLEADJ: 'SETTLEADJ_REVERSAL',
 };
 
 export type RoleCodes = Record<AccountRole, string>;
@@ -259,6 +260,44 @@ export function customerPaymentLines(
  * is phase 5's job (the brief's tax work) and is deliberately NOT faked with a
  * hardcoded rate.
  */
+/**
+ * A charge the STATEMENT makes that belongs to no transaction on it.
+ *
+ * AEON's subvention fee is the case that forced this: its transaction line nets
+ * 5,928.00 and the statement pays 5,673.84, keeping 254.16 that no line
+ * explains. The transaction lines already cleared settlement-in-transit by
+ * their gross — correctly — so what this charge represents is money that never
+ * reached the BANK:
+ *
+ *     Dr Merchant charges  254.16
+ *         Cr Bank          254.16
+ *
+ * A NEGATIVE adjustment (the statement paid more than its lines come to — a
+ * rebate or an incentive) books the other way round, for the same reason.
+ */
+export function statementChargeLines(
+  accounts: { bankAccountCode: string; feeAccountCode: string },
+  s: { acquirerCode: string; statementDate: string; adjustmentSen: number },
+): RuleLine[] {
+  const amount = Math.abs(s.adjustmentSen);
+  const isCharge = s.adjustmentSen > 0;
+  const tag = `${s.acquirerCode} statement ${s.statementDate}`;
+  return [
+    {
+      accountCode: accounts.feeAccountCode,
+      debitSen: isCharge ? amount : 0,
+      creditSen: isCharge ? 0 : amount,
+      notes: `${isCharge ? 'Charge on the statement' : 'Rebate on the statement'}, not on any transaction — ${tag}`,
+    },
+    {
+      accountCode: accounts.bankAccountCode,
+      debitSen: isCharge ? 0 : amount,
+      creditSen: isCharge ? amount : 0,
+      notes: `${isCharge ? 'Never arrived' : 'Extra received'} — ${tag}`,
+    },
+  ];
+}
+
 export function settlementLines(
   accounts: { bankAccountCode: string; feeAccountCode: string; transitAccountCode: string },
   s: { acquirerCode: string; txnDate: string; ref: string | null; grossSen: number; feeSen: number },

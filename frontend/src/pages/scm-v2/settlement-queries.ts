@@ -73,6 +73,11 @@ export type SettlementBatch = {
   gross_sen: number;
   fee_sen: number;
   net_sen: number;
+  /** What the statement itself says it is paying, when it says so. */
+  stated_net_sen: number | null;
+  /** lines net minus stated net: a charge the transactions do not explain. */
+  adjustment_sen: number;
+  adjustment_je_no: string | null;
   status: string;
   uploaded_by: string | null;
   created_at: string;
@@ -135,6 +140,8 @@ export type UploadResult = {
   rows: number;
   /** Summary/total rows in the file that are not transactions. */
   skippedLines: number;
+  statedNetSen: number | null;
+  adjustmentSen: number;
   grossSen: number; feeSen: number; netSen: number;
   periodFrom: string; periodTo: string;
   buckets: Record<string, number>;
@@ -181,7 +188,7 @@ export const useConfirmSettlementRow = () => {
 export const useConfirmMatched = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (batchId: number) => authedFetch<{ attempted: number; confirmed: number; failed: Array<{ rowId: number; reason: string }> }>(
+    mutationFn: (batchId: number) => authedFetch<{ attempted: number; confirmed: number; failed: Array<{ rowId: number; reason: string }>; statementCharge: { status: string; jeNo?: string } | null }>(
       `/accounting/settlement/batches/${batchId}/confirm-matched`, { method: 'POST', body: '{}' },
     ),
     onSuccess: () => invalidateAfterPosting(qc),

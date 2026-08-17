@@ -157,6 +157,8 @@ const seed = () => ({
     soPay('h2', 'SO-2608-021', '2026-08-16T13:40:00', 59400, '674234', 'HLB'),
     soPay('h3', 'SO-2608-022', '2026-08-16T15:02:00', 120000, '014723', 'HLB'),
     soPay('h4', 'SO-2608-023', '2026-08-16T17:26:00', 350000, '448433', 'HLB'),
+    // ── AEON: matches demo-statements/AEON-Aug.csv (the owner's own export).
+    soPay('a1', 'SO-2608-030', '2026-08-14T15:10:00', 600000, 'R73811', 'AEON'),
     // ── GHL: the gateway id IS on the statement, so a till that captured it
     //    auto-matches; the one that did not waits for a human.
     soPay('g1', 'SO-2608-010', '2026-08-01T12:00:00', 80000, '615318040666', 'GHL'),
@@ -177,6 +179,7 @@ const seed = () => ({
     ['SO-2608-010', 'Raj Kumar'], ['SO-2608-011', 'Nurul Aina'],
     ['SO-2608-020', 'Chong Wei Ming'], ['SO-2608-021', 'Faridah Hassan'],
     ['SO-2608-022', 'Kedai Tilam Sejahtera'], ['SO-2608-023', 'Ng Choon Hoe'],
+    ['SO-2608-030', 'Ooi Sze Ling'],
   ].map(([doc_no, customer_name]) => ({ doc_no, customer_name, customer_phone: null, company_id: CO })),
   sales_invoices: [
     { id: 'INV-2608-777', invoice_number: 'INV-2608-777', company_id: CO,
@@ -229,7 +232,8 @@ const refreshView = () => {
       bank_account_code: l.bank_account_code,
       statement_format: g.statement_format, has_unique_ref: g.has_unique_ref,
       fee_method: g.fee_method, date_tolerance_days: g.date_tolerance_days,
-      column_map: g.column_map, is_active: Boolean(g.is_active && l.is_active),
+      column_map: g.column_map, total_net_label: g.total_net_label ?? null,
+      is_active: Boolean(g.is_active && l.is_active),
     });
   }
 };

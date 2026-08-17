@@ -282,6 +282,7 @@ const BatchView = ({ batchId }: { batchId: number }) => {
   const [pile, setPile] = useState<SettlementBucket>('NEEDS_CONFIRM');
 
   const rows = useMemo(() => q.data?.rows ?? [], [q.data]);
+  const batch = q.data?.batch ?? null;
   const buckets = q.data?.buckets ?? {};
   const shown = rows.filter((r) => r.bucket === pile);
   const unconfirmedMatched = rows.filter((r) => r.bucket === 'MATCHED' && !r.confirmed_at).length;
@@ -319,10 +320,32 @@ const BatchView = ({ batchId }: { batchId: number }) => {
         <button type="button" style={btn()} onClick={exportCsv}><Download {...ICON} /> Export</button>
       </div>
 
+      {/* The charge the STATEMENT makes that no transaction on it explains —
+          AEON's subvention fee. Shown whether or not it is booked yet, because
+          an unbooked one means the bank balance in the books is wrong by
+          exactly this much. */}
+      {batch && batch.adjustment_sen !== 0 && (
+        <div style={{
+          padding: 'var(--space-3)', borderRadius: 'var(--radius-md)',
+          border: `1px solid ${batch.adjustment_je_no ? good : danger}`,
+          background: batch.adjustment_je_no ? 'rgba(47,93,79,0.08)' : 'rgba(184,51,31,0.08)',
+          fontSize: 'var(--fs-13)',
+        }}>
+          <b>Charge on the statement, not on any transaction: {fmt(Math.abs(batch.adjustment_sen))}</b>
+          <div style={softText}>
+            The lines come to {fmt(batch.net_sen)}, and {batch.acquirer_code} says it is paying {fmt(batch.stated_net_sen ?? 0)}.
+            {batch.adjustment_je_no
+              ? ` Booked as ${batch.adjustment_je_no} — merchant charges up, bank down.`
+              : ' Not booked yet — confirm the batch and it posts against the bank, because that money never arrived.'}
+          </div>
+        </div>
+      )}
+
       {confirmAll.data && (
         <div style={{ fontSize: 'var(--fs-13)', color: confirmAll.data.failed.length ? danger : good }}>
           Posted {confirmAll.data.confirmed} of {confirmAll.data.attempted}.
-          {confirmAll.data.failed.map((f) => <div key={f.rowId}>Line {f.rowId}: {f.reason}</div>)}
+          {confirmAll.data.statementCharge?.jeNo && ` Statement charge booked as ${confirmAll.data.statementCharge.jeNo}.`}
+          {confirmAll.data.failed.map((f) => <div key={f.rowId}>{f.rowId ? `Line ${f.rowId}: ` : ''}{f.reason}</div>)}
         </div>
       )}
 

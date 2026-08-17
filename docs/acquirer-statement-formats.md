@@ -17,7 +17,7 @@
 | HLB (Hong Leong terminal) | CSV | **searched for** — merchant + SUMMARY blocks above, and repeated per terminal | `16-Aug` — **no year** | `MDR` column, an amount | `INVOICE/AUTHO` ✓ |
 | GHL | CSV | line 1 | `2026-06-02 18:38:24.0` | fee column, printed **negative** | `gateway_tx_id` — present but **unusable**, see below |
 | PBB (2990 HOME) | CSV | line 1, every field quoted | `17062026` — DDMMYYYY, no separators | **gross − net** (see the trap below) | `Approval_code` ✓ |
-| AEON (instalment) | XLSX -> CSV in the page | searched for | `14/08/2026` | fee column, printed **negative**, PLUS a statement-level subvention fee | `APP. CODE` OK |
+| AEON (instalment) | XLSX → CSV in the page | searched for | `14/08/2026` | fee column printed **negative**, PLUS a statement-level subvention fee (handled) | `APP. CODE` ✓ |
 | MBB (Maybank terminal) | — | — | — | — | **Maybank sends no settlement statement** — reconciles at layer 4 |
 | CIMB | — | — | — | — | not in use (owner, 2026-08-17) |
 
@@ -88,15 +88,31 @@ transaction. Book the lines and the bank receives 5,673.84 while the books say
 It is also 3.5× the fee the transaction line shows: the true cost of that
 instalment sale is 326.16 on 6,000.00 = **5.4%**, not 1.2%.
 
-So the config gained `total_net_label`: name the row where the statement states
-what it is really paying, and the parser checks the lines against it and
-**refuses** a difference, naming the amount. AEON therefore cannot be uploaded
-until statement-level charges exist — which is the honest state, and far better
-than a batch that books cleanly and quietly loses RM 254.16.
+**This is built (migration 0303).** The config carries `total_net_label` — the
+row on which a statement states what it is really paying — and the parser
+measures the difference instead of spreading it across lines that did not incur
+it. The batch records `stated_net_sen` and `adjustment_sen`, and confirming the
+batch posts the charge as its own entry, source `SETTLEADJ`, keyed on the batch
+so it books once.
 
-→ **Next piece of work, and it is a real one:** a batch-level charge on
-`acc_settlement_batches` that posts Dr fee / Cr transit for the difference when
-the batch is confirmed. Until then AEON is read-only.
+**It posts against the BANK, not against settlement-in-transit.** The
+transaction lines already clear in-transit by their gross, correctly; what the
+statement kept is money that never arrived:
+
+```
+   the transaction line     Dr bank 5,928.00  Dr fee    72.00  Cr in-transit 6,000.00
+   the statement charge     Dr fee    254.16                   Cr bank         254.16
+   ------------------------------------------------------------------------------
+   bank ends at 5,673.84 (what AEON paid)    fee ends at 326.16 (the real cost)
+```
+
+A negative adjustment — a statement that paid MORE than its lines — books the
+other way round. A statement that pays exactly what its lines come to, which is
+every other acquirer here, books nothing at all.
+
+Proved on the owner's own AEON export end to end: 1 transaction matched on its
+approval code, `JE-…-0014` for the settlement, `JE-…-0015` for the charge, bank
+landing on RM 5,673.84 to the sen.
 
 AEON also settles into **Maybank 564418610346** (the file names the bank and
 account itself), and its merchant id `000458030215369` is exactly the

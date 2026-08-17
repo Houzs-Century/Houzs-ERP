@@ -9,7 +9,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { fakeSb, type Row } from '../scm/lib/fake-postgrest';
-import { loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow } from './settlement';
+import { loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge } from './settlement';
 
 const CHART: Row[] = ['320-0000', '330-0000', '930-0000'].map((code) => ({
   account_code: code, account_name: code, account_type: 'ASSET', parent_code: null, is_active: true, company_id: 1,
@@ -163,6 +163,49 @@ describe('confirmSettlementRow — the moment of confirmation IS the moment of p
     expect(lines.find((l) => l.account_code === '330-0000')).toMatchObject({ credit_sen: 49250 });
     expect(lines.find((l) => l.account_code === '930-0000')).toMatchObject({ credit_sen: 750 });
     expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ debit_sen: 50000 });
+  });
+
+  /* AEON's subvention fee: the statement keeps money no transaction explains.
+     The transaction lines have already cleared in-transit by their gross, so
+     what this corrects is the BANK — that money never arrived. */
+  it('a statement charge books Dr fee / Cr bank, once, and stamps the batch', async () => {
+    const sb = world({
+      acc_settlement_batches: [{
+        id: 3, company_id: 1, acquirer_code: 'MBB', period_to: '2026-08-14',
+        adjustment_sen: 25416, adjustment_je_no: null,
+      }],
+    });
+    const r = await postStatementCharge(sb, 1, 3);
+    expect(r).toMatchObject({ ok: true, status: 'posted' });
+
+    const lines = sb.tables.journal_entry_lines;
+    expect(lines).toHaveLength(2);
+    expect(lines.find((l) => l.account_code === '930-0000')).toMatchObject({ debit_sen: 25416 });
+    expect(lines.find((l) => l.account_code === '330-0000')).toMatchObject({ credit_sen: 25416 });
+    expect(sb.tables.journal_entries[0]).toMatchObject({ source_type: 'SETTLEADJ', source_doc_no: 'SETTLEADJ-3', entry_date: '2026-08-14' });
+    expect(sb.tables.acc_settlement_batches[0].adjustment_je_no).toBe(sb.tables.journal_entries[0].je_no);
+
+    const again = await postStatementCharge(sb, 1, 3);
+    expect(again).toMatchObject({ ok: true, status: 'already_posted' });
+    expect(sb.tables.journal_entries).toHaveLength(1);
+  });
+
+  it('a statement that pays exactly what its lines come to books nothing', async () => {
+    const sb = world({
+      acc_settlement_batches: [{ id: 4, company_id: 1, acquirer_code: 'MBB', period_to: '2026-08-14', adjustment_sen: 0 }],
+    });
+    expect(await postStatementCharge(sb, 1, 4)).toMatchObject({ ok: true, status: 'nothing_to_post' });
+    expect(sb.tables.journal_entries).toHaveLength(0);
+  });
+
+  it('a statement that paid MORE than its lines books the other way round', async () => {
+    const sb = world({
+      acc_settlement_batches: [{ id: 5, company_id: 1, acquirer_code: 'MBB', period_to: '2026-08-14', adjustment_sen: -5000 }],
+    });
+    expect(await postStatementCharge(sb, 1, 5)).toMatchObject({ ok: true, status: 'posted' });
+    const lines = sb.tables.journal_entry_lines;
+    expect(lines.find((l) => l.account_code === '330-0000')).toMatchObject({ debit_sen: 5000 });
+    expect(lines.find((l) => l.account_code === '930-0000')).toMatchObject({ credit_sen: 5000 });
   });
 
   it('an unconfigured receiving bank books to the company default rather than nowhere', async () => {

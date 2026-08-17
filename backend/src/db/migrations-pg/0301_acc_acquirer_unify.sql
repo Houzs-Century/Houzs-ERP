@@ -102,3 +102,28 @@ SELECT
   (g.is_active AND l.is_active) AS is_active
 FROM scm.acc_company_acquirers l
 JOIN scm.acc_acquirer_config g ON g.code = l.acquirer_code;
+
+/* A NEW VIEW INHERITS NOTHING. The dropped table's privileges went with it, so
+   without this every reader — acc/payments.ts's transit lookup, /acquirers, the
+   Daily Bank board — gets "permission denied for view acc_acquirers", which is
+   the failure 0189 shipped and 0190/0191 had to repair. The grants are copied
+   from the table this view replaces where they can still be read, and the
+   service role is granted unconditionally. Idempotent: GRANT is additive. */
+GRANT SELECT ON scm.acc_acquirers TO service_role;
+
+DO $$
+DECLARE r record;
+BEGIN
+  FOR r IN
+    SELECT DISTINCT grantee
+    FROM information_schema.role_table_grants
+    WHERE table_schema = 'scm'
+      AND table_name = 'acc_settlement_batches'   -- a sibling of this module
+      AND privilege_type = 'SELECT'
+      AND grantee NOT IN ('PUBLIC', 'service_role')
+  LOOP
+    EXECUTE format('GRANT SELECT ON scm.acc_acquirers TO %I', r.grantee);
+  END LOOP;
+EXCEPTION WHEN undefined_table THEN
+  NULL;  -- the sibling arrives in 0302; service_role above is enough on its own
+END $$;

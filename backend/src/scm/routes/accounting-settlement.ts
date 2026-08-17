@@ -33,7 +33,7 @@ import { todayMyt } from '../lib/my-time';
 import { parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
 import { matchStatement, recordedNotArrived, type PaymentCandidate } from '../../acc/settlement-match';
 import {
-  loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow,
+  loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge,
 } from '../../acc/settlement';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -74,7 +74,7 @@ export const settlementSetup = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
   const { data, error } = await sb.from('acc_acquirers')
-    .select('code, display_name, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, transit_account_code, fee_account_code, bank_account_code, is_active')
+    .select('code, display_name, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, total_net_label, transit_account_code, fee_account_code, bank_account_code, is_active')
     .eq('company_id', co.companyId).order('code');
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   const acquirers = ((data ?? []) as Array<Record<string, any>>).map((a) => ({
@@ -185,6 +185,8 @@ export const settlementUpload = guard(async (c) => {
     gross_sen: parsed.grossSen,
     fee_sen: parsed.feeSen,
     net_sen: parsed.netSen,
+    stated_net_sen: parsed.statedNetSen,
+    adjustment_sen: parsed.adjustmentSen,
     uploaded_by: (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null,
   }).select('id').single();
   if (batchErr) {
@@ -262,6 +264,8 @@ export const settlementUpload = guard(async (c) => {
        rather than swallowed — the operator should never have to wonder why the
        file had 6 lines and the batch has 5. */
     skippedLines: parsed.skippedLines,
+    statedNetSen: parsed.statedNetSen,
+    adjustmentSen: parsed.adjustmentSen,
     grossSen: parsed.grossSen,
     feeSen: parsed.feeSen,
     netSen: parsed.netSen,
@@ -277,7 +281,7 @@ export const settlementBatches = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
   const { data, error } = await sb.from('acc_settlement_batches')
-    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, status, uploaded_by, created_at')
+    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, status, uploaded_by, created_at')
     .eq('company_id', co.companyId)
     .order('created_at', { ascending: false })
     .limit(100);
@@ -296,7 +300,7 @@ export const settlementBatchDetail = guard(async (c) => {
   const sb = c.get('supabase');
 
   const { data: batch, error: bErr } = await sb.from('acc_settlement_batches')
-    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, status, created_at')
+    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, status, created_at')
     .eq('id', batchId).eq('company_id', co.companyId).maybeSingle();
   if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
   if (!batch) return c.json({ error: 'not_found' }, 404);
@@ -446,7 +450,22 @@ export const settlementConfirmMatched = guard(async (c) => {
     if (r.ok) confirmed += 1;
     else failed.push({ rowId: row.id, reason: r.reason });
   }
-  return c.json({ ok: true, attempted: pending.length, confirmed, failed });
+
+  /* And the charge the STATEMENT made that no transaction explains (AEON's
+     subvention fee). Posted here rather than left for a separate click,
+     because a batch whose lines are booked and whose statement charge is not
+     leaves the bank overstated by exactly that amount. Idempotent, and a zero
+     adjustment — the ordinary case — books nothing. */
+  const charge = await postStatementCharge(sb, co.companyId, batchId);
+  if (!charge.ok) failed.push({ rowId: 0, reason: `statement charge: ${charge.reason}` });
+
+  return c.json({
+    ok: true,
+    attempted: pending.length,
+    confirmed,
+    failed,
+    statementCharge: charge.ok ? { status: charge.status, ...(charge.jeNo ? { jeNo: charge.jeNo } : {}) } : null,
+  });
 });
 
 /* POST /rows/:id/ignore — set a line aside (or put it back). A confirmed line

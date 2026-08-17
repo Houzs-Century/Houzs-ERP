@@ -184,6 +184,25 @@ describe('confirming is the moment of posting', () => {
     expect(sb.tables.journal_entries[0]).toMatchObject({ source_type: 'SETTLE', entry_date: '2026-08-01' });
   });
 
+  /* AEON's subvention fee. Confirming a batch must book the statement's own
+     charge too, or the bank is left overstated by exactly that amount. */
+  test('confirming a batch also books the charge the statement made against no transaction', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    // The parser fills this in from the file; set it directly to pin the route.
+    sb.tables.acc_settlement_batches[0].adjustment_sen = 25416;
+
+    const res = await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ statementCharge: { status: 'posted' } });
+
+    const adj = sb.tables.journal_entries.find((e) => e.source_type === 'SETTLEADJ');
+    expect(adj).toBeTruthy();
+    const adjLines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === adj!.id);
+    expect(adjLines.find((l) => l.account_code === '930-0000')).toMatchObject({ debit_sen: 25416 });
+    expect(adjLines.find((l) => l.account_code === '330-0000')).toMatchObject({ credit_sen: 25416 });
+  });
+
   test('confirming a line whose selection does not add up is refused with the difference', async () => {
     const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
     await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT });

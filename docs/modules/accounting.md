@@ -30,6 +30,7 @@ books which entry":
 | Customer payment collected | Dr CASH/BANK/transit / Cr AR | `SOPAY` / `SIPAY` | `*_REVERSAL` |
 | Daily cash close | Dr/Cr OVER_SHORT / Cr/Dr CASH | `CASHUP` | (correct by JV) |
 | Acquirer settlement confirmed | Dr bank + Dr fee / Cr transit | `SETTLE` | `SETTLE_REVERSAL` |
+| Statement charge with no transaction | Dr fee / Cr bank | `SETTLEADJ` | `SETTLEADJ_REVERSAL` |
 
 Adding an auto-posting document type means: a rule in `rules.ts`, a caller
 that builds its lines through that rule, and a behaviour-lock test — the

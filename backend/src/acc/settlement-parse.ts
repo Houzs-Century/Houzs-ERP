@@ -53,7 +53,16 @@ export type ParsedRow = {
 };
 
 export type ParseResult =
-  | { ok: true; rows: ParsedRow[]; grossSen: number; feeSen: number; netSen: number; periodFrom: string; periodTo: string; skippedLines: number }
+  | {
+      ok: true; rows: ParsedRow[];
+      grossSen: number; feeSen: number; netSen: number;
+      periodFrom: string; periodTo: string; skippedLines: number;
+      /** What the statement itself says it is paying, when it says so. */
+      statedNetSen: number | null;
+      /** lines net MINUS stated net. Positive = a charge the transactions do
+          not explain; negative = the statement paid more than they come to. */
+      adjustmentSen: number;
+    }
   | { ok: false; reason: string };
 
 /* ── The small mechanical helpers ─────────────────────────────────────────── */
@@ -307,6 +316,12 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
        silently dropping rows is the same sin as silently parsing none. */
     const txnDate = toIsoDate(rawDate, hint);
     if (!txnDate) { skipped += 1; continue; }
+
+    /* AEON's statement breaks its transactions up with a row that carries the
+       date and NOTHING else — a day sub-heading. A transaction always has an
+       amount, so an EMPTY money column means this is not one. An amount that is
+       present but unreadable still raises below; that one is a broken line. */
+    if (!rawGross.trim()) { skipped += 1; continue; }
     const grossSen = toSen(rawGross);
     if (grossSen == null) return { ok: false, reason: `Line ${i + 1}: cannot read the amount "${rawGross}".` };
 
@@ -377,37 +392,29 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
     for (const r of rows) r.netSen = r.grossSen - (r.grossSen < 0 ? -r.feeSen : r.feeSen);
   }
 
-  /* DOES THE STATEMENT PAY WHAT ITS LINES ADD UP TO?
-     AEON's does not. Its one sale reads gross 6,000.00 less MDR 72.00 = net
-     5,928.00, and then the statement charges a SUBVENTION FEE of 254.16 with no
-     transaction attached and pays 5,673.84. Book the lines and 320-0000 is left
-     holding 254.16 that will never clear — per statement, forever. The real
-     cost of that sale is 5.4%, not the 1.2% its line shows.
-     A statement-level charge cannot be attributed to any one transaction, so it
-     is not spread or guessed at: when the acquirer's config names the row where
-     the statement states what it is really paying, the arithmetic is checked
-     and a difference is REFUSED, with the amount named. */
+  /* WHAT THE STATEMENT SAYS IT IS ACTUALLY PAYING.
+     AEON's transaction line reads gross 6,000.00 less MDR 72.00 = net 5,928.00,
+     and then the statement charges a SUBVENTION FEE of 254.16 against no
+     transaction at all and pays 5,673.84. That charge cannot be attributed to
+     any one line, so it is NOT spread across them and NOT guessed at — it is
+     measured here and carried on the batch, and the caller books it as its own
+     entry against the bank. Left unmeasured it would sit in the books for ever
+     and make an instalment sale look like it cost 1.2% when it cost 5.4%. */
+  let statedNetSen: number | null = null;
   if (cfg.total_net_label) {
     const wanted = cfg.total_net_label.replace(/[\s:]+/g, '').toLowerCase();
-    let statedNet: number | null = null;
     for (const line of lines) {
       const cells = splitCsvLine(line);
       if (cells[0].replace(/[\s:]+/g, '').toLowerCase() !== wanted) continue;
       for (let k = cells.length - 1; k >= 1; k -= 1) {
         const v = toSen(cells[k]);
-        if (v != null) { statedNet = v; break; }
+        if (v != null) { statedNetSen = v; break; }
       }
       break;
     }
-    const lineNet = rows.reduce((s, r) => s + r.netSen, 0);
-    if (statedNet != null && statedNet !== lineNet) {
-      const gap = (lineNet - statedNet) / 100;
-      return {
-        ok: false,
-        reason: `The lines add up to ${(lineNet / 100).toFixed(2)} but ${cfg.code} says it is paying ${(statedNet / 100).toFixed(2)} — ${Math.abs(gap).toFixed(2)} is charged on the statement, not on any transaction. Clearing it needs statement-level charges, which are not built yet.`,
-      };
-    }
   }
+  const lineNetSen = rows.reduce((s, r) => s + r.netSen, 0);
+  const adjustmentSen = statedNetSen == null ? 0 : lineNetSen - statedNetSen;
 
   const dates = rows.map((r) => r.txnDate).sort();
   return {
@@ -419,5 +426,7 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
     periodFrom: dates[0],
     periodTo: dates[dates.length - 1],
     skippedLines: skipped,
+    statedNetSen,
+    adjustmentSen,
   };
 }

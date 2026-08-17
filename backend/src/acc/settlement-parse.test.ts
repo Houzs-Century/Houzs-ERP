@@ -379,13 +379,23 @@ describe('parseStatement — a charge that belongs to no transaction', () => {
     ...over,
   });
 
-  it('refuses when the lines do not add up to what the statement says it is paying', () => {
+  it('measures the charge the lines do not explain, rather than spreading or ignoring it', () => {
     const r = parseStatement(aeonCfg({ total_net_label: 'TOTAL NET PAYMENT (RM) :' }), AEON);
-    expect(r).toMatchObject({ ok: false });
-    const { reason } = r as { reason: string };
-    expect(reason).toMatch(/5928\.00/);   // what the lines come to
-    expect(reason).toMatch(/5673\.84/);   // what AEON actually pays
-    expect(reason).toMatch(/254\.16/);    // the charge with no transaction behind it
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.netSen).toBe(592800);          // what the lines come to
+    expect(r.statedNetSen).toBe(567384);    // what AEON actually pays
+    expect(r.adjustmentSen).toBe(25416);    // the charge with no transaction behind it
+    // The per-line figures are left alone — the charge belongs to no line.
+    expect(r.rows[0].netSen).toBe(592800);
+  });
+
+  it('reports no adjustment when the acquirer has no such row configured', () => {
+    const r = parseStatement(aeonCfg(), AEON);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.statedNetSen).toBeNull();
+    expect(r.adjustmentSen).toBe(0);
   });
 
   it('reads the line itself correctly — the negative fee and the approval code', () => {
@@ -395,10 +405,12 @@ describe('parseStatement — a charge that belongs to no transaction', () => {
     expect(r.rows[0]).toMatchObject({ txnDate: '2026-08-14', ref: 'R73811', grossSen: 600000, feeSen: 7200, netSen: 592800 });
   });
 
-  it('says nothing when the statement pays exactly what its lines come to', () => {
+  it('reports zero when the statement pays exactly what its lines come to', () => {
     const clean = AEON.replace('SUBVENTION FEE :,,,,,,,,-254.16\n', '').replace('5673.84', '5928');
     const r = parseStatement(aeonCfg({ total_net_label: 'TOTAL NET PAYMENT (RM) :' }), clean);
     expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.adjustmentSen).toBe(0);
   });
 });
 
