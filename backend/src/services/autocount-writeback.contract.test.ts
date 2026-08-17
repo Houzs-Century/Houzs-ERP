@@ -979,15 +979,26 @@ describe('/so-to-po names the supplier', () => {
    Same shape as the CreditorCode defect directly above and it needs the same two
    halves — the enqueue, and the drain for rows already in the queue. */
 describe('/so-to-po carries the ERP document number', () => {
+  /* THE CASTS LIVE HERE AND NOWHERE ELSE IN THIS BLOCK. Every other test in this
+     file writes `sb as never` and `(payload as any)` at each call site, and this
+     file is already over its `no-restricted-syntax` and `no-explicit-any`
+     ceilings on main. Five more tests written the same way would be seven more
+     findings on a ceiling that may only fall, so the two shapes are named once
+     and the tests below read as tests. */
+  const enqueue = (sb: ReturnType<typeof soToPoSb>) =>
+    // eslint-disable-next-line no-restricted-syntax -- the fake PostgREST is not a SupabaseClient and enqueuePoCreate takes one; this is the file's existing bridge, named once instead of at five call sites
+    enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
+  const storedBody = (sb: ReturnType<typeof soToPoSb>): Record<string, unknown> =>
+    (sb.tables.autocount_outbox[0].payload as { body: Record<string, unknown> }).body;
+
   test('the enqueued body carries DocNo, and it is the ERP purchase order number', async () => {
     const sb = soToPoSb();
-    await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
-    const row = sb.tables.autocount_outbox[0];
+    await enqueue(sb);
     /* The positive control at the top of the previous block proves this fixture
        takes the TRANSFER arm; re-asserted here because the CREATE arm has always
        sent a DocNo and would pass this test while testing nothing. */
-    expect(row.op).toBe('so_to_po');
-    const stored = (row.payload as any).body;
+    expect(sb.tables.autocount_outbox[0].op).toBe('so_to_po');
+    const stored = storedBody(sb);
     expect(stored.DocNo, 'the ERP numbers its own purchase orders').toBe(PO_HEADER.po_number);
     // Still the transfer payload, not a create wearing its clothes.
     expect(stored.DtlKeys).toEqual([4242]);
@@ -995,7 +1006,7 @@ describe('/so-to-po carries the ERP document number', () => {
 
   test('the number reaches the WIRE, not just the stored row', async () => {
     const sb = soToPoSb();
-    await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
+    await enqueue(sb);
     sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-PARENT-1';
     const body = await wireBody(sb);
     expect(body.DocNo).toBe(PO_HEADER.po_number);
@@ -1013,8 +1024,8 @@ describe('/so-to-po carries the ERP document number', () => {
        today auto-numbering for ever. Cheaper than the creditor's backfill and
        with nothing to get wrong: the outbox row is KEYED by the ERP's number. */
     const sb = soToPoSb();
-    await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
-    delete (sb.tables.autocount_outbox[0].payload as any).body.DocNo;
+    await enqueue(sb);
+    delete storedBody(sb).DocNo;
     sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-PARENT-1';
     const body = await wireBody(sb);
     expect(body.DocNo, 'resolved at drain, so no requeue is needed').toBe(PO_HEADER.po_number);
@@ -1022,8 +1033,8 @@ describe('/so-to-po carries the ERP document number', () => {
 
   test('the backfill does NOT overwrite a number the payload already names', async () => {
     const sb = soToPoSb();
-    await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
-    (sb.tables.autocount_outbox[0].payload as any).body.DocNo = 'HC-PO-2608-999';
+    await enqueue(sb);
+    storedBody(sb).DocNo = 'HC-PO-2608-999';
     sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-PARENT-1';
     expect((await wireBody(sb)).DocNo).toBe('HC-PO-2608-999');
   });
