@@ -10,7 +10,7 @@
 //
 // ANSWERED, and the read has since been FIXED — see the note below before you
 // read a verdict off this script. The picker is `GET /outstanding-po-items`
-// (scm/routes/grns.ts, read now in scm/lib/outstanding-po-items.ts). It USED to
+// (scm/routes/grns.ts, read now in scm/lib/outstanding-po-lines.ts). It USED to
 // be one PostgREST statement followed by TWO JavaScript filters:
 //
 //   SELECT ... FROM scm.purchase_order_items poi
@@ -292,13 +292,13 @@ async function main() {
        The sections above evaluate gates one at a time, which is how you find a
        cause; this one runs the whole live statement and asks the only question
        the operator has. It is the SQL equivalent of what
-       scm/lib/outstanding-po-items.ts now issues: company scope, the `!inner`
+       scm/lib/outstanding-po-lines.ts now issues: company scope, the `!inner`
        parent join, the status filter IN THE QUERY, the (purchase_order_id, id)
        total order, no cap — then the remaining-qty test the JS still applies
        because PostgREST cannot compare two columns.
 
        It is a REPLICA and says so. It cannot prove PostgREST translates
-       `.in('po.status', …)` across the embed the way this JOIN predicate does;
+       `.not('po.status','in',…)` across the embed the way this JOIN predicate does;
        only the running endpoint proves that. What it does prove is that the
        rows exist and satisfy every condition the new read asks for, which is
        the half a replica can get right. */

@@ -926,7 +926,7 @@ the wrong first step — see §10.5 Part 3.
 Ranked by consequence, not by tidiness. "We use different words" is not on this
 list.
 
-### G1 — GRN → PI is the one money chain with no unlinked-line guard. A supplier's goods can be billed twice.
+### G1 — ~~GRN → PI is the one money chain with no unlinked-line guard~~ — CLOSED 2026-08-17
 
 **PROVEN.** `purchase_invoice_items.grn_item_id` is nullable and a NULL is
 legitimate — it is how a PI-native service line is represented. Every cap and
@@ -948,9 +948,32 @@ Pending qty on the source DO is the double-invoice vector."*
 2026-08-04 instruction *"包括 GR 那边也是"*. The invoicing side of the same chain
 was not done.
 
-This is the top item because it is the AP twin of a defect the owner already
+This was the top item because it is the AP twin of a defect the owner already
 reported and paid to fix on three other chains, it is on the money path, and it
 propagates into the book we reconcile against.
+
+**CLOSED 2026-08-17**, and the closing took four fixes rather than one, because
+the first version of the guard was correct on the RULE and short on its REACH. The
+full account is in `docs/unlinked-line-duplicate-coe.md` §5a; in brief:
+
+| what | where |
+|---|---|
+| the predicate — refuse only when the material is already on a receipt this invoice covers | `lib/return-unlinked-lines.ts` `findUnlinkedPiLines` |
+| **all three** paths that can reach the shape, not two | `POST /`, `POST /:id/items`, **`PATCH /:id/items/:itemId`** (which rewrites `material_code` and left `grn_item_id` null, so the shape assembled in two legal steps) |
+| **every** receipt the invoice covers, not the header ref | `coveredGrnIds`: header `grn_id` UNION the receipts behind the invoice's own linked lines. A PI is line-level multi-receipt (mig 0267), so a set of one let a SECONDARY note's material through |
+| FAILS CLOSED | the guard's read binds its error; every call site answers 500 `unlinked_check_failed`. An empty parent-code set is an unconditional pass, so a swallowed error opened the door in silence |
+
+`grep -ci unlinked backend/src/scm/routes/purchase-invoices.ts` now returns a
+non-zero count, and `return-unlinked-lines.test.ts` proves the wiring per HANDLER
+by slicing the router's own source — each slice bounded at both ends, because an
+unbounded one can be satisfied by a different handler's guard.
+
+**What is still open on this chain**, and it is the reason G5 below does not read
+as fully closed: the identical edit-path gap remains on all five SIBLING chains
+(`grns.ts`, `purchase-returns.ts`, `delivery-returns.ts`, `sales-invoices.ts` each
+map an item code in a line PATCH whose handler calls no unlinked guard), and their
+shared code readers still swallow their errors. Those chains move STOCK; this one
+moved money, which is why only it was closed.
 
 ### G2 — The purchase chain's counter is a CACHE maintained best-effort, and it has already drifted in production.
 
@@ -976,7 +999,7 @@ makes the drift *visible* — it does not make the counter *authoritative*.
 
 | policy | pairs | failure mode |
 |---|---|---|
-| a DRAFT downstream does **not** consume | SO → DO, PO → GRN, GRN → PI | **two documents for one line.** Both are keyed, both look valid, and the second is refused only at confirm/post — after the operator has done the work. `grns.ts` states the consequence as a feature: *"two drafts can coexist on one PO line"*. |
+| a DRAFT downstream does **not** consume | SO → DO, PO → GRN, GRN → PI | **two documents for one line.** Both are keyed, both look valid, and the second is refused only at confirm/post — after the operator has done the work. `grns.ts` states the consequence as a feature: *"two drafts can coexist on one PO line"*. **On GRN → PI that refusal did not exist until 2026-08-17**: the comment in `purchase-invoices.ts` claimed the cap was "re-checked at confirm (recomputeGrnInvoiced clamps to qty_accepted)", and that function CLAMPS and never throws, so it refused nothing — two draft invoices for one receipt line both confirmed, both posted AP, and the clamp left `invoiced_qty` reading correct. `PATCH /:id/post` now calls `verifyGrnLinesNotOverInvoiced` with the draft being confirmed COUNTED, before the flip and again after. The two coexisting DRAFTS are still allowed, deliberately; only the second COMMIT is refused. |
 | a DRAFT downstream **does** consume | DO → SI, DO → DR, GRN → PR, PC Order → PC Receive, PC Receive → PC Return | an abandoned draft blocks the line until somebody cancels it. Recoverable, but invisible: the picker just stops offering the line. |
 | **no cap at all** | Consignment Order → Note | by ruling. |
 
@@ -1002,13 +1025,25 @@ operator watched succeed"* — and about the limit: those verifiers are
 the over-receipt standing. **SO → PO, Consignment Order → Note and Note →
 Consignment Return have no second half at all.**
 
-### G5 — Six of the eleven chains close no unlinked-line back door, and two of those have no endpoint to close it on.
+### G5 — Five of the eleven chains close no unlinked-line back door, and two of those have no endpoint to close it on.
 
-**PROVEN** (second enumeration block, §10.2). The five that close it are SO → DO,
-DO → SI, DO → DR, PO → GRN, GRN → PR. The six that do not are GRN → PI (G1) and
-all four consignment / purchase-consignment chains, plus SO → PO. On the two
-consignment pairs this is structural: the conversion is an ordinary `POST /`, so
-there is no conversion handler to gate.
+**PROVEN** (second enumeration block, §10.2). The SIX that close it are SO → DO,
+DO → SI, DO → DR, PO → GRN, GRN → PR and — since 2026-08-17 — GRN → PI (G1). The
+five that do not are all four consignment / purchase-consignment chains, plus
+SO → PO. On the two consignment pairs this is structural: the conversion is an
+ordinary `POST /`, so there is no conversion handler to gate. **SO → PO carries no
+once-only guard by ruling** (owner 2026-08-17): PO is soft-bound and MRP is the
+authority, and MRP has no "already converted" concept at all — a demand line is
+covered because its PO sits in the supply pool, so re-running MRP after a partial
+legitimately offers the remainder again. It is not a gap to close.
+
+**And on all six that DO close it, the door is closed on the CREATE paths only —
+except GRN → PI.** Each of `grns.ts`, `purchase-returns.ts`, `delivery-returns.ts`
+and `sales-invoices.ts` maps an item code in a line PATCH whose handler calls no
+unlinked guard, so the refused shape can be assembled in two legal steps: add a
+line the parent does not contain, then edit its code to one the parent does. Only
+the PI edit path is guarded, because only that chain bills money. This is the
+highest-value item left on this list.
 
 `convert-ceilings.test.ts` pins the general shape as a KNOWN EXPOSURE with a
 real production case — *"DO-2607-005 on SO-2606-019 shipped with NULL
@@ -1061,6 +1096,21 @@ material IS on the parent         -> REFUSED: link it, and tick the qty off
 pairs it also means the conversion needs a real endpoint (or a `sourceKind`
 discriminator on the create) so the guard has somewhere to live. This part alone
 closes G1 and G5.
+
+**G1 is already closed by hand** (2026-08-17), so this Part now has one fewer
+chain to build and one worked example to copy. Two lessons from doing it that this
+plan did not contain, and both generalise to the other chains:
+
+1. **The set of call sites is part of the rule.** Guarding the CREATE paths is not
+   guarding the chain: the line PATCH rewrites the item code and leaves the link
+   alone, so the refused shape assembles in two legal steps. Any per-chain rollout
+   must enumerate every handler that can write the code column, not just the ones
+   named "create" or "convert".
+2. **The parent is a SET, not a ref.** A purchase invoice covers several receipts
+   (mig 0267) and its header names only the first, so a guard fed the header ref
+   is blind to the rest. The same is true of any chain whose header FK is
+   documented as a "primary ref"; the authoritative parent set has to be derived
+   from the child LINES.
 
 ### Part 2 — the CEILING moves into the database, as a trigger, copied from mig 0235
 
