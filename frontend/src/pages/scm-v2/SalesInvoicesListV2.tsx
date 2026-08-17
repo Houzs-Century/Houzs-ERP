@@ -12,6 +12,7 @@
 //         chrome only.)
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { transferFromLabel } from '../../lib/convertScope';
 import { canViewScmCosting, canOperateSalesInvoices } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -1623,7 +1624,7 @@ export function SalesInvoicesListV2() {
                     icon={<ArrowRightLeft size={14} />}
                     onClick={goFromDo}
                   >
-                    From Delivery Order
+                    {transferFromLabel('do')}
                   </Button>
                   <div className="flex items-stretch">
                     <Button

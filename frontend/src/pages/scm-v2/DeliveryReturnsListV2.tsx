@@ -16,6 +16,7 @@
 // about when triaging a return.
 
 import { useMemo, useState, type ReactNode } from "react";
+import { transferFromLabel } from '../../lib/convertScope';
 import { canViewScmCosting } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
@@ -1502,7 +1503,7 @@ export function DeliveryReturnsListV2() {
                   icon={<ArrowRightLeft size={14} />}
                   onClick={goFromDo}
                 >
-                  From Delivery Order
+                  {transferFromLabel('do')}
                 </Button>
                 <div className="flex items-stretch">
                   <Button

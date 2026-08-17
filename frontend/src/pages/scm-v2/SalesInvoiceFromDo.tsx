@@ -75,7 +75,7 @@ export const SalesInvoiceFromDo = () => {
   const navigate = useNavigate();
   const linesQ = useInvoiceableDoLines();
 
-  /* "Convert to SI" on a Delivery Order lands here with ?doId=<id> so the
+  /* "Transfer to Sales Invoice" on a Delivery Order lands here with ?doId=<id> so the
      operator sees the note they were just looking at, not every open DO in the
      company. The parameter was being constructed by both callers and dropped
      here until 2026-08-16. No parameter → the full picker, which is what the

@@ -8,7 +8,7 @@
 //   · Print PDF       — print-preview card + Download/Print
 //   · Edit            — navigate to the New DO form
 //
-// Stateful DO transitions (Cancel DO / Mark signed / Convert to SI) are
+// Stateful DO transitions (Cancel DO / Mark signed / Transfer to Sales Invoice) are
 // kept as CONDITIONAL secondary buttons within the same header, positioned
 // between Print PDF and Edit so they don't hide from ops but also don't
 // dominate the primary action bar.
@@ -73,7 +73,7 @@ import {
 } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { convertToLink } from "../../lib/convertScope";
+import { convertToLink, transferToLabel } from "../../lib/convertScope";
 import { buildVariantSummary, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
@@ -1087,13 +1087,16 @@ export function DeliveryOrderDetailV2() {
                 Mark signed
               </Button>
             )}
+            {/* The transfer takes the PRIMARY slot; "Mark signed" above stays
+                secondary because it changes THIS document's own status rather
+                than producing the next document (owner rule, 2026-08-17). */}
             {canConvertToSi && canWriteDo && (
               <Button
-                variant="secondary"
+                variant="primary"
                 icon={<Receipt size={14} />}
                 onClick={goConvertToSi}
               >
-                Convert to SI
+                {transferToLabel('si')}
               </Button>
             )}
             {canWriteDo && (

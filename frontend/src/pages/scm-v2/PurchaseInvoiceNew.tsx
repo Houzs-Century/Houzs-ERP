@@ -27,6 +27,7 @@
 // repointed to /scm/purchase-invoices (and /scm/grns for the GRN backlink).
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -523,7 +524,7 @@ export const PurchaseInvoiceNew = () => {
             {/* Keep the GRN→Invoice path: jump to the multi-GRN-line picker. */}
             {isManual && (
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-invoices/from-grn')}>
-                <ArrowRightLeft {...ICON} /> From Goods Receipt
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('grn')}
               </Button>
             )}
             <Button variant="ghost" size="md" onClick={() => navigate(isManual ? '/scm/purchase-invoices' : (grn ? `/scm/grns/${grn.id}` : '/scm/grns'))}>
