@@ -771,9 +771,21 @@ export async function enqueuePoCreate(
       docNo: header.po_number,
       docId: opts.poId,
       payload: {
-        /* FromDocNo resolves at DRAIN; composeSoToPo carries the rest. */
+        /* FromDocNo resolves at DRAIN; composeSoToPo carries the rest.
+
+           THE SUPPLIER IS NOT IN "the rest", and that was the defect: on the
+           host 2026-08-17 09:15, `CreditorCode required for /so-to-po`.
+           composeSoToPo returns { DtlKeys, Details } and nothing else, so the
+           whole master went missing the moment the shape was a transfer —
+           `body`, built three lines up by composeCreatePo and carrying the
+           creditor, is thrown away on this branch. No join is needed to fix it:
+           readPoHeader resolved suppliers.code for the binding lookup above.
+           Guide §7c3a. */
         body: (shape.kind === 'transfer'
-          ? composeSoToPo(shape.dtlKeys, details)
+          ? { ...composeSoToPo(shape.dtlKeys, details), ...present({
+            CreditorCode: header.creditor_code,
+            CreditorName: header.creditor_name,
+          }) }
           : body) as unknown as Record<string, unknown>,
         /* THE PARENT MUST EXIST FIRST — dispatchOne holds this as `waiting`,
            without burning an attempt, until the sales order has its number. */
@@ -1847,6 +1859,28 @@ export async function dispatchOne(
       return 'waiting';
     }
     body.DocNo = self;
+  }
+
+  /* THE SUPPLIER, FOR A ROW COMPOSED BEFORE ANYONE KNEW IT WAS NEEDED.
+     The drain REPLAYS the stored payload and never recomposes, so fixing the
+     enqueue above leaves every `so_to_po` row already queued failing for ever.
+
+     THE ACCOUNT BOOK CANNOT ANSWER THIS ONE, unlike #2340's debtor: this source
+     is a SALES order, which carries a DebtorCode and no creditor, and the
+     supplier exists nowhere in AutoCount until we send it. The authority is the
+     ERP's own purchase order, which the row already points at. Best-effort — on
+     any doubt the body goes unchanged and the service's named guard answers,
+     which is a clear error and not a mystery. Guide §7c3a. */
+  if (row.op === 'so_to_po' && !body.CreditorCode && payload.writeback?.table === 'purchase_orders') {
+    try {
+      const po = await readPoHeader(sb, String(payload.writeback.key));
+      if (po?.creditor_code) {
+        body.CreditorCode = po.creditor_code;
+        if (po.creditor_name) body.CreditorName = po.creditor_name;
+      }
+    } catch (e) {
+      console.error('so_to_po: creditor backfill failed:', e instanceof Error ? e.message : String(e));
+    }
   }
 
   const attempts = (row.attempts ?? 0) + 1;
