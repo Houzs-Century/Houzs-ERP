@@ -64,6 +64,43 @@ ended up, but now for a reason on the record rather than an assumption.
 → *Open improvement:* capture GHL's gateway id at the point of sale and GHL
 becomes auto-matchable. That is a sales-module change and the owner's call.
 
+## MBB — the file received is the INSTALMENT report, not the settlement report
+
+`027012896718_EP41_713_20260614.PDF` decodes to:
+
+```
+MAYBANK — INTEREST FREE INSTALLMENT SCHEME TRANSACTIONS
+REPORT NO: EP41       MERCHANT NO: 027012896718      2990 HOME SDN. BHD.
+Card Number | Amount | Tran Date | Auth Code | Reference No | Terminal No | Card Type | EzyPay Term | Interchange Fee
+…3631       | 3,240.00 | 14/06/26 | 009069  | 43290646     |             | AMEX CRMAYBANK | 06 | 19.44
+TOTAL         3,240.00                                              MDR 97.20   NET 3,142.80   items 1   interchange 19.44
+```
+
+It is readable — the PDF is encrypted but opens without a password, and its text
+is obfuscated by writing each glyph two bytes wide and shifting the character by
+29, which is reversible. So a PDF path is *possible* for Maybank.
+
+But two things say wait:
+
+1. **This is report EP41 — EzyPay instalment transactions only.** It carries one
+   transaction. Ordinary card settlement is a different report, and that is the
+   one reconciliation needs.
+2. **HLB's portal turned out to have a CSV export.** Maybank's very likely does
+   too, and a CSV is worth far more than a PDF reader that breaks the first time
+   the bank adjusts a column.
+
+→ *Needed: Maybank's ordinary merchant settlement report, CSV if the portal
+offers one.*
+
+**And a real accounting point falls out of this report.** Instalment sales cost
+much more than ordinary ones: MDR 97.20 on 3,240.00 is **3%**, against the
+0.6–0.9% the same merchants pay on a straight swipe, plus a separately-stated
+interchange fee of 19.44. If instalment sales are booked at the ordinary fee
+rate the margin on them is overstated. The ERP already distinguishes an
+`installment` payment method, so the data to get this right exists — the
+acquirer config is what has to carry the different fee, and today it carries one
+fee method per acquirer, not one per product type. Worth deciding before phase 5.
+
 ## HLB — waiting on the CSV
 
 `1174355096_20260816.pdf` is a **password-protected PDF** (standard security
