@@ -65,24 +65,28 @@ export function deriveProjectCode(input: {
  *   SABAH [AKEMI] SOLO @ SURIA SABAH        (organizer NULL -> "SOLO")
  *
  * Unlike the code, every slot has a fallback (an em dash) — a name is a label
- * and must always render. The one rule that is easy to miss: a SOLO event says
- * `SOLO` in the organizer slot EVEN IF an organizer was picked.
+ * and must always render.
+ *
+ * A picked organizer ALWAYS wins the slot — solo events included. This used to
+ * force "SOLO" for solo events even when an organizer was chosen, which is how
+ * nine projects ended up saying SOLO on the calendar while their Excel
+ * organizer column said MALL MGMT (owner 2026-08-17, IOI Mall Damansara:
+ * "supposed for ioi mall damansara mall mgt why got solo"). "SOLO" is only the
+ * fallback for an empty organizer; the CODE keeps its SOLO segment (it is the
+ * immutable identity, and the owner reads it as the event type there).
  */
 export function deriveProjectName(input: {
   state?: string | null;
   brand?: string | null;
   organizer?: string | null;
   venue?: string | null;
-  /** Optional event-type slug. When "solo", the organizer slot is
-   *  forced to the literal "SOLO" regardless of organizer input. */
+  /** Event-type slug; accepted for call-site symmetry with
+   *  deriveProjectCode. The name no longer branches on it. */
   event_type_slug?: string | null;
 }): string {
   const state = (input.state || "").trim() || "—";
   const brand = (input.brand || "").trim() || "—";
   const venue = (input.venue || "").trim() || "—";
-  const isSolo = (input.event_type_slug || "").toLowerCase() === "solo";
-  const organizer = isSolo
-    ? "SOLO"
-    : ((input.organizer || "").trim() || "SOLO");
+  const organizer = (input.organizer || "").trim() || "SOLO";
   return `${state} [${brand}] ${organizer} @ ${venue}`;
 }

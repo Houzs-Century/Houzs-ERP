@@ -43,7 +43,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/pos.ts` | 8 | 339 |
 | `backend/src/routes/positions.ts` | 9 | 571 |
 | `backend/src/routes/presence.ts` | 2 | 178 |
-| `backend/src/routes/projects.ts` | 109 | 5119 |
+| `backend/src/routes/projects.ts` | 109 | 5131 |
 | `backend/src/routes/projects_print.ts` | 1 | 1367 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 371 |
@@ -66,13 +66,13 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/autocount-outbox.ts` | 2 | 515 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1128 |
-| `backend/src/scm/routes/consignment-orders.ts` | 19 | 2383 |
+| `backend/src/scm/routes/consignment-orders.ts` | 19 | 2332 |
 | `backend/src/scm/routes/consignment-returns.ts` | 9 | 1141 |
 | `backend/src/scm/routes/currencies.ts` | 3 | 148 |
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 223 |
 | `backend/src/scm/routes/delivery-messages.ts` | 2 | 189 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5678 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5652 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
 | `backend/src/scm/routes/delivery-planning.ts` | 5 | 2899 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
@@ -103,10 +103,10 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1220 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4598 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 12063 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11999 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
-| `backend/src/scm/routes/mrp.ts` | 1 | 1386 |
+| `backend/src/scm/routes/mrp.ts` | 1 | 1491 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 244 |
 | `backend/src/scm/routes/payment-audit-log.ts` | 1 | 427 |
 | `backend/src/scm/routes/payment-vouchers.ts` | 6 | 1048 |
@@ -170,19 +170,19 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1380 files, 561522 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1390 files, 564464 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `frontend/src/pages/Projects.tsx` | 15128 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 12063 |
+| `frontend/src/pages/Projects.tsx` | 15127 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11999 |
 | `frontend/src/pages/ServiceCases.tsx` | 8846 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5822 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5678 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5652 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5450 |
-| `backend/src/routes/projects.ts` | 5119 |
+| `backend/src/routes/projects.ts` | 5131 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4598 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
@@ -193,7 +193,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3314 |
-| `backend/src/services/projects.ts` | 3137 |
+| `backend/src/services/projects.ts` | 3169 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3016 |
 
 ## 4. Frontend desktop routes
@@ -370,7 +370,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAnnouncements.tsx` | 1071 |
 | `frontend/src/mobile/MobileApp.tsx` | 1046 |
 | `frontend/src/mobile/MobileAssistant.tsx` | 298 |
-| `frontend/src/mobile/MobileAutoCountSync.tsx` | 463 |
+| `frontend/src/mobile/MobileAutoCountSync.tsx` | 568 |
 | `frontend/src/mobile/MobileCalendar.tsx` | 792 |
 | `frontend/src/mobile/MobileConvertWizard.tsx` | 1033 |
 | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2427 |

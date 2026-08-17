@@ -501,6 +501,30 @@ export async function patchProject(
     body.venue = canonicalizeVenue(body.venue as string | null);
   }
 
+  // Organizer edits follow through to the display name (owner 2026-08-17,
+  // IOI Mall Damansara: calendar said SOLO, the Excel organizer column said
+  // MALL MGMT). The name embeds the organizer slot — "State [BRAND] ORGANIZER
+  // @ VENUE" — and editing the field used to leave the old word behind. Swap
+  // the slot ONLY when the current name still carries the OLD organizer or the
+  // SOLO placeholder; a hand-written custom name doesn't match and is never
+  // touched. Callers that set an explicit name in the same patch win outright.
+  if ("organizer" in body && !("name" in body)) {
+    const cur = await env.DB.prepare(
+      `SELECT name, organizer FROM projects WHERE id = ?`
+    )
+      .bind(id)
+      .first<{ name: string | null; organizer: string | null }>();
+    const m = (cur?.name ?? "").match(/^(.*\[[^\]]*\]\s*)(.*?)(\s*@.*)$/);
+    if (m) {
+      const slot = m[2].trim().toUpperCase();
+      const oldOrg = (cur?.organizer ?? "").trim().toUpperCase();
+      if (slot === "SOLO" || (oldOrg && slot === oldOrg)) {
+        const nextOrg = ((body.organizer as string | null) ?? "").trim() || "SOLO";
+        body.name = `${m[1]}${nextOrg}${m[3]}`;
+      }
+    }
+  }
+
   const sets: string[] = [];
   const binds: any[] = [];
   for (const k of PATCH_FIELDS) {
