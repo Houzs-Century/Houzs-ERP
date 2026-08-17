@@ -10123,6 +10123,13 @@ function ChecklistRow({
           keeps Approve/Reject once a file exists — approved ones included — so
           a decision can be reviewed or reversed. Mirrors the mobile
           checklistReviewVisible gate; the decision stays on the review badge. */}
+      {/* Owner 2026-08-10 toggle, applied here 2026-08-17 ("i cant click
+          approve"): show only the button that REVERSES the current decision.
+          The table rows (DocRow) got this on 08-10 but this card block kept
+          showing an enabled Approve on an already-approved item — the backend
+          approve is idempotent (08-08), so the click was a silent no-op that
+          read as a dead button. Approved → Reject only; rejected → Approve
+          only; undecided → both. */}
       {!!attachments && attachments.length > 0 && (item.required_perm
         ? canApprove
         : reviewable && awaitingReview && canApprove) && (
@@ -10133,29 +10140,33 @@ function ChecklistRow({
               placeholder="Management remark (required to reject)…"
               className="min-w-[160px] flex-1 rounded-md border border-border bg-surface px-2 py-1 text-[11px] outline-none focus:border-primary/40"
             />
-            <button
-              onClick={async () => {
-                if (reason.trim()) await onReview("comment", { note: reason.trim() });
-                await onReview("approve", {});
-                setReason("");
-              }}
-              className="rounded-md bg-synced/90 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-synced"
-            >
-              Approve
-            </button>
-            <button
-              onClick={async () => {
-                if (!reason.trim()) {
-                  toast?.error("Add a remark to reject");
-                  return;
-                }
-                await onReview("reject", { reason: reason.trim() });
-                setReason("");
-              }}
-              className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[10px] font-semibold text-err hover:bg-err/5"
-            >
-              Reject
-            </button>
+            {item.review_status !== "approved" && (
+              <button
+                onClick={async () => {
+                  if (reason.trim()) await onReview("comment", { note: reason.trim() });
+                  await onReview("approve", {});
+                  setReason("");
+                }}
+                className="rounded-md bg-synced/90 px-2.5 py-1 text-[10px] font-semibold text-white hover:bg-synced"
+              >
+                Approve
+              </button>
+            )}
+            {item.review_status !== "rejected" && (
+              <button
+                onClick={async () => {
+                  if (!reason.trim()) {
+                    toast?.error("Add a remark to reject");
+                    return;
+                  }
+                  await onReview("reject", { reason: reason.trim() });
+                  setReason("");
+                }}
+                className="rounded-md border border-err/40 bg-surface px-2.5 py-1 text-[10px] font-semibold text-err hover:bg-err/5"
+              >
+                Reject
+              </button>
+            )}
           </div>
         )}
 
