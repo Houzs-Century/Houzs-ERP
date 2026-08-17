@@ -46,6 +46,12 @@ export type OutstandingScope = {
   unknownPoIds: string[];
   truncated: boolean;
   scanned: number;
+  /** The server's follow-up HEADER read failed, so a requested PO's absence from
+   *  `pos` proves nothing about it. Optional because an older cached payload has
+   *  no such field; absent is read as "did not fail", which is the same thing the
+   *  previous version of this screen assumed and the only backwards-compatible
+   *  reading. */
+  headerReadFailed?: boolean;
 };
 
 export type EmptyReasonInput = {
@@ -100,6 +106,15 @@ export function outstandingEmptyReason(input: EmptyReasonInput): string | null {
     return 'This list was cut short before it finished loading, so lines are missing from it. '
       + 'It does NOT mean there is nothing left to receive. Open a single Purchase Order '
       + 'and convert from there, which reads only that order.';
+  }
+
+  /* 2b. THE STATUS LOOKUP FAILED. Everything below reasons about a PO's status,
+         and the server could not read it — so "not in this company's books" and
+         "is a draft" are both unproven. A blip must not become an accusation. */
+  if (scope?.headerReadFailed) {
+    return "We couldn't check the status of the Purchase Order you came from, so this "
+      + 'list may be incomplete. That is not the same as its lines being received — '
+      + 'please refresh and try again.';
   }
 
   /* 3. SCOPED TO POs THIS COMPANY DOES NOT HOLD. A wrong id, or another

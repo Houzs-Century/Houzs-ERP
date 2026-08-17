@@ -156,6 +156,12 @@ export type OutstandingScope = {
   unknownPoIds: string[];
   /** The paged read stopped at its ceiling, so lines are missing from `items`. */
   truncated: boolean;
+  /** The follow-up HEADER read failed, so a requested PO's absence from `pos`
+   *  proves nothing. Without this, a database blip renders as "that Purchase
+   *  Order is not in this company's books". Optional on the type because
+   *  `explainOutstanding` does not perform that read — `loadOutstandingPoLines`
+   *  adds it — and a report that never looked must not claim it succeeded. */
+  headerReadFailed?: boolean;
   /** Candidate lines actually read (post status filter, pre remaining filter). */
   scanned: number;
 };
@@ -266,19 +272,35 @@ export async function loadOutstandingPoLines(args: {
      Scoped requests only; the open picker asks for nothing. */
   const headerStatuses = new Map<string, { poDocNo: string | null; status: string | null }>();
   const missing = requestedPoIds.filter((id) => !candidates.some((r) => r.purchase_order_id === id));
+  /* BIND THE ERROR. supabase-js does not throw, so `const { data } = await …`
+     cannot tell "the query failed" from "there is nothing here" — and here that
+     difference is the whole point: a swallowed failure leaves `headerStatuses`
+     empty, `explainOutstanding` then reports the PO as UNKNOWN, and the operator
+     is told his Purchase Order is not in this company's books. That is a
+     confidently wrong sentence produced by a database blip, which is the exact
+     class of bug this module was written to remove. Reported as its own fact
+     rather than folded into either answer. */
+  let headerReadFailed = false;
   if (missing.length > 0) {
-    const { data: hdrs } = await scopeQuery(
+    const { data: hdrs, error: hdrErr } = await scopeQuery(
       sb.from('purchase_orders').select('id, po_number, status'),
     ).in('id', missing);
-    for (const h of (hdrs ?? []) as Array<{ id: string; po_number: string | null; status: string | null }>) {
-      headerStatuses.set(h.id, { poDocNo: h.po_number, status: h.status });
+    if (hdrErr) {
+      headerReadFailed = true;
+    } else {
+      for (const h of (hdrs ?? []) as Array<{ id: string; po_number: string | null; status: string | null }>) {
+        headerStatuses.set(h.id, { poDocNo: h.po_number, status: h.status });
+      }
     }
   }
 
   return {
     error: null,
     rows,
-    scope: explainOutstanding(requestedPoIds, candidates, headerStatuses, truncated, isReceivable),
+    scope: {
+      ...explainOutstanding(requestedPoIds, candidates, headerStatuses, truncated, isReceivable),
+      headerReadFailed,
+    },
   };
 }
 
@@ -363,7 +385,12 @@ export async function toOutstandingPoItems(
   const whIds = [...new Set(rows.map((r) => effWh(r)).filter((x): x is string => Boolean(x)))];
   const whById = new Map<string, { code: string; name: string }>();
   if (whIds.length > 0) {
-    const { data: whs } = await sb.from('warehouses').select('id, code, name').in('id', whIds);
+    /* Bind the error even though the failure is cosmetic here — a blank warehouse
+       column, not a wrong claim. Left unbound it is indistinguishable from "no
+       such warehouse", and check-swallowed-reads.mjs cannot tell the two apart
+       either, so an unbound read in a NEW file reads as the dangerous kind. */
+    const { data: whs, error: whErr } = await sb.from('warehouses').select('id, code, name').in('id', whIds);
+    if (whErr) console.error(`outstanding-po-items: warehouse lookup failed, names will be blank: ${whErr.message}`);
     for (const w of (whs ?? []) as Array<{ id: string; code: string; name: string }>) {
       whById.set(w.id, { code: w.code, name: w.name });
     }

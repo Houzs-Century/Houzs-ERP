@@ -59,6 +59,28 @@ describe('the read stopped early — the owner-facing mechanism', () => {
   });
 });
 
+describe('the status lookup failed', () => {
+  /* The server binds that read's error (it used to swallow it), because a
+     swallowed failure left the scope empty and the operator was told his PO was
+     not in this company's books — a confidently wrong sentence produced by a
+     database blip. */
+  test('a failed header read is NOT reported as "not in this company"', () => {
+    const m = outstandingEmptyReason({
+      ...base,
+      scope: scope({ requestedPoIds: ['p1'], unknownPoIds: ['p1'], headerReadFailed: true }),
+    })!;
+    expect(m).toContain("couldn't check the status");
+    expect(m).not.toContain("not in this company's books");
+    expect(m).not.toMatch(/received in full/);
+  });
+
+  test('an absent flag is read as "did not fail", so older payloads behave as before', () => {
+    const s = scope({ requestedPoIds: ['p1'], unknownPoIds: ['p1'] });
+    delete s.headerReadFailed;
+    expect(outstandingEmptyReason({ ...base, scope: s })).toContain("not in this company's books");
+  });
+});
+
 describe('scoped to a PO this company does not hold', () => {
   test('one unknown id names the company problem instead of a completion', () => {
     const m = outstandingEmptyReason({
@@ -187,6 +209,11 @@ describe('THE PROPERTY, asserted directly', () => {
   const cases: Array<{ name: string; input: Parameters<typeof outstandingEmptyReason>[0]; mayClaimDone: boolean }> = [
     { name: 'failed read', input: { ...base, isError: true }, mayClaimDone: false },
     { name: 'truncated', input: { ...base, scope: scope({ truncated: true }) }, mayClaimDone: false },
+    {
+      name: 'header read failed',
+      input: { ...base, scope: scope({ requestedPoIds: ['p1'], unknownPoIds: ['p1'], headerReadFailed: true }) },
+      mayClaimDone: false,
+    },
     {
       name: 'unknown PO',
       input: { ...base, scope: scope({ requestedPoIds: ['x'], unknownPoIds: ['x'] }) },

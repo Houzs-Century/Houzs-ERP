@@ -302,7 +302,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/grns.ts": {
-      "reads": 51,
+      "reads": 50,
       "catches": 0
     },
     "backend/src/scm/routes/helpers.ts": {
