@@ -1876,12 +1876,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
     supplier_delivery_date_4?: string | null;
   }>).filter((it) => it.qty - (it.received_qty ?? 0) > 0);
 
-  /* An empty read is evidence that THE QUERY FOUND NOTHING, never that the
-     order is settled — the select is company-scoped and scopeToCompany fails
-     closed (scm/lib/companyScope.ts). Refusing is right; the verdict was not.
-     Its five siblings in purchase-returns / purchase-consignment-* were
-     reworded in the same pass. */
-  if (itemList.length === 0) return c.json({ error: 'nothing_outstanding', message: 'No outstanding lines came back for this PO. Open it and check its received balance before treating it as received in full.' }, 400);
+  if (itemList.length === 0) return c.json({ error: 'nothing_outstanding', message: 'No outstanding lines came back for this PO. Open it and check its received balance before treating it as received in full.' }, 400); // Refusing is right; the VERDICT was not. This read is company-scoped and scopeToCompany fails closed, so [] arrives with error: null whether the order is settled or the company could not be resolved. Five siblings in purchase-returns / purchase-consignment-* were reworded with it; audit:empty-state-claims keeps them honest.
 
   /* Warehouse-required guard (audit gap #6) — this batch-convert never set a
      header warehouse and relied on postGrnAndRollup's defaultWarehouseId
