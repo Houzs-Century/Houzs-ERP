@@ -165,6 +165,10 @@ export const settlementUpload = guard(async (c) => {
     fee_method: acq.acquirer.fee_method,
     column_map: acq.acquirer.column_map as StatementColumnMap | null,
     summaryFeeSen: body.summaryFeeSen == null ? null : Number(body.summaryFeeSen),
+    /* Only consulted when the file's own dates carry no year (the Maybank
+       terminal statement prints "05-Jun"). The operator answers; nothing here
+       guesses which year a payment belongs to. */
+    statementMonth: /^\d{4}-\d{2}$/.test(String(body.statementMonth ?? '')) ? String(body.statementMonth) : null,
   }, content);
   if (!parsed.ok) return c.json({ error: 'unreadable_statement', message: parsed.reason }, 400);
 

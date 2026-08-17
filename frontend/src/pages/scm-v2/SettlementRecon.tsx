@@ -114,6 +114,10 @@ const ReconcileTab = () => {
   const [code, setCode] = useState('');
   const [files, setFiles] = useState<Array<{ name: string; content: string }>>([]);
   const [summaryFee, setSummaryFee] = useState('');
+  /* Some terminal statements date a line "05-Jun" with no year anywhere in the
+     file. The operator answers that; the system never guesses which year money
+     belongs to. */
+  const [statementMonth, setStatementMonth] = useState('');
   /* One result line per file — a month's statements go up in one go and each
      one answers for itself, so a single bad file never hides four good ones. */
   const [results, setResults] = useState<Array<{ name: string; ok: boolean; text: string }>>([]);
@@ -143,6 +147,7 @@ const ReconcileTab = () => {
           fileName: f.name,
           content: f.content,
           summaryFeeSen: summaryFee.trim() ? Math.round(Number(summaryFee) * 100) : null,
+          statementMonth: statementMonth || null,
         });
         lastBatch = r.batchId;
         done.push({
@@ -190,6 +195,17 @@ const ReconcileTab = () => {
             disabled={!code || files.length === 0 || busy} onClick={() => { void send(); }}>
             <Upload {...ICON} /> {busy ? 'Reading…' : `Upload${files.length > 1 ? ` ${files.length} files` : ''}`}
           </button>
+        </div>
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+          <label style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' }} htmlFor="settlement-month">
+            Statement month
+          </label>
+          <input id="settlement-month" type="month" value={statementMonth} aria-label="Statement month"
+            onChange={(e) => setStatementMonth(e.target.value)}
+            style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
+          <span style={softText}>
+            Only needed when the file dates a line like &ldquo;05-Jun&rdquo; with no year — then it says which year that is.
+          </span>
         </div>
         <div style={softText}>
           You can pick several files at once — they go up one after another, and each one answers for itself.

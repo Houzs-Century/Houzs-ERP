@@ -34,6 +34,9 @@ export type ParseConfig = {
   /** Only for fee_method 'prorated-summary': the statement's total fee, keyed in
       by the operator from the summary block the file prints. */
   summaryFeeSen?: number | null;
+  /** YYYY-MM. Only used when the file's dates carry no year (Maybank prints
+      "05-Jun"); supplying it is the operator's answer, never a guess. */
+  statementMonth?: string | null;
 };
 
 export type ParsedRow = {
@@ -82,7 +85,8 @@ export function splitCsvLine(line: string): string[] {
  * names the line, never a zero.
  */
 export function toSen(raw: string): number | null {
-  let s = String(raw ?? '').trim();
+  // A leading apostrophe is Excel's "keep this as text" guard, not a value.
+  let s = String(raw ?? '').trim().replace(/^'/, '');
   if (!s) return null;
   let negative = false;
   if (/^\(.*\)$/.test(s)) { negative = true; s = s.slice(1, -1); }
@@ -96,19 +100,58 @@ export function toSen(raw: string): number | null {
   return negative ? -sen : sen;
 }
 
-/** Statement dates → YYYY-MM-DD. DD/MM/YYYY is the Malaysian acquirer default;
-    an ISO date passes through. An ambiguous or impossible date is refused. */
-export function toIsoDate(raw: string): string | null {
-  const s = String(raw ?? '').trim();
+const MONTHS: Record<string, number> = {
+  jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+  jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12,
+};
+
+/** A date shape that carries a day and a month but NO year (`05-Jun`) — the
+    Maybank terminal statement prints exactly this. It cannot be dated without
+    being told which month the statement covers. */
+export const dateNeedsYear = (raw: string): boolean =>
+  /^\d{1,2}[-/\s]([A-Za-z]{3,})$/.test(String(raw ?? '').trim());
+
+/**
+ * Statement dates → YYYY-MM-DD.
+ *
+ * Handles what the real files print: ISO (with or without a time), DD/MM/YYYY,
+ * DD-MMM-YYYY, two-digit years, and — the Maybank case — DD-MMM with no year
+ * at all, which is why `hint` exists. An ambiguous or impossible date is
+ * refused rather than guessed; money is not dated by assumption (§2.5).
+ */
+export function toIsoDate(raw: string, hint?: { year: number; month: number } | null): string | null {
+  const s = String(raw ?? '').trim().replace(/^'/, '');
   if (!s) return null;
   const iso = /^(\d{4})-(\d{2})-(\d{2})/.exec(s);
   if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
-  const dmy = /^(\d{1,2})[/-](\d{1,2})[/-](\d{4})/.exec(s);
+
+  const pad = (n: number) => String(n).padStart(2, '0');
+  const fullYear = (y: number) => (y < 100 ? 2000 + y : y);
+  /* A statement issued in January still carries December's transactions, so a
+     month far AHEAD of the statement's month belongs to the year before. */
+  const yearFor = (month: number): number | null => {
+    if (!hint) return null;
+    if (month > hint.month + 6) return hint.year - 1;
+    if (month < hint.month - 6) return hint.year + 1;
+    return hint.year;
+  };
+
+  const dmy = /^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/.exec(s);
   if (dmy) {
     const d = Number(dmy[1]);
     const m = Number(dmy[2]);
     if (d < 1 || d > 31 || m < 1 || m > 12) return null;
-    return `${dmy[3]}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    return `${fullYear(Number(dmy[3]))}-${pad(m)}-${pad(d)}`;
+  }
+
+  const named = /^(\d{1,2})[-/\s]([A-Za-z]{3,})(?:[-/\s](\d{2,4}))?$/.exec(s);
+  if (named) {
+    const d = Number(named[1]);
+    const m = MONTHS[named[2].slice(0, 3).toLowerCase()];
+    if (!m || d < 1 || d > 31) return null;
+    const y = named[3] ? fullYear(Number(named[3])) : yearFor(m);
+    if (y == null) return null; // no year in the file and none supplied
+    return `${y}-${pad(m)}-${pad(d)}`;
   }
   return null;
 }
@@ -159,35 +202,58 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
   const lines = body.split(/\r\n|\n|\r/).filter((l) => l.trim() !== '');
   if (lines.length === 0) return { ok: false, reason: 'The file is empty.' };
 
-  const headers = splitCsvLine(lines[0]);
+  /* WHICH ROW IS THE HEADING ROW.
+     A real terminal statement does not start with it. Maybank's export opens
+     with the merchant number, a SUMMARY block, its own totals, and a TERMINAL
+     ID line — the transaction headings are on line 16, and a file with two
+     terminals repeats them further down. Assuming line 1 made every real
+     statement unreadable, so the headings are SEARCHED for instead: the first
+     row carrying all of them wins, everything above it is preamble, and the
+     same row appearing again later is the next terminal's section, not data. */
+  const required = [
+    map.date, map.gross,
+    ...(map.ref ? [map.ref] : []),
+    ...(feeMethod === 'stated' ? [map.fee as string] : []),
+    ...(feeMethod === 'gross-minus-net' ? [map.net as string] : []),
+  ];
+  let headerLine = -1;
+  let headers: string[] = [];
+  for (let i = 0; i < lines.length; i += 1) {
+    const cells = splitCsvLine(lines[i]);
+    if (required.every((h) => headerIndex(cells, h) >= 0)) { headerLine = i; headers = cells; break; }
+  }
+  const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+  if (headerLine < 0) {
+    /* Kept SHORT and free of the words a generic API-error humaniser strips as
+       "database internals" (the frontend's shared humanApiError drops any
+       message containing "column", which silently turned this sentence into
+       "some details weren't accepted" — the exact opposite of §2.14). */
+    return {
+      ok: false,
+      reason: `Not a ${cfg.code} statement — no row has the ${clip(required.join(', '), 60)} heading${required.length > 1 ? 's' : ''}. The file starts: ${clip(splitCsvLine(lines[0]).join(', '), 70)}`,
+    };
+  }
+  const headerSignature = headers.join('');
+
   const idxDate = headerIndex(headers, map.date);
   const idxGross = headerIndex(headers, map.gross);
   const idxRef = map.ref ? headerIndex(headers, map.ref) : -1;
   const idxFee = map.fee ? headerIndex(headers, map.fee) : -1;
   const idxNet = map.net ? headerIndex(headers, map.net) : -1;
 
-  const missing: string[] = [];
-  if (idxDate < 0) missing.push(map.date);
-  if (idxGross < 0) missing.push(map.gross);
-  if (map.ref && idxRef < 0) missing.push(map.ref);
-  if (feeMethod === 'stated' && idxFee < 0) missing.push(map.fee as string);
-  if (feeMethod === 'gross-minus-net' && idxNet < 0) missing.push(map.net as string);
-  if (missing.length) {
-    /* Kept SHORT and free of the words a generic API-error humaniser strips as
-       "database internals" (the frontend's shared humanApiError drops any
-       message containing "column", which silently turned this sentence into
-       "some details weren't accepted" — the exact opposite of §2.14). */
-    const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
-    return {
-      ok: false,
-      reason: `Not a ${cfg.code} statement — no ${clip(missing.join(', '), 50)} heading${missing.length > 1 ? 's' : ''}. The file has: ${clip(headers.join(', '), 90)}`,
-    };
-  }
+  /* Only for files whose dates carry no year — the operator says which month
+     the statement covers, rather than the system inventing one. */
+  const hint = /^\d{4}-\d{2}$/.test(cfg.statementMonth ?? '')
+    ? { year: Number((cfg.statementMonth as string).slice(0, 4)), month: Number((cfg.statementMonth as string).slice(5, 7)) }
+    : null;
 
   const rows: ParsedRow[] = [];
-  let skipped = 0;
-  for (let i = 1; i < lines.length; i += 1) {
+  // Everything above the headings is the merchant/summary preamble.
+  let skipped = headerLine;
+  for (let i = headerLine + 1; i < lines.length; i += 1) {
     const cells = splitCsvLine(lines[i]);
+    // The next terminal's heading row, repeated mid-file.
+    if (cells.join('') === headerSignature) { skipped += 1; continue; }
     const rawDate = cells[idxDate] ?? '';
     const rawGross = cells[idxGross] ?? '';
     /* Statements end with a totals block — a row with no date and the whole
@@ -198,8 +264,22 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
        "skipped some rows" must never be something the operator has to guess. */
     if (!rawDate.trim()) { skipped += 1; continue; }
 
-    const txnDate = toIsoDate(rawDate);
-    if (!txnDate) return { ok: false, reason: `Line ${i + 1}: cannot read the date "${rawDate}".` };
+    const txnDate = toIsoDate(rawDate, hint);
+    /* The footnote block a terminal statement ends with ("*Cash Out
+       Description Code: CP - …") has prose where the date belongs and nothing
+       where the money belongs. No date AND no amount is not a transaction —
+       skipped and counted. A row with an amount but an unreadable date still
+       stops the parse below, because that one really is a broken transaction. */
+    if (!txnDate && toSen(rawGross) == null) { skipped += 1; continue; }
+    if (!txnDate) {
+      if (dateNeedsYear(rawDate)) {
+        return {
+          ok: false,
+          reason: `This ${cfg.code} statement writes its dates without a year (line ${i + 1} says "${rawDate}") — choose the month it covers and upload it again.`,
+        };
+      }
+      return { ok: false, reason: `Line ${i + 1}: cannot read the date "${rawDate}".` };
+    }
     const grossSen = toSen(rawGross);
     if (grossSen == null) return { ok: false, reason: `Line ${i + 1}: cannot read the amount "${rawGross}".` };
 
@@ -220,7 +300,8 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
       }
     }
 
-    const ref = idxRef >= 0 ? (cells[idxRef] ?? '').trim() || null : null;
+    // GHL exports every id with Excel's leading text-guard apostrophe.
+    const ref = idxRef >= 0 ? (cells[idxRef] ?? '').trim().replace(/^'/, '') || null : null;
     rows.push({ lineNo: i + 1, txnDate, ref, grossSen, feeSen, netSen });
   }
 

@@ -143,7 +143,12 @@ export type UploadResult = {
 export const useUploadStatement = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { acquirerCode: string; fileName: string; content: string; summaryFeeSen?: number | null }) =>
+    mutationFn: (body: {
+      acquirerCode: string; fileName: string; content: string;
+      summaryFeeSen?: number | null;
+      /** YYYY-MM — only needed when the file's dates carry no year. */
+      statementMonth?: string | null;
+    }) =>
       authedFetch<UploadResult>(`/accounting/settlement/batches`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['settlement-batches'] }); },
     /* No writeFailedAs here: an unreadable statement is the MESSAGE, and the

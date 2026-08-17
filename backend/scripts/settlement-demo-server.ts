@@ -41,19 +41,21 @@ const CHART: Row[] = [
   account_code, account_name, account_type, parent_code: null, is_active: true, company_id: CO,
 }));
 
-/* MBB carries a unique approval code — the only kind that may auto-match.
-   GHL deliberately does NOT: it is the brief's cautionary tale, and on this rig
-   the owner can see for himself that nothing of GHL's confirms itself. */
+/* The layouts are the OWNER'S REAL FILES, read off the exports he uploaded on
+   2026-08-17 — not invented ones. Maybank's terminal statement opens with a
+   merchant/summary preamble and puts its headings on line 16; GHL's export is
+   one header row of snake_case ids and — contrary to 系统3's assumption — DOES
+   carry a unique transaction id (gateway_tx_id). */
 const ACQUIRER_CONFIG: Row[] = [
   {
     code: 'MBB', display_name: 'MBB', statement_format: 'CSV', has_unique_ref: true,
     fee_method: 'stated', date_tolerance_days: 3, is_active: true,
-    column_map: { date: 'Txn Date', ref: 'Approval Code', gross: 'Gross', fee: 'MDR' },
+    column_map: { date: 'DATE', ref: 'INVOICE/AUTHO', gross: 'TRXN AMOUNT', fee: 'MDR', net: 'TRXN NET' },
   },
   {
-    code: 'GHL', display_name: 'GHL', statement_format: 'CSV', has_unique_ref: false,
-    fee_method: 'gross-minus-net', date_tolerance_days: 3, is_active: true,
-    column_map: { date: 'Date', gross: 'Amount', net: 'Net Credited' },
+    code: 'GHL', display_name: 'GHL', statement_format: 'CSV', has_unique_ref: true,
+    fee_method: 'stated', date_tolerance_days: 3, is_active: true,
+    column_map: { date: 'tx_create_date', ref: 'gateway_tx_id', gross: 'tx_amount', fee: 'merchant_mdr_amount', net: 'net_amount' },
   },
   {
     code: 'PBB', display_name: 'PBB', statement_format: null, has_unique_ref: null,
@@ -107,9 +109,10 @@ const seed = () => ({
     soPay('p5', 'SO-2608-005', '2026-08-02T16:21:00', 40000, null, 'MBB'),
     // ── Card money nobody has settled: this is watchlist 1.
     soPay('p6', 'SO-2607-088', '2026-07-18T09:30:00', 35000, 'A0900', 'MBB'),
-    // ── GHL: no approval codes at all, by nature.
-    soPay('g1', 'SO-2608-010', '2026-08-01T12:00:00', 80000, null, 'GHL'),
-    soPay('g2', 'SO-2608-011', '2026-08-02T13:30:00', 45000, null, 'GHL'),
+    // ── GHL: the gateway id IS on the statement, so a till that captured it
+    //    auto-matches; the one that did not waits for a human.
+    soPay('g1', 'SO-2608-010', '2026-08-01T12:00:00', 80000, '615318040666', 'GHL'),
+    soPay('g2', 'SO-2608-011', '2026-08-02T13:30:00', 45000, null, 'GHL'), // no id captured at the till - lands in NEEDS_CONFIRM
   ],
   sales_invoice_payments: [
     {

@@ -65,7 +65,7 @@ describe('parseStatement — refusals are loud and name what is wrong', () => {
     const r = parseStatement(baseCfg(), CSV('Date,Amount', '2026-08-01,10.00'));
     expect(r).toMatchObject({ ok: false });
     expect((r as { reason: string }).reason).toMatch(/Txn Date/);
-    expect((r as { reason: string }).reason).toMatch(/The file has: Date, Amount/);
+    expect((r as { reason: string }).reason).toMatch(/The file starts: Date, Amount/);
   });
 
   /* Two failures the owner hit on the demo rig, both invisible to him:
@@ -202,6 +202,85 @@ describe('parseStatement — the three fee methods', () => {
     const r = parseStatement(cfg, CSV('Date,Gross', '01/08/2026,10.00'));
     expect(r).toMatchObject({ ok: false });
     expect((r as { reason: string }).reason).toMatch(/total/i);
+  });
+});
+
+/* The shapes of the OWNER'S ACTUAL EXPORTS, read off the files he uploaded on
+   2026-08-17. Everything above was written against invented statements, and
+   every one of these cases is something a real file does that an invented one
+   did not — which is why all three of his uploads were refused. */
+describe('parseStatement — the real terminal statements', () => {
+  const MAYBANK = [
+    'MERCHANT NO:,00000000000,,,TRADING NAME:,DEMO',
+    'SUMMARY',
+    'TRANSACTION TYPE,,,,,TRXN AMOUNT,MDR/INCENTIVE,LATE FEE,,AMOUNT PAYABLE',
+    'SALES & MANUAL POSTINGS,,,,,5700.00,-256.50,0.00,,5443.50',
+    ',,,,,,,,TOTAL AMOUNT PAYABLE,5443.50',
+    'TERMINAL ID:,00071213960',
+    'DATE,BATCH,INVOICE/AUTHO,CARD NUMBER,TENURE/CASHOUT*,TRXN AMOUNT,MDR,LATE FEE,MDR(%),INTERCHANGE FEE,TRXN NET',
+    '05-Jun,68035,454919,4293-20xx-xxxx-4789,12,5700.00,256.500000,0.000000,4.50,="0.6%",5443.500000',
+    ',,,Batch Total,1,5700.00,256.500000,0.000000,,,5443.500000',
+    '*Cash Out Description Code:  CP - Cash Out Purchase Amount  CO - Cash Out Withdrawal Amount',
+  ].join('\n');
+
+  const maybankCfg = (over: Partial<ParseConfig> = {}): ParseConfig => ({
+    code: 'MBB', statement_format: 'CSV', fee_method: 'stated',
+    column_map: { date: 'DATE', ref: 'INVOICE/AUTHO', gross: 'TRXN AMOUNT', fee: 'MDR', net: 'TRXN NET' },
+    ...over,
+  });
+
+  it('finds the headings on line 7, under the merchant and summary preamble', () => {
+    const r = parseStatement(maybankCfg({ statementMonth: '2026-06' }), MAYBANK);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]).toMatchObject({ txnDate: '2026-06-05', ref: '454919', grossSen: 570000, feeSen: 25650, netSen: 544350 });
+    // Preamble + the batch total + the footnote, all counted, none silent.
+    expect(r.skippedLines).toBe(8);
+  });
+
+  it('a date with no year in the file is REFUSED until the month is given', () => {
+    const r = parseStatement(maybankCfg(), MAYBANK);
+    expect(r).toMatchObject({ ok: false });
+    expect((r as { reason: string }).reason).toMatch(/without a year/);
+    expect((r as { reason: string }).reason).toMatch(/05-Jun/);
+  });
+
+  it("a second terminal's repeated heading row is a section break, not a transaction", () => {
+    const twoTerminals = [
+      MAYBANK,
+      'TERMINAL ID:,00071213961',
+      'DATE,BATCH,INVOICE/AUTHO,CARD NUMBER,TENURE/CASHOUT*,TRXN AMOUNT,MDR,LATE FEE,MDR(%),INTERCHANGE FEE,TRXN NET',
+      '06-Jun,68036,454920,5412-30xx-xxxx-9001,,100.00,4.500000,0.000000,4.50,="0.6%",95.500000',
+    ].join('\n');
+    const r = parseStatement(maybankCfg({ statementMonth: '2026-06' }), twoTerminals);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows.map((x) => x.ref)).toEqual(['454919', '454920']);
+  });
+
+  it("GHL's export reads, apostrophe-guarded ids and all — and it HAS a unique id", () => {
+    const r = parseStatement({
+      code: 'GHL', statement_format: 'CSV', fee_method: 'stated',
+      column_map: { date: 'tx_create_date', ref: 'gateway_tx_id', gross: 'tx_amount', fee: 'merchant_mdr_amount', net: 'net_amount' },
+    }, [
+      'tx_create_date,gateway_tx_id,mah_ref,product_itemname,tx_code_true,terminal_id,currency_code,currency_tx_amount,tx_amount,merchant_mdr_amount,product_commission_amount,vat_amount,net_amount',
+      "2026-06-02 18:38:24.0,'615318040666,'VIPP0000040666000010,VISA - IPP12/VISA-EDC-IPP12,PAYMENT,66043062,MYR,,2865.0000,-114.6000,0.0000,0.0000,2750.4000",
+    ].join('\n'));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // The fee is printed NEGATIVE and the id wears Excel's text-guard quote.
+    expect(r.rows[0]).toMatchObject({ txnDate: '2026-06-02', ref: '615318040666', grossSen: 286500, feeSen: 11460, netSen: 275040 });
+  });
+});
+
+describe('toIsoDate — the year rule', () => {
+  it('takes the year from the statement month, and rolls back for a December line on a January statement', () => {
+    expect(toIsoDate('05-Jun', { year: 2026, month: 6 })).toBe('2026-06-05');
+    expect(toIsoDate('28-Dec', { year: 2027, month: 1 })).toBe('2026-12-28');
+    expect(toIsoDate('05-Jun')).toBeNull();
+    expect(toIsoDate('05-Jun-2025')).toBe('2025-06-05');
+    expect(toIsoDate('05-06-25')).toBe('2025-06-05');
   });
 });
 
