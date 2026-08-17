@@ -1,3 +1,269 @@
+## Three more ways one goods receipt could be billed twice — and the confirm that clamped instead of refusing [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** None reported. Found by reading the newly-added GRN -> Purchase
+Invoice unlinked-line guard back three times before shipping it, once for the
+predicate, once for what could reach the same money outcome WITHOUT passing
+through it, and once for what the change itself broke. The predicate was right in
+all three readings. Its reach was not.
+
+**Root cause 1 — the guard checked ONE receipt; an invoice covers several.**
+A purchase invoice is line-level multi-receipt by design. Migration
+`0267_grn_outstanding_line_level.sql` records the ruling (owner 2026-08-06): *"the
+PI header's `grn_id` is only the PRIMARY note ref, while the authoritative linkage
+is per line"*, and `POST /from-grn-items` stamps `grn_id: bucket.grnIds[0]` under
+its own comment saying exactly that. The guard read that single ref. So an invoice
+covering HC-GRN-2608-011 (FABRIC-KN390) and HC-GRN-2608-012 (FOAM-40D 20 accepted,
+invoiced 0) accepted a hand-typed FOAM-40D line: not on note 011, therefore
+"genuinely ad-hoc", therefore allowed — the refused shape, one note over. Note
+012's line kept reading remaining 20, stayed in the outstanding picker, and a
+second invoice billed it.
+
+**Root cause 2 — `PATCH /:id/items/:itemId` had no guard at all.** It maps
+`materialCode -> material_code` and never touches `grn_item_id`, so the shape
+assembles in two legal steps: add PACKING-FILM by hand (correctly allowed — the
+receipt does not contain it), then edit that line's product to FOAM-40D. Neither
+the qty cap nor the invoiced-qty recount fires, because both read the STORED link,
+which is still null — while `recomputePiTotals`, `resyncPiAccounting` and
+`queueAcPiEdit` all move. The shipped UI drives it: `PurchaseInvoiceDetail.tsx`'s
+change-detector compares `d.materialCode !== it.material_code` and puts
+`materialCode` in the PATCH payload. This router already knew lines get retyped
+after creation — its charge-reallocation note describes *"a row that used to be
+goods and was later retyped as freight"*.
+
+**Root cause 3 — the guard's own read FAILED OPEN.** An empty parent-code set is
+an unconditional pass (`do-unlinked-so-lines.ts`: `if (ordered.size === 0) return
+[];`) and the read that filled it dropped its error, so a statement timeout
+answered *"nothing to find"*. That is the same fail-open `piLocked` **in this very
+router** was fixed for: *"A failed read must never read as an absence when the
+absence is what authorises the write."*
+
+**Root cause 4 — the DRAFT confirm never re-checked the cap, and the counter
+CLAMPED.** Both over-invoice re-sums exclude DRAFT invoices — right, a draft
+consumes nothing — on the strength of a comment claiming *"The cap is re-checked
+at confirm (recomputeGrnInvoiced clamps to qty_accepted), so a DRAFT that would
+over-bill is caught the moment it's confirmed."* It was not.
+`recomputeGrnInvoiced` clamps (`Math.min(accepted, inv)`) and is contractually
+*"best-effort, never throws"*, so it can refuse nothing. Two clerks each drafting
+an invoice for all 12 units of a 12-unit receipt line both confirmed, both posted
+AP at 576,000 sen, and the clamp left `invoiced_qty` reading 12 of 12 — **every
+counter a reconciliation reads said the receipt was billed exactly once.**
+
+**Fix.** `findUnlinkedPiLines` now takes a SET of receipts and returns a verdict
+rather than a bare array. `coveredGrnIds` in `purchase-invoices.ts` derives that
+set the way this router already derives it twice for reads — header ref UNION the
+receipts behind the invoice's own linked lines (`grn_item_id -> grn_items.grn_id`).
+All three paths that can reach the shape now call it — `POST /`, `POST /:id/items`
+and `PATCH /:id/items/:itemId` (on the EFFECTIVE post-patch code, and only for an
+unlinked line, so an ordinary qty edit pays for no extra read) — and every one of
+them answers 500 `unlinked_check_failed` when the check cannot run.
+`verifyGrnLinesNotOverInvoiced` takes `countDraftPiId` so the draft being
+confirmed counts, and `PATCH /:id/post` calls it BEFORE the `DRAFT -> POSTED` flip
+and again after, reverting to DRAFT if a concurrent confirm won the race. That is
+the per-line invariant Σ(billed so far) + this bill <= received qty, **not** an
+"already invoiced" flag — a receipt line still bills across several invoices and
+every partial passes. The three reads inside that function bind their errors too:
+the CREATE paths log and proceed (each ran its own pre-check moments earlier), the
+CONFIRM refuses, because there the pre-check is the only check. The false comment
+is corrected in place.
+
+**The refusal message was also wrong twice.** It said *"Pick those items from the
+Goods Receipt instead of adding them by hand"* — on the invoice DETAIL editor,
+where it fires most, there is no receipt-line picker and the add payload cannot
+carry a `grnItemId`, so a correctly-refused operator was dead-ended and the way
+out of a dead end is to retype the code until it stops matching. It also promised
+a freight or service line was *"unaffected"* full stop, which is false when the
+receipt carries its own service line. And it named the receipt by raw uuid: no
+client sends `grnNumber` on create, and the add path passed the id as the label.
+Each offender now names the receipt NUMBER that carries its material.
+
+**Tests.** `return-unlinked-lines.test.ts` 15 -> 26. Three wiring slices, each
+BOUNDED AT BOTH ENDS — the add-line slice previously ran to end-of-file, so a
+guard in a different handler could have satisfied it. Proven not vacuous: deleting
+the PATCH guard fails 2 tests; dropping `countDraftPiId` from the confirm fails 1.
+
+**Deferred, recorded not fixed.** The identical edit-path gap exists on all five
+sibling chains — `grns.ts`, `purchase-returns.ts`, `delivery-returns.ts` and
+`sales-invoices.ts` all map an item code in a line PATCH whose handler calls no
+unlinked guard — and the shared `grnMaterialCodesOf` / `poMaterialCodesOf` /
+`soItemCodesOf` readers still swallow their errors for those chains. Those move
+STOCK; this one moved money, which is why only this one is closed here. See
+`docs/unlinked-line-duplicate-coe.md` §5a and §8.
+
+**Ref** — the guard itself is the entry above. Reviews: money-correctness,
+bypass-enumeration and regression, all 2026-08-17.
+
+## The GRN picker's empty state claimed completion again, one merge after it was removed [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** Two parallel fixes for the same owner report (2026-08-17, the
+unreceived PO showing zero outstanding lines) landed within hours of each other.
+PR #2367 removed the sentence *"every line has been received"* from
+`GrnFromPo.tsx` and replaced it with copy that explicitly denies the completion
+reading. The other fix — this branch — moved the whole empty state into
+`frontend/src/lib/outstandingEmptyReason.ts`, and its unscoped branch said *"No
+Purchase Order lines are awaiting receipt in this company right now — every
+SUBMITTED and PARTIALLY_RECEIVED order has been received in full."* Same claim,
+different words, in the file whose header forbids it.
+
+**Root cause.** The module's own property test banned a LITERAL, not the claim:
+`expect(...).not.toContain('every line has been received')`. The replacement
+phrasing passes that assertion while asserting the same fact. And the fact is not
+knowable from an empty read: `scopeToCompany` FAILS CLOSED — when the company
+context resolves but no single active company can be picked it appends
+`.in('company_id', [])`, and PostgREST answers `[]` with `error: null`. A
+companies-master blip is byte-identical on the wire to a company with nothing
+outstanding, so during one the operator would be told every order is received
+while unreceived orders sit in his own company's books.
+
+**Two more empty-state defects found in the same pass.** A **RECEIVED** purchase
+order was told *"Submit the order first, or reopen it"* — the picker's SQL filter
+now excludes only DRAFT and CANCELLED, so a closed order genuinely reaches the
+screen, and reopening a finished order invites a second receipt against lines
+already received in full. And a scoped, fully-received PO viewed with a stale
+toolbar filter escaped every scoped branch and fell through to the unscoped one,
+so a one-PO read made a statement about the whole company.
+
+**Fix.** The unscoped branch carries #2367's wording. Completion is decided on
+EVIDENCE the server took — `candidateLines > 0 && outstandingLines === 0`, i.e.
+the read COUNTED this document's lines and found none outstanding — rather than on
+a status name the frontend would have to keep its own list of; a closed order at
+zero is reported FINISHED and one that still counts outstanding lines keeps the
+reopen advice. The `!filtersActive` guard is gone from the completion branch (the
+read is scoped, so `serverRowCount === 0` already proves no filter hid anything)
+and a scoped fallback names the document instead of falling through. New input
+`scopedRowCount`, because the screen's own PO scope / append lock is its own
+cause: rows it dropped were being reported as rows the operator's unsaved DRAFT
+had already taken, which sends them to the wrong screen. The property test now
+bans the CLAIM in every phrasing the module can produce, and asserts that every
+completion sentence names the document it is about. The mobile convert wizard uses
+the shared module too — it had the identical hard-coded claim, *"Nothing left to
+receive on the selected order(s)"*, and the module's header already said both
+surfaces shared it.
+
+**Ref** — collides with #2367. Also in this merge: #2367 landed the truncation fix
+as `lib/outstanding-po-items.ts` while this branch landed it as
+`lib/outstanding-po-lines.ts`. Keeping both would have left the module whose header
+says *"three properties this must keep"* with zero callers, its tests passing about
+code the endpoint no longer runs. `-items` was deleted and its three assertions
+carried into `outstanding-po-lines.test.ts` as BEHAVIOURAL tests of
+`loadOutstandingPoLines` against a recording PostgREST stand-in — no `.limit()`
+anywhere in the chain, the status filter through the `!inner` embed, `order('id')`
+as a total order, every page read, the company predicate failing closed, a read
+error surfacing instead of an empty list. Reintroducing `.limit(500)` fails 3 of
+them.
+
+## A Purchase Invoice could bill the same goods receipt twice, and the supplier be paid twice [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** None reported — found by asking which conversion chains still lack
+the unlinked-line guard, after the owner asked for duplicate-document prevention
+across every chain. `grep -ci unlinked backend/src/scm/routes/purchase-invoices.ts`
+returned **0**, against 5 in `grns.ts`, 5 in `purchase-returns.ts`, 5 in
+`delivery-returns.ts` and 12 in `sales-invoices.ts`.
+
+**Root cause (traced, not guessed).** `scm.purchase_invoices.grn_id` names a
+Goods Receipt; `purchase_invoice_items.grn_item_id` is NULLABLE, and that
+nullability is legitimate — it is how a PI-native line (freight, a service
+charge) is represented. Every cap and every recount in `purchase-invoices.ts`
+filters NULL links out FIRST, which is right for a service line and wrong for a
+hand-added GOODS line: it bills the material, `grn_items.invoiced_qty` never
+moves, `recomputeGrnInvoiced` recounts only linked children so the GRN line still
+reads fully outstanding, and a SECOND Purchase Invoice bills the same receipt.
+Both post to AP and both enqueue to AutoCount.
+
+This is the same back door `docs/unlinked-line-duplicate-coe.md` was written for
+on 2026-08-04, when one Sales Order shipped twice. Five chains were closed then.
+That COE's own deferred table says *"All four links in the chain are now
+guarded"* — true of the four it enumerated, and read ever since as "the chain is
+closed". It was not: the owner's instruction that day was 「包括 GR 那边也是」,
+the RECEIVING half was built (`grn-unlinked-po-lines.ts`) and the BILLING half
+was never done. Four guards were mistaken for a closed chain; there were six.
+The stock chains lose goods — this one loses money.
+
+**Fix.** `findUnlinkedPiLines` + `unlinkedInvoiceResponse` in
+`backend/src/scm/lib/return-unlinked-lines.ts`, reusing the identical narrow
+predicate all five siblings share: header names no parent -> allowed; item not
+on the named parent -> allowed; item IS on the named parent -> 409, link it.
+Wired into BOTH paths that can create such a line — `POST /` (including the
+`?grnId=` draft path) and `POST /:id/items`, which is the likelier one, since the
+operator converts the GRN properly and then types the missing item in by hand.
+The add-line path now selects the parent's `grn_id` alongside `id`; without it
+there is no parent to check against. No schema change. A freight or service line,
+and any item the receipt does not contain, passes untouched — asserted directly,
+because a guard that breaks legitimate invoicing gets removed rather than fixed.
+The COE's over-claiming sentence is corrected in place. **Ref** PR #PLACEHOLDER,
+2026-08-17.
+
+## An unreceived PO showed ZERO outstanding lines, and the picker said "every line has been received" [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** Owner, 2026-08-17: 「我的这个 PO 要 convert to GRN,它是 convert 不到
+的,显示是空的」 and 「我明明没有把 PO transfer 去 GRN 过,但我要 transfer 的时候
+却不行」. He opened **Pick PO lines for this GRN** scoped to one PO (`?poId=`,
+banner *"Reviewing this PO — outstanding lines are pre-filled"*), the grid
+returned 0 rows, and the empty state read *"No outstanding PO lines — every line
+has been received (or there are no outstanding POs)."* That PO had never been
+received. **Pick Sales Orders for this PO** returned 498 rows on the same screen
+and worked, which is what made it look like a GRN-specific fault.
+
+**Root cause (traced, not guessed).** THREE independent mechanisms, and the bug
+is that all three were silent. In `backend/src/scm/routes/grns.ts`,
+`GET /outstanding-po-items`:
+
+1. **`.limit(500)` sat on the RAW `purchase_order_items` select, and BOTH filters
+   ran AFTERWARDS in JavaScript** — the parent-status filter and
+   `qty - received_qty > 0`. So the 500-row window was spent on every PO line in
+   the company, received or not, draft or not. The picker never saw "the first
+   500 outstanding lines"; it saw "however many of an arbitrary 500 lines
+   happened to be outstanding". A PO outside that window was invisible.
+2. **The window was ordered by `purchase_order_id DESC`** — a uuid key order, not
+   a date order, so WHICH 500 lines came back was arbitrary rather than newest.
+3. **`?poId=` never reached the server.** `GrnFromPo.tsx` applied the scope in the
+   browser, to the already-truncated list, so scoping could only NARROW the
+   window and never recover a PO that fell outside it. The banner naming the PO
+   read its doc number off the same truncated rows, which is why it degraded to
+   the anonymous *"this PO"* in exactly the case the operator needed it named.
+
+The mobile convert wizard (`MobileConvertWizard.tsx`) fetched the same unscoped
+endpoint and filtered by `selectedPoIds` client-side, so it inherited all three.
+
+This is the THIRD instance of one class in one week: MRP planned over 1,000 of
+13,916 demand rows behind a `.limit(5000)` above PostgREST's `db-max-rows`
+(#2300), and the From-SO picker carries its own `.limit(500)` with its filters
+after it. **A cap above a later filter is not a cap on the answer — it is a cap
+on the QUESTION**, and in all three cases the screen reported the truncated
+answer as a complete one.
+
+**Fix.** The read is PAGED, not capped (`pageWithTruncation` in
+`backend/src/scm/lib/outstanding-po-lines.ts` — deliberately not `paginateAll`,
+which returns `{data, error}` and so cannot distinguish "that is all of them"
+from "that is as many as I would read"). The dead-status filter moved into SQL
+using `.not('po.status','in',…)` on the embedded alias, the one form this repo
+has already proven in production on this same table and embed (`mrp.ts:535`); the
+exact SUBMITTED / PARTIALLY_RECEIVED set stays the JS gate, so behaviour is
+unchanged. `?poId=` is now a SQL predicate, which makes a scoped read exact and
+bounded by one PO's line count. Ordering moved to the line's own key, since paging
+needs a total order.
+
+And the message: `frontend/src/lib/outstandingEmptyReason.ts` replaces one
+sentence covering five situations with eight branches that each name their own
+cause — read failed / read truncated / PO not in this company / PO is DRAFT or
+CANCELLED or RECEIVED (status named) / genuinely fully received / hidden by the
+toolbar / already on the unsaved draft / nothing awaiting receipt. **Only the two
+branches that verified completion are allowed to claim it**, and that property is
+asserted directly by an enumeration over every branch rather than by reviewing
+the wording. The server returns the facts (`scope`) because only it knows the
+PO's status and whether its own read stopped early; desktop and mobile share the
+one logic layer. `backend/scripts/probe-transfer-census.mjs` replays the old
+window against production to measure what it hid, and every one of its queries
+is EXECUTED against real Postgres by `tests-pg/probeTransferCensusSql.pg.test.ts`
+— the last probe died on unparsed SQL on its first dispatch. **Ref** PR
+#PLACEHOLDER, 2026-08-17.
 ## A purchase order that landed in AutoCount under AutoCount's own number could not be sent again by ANY path [high]
 
 <!-- area: AutoCount sync + write-back -->
