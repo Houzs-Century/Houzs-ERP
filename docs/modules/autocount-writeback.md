@@ -2109,7 +2109,7 @@ words. The owner reviewed a mockup and asked for five changes; all five live in
 
 | | |
 |---|---|
-| **Two filter strips, counts on the chips** | Status (Everything / Needs attention / Waiting / In AutoCount / Not accepted / Held back / Sent again) and Document (Sales orders / Delivery orders / Invoices / Purchase orders / Goods received / Supplier invoices). Both are `<FilterPills>`, the same component the Sales Order list uses. The tiles are gone: the counts were the only useful thing about them and a tile cannot be clicked. |
+| **Two filter strips, counts on the chips** | Status (Everything / Needs attention / Waiting / In AutoCount / Not accepted / Held back / Replaced — *"Sent again" until 2026-08-17*) and Document (Sales orders / Delivery orders / Invoices / Purchase orders / Goods received / Supplier invoices). Both are `<FilterPills>`, the same component the Sales Order list uses. The tiles are gone: the counts were the only useful thing about them and a tile cannot be clicked. |
 | **The reason, in three parts** | A headline, one sentence, and a **To fix** line, keyed by the server's `reason_kind` (`AC_REASON_COPY`). The headline is never behind a click — that was the owner's specific complaint. A `failed` row gets `AC_FAILED_COPY`, because the server deliberately does not classify those. *(The sentence and the To fix line moved behind opening the row the same day — see the section below.)* |
 | **Who was asked** | `acReplySource` labels the quote **AutoCount replied** (the row went through `dispatchOne`), **AutoCount was not asked** (every `skipped` row — all of them are decided at enqueue time or before `callAcService`, so no held-back document has ever reached the account book), or **The last send attempt reported** for a `pending` row, where the note may be either and nothing the server sends tells them apart. |
 | **Send again, per row** | Offered only where the server's `can_requeue` says a re-send can mean anything, and driven by `useAcRequeue` — one hook, both surfaces. |
@@ -2138,7 +2138,7 @@ contract**; the short version:
 | **The distinction did not move** | **AutoCount replied** / **AutoCount was not asked** is still on every quote. |
 | **A reason is read by the owner** | `acParentlessCreateReason` moved into `autocount-outbox-status.ts`, beside the `no-source-document` needle it must keep containing, and `backend/tests/autocountSyncReasonsCatalogue.test.ts` pins both halves. Rewording the writer does not clean the queue — `scm.autocount_outbox` is append-only and `last_error` is never rewritten, so the render rule is what fixes rows already in the table. |
 | **A refusal that names no field says so** | `AC_FAILED_COPY.toFix` no longer reads "Put right whatever AutoCount named". `Invalid transfer item.` names nothing, and those lines were measured correct against the live book the same day (`autocount-sync-reasons.md` §4). It now covers both cases and, for the second, says who to tell. |
-| **History is folded** | `acSplitSuperseded(rows, state)` takes `requeued` rows out of the list into *"N superseded rows, kept as a record"*, closed on arrival (`useAcSupersededGroup`), on both surfaces — except under the **Sent again** filter, where they ARE the list. His screen was fifteen rows with six of them history and two documents appearing twice. |
+| **History is folded** | `acSplitReplaced(groups, state)` takes documents whose newest send is `requeued` out of the list into *"N replaced documents, kept as a record"*, closed on arrival (`useAcReplacedGroup`), on both surfaces — except under the **Replaced** filter, where they ARE the list. His screen was fifteen rows with six of them history and two documents appearing twice. *(Was `acSplitSuperseded(rows, state)` over ROWS until 2026-08-17 — see the section below.)* |
 | **A load failure is the page's sentence** | `AC_LOAD_FAILED_LINE`, with the transport's words quoted under it rather than spliced into it. Same for the `Send again` throw path, whose text used to end `: ${e.message}`. |
 
 #### Simplified the same day — the row is ONE LINE
@@ -2215,12 +2215,48 @@ which the API does not carry at all, and it renders as a **To do** line under
 the sentence. A code with no entry shows nothing rather than a bare hyphenated
 key, so a new outcome still reads correctly the day it ships.
 
+#### Corrected 2026-08-17 — the unit was the SEND, and the badge was an order
+
+He read the page a third time and found two more, both display and neither a
+fault in what the ERP writes.
+
+**「为什么在 AutoCount 里面一张 Sales Order 会出现两次呢?」** Under **In AutoCount →
+Sales orders**, `HC-SO-2608-002` was FOUR of six rows — three changes and the
+create. `AED_HOUZS` holds exactly one of it, verified by direct SQL. The queue is
+append-only and writes one row per intended operation (0277), so that document IS
+four rows for good; the list was one row per SEND and the header read *"6 of 17
+documents"* over it.
+
+| | |
+|---|---|
+| **One row per document** | `acGroupByDocument(rows)` in the shared layer, keyed on `doc_type + doc_no` — the pair `autocount_outbox_doc_idx (company_id, doc_type, doc_no)` was created to answer with. Not `doc_no` alone (six types, one number can belong to two, and folding them would LOSE a document); not `doc_id` (0277 declares it nullable and untyped so a row survives its document being reworked). |
+| **The newest send draws the row** | `group.current`. Under a status filter that is the newest send MATCHING the filter — the honest answer to the question the filter asked. |
+| **The audit trail is kept** | *"N earlier sends for this document"* (`acEarlierSendsHeading`, `data-ac-send`), folded on arrival, on both surfaces. 0277 exists so "what did we tell AutoCount, when, and what did it answer" is a SELECT a year later; nothing is dropped. |
+| **Both strips count documents** | the type chips over the loaded page (`acDocTypeCounts` takes groups now), the status chips at the SERVER. The route's six `count: 'exact', head: true` queries became TWO paged scans — `id, doc_type, doc_no, status` for the company, plus the ids matching `REQUEUED_LIKE` — reduced to distinct `doc_type + doc_no`. Fewer round trips than before, no `last_error` downloaded, and the state per row still comes from the shared `acOutboxState`. |
+| **The counts do not sum to the total** | on purpose. A document that arrived and was later edited into a refusal is counted by **In AutoCount** AND by **Not accepted**, because both are true of it and both chips list it. `total` is distinct documents. |
+| **A partial count says so** | the scan stops at `AC_DOC_SCAN_MAX` (20,000) and answers `counts_complete: false`; the page adds *"the numbers on the chips are at least this many and possibly more"* to the amber banner. An undercount must never read as a count. Past that cap this wants a `count(distinct …)` in SQL, which PostgREST cannot express — the open item is recorded in `docs/autocount-sync-reasons.md`. |
+
+**「你写 Send Again,明明都已经进去了,为什么还要 Send Again？」** The badge read **SENT
+AGAIN** — the same two words as the **Send again** BUTTON beside it — on seven of
+seventeen rows, on exactly the rows where pressing it is the one thing a reader
+must not do, and the row's own body then said *"Already sent again under a newer
+row · this row is history"*.
+
+The state is **Replaced** now, on the badge and the chip; the status line is
+*Replaced by a newer send*; the headline is *Replaced by a newer send — nothing to
+do on this one*. The rule, which is what the next person needs rather than the
+words: **a state is something that happened TO the record and is never named with
+the imperative of a control beside it.** `AC_SEND_AGAIN_LABEL` is unchanged.
+`docs/autocount-sync-reasons.md` §0a is the contract and
+`frontend/src/lib/autocountOutbox.test.ts` asserts the strings carry neither the
+button's words nor `re-queue` / `supersede` / `row`.
+
 **`docType` is no longer sent to the server**, though the endpoint still accepts
 it. The type strip has to carry a count for every type, and a response already
 narrowed to one type makes every other chip read zero — so the type is applied on
 the client (`acRowsOfType` / `acDocTypeCounts`) while `state` and `docNo` stay
 server-side. Consequence, stated on screen when `truncated` is true: the STATUS
-counts are exact and whole-company, the TYPE counts are of the rows loaded.
+counts are exact and whole-company, the TYPE counts are of the DOCUMENTS loaded.
 
 **IT WAS READ-ONLY UNTIL 2026-08-16.** This paragraph read: *"There is no
 re-queue button … Putting that behind a button is a decision the owner has not
