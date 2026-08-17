@@ -1,5 +1,5 @@
-import { Suspense, type ReactNode } from "react";
-import { ChunkReloadBoundary } from "../components/RouteFallback";
+import { type ReactNode } from "react";
+import { LazySlot } from "../components/LazySlot";
 
 /**
  * Mobile's equivalent of the desktop RouteCrashBoundary, and it exists because
@@ -16,9 +16,10 @@ import { ChunkReloadBoundary } from "../components/RouteFallback";
  * moving to another tab clears the crash, which is exactly what the desktop
  * shell has done since 2026-07-13 ("整个 system 都崩溃掉了").
  *
- * The Suspense sits INSIDE the boundary on purpose: a lazy import that rejects
- * throws on the render that Suspense resumes, so a boundary nested within it
- * would never see the failure.
+ * It is a thin naming layer over LazySlot, which owns the boundary/Suspense
+ * pairing (including why the Suspense must sit INSIDE the boundary) for the
+ * whole tree. Kept as its own name because the mobile shell's call sites read
+ * better for it and its resetKey rule is specific: state, never the URL.
  */
 export function MobileCrashBoundary({
   resetKey,
@@ -31,8 +32,8 @@ export function MobileCrashBoundary({
   children: ReactNode;
 }) {
   return (
-    <ChunkReloadBoundary resetKey={resetKey}>
-      <Suspense fallback={fallback}>{children}</Suspense>
-    </ChunkReloadBoundary>
+    <LazySlot resetKey={resetKey} fallback={fallback}>
+      {children}
+    </LazySlot>
   );
 }

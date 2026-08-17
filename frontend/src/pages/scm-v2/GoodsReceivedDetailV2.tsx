@@ -2,10 +2,11 @@
 // doc: goods land at a warehouse, PO's received_qty rolls up. Aside hero =
 // Received value + qty landed, tinted green once posted.
 
-import { lazy, Suspense, useCallback, useMemo, useState, type ReactNode } from "react";
+import { lazy, useCallback, useMemo, useState, type ReactNode } from "react";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -264,18 +265,25 @@ const GoodsReceivedDetailInlineEditor = lazy(() =>
   import("./GoodsReceivedDetail").then((m) => ({ default: m.GoodsReceivedDetail })),
 );
 
-/* Thin router — the only hook it calls is useSearchParams, so Rules of Hooks
+/* Thin router — the only hooks it calls are useSearchParams and useLocation
+   (both unconditional, at the top), so Rules of Hooks
    are respected when the ?edit=1 flip swaps between the read-only body and the
    lazy inline editor (the two children have different hook counts). */
 export function GoodsReceivedDetailV2() {
   const [params] = useSearchParams();
+  const location = useLocation();
   if (params.get("edit") === "1") {
+    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
+       so a failed editor chunk shows the panel in place of the editor and
+       clears when the operator moves to another document, instead of leaning
+       on a boundary in a file this one cannot see. */
     return (
-      <Suspense
+      <LazySlot
+        resetKey={`grn-editor:${location.pathname}`}
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
       >
         <GoodsReceivedDetailInlineEditor />
-      </Suspense>
+      </LazySlot>
     );
   }
   return <GoodsReceivedDetailV2ReadOnly />;

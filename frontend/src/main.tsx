@@ -1,4 +1,4 @@
-import React, { Suspense, lazy } from "react";
+import React, { lazy } from "react";
 import ReactDOM from "react-dom/client";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import App from "./App";
@@ -15,6 +15,7 @@ import { AuthGate } from "./auth/AuthGate";
 import { PwaBanners } from "./components/PwaBanners";
 import { NewVersionBanner } from "./components/NewVersionBanner";
 import { ChunkReloadBoundary } from "./components/RouteFallback";
+import { LazySlot } from "./components/LazySlot";
 import { registerPwa } from "./pwa";
 import { installGlobalErrorReporting } from "./lib/errorReporter";
 import { installChunkFailureWatch } from "./lib/staleBuild";
@@ -162,48 +163,48 @@ function RootApp() {
   const surface = useAppSurface();
   if (surface === "survey") {
     return (
-      <Suspense fallback={<PublicFallback />}>
+      <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <SurveyPublic />
-      </Suspense>
+      </LazySlot>
     );
   }
   if (surface === "portal") {
     return (
-      <Suspense fallback={<PublicFallback />}>
+      <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <PortalApp />
-      </Suspense>
+      </LazySlot>
     );
   }
   if (surface === "reset") {
     return (
-      <Suspense fallback={<PublicFallback />}>
+      <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <Routes>
           <Route path="/reset/:token" element={<ResetPassword />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
-      </Suspense>
+      </LazySlot>
     );
   }
   if (surface === "invite") {
     return (
       <AuthProvider>
-        <Suspense fallback={<PublicFallback />}>
+        <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
           <Routes>
             <Route path="/invite/:token" element={<AcceptInviteScreen />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Routes>
-        </Suspense>
+        </LazySlot>
       </AuthProvider>
     );
   }
   if (surface === "privacy") {
     return (
-      <Suspense fallback={<PublicFallback />}>
+      <LazySlot resetKey={`public:${surface}`} fallback={<PublicFallback />}>
         <Routes>
           <Route path="/privacy" element={<PrivacyPolicy />} />
           <Route path="*" element={<Navigate to="/privacy" replace />} />
         </Routes>
-      </Suspense>
+      </LazySlot>
     );
   }
   return (

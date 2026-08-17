@@ -16,16 +16,34 @@
 //      caught by the handler's own try/catch and shown as a toast, so no
 //      boundary runs, and errorReporter's `unhandledrejection` listener never
 //      fires either because nothing is left unhandled. As of 2026-08-18 there
-//      are 55 such sites outside tests
-//      (`git grep -c "await import(" -- 'frontend/src' ':!*.test.*'`), and
-//      patching them one at a time is not a fix of the class.
+//      are 55 such sites outside tests, and patching them one at a time is not
+//      a fix of the class. The command that reproduces 55 has to drop comment
+//      lines, because THIS comment and NewVersionBanner's header both quote the
+//      phrase and an unfiltered `git grep -c` counts its own prose:
+//        git grep -n "await import(" -- 'frontend/src' ':!*.test.*' \
+//          | grep -vE "^[^:]+:[0-9]+: *(//|\*)" | wc -l
 //
-// Vite's preload helper is the ONE place both populations pass through. Every
-// dynamic import in a production build is rewritten to `__vitePreload(() =>
-// import(...), deps)`, whose tail is literally
-// `return baseModule().catch(handlePreloadError)`, and handlePreloadError
-// dispatches a cancelable `vite:preloadError` on window before rethrowing.
-// Listening there covers the whole class at one site.
+// Vite's preload helper is the ONE place both populations pass through. Vite
+// rewrites a dynamic import to `__vitePreload(() => import(...), deps)`, whose
+// tail is literally `return baseModule().catch(handlePreloadError)`, and
+// handlePreloadError dispatches a cancelable `vite:preloadError` on window
+// before rethrowing. Listening there covers the whole class at one site.
+//
+// MEASURED, not assumed — because "every dynamic import goes through it" is a
+// completeness claim and this repo has been burned by unbacked ones. Built this
+// tree with `npx vite build` on 2026-08-18 and parsed all 410 emitted chunks
+// with the TypeScript parser, counting `import()` call expressions and checking
+// each for an enclosing `F(() => …, __vite__mapDeps([…]))`:
+//
+//     chunks=410 dynamic-import sites=329 wrapped-by-preload-helper=329 bare=0
+//
+// That is one build of one tree on one day, so it is evidence about THIS
+// toolchain rather than a law about Vite. The shape it depends on is pinned by
+// staleBuild.test.ts, which reads `return baseModule().catch(handlePreloadError)`
+// and the event dispatch back out of node_modules/vite — if a Vite upgrade
+// changes the helper, the suite goes red instead of the coverage going quietly
+// dead. Re-run the scan (it is in the commit body) rather than trusting the
+// number above after a Vite bump.
 //
 // WHAT THIS DOES AND DOES NOT DO — stated plainly, because the previous pass
 // left the gap undisclosed:
@@ -111,8 +129,36 @@ export function noteChunkFailure(err: unknown): void {
   // handlePreloadError, and that is a page bug, not a deploy.
   if (!isDeployStaleEvidence(err)) return;
   chunkFailed = true;
-  // IT should know: unlike a route chunk, this failure self-heals for nobody —
-  // the operator's click just silently did nothing useful.
+  // WHO GETS REPORTED HERE, stated accurately — an earlier version of this
+  // comment said "unlike a route chunk, this failure self-heals for nobody",
+  // and that is false. This listener cannot tell the two populations apart:
+  // the helper wraps ROUTE lazies too (329 of 329 sites in the build, see the
+  // header), so a routine route-chunk miss that ChunkReloadBoundary is about
+  // to heal on its own also lands here and also gets reported.
+  //
+  // That looks like it contradicts RouteFallback's giveUp(), which reports only
+  // the PERSISTED case on the stated grounds that routine misses "would be pure
+  // noise". It does not, for two reasons, and both are load-bearing:
+  //   • VOLUME. The store latches at the guard above, so this fires at most once
+  //     per tab per session no matter how many imports fail. giveUp() sits on a
+  //     path a busy tab can reach repeatedly.
+  //   • BAR. It is gated on isDeployStaleEvidence, the narrow matcher, so what
+  //     is reported is "a tab could not fetch a module", which is worth one line
+  //     whether or not a boundary healed it.
+  //
+  // The same overlap has a VISIBLE consequence, so it was measured rather than
+  // reasoned about: because the banner is mounted at RootApp it sits outside
+  // both RouteCrashBoundary and MobileCrashBoundary, so a route-chunk failure
+  // that spends the ladder puts the crash PANEL and this pill on screen at once.
+  // Checked 2026-08-18 in a browser against a throwaway harness that mounted the
+  // real ChunkReloadBoundary (seeded with a `hard` mark so it renders the panel)
+  // beside the real banner, and read getBoundingClientRect for both:
+  //   375x812   panel "Reload now" 204-242, pill 650-722 — no overlap
+  //   375x420   panel "Reload now" 204-242, pill 258-330 — no overlap, and
+  //             elementFromPoint at the button's centre returns the BUTTON
+  //   1280x800  panel "Reload now" 188-226, pill 728-776 — no overlap
+  // The panel is in normal flow near the top; the pill is fixed to the bottom
+  // inset. Both offer the same correct action and neither covers the other.
   reportClientError(err, "chunk-load-failed");
   for (const notify of [...listeners]) notify();
 }
