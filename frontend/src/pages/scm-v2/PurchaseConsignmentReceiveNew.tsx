@@ -578,9 +578,14 @@ export const PurchaseConsignmentReceiveNew = () => {
             {selPoId
               ? (poQ.isLoading
                   ? 'Loading order items…'
-                  : lines.length === 0
-                    ? 'No outstanding lines on this order (all qty already received)'
-                    : `${lines.length} line${lines.length === 1 ? '' : 's'} · ${totalQty} qty · subtotal ${fmtRm(subtotalCenti, currency)}`)
+                  /* Same shape as GrnNew: no error arm, and an empty arm that
+                     reported the absence as a finished receipt. Both are now
+                     told apart, and neither claims the order is complete. */
+                  : poQ.isError
+                    ? "We couldn't load this order's lines — please refresh and try again."
+                    : lines.length === 0
+                      ? 'No outstanding lines came back for this order. Open the consignment order and check its balance before treating it as received in full.'
+                      : `${lines.length} line${lines.length === 1 ? '' : 's'} · ${totalQty} qty · subtotal ${fmtRm(subtotalCenti, currency)}`)
               : lines.length === 0
                 ? 'Manual receipt — pick a supplier above, then add items below'
                 : `${lines.length} line${lines.length === 1 ? '' : 's'} · ${totalQty} qty · subtotal ${fmtRm(subtotalCenti, currency)}`}

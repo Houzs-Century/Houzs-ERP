@@ -57,7 +57,7 @@ export function NotificationBell({
   tone = "sidebar",
   unread = "count",
 }: Props) {
-  const { feed, totalUnread } = useNotifications();
+  const { feed, totalUnread, loadFailed } = useNotifications();
   const { user } = useAuth();
   const qc = useQueryClient();
   const [open, setOpen] = useState(false);
@@ -166,6 +166,7 @@ export function NotificationBell({
       {open && (
         <BellPopover
           feed={feed}
+          loadFailed={loadFailed}
           systemNotices={systemNotices}
           onMarkRead={markRead}
           onNavigate={() => setOpen(false)}
@@ -179,6 +180,7 @@ export function NotificationBell({
 
 function BellPopover({
   feed,
+  loadFailed,
   systemNotices,
   onMarkRead,
   onNavigate,
@@ -186,6 +188,7 @@ function BellPopover({
   align,
 }: {
   feed: NotificationItem[];
+  loadFailed: boolean;
   systemNotices: BannerAnnouncement[];
   onMarkRead: (a: BannerAnnouncement) => void;
   onNavigate: () => void;
@@ -262,7 +265,21 @@ function BellPopover({
           </div>
         )}
 
-        {total === 0 ? (
+        {/* THREE consumers read useNotifications(); TWO of them consulted
+            `loadFailed` before rendering a reassuring empty state and this one
+            did not — the same rule-at-N-call-sites-present-at-N-minus-1 shape
+            the rest of this branch is about. The hook's own contract says
+            consumers MUST consult it (hooks/useNotifications.tsx), because
+            `feed: []` after a failed poll means "we don't know", not "there is
+            nothing". This popover is the fastest surface in the app for
+            deciding whether anything needs you, and on a failed poll it said
+            you were caught up. */}
+        {total === 0 && loadFailed ? (
+          <div className="px-4 py-8 text-center text-[11px] text-ink-muted">
+            <p className="font-semibold text-ink">We couldn't load your notifications.</p>
+            <p className="mt-1">This is not the same as having none. Open Notifications to retry.</p>
+          </div>
+        ) : total === 0 ? (
           <div className="px-4 py-8 text-center text-[11px] text-ink-muted">
             Nothing new. You're caught up.
           </div>

@@ -1,0 +1,190 @@
+{
+  "_README": [
+    "REVIEWED completion claims. NO EMPTY STATE MAY CLAIM THE WORK IS DONE (owner",
+    "2026-08-17): a screen that got back nothing may say what it LOOKED FOR, never",
+    "what is TRUE OF THE BUSINESS. backend/scripts/check-empty-state-claims.mjs",
+    "finds claim-SHAPED strings; a regex cannot read meaning, so this file is where",
+    "a person records the judgement. Every entry needs a `why` that would survive",
+    "being read out loud. A string not listed here FAILS the build — that is the",
+    "whole point: silence becomes a decision.",
+    "",
+    "Keyed by (file, normalized line text) and NOT by line number, so a merge that",
+    "moves a string keeps its review and an EDIT to a string re-opens it.",
+    "",
+    "Entries whose string is gone are reported as STALE and printed, never failed —",
+    "a gate that punishes somebody for fixing a string is a gate that stops fixes.",
+    "Clear them anyway."
+  ],
+  "reviewed": [
+    {
+      "file": "backend/src/scm/lib/convert-ceilings.test.ts",
+      "text": "test('a PO line amended BELOW what was already received refuses any further GRN', () => {",
+      "why": "A test NAME describing a fixture, not a string any operator can see."
+    },
+    {
+      "file": "backend/src/scm/lib/migrated-chain.test.ts",
+      "text": "it('refuses a document with nothing left to invoice', () => {",
+      "why": "A test NAME describing the refusal under test, not product copy."
+    },
+    {
+      "file": "backend/src/scm/lib/po-allocations.test.ts",
+      "text": "it('returns null when the line is fully allocated — deliberate splits are not touched', () => {",
+      "why": "A test NAME describing a return value, not product copy."
+    },
+    {
+      "file": "backend/src/scm/lib/po-allocations.ts",
+      "text": "message: `This line orders ${lineQty}; ${otherSum} of that is already allocated, so at most ${Math.max(0, lineQty - otherSum)} more can be.`,",
+      "why": "Arithmetic about the one line being edited, with both numbers printed — the reader can check it against the line in front of them."
+    },
+    {
+      "file": "backend/src/scm/lib/po-revision.ts",
+      "text": "+ `was already received, so it was kept on the order instead of being removed. Handle it by hand.`,",
+      "why": "A warning about one named line whose received qty was read; it explains why a removal was refused, and refusing is the fail-closed direction."
+    },
+    {
+      "file": "backend/src/scm/lib/pv-rate-adoption.test.ts",
+      "text": "test('a fully-clamped allocation (the invoice was already paid) adopts nothing', () => {",
+      "why": "A test NAME describing a fixture, not product copy."
+    },
+    {
+      "file": "backend/src/scm/lib/so-revision.ts",
+      "text": "warnings.push(`A removed item (${label}) was already received on purchase order ${po.po_number}, so it was left on the purchase order and needs manual handling (for example, a purchase return).`);",
+      "why": "Names the item and the purchase order it was received on, from a read of that PO — a specific finding the operator can verify, not an absence."
+    },
+    {
+      "file": "backend/src/scm/routes/delivery-orders-mfg.ts",
+      "text": "reason: 'A cancelled Delivery Order cannot be reactivated — its stock was already returned. Create a new DO to deliver again.',",
+      "why": "A fact read off the cancelled DO's own row, explaining why reactivation is refused. The refusal is the safe direction."
+    },
+    {
+      "file": "backend/src/scm/routes/grns.ts",
+      "text": "if (itemList.length === 0) return c.json({ error: 'nothing_outstanding', message: 'All PO items are already fully received' }, 400);",
+      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states, which owns backend/src/scm/routes/grns.ts this hour. Its five siblings are reworded on this branch; re-review this one when that branch lands."
+    },
+    {
+      "file": "backend/src/scm/routes/mfg-sales-orders.ts",
+      "text": "reason: 'A cancelled Sales Order cannot be reactivated — its deposit was already converted to customer credit. Create a new SO instead.',",
+      "why": "A fact read off the cancelled SO's own row, explaining a refusal. The refusal is the safe direction."
+    },
+    {
+      "file": "backend/src/scm/routes/purchase-invoices.ts",
+      "text": "if (lines.length === 0) return c.json({ error: 'nothing_to_invoice', message: 'GRN is fully invoiced' }, 400);",
+      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states, which owns backend/src/scm/routes/purchase-invoices.ts this hour. Reword with its MobileConvertWizard twin."
+    },
+    {
+      "file": "backend/src/scm/shared/po-amendment.test.ts",
+      "text": "it(\"blocks every action once the amendment is closed\", () => {",
+      "why": "A test NAME about a state machine; closed here is the amendment's own status, not a claim that work finished."
+    },
+    {
+      "file": "backend/src/services/projects.ts",
+      "text": "-- Section totals so the UI can show \"complete\" when all are done.",
+      "why": "A SQL comment inside a template literal, so it is invisible to the stripper and to every user; it describes a computed column, not an empty state."
+    },
+    {
+      "file": "frontend/src/components/NotificationBell.tsx",
+      "text": "Nothing new. You're caught up.",
+      "why": "Per-user notification feed, and the arm above it now renders the failed-poll case separately — useNotifications exposes loadFailed and all three consumers consult it. No document chain hangs on this sentence."
+    },
+    {
+      "file": "frontend/src/lib/autocountOutbox.test.ts",
+      "text": "expect(h.text).not.toContain(\"Everything is in AutoCount\");",
+      "why": "A test asserting the claim is ABSENT. Quoting a claim in order to forbid it is the opposite of making it."
+    },
+    {
+      "file": "frontend/src/lib/autocountOutbox.test.ts",
+      "text": "expect(h.text).toContain(\"Everything is in AutoCount\");",
+      "why": "A test pinning the healthy-queue headline, which is now unreachable unless the server reported counts_complete. It asserts the guard, it does not ship copy."
+    },
+    {
+      "file": "frontend/src/lib/autocountOutbox.ts",
+      "text": ": \"Everything is in AutoCount. Nothing is waiting and nothing was refused.\",",
+      "why": "Same guard: only reachable when the server finished its count scan and reported counts_complete, which is the one state in which this sentence is supportable."
+    },
+    {
+      "file": "frontend/src/lib/autocountOutbox.ts",
+      "text": "? `Everything is in AutoCount. ${d.counts.pending} still on the way, going out with the next five-minute send.`",
+      "why": "Now unreachable unless the server set counts_complete: acHeadline returns the partial-count line first, because a count that is a floor cannot support a verdict."
+    },
+    {
+      "file": "frontend/src/lib/autocountOutbox.ts",
+      "text": "\"Nothing more to do. One thing to know: this kind is sent exactly as it was first written down, so if you changed the document after it was refused, that change is not in what goes out.\",",
+      "why": "Same single-row case as the requeued line above — a fact read off the row in hand, not a conclusion drawn from an empty list."
+    },
+    {
+      "file": "frontend/src/lib/autocountOutbox.ts",
+      "text": "requeued: \"Nothing more to do. It goes out with the next five-minute send.\",",
+      "why": "Describes ONE outbox row the caller is looking at, not an absence: the row was replaced by a newer send, which is a fact about that row's own status column."
+    },
+    {
+      "file": "frontend/src/mobile/MobileAnnouncements.tsx",
+      "text": "<div className=\"empty-t\">You're all caught up</div>",
+      "why": "Rendered only under !systemQ.isLoading && !systemQ.error, so a failed read shows the error arm instead. An announcement feed, not outstanding work."
+    },
+    {
+      "file": "frontend/src/mobile/MobileConvertWizard.tsx",
+      "text": "<Muted>Nothing left to {noun} on this document.</Muted>",
+      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states, which owns this file this hour. Re-review when it lands — do not let this entry outlive that branch."
+    },
+    {
+      "file": "frontend/src/mobile/MobileConvertWizard.tsx",
+      "text": "<Muted>Nothing left to receive on the selected order(s).</Muted>",
+      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states, which owns this file this hour. Re-review when it lands."
+    },
+    {
+      "file": "frontend/src/mobile/MobileConvertWizard.tsx",
+      "text": "nothing_outstanding: \"All selected Purchase Order lines are already fully received.\",",
+      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states. Mirrors grns.ts, also deferred — reword the pair together or the two surfaces disagree."
+    },
+    {
+      "file": "frontend/src/mobile/MobileConvertWizard.tsx",
+      "text": "nothing_to_invoice: \"This Goods Receipt is already fully invoiced.\",",
+      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states. Mirrors the backend refusal message in purchase-invoices.ts, which is also deferred — the pair must be reworded together."
+    },
+    {
+      "file": "frontend/src/mobile/MobileConvertWizard.tsx",
+      "text": "nothing_to_return: \"This Goods Receipt is already fully returned.\",",
+      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states. Same pairing as nothing_to_invoice above."
+    },
+    {
+      "file": "frontend/src/mobile/MobileDeliveryPlanning.tsx",
+      "text": "await notify({ title: \"Nothing to deliver\", body: \"Every line on this order is already delivered.\" });",
+      "why": "Shown on the server's already_delivered refusal for ONE named sales order, not on an empty list render — the server read that order and answered about it."
+    },
+    {
+      "file": "frontend/src/mobile/MobileInbox.tsx",
+      "text": "<div className=\"empty-t\">You're all caught up.</div>",
+      "why": "The arm directly above renders the failed-poll case from useNotifications' loadFailed, so this branch only runs on a read that answered."
+    },
+    {
+      "file": "frontend/src/pages/Notifications.tsx",
+      "text": ": \"You're caught up\"}",
+      "why": "The header subtitle, and its own ternary tests loadFailed && feed.length === 0 first, so a failed poll reads Couldn't load instead."
+    },
+    {
+      "file": "frontend/src/pages/Notifications.tsx",
+      "text": "Nothing new. You're caught up.",
+      "why": "Reached only after the loadFailed arm above it has been ruled out; the failed read renders its own panel with a Retry button."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/DeliveryPlanning.tsx",
+      "text": "parts.push(`Skipped ${res.skipped.length} already fully delivered: ${res.skipped.map((r) => r.docNo).join(', ')}.`);",
+      "why": "Reports what the server DID, document by document, and names each one — a per-document result the caller can check, not a conclusion drawn from an absence."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/grnFromPoEmptyState.test.tsx",
+      "text": "expect(screen.queryByText(/every line has been received/i)).toBeNull();",
+      "why": "A negative assertion — .toBeNull() on the forbidden wording. Deleting it would delete the regression test for the defect this gate exists for."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/grnFromPoEmptyState.test.tsx",
+      "text": "it(\"does not tell the operator every line was received when the query came back empty\", () => {",
+      "why": "The test that ENFORCES this rule on the from-PO picker. It quotes the forbidden sentence in order to assert it is absent."
+    },
+    {
+      "file": "frontend/src/portal/pages/PortalCaseDetail.tsx",
+      "text": "completed: { step: 5, eyebrow: \"Completed\", title: \"All done — thank you\", body: \"Your service case has been closed. We'd love to hear how we did.\" },",
+      "why": "A step label keyed off the case's own status column on a case the portal loaded by id, not an empty-result render."
+    }
+  ]
+}

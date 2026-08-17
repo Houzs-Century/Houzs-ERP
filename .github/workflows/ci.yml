@@ -171,6 +171,24 @@ jobs:
       # cancelErrors and reversalErrors had ZERO readers, one of them a field
       # THIS branch had just started emitting, which made that fix half a feature.
       - run: node ../frontend/scripts/check-inband-failures.mjs --strict
+      # The SEVENTH: an empty state that CLAIMS THE WORK IS DONE. The owner's
+      # rule (2026-08-17) is that a screen which got back nothing may say what it
+      # LOOKED FOR and never what is TRUE OF THE BUSINESS — company scope fails
+      # closed (scm/lib/companyScope.ts -> .in('company_id', []) returns [] with
+      # error: null), PostgREST truncates at db-max-rows in silence, and a
+      # swallowed read error is shaped exactly like an empty one.
+      #
+      # It is here because the same screen shipped the same lie TWICE inside five
+      # commits — #2367 removed it, a rewritten helper five commits later put it
+      # back AND shipped a test declaring it correct. And it was the usual shape:
+      # NINE sibling convert pickers carried the sentence and ONE had been fixed.
+      #
+      # A REVIEWED ALLOWLIST, not a meaning detector: a regex cannot tell a claim
+      # from a quotation of one, so every claim-shaped string is either fixed or
+      # listed in scripts/data/empty-state-claim-allowlist.json with a reason,
+      # and a NEW one fails until somebody decides about it. Stale entries print
+      # and never fail — a gate that punishes the fix is a gate that stops fixes.
+      - run: npm run audit:empty-state-claims
 
 
       # ---- the bug-class gates (docs/bug-classes.md) ------------------------
