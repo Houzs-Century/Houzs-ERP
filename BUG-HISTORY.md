@@ -498,6 +498,27 @@ useful protection was on the CLASSIFICATION, not on the rule.
 
 **Ref.** 2026-08-17.
 
+## The card-style task block showed a dead Approve button on already-approved items [low]
+
+<!-- area: Projects + PMS + fair report -->
+
+**Symptom.** Owner 2026-08-17: "i cant click approve" — on an APPROVED Stock In
+Transfer Record (approved by the Owner account that same day), the expanded
+task card still showed an enabled Approve button that did nothing when clicked.
+
+**Root cause (traced).** Two rules collided. The 2026-08-08 idempotence guard
+makes re-approving an approved item a silent backend no-op (correct). The
+2026-08-10 per-decision toggle (hide the button that repeats the current
+decision, keep the one that reverses it) was applied to the table DocRow but
+NOT to the card-style block with the "Management remark" input — so that block
+kept rendering an enabled Approve whose click was swallowed by the guard, which
+reads as a broken button. Same class as the 08-10 report, one render site missed.
+
+**Fix.** Same toggle applied to the card block: approved → Reject only,
+rejected → Approve only, undecided → both.
+
+**Ref.** 2026-08-17.
+
 ## Cancelled and unconfirmed events kept generating everyone's My Pending work [medium]
 
 <!-- area: Projects + PMS + fair report -->
@@ -6240,6 +6261,42 @@ required check partly because of it. Expect a recurrence on the next
 **Ref** — #2143. Gate under test: itself.
 
 =======
+## Solo events said SOLO on the calendar while their organizer column said MALL MGMT [low]
+
+<!-- area: Projects + PMS + fair report -->
+
+**Symptom.** Owner, on the Excel export (2026-08-17): three same-event rows at
+IOI Mall Damansara — two named "… MALL MGMT @ IOI MALL DAMANSARA", one named
+"… SOLO @ …", all three with organizer = MALL MGMT. "on calender show solo but
+in excel mall mgt for name organizer."
+
+**Root cause, two layers.**
+
+1. `deriveProjectName` (and the frontend mirror `composeDefaultProjectName`)
+   deliberately forced the name's organizer slot to the literal "SOLO" for
+   solo-type events **even when an organizer was picked** — the comment said so
+   in bold. The owner's own data disagreed: 38 solo projects carry
+   "KAI HAO (KL, CHEN)" in their names.
+2. Editing the organizer field later never touched the name, so a project
+   created before the organizer was known kept "SOLO" forever.
+
+Nine production projects had the mismatch (SOLO in the name; MALL MGMT /
+KAI HAO / VINCENT in the organizer column).
+
+**Fix.** Data: the nine names were rewritten live from the organizer column
+(sweep now returns zero). Code: a picked organizer always fills the name slot —
+"SOLO" is only the empty-organizer fallback — and a PATCH that changes the
+organizer swaps the name's slot too, but ONLY when the current name still
+carries the old organizer or the SOLO placeholder, so a hand-written custom
+name is never clobbered. The project CODE keeps its SOLO segment: it is the
+immutable identity and reads as the event type there.
+
+**The class, for next time.** When a derived label disagrees with the field it
+was derived from, check whether the derivation was ever re-run — a label
+written once is a snapshot, not a view.
+
+**Ref** — 2026-08-17, `fix/solo-name-organizer`.
+
 ## Defect-review region routing was a UI hint, not a rule — either reviewer could stamp any state [low]
 
 **Symptom.** Owner, on a Sarawak project: "sabah sarawak defect under shukor ya
