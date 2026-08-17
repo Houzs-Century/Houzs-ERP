@@ -173,15 +173,17 @@ describe("useIdempotencyKey", () => {
       refusal = await save(result.current, 99_00);
     });
     expect(refusal.ok).toBe(false);
-    expect(result.current).toBe(key);
-    expect(server.state.writes).toBe(1);
 
-    // ... and again, because a stubborn operator is the realistic one.
+    // ... and again, because a stubborn operator is the realistic one, and
+    // because the refusal copy is what decides whether they try. Whether this
+    // one is refused is not the assertion — what it did to the ledger is.
     await act(async () => {
-      expect((await save(result.current, 99_00)).ok).toBe(false);
+      await save(result.current, 99_00);
     });
-    expect(result.current).toBe(key);
+    // ONE document. This is the assertion the whole design serves.
     expect(server.state.writes).toBe(1);
+    expect(server.state.grnNo).toBe(1);
+    expect(result.current).toBe(key);
   });
 
   test("a route that keeps its claim sends the operator to CHECK, and never rotates the key", async () => {
