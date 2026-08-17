@@ -2065,6 +2065,13 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
             seatSize:       category === 'SOFA' ? (variants.seatHeight as string | undefined) ?? null : null,
             divanHeight:    (variants.divanHeight as string | undefined) ?? null,
             legHeight:      category === 'BEDFRAME' ? (variants.legHeight as string | undefined) ?? null : null,
+            /* Total height is PRICED (maintenanceConfig.totalHeights, BEDFRAME).
+               It was the one surcharge pool this call omitted, so the engine
+               costed it at 0 and every server-derived PO came out short by a
+               tier — RM80 on 2990-PO-2608-003's 18" CODY-(SS). See po-pricing.ts
+               for the full trace; all three backend callers were missing it
+               while all five frontend callers were not. */
+            totalHeight:    (variants.totalHeight as string | undefined) ?? null,
             sofaLegHeight:  category === 'SOFA' ? (variants.legHeight as string | undefined) ?? null : null,
             specials,
           },
@@ -3940,6 +3947,10 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
         seatSize:       category === 'SOFA' ? ((variants.seatHeight as string | undefined) ?? null) : null,
         divanHeight:    (variants.divanHeight as string | undefined) ?? null,
         legHeight:      category === 'BEDFRAME' ? ((variants.legHeight as string | undefined) ?? null) : null,
+        /* Priced pool, same as divan and leg — omitting it costed the total-height
+           surcharge at 0 on every PO this legacy append path raised. See
+           po-pricing.ts for the measured case (RM80, 2990-PO-2608-003). */
+        totalHeight:    (variants.totalHeight as string | undefined) ?? null,
         sofaLegHeight:  category === 'SOFA' ? ((variants.legHeight as string | undefined) ?? null) : null,
         specials,
       },

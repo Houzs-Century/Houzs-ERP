@@ -59,6 +59,7 @@ import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { loadUnlinkedDoCoverage } from '../lib/do-unlinked-coverage';
 import {
   resolveDoLineSources,
   resolveDoHeaderSources,
@@ -2226,6 +2227,31 @@ export async function soDeliverableRemaining(
     if (st === 'CANCELLED' || st === 'DRAFT') continue;
     doLineToSoItem.set(l.id, l.so_item_id);
     deliveredBySoItem.set(l.so_item_id, (deliveredBySoItem.get(l.so_item_id) ?? 0) + Number(l.qty ?? 0));
+  }
+
+  /* 2b. Σ delivered — shipments that LOST their so_item_id but whose DO header
+         still NAMES one of these orders. That column is nullable behind an
+         `ON DELETE SET NULL` FK, so deleting a single SO line blanks the
+         pointer on every document that served it. Reading only the pointer made
+         one nullable column the sole evidence a shipment happened, and a NULL
+         flip turned real deliveries invisible: the order stayed CONFIRMED and
+         MRP re-ordered goods already in the customer's house (26 lines across 8
+         live 2990 DOs, 2026-08-17). `delivery_orders.so_doc_no` is the second
+         reading — see lib/do-unlinked-coverage.ts for exactly what it will and
+         will not attribute. CAPPED BY THE LINKED SUM ABOVE, so a repaired line
+         and its unlinked twin can never both count. */
+  const attributed = await loadUnlinkedDoCoverage(
+    sb,
+    soDocNos,
+    lines.map((l) => ({ id: l.id, docNo: l.doc_no, itemCode: l.item_code, qty: Number(l.qty ?? 0) })),
+    deliveredBySoItem,
+  );
+  for (const a of attributed) {
+    /* Registered in doLineToSoItem as well, so a Delivery Return against one of
+       these lines nets out below exactly as it does for a linked one — a
+       returned unit must re-open the order however its delivery was counted. */
+    doLineToSoItem.set(a.doLineId, a.soItemId);
+    deliveredBySoItem.set(a.soItemId, (deliveredBySoItem.get(a.soItemId) ?? 0) + a.qty);
   }
 
   // 3. Σ returned — DR lines whose do_item_id traces (via the active DO line)

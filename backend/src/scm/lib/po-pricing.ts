@@ -79,7 +79,7 @@ export async function resolveMaintenanceConfigForSupplier(
    loop): the supplier's own material binding (`price_matrix` P2/P1 cells + flat
    `unit_price_centi` fallback) projected through the fabric tier resolved from
    the line's fabricCode, plus the supplier's maintenance surcharges (divan /
-   leg / specials), via the shared pure `computeMfgPoUnitCost`.
+   leg / total height / specials), via the shared pure `computeMfgPoUnitCost`.
 
    Reused by reviseBoundPo (Approve-PO amendment engine) so a revised bound-PO
    line re-derives its supplier cost from the now-revised SO line's spec instead
@@ -148,6 +148,18 @@ export async function deriveMfgPoUnitCost(
       seatSize:      category === 'SOFA' ? ((variants.seatHeight as string | undefined) ?? null) : null,
       divanHeight:   (variants.divanHeight as string | undefined) ?? null,
       legHeight:     category === 'BEDFRAME' ? ((variants.legHeight as string | undefined) ?? null) : null,
+      /* TOTAL HEIGHT IS A PRICED POOL, exactly like divan and leg — the engine
+         reads it for BEDFRAME out of the supplier's maintenance config. Leaving
+         it out handed the engine `undefined`, the lookup returned 0, and the
+         surcharge silently vanished: 2990-PO-2608-003's CODY-(SS) at 18" was
+         raised at RM407.50 against the SO line's own RM487.50 cost — exactly
+         one tier, RM80 — while the same order's 22" line matched, because that
+         tier is priced 0 and the omission was invisible on it. Every FRONTEND
+         caller has always passed this; all three BACKEND callers did not, which
+         is why a hand-keyed PO priced correctly and only server-derived ones
+         came out short. Passed unconditionally, as the frontend does; the
+         engine ignores it off BEDFRAME. */
+      totalHeight:   (variants.totalHeight as string | undefined) ?? null,
       sofaLegHeight: category === 'SOFA' ? ((variants.legHeight as string | undefined) ?? null) : null,
       specials,
     },

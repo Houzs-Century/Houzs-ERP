@@ -18,6 +18,7 @@ import type { SupabaseClient } from '@supabase/supabase-js';
 import { isServiceLine } from '../shared';
 import { recordSoAudit } from './so-audit';
 import { advanceSoGeneration } from './so-generation';
+import { loadUnlinkedDoCoverage } from './do-unlinked-coverage';
 
 export type SoLineQty = { id: string; qty: number };
 export type DoLineQty = { soItemId: string | null; qty: number };
@@ -117,6 +118,36 @@ export async function syncSoDeliveredFromDo(
         .not('delivery_orders.status', 'in', '("CANCELLED","DRAFT")');
       const doItemRows = (doItemsRaw ?? []) as Array<{ id: string; so_item_id: string | null; qty: number }>;
       const doLines = doItemRows.map((d) => ({ soItemId: d.so_item_id, qty: Number(d.qty) }));
+
+      /* THE SAME SHIPMENT, READ THE OTHER WAY. `so_item_id` is nullable behind
+         an `ON DELETE SET NULL` FK, so deleting ONE Sales-Order line blanks the
+         pointer on every document that served it — and isSoFullyCovered, which
+         opens with `if (!d.soItemId) continue`, then reads a delivered order as
+         undelivered and leaves it CONFIRMED for good (26 lines across 8 live
+         2990 DOs on 2026-08-17, while MRP re-ordered the same goods). The DO
+         header's own so_doc_no still records which order it served; attribute
+         on that, capped by what the real links already cover, so the two
+         readings can never double-count. Best-effort by construction: a failed
+         read yields [] and this stays exactly as strict as it was. */
+      const linkedByLine = new Map<string, number>();
+      for (const d of doLines) {
+        if (!d.soItemId) continue;
+        linkedByLine.set(d.soItemId, (linkedByLine.get(d.soItemId) ?? 0) + d.qty);
+      }
+      const attributed = await loadUnlinkedDoCoverage(
+        sb,
+        [docNo],
+        soLines.map((l) => ({ id: l.id, docNo, itemCode: l.item_code, qty: l.qty })),
+        linkedByLine,
+      );
+      /* Pushed into BOTH collections as ordinary delivered rows: doLines feeds
+         coverage + the READY stamp, doItemRows is what the return-netting maps
+         do_item_id through — a return against one of these must re-open the
+         order exactly as it does for a linked line. */
+      for (const a of attributed) {
+        doItemRows.push({ id: a.doLineId, so_item_id: a.soItemId, qty: a.qty });
+        doLines.push({ soItemId: a.soItemId, qty: a.qty });
+      }
 
       // DR 3B — Σ returned qty per SO line across all non-cancelled Delivery
       // Returns. A DR line carries do_item_id (the DO line it returns), so map
