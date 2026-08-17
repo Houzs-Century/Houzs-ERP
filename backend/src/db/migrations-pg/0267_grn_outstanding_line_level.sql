@@ -14,9 +14,9 @@
 --
 -- Both are answered by the same counters the rest of the system already trusts
 -- (grn_items.invoiced_qty / returned_qty, maintained by recomputeGrnInvoiced and
--- read by computeGrnFlags, lib/grn-consumption-flags): a note is outstanding while ANY of its lines still
+-- read by computeGrnFlags): a note is outstanding while ANY of its lines still
 -- has accepted − invoiced − returned > 0. A note with no lines at all is not
--- outstanding (nothing to bill), matching computeGrnFlags (lib/grn-consumption-flags).
+-- outstanding (nothing to bill), matching computeGrnFlags.
 --
 -- Consumers: backend/src/scm/routes/outstanding.ts (the Outstanding → GRN tab).
 -- Columns and their order are unchanged, so the route needs no edit.

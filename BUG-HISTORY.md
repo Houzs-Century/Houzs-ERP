@@ -76,7 +76,14 @@ reasoning belongs — restating it four times is how it drifts), the two-step
 `lib/grn-consumption-flags.ts`. That last one is the CANONICAL definition four
 other routers and migration 0267 defer to in prose — "mirrors computeGrnFlags in
 routes/grns.ts" — so it had no business being a private function halfway down a
-3,600-line router. Those five pointers are updated and it now has its own tests.
+3,600-line router. Its body is byte-identical to the one it replaces, the four
+ROUTER pointers are updated, and it now has its own tests.
+
+Migration 0267's two mentions are deliberately NOT updated. They name the
+function, not its path, so they are still true — and 0267 is already applied.
+The working-agreement gate refused a comment-only edit to it, correctly: an
+applied migration that no longer matches what ran is a worse artefact than a
+prose pointer one directory stale, and pg-migrate tracks by full filename.
 
 **Residual, deliberately not smuggled in.** An orphaned line's QTY can still be
 raised without the guard firing (it fires on the code transition only), and
