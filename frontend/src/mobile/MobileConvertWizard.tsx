@@ -8,6 +8,7 @@ import { fmtCenti } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { transferToLabel, transferFromLabel } from "../lib/convertScope";
+import { outstandingEmptyReason, type OutstandingScope } from "../lib/outstandingEmptyReason";
 import "./mobile.css";
 
 /* ---------------------------------------------------------------------------
@@ -388,9 +389,23 @@ export function MobileConvertWizard({
     enabled: target === "grn" && selectedPoIds.length > 0,
     queryKey: ["convert-grn-lines", [...selectedPoIds].sort().join(",")],
     queryFn: async () => {
-      const res = await authedFetch<{ items?: OutstandingPoLine[] }>(`/grns/outstanding-po-items`);
+      /* Scope the READ, not the result. This used to fetch the unscoped list and
+         filter by `selectedPoIds` here — and that list was capped at 500 raw PO
+         lines server-side, so a selected PO outside the window silently produced
+         zero lines (the owner's 2026-08-17 desktop screen, same endpoint, same
+         mechanism). The server now applies `?poId=` in SQL. The JS filter below
+         is kept as a belt-and-braces narrowing, not as the scope. */
+      const scoped = [...selectedPoIds].map((x) => str(x)).sort().join(',');
+      const res = await authedFetch<{ items?: OutstandingPoLine[]; scope?: OutstandingScope }>(
+        `/grns/outstanding-po-items?poId=${encodeURIComponent(scoped)}`,
+      );
       const set = new Set(selectedPoIds.map((x) => str(x)));
-      return (res.items ?? [])
+      /* `scope` is carried, not discarded. It is the WHY behind an empty list, and
+         mobile had the SAME defect the desktop screen was fixed for: it answered
+         "Nothing left to receive on the selected order(s)" — a claim about the
+         orders — from an absence of rows. One shared module now words both. */
+      const serverRows = res.items ?? [];
+      const lines = serverRows
         .filter((r) => set.has(str(r.poId)))
         .filter((r) => (Number(r.remainingQty) || 0) > 0)
         .map<GrnPickLine>((r) => ({
@@ -408,12 +423,28 @@ export function MobileConvertWizard({
           checked: true,
           qty: String(Number(r.remainingQty) || 0),
         }));
+      return { lines, scope: res.scope ?? null, serverRowCount: serverRows.length };
     },
     staleTime: 15_000,
   });
   useEffect(() => {
-    if (grnLinesQuery.data) setGrnLines(grnLinesQuery.data);
+    if (grnLinesQuery.data) setGrnLines(grnLinesQuery.data.lines);
   }, [grnLinesQuery.data]);
+  /* The sentence for an empty list, from the same module the desktop picker uses.
+     There is no toolbar and no unsaved draft on this screen, and the JS narrowing
+     below is the same `?poId=` set the server already applied — so `scopedRowCount`
+     is the server count and `filtersActive` is false. Saying that here, rather
+     than passing a convenient boolean, is what keeps the two surfaces honest. */
+  const grnEmptyReason = outstandingEmptyReason({
+    isError: !!grnLinesQuery.error,
+    isLoading: grnLinesQuery.isLoading,
+    scope: grnLinesQuery.data?.scope ?? null,
+    serverRowCount: grnLinesQuery.data?.serverRowCount ?? 0,
+    scopedRowCount: grnLinesQuery.data?.serverRowCount ?? 0,
+    visibleRowCount: grnLines.length,
+    filtersActive: false,
+    poScopeActive: false,
+  });
   const setGrnLine = (id: string, patch: Partial<GrnPickLine>) =>
     setGrnLines((prev) => prev.map((l) => (l.poItemId === id ? { ...l, ...patch } : l)));
   const grnPicks = useMemo(
@@ -646,6 +677,7 @@ export function MobileConvertWizard({
             loading={grnLinesQuery.isLoading}
             error={!!grnLinesQuery.error}
             lines={grnLines}
+            emptyReason={grnEmptyReason}
             deliveryNoteRef={deliveryNoteRef}
             notes={notes}
             onSetLine={setGrnLine}
@@ -874,11 +906,14 @@ function LinesStep({
 // creates a DRAFT — nothing moves stock until they post the receipt. Mirrors the
 // desktop GrnFromPo Pick-Qty picker (GrnFromPo.tsx:376-398) + the New-GRN form.
 function GrnLinesStep({
-  loading, error, lines, deliveryNoteRef, notes, onSetLine, onRef, onNotes, onChangeSource,
+  loading, error, lines, emptyReason, deliveryNoteRef, notes, onSetLine, onRef, onNotes, onChangeSource,
 }: {
   loading: boolean;
   error: boolean;
   lines: GrnPickLine[];
+  /** Why the list is empty, from `lib/outstandingEmptyReason` — the same module
+   *  the desktop picker uses. Null only when there is nothing to explain. */
+  emptyReason: string | null;
   deliveryNoteRef: string;
   notes: string;
   onSetLine: (id: string, patch: Partial<GrnPickLine>) => void;
@@ -889,10 +924,15 @@ function GrnLinesStep({
   if (loading) return <><ChangeSource onClick={onChangeSource} label="Change selection" /><Muted>Loading lines…</Muted></>;
   if (error) return <><ChangeSource onClick={onChangeSource} label="Change selection" /><Muted danger>Couldn't load the receivable lines. Please try again.</Muted></>;
   if (!lines.length) {
+    /* "Nothing left to receive on the selected order(s)" used to be hard-coded
+       here — a completion claim made from an absence of rows, on a read that is
+       company-scoped and FAILS CLOSED. The shared module only says the work is
+       finished when the server counted the order's lines and found none
+       outstanding; every other absence gets its own true sentence. */
     return (
       <>
         <ChangeSource onClick={onChangeSource} label="Change selection" />
-        <Muted>Nothing left to receive on the selected order(s).</Muted>
+        <Muted>{emptyReason ?? 'No receivable lines are showing for the selected order(s).'}</Muted>
       </>
     );
   }

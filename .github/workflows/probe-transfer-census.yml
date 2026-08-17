@@ -1,0 +1,81 @@
+name: probe-transfer-census
+
+# Three questions about document transfer, answered against production.
+#
+# 1. WHAT THE GRN PICKER'S 500-ROW CAP WAS HIDING. The owner opened "Pick PO
+#    lines for this GRN" scoped to one PO (2026-08-17), got zero rows, and was
+#    told "every line has been received". The PO had never been received.
+#    `GET /grns/outstanding-po-items` capped the RAW `purchase_order_items`
+#    select at 500 and ran BOTH filters afterwards in JavaScript, over rows
+#    ordered by `purchase_order_id DESC`. This replays that query and counts the
+#    outstanding lines, and the whole POs, it could not see.
+#
+# 2. WHAT STATUSES LIVE POs ACTUALLY CARRY, and which the picker excludes. The
+#    AutoCount import writes PO rows, so this is a question about production
+#    rather than about `purchase-doc-vocab.ts`.
+#
+# 3. THE DOUBLE-TRANSFER CENSUS. Per pair, per line: source lines whose
+#    downstream total EXCEEDS the source quantity, plus destination lines whose
+#    binding is NULL and which no quantity ceiling can therefore see.
+#    SO -> PO is deliberately excluded — the owner ruled the PO follows MRP's
+#    shortage and is not once-only.
+#
+# Read-only: one statement per question, no DDL, no writes, no transaction.
+# See backend/scripts/probe-transfer-census.mjs. Every query it runs is EXECUTED
+# against real Postgres by backend/tests-pg/probeTransferCensusSql.pg.test.ts in
+# the `backend-postgres` CI job, so it cannot die on unparsed SQL the way
+# probe-undated-demand did on its first dispatch (run 31962771658).
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: "company_id (1 = HOUZS, 2 = 2990). Blank = every company."
+        required: false
+        default: ""
+        type: string
+      po_doc_no:
+        description: "PO number to dump line by line (the screenshot PO), e.g. PO-2608-0123"
+        required: false
+        default: ""
+        type: string
+      window:
+        description: "The picker cap to replay. 500 is the real one."
+        required: false
+        default: "500"
+        type: string
+
+concurrency:
+  group: probe-transfer-census
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Measure the window, the statuses and the double transfers
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          PO_DOC_NO: ${{ inputs.po_doc_no }}
+          WINDOW: ${{ inputs.window }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-transfer-census.mjs | tee transfer-census.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-transfer-census
+          path: backend/transfer-census.txt
+          retention-days: 14
