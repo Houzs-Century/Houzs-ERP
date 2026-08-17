@@ -70,3 +70,51 @@ export function readStatusCounts<K extends string>(
   }
   return { ok: true, counts };
 }
+
+/* ---------------------------------------------------------------------------
+   The OTHER shape of the same bug, and the one that survived the first sweep.
+
+   Two consumers do not run one query per bucket — they read the status COLUMN
+   (or a grouped aggregate over it) and tally in JS: the SO list's filter pills
+   (mfg-sales-orders.ts) and the Delivery Agent's DO pipeline
+   (services/agents/delivery-agent.ts). Both wrote `for (const r of (res.data ??
+   []))`, and `data ?? []` is `count ?? 0` wearing a different hat: PostgREST
+   and paginateAll both answer a FAILED read with `{ data: null, error }`, so a
+   failure tallied as ZERO ROWS. The SO list served every pill as 0 beside a
+   full page of orders; the agent's pipeline reported the failed bucket as
+   simply absent, then handed that to the brain as fact.
+
+   Reading the column instead of enumerating a vocabulary also fixes the other
+   half: nothing is handed to Postgres to parse, so a label that is not an enum
+   member — 'COMPLETED' on do_status — cannot 22P02 the query in the first place.
+   --------------------------------------------------------------------------- */
+
+export type StatusTally =
+  | { ok: true; byStatus: Record<string, number> }
+  | { ok: false; reason: string };
+
+/**
+ * Tally a read of a status column into `RAW_STATUS -> count`, or say the read
+ * FAILED. A blank/absent status tallies under `UNKNOWN` rather than vanishing.
+ *
+ * `weight` is REQUIRED, not defaulted to 1: one caller reads raw rows (weight 1
+ * each) and the other reads a grouped aggregate whose weight is the group's own
+ * count, and silently getting that wrong would produce a plausible number.
+ */
+export function tallyStatusRows<T extends { status?: string | null }>(
+  res: { data: T[] | null; error?: { message?: string | null } | null },
+  weight: (row: T) => number,
+): StatusTally {
+  if (res.error) return { ok: false, reason: res.error.message || 'unknown error' };
+  if (res.data === null || res.data === undefined) {
+    // No error, no rows object: the read produced no answer, and an empty tally
+    // would be a claim we cannot support.
+    return { ok: false, reason: 'status rows returned no value' };
+  }
+  const byStatus: Record<string, number> = {};
+  for (const row of res.data) {
+    const key = String(row.status ?? '').toUpperCase() || 'UNKNOWN';
+    byStatus[key] = (byStatus[key] ?? 0) + weight(row);
+  }
+  return { ok: true, byStatus };
+}

@@ -233,6 +233,13 @@ const MUST_GATE_MERGE = [
      downstream catches it, and the deploy is perfectly healthy while the list
      lies. */
   "tests/statusBucketsEnumMembership.test.mjs",
+  /* The other half of the same fault, and the half that survived the first
+     sweep: a count read that FAILED served as 0. The bucket gate cannot see it
+     — it keys off the *_STATUS_BUCKETS naming convention, and the sixth list
+     (mfg-sales-orders) does not use one. Same reason for gating the merge: the
+     deploy is perfectly healthy while every filter pill reads zero beside a
+     full page of rows. */
+  "tests/statusCountsFailLoud.test.mjs",
 ];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {

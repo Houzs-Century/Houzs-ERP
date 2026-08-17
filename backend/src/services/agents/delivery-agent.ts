@@ -48,13 +48,13 @@
 import type { Env } from '../../types';
 import { getSupabaseService } from '../../db/supabase';
 import { paginateAll } from '../../scm/lib/paginate-all';
+import { tallyStatusRows, type StatusTally } from '../../scm/lib/status-counts';
 import { todayMyt, mytDateOf } from '../../scm/lib/my-time';
 import { summariseReadiness, type ReadinessLine } from '../../scm/lib/so-readiness';
 import { resolveLineCategories } from '../../scm/lib/so-readiness-category';
 import { derivePlanningState, type DeliveryState } from '../../scm/routes/delivery-planning';
 import { soDeliverableRemaining } from '../../scm/routes/delivery-orders-mfg';
 import { readAgentSetting, type ConfigParamRule } from '../agent-console';
-import { DO_STATUSES as SHARED_DO_STATUSES } from '../../scm/shared/do-shipped-states';
 import {
   loadRegionConfig,
   stateToRegions,
@@ -540,34 +540,51 @@ export interface DeliveryBriefData {
       effectiveDeliveryDate: string | null; daysLeft: number | null; valueCenti: number;
     }>;
   };
-  doPipeline: { byStatus: Record<string, number> };
+  /** DO counts per raw status. `unavailableReason` non-null means the read
+   *  FAILED and `byStatus` is empty because nothing was counted — never read an
+   *  absent bucket as zero deliveries in that status. */
+  doPipeline: { byStatus: Record<string, number>; unavailableReason: string | null };
   podGaps: { count: number; rows: PodGapRow[] };
   trips: { today: TripBriefRow[]; tomorrow: TripBriefRow[] };
   openProposals: { total: number; byKind: Record<string, number> };
 }
 
-/* The DO lifecycle — pipeline buckets. IMPORTED from the state machine's own
-   declaration (scm/shared/do-shipped-states.ts, which delivery-orders-mfg.ts
-   reads for its PATCH status guard), because the copy that used to sit here had
-   quietly lost COMPLETED: the pipeline counted eight of the nine legal statuses
-   and reported the missing bucket as absent rather than as uncounted. */
-const DO_STATUSES: readonly string[] = SHARED_DO_STATUSES;
+/* The DO pipeline — counted from the ROWS, never by enumerating a status list.
+   This used to map a hand-held vocabulary and issue one
+   `count:'exact'` query per entry with `.eq('status', st)`. Two faults, both of
+   which this branch exists to end:
 
+   1. `delivery_orders.status` is a Postgres ENUM. The list it mapped
+      (scm/shared/do-shipped-states.ts DO_STATUSES) still carries 'COMPLETED',
+      which do_status has never had, so that one query sent a label Postgres
+      refuses to parse — `22P02 invalid input value for enum do_status:
+      "COMPLETED"` — exactly the 500 fixed on the SI and DO list endpoints.
+   2. The await destructured only `count` and dropped `error`, so
+      `if ((count ?? 0) > 0)` rendered the failed read as an ABSENT bucket. The
+      comment that stood here said the local copy was replaced because the
+      pipeline "reported the missing bucket as absent rather than as uncounted";
+      it went on doing precisely that.
+
+   Reading the column removes both halves at once: no literal is handed to the
+   enum, and a failed read is reported as unavailable instead of as zeros. It
+   also needs no status vocabulary at all, so there is no longer a second copy
+   of one here to drift. Statuses OUTSIDE the vocabulary (legacy spellings,
+   blanks) now appear too — under their own key, or UNKNOWN for a blank — which
+   is a change to what the brief shows and is the honest direction: they were
+   previously counted nowhere. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function collectDoStatusCounts(sb: any): Promise<Record<string, number>> {
-  const byStatus: Record<string, number> = {};
-  await Promise.all(
-    DO_STATUSES.map(async (st) => {
-      try {
-        const { count } = await sb
-          .from('delivery_orders')
-          .select('id', { head: true, count: 'exact' })
-          .eq('status', st);
-        if ((count ?? 0) > 0) byStatus[st] = count ?? 0;
-      } catch { /* best-effort section */ }
-    }),
-  );
-  return byStatus;
+export async function collectDoStatusCounts(sb: any): Promise<StatusTally> {
+  try {
+    return tallyStatusRows(
+      await paginateAll<{ status: string | null }>((from, to) =>
+        sb.from('delivery_orders').select('status').range(from, to)),
+      () => 1,
+    );
+  } catch (e) {
+    /* Still contained — a throw here must not take the whole brief down — but
+       it is now REPORTED rather than swallowed into an empty pipeline. */
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -678,7 +695,7 @@ async function collectDeliveryBriefCore(
   const today = snapshot.today;
   const tomorrow = todayMyt(1);
 
-  const [byStatus, podGaps, tripsByDate, openProposals] = await Promise.all([
+  const [doCounts, podGaps, tripsByDate, openProposals] = await Promise.all([
     collectDoStatusCounts(sb),
     loadPodGaps(sb, today).catch((e) => {
       console.error('[delivery-agent] podGaps failed:', e);
@@ -690,6 +707,7 @@ async function collectDeliveryBriefCore(
     }),
     openProposalCounts(db),
   ]);
+  if (!doCounts.ok) console.error('[delivery-agent] DO pipeline counts failed:', doCounts.reason);
 
   const byPlanningState: Record<DeliveryState, number> = {
     PENDING_DELIVERY: 0, PENDING_SCHEDULE: 0, OVERDUE: 0, DELIVERED: 0,
@@ -755,7 +773,9 @@ async function collectDeliveryBriefCore(
       readyByState,
     },
     overdueToDeliver: { count: overdueRows.length, rows: overdueRows.slice(0, 20) },
-    doPipeline: { byStatus },
+    doPipeline: doCounts.ok
+      ? { byStatus: doCounts.byStatus, unavailableReason: null }
+      : { byStatus: {}, unavailableReason: doCounts.reason },
     podGaps: { count: podGaps.length, rows: podGaps.slice(0, 20) },
     trips: {
       today: tripsByDate.get(today) ?? [],

@@ -257,12 +257,24 @@ Status vocabulary: `DRAFT | POSTED | CANCELLED | CLOSED`. Filter buckets
 (`GRN_STATUS_BUCKETS`): `draft` = DRAFT, `posted` = POSTED+CLOSED, `cancelled` =
 CANCELLED.
 
-> **FIXED 2026-08-17.** CLOSED was in NO bucket, so a CLOSED GRN appeared under
-> "All" and nowhere else. It files under `posted` because of what the STOCK did:
-> a CLOSED GRN was posted first, so its inventory IN stands — a CANCELLED one had
-> its receipt reversed. `GoodsReceivedListV2`'s `statusFor()` already bucketed it
-> as `posted` by fallback and now says so explicitly. Membership both ways is
-> pinned by `backend/tests/statusBucketsEnumMembership.test.mjs`.
+> **CHANGED 2026-08-17 — and this one MOVES A NUMBER, so read it before you are
+> surprised by it.** CLOSED was in NO bucket, so a CLOSED GRN appeared under
+> "All" and nowhere else. It now files under `posted` because of what the STOCK
+> did: a CLOSED GRN was posted first, so its inventory IN stands — a CANCELLED
+> one had its receipt reversed. `GoodsReceivedListV2`'s `statusFor()` already
+> bucketed it as `posted` by fallback and now says so explicitly, so the tab and
+> the row chip stop disagreeing. Membership both ways is pinned by
+> `backend/tests/statusBucketsEnumMembership.test.mjs`.
+>
+> **It is a COVERAGE JUDGMENT, not a defect repair, and it was NOT asked for.**
+> Unlike `SI_STATUS_BUCKETS` and `DO_STATUS_BUCKETS`, no value in this map was
+> ever a non-member: DRAFT / POSTED / CANCELLED are all real `grn_status`
+> members, so no GRN tab 500d and no GRN count was ever wrong. What changes is
+> that the **Posted pill rises by the number of CLOSED GRNs** and
+> `?status=posted` returns rows it never returned before. The alternative — a
+> fourth `closed` pill, which needs a `closed` entry here plus a `StatusTab`
+> arm in `frontend/src/pages/scm-v2/GoodsReceivedListV2.tsx` — was not taken and
+> is a one-line reversal if the owner prefers it.
 
 **Who sets each, and what it blocks (2026-08-16).** DB type is the
 `scm.grn_status` ENUM (base body in `backend/scripts/scm-schema/2990s-full-schema.sql`,

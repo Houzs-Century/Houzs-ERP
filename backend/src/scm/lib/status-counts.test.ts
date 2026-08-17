@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { readStatusCounts } from './status-counts';
+import { readStatusCounts, tallyStatusRows } from './status-counts';
 
 /* The whole point of this helper is the difference between "none" and "we could
    not find out", which `count ?? 0` erased. Each test below is one side of that
@@ -46,5 +46,49 @@ describe('readStatusCounts', () => {
       closed: { count: null, error: { message: 'second' } },
     });
     expect(read).toEqual({ ok: false, reason: 'open count failed: first' });
+  });
+});
+
+/* The same line, drawn for the OTHER shape: `data ?? []` is `count ?? 0` wearing
+   a different hat. PostgREST and paginateAll both answer a failed read with
+   `{ data: null, error }`, so tallying `res.data ?? []` turns a failure into
+   ZERO ROWS — which is what served the SO list's pills as all-zero beside a full
+   page of orders, and what left the Delivery Agent's DO pipeline reporting a
+   failed bucket as simply absent. */
+
+describe('tallyStatusRows', () => {
+  test('a failed read is a failure, NOT an empty tally', () => {
+    const read = tallyStatusRows(
+      { data: null, error: { message: 'invalid input value for enum do_status: "COMPLETED"' } },
+      () => 1,
+    );
+    expect(read.ok).toBe(false);
+    if (read.ok) throw new Error('unreachable');
+    expect(read.reason).toContain('COMPLETED');
+  });
+
+  test('a genuinely empty result is a tally of nothing, not a failure', () => {
+    expect(tallyStatusRows({ data: [], error: null }, () => 1)).toEqual({ ok: true, byStatus: {} });
+  });
+
+  test('no error and no rows object is still a failure', () => {
+    const read = tallyStatusRows({ data: null, error: null }, () => 1);
+    expect(read).toEqual({ ok: false, reason: 'status rows returned no value' });
+  });
+
+  test('raw rows tally one each; blank and lowercase statuses are not lost', () => {
+    const read = tallyStatusRows(
+      { data: [{ status: 'DRAFT' }, { status: 'draft' }, { status: null }, { status: '' }], error: null },
+      () => 1,
+    );
+    expect(read).toEqual({ ok: true, byStatus: { DRAFT: 2, UNKNOWN: 2 } });
+  });
+
+  test('a grouped aggregate tallies by its OWN count, not one per group', () => {
+    const read = tallyStatusRows<{ status: string | null; cnt: number }>(
+      { data: [{ status: 'CONFIRMED', cnt: 35 }, { status: 'DELIVERED', cnt: 33 }], error: null },
+      (r) => Number(r.cnt ?? 0),
+    );
+    expect(read).toEqual({ ok: true, byStatus: { CONFIRMED: 35, DELIVERED: 33 } });
   });
 });

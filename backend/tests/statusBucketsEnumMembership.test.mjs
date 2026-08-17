@@ -68,7 +68,17 @@ const SRC_ROOT = path.join(backendRoot, "src");
 /* The map's file -> the enum type its values are filtered against. The ONE
    hand-written pairing in this test, and the "no stray map" check below makes it
    self-completing: a new *_STATUS_BUCKETS anywhere under src/ that is not listed
-   here fails, so the next list endpoint cannot quietly opt out of the check. */
+   here fails, so the next list endpoint cannot quietly opt out of the check.
+
+   CORRECTED 2026-08-18. That sentence was FALSE for the same-file case and the
+   hole was demonstrated, not theorised: the scan below keyed its results by FILE
+   PATH, so a SECOND *_STATUS_BUCKETS declaration in an already-registered file
+   overwrote the real map, and the real map was then never checked. Planting
+   'COMPLETED' back in GRN_STATUS_BUCKETS.posted AND appending a second, valid
+   GRN2_STATUS_BUCKETS to grns.ts made this suite report 12 passed. The
+   `maps.size === 5` guard could not see it because it was counting FILES. The
+   results are now keyed by `<file>::<MAP_NAME>`, every map found is checked on
+   its own, and parseBucketMaps() has its own two-map self-test below. */
 const BUCKET_OWNERS = {
   "src/scm/routes/mfg-purchase-orders.ts": "po_status",
   "src/scm/routes/purchase-invoices.ts": "purchase_invoice_status",
@@ -132,24 +142,36 @@ function listSourceFiles(dir) {
   return out;
 }
 
-/** repo-relative file path -> { name, buckets: { bucket: [values] } } */
+/** EVERY *_STATUS_BUCKETS map in one source text, in declaration order.
+ *  Pure, so the two-map case has a self-test rather than a manual demo. */
+function parseBucketMaps(src) {
+  const out = [];
+  for (const m of src.matchAll(BUCKET_DECL)) {
+    const buckets = {};
+    /* One entry per LINE: `key: ['A', 'B'],`. Line-anchored so a comment
+       mentioning a status inside the literal cannot contribute a value —
+       these maps are commented heavily and a value harvested out of prose
+       would be a value nobody wrote. */
+    for (const line of m[2].split("\n")) {
+      const entry = /^\s*(\w+)\s*:\s*\[([^\]]*)\]/.exec(line);
+      if (entry) buckets[entry[1]] = quotedValues(entry[2]);
+    }
+    out.push({ name: m[1], buckets });
+  }
+  return out;
+}
+
+/** "<repo-relative file>::<MAP_NAME>" -> { file, name, buckets }. Keyed by the
+ *  PAIR, never by the file alone: two maps in one file must be two entries, or
+ *  the second silently replaces the first and the first stops being checked. */
 function readBucketMaps() {
   const found = new Map();
   for (const file of listSourceFiles(SRC_ROOT)) {
     const src = fs.readFileSync(file, "utf8");
     if (!src.includes("_STATUS_BUCKETS")) continue;
-    for (const m of src.matchAll(BUCKET_DECL)) {
-      const buckets = {};
-      /* One entry per LINE: `key: ['A', 'B'],`. Line-anchored so a comment
-         mentioning a status inside the literal cannot contribute a value —
-         these maps are commented heavily and a value harvested out of prose
-         would be a value nobody wrote. */
-      for (const line of m[2].split("\n")) {
-        const entry = /^\s*(\w+)\s*:\s*\[([^\]]*)\]/.exec(line);
-        if (entry) buckets[entry[1]] = quotedValues(entry[2]);
-      }
-      const rel = path.relative(backendRoot, file).split(path.sep).join("/");
-      found.set(rel, { name: m[1], buckets });
+    const rel = path.relative(backendRoot, file).split(path.sep).join("/");
+    for (const { name, buckets } of parseBucketMaps(src)) {
+      found.set(`${rel}::${name}`, { file: rel, name, buckets });
     }
   }
   return found;
@@ -176,22 +198,49 @@ describe("the checker itself", () => {
     }
   });
 
+  /* THE HOLE THAT WAS WALKED PAST, pinned. The old scan kept one result per
+     FILE, so the second map in a file replaced the first and the first stopped
+     being checked while the suite stayed green. */
+  test("the map scan returns EVERY map in a file, not only the last one", () => {
+    const twoInOneFile = [
+      "const A_STATUS_BUCKETS: Record<string, string[]> = {",
+      "  draft: ['DRAFT'],",
+      "  posted: ['POSTED', 'CLOSED'],",
+      "  cancelled: ['CANCELLED'],",
+      "};",
+      "const B_STATUS_BUCKETS: Record<string, string[]> = {",
+      "  draft: ['DRAFT'],",
+      "  posted: ['POSTED'],",
+      "  cancelled: ['CANCELLED'],",
+      "};",
+    ].join("\n");
+    const parsed = parseBucketMaps(twoInOneFile);
+    assert.deepEqual(parsed.map((p) => p.name), ["A_STATUS_BUCKETS", "B_STATUS_BUCKETS"]);
+    assert.deepEqual(parsed[0].buckets.posted, ["POSTED", "CLOSED"]);
+    assert.deepEqual(parsed[1].buckets.posted, ["POSTED"]);
+  });
+
   test("every *_STATUS_BUCKETS map under src/ is registered here", () => {
     assert.equal(
       maps.size,
       Object.keys(BUCKET_OWNERS).length,
       `found ${maps.size} bucket maps, expected ${Object.keys(BUCKET_OWNERS).length}: ${[...maps.keys()].join(", ")}`,
     );
-    for (const file of maps.keys()) {
+    for (const [key, map] of maps) {
       assert.ok(
-        BUCKET_OWNERS[file],
-        `${file} declares a *_STATUS_BUCKETS map that this test does not know the enum for. `
+        BUCKET_OWNERS[map.file],
+        `${key} declares a *_STATUS_BUCKETS map that this test does not know the enum for. `
         + `Add it to BUCKET_OWNERS with the enum its status column uses — a map nobody checks is how ISSUED / PARTIAL / COMPLETED survived.`,
       );
     }
     for (const [file, enumName] of Object.entries(BUCKET_OWNERS)) {
-      const map = maps.get(file);
-      assert.ok(map, `${file} no longer declares a *_STATUS_BUCKETS map — was it renamed or moved? (${enumName})`);
+      const mine = [...maps.values()].filter((m) => m.file === file);
+      assert.equal(
+        mine.length, 1,
+        `${file} declares ${mine.length} *_STATUS_BUCKETS map(s) (${mine.map((m) => m.name).join(", ") || "none"}) — expected exactly one for ${enumName}. `
+        + `Zero means it was renamed or moved; two means a second map now shares the file, and BUCKET_OWNERS pairs an enum with a FILE, so it can no longer say which map that enum belongs to.`,
+      );
+      const map = mine[0];
       const keys = Object.keys(map.buckets);
       assert.ok(keys.length >= 3, `${map.name} parsed as ${keys.length} buckets — the map pattern is broken`);
       const values = keys.flatMap((k) => map.buckets[k]);
@@ -200,10 +249,14 @@ describe("the checker itself", () => {
   });
 });
 
+/* Driven by what is DECLARED, not by what is registered. Registration is a
+   separate assertion above; if a file grew a second map, both are checked here
+   on their own merits rather than one hiding behind the other. */
 describe("status buckets against the enum", () => {
-  for (const [file, enumName] of Object.entries(BUCKET_OWNERS)) {
-    test(`${file}: every bucket value is a member of ${enumName}`, () => {
-      const { name, buckets } = maps.get(file);
+  for (const [key, { file, name, buckets }] of maps) {
+    const enumName = BUCKET_OWNERS[file];
+    test(`${key}: every bucket value is a member of ${enumName ?? "its (unregistered) enum"}`, () => {
+      assert.ok(enumName, `${file} is in no BUCKET_OWNERS entry, so nothing knows which enum ${name} must be a subset of`);
       const members = enums.get(enumName);
       for (const [bucket, values] of Object.entries(buckets)) {
         for (const value of values) {
@@ -217,8 +270,8 @@ describe("status buckets against the enum", () => {
       }
     });
 
-    test(`${file}: every member of ${enumName} is reachable from a bucket`, () => {
-      const { name, buckets } = maps.get(file);
+    test(`${key}: every member of ${enumName ?? "its (unregistered) enum"} is reachable from a bucket`, () => {
+      assert.ok(enumName, `${file} is in no BUCKET_OWNERS entry, so nothing knows which enum ${name} must cover`);
       const covered = new Set(Object.values(buckets).flat());
       for (const member of enums.get(enumName)) {
         assert.ok(

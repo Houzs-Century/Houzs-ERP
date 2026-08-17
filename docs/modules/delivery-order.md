@@ -259,7 +259,7 @@ status from a child document.
 | `LOADED` | `PATCH /:id/status` ("Mark loaded") | pre-ship |
 | `DISPATCHED` | create not-draft, or `PATCH /:id/status` | **The DRAFT-confirm hop, and the only status that emails the customer.** First entry into any shipped state fires the inventory OUT. |
 | `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD | shipped states; stock has already left |
-| `COMPLETED` | **nothing writes it.** Still in the code vocabulary (`DO_STOCK_OUT_STATES`, `DO_STATUSES`) but NOT a member of the `do_status` enum in any schema file or migration. Removed from the `delivered` filter bucket 2026-08-17 — that was the one copy sent to Postgres to be parsed, and it 500'd the tab and zeroed its count. The JS-side sets compare a status already in hand, where a value that can never occur is inert | read-only |
+| `COMPLETED` | **nothing writes it.** Still in the code vocabulary (`DO_STOCK_OUT_STATES`, `DO_STATUSES`) but NOT a member of the `do_status` enum in any schema file or migration. Removed from the `delivered` filter bucket 2026-08-17. **CORRECTED 2026-08-18** — this cell used to end "the JS-side sets compare a status already in hand, where a value that can never occur is inert", and that was FALSE: `services/agents/delivery-agent.ts` mapped `DO_STATUSES` into one `.eq('status', st)` query per entry, so `COMPLETED` *was* being handed to Postgres to parse. That consumer no longer enumerates the list at all (it counts the rows it reads), so the claim is now true of every remaining reader — but it was a second live 22P02 for a day, and it was found by a reviewer, not by the sweep that wrote the sentence | read-only |
 | `CANCELLED` | `PATCH /:id/status`, atomic branch | **FINAL.** `A cancelled Delivery Order cannot be reactivated — its stock was already returned. Create a new DO to deliver again.` (409 `do_cancelled_final`) |
 
 Refusals the operator sees, in the order they fire:
@@ -285,6 +285,18 @@ blank).` It is not part of the lifecycle above.
 > delivered tab and its count no longer fail on it. Verified by grepping every
 > `CREATE TYPE` / `ADD VALUE` under `migrations-pg/` and `scripts/scm-schema/`,
 > now pinned by `backend/tests/statusBucketsEnumMembership.test.mjs`.
+>
+> **The second READ site, found 2026-08-18 and now fixed.** The Delivery Agent's
+> brief (`services/agents/delivery-agent.ts`, `collectDoStatusCounts`) imported
+> `DO_STATUSES` and issued one `count:'exact'` query per entry with
+> `.eq('status', st)` — so `COMPLETED` reached the enum column there too, and the
+> await destructured only `count`, discarding `error`, so `(count ?? 0) > 0` left
+> the failed bucket ABSENT from the pipeline. It now pages the `status` column
+> and counts the rows it read: no vocabulary is sent to Postgres, and a failed
+> read is reported as `doPipeline.unavailableReason` (with `byStatus` empty)
+> instead of as a missing bucket. Statuses outside the vocabulary now appear too,
+> under their own key or `UNKNOWN` for a blank — previously counted nowhere.
+> `do-shipped-states.ts` itself is untouched by this branch.
 >
 > **BUG (reported, not fixed): the Consignment Note's status PATCH has NO
 > whitelist.** `consignment-notes.ts`'s handler writes `body.status` verbatim —

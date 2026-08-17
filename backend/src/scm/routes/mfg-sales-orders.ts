@@ -104,6 +104,7 @@ import {
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { paginateAll } from '../lib/paginate-all';
+import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 import { soConvertedPoNumbers } from '../lib/so-converted-po';
 /* "A PO is already out for this SO" — the second road to the same soft lock
    (owner 2026-08-12, 2990 only). See lib/so-po-lock.ts. */
@@ -1220,6 +1221,7 @@ mfgSalesOrders.get('/', async (c) => {
   let page = 0;
   let pageSize = 50;
   let statusCounts: Record<string, number> | undefined;
+  let countError: string | null = null; // held, not returned here, so the LIST read's own error still wins the report
   /* Full-set money KPIs (Revenue / Outstanding / Paid). Pre-pagination the FE
      summed these three view columns over the whole status+search-filtered set;
      paging broke that (the client could only sum the current page → "on this
@@ -1282,35 +1284,27 @@ mfgSalesOrders.get('/', async (c) => {
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
 
     /* Status counts over the SAME scope + company filters but WITHOUT the status
-       filter, search, or pagination. ONE grouped PostgREST aggregate against the
-       base table (status + count per bucket) replaces the old four head-only
-       counts. The old shape (all/draft/confirmed/cancelled) HID every other live
-       status — READY_TO_SHIP, DELIVERED, ... — so the strip's buckets stopped
-       summing to All the moment an SO advanced past CONFIRMED and orders looked
-       lost (owner 2026-07-24: "ALL 68 but CONFIRMED 35 — where did they go?").
-       If the aggregate errors (aggregates disabled), fall back to paging the
-       status column and reducing in JS — never wrong, worst case slower
-       (precedent: outstanding.ts /summary). */
-    const scopedCountQ = (q0: any): any => {
-      let cq = q0;
-      if (scopeIds) cq = cq.in('salesperson_id', scopeIds);
-      return scopeToCompany(cq, c);
-    };
-    const countsProm = (async (): Promise<Record<string, number>> => {
-      const byStatus: Record<string, number> = {};
-      const bump = (raw: string | null | undefined, n: number) => {
-        const key = String(raw ?? '').toUpperCase() || 'UNKNOWN';
-        byStatus[key] = (byStatus[key] ?? 0) + n;
-      };
+       filter, search, or pagination. ONE grouped PostgREST aggregate (status +
+       count per bucket) replaced the old four head-only counts, whose shape
+       (all/draft/confirmed/cancelled) HID every other live status and stopped
+       the buckets summing to All once an SO passed CONFIRMED (owner 2026-07-24:
+       "ALL 68 but CONFIRMED 35 — where did they go?"). Aggregates disabled →
+       fall back to paging the status column and reducing in JS (precedent:
+       outstanding.ts /summary). BOTH reads failing is NOT "no orders": `fb.error`
+       was dropped and `fb.data ?? []` read as zero rows, so every pill — and
+       `all`, which is their SUM — served 0 beside a full page of orders. That is
+       a 500 now, as on the other five SCM lists (scm/lib/status-counts.ts). */
+    const scopedCountQ = (q0: any): any =>
+      scopeToCompany(scopeIds ? q0.in('salesperson_id', scopeIds) : q0, c);
+    const countsProm = (async (): Promise<StatusTally> => {
       const agg = await scopedCountQ(sb.from('mfg_sales_orders').select('status, cnt:doc_no.count()'));
-      if (!agg.error) {
-        for (const r of (agg.data ?? []) as Array<{ status: string | null; cnt: number }>) bump(r.status, Number(r.cnt ?? 0));
-        return byStatus;
-      }
+      if (!agg.error) return tallyStatusRows<{ status: string | null; cnt: number }>(agg, (r) => Number(r.cnt ?? 0));
       const fb = await paginateAll<{ status: string | null }>((cfrom, cto) =>
         scopedCountQ(sb.from('mfg_sales_orders').select('status')).range(cfrom, cto));
-      for (const r of (fb.data ?? [])) bump(r.status, 1);
-      return byStatus;
+      /* Named separately from tallyStatusRows' own error branch so the 500 says
+         which of the TWO reads died, not just that the second one did. */
+      if (fb.error) return { ok: false, reason: `status counts failed: aggregate ${agg.error.message}; fallback ${fb.error.message}` };
+      return tallyStatusRows(fb, () => 1);
     })();
 
     /* Full-set money KPIs — sum local_total_centi / balance_centi_live /
@@ -1352,7 +1346,7 @@ mfgSalesOrders.get('/', async (c) => {
        the same filter params, none reads the page result — yet they were paying
        three sequential DB round-trips. Fire them together; only the per-doc
        enrichment below actually needs the page rows, so it still follows. */
-    const [res, byStatus, moneyRes] = await Promise.all([q, countsProm, moneyProm]);
+    const [res, counted, moneyRes] = await Promise.all([q, countsProm, moneyProm]);
     data = res.data;
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
@@ -1360,15 +1354,14 @@ mfgSalesOrders.get('/', async (c) => {
        shape the tabs read), plus `other` for anything OUTSIDE it (legacy
        spellings, blanks) — so the visible buckets ALWAYS sum to `all` and no
        order can silently fall between tabs again. */
-    const bucket = (k: string) => byStatus[k] ?? 0;
-    const allCount = Object.values(byStatus).reduce((s, n) => s + n, 0);
-    statusCounts = { all: allCount };
-    let known = 0;
-    for (const s of SO_STATUSES) {
-      statusCounts[s.toLowerCase()] = bucket(s);
-      known += bucket(s);
+    if (!counted.ok) countError = counted.reason;
+    else {
+      const allCount = Object.values(counted.byStatus).reduce((s, n) => s + n, 0);
+      let known = 0;
+      statusCounts = { all: allCount };
+      for (const s of SO_STATUSES) { const cnt = counted.byStatus[s] ?? 0; statusCounts[s.toLowerCase()] = cnt; known += cnt; }
+      statusCounts.other = allCount - known;
     }
-    statusCounts.other = allCount - known;
 
     if (moneyRes.error) return c.json({ error: 'load_failed', reason: moneyRes.error.message }, 500);
     let revenueCenti = 0, outstandingCenti = 0, paidCenti = 0;
@@ -1380,6 +1373,7 @@ mfgSalesOrders.get('/', async (c) => {
     aggregates = { revenueCenti, outstandingCenti, paidCenti };
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (countError) return c.json({ error: 'status_counts_failed', reason: countError }, 500);
 
   /* PR — Commander 2026-05-28: Stock Status chip column.
      Per-SO aggregate computed from mfg_sales_order_items.stock_status grouped

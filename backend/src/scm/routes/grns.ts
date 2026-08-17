@@ -1050,7 +1050,7 @@ function computeGrnFlags(items: Array<{ qty_accepted?: number | null; invoiced_q
 /* Filter-pill bucket → the raw grns.status values it covers. Single source of truth for BOTH the status-count queries and
    the list `status` filter; the FE sends the BUCKET NAME (a raw DB status still works). EVERY VALUE IS AN ENUM MEMBER AND
    EVERY MEMBER IS IN A BUCKET — pinned by tests/statusBucketsEnumMembership.test.mjs. CLOSED joined `posted` on 2026-08-17
-   out of NO bucket (it counted in `all`, showed in no tab); `posted` because its stock IN stands where a CANCELLED GRN's was reversed, and it is the bucket GoodsReceivedListV2's statusFor() already fell back to. */
+   out of NO bucket (it counted in `all`, showed in no tab). SAY IT PLAINLY: unlike the SI and DO maps, nothing here was ever a NON-member, so no GRN tab 500d and no GRN count was wrong — this half is a COVERAGE JUDGMENT and it MOVES A NUMBER an operator reads as fact. The Posted pill rises by the number of CLOSED GRNs and ?status=posted returns rows it never returned before. `posted` rather than a fourth `closed` pill because a CLOSED GRN's stock IN stands where a CANCELLED one's receipt was reversed, and it is the bucket GoodsReceivedListV2's statusFor() already fell back to — so the tab and the row chip stop disagreeing. If the owner wants CLOSED separated, the change is a `closed` entry here plus a StatusTab arm; nothing else depends on the pairing. */
 const GRN_STATUS_BUCKETS: Record<string, string[]> = {
   draft: ['DRAFT'],
   posted: ['POSTED', 'CLOSED'],
