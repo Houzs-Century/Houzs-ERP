@@ -75,6 +75,30 @@ export function deriveProjectCode(input: {
  * fallback for an empty organizer; the CODE keeps its SOLO segment (it is the
  * immutable identity, and the owner reads it as the event type there).
  */
+/**
+ * The name to store after an organizer edit, or null to leave the name alone.
+ *
+ * The display name embeds the organizer slot ("State [BRAND] ORGANIZER @
+ * VENUE") and editing the field used to leave the old word behind — the
+ * calendar then said SOLO while the Excel organizer column said MALL MGMT
+ * (owner 2026-08-17). Swaps the slot ONLY when the current name still carries
+ * the OLD organizer or the SOLO placeholder; a hand-written custom name
+ * doesn't match and is never touched.
+ */
+export function syncedNameForOrganizerChange(
+  currentName: string | null | undefined,
+  currentOrganizer: string | null | undefined,
+  nextOrganizer: string | null | undefined,
+): string | null {
+  const m = (currentName ?? "").match(/^(.*\[[^\]]*\]\s*)(.*?)(\s*@.*)$/);
+  if (!m) return null;
+  const slot = m[2].trim().toUpperCase();
+  const oldOrg = (currentOrganizer ?? "").trim().toUpperCase();
+  if (slot !== "SOLO" && (!oldOrg || slot !== oldOrg)) return null;
+  const nextOrg = (nextOrganizer ?? "").trim() || "SOLO";
+  return `${m[1]}${nextOrg}${m[3]}`;
+}
+
 export function deriveProjectName(input: {
   state?: string | null;
   brand?: string | null;
