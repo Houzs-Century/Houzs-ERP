@@ -82,8 +82,10 @@ SUBVENTION FEE :                              −254.16
 TOTAL NET PAYMENT (RM) :                       5,673.84
 ```
 
-The subvention fee is charged against the STATEMENT, not against any
-transaction. Book the lines and the bank receives 5,673.84 while the books say
+The subvention fee is a MERCHANT CHARGE like any other (owner, 2026-08-17 —
+the report comes off Pine Labs), so it books to the same 930-0000 the per-line
+fees do. What is different is that it is charged against the STATEMENT rather
+than against any transaction. Book the lines and the bank receives 5,673.84 while the books say
 5,928.00 — **RM 254.16 stranded in 320-0000 on every AEON statement, for ever.**
 It is also 3.5× the fee the transaction line shows: the true cost of that
 instalment sale is 326.16 on 6,000.00 = **5.4%**, not 1.2%.

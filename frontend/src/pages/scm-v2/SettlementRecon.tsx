@@ -367,12 +367,12 @@ const BatchView = ({ batchId }: { batchId: number }) => {
           background: batch.adjustment_je_no ? 'rgba(47,93,79,0.08)' : 'rgba(184,51,31,0.08)',
           fontSize: 'var(--fs-13)',
         }}>
-          <b>Charge on the statement, not on any transaction: {fmt(Math.abs(batch.adjustment_sen))}</b>
+          <b>Merchant charge on the statement, not on any transaction: {fmt(Math.abs(batch.adjustment_sen))}</b>
           <div style={softText}>
             The lines come to {fmt(batch.net_sen)}, and {batch.acquirer_code} says it is paying {fmt(batch.stated_net_sen ?? 0)}.
             {batch.adjustment_je_no
-              ? ` Booked as ${batch.adjustment_je_no} — merchant charges up, bank down.`
-              : ' Not booked yet — confirm the batch and it posts against the bank, because that money never arrived.'}
+              ? ` Booked as ${batch.adjustment_je_no}: into merchant charges, out of the bank.`
+              : ' Not booked yet — confirm the batch and it posts into merchant charges, against the bank, because that money never arrived.'}
           </div>
         </div>
       )}
