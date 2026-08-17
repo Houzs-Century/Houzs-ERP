@@ -55,6 +55,7 @@ const payload = (over: Partial<AcOutboxResponse> = {}): AcOutboxResponse => ({
   oldest_pending: null,
   rows: [],
   truncated: false,
+  counts_complete: true,
   meta: {
     max_attempts: 6,
     /* Kept in the fixture even though the page no longer prints it — otherwise
@@ -103,8 +104,10 @@ const plainTextOf = (el: HTMLElement): string => {
   return copy.textContent;
 };
 
-async function openSupersededGroup() {
-  await userEvent.click(screen.getByRole("button", { name: /superseded rows?, kept as a record/ }));
+async function openReplacedGroup() {
+  await userEvent.click(
+    screen.getByRole("button", { name: /replaced documents?, kept as a record/ }),
+  );
 }
 
 const busy = payload({
@@ -191,13 +194,17 @@ describe("MobileAutoCountSync — the reason is on the row here too", () => {
     expect(within(failed).getByText(/FK_SO_SalesAgent/)).toBeTruthy();
   });
 
-  /* Behind the fold since 2026-08-16, on this surface too — see the superseded
-     block at the bottom of this file. Everything it says is unchanged. */
-  it("marks a re-queued refusal as history, not an open item", async () => {
+  /* Behind the fold since 2026-08-16, on this surface too — see the replaced
+     block at the bottom of this file. Everything it says is unchanged, except
+     the words, which no longer read as an order to press Send again. */
+  it("marks a replaced refusal as a record, not an open item", async () => {
     await mount(busy);
     await screen.findByText("SO-F");
-    await openSupersededGroup();
-    expect(within(cardOf("IV-R")).getByText(/this row is history/i)).toBeTruthy();
+    await openReplacedGroup();
+    expect(within(cardOf("IV-R")).getByText("Replaced")).toBeTruthy();
+    expect(
+      within(cardOf("IV-R")).getByText(/Replaced by a newer send — nothing to do on this one/),
+    ).toBeTruthy();
     const card = await openRow("IV-R");
     expect(within(card).getByText(/record of the first refusal/i)).toBeTruthy();
     expect(within(card).queryByText("To fix")).toBeNull();
@@ -439,7 +446,7 @@ describe("MobileAutoCountSync — the same four fixes, one surface over", () => 
       .toBeTruthy();
   });
 
-  it("folds superseded rows out of the list, and shows them when asked", async () => {
+  it("folds replaced documents out of the list, and shows them when asked", async () => {
     const withHistory = payload({
       counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 2, attention: 1, total: 3 },
       rows: [
@@ -455,7 +462,7 @@ describe("MobileAutoCountSync — the same four fixes, one surface over", () => 
     await screen.findByText("HC-DO-2608-100");
     expect(document.querySelectorAll("[data-ac-row]").length).toBe(1);
 
-    await openSupersededGroup();
+    await openReplacedGroup();
 
     expect(document.querySelectorAll("[data-ac-row]").length).toBe(3);
     expect(screen.getByText(/nothing here to do/i)).toBeTruthy();
@@ -467,5 +474,72 @@ describe("MobileAutoCountSync — the same four fixes, one surface over", () => 
       "The queue could not be read, so nothing below is the current picture.",
     )).toBeTruthy();
     expect(screen.getByText("AutoCount service responded 502")).toBeTruthy();
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   ONE DOCUMENT, ONE CARD — the phone half of the owner's duplicate report.
+
+   "为什么在 AutoCount 里面一张 Sales Order 会出现两次呢?" He read it on the
+   desktop; a phone has LESS room for the same sales order four times over, not
+   more, and a fix on one surface only is the bug class this repo names.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("MobileAutoCountSync — one document, one card", () => {
+  const sent = (over: Partial<AcOutboxRow>): AcOutboxRow =>
+    row({ status: "sent", state: "sent", ac_doc_no: "SO-00002", ...over });
+
+  const hisScreen = payload({
+    counts: { pending: 0, sent: 2, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 2 },
+    rows: [
+      sent({ id: "s4", op: "edit", doc_no: "HC-SO-2608-002",
+        created_at: "2026-08-16T08:31:40.000Z", sent_at: "2026-08-16T08:31:55.000Z" }),
+      sent({ id: "s3", op: "edit", doc_no: "HC-SO-2608-002",
+        created_at: "2026-08-16T08:31:05.000Z", sent_at: "2026-08-16T08:31:20.000Z" }),
+      sent({ id: "s2", op: "edit", doc_no: "HC-SO-2608-002",
+        created_at: "2026-08-16T08:30:12.000Z", sent_at: "2026-08-16T08:30:30.000Z" }),
+      sent({ id: "s1", op: "create_so", doc_no: "HC-SO-2608-002",
+        created_at: "2026-08-14T17:25:00.000Z", sent_at: "2026-08-14T17:25:18.000Z" }),
+      sent({ id: "o1", doc_no: "HC-SO-2608-003", ac_doc_no: "SO-00003",
+        created_at: "2026-08-16T02:00:00.000Z", sent_at: "2026-08-16T02:00:10.000Z" }),
+    ],
+  });
+
+  it("renders one sales order once, however many times it was sent", async () => {
+    await mount(hisScreen);
+    /* The phone opens on Needs attention, as the desktop does — these five are
+       all in AutoCount, so the chip is how they are reached. */
+    await userEvent.click(await screen.findByRole("button", { name: /In AutoCount\s*2/ }));
+    await screen.findAllByText("HC-SO-2608-002");
+    expect(document.querySelectorAll("[data-ac-row]").length).toBe(2);
+    expect(screen.getAllByText("HC-SO-2608-002")).toHaveLength(1);
+  });
+
+  it("counts documents on both strips and in the line under them", async () => {
+    await mount(hisScreen);
+    await userEvent.click(await screen.findByRole("button", { name: /In AutoCount\s*2/ }));
+    await screen.findAllByText("HC-SO-2608-002");
+    expect(screen.getByText("2 of 2 documents")).toBeTruthy();
+    expect(chip(/Sales orders\s*2/)).toBeTruthy();
+  });
+
+  it("keeps every send, one tap under the document", async () => {
+    await mount(hisScreen);
+    await userEvent.click(await screen.findByRole("button", { name: /In AutoCount\s*2/ }));
+    await screen.findAllByText("HC-SO-2608-002");
+    const card = cardOf("HC-SO-2608-002");
+    expect(card.querySelectorAll("[data-ac-send]").length).toBe(0);
+    await userEvent.click(
+      within(card).getByRole("button", { name: /3 earlier sends for this document/ }),
+    );
+    expect(cardOf("HC-SO-2608-002").querySelectorAll("[data-ac-send]").length).toBe(3);
+  });
+
+  it("says the numbers are a floor when the server could not scan the whole queue", async () => {
+    await mount(payload({
+      counts_complete: false,
+      rows: [row({ status: "failed", state: "failed", needs_attention: true, reason: "refused" })],
+      counts: { pending: 0, sent: 0, failed: 1, skipped: 0, requeued: 0, attention: 1, total: 1 },
+    }));
+    expect(await screen.findByText(/at least this many and possibly more/)).toBeTruthy();
   });
 });

@@ -62,6 +62,7 @@ const payload = (over: Partial<AcOutboxResponse> = {}): AcOutboxResponse => ({
   oldest_pending: null,
   rows: [],
   truncated: false,
+  counts_complete: true,
   meta: {
     max_attempts: 6,
     /* The server still ships these and the page no longer prints them — they
@@ -121,8 +122,10 @@ const plainTextOf = (el: HTMLElement): string => {
 };
 
 /** Open the fold that history sits behind. */
-async function openSupersededGroup() {
-  await userEvent.click(screen.getByRole("button", { name: /superseded rows?, kept as a record/ }));
+async function openReplacedGroup() {
+  await userEvent.click(
+    screen.getByRole("button", { name: /replaced documents?, kept as a record/ }),
+  );
 }
 
 const rows = [
@@ -177,7 +180,7 @@ describe("AutoCountSync — the counts are on something you can click", () => {
     expect(chip(/Not accepted\s*1/)).toBeTruthy();
     expect(chip(/Held back\s*1/)).toBeTruthy();
     expect(chip(/In AutoCount\s*1/)).toBeTruthy();
-    expect(chip(/Sent again\s*1/)).toBeTruthy();
+    expect(chip(/Replaced\s*1/)).toBeTruthy();
   });
 
   it("offers all six document types, spelled out, each with its own count", async () => {
@@ -314,11 +317,17 @@ describe("AutoCountSync — the reason is on the row", () => {
   /* Folded away by default since 2026-08-16 — see the superseded block at the
      bottom of this file. Everything it said about the row is still true, and it
      is still all there; it is one click further away. */
-  it("marks a re-queued refusal as history rather than something to act on", async () => {
+  it("marks a replaced refusal as a record rather than something to act on", async () => {
     await mount(busy);
     await screen.findByText("SO-F");
-    await openSupersededGroup();
-    expect(within(cardOf("IV-R")).getByText(/this row is history/i)).toBeTruthy();
+    await openReplacedGroup();
+    /* The badge, the one-line status and the headline all say it, which is the
+       point — they used to say "Sent again", "Already sent again under a newer
+       row" and "Already sent again — this row is history". */
+    expect(within(cardOf("IV-R")).getByText("Replaced")).toBeTruthy();
+    expect(
+      within(cardOf("IV-R")).getByText(/Replaced by a newer send — nothing to do on this one/),
+    ).toBeTruthy();
     const card = await openRow("IV-R");
     expect(within(card).getByText(/record of the first refusal/i)).toBeTruthy();
     expect(within(card).queryByText("To fix")).toBeNull();
@@ -760,35 +769,35 @@ describe("AutoCountSync — history is not half the list", () => {
     ],
   }, );
 
-  it("keeps the six superseded rows out of the list", async () => {
+  it("keeps the six replaced documents out of the list", async () => {
     await mount(fifteen, "/autocount-sync?state=all");
     await screen.findByText("HC-DO-2608-100");
     /* Nine live rows on screen, none of them a record. */
     expect(document.querySelectorAll("[data-ac-row]").length).toBe(9);
-    expect(screen.queryByText(/this row is history/i)).toBeNull();
+    expect(screen.queryByText(/Replaced by a newer send/i)).toBeNull();
   });
 
   it("says how many there are and why they are kept", async () => {
     await mount(fifteen, "/autocount-sync?state=all");
-    expect(await screen.findByRole("button", { name: /6 superseded rows, kept as a record/ }))
+    expect(await screen.findByRole("button", { name: /6 replaced documents, kept as a record/ }))
       .toBeTruthy();
   });
 
   it("shows them when asked, without moving them back into the list", async () => {
     await mount(fifteen, "/autocount-sync?state=all");
     await screen.findByText("HC-DO-2608-100");
-    await openSupersededGroup();
+    await openReplacedGroup();
     expect(screen.getByText(/nothing here to do/i)).toBeTruthy();
     expect(document.querySelectorAll("[data-ac-row]").length).toBe(15);
   });
 
-  /* The Sent again chip exists to show exactly these rows. Folding them there
-     would answer the chip with an empty page. */
-  it("makes them the list when the reader picks Sent again", async () => {
+  /* The Replaced chip exists to show exactly these documents. Folding them
+     there would answer the chip with an empty page. */
+  it("makes them the list when the reader picks Replaced", async () => {
     await mount(fifteen, "/autocount-sync?state=requeued");
     await screen.findByText("HC-DO-2608-001");
     expect(document.querySelectorAll("[data-ac-row]").length).toBe(15);
-    expect(screen.queryByRole("button", { name: /superseded rows/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /kept as a record/ })).toBeNull();
   });
 
   it("does not tell a reader to try another filter when the matches are all history", async () => {
@@ -803,7 +812,7 @@ describe("AutoCountSync — history is not half the list", () => {
     }), "/autocount-sync?state=all");
     expect(await screen.findByText(/Nothing live here/)).toBeTruthy();
     expect(screen.queryByText(/Try another status/)).toBeNull();
-    expect(screen.getByRole("button", { name: /2 superseded rows, kept as a record/ }))
+    expect(screen.getByRole("button", { name: /2 replaced documents, kept as a record/ }))
       .toBeTruthy();
   });
 });
@@ -817,5 +826,108 @@ describe("AutoCountSync — a load failure is the page's sentence, not the trans
       "The queue could not be read, so nothing below is the current picture.",
     )).toBeTruthy();
     expect(screen.getByText("AutoCount service responded 502")).toBeTruthy();
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   ONE SALES ORDER, ONE ROW.
+
+   Owner, 2026-08-16, reading In AutoCount / Sales orders on the live page:
+   "为什么在 AutoCount 里面一张 Sales Order 会出现两次呢?" Six rows, and
+   HC-SO-2608-002 was FOUR of them — three "Change to the sales order" at 16/08
+   4:30-4:31pm and the original "New sales order" at 15/08 1:25am. AED_HOUZS
+   holds exactly one HC-SO-2608-002, verified by direct SQL, so nothing was
+   duplicated anywhere: the list was one row per SEND.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe("AutoCountSync — one document, one row", () => {
+  const sent = (over: Partial<AcOutboxRow>): AcOutboxRow =>
+    row({ status: "sent", state: "sent", ac_doc_no: "SO-00002", ...over });
+
+  /** His six rows, in the order the route returns them: newest first. */
+  const hisScreen = payload({
+    counts: { pending: 0, sent: 3, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 3 },
+    rows: [
+      sent({ id: "s4", op: "edit", doc_no: "HC-SO-2608-002",
+        created_at: "2026-08-16T08:31:40.000Z", sent_at: "2026-08-16T08:31:55.000Z" }),
+      sent({ id: "s3", op: "edit", doc_no: "HC-SO-2608-002",
+        created_at: "2026-08-16T08:31:05.000Z", sent_at: "2026-08-16T08:31:20.000Z" }),
+      sent({ id: "s2", op: "edit", doc_no: "HC-SO-2608-002",
+        created_at: "2026-08-16T08:30:12.000Z", sent_at: "2026-08-16T08:30:30.000Z" }),
+      sent({ id: "s1", op: "create_so", doc_no: "HC-SO-2608-002",
+        created_at: "2026-08-14T17:25:00.000Z", sent_at: "2026-08-14T17:25:18.000Z" }),
+      sent({ id: "o1", doc_no: "HC-SO-2608-003", ac_doc_no: "SO-00003",
+        created_at: "2026-08-16T02:00:00.000Z", sent_at: "2026-08-16T02:00:10.000Z" }),
+      sent({ id: "o2", doc_no: "HC-SO-2608-004", ac_doc_no: "SO-00004",
+        created_at: "2026-08-16T01:00:00.000Z", sent_at: "2026-08-16T01:00:10.000Z" }),
+    ],
+  });
+
+  /* THE DEFECT, AS A NUMBER: four rows for one sales order, rendered as one. */
+  it("renders one sales order once, however many times it was sent", async () => {
+    await mount(hisScreen, "/autocount-sync?state=sent");
+    await screen.findAllByText("HC-SO-2608-002");
+    expect(document.querySelectorAll("[data-ac-row]").length).toBe(3);
+    expect(screen.getAllByText("HC-SO-2608-002")).toHaveLength(1);
+  });
+
+  /* AND THE COUNTS SAY THE SAME NUMBER. "6 of 17 documents" over six rows for
+     three documents was the other half of what he read. */
+  it("counts documents on the strips and in the line under them", async () => {
+    await mount(hisScreen, "/autocount-sync?state=sent");
+    await screen.findAllByText("HC-SO-2608-002");
+    expect(screen.getByText("3 of 3 documents")).toBeTruthy();
+    expect(chip(/Sales orders\s*3/)).toBeTruthy();
+    expect(chip(/Every type\s*3/)).toBeTruthy();
+  });
+
+  /* THE SENDS ARE THE AUDIT TRAIL AND NONE OF THEM IS DROPPED. 0277 exists so
+     "what did we tell AutoCount, when, and what did it answer" is a SELECT a
+     year later; a page that hid three of the four would be a worse defect than
+     the one being fixed. */
+  it("keeps every send, one click under the document", async () => {
+    await mount(hisScreen, "/autocount-sync?state=sent");
+    await screen.findAllByText("HC-SO-2608-002");
+    const card = cardOf("HC-SO-2608-002");
+    const opener = within(card).getByRole("button", { name: /3 earlier sends for this document/ });
+    /* Folded on arrival — the row is one line until it is asked. */
+    expect(card.querySelectorAll("[data-ac-send]").length).toBe(0);
+    await userEvent.click(opener);
+    expect(cardOf("HC-SO-2608-002").querySelectorAll("[data-ac-send]").length).toBe(3);
+  });
+
+  /* The row is drawn from the NEWEST send: the document's current state is what
+     happened last to it, not what happened first. */
+  it("shows where the document stands now, not where it started", async () => {
+    await mount(hisScreen, "/autocount-sync?state=sent");
+    await screen.findAllByText("HC-SO-2608-002");
+    const card = cardOf("HC-SO-2608-002");
+    expect(within(card).getByText(/^Change to the sales order · /)).toBeTruthy();
+    expect(within(card).queryByText(/^New sales order · /)).toBeNull();
+  });
+
+  /* A document sent once has no second opener at all — the majority row must
+     not grow a control it has nothing to put behind. */
+  it("gives a document sent once nothing extra to open", async () => {
+    await mount(hisScreen, "/autocount-sync?state=sent");
+    await screen.findByText("HC-SO-2608-003");
+    expect(within(cardOf("HC-SO-2608-003")).queryByRole("button")).toBeNull();
+  });
+});
+
+/* A count the server could not finish must not read as a count. */
+describe("AutoCountSync — a partial count says so", () => {
+  it("says the numbers are a floor when the queue was too long to scan", async () => {
+    await mount(payload({
+      counts_complete: false,
+      rows: [row({ status: "sent", state: "sent", ac_doc_no: "SO-1" })],
+      counts: { pending: 0, sent: 1, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 1 },
+    }), "/autocount-sync?state=all");
+    expect(await screen.findByText(/at least this many and possibly more/)).toBeTruthy();
+  });
+
+  it("says nothing of the kind when it scanned the lot", async () => {
+    await mount(busy);
+    await screen.findByText("SO-F");
+    expect(screen.queryByText(/at least this many and possibly more/)).toBeNull();
   });
 });
