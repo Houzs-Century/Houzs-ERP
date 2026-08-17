@@ -191,6 +191,20 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
   `soDeliverableRemaining` (delivery-orders-mfg.ts) — DRAFT and CANCELLED DOs
   never count as delivered. `so-stock-allocation.ts` step 3 follows the same
   rule (aligned 2026-08-01, audit D5).
+- **"Delivered" is read TWO ways, and has to be** (2026-08-17). The delivered
+  sum lives in `lib/do-unlinked-coverage.ts::netDeliveredBySoItem` and counts
+  (a) DO lines linked by `so_item_id`, plus (b) DO lines whose link is NULL but
+  whose DO header still names the order in `so_doc_no`. Reason: that column is
+  nullable behind an `ON DELETE SET NULL` FK, so deleting ONE Sales-Order line
+  blanks the pointer on every document that served it — and reading only (a), a
+  shipment that physically happened went invisible: the SO stayed CONFIRMED and
+  MRP re-ordered goods already at the customer's house (26 lines across 8 live
+  2990 DOs). (b) is confined to the order the header names, matched on item
+  code, and CAPPED by (a), so the two readings cannot double-count and no unit
+  moves between orders. `syncSoDeliveredFromDo` feeds `isSoFullyCovered` the
+  same pair. Orphaned rows are healed by
+  `backend/scripts/repair-do-so-item-links.mjs`; the path that blanks the
+  pointer was still open when this shipped.
 - SERVICE lines never create demand (`isServiceLine`).
 - **The warehouse follows the SO**: a line's NULL `warehouse_id` is resolved
   from the SO header (`lib/so-warehouse.ts`) BEFORE bucketing, server-side, so

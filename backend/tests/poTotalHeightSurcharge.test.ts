@@ -2,7 +2,7 @@
 // the Purchase Order raised from it.
 //
 // THE BUG (2990-PO-2608-003, reported 2026-08-17). `computeMfgPoUnitCost`
-// accepts `totalHeight` and `computeMfgLineCost` prices it for BEDFRAME out of
+// accepts `totalHeight` and the engine prices it for BEDFRAME out of
 // `maintenanceConfig.totalHeights`. All five FRONTEND callers passed it; all
 // three BACKEND callers did not. So a PO keyed by hand on the PO screen carried
 // the surcharge and a PO converted from an SO did not: CODY-(SS) at 18" was
@@ -10,18 +10,19 @@
 // tier, RM80 — while the same order's CODY-(Q) at 22" matched, because that
 // tier is priced 0 and the omission was therefore invisible on it.
 //
-// TWO TESTS, because the defect had two halves. The first pins the ENGINE:
-// given the height, the surcharge lands. That half was never broken and would
-// not have caught this. The second pins the CALL SITES, which is where the bug
-// actually lived — a passing engine reached through an argument nobody passed.
-// A structural assertion is the only kind that fails when a FOURTH caller is
-// added tomorrow and forgets it again.
+// THREE GROUPS, because the defect had three surfaces: the engine (never
+// broken, and so would never have caught this), the shared constructor that now
+// owns the argument object, and the call sites — where the bug actually lived,
+// a working engine reached through an argument nobody passed. Only the
+// structural group fails when a FOURTH caller is added tomorrow and hand-rolls
+// the object again.
 
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
 import { computeMfgPoUnitCost, type MaintenanceConfig } from '../src/scm/shared/mfg-pricing';
+import { poVariantPricingInput } from '../src/scm/lib/po-pricing';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const repoFile = (rel: string) => readFileSync(resolve(here, '..', rel), 'utf8');
@@ -53,12 +54,12 @@ const cost = (totalHeight: string | null) => computeMfgPoUnitCost(
 ).unitPriceSen;
 
 describe('total-height surcharge on a server-derived PO cost', () => {
-  it('adds the sub-20" tier to the supplier base', () => {
+  it('adds the sub-20 inch tier to the supplier base', () => {
     // RM407.50 base + RM80.00 (18") = RM487.50 — the SO line's stored cost.
     expect(cost('18"')).toBe(48750);
   });
 
-  it('adds nothing at 20" and above, which is why the bug hid on most lines', () => {
+  it('adds nothing at 20 inches and above, which is why the bug hid on most lines', () => {
     expect(cost('22"')).toBe(40750);
   });
 
@@ -69,32 +70,57 @@ describe('total-height surcharge on a server-derived PO cost', () => {
   });
 });
 
-describe('every backend computeMfgPoUnitCost caller passes totalHeight', () => {
-  /* Source-level, deliberately. The three call sites live in two files and each
-     builds its argument object by hand; there is no shared constructor to test
-     instead. Scanning the source is what makes a fourth, future caller that
-     drops the field fail HERE rather than in a customer's PO. */
-  const CALLERS = ['src/scm/lib/po-pricing.ts', 'src/scm/routes/mfg-purchase-orders.ts'] as const;
+describe('poVariantPricingInput is the one place the spec fields are built', () => {
+  it('carries totalHeight through from the line variants', () => {
+    expect(poVariantPricingInput('BEDFRAME', { totalHeight: '18"' }).totalHeight).toBe('18"');
+  });
 
-  /* COMMENTS ARE STRIPPED FIRST, and that is not tidiness — it is the whole
-     reason this assertion works. Written without it, the check passed against a
-     probe that DELETED the `totalHeight:` argument, because the explanatory
-     comment sitting right above it still contains the word. A guard that reads
-     prose instead of code is the "check that stops running" shape: green, and
-     measuring nothing. It is asserted on the KEY (`totalHeight:`), in
-     comment-free source, and proven to fail when the argument is removed. */
+  it('keeps the category gating each hand-copy had', () => {
+    const bed = poVariantPricingInput('BEDFRAME', { legHeight: '2"', seatHeight: '28' });
+    expect(bed.legHeight).toBe('2"');
+    expect(bed.sofaLegHeight).toBeNull();
+    expect(bed.seatSize).toBeNull();
+
+    const sofa = poVariantPricingInput('SOFA', { legHeight: '2"', seatHeight: '28' });
+    expect(sofa.sofaLegHeight).toBe('2"');
+    expect(sofa.legHeight).toBeNull();
+    expect(sofa.seatSize).toBe('28');
+  });
+
+  it('defaults every field rather than emitting undefined', () => {
+    expect(poVariantPricingInput('BEDFRAME', {})).toEqual({
+      seatSize: null, divanHeight: null, legHeight: null,
+      totalHeight: null, sofaLegHeight: null, specials: [],
+    });
+  });
+});
+
+describe('every backend computeMfgPoUnitCost caller goes through the constructor', () => {
+  /* Source-level, deliberately. The defect was never in the engine — it was
+     three hand-copied argument objects, each independently deciding which
+     surcharge pools existed, and all three forgetting the same one. Collapsing
+     them into poVariantPricingInput fixes today; this assertion is what stops a
+     FOURTH caller hand-rolling the object again and quietly dropping a pool.
+
+     COMMENTS ARE STRIPPED FIRST, and that is not tidiness — it is the reason
+     the assertion works at all. Written without it, an earlier version of this
+     check passed against a probe that DELETED the argument, because the
+     explanatory comment above it still contained the word. A guard that reads
+     prose instead of code is green while measuring nothing. */
+  const CALLERS = ['src/scm/lib/po-pricing.ts', 'src/scm/routes/mfg-purchase-orders.ts'] as const;
   const stripComments = (src: string) =>
     src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '');
 
   for (const rel of CALLERS) {
-    it(`${rel} passes totalHeight at every call`, () => {
-      // Each argument object ends at the `specials` field every caller closes
-      // with; slice from call to that, and require the key inside each slice.
+    it(`${rel} spreads poVariantPricingInput at every call`, () => {
+      // Each argument object ends at its closing brace; slice from the call to
+      // that, and require the constructor spread inside the slice.
       const parts = stripComments(repoFile(rel)).split('computeMfgPoUnitCost(').slice(1);
       expect(parts.length).toBeGreaterThan(0);
       for (const part of parts) {
-        const argObject = part.slice(0, part.indexOf('specials'));
-        expect(argObject, `a computeMfgPoUnitCost call in ${rel} omits totalHeight`).toMatch(/\btotalHeight\s*:/);
+        const argObject = part.slice(0, part.indexOf('},'));
+        expect(argObject, `a computeMfgPoUnitCost call in ${rel} builds its spec args by hand`)
+          .toMatch(/\.\.\.poVariantPricingInput\(/);
       }
     });
   }
@@ -105,7 +131,7 @@ describe('every backend computeMfgPoUnitCost caller passes totalHeight', () => {
       0,
     );
     // 1 in po-pricing.ts + 2 in mfg-purchase-orders.ts. If this number moves, a
-    // caller was added or removed — check it passes totalHeight, then update.
+    // caller was added or removed — check it uses the constructor, then update.
     expect(total).toBe(3);
   });
 });
