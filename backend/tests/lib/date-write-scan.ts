@@ -302,13 +302,24 @@ function requestDerivedNames(src: ts.SourceFile): RequestInfo {
     }
     if (ts.isForOfStatement(node) && ts.isVariableDeclarationList(node.initializer)) {
       const scope = enclosingFunction(node);
-      /* The seed flag is carried here too, because this branch is now the ONLY
-         one that binds a for-of head: `for (const patch of …)` must not become
-         less derived than it was when the declaration branch also saw it. */
+      /* The seed flag is carried on the SIMPLE arm only, because this branch is
+         now the ONLY one that binds a for-of head: `for (const patch of …)` must
+         not become less derived than it was when the declaration branch also saw
+         it.
+
+         The DESTRUCTURED arm keeps `false`, and the asymmetry is the point. A
+         seed name is an author naming the whole parsed payload — that is what
+         makes `let body;` count on sight. In a binding PATTERN the identifier is
+         the source object's FIELD name instead, so `for (const { patch } of
+         dbRows)` says the row has a column called `patch`, not that the value
+         came from the browser. Seeding it read a stored field as request data
+         (`safeForOfDestructuredOverDbRead` below), which is per-NAME judging —
+         the thing this pass exists not to do. `.map(({ patch }) => …)` binds the
+         identical construct with `false` twenty lines up, for the same reason. */
       for (const d of node.initializer.declarations) {
         if (ts.isIdentifier(d.name)) add(d.name.text, node, scope, node.expression, REQUEST_SEED_NAMES.has(d.name.text));
         else for (const el of d.name.elements) {
-          if (ts.isBindingElement(el) && ts.isIdentifier(el.name)) add(el.name.text, node, scope, node.expression, REQUEST_SEED_NAMES.has(el.name.text));
+          if (ts.isBindingElement(el) && ts.isIdentifier(el.name)) add(el.name.text, node, scope, node.expression, false);
         }
       }
     }

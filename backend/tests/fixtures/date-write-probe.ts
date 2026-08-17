@@ -147,6 +147,20 @@ export async function safeForOfOverDbRead() {
   await sb.from('grn_items').insert(rows);
 }
 
+/* ── SAFE: a DESTRUCTURED head over a database read, binding a SEED NAME ──── */
+/* The counter-case UNSAFE 9 does NOT cover, because it binds `shipDate`. Seeding
+   the destructured arm on the element's name judges a stored COLUMN called
+   `patch` as request data — the per-name judging the scope-correct pass removed.
+   Only this shape fails if the seed is put back on that arm; the whole-tree
+   assertion cannot see it, because backend/src has no destructured for-of head
+   binding any of the six seed names. */
+export async function safeForOfDestructuredOverDbRead() {
+  const { data } = await sb.from('purchase_order_items').select('*').eq('po_id', 1);
+  for (const { patch, id } of (data ?? []) as Array<Record<string, unknown>>) {
+    await sb.from('grn_items').update({ received_date: (patch as string | undefined) ?? null }).eq('id', id);
+  }
+}
+
 /* ── SAFE: the coercion itself ────────────────────────────────────────────── */
 export async function safeCoerced(body: Record<string, unknown>) {
   await sb.from('purchase_orders').update({
