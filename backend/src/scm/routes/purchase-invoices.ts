@@ -18,6 +18,7 @@ import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
+import { findUnlinkedPiLines, unlinkedInvoiceResponse } from '../lib/return-unlinked-lines';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
@@ -1017,6 +1018,30 @@ purchaseInvoices.post('/', async (c) => {
   const asDraft = body.asDraft === true;
 
   const sb = c.get('supabase'); const user = c.get('user');
+
+  /* THE UNLINKED-LINE BACK DOOR, on the sixth and last chain that has it.
+     The over-invoice guard below caps only lines that CARRY a grnItemId; a
+     hand-added line with no link bills the goods while moving no
+     `grn_items.invoiced_qty`, so the GRN line still reads fully outstanding and
+     a second PI bills the same receipt — the supplier is paid twice. Refused
+     only when the material is already on the GRN this invoice names, so a
+     freight or service line still passes. Five sibling chains close exactly this
+     door; see docs/unlinked-line-duplicate-coe.md and the owner's 2026-08-04
+     "包括 GR 那边也是". */
+  {
+    const unlinked = await findUnlinkedPiLines(
+      sb,
+      (body.grnId as string | undefined) ?? null,
+      (body.grnNumber as string | undefined) ?? null,
+      items.map((it, idx) => ({
+        lineRef: String(idx),
+        itemCode: String(it.materialCode ?? ''),
+        qty: Number(it.qty ?? 0),
+        soItemId: (it.grnItemId as string | undefined) ?? null,
+      })),
+    );
+    if (unlinked.length > 0) return c.json(unlinkedInvoiceResponse(unlinked), 409);
+  }
 
   /* Over-invoice guard (mirrors /from-grn-items line ~432 + /:id/items): any
      line linked to a GRN line is capped at that line's REMAINING
@@ -2181,12 +2206,30 @@ purchaseInvoices.post('/:id/items', async (c) => {
      a predicate — it tags the new line as ours while hanging it off the other
      company's invoice. piLocked below returns null on a miss, so it is not a
      load either. */
-  const { data: own, error: ownErr } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', piId), c).maybeSingle();
+  /* `grn_id` is selected alongside `id` for the unlinked-line guard below — the
+     ADD-LINE path is the other way a hand-typed goods line reaches an invoice
+     that names a receipt, and it is the likelier one: the operator converts the
+     GRN properly, then types the missing item in by hand. */
+  const { data: own, error: ownErr } = await scopeToCompany(sb.from('purchase_invoices').select('id, grn_id').eq('id', piId), c).maybeSingle();
   if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
   if (!own) return c.json({ error: 'not_found' }, 404);
   // PI edit-lock: a paid / cancelled PI is read-only.
   const lock = await piLocked(sb, piId);
   if (lock) return c.json(lock, 409);
+
+  /* Same door as POST / — see the comment there. An unlinked line billing a
+     material the named GRN already contains is refused; a freight or service
+     line, or anything that receipt does not contain, passes. */
+  {
+    const parentGrnId = (own as { grn_id?: string | null }).grn_id ?? null;
+    const unlinked = await findUnlinkedPiLines(sb, parentGrnId, parentGrnId, [{
+      lineRef: String(it.lineNumber ?? '0'),
+      itemCode: String(it.materialCode ?? ''),
+      qty: Number(it.qty ?? 1),
+      soItemId: (it.grnItemId as string | undefined) ?? null,
+    }]);
+    if (unlinked.length > 0) return c.json(unlinkedInvoiceResponse(unlinked), 409);
+  }
 
   const qty = Number(it.qty ?? 1);
   const unitPriceCenti = Number(it.unitPriceCenti ?? 0);

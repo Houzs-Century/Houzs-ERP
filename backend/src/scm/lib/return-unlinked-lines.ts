@@ -126,6 +126,43 @@ export function findUnlinkedPrLines(
   return findUnlinked(grnId, grnNumber, lines, () => grnMaterialCodesOf(sb, grnId));
 }
 
+/**
+ * The SIXTH chain, and the last one on this door — GRN -> Purchase INVOICE.
+ *
+ * *Added 2026-08-17.* Five chains closed this back door; the invoicing side of
+ * the receiving chain never did. The owner's 2026-08-04 instruction was
+ * "包括 GR 那边也是" — including the GR side — and the receipt half
+ * (`grn-unlinked-po-lines.ts`) was built then while the BILLING half was not.
+ * `sales-invoices.ts` describes the identical vector on its own chain and blocks
+ * it; `purchase-invoices.ts` contained the word "unlinked" zero times.
+ *
+ * THE VECTOR, and why the money version is worse than the stock version.
+ * `scm.purchase_invoices.grn_id` names a GRN; `purchase_invoice_items.grn_item_id`
+ * is nullable — legitimately, because that is how a PI-native line (freight, a
+ * service charge, a discount) is represented. Every cap and every recount in
+ * `purchase-invoices.ts` filters NULL links out FIRST, which is correct for a
+ * service line and catastrophic for a hand-added GOODS line: it bills the
+ * material, `grn_items.invoiced_qty` never moves, the GRN line still reads fully
+ * outstanding, and a second Purchase Invoice bills the same receipt. Both post to
+ * AP and both enqueue to AutoCount, so the supplier is paid twice for one
+ * delivery.
+ *
+ * The rule is the same narrow one as the other five, and deliberately so:
+ * refused only when the material is ALREADY ON the GRN the invoice names. A
+ * freight line, a service charge, or a part that receipt never contained still
+ * passes untouched — which is the property that lets this ship without breaking
+ * PI-native lines.
+ */
+export function findUnlinkedPiLines(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  grnId: string | null | undefined,
+  grnNumber: string | null | undefined,
+  lines: UnlinkedCandidate[],
+): Promise<UnlinkedReturnOffender[]> {
+  return findUnlinked(grnId, grnNumber, lines, () => grnMaterialCodesOf(sb, grnId));
+}
+
 export function unlinkedReturnResponse(
   offenders: UnlinkedReturnOffender[],
   kind: 'delivery' | 'purchase',
@@ -140,6 +177,24 @@ export function unlinkedReturnResponse(
       `This return names ${source} ${parent}, but ${offenders.length} line(s) are not linked to it: ${list}. ` +
       `Pick those items from ${picker} instead of adding them by hand — an unlinked line still moves the ` +
       `stock but counts against no line of the source document, so the same goods can be returned again.`,
+    parentNo: parent,
+    offenders,
+  };
+}
+
+/** The invoice refusal. Its own wording because the consequence is MONEY, not
+ *  stock: the operator has to understand that the goods get PAID FOR twice. */
+export function unlinkedInvoiceResponse(offenders: UnlinkedReturnOffender[]) {
+  const parent = offenders[0]?.parentNo ?? '';
+  const list = [...new Set(offenders.map((o) => o.itemCode))].join(', ');
+  return {
+    error: 'unlinked_grn_lines',
+    message:
+      `This invoice names Goods Receipt ${parent}, but ${offenders.length} line(s) bill an item that is ` +
+      `on that receipt without being linked to it: ${list}. Pick those items from the Goods Receipt ` +
+      `instead of adding them by hand — an unlinked line still bills the supplier but ticks nothing off ` +
+      `the receipt, so the same goods can be invoiced and paid for a second time. A freight or service ` +
+      `line, or any item this receipt does not contain, is unaffected.`,
     parentNo: parent,
     offenders,
   };

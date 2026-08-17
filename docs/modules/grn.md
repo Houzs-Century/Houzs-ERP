@@ -168,6 +168,33 @@ To measure what the cap hid on production: Actions →
 **probe-transfer-census** (read-only), which replays the old window at any
 `LIMIT` and counts the outstanding lines and whole POs it could not reach.
 
+## 2b. Two open gaps this module carries, RECORDED not changed
+
+*Added 2026-08-17. Both are for the owner to decide; neither was touched.*
+
+**1. Two DRAFT GRNs can coexist on one PO line, and that is deliberate.** A DRAFT
+GRN commits nothing — `recomputePoReceived` excludes DRAFT rows from a PO line's
+`received_qty` (`grns.ts`), so the line stays fully outstanding and the picker
+keeps offering it. That is what makes a draft a draft, and it is also what lets
+two people draft a receipt for the same delivery. The confirm transition is a
+compare-and-swap on the observed status, so only ONE of them can post; the loser
+gets `already_posting` 409. The exposure is therefore duplicated WORK, not
+duplicated stock. Refusing the second draft was considered and NOT done: it would
+break the legitimate case (one person drafts, another revises) and there is no
+report of it happening.
+
+**2. `purchase_order_item_id` on `grn_items` is nullable with NO unique index**,
+and the same is true of `grn_item_id` on `purchase_invoice_items` and
+`purchase_return_items`. Every once-only rule on these chains is a running tally
+recounted in application code — `received_qty`, `invoiced_qty`, `returned_qty` —
+read-then-write, with no database constraint behind it. `grns.ts` says so in its
+own words: *"with no DB unique index behind it to reject the second write (unlike
+DO/DR, which have one)"*. The unlinked-line guards close the operator-facing door
+(`grn-unlinked-po-lines.ts`, `return-unlinked-lines.ts`); a concurrent-write race
+is held only by the CAS and the post-insert verifiers, and two of those verifiers
+swallow their read errors on purpose. Counting how much of this shape is already
+in production is what `probe-transfer-census` is for.
+
 **`PATCH /:id` was unscoped on both its read and its UPDATE until 2026-08-13**
 (PR #2086; BUG-HISTORY, *"The writes the read-hardening audit left"*). The GET at
 `:1173` had been scoped by the 2026-08-10 audit and this write had not, so a GRN
