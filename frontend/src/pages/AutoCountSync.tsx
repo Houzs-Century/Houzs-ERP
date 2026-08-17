@@ -26,6 +26,15 @@
 //     component eight mobile screens and DataTable already use), so a thousand
 //     rows are a thousand rows of scrolling, not a thousand rows of DOM.
 //
+// ONE ROW PER DOCUMENT, 2026-08-17. He read the page again: "为什么在 AutoCount
+// 里面一张 Sales Order 会出现两次呢?" HC-SO-2608-002 took four of the six rows
+// under In AutoCount / Sales orders — three changes and the create — while the
+// account book holds exactly one of it. Nothing was duplicated; the list was one
+// row per SEND. `acGroupByDocument` folds the sends into the document they
+// belong to, the newest one draws the card, and the rest are the audit trail,
+// one click down. Both chip strips and the "N of M documents" line count
+// documents to match.
+//
 // Presentation only. The state, the reason kind and the remedy are decided by
 // the server (backend/src/scm/lib/autocount-outbox-status.ts); the words, and
 // how much of them is on screen before a click, are lib/autocountOutbox. The
@@ -50,38 +59,45 @@ import { ListSkeleton } from "../components/Skeleton";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
 import { cn } from "../lib/utils";
 import {
+  AC_COUNTS_PARTIAL_LINE,
   AC_DEFAULT_STATE,
   AC_DOC_TYPES,
+  AC_EARLIER_SENDS_NOTE,
   AC_FILTER_STATES,
   AC_FILTER_STATE_LABEL,
   AC_LOAD_FAILED_LINE,
   AC_NOT_ASKED_NOTE,
-  AC_ONLY_SUPERSEDED_LINE,
-  AC_REQUEUED_NOTE,
+  AC_ONLY_REPLACED_LINE,
+  AC_REPLACED_GROUP_NOTE,
+  AC_REPLACED_NOTE,
   AC_SEND_AGAIN_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
   AC_STATE_PLAIN_MEANING,
-  AC_SUPERSEDED_NOTE,
   AC_TECHNICAL_LABEL,
   acAge,
   acDocTypePlural,
   acDocTypeCounts,
+  acEarlierSendsHeading,
   acEmptyLine,
+  acGroupByDocument,
+  acGroupsOfType,
   acHeadline,
+  acListCountLine,
   acListTitle,
+  acReplacedHeading,
   acRowDetail,
   acRowStandsAt,
-  acRowsOfType,
-  acSplitSuperseded,
+  acSplitReplaced,
   acStateCount,
   acStateLabel,
   acStateTone,
-  acSupersededHeading,
   acWritebackLine,
   useAcExpandedRows,
+  useAcReplacedGroup,
   useAcRequeue,
-  useAcSupersededGroup,
+  useAcSendHistory,
   useAutoCountOutbox,
+  type AcDocGroup,
   type AcDocType,
   type AcFilterState,
   type AcOutboxRow,
@@ -198,23 +214,55 @@ function WhatWasSaid({ said }: { said: AcSaid }) {
 }
 
 /**
- * ONE DOCUMENT, ONE LINE.
+ * A DOCUMENT'S EARLIER SENDS, folded under it.
  *
- * A row already in the account book is that line and nothing else. A row with a
- * problem adds a second line — the plain-language headline, which is never
+ * The audit trail, and it is why the page must not simply drop the extra rows:
+ * the queue is the record of what the ERP told AutoCount and when. What it is
+ * NOT is the list — one document is one line, and its history is one click.
+ */
+function EarlierSends({ sends, maxAttempts }: { sends: AcOutboxRow[]; maxAttempts: number }) {
+  return (
+    <div className="border-t border-border bg-canvas px-2.5 py-2">
+      <p className="mb-1.5 max-w-[84ch] text-[12px] text-ink-muted">{AC_EARLIER_SENDS_NOTE}</p>
+      <ul className="space-y-1">
+        {sends.map((s) => (
+          <li key={s.id} data-ac-send="" className="flex items-center gap-x-2 text-[11.5px]">
+            <StateBadge state={s.state} />
+            <span className="min-w-0 flex-1 truncate text-ink-muted">
+              {acRowStandsAt(s, maxAttempts)}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+/**
+ * ONE DOCUMENT, ONE LINE — and since 2026-08-17 that is one line per DOCUMENT
+ * rather than one per send.
+ *
+ * The card is drawn from `group.current`, the newest send, which is where the
+ * document stands. Everything sent before it is behind the second opener.
+ *
+ * A document already in the account book is that line and nothing else. One with
+ * a problem adds a second line — the plain-language headline, which is never
  * hidden — and that line is the button that opens the rest.
  */
 function OutboxRowCard(
-  { row, maxAttempts, sending, note, open, onToggle, onSendAgain }: {
-    row: AcOutboxRow;
+  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain }: {
+    group: AcDocGroup;
     maxAttempts: number;
     sending: boolean;
     note: AcRequeueNote | undefined;
     open: boolean;
     onToggle: () => void;
+    historyOpen: boolean;
+    onToggleHistory: () => void;
     onSendAgain: () => void;
   },
 ) {
+  const row = group.current;
   const tone = acStateTone(row.state);
   /* A re-sent document's old refusal is no longer true, and "To fix: change it
      in AutoCount" on a document that has just gone back into the queue is a
@@ -298,10 +346,30 @@ function OutboxRowCard(
             </>
           )}
           {detail.showRequeuedNote && (
-            <p className="max-w-[84ch] text-[13px] text-ink-muted">{AC_REQUEUED_NOTE}</p>
+            <p className="max-w-[84ch] text-[13px] text-ink-muted">{AC_REPLACED_NOTE}</p>
           )}
           {detail.said && <WhatWasSaid said={detail.said} />}
         </div>
+      )}
+
+      {/* THE SEND HISTORY, folded. Only where there IS one — the majority of
+          documents were sent once and get no second opener. */}
+      {group.earlier.length > 0 && (
+        <>
+          <button
+            type="button"
+            aria-expanded={historyOpen}
+            onClick={onToggleHistory}
+            className="flex w-full items-center gap-1.5 border-t border-border px-2.5 py-1 text-left text-[11.5px] font-semibold text-ink-muted"
+          >
+            <ChevronRight
+              size={13}
+              className={cn("shrink-0 transition-transform", historyOpen && "rotate-90")}
+            />
+            {acEarlierSendsHeading(group.earlier.length)}
+          </button>
+          {historyOpen && <EarlierSends sends={group.earlier} maxAttempts={maxAttempts} />}
+        </>
       )}
 
       {/* The answer to Send again lands HERE, on the row that was pressed —
@@ -373,19 +441,23 @@ export function AutoCountSync() {
   const reload = q.reload;
   const requeue = useAcRequeue(useCallback(() => { reload(); }, [reload]));
   const expanded = useAcExpandedRows();
-  const history = useAcSupersededGroup();
+  const sendHistory = useAcSendHistory();
+  const history = useAcReplacedGroup();
 
   const headline = acHeadline(d);
   const maxAttempts = d?.meta.max_attempts ?? 6;
-  const loaded = d?.rows ?? [];
+  /* ONE ROW PER DOCUMENT. The sends are folded into the document they belong to
+     before anything else looks at them, so every count below — and the list
+     itself — is about documents. `HC-SO-2608-002` was four of six rows here. */
+  const loaded = acGroupByDocument(d?.rows ?? []);
   const typeCounts = acDocTypeCounts(loaded);
-  const rows = acRowsOfType(loaded, docType);
+  const groups = acGroupsOfType(loaded, docType);
   /* HISTORY IS NOT A TASK LIST. Six of fifteen rows on the live page were
-     "already sent again", two documents appearing twice. They stay reachable —
-     folded under the list, and the Sent again chip still shows them as the
+     replaced refusals, two documents appearing twice. They stay reachable —
+     folded under the list, and the Replaced chip still shows them as the
      list — but they no longer stand between the reader and a live refusal. The
      counts on the chips are untouched: they are the server's. */
-  const split = acSplitSuperseded(rows, state);
+  const split = acSplitReplaced(groups, state);
 
   /* The state counts are the SERVER's, exact and whole-company. The type counts
      are of the rows actually loaded — a different kind of number, and the only
@@ -496,29 +568,33 @@ export function AutoCountSync() {
                   <span className="font-semibold text-ink">{acListTitle(state, docType)}</span>
                   <span className="mx-2 opacity-50">|</span>
                   <span className="tabular-nums">
-                    {q.fetching
-                      ? "Loading…"
-                      : `${rows.length} of ${d.counts.total} document${d.counts.total === 1 ? "" : "s"}`}
+                    {q.fetching ? "Loading…" : acListCountLine(groups.length, d.counts.total)}
                   </span>
                 </span>
               </div>
             </div>
 
-            {d.truncated && (
+            {(d.truncated || !d.counts_complete) && (
               <div className="rounded-md border border-amber-500/40 bg-amber-500/5 p-3 text-[12px] text-warning-text">
-                Only the most recent documents are shown. The status counts above still cover
-                every one; the document-type counts cover what is on screen. Narrow the search
-                to see the rest.
+                {d.truncated && (
+                  <p>
+                    Only the most recent documents are shown. The status counts above still cover
+                    every one; the document-type counts cover what is on screen. Narrow the search
+                    to see the rest.
+                  </p>
+                )}
+                {/* A COUNT THAT DID NOT SEE EVERY ROW MUST NOT READ AS A FACT. */}
+                {!d.counts_complete && <p>{AC_COUNTS_PARTIAL_LINE}</p>}
               </div>
             )}
 
-            {rows.length === 0 ? (
+            {groups.length === 0 ? (
               <div className="rounded-lg border border-border bg-surface p-8 text-center text-[13px] text-ink-muted">
                 {acEmptyLine(d, state)}
               </div>
             ) : split.live.length === 0 ? (
               <div className="rounded-lg border border-border bg-surface p-8 text-center text-[13px] text-ink-muted">
-                {AC_ONLY_SUPERSEDED_LINE}
+                {AC_ONLY_REPLACED_LINE}
               </div>
             ) : (
               /* WINDOWED. The same component eight mobile screens and DataTable
@@ -527,28 +603,31 @@ export function AutoCountSync() {
                  above it only the visible slice is in the DOM. */
               <MobileVirtualList
                 items={split.live}
-                getKey={(r) => r.id}
+                getKey={(g) => g.key}
                 gap={6}
                 estimateHeight={52}
                 ariaLabel={`${split.live.length} loaded documents. Only visible rows are mounted; scroll to browse this loaded set.`}
-                renderItem={(r) => (
+                renderItem={(g) => (
                   <OutboxRowCard
-                    row={r}
+                    group={g}
                     maxAttempts={maxAttempts}
-                    sending={requeue.sendingId === r.id}
-                    note={requeue.notes[r.id]}
-                    open={expanded.isOpen(r)}
-                    onToggle={() => expanded.toggle(r)}
-                    onSendAgain={() => void requeue.sendAgain(r.id)}
+                    sending={requeue.sendingId === g.current.id}
+                    note={requeue.notes[g.current.id]}
+                    open={expanded.isOpen(g.current)}
+                    onToggle={() => expanded.toggle(g.current)}
+                    historyOpen={sendHistory.isOpen(g)}
+                    onToggleHistory={() => sendHistory.toggle(g)}
+                    onSendAgain={() => void requeue.sendAgain(g.current.id)}
                   />
                 )}
               />
             )}
 
             {/* THE RECORD, FOLDED. Under the live list, never inside it. The
-                rows are not rendered at all until it is opened — a superseded
-                row costs nothing to keep and should cost nothing to ignore. */}
-            {split.superseded.length > 0 && (
+                rows are not rendered at all until it is opened — a replaced
+                document costs nothing to keep and should cost nothing to
+                ignore. */}
+            {split.replaced.length > 0 && (
               <div className="rounded-lg border border-dashed border-border bg-surface">
                 <button
                   type="button"
@@ -560,28 +639,30 @@ export function AutoCountSync() {
                     size={13}
                     className={cn("shrink-0 transition-transform", history.open && "rotate-90")}
                   />
-                  {acSupersededHeading(split.superseded.length)}
+                  {acReplacedHeading(split.replaced.length)}
                 </button>
                 {history.open && (
                   <div className="border-t border-border px-3 py-2">
                     <p className="mb-2 max-w-[84ch] text-[12px] text-ink-muted">
-                      {AC_SUPERSEDED_NOTE}
+                      {AC_REPLACED_GROUP_NOTE}
                     </p>
                     <MobileVirtualList
-                      items={split.superseded}
-                      getKey={(r) => r.id}
+                      items={split.replaced}
+                      getKey={(g) => g.key}
                       gap={6}
                       estimateHeight={52}
-                      ariaLabel={`${split.superseded.length} superseded rows, kept as a record.`}
-                      renderItem={(r) => (
+                      ariaLabel={`${split.replaced.length} replaced documents, kept as a record.`}
+                      renderItem={(g) => (
                         <OutboxRowCard
-                          row={r}
+                          group={g}
                           maxAttempts={maxAttempts}
-                          sending={requeue.sendingId === r.id}
-                          note={requeue.notes[r.id]}
-                          open={expanded.isOpen(r)}
-                          onToggle={() => expanded.toggle(r)}
-                          onSendAgain={() => void requeue.sendAgain(r.id)}
+                          sending={requeue.sendingId === g.current.id}
+                          note={requeue.notes[g.current.id]}
+                          open={expanded.isOpen(g.current)}
+                          onToggle={() => expanded.toggle(g.current)}
+                          historyOpen={sendHistory.isOpen(g)}
+                          onToggleHistory={() => sendHistory.toggle(g)}
+                          onSendAgain={() => void requeue.sendAgain(g.current.id)}
                         />
                       )}
                     />

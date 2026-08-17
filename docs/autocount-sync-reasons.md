@@ -53,11 +53,56 @@ both were bought:
    the old words for good, which is why the fix has to be in how the page RENDERS
    a note and not only in what the writer produces.
 
-**A superseded row is a record, not a task.** `requeued` rows are folded out of
-the list under *"N superseded rows, kept as a record"* on both surfaces
-(`acSplitSuperseded`) — except under the **Sent again** filter, where the reader
-asked for them and they are the list. The status counts on the chips are
-untouched: they are the server's, exact and whole-company.
+**A replaced document is a record, not a task.** A document whose newest send is
+`requeued` is folded out of the list under *"N replaced documents, kept as a
+record"* on both surfaces (`acSplitReplaced`) — except under the **Replaced**
+filter, where the reader asked for them and they are the list. The status counts
+on the chips are untouched: they are the server's, exact and whole-company.
+
+---
+
+## 0a. The unit of the screen is the DOCUMENT, and the words are not the button's
+
+**Added 2026-08-17, after the owner read two more defects off the live page.**
+Both are in this section because both are display contract: nothing about which
+row the ERP writes changed.
+
+### One row per document, not one per send
+
+*"为什么在 AutoCount 里面一张 Sales Order 会出现两次呢?"* — `HC-SO-2608-002` took
+four of the six rows under **In AutoCount → Sales orders** while `AED_HOUZS` holds
+exactly one of it. `scm.autocount_outbox` is append-only and writes one row per
+intended operation (0277), so a document created and then edited three times IS
+four rows and always will be. The queue was right; the screen had the wrong unit.
+
+| | |
+| --- | --- |
+| **What identifies a document** | `doc_type` + `doc_no`, the pair `autocount_outbox_doc_idx (company_id, doc_type, doc_no)` was created to answer with. NOT `doc_no` alone — six types, and the same number can belong to two of them, so a bare number would LOSE a document. NOT `doc_id` — 0277 declares it nullable and untyped so an outbox row survives its document being reworked, and a key that may be absent is not a key. Company is not in the key: the whole response is one company. |
+| **Which send draws the row** | the NEWEST, by `created_at`. Under a status filter that is the newest send matching the filter, which is the honest answer to the question the filter asked. |
+| **Where the other sends go** | behind *"N earlier sends for this document"*, on both surfaces (`data-ac-send`), folded on arrival. They are the audit trail — 0277 exists so "what did we tell AutoCount, when, and what did it answer" is a SELECT a year later — and none of them is dropped. |
+| **What the counts count** | DOCUMENTS, on both chip strips and in the line under them. The type chips count distinct documents in the loaded page (`acDocTypeCounts`); the status chips are the server's `counts`, which count distinct `doc_type + doc_no` over the whole company. They do NOT sum to the total, deliberately: a document that arrived and was later edited into a refusal is counted by **In AutoCount** and by **Not accepted**, because both are true of it and both chips list it. |
+| **A count that did not finish** | `counts_complete: false`, and the page says *"the numbers on the chips are at least this many and possibly more"*. The scan pages through the queue and stops at `AC_DOC_SCAN_MAX`; an undercount must never read as a count. |
+
+### The state is Replaced, and the button is Send again
+
+*"你写 Send Again,明明都已经进去了,为什么还要 Send Again？"* — the badge carried the
+same two words as the BUTTON on the same screen, on seven of seventeen rows, on
+exactly the rows where pressing it is the one thing a reader must not do.
+
+| where | it says |
+| --- | --- |
+| the badge and the filter chip | **Replaced** |
+| the one-line status (`acRowStatusLine`) | *Replaced by a newer send* |
+| the headline on the row (`AC_REPLACED_LINE`) | *Replaced by a newer send — nothing to do on this one* |
+| behind the opener (`AC_REPLACED_NOTE`) | *This is the record of the first refusal, not something to act on — the document is queued or in AutoCount under a newer send.* |
+| the fold (`acReplacedHeading`) | *N replaced documents, kept as a record* |
+
+The rule underneath: **a state is something that happened TO the record and is
+never named with the imperative of a control beside it.** `AC_SEND_AGAIN_LABEL`
+is unchanged and still reads *Send again*, which is why the badge may not. The
+server's own vocabulary — `requeued`, the `[re-queued …]` marker — stays on the
+server; `re-queue`, `supersede` and `row` are all asserted absent from these
+strings by `frontend/src/lib/autocountOutbox.test.ts`.
 
 ---
 
@@ -290,7 +335,17 @@ needs it, it has to be raised there by hand, against a source document.
 5. **`Invalid transfer item.` on `HC-DO-2608-001` / `-002` is unexplained.** The
    recorded cause (line keys spanning two source documents) is refuted for both
    — see the measurement in §4. Open on the AutoCount side.
-6. **Nothing asks the account book whether a `failed` document landed.** The one
+6. **The document counts are a SCAN, not a `count(distinct …)`.** The route pages
+   through `scm.autocount_outbox` for the whole company (`id, doc_type, doc_no,
+   status`, plus the ids matching the re-queue marker) and reduces to distinct
+   `doc_type + doc_no`, because PostgREST cannot express a distinct count and the
+   alternatives — a view or an RPC — would restate `acOutboxState` in SQL, which
+   is the third-opinion drift §2's classifier exists to prevent. It stops at
+   `AC_DOC_SCAN_MAX` (20,000 rows) and answers `counts_complete: false` past that.
+   The queue held 17 rows on 2026-08-16, four days after the write-back went live;
+   when it approaches the cap this needs to become SQL, and the honest flag is
+   what keeps the page truthful until it does.
+7. **Nothing asks the account book whether a `failed` document landed.** The one
    residual risk on any re-send is a document that was accepted and whose reply
    was lost. A read-only probe on the ERP's own `DocNo` — which every create and
    every conversion now sends — would settle it before the queue writes, and
