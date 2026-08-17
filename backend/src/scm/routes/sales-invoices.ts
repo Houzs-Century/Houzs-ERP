@@ -54,6 +54,7 @@ import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
+import { siShadowRefusal, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
@@ -482,43 +483,8 @@ async function checkSiOverRemaining(
   return offenders.length > 0 ? { error: 'over_remaining', lines: offenders } : null;
 }
 
-/* FIX 3 (fix/si-cancel-revenue-qty) — a from-DO Sales Invoice (its header carries
-   delivery_order_id) must LINK its DO-derived lines via do_item_id, so they count
-   against the DO's Pending pool (do-line-remaining) and respect the
-   remaining-to-invoice ceiling. An UNLINKED line whose item code STILL has Pending
-   qty on the source DO is the double-invoice vector: the link was dropped, so both
-   the ceiling and the pool are bypassed and the same delivered goods can be billed
-   again. Such a line must instead be added through the DO picker so it links.
-
-   Genuinely-new manual lines ride free — the owner's ruling is that a Sales Invoice
-   MAY carry direct/standalone lines. We only block the clear shadow case (item on
-   the DO with Pending qty); a manual line for an item NOT on the DO, or one whose
-   DO line is already fully invoiced (remaining 0), is left alone. Returns the
-   offending item codes (empty = nothing to block, and no DB round-trip when there
-   are no unlinked lines — the common from-DO path is all-linked). */
-async function unlinkedFromDoOffenders(
-  sb: any,
-  doId: string,
-  lines: Array<Record<string, unknown>>,
-): Promise<string[]> {
-  const unlinked = lines.filter((l) => !l.doItemId && l.itemCode);
-  if (unlinked.length === 0) return [];
-  const { data: doItemRows } = await sb.from('delivery_order_items')
-    .select('id, item_code').eq('delivery_order_id', doId);
-  const rows = (doItemRows ?? []) as Array<{ id: string; item_code: string | null }>;
-  if (rows.length === 0) return [];
-  const remainingMap = await doRemainingByItemId(sb, rows.map((r) => r.id));
-  const pendingCodes = new Set<string>();
-  for (const r of rows) {
-    if (r.item_code && (remainingMap.get(r.id) ?? 0) > 0) pendingCodes.add(r.item_code.trim().toUpperCase());
-  }
-  const offenders = new Set<string>();
-  for (const l of unlinked) {
-    const code = String(l.itemCode).trim().toUpperCase();
-    if (pendingCodes.has(code)) offenders.add(String(l.itemCode));
-  }
-  return [...offenders];
-}
+/* FIX 3's shadow check now lives in unlinked-line-edit-guard (siShadowRefusal),
+   shared with the line PATCH that had no check at all. */
 
 /* ── Invoice price vs the AGREED ORDER price — WARN, never block ───────────
    Nothing downstream of the SO compares the two. The happy path is already
@@ -1002,14 +968,9 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
   {
     const fromDoId = (body.deliveryOrderId as string | undefined) ?? null;
     if (fromDoId) {
-      const shadow = await unlinkedFromDoOffenders(sb, fromDoId, items);
-      if (shadow.length > 0) {
-        return c.json({
-          error: 'unlinked_do_line',
-          message: `These items are still pending on the source Delivery Order and must be added through "Add from Delivery Order" so the delivered quantity is tracked: ${shadow.join(', ')}.`,
-          itemCodes: shadow,
-        }, 409);
-      }
+      const shadow = await siShadowRefusal(sb, fromDoId, items, (codes) =>
+        `These items are still pending on the source Delivery Order and must be added through "Add from Delivery Order" so the delivered quantity is tracked: ${codes.join(', ')}.`);
+      if (shadow) return c.json(shadow, 409);
     }
   }
 
@@ -1794,14 +1755,9 @@ salesInvoices.post('/:id/items', async (c) => {
   {
     const fromDoId = (header as { delivery_order_id?: string | null }).delivery_order_id ?? null;
     if (fromDoId && !it.doItemId) {
-      const shadow = await unlinkedFromDoOffenders(sb, fromDoId, [it]);
-      if (shadow.length > 0) {
-        return c.json({
-          error: 'unlinked_do_line',
-          message: `${shadow.join(', ')} is still pending on the source Delivery Order — add it through "Add from Delivery Order" so the delivered quantity is tracked.`,
-          itemCodes: shadow,
-        }, 409);
-      }
+      const shadow = await siShadowRefusal(sb, fromDoId, [it], (codes) =>
+        `${codes.join(', ')} is still pending on the source Delivery Order — add it through "Add from Delivery Order" so the delivered quantity is tracked.`);
+      if (shadow) return c.json(shadow, 409);
     }
   }
 
@@ -1863,11 +1819,13 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
+  // Source DO, read on the gate query below and used by the re-point guard.
+  let siFromDoId: string | null = null;
   {
     /* The gate for the whole handler: every line write below keys on
        (itemId, sales_invoice_id), so proving the INVOICE is ours proves the
        chain. Unscoped, the status gate below read the OTHER company's status. */
-    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status').eq('id', id), co.companyId).maybeSingle();
+    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status, delivery_order_id').eq('id', id), co.companyId).maybeSingle();
     if (!hd) return c.json(NOT_THIS_COMPANY, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before editing lines.' }, 409);
@@ -1876,6 +1834,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     if (hd && isIssuedSi((hd as { status: string }).status)) {
       return c.json({ error: 'invoice_issued', message: SI_ISSUED_LINE_MESSAGE }, 409);
     }
+    siFromDoId = (hd as { delivery_order_id?: string | null } | null)?.delivery_order_id ?? null;
   }
 
   if (it.itemCode !== undefined) {
@@ -1939,6 +1898,18 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     const effGroup = (it.itemGroup ?? prev.item_group) as string | null | undefined;
     const effVariants = (it.variants ?? prev.variants) as Record<string, unknown> | null | undefined;
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
+  }
+
+  /* The EDIT half of FIX 3 — see unlinked-line-edit-guard for why (the cap above
+     is gated on prev.do_item_id, so a re-typed unlinked code double-bills). */
+  {
+    const repoint = await unlinkedEditRefusal(sb, 'sales-invoice', {
+      parentId: siFromDoId,
+      storedLink: (prev as { do_item_id?: string | null }).do_item_id ?? null,
+      storedCode: (prev as { item_code?: string | null }).item_code ?? null,
+      patchCode: it.itemCode,
+    });
+    if (repoint) return c.json(repoint, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').update(updates).eq('id', itemId), co.companyId);

@@ -94,27 +94,86 @@ export function findUnlinkedSoItemLines(
   return out;
 }
 
+/* ── The parent-set read, once, and FAIL CLOSED ────────────────────────────
+   Every chain's guard asks the same question — "which codes does the parent
+   document carry?" — and until 2026-08-17 all four copies asked it the same
+   WRONG way: `const { data } = await sb…`, with the error destructured away.
+
+   A failed read then produced an EMPTY set, and an empty set is precisely the
+   input `findUnlinkedSoItemLines` treats as "the parent orders nothing", which
+   returns no offenders, which the caller reads as "allowed". So a transient
+   blip on the one read the guard is built around did not degrade the guard —
+   it DISABLED it, silently, on the write it exists to refuse. That is the same
+   defect `piLocked` and `findServiceLineCodes` were each fixed for; this is the
+   third time, which is why the read now lives in ONE function.
+
+   `ok: false` is NOT "all clear". Callers must refuse on it. */
+export type ParentCodes =
+  | { ok: true; codes: Set<string> }
+  | { ok: false; reason: string };
+
+/** Either the offenders, or the reason no verdict could be reached. Same
+ *  contract as ParentCodes: `ok: false` must be refused, never ignored. */
+export type UnlinkedScan<T> =
+  | { ok: true; offenders: T[] }
+  | { ok: false; reason: string };
+
+/** Canonical 409 body for "the parent document could not be read". Refuse
+ *  rather than guess: the unchecked line is the one that bills or ships the
+ *  same goods twice. */
+export const unlinkedCheckUnavailableResponse = (reason: string) => ({
+  error: 'unlinked_check_failed',
+  message:
+    `Could not read the source document to check this line, so nothing was saved — try again (${reason}).`,
+});
+
+/** THE parent-code read. One implementation, four chains; the differences are
+ *  arguments (which table, which code column, which parent key, which rows to
+ *  skip), not different rules. */
+export async function readParentCodes(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  opts: {
+    table: string;
+    select: string;
+    codeColumn: string;
+    parentColumn: string;
+    parentId: string | null | undefined;
+    /** Rows that order nothing, so they cannot be bypassed (e.g. cancelled). */
+    skip?: (row: Record<string, unknown>) => boolean;
+  },
+): Promise<ParentCodes> {
+  const id = String(opts.parentId ?? '').trim();
+  if (!id) return { ok: true, codes: new Set() };
+  const { data, error } = await sb
+    .from(opts.table)
+    .select(opts.select)
+    .eq(opts.parentColumn, id);
+  if (error) return { ok: false, reason: error.message ?? `${opts.table} lookup failed` };
+  const out = new Set<string>();
+  for (const r of (data ?? []) as Array<Record<string, unknown>>) {
+    if (opts.skip?.(r)) continue;
+    const k = codeKey(r[opts.codeColumn] as string | null | undefined);
+    if (k) out.add(k);
+  }
+  return { ok: true, codes: out };
+}
+
 /** Every item_code the named Sales Order orders, cancelled lines excluded (they
  *  order nothing, so shipping against them is not a bypass of anything). */
-export async function soItemCodesOf(
+export function soItemCodesOf(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
   soDocNo: string | null | undefined,
-): Promise<Set<string>> {
-  const doc = String(soDocNo ?? '').trim();
-  if (!doc) return new Set();
-  const { data } = await sb
-    .from('mfg_sales_order_items')
-    .select('item_code, cancelled')
-    .eq('doc_no', doc);
-  const rows = (data ?? []) as Array<{ item_code: string | null; cancelled?: boolean | null }>;
-  const out = new Set<string>();
-  for (const r of rows) {
-    if (r.cancelled === true) continue;
-    const k = codeKey(r.item_code);
-    if (k) out.add(k);
-  }
-  return out;
+): Promise<ParentCodes> {
+  return readParentCodes(sb, {
+    table: 'mfg_sales_order_items',
+    select: 'item_code, cancelled',
+    codeColumn: 'item_code',
+    parentColumn: 'doc_no',
+    parentId: soDocNo,
+    skip: (r) => r.cancelled === true,
+  });
 }
 
 /** Convenience: load the SO's item codes and apply the rule in one call. */
@@ -123,10 +182,13 @@ export async function findUnlinkedSoLines(
   sb: any,
   soDocNo: string | null | undefined,
   lines: UnlinkedCandidate[],
-): Promise<UnlinkedOffender[]> {
-  if (!String(soDocNo ?? '').trim()) return [];
-  if (!lines.some((l) => !l.soItemId)) return [];   // nothing unlinked — skip the read
-  return findUnlinkedSoItemLines(soDocNo, lines, await soItemCodesOf(sb, soDocNo));
+): Promise<UnlinkedScan<UnlinkedOffender>> {
+  if (!String(soDocNo ?? '').trim()) return { ok: true, offenders: [] };
+  // nothing unlinked — skip the read
+  if (!lines.some((l) => !l.soItemId)) return { ok: true, offenders: [] };
+  const codes = await soItemCodesOf(sb, soDocNo);
+  if (!codes.ok) return codes;
+  return { ok: true, offenders: findUnlinkedSoItemLines(soDocNo, lines, codes.codes) };
 }
 
 /** The 409 body. Names the offending lines so the UI can point at the rows

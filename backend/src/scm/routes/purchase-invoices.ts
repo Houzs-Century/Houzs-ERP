@@ -1431,7 +1431,7 @@ purchaseInvoices.patch('/:id/cancel', cancelPurchaseInvoiceHandler);
    the PRIMARY note ref only; the authoritative linkage is per LINE via
    purchase_invoice_items.grn_item_id. Every consumption / costing path already
    reads the line level (recomputeGrnInvoiced, verifyGrnLinesNotOverInvoiced,
-   computeGrnFlags, recostForPi), so they are multi-GRN correct unchanged.
+   computeGrnFlags (lib/grn-consumption-flags), recostForPi), so they are multi-GRN correct unchanged.
    PI does NOT touch inventory (PI is AP-only — inventory landed at GRN time).
    Returns { created: [{ id, invoiceNumber, supplierId, grnCount, lineCount }], total }. */
 // Exported for the scope tests: supabaseAuth cannot run in the vitest harness.
