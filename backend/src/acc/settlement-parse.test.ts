@@ -128,13 +128,20 @@ describe('parseStatement — refusals are loud and name what is wrong', () => {
     expect(r.grossSen).toBe(100000);
   });
 
-  it('a row that HAS a date it cannot read still stops the parse', () => {
+  /* This rule CHANGED once real statements arrived. A row whose date column
+     holds something that is not a date used to stop the parse — but that is
+     exactly what a statement's summary rows look like ("SALES & MANUAL
+     POSTINGS, , , , , 3500.00, …"), and one file can carry a dozen of them.
+     They are skipped and counted now. The protection that matters survives: a
+     file with no readable transaction at all is still REFUSED, never shown as
+     an empty batch. */
+  it('a file whose rows are all furniture is still refused, not shown empty', () => {
     const r = parseStatement(baseCfg(), CSV(
       'Txn Date,Approval Code,Gross,MDR',
       'yesterday,A1,1000.00,15.00',
     ));
     expect(r).toMatchObject({ ok: false });
-    expect((r as { reason: string }).reason).toMatch(/Line 2/);
+    expect((r as { reason: string }).reason).toMatch(/No transaction lines/i);
   });
 
   it('an unreadable amount stops the parse and names the line', () => {
@@ -244,6 +251,48 @@ describe('parseStatement — the real terminal statements', () => {
     expect(r).toMatchObject({ ok: false });
     expect((r as { reason: string }).reason).toMatch(/without a year/);
     expect((r as { reason: string }).reason).toMatch(/05-Jun/);
+  });
+
+  /* The real Hong Leong export: TWO merchant blocks in one file, each opening
+     with its own SUMMARY whose rows carry prose in the date column and money in
+     the money column. Refusing those made every multi-merchant statement
+     unreadable — this is the case that proved it. */
+  it('reads a file holding several MERCHANT blocks, each with its own summary', () => {
+    const twoMerchants = [
+      'MERCHANT NO:,00005407101,,,TRADING NAME:,DEMO',
+      'SUMMARY',
+      'TRANSACTION TYPE,,,,ITEMS,TRXN AMOUNT,MDR,LATE FEE,,TRXN NET',
+      'SALES,HLB CARD,VISA CARD,,2,2394.00,21.546000,0.000000,,2372.454000',
+      'TERMINAL ID:,00099423076',
+      'DATE,BATCH,INVOICE/AUTHO,CARD NUMBER,TENURE/CASHOUT*,TRXN AMOUNT,MDR,LATE FEE,MDR(%),INTERCHANGE FEE,TRXN NET',
+      '16-Aug,64265,663554,4902-82xx-xxxx-2474,  ,1800.00,16.200000,0.000000,0.90,="0.6%",1783.800000',
+      ',,,Batch Total,1,1800.00,16.200000,0.000000,,,1783.800000',
+      'MERCHANT NO:,00005407119,,,TRADING NAME:,DEMO',
+      'SUMMARY',
+      'SALES & MANUAL POSTINGS,,,,,3500.00,-14.00,0.00,,3486.00',
+      'SALES,NON-HLB CARDS,MyDebit,,1,3500.00,14.000000,0.000000,,3486.000000',
+      'TERMINAL ID:,00099423082',
+      'DATE,BATCH,INVOICE/AUTHO,CARD NUMBER,TENURE/CASHOUT*,TRXN AMOUNT,MDR,LATE FEE,MDR(%),INTERCHANGE FEE,TRXN NET',
+      '16-Aug,57578,448433,5509-89xx-xxxx-5679,  ,3500.00,14.000000,0.000000,0.40,="RM0.37+0.001%",3486.000000',
+    ].join('\n');
+    const r = parseStatement(maybankCfg({ statementMonth: '2026-08' }), twoMerchants);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows.map((x) => x.ref)).toEqual(['663554', '448433']);
+    expect(r.grossSen).toBe(180000 + 350000);
+    // Everything that is not a transaction is counted, never silently dropped.
+    expect(r.skippedLines).toBeGreaterThan(0);
+  });
+
+  it('a dateless year still stops the upload even among all that furniture', () => {
+    const r = parseStatement(maybankCfg(), [
+      'MERCHANT NO:,00005407101,,,TRADING NAME:,DEMO',
+      'SALES & MANUAL POSTINGS,,,,,3500.00,-14.00,0.00,,3486.00',
+      'DATE,BATCH,INVOICE/AUTHO,CARD NUMBER,TENURE/CASHOUT*,TRXN AMOUNT,MDR,LATE FEE,MDR(%),INTERCHANGE FEE,TRXN NET',
+      '16-Aug,64265,663554,4902-82xx-xxxx-2474,  ,1800.00,16.200000,0.000000,0.90,="0.6%",1783.800000',
+    ].join('\n'));
+    expect(r).toMatchObject({ ok: false });
+    expect((r as { reason: string }).reason).toMatch(/without a year/);
   });
 
   it("a second terminal's repeated heading row is a section break, not a transaction", () => {

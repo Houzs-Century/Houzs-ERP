@@ -14,11 +14,30 @@
 
 | Acquirer | Format | Headings on | Date written as | Fee given as | Unique ref |
 |---|---|---|---|---|---|
-| MBB (Maybank terminal) | CSV | **line 16** — merchant + SUMMARY block above it | `05-Jun` — **no year** | `MDR` column, an amount | `INVOICE/AUTHO` ✓ |
+| HLB (Hong Leong terminal) | CSV | **searched for** — merchant + SUMMARY blocks above, and repeated per terminal | `16-Aug` — **no year** | `MDR` column, an amount | `INVOICE/AUTHO` ✓ |
 | GHL | CSV | line 1 | `2026-06-02 18:38:24.0` | fee column, printed **negative** | `gateway_tx_id` — present but **unusable**, see below |
 | PBB (2990 HOME) | CSV | line 1, every field quoted | `17062026` — DDMMYYYY, no separators | **gross − net** (see the trap below) | `Approval_code` ✓ |
-| HLB | **encrypted PDF** | — | — | — | — · **cannot be read yet** |
+| MBB (Maybank terminal) | — | — | — | — | **no merchant statement seen yet** — see below |
 | CIMB | — | — | — | — | not in use (owner, 2026-08-17) |
+
+### ⚠️ The file labelled "MBB (1).CSV" is a HONG LEONG statement
+
+Three things say so, and nothing says otherwise:
+
+1. It is byte-for-byte the same layout as `HLBB Merchant.CSV` — MERCHANT NO /
+   SUMMARY / TERMINAL ID / `DATE,BATCH,INVOICE/AUTHO,…` — and parses correctly
+   with the identical config.
+2. It classifies its sales as **`HLB CARD` vs `NON-HLB CARDS`**, a distinction
+   only Hong Leong's own acquiring makes.
+3. Its merchant number is `00004879219`. Maybank's own merchant numbers, read
+   off the Maybank account report, look like `32410011`, `32259046`, `32409997`
+   — a different numbering scheme entirely.
+
+So the Hong Leong layout above is confirmed by two files, and **Maybank's
+merchant statement has not actually been seen yet**. MBB is configured with the
+same layout provisionally so it is not left blank, but it needs its own file
+before it can be trusted. → *Owner to confirm and send a real Maybank merchant
+statement.*
 
 Column mappings live in `acc_acquirer_config.column_map` and are editable from
 the Acquirer setup tab; the demo rig
@@ -97,6 +116,35 @@ containing `MERCHANT` and the merchant number.* Both credits landed together on
 → **The check to run when HLB's CSV arrives:** its net for 16/06 should be
 RM 7,261.65 and for 17/06 RM 1,788.28. If they agree, HLB is proven end to end
 the same way PBB already is.
+
+### The Maybank current account (Houzs Century, 0000564418610346)
+
+Read off `ACCOUNTACTIVITYREPORT_564418610346.csv`, 01–15 Aug 2026. This file is
+**pipe-delimited**, its amounts are integer sen zero-padded to 15 digits, and
+CR/DR is its own column — nothing like the Hong Leong statement. Layer 4 will
+need a delimiter setting; layer 3 does not, so it is noted, not built.
+
+| Money stream | Recognised by | Shape |
+|---|---|---|
+| MBB credit card settlement | `CR/CARD SALES MN <merchant> DATED <DDMMYYYY>` | net credited |
+| MBB **debit** card settlement | `DR/CARD SALES M/N <merchant> DATED <DDMMYYYY>` | **gross credited, fee taken as a SEPARATE `BCHARGE` debit** |
+| PBB settlement | `03999061714  PBB-PBCS AC 3` | net credited |
+| AEON instalment financing | `Book Transfer Third AEON CREDIT SERVICE`, ref `MA…` | net credited |
+| Cash deposits | `CDM CASH DEPOSIT` | — |
+| Own-bank transfers | `MBB TO HLBB BANK`, ref `MPV-…` | — |
+
+Two of these need the owner's answer before layer 4:
+
+- **MBB debit card does not net its fee.** RM 875.00 arrives as a credit and
+  RM 3.94 leaves as a separate `BCHARGE` debit on the same reference. An
+  acquirer whose fee is charged separately rather than deducted is a fourth fee
+  shape, and the current `fee_method` list has no name for it. Whether Maybank's
+  own merchant statement presents it netted is unknown until that file arrives.
+- **AEON CREDIT SERVICE is a money stream nobody has mentioned.** Instalment
+  financing paying in by book transfer, dozens of credits in two weeks. Does the
+  ERP record those sales as payments at all? If it does, they need reconciling
+  like any acquirer; if it does not, that money reaches the bank with nothing
+  behind it in the books.
 
 **The loop closes on real money.** The PBB settlement file for 2990 HOME lists 4
 card transactions on 17/06 netting **RM 11,814.44**; the Hong Leong account

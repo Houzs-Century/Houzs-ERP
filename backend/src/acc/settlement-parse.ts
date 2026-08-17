@@ -283,22 +283,26 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
        "skipped some rows" must never be something the operator has to guess. */
     if (!rawDate.trim()) { skipped += 1; continue; }
 
-    const txnDate = toIsoDate(rawDate, hint);
-    /* The footnote block a terminal statement ends with ("*Cash Out
-       Description Code: CP - …") has prose where the date belongs and nothing
-       where the money belongs. No date AND no amount is not a transaction —
-       skipped and counted. A row with an amount but an unreadable date still
-       stops the parse below, because that one really is a broken transaction. */
-    if (!txnDate && toSen(rawGross) == null) { skipped += 1; continue; }
-    if (!txnDate) {
-      if (dateNeedsYear(rawDate)) {
-        return {
-          ok: false,
-          reason: `This ${cfg.code} statement writes its dates without a year (line ${i + 1} says "${rawDate}") — choose the month it covers and upload it again.`,
-        };
-      }
-      return { ok: false, reason: `Line ${i + 1}: cannot read the date "${rawDate}".` };
+    /* A date the file WROTE without a year is a real problem and must stop the
+       upload — it is asked about, never assumed. Checked before the skip rule
+       below, or "16-Aug" would be quietly dropped as if it were a heading. */
+    if (dateNeedsYear(rawDate) && !hint) {
+      return {
+        ok: false,
+        reason: `This ${cfg.code} statement writes its dates without a year (line ${i + 1} says "${rawDate}") — choose the month it covers and upload it again.`,
+      };
     }
+
+    /* A TRANSACTION ROW IS ONE WITH A DATE IN THE DATE COLUMN. Everything else
+       on these pages is furniture, and a real statement is full of it: one file
+       can hold several MERCHANT blocks, each opening with its own SUMMARY whose
+       rows read "SALES & MANUAL POSTINGS, , , , , 3500.00, …" — prose in the
+       date column and money in the money column. Refusing those (the first
+       rule tried) makes every multi-merchant statement unreadable; so they are
+       skipped and COUNTED, and the count is reported to the operator, because
+       silently dropping rows is the same sin as silently parsing none. */
+    const txnDate = toIsoDate(rawDate, hint);
+    if (!txnDate) { skipped += 1; continue; }
     const grossSen = toSen(rawGross);
     if (grossSen == null) return { ok: false, reason: `Line ${i + 1}: cannot read the amount "${rawGross}".` };
 

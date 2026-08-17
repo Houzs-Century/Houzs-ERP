@@ -47,6 +47,18 @@ const CHART: Row[] = [
    one header row of snake_case ids and — contrary to 系统3's assumption — DOES
    carry a unique transaction id (gateway_tx_id). */
 const ACQUIRER_CONFIG: Row[] = [
+  /* HONG LEONG's terminal statement. One file can hold several MERCHANT blocks,
+     each with its own SUMMARY and several TERMINAL sections, and its dates carry
+     no year. NOTE: the file the owner first sent as "MBB (1).CSV" is this same
+     layout and classifies its sales as HLB CARD / NON-HLB CARDS, so it is a Hong
+     Leong statement too — Maybank's own merchant numbers look nothing like
+     these (32410011 vs 00005407101). Owner to confirm; MBB's real layout is
+     still unseen. */
+  {
+    code: 'HLB', display_name: 'HLB', statement_format: 'CSV', has_unique_ref: true,
+    fee_method: 'stated', date_tolerance_days: 3, is_active: true,
+    column_map: { date: 'DATE', ref: 'INVOICE/AUTHO', gross: 'TRXN AMOUNT', fee: 'MDR', net: 'TRXN NET' },
+  },
   {
     code: 'MBB', display_name: 'MBB', statement_format: 'CSV', has_unique_ref: true,
     fee_method: 'stated', date_tolerance_days: 3, is_active: true,
@@ -79,7 +91,7 @@ const ACQUIRER_CONFIG: Row[] = [
 const COMPANY_LINKS: Row[] = ACQUIRER_CONFIG.map((a) => ({
   company_id: CO, acquirer_code: a.code,
   transit_account_code: '320-0000', fee_account_code: '930-0000',
-  bank_account_code: a.code === 'GHL' ? '331-0000' : '330-0000',
+  bank_account_code: a.code === 'PBB' || a.code === 'HLB' ? '331-0000' : '330-0000',
   is_active: true,
 }));
 
@@ -122,6 +134,13 @@ const seed = () => ({
     soPay('p5', 'SO-2608-005', '2026-08-02T16:21:00', 40000, null, 'MBB'),
     // ── Card money nobody has settled: this is watchlist 1.
     soPay('p6', 'SO-2607-088', '2026-07-18T09:30:00', 35000, 'A0900', 'MBB'),
+    /* ── HLB: these match demo-statements/HLB-Aug.csv, which is the owner's
+       OWN Hong Leong export with the merchant/terminal/card numbers replaced —
+       two merchant blocks, three terminals, one file. */
+    soPay('h1', 'SO-2608-020', '2026-08-16T11:15:00', 180000, '663554', 'HLB'),
+    soPay('h2', 'SO-2608-021', '2026-08-16T13:40:00', 59400, '674234', 'HLB'),
+    soPay('h3', 'SO-2608-022', '2026-08-16T15:02:00', 120000, '014723', 'HLB'),
+    soPay('h4', 'SO-2608-023', '2026-08-16T17:26:00', 350000, '448433', 'HLB'),
     // ── GHL: the gateway id IS on the statement, so a till that captured it
     //    auto-matches; the one that did not waits for a human.
     soPay('g1', 'SO-2608-010', '2026-08-01T12:00:00', 80000, '615318040666', 'GHL'),
@@ -140,6 +159,8 @@ const seed = () => ({
     ['SO-2608-003', 'Lim Boon Huat'], ['SO-2608-004', 'Kedai Perabot Jaya'],
     ['SO-2608-005', 'Kedai Perabot Jaya'], ['SO-2607-088', 'Wong Mei Ling'],
     ['SO-2608-010', 'Raj Kumar'], ['SO-2608-011', 'Nurul Aina'],
+    ['SO-2608-020', 'Chong Wei Ming'], ['SO-2608-021', 'Faridah Hassan'],
+    ['SO-2608-022', 'Kedai Tilam Sejahtera'], ['SO-2608-023', 'Ng Choon Hoe'],
   ].map(([doc_no, customer_name]) => ({ doc_no, customer_name, customer_phone: null, company_id: CO })),
   sales_invoices: [
     { id: 'INV-2608-777', invoice_number: 'INV-2608-777', company_id: CO,
