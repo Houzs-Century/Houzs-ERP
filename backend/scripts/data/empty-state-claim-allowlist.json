@@ -210,6 +210,16 @@
       "file": "frontend/src/portal/pages/PortalCaseDetail.tsx",
       "text": "completed: { step: 5, eyebrow: \"Completed\", title: \"All done — thank you\", body: \"Your service case has been closed. We'd love to hear how we did.\" },",
       "why": "A step label keyed off the case's own status column on a case the portal loaded by id, not an empty-result render."
+    },
+    {
+      "file": "backend/src/scm/lib/grn-consumption-flags.test.ts",
+      "text": "it('is fully invoiced only when EVERY accepted line is', () => {",
+      "why": "A test NAME stating computeGrnFlags' rule over an array passed in by the test itself, not a string any operator can see and not a read of the database."
+    },
+    {
+      "file": "backend/src/scm/lib/unlinked-line-edit-guard.test.ts",
+      "text": "it('ALLOWS an SI line shadowing a DO item that is ALREADY FULLY INVOICED', async () => {",
+      "why": "A test NAME describing the owner's narrow SI rule over a stubbed DO line, not product copy; it asserts what the guard PERMITS, not that any real work is finished."
     }
   ]
 }
