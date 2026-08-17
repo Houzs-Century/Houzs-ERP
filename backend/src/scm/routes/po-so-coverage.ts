@@ -76,6 +76,7 @@ import { parseFromSosNote } from './document-flow';
 import { computeMrp, mrpReverseCoverage } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { tracePoDeliveredLedger } from '../lib/source-po-trace';
+import { eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
 
 export const poSoCoverage = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -684,6 +685,30 @@ export async function resolvePoSoCoveragePerSkuForPos(
   if (validIds.length === 0) return out;
   const poNumbers = [...new Set([...poNumberById.values()].filter(Boolean))];
 
+  /* PERF (2026-08-17). The two most expensive reads in this function — the MRP
+     engine (section c, ~100 round trips of its own) and the delivered ledger
+     (section a) — take NOTHING from the stored-origin chain that runs between
+     here and their old call sites. computeMrp keys off the company alone;
+     tracePoDeliveredLedger keys off `poNumbers`, which is known on the line
+     above. They were nonetheless issued only after six serial reads had
+     finished, so the whole stored-origin chain was dead time on the critical
+     path of the PO list, the GRN list and the PI list alike.
+
+     ISSUED here, AWAITED at their original sites. Neither query text, filter,
+     nor argument changes; `eager` keeps the rejection attached from the moment
+     it is created, so a failure still surfaces inside the same try/catch that
+     caught it before and still degrades to the same empty map. The set of
+     requests that run either read is unchanged too — both sit after the same
+     two early returns they always sat after. */
+  const mrpProm = eager((async () => computeMrp(sb, {
+    catFilter: null,
+    whFilter: null,
+    includeUndated: true,
+    companyId: activeCompanyId(c),
+    leadBuffers: await loadLeadBuffers(c.env.DB),
+  }))());
+  const ledgerProm = eager(tracePoDeliveredLedger(sb, poNumbers));
+
   // PO lines — SKUs + so_item_id links, grouped by PO — company-scoped.
   const { data: poLines } = await scopeToCompany(
     sb.from('purchase_order_items').select('id, purchase_order_id, material_code, so_item_id'), c,
@@ -784,13 +809,7 @@ export async function resolvePoSoCoveragePerSkuForPos(
   // ── (c) MRP FLOATING — computeMrp runs ONCE for the whole page ────────────
   const floatingByPo = new Map<string, Map<string, OriginAssignment[]>>();
   try {
-    const mrpResult = await computeMrp(sb, {
-      catFilter: null,
-      whFilter: null,
-      includeUndated: true,
-      companyId: activeCompanyId(c),
-      leadBuffers: await loadLeadBuffers(c.env.DB),
-    });
+    const mrpResult = (await mrpProm)();
     const reverse = mrpReverseCoverage(mrpResult);
     for (const poNum of poNumbers) {
       const forPo = reverse.get(poNum) ?? [];
@@ -821,7 +840,7 @@ export async function resolvePoSoCoveragePerSkuForPos(
   let bucketsByPo = new Map<string, Set<string>>();
   const doIds = new Set<string>();
   try {
-    const ledger = await tracePoDeliveredLedger(sb, poNumbers);
+    const ledger = (await ledgerProm)();
     bucketsByPo = ledger.bucketsByPo;
     for (const set of bucketsByPo.values()) {
       for (const k of set) {
