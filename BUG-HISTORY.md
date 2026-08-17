@@ -1,6 +1,6 @@
 ## Cancelled and unconfirmed events kept generating everyone's My Pending work [medium]
 
-<!-- area: PMS My Pending lanes -->
+<!-- area: Projects + PMS + fair report -->
 
 **Symptom.** Owner 2026-08-17: "why event on status cancelled and pending appear
 in my pending task??" — past events (e.g. a cancelled REX Johor show that ended
@@ -23,7 +23,7 @@ rows stay visible. Only confirmed events generate pending work.
 
 ## The purchaser could not N/A her own gated tasks — the approval key gated the wrong verb [medium]
 
-<!-- area: PMS checklist status / approvals -->
+<!-- area: Projects + PMS + fair report -->
 
 **Symptom.** Owner 2026-08-17: "user sim cannot click N/A on her task please
 allowed her to click N/A." Sim (Purchaser) clicking N/A on Exchange List /

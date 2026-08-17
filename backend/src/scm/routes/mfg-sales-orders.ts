@@ -1780,12 +1780,7 @@ mfgSalesOrders.get('/', async (c) => {
       (r as Record<string, unknown>).planning_state = derivePlanningState({
         storedOverride: overrideByDoc.get(docNo) ?? null,
         status: (r as Record<string, unknown>).status as string | null,
-        readiness: {
-          mainCount: readiness?.mainCount ?? 0,
-          isMainReady: readiness?.isMainReady ?? false,
-          isFullyReady: readiness?.isFullyReady ?? false,
-          isShipReady: readiness?.isShipReady ?? false,
-        },
+        readiness: { isShipReady: readiness?.isShipReady ?? false },
         delivered: dDelivered,
         remaining: dRemaining,
         effectiveDD,
