@@ -71,11 +71,16 @@
 import {
   itemCodeKey,
   readParentCodes,
+  unlinkedCheckUnavailableResponse,
   type ParentCodes,
+  type UnlinkedScan,
 } from './do-unlinked-so-lines';
 import { poMaterialCodesOf } from './grn-unlinked-po-lines';
 import { doItemCodesOf, grnMaterialCodesOf } from './return-unlinked-lines';
 import { doRemainingByItemId } from './do-line-remaining';
+import { scopeToCompanyId } from './companyScope';
+
+export { unlinkedCheckUnavailableResponse } from './do-unlinked-so-lines';
 
 /**
  * The item codes on a Delivery Order that STILL HAVE PENDING QTY.
@@ -116,6 +121,53 @@ export async function doPendingItemCodesOf(
     if (k) out.add(k);
   }
   return { ok: true, codes: out };
+}
+
+/**
+ * The 409 body an insert-path scan calls for, or null to proceed.
+ *
+ * Every insert call site has to answer the SAME two questions in the same order
+ * — could the parent be read, and did the scan find anything — and getting the
+ * order wrong (or dropping the first) is the fail-open this whole change is
+ * about. One helper means one answer: `ok: false` can never fall through to
+ * "no offenders" at a call site that forgot to check it.
+ */
+export function unlinkedScanRefusal<T>(
+  scan: UnlinkedScan<T>,
+  body: (offenders: T[]) => unknown,
+): unknown | null {
+  if (!scan.ok) return unlinkedCheckUnavailableResponse(scan.reason);
+  return scan.offenders.length > 0 ? body(scan.offenders) : null;
+}
+
+/**
+ * The Sales Invoice INSERT-path shadow check, as a refusal body or null.
+ *
+ * Lived in sales-invoices.ts until 2026-08-17, where it read the DO itself and
+ * dropped the error. It sits here now so both ends of that chain — the two
+ * insert paths and the line PATCH — cannot drift apart on what "shadow" means,
+ * and so the read fails closed in one place.
+ *
+ * The narrow rule is the owner's: a Sales Invoice MAY carry direct/standalone
+ * lines, so only a line shadowing a DO line with remaining > 0 is refused. One
+ * whose DO line is already fully invoiced is left alone.
+ */
+export async function siShadowRefusal(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  doId: string,
+  lines: Array<Record<string, unknown>>,
+  message: (codes: string[]) => string,
+): Promise<UnlinkedEditRefusal | null> {
+  const unlinked = lines.filter((l) => !l.doItemId && l.itemCode);
+  if (unlinked.length === 0) return null;
+  const pending = await doPendingItemCodesOf(sb, doId);
+  if (!pending.ok) return unlinkedCheckUnavailableResponse(pending.reason);
+  const offenders = [...new Set(unlinked
+    .filter((l) => pending.codes.has(String(l.itemCode).trim().toUpperCase()))
+    .map((l) => String(l.itemCode)))];
+  if (offenders.length === 0) return null;
+  return { error: 'unlinked_do_line', message: message(offenders), itemCodes: offenders };
 }
 
 export type UnlinkedEditChain =
@@ -173,8 +225,24 @@ const CHAINS: Record<UnlinkedEditChain, ChainSpec> = {
 };
 
 export type UnlinkedEditInput = {
-  /** The parent this DOCUMENT names (header column). Falsy = nothing to bypass. */
-  parentId: string | null | undefined;
+  /** The parent this DOCUMENT names (header column). Falsy = nothing to bypass.
+   *  Pass this when the handler already has it — GRN and Sales Invoice both read
+   *  the header for their status gate, so it rides along for free. */
+  parentId?: string | null | undefined;
+  /** …or let the guard read it. The Return chains have no header read to piggy-back
+   *  on, and an inline one in the handler is where the NEXT fail-open would live:
+   *  a discarded error yields a null parent, a null parent reads as "names no
+   *  parent", and that is an unconditional allow. Resolved here so it is resolved
+   *  the same way, once, and its failure is refused rather than dropped. */
+  parent?: {
+    table: string;
+    column: string;
+    id: string;
+    /** RESOLVED, not nullable: both callers sit behind requireActiveCompanyId,
+     *  and an unresolved company here would read the parent unscoped — the guard
+     *  would then answer about another company's document. */
+    companyId: number;
+  };
   /** The LINE's stored link column. Non-null = cap + recount already see it. */
   storedLink: string | null | undefined;
   /** The line's stored code, before this patch. */
@@ -188,6 +256,7 @@ export type UnlinkedEditRefusal = {
   error: string;
   message: string;
   itemCode?: string;
+  itemCodes?: string[];
   parentNoun?: string;
 };
 
@@ -205,8 +274,8 @@ export async function unlinkedEditRefusal(
   chain: UnlinkedEditChain,
   input: UnlinkedEditInput,
 ): Promise<UnlinkedEditRefusal | null> {
-  const parentId = String(input.parentId ?? '').trim();
-  if (!parentId) return null;                    // header names no parent
+  /* The cheap disqualifiers run BEFORE any read, so an ordinary qty or price
+     edit — which is almost every edit — pays for nothing. */
   if (input.storedLink) return null;             // linked — the ceiling governs it
   if (input.patchCode === undefined) return null; // code untouched by this patch
 
@@ -216,6 +285,25 @@ export async function unlinkedEditRefusal(
   if (effective === stored) return null;         // no actual change
 
   const spec = CHAINS[chain];
+
+  let parentId = String(input.parentId ?? '').trim();
+  if (!parentId && input.parent) {
+    const p = input.parent;
+    const { data, error } = await scopeToCompanyId(
+      sb.from(p.table).select(p.column).eq('id', p.id), p.companyId,
+    ).maybeSingle();
+    // A parent we could not read is not a parent that is absent.
+    if (error) {
+      return {
+        error: 'unlinked_check_failed',
+        message:
+          `Could not read this document's source ${spec.parentNoun} to check the line, so the `
+          + `edit was not saved — try again (${error.message ?? 'lookup failed'}).`,
+      };
+    }
+    parentId = String((data as Record<string, unknown> | null)?.[p.column] ?? '').trim();
+  }
+  if (!parentId) return null;                    // header names no parent
   const codes = await spec.codesOf(sb, parentId);
   if (!codes.ok) {
     return {

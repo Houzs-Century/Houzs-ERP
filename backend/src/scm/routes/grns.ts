@@ -32,8 +32,8 @@ import { normalizeExchangeRate, toMyrSen, normalizeCurrency, masterRateForCurren
 import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx-guard';
 import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
 import { findUnlinkedPoLines, unlinkedPoLinesResponse } from '../lib/grn-unlinked-po-lines';
-import { unlinkedCheckUnavailableResponse } from '../lib/do-unlinked-so-lines';
-import { unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
+import { unlinkedEditRefusal, unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
+import { computeGrnFlags } from '../lib/grn-consumption-flags';
 import {
   parsePoIdScope, loadOutstandingPoLines, toOutstandingPoItems,
 } from '../lib/outstanding-po-lines';
@@ -1037,19 +1037,6 @@ async function grnReverseWouldGoNegative(
   return null;
 }
 
-/* ── Per-GRN consumption flags (migration 0106) ────────────────────────────
-   From a GRN's items compute: has_children (any line invoiced_qty>0 or
-   returned_qty>0), fully_invoiced (every accepted line has invoiced_qty >=
-   qty_accepted), fully_returned (likewise returned_qty). A line with
-   qty_accepted = 0 is treated as already satisfied (nothing to consume). */
-function computeGrnFlags(items: Array<{ qty_accepted?: number | null; invoiced_qty?: number | null; returned_qty?: number | null }>) {
-  const accepted = items.filter((r) => (r.qty_accepted ?? 0) > 0);
-  const hasChildren = items.some((r) => (r.invoiced_qty ?? 0) > 0 || (r.returned_qty ?? 0) > 0);
-  const fullyInvoiced = accepted.length > 0 && accepted.every((r) => (r.invoiced_qty ?? 0) >= (r.qty_accepted ?? 0));
-  const fullyReturned = accepted.length > 0 && accepted.every((r) => (r.returned_qty ?? 0) >= (r.qty_accepted ?? 0));
-  return { has_children: hasChildren, fully_invoiced: fullyInvoiced, fully_returned: fullyReturned };
-}
-
 /* Filter-pill bucket → the raw grns.status values it covers. Single source of
    truth for BOTH the status-count queries and the list `status` filter. All
    three buckets are 1:1 today, but the FE sends the BUCKET NAME as `status`; a
@@ -1631,9 +1618,8 @@ grns.post('/', async (c) => {
         soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
       })),
     );
-    // A guard that could not read the PO must refuse, not permit.
-    if (!unlinked.ok) return c.json(unlinkedCheckUnavailableResponse(unlinked.reason), 409);
-    if (unlinked.offenders.length > 0) return c.json(unlinkedPoLinesResponse(unlinked.offenders), 409);
+    const bad = unlinkedScanRefusal(unlinked, unlinkedPoLinesResponse);
+    if (bad) return c.json(bad, 409);
   }
 
   const headerWarehouseId = await resolveReceiveWarehouse(
@@ -2997,9 +2983,8 @@ grns.post('/:id/items', async (c) => {
         soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
       }],
     );
-    // A guard that could not read the PO must refuse, not permit.
-    if (!unlinked.ok) return c.json(unlinkedCheckUnavailableResponse(unlinked.reason), 409);
-    if (unlinked.offenders.length > 0) return c.json(unlinkedPoLinesResponse(unlinked.offenders), 409);
+    const bad = unlinkedScanRefusal(unlinked, unlinkedPoLinesResponse);
+    if (bad) return c.json(bad, 409);
   }
 
   const parsedAdd = parseLineNumbers({
@@ -3221,8 +3206,6 @@ grns.patch('/:id/items/:itemId', async (c) => {
   /* Audit 2026-06-10 #10 — line CRUD on a CANCELLED/CLOSED GRN was a silent
      stock door: an added line writes its IN immediately, but a cancelled GRN's
      reversal never runs again → ghost stock forever. Mirror prLineLock. */
-  /* purchase_order_id rides along on the gate read (same row, no extra query) —
-     the unlinked re-point guard below needs the PO this receipt names. */
   const { data: grnGate } = await scopeToCompanyId(sb.from('grns').select('status, purchase_order_id').eq('id', grnId), co.companyId).maybeSingle();
   if (!grnGate) return c.json(NOT_THIS_COMPANY, 404);
   const grnGateStatus = ((grnGate as { status?: string } | null)?.status ?? '').toUpperCase();
@@ -3280,22 +3263,14 @@ grns.patch('/:id/items/:itemId', async (c) => {
     }
   }
 
-  /* The EDIT half of the same back door the create/add paths already close.
-     The cap directly above is gated on `poItemId`, and recomputePoReceived below
-     sums by that same link — so re-typing an unlinked line's material code to
-     one the named PO orders receives the PO's goods while its received_qty never
-     moves, and the delivery can be received again. Runs on the POST-edit code
-     and only while the stored link is NULL; the rule itself lives in
-     unlinked-line-edit-guard, shared with the three sibling chains. */
-  {
-    const repoint = await unlinkedEditRefusal(sb, 'grn', {
-      parentId: (grnGate as { purchase_order_id?: string | null } | null)?.purchase_order_id ?? null,
-      storedLink: (prev as { purchase_order_item_id: string | null }).purchase_order_item_id,
-      storedCode: (prev as { material_code: string | null }).material_code,
-      patchCode: it.materialCode,
-    });
-    if (repoint) return c.json(repoint, 409);
-  }
+  // EDIT half of the back door — cap + recount are both gated on poItemId.
+  const repoint = await unlinkedEditRefusal(sb, 'grn', {
+    parentId: (grnGate as { purchase_order_id?: string | null } | null)?.purchase_order_id ?? null,
+    storedLink: (prev as { purchase_order_item_id: string | null }).purchase_order_item_id,
+    storedCode: (prev as { material_code: string | null }).material_code,
+    patchCode: it.materialCode,
+  });
+  if (repoint) return c.json(repoint, 409);
 
   const unit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : (prev as { unit_price_centi: number }).unit_price_centi;
   const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : ((prev as { discount_centi: number }).discount_centi ?? 0);

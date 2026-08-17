@@ -54,8 +54,7 @@ import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
-import { doPendingItemCodesOf, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
-import { unlinkedCheckUnavailableResponse } from '../lib/do-unlinked-so-lines';
+import { siShadowRefusal, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
@@ -484,42 +483,8 @@ async function checkSiOverRemaining(
   return offenders.length > 0 ? { error: 'over_remaining', lines: offenders } : null;
 }
 
-/* FIX 3 (fix/si-cancel-revenue-qty) — a from-DO Sales Invoice (its header carries
-   delivery_order_id) must LINK its DO-derived lines via do_item_id, so they count
-   against the DO's Pending pool (do-line-remaining) and respect the
-   remaining-to-invoice ceiling. An UNLINKED line whose item code STILL has Pending
-   qty on the source DO is the double-invoice vector: the link was dropped, so both
-   the ceiling and the pool are bypassed and the same delivered goods can be billed
-   again. Such a line must instead be added through the DO picker so it links.
-
-   Genuinely-new manual lines ride free — the owner's ruling is that a Sales Invoice
-   MAY carry direct/standalone lines. We only block the clear shadow case (item on
-   the DO with Pending qty); a manual line for an item NOT on the DO, or one whose
-   DO line is already fully invoiced (remaining 0), is left alone. Returns the
-   offending item codes (empty = nothing to block, and no DB round-trip when there
-   are no unlinked lines — the common from-DO path is all-linked).
-
-   The pending-code read moved to doPendingItemCodesOf (unlinked-line-edit-guard)
-   so this path and the line PATCH — which had no check at all — cannot drift
-   apart on what "shadow" means, and so a failed DO read is REPORTED rather than
-   read as "nothing pending" (which silently cleared the very line this exists
-   to refuse). `ok: false` is not "all clear". */
-async function unlinkedFromDoOffenders(
-  sb: any,
-  doId: string,
-  lines: Array<Record<string, unknown>>,
-): Promise<{ ok: true; codes: string[] } | { ok: false; reason: string }> {
-  const unlinked = lines.filter((l) => !l.doItemId && l.itemCode);
-  if (unlinked.length === 0) return { ok: true, codes: [] };
-  const pending = await doPendingItemCodesOf(sb, doId);
-  if (!pending.ok) return pending;
-  const offenders = new Set<string>();
-  for (const l of unlinked) {
-    const code = String(l.itemCode).trim().toUpperCase();
-    if (pending.codes.has(code)) offenders.add(String(l.itemCode));
-  }
-  return { ok: true, codes: [...offenders] };
-}
+/* FIX 3's shadow check now lives in unlinked-line-edit-guard (siShadowRefusal),
+   shared with the line PATCH that had no check at all. */
 
 /* ── Invoice price vs the AGREED ORDER price — WARN, never block ───────────
    Nothing downstream of the SO compares the two. The happy path is already
@@ -1003,16 +968,9 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
   {
     const fromDoId = (body.deliveryOrderId as string | undefined) ?? null;
     if (fromDoId) {
-      const shadow = await unlinkedFromDoOffenders(sb, fromDoId, items);
-      // A guard that could not read the DO must refuse, not permit.
-      if (!shadow.ok) return c.json(unlinkedCheckUnavailableResponse(shadow.reason), 409);
-      if (shadow.codes.length > 0) {
-        return c.json({
-          error: 'unlinked_do_line',
-          message: `These items are still pending on the source Delivery Order and must be added through "Add from Delivery Order" so the delivered quantity is tracked: ${shadow.codes.join(', ')}.`,
-          itemCodes: shadow.codes,
-        }, 409);
-      }
+      const shadow = await siShadowRefusal(sb, fromDoId, items, (codes) =>
+        `These items are still pending on the source Delivery Order and must be added through "Add from Delivery Order" so the delivered quantity is tracked: ${codes.join(', ')}.`);
+      if (shadow) return c.json(shadow, 409);
     }
   }
 
@@ -1797,16 +1755,9 @@ salesInvoices.post('/:id/items', async (c) => {
   {
     const fromDoId = (header as { delivery_order_id?: string | null }).delivery_order_id ?? null;
     if (fromDoId && !it.doItemId) {
-      const shadow = await unlinkedFromDoOffenders(sb, fromDoId, [it]);
-      // A guard that could not read the DO must refuse, not permit.
-      if (!shadow.ok) return c.json(unlinkedCheckUnavailableResponse(shadow.reason), 409);
-      if (shadow.codes.length > 0) {
-        return c.json({
-          error: 'unlinked_do_line',
-          message: `${shadow.codes.join(', ')} is still pending on the source Delivery Order — add it through "Add from Delivery Order" so the delivered quantity is tracked.`,
-          itemCodes: shadow.codes,
-        }, 409);
-      }
+      const shadow = await siShadowRefusal(sb, fromDoId, [it], (codes) =>
+        `${codes.join(', ')} is still pending on the source Delivery Order — add it through "Add from Delivery Order" so the delivered quantity is tracked.`);
+      if (shadow) return c.json(shadow, 409);
     }
   }
 
@@ -1868,8 +1819,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
-  /* The source DO this invoice names, read on the gate query below (same row,
-     no extra round-trip) and used by the unlinked re-point guard further down. */
+  // Source DO, read on the gate query below and used by the re-point guard.
   let siFromDoId: string | null = null;
   {
     /* The gate for the whole handler: every line write below keys on
@@ -1950,13 +1900,8 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
   }
 
-  /* The EDIT half of FIX 3, which until now guarded only the two INSERT paths.
-     The over-invoice cap above is gated on `prev.do_item_id`, so re-typing an
-     unlinked line's item code to one still Pending on the source DO bills those
-     delivered goods a second time — the delivery's Pending pool never moves, and
-     the resync below re-posts the revenue and re-enqueues the invoice to
-     AutoCount. Same narrow rule as the insert paths (a fully-invoiced DO line is
-     still left alone), same shared implementation as the sibling chains. */
+  /* The EDIT half of FIX 3 — see unlinked-line-edit-guard for why (the cap above
+     is gated on prev.do_item_id, so a re-typed unlinked code double-bills). */
   {
     const repoint = await unlinkedEditRefusal(sb, 'sales-invoice', {
       parentId: siFromDoId,

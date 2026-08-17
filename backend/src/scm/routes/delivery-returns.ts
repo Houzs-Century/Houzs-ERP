@@ -30,8 +30,7 @@ import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item
 import { isServiceLine } from '../shared';
 import { findServiceLineCodes, serviceLinesNotReturnableResponse, serviceGuardUnavailableResponse } from '../lib/service-line-guard';
 import { findUnlinkedDrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
-import { unlinkedCheckUnavailableResponse } from '../lib/do-unlinked-so-lines';
-import { unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
+import { unlinkedEditRefusal, unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
@@ -1060,9 +1059,9 @@ deliveryReturns.post('/', async (c) => {
         soItemId: (it.doItemId as string | undefined) ?? null,
       })),
     );
-    // A guard that could not read the DO must refuse, not permit.
-    if (!unlinked.ok) return c.json(unlinkedCheckUnavailableResponse(unlinked.reason), 409);
-    if (unlinked.offenders.length > 0) return c.json(unlinkedReturnResponse(unlinked.offenders, 'delivery'), 409);
+    // Refuses on an unreadable DO too — see unlinkedScanRefusal.
+    const bad = unlinkedScanRefusal(unlinked, (o) => unlinkedReturnResponse(o, 'delivery'));
+    if (bad) return c.json(bad, 409);
   }
 
   /* P1 SO-SKU spec §4.6 — SERVICE lines (delivery fee / dispose / lift) ride
@@ -1595,25 +1594,12 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
   }
 
-  /* The EDIT half of the back door the CREATE path closes. Both write paths
-     here refuse a null doItemId outright ("no DO, no Return", bug #16), so an
-     unlinked DR line cannot be TYPED — but it can still ARRIVE: do_item_id is
-     `ON DELETE SET NULL` (2990s-full-schema.sql:1656), so deleting a DO line
-     orphans its return lines. On such a row the over-return cap above is
-     skipped (it is gated on `doItemId`) and nothing counts the goods against
-     the delivery, so re-pointing its item code is the double-return. Same rule,
-     same shared implementation as the sibling chains. */
+  /* The EDIT half of the back door. A null doItemId cannot be TYPED here ("no DO,
+     no Return") but still ARRIVES — do_item_id is ON DELETE SET NULL — and on such
+     a row the cap above is skipped. See unlinked-line-edit-guard. */
   {
-    /* `error` is BOUND, and that is load-bearing rather than tidy: a discarded
-       failure here yields a null delivery_order_id, a null parent reads as
-       "this return names no DO", and the guard below returns "allowed" —
-       re-opening the exact door this block closes. Refuse instead. */
-    const { data: drHdr, error: drHdrErr } = await scopeToCompanyId(
-      sb.from('delivery_returns').select('delivery_order_id').eq('id', id), co.companyId,
-    ).maybeSingle();
-    if (drHdrErr) return c.json(unlinkedCheckUnavailableResponse(drHdrErr.message), 409);
     const repoint = await unlinkedEditRefusal(sb, 'delivery-return', {
-      parentId: (drHdr as { delivery_order_id?: string | null } | null)?.delivery_order_id ?? null,
+      parent: { table: 'delivery_returns', column: 'delivery_order_id', id, companyId: co.companyId },
       storedLink: (prev as { do_item_id?: string | null }).do_item_id ?? null,
       storedCode: (prev as { item_code?: string | null }).item_code ?? null,
       patchCode: it.itemCode,

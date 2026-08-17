@@ -67,6 +67,17 @@ yields a null parent, which reads as "names no parent", which returns "allowed" 
 and both now bind `error` and refuse. The four guard libs left the swallowed-read
 baseline entirely (1/1/2 -> 0) and `sales-invoices.ts` went 30 -> 29.
 
+**One extraction, forced by the file-size ratchet and worth it anyway.** Three of
+the touched routers are already over their ceilings, so a touched file may not
+grow. The per-handler prose moved into the lib (which is where a shared rule's
+reasoning belongs — restating it four times is how it drifts), the two-step
+"refuse on unreadable, refuse on offenders" collapsed into one
+`unlinkedScanRefusal`, and `computeGrnFlags` left `routes/grns.ts` for
+`lib/grn-consumption-flags.ts`. That last one is the CANONICAL definition four
+other routers and migration 0267 defer to in prose — "mirrors computeGrnFlags in
+routes/grns.ts" — so it had no business being a private function halfway down a
+3,600-line router. Those five pointers are updated and it now has its own tests.
+
 **Residual, deliberately not smuggled in.** An orphaned line's QTY can still be
 raised without the guard firing (it fires on the code transition only), and
 `doLineRemaining` — which the SI chain's pending-code reader calls — is fail-open
