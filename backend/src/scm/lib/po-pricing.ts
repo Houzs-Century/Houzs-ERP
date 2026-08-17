@@ -98,6 +98,42 @@ export async function resolveMaintenanceConfigForSupplier(
    mirroring the create path's non-category fallback. When the SKU has no live
    binding for this supplier it returns 0 (the create path's zero-priced
    pseudo-binding — price keyed in at PI time). */
+/** The variant half of `computeMfgPoUnitCost`'s input — the five spec fields
+ *  whose values come off the line's `variants` blob, in ONE place.
+ *
+ *  IT IS ONE PLACE BECAUSE IT WAS THREE. Every backend caller hand-copied this
+ *  object, and each copy silently decided which surcharge pools existed: all
+ *  three omitted `totalHeight`, so a PO raised from a Sales Order was costed
+ *  with the total-height surcharge at 0 — RM80 short on 2990-PO-2608-003's 18"
+ *  CODY-(SS) (SO line cost RM487.50, PO RM407.50), and invisible on every line
+ *  at 20"+ where that tier is priced 0. The five FRONTEND callers had always
+ *  passed it, which is why a hand-keyed PO priced correctly and only the
+ *  converted ones came out short. A shared constructor makes the next added
+ *  pool reach all three callers by construction instead of by three people
+ *  remembering.
+ *
+ *  Category gating is preserved exactly as each copy had it: seat size and the
+ *  sofa leg pool are SOFA-only, the bedframe leg pool is BEDFRAME-only, and
+ *  divan / total height are passed unconditionally (the engine reads them for
+ *  BEDFRAME and ignores them elsewhere) — matching what the frontend sends. */
+export function poVariantPricingInput(
+  category: 'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE',
+  variants: Record<string, unknown>,
+): {
+  seatSize: string | null; divanHeight: string | null; legHeight: string | null;
+  totalHeight: string | null; sofaLegHeight: string | null; specials: string[];
+} {
+  const str = (k: string): string | null => (variants[k] as string | undefined) ?? null;
+  return {
+    seatSize:      category === 'SOFA' ? str('seatHeight') : null,
+    divanHeight:   str('divanHeight'),
+    legHeight:     category === 'BEDFRAME' ? str('legHeight') : null,
+    totalHeight:   str('totalHeight'),
+    sofaLegHeight: category === 'SOFA' ? str('legHeight') : null,
+    specials:      Array.isArray(variants.specials) ? (variants.specials as string[]) : [],
+  };
+}
+
 export async function deriveMfgPoUnitCost(
   sb: any,
   input: {
@@ -138,30 +174,13 @@ export async function deriveMfgPoUnitCost(
   // (3) The supplier's maintenance config (supplier scope → master fallback).
   const { config } = await resolveMaintenanceConfigForSupplier(sb, input.supplierId);
 
-  const specials = Array.isArray(variants.specials) ? (variants.specials as string[]) : [];
   return computeMfgPoUnitCost(
     {
       category,
       priceMatrix,
       unitPriceCenti: flatPriceCenti,
       fabricTier,
-      seatSize:      category === 'SOFA' ? ((variants.seatHeight as string | undefined) ?? null) : null,
-      divanHeight:   (variants.divanHeight as string | undefined) ?? null,
-      legHeight:     category === 'BEDFRAME' ? ((variants.legHeight as string | undefined) ?? null) : null,
-      /* TOTAL HEIGHT IS A PRICED POOL, exactly like divan and leg — the engine
-         reads it for BEDFRAME out of the supplier's maintenance config. Leaving
-         it out handed the engine `undefined`, the lookup returned 0, and the
-         surcharge silently vanished: 2990-PO-2608-003's CODY-(SS) at 18" was
-         raised at RM407.50 against the SO line's own RM487.50 cost — exactly
-         one tier, RM80 — while the same order's 22" line matched, because that
-         tier is priced 0 and the omission was invisible on it. Every FRONTEND
-         caller has always passed this; all three BACKEND callers did not, which
-         is why a hand-keyed PO priced correctly and only server-derived ones
-         came out short. Passed unconditionally, as the frontend does; the
-         engine ignores it off BEDFRAME. */
-      totalHeight:   (variants.totalHeight as string | undefined) ?? null,
-      sofaLegHeight: category === 'SOFA' ? ((variants.legHeight as string | undefined) ?? null) : null,
-      specials,
+      ...poVariantPricingInput(category, variants),
     },
     config,
   ).unitPriceSen;

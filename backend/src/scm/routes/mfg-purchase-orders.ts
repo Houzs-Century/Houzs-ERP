@@ -34,7 +34,7 @@ import {
 } from '../shared/so-line-display';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
-import { resolveMaintenanceConfigForSupplier } from '../lib/po-pricing';
+import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
 import { poHasDownstream } from '../lib/downstream-lock';
 import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -2054,7 +2054,6 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     const category = (it.itemGroup?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
     const variants = (it.variants ?? {}) as Record<string, unknown>;
-    const specials = Array.isArray(variants.specials) ? (variants.specials as string[]) : [];
     const base = category
       ? computeMfgPoUnitCost(
           {
@@ -2062,18 +2061,10 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
             priceMatrix:    (b.price_matrix ?? null) as PoPriceMatrix,
             unitPriceCenti: b.unit_price_centi,
             fabricTier:     resolveFabricTier(it.itemGroup, it.variants),
-            seatSize:       category === 'SOFA' ? (variants.seatHeight as string | undefined) ?? null : null,
-            divanHeight:    (variants.divanHeight as string | undefined) ?? null,
-            legHeight:      category === 'BEDFRAME' ? (variants.legHeight as string | undefined) ?? null : null,
-            /* Total height is PRICED (maintenanceConfig.totalHeights, BEDFRAME).
-               It was the one surcharge pool this call omitted, so the engine
-               costed it at 0 and every server-derived PO came out short by a
-               tier — RM80 on 2990-PO-2608-003's 18" CODY-(SS). See po-pricing.ts
-               for the full trace; all three backend callers were missing it
-               while all five frontend callers were not. */
-            totalHeight:    (variants.totalHeight as string | undefined) ?? null,
-            sofaLegHeight:  category === 'SOFA' ? (variants.legHeight as string | undefined) ?? null : null,
-            specials,
+            /* The spec fields, from the ONE constructor — this call used to
+               hand-copy them and, like both other backend copies, left out the
+               priced totalHeight pool (po-pricing.ts carries the trace). */
+            ...poVariantPricingInput(category, variants),
           },
           maintBySupplier.get(b.supplier_id) ?? null,
         ).unitPriceSen
@@ -3937,22 +3928,13 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
     const ft = fc ? (tierByFabric.get(fc) ?? null) : null;
     const fabricTier = category === 'SOFA' ? (ft?.sofa ?? null)
       : category === 'BEDFRAME' ? (ft?.bedframe ?? null) : null;
-    const specials = Array.isArray(variants.specials) ? (variants.specials as string[]) : [];
     const cost = computeMfgPoUnitCost(
       {
         category,
         priceMatrix:    (b.price_matrix ?? null) as PoPriceMatrix,
         unitPriceCenti: b.unit_price_centi,
         fabricTier,
-        seatSize:       category === 'SOFA' ? ((variants.seatHeight as string | undefined) ?? null) : null,
-        divanHeight:    (variants.divanHeight as string | undefined) ?? null,
-        legHeight:      category === 'BEDFRAME' ? ((variants.legHeight as string | undefined) ?? null) : null,
-        /* Priced pool, same as divan and leg — omitting it costed the total-height
-           surcharge at 0 on every PO this legacy append path raised. See
-           po-pricing.ts for the measured case (RM80, 2990-PO-2608-003). */
-        totalHeight:    (variants.totalHeight as string | undefined) ?? null,
-        sofaLegHeight:  category === 'SOFA' ? ((variants.legHeight as string | undefined) ?? null) : null,
-        specials,
+        ...poVariantPricingInput(category, variants), // incl. the totalHeight this path dropped
       },
       maintCfg ?? null,
     ).unitPriceSen;
