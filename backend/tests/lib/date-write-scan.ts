@@ -11,19 +11,29 @@
  * How a site is judged. All of it is syntax (ts.createSourceFile, no
  * type-checker), so the whole backend scans in about a second.
  *
- *  1. REQUEST-DERIVED NAMES. Seeded per file from anything bound to
- *     `await c.req.json()`, `c.req.query()/param()/valid()`, a zod
- *     `.parse()/.safeParse()`, or a binding/parameter named `body`/`payload`/
- *     `patch`/`input`. Grown to a fixed point along VALUE edges only — `const p
- *     = body.rows[0]`, `for (const it of body.items)`, `const x = a ?? body.b`.
- *     It deliberately does NOT flow through an opaque call, so
- *     `const { data } = await sb.from(t).eq('id', body.id)` leaves `data` a
- *     database row, not request input.
+ *  1. REQUEST-DERIVED BINDINGS — per BINDING, with its scope, never per name.
+ *     Seeded from anything bound OR ASSIGNED (`let it; try { it = await
+ *     c.req.json() }`) from `c.req.json()/query()/param()/valid()`, a zod
+ *     `.parse()/.safeParse()`, a parameter named `body`/`payload`/`patch`/
+ *     `input`, or a parameter typed `z.infer<typeof schema>` (the route parses,
+ *     a helper receives). Grown to a fixed point along VALUE edges only —
+ *     `const p = body.rows[0]`, `for (const it of body.items)`,
+ *     `rows.map((l) => …)`, `const x = a ?? body.b`. It deliberately does NOT
+ *     flow through an opaque call, so `const { data } = await
+ *     sb.from(t).eq('id', body.id)` leaves `data` a database row.
+ *
+ *     Scope is load-bearing, not tidiness. `grns.ts` declares `items` twice —
+ *     `body.items` in one handler, a `purchase_order_items` read in another —
+ *     and a per-NAME set reported the second handler copying one stored row's
+ *     `delivery_date` into another as an uncoerced request write.
  *
  *  2. SITES THAT REACH THE DATABASE. Only object literals and variables that
  *     are arguments to `.insert()/.update()/.upsert()/.rpc()` count — directly,
- *     inside an array, inside a `.map()` callback, through a coercer wrapper, or
- *     as the initializer of a variable used that way. Response-shaping objects
+ *     inside an array, inside a `.map()`/`.flatMap()` callback (expression body
+ *     or `return`), through ANY wrapper call (`stampCompany(rows, c)` is the
+ *     house shape at ~46 sites — only a COERCER wrapper also discharges the
+ *     field-map obligation), or through the declaration of a variable used that
+ *     way, however that variable was built. Response-shaping objects
  *     (reports.ts, search.ts) are not writes and are not scanned.
  *
  *  3. NAMED DATE WRITES. `voucher_date: X` inside such a literal, or
@@ -73,6 +83,16 @@ const PASSTHROUGH_METHODS = new Set([
   'map', 'filter', 'slice', 'find', 'at', 'flat', 'flatMap', 'concat', 'sort',
   'reverse', 'trim', 'toUpperCase', 'toLowerCase', 'split', 'join',
 ]);
+/**
+ * Array methods whose callback is handed one ELEMENT of the receiver. The
+ * element carries whatever the array carries, so `rows.map((l) => …)` makes `l`
+ * request-derived exactly when `rows` is. Without this a payload assembled in a
+ * `.map()` callback — the house shape for line rows — reads as if it came from
+ * nowhere, and every date in it is judged safe by default.
+ */
+const ELEMENT_CALLBACK_METHODS = new Set([
+  'map', 'flatMap', 'forEach', 'filter', 'find', 'findIndex', 'some', 'every',
+]);
 
 const REQUEST_SEED_NAMES = new Set(['body', 'payload', 'rawBody', 'reqBody', 'patch', 'input']);
 const WRITE_METHODS = new Set(['insert', 'update', 'upsert', 'rpc']);
@@ -116,27 +136,29 @@ function isAncestor(maybe: ts.Node, node: ts.Node): boolean {
 /**
  * The identifiers a value can actually come FROM — following ??/||/?:/member
  * access and the passthrough methods, and stopping dead at any other call.
+ * Returns the identifier NODES, because which `items` an identifier means is a
+ * question about scope, not about spelling.
  */
-function valueRoots(node: ts.Node, out: Set<string> = new Set()): Set<string> {
+function valueRootIds(node: ts.Node, out: ts.Identifier[] = []): ts.Identifier[] {
   const n = unwrap(node);
-  if (ts.isIdentifier(n)) { out.add(n.text); return out; }
-  if (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) return valueRoots(n.expression, out);
-  if (ts.isAwaitExpression(n)) return valueRoots(n.expression, out);
+  if (ts.isIdentifier(n)) { out.push(n); return out; }
+  if (ts.isPropertyAccessExpression(n) || ts.isElementAccessExpression(n)) return valueRootIds(n.expression, out);
+  if (ts.isAwaitExpression(n)) return valueRootIds(n.expression, out);
   if (ts.isBinaryExpression(n)) {
     const k = n.operatorToken.kind;
     if (k === ts.SyntaxKind.QuestionQuestionToken || k === ts.SyntaxKind.BarBarToken || k === ts.SyntaxKind.AmpersandAmpersandToken) {
-      valueRoots(n.left, out); valueRoots(n.right, out);
+      valueRootIds(n.left, out); valueRootIds(n.right, out);
     }
     return out;
   }
-  if (ts.isConditionalExpression(n)) { valueRoots(n.whenTrue, out); valueRoots(n.whenFalse, out); return out; }
+  if (ts.isConditionalExpression(n)) { valueRootIds(n.whenTrue, out); valueRootIds(n.whenFalse, out); return out; }
   if (ts.isCallExpression(n)) {
     const callee = unwrap(n.expression);
     if (ts.isPropertyAccessExpression(callee) && PASSTHROUGH_METHODS.has(callee.name.text)) {
-      return valueRoots(callee.expression, out);
+      return valueRootIds(callee.expression, out);
     }
     if (ts.isIdentifier(callee) && (callee.text === 'String' || callee.text === 'Object')) {
-      for (const a of n.arguments) valueRoots(a, out);
+      for (const a of n.arguments) valueRootIds(a, out);
     }
     return out;
   }
@@ -145,9 +167,57 @@ function valueRoots(node: ts.Node, out: Set<string> = new Set()): Set<string> {
 
 /* ── 1. which names carry request data ─────────────────────────────────────── */
 
-function requestDerivedNames(src: ts.SourceFile): Set<string> {
-  const names = new Set<string>();
-  const edges: Array<{ name: string; from: ts.Node }> = [];
+/**
+ * One binding — a variable declaration, a for-of head, a request-named
+ * parameter, or an array-callback parameter — with the scope it is visible in.
+ *
+ * Derivation is per BINDING, not per name. A flat per-file name set is what a
+ * 3,000-line router breaks: `grns.ts` declares `items` twice, once as
+ * `body.items` (:1584) and once as a `purchase_order_items` read (:1906), and a
+ * name set cannot tell the GRN line rows built from the second apart from
+ * request input. It reported `delivery_date: it.delivery_date` — a column copied
+ * from one database row to another — as an uncoerced request write.
+ */
+type Binding = {
+  name: string;
+  /** the function the binding is visible inside; undefined = module scope */
+  scope: ts.Node | undefined;
+  pos: number;
+  from?: ts.Node;
+  derived: boolean;
+};
+
+export type RequestInfo = { bindings: Binding[] };
+
+/** Nesting depth, so an inner `it` beats an outer one. */
+function scopeDepth(n: ts.Node | undefined): number {
+  let d = 0;
+  for (let x: ts.Node | undefined = n; x; x = x.parent) d++;
+  return d;
+}
+
+function resolveBinding(id: ts.Identifier, bindings: Binding[]): Binding | undefined {
+  const use = id.getStart();
+  let best: Binding | undefined;
+  let bestDepth = -1;
+  for (const b of bindings) {
+    if (b.name !== id.text) continue;
+    if (b.scope && !isAncestor(b.scope, id)) continue;
+    /* A later declaration of the same name in the same scope is not this use's
+       binding. A parameter's own position precedes its body, so one rule serves
+       declarations and parameters alike. */
+    if (b.pos > use) continue;
+    const d = scopeDepth(b.scope);
+    if (d > bestDepth || (d === bestDepth && best && b.pos > best.pos)) { best = b; bestDepth = d; }
+  }
+  return best;
+}
+
+function requestDerivedNames(src: ts.SourceFile): RequestInfo {
+  const bindings: Binding[] = [];
+  /** `let it; try { it = await c.req.json() } catch { 400 }` — the assignment,
+      not the declaration, is where the request enters. */
+  const assignments: Array<{ id: ts.Identifier; from: ts.Node }> = [];
 
   const isRequestSource = (e: ts.Node): boolean => {
     const t = e.getText(src);
@@ -158,35 +228,68 @@ function requestDerivedNames(src: ts.SourceFile): Set<string> {
       || /\bparseJsonBody\(/.test(t);
   };
 
-  const bind = (name: string, init: ts.Node) => {
-    if (isRequestSource(init)) names.add(name);
-    edges.push({ name, from: init });
+  const add = (name: string, at: ts.Node, scope: ts.Node | undefined, from: ts.Node | undefined, seeded: boolean) => {
+    bindings.push({ name, scope, pos: at.getStart(src), from, derived: seeded || (!!from && isRequestSource(from)) });
   };
 
   const visit = (node: ts.Node): void => {
-    /* `let body: Record<string, unknown>;` then `body = await c.req.json()` in a
-       try/catch is the house shape for a 400-on-bad-JSON handler — there is no
-       initializer to read, so the seed names count on sight. */
-    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && REQUEST_SEED_NAMES.has(node.name.text)) {
-      names.add(node.name.text);
-    }
-    if (ts.isVariableDeclaration(node) && node.initializer) {
+    if (ts.isVariableDeclaration(node)) {
+      const scope = enclosingFunction(node);
+      /* `let body: Record<string, unknown>;` then `body = await c.req.json()` in
+         a try/catch is the house shape for a 400-on-bad-JSON handler — there is
+         no initializer to read, so the seed names count on sight. */
       if (ts.isIdentifier(node.name)) {
-        bind(node.name.text, node.initializer);
-      } else {
+        add(node.name.text, node, scope, node.initializer, REQUEST_SEED_NAMES.has(node.name.text));
+      } else if (node.initializer) {
         for (const el of node.name.elements) {
-          if (ts.isBindingElement(el) && ts.isIdentifier(el.name)) bind(el.name.text, node.initializer);
+          if (ts.isBindingElement(el) && ts.isIdentifier(el.name)) {
+            add(el.name.text, node, scope, node.initializer, REQUEST_SEED_NAMES.has(el.name.text));
+          }
         }
       }
     }
-    if (ts.isParameter(node) && ts.isIdentifier(node.name) && REQUEST_SEED_NAMES.has(node.name.text)) {
-      names.add(node.name.text);
+    /* A parameter that IS the parsed payload. The name list catches `body` /
+       `payload`; `p: z.infer<typeof scheduleSchema>` catches the helper that the
+       route hands its parsed body to — delivery-planning's two trip-mint paths
+       take exactly that and write scm.trips.trip_date. */
+    if (ts.isParameter(node) && ts.isIdentifier(node.name)) {
+      const typed = node.type ? /\bz\.infer</.test(node.type.getText(src)) : false;
+      if (typed || REQUEST_SEED_NAMES.has(node.name.text)) {
+        add(node.name.text, node, enclosingFunction(node), undefined, true);
+      }
+    }
+    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken
+      && ts.isIdentifier(unwrap(node.left))) {
+      assignments.push({ id: unwrap(node.left) as ts.Identifier, from: node.right });
+    }
+    /* `submittedLines.map((l) => ({ new_delivery_date: l.newDeliveryDate }))`.
+       `l` is a callback PARAMETER — neither a variable declaration nor a for-of
+       head — so nothing above binds it, and po-amendments.ts:264 stayed
+       invisible while it wrote a request date into a DATE column. Scoped to the
+       callback, so the same `it` over a database read stays a database row. */
+    if (ts.isCallExpression(node)) {
+      const callee = unwrap(node.expression);
+      if (ts.isPropertyAccessExpression(callee) && ELEMENT_CALLBACK_METHODS.has(callee.name.text)) {
+        for (const a of node.arguments) {
+          const cb = unwrap(a);
+          if (!ts.isArrowFunction(cb) && !ts.isFunctionExpression(cb)) continue;
+          const p0 = cb.parameters[0];
+          if (!p0) continue;
+          if (ts.isIdentifier(p0.name)) add(p0.name.text, p0, cb, callee.expression, false);
+          else if (ts.isObjectBindingPattern(p0.name) || ts.isArrayBindingPattern(p0.name)) {
+            for (const el of p0.name.elements) {
+              if (ts.isBindingElement(el) && ts.isIdentifier(el.name)) add(el.name.text, p0, cb, callee.expression, false);
+            }
+          }
+        }
+      }
     }
     if (ts.isForOfStatement(node) && ts.isVariableDeclarationList(node.initializer)) {
+      const scope = enclosingFunction(node);
       for (const d of node.initializer.declarations) {
-        if (ts.isIdentifier(d.name)) bind(d.name.text, node.expression);
+        if (ts.isIdentifier(d.name)) add(d.name.text, node, scope, node.expression, false);
         else for (const el of d.name.elements) {
-          if (ts.isBindingElement(el) && ts.isIdentifier(el.name)) bind(el.name.text, node.expression);
+          if (ts.isBindingElement(el) && ts.isIdentifier(el.name)) add(el.name.text, node, scope, node.expression, false);
         }
       }
     }
@@ -196,27 +299,35 @@ function requestDerivedNames(src: ts.SourceFile): Set<string> {
 
   for (let pass = 0; pass < 10; pass++) {
     let grew = false;
-    for (const e of edges) {
-      if (names.has(e.name)) continue;
-      for (const r of valueRoots(e.from)) {
-        if (names.has(r)) { names.add(e.name); grew = true; break; }
+    for (const b of bindings) {
+      if (b.derived || !b.from) continue;
+      for (const r of valueRootIds(b.from)) {
+        if (resolveBinding(r, bindings)?.derived) { b.derived = true; grew = true; break; }
+      }
+    }
+    for (const a of assignments) {
+      const target = resolveBinding(a.id, bindings);
+      if (!target || target.derived) continue;
+      if (isRequestSource(a.from)) { target.derived = true; grew = true; continue; }
+      for (const r of valueRootIds(a.from)) {
+        if (resolveBinding(r, bindings)?.derived) { target.derived = true; grew = true; break; }
       }
     }
     if (!grew) break;
   }
-  return names;
+  return { bindings };
 }
 
-function isRequestDerived(expr: ts.Node, names: Set<string>): boolean {
+function isRequestDerived(expr: ts.Node, info: RequestInfo): boolean {
   let hit = false;
   const walk = (n: ts.Node): void => {
     if (hit) return;
-    if (ts.isIdentifier(n) && names.has(n.text)) {
+    if (ts.isIdentifier(n)) {
       const p = n.parent;
       // a PROPERTY called `body` is not the body
-      if (p && ts.isPropertyAccessExpression(p) && p.name === n) return;
-      if (p && (ts.isPropertyAssignment(p) || ts.isBindingElement(p)) && p.name === n) return;
-      hit = true; return;
+      if (p && ts.isPropertyAccessExpression(p) && p.name === n) { ts.forEachChild(n, walk); return; }
+      if (p && (ts.isPropertyAssignment(p) || ts.isBindingElement(p)) && p.name === n) { ts.forEachChild(n, walk); return; }
+      if (resolveBinding(n, info.bindings)?.derived) { hit = true; return; }
     }
     ts.forEachChild(n, walk);
   };
@@ -477,6 +588,7 @@ export function scanFile(file: string, rel: string): Finding[] {
   /** decl node → the identifier uses that send it */
   const sentVars: Array<{ decl: ts.VariableDeclaration; id: ts.Identifier; wrapped: boolean }> = [];
 
+  const takenPayloads = new Set<ts.Node>(); // a var can be sent twice; follow it once
   const takePayload = (argIn: ts.Node, wrapped: boolean): void => {
     const arg = unwrap(argIn);
     if (ts.isObjectLiteralExpression(arg)) {
@@ -492,8 +604,14 @@ export function scanFile(file: string, rel: string): Finding[] {
       const d = resolveDecl(arg);
       if (d) {
         sentVars.push({ decl: d, id: arg, wrapped });
-        if (d.initializer && ts.isObjectLiteralExpression(unwrap(d.initializer))) {
-          payloadLiterals.add(unwrap(d.initializer) as ts.ObjectLiteralExpression);
+        /* Follow the DECLARATION, not just an object literal: `const lineRows =
+           submittedLines.map((l) => ({ … }))` is a row array exactly as much as
+           `const row = { … }` is a row, and the columns live inside the
+           callback. Stopping at "is it an object literal?" is what let
+           po-amendments.ts's line insert pass as a non-payload. */
+        if (d.initializer && !takenPayloads.has(d)) {
+          takenPayloads.add(d);
+          takePayload(d.initializer, wrapped);
         }
       }
       return;
@@ -505,9 +623,23 @@ export function scanFile(file: string, rel: string): Finding[] {
       if (ts.isPropertyAccessExpression(callee) && (callee.name.text === 'map' || callee.name.text === 'flatMap')) {
         for (const a of arg.arguments) {
           const cb = unwrap(a);
-          if (ts.isArrowFunction(cb) && !ts.isBlock(cb.body)) takePayload(cb.body, wrapped);
+          if (!ts.isArrowFunction(cb) && !ts.isFunctionExpression(cb)) continue;
+          if (!ts.isBlock(cb.body)) { takePayload(cb.body, wrapped); continue; }
+          const returns = (n: ts.Node): void => {
+            if (ts.isReturnStatement(n) && n.expression) takePayload(n.expression, wrapped);
+            if (ts.isFunctionDeclaration(n) || ts.isFunctionExpression(n) || ts.isArrowFunction(n)) return;
+            ts.forEachChild(n, returns);
+          };
+          ts.forEachChild(cb.body, returns);
         }
+        return;
       }
+      /* A wrapper that is not a coercer — `.insert(stampCompany(lineRows, c))`,
+         the house pattern at ~46 write sites. It hands the row straight on, so
+         the row is still the row; treating the call as opaque hid every column
+         behind it. `wrapped` stays false because only a COERCER discharges the
+         field-map obligation. */
+      for (const a of arg.arguments) takePayload(a, wrapped);
     }
   };
 

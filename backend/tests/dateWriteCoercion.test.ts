@@ -43,7 +43,10 @@ describe('no request value reaches a date column uncoerced', () => {
        direction this list stops matching. */
     expect(columns).toEqual([
       'write:amend_date_from_customer',
+      'write:new_delivery_date',
       'write:paid_at',
+      'write:supplier_delivery_date_2',
+      'write:trip_date',
       'write:voucher_date',
       'payload:updates',
     ].sort());
