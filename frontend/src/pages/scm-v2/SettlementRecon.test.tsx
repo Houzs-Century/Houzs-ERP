@@ -33,16 +33,17 @@ const ROW: SettlementRow = {
 };
 
 const confirmMutate = vi.fn();
+const receivedMutate = vi.fn();
 const uploadMutateAsync = vi.fn();
 let saveMutate = vi.fn();
 
 vi.mock('./settlement-queries', () => ({
   useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL] }, isLoading: false }),
   useSaveAcquirerSetup: () => ({ mutate: saveMutate, isPending: false }),
-  useSettlementBatches: () => ({ data: { batches: [{ id: 1, acquirer_code: 'MBB', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-03', row_count: 2, gross_sen: 177700, fee_sen: 2600, net_sen: 175100, status: 'OPEN', uploaded_by: null, created_at: '' }] }, isLoading: false }),
+  useSettlementBatches: () => ({ data: { batches: [{ id: 1, acquirer_code: 'MBB', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-03', row_count: 2, gross_sen: 177700, fee_sen: 2600, net_sen: 175100, stated_net_sen: null, adjustment_sen: 0, adjustment_je_no: null, received_on: null, receipt_je_no: null, status: 'OPEN', uploaded_by: null, created_at: '' }] }, isLoading: false }),
   useSettlementBatch: () => ({
     data: {
-      batch: { id: 1, acquirer_code: 'MBB' },
+      batch: { id: 1, acquirer_code: 'MBB', net_sen: 175100, stated_net_sen: null, adjustment_sen: 0, adjustment_je_no: null, received_on: null, receipt_je_no: null },
       acquirer: { code: 'MBB', hasUniqueRef: true, dateToleranceDays: 3 },
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 1, UNMATCHED: 0, IGNORED: 0 },
       rows: [ROW],
@@ -53,10 +54,12 @@ vi.mock('./settlement-queries', () => ({
   useConfirmSettlementRow: () => ({ mutate: confirmMutate, isPending: false, isError: false, error: null }),
   useConfirmMatched: () => ({ mutate: vi.fn(), isPending: false, data: null }),
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
+  useMarkBatchReceived: () => ({ mutate: receivedMutate, isPending: false, isError: false, error: null }),
   useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, recordedNotArrived: [], arrivedNotRecorded: [] }, isLoading: false }),
-  useInTransit: () => ({ data: { from: '2026-02-17', to: '2026-08-17', totalSen: 259400, ageing: { MBB: { '0-7': { count: 1, sen: 230000 } }, GHL: { 'over-30': { count: 1, sen: 29400 } } }, lines: [
+  useInTransit: () => ({ data: { from: '2026-02-17', to: '2026-08-17', totalSen: 357900, ageing: { MBB: { '0-7': { count: 1, sen: 230000 } }, GHL: { 'over-30': { count: 1, sen: 29400 } } }, lines: [
     { acquirerCode: 'MBB', source: 'SOPAY', paymentId: 'm1', docNo: 'SO-2608-040', paidOn: '2026-08-14', amountSen: 230000, approvalCode: '861777', recordedBy: 'Siti at the KL till', recordedById: 'u1', ageDays: 3, state: 'MATCHED_NOT_POSTED' },
     { acquirerCode: 'GHL', source: 'SOPAY', paymentId: 'g9', docNo: 'SO-2607-001', paidOn: '2026-07-02', amountSen: 29400, approvalCode: null, recordedBy: null, recordedById: null, ageDays: 46, state: 'NOT_ON_A_STATEMENT' },
+    { acquirerCode: 'PBB', source: 'SOPAY', paymentId: 'b3', docNo: 'SO-2608-050', paidOn: '2026-08-12', amountSen: 98500, approvalCode: '114220', recordedBy: null, recordedById: null, ageDays: 5, state: 'RECONCILED_NOT_PAID' },
   ] }, isLoading: false }),
 }));
 
@@ -111,6 +114,26 @@ describe('the reconcile tab', () => {
     expect(screen.queryByLabelText('Statement month')).toBeNull();
   });
 
+  /* The field this screen used to carry at upload was wrong, and the owner
+     caught it: on the day he uploads the card-machine report he cannot know
+     when the money will land — 全部卡机都是隔几天收到的。 */
+  test('the upload form does not ask when the money arrived', () => {
+    draw();
+    expect(screen.queryByLabelText('Money reached the bank on')).toBeNull();
+  });
+
+  test('an open statement asks for the bank date as its own step, and posts it', () => {
+    draw();
+    fireEvent.click(screen.getByText('Open'));
+    expect(screen.getByText(/MBB still owes/)).toBeTruthy();
+
+    const post = screen.getByText('Money received') as HTMLButtonElement;
+    expect(post.disabled).toBe(true);          // no date, nothing to post
+    fireEvent.change(screen.getByLabelText('Money arrived in the bank on'), { target: { value: '2026-08-07' } });
+    fireEvent.click(screen.getByText('Money received'));
+    expect(receivedMutate).toHaveBeenCalledWith({ batchId: 1, receivedOn: '2026-08-07' });
+  });
+
   test('the four piles carry their counts, and a line shows its clue and its candidates', () => {
     draw();
     fireEvent.click(screen.getByText('Open'));
@@ -151,10 +174,13 @@ describe('paid, not yet in the bank', () => {
     draw();
     fireEvent.click(screen.getByText('Paid, not yet in the bank'));
 
-    expect(screen.getByText('RM 2,594.00')).toBeTruthy();          // the total sitting with acquirers
+    expect(screen.getByText('RM 3,579.00')).toBeTruthy();          // the total sitting with acquirers
     expect(screen.getByText('SO-2608-040')).toBeTruthy();          // named to the document
     expect(screen.getByText('On a statement, waiting to be confirmed')).toBeTruthy();
     expect(screen.getByText('The acquirer has not reported it yet')).toBeTruthy();
+    /* Three states, three different jobs: chase the acquirer, finish the
+       reconciling, or wait for a payout that is already agreed. */
+    expect(screen.getByText('Reconciled — the payout has not arrived')).toBeTruthy();
     // Who keyed it in — money sitting for weeks is a question for a person.
     expect(screen.getByText('Siti at the KL till')).toBeTruthy();
   });

@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-136 route modules (40 in `backend/src/routes`, 96 in `backend/src/scm/routes`), 1058 endpoint registrations.
+136 route modules (40 in `backend/src/routes`, 96 in `backend/src/scm/routes`), 1060 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -59,8 +59,8 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/track.ts` | 1 | 44 |
 | `backend/src/routes/udf.ts` | 4 | 251 |
 | `backend/src/routes/users.ts` | 22 | 2282 |
-| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 558 |
-| `backend/src/scm/routes/accounting.ts` | 31 | 1111 |
+| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 762 |
+| `backend/src/scm/routes/accounting.ts` | 33 | 1114 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
@@ -165,13 +165,13 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 148 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 300 | `0302_acc_settlement.sql` (0302) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 302 | `0304_acc_settlement_bank_receipt.sql` (0304) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1376 files, 557209 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1379 files, 559473 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

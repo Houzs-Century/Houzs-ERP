@@ -34,6 +34,7 @@ import { parseStatement, type StatementColumnMap } from '../../acc/settlement-pa
 import { matchStatement, recordedNotArrived, type PaymentCandidate } from '../../acc/settlement-match';
 import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge,
+  postBatchReceipt,
 } from '../../acc/settlement';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
@@ -186,10 +187,6 @@ export const settlementUpload = guard(async (c) => {
     gross_sen: parsed.grossSen,
     fee_sen: parsed.feeSen,
     net_sen: parsed.netSen,
-    /* The day the money reached the bank, from the acquirer's payment advice.
-       Null keeps the old behaviour: the entry takes the statement line's date,
-       which is right for an acquirer that pays same-day. */
-    paid_on: DAY.test(String(body.paidOn ?? '')) ? String(body.paidOn) : null,
     stated_net_sen: parsed.statedNetSen,
     adjustment_sen: parsed.adjustmentSen,
     uploaded_by: (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null,
@@ -286,7 +283,7 @@ export const settlementBatches = guard(async (c) => {
   if (!co.ok) return c.json(co.refusal, 409);
   const sb = c.get('supabase');
   const { data, error } = await sb.from('acc_settlement_batches')
-    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, paid_on, status, uploaded_by, created_at')
+    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, received_on, receipt_je_no, status, uploaded_by, created_at')
     .eq('company_id', co.companyId)
     .order('created_at', { ascending: false })
     .limit(100);
@@ -305,7 +302,7 @@ export const settlementBatchDetail = guard(async (c) => {
   const sb = c.get('supabase');
 
   const { data: batch, error: bErr } = await sb.from('acc_settlement_batches')
-    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, paid_on, status, created_at')
+    .select('id, acquirer_code, file_name, period_from, period_to, row_count, gross_sen, fee_sen, net_sen, stated_net_sen, adjustment_sen, adjustment_je_no, received_on, receipt_je_no, status, created_at')
     .eq('id', batchId).eq('company_id', co.companyId).maybeSingle();
   if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
   if (!batch) return c.json({ error: 'not_found' }, 404);
@@ -473,6 +470,34 @@ export const settlementConfirmMatched = guard(async (c) => {
   });
 });
 
+/* POST /batches/:id/received — "the money is in the bank, on this day".
+   The second half of the owner's two-step (2026-08-17: 先对卡机报告，然后
+   match 了就会去 match bank statement). Reconciling the card machine booked the
+   fee; this books the payout, dated by the bank statement, and empties what the
+   acquirer still owed. Layer 4 will call the same function with the date it
+   reads off the bank statement — this endpoint is how a human does it today. */
+export const settlementBatchReceived = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const batchId = Number(c.req.param('id'));
+  if (!Number.isInteger(batchId)) return c.json({ error: 'bad_id' }, 400);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const receivedOn = String(body.receivedOn ?? '').trim();
+  if (!DAY.test(receivedOn)) {
+    return c.json({ error: 'bad_date', message: 'Give the date the money reached the bank, as it reads on the bank statement.' }, 400);
+  }
+
+  const r = await postBatchReceipt(c.get('supabase'), co.companyId, batchId, receivedOn);
+  if (!r.ok) {
+    const status = r.status === 'not_found' ? 404
+      : ['bad_date', 'nothing_to_receive', 'acquirer_unavailable'].includes(r.status) ? 409
+      : 500;
+    return c.json({ error: r.status, message: r.reason }, status);
+  }
+  return c.json(r);
+});
+
 /* POST /rows/:id/ignore — set a line aside (or put it back). A confirmed line
    cannot be ignored: it is in the ledger, and the way out of the ledger is a
    journal, not a checkbox. */
@@ -561,11 +586,16 @@ export const settlementWatchlist = guard(async (c) => {
    line (the brief's 在途结算款账龄, §3.7 — "刷卡多久还没到账，按收单行分").
    The owner asked for it in these words: he needs to see that a customer has
    paid but the money has not arrived or been reconciled yet, in DETAIL, not as
-   a balance. Two states, because they mean different things:
+   a balance. THREE states, because they mean different things and need
+   different people chased:
      • not on any statement yet  — the acquirer has not reported it
      • matched, not yet posted   — reported, waiting to be confirmed
+     • reconciled, not yet paid  — confirmed, the payout has not arrived
+   A line leaves this list only when its batch's money is actually in the bank.
    Live from the payments and the match table; nothing cached (§2.3), so this
-   list and the 320-0000 balance can never tell different stories. */
+   list and the 320-0000 balance can never tell different stories — which is
+   also why a reconciled line shows its NET: its fee is already out of transit,
+   booked the day it was confirmed. */
 export const settlementInTransit = guard(async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -580,19 +610,72 @@ export const settlementInTransit = guard(async (c) => {
     .eq('company_id', co.companyId).eq('is_active', true).order('code');
   if (aErr) return c.json({ error: 'load_failed', reason: aErr.message }, 500);
 
-  /* Which payments a settlement line has claimed, and whether that line has
-     actually reached the ledger yet. */
+  /* Which payments a settlement line has claimed, whether that line has been
+     confirmed, and whether its batch's money has actually arrived. */
   const { data: matchRaw, error: mErr } = await sb.from('acc_settlement_matches')
-    .select('payment_source, payment_id, settlement_row_id').eq('company_id', co.companyId);
+    .select('payment_source, payment_id, settlement_row_id, amount_sen').eq('company_id', co.companyId);
   if (mErr) return c.json({ error: 'load_failed', reason: mErr.message }, 500);
   const { data: rowRaw, error: rErr } = await sb.from('acc_settlement_rows')
-    .select('id, confirmed_at, posted_je_no').eq('company_id', co.companyId);
+    .select('id, batch_id, confirmed_at, fee_sen').eq('company_id', co.companyId);
   if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
-  const postedRow = new Map(((rowRaw ?? []) as Array<{ id: number; confirmed_at: string | null; posted_je_no: string | null }>)
-    .map((r) => [Number(r.id), Boolean(r.confirmed_at && r.posted_je_no)]));
-  const claim = new Map<string, boolean>();
-  for (const m of (matchRaw ?? []) as Array<{ payment_source: string; payment_id: string; settlement_row_id: number }>) {
-    claim.set(`${m.payment_source}:${m.payment_id}`, postedRow.get(Number(m.settlement_row_id)) === true);
+  const { data: batchRaw, error: bErr } = await sb.from('acc_settlement_batches')
+    .select('id, received_on, adjustment_sen, adjustment_je_no').eq('company_id', co.companyId);
+  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+
+  type BatchRow = { id: number; received_on: string | null; adjustment_sen: number | null; adjustment_je_no: string | null };
+  const batches = (batchRaw ?? []) as BatchRow[];
+  const paidBatch = new Set(batches.filter((b) => Boolean(b.received_on)).map((b) => Number(b.id)));
+  const rowInfo = new Map(((rowRaw ?? []) as Array<{ id: number; batch_id: number; confirmed_at: string | null; fee_sen: number | null }>)
+    .map((r) => [Number(r.id), {
+      confirmed: Boolean(r.confirmed_at),
+      batchId: Number(r.batch_id),
+      paid: paidBatch.has(Number(r.batch_id)),
+      feeSen: Number(r.fee_sen ?? 0),
+    }]));
+
+  const matches = (matchRaw ?? []) as Array<{ payment_source: string; payment_id: string; settlement_row_id: number; amount_sen: number | null }>;
+  const claim = new Map<string, number>();
+  for (const m of matches) claim.set(`${m.payment_source}:${m.payment_id}`, Number(m.settlement_row_id));
+
+  /* A confirmed line's fee is already OUT of in-transit, so what it still holds
+     for that line is the net. One statement line can cover two orders (一笔刷卡
+     对应两张订单), so the fee is split across them in proportion to their
+     amounts — and the last share takes the rounding, so the split adds back to
+     the fee exactly rather than leaving a sen adrift from the ledger. */
+  const feeShare = new Map<string, number>();
+  const byRow = new Map<number, typeof matches>();
+  for (const m of matches) {
+    const list = byRow.get(Number(m.settlement_row_id));
+    if (list) list.push(m);
+    else byRow.set(Number(m.settlement_row_id), [m]);
+  }
+  const spread = (amount: number, list: typeof matches, into: Map<string, number>) => {
+    const total = list.reduce((s, m) => s + Number(m.amount_sen ?? 0), 0);
+    let allocated = 0;
+    list.forEach((m, i) => {
+      const share = i === list.length - 1 || total === 0
+        ? amount - allocated
+        : Math.round((amount * Number(m.amount_sen ?? 0)) / total);
+      allocated += share;
+      const key = `${m.payment_source}:${m.payment_id}`;
+      into.set(key, (into.get(key) ?? 0) + share);
+    });
+  };
+  for (const [rowId, list] of byRow) spread(rowInfo.get(rowId)?.feeSen ?? 0, list, feeShare);
+
+  /* And the charge the STATEMENT made that no transaction explains (AEON's
+     subvention fee): once it is booked it has left in-transit too, so it comes
+     off the same way — spread across the payments of that batch that are still
+     sitting there. Left out, this list would read 254.16 higher than the
+     account it is supposed to be the readable form of. */
+  for (const b of batches) {
+    const adjustment = Number(b.adjustment_sen ?? 0);
+    if (adjustment === 0 || !b.adjustment_je_no || paidBatch.has(Number(b.id))) continue;
+    const stillHere = matches.filter((m) => {
+      const row = rowInfo.get(Number(m.settlement_row_id));
+      return row?.confirmed === true && row.batchId === Number(b.id);
+    });
+    if (stillHere.length > 0) spread(adjustment, stillHere, feeShare);
   }
 
   const days = (a: string, b: string) =>
@@ -603,19 +686,25 @@ export const settlementInTransit = guard(async (c) => {
     const got = await loadPaymentCandidates(sb, co.companyId, a, from, to);
     if (!got.ok) return c.json({ error: 'load_failed', reason: got.reason }, 500);
     for (const p of got.payments) {
-      const state = claim.get(`${p.source}:${p.id}`);
-      if (state === true) continue; // already in the bank, out of transit
+      const key = `${p.source}:${p.id}`;
+      const row = rowInfo.get(claim.get(key) ?? -1);
+      if (row?.paid === true) continue; // the money is in the bank, out of transit
+      const state = row == null ? 'NOT_ON_A_STATEMENT'
+        : row.confirmed ? 'RECONCILED_NOT_PAID'
+        : 'MATCHED_NOT_POSTED';
       lines.push({
         acquirerCode: a.code,
         source: p.source,
         paymentId: p.id,
         docNo: p.docNo,
         paidOn: p.paidOn,
-        amountSen: p.amountSen,
+        /* Still in transit for this payment: the gross until it is reconciled,
+           the net afterwards — the fee left the account on confirmation. */
+        amountSen: state === 'RECONCILED_NOT_PAID' ? p.amountSen - (feeShare.get(key) ?? 0) : p.amountSen,
         approvalCode: p.approvalCode,
         recordedById: p.recordedById ?? null,
         ageDays: days(p.paidOn, to),
-        state: state === false ? 'MATCHED_NOT_POSTED' : 'NOT_ON_A_STATEMENT',
+        state,
       });
     }
   }

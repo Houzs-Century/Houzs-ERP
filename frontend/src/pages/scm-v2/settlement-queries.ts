@@ -81,8 +81,10 @@ export type SettlementBatch = {
   /** lines net minus stated net: a charge the transactions do not explain. */
   adjustment_sen: number;
   adjustment_je_no: string | null;
-  /** The day the money reached the bank, from the acquirer payment advice. */
-  paid_on: string | null;
+  /** The day the payout actually reached the bank. Null = still with the
+      acquirer, which is the honest state, not a missing field. */
+  received_on: string | null;
+  receipt_je_no: string | null;
   status: string;
   uploaded_by: string | null;
   created_at: string;
@@ -160,8 +162,6 @@ export const useUploadStatement = () => {
       summaryFeeSen?: number | null;
       /** YYYY-MM — only needed when the file's dates carry no year. */
       statementMonth?: string | null;
-      /** YYYY-MM-DD — the day the acquirer paid it into the bank. */
-      paidOn?: string | null;
     }) =>
       authedFetch<UploadResult>(`/accounting/settlement/batches`, { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => { void qc.invalidateQueries({ queryKey: ['settlement-batches'] }); },
@@ -203,6 +203,24 @@ export const useConfirmMatched = () => {
   });
 };
 
+/** "The money is in the bank, on this day." The second step of the owner's
+    two-step: reconciling the card machine booked the fee; this books the payout
+    and empties what the acquirer still owed. */
+export const useMarkBatchReceived = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ batchId, receivedOn }: { batchId: number; receivedOn: string }) =>
+      authedFetch<{ ok: boolean; status: string; jeNo?: string; amountSen: number }>(
+        `/accounting/settlement/batches/${batchId}/received`,
+        { method: 'POST', body: JSON.stringify({ receivedOn }) },
+      ),
+    onSuccess: () => {
+      invalidateAfterPosting(qc);
+      void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
+    },
+  });
+};
+
 export const useIgnoreSettlementRow = () => {
   const qc = useQueryClient();
   return useMutation({
@@ -235,9 +253,11 @@ export type InTransitLine = {
   recordedBy: string | null;
   recordedById: string | null;
   ageDays: number;
-  /** NOT_ON_A_STATEMENT — the acquirer has not reported it yet.
-   *  MATCHED_NOT_POSTED — reported and matched, waiting to be confirmed. */
-  state: 'NOT_ON_A_STATEMENT' | 'MATCHED_NOT_POSTED';
+  /** NOT_ON_A_STATEMENT  — the acquirer has not reported it yet.
+   *  MATCHED_NOT_POSTED  — reported and matched, waiting to be confirmed.
+   *  RECONCILED_NOT_PAID — confirmed (its fee is booked), payout not arrived;
+   *                        amountSen is the NET for these, matching the ledger. */
+  state: 'NOT_ON_A_STATEMENT' | 'MATCHED_NOT_POSTED' | 'RECONCILED_NOT_PAID';
 };
 
 export type InTransit = {

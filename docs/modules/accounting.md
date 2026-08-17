@@ -29,8 +29,9 @@ books which entry":
 | Manual journal (JV) | operator lines, draft first | `MANUAL` | `MANUAL_REVERSAL` |
 | Customer payment collected | Dr CASH/BANK/transit / Cr AR | `SOPAY` / `SIPAY` | `*_REVERSAL` |
 | Daily cash close | Dr/Cr OVER_SHORT / Cr/Dr CASH | `CASHUP` | (correct by JV) |
-| Acquirer settlement confirmed | Dr bank + Dr fee / Cr transit | `SETTLE` | `SETTLE_REVERSAL` |
-| Statement charge with no transaction | Dr fee / Cr bank | `SETTLEADJ` | `SETTLEADJ_REVERSAL` |
+| Acquirer settlement confirmed | Dr fee / Cr transit | `SETTLE` | `SETTLE_REVERSAL` |
+| Statement charge with no transaction | Dr fee / Cr transit | `SETTLEADJ` | `SETTLEADJ_REVERSAL` |
+| Acquirer payout received | Dr bank / Cr transit | `SETTLEBANK` | `SETTLEBANK_REVERSAL` |
 
 Adding an auto-posting document type means: a rule in `rules.ts`, a caller
 that builds its lines through that rule, and a behaviour-lock test — the
@@ -111,13 +112,33 @@ config and REFUSES by name rather than parsing 0 rows (§2.14);
 `acc/settlement-match.ts` auto-matches ONLY on a unique reference — an acquirer
 without one (or one whose 决定4 is still blank) sends every line to a human, and
 the date tolerance comes from the config row, not a literal;
-`acc/settlement.ts` confirms, which POSTS that moment: Dr bank + Dr fee / Cr
-transit, source `SETTLE`, keyed `SETTLE-<row id>`. Ten endpoints under
-`/accounting/settlement/*` (setup read/write, upload, batch list/detail,
-confirm one, confirm-all-matched, ignore, watchlist, CSV export), each carrying
-its own permission check on top of the area guard. Page `/scm/settlement-recon`
-(Finance menu): upload, four piles, multi-select candidates with combo hints,
-the two standing watchlists, Excel-ready export.
+`acc/settlement.ts` confirms, which POSTS that moment.
+
+**Two events, two entries** (owner, 2026-08-17: 全部卡机都是隔几天收到的。应该是
+先对卡机报告，然后 match 了就会去 match bank statement). Reconciling the card
+machine and receiving the money are days apart, so the ledger keeps them apart:
+confirming a line books the FEE only (Dr fee / Cr transit, source `SETTLE`,
+keyed `SETTLE-<row id>`, dated by the transaction); marking the batch received
+books the payout (Dr bank / Cr transit, source `SETTLEBANK`, keyed
+`SETTLEBANK-<batch id>`, dated by the BANK statement, for `stated_net_sen ??
+net_sen`). In between, settlement-in-transit holds exactly what the acquirer
+still owes — the fee is already lost and is no longer receivable. The customer
+side never changes: AR is knocked off by the full gross at the swipe (owner:
+顾客还款确定到时是记录6000哦，不然knock off 不到). A fee-free line confirms with
+no entry at all. Migration 0304 adds `received_on`/`receipt_je_*` to the batch;
+layer 4 (bank reconciliation) will call the same function with the date it reads
+off the bank statement, which is why the operator is never asked for a payout
+date at upload time — that is the one moment he cannot know it.
+
+Eleven endpoints under `/accounting/settlement/*` (setup read/write, upload,
+batch list/detail, confirm one, confirm-all-matched, received, ignore,
+watchlist, in-transit, CSV export), each carrying its own permission check on
+top of the area guard. Page `/scm/settlement-recon` (Finance menu): upload, four
+piles, multi-select candidates with combo hints, the "money arrived in the bank"
+step, the paid-not-yet-in-the-bank detail list (three states — the acquirer has
+not reported it / waiting to be confirmed / reconciled but not paid — each
+naming who keyed the payment in), the two standing watchlists, Excel-ready
+export.
 
 SI auto-posts on create/confirm (`lib/post-si-revenue.ts`; resync
 void+reposts on post-issue edits). PI posts on demand + resyncs. PV posts on

@@ -6,11 +6,19 @@
 // reconciled on screen and left the booking "for next phase"; that next phase
 // never came, so its card fees never reached the P&L and its bank balance
 // could never agree with its books. Here, confirming a match posts through the
-// one gate before the row is allowed to call itself confirmed:
+// one gate before the row is allowed to call itself confirmed.
 //
-//     Dr Bank              net
-//     Dr Merchant charges  fee
-//         Cr Settlement-in-transit  gross
+// TWO EVENTS, TWO ENTRIES (owner, 2026-08-17: "全部卡机都是隔几天收到的。应该
+// 是先对卡机报告，然后 match 了就会去 match bank statement"). Reconciling the
+// card machine and receiving the money are days apart, so the ledger keeps them
+// apart:
+//
+//   confirm a statement line   Dr Merchant charges  fee   Cr in-transit  fee
+//   the payout reaches the bank Dr Bank             net   Cr in-transit  net
+//
+// Between the two, settlement-in-transit holds the net — which is not a gap in
+// the books but the true answer to "how much do the acquirers still owe me":
+// the fee is already lost and is no longer receivable, so it leaves first.
 //
 // Reconciliation IS the emptying of 320-0000. Whatever is left in it is money
 // swiped but not yet received — and layer 1's control self-check reads the same
@@ -21,7 +29,7 @@
 // ----------------------------------------------------------------------------
 
 import { postJournal } from './engine';
-import { resolveRoles, settlementLines, statementChargeLines } from './rules';
+import { resolveRoles, settlementLines, settlementReceiptLines, statementChargeLines } from './rules';
 import type { PaymentCandidate } from './settlement-match';
 
 export type AcquirerRow = {
@@ -170,11 +178,11 @@ export async function postStatementCharge(
 ): Promise<{ ok: true; status: 'posted' | 'already_posted' | 'nothing_to_post'; jeNo?: string } | { ok: false; status: string; reason: string }> {
   const { data: batchRaw, error } = await sb
     .from('acc_settlement_batches')
-    .select('id, acquirer_code, period_to, paid_on, adjustment_sen, adjustment_je_no')
+    .select('id, acquirer_code, period_to, adjustment_sen, adjustment_je_no')
     .eq('id', batchId).eq('company_id', companyId).maybeSingle();
   if (error) return { ok: false, status: 'load_failed', reason: error.message };
   if (!batchRaw) return { ok: false, status: 'not_found', reason: `batch ${batchId} not found` };
-  const batch = batchRaw as { acquirer_code: string; period_to: string | null; paid_on: string | null; adjustment_sen: number | null; adjustment_je_no: string | null };
+  const batch = batchRaw as { acquirer_code: string; period_to: string | null; adjustment_sen: number | null; adjustment_je_no: string | null };
 
   const adjustment = Number(batch.adjustment_sen ?? 0);
   if (adjustment === 0) return { ok: true, status: 'nothing_to_post' };
@@ -182,20 +190,19 @@ export async function postStatementCharge(
 
   const acq = await loadAcquirer(sb, companyId, batch.acquirer_code);
   if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
-  const roles = await resolveRoles(sb, companyId);
-  const bankAccount = acq.acquirer.bank_account_code || roles.BANK_DEFAULT;
 
   const posted = await postJournal(sb, {
     companyId,
-    /* Dated by the payout for the same reason the transaction lines are: this
-       charge is money the bank did not receive, so it belongs on the day the
-       rest of that payout landed. */
-    entryDate: isoDay(batch.paid_on) || isoDay(batch.period_to) || isoDay(new Date().toISOString()),
+    /* Dated by the statement, because the statement is the document that makes
+       the charge (§2.5: the document's own date, not today's). It is not dated
+       by a payout — the payout is a separate event this batch may not have had
+       yet, and the charge is real the moment the acquirer states it. */
+    entryDate: isoDay(batch.period_to) || isoDay(new Date().toISOString()),
     sourceType: 'SETTLEADJ',
     sourceDocNo: `SETTLEADJ-${batchId}`,
     narration: `${batch.acquirer_code} statement charge with no transaction behind it — ${(Math.abs(adjustment) / 100).toFixed(2)}`,
     lines: statementChargeLines(
-      { bankAccountCode: bankAccount, feeAccountCode: acq.acquirer.fee_account_code },
+      { transitAccountCode: acq.acquirer.transit_account_code, feeAccountCode: acq.acquirer.fee_account_code },
       { acquirerCode: batch.acquirer_code, statementDate: isoDay(batch.period_to), adjustmentSen: adjustment },
     ),
   });
@@ -283,29 +290,6 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
   const acq = await loadAcquirer(sb, companyId, row.acquirer_code);
   if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
 
-  /* THE DATE THE BANK LEG TAKES (owner decision, 2026-08-17). An acquirer does
-     not pay on the day the card is swiped — Public Bank's advice of 10 Aug
-     covered batches settled on the 7th, 8th and 9th. Dating the entry by the
-     swipe would put money in the bank account days before it is there, and
-     across a month end it would show in a month that never received it. When
-     the batch knows its payout day, that is the entry's date; the gap sits in
-     settlement-in-transit, which is the account that exists for it. */
-  const { data: batchRaw } = await sb.from('acc_settlement_batches')
-    .select('paid_on').eq('id', row.batch_id).maybeSingle();
-  const paidOn = isoDay((batchRaw as { paid_on?: string | null } | null)?.paid_on ?? '');
-  const entryDate = /^\d{4}-\d{2}-\d{2}$/.test(paidOn) ? paidOn : isoDay(row.txn_date);
-
-  /* Which bank the net lands in is 决定4 information. Until the owner supplies
-     it the company's default bank carries it — and says so, every time, rather
-     than silently choosing. */
-  const roles = await resolveRoles(sb, companyId);
-  let bankAccount = acq.acquirer.bank_account_code;
-  if (!bankAccount) {
-    bankAccount = roles.BANK_DEFAULT;
-    /* eslint-disable-next-line no-console */
-    console.error(`[acc/settlement] ${row.acquirer_code} has no receiving bank account configured — net booked to ${bankAccount}; fill in the acquirer setup (决定4)`);
-  }
-
   /* A previous attempt may have linked and posted but failed on the final
      stamp. Resuming must not read its own links as "someone else already
      settled this money" — so the links are written only if this row has none. */
@@ -337,27 +321,34 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
     };
   }
 
-  const posted = await postJournal(sb, {
-    companyId,
-    entryDate,
-    sourceType: 'SETTLE',
-    sourceDocNo: `SETTLE-${row.id}`,
-    narration: `${row.acquirer_code} settlement ${isoDay(row.txn_date)}${row.ref ? ` ref ${row.ref}` : ''} — ${chosen.map((p) => p.docNo).filter(Boolean).join(', ') || 'card payments'}`,
-    lines: settlementLines(
-      {
-        bankAccountCode: bankAccount,
-        feeAccountCode: acq.acquirer.fee_account_code,
-        transitAccountCode: acq.acquirer.transit_account_code,
-      },
-      {
-        acquirerCode: row.acquirer_code,
-        txnDate: isoDay(row.txn_date),
-        ref: row.ref,
-        grossSen: Number(row.gross_sen),
-        feeSen: Number(row.fee_sen),
-      },
-    ),
-  });
+  /* Confirming books the FEE and nothing else, dated by the transaction (§2.5).
+     No bank leg: the money is still with the acquirer on this day, and saying
+     otherwise in the ledger would be a lie the bank statement then contradicts.
+     A fee-free line — some instalment plans, most refunds — books nothing at
+     all, and that is right: nothing has been lost yet, the whole gross is still
+     owed, and the payout entry will clear it. */
+  const feeSen = Number(row.fee_sen);
+  const posted = feeSen === 0
+    ? { ok: true as const, status: 'nothing_to_post', jeNo: null as string | null, jeId: null as string | null }
+    : await postJournal(sb, {
+      companyId,
+      entryDate: isoDay(row.txn_date),
+      sourceType: 'SETTLE',
+      sourceDocNo: `SETTLE-${row.id}`,
+      narration: `${row.acquirer_code} settlement ${isoDay(row.txn_date)}${row.ref ? ` ref ${row.ref}` : ''} — ${chosen.map((p) => p.docNo).filter(Boolean).join(', ') || 'card payments'}`,
+      lines: settlementLines(
+        {
+          feeAccountCode: acq.acquirer.fee_account_code,
+          transitAccountCode: acq.acquirer.transit_account_code,
+        },
+        {
+          acquirerCode: row.acquirer_code,
+          txnDate: isoDay(row.txn_date),
+          ref: row.ref,
+          feeSen,
+        },
+      ),
+    });
   if (!posted.ok) {
     /* The entry did not post, so the links must not survive — otherwise the
        payments are marked settled with nothing in the ledger behind them. */
@@ -372,15 +363,106 @@ export async function confirmSettlementRow(sb: any, input: ConfirmInput): Promis
       match_reason: input.matchReason,
       confirmed_at: new Date().toISOString(),
       confirmed_by: input.userName ?? null,
-      posted_je_no: posted.jeNo,
-      posted_je_id: posted.jeId,
+      posted_je_no: posted.jeNo ?? null,
+      posted_je_id: posted.jeId ?? null,
       updated_at: new Date().toISOString(),
     })
     .eq('id', row.id);
   if (upErr) {
     /* The ledger is right and the links are right; only the row's stamp failed.
        Say so loudly — a retry is a no-op through the gate's idempotency. */
-    return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (the entry ${posted.jeNo} DID post — press confirm again to finish stamping the line)` };
+    return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (the entry ${posted.jeNo ?? '(none — no fee to book)'} DID post — press confirm again to finish stamping the line)` };
   }
-  return { ok: true, status: 'confirmed', jeNo: posted.jeNo };
+  return { ok: true, status: 'confirmed', ...(posted.jeNo ? { jeNo: posted.jeNo } : {}) };
+}
+
+/**
+ * THE MONEY ARRIVED. Book one payout against the bank.
+ *
+ * This is the second half of the owner's two-step: the card machine was
+ * reconciled days ago; today the bank statement (or the acquirer's payment
+ * advice) shows the credit, and only now does the ledger move it out of
+ * settlement-in-transit and into the bank.
+ *
+ * The amount is what the STATEMENT SAID IT WOULD PAY — stated_net_sen when the
+ * acquirer prints a payable total, otherwise the sum of its own lines. It is
+ * not re-derived from what has been confirmed so far, because a payout is not
+ * partial: the acquirer pays the batch, and if the bank credit disagrees with
+ * this number the difference is a real problem for a human to look at, not
+ * something to quietly absorb.
+ *
+ * Idempotent through the gate (source SETTLEBANK, keyed on the batch), so
+ * pressing it twice books once. Layer 4 will call this with the date it reads
+ * off the bank statement; until then the operator types it.
+ */
+export async function postBatchReceipt(
+  sb: any,
+  companyId: number,
+  batchId: number,
+  receivedOn: string,
+): Promise<{ ok: true; status: 'posted' | 'already_posted'; jeNo?: string; amountSen: number } | { ok: false; status: string; reason: string }> {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(receivedOn ?? ''))) {
+    return { ok: false, status: 'bad_date', reason: 'Give the date the money reached the bank, as it reads on the bank statement (YYYY-MM-DD).' };
+  }
+
+  const { data: batchRaw, error } = await sb
+    .from('acc_settlement_batches')
+    .select('id, acquirer_code, period_to, net_sen, stated_net_sen, received_on, receipt_je_no')
+    .eq('id', batchId).eq('company_id', companyId).maybeSingle();
+  if (error) return { ok: false, status: 'load_failed', reason: error.message };
+  if (!batchRaw) return { ok: false, status: 'not_found', reason: `batch ${batchId} not found` };
+  const batch = batchRaw as {
+    acquirer_code: string; period_to: string | null;
+    net_sen: number | null; stated_net_sen: number | null;
+    received_on: string | null; receipt_je_no: string | null;
+  };
+
+  const amountSen = Number(batch.stated_net_sen ?? batch.net_sen ?? 0);
+  if (amountSen === 0) {
+    return { ok: false, status: 'nothing_to_receive', reason: 'This statement pays nothing — there is no receipt to book.' };
+  }
+  if (batch.receipt_je_no) {
+    return { ok: true, status: 'already_posted', jeNo: batch.receipt_je_no, amountSen };
+  }
+
+  const acq = await loadAcquirer(sb, companyId, batch.acquirer_code);
+  if (!acq.ok) return { ok: false, status: 'acquirer_unavailable', reason: acq.reason };
+
+  /* Which bank the payout lands in is 决定4 information. Until the owner
+     supplies it the company's default bank carries it — and says so, every
+     time, rather than silently choosing. */
+  const roles = await resolveRoles(sb, companyId);
+  let bankAccount = acq.acquirer.bank_account_code;
+  if (!bankAccount) {
+    bankAccount = roles.BANK_DEFAULT;
+    /* eslint-disable-next-line no-console */
+    console.error(`[acc/settlement] ${batch.acquirer_code} has no receiving bank account configured — payout booked to ${bankAccount}; fill in the acquirer setup (决定4)`);
+  }
+
+  const posted = await postJournal(sb, {
+    companyId,
+    /* The bank's date, never the statement's: this entry exists because the
+       bank says the money is there on this day. */
+    entryDate: receivedOn,
+    sourceType: 'SETTLEBANK',
+    sourceDocNo: `SETTLEBANK-${batchId}`,
+    narration: `${batch.acquirer_code} payout received ${receivedOn} — ${(Math.abs(amountSen) / 100).toFixed(2)}`,
+    lines: settlementReceiptLines(
+      { bankAccountCode: bankAccount, transitAccountCode: acq.acquirer.transit_account_code },
+      { acquirerCode: batch.acquirer_code, receivedOn, amountSen },
+    ),
+  });
+  if (!posted.ok) return { ok: false, status: posted.status, reason: posted.reason ?? 'the posting gate refused the entry' };
+
+  const { error: upErr } = await sb.from('acc_settlement_batches').update({
+    received_on: receivedOn,
+    receipt_je_no: posted.jeNo,
+    receipt_je_id: posted.jeId,
+    receipt_posted_at: new Date().toISOString(),
+    updated_at: new Date().toISOString(),
+  }).eq('id', batchId);
+  if (upErr) {
+    return { ok: false, status: 'stamp_failed', reason: `${upErr.message} (entry ${posted.jeNo} DID post — try again to finish stamping the batch)` };
+  }
+  return { ok: true, status: posted.status === 'already_posted' ? 'already_posted' : 'posted', jeNo: posted.jeNo, amountSen };
 }

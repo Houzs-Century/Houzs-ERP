@@ -3,9 +3,10 @@
 //
 // "对账 ＝ 把「在途结算款」这个科目清干净的过程" — this screen exists to empty
 // 320-0000. Upload the acquirer's statement, sort its lines into FOUR piles,
-// and confirm: confirming posts Dr bank + Dr fee / Cr in-transit immediately,
-// which is the single thing 系统3 never did (its card fees never reached the
-// P&L and its bank never agreed with its books).
+// and confirm. Confirming posts the FEE immediately (Dr merchant charges / Cr
+// in-transit) — the single thing 系统3 never did, so its card fees never reached
+// the P&L. The money itself arrives days later, and the second step on the
+// statement books it (Dr bank / Cr in-transit) on the day the BANK says so.
 //
 // The screen deliberately keeps 系统3's skeleton — four piles, bulk-confirm the
 // auto-matched, a candidate list with clues, two standing watchlists, an export
@@ -15,13 +16,13 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCheck, Download, Upload } from 'lucide-react';
+import { AlertTriangle, CheckCheck, Download, Landmark, Upload } from 'lucide-react';
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
-  useSettlementWatchlist, useInTransit,
+  useSettlementWatchlist, useInTransit, useMarkBatchReceived,
   type AgeBucket,
-  type AcquirerSetup, type SettlementRow, type SettlementBucket,
+  type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch,
 } from './settlement-queries';
 import { fmtCenti } from '../../vendor/shared/format';
 import { downloadCSV, toCSV } from '../../lib/csv';
@@ -121,13 +122,6 @@ const ReconcileTab = () => {
      file. The operator answers that; the system never guesses which year money
      belongs to. */
   const [statementMonth, setStatementMonth] = useState('');
-  /* The day the acquirer's money actually reached the bank, off its payment
-     advice. Public Bank's advice of 10 Aug paid for trading on the 7th, 8th and
-     9th, so dating the bank leg by the swipe would show money in the account
-     days before it was there — and across a month end, in a month that never
-     received it. Left blank, the entry keeps the statement line's own date,
-     which is right for an acquirer that pays same-day. */
-  const [paidOn, setPaidOn] = useState('');
   /* One result line per file — a month's statements go up in one go and each
      one answers for itself, so a single bad file never hides four good ones. */
   const [results, setResults] = useState<Array<{ name: string; ok: boolean; text: string }>>([]);
@@ -180,7 +174,6 @@ const ReconcileTab = () => {
           content: f.content,
           summaryFeeSen: summaryFee.trim() ? Math.round(Number(summaryFee) * 100) : null,
           statementMonth: statementMonth || null,
-          paidOn: paidOn || null,
         });
         lastBatch = r.batchId;
         done.push({
@@ -251,26 +244,14 @@ const ReconcileTab = () => {
             </span>
           </div>
         )}
-        {/* The acquirer does not pay on the day the card is swiped. Public Bank's
-            advice of 10 Aug paid for trading on the 7th, 8th and 9th — so the
-            bank leg is dated by the PAYOUT, and the days in between sit in
-            settlement-in-transit where they belong. Left blank for an acquirer
-            that pays same-day, the entry keeps the statement's own date. */}
-        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <label style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }} htmlFor="settlement-paid-on">
-            Money reached the bank on
-          </label>
-          <input id="settlement-paid-on" type="date" value={paidOn} aria-label="Money reached the bank on"
-            onChange={(e) => setPaidOn(e.target.value)}
-            style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
-          <span style={softText}>
-            From the acquirer&rsquo;s payment advice. The bank entry is dated by this, so the books agree with the
-            bank statement — leave it blank if this acquirer pays the same day.
-          </span>
-        </div>
         <div style={softText}>
           You can pick several files at once — they go up one after another, and each one answers for itself.
         </div>
+        {/* Nothing here asks when the money arrived, on purpose. Uploading is
+            the moment the operator has the CARD MACHINE report and nothing
+            else; the payout comes days later and the bank statement is what
+            tells him. That step is on the statement itself, once its lines are
+            reconciled. (Owner, 2026-08-17: 全部卡机都是隔几天收到的。) */}
         {chosen && !chosen.autoMatchable && (
           <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
             {chosen.display_name} sends no unique transaction reference — every line will wait for you to confirm it.
@@ -292,7 +273,8 @@ const ReconcileTab = () => {
           <thead>
             <tr style={headRow}>
               <th style={cell}>Acquirer</th><th style={cell}>File</th><th style={cell}>Period</th>
-              <th style={num}>Lines</th><th style={num}>Gross</th><th style={num}>Fee</th><th style={num}>Net</th><th style={cell} />
+              <th style={num}>Lines</th><th style={num}>Gross</th><th style={num}>Fee</th><th style={num}>Net</th>
+              <th style={cell}>In the bank</th><th style={cell} />
             </tr>
           </thead>
           <tbody>
@@ -305,6 +287,11 @@ const ReconcileTab = () => {
                 <td style={num}>{fmt(b.gross_sen)}</td>
                 <td style={num}>{fmt(b.fee_sen)}</td>
                 <td style={num}>{fmt(b.net_sen)}</td>
+                {/* Not a status badge but the answer to the only question that
+                    matters about a settled statement: has the money come? */}
+                <td style={{ ...cell, color: b.received_on ? good : danger }}>
+                  {b.received_on ?? 'not yet'}
+                </td>
                 <td style={cell}>
                   <button type="button" style={btn(batchId === b.id)} onClick={() => setBatchId(b.id)}>Open</button>
                 </td>
@@ -380,11 +367,13 @@ const BatchView = ({ batchId }: { batchId: number }) => {
           <div style={softText}>
             The lines come to {fmt(batch.net_sen)}, and {batch.acquirer_code} says it is paying {fmt(batch.stated_net_sen ?? 0)}.
             {batch.adjustment_je_no
-              ? ` Booked as ${batch.adjustment_je_no}: into merchant charges, out of the bank.`
-              : ' Not booked yet — confirm the batch and it posts into merchant charges, against the bank, because that money never arrived.'}
+              ? ` Booked as ${batch.adjustment_je_no}: into merchant charges, out of what ${batch.acquirer_code} still owes.`
+              : ` Not booked yet — confirm the batch and it posts into merchant charges, out of what ${batch.acquirer_code} still owes, because that money is never coming.`}
           </div>
         </div>
       )}
+
+      {batch && <BatchReceipt batch={batch} unconfirmedLines={rows.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED').length} />}
 
       {confirmAll.data && (
         <div style={{ fontSize: 'var(--fs-13)', color: confirmAll.data.failed.length ? danger : good }}>
@@ -395,14 +384,70 @@ const BatchView = ({ batchId }: { batchId: number }) => {
       )}
 
       <div style={softText}>
-        Confirming a line posts it straight away: the net into the bank, the fee into merchant charges, and the
-        gross out of settlement-in-transit. Nothing is left "for next period".
+        Confirming a line posts its FEE straight away — into merchant charges, out of what the acquirer owes you.
+        The rest stays owed until the money actually reaches the bank, which is the step above. Nothing is left
+        &ldquo;for next period&rdquo;.
       </div>
 
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the statement…</div>}
       {!q.isLoading && shown.length === 0 && <div style={softText}>This pile is empty.</div>}
       {shown.map((r) => <SettlementLine key={r.id} row={r} />)}
     </section>
+  );
+};
+
+/* ── Step two: the money actually arrives ─────────────────────────────────────
+   The owner's correction, 2026-08-17: 全部卡机都是隔几天收到的。应该是先对卡机
+   报告，然后 match 了就会去 match bank statement. Reconciling the statement and
+   receiving the payout are days apart, so they are two buttons, and in between
+   the screen says plainly how much the acquirer still owes. */
+
+const BatchReceipt = ({ batch, unconfirmedLines }: { batch: SettlementBatch; unconfirmedLines: number }) => {
+  const receive = useMarkBatchReceived();
+  const [on, setOn] = useState('');
+  const expected = batch.stated_net_sen ?? batch.net_sen;
+
+  if (batch.received_on) {
+    return (
+      <div style={{
+        padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', border: `1px solid ${good}`,
+        background: 'rgba(47,93,79,0.08)', fontSize: 'var(--fs-13)',
+      }}>
+        <b>{fmt(expected)} reached the bank on {batch.received_on}.</b>
+        <div style={softText}>
+          {batch.receipt_je_no ? `Booked as ${batch.receipt_je_no}: into the bank, out of settlement-in-transit. ` : ''}
+          This statement owes you nothing more.
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{
+      padding: 'var(--space-3)', borderRadius: 'var(--radius-md)', border: '1px solid var(--c-ink)',
+      fontSize: 'var(--fs-13)', display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap',
+    }}>
+      <b>{batch.acquirer_code} still owes {fmt(expected)}.</b>
+      <label htmlFor={`recv-${batch.id}`} style={{ fontWeight: 600 }}>Money arrived in the bank on</label>
+      <input id={`recv-${batch.id}`} type="date" value={on} aria-label="Money arrived in the bank on"
+        onChange={(e) => setOn(e.target.value)} style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
+      <button type="button" style={btn(true, !on || receive.isPending)} disabled={!on || receive.isPending}
+        onClick={() => receive.mutate({ batchId: batch.id, receivedOn: on })}>
+        <Landmark {...ICON} /> {receive.isPending ? 'Posting…' : 'Money received'}
+      </button>
+      <div style={{ ...softText, flexBasis: '100%' }}>
+        Take the date off the bank statement, not the acquirer&rsquo;s statement — this entry is what makes the books
+        agree with the bank. {unconfirmedLines > 0
+          ? `${unconfirmedLines} line(s) here are still unconfirmed, so their fees are not booked yet; the payout can still be recorded, but this acquirer will not come to zero until they are done.`
+          : 'Every line is reconciled, so this empties the acquirer.'}
+      </div>
+      {receive.isError && (
+        <div style={{ color: danger, flexBasis: '100%', display: 'flex', gap: 6 }}>
+          <AlertTriangle {...ICON} />
+          <span>{refusalText(receive.error, 'The receipt was not posted.')}</span>
+        </div>
+      )}
+    </div>
   );
 };
 
@@ -538,9 +583,12 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
    balance. It is the brief's 在途结算款账龄 (§3.7) and it is the readable form
    of the 320-0000 balance — same money, named to the document. */
 
+/* Three states, because each one is somebody else's job: chase the acquirer,
+   finish the reconciling, or wait for the payout. */
 const IN_TRANSIT_STATE: Record<string, string> = {
   NOT_ON_A_STATEMENT: 'The acquirer has not reported it yet',
   MATCHED_NOT_POSTED: 'On a statement, waiting to be confirmed',
+  RECONCILED_NOT_PAID: 'Reconciled — the payout has not arrived',
 };
 
 const AGE_BUCKETS: AgeBucket[] = ['0-7', '8-14', '15-30', 'over-30'];

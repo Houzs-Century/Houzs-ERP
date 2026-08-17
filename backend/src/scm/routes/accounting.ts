@@ -36,6 +36,7 @@ import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched,
   settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
+  settlementBatchReceived,
 } from './accounting-settlement';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -79,6 +80,7 @@ accounting.get('/settlement/batches', settlementBatches);
 accounting.get('/settlement/batches/:id', settlementBatchDetail);
 accounting.get('/settlement/batches/:id/export', settlementExport);
 accounting.post('/settlement/batches/:id/confirm-matched', settlementConfirmMatched);
+accounting.post('/settlement/batches/:id/received', settlementBatchReceived);
 accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
 accounting.get('/settlement/watchlist', settlementWatchlist);

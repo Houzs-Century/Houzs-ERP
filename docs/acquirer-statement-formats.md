@@ -10,6 +10,30 @@
 > That is exactly why the config is per-acquirer and taught ONCE, then shared by
 > every company (the owner's standing principle).
 
+## The statement is only half of it
+
+The owner, 2026-08-17, correcting an earlier design of mine: **全部卡机都是隔几
+天收到的。应该是先对卡机报告，然后 match 了就会去 match bank statement.**
+
+Every file below is a CARD MACHINE report. None of them is proof that money
+arrived — the payout lands days later, and the bank statement is what says so.
+The system therefore reconciles in two steps, and the screen never asks for a
+payout date at upload time, because that is the one moment the operator cannot
+know it:
+
+1. **Reconcile the card machine.** Match each line to the payments behind it and
+   confirm. That books the FEE only (Dr merchant charges / Cr settlement-in-
+   transit). What is left in transit is exactly what the acquirer still owes.
+2. **Record the payout.** When the bank statement shows the credit, enter its
+   date on the batch. That books Dr bank / Cr settlement-in-transit for the net
+   the statement said it would pay, and the acquirer comes to zero.
+
+The customer's side is untouched by either step: AR is knocked off by the full
+gross when the card is swiped (owner: 顾客还款确定到时是记录6000哦，不然knock
+off 不到). The fee is the merchant's cost, taken out of what the acquirer owes,
+never out of what the customer paid. Step 2 becomes automatic in layer 4, when
+the bank statement itself is read.
+
 ## What is set up
 
 | Acquirer | Format | Headings on | Date written as | Fee given as | Unique ref |

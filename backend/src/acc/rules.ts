@@ -15,7 +15,9 @@
 //  SO payment collected      | Dr CASH/BANK/transit / Cr AR            | SOPAY       | SOPAY_REVERSAL
 //  SI payment collected      | Dr CASH/BANK/transit / Cr AR            | SIPAY       | SIPAY_REVERSAL
 //  Daily cash close          | Dr/Cr OVER_SHORT      / Cr/Dr CASH      | CASHUP      | (none — correct by JV)
-//  Acquirer settlement conf. | Dr bank + Dr fee      / Cr transit      | SETTLE      | SETTLE_REVERSAL
+//  Acquirer settlement conf. | Dr fee                / Cr transit      | SETTLE      | SETTLE_REVERSAL
+//  Statement-level charge    | Dr fee                / Cr transit      | SETTLEADJ   | SETTLEADJ_REVERSAL
+//  Acquirer payout received  | Dr bank               / Cr transit      | SETTLEBANK  | SETTLEBANK_REVERSAL
 //
 //  Customer-payment debit side, by the sales panel's own method model:
 //    cash                 -> CASH role (335-0000)
@@ -247,17 +249,19 @@ export function customerPaymentLines(
  * Acquirer settlement confirmed (brief §3.5 layer 3) — THE entry 系统3 never
  * wrote, which is why card fees never reached its P&L:
  *
- *     Dr Bank              net    (what actually arrived)
- *     Dr Merchant charges  fee    (what the acquirer kept — an EXPENSE)
- *         Cr Settlement-in-transit  gross  (clearing the swipe)
+ *     Dr Merchant charges          fee   (what the acquirer kept — an EXPENSE)
+ *         Cr Settlement-in-transit fee
  *
- * A zero fee simply drops its line — two lines still balance. A NEGATIVE gross
- * (a refund or chargeback line on the statement) mirrors every side, so the
- * refund walks back out of the same three accounts it walked in through
- * instead of being posted as a strange positive somewhere else.
+ * ONLY the fee. Reconciling the card machine proves what was sold and what it
+ * cost; it does NOT prove the money arrived, and every acquirer pays days later
+ * (owner, 2026-08-17: "全部卡机都是隔几天收到的"). What remains in in-transit
+ * after this is the NET the acquirer still owes — the true answer — and
+ * settlementReceiptLines clears it when the bank actually pays.
  *
- * Fee SST: the fee is booked whole here. Splitting it into expense + input tax
- * is phase 5's job (the brief's tax work) and is deliberately NOT faked with a
+ * A NEGATIVE fee (a rebate on a refund line) mirrors both sides.
+ *
+ * Fee SST: booked whole here. Splitting it into expense + input tax is phase
+ * 5's job (the brief's tax work) and is deliberately NOT faked with a
  * hardcoded rate.
  */
 /**
@@ -265,18 +269,18 @@ export function customerPaymentLines(
  *
  * AEON's subvention fee is the case that forced this: its transaction line nets
  * 5,928.00 and the statement pays 5,673.84, keeping 254.16 that no line
- * explains. The transaction lines already cleared settlement-in-transit by
- * their gross — correctly — so what this charge represents is money that never
- * reached the BANK:
+ * explains. It is a merchant charge like any other (owner, 2026-08-17 — the
+ * report comes off Pine Labs), so it goes to the same account the per-line fees
+ * do, and it comes out of the SAME place they do: what the acquirer still owes.
  *
  *     Dr Merchant charges  254.16
- *         Cr Bank          254.16
+ *         Cr Settlement-in-transit  254.16
  *
  * A NEGATIVE adjustment (the statement paid more than its lines come to — a
- * rebate or an incentive) books the other way round, for the same reason.
+ * rebate) books the other way round, for the same reason.
  */
 export function statementChargeLines(
-  accounts: { bankAccountCode: string; feeAccountCode: string },
+  accounts: { transitAccountCode: string; feeAccountCode: string },
   s: { acquirerCode: string; statementDate: string; adjustmentSen: number },
 ): RuleLine[] {
   const amount = Math.abs(s.adjustmentSen);
@@ -290,45 +294,68 @@ export function statementChargeLines(
       notes: `${isCharge ? 'Charge on the statement' : 'Rebate on the statement'}, not on any transaction — ${tag}`,
     },
     {
-      accountCode: accounts.bankAccountCode,
+      accountCode: accounts.transitAccountCode,
       debitSen: isCharge ? 0 : amount,
       creditSen: isCharge ? amount : 0,
-      notes: `${isCharge ? 'Never arrived' : 'Extra received'} — ${tag}`,
+      notes: `${isCharge ? 'Never coming' : 'Extra due'} — ${tag}`,
+    },
+  ];
+}
+
+/**
+ * THE MONEY ARRIVES. One entry per payout, dated by the bank.
+ *
+ * The second half of the two-step the owner asked for: reconciling the card
+ * machine says WHAT was sold and what it cost; this says the money is actually
+ * in the account. Until it posts, the batch's net sits in settlement-in-transit
+ * — which is not a gap in the books, it is the true answer to "how much do the
+ * acquirers still owe me".
+ *
+ *     Dr Bank                      5,673.84
+ *         Cr Settlement-in-transit 5,673.84
+ */
+export function settlementReceiptLines(
+  accounts: { bankAccountCode: string; transitAccountCode: string },
+  s: { acquirerCode: string; receivedOn: string; amountSen: number },
+): RuleLine[] {
+  const amount = Math.abs(s.amountSen);
+  const refund = s.amountSen < 0;
+  const tag = `${s.acquirerCode} payout received ${s.receivedOn}`;
+  return [
+    {
+      accountCode: accounts.bankAccountCode,
+      debitSen: refund ? 0 : amount,
+      creditSen: refund ? amount : 0,
+      notes: `Into the bank — ${tag}`,
+    },
+    {
+      accountCode: accounts.transitAccountCode,
+      debitSen: refund ? amount : 0,
+      creditSen: refund ? 0 : amount,
+      notes: `Clears in-transit — ${tag}`,
     },
   ];
 }
 
 export function settlementLines(
-  accounts: { bankAccountCode: string; feeAccountCode: string; transitAccountCode: string },
-  s: { acquirerCode: string; txnDate: string; ref: string | null; grossSen: number; feeSen: number },
+  accounts: { feeAccountCode: string; transitAccountCode: string },
+  s: { acquirerCode: string; txnDate: string; ref: string | null; feeSen: number },
 ): RuleLine[] {
-  const refund = s.grossSen < 0;
-  const gross = Math.abs(s.grossSen);
   const fee = Math.abs(s.feeSen);
-  const net = gross - fee;
+  const refund = s.feeSen < 0;
   const tag = `${s.acquirerCode} settlement ${s.txnDate}${s.ref ? ` ref ${s.ref}` : ''}`;
-  const lines: RuleLine[] = [];
-  if (net !== 0) {
-    lines.push({
-      accountCode: accounts.bankAccountCode,
-      debitSen: refund ? 0 : net,
-      creditSen: refund ? net : 0,
-      notes: `Net received — ${tag}`,
-    });
-  }
-  if (fee > 0) {
-    lines.push({
+  return [
+    {
       accountCode: accounts.feeAccountCode,
       debitSen: refund ? 0 : fee,
       creditSen: refund ? fee : 0,
       notes: `Acquirer fee — ${tag}`,
-    });
-  }
-  lines.push({
-    accountCode: accounts.transitAccountCode,
-    debitSen: refund ? gross : 0,
-    creditSen: refund ? 0 : gross,
-    notes: `Clears in-transit — ${tag}`,
-  });
-  return lines;
+    },
+    {
+      accountCode: accounts.transitAccountCode,
+      debitSen: refund ? fee : 0,
+      creditSen: refund ? 0 : fee,
+      notes: `Fee is no longer receivable — ${tag}`,
+    },
+  ];
 }

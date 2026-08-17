@@ -9,7 +9,8 @@
 //   • the same file twice is refused, not doubled;
 //   • an upload sorts its lines into the four piles and auto-confirms nothing
 //     for an acquirer with no unique reference;
-//   • confirming a line posts the entry and empties the in-transit account.
+//   • confirming a line posts its FEE, and the payout is a second entry that
+//     empties the in-transit account on the day the BANK says the money came.
 
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
@@ -17,6 +18,7 @@ import { fakeSb, type Row } from '../src/scm/lib/fake-postgrest';
 import {
   settlementSetup, settlementUpload, settlementBatches, settlementBatchDetail,
   settlementConfirmRow, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist,
+  settlementBatchReceived, settlementInTransit,
 } from '../src/scm/routes/accounting-settlement';
 
 const CO = 1;
@@ -79,7 +81,9 @@ function harness(tables: Record<string, Row[]>, perms: readonly string[] = [GL_P
   app.post('/settlement/batches/:id/confirm-matched', settlementConfirmMatched as never);
   app.post('/settlement/rows/:id/confirm', settlementConfirmRow as never);
   app.post('/settlement/rows/:id/ignore', settlementIgnoreRow as never);
+  app.post('/settlement/batches/:id/received', settlementBatchReceived as never);
   app.get('/settlement/watchlist', settlementWatchlist as never);
+  app.get('/settlement/in-transit', settlementInTransit as never);
   return { app, sb };
 }
 
@@ -168,7 +172,7 @@ describe('POST /settlement/batches — the four piles', () => {
 });
 
 describe('confirming is the moment of posting', () => {
-  test('bulk-confirming the auto-matched pile books Dr bank + Dr fee / Cr in-transit', async () => {
+  test('bulk-confirming the auto-matched pile books the FEE, and leaves the bank alone', async () => {
     const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
     const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: string };
 
@@ -177,15 +181,15 @@ describe('confirming is the moment of posting', () => {
     expect(await res.json()).toMatchObject({ attempted: 1, confirmed: 1, failed: [] });
 
     const lines = sb.tables.journal_entry_lines;
-    expect(lines).toHaveLength(3);
-    expect(lines.find((l) => l.account_code === '330-0000')).toMatchObject({ debit_sen: 98500 });
+    expect(lines).toHaveLength(2);
     expect(lines.find((l) => l.account_code === '930-0000')).toMatchObject({ debit_sen: 1500 });
-    expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 100000 });
+    expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 1500 });
+    expect(lines.some((l) => l.account_code === '330-0000')).toBe(false);
     expect(sb.tables.journal_entries[0]).toMatchObject({ source_type: 'SETTLE', entry_date: '2026-08-01' });
   });
 
   /* AEON's subvention fee. Confirming a batch must book the statement's own
-     charge too, or the bank is left overstated by exactly that amount. */
+     charge too, or in-transit is left holding money that is never coming. */
   test('confirming a batch also books the charge the statement made against no transaction', async () => {
     const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
     const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
@@ -200,7 +204,7 @@ describe('confirming is the moment of posting', () => {
     expect(adj).toBeTruthy();
     const adjLines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === adj!.id);
     expect(adjLines.find((l) => l.account_code === '930-0000')).toMatchObject({ debit_sen: 25416 });
-    expect(adjLines.find((l) => l.account_code === '330-0000')).toMatchObject({ credit_sen: 25416 });
+    expect(adjLines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 25416 });
   });
 
   test('confirming a line whose selection does not add up is refused with the difference', async () => {
@@ -223,6 +227,90 @@ describe('confirming is the moment of posting', () => {
     const res = await post(app, `/settlement/rows/${unmatched.id}/confirm`, { payments: [] });
     expect(res.status).toBe(409);
     expect(await res.json()).toMatchObject({ error: 'no_payments' });
+  });
+});
+
+/* The owner's two-step, end to end through the endpoints. Reconciling the card
+   machine and receiving the payout are days apart and are two separate calls;
+   only the second one touches the bank. */
+describe('POST /settlement/batches/:id/received — the money arrives', () => {
+  test('books Dr bank / Cr in-transit on the bank date, and only then is the acquirer square', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+
+    const res = await post(app, `/settlement/batches/${up.batchId}/received`, { receivedOn: '2026-08-05' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ ok: true, status: 'posted' });
+
+    const receipt = sb.tables.journal_entries.find((e) => e.source_type === 'SETTLEBANK')!;
+    expect(receipt).toMatchObject({ entry_date: '2026-08-05' });
+    const lines = sb.tables.journal_entry_lines.filter((l) => l.journal_entry_id === receipt.id);
+    /* The statement's net: 1,777.00 gross less 26.00 of fees. */
+    expect(lines.find((l) => l.account_code === '330-0000')).toMatchObject({ debit_sen: 175100 });
+    expect(lines.find((l) => l.account_code === '320-0000')).toMatchObject({ credit_sen: 175100 });
+    expect(sb.tables.acc_settlement_batches[0]).toMatchObject({ received_on: '2026-08-05' });
+  });
+
+  test('a date it was not given is refused rather than assumed', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    const res = await post(app, `/settlement/batches/${up.batchId}/received`, {});
+    expect(res.status).toBe(400);
+    expect(await res.json()).toMatchObject({ error: 'bad_date' });
+    expect(sb.tables.journal_entries).toHaveLength(0);
+  });
+});
+
+/* "我需要看到说顾客还钱了，但是还没收款或还没对账。我要明细的" — and each state
+   is a different person's job. */
+describe('GET /settlement/in-transit — whose money is still out there', () => {
+  test('walks a payment through all three states and off the list when the money lands', async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const read = async () => (await (await app.request('/settlement/in-transit')).json() as {
+      totalSen: number; lines: Array<{ docNo: string; state: string; amountSen: number }>;
+    });
+
+    const before = await read();
+    expect(before.lines).toMatchObject([{ docNo: 'SO-2608-001', state: 'NOT_ON_A_STATEMENT', amountSen: 100000 }]);
+
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    expect((await read()).lines[0]).toMatchObject({ state: 'MATCHED_NOT_POSTED', amountSen: 100000 });
+
+    await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+    /* Reconciled: its fee is out of in-transit already, so what is still owed
+       on this payment is the NET — the list and 320-0000 stay one story. */
+    const reconciled = await read();
+    expect(reconciled.lines[0]).toMatchObject({ state: 'RECONCILED_NOT_PAID', amountSen: 98500 });
+    expect(reconciled.totalSen).toBe(98500);
+
+    await post(app, `/settlement/batches/${up.batchId}/received`, { receivedOn: '2026-08-05' });
+    const after = await read();
+    expect(after.lines).toHaveLength(0);
+    expect(after.totalSen).toBe(0);
+    expect(sb.tables.acc_settlement_batches[0].receipt_je_no).toBeTruthy();
+  });
+
+  /* AEON's subvention fee has left in-transit too once it is booked, so it must
+     come off this list as well — otherwise the list reads higher than the
+     account it is the readable form of, which is the one thing it may not do. */
+  test("a booked statement charge comes off the money still owed", async () => {
+    const { app, sb } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    sb.tables.acc_settlement_batches[0].adjustment_sen = 25416;
+    await post(app, `/settlement/batches/${up.batchId}/confirm-matched`);
+
+    const body = await (await app.request('/settlement/in-transit')).json() as { totalSen: number; lines: Array<{ amountSen: number }> };
+    /* 1,000.00 swiped, less its 15.00 fee, less the 254.16 the statement kept. */
+    expect(body.lines[0].amountSen).toBe(100000 - 1500 - 25416);
+
+    const transit = sb.tables.journal_entry_lines
+      .filter((l) => l.account_code === '320-0000')
+      .reduce((s, l) => s + Number(l.debit_sen ?? 0) - Number(l.credit_sen ?? 0), 0);
+    /* The swipe itself is booked by phase 2A, not here, so what this suite can
+       compare is the movement: everything taken out of in-transit so far is
+       exactly what the list says is no longer owed. */
+    expect(body.totalSen).toBe(100000 + transit);
   });
 });
 

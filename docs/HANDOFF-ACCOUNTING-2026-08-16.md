@@ -40,17 +40,36 @@ What is on the branch:
   acquirer without one (or with `has_unique_ref` still NULL) sends every line to
   NEEDS_CONFIRM; tolerance comes from the config row; exact-summing PAIRS are
   surfaced for the one-swipe-many-orders case.
-- **`acc/settlement.ts`** — confirm = post, that moment: Dr bank + Dr fee /
-  Cr transit, source `SETTLE`, doc `SETTLE-<row id>`. Links first, post second,
-  stamp last, so a failure is retryable and never leaves a "confirmed" line with
-  nothing in the ledger.
-- **Ten endpoints** `/accounting/settlement/*` registered one path each in
+- **`acc/settlement.ts`** — confirm = post, that moment. Links first, post
+  second, stamp last, so a failure is retryable and never leaves a "confirmed"
+  line with nothing in the ledger.
+- **Migration 0304 + the TWO-STEP** (owner's correction, 2026-08-17: 全部卡机都
+  是隔几天收到的。应该是先对卡机报告，然后 match 了就会去 match bank statement).
+  Reconciling the card machine and receiving the money are days apart, so they
+  are two entries: confirming a line books the FEE only (Dr fee / Cr transit,
+  `SETTLE`, dated by the transaction), and marking the batch received books the
+  payout (Dr bank / Cr transit, `SETTLEBANK-<batch id>`, dated by the BANK
+  statement, for `stated_net_sen ?? net_sen`). In between, in-transit holds
+  exactly what the acquirer still owes. AR is still knocked off by the full
+  gross at the swipe — his constraint: 顾客还款确定到时是记录6000哦，不然knock
+  off 不到. The statement-level charge (AEON's subvention fee) now credits
+  in-transit too, not the bank. Layer 4 will supply the received date
+  automatically; nothing asks for it at upload time, which is the one moment
+  he cannot know it.
+- **Eleven endpoints** `/accounting/settlement/*` registered one path each in
   `routes/accounting.ts` (the route-capability audit only follows top-level
   `app.route`/`scm.route`, so a sub-router would have hidden them); handlers in
   `routes/accounting-settlement.ts`, each behind its own permission check.
 - **Page `/scm/settlement-recon`** (Finance menu, "Card Settlement"): upload,
-  four piles, multi-select candidates with combo hints, two watchlists, CSV
-  export, and an **Acquirer setup tab that is where 决定4 gets typed in**.
+  four piles, multi-select candidates with combo hints, the "money arrived in
+  the bank" step on the open statement, two watchlists, CSV export, and an
+  **Acquirer setup tab that is where 决定4 gets typed in**.
+- **"Paid, not yet in the bank"** — the detail list he asked for (我需要看到说顾
+  客还钱了，但是还没收款或还没对账。我要明细的), with WHO keyed each payment in
+  (我还要看到谁记录这笔的) and three states: the acquirer has not reported it /
+  waiting to be confirmed / reconciled but the payout has not arrived. Its total
+  ties to 320-0000 to the sen at every point in the two-step — proven on the rig
+  against the real AEON file (19,658.00 both sides).
 
 Green locally: backend light 4933 · backend workers 335 · frontend 1472 ·
 route matrix regenerated (1076 routes) · release-discipline no new violations ·
@@ -61,16 +80,20 @@ the real answer.
 
 ### How to run the owner's local test
 
-1. `preview_start` both servers (backend `npm run dev` in `backend/`, frontend
-   `npm run dev` in `frontend/`) from this worktree.
-2. Apply migrations 0301 + 0302 to whatever DB the local backend points at.
-3. Acquirer setup tab: fill MBB in as CSV / unique ref YES / fee stated /
-   tolerance 3 / column map, and GHL as CSV / unique ref **NO** — GHL is the
-   one that proves nothing auto-confirms without a reference.
-4. Seed a few card payments, export a matching CSV, upload it, and walk him
-   through: the auto-matched pile, "confirm all matched", a needs-confirm line
-   where he ticks two orders that add up, a wrong file (it must refuse by name),
-   and the two watchlists.
+No database and no credentials needed — there is a rig:
+
+1. `npx tsx scripts/settlement-demo-server.ts` from `backend/` (port 8788,
+   in-memory; the REAL handlers, parser, matcher and posting engine).
+2. `npm run dev` in `frontend/`, then open `/demo-settlement.html`.
+3. Test files are in `demo-statements/` at the worktree root — the owner's own
+   exports with merchant/card numbers replaced. All five acquirers are already
+   configured from those files, plus `wrong-file.csv` for the refusal.
+4. Walk him through: upload → the auto-matched pile → "confirm all matched"
+   (fee only) → **"Money arrived in the bank on"** → "Paid, not yet in the
+   bank" (the three states, the ageing, who keyed it in) → the two watchlists →
+   a wrong file (it must refuse by name, and keep the file selected).
+   `POST /api/scm/demo/reset` starts over; `GET /api/scm/demo/ledger` shows
+   every entry that posted.
 5. Only after he approves: PR + merge.
 
 ## NEXT UP after layer 3 merges

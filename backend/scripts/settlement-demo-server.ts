@@ -22,6 +22,7 @@ import {
   settlementSetup, settlementSetupSave, settlementUpload, settlementBatches,
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched,
   settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
+  settlementBatchReceived,
 } from '../src/scm/routes/accounting-settlement';
 
 const PORT = Number(process.env.DEMO_PORT ?? 8788);
@@ -277,6 +278,7 @@ app.get(`${R}/batches`, settlementBatches as never);
 app.get(`${R}/batches/:id`, settlementBatchDetail as never);
 app.get(`${R}/batches/:id/export`, settlementExport as never);
 app.post(`${R}/batches/:id/confirm-matched`, settlementConfirmMatched as never);
+app.post(`${R}/batches/:id/received`, settlementBatchReceived as never);
 app.post(`${R}/rows/:id/confirm`, settlementConfirmRow as never);
 app.post(`${R}/rows/:id/ignore`, settlementIgnoreRow as never);
 app.get(`${R}/watchlist`, settlementWatchlist as never);
