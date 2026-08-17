@@ -11,6 +11,12 @@
 // answers with a stage code, that the raw driver text does NOT reach the
 // operator, and that a driver error with an EMPTY message is still diagnosable.
 //
+// THE BOARD ALSO READ EVERY COMPANY'S ORDERS. The SO header read carried no
+// company predicate at all, while its sibling /geo read of the same table wraps
+// scopeToAllowedCompanies. That is a leak in its own right — and it is also why
+// the 500 reproduced identically in a 100-order tenant and a 2,726-order one:
+// the doc list handed to every downstream read did not depend on who asked.
+//
 // Harness follows autocountOutboxRoute.test.ts: a bare Hono app whose middleware
 // injects scm/lib/fake-postgrest's fakeSb plus a company context, mounting the
 // EXPORTED handler (the supabaseAuth bridge cannot run here).
@@ -170,5 +176,32 @@ describe('GET /delivery-planning — a failed read says which one', () => {
       'HC-SO-2608-001',
       'HC-SO-2608-002',
     ]);
+  });
+});
+
+describe('GET /delivery-planning — cross-company means GRANTED companies', () => {
+  it('shows only the caller\'s companies, not every company on the platform', async () => {
+    const { status, body } = await get(harness({ allowedCompanyIds: [2] }));
+
+    expect(status).toBe(200);
+    expect((body.orders ?? []).map((o) => o.so_doc_no)).toEqual(['HC-SO-2608-002']);
+  });
+
+  it('still widens to every granted company for a two-company caller', async () => {
+    const { body } = await get(harness({ allowedCompanyIds: [1, 2] }));
+
+    expect((body.orders ?? []).map((o) => o.so_doc_no).sort()).toEqual([
+      'HC-SO-2608-001',
+      'HC-SO-2608-002',
+    ]);
+  });
+
+  /* The UNRESOLVED sentinel (companies master unreadable / cold start) must
+     still degrade to no predicate — collapsing it into [] would empty the board
+     for everyone. Same three-state contract lib/companyScope.ts states. */
+  it('degrades to no predicate when the company context is unresolved', async () => {
+    const { body } = await get(harness({ allowedCompanyIds: undefined }));
+
+    expect((body.orders ?? []).length).toBe(2);
   });
 });

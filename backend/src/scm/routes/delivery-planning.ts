@@ -442,18 +442,23 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     possessionDate?: string | null; houseType?: string | null;
     replacementDisposal?: string | null;
   };
+  /* CROSS-COMPANY means the caller's GRANTED companies, never "no predicate"
+     (lib/companyScope.ts; the sibling /geo read on this table already does it).
+     Unscoped, a one-company caller saw the other company's orders. */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
-    sb.from('mfg_sales_orders')
-      /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
-         has no `id` column at all. Selecting `id` makes PostgREST reject the whole
-         query ("column mfg_sales_orders.id does not exist") → soErr → the board 500s
-         with load_failed. The SO's identity on this board is its doc_no; every join
-         below keys on doc_no / so_doc_no, never an id. */
-      .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_centi, balance_centi, possession_date, house_type, replacement_disposal, referral')
-      .neq('status', 'DRAFT')
-      .neq('status', 'CANCELLED')
-      .order('customer_delivery_date', { ascending: true, nullsFirst: false })
-      .range(from, to),
+    scopeToAllowedCompanies(
+      sb.from('mfg_sales_orders')
+        /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
+           has no `id` column at all. Selecting `id` makes PostgREST reject the whole
+           query ("column mfg_sales_orders.id does not exist") → soErr → the board 500s
+           with load_failed. The SO's identity on this board is its doc_no; every join
+           below keys on doc_no / so_doc_no, never an id. */
+        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_centi, balance_centi, possession_date, house_type, replacement_disposal, referral')
+        .neq('status', 'DRAFT')
+        .neq('status', 'CANCELLED')
+        .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
+      c,
+    ).range(from, to),
   );
   if (soErr) return c.json(readFailure('sales_orders', soErr), 500);
   /* Only SOs that actually need delivering — they carry a date signal
