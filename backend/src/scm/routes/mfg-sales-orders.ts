@@ -2021,12 +2021,12 @@ mfgSalesOrders.get('/mine', async (c) => {
      value. Only a view-all caller asking for ?salesperson=all earns the second. */
   let viewingAll = false;
   if (wantSalesperson) {
-    // Houzs-flavoured: gate on the flat permission key `scm.so.view_all`
-    // against the REAL caller (the 2990 staff_role lookup is dead in Houzs —
-    // the SCM bridge pins every caller to one super_admin row). Owner + IT
-    // Admin pass via `*`; grant to other positions via the Team > Positions
-    // matrix.
-    if (hasHouzsPerm(c, 'scm.so.view_all')) {
+    // Same view-all tier as the rest of this file (:772, :1161, :1877):
+    // `scm.so.view_all` OR a director position, via canViewAllSales. This was
+    // the ONE gate still on the flat key alone, so a Sales Director whose
+    // position matrix lacked the key saw every order on the SO list but a
+    // silently self-scoped "All salespeople" board (1 row under a 28 KPI).
+    if (canViewAllSales(c)) {
       const admin = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY, {
         auth: { persistSession: false, autoRefreshToken: false },
       });
