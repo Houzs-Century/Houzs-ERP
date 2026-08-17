@@ -653,20 +653,28 @@ export const cancelPurchaseConsignmentOrderHandler = async (c: any) => {
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const curStatus = (cur as { status: string }).status;
   if (curStatus === 'RECEIVED') return c.json({ error: 'cannot_cancel', message: 'PC Order already received' }, 409);
-  if (curStatus === 'CANCELLED') {
-    return c.json({ purchaseConsignmentOrder: { id, status: 'CANCELLED' } });
-  }
+  // Advisory only: this read cannot see a cancel that lands after it. The atomic
+  // gate on the UPDATE below is what decides, and answers with the same body.
+  if (curStatus === 'CANCELLED') return c.json({ purchaseConsignmentOrder: { id, status: 'CANCELLED' } });
 
   /* Tier 2 downstream-lock — can't cancel a PC Order that has a downstream PC
      Receive; the receive must be CANCELLED first (it has no delete either). */
   const childLock = await pcoHasDownstream(supabase, id);
   if (childLock) return c.json(childLock, 409);
 
-  const { error: updErr } = await scopeToCompanyId(supabase
+  /* ATOMIC ACTIVE->CANCELLED, the same conditional UPDATE the six sibling cancels
+     carry (grns.ts:2566 has the full note). Two concurrent cancels race on the row
+     and exactly one flips it; the loser gets no row back and echoes. Nothing here
+     moves money — a PC Order never reaches AutoCount (mig 0277 pins the outbox
+     doc_type vocabulary to SO/PO/DO/IV/GR/PI) and there is no inventory reversal
+     on this path — so what the gate buys is one cancelled_at and one honest
+     response per cancel, instead of a second write silently restamping the time. */
+  const { data: updRow, error: updErr } = await scopeToCompanyId(supabase
     .from('purchase_consignment_orders')
     .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq('id', id), co.companyId);
+    .eq('id', id).neq('status', 'CANCELLED'), co.companyId).select('id').maybeSingle();
   if (updErr) return c.json({ error: 'cancel_failed', reason: updErr.message }, 500);
+  if (!updRow) return c.json({ purchaseConsignmentOrder: { id, status: 'CANCELLED' } });
 
   const { data: after } = await scopeToCompanyId(supabase
     .from('purchase_consignment_orders')

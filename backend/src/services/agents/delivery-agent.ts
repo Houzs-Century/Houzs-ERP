@@ -548,9 +548,17 @@ export interface DeliveryBriefData {
 
 /* The DO lifecycle — pipeline buckets. IMPORTED from the state machine's own
    declaration (scm/shared/do-shipped-states.ts, which delivery-orders-mfg.ts
-   reads for its PATCH status guard), because the copy that used to sit here had
-   quietly lost COMPLETED: the pipeline counted eight of the nine legal statuses
-   and reported the missing bucket as absent rather than as uncounted. */
+   reads for its PATCH status guard), because a hand-typed second copy of a
+   status list is how the two drift.
+
+   The reason recorded here in 2026-08-13 was that the local copy "had quietly
+   lost COMPLETED". It had not lost anything: COMPLETED is not a member of
+   scm.do_status, and importing the shared list is what gave this loop a bucket
+   the enum rejects. `collectDoStatusCounts` below queries `.eq('status', st)`
+   per status inside a `try {} catch {}`, so from 2026-08-13 to 2026-08-18 the
+   COMPLETED query threw 22P02 on every run and was swallowed — no count, no
+   error, nothing in the brief. The failure was invisible precisely because the
+   catch is there to keep this a best-effort section. */
 const DO_STATUSES: readonly string[] = SHARED_DO_STATUSES;
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

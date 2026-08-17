@@ -371,9 +371,9 @@ const DO_STATUSES = new Set<string>(SHARED_DO_STATUSES);
 const DO_PRESHIP_STATUSES = new Set<string>(DO_PRESHIP_STATES);
 /* Statuses in which the inventory OUT has already been written. Once a DO is in
    any of these, its stock is deducted, so it must NOT drop back to a pre-ship
-   status (the OUT would be orphaned). COMPLETED sits past INVOICED, so goods
-   have certainly shipped — see shared/do-shipped-states.ts for why this is a
-   different set from SHIPPED_STATES and must stay one. */
+   status (the OUT would be orphaned). This block named COMPLETED as a member
+   that "has certainly shipped"; scm.do_status has no such label — see
+   shared/do-shipped-states.ts, which records how that was established. */
 const DO_STOCK_OUT_STATUSES = new Set<string>(DO_STOCK_OUT_STATES);
 
 const nextNum = async (sb: any, c: any, prefixOverride?: string): Promise<string> => {

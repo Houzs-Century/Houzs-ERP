@@ -4356,10 +4356,8 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const curStatus = (cur as { status: string }).status;
   if (curStatus === 'RECEIVED') return c.json({ error: 'cannot_cancel', message: 'PO already received' }, 409);
-  // Idempotent — already cancelled, just echo back.
-  if (curStatus === 'CANCELLED') {
-    return c.json({ purchaseOrder: { id, status: 'CANCELLED' } });
-  }
+  // Idempotent echo. ADVISORY — this read cannot see a cancel that lands after it; the atomic gate on the UPDATE below is what decides.
+  if (curStatus === 'CANCELLED') return c.json({ purchaseOrder: { id, status: 'CANCELLED' } });
 
   /* Tier 2 downstream-lock — can't cancel a PO that has a downstream GRN; the
      GRN must be cancelled/deleted first (mirrors grnHasDownstream cancel guard). */
@@ -4373,11 +4371,13 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
     supabase, (cur as { po_number?: string | null }).po_number);
   if (dropshipLock) return c.json(dropshipLock, 409);
 
-  const { error: updErr } = await scopeToCompanyId(supabase
+  /* ATOMIC ACTIVE->CANCELLED: only one of two concurrent cancels flips the row, so the audit row + SO-quota release below fire once (full note at grns.ts:2566). */
+  const { data: updRow, error: updErr } = await scopeToCompanyId(supabase
     .from('purchase_orders')
     .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq('id', id), co.companyId);
+    .eq('id', id).neq('status', 'CANCELLED'), co.companyId).select('id').maybeSingle();
   if (updErr) return c.json({ error: 'cancel_failed', reason: updErr.message }, 500);
+  if (!updRow) return c.json({ purchaseOrder: { id, status: 'CANCELLED' } });   // lost the race
 
   /* The prior status comes from the guarded read above, so this records the real
      transition (SUBMITTED / PARTIALLY_RECEIVED -> CANCELLED) rather than
