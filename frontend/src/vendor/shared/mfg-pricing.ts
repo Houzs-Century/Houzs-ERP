@@ -162,6 +162,48 @@ export type MfgPricingBreakdown = {
 
 const sum = (...n: number[]): number => n.reduce((a, b) => a + b, 0);
 
+/* ─── Typographic quotes ──────────────────────────────────────────────────
+   THE INCH MARK IS TYPED THREE DIFFERENT WAYS AND THEY ARE DIFFERENT STRINGS.
+   Every pool value here is compared with `===`, so `18"` (U+0022) and `18“`
+   (U+201C, what a phone keyboard or a paste from Word produces) are simply two
+   unrelated keys. Measured on prod 2026-08-17: 2990's live totalHeights pool
+   carries `17“`, `19“`, `25”` and `27“` alongside straight-quoted `18"` and
+   `26"`, and one document line stores its gap as `12“`. A line whose spelling
+   does not match the pool's silently prices the surcharge at 0 — the same
+   failure mode as the missing `totalHeight` argument, arriving by a different
+   road.
+
+   NORMALISATION IS A FALLBACK, NEVER A REPLACEMENT, and that ordering is the
+   whole safety argument. An exact hit is always preferred, so no line that
+   already matches can be re-priced by this change — including the pools that
+   carry the SAME height twice under different spellings and DIFFERENT prices
+   (supplier 07204b99 has `19“` at both RM40 and RM120). Only a value that
+   matches nothing today — and therefore prices at 0 today — can start matching.
+
+   Deliberately narrow: quote characters only. No trim, no case folding. Those
+   would be a second, unrelated behaviour change hiding inside a typography fix,
+   and this same string family also composes `variant_key`, which is the
+   inventory bucket identity. */
+const QUOTE_MAP: Record<string, string> = {
+  '“': '"', '”': '"', '„': '"', '‟': '"', '″': '"', 'ʺ': '"',
+  '‘': "'", '’': "'", '‚': "'", '‛': "'", '′': "'", 'ʹ': "'",
+};
+/** Fold typographic quote/prime characters onto their ASCII equivalents. */
+export const normaliseTypographicQuotes = (s: string): string =>
+  s.replace(/[‘’‚‛“”„‟′″ʹʺ]/g, (c) => QUOTE_MAP[c] ?? c);
+
+/** Exact match first; only then a quote-insensitive one. Returns undefined when
+ *  neither finds anything, exactly as `find` did. */
+const findOption = (
+  pool: MfgPricedOption[],
+  value: string,
+): MfgPricedOption | undefined => {
+  const exact = pool.find((o) => o.value === value);
+  if (exact) return exact;
+  const wanted = normaliseTypographicQuotes(value);
+  return pool.find((o) => normaliseTypographicQuotes(o.value) === wanted);
+};
+
 /** COST surcharge lookup (Commander 2026-05-28 definitive model). Backend
  *  maintenance `priceSen` IS the cost, so the cost compute reads `priceSen`
  *  (mirroring what `computeMfgLinePrice` did before PR #265). `costSen` is
@@ -173,7 +215,7 @@ const lookupCost = (
   value: string | null | undefined,
 ): number => {
   if (!pool || !value) return 0;
-  const hit = pool.find((o) => o.value === value);
+  const hit = findOption(pool, value);
   if (!hit) return 0;
   return hit.priceSen ?? hit.costSen ?? 0;
 };
@@ -188,7 +230,7 @@ const lookupSelling = (
   value: string | null | undefined,
 ): number => {
   if (!pool || !value) return 0;
-  const hit = pool.find((o) => o.value === value);
+  const hit = findOption(pool, value);
   return hit?.sellingPriceSen ?? 0;
 };
 
@@ -204,7 +246,7 @@ const sumSpecialsSelling = (
   if (!pool || !picks || picks.length === 0) return 0;
   let total = 0;
   for (const p of picks) {
-    const hit = pool.find((o) => o.value === p);
+    const hit = findOption(pool, p);
     if (hit) total += hit.sellingPriceSen ?? 0;
   }
   return total;
@@ -220,7 +262,7 @@ const sumSpecialsCost = (
   if (!pool || !picks || picks.length === 0) return 0;
   let total = 0;
   for (const p of picks) {
-    const hit = pool.find((o) => o.value === p);
+    const hit = findOption(pool, p);
     if (hit) total += hit.priceSen ?? hit.costSen ?? 0;
   }
   return total;

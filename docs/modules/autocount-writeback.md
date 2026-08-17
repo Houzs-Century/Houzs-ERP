@@ -226,6 +226,7 @@ Each hook sits at the point the document becomes permanent — after the
 | SI cancel | `sales-invoices.ts` | `PATCH /:id/status` inside the atomic CANCELLED branch |
 | PI cancel | `purchase-invoices.ts` | `PATCH /:id/cancel`, after the atomic ACTIVE->CANCELLED flip won |
 | SO edit | `mfg-sales-orders.ts` | `queueAcSoEdit` from the header PATCH, line add/edit/delete, `tbc-update` / `tbc-swap` / `tbc-swap-sofa`, the admin price `override`, and `so-amendments.ts` approve-so |
+| SO edit (salesperson HANDOVER) | `so-handover.ts` | `enqueueEdit({ touchedFields: ['agent'] })` once per order that actually moved, inside the loop and after every `continue` — so a skipped order queues nothing. `agent` is the AutoCount rep NAME and it follows a reassigned salesperson, so without this the account book keeps naming the departed rep. See `so-handover.md` |
 | SO edit (a PAYMENT moved the balance) | `mfg-sales-orders.ts` | `enqueueEdit` inside `recordSoPaymentRow` — the insert CORE, so `scan-so.ts`'s background receipt booking is covered as well as `POST /:docNo/payments`; plus `queueAcSoEdit` in `PATCH` and `DELETE /:docNo/payments/:id`. **Not** on `POST /:docNo/payments/:id/slip`, which attaches proof and moves no money |
 | PO edit | `mfg-purchase-orders.ts` | `queueAcPoEdit` from the header PATCH, line add/edit/delete, `bulk-supplier-date` (per PO that moved), `convert-from-so`, and `po-amendments.ts` approve |
 | DO edit | `delivery-orders-mfg.ts` | `queueAcDoEdit` from the header PATCH and line add/edit/delete |
@@ -928,6 +929,52 @@ document in the book.
 **Keep the book fallback whatever happens to D15.** It is the only thing that
 drains an outbox row composed before any of this, and a lookup that quietly
 stops being exercised is a lookup someone deletes.
+
+#### 7c3a. `/so-to-po` — the same defect, and the book cannot fix this one
+
+Measured on the host 2026-08-17 09:15, and again at 09:20 when the cron retried:
+
+```
+ERROR /so-to-po: System.Exception: CreditorCode required for /so-to-po -
+  AutoCount defaults the payment term from the supplier, and without one the
+  save dies on FK_PO_DisplayTerm, which names the term and not the supplier
+```
+
+`enqueuePoCreate` builds `body` with `composeCreatePo` — which carries
+`CreditorCode` — and then **throws it away** when `poTransferShape` says
+`transfer`, because `composeSoToPo` returns `{ DtlKeys, Details }` and nothing
+else. The create arm has always named the supplier; the transfer arm never named
+anything. It read as a clear error only because `SoToPo` already carries a guard
+that names it.
+
+**The fix is in two places, and the second is the one that matters today:**
+
+| | |
+|---|---|
+| `enqueuePoCreate` | puts `CreditorCode` / `CreditorName` on the transfer body. **No join needed** — `readPoHeader` resolved `suppliers.code` two lines earlier for the binding lookup |
+| `dispatchOne` | backfills it at drain when the stored body has none. The drain **replays** the stored payload and never recomposes, so the enqueue fix alone leaves every already-queued row failing for ever |
+
+**And the account book cannot answer this one** — this is where the analogy with
+§7c3's debtor fallback stops. `/so-to-po`'s source is a SALES order: it carries a
+`DebtorCode` and no creditor, and the supplier is a purchase decision that exists
+nowhere in AutoCount until we send it. The authority is the ERP's own purchase
+order, which the outbox row already points at through `payload.writeback`.
+
+**Reading the service log for this route.** The request line identifies a
+`/so-to-po` call by its **source sales order**, not by the purchase order —
+`composeSoToPo` sends no `DocNo`, so `Or(DocNo, FromDocNo)` falls through to
+`FromDocNo`. A reader who takes `HC-SO-2608-001` there for a PO number will
+search for a document that does not exist.
+`backend/scripts/which-so-is-so-to-po-retrying.mjs` (Actions → *Which SO is
+so_to_po retrying (read-only)*) prints, per row, the sales order the QUEUE names
+beside the one the purchase order's own lines imply, and flags a disagreement —
+which would be a mislinked `so_item_id`, not a bookkeeping mismatch.
+
+**Still open on this route:** the transfer arm sends no `DocNo` either, so the
+first `/so-to-po` that succeeds takes an AutoCount auto-number rather than the
+ERP's — divergence **D5**, closed for the four conversions and never for this
+one. Left alone deliberately: the route has never succeeded, and one variable at
+a time is what isolated the debtor.
 
 **And a second thing this exposed.** `FullTransfer` is the call PROVEN against
 this book, and today's production payloads never reach it: `readConvertSourceKeys`

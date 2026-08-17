@@ -188,6 +188,7 @@ import {
   soDatePairCascadeColumns,
   soDatePairRefusal,
 } from '../shared/so-processing-date';
+import { ATTRIBUTE_OTHER_REFUSAL, changedIdentityLockCols, salespersonReattributed } from '../shared/so-identity-lock';
 /* Variants-vocabulary unification (port of 2990 73aeeb1e, 2026-06-26):
    POS-handover sofa lines speak `depth`/`sofaLegHeight`/`fabricColor`, Backend
    editors read `seatHeight`/`legHeight`/`fabricCode`. canonicalizeVariants
@@ -616,19 +617,8 @@ async function soProcessingDateProblemsForDoc(
   });
 }
 
-/* Owner 2026-05-31 — Identity + value columns a downstream DO / SI snapshots.
-   These are frozen on the SO header once a non-cancelled child exists; payment,
-   remark and scheduling columns are intentionally NOT in this set so the shop
-   can still record payment after delivery. Keyed by DB column name. */
-const SO_IDENTITY_LOCK_COLS = new Set<string>([
-  'debtor_code', 'debtor_name', 'agent', 'sales_location', 'ref', 'po_doc_no',
-  'venue', 'venue_id', 'branding', 'address1', 'address2', 'address3', 'address4',
-  'phone', 'currency', 'so_date', 'customer_id', 'customer_state', 'customer_po',
-  'customer_po_id', 'customer_po_date', 'customer_po_image_b64', 'customer_so_no',
-  'hub_id', 'hub_name', 'ship_to_address', 'bill_to_address', 'install_to_address',
-  'email', 'customer_type', 'salesperson_id', 'city', 'postcode', 'building_type',
-  'emergency_contact_name', 'emergency_contact_phone', 'emergency_contact_relationship',
-]);
+/* The identity lock (which columns freeze once a DO / SI exists, and why
+   `salesperson_id` no longer does) lives in shared/so-identity-lock.ts. */
 
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 const SO_PROCESSING_LOCK_COLS = soProcessingLockColumns();
@@ -1780,12 +1770,7 @@ mfgSalesOrders.get('/', async (c) => {
       (r as Record<string, unknown>).planning_state = derivePlanningState({
         storedOverride: overrideByDoc.get(docNo) ?? null,
         status: (r as Record<string, unknown>).status as string | null,
-        readiness: {
-          mainCount: readiness?.mainCount ?? 0,
-          isMainReady: readiness?.isMainReady ?? false,
-          isFullyReady: readiness?.isFullyReady ?? false,
-          isShipReady: readiness?.isShipReady ?? false,
-        },
+        readiness: { isShipReady: readiness?.isShipReady ?? false },
         delivered: dDelivered,
         remaining: dRemaining,
         effectiveDD,
@@ -2025,7 +2010,6 @@ mfgSalesOrders.get('/mine', async (c) => {
      (so RLS can't clip another salesperson's rows/items/payments). Everyone
      else: the param is ignored and they stay self-scoped on their own client. */
   const wantSalesperson = c.req.query('salesperson') ?? null;
-  let client = sb;
   /* Self = the caller's REAL scm.staff uuid (mig 0066) — never user.id, the
      bridge's pinned system row shared by every caller (see /my-mtd note). The
      old `?? user.id` handed an unresolved caller every order ever mis-stamped
@@ -2036,16 +2020,14 @@ mfgSalesOrders.get('/mine', async (c) => {
      value. Only a view-all caller asking for ?salesperson=all earns the second. */
   let viewingAll = false;
   if (wantSalesperson) {
-    // Houzs-flavoured: gate on the flat permission key `scm.so.view_all`
-    // against the REAL caller (the 2990 staff_role lookup is dead in Houzs —
-    // the SCM bridge pins every caller to one super_admin row). Owner + IT
-    // Admin pass via `*`; grant to other positions via the Team > Positions
-    // matrix.
-    if (hasHouzsPerm(c, 'scm.so.view_all')) {
-      const admin = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
-      client = admin;
+    // Same view-all tier as the rest of this file (:772, :1161, :1877):
+    // `scm.so.view_all` OR a director position, via canViewAllSales.
+    // No client swap here: `sb` IS the service-role client already
+    // (getSupabaseService), pointed at db.schema 'scm'. The ported 2990 branch
+    // built a raw createClient() for RLS bypass — which defaults to the PUBLIC
+    // schema, where mfg_sales_orders has no company_id, so the first caller to
+    // ever pass this gate got a 500 instead of a board.
+    if (canViewAllSales(c)) {
       viewingAll = wantSalesperson === 'all';
       targetSalespersonId = viewingAll ? null : wantSalesperson;
     }
@@ -2056,18 +2038,18 @@ mfgSalesOrders.get('/mine', async (c) => {
   if (!targetSalespersonId && !viewingAll) return c.json({ salesOrders: [] });
 
   let query = scopeToCompany(
-    client
+    sb
       .from('mfg_sales_orders')
       .select(
         'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
         'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
         'proceeded_at, total_revenue_centi, line_count, deposit_centi',
       )
-      .not('status', 'in', '("CANCELLED","ON_HOLD","DRAFT")'),
+      .not('status', 'in', '("CANCELLED","ON_HOLD")'), // DRAFT shown on purpose — pairs with /pos/sales-stats; BUG-HISTORY 2026-08-17
     c,
   );
   /* Company scope is NOT optional here (owner 2026-08-10 cross-company audit).
-     The view_all branch above swaps in a SERVICE-ROLE client and clears
+     `sb` is the SERVICE-ROLE client, and the view_all branch above clears
      targetSalespersonId, so without this wrap the query degrades to "every
      non-cancelled SO in the database" — both companies, RLS bypassed, with
      customer PII and total_revenue_centi. */
@@ -2108,7 +2090,7 @@ mfgSalesOrders.get('/mine', async (c) => {
      floor-rule preview), so they ride the same fetch. */
   const itemsByDoc = new Map<string, Array<{ id: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_centi: number; discount_centi: number; total_centi: number; variants: unknown; remark: string | null }>>();
   if (docNos.length > 0) {
-    const { data: itemRows } = await client
+    const { data: itemRows } = await sb
       .from('mfg_sales_order_items')
       .select('id, doc_no, item_code, item_group, description, qty, unit_price_centi, discount_centi, total_centi, variants, remark')
       .in('doc_no', docNos)
@@ -2131,7 +2113,7 @@ mfgSalesOrders.get('/mine', async (c) => {
   const paidLedgerByDoc = new Map<string, number>();
   const depositInLedger = new Set<string>();
   if (docNos.length > 0) {
-    const { data: payRows } = await client
+    const { data: payRows } = await sb
       .from('mfg_sales_order_payments')
       .select('so_doc_no, amount_centi, is_deposit')
       .in('so_doc_no', docNos);
@@ -6706,7 +6688,11 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
 
   /* `agent` follows a reassigned salesperson; a PATCH naming `agent` still wins.
      scm/lib/so-agent.ts says why this must precede the read below. */
+  const agentBeforeFollow = updates['agent'];
   await followSalespersonToAgent(sb as never, updates, body);
+  /* Did `agent` change ONLY because it followed the salesperson? It is an
+     identity-locked column — see the carve-out in shared/so-identity-lock.ts. */
+  const agentFollowedSalesperson = updates['agent'] !== agentBeforeFollow;
   /* A PATCH is a real mutation only when at least one recognised, normalised
      field differs from storage. Compare before validation or derivation so an
      unchanged phone/dropdown/date cannot demand a version, bump it, or fire a
@@ -7224,9 +7210,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      not falsely trip the lock — only a genuine change to a locked field blocks. */
   if (before) {
     const beforeRow = before as unknown as Record<string, unknown>;
-    const changedLocked = [...SO_IDENTITY_LOCK_COLS].filter(
-      (col) => col in updates && norm(updates[col]) !== norm(beforeRow[col]),
-    );
+    /* Re-attribution gate (Owner 2026-08-17) — shared/so-identity-lock.ts says
+       why the UI disabling the select was never the control. */
+    if (salespersonReattributed(updates, beforeRow) && !hasHouzsPerm(c, 'scm.so.attribute_other')) {
+      return c.json(ATTRIBUTE_OTHER_REFUSAL, 403);
+    }
+    const changedLocked = changedIdentityLockCols(updates, beforeRow, { agentFollowedSalesperson });
     if (changedLocked.length > 0) {
       const lock = await soHasDownstream(sb, docNo);
       if (lock) {

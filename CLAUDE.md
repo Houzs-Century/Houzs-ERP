@@ -315,11 +315,35 @@ the STALE-BRANCH mechanism behind the incidents below:
 > to 0286_*.sql` — and #2121 merged four minutes into that run anyway. **Branch
 > protection does not gate on it.** The required contexts are `backend-typecheck`
 > + `frontend` (`gh api repos/hello-houzs/Houzs-ERP/rules/branches/main`);
-> `migrationNumbers.test.ts` runs in `backend-tests (2)`, which the section below
-> forbids making required, for good reasons that remain good. So this class is
+> `migrationNumbers.test.ts` ran in `backend-tests (2)`, which the section below
+> forbids making required, for good reasons that remain good. So this class was
 > **structurally ungated**, and `gh pr merge --auto` — armed on 12 PRs in 27
 > seconds that morning — merges the moment the two required checks go green,
 > which is exactly what happened.
+>
+> **CLOSED 2026-08-17, and it closed by ACCIDENT three days before anyone
+> noticed.** `migrationNumbers.test.ts` is no longer in the workers shards. It is
+> in the LIGHT project, and `backend-typecheck` — a required context — runs
+> `npm run test:light` (`ci.yml`). So a duplicate number blocks the MERGE today.
+> Nothing was done about it on purpose: `d78d55bf` (#2131, *"perf(ci): 565s ->
+> 106s by not booting a Workers runtime for tests that never use one"*) created
+> the light project on 2026-08-14 and swept this suite into it as one of many.
+> The remedy below was written the day before and stayed marked "not done" for
+> three days while it was in fact done.
+>
+> Verify, do not believe this paragraph:
+> ```
+> grep -n "run: npm run test:light" .github/workflows/ci.yml
+> cd backend && npx vitest list --config vitest.light.config.mts | grep migrationNumbers
+> ```
+>
+> **What is still yours:** that gating is INCIDENTAL. `classifyTests()` decides
+> the split at config time from a regex over the comment-stripped source, so one
+> added string containing `cloudflare:test` or `env.DB` moves the suite back to
+> the shards and silently un-gates it. That is now pinned by the merge-gating
+> test in `backend/tests/classifyTests.test.mjs` — add a suite to its
+> `MUST_GATE_MERGE` list whenever an assertion must stop a merge rather than a
+> deploy.
 >
 > The deploy stayed broken from 13:06Z (#2121 merged) until #2124 landed:
 > `Deploy` runs 31703284503 and 31704506807 both concluded `failure` with the
@@ -330,7 +354,9 @@ the STALE-BRANCH mechanism behind the incidents below:
 > **Two remedies, neither of which is "be careful":**
 > 1. Move the duplicate-number assertion into `backend-typecheck` — the job that
 >    IS a required context — so a collision blocks the merge instead of only the
->    deploy. **Not done. This is the open item.**
+>    deploy. **DONE — see the CLOSED box above. It was already done when this
+>    line still said "Not done", which is the more useful lesson: check the
+>    tree before believing a remedy is outstanding.**
 > 2. Never arm `gh pr merge --auto` on a PR carrying a migration or an
 >    integration batch. Auto-merge structurally cannot wait for a check that is
 >    not required.
@@ -396,6 +422,64 @@ roll-up that is legitimately `skipped` on frontend-only PRs — a skipped requir
 check leaves the PR pending forever. This rule stands — but note what it costs:
 every assertion living only in a shard is advisory at merge time. If an assertion
 must BLOCK a merge, it belongs in `backend-typecheck`, not in a shard.
+
+### ⚠️ Update a behind branch by merging `main` LOCALLY. Never press *Update branch*
+
+*Added 2026-08-17.* The strict flag above means a busy day leaves your PR behind
+`main` constantly, so you will do this many times. **`git merge origin/main`
+locally, then push.** Do NOT use GitHub's *Update branch* button and do NOT run
+`gh pr update-branch`.
+
+`.gitattributes` carries `BUG-HISTORY.md merge=union` (PR #2133), because every
+open branch prepends an entry to the same first line of that file and git's
+default calls that a conflict when it is not one. The attribute only works for
+half the ways a branch gets updated:
+
+| how the branch is updated | `merge=union` applies |
+| --- | --- |
+| `git merge origin/main` locally, then push | **YES** |
+| *Update branch* button / `gh pr update-branch` | **NO** |
+
+The attribute is applied by whichever git PERFORMS the merge, and *Update branch*
+is GitHub's git reading its own configuration, not this repository's. Measured
+2026-08-13 on #1905, whose only conflict was `BUG-HISTORY.md`: `git merge
+origin/main` locally resolved it clean, `gh pr update-branch 1905` answered
+`Cannot update PR branch due to conflicts` — same two commits, opposite answers.
+
+So the button reports **CONFLICTING** on a file this repo's own merge driver
+would have resolved silently. The symptom is the confusing one: **GitHub says
+CONFLICTING while a local merge is clean.** That is not a contradiction to
+resolve, it is this. Merge locally and push, and the conflict never exists.
+
+**This was not undocumented — and that is the point.** The full trace is in
+`docs/ci-capacity-coe.md`, under *"The half of this that does NOT work"* (PR
+#2145 is where the correction was first written). It had simply never reached
+THIS file, and this is the file that is auto-loaded into every session, so
+sessions kept re-deriving it at a cost of hours each. A rule that lives only in
+a COE is a rule that is read after the damage, not before it.
+
+### ⚠️ `statusCheckRollup` LIES. Read `mergeStateStatus` and the newest run
+
+*Added 2026-08-17.* `gh pr view --json statusCheckRollup` serves **stale**
+entries. On 2026-08-16 it reported `completeness-claim` as `FAILURE` on #2295,
+#2300 and #2318 while each of those PRs' newest run of that same workflow had
+concluded `success`.
+
+Nothing in this repo can fix GitHub's API, so the remedy is what you read:
+
+```sh
+gh pr view <N> --json mergeable,mergeStateStatus          # the honest fields
+gh run list --workflow=<name>.yml --branch <branch> --limit 5 \
+  --json databaseId,conclusion,headSha,createdAt          # the newest REAL run
+```
+
+**Never react to a rollup entry without confirming it against the newest run for
+that workflow on that branch.** It has already cost real damage: a legitimate
+`enumeration` block was deleted out of another agent's PR to "fix" a failure that
+had stopped existing. That is the CLAUDE.md rule *"a contradiction is a finding —
+STOP, do not bridge it"* with a name: when the rollup and the run list disagree,
+**the run list is right**, and editing code to satisfy the stale one destroys
+working evidence.
 
 ## ⚠️ Run the audit scripts — they answer questions no doc can
 
@@ -503,6 +587,20 @@ never nullish.
 
 - `npm run lint` (root, or inside `backend/` / `frontend/`). CI job: **`lint`**,
   matrixed over the two apps. NOT a required status check yet.
+- **"ESLint cannot run locally" is a STALE `node_modules`, not a repo bug — the
+  fix is one command.** *Added 2026-08-17.* Every session in the week of
+  2026-08-15 reported the linter unrunnable and deferred to CI, and one shipped a
+  wrong lint fix it could not see was wrong. Traced: `eslint@^9.39.5` is in
+  `devDependencies` AND in both lockfiles (`node_modules/eslint`, `dev: true`,
+  no `os`/`cpu` gate), there is no `.npmrc`, and `npm config get omit` is empty —
+  so nothing skips it. The installed trees simply predate it: the install marker
+  npm writes inside each app's `node_modules` is dated 2026-07-31 for the backend
+  and 2026-08-02 for the frontend, while the linter landed 2026-08-13
+  (`cbdf03618`). Neither tree contains eslint or typescript-eslint at all.
+  **`npm ci` in the app directory** fixes it — measured 2026-08-17 at **4
+  seconds** for `frontend/`, after which `npm run lint` runs. `lint-ratchet.mjs`
+  already prints exactly this instruction when the binary is absent; read it
+  rather than concluding the gate is broken.
 - **The FRONTEND leg enforces; the BACKEND leg runs `-- --advisory` and only
   reports.** Not laziness — the backend ratchet is 16 file/rule pairs over
   ceiling, all of it debt `main` grew while the linter waited to land, and
@@ -799,6 +897,14 @@ Not generic narrative.
   unverified-completeness-claim** at the top of `BUG-HISTORY.md`. As of
   2026-08-13 the detector fires on 13.6% of merged commit messages — roughly one
   PR in seven makes a claim of this shape; re-measure before quoting that.
+  **A `path:NNN:` line number in your pasted output is NORMALISED AWAY before
+  the diff** (since 2026-08-17): a merge that shifts a 12,000-line router no
+  longer fails a PR that changed no member of the population. Membership is
+  still exact — an added, removed, retexted or file-MOVED site fails as before —
+  so `git grep -n` is safe to paste. The one shape that is not normalised is a
+  BARE `NNN:` with no path (`grep -n pattern onefile`), because a leading number
+  with nothing in front of it is indistinguishable from content; the gate fails
+  and tells you to include the path.
 - **Drizzle ORM for new code.** New routes / services use Drizzle —
   schema in `backend/src/db/schema.ts`, client via
   `getDb(env)` from `backend/src/db/client.ts`. Raw

@@ -59,6 +59,7 @@ import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { netDeliveredBySoItem } from '../lib/do-unlinked-coverage';
 import {
   resolveDoLineSources,
   resolveDoHeaderSources,
@@ -2198,35 +2199,14 @@ export async function soDeliverableRemaining(
   );
   const soItemIds = lines.map((l) => l.id);
 
-  // 2. Σ delivered — DO lines linked by so_item_id whose parent DO is NOT
-  //    cancelled (nor DRAFT — a draft hasn't shipped). PERF: collapsed from a
-  //    two-step "pull DO lines, then re-fetch their parent DOs to read status"
-  //    into ONE round-trip by embedding the parent status (PostgREST to-one
-  //    embed → row count unchanged, so paginateAll stays exact). The
-  //    CANCELLED/DRAFT decision is still made HERE in JS with the same
-  //    .toUpperCase() compare, and a missing parent (orphan) is excluded exactly
-  //    as before (its id used to be absent from the delivery_orders lookup, so
-  //    it never entered activeDoIds) — the delivered sum is byte-identical.
-  const { data: doLines } = await paginateAll<{ id: string; so_item_id: string | null; qty: number; parent: { status: string | null } | null }>((from, to) => sb
-    .from('delivery_order_items')
-    .select('id, so_item_id, qty, parent:delivery_orders(status)')
-    .in('so_item_id', soItemIds)
-    .order('id')
-    .range(from, to));
-  const doLineRows = (doLines ?? []) as Array<{ id: string; so_item_id: string | null; qty: number; parent: { status: string | null } | null }>;
-  // DO line id → SO item id (only for active DOs), used to trace returns below.
-  const doLineToSoItem = new Map<string, string>();
-  const deliveredBySoItem = new Map<string, number>();
-  for (const l of doLineRows) {
-    if (!l.so_item_id || !l.parent) continue;
-    /* LEAK GUARD (DRAFT): a DRAFT DO hasn't shipped — it must NOT consume the
-       SO line's deliverable remaining (else the real DO can't be raised and
-       the picker shows phantom-delivered qty). Treated like CANCELLED here. */
-    const st = (l.parent.status ?? '').toUpperCase();
-    if (st === 'CANCELLED' || st === 'DRAFT') continue;
-    doLineToSoItem.set(l.id, l.so_item_id);
-    deliveredBySoItem.set(l.so_item_id, (deliveredBySoItem.get(l.so_item_id) ?? 0) + Number(l.qty ?? 0));
-  }
+  /* 2. Σ delivered per SO line — the real so_item_id links AND the shipments
+        whose link the FK blanked but whose DO header still names this order.
+        Both readings, and the DO-line map returns trace through, come from
+        lib/do-unlinked-coverage.ts (moved out of here: this file is over its
+        size ceiling, and a coverage engine is not a route). */
+  const { deliveredBySoItem, doLineToSoItem } = await netDeliveredBySoItem(
+    sb, soDocNos, lines.map((l) => ({ id: l.id, docNo: l.doc_no, itemCode: l.item_code, qty: Number(l.qty ?? 0) })),
+  );
 
   // 3. Σ returned — DR lines whose do_item_id traces (via the active DO line)
   //    back to one of our SO items, and whose parent DR is NOT cancelled.

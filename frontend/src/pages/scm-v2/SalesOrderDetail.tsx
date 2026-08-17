@@ -1596,6 +1596,10 @@ export const SalesOrderDetail = () => {
      (partial delivery) via the list's right-click. */
   const hasChildren = Boolean((header as { has_children?: boolean }).has_children);
   const isLocked = isSoLocked(header.status, hasChildren, unlockOverride);
+  /* The one thing a hard-locked SO still accepts: a new salesperson. Same
+     permission the API enforces (mfg-sales-orders.ts PATCH), so the Edit button
+     it re-enables can never open an order the server would refuse to save. */
+  const canAttributeOther = can('scm.so.attribute_other');
 
   /* Owner 2026-07-05 — SO PROCESS lock: once the SO has been PROCEEDED
      (proceeded_at stamped) AND its processing day has passed, we PO to the
@@ -1734,7 +1738,7 @@ export const SalesOrderDetail = () => {
       body: "The SO will stop proceeding — it won't appear in MRP / PO / DO conversion, and line edits lock. You can Reopen it later.",
       confirmLabel: 'Cancel SO', danger: true,
     }))) return;
-    updateStatus.mutate({ docNo: header.doc_no, status: 'CANCELLED' });
+    updateStatus.mutate({ docNo: header.doc_no, status: 'CANCELLED', expectedStatus: header.status });
   };
   /* Discard draft (owner 2026-07-20) — hard-delete a junk DRAFT (esp. a bad
      scan/OCR draft) instead of burning a doc number on confirm→cancel. Behind the
@@ -1931,10 +1935,19 @@ export const SalesOrderDetail = () => {
                 <span>Cancel SO</span>
               </Button>
             ) : null}
-            {/* PR-A — Page-level Edit/Save/Cancel. */}
+            {/* PR-A — Page-level Edit/Save/Cancel.
+
+                Owner 2026-08-17 — a hard-locked (DO/SI) SO still opens for
+                edit when the caller may RE-ATTRIBUTE it. Everything else on
+                the page stays disabled: `inputsDisabled` keeps reading
+                `locked`, and only the Salesperson select opts out of it (see
+                CustomerCard). Without this, handing a delivered order to the
+                replacement rep meant clicking Override — which unlocks the
+                WHOLE order, addresses and lines included, to change one
+                dropdown. The heavy door stays for everything else. */}
             {!isEditing ? (
               <Button variant="primary"
-                onClick={enterEdit} disabled={isLocked}>
+                onClick={enterEdit} disabled={isLocked && !canAttributeOther}>
                 <Pencil {...ICON} />
                 <span>Edit</span>
               </Button>
@@ -2043,7 +2056,7 @@ export const SalesOrderDetail = () => {
                   body: 'This turns the draft into a live, confirmed sales order — it will appear in MRP / PO / DO flows and KPIs.',
                   confirmLabel: 'Confirm Order',
                 }))) return;
-                updateStatus.mutate({ docNo: header.doc_no, status: 'CONFIRMED' });
+                updateStatus.mutate({ docNo: header.doc_no, status: 'CONFIRMED', expectedStatus: header.status });
               }}
               disabled={updateStatus.isPending || deleteDraft.isPending}>
               <span>{updateStatus.isPending ? 'Confirming…' : 'Confirm Order'}</span>
@@ -2082,7 +2095,7 @@ export const SalesOrderDetail = () => {
                 if (reason == null) return;
                 // Audit the override via a status change row (we re-affirm the
                 // current status with an OVERRIDE notes prefix).
-                updateStatus.mutate({ docNo: header.doc_no, status: header.status });
+                updateStatus.mutate({ docNo: header.doc_no, status: header.status, expectedStatus: header.status });
                 setUnlockOverride(true);
               } else {
                 setUnlockOverride(false);
@@ -3335,27 +3348,36 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
               <span className={styles.fieldLabel}>Salesperson</span>
               {/* Commander 2026-05-27: only admin / sales_director can swap
                   the salesperson on an existing SO. Non-admin sales roles
-                  see a disabled select pinned to whoever owns the SO. */}
+                  see a disabled picker pinned to whoever owns the SO.
+
+                  Owner 2026-08-17 — this ONE field ignores `locked`. A
+                  delivered / invoiced order freezes everything a DO or SI
+                  snapshots, but not who owns it: that is how a resigning rep's
+                  orders reach their replacement. Searchable because the roster
+                  is ~100 people; a former staff id with no roster row still
+                  shows as "(not in this list)" rather than a bare uuid. */}
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={form.salespersonId}
-                  disabled={inputsDisabled || !canChangeSalesperson}
-                  onChange={(e) => set('salespersonId', e.target.value)}>
-                  <option value="">— Pick staff —</option>
-                  {sortByText(staffList).map((s) => (
-                    <option key={s.id} value={s.id}>{s.name} ({s.staffCode})</option>
-                  ))}
-                  {/* Persisted salesperson may not be in the active list
-                      (deactivated since the SO was created) — render
-                      explicitly so the select still shows the original
-                      name instead of blanking out. */}
-                  {form.salespersonId
-                    && !staffList.some((s) => s.id === form.salespersonId)
-                    && (
-                      <option value={form.salespersonId}>
-                        (former staff)
-                      </option>
-                    )}
-                </select>
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  ariaLabel="Salesperson"
+                  placeholder="— Pick staff —"
+                  disabled={!isEditing || !canChangeSalesperson}
+                  value={form.salespersonId}
+                  onChange={(v) => set('salespersonId', v)}
+                  options={[
+                    ...sortByText(staffList).map((s) => ({
+                      value: s.id,
+                      label: `${s.name} (${s.staffCode})`,
+                    })),
+                    /* Persisted salesperson may not be in the active list
+                       (deactivated since the SO was created) — carry a row for
+                       it so the picker still shows a name instead of blanking
+                       out or printing a uuid. */
+                    ...(form.salespersonId && !staffList.some((s) => s.id === form.salespersonId)
+                      ? [{ value: form.salespersonId, label: '(former staff)' }]
+                      : []),
+                  ]}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>

@@ -3672,19 +3672,31 @@ app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "p
     // Approval keys are explicit-only (owner matrix 2026-07-21) — `*` does
     // not pass; see EXPLICIT_APPROVAL_KEYS.
     const has = holdsChecklistApproval(user.permissions, item.required_perm);
-    if (!has) {
+    // N/A — and its undo back to 'pending' — is the DOCUMENT OWNER's call,
+    // not an approval decision (owner 2026-08-17: "user sim cannot click N/A
+    // on her task please allowed her to click N/A"). The purchaser lane's
+    // whole design expects Sim/Farra to N/A Exchange List / Stock In / Stock
+    // Out when an event doesn't need one, but every one of those rows is
+    // gated (stock_transfer.approve / stock_in.approve / projects.approve),
+    // so this key check 403'd the exact flow the lane asks for. The key now
+    // gates only the decision-equivalent transitions ('done' / 'blocked');
+    // 'na' and 'pending' fall through to the role-badge gate below, which
+    // still restricts them to the badged function (or projects.write).
+    if (!has && status !== "na" && status !== "pending") {
       return c.json({ error: `Requires ${item.required_perm}` }, 403);
     }
-    // Same brand scope as the review route (owner 2026-08-10) — a
-    // brand-configured approver can only tick their own brands' gated steps.
-    const denied = await approverBrandBlocked(c.env, user?.id, itemId);
-    if (denied) {
-      return c.json(
-        {
-          error: `You approve ${denied.brands.join(" / ")} events only — this one is ${denied.brand || "unbranded"}.`,
-        },
-        403,
-      );
+    if (has) {
+      // Same brand scope as the review route (owner 2026-08-10) — a
+      // brand-configured approver can only tick their own brands' gated steps.
+      const denied = await approverBrandBlocked(c.env, user?.id, itemId);
+      if (denied) {
+        return c.json(
+          {
+            error: `You approve ${denied.brands.join(" / ")} events only — this one is ${denied.brand || "unbranded"}.`,
+          },
+          403,
+        );
+      }
     }
   }
   // Per-function gate for tick-only roles (Sales-department visibility, rules

@@ -1,3 +1,13 @@
+/* ALREADY RUN — DO NOT RE-RUN.
+   
+   Written for the D1 -> Supabase cutover and executed in 2026-06. It is kept for the record of
+   what was done to production, not as a tool.
+   
+   A SOURCE codemod. It rewrote SQLite dialect into Postgres across the tree; the tree it was written against no longer exists.
+   
+   Nothing in this repository reaches it: no npm script, no workflow, no doc,
+   no import. That is deliberate now — it used to be an accident, and an
+   unreferenced script whose NAME still reads as runnable is an invitation. */
 // Source-level dialect fixes for the D1->Supabase cutover that the shim cannot
 // reach: Drizzle sql`` fragments (compiled by Drizzle, bypassing env.DB), plus
 // GROUP_CONCAT and INSERT OR IGNORE which need a Postgres rewrite.

@@ -1,0 +1,50 @@
+name: Which SO is so_to_po retrying (read-only)
+
+# 2026-08-17. The service log shows `/so-to-po HC-SO-2608-001` retrying every
+# five minutes; the owner says he raised the purchase order from HC-SO-2608-003.
+# Both name a SALES ORDER, so they disagree about a fact.
+#
+# The log's identifier is the SOURCE sales order, not the purchase order:
+# composeSoToPo sends no DocNo, so AcSyncService's request line falls through to
+# FromDocNo. This prints, for every so_to_po and create_po row, which sales
+# order the QUEUE names and which one the purchase order's own lines imply, and
+# flags a row where those two disagree — which would be a mislinked
+# `so_item_id`, not a mismatch of memory.
+#
+# SELECT only — no DDL, no writes, no transaction. The verdict is the output,
+# so it exits 0 for every legitimate answer, including an empty queue.
+on:
+  workflow_dispatch:
+    inputs:
+      company_id:
+        description: 'Company id'
+        required: false
+        default: '1'
+      limit:
+        description: 'Rows to list (max 200)'
+        required: false
+        default: '50'
+
+# Its own group, never the deploy's: a diagnostic must not queue behind a
+# release or displace one.
+concurrency:
+  group: which-so-is-so-to-po-retrying
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: diagnose (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          COMPANY_ID: "${{ inputs.company_id }}"
+          LIMIT: "${{ inputs.limit }}"
+        run: node scripts/which-so-is-so-to-po-retrying.mjs

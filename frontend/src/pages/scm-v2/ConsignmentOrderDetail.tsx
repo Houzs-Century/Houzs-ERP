@@ -974,21 +974,23 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Salesperson</span>
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={form.salespersonId}
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  ariaLabel="Salesperson"
+                  placeholder="— Pick staff —"
                   disabled={inputsDisabled || !canChangeSalesperson}
-                  onChange={(e) => set('salespersonId', e.target.value)}>
-                  <option value="">— Pick staff —</option>
-                  {sortByText(staffList).map((s) => (
-                    <option key={s.id} value={s.id}>{s.name} ({s.staffCode})</option>
-                  ))}
-                  {form.salespersonId
-                    && !staffList.some((s) => s.id === form.salespersonId)
-                    && (
-                      <option value={form.salespersonId}>
-                        (former staff)
-                      </option>
-                    )}
-                </select>
+                  value={form.salespersonId}
+                  onChange={(v) => set('salespersonId', v)}
+                  options={[
+                    ...sortByText(staffList).map((s) => ({
+                      value: s.id,
+                      label: `${s.name} (${s.staffCode})`,
+                    })),
+                    ...(form.salespersonId && !staffList.some((s) => s.id === form.salespersonId)
+                      ? [{ value: form.salespersonId, label: '(former staff)' }]
+                      : []),
+                  ]}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>

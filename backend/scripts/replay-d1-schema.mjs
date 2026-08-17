@@ -1,3 +1,13 @@
+/* ALREADY RUN — DO NOT RE-RUN.
+   
+   Written for the D1 -> Supabase cutover and executed in 2026-06. It is kept for the record of
+   what was done to production, not as a tool.
+   
+   It replayed the D1 migrations into an in-memory SQLite to diff them against Postgres. D1 is test-only now.
+   
+   Nothing in this repository reaches it: no npm script, no workflow, no doc,
+   no import. That is deliberate now — it used to be an accident, and an
+   unreferenced script whose NAME still reads as runnable is an invitation. */
 // Replay all D1 migrations into an in-memory SQLite (sql.js) to recover the
 // AUTHORITATIVE final schema (after all 195 ALTERs), then dump each table's
 // final CREATE + columns. Source for porting the raw-SQL-only tables to PG.

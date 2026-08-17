@@ -1,3 +1,13 @@
+/* ALREADY RUN — DO NOT RE-RUN.
+   
+   Written for a one-shot prod config change and executed in 2026-06. It is kept for the record of
+   what was done to production, not as a tool.
+   
+   It switched the prod Hyperdrive config between Supabase poolers. Same caution: it sets, it does not read first.
+   
+   Nothing in this repository reaches it: no npm script, no workflow, no doc,
+   no import. That is deliberate now — it used to be an accident, and an
+   unreferenced script whose NAME still reads as runnable is an invitation. */
 // One-shot: switch the prod Hyperdrive config between Supabase poolers to fix
 // the ~20s connection-establishment latency on multi-query endpoints (inbox).
 // Default -> TRANSACTION pooler (6543), which multiplexes without spinning up a

@@ -243,6 +243,14 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   if (!me) return c.json(empty);
 
   // Shared period + company + status predicate.
+  // DRAFT is COUNTED here, deliberately. #2356 excluded it on the reasoning that
+  // a draft is not a sale, which is true of commission and of the MTD reports —
+  // but this card is not a commission figure. It is the salesperson's pipeline
+  // for the month, and the owner wants a started order to appear in it.
+  // The mismatch #2356 was chasing (card 28, board 1) is closed from the other
+  // side instead: GET /mfg-sales-orders/mine now returns drafts too, so the
+  // board lists the same 28 orders this card counts. Change the two together or
+  // they drift apart again.
   const conds = ["status::text NOT IN ('CANCELLED','ON_HOLD')", "so_date >= ?"];
   const binds: unknown[] = [monthStart];
   if (toYmd) { conds.push("so_date <= ?"); binds.push(toYmd); }

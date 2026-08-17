@@ -1,3 +1,13 @@
+/* ALREADY RUN — DO NOT RE-RUN.
+   
+   Written for the D1 -> Supabase cutover and executed in 2026-06. It is kept for the record of
+   what was done to production, not as a tool.
+   
+   It applied the generated Postgres baseline to the live Supabase project. Re-running it against a schema that has moved 280 migrations past that baseline is not a no-op.
+   
+   Nothing in this repository reaches it: no npm script, no workflow, no doc,
+   no import. That is deliberate now — it used to be an accident, and an
+   unreferenced script whose NAME still reads as runnable is an invitation. */
 // One-shot: apply the generated Postgres baseline to the Supabase DB.
 // Reads DATABASE_URL from backend/.dev.vars. Splits drizzle's
 // `--> statement-breakpoint` markers and runs each statement.

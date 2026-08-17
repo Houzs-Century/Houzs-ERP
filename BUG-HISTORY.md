@@ -59,6 +59,847 @@ frontend call site reaches any more. There is no `limit` query param at all,
 which is why `limit=3000` and the default returned byte-identical payloads.
 
 **Ref.** PR (2026-08-17), following #2300.
+## One bad area tag on `main` turned `audit:bug-index` into a repo-wide CI blackout [high]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** 2026-08-17, 04:00–05:00Z: five of five PR-branch CI runs red, on
+four unrelated branches, with the identical message —
+`BUG-INDEX: "Cancelled and unconfirmed events…" carries <!-- area: PMS My
+Pending lanes -->, which is not an area.` Three of the four branches
+(`fix/pair-stockin-tile`, `fix/floorplan-card`,
+`refactor/planning-state-narrow-readiness-0815`) had no connection to the entry
+at all. The only green run in the window was the repair branch itself.
+
+**Root cause (traced, not guessed).** `gen-bug-index.mjs` validated the
+`<!-- area: -->` tag with an unconditional `process.exit(1)` the moment it saw
+one that named no area. Three facts turn that into a blackout:
+
+1. `audit:bug-index` runs inside `backend-typecheck`, which IS a required status
+   check, so the failure blocks the merge;
+2. the tag lives in `BUG-HISTORY.md` — the ONE file the working agreement makes
+   every code PR append to — so once a bad tag merges it is in everybody's tree;
+3. the exit happened before the generator wrote anything, so nobody could
+   regenerate their way out either.
+
+Commit `6c9f8cbd` landed the bad tag at 04:00:21Z. Repair PR #2351 (merged
+04:59:53Z) touches only `BUG-HISTORY.md`. Fifty-nine minutes of blocked merges
+for a typo three of the four blocked authors never wrote.
+
+The assumption is recorded, in writing, in the test that guarded this file:
+*"a malformed tag is in the diff of whoever wrote it"*
+(`derivedDocsDoNotDeadlock.test.mjs`). It is false for exactly the reason the
+same file already gives for content DRIFT, four lines above it — the ledger is
+shared, and merges are serial. The drift half had learned the lesson; the tag
+half predated it.
+
+**Fix.** A bad tag is now REPORTED in full on every run and CHARGED only to the
+change that introduced it — matched by ENTRY (title + tag) against
+`BUG-HISTORY.md` at the merge base, not by counting tag strings, so the entry
+NAMED is the one actually added. Inherited tags fall back to the keyword guess,
+so the index still builds and the author can still regenerate. An unresolvable
+merge base charges everything, because a gate that cannot tell whose fault it is
+must not let anything through. Same rule, same wording, as
+`check-file-size.mjs`'s inherited-ceiling handling.
+
+**Proof.** Four behavioural tests in `derivedDocsDoNotDeadlock.test.mjs`, each
+building a throwaway git repo: inherited tag exits 0 and still writes the index;
+an introduced tag exits 1; with the tag broken on the base AND a second added
+here, exit 1 names only the new one; no merge base charges everything.
+
+**Ref.** PR (this one), 2026-08-17.
+
+## `completeness-claim` failed on LINE NUMBERS, so an unrelated merge turned a PR red with nothing in it changed [medium]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** A PR whose diff had not touched a single member of the population
+it enumerated went red on `completeness-claim` after merging `main`. The
+author's only remedy was to regenerate the ```enumeration block by hand and push
+again — proving nothing, costing a CI round, and (worse) training people to
+treat a red completeness gate as noise. Compounded by finding #3 below: on
+2026-08-16 the reaction to one such failure was to DELETE a legitimate
+enumeration block out of another agent's PR.
+
+**Root cause (traced, not guessed).** The gate re-runs the pasted command and
+diffs its output as a multiset (`diffOutput`, `scripts/lib/completeness-claim.mjs`).
+CLAUDE.md, the runner's own `HOW_TO` and the pull_request_template all show
+`git grep -n`, so authors write `-n` and every pasted line carries a
+`path:NNN:` COORDINATE. The populations this repo enumerates live in
+`mfg-sales-orders.ts` (11,988 lines) and `Projects.tsx` (15,128) — files touched
+constantly. Any merge into the branch shifts those numbers, every line of the
+pasted block mismatches, and the gate reports the stale-enumeration shape for a
+population that did not change. The membership was identical; only its
+coordinates moved, and the diff was comparing coordinates.
+
+**Fix.** A leading `path:NNN:` is normalised to `path:` on BOTH sides before the
+diff (`stripLineNumber`). Same argument as the pre-existing sort: the diff
+already drops output ORDER because `rg` walks in parallel and order carries no
+meaning — a line number carries no membership either. What the gate still fails
+on is unchanged and pinned by tests in both directions: a site ADDED, REMOVED,
+RETEXTED, or moved to a DIFFERENT FILE all fail (the path is kept), and two
+sites in one file stay two entries in the multiset. `grep -c` output (`path:12`,
+no trailing colon) is deliberately NOT matched — there the number IS the
+population's size.
+
+Rejected alternative: refusing `-n` in an enumeration command. It would turn
+every block already written here, and the example this repo's own documentation
+tells authors to copy, into a `COMMAND_REFUSED` failure — more red of exactly
+the shape being removed — and it throws away a number the human reviewer wants.
+
+The one coordinate shape left is a BARE `NNN:` from `grep -n pattern onefile`: a
+leading number with no path cannot be told apart from content, so the gate still
+FAILS and now names the cause and the one-line fix instead of showing two lists
+that look identical.
+
+**Proof it still bites.** `node --test scripts/check-completeness-claim.test.mjs`
+— 52 pass / 0 fail with the fix; with `stripLineNumber` reverted to the identity,
+47 pass / **5 fail**, exit 1.
+
+**Ref.** PR (this one), 2026-08-17.
+## An unknown area tag in a bug entry turned a required check red and blocked every merge [medium]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** From 2026-08-17, every open pull request failed `backend-typecheck`
+— a REQUIRED context — with a message about a document none of them had
+touched: `BUG-INDEX: "The card-style task block showed a dead Approve button on
+al" carries <!-- area: PMS checklist status / approvals -->, which is not an
+area.` `main` itself was red, so nothing could land behind it.
+
+**Root cause (traced, not guessed).** #2363 hand-wrote its own area tag instead
+of taking one of the seventeen `gen-bug-index.mjs` accepts. That script refuses
+an unknown area rather than falling back to its keyword guess, and the refusal
+is deliberate — "a typo that silently reverts to guessing is the failure this
+tag exists to remove" is its own error text. What it did not anticipate is
+WHERE it runs: `audit:bug-index` sits inside `backend-typecheck`, so a one-line
+typo in a Markdown comment is a repo-wide merge stop. Confirmed by running
+`npm --prefix backend run audit:bug-index` against a clean `origin/main`
+checkout: exit 1, with `main` carrying the tag at `BUG-HISTORY.md:404`.
+
+**Fix.** Retagged that entry to `Projects + PMS + fair report`, the area three
+other PMS entries already carry. The entry's text is unchanged.
+
+**Not fixed here, and worth someone's judgement:** the author of #2363 could
+not have been told. The tag is validated only by a job that runs after the
+merge, so the check that fails is the one nobody could act on before landing —
+the actor who can fix it and the actor it fails are different people. Either
+the validation belongs on the PR that writes the tag, or the area list belongs
+somewhere the writer reads.
+
+**Ref.** PR #2364, 2026-08-17.
+
+## The /mine view-all branch queried the wrong schema, so the first director to use it got a 500 [high]
+
+**Symptom.** Minutes after #2359 deployed, the POS My-orders board failed to
+load for a Sales Director on "All salespeople":
+`500 {"error":"load_failed","reason":"column mfg_sales_orders.company_id does not exist"}`.
+
+**Root cause (traced, not guessed).** The view-all branch of
+`GET /mfg-sales-orders/mine` swapped in its own client:
+
+    const admin = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY, ...)
+
+Ported 2990 logic: there, the request client was RLS-scoped, so view-all needed
+a service-role client. In Houzs both premises are false. `sb` already IS the
+service-role client, and — the actual break — `getSupabaseService` pins
+`db: { schema: 'scm' }` while a raw `createClient` defaults to PUBLIC, where
+Houzs's own AutoCount-named tables live and `mfg_sales_orders` has no
+`company_id`. So the branch was not redundant-but-harmless; it pointed the whole
+board at the wrong schema.
+
+It never fired before #2359 because the gate in front of it was the bare
+`scm.so.view_all` flat key, which no caller held. The gate was widened to the
+director tier, the branch became reachable, and its first caller ever found the
+bug. Latent since the port.
+
+**Fix.** The branch no longer builds a client — it only sets the scope flags,
+and every query in `/mine` rides `sb`. Net-negative lines (the file is under the
+shrink-only size gate). The structural test gains a third assertion: the /mine
+block must not assign a `createClient(` of its own, so the ported pattern cannot
+come back.
+
+**Residual risk, and what holds it.** The same ported `createClient` shape
+exists once more in this file (the one-shot SKU mint probe, ~:5330) and its
+failure is deliberately swallowed ("never fail the SO on a mint error") — if
+one-shot mints are silently not deduplicating, this is the first place to look.
+Not touched here: it is load-bearing on the SO create path and deserves its own
+verification rather than a drive-by edit.
+
+## The "All salespeople" board silently self-scoped for directors, and two DRAFT fixes chased the wrong filter [medium]
+
+**Symptom.** After #2357 shipped (drafts shown on the board, KPI counting them
+again), the POS My-orders screen for company 2 still read **28 orders /
+RM 73,975** on the KPI card over a board showing **1** — with the picker on
+"All salespeople". The one row shown was the viewer's own single order.
+
+**Root cause (traced, not guessed).** `GET /mfg-sales-orders/mine` honours
+`?salesperson=all` only for a view-all caller — and it was the ONE gate in
+`mfg-sales-orders.ts` still checking the bare flat key:
+
+```
+$ git grep -n "hasHouzsPerm(c, 'scm.so.view_all')" -- backend/src/scm/routes
+backend/src/scm/routes/mfg-sales-orders.ts:2029:    if (hasHouzsPerm(c, 'scm.so.view_all')) {
+```
+
+while every other sales read in the same file grants the tier via
+`canViewAllSales` — flat key OR director position (`:772`, `:1161`, `:1877`),
+the alignment `houzs-perms.ts` documents. The caller is a Sales Director whose
+position matrix lacks the flat key: full visibility on the SO list, silently
+self-scoped on the board. Silent is the sting — the param is ignored, not
+refused, so the board looks complete and merely short.
+
+The board therefore showed the caller's own 1 order. The KPI card counts the
+showroom by `scm.staff.showroom_id`, no view-all needed, hence 28. **DRAFT was
+never the binding constraint for the all-salespeople view** — #2356 and #2357
+each closed a real inconsistency (the endpoints genuinely disagreed on DRAFT),
+but neither could have produced 28/28 for this caller.
+
+**Fix.** `/mine` gates on `canViewAllSales(c)`, the same tier as the rest of the
+file. Net-zero lines (the file is under the shrink-only size gate). A structural
+test in the consignmentOrderSalesScope layer-3 idiom
+(`tests/mineBoardViewAllTier.test.ts`) pins the gate and fails on any revert to
+the bare key, since the inline handler cannot be driven directly without
+exporting it.
+
+**Residual risk, and what holds it.** The period columns still differ —
+`/pos/sales-stats` windows on `so_date`, `/mine` on `created_at` — so a
+back-dated order can land in one month's card and the other month's board. That
+mismatch is at most a few rows, not 27, and is recorded in the #2357 entry
+below. Nothing yet asserts the two endpoints agree; a shared predicate remains
+the durable fix.
+
+## The POS order board hid the drafts its own KPI card was counting [medium]
+
+**Symptom.** On `pos.2990shome.com` (company 2) the My-orders KPI card read
+**"28 orders / RM 73,975"** for July 2026 while the board directly beneath it
+showed **1**. The POS carried a banner to explain the gap — *"27 orders count
+toward the totals above but are not shown here"* — so a salesperson could see
+that 27 of their month was somewhere they could not open.
+
+**Root cause (traced, not guessed).** Two endpoints disagreed on one status.
+`/pos/sales-stats` counted `DRAFT`; `GET /mfg-sales-orders/mine` excluded it.
+
+**The first fix went the wrong way.** #2356 closed the gap by making the KPI card
+exclude DRAFT too, reasoning from the rest of the codebase: the MTD aggregates
+exclude it, and `COMMISSION_EXCLUDED_STATUSES` pays no commission on one. That
+reasoning is sound for a *money* report and wrong for *this* card. The card is
+the salesperson's pipeline for the month, and the owner wants a started order to
+count. #2356 also dropped the card from 28 orders to 1 for company 2, and would
+have dropped it for every other tenant that had drafts.
+
+**Fix.** Reverted the `/pos/sales-stats` predicate to
+`NOT IN ('CANCELLED','ON_HOLD')`, and closed the gap from the other side instead:
+`/mine` now returns DRAFT, so the board lists the same orders the card counts.
+The MTD aggregates in the same file still exclude DRAFT — those are money and a
+draft earns nothing. This board is a work queue.
+
+**Residual risk, and what holds it.** Nothing holds it. The two predicates live
+in different files (`routes/pos.ts` and `scm/routes/mfg-sales-orders.ts`), share
+no constant, and no test asserts they agree. They have now drifted apart twice in
+one day, in both directions. A shared exported predicate would fix that properly.
+
+They are also still not guaranteed to produce the same COUNT, because they filter
+the period on different columns: `/pos/sales-stats` uses `so_date`, `/mine` uses
+`created_at`. An order whose `so_date` and `created_at` fall in different months —
+a back-dated SO, or one created just after midnight on the 1st — lands in one and
+not the other. That is a second, smaller mismatch which this PR does not address
+and which no one has yet quantified.
+## The inch mark was typed three ways and each one priced differently [medium]
+
+**Symptom.** Found while quantifying the total-height shortfall (the entry
+above), not reported: 2990's live `totalHeights` pool lists `17“`, `19“`, `25”`
+and `27“` — curly — right next to straight-quoted `18"` and `26"`. One document
+line stores its gap as `12“`. Products · Maintenance therefore shows the same
+kind of value two different ways, and a line whose spelling did not match the
+pool's priced its surcharge at 0.
+
+**Root cause (traced, not guessed).** Every maintenance-pool lookup in
+`scm/shared/mfg-pricing.ts` is `pool.find((o) => o.value === value)`. `"`
+(U+0022), `“` (U+201C), `”` (U+201D) and `″` (U+2033) are four distinct strings,
+so `18"` and `18“` are unrelated keys — and a miss returns 0, which is
+indistinguishable from a tier that is genuinely free. That is the same failure
+shape as the missing `totalHeight` argument in the entry above, arriving by a
+different road: a value silently worth nothing.
+
+Curly marks are what a phone keyboard and a paste out of Word produce, and the
+Maintenance screen accepts whatever is typed.
+
+**Fix.** `findOption` — exact match first, then a quote-insensitive one. The
+ordering is the whole safety argument: **no line that already matches can be
+re-priced**, so the pools that carry one height twice under different spellings
+AND different prices (supplier `07204b99` has `19“` at RM120 and `19"` at RM40)
+keep resolving exactly as they do today. Only a value that matches nothing —
+and therefore prices at 0 — can start matching. Deliberately narrow: quote
+characters only, no trim, no case folding; this same string family also composes
+`variant_key`, which is the inventory bucket identity.
+
+**The data is a SEPARATE, refusable step.** `scripts/normalise-maintenance-quotes.mjs`
+straightens the stored pool values, but it ADDS a config version rather than
+rewriting one (the table is versioned and the app reads the newest row), and it
+REFUSES any pool where two spellings would fold together at different prices —
+merging those leaves two identical keys whose answer depends on array order, i.e.
+the ambiguity made permanent instead of removed. Which price is right is a
+business fact nobody wrote down.
+
+**What was NOT done, deliberately.** Stored document `variants` are untouched.
+`gap` / `divanHeight` / `legHeight` are components of `variant_key`
+(`fabriccode=bf-01|gap=8"|divanheight=14"|legheight=2"`), so rewriting one moves
+that line's inventory bucket. The lookup fix makes the rewrite unnecessary for
+pricing, which is the only place the mismatch cost money.
+
+**Also found, not fixed (needs pricing, not code).** Ten bedframe PO lines carry
+a total height that is in NO pool at all — `8"` ×7, `9"`, `30"`, `40"` — so their
+surcharge is 0 by absence rather than by price. `8"` is shorter than the cheapest
+listed tier (`10"` = RM400).
+
+**Ref.** PR (branch `fix/maintenance-pool-smart-quotes`), 2026-08-17.
+Tests: `backend/tests/mfgPricingSmartQuotes.test.ts`,
+`backend/tests/maintenanceQuoteNormalise.test.ts`.
+
+## /pos/sales-stats counted DRAFT orders as revenue, so the POS KPI card never matched the board under it [medium]
+
+**Symptom.** On `pos.2990shome.com` (company 2), the My-orders KPI card read
+**"28 orders / RM 73,975"** for July 2026 while the order board directly beneath
+it showed **1**. Only RM 3,865 of that total sat on a confirmed order. The POS
+carries a banner reconciling the two — *"27 orders count toward the totals above
+but are not shown here"* — so the contradiction was visible on the tablet, not
+silent, but it could never resolve.
+
+**Root cause (traced, not guessed).** The two figures come from two endpoints
+that disagreed on one status. `GET /mfg-sales-orders/mine` (the board) excludes
+`DRAFT`. `GET /pos/sales-stats` (the card) did not — its predicate was
+`status::text NOT IN ('CANCELLED','ON_HOLD')`.
+
+That made `/sales-stats` the outlier. Every other status filter on
+`mfg_sales_orders` already excludes DRAFT:
+
+```
+$ git grep -n '("CANCELLED","DRAFT")' -- backend/src/scm/routes/mfg-sales-orders.ts
+backend/src/scm/routes/mfg-sales-orders.ts:1966:      .not('status', 'in', '("CANCELLED","DRAFT")')
+backend/src/scm/routes/mfg-sales-orders.ts:2304:      .not('status', 'in', '("CANCELLED","DRAFT")'),
+backend/src/scm/routes/mfg-sales-orders.ts:2354:      .not('status', 'in', '("CANCELLED","DRAFT")'),
+backend/src/scm/routes/mfg-sales-orders.ts:6518:        .eq('phone', normPhone).not('status', 'in', '("CANCELLED","DRAFT")').neq('doc_no', docNo),
+```
+
+and the commission rules refuse to pay on one:
+
+```
+$ git grep -n "COMMISSION_EXCLUDED_STATUSES =" -- backend/src
+backend/src/scm/shared/hr-commission.ts:39:export const COMMISSION_EXCLUDED_STATUSES = ['CANCELLED', 'ON_HOLD', 'DRAFT'] as const;
+```
+
+So the card credited revenue that earns no commission and that no other report
+recognises. A salesperson reading "RM 73,975 this month" was reading mostly
+abandoned drafts.
+
+**Fix.** `DRAFT` added to the shared status predicate in `/sales-stats`, so the
+endpoint follows the same rule as the rest of the codebase. The stale doc comment
+above the handler ("excludes CANCELLED/ON_HOLD safely") was corrected with it.
+
+**Residual risk, and what holds it.** The status predicate is a CONSTANT in the
+shared `conds` array while the company filter is bound per request, so this moves
+the KPI card for every tenant on the endpoint, not only company 2. Any tenant
+that was counting draft revenue will see its total fall. That is intended — the
+reasoning does not depend on which company is asking — but it is a visible number
+moving for people who did not ask for it, and it is the reason this is a
+behaviour change rather than a silent correction.
+
+Nothing pins the two endpoints together. `/mine` and `/sales-stats` live in
+different files (`scm/routes/mfg-sales-orders.ts` and `routes/pos.ts`), share no
+predicate, and no test asserts they agree. They drifted once and can drift again.
+The POS-side banner that made this visible lives in the OTHER repo
+(`apps/pos/src/lib/order-board-counts.ts` in 2990's), which is the only thing
+that surfaced it.
+
+## A delivered order kept asking Procurement to buy the goods again [high]
+
+**Symptom.** Owner, 2026-08-17, with screenshots of MRP · Stock Status: *"check
+all these SO already have PO & some done delivered, why still appear at MRP for
+ordering"*. `2990-SO-2607-012` (BARON-(K), ARRUS-SOFT MATT Q) and
+`2990-SO-2606-019` (TRION-(K), KETTA-FIRM MATT K) were sitting in MRP as
+SHORT — orange, still to order — while their goods had shipped, stock was
+deducted and the customer had the furniture. Both orders also read CONFIRMED
+instead of DELIVERED. Reported as "还是出现" — it had been raised before.
+
+**Root cause (traced, not guessed).** `delivery_order_items.so_item_id` was the
+ONLY key either coverage engine read:
+
+- `soDeliverableRemaining` (`delivery-orders-mfg.ts`) sums delivered qty with
+  `.in('so_item_id', soItemIds)`, and MRP subtracts that from demand;
+- `isSoFullyCovered` (`so-delivery-sync.ts`) opens with
+  `if (!d.soItemId) continue;`, and that decides CONFIRMED → DELIVERED.
+
+That column is nullable behind
+`delivery_order_items_so_item_id_mfg_sales_order_items_id_fk … ON DELETE SET
+NULL` (confirmed against prod `pg_constraint`, `confdeltype = 'n'`), so deleting
+ONE Sales-Order line blanks the pointer on every downstream document that served
+it — the same hazard `so-line-relink.ts` was written to defend against on the
+PO/DO/SI side. When it blanks, a shipment that physically happened becomes
+invisible to BOTH engines at once, and the two symptoms above are one fact read
+twice.
+
+Measured on prod, not inferred: **26 lines across 8 non-cancelled DOs** carried
+`so_item_id IS NULL` while their DO header still named the order —
+2990-DO-2607-008/009/011/013/014/025, 2990-DO-2608-003 and 2990-DO-2608-008.
+`scm.inventory_movements` carries the OUT for them.
+
+The links were NOT missing at creation. `scm.mfg_so_audit_log` for
+2990-SO-2607-012 records, six seconds after 2990-DO-2608-008 was raised on
+2026-08-13, `UPDATE_LINE → "READY: 2990S WP MP (K), …"` and `UPDATE_STATUS
+CONFIRMED→DELIVERED` — two rows only reachable through a populated
+`so_item_id`. They are gone now, and no trigger exists on the table
+(`pg_trigger`: none) and no code writes the column to NULL (`grep`), which
+leaves the FK as the mechanism. **Which path deletes the SO line is still
+open** — this fix does not claim to have closed it, and says so where it
+matters.
+
+**Fix.** Three parts, in the order they help:
+
+1. `backend/scripts/repair-do-so-item-links.mjs` + `scripts/lib/do-so-link-repair.mjs`
+   — re-point the orphaned lines. A repair is offered only when it is FORCED:
+   same SO doc (from the DO header), same item code, same qty, exactly one
+   candidate, no competing claim. Dry-run by default, verified in-transaction
+   against an over-delivery check, rolled back otherwise.
+2. `backend/src/scm/lib/do-unlinked-coverage.ts` — give both engines the SECOND
+   reading the database always held: `delivery_orders.so_doc_no`. Attribution is
+   confined to the order the DO header names, matched on item code, and capped
+   by what the real links already cover, so a repaired line and its unlinked
+   twin can never double-count and no unit can move between orders.
+3. Wired into `soDeliverableRemaining` (§2b) and `syncSoDeliveredFromDo`, with
+   the synthesised lines registered for return-netting exactly like linked ones.
+
+**What was deliberately NOT done.** `2990-DO-2607-017` has zero line rows and
+three OUT movements — its lines are gone entirely, not just unlinked. Rebuilding
+them writes money onto a customer-facing document from inference, and the fate
+of its three service lines is a business call; it is reported, not guessed.
+`2990-SO-2606-030`'s pillow is refused too: ordered qty 1, already delivered by
+2990-DO-2608-010, with a second orphaned line on 2990-DO-2607-013 — linking it
+would report 2 delivered against 1 ordered.
+
+**The trap this leaves behind, and what holds it.** `loadUnlinkedDoCoverage` is
+best-effort: a failed read returns `[]`, which is the same sentence a healthy
+system produces. So it is written with two plain reads instead of the elegant
+embedded-column filter (`.in('parent.so_doc_no', …)`) — the one PostgREST shape
+the fake client in the route tests cannot exercise, and therefore the one that
+could ship as a silent no-op — and the catch logs rather than swallows.
+
+**Ref.** PR (branch `fix/do-so-link-repair-and-po-total-height`), 2026-08-17.
+Tests: `backend/tests/doSoLinkRepair.test.ts`, `backend/tests/doUnlinkedCoverage.test.ts`.
+
+## A PO raised from a Sales Order dropped the total-height surcharge [medium]
+
+**Symptom.** Owner, 2026-08-17: *"PO2608-003 /SO2607-018 price incorrect short
+RM80 due to additional charges for total height less than 20""*. On
+`2990-PO-2608-003`, CODY-(SS) at total height 18" was raised at **RM407.50**
+against the SO line's own stored cost of **RM487.50** — exactly the RM80 the
+Products · Maintenance *Total Heights* table prices that tier at. The same PO's
+CODY-(Q) at 22" matched to the cent.
+
+**Root cause (traced, not guessed).** `computeMfgPoUnitCost` accepts
+`totalHeight` and `computeMfgLineCost` prices it for BEDFRAME out of
+`maintenanceConfig.totalHeights`. All **five** frontend callers passed it
+(`PurchaseOrderNew`, `PurchaseOrderDetail`, `PurchaseInvoiceDetail`, both
+Consignment pages). All **three** backend callers did not —
+`scm/lib/po-pricing.ts` and two in `scm/routes/mfg-purchase-orders.ts`. The
+lookup therefore received `undefined` and returned 0. So a PO keyed by hand on
+the PO screen carried the surcharge and a PO converted from an SO did not, which
+is why this read as a data problem rather than a code one. The 22" line matched
+because that tier is priced 0 — the omission was invisible on every line at or
+above 20", which is most of them.
+
+**Fix.** Pass `totalHeight` at all three backend call sites, unconditionally, as
+the frontend does (the engine ignores it off BEDFRAME).
+
+**The test is structural, on purpose.** An engine test would have stayed green
+throughout — the engine was never broken; it was reached through an argument
+nobody passed. `backend/tests/poTotalHeightSurcharge.test.ts` asserts every
+`computeMfgPoUnitCost(` call site passes the key, so a fourth caller that forgets
+it fails here instead of in a supplier's PO. Written first WITHOUT stripping
+comments, it passed against a probe that deleted the argument — the explanatory
+comment above it still contained the word. It now asserts on `\btotalHeight\s*:`
+in comment-free source and is proven to fail when the argument is removed.
+
+**Not repriced.** 28 bedframe PO lines carry a sub-20" total height and were
+raised through a server-side path; whether to recover the difference on already
+-issued POs is the owner's call, not the fix's.
+
+**Ref.** PR (branch `fix/do-so-link-repair-and-po-total-height`), 2026-08-17.
+
+## CLAUDE.md said the migration-number gate was still open for three days after it had closed [medium]
+
+**Symptom.** `CLAUDE.md` carried, as a standing instruction to every session:
+*"Move the duplicate-number assertion into `backend-typecheck` ... **Not done.
+This is the open item.**"* A session picking that up on 2026-08-17 began building
+a dependency-free `check-migration-numbers.mjs` and wiring it into
+`backend-typecheck` — re-implementing a gate that already existed.
+
+**Root cause (traced, not guessed).** The remedy was written on 2026-08-13, the
+day #2121 merged a duplicate `0284` and production could not take a backend
+deploy for ~30 minutes. It was correct that day: `migrationNumbers.test.ts` ran
+in `backend-tests (2)`, which is not a required context.
+
+It stopped being true on 2026-08-14. `d78d55bf` (#2131, *"perf(ci): 565s -> 106s
+by not booting a Workers runtime for tests that never use one"*) created the
+light vitest project and `classifyTests()` swept this suite into it, because the
+suite needs no workerd. `backend-typecheck` runs `npm run test:light`. So the
+assertion has blocked a MERGE since 2026-08-14 — nobody was aiming for that, it
+was a side effect of a performance change, and nobody connected the two.
+
+Proven three ways, not inferred:
+
+```
+$ grep -n "run: npm run test:light" .github/workflows/ci.yml
+290:      - run: npm run test:light
+$ cd backend && npx vitest list --config vitest.light.config.mts | grep migrationNumbers
+tests/migrationNumbers.test.ts > migration numbering > ...
+$ gh api repos/hello-houzs/Houzs-ERP/rules/branches/main --jq '...required_status_checks[].context'
+backend-typecheck
+frontend
+```
+
+**Fix.** `CLAUDE.md` corrected: the remedy is marked DONE, with the commands to
+re-verify rather than a claim to believe, and the mechanism paragraph is kept
+because it still describes every OTHER shard-only assertion truthfully.
+
+**The real residual risk, and what now holds it.** The gating is INCIDENTAL. The
+light/workers split is computed at config time by a regex (`NEEDS_WORKERS`) over
+the comment-stripped source, so one added string containing `cloudflare:test` or
+`env.DB` — a fixture, a fake env, an asserted error message — would move the
+suite back to the shards and silently un-gate it, with CI still green. That is
+the "check that stops running" shape of `docs/staging-bench-rot-coe.md`.
+
+`backend/tests/classifyTests.test.mjs` now carries a `MUST_GATE_MERGE` list and
+fails if any suite on it is not classified LIGHT. Proven to fire, not assumed:
+appending `const __probe = "cloudflare:test";` to `migrationNumbers.test.ts`
+turns it red with the reason and the three ways out; removing it returns 11/11.
+The guard also fails loudly if a listed suite is renamed or deleted, rather than
+passing vacuously over a name nothing matches.
+
+**A second stale fact found in the same file, corrected.** That test's own header
+recorded a defect — "a file that merely MENTIONS `env.DB` in a comment is exiled
+to the serial pool ... five of the 46 workers-pool files" — and named three of
+them. `stripComments` has since fixed it: `companyScopeFailClosed`,
+`adminResetLink` and `reviewHighFindings` all classify LIGHT today, and the split
+is 42/332, not 5-of-46. Corrected in place with the command to re-measure.
+
+**What was NOT done, deliberately.** No second copy of the rule was shipped. A
+duplicate `check-migration-numbers.mjs` enforcing an already-enforced assertion
+is the "ONE RULE, MANY HAND COPIES" shape the 2026-08-15 handoff names; the
+useful protection was on the CLASSIFICATION, not on the rule.
+
+**Ref.** 2026-08-17.
+
+## The card-style task block showed a dead Approve button on already-approved items [low]
+
+<!-- area: Projects + PMS + fair report -->
+
+**Symptom.** Owner 2026-08-17: "i cant click approve" — on an APPROVED Stock In
+Transfer Record (approved by the Owner account that same day), the expanded
+task card still showed an enabled Approve button that did nothing when clicked.
+
+**Root cause (traced).** Two rules collided. The 2026-08-08 idempotence guard
+makes re-approving an approved item a silent backend no-op (correct). The
+2026-08-10 per-decision toggle (hide the button that repeats the current
+decision, keep the one that reverses it) was applied to the table DocRow but
+NOT to the card-style block with the "Management remark" input — so that block
+kept rendering an enabled Approve whose click was swallowed by the guard, which
+reads as a broken button. Same class as the 08-10 report, one render site missed.
+
+**Fix.** Same toggle applied to the card block: approved → Reject only,
+rejected → Approve only, undecided → both.
+
+**Ref.** 2026-08-17.
+
+## Cancelled and unconfirmed events kept generating everyone's My Pending work [medium]
+
+<!-- area: Projects + PMS + fair report -->
+
+**Symptom.** Owner 2026-08-17: "why event on status cancelled and pending appear
+in my pending task??" — past events (e.g. a cancelled REX Johor show that ended
+2026-08-16) surfaced in the purchaser's My Pending as an incomplete Stock Out
+Transfer Record. Measured at report time: 22 lane items sat on cancelled events
+and 24 on unconfirmed ('pending'-status) ones, across every lane.
+
+**Root cause (traced).** `listProjects` assembles the `pendingOr` lanes (role /
+title / approver / logistic / director / defect) and pushes them into WHERE with
+no gate on the PROJECT's own status. Every lane predicate looks only at
+checklist rows + due dates, so a cancelled event's untouched checklist kept
+qualifying forever — and the DUE_GATE (`due <= today`) means a PAST event always
+qualifies, which is why they "suddenly" pile up after the end date passes.
+
+**Fix.** One `COALESCE(p.status,'confirmed') NOT IN ('cancelled','pending')`
+pushed alongside the OR-block, so every lane inherits it and NULL-status legacy
+rows stay visible. Only confirmed events generate pending work.
+
+**Ref.** 2026-08-17, same PR as the N/A-gate entry below.
+
+## The purchaser could not N/A her own gated tasks — the approval key gated the wrong verb [medium]
+
+<!-- area: Projects + PMS + fair report -->
+
+**Symptom.** Owner 2026-08-17: "user sim cannot click N/A on her task please
+allowed her to click N/A." Sim (Purchaser) clicking N/A on Exchange List /
+Stock In / Stock Out rows got 403 `Requires stock_transfer.approve`.
+
+**Root cause (traced).** POST `/checklist/:itemId/status` required the item's
+`required_perm` approval key for EVERY status transition on a gated row. All
+three PURCHASER document rows are gated (`stock_transfer.approve` /
+`stock_in.approve` / `projects.approve`), while the purchaser-lane design
+(2026-08-11) explicitly expects the purchaser to N/A them when an event needs
+none — the gate and the lane contradicted each other, and since only approvers
+held the keys, the flood could only be cleared by Peter/Kris clicking N/A on
+the purchaser's behalf.
+
+**Fix.** The approval key now gates only the decision-equivalent transitions
+('done' / 'blocked'). 'na' and its undo ('pending') fall through to the
+existing role-badge gate, so the badged function (or projects.write) may N/A
+their own document rows; the approver brand scope still applies whenever the
+caller holds the key.
+
+**Ref.** 2026-08-17, same PR as the cancelled/pending-lane entry above.
+
+## /so-to-po sent no supplier, because the transfer branch threw the whole master away [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Measured on the live host 2026-08-17 09:15, and again at 09:20 when
+the cron tried again:
+
+```
+2026-08-17 09:15:12 /so-to-po   HC-SO-2608-001
+2026-08-17 09:15:13 ERROR /so-to-po: System.Exception: CreditorCode required for /so-to-po -
+    AutoCount defaults the payment term from the supplier, and without one the save dies on
+    FK_PO_DisplayTerm, which names the term and not the supplier
+      at AcSyncService.SoToPo(Dictionary`2 p)
+```
+
+Book state at that moment: no `HC-` purchase order exists; the six newest POs
+are all `ZZQA-PO-*` and all `Cancelled=T`.
+
+**Root cause (traced).** `enqueuePoCreate` builds `body = composeCreatePo(...)`,
+which carries `CreditorCode` — and then throws it away when the shape is a
+transfer:
+
+```ts
+body: (shape.kind === 'transfer' ? composeSoToPo(shape.dtlKeys, details) : body)
+```
+
+`composeSoToPo` returns `{ DtlKeys, Details }` **and nothing else**. So the
+create arm has always named the supplier and the transfer arm has never named
+anything: no creditor, no `DocNo`, no `DocDate`, no `Description`, no UDF. It is
+the same defect as the debtor on the sales side (#2340, #2341) — *the target
+document has no account when the SDK is asked to build it* — in the one place
+those two did not reach.
+
+**This one read clearly instead of as `Invalid transfer item.`** only because
+`SoToPo` already carries a guard that names it, added 2026-08-15 after
+`FK_PO_DisplayTerm` was chased as a mystery. The guard was right and the payload
+never caught up.
+
+**Fix, two halves, because one of them cannot reach the row that is stuck.**
+
+1. `enqueuePoCreate` puts `CreditorCode` / `CreditorName` on the transfer body.
+   **No join is needed here**, unlike the GRN and purchase-invoice arms:
+   `readPoHeader` has already resolved `suppliers.code` for the binding lookup
+   two lines above, so the value is in hand.
+2. `dispatchOne` backfills it at drain when the stored body has none. The drain
+   **replays** the stored payload and never recomposes, so fixing the enqueue
+   alone would leave every already-queued row failing for ever — and there is at
+   least one, retrying every five minutes.
+
+**THE ACCOUNT BOOK CANNOT ANSWER THIS ONE**, which is where the analogy with
+#2340's debtor fallback stops and why the backfill reads the ERP instead. For the
+four conversions the source document in the book HAS the account. `/so-to-po`'s
+source is a SALES order: it carries a `DebtorCode` and no creditor, and the
+supplier is a purchase decision that exists nowhere in AutoCount until we send
+it. The authority is the ERP's own purchase order, and the row already points at
+it: `enqueuePoCreate` sets `payload.writeback` to `{ purchase_orders, id,
+<poId> }` unconditionally, outside the transfer/create branch, so it is there
+whichever shape the row took.
+
+**Unchanged, and deliberately: `po_to_gr` and `gr_to_pi`.** This finding says
+nothing about them. `PurchaseHeader` still runs after the transfer there for the
+`transferMaster: true` reason recorded in #2340, and neither arm has ever
+succeeded. Divergence **D15** keeps its purchase half open.
+
+**Test.** `autocount-writeback.contract.test.ts`, four tests, and each of the two
+fixes was verified to FAIL when reverted (`expected undefined to be '400-T001'`,
+separately for the enqueue and for the drain). One of the four is a **positive
+control** — it asserts the fixture really takes the `so_to_po` branch — and it
+earned its place immediately: the first run showed the seeded purchase order was
+refusing with `MissingLocationError` because nothing had ever seeded a
+`warehouses` row for `wh-kl`, so all three assertions would have been passing
+over the `create_po` path. No live test had ever exercised `enqueuePoCreate` end
+to end; the only one that tried is `test.skip`.
+
+**Not fixed here, and worth a decision.** The transfer arm still sends no
+`DocNo`, so the first `/so-to-po` that succeeds will take an AutoCount
+auto-number rather than the ERP's — divergence **D5**, which `enqueueConvert`
+closed for the four conversions and this path never did. Left alone on purpose:
+this route has never once succeeded, and one variable at a time is what let the
+debtor be isolated on the sales side.
+
+**Ref.** PR for `fix/so-to-po-names-the-supplier`, 2026-08-17. Follows #2340 and
+#2341.
+## The repair expected one outbox row per document and production had five [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** The first PLAN dispatch of `repair-outbox-sent-by-hand.mjs` (run
+`31985282257`, 2026-08-17) refused with `HC-DO-2608-001: expected exactly one
+so_to_do outbox row, found 2` and the same for `HC-DO-2608-002`. Five rows for
+three documents, not three.
+
+**Root cause — read off the plan's own dump, not reasoned about.** Both delivery
+orders carry TWO `so_to_do` rows, because the **Send again** button had already
+been pressed on 2026-08-16 15:12:
+
+| row | `last_error` starts | state the page shows |
+|---|---|---|
+| the original | `[re-queued 2026-08-16T15:12:18.208Z -> outbox 07a12861-…]` | `requeued` — history |
+| the row that press inserted | `Gave up after 6 attempts. Last error: Invalid transfer item. \|\| source SO lines as the book holds them: …` | `failed` — live backlog |
+
+`annotate` deliberately leaves a re-queued row's status alone (nothing was ever
+sent for it), so the predecessor stays `failed` in the column while
+`acOutboxState` reads the marker and reports `requeued`. Counting rows by
+`(doc_no, op)` therefore over-counts by exactly the number of times anyone has
+pressed the button.
+
+**This also settles the window question with production data rather than code
+reading.** The live row on each delivery order is `failed`, its payload is
+composed (`writeback` names `delivery_orders.id=441fd56a-…` and
+`2c61d592-…`), and the ERP document carries no `linked_ac_docno` — the three
+facts `transferVerdict` requires to re-send. The predecessor is not re-sendable:
+`requeueOneRow` answers `already-requeued` to any row carrying the marker,
+before it looks at status or payload.
+
+**Fix.** Select the LIVE row — the one without the re-queue marker — and require
+exactly one of those, reporting the superseded predecessors and leaving them
+untouched. The post-repair assertion changed with it: the window is closed when
+every row is `sent` **or** carries the marker, which are the two rungs
+`requeueOneRow` refuses unconditionally, rather than the cruder "every row is
+`sent`" that would have failed against a predecessor it was right to leave alone.
+
+**Lesson.** The plan mode earned its keep on its first run. Had this shipped
+straight to APPLY it would have written nothing and exited 3 — the refusal was
+correct — but the assumption behind it ("one document, one outbox row") was
+invisible until a production dispatch printed the rows.
+
+**Ref.** PR #2344, 2026-08-17.
+
+## Three documents were in the account book and the ERP still offered to send them again [critical]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** On 2026-08-17 ~01:00 MYT three documents were written into the
+production AutoCount book `AED_HOUZS` by calling `AcSyncService` DIRECTLY on the
+shop-floor host, bypassing the outbox drain. Read back out of the book by direct
+SQL the same night: `DO HC-DO-2608-001` (from `HC-SO-2608-003`), `DO
+HC-DO-2608-002` (from `HC-SO-2608-002`) and `IV HC-SI-2608-001` (from
+`HC-DO-2608-002`), all `300-C002`, all `Cancelled=F`, two lines of Qty 1.0 each,
+with `TransferedQty = 1.0` now on seq 16 and 32 of both sales orders. The ERP
+knew none of it: the two delivery orders were still `failed` in
+`scm.autocount_outbox` (6/6 attempts, `Invalid transfer item.`), the invoice was
+still `skipped`, and no ERP document carried a `linked_ac_docno`.
+
+**Root cause of the RISK — traced through the ladder, not guessed.** The
+mismatch was not cosmetic. `status` was the only thing between those rows and a
+second copy of a live accounting document, and on the two delivery orders it was
+the wrong value:
+
+- `acRowIsRequeueable` (`scm/lib/autocount-outbox-status.ts:399`) returns
+  `state === 'failed'` for a transfer op, so the AutoCount Sync page put a live
+  **Send again** button on both delivery-order rows, desktop and mobile.
+- `requeueOutboxRow` refuses `sent` and refuses `pending`; a `failed` row falls
+  through to `requeueOneRow` with `resendingThisRow: true`.
+- `transferVerdict` then re-sends a transfer when `status = 'failed'` AND the
+  payload is composed AND the ERP document carries no `linked_ac_docno`. All
+  three held. Its duplicate guard reads exactly the column that was null.
+
+So the window was **open from the moment #2330 relaxed the transfer rule** (a
+`failed` transfer became re-sendable, correctly — it is the shape a rebuilt host
+fixes) **until this repair ran**. #2330 is not the bug; the bug is that a
+hand-made send left the recorded state saying "the service refused this", which
+is precisely the state #2330 made re-sendable. The invoice was never exposed:
+`skipped` fails `transferVerdict`'s first fact and comes back `not-recoverable`.
+
+**Fix.** `backend/scripts/repair-outbox-sent-by-hand.mjs` +
+`.github/workflows/repair-outbox-sent-by-hand.yml` — mark the three outbox rows
+`sent` with their `ac_doc_no`, and write `linked_ac_docno` onto the three ERP
+documents. That closes the window twice over and independently: `sent` is
+refused at `requeueOneRow`'s first rung, which has no exception, and a non-null
+`linked_ac_docno` is refused at `transferVerdict`'s own guard. The three
+document numbers are hard-coded and `DOC` can only narrow to one of them; a
+repair that could mark an arbitrary document `sent` would be a worse hazard than
+the one it fixes, because `sent` is the state that makes the ERP stop asking.
+The script refuses and exits 3 rather than guessing when it finds a row already
+`sent` without its own marker, or any `pending` row for the three.
+
+**What it deliberately does NOT do.** It cannot see the account book, and it
+says so in its own output rather than only in a comment: it asserts that the ERP
+now claims what a human measured in `AED_HOUZS`, nothing more. It also does not
+store the lines' AutoCount DtlKeys — the service was never asked, so they do not
+exist on this side — which means `composeEdit` will refuse an edit of these
+three until somebody backfills the keys from the book. A refused edit is the
+safe direction; a wrong DtlKey silently rewrites a different line in a live book.
+
+**Ref.** PR #2343, 2026-08-17.
+
+## Nineteen scripts nothing reached, and a blanket "do not run" would have been wrong for six of them [low]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**Symptom.** 19 of 367 scripts in `backend/scripts` were reached by nothing: no
+npm script, no workflow, no doc, no import. Several had been run against
+production during the June Postgres cutover. The danger is not that they are
+stale — it is that the NAMES still read as runnable.
+
+**The recommendation I gave first was wrong**, and reading them is what showed
+it. A single header saying "already run, do not re-run" would have been false on
+nine of the nineteen. They are three different things:
+
+| class | count | treatment |
+|---|---|---|
+| one-shot migrations and backfills — `apply-pg-baseline`, `patch-drizzle-pg`, `backfill-sales-reps`, `seed-assr-cases`, … | 10 | header: ALREADY RUN — DO NOT RE-RUN, naming what it did and what a second run would do |
+| spent probes — `probe-ports`, `diag-email`, `explain-hot-queries`, … | 6 | header: SPENT PROBE. Read-only, so running them is not dangerous — but they probe an environment that has moved, so the output no longer means what it says |
+| **read-only reports** — `report-overpaid-purchase-invoices`, `find-wrong-country-phones`, `list-sales` | 3 | **npm scripts.** These are USEFUL and were unreachable; a gravestone on a working tool is the wrong fix |
+
+Verified read-only before promoting: zero `insert` / `update` / `delete` /
+`INSERT` / `UPDATE` / `DELETE` / `ALTER` / `DROP` in all three.
+
+**One of the three was built for a workflow that was never created.**
+`find-wrong-country-phones.mjs` emits `::notice::` annotations, which mean
+nothing outside GitHub Actions. It is the same shape as the rule
+`CLAUDE.md` already records — *a `workflow_dispatch` workflow is not shipped
+until it has been dispatched once and reported success* — one step earlier: a
+script written FOR a workflow that never landed. It gets an npm script here
+rather than a new workflow, because shipping an undispatched workflow is exactly
+what that rule forbids.
+
+**Result.** 16 still unreferenced, every one of them now carrying a header that
+says why it is there and what it would do if run. 3 promoted to
+`audit:overpaid-pi`, `audit:phone-country`, `audit:sales-org` — reachable, and
+covered by the existing `npmScriptsResolve` guard.
+
+**Ref.** 2026-08-15.
+
+## Two merged branches deleted by hand, with a restore manifest [low]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+`delete_branch_on_merge` is ON and works — verified by listing every branch from
+this session's PRs and finding all thirteen gone. These two merged BEFORE the
+setting took effect and GitHub does not apply it retroactively, so they were the
+last of that set.
+
+Selected on the PR being MERGED, never on age — `fix/bug-index-area-tags` is
+PR #2202 and `fix/file-size-rebaseline-is-not-a-thing` is PR #2207, both
+verified merged before deletion. `sha<TAB>branch` recorded in
+`docs/branch-manifests/2026-08-15-post-setting-leftovers.tsv`, committed BEFORE
+the delete so the restore information outlives the branch.
+
+**Ref.** 2026-08-15.
 
 ## A read-only probe shipped with its SQL never executed, and died on the one company that mattered less [med]
 
@@ -5238,6 +6079,68 @@ fixed as `void addNew()`, the idiom already used at `:2116` and `:7691`, rather
 than re-baselined.
 
 **Ref** - `fix/task-history-kinds`, 2026-08-14
+## Cancel SO — and every status button on the SO detail page — failed with "Someone else updated this order" on the first click, with nobody else involved [high]
+
+**Symptom.** Pressing **Cancel SO** on the Sales Order detail page raised
+"Status update failed — Someone else updated this order while you were editing.
+Your changes are still on this screen. Copy anything you need, then refresh to
+review the latest order." No second user, no second tab, no concurrent write.
+Reproducible on the first click, every time.
+
+**Root cause (traced, not guessed).** `useUpdateMfgSalesOrderStatus`
+(`frontend/src/vendor/scm/lib/sales-order-queries.ts`) built the request body's
+`expectedStatus` by reading the status back out of the detail query cache:
+
+```ts
+const cached = qc.getQueryData(['mfg-sales-order-detail', docNo]);
+body: JSON.stringify({ status, version, expectedStatus: cached?.salesOrder?.status })
+```
+
+Its own `onMutate` paints the TARGET status onto that same cache, and
+react-query runs `onMutate` **before** `mutationFn`. So the mutation read its
+own optimistic write, and `expectedStatus` was always the status being moved
+TO. The backend's compare-and-set (`mfg-sales-orders.ts`, `PATCH /:docNo/status`)
+is `String(body.expectedStatus).toUpperCase() !== fromNorm -> 409
+so_version_conflict`, which `authed-fetch.ts` renders as the sentence above.
+`'CANCELLED' !== 'CONFIRMED'` — refused, correctly, against a claim the client
+never meant to make.
+
+The `version` half of the CAS was always right; only the status half was
+poisoned. That is why the failure looked like a concurrency problem.
+
+**Why the list buttons still worked, and the detail page never did.** On a cold
+detail cache `onMutate`'s paint is a no-op (`if (!o.salesOrder) return old`),
+and `resolveLoadedSoVersion` then fetches the real row into the cache before
+the read — so `expectedStatus` came out correct. The list surface hits that
+path; the detail page, which renders FROM that cache, never does. One bug, two
+opposite-looking behaviours, which is what kept it read as flaky.
+
+**Evidence.** `frontend/src/vendor/scm/lib/sales-order-status-expected.test.tsx`
+mounts the hook against a warm detail cache and asserts the wire body. Before
+the fix: `AssertionError: expected 'cancelled' to be 'CONFIRMED'`.
+
+**Fix.** `expectedStatus` is now a REQUIRED mutation variable supplied by the
+caller — the surface holds the status the operator was looking at, which is the
+only honest source for a CAS — and the hook no longer reads the cache at all.
+Per the CLAUDE.md rule on parameters that DECIDE something: making it required
+rather than optional is what enumerated the call sites, and `tsc -b` found two
+in `SalesOrderDetail.tsx` that a grep for `updateStatus.mutate` had missed.
+`null` is accepted and means "this surface does not know the current status" —
+the status half of the CAS is then omitted and the version CAS alone guards the
+write. Six call sites updated: `SalesOrderDetailV2` (Cancel SO),
+`SalesOrderDetail` (Cancel SO, Confirm Order, lock Override),
+`MfgSalesOrdersListV2` (Confirm, Reopen), `MobileSODetail` (all transitions).
+
+**Not a defect, checked while here: cancelling does not disturb doc numbering.**
+A cancel is an UPDATE of `{ status, version, updated_at }` — `doc_no` is never
+written and the row is never deleted (the only two `mfg_sales_orders.delete()`
+call sites are the create rollback and the DRAFT discard route). `mintMonthlyDocNo`
+counts the month via `fetchMonthlyDocNos`, whose query carries only
+`.like(col, '<prefix>-%')` and no status predicate, then takes max+1 — so a
+cancelled order keeps its number, still counts toward the max, and the next
+order takes the next integer. Numbering stays contiguous and is never reused.
+
+**Ref.** 2026-08-14.
 
 ## A delivery order that lost its link to the sales order made MRP order the goods a second time [high]
 
@@ -5450,6 +6353,42 @@ required check partly because of it. Expect a recurrence on the next
 **Ref** — #2143. Gate under test: itself.
 
 =======
+## Solo events said SOLO on the calendar while their organizer column said MALL MGMT [low]
+
+<!-- area: Projects + PMS + fair report -->
+
+**Symptom.** Owner, on the Excel export (2026-08-17): three same-event rows at
+IOI Mall Damansara — two named "… MALL MGMT @ IOI MALL DAMANSARA", one named
+"… SOLO @ …", all three with organizer = MALL MGMT. "on calender show solo but
+in excel mall mgt for name organizer."
+
+**Root cause, two layers.**
+
+1. `deriveProjectName` (and the frontend mirror `composeDefaultProjectName`)
+   deliberately forced the name's organizer slot to the literal "SOLO" for
+   solo-type events **even when an organizer was picked** — the comment said so
+   in bold. The owner's own data disagreed: 38 solo projects carry
+   "KAI HAO (KL, CHEN)" in their names.
+2. Editing the organizer field later never touched the name, so a project
+   created before the organizer was known kept "SOLO" forever.
+
+Nine production projects had the mismatch (SOLO in the name; MALL MGMT /
+KAI HAO / VINCENT in the organizer column).
+
+**Fix.** Data: the nine names were rewritten live from the organizer column
+(sweep now returns zero). Code: a picked organizer always fills the name slot —
+"SOLO" is only the empty-organizer fallback — and a PATCH that changes the
+organizer swaps the name's slot too, but ONLY when the current name still
+carries the old organizer or the SOLO placeholder, so a hand-written custom
+name is never clobbered. The project CODE keeps its SOLO segment: it is the
+immutable identity and reads as the event type there.
+
+**The class, for next time.** When a derived label disagrees with the field it
+was derived from, check whether the derivation was ever re-run — a label
+written once is a snapshot, not a view.
+
+**Ref** — 2026-08-17, `fix/solo-name-organizer`.
+
 ## Defect-review region routing was a UI hint, not a rule — either reviewer could stamp any state [low]
 
 **Symptom.** Owner, on a Sarawak project: "sabah sarawak defect under shukor ya

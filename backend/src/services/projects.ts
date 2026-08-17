@@ -5,7 +5,7 @@ import { isSensitiveChecklistItem, isSetupDismantleSection } from "./pmsAccess";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeMyState } from "../scm/lib/canonical-state";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
-import { deriveProjectCode, deriveProjectName } from "./project-naming";
+import { deriveProjectCode, deriveProjectName, syncedNameForOrganizerChange } from "./project-naming";
 export { deriveProjectCode, deriveProjectName };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
@@ -415,30 +415,13 @@ const PATCH_FIELDS = [
 // SEREMBAN, KUANTAN, etc.) get rolled up to their state at write
 // time and during data backfills.
 export const MALAYSIA_STATES = [
-  "JOHOR",
-  "KEDAH",
-  "KELANTAN",
-  "KL",
-  "LABUAN",
-  "MELAKA",
-  "NEGERI SEMBILAN",
-  "PAHANG",
-  "PENANG",
-  "PERAK",
-  "PERLIS",
-  "PUTRAJAYA",
-  "SABAH",
-  "SARAWAK",
-  "SELANGOR",
-  "TERENGGANU",
+  "JOHOR", "KEDAH", "KELANTAN", "KL", "LABUAN", "MELAKA", "NEGERI SEMBILAN",
+  "PAHANG", "PENANG", "PERAK", "PERLIS", "PUTRAJAYA", "SABAH", "SARAWAK",
+  "SELANGOR", "TERENGGANU",
 ] as const;
 
 export const PAYMENT_STATUSES = [
-  "not_started",
-  "deposit_paid",
-  "paid",
-  "refund_pending",
-  "refunded",
+  "not_started", "deposit_paid", "paid", "refund_pending", "refunded",
 ] as const;
 
 export async function patchProject(
@@ -499,6 +482,15 @@ export async function patchProject(
   // Fold showroom-venue aliases to canonical on edit too (front door, same as create).
   if ("venue" in body) {
     body.venue = canonicalizeVenue(body.venue as string | null);
+  }
+
+  // Organizer edits follow through to the display name (owner 2026-08-17) —
+  // swap rules in project-naming.ts. An explicit name in the same patch wins.
+  if ("organizer" in body && !("name" in body)) {
+    const cur = await env.DB.prepare(`SELECT name, organizer FROM projects WHERE id = ?`)
+      .bind(id).first<{ name: string | null; organizer: string | null }>();
+    const synced = syncedNameForOrganizerChange(cur?.name, cur?.organizer, body.organizer as string | null);
+    if (synced) body.name = synced;
   }
 
   const sets: string[] = [];
@@ -1713,6 +1705,14 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
   // Agreement / Quotation on its own timeline (Super Admin / weisiang).
   if (f.pending_agreement) { pendingOr.push(AGREEMENT_PENDING); pendingBinds.push(dueToday); }
   if (pendingOr.length) {
+    // Only CONFIRMED events generate anyone's pending work (owner 2026-08-17:
+    // "why event on status cancelled and pending appear in my pending task??
+    // ... make sure these 2 status event not appear on my pending task").
+    // Measured at the time of the report: 22 lane items sat on cancelled
+    // events and 24 on unconfirmed ('pending'-status) ones. Applied to the
+    // whole OR-block so every lane — role, title, approver, logistic,
+    // director, defect — inherits it; NULL/legacy status still shows.
+    where.push(`COALESCE(p.status, 'confirmed') NOT IN ('cancelled', 'pending')`);
     where.push(`(${pendingOr.join("\n      OR ")})`);
     binds.push(...pendingBinds);
   }

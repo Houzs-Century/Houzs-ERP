@@ -55,6 +55,7 @@ import {
 import { AuditHistoryPanel } from "../../components/audit/AuditHistoryPanel";
 import { SO_AUDIT_LABELS } from "./so-audit-labels";
 import { fmtDateTime } from "../../vendor/shared/format";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -595,6 +596,17 @@ function SalesOrderDetailV2ReadOnly() {
     : false;
   const canAmend = salesOrder ? soAmendmentEligible(salesOrder, hardLocked) : false;
   const hasOpenAmend = Boolean(salesOrder?.has_open_amendment);
+  /* Owner 2026-08-17 — a hard-locked order still opens for the ONE change a
+     DO / SI does not snapshot: who owns it. The editor keeps every other field
+     disabled (SalesOrderDetail's `inputsDisabled` still reads the lock), so
+     this door leads to exactly one dropdown. Without it, handing a delivered
+     order to a resigning rep's replacement meant Override — which unlocks the
+     whole order, addresses and lines included. */
+  const canAttributeOther = useHouzsAuth().can("scm.so.attribute_other");
+  const editDisabled = hardLocked && !canAttributeOther;
+  const lockedEditHint = hardLocked && canAttributeOther
+    ? "This order is locked by a downstream Delivery Order / Sales Invoice — only the Salesperson can still be changed."
+    : "This order is locked — it already has a downstream Delivery Order / Sales Invoice.";
   const editLabel = canAmend
     ? hasOpenAmend
       ? "View amendment"
@@ -657,7 +669,11 @@ function SalesOrderDetailV2ReadOnly() {
         `Cancel sales order ${salesOrder.doc_no}? This cannot be undone.`
       )
     ) {
-      updateStatus.mutate({ docNo: salesOrder.doc_no, status: "cancelled" });
+      updateStatus.mutate({
+        docNo: salesOrder.doc_no,
+        status: "cancelled",
+        expectedStatus: salesOrder.status,
+      });
     }
   };
   /* History (owner 2026-08-13: "点history的时候没有反应").
@@ -1129,10 +1145,10 @@ function SalesOrderDetailV2ReadOnly() {
               variant="primary"
               icon={<Edit3 size={14} />}
               onClick={goEdit}
-              disabled={hardLocked}
+              disabled={editDisabled}
               title={
                 hardLocked
-                  ? "This order is locked — it already has a downstream Delivery Order / Sales Invoice."
+                  ? lockedEditHint
                   : canAmend
                     ? "This order is processing-locked — changes go through the SO Amendment workflow."
                     : undefined
@@ -1512,7 +1528,8 @@ function SalesOrderDetailV2ReadOnly() {
           <button
             type="button"
             onClick={goEdit}
-            disabled={hardLocked}
+            disabled={editDisabled}
+            title={hardLocked ? lockedEditHint : undefined}
             className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink disabled:opacity-40"
           >
             <Edit3 size={16} /> {editLabel}

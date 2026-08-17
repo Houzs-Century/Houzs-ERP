@@ -567,6 +567,42 @@ Full rules, the ambiguity contract and the surfaces that deliberately opt out:
   `qc.invalidateQueries({ queryKey: ['mfg-sales-orders'] })` on success, so the list
   reflects a write immediately (same tab) and cross-tab via the MutationCache broadcast.
 
+#### The status CAS — `expectedStatus` comes from the CALLER, never from the cache
+
+`useUpdateMfgSalesOrderStatus` sends `{ status, version, expectedStatus }` to
+`PATCH /:docNo/status`. `expectedStatus` is the server's compare-and-set on the
+status column: the route refuses with `409 so_version_conflict` when it does not
+equal the row's current status. It therefore has to carry the status the operator
+was LOOKING at, before the click.
+
+It is a **REQUIRED** mutation variable (`string | null`), and that is load-bearing.
+It used to be derived inside the hook by reading the detail query cache — but the
+hook's own `onMutate` paints the TARGET status onto that cache, and react-query
+runs `onMutate` BEFORE `mutationFn`, so the mutation read its own optimistic write
+and asserted `expectedStatus === status`. Every transition off a warm detail cache
+was refused on the first click; Cancel SO on the detail page could not be completed
+at all, while the list buttons worked because a cold detail cache made the paint a
+no-op. Making the parameter required is what enumerated the six call sites —
+`tsc -b` found two in `SalesOrderDetail.tsx` that a grep had missed. Pass an
+explicit `null` where a surface genuinely does not know the current status: the
+status half of the CAS is then omitted and the version CAS alone guards the write.
+
+Pinned by `frontend/src/vendor/scm/lib/sales-order-status-expected.test.tsx`. The
+mobile DRAFT→CONFIRMED path (`mobile/mobile-so-concurrency.ts`) already passed the
+literal `expectedStatus: 'DRAFT'` and was never affected.
+
+#### Cancelling does not disturb doc numbering
+
+A cancel is an UPDATE of `{ status, version, updated_at }`; `doc_no` is never
+written and the row is never deleted (the only two `mfg_sales_orders.delete()`
+call sites are the create rollback and the DRAFT discard route). `mintMonthlyDocNo`
+reads the month through `fetchMonthlyDocNos`, whose query carries only
+`.like(col, '<prefix>-%')` and **no status predicate**, then takes max+1. So a
+cancelled order keeps its number, still counts toward the max, and the next order
+takes the next integer — contiguous, never reused. Only a hard DELETE (discard
+draft) leaves a gap, which max+1 deliberately tolerates rather than re-minting
+into (see the 2026-06-12 note in `scm/lib/doc-no.ts`).
+
 ### Caching / loading behaviour (why the list opens instantly)
 Three layers, tuned so the list never shows a full-load spinner on a revisit:
 1. **react-query in-memory** (`lib/queryClient.ts`) — `staleTime 30s`, `gcTime 30min`.
@@ -596,6 +632,26 @@ Invalidation always wins over all three (mutation → invalidate → forced refe
 All under `backend/src/scm/routes/mfg-sales-orders.ts`. Auth: inside `/api/scm/*`,
 `user.id` is the caller's **scm.staff UUID** (bridge-pinned); use `houzsUser.id` for
 the public bigint or you get a 500 (uuid-in-int column).
+
+### Who owns the order — `salesperson_id` (owner 2026-08-17)
+
+Two changes to the header PATCH, both because a resigning rep's orders have to
+reach their replacement (*"如果第一个销售人员PIC辞职…"*):
+
+- **`salesperson_id` is no longer identity-locked.** It used to freeze once a
+  non-cancelled DO / SI existed — collateral, since those documents snapshot the
+  customer, the addresses and the money, never who sold it. Everything else in
+  the lock set stays frozen. The set, the rule, and the `agent` carve-out that
+  makes the unlock actually work, now live in
+  `backend/src/scm/shared/so-identity-lock.ts`.
+- **Moving it needs `scm.so.attribute_other`, enforced server-side** (403
+  `forbidden_attribute_other`). CREATE always checked that permission; the PATCH
+  relied on the SO Detail page disabling the select, which the scope check does
+  not substitute for — that only proves the order is the caller's own.
+
+On a hard-locked order the page-level Edit button now opens for a caller who may
+re-attribute, with the Salesperson field as the only live control. Bulk handover
+(a resignation is fifty orders) has its own routes and guide: **`so-handover.md`**.
 
 Paginated contract (`?page=`) returns `{ salesOrders, total, page, pageSize,
 statusCounts, aggregates }`. `statusCounts` carries `all` plus ONE lowercase
