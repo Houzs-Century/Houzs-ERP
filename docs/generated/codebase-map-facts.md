@@ -40,7 +40,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/mail-inbound.ts` | 1 | 59 |
 | `backend/src/routes/notifications.ts` | 1 | 241 |
 | `backend/src/routes/portal.ts` | 6 | 329 |
-| `backend/src/routes/pos.ts` | 8 | 347 |
+| `backend/src/routes/pos.ts` | 8 | 339 |
 | `backend/src/routes/positions.ts` | 9 | 571 |
 | `backend/src/routes/presence.ts` | 2 | 178 |
 | `backend/src/routes/projects.ts` | 109 | 5131 |
@@ -72,7 +72,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 223 |
 | `backend/src/scm/routes/delivery-messages.ts` | 2 | 189 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5632 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5652 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
 | `backend/src/scm/routes/delivery-planning.ts` | 5 | 2898 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
@@ -102,8 +102,8 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1220 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4591 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11988 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4598 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11991 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1491 |
@@ -135,7 +135,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/slips.ts` | 3 | 246 |
 | `backend/src/scm/routes/so-amendments.ts` | 9 | 1226 |
 | `backend/src/scm/routes/so-dropdown-options.ts` | 4 | 302 |
-| `backend/src/scm/routes/so-handover.ts` | 2 | 214 |
+| `backend/src/scm/routes/so-handover.ts` | 2 | 209 |
 | `backend/src/scm/routes/so-mirror.ts` | 1 | 139 |
 | `backend/src/scm/routes/so-settings.ts` | 2 | 61 |
 | `backend/src/scm/routes/sofa-combos.ts` | 7 | 788 |
@@ -171,21 +171,21 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1400 files, 565945 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1399 files, 565548 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15128 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11988 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11991 |
 | `frontend/src/pages/ServiceCases.tsx` | 8846 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5792 |
-| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5632 |
+| `backend/src/scm/routes/delivery-orders-mfg.ts` | 5652 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5450 |
 | `backend/src/routes/projects.ts` | 5131 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4591 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4598 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4491 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4174 |
