@@ -57,9 +57,16 @@ const ACQUIRER_CONFIG: Row[] = [
     fee_method: 'stated', date_tolerance_days: 3, is_active: true,
     column_map: { date: 'tx_create_date', ref: 'gateway_tx_id', gross: 'tx_amount', fee: 'merchant_mdr_amount', net: 'net_amount' },
   },
+  /* The 2990 HOME export — a THIRD layout again: quoted fields, DDMMYYYY dates
+     with no separators, and an "MDR" column that holds the RATE (0.85 meaning
+     0.85%), not the amount. fee_method is gross-minus-net for exactly that
+     reason; configured as `stated` it books RM 3.05 of charges against a real
+     cost of RM 95.56. Filed under PBB provisionally — the file itself never
+     names its acquirer (MID 3332465732, TID 41089055), so the owner confirms. */
   {
-    code: 'PBB', display_name: 'PBB', statement_format: null, has_unique_ref: null,
-    fee_method: null, date_tolerance_days: 3, is_active: true, column_map: null,
+    code: 'PBB', display_name: 'PBB', statement_format: 'CSV', has_unique_ref: true,
+    fee_method: 'gross-minus-net', date_tolerance_days: 3, is_active: true,
+    column_map: { date: 'Trans_date', ref: 'Approval_code', gross: 'Trans_amt', net: 'Sett_amt' },
   },
 ];
 

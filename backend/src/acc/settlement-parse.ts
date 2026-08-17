@@ -136,6 +136,25 @@ export function toIsoDate(raw: string, hint?: { year: number; month: number } | 
     return hint.year;
   };
 
+  /* Eight digits with no separators — the 2990 HOME acquirer writes 17062026.
+     DDMMYYYY and YYYYMMDD are told apart by asking whether the FIRST four
+     digits can be a year and the next two a month; 17062026 cannot be (month
+     "06" is fine but year "1706" is not), 20260617 can. An eight-digit date
+     that reads as neither is refused rather than guessed. */
+  const packed = /^(\d{8})$/.exec(s);
+  if (packed) {
+    const v = packed[1];
+    const asYmd = { y: Number(v.slice(0, 4)), m: Number(v.slice(4, 6)), d: Number(v.slice(6, 8)) };
+    if (asYmd.y >= 1990 && asYmd.y <= 2100 && asYmd.m >= 1 && asYmd.m <= 12 && asYmd.d >= 1 && asYmd.d <= 31) {
+      return `${asYmd.y}-${pad(asYmd.m)}-${pad(asYmd.d)}`;
+    }
+    const asDmy = { d: Number(v.slice(0, 2)), m: Number(v.slice(2, 4)), y: Number(v.slice(4, 8)) };
+    if (asDmy.y >= 1990 && asDmy.y <= 2100 && asDmy.m >= 1 && asDmy.m <= 12 && asDmy.d >= 1 && asDmy.d <= 31) {
+      return `${asDmy.y}-${pad(asDmy.m)}-${pad(asDmy.d)}`;
+    }
+    return null;
+  }
+
   const dmy = /^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$/.exec(s);
   if (dmy) {
     const d = Number(dmy[1]);
@@ -290,6 +309,21 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
       if (f == null) return { ok: false, reason: `Line ${i + 1}: cannot read the fee "${cells[idxFee] ?? ''}".` };
       feeSen = Math.abs(f);
       netSen = grossSen - (grossSen < 0 ? -feeSen : feeSen);
+      /* THE FEE COLUMN IS NOT ALWAYS A FEE. One acquirer's "MDR" column holds
+         the RATE (0.85 meaning 0.85%), not the amount — configured as `stated`
+         it booked RM 3.05 of charges where the real cost was RM 95.56, which is
+         exactly the understated-profit disease this layer exists to cure.
+         Whenever the file also prints its own net, the arithmetic is checked
+         against it and a mismatch is refused, not averaged over. */
+      if (idxNet >= 0) {
+        const statedNet = toSen(cells[idxNet] ?? '');
+        if (statedNet != null && statedNet !== netSen) {
+          return {
+            ok: false,
+            reason: `Line ${i + 1}: ${(grossSen / 100).toFixed(2)} less the fee ${(feeSen / 100).toFixed(2)} is ${(netSen / 100).toFixed(2)}, but the file says ${(statedNet / 100).toFixed(2)}. That fee heading is probably a rate, not an amount — set ${cfg.code} to "gross minus net".`,
+          };
+        }
+      }
     } else if (feeMethod === 'gross-minus-net') {
       const n = toSen(cells[idxNet] ?? '');
       if (n == null) return { ok: false, reason: `Line ${i + 1}: cannot read the net amount "${cells[idxNet] ?? ''}".` };

@@ -274,6 +274,38 @@ describe('parseStatement — the real terminal statements', () => {
   });
 });
 
+/* The 2990 HOME acquirer — a THIRD layout again, and the one that nearly cost
+   real money: its "MDR" column is the RATE (0.85 = 0.85%), not the amount. */
+describe('parseStatement — the rate-not-amount trap', () => {
+  const STATEMENT = [
+    '"Sett_date","Trans_date","Card_no","Card_type","Trans_amt","Sett_amt","MDR","Approval_code"',
+    '"17062026","17062026","483551XXXXXX2436","VISA","945.00","936.97","0.85","005628"',
+    '"17062026","17062026","468786XXXXXX1367","VISA","3,240.00","3,212.46","0.85","042628"',
+  ].join('\n');
+
+  it('reads DDMMYYYY dates and derives the fee from gross minus net', () => {
+    const r = parseStatement({
+      code: 'PBB', statement_format: 'CSV', fee_method: 'gross-minus-net',
+      column_map: { date: 'Trans_date', ref: 'Approval_code', gross: 'Trans_amt', net: 'Sett_amt' },
+    }, STATEMENT);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows[0]).toMatchObject({ txnDate: '2026-06-17', ref: '005628', grossSen: 94500, feeSen: 803, netSen: 93697 });
+    expect(r.feeSen).toBe(803 + 2754);
+  });
+
+  it('REFUSES the same file configured as a stated fee, because the arithmetic does not agree with the file', () => {
+    const r = parseStatement({
+      code: 'PBB', statement_format: 'CSV', fee_method: 'stated',
+      column_map: { date: 'Trans_date', ref: 'Approval_code', gross: 'Trans_amt', fee: 'MDR', net: 'Sett_amt' },
+    }, STATEMENT);
+    expect(r).toMatchObject({ ok: false });
+    // Names the numbers AND the fix, instead of booking RM 0.85 as the charge.
+    expect((r as { reason: string }).reason).toMatch(/944\.15.*936\.97|936\.97/);
+    expect((r as { reason: string }).reason).toMatch(/gross minus net/);
+  });
+});
+
 describe('toIsoDate — the year rule', () => {
   it('takes the year from the statement month, and rolls back for a December line on a January statement', () => {
     expect(toIsoDate('05-Jun', { year: 2026, month: 6 })).toBe('2026-06-05');
@@ -281,6 +313,10 @@ describe('toIsoDate — the year rule', () => {
     expect(toIsoDate('05-Jun')).toBeNull();
     expect(toIsoDate('05-Jun-2025')).toBe('2025-06-05');
     expect(toIsoDate('05-06-25')).toBe('2025-06-05');
+    // Eight packed digits, both ways round, and a shape that is neither.
+    expect(toIsoDate('17062026')).toBe('2026-06-17');
+    expect(toIsoDate('20260617')).toBe('2026-06-17');
+    expect(toIsoDate('99999999')).toBeNull();
   });
 });
 
