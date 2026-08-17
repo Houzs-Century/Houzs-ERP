@@ -41,6 +41,14 @@ export type ParseConfig = {
       paying, e.g. AEON's "TOTAL NET PAYMENT (RM) :". When set, the sum of the
       transaction lines is checked against it — see the guard in parseStatement. */
   total_net_label?: string | null;
+  /** For a statement whose FEE is not on the transaction lines at all.
+      Maybank's detail table carries only the gross; the charge appears once, in
+      a summary table that has its own headings and a labelled TOTAL row:
+        …,Gross Amt,,CashBack Amt,,…,,Disc. Amt,,Net Amount,,Trnx Count,…
+        TOTAL,,,,+2300.00,,+0.00,,…,,+23.00,,+2277.00,,1,…
+      Naming the row and the two headings lets the fee be READ from the file
+      instead of typed in by the operator — one less number to get wrong. */
+  summary_totals?: { rowLabel: string; fee?: string; net?: string } | null;
 };
 
 export type ParsedRow = {
@@ -98,8 +106,9 @@ export function splitCsvLine(line: string): string[] {
  * names the line, never a zero.
  */
 export function toSen(raw: string): number | null {
-  // A leading apostrophe is Excel's "keep this as text" guard, not a value.
-  let s = String(raw ?? '').trim().replace(/^'/, '');
+  /* A leading apostrophe is Excel's "keep this as text" guard, not a value; a
+     leading plus is how Maybank's summary writes a positive figure (+2300.00). */
+  let s = String(raw ?? '').trim().replace(/^'/, '').replace(/^\+/, '');
   if (!s) return null;
   let negative = false;
   if (/^\(.*\)$/.test(s)) { negative = true; s = s.slice(1, -1); }
@@ -366,14 +375,48 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
     return { ok: false, reason: `No transaction lines were found in this file. It has ${lines.length - 1} data line(s), none of them readable as a ${cfg.code} transaction — check that this is the right file.` };
   }
 
+  /* THE FEE THE STATEMENT STATES ONCE, in its own summary table.
+     Maybank's transaction lines carry no charge at all — only the gross and an
+     interchange figure — and the MDR appears a single time on a TOTAL row under
+     the summary's own headings. Read it from the file rather than asking the
+     operator to copy it across; the net on the same row then feeds the
+     lines-versus-statement check below, for free. */
+  let summaryFeeSen: number | null = cfg.summaryFeeSen ?? null;
+  let summaryNetSen: number | null = null;
+  if (cfg.summary_totals) {
+    const { rowLabel, fee, net } = cfg.summary_totals;
+    const norm = (v: string) => v.replace(/[\s:]+/g, '').toLowerCase();
+    let idxFee = -1;
+    let idxNet = -1;
+    let summaryHeader = -1;
+    for (let i = headerLine + 1; i < lines.length; i += 1) {
+      const cells = splitCsvLine(lines[i]);
+      const f = fee ? headerIndex(cells, fee) : -1;
+      const n = net ? headerIndex(cells, net) : -1;
+      if ((fee && f >= 0) || (net && n >= 0)) { summaryHeader = i; idxFee = f; idxNet = n; break; }
+    }
+    /* The label appears more than once in these files — an earlier TOTAL closes
+       the withheld/rejected block. Only the one BELOW the summary headings is
+       the statement's own total. */
+    if (summaryHeader >= 0) {
+      for (let i = summaryHeader + 1; i < lines.length; i += 1) {
+        const cells = splitCsvLine(lines[i]);
+        if (norm(cells[0] ?? '') !== norm(rowLabel)) continue;
+        if (idxFee >= 0) summaryFeeSen = toSen(cells[idxFee] ?? '') ?? summaryFeeSen;
+        if (idxNet >= 0) summaryNetSen = toSen(cells[idxNet] ?? '');
+        break;
+      }
+    }
+  }
+
   /* prorated-summary: the acquirer prints one fee total for the whole
      statement. Spread it by gross value and give the rounding remainder to the
      largest line, so the fees SUM EXACTLY to the total the acquirer charged —
      an approximation here would leave a permanent unexplainable sen in 320-0000. */
   if (feeMethod === 'prorated-summary') {
-    const total = cfg.summaryFeeSen ?? null;
+    const total = summaryFeeSen;
     if (total == null) {
-      return { ok: false, reason: `${cfg.code} prints its fee only as a statement total — enter that total when uploading so it can be spread across the lines.` };
+      return { ok: false, reason: `${cfg.code} prints its fee only as a statement total, and this file does not show one — enter it when uploading, or check the acquirer's summary-row setup.` };
     }
     if (!Number.isInteger(total) || total < 0) {
       return { ok: false, reason: 'The statement fee total must be a non-negative amount.' };
@@ -400,7 +443,7 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
      measured here and carried on the batch, and the caller books it as its own
      entry against the bank. Left unmeasured it would sit in the books for ever
      and make an instalment sale look like it cost 1.2% when it cost 5.4%. */
-  let statedNetSen: number | null = null;
+  let statedNetSen: number | null = summaryNetSen;
   if (cfg.total_net_label) {
     const wanted = cfg.total_net_label.replace(/[\s:]+/g, '').toLowerCase();
     for (const line of lines) {

@@ -5,13 +5,13 @@
 --     DROP COLUMN adjustment_posted_at;
 --   DROP VIEW scm.acc_acquirers;
 --   CREATE VIEW scm.acc_acquirers AS (the 0301 definition, without
---     g.total_net_label);
+--     g.total_net_label and g.summary_totals);
 --   ⚠️ GRANTS: DROP VIEW discards the view's ACL, so the reverse MUST re-apply
 --      them — `GRANT SELECT ON scm.acc_acquirers TO service_role;` plus any
 --      other grantee 0301's copy loop picked up (that is the 0189 failure, and
 --      0190/0191 were the repair). This migration re-grants below for the same
 --      reason.
---   ALTER TABLE scm.acc_acquirer_config DROP COLUMN total_net_label;
+--   ALTER TABLE scm.acc_acquirer_config DROP COLUMN total_net_label, DROP COLUMN summary_totals;
 --   DELETE FROM scm.acc_company_acquirers WHERE acquirer_code = 'AEON';
 --   DELETE FROM scm.acc_acquirer_config WHERE code = 'AEON';
 -- No existing row is modified; every new column is nullable or defaulted.
@@ -37,6 +37,14 @@
 -- 1. Where a statement states what it is really paying. Set per acquirer, once,
 --    like every other reading rule (AEON: 'TOTAL NET PAYMENT (RM) :').
 ALTER TABLE scm.acc_acquirer_config ADD COLUMN total_net_label TEXT;
+
+-- 1b. And for a statement whose FEE is not on its transaction lines at all.
+--     Maybank's detail table carries only the gross; the MDR appears once, on a
+--     TOTAL row under a summary table with its OWN headings. Naming the row and
+--     the two headings lets the fee be READ from the file instead of keyed in —
+--     one number fewer to get wrong, on the largest acquirer of the lot.
+--     {"rowLabel":"TOTAL","fee":"Disc. Amt","net":"Net Amount"}
+ALTER TABLE scm.acc_acquirer_config ADD COLUMN summary_totals JSONB;
 
 -- 2. What the file said, what the lines came to, and whether the difference has
 --    reached the ledger yet.
@@ -67,6 +75,7 @@ SELECT
   g.date_tolerance_days,
   g.column_map,
   g.total_net_label,
+  g.summary_totals,
   (g.is_active AND l.is_active) AS is_active
 FROM scm.acc_company_acquirers l
 JOIN scm.acc_acquirer_config g ON g.code = l.acquirer_code;
@@ -101,3 +110,4 @@ ON CONFLICT (code) DO NOTHING;
 INSERT INTO scm.acc_company_acquirers (company_id, acquirer_code)
 SELECT c.company_id, 'AEON' FROM (VALUES (1), (2)) AS c(company_id)
 ON CONFLICT (company_id, acquirer_code) DO NOTHING;
+

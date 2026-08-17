@@ -414,6 +414,63 @@ describe('parseStatement — a charge that belongs to no transaction', () => {
   });
 });
 
+/* Maybank's CSV export. Its transaction line carries NO fee at all — only the
+   gross and an interchange figure — and the MDR is stated once, on a TOTAL row
+   under a summary table with its own headings. Reading it from the file rather
+   than asking the operator to copy it removes the number most likely to be
+   mistyped, on the largest acquirer of the lot. */
+describe('parseStatement — a fee stated once, in the statement summary', () => {
+  const MAYBANK = [
+    'Credit Card Transactions',
+    'Report Type  :, DVS04A',
+    'Merchant No.,:, 027032409997',
+    'Card Number,,Amount,,Tran Date,,Auth Code,,Tran ID,,Reference No,,Terminal No.,,Card Type.,,Interchange Fee,',
+    '429320******3105,,2300.00,,14/08/26,,861777,,40,,000246,,38210103,,VISA CR LOCAL,,13.80,',
+    'Total Amount,:,2300.00,,Items,:,1',
+    // An earlier TOTAL closes the withheld/rejected block — not the one we want.
+    'TOTAL,,,,0.00,,0.00,,0.00,,0.00',
+    ',,,,Gross Amt,,CashBack Amt,,Total After CashBack,,Disc Rate,,Disc. Amt,,Net Amount,,Trnx Count,,Interchange Fee',
+    'TOTAL,,,,+2300.00,,+0.00,,+0.00,,,,+23.00,,+2277.00,,1,,+13.80',
+  ].join('\n');
+
+  const mbbCfg = (over: Partial<ParseConfig> = {}): ParseConfig => ({
+    code: 'MBB', statement_format: 'CSV', fee_method: 'prorated-summary',
+    column_map: { date: 'Tran Date', ref: 'Auth Code', gross: 'Amount' },
+    summary_totals: { rowLabel: 'TOTAL', fee: 'Disc. Amt', net: 'Net Amount' },
+    ...over,
+  });
+
+  it('reads the fee off the summary row and spreads it, without the operator typing it', () => {
+    const r = parseStatement(mbbCfg(), MAYBANK);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows).toHaveLength(1);
+    expect(r.rows[0]).toMatchObject({ txnDate: '2026-08-14', ref: '861777', grossSen: 230000, feeSen: 2300, netSen: 227700 });
+    // And the net on the same row proves the arithmetic against the statement.
+    expect(r.statedNetSen).toBe(227700);
+    expect(r.adjustmentSen).toBe(0);
+  });
+
+  it('takes the TOTAL row BELOW the summary headings, not the first one it meets', () => {
+    const r = parseStatement(mbbCfg(), MAYBANK);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    // The earlier TOTAL reads 0.00; taking it would book no fee at all.
+    expect(r.feeSen).toBe(2300);
+  });
+
+  it('a "+" in front of a figure is a sign, not a character that breaks it', () => {
+    expect(toSen('+2300.00')).toBe(230000);
+    expect(toSen('+0.00')).toBe(0);
+  });
+
+  it('without the summary configured, the same file still refuses rather than booking a zero fee', () => {
+    const r = parseStatement(mbbCfg({ summary_totals: null }), MAYBANK);
+    expect(r).toMatchObject({ ok: false });
+    expect((r as { reason: string }).reason).toMatch(/fee/i);
+  });
+});
+
 describe('toIsoDate — the year rule', () => {
   it('takes the year from the statement month, and rolls back for a December line on a January statement', () => {
     expect(toIsoDate('05-Jun', { year: 2026, month: 6 })).toBe('2026-06-05');

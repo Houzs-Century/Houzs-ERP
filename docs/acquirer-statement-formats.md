@@ -6,7 +6,7 @@
 > `scm.acc_acquirer_config`, so this document IS the configuration — nothing
 > below is hardcoded anywhere.
 >
-> **The formats are not the same between acquirers.** Three files, three shapes.
+> **The formats are not the same between acquirers.** Five acquirers, five shapes.
 > That is exactly why the config is per-acquirer and taught ONCE, then shared by
 > every company (the owner's standing principle).
 
@@ -18,7 +18,7 @@
 | GHL | CSV | line 1 | `2026-06-02 18:38:24.0` | fee column, printed **negative** | `gateway_tx_id` — present but **unusable**, see below |
 | PBB (2990 HOME) | CSV | line 1, every field quoted | `17062026` — DDMMYYYY, no separators | **gross − net** (see the trap below) | `Approval_code` ✓ |
 | AEON (instalment) | XLSX → CSV in the page | searched for | `14/08/2026` | fee column printed **negative**, PLUS a statement-level subvention fee (handled) | `APP. CODE` ✓ |
-| MBB (Maybank terminal) | **encrypted PDF** — reader built, not yet wired | searched for | `14/06/26` | none per line; MDR stated once in TOTAL | `Auth Code` ✓ |
+| MBB (Maybank terminal) | CSV | searched for | `14/08/26` | **none per line** — MDR stated once in the summary TOTAL, read from the file | `Auth Code` ✓ |
 | CIMB | — | — | — | — | not in use (owner, 2026-08-17) |
 
 ### ⚠️ The file labelled "MBB (1).CSV" is a HONG LEONG statement
@@ -119,7 +119,64 @@ account itself), and its merchant id `000458030215369` is exactly the
 `MA458030215369` reference the Maybank account report carries — so its bank-side
 rule is already known.
 
-## MBB — the file received is the INSTALMENT report, not the settlement report
+## MBB — done, from the CSV export (2026-08-17)
+
+Maybank's portal does export CSV, and it sends a separate report per merchant
+per trading day per card programme:
+
+| Report | What |
+|---|---|
+| `DVS04A` | Credit card transactions |
+| `DVS04E` | Debit card transactions |
+| `T41AX` | Amex transactions |
+| `EP41` | EzyPay instalment transactions |
+
+**One config reads all four** — same headings, same summary block. The detail
+table is `Card Number, Amount, Tran Date, Auth Code, Tran ID, Reference No,
+Terminal No., Batch No., Card Type., EzyPay Term, Interchange Fee` (every column
+followed by an empty one, which the heading search does not care about), and it
+carries **no fee at all**. The MDR appears exactly once, on a `TOTAL` row under
+the summary table's own headings:
+
+```
+,,,,Gross Amt,,CashBack Amt,,Total After CashBack,,Disc Rate,,Disc. Amt,,Net Amount,,Trnx Count,,Interchange Fee
+TOTAL,,,,+2300.00,,+0.00,,+0.00,,,,+23.00,,+2277.00,,1,,+13.80
+```
+
+So `fee_method` is `prorated-summary` and `summary_totals`
+(`{rowLabel: 'TOTAL', fee: 'Disc. Amt', net: 'Net Amount'}`) makes the parser
+READ the charge out of the file instead of asking the operator to copy it —
+removing the number most likely to be mistyped, on the largest acquirer of the
+lot. The net on the same row then feeds the lines-versus-statement check for
+free, and comes out at zero on all four reports.
+
+Two details that would have bitten: the figures are written `+2300.00`, and an
+EARLIER `TOTAL` row closes the withheld/rejected block. Taking the first `TOTAL`
+would book a fee of zero; the summary total is the one below the summary
+headings. Both are pinned by tests.
+
+**The rates differ enormously between Maybank's own programmes**, which is why
+booking them from the statement rather than from an assumed rate matters:
+
+| | Gross | MDR | Rate |
+|---|---|---|---|
+| Credit card (DVS04A) | 2,300.00 | 23.00 | **1.00%** |
+| Debit card (DVS04E) | 2,588.00 | 11.65 | **0.45%** |
+| Amex (T41AX) | 1,000.00 | 15.00 | **1.50%** |
+| Instalment (EP41) | 3,899.00 | 155.96 | **4.00%** |
+
+An instalment sale costs nearly nine times what the same sale costs on a debit
+card. Any margin figure that assumes one blended rate is wrong.
+
+## The PDF reader is kept, unused
+
+`backend/src/acc/settlement-pdf.ts` decrypts and reads Maybank's PDF version of
+the same report (encrypted, opens without a password, text obfuscated two bytes
+per glyph with a constant shift — detected, not hardcoded). The CSV supersedes
+it, so it is not wired into upload. It stays because it cost little, it is
+tested, and the next acquirer that sends only PDF will need exactly this.
+
+## The earlier PDF reading, for the record
 
 `027012896718_EP41_713_20260614.PDF` decodes to:
 

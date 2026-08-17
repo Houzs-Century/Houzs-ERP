@@ -170,6 +170,7 @@ export const settlementUpload = guard(async (c) => {
        guesses which year a payment belongs to. */
     statementMonth: /^\d{4}-\d{2}$/.test(String(body.statementMonth ?? '')) ? String(body.statementMonth) : null,
     total_net_label: (acq.acquirer as { total_net_label?: string | null }).total_net_label ?? null,
+    summary_totals: (acq.acquirer as { summary_totals?: { rowLabel: string; fee?: string; net?: string } | null }).summary_totals ?? null,
   }, content);
   if (!parsed.ok) return c.json({ error: 'unreadable_statement', message: parsed.reason }, 400);
 

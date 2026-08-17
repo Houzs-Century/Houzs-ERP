@@ -59,10 +59,18 @@ const ACQUIRER_CONFIG: Row[] = [
     fee_method: 'stated', date_tolerance_days: 3, is_active: true,
     column_map: { date: 'DATE', ref: 'INVOICE/AUTHO', gross: 'TRXN AMOUNT', fee: 'MDR', net: 'TRXN NET' },
   },
+  /* MAYBANK, from the CSV export the owner found on 2026-08-17. Its detail table
+     carries NO fee at all — only the gross and an interchange figure — and the
+     MDR appears once, on a TOTAL row under the summary table's own headings. So
+     the fee is prorated from a figure READ OUT OF THE FILE rather than typed.
+     ONE config reads all four of Maybank's report types (DVS04A credit card,
+     DVS04E debit card, T41AX Amex, EP41 instalment) — and their rates differ
+     enormously: 1.00% / 0.45% / 1.50% / 4.00%. */
   {
     code: 'MBB', display_name: 'MBB', statement_format: 'CSV', has_unique_ref: true,
-    fee_method: 'stated', date_tolerance_days: 3, is_active: true,
-    column_map: { date: 'DATE', ref: 'INVOICE/AUTHO', gross: 'TRXN AMOUNT', fee: 'MDR', net: 'TRXN NET' },
+    fee_method: 'prorated-summary', date_tolerance_days: 3, is_active: true,
+    column_map: { date: 'Tran Date', ref: 'Auth Code', gross: 'Amount' },
+    summary_totals: { rowLabel: 'TOTAL', fee: 'Disc. Amt', net: 'Net Amount' },
   },
   /* GHL's export DOES carry a unique id (gateway_tx_id) — but the owner
      confirmed on 2026-08-17 that the code the till captures is NOT that id, so
@@ -120,6 +128,7 @@ const acquirerView = (): Row[] => COMPANY_LINKS.map((l) => {
     statement_format: g.statement_format, has_unique_ref: g.has_unique_ref,
     fee_method: g.fee_method, date_tolerance_days: g.date_tolerance_days,
     column_map: g.column_map, total_net_label: g.total_net_label ?? null,
+    summary_totals: g.summary_totals ?? null,
     is_active: Boolean(g.is_active && l.is_active),
   };
 });
@@ -141,18 +150,15 @@ const seed = () => ({
   journal_entries: [] as Row[],
   journal_entry_lines: [] as Row[],
   mfg_sales_order_payments: [
-    // ── MBB: these carry approval codes, so the MBB statement auto-matches them.
-    soPay('p1', 'SO-2608-001', '2026-08-01T10:12:00', 100000, 'A1001', 'MBB'),
-    soPay('p2', 'SO-2608-002', '2026-08-01T14:40:00', 250000, 'A1002', 'MBB'),
-    soPay('p3', 'SO-2608-003', '2026-08-02T11:05:00', 60000, 'A1003', 'MBB'),
-    // ── The one-swipe-two-orders case: 600 + 400 = the statement's 1,000 line.
-    soPay('p4', 'SO-2608-004', '2026-08-02T16:20:00', 60000, null, 'MBB'),
-    soPay('p5', 'SO-2608-005', '2026-08-02T16:21:00', 40000, null, 'MBB'),
-    // ── Card money nobody has settled: this is watchlist 1.
-    soPay('p6', 'SO-2607-088', '2026-07-18T09:30:00', 35000, 'A0900', 'MBB'),
     /* ── HLB: these match demo-statements/HLB-Aug.csv, which is the owner's
        OWN Hong Leong export with the merchant/terminal/card numbers replaced —
        two merchant blocks, three terminals, one file. */
+    /* ── MBB: these match demo-statements/MBB-*.csv, the owner's own Maybank
+       exports with the merchant/account/card numbers replaced. */
+    soPay('m1', 'SO-2608-040', '2026-08-14T14:05:00', 230000, '861777', 'MBB'),
+    soPay('m2', 'SO-2608-041', '2026-08-01T16:30:00', 389900, '002825', 'MBB'),
+    // Card money nobody has settled — this is watchlist 1.
+    soPay('m3', 'SO-2607-088', '2026-07-18T09:30:00', 35000, 'A0900', 'MBB'),
     soPay('h1', 'SO-2608-020', '2026-08-16T11:15:00', 180000, '663554', 'HLB'),
     soPay('h2', 'SO-2608-021', '2026-08-16T13:40:00', 59400, '674234', 'HLB'),
     soPay('h3', 'SO-2608-022', '2026-08-16T15:02:00', 120000, '014723', 'HLB'),
@@ -179,7 +185,8 @@ const seed = () => ({
     ['SO-2608-010', 'Raj Kumar'], ['SO-2608-011', 'Nurul Aina'],
     ['SO-2608-020', 'Chong Wei Ming'], ['SO-2608-021', 'Faridah Hassan'],
     ['SO-2608-022', 'Kedai Tilam Sejahtera'], ['SO-2608-023', 'Ng Choon Hoe'],
-    ['SO-2608-030', 'Ooi Sze Ling'],
+    ['SO-2608-030', 'Ooi Sze Ling'], ['SO-2608-040', 'Chan Wai Keong'],
+    ['SO-2608-041', 'Nurhaliza Yusof'], ['SO-2607-088', 'Wong Mei Ling'],
   ].map(([doc_no, customer_name]) => ({ doc_no, customer_name, customer_phone: null, company_id: CO })),
   sales_invoices: [
     { id: 'INV-2608-777', invoice_number: 'INV-2608-777', company_id: CO,
@@ -233,6 +240,7 @@ const refreshView = () => {
       statement_format: g.statement_format, has_unique_ref: g.has_unique_ref,
       fee_method: g.fee_method, date_tolerance_days: g.date_tolerance_days,
       column_map: g.column_map, total_net_label: g.total_net_label ?? null,
+    summary_totals: g.summary_totals ?? null,
       is_active: Boolean(g.is_active && l.is_active),
     });
   }

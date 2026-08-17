@@ -38,6 +38,8 @@ export type AcquirerRow = {
   column_map: Record<string, string> | null;
   /** Row label on which the statement states what it is actually paying. */
   total_net_label?: string | null;
+  /** For a statement whose fee is stated once, in its own summary table. */
+  summary_totals?: { rowLabel: string; fee?: string; net?: string } | null;
   is_active: boolean;
 };
 
@@ -50,7 +52,7 @@ export async function loadAcquirer(
 ): Promise<{ ok: true; acquirer: AcquirerRow } | { ok: false; reason: string }> {
   const { data, error } = await sb
     .from('acc_acquirers')
-    .select('company_id, code, display_name, transit_account_code, fee_account_code, bank_account_code, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, total_net_label, is_active')
+    .select('company_id, code, display_name, transit_account_code, fee_account_code, bank_account_code, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, total_net_label, summary_totals, is_active')
     .eq('company_id', companyId)
     .eq('code', code)
     .maybeSingle();
