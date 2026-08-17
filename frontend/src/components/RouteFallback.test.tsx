@@ -47,6 +47,7 @@ describe("ChunkReloadBoundary", () => {
   afterEach(() => {
     cleanup();
     vi.restoreAllMocks();
+    vi.unstubAllGlobals();
     sessionStorage.clear();
     if (serviceWorkerDescriptor) {
       Object.defineProperty(navigator, "serviceWorker", serviceWorkerDescriptor);
@@ -77,11 +78,13 @@ describe("ChunkReloadBoundary", () => {
     expect(reportClientError).not.toHaveBeenCalled();
 
     await act(async () => {
-      vi.advanceTimersByTime(10_000);
+      // Past the watchdog, which is derived from the probe + cleanup budgets
+      // rather than typed, so this must not assert the exact number.
+      vi.advanceTimersByTime(30_000);
       await Promise.resolve();
     });
 
-    expect(screen.getByText("Something went wrong loading this page.")).toBeTruthy();
+    expect(screen.getByText("This tab is running an older version of the app.")).toBeTruthy();
     expect(getRegistrations).toHaveBeenCalledTimes(1);
   });
 
@@ -136,6 +139,104 @@ describe("ChunkReloadBoundary", () => {
     });
   });
 
+  // ── The probe: how expensive a recovery this failure has earned ──────────
+  //
+  // A hard recovery unregisters every service worker and deletes every cache.
+  // That is right for a build that has moved and absurd for one dropped
+  // request, and until the probe existed a single blip bought the full price.
+  // These pin the branch each probe answer takes; the observable difference is
+  // whether navigator.serviceWorker.getRegistrations() is ever reached.
+  const CHUNK_URL = `${window.location.origin}/assets3/SalesOrderDetail-AbC123.js`;
+  const chunkError = (url = CHUNK_URL) =>
+    `Failed to fetch dynamically imported module: ${url}`;
+  const fakeResponse = (ok: boolean, contentType: string) =>
+    ({ ok, headers: { get: () => contentType } }) as unknown as Response;
+  const flush = async () => {
+    await act(async () => {
+      for (let i = 0; i < 20; i += 1) await Promise.resolve();
+    });
+  };
+
+  it("re-fetches the failed chunk and stays cheap when it is actually there", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(fakeResponse(true, "application/javascript"));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ChunkReloadBoundary resetKey="/scm/sales-orders/SO-1">
+        <ThrowError message={chunkError()} />
+      </ChunkReloadBoundary>,
+    );
+    await flush();
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(fetchMock.mock.calls[0][0]).toBe(CHUNK_URL);
+    // Cache-busting on the way out, or the probe replays the same poisoned
+    // HTTP-cache entry the import already choked on and learns nothing.
+    expect(fetchMock.mock.calls[0][1]).toMatchObject({ cache: "reload" });
+    expect(getRegistrations).not.toHaveBeenCalled();
+  });
+
+  it("escalates to the full recovery when the chunk is really gone", async () => {
+    // functions/[[path]].ts turns the SPA-fallback shell back into a real 404
+    // for a static-asset extension, so this is the shape production serves.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse(false, "text/plain")));
+
+    render(
+      <ChunkReloadBoundary resetKey="/scm/sales-orders/SO-1">
+        <ThrowError message={chunkError()} />
+      </ChunkReloadBoundary>,
+    );
+    await flush();
+
+    expect(getRegistrations).toHaveBeenCalledTimes(1);
+  });
+
+  it("escalates when a stale worker answers the chunk with the app shell", async () => {
+    // 200 with an HTML body under a .js URL is the poisoning hardRecover exists
+    // for; only the unregister clears it, so a plain reload would fail again.
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(fakeResponse(true, "text/html; charset=utf-8")));
+
+    render(
+      <ChunkReloadBoundary resetKey="/scm/sales-orders/SO-1">
+        <ThrowError message={chunkError()} />
+      </ChunkReloadBoundary>,
+    );
+    await flush();
+
+    expect(getRegistrations).toHaveBeenCalledTimes(1);
+  });
+
+  it("does not purge caches when the probe itself fails", async () => {
+    // Offline. The caches we would delete are the only copy of the shell the
+    // service worker could still serve, and a failed probe is not evidence the
+    // build moved.
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
+
+    render(
+      <ChunkReloadBoundary resetKey="/scm/sales-orders/SO-1">
+        <ThrowError message={chunkError()} />
+      </ChunkReloadBoundary>,
+    );
+    await flush();
+
+    expect(getRegistrations).not.toHaveBeenCalled();
+  });
+
+  it("never probes a URL that is not ours, and escalates instead", async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ChunkReloadBoundary resetKey="/scm/sales-orders/SO-1">
+        <ThrowError message={chunkError("https://evil.example/assets3/Foo-AbC123.js")} />
+      </ChunkReloadBoundary>,
+    );
+    await flush();
+
+    expect(fetchMock).not.toHaveBeenCalled();
+    expect(getRegistrations).toHaveBeenCalledTimes(1);
+  });
+
   it("keeps the cooldown when the recorded attempt is from the same build", () => {
     sessionStorage.setItem(
       RECOVER_AT_KEY,
@@ -148,12 +249,40 @@ describe("ChunkReloadBoundary", () => {
       </ChunkReloadBoundary>,
     );
 
-    expect(screen.getByText("Something went wrong loading this page.")).toBeTruthy();
+    // The dead end this replaces: the panel said "something went wrong" and
+    // nothing else, so the operator could not tell a stranded tab from a broken
+    // page and had no reason to believe the button would help.
+    expect(screen.getByText("This tab is running an older version of the app.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Reload now" })).toBeTruthy();
     expect(getRegistrations).not.toHaveBeenCalled();
     expect(reportClientError).toHaveBeenCalledWith(
       expect.objectContaining({ message: "Loading chunk 42 failed" }),
       "stale-chunk-persisted",
     );
+  });
+
+  it("lets the operator recover by hand even with the cooldown spent", () => {
+    // The cooldown's job is to stop an automatic reload LOOP. A click is not a
+    // loop, so the button must not inherit the refusal that put the panel on
+    // screen — that was the "dead-ends on an error screen" report.
+    sessionStorage.setItem(
+      RECOVER_AT_KEY,
+      JSON.stringify({ at: Date.now() - 1_000, buildId: CURRENT_BUILD_ID }),
+    );
+
+    render(
+      <ChunkReloadBoundary resetKey="/orders">
+        <ThrowError message="Failed to fetch dynamically imported module" />
+      </ChunkReloadBoundary>,
+    );
+    expect(getRegistrations).not.toHaveBeenCalled();
+
+    act(() => {
+      screen.getByRole("button", { name: "Reload now" }).click();
+    });
+
+    expect(getRegistrations).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("Loading page")).toBeTruthy();
   });
 
   it("honours a legacy bare-timestamp mark as a same-build attempt", () => {
@@ -165,7 +294,7 @@ describe("ChunkReloadBoundary", () => {
       </ChunkReloadBoundary>,
     );
 
-    expect(screen.getByText("Something went wrong loading this page.")).toBeTruthy();
+    expect(screen.getByText("This tab is running an older version of the app.")).toBeTruthy();
     expect(getRegistrations).not.toHaveBeenCalled();
     expect(reportClientError).toHaveBeenCalledWith(
       expect.objectContaining({ message: "Loading chunk 42 failed" }),
@@ -184,7 +313,7 @@ describe("ChunkReloadBoundary", () => {
       </ChunkReloadBoundary>,
     );
 
-    expect(screen.getByText("Something went wrong loading this page.")).toBeTruthy();
+    expect(screen.getByText("This tab is running an older version of the app.")).toBeTruthy();
     expect(getRegistrations).not.toHaveBeenCalled();
     expect(reportClientError).toHaveBeenCalledWith(
       expect.objectContaining({ message: "Importing a module script failed" }),

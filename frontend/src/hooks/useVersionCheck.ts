@@ -16,7 +16,7 @@
 // No new backend route: reads the static index.html the SPA already serves.
 // ---------------------------------------------------------------------------
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 // Vite emits ONE hashed entry module (e.g. /assets3/index-AbC123.js). Its
 // filename changes on every build, so it's a free build id.
@@ -76,11 +76,36 @@ export function latestBuildIdFrom(html: string): string | null {
   return m?.[1] ? assetHashFrom(m[1]) : null;
 }
 
+export interface VersionCheckOptions {
+  /** The caller's current navigation position — the pathname on the desktop
+      shell. REQUIRED, not optional: it decides whether the check runs at the
+      one moment that matters most (see below), and an omitted key would
+      silently keep the old poll-only behaviour with nothing failing to
+      compile. Pass null only where the surface genuinely has no navigation. */
+  routeKey: string | null;
+  intervalMs?: number;
+}
+
 /** Poll the deployed index.html for a changed entry chunk. Returns
     `updateReady` once a newer build is live; the caller decides when to reload
-    (we never reload from under the operator). Pauses while the tab is hidden. */
-export function useVersionCheck(intervalMs = 5 * 60_000): { updateReady: boolean } {
+    (we never reload from under the operator). Pauses while the tab is hidden.
+
+    The cadence was 5 minutes and that lost the race it exists to win. `main`
+    takes roughly 30-70 merges a day, App.tsx code-splits 100+ routes, and every
+    route the tab has NOT visited yet is a chunk that disappears on the next
+    deploy — so the operator's odds of being warned before clicking into one
+    were poor, and the audit caught five 404-then-reload "flashes" in a single
+    session. Sixty seconds plus a check on every navigation closes most of that
+    window, and each check is one small same-origin GET of index.html. */
+export function useVersionCheck(
+  { routeKey, intervalMs = 60_000 }: VersionCheckOptions,
+): { updateReady: boolean } {
   const [updateReady, setUpdateReady] = useState(false);
+  /** Lets the navigation effect below fire a check WITHOUT taking routeKey as a
+      dependency of the polling effect — that would tear down and rebuild the
+      interval on every click, so a busy operator would reset the 60s clock
+      forever and the periodic check would never actually run. */
+  const checkNow = useRef<() => void>(() => {});
 
   useEffect(() => {
     const boot = bootBuildId();
@@ -109,14 +134,30 @@ export function useVersionCheck(intervalMs = 5 * 60_000): { updateReady: boolean
       if (!document.hidden) void check();
     };
     document.addEventListener("visibilitychange", onVis);
+    checkNow.current = () => { void check(); };
     void check(); // once on mount
 
     return () => {
       stopped = true;
+      // Drop the handle with the effect that owns it, so a navigation landing
+      // after unmount cannot call into a torn-down closure.
+      checkNow.current = () => {};
       window.clearInterval(id);
       document.removeEventListener("visibilitychange", onVis);
     };
   }, [intervalMs, updateReady]);
+
+  // A navigation is the moment the tab is about to import a chunk it has never
+  // fetched — exactly where a stranded build turns into a 404 and a reload
+  // under the operator. Checking here means the banner can be up BEFORE they
+  // click the next thing, which the 5-minute poll almost never managed.
+  const mounted = useRef(false);
+  useEffect(() => {
+    // The polling effect already checks once on mount; without this the very
+    // first render would fire two identical requests back to back.
+    if (!mounted.current) { mounted.current = true; return; }
+    checkNow.current();
+  }, [routeKey]);
 
   return { updateReady };
 }

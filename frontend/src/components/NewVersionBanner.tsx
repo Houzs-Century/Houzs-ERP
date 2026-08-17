@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useLocation } from "react-router-dom";
 import { RefreshCw } from "lucide-react";
 import { useVersionCheck } from "../hooks/useVersionCheck";
 
@@ -10,9 +11,15 @@ import { useVersionCheck } from "../hooks/useVersionCheck";
  * We never reload from under the operator — they click when they're ready, so
  * a deploy mid-data-entry can't wipe their work. Clicking enters a brief
  * loading state (spinning icon) so a double-click can't fire two reloads.
+ *
+ * useLocation is read HERE and not in App(): App creates the element tree for
+ * 137 lazy routes on every render, and subscribing it to the location would
+ * re-run all of that on every navigation. This banner is a leaf, so the
+ * subscription costs one re-render of one pill.
  */
 export function NewVersionBanner() {
-  const { updateReady } = useVersionCheck();
+  const { pathname } = useLocation();
+  const { updateReady } = useVersionCheck({ routeKey: pathname });
   const [reloading, setReloading] = useState(false);
   if (!updateReady) return null;
 

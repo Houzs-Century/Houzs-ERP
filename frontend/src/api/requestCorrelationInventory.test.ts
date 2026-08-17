@@ -15,6 +15,17 @@ type FetchCall = {
 // correlatedFetch; the other two calls are fixed same-origin static assets.
 const EXPECTED_RAW_FETCH_CALLS: FetchCall[] = [
   {
+    // One re-fetch of the hashed chunk a lazy import just failed on, to tell a
+    // dropped request apart from a build that has moved before spending a
+    // service-worker unregister + full cache purge on it. Same category as the
+    // version check below: a fixed same-origin static asset, no API traffic, and
+    // chunkUrlFrom() constrains the URL to our own origin.
+    file: "components/RouteFallback.tsx",
+    functionName: "probeChunk",
+    callee: "fetch",
+    argument: "url",
+  },
+  {
     file: "hooks/useVersionCheck.ts",
     functionName: "check",
     callee: "fetch",
