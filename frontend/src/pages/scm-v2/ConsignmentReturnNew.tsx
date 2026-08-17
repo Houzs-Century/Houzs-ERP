@@ -20,6 +20,7 @@
 // CRN-YYMM-NNN.
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -310,7 +311,7 @@ export const ConsignmentReturnNew = () => {
           <>
             <div className={styles.actions}>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/consignment-returns/from-note')}>
-                <ArrowRightLeft {...ICON} /> From Consignment Note
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('cn')}
               </Button>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/consignment-returns')}>
                 <X {...ICON} /> Cancel

@@ -579,7 +579,7 @@
 }
 
 /* ── Row context menu (right-click) ─────────────────────────────────
-   AutoCount-style: New / Edit / View / Convert to DO / Delete.
+   AutoCount-style: New / Edit / View / Transfer to Delivery Order / Delete.
    z-index sits above sticky <thead> and the header ctx menu so the
    floating menu always clears chrome. */
 .contextMenu {

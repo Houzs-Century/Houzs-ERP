@@ -10,7 +10,7 @@
 // (pc-receive hooks) and navigation points at /purchase-consignment-receive.
 //
 // Dropped from the GRN clone (per scope): the From-PO header button + the
-// right-click "Convert to PI / PR" actions (consignment receiving doesn't feed
+// right-click transfer-to-Purchase-Invoice / Purchase-Return actions (consignment receiving doesn't feed
 // real purchase-invoice / purchase-return flows — the parallel Purchase
 // Consignment Return flow handles returns). The Transfer-From (PO) column is
 // relabelled to the source Purchase Consignment Order.

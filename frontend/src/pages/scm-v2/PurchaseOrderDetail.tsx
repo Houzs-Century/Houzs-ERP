@@ -884,7 +884,7 @@ export const PurchaseOrderDetail = () => {
             />
             </>
           )}
-          {/* PR #78 — Convert from Sales Order. Gated behind Edit mode (it
+          {/* PR #78 — Transfer from Sales Order. Gated behind Edit mode (it
               mutates line items). Commander 2026-05-29 — opens the full "Pick
               Sales Orders for this PO" picker scoped to this PO's supplier. */}
           {isEditing && (po.status === 'SUBMITTED' || po.status === 'PARTIALLY_RECEIVED') && (

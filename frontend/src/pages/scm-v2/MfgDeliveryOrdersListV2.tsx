@@ -65,7 +65,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { convertToLink } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
@@ -623,7 +623,7 @@ function DetailDrawer({
                       icon={<Receipt size={14} />}
                       onClick={onConvertToSi}
                     >
-                      Convert to SI
+                      {transferToLabel('si')}
                     </Button>
                   );
                 }
@@ -1707,7 +1707,7 @@ export function MfgDeliveryOrdersListV2() {
                     icon={<ArrowRightLeft size={14} />}
                     onClick={goFromSo}
                   >
-                    From Sales Order
+                    {transferFromLabel('so')}
                   </Button>
                   <div className="flex items-stretch">
                     <Button

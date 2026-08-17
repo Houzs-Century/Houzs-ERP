@@ -124,7 +124,7 @@ export const PurchaseReturnNew = () => {
   const navigate = useNavigate();
   const notify   = useNotify();
   const [params] = useSearchParams();
-  /* The GRN screens' "Convert to PR" sent ?fromGrn=<id> here while this page has
+  /* The GRN screens' "Transfer to Purchase Return" sent ?fromGrn=<id> here while this page has
      always read `grnId`, so the button opened a blank free-form return with no
      note attached and said nothing (fixed 2026-08-16 by routing both callers
      through lib/convertScope). The scope read now goes through the same module,
@@ -341,7 +341,7 @@ export const PurchaseReturnNew = () => {
         actions={
           <div className={styles.actions}>
             {/* Pull lines from a Goods Receipt — routes to the GRN list where the
-                user right-clicks "Convert to PR" (no dedicated picker page). */}
+                user right-clicks "Transfer to Purchase Return" (no dedicated picker page). */}
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/grns')}>
               <ArrowRightLeft {...ICON} /> From Goods Receipt
             </Button>

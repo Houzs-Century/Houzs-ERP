@@ -20,6 +20,7 @@
 // numbering is PCR-…
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -427,7 +428,7 @@ export const PurchaseConsignmentReceiveNew = () => {
         actions={
           <div className={styles.actions}>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-consignment-receives/from-pc-order')}>
-              <ArrowRightLeft {...ICON} /> From Purchase Consignment Order
+              <ArrowRightLeft {...ICON} /> {transferFromLabel('pco')}
             </Button>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-consignment-receives')}>
               <X {...ICON} /> Cancel
