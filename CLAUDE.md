@@ -440,17 +440,23 @@ half the ways a branch gets updated:
 | `git merge origin/main` locally, then push | **YES** |
 | *Update branch* button / `gh pr update-branch` | **NO** |
 
-> *".gitattributes is applied by whichever git performs the merge; GitHub's
-> Update branch is GitHub's git reading its own configuration, not the
-> repository's."* — PR #2145, which measured it.
+The attribute is applied by whichever git PERFORMS the merge, and *Update branch*
+is GitHub's git reading its own configuration, not this repository's. Measured
+2026-08-13 on #1905, whose only conflict was `BUG-HISTORY.md`: `git merge
+origin/main` locally resolved it clean, `gh pr update-branch 1905` answered
+`Cannot update PR branch due to conflicts` — same two commits, opposite answers.
 
 So the button reports **CONFLICTING** on a file this repo's own merge driver
 would have resolved silently. The symptom is the confusing one: **GitHub says
 CONFLICTING while a local merge is clean.** That is not a contradiction to
 resolve, it is this. Merge locally and push, and the conflict never exists.
 
-This rule is here because it was already written down — in a CLOSED PR nobody
-reads — and sessions kept re-deriving it at a cost of hours each time.
+**This was not undocumented — and that is the point.** The full trace is in
+`docs/ci-capacity-coe.md`, under *"The half of this that does NOT work"* (PR
+#2145 is where the correction was first written). It had simply never reached
+THIS file, and this is the file that is auto-loaded into every session, so
+sessions kept re-deriving it at a cost of hours each. A rule that lives only in
+a COE is a rule that is read after the damage, not before it.
 
 ### ⚠️ `statusCheckRollup` LIES. Read `mergeStateStatus` and the newest run
 
@@ -587,9 +593,10 @@ never nullish.
   wrong lint fix it could not see was wrong. Traced: `eslint@^9.39.5` is in
   `devDependencies` AND in both lockfiles (`node_modules/eslint`, `dev: true`,
   no `os`/`cpu` gate), there is no `.npmrc`, and `npm config get omit` is empty —
-  so nothing skips it. The installed trees simply predate it:
-  `backend/node_modules/.package-lock.json` was written 2026-07-31 and
-  `frontend/`'s 2026-08-02, while the linter landed 2026-08-13 (`cbdf03618`).
+  so nothing skips it. The installed trees simply predate it: the install marker
+  npm writes inside each app's `node_modules` is dated 2026-07-31 for the backend
+  and 2026-08-02 for the frontend, while the linter landed 2026-08-13
+  (`cbdf03618`). Neither tree contains eslint or typescript-eslint at all.
   **`npm ci` in the app directory** fixes it — measured 2026-08-17 at **4
   seconds** for `frontend/`, after which `npm run lint` runs. `lint-ratchet.mjs`
   already prints exactly this instruction when the binary is absent; read it
