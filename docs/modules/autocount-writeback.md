@@ -2508,6 +2508,40 @@ failed, and `pending` would hand the drain a row with an empty body) — and its
 original reason kept whole behind it. The health check reads that prefix and
 reports those rows under RE-QUEUED instead of counting them as backlog.
 
+### When a SENT document's counterpart has been cancelled by hand
+
+Nothing above covers this, and 2026-08-17 proved it. `HC-PO-2608-001` landed in
+the book as `PO-009968` (the transfer arm sent no `DocNo` — D5, §7c3b), a human
+then cancelled `PO-009968` in `AED_HOUZS`, and the ERP could not re-send the
+order through ANY path:
+
+| path | why not |
+|---|---|
+| `enqueuePoCreate` | `if (header.linked_ac_docno) return false;` — the column still named the cancelled document |
+| an ERP-side save | `enqueueEdit` returns false for a document with no `linked_ac_docno`, so CLEARING the column does not make a save re-send it either |
+| `requeueSkipped` / the per-row button | the row is `sent`, and both refuse that — correctly |
+| `PATCH /:id/confirm` | short-circuits on an already-`SUBMITTED` PO before it reaches the enqueue |
+
+Those four guards are right and stay. What was missing is a way to express the
+one case where a re-send IS correct, and it needs a HUMAN fact the ERP cannot
+see: the counterpart is cancelled. `backend/scripts/reraise-hc-po-2608-001.mjs`
++ Actions -> **Re-raise HC-PO-2608-001 into AutoCount (PLAN by default)** is that
+tool, and it is deliberately scoped to ONE document by constant rather than
+generalised — clearing `linked_ac_docno` on a document that IS in the book makes
+the next drain write a duplicate into a licensed system, so the blast radius of
+a mistake is the whole reason the scope is a constant and not a parameter.
+
+Two properties worth copying if this ever has to be done again:
+
+- **It clears AND queues.** Clearing alone leaves the document unlinked and
+  unqueued, which is worse than the state it started in: the ERP then believes
+  the order is not in AutoCount and nothing will ever send it.
+- **The verification asserts the DEFECT.** It re-reads on a fresh connection and
+  requires `payload->'body'->>'DocNo'` on the queued row to equal the ERP's
+  number. That field's absence is what produced `PO-009968`, so its presence is
+  the only pre-drain evidence the fix carried. Where the document actually LANDS
+  is still not knowable from the ERP — a `sent` row means AutoCount answered.
+
 ### The cancel-parity check — the owner's rule 3, made testable
 
 `backend/scripts/check-cancel-parity.mjs` + `.github/workflows/cancel-parity-check.yml`.
