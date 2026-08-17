@@ -369,7 +369,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
     setActionError(null);
     setBusy(true);
     try {
-      await updateStatus.mutateAsync({ docNo, status });
+      await updateStatus.mutateAsync({ docNo, status, expectedStatus: h?.status ?? null });
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
     } finally {
