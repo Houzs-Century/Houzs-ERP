@@ -1,0 +1,44 @@
+name: Why is a PO not receivable (read-only)
+
+# Owner-triggered, 2026-08-17. HC-PO-2608-001 shows two lines at Ordered 1 /
+# Received 0 / Balance 1 and status "Submitted", while the GRN-from-PO picker
+# for that same PO reports `0 OF 0 ROWS` and "every line has been received".
+# Two screens of one ERP disagree about one document. This prints the inputs
+# GET /outstanding-po-items reads and evaluates each of its gates separately,
+# so the output NAMES the gate that drops the lines.
+#
+# SELECT only — no DDL, no writes, no transaction. The verdict is the output,
+# so it exits 0 for every legitimate answer.
+on:
+  workflow_dispatch:
+    inputs:
+      doc_no:
+        description: 'Purchase order document number'
+        required: false
+        default: 'HC-PO-2608-001'
+      company_id:
+        description: 'Company id to evaluate the gates against (blank = the document''s own)'
+        required: false
+        default: ''
+
+concurrency:
+  group: why-po-not-receivable
+  cancel-in-progress: false
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: npm ci
+        working-directory: backend
+      - name: diagnose (read-only)
+        working-directory: backend
+        env:
+          DATABASE_URL: "${{ secrets.DATABASE_URL }}"
+          DOC_NO: "${{ inputs.doc_no }}"
+          COMPANY_ID: "${{ inputs.company_id }}"
+        run: node scripts/why-po-not-receivable.mjs
