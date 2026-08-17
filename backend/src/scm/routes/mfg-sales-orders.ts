@@ -2048,7 +2048,7 @@ mfgSalesOrders.get('/mine', async (c) => {
         'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
         'proceeded_at, total_revenue_centi, line_count, deposit_centi',
       )
-      .not('status', 'in', '("CANCELLED","ON_HOLD","DRAFT")'),
+      .not('status', 'in', '("CANCELLED","ON_HOLD")'), // DRAFT shown on purpose — pairs with /pos/sales-stats; BUG-HISTORY 2026-08-17
     c,
   );
   /* Company scope is NOT optional here (owner 2026-08-10 cross-company audit).
