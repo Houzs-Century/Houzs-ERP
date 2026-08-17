@@ -191,9 +191,31 @@ read-then-write, with no database constraint behind it. `grns.ts` says so in its
 own words: *"with no DB unique index behind it to reject the second write (unlike
 DO/DR, which have one)"*. The unlinked-line guards close the operator-facing door
 (`grn-unlinked-po-lines.ts`, `return-unlinked-lines.ts`); a concurrent-write race
-is held only by the CAS and the post-insert verifiers, and two of those verifiers
-swallow their read errors on purpose. Counting how much of this shape is already
-in production is what `probe-transfer-census` is for.
+is held only by the CAS and the post-insert verifiers. Counting how much of this
+shape is already in production is what `probe-transfer-census` is for.
+
+Two corrections to this paragraph, both made 2026-08-17 when the BILLING side of
+this chain was guarded. *"Two of those verifiers swallow their read errors on
+purpose"* was true of `verifyGrnLinesNotOverInvoiced`; its three reads now bind
+them, and each caller chooses — the CREATE paths log and proceed (they ran their
+own pre-check moments earlier), the CONFIRM refuses, because there the pre-check is
+the only check. And the sentence gave the impression the operator-facing door was
+fully closed, which it was not: `purchase_invoice_items` had NO unlinked-line guard
+at all until that day, so a hand-added goods line billed a receipt while
+`invoiced_qty` stayed put and a second invoice billed the same delivery. That is
+the money version of this shape, and it is closed on all three write paths — see
+`docs/unlinked-line-duplicate-coe.md` §5a.
+
+**3. On this side of the chain the same edit-path door is still open.**
+`PATCH /grns/:id/items/:itemId` rewrites a line's `material_code` and never calls
+`findUnlinkedPoLines`, so a receipt line added for a material the PO does not carry
+(correctly allowed) can afterwards be retyped onto one it does — the refused shape,
+assembled in two legal steps, with `purchase_order_item_id` still null so
+`recomputePoReceived` never counts it. The identical gap is on
+`purchase-returns.ts`, `delivery-returns.ts` and `sales-invoices.ts`. Only the
+Purchase Invoice edit path was closed on 2026-08-17, because only that chain bills
+money; these four move stock. RECORDED, not changed, for the owner to rank —
+`docs/modules/document-conversion.md` §10.4 G5 carries the same list.
 
 **`PATCH /:id` was unscoped on both its read and its UPDATE until 2026-08-13**
 (PR #2086; BUG-HISTORY, *"The writes the read-hardening audit left"*). The GET at
