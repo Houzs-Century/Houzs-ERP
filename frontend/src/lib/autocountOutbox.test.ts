@@ -231,6 +231,44 @@ describe("acHeadline — the owner's question, answered in one line", () => {
   it("says something while the queue is still loading", () => {
     expect(acHeadline(null).tone).toBe("muted");
   });
+
+  /* NO EMPTY STATE MAY CLAIM THE WORK IS DONE (owner 2026-08-17). The server
+     already tells us when its count scan gave up — `counts_complete: false` —
+     and both screens render a banner for it. The headline used to ignore the
+     flag and print the green "Everything is in AutoCount" beside that banner.
+     A count that is a FLOOR cannot support a verdict of "nothing was refused". */
+  it("will not say everything arrived when the server says it could not finish counting", () => {
+    const h = acHeadline(payload({
+      counts_complete: false,
+      counts: { pending: 0, sent: 900, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 900 },
+    }));
+    expect(h.text).not.toContain("Everything is in AutoCount");
+    expect(h.tone).not.toBe("good");
+    expect(h.text).toMatch(/cannot say whether everything reached AutoCount/i);
+    /* And it must not simply repeat AC_COUNTS_PARTIAL_LINE, which sits directly
+       under it on both screens — two copies of one sentence teach the reader to
+       skip both. */
+    expect(h.text).not.toContain("at least this many");
+  });
+
+  /* The guard must not swallow the alarm. A partial count that ALREADY shows
+     refused documents is still showing refused documents — a floor above zero
+     is above zero — so `attention` keeps winning. */
+  it("still raises the alarm when a partial count already found refusals", () => {
+    const h = acHeadline(payload({
+      counts_complete: false,
+      counts: { pending: 0, sent: 5, failed: 2, skipped: 0, requeued: 0, attention: 2, total: 7 },
+    }));
+    expect(h.tone).toBe("bad");
+    expect(h.text).toContain("need your attention");
+  });
+
+  /* The empty-queue line is a claim too: "nothing has ever been queued" is a
+     fact about the world, and a scan that stopped early cannot establish it. */
+  it("does not report an unfinished count as an empty queue", () => {
+    const h = acHeadline(payload({ counts_complete: false }));
+    expect(h.text).not.toContain("nothing has ever been queued");
+  });
 });
 
 describe("acWritebackLine — the switch, without the setting it lives in", () => {

@@ -911,7 +911,7 @@ export const createPcReceiveFromPcosHandler = async (c: Context<{ Bindings: Env;
     discount_centi?: number; unit_cost_centi?: number; delivery_date?: string | null;
   }>).filter((it) => it.qty - (it.received_qty ?? 0) > 0);
 
-  if (itemList.length === 0) return c.json({ error: 'nothing_outstanding', message: 'All PC Order items are already fully received' }, 400);
+  if (itemList.length === 0) return c.json({ error: 'nothing_outstanding', message: 'No outstanding lines came back for this PC Order. Open it and check its received balance before treating it as received in full.' }, 400);
 
   const receiveNumber = await nextNumber(sb, 'PCR', 'purchase_consignment_receives', 'receive_number', c);
 
