@@ -18,7 +18,9 @@ import { assertForeignRatePostable, assertForeignRatePatchable } from '../lib/fx
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
-import { findUnlinkedPiLines, unlinkedInvoiceResponse } from '../lib/return-unlinked-lines';
+import {
+  findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
+} from '../lib/return-unlinked-lines';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
@@ -88,6 +90,50 @@ const ITEM =
    resolve below walks id lists hop by hop. */
 const uniq = (xs: Array<string | null | undefined>) =>
   [...new Set(xs.filter((x): x is string => !!x))];
+
+/* ── coveredGrnIds — EVERY receipt a purchase invoice bills ──────────────────
+   The header's `grn_id` is only the PRIMARY ref. `/from-grn-items` says so where
+   it stamps it — "PRIMARY note ref … the line-level grn_item_id is the
+   authoritative linkage" — because one supplier invoice may cover several notes
+   (owner 2026-08-06, migration 0267). This file already walks
+   `grn_item_id -> grn_items.grn_id` twice for READS (the detail's `sourceGrns`,
+   the linked-docs fan-out); the unlinked-line GUARD was the one place still
+   trusting the header ref alone, so a hand-added line billing a SECONDARY note's
+   material passed the very check written to refuse it.
+
+   Every read binds its error and the result carries `error`, because the CALLER
+   is a money guard: an id list short by one receipt is a door left open, and it
+   is indistinguishable from a receipt that legitimately has no lines. */
+async function coveredGrnIds(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  args: {
+    /** The header's primary ref, when there is one. */
+    headerGrnId?: string | null;
+    /** Walk this invoice's OWN lines for the receipts they descend from. */
+    piId?: string | null;
+    /** Receipt LINE ids from the request body (a create has no invoice yet). */
+    grnItemIds?: Array<string | null | undefined>;
+  },
+): Promise<{ ids: string[]; error: string | null }> {
+  const grnItemIds = [...(args.grnItemIds ?? [])];
+  if (args.piId) {
+    const { data, error } = await sb.from('purchase_invoice_items')
+      .select('grn_item_id').eq('purchase_invoice_id', args.piId);
+    if (error) return { ids: [], error: `invoice lines: ${error.message}` };
+    for (const r of (data ?? []) as Array<{ grn_item_id: string | null }>) grnItemIds.push(r.grn_item_id);
+  }
+  const lineIds = uniq(grnItemIds);
+  const out = uniq([args.headerGrnId ?? null]);
+  if (lineIds.length > 0) {
+    const { data, error } = await sb.from('grn_items').select('grn_id').in('id', lineIds);
+    if (error) return { ids: [], error: `receipt lines: ${error.message}` };
+    for (const r of (data ?? []) as Array<{ grn_id: string | null }>) {
+      if (r.grn_id && !out.includes(r.grn_id)) out.push(r.grn_id);
+    }
+  }
+  return { ids: out, error: null };
+}
 
 /* The PI's identity for an audit row written from a LINE handler, which has the
    line in hand but not the parent. Best-effort by design: the writer is
@@ -432,32 +478,61 @@ async function recomputeGrnInvoiced(sb: any, grnItemIds: Array<string | null | u
 async function verifyGrnLinesNotOverInvoiced(
   sb: any,
   grnItemIds: Array<string | null | undefined>,
-): Promise<Array<{ grnItemId: string; invoiced: number; cap: number }>> {
+  /* One PI whose DRAFT lines COUNT anyway — the one being confirmed. See the
+     DRAFT note below: drafts are excluded from this sum because a draft consumes
+     nothing, but the whole question at confirm time is "would committing THIS
+     draft break the cap?", and excluding it makes the answer always yes. */
+  countDraftPiId?: string | null,
+): Promise<{ over: Array<{ grnItemId: string; invoiced: number; cap: number }>; error: string | null }> {
   const ids = [...new Set(grnItemIds.filter((x): x is string => Boolean(x)))];
-  if (ids.length === 0) return [];
+  if (ids.length === 0) return { over: [], error: null };
+  /* THE ERRORS ARE BOUND, and returned rather than swallowed. Unbound, a failed
+     cap read left `capById` empty, `cap = capById.get(id) ?? invoiced` made every
+     cap equal its own draw, and the function answered "nothing is over" — a
+     money guard that says all-clear because it could not look. Each caller then
+     decides: the CREATE paths log and proceed (they ran a pre-check of their own
+     moments earlier, and rolling a legitimate invoice back on a transient blip is
+     the wrong trade), while the CONFIRM transition refuses, because there the
+     pre-check is the only check there is. */
   // Cap per GRN line = qty_accepted - returned_qty.
-  const { data: giRows } = await sb.from('grn_items')
+  const { data: giRows, error: giErr } = await sb.from('grn_items')
     .select('id, qty_accepted, returned_qty').in('id', ids);
+  if (giErr) return { over: [], error: `receipt cap read failed: ${giErr.message}` };
   const capById = new Map<string, number>(
     ((giRows ?? []) as Array<{ id: string; qty_accepted: number; returned_qty: number }>)
       .map((g) => [g.id, (g.qty_accepted ?? 0) - (g.returned_qty ?? 0)]),
   );
   // Live invoiced per GRN line = sum(qty) across all committed (non-cancelled,
   // non-draft) PI lines.
-  const { data: sib } = await sb.from('purchase_invoice_items')
+  const { data: sib, error: sibErr } = await sb.from('purchase_invoice_items')
     .select('grn_item_id, qty, purchase_invoice_id').in('grn_item_id', ids);
+  if (sibErr) return { over: [], error: `invoiced-qty read failed: ${sibErr.message}` };
   const sibRows = (sib ?? []) as Array<{ grn_item_id: string; qty: number; purchase_invoice_id: string }>;
   const piIds = [...new Set(sibRows.map((r) => r.purchase_invoice_id).filter(Boolean))];
   /* LEAK GUARD (DRAFT, PI two-state — 2026-06-25 anchoring diff vs 2990) — exclude
      DRAFT as well as CANCELLED from the over-invoice cap re-sum: a DRAFT PI consumes
-     no GRN qty, so it never counts against the qty_accepted-returned cap. The cap is
-     re-checked at confirm (recomputeGrnInvoiced clamps to qty_accepted), so a DRAFT
-     that would over-bill is caught the moment it's confirmed, not while still a
-     draft. */
+     no GRN qty, so it never counts against the qty_accepted-returned cap.
+
+     THIS NOTE USED TO END with "The cap is re-checked at confirm
+     (recomputeGrnInvoiced clamps to qty_accepted), so a DRAFT that would over-bill
+     is caught the moment it's confirmed". IT WAS NOT TRUE, and it was load-bearing:
+     `recomputeGrnInvoiced` CLAMPS (`Math.min(accepted, inv)`) and is contractually
+     "best-effort, never throws", so it cannot refuse anything — it just quietly
+     writes the capped number and leaves invoiced_qty reading correct over a receipt
+     billed twice. Two DRAFT PIs each taking a receipt line in full both confirmed,
+     both posted AP, and every counter a reconciliation reads said the receipt was
+     billed exactly once. The confirm transition now calls THIS function with
+     `countDraftPiId` set, which is the check that note always claimed existed. */
   const excluded = new Set<string>();
   if (piIds.length > 0) {
-    const { data: pis } = await sb.from('purchase_invoices').select('id, status').in('id', piIds);
+    const { data: pis, error: pisErr } = await sb.from('purchase_invoices').select('id, status').in('id', piIds);
+    /* An empty `excluded` from a failed read does not read as "we don't know" — it
+       reads as "no sibling invoice is DRAFT or CANCELLED", which INFLATES the sum
+       and would refuse a legitimate bill. Same class as the note in
+       recomputeGrnInvoiced. */
+    if (pisErr) return { over: [], error: `sibling-status read failed: ${pisErr.message}` };
     for (const p of (pis ?? []) as Array<{ id: string; status: string }>) {
+      if (p.id === countDraftPiId) continue;   // the one being confirmed: it counts
       if (p.status === 'CANCELLED' || p.status === 'DRAFT') excluded.add(p.id);
     }
   }
@@ -472,7 +547,7 @@ async function verifyGrnLinesNotOverInvoiced(
     const cap = capById.get(id) ?? invoiced;
     if (invoiced > cap) over.push({ grnItemId: id, invoiced, cap });
   }
-  return over;
+  return { over, error: null };
 }
 
 /* PI edit-lock guard: a PI with ANY payment recorded (paid_centi > 0) or that's
@@ -1024,15 +1099,25 @@ purchaseInvoices.post('/', async (c) => {
      hand-added line with no link bills the goods while moving no
      `grn_items.invoiced_qty`, so the GRN line still reads fully outstanding and
      a second PI bills the same receipt — the supplier is paid twice. Refused
-     only when the material is already on the GRN this invoice names, so a
-     freight or service line still passes. Five sibling chains close exactly this
-     door; see docs/unlinked-line-duplicate-coe.md and the owner's 2026-08-04
-     "包括 GR 那边也是". */
+     only when the material is already on one of the receipts this invoice
+     COVERS, so a freight or service line still passes. Five sibling chains close
+     exactly this door; see docs/unlinked-line-duplicate-coe.md and the owner's
+     2026-08-04 "包括 GR 那边也是".
+
+     The receipt set is the header ref UNION the receipts behind the body's own
+     linked lines, not the header ref alone: this endpoint is how the multi-note
+     `?grnId=` draft is saved, and a set of one made an unlinked line billing a
+     SECONDARY note's material pass. FAILS CLOSED — a check that could not run
+     must not authorise the write. */
   {
+    const covered = await coveredGrnIds(sb, {
+      headerGrnId: (body.grnId as string | undefined) ?? null,
+      grnItemIds: items.map((it) => (it.grnItemId as string | undefined) ?? null),
+    });
+    if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
     const unlinked = await findUnlinkedPiLines(
       sb,
-      (body.grnId as string | undefined) ?? null,
-      (body.grnNumber as string | undefined) ?? null,
+      covered.ids,
       items.map((it, idx) => ({
         lineRef: String(idx),
         itemCode: String(it.materialCode ?? ''),
@@ -1040,7 +1125,8 @@ purchaseInvoices.post('/', async (c) => {
         soItemId: (it.grnItemId as string | undefined) ?? null,
       })),
     );
-    if (unlinked.length > 0) return c.json(unlinkedInvoiceResponse(unlinked), 409);
+    if (!unlinked.ok) return c.json(unlinkedCheckFailedResponse(unlinked.reason), 500);
+    if (unlinked.offenders.length > 0) return c.json(unlinkedInvoiceResponse(unlinked.offenders), 409);
   }
 
   /* Over-invoice guard (mirrors /from-grn-items line ~432 + /:id/items): any
@@ -1193,7 +1279,12 @@ purchaseInvoices.post('/', async (c) => {
      committed. If any GRN line is over its cap, delete THIS PI (header cascades
      its lines) + 409. Mirrors POST /:id/items. */
   {
-    const over = await verifyGrnLinesNotOverInvoiced(sb, itemRows.map((r) => r.grn_item_id));
+    const verify = await verifyGrnLinesNotOverInvoiced(sb, itemRows.map((r) => r.grn_item_id));
+    // The pre-check above already ran; this is the race guard, so a read failure
+    // is logged rather than rolling back a legitimate invoice.
+    // eslint-disable-next-line no-console
+    if (verify.error) console.error(`[pi over-invoice verify] ${h.invoice_number}: ${verify.error}`);
+    const over = verify.over;
     if (over.length > 0) {
       await sb.from('purchase_invoices').delete().eq('id', h.id);
       return c.json({ error: 'qty_exceeds_remaining', lines: over }, 409);
@@ -1295,6 +1386,56 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
     return c.json({ purchaseInvoice: cur });
   }
 
+  /* ── THE CAP, RE-CHECKED BEFORE THE COMMIT ────────────────────────────────
+     A DRAFT PI consumes no GRN qty, so `verifyGrnLinesNotOverInvoiced` and
+     `recomputeGrnInvoiced` both exclude drafts from their sums — which is right
+     while it is a draft, and left the CONFIRM with no cap check at all. Two
+     clerks could each draft a PI taking the same receipt line in full: neither
+     create was refused (the pre-check saw remaining in full, the post-insert
+     verify excluded the sibling draft), both confirms flipped to POSTED, both
+     called postPiAccounting, and `recomputeGrnInvoiced` CLAMPED the recount to
+     qty_accepted — so the receipt was billed and paid for twice while
+     invoiced_qty read exactly right. The comment on that DRAFT exclusion claimed
+     this check existed; it did not.
+
+     `countDraftPiId: id` is what makes the sum answer the actual question: every
+     committed sibling PLUS this draft's own lines against the receipt line's
+     (qty_accepted - returned_qty). It is the owner's per-line invariant —
+     Σ(billed so far) + this bill ≤ received qty — NOT an "already invoiced" flag:
+     a receipt line legitimately gets billed across several invoices, and every
+     partial still passes.
+
+     Read BEFORE the flip so a refusal changes nothing, and the error FAILS CLOSED
+     because here the pre-check is the only check. */
+  const { data: draftLines, error: draftLinesErr } = await sb.from('purchase_invoice_items')
+    .select('grn_item_id').eq('purchase_invoice_id', id);
+  if (draftLinesErr) {
+    return c.json({
+      error: 'lookup_failed',
+      reason: `Could not read this invoice's lines, so it was NOT confirmed: ${draftLinesErr.message}`,
+    }, 500);
+  }
+  const draftGrnItemIds = ((draftLines ?? []) as Array<{ grn_item_id: string | null }>)
+    .map((l) => l.grn_item_id);
+  {
+    const verify = await verifyGrnLinesNotOverInvoiced(sb, draftGrnItemIds, id);
+    if (verify.error) {
+      return c.json({
+        error: 'over_invoice_check_failed',
+        reason: `Could not check this invoice against the receipt's remaining quantity, so it was `
+          + `NOT confirmed — the same goods could otherwise be paid for twice (${verify.error}).`,
+      }, 500);
+    }
+    if (verify.over.length > 0) {
+      return c.json({
+        error: 'qty_exceeds_remaining',
+        message: 'Confirming this invoice would bill more than the Goods Receipt received. Another '
+          + 'invoice has already billed those lines — reduce the quantities, or cancel this draft.',
+        lines: verify.over,
+      }, 409);
+    }
+  }
+
   /* Atomic single DRAFT → POSTED transition — the conditional UPDATE only fires
      when the row is still DRAFT, so two concurrent confirms race and exactly ONE
      flips it (the other gets no row → idempotent echo). This guarantees the
@@ -1332,12 +1473,36 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
     ]),
   });
 
+  /* THE RACE, closed the same way the create paths close theirs. The cap check
+     above is read-before-write: two concurrent confirms of two drafts against the
+     same receipt line can each pass it and both flip. Re-sum now that this PI is
+     POSTED — its lines count on their own, so no `countDraftPiId` is needed — and
+     if OUR flip is the one that broke the cap, put the invoice back to DRAFT and
+     refuse. Nothing irreversible has happened yet: the AP post and the recost are
+     both below this point. */
+  {
+    const verify = await verifyGrnLinesNotOverInvoiced(sb, draftGrnItemIds);
+    if (verify.over.length > 0) {
+      await scopeToCompanyId(sb.from('purchase_invoices').update({
+        status: 'DRAFT', posted_at: null, updated_at: new Date().toISOString(),
+      }).eq('id', id), co.companyId);
+      return c.json({
+        error: 'qty_exceeds_remaining',
+        message: 'Another invoice billed those receipt lines while this one was being confirmed, so '
+          + 'it has been left as a draft. Reduce the quantities, or cancel it.',
+        lines: verify.over,
+      }, 409);
+    }
+    if (verify.error) {
+      // eslint-disable-next-line no-console
+      console.error(`[pi over-invoice verify] confirm ${curRow.invoice_number}: ${verify.error}`);
+    }
+  }
+
   // COMMIT (was skipped at DRAFT create). Consume the GRN lines so the just-billed
-  // rows drop out of the outstanding picker.
-  const { data: lines } = await sb.from('purchase_invoice_items')
-    .select('grn_item_id').eq('purchase_invoice_id', id);
-  const grnItemIds = (lines ?? []).map((l: { grn_item_id: string | null }) => l.grn_item_id);
-  await recomputeGrnInvoiced(sb, grnItemIds);
+  // rows drop out of the outstanding picker. The line ids were read before the
+  // flip, for the cap check above — one read, both uses.
+  await recomputeGrnInvoiced(sb, draftGrnItemIds);
   // Post the AP/GL entry (Dr Inventory 1200 / Cr Payables 2000). Best-effort —
   // idempotent + a post failure never un-confirms the PI.
   const postRes = await postPiAccounting(sb, curRow.invoice_number);
@@ -1844,7 +2009,10 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
        bucket's lines are committed. On overshoot, delete THIS PI (cascades its
        lines) and skip the bucket rather than over-bill the GRN line. */
     {
-      const over = await verifyGrnLinesNotOverInvoiced(sb, bucket.lines.map(({ row }) => row.id));
+      const verify = await verifyGrnLinesNotOverInvoiced(sb, bucket.lines.map(({ row }) => row.id));
+      // eslint-disable-next-line no-console
+      if (verify.error) console.error(`[pi over-invoice verify] ${h.id}: ${verify.error}`);
+      const over = verify.over;
       if (over.length > 0) {
         await sb.from('purchase_invoices').delete().eq('id', h.id);
         continue;
@@ -2036,7 +2204,10 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
      PI's lines are committed. On overshoot, delete THIS PI (cascades its lines)
      + 409. */
   {
-    const over = await verifyGrnLinesNotOverInvoiced(sb, lines.map((it) => it.id));
+    const verify = await verifyGrnLinesNotOverInvoiced(sb, lines.map((it) => it.id));
+    // eslint-disable-next-line no-console
+    if (verify.error) console.error(`[pi over-invoice verify] ${h.id}: ${verify.error}`);
+    const over = verify.over;
     if (over.length > 0) {
       await sb.from('purchase_invoices').delete().eq('id', h.id);
       return c.json({ error: 'qty_exceeds_remaining', lines: over }, 409);
@@ -2218,17 +2389,25 @@ purchaseInvoices.post('/:id/items', async (c) => {
   if (lock) return c.json(lock, 409);
 
   /* Same door as POST / — see the comment there. An unlinked line billing a
-     material the named GRN already contains is refused; a freight or service
-     line, or anything that receipt does not contain, passes. */
+     material one of this invoice's receipts already contains is refused; a
+     freight or service line, or anything those receipts do not contain, passes.
+     The receipt set walks THIS invoice's existing linked lines as well as the
+     header ref, because the header ref is only the primary one. */
   {
-    const parentGrnId = (own as { grn_id?: string | null }).grn_id ?? null;
-    const unlinked = await findUnlinkedPiLines(sb, parentGrnId, parentGrnId, [{
+    const covered = await coveredGrnIds(sb, {
+      headerGrnId: (own as { grn_id?: string | null }).grn_id ?? null,
+      piId,
+      grnItemIds: [(it.grnItemId as string | undefined) ?? null],
+    });
+    if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
+    const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{
       lineRef: String(it.lineNumber ?? '0'),
       itemCode: String(it.materialCode ?? ''),
       qty: Number(it.qty ?? 1),
       soItemId: (it.grnItemId as string | undefined) ?? null,
     }]);
-    if (unlinked.length > 0) return c.json(unlinkedInvoiceResponse(unlinked), 409);
+    if (!unlinked.ok) return c.json(unlinkedCheckFailedResponse(unlinked.reason), 500);
+    if (unlinked.offenders.length > 0) return c.json(unlinkedInvoiceResponse(unlinked.offenders), 409);
   }
 
   const qty = Number(it.qty ?? 1);
@@ -2361,9 +2540,14 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   /* company-scope: prove the PARENT invoice first. The M10 note below scopes the
      LINE to this PI, which proves the pair belongs together, never whose it is —
      both ids come from the caller. */
-  const { data: own, error: ownErr } = await scopeToCompany(c.get('supabase').from('purchase_invoices').select('id').eq('id', piId), c).maybeSingle();
+  /* `grn_id` rides along for the unlinked-line guard further down — this handler
+     can rewrite a line's material_code, which is the third way the refused shape
+     reaches the table, and without the parent ref there is nothing to check it
+     against. */
+  const { data: own, error: ownErr } = await scopeToCompany(c.get('supabase').from('purchase_invoices').select('id, grn_id').eq('id', piId), c).maybeSingle();
   if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
   if (!own) return c.json({ error: 'not_found' }, 404);
+  const parentGrnId = (own as { grn_id?: string | null }).grn_id ?? null;
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const sb = c.get('supabase');
@@ -2432,6 +2616,36 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
     const effGroup = (it.itemGroup ?? (prev as { item_group?: string }).item_group) as string | null | undefined;
     const effVariants = (it.variants ?? (prev as { variants?: unknown }).variants) as Record<string, unknown> | null | undefined;
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
+  }
+
+  /* THE THIRD DOOR, and it was wide open. The two guards above sit on the paths
+     that CREATE a line; this one rewrites an existing line's `material_code` (the
+     rename map below carries `materialCode`), leaves `grn_item_id` untouched, and
+     therefore lets the refused shape be assembled in two legal steps: add
+     PACKING-FILM by hand (allowed — the receipt does not contain it), then edit
+     that line's product to a material the receipt DOES contain. Nothing else
+     catches it: the qty cap at `if (grnItemId && delta !== 0)` below and the
+     `recomputeGrnInvoiced` recount are both gated on the STORED link, which is
+     still null, so the receipt line keeps reading fully outstanding while AP and
+     AutoCount both move. This file already knew lines get retyped after creation
+     — the charge-reallocation note calls out "a row that used to be goods and was
+     later retyped as freight".
+
+     The check runs on the EFFECTIVE post-patch code, and only for an unlinked
+     line: a linked line's identity is read-only in the UI and its qty is capped,
+     so the early-out means an ordinary qty or price edit pays for no extra read.
+     FAILS CLOSED, like the other two. */
+  if (!grnItemId && it.materialCode !== undefined) {
+    const covered = await coveredGrnIds(sb, { headerGrnId: parentGrnId, piId });
+    if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
+    const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{
+      lineRef: itemId,
+      itemCode: String(it.materialCode ?? prev.material_code ?? ''),
+      qty,
+      soItemId: null,
+    }]);
+    if (!unlinked.ok) return c.json(unlinkedCheckFailedResponse(unlinked.reason), 500);
+    if (unlinked.offenders.length > 0) return c.json(unlinkedInvoiceResponse(unlinked.offenders), 409);
   }
 
   // GRN-linked + qty changed: pre-check the delta won't push the GRN line over
