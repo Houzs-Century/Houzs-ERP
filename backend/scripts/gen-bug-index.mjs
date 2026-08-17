@@ -9,6 +9,7 @@
 // GENERATED, never hand-edited. `--check` fails when the index no longer matches
 // the ledger, and is wired into `audit:bug-index` so it cannot rot the way
 // codebase-map-facts.md did for three weeks.
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -114,19 +115,39 @@ function countHits(text, re) {
  * @returns {{area: string, tagged: boolean}} — `tagged` says the ENTRY named it,
  *          so the caller can report how much of the index is guessed.
  */
+/** Entries whose `<!-- area: -->` names nothing. Collected, not thrown on —
+ *  WHO introduced the tag decides whether it fails the run. See chargeBadAreaTags. */
+const badAreaTags = [];
+
 function areaOf(title, body) {
   const tag = AREA_TAG.exec(body)?.[1];
   if (tag) {
     if (!AREA_NAMES.has(tag)) {
-      console.error(
-        `\nBUG-INDEX: "${title.slice(0, 60)}" carries <!-- area: ${tag} -->, which is not an area.\n` +
-          `Valid areas:\n${[...AREA_NAMES].map((n) => `  ${n}`).join("\n")}\n\n` +
-          "Refusing rather than falling back to the keyword guess: a typo that silently\n" +
-          "reverts to guessing is the failure this tag exists to remove.",
-      );
-      process.exit(1);
+      /* This used to `process.exit(1)` right here, unconditionally, and that
+         turned one bad merge into a repo-wide CI blackout.
+
+         `audit:bug-index` runs inside `backend-typecheck`, which IS a required
+         status check, and this file is the ONE file the working agreement makes
+         every code PR append to. So an unparseable tag reaching `main` fails
+         every open PR AND makes the generator unrunnable, so nobody can even
+         regenerate their way out. Measured 2026-08-17: commit 6c9f8cbd landed a
+         `<!-- area: PMS My Pending lanes -->` at 04:00:21Z; between then and the
+         repair (#2351, merged 04:59:53Z) five of five PR-branch CI runs were
+         red, and three of those four branches had no connection to it at all.
+
+         The file already encodes the right rule for content DRIFT a few hundred
+         lines down — "a gate that every author trips for something the previous
+         author did is a deadlock, not a check" — and this validation simply
+         predated it. Same rule now applies here, and it is the same rule
+         check-file-size.mjs uses for an inherited ceiling violation: REPORT in
+         full, always; CHARGE only the change that introduced it. */
+      badAreaTags.push({ title, tag });
+      // Fall through to the keyword guess. The objection recorded here was to a
+      // typo reverting to guessing SILENTLY — it is not silent: every run prints
+      // the entry and the bad tag until somebody fixes it.
+    } else {
+      return { area: tag, tagged: true };
     }
-    return { area: tag, tagged: true };
   }
 
   let best = null;
@@ -151,21 +172,27 @@ function githubAnchor(heading) {
     .replace(/\s+/g, "-");
 }
 
+/** Split a ledger into entries. Shared with the merge-base copy, so "was this
+ *  entry already there?" is asked of the SAME shape it is asked of here. */
+function parseEntries(text) {
+  const out = [];
+  let cur = null;
+  text.split(/\r?\n/).forEach((line, i) => {
+    const m = /^##\s+(.*?)\s*(?:\[(\w+)\])?\s*$/.exec(line);
+    if (m) {
+      if (cur) out.push(cur);
+      cur = { title: m[1], severity: m[2] ?? "unspecified", line: i + 1, body: "" };
+    } else if (cur) {
+      cur.body += line + "\n";
+    }
+  });
+  if (cur) out.push(cur);
+  return out;
+}
+
 const src = fs.readFileSync(SRC, "utf8");
 const lines = src.split(/\r?\n/);
-
-const entries = [];
-let current = null;
-lines.forEach((line, i) => {
-  const m = /^##\s+(.*?)\s*(?:\[(\w+)\])?\s*$/.exec(line);
-  if (m) {
-    if (current) entries.push(current);
-    current = { title: m[1], severity: m[2] ?? "unspecified", line: i + 1, body: "" };
-  } else if (current) {
-    current.body += line + "\n";
-  }
-});
-if (current) entries.push(current);
+const entries = parseEntries(src);
 
 for (const e of entries) {
   const a = areaOf(e.title, e.body);
@@ -230,6 +257,88 @@ for (const [name, list] of byArea) {
     out += `| ${e.severity} | [${title}](../../BUG-HISTORY.md#${githubAnchor(e.title)}) <sub>L${e.line}</sub> | ${e.ref.replace(/\|/g, "\\|")} |\n`;
   }
 }
+
+/**
+ * BUG-HISTORY.md as it stands at the merge base, or null when that cannot be
+ * resolved (shallow clone, no origin/main). Null means "cannot tell whose fault
+ * it is", and the caller then charges everything — the same choice
+ * check-file-size.mjs makes, for the same reason.
+ */
+function ledgerAtMergeBase() {
+  const git = (args) =>
+    execFileSync("git", args, {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  try {
+    git(["rev-parse", "--verify", "--quiet", "origin/main"]);
+    const base = git(["merge-base", "HEAD", "origin/main"]).trim();
+    if (!base) return null;
+    return git(["show", `${base}:BUG-HISTORY.md`]);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Report every unparseable area tag; fail only on the ones THIS change added.
+ *
+ * Matched by ENTRY (title + the exact tag it carries), not by counting tag
+ * strings. Counting gets the verdict right but names the wrong entry whenever
+ * one broken tag appears twice — and a gate whose whole purpose is to blame the
+ * right person must not misidentify who that is.
+ */
+function chargeBadAreaTags() {
+  if (badAreaTags.length === 0) return;
+
+  const base = ledgerAtMergeBase();
+  /** `title\u0000tag` for every entry that ALREADY carried this bad tag at the base. */
+  const atBase = new Set();
+  if (base !== null) {
+    for (const e of parseEntries(base)) {
+      const tag = AREA_TAG.exec(e.body)?.[1];
+      if (tag && !AREA_NAMES.has(tag)) atBase.add(`${e.title}\u0000${tag}`);
+    }
+  }
+
+  const mine = [];
+  const inherited = [];
+  for (const bad of badAreaTags) {
+    if (base !== null && atBase.has(`${bad.title}\u0000${bad.tag}`)) inherited.push(bad);
+    else mine.push(bad);
+  }
+
+  const show = (b) => `  "${b.title.slice(0, 60)}" carries <!-- area: ${b.tag} -->`;
+
+  if (inherited.length) {
+    console.warn(
+      `\nBUG-INDEX: ${inherited.length} entr(y/ies) carry an area tag that names nothing, ` +
+        `and came from an earlier merge — reported, NOT charged to this change:\n` +
+        inherited.map(show).join("\n") +
+        `\nThese fall back to the keyword guess, so the index still builds. ` +
+        `They should be fixed, but not by whoever is holding this branch.`,
+    );
+  }
+
+  if (mine.length) {
+    console.error(
+      `\nBUG-INDEX: this change adds ${mine.length} entr(y/ies) whose area tag is not an area:\n` +
+        mine.map(show).join("\n") +
+        `\n\nValid areas:\n${[...AREA_NAMES].map((n) => `  ${n}`).join("\n")}\n\n` +
+        (base === null
+          ? "The merge base could not be resolved, so every bad tag is charged here — a gate\n" +
+            "that cannot tell whose fault it is must not let anything through.\n"
+          : "") +
+        "Refusing rather than falling back to the keyword guess: a typo that silently\n" +
+        "reverts to guessing is the failure this tag exists to remove.",
+    );
+    process.exit(1);
+  }
+}
+
+chargeBadAreaTags();
 
 const existing = fs.existsSync(OUT) ? fs.readFileSync(OUT, "utf8") : "";
 if (checkOnly) {
