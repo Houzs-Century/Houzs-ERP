@@ -5,7 +5,7 @@ import { isSensitiveChecklistItem, isSetupDismantleSection } from "./pmsAccess";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeMyState } from "../scm/lib/canonical-state";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
-import { deriveProjectCode, deriveProjectName } from "./project-naming";
+import { deriveProjectCode, deriveProjectName, syncedNameForOrganizerChange } from "./project-naming";
 export { deriveProjectCode, deriveProjectName };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
@@ -415,30 +415,13 @@ const PATCH_FIELDS = [
 // SEREMBAN, KUANTAN, etc.) get rolled up to their state at write
 // time and during data backfills.
 export const MALAYSIA_STATES = [
-  "JOHOR",
-  "KEDAH",
-  "KELANTAN",
-  "KL",
-  "LABUAN",
-  "MELAKA",
-  "NEGERI SEMBILAN",
-  "PAHANG",
-  "PENANG",
-  "PERAK",
-  "PERLIS",
-  "PUTRAJAYA",
-  "SABAH",
-  "SARAWAK",
-  "SELANGOR",
-  "TERENGGANU",
+  "JOHOR", "KEDAH", "KELANTAN", "KL", "LABUAN", "MELAKA", "NEGERI SEMBILAN",
+  "PAHANG", "PENANG", "PERAK", "PERLIS", "PUTRAJAYA", "SABAH", "SARAWAK",
+  "SELANGOR", "TERENGGANU",
 ] as const;
 
 export const PAYMENT_STATUSES = [
-  "not_started",
-  "deposit_paid",
-  "paid",
-  "refund_pending",
-  "refunded",
+  "not_started", "deposit_paid", "paid", "refund_pending", "refunded",
 ] as const;
 
 export async function patchProject(
@@ -501,28 +484,13 @@ export async function patchProject(
     body.venue = canonicalizeVenue(body.venue as string | null);
   }
 
-  // Organizer edits follow through to the display name (owner 2026-08-17,
-  // IOI Mall Damansara: calendar said SOLO, the Excel organizer column said
-  // MALL MGMT). The name embeds the organizer slot — "State [BRAND] ORGANIZER
-  // @ VENUE" — and editing the field used to leave the old word behind. Swap
-  // the slot ONLY when the current name still carries the OLD organizer or the
-  // SOLO placeholder; a hand-written custom name doesn't match and is never
-  // touched. Callers that set an explicit name in the same patch win outright.
+  // Organizer edits follow through to the display name (owner 2026-08-17) —
+  // swap rules in project-naming.ts. An explicit name in the same patch wins.
   if ("organizer" in body && !("name" in body)) {
-    const cur = await env.DB.prepare(
-      `SELECT name, organizer FROM projects WHERE id = ?`
-    )
-      .bind(id)
-      .first<{ name: string | null; organizer: string | null }>();
-    const m = (cur?.name ?? "").match(/^(.*\[[^\]]*\]\s*)(.*?)(\s*@.*)$/);
-    if (m) {
-      const slot = m[2].trim().toUpperCase();
-      const oldOrg = (cur?.organizer ?? "").trim().toUpperCase();
-      if (slot === "SOLO" || (oldOrg && slot === oldOrg)) {
-        const nextOrg = ((body.organizer as string | null) ?? "").trim() || "SOLO";
-        body.name = `${m[1]}${nextOrg}${m[3]}`;
-      }
-    }
+    const cur = await env.DB.prepare(`SELECT name, organizer FROM projects WHERE id = ?`)
+      .bind(id).first<{ name: string | null; organizer: string | null }>();
+    const synced = syncedNameForOrganizerChange(cur?.name, cur?.organizer, body.organizer as string | null);
+    if (synced) body.name = synced;
   }
 
   const sets: string[] = [];
