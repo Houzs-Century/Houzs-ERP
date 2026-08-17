@@ -36,7 +36,8 @@
 //   SalesDocument.PartialTransfer(TransferFrom, String, String, String, Decimal, Decimal)
 //   SalesDocument.PartialTransfer(TransferFrom, String, String, String, Decimal, Decimal, Int64)
 //   SalesDocument.InternalFullTransfer / InternalPartialTransfer / AddPartialTransferRow
-//   DeliveryOrder.AddPartialTransferDetail(String, Int64[], Boolean)   <- what ran until now
+//   DeliveryOrder.AddPartialTransferDetail(String, Int64[], Boolean)   <- the sales-side
+//        primitive, and the purchase side's FALLBACK since 2026-08-17 (Convert_ GR/PI)
 //   DeliveryOrder.AddPartialTransferDetail(String, Int64, Boolean)
 //   DeliveryOrder.get_IsTransferFromSupported() / get_IsTransfered() / get_Transferable()
 //   SalesDocument.add_OnSalesDocumentTransferConflict(SalesDocumentTransferConflictDelegate)
@@ -51,13 +52,24 @@
 // service does not call it; it exists here as a warning about how easily the
 // remainder bookkeeping gets wrong.
 //
-// NOTHING HERE IS TYPED AGAINST THOSE SIGNATURES. RunTransfer binds them by the
-// parameter NAMES in the assembly's own metadata and logs every overload it
-// finds, because this file compiles nowhere but the office host and neither
-// FullTransferOption's shape nor PartialTransfer's argument order can be
-// established from off it. The reasoning is written out above
-// TryDocumentedTransfer. LogTransferApi re-takes the dump above on every
-// service start, so the next reader does not have to trust this comment.
+// RunTransfer BINDS BY PARAMETER NAME, not by position. It reads the assembly's
+// own metadata and logs every overload it finds, because this file compiles
+// nowhere but the office host and neither FullTransferOption's shape nor
+// PartialTransfer's argument order can be established from off it. The reasoning
+// is written out above TryDocumentedTransfer. LogTransferApi re-takes the dump
+// above on every service start, so the next reader does not have to trust this
+// comment.
+//
+// ONE EXCEPTION, ADDED 2026-08-17, and it is stated here because this paragraph
+// used to read "NOTHING HERE IS TYPED AGAINST THOSE SIGNATURES" and that is no
+// longer true. Convert_'s GR and PI arms call the three-argument
+// FullTransfer(String[], TransferFrom, FullTransferOption) DIRECTLY, statically
+// typed, inside a try/catch that falls back to AddPartialTransferDetail. It is
+// typed because it is the only shape that has ever moved a purchase-side
+// conversion into the live book (host, 2026-08-17 23:09), and it was arrived at
+// by compiling on the host — including one failed build, CS0117 on the enum
+// member, which is exactly the round trip late binding exists to avoid. The
+// late-bound path is unchanged and still serves every other shape.
 //
 // The vendor's own pages, which set the debtor/creditor and the document date
 // on the target BEFORE calling the transfer — the order Convert_ now follows:
@@ -977,7 +989,19 @@ class AcSyncService {
 
      DO-011260 is not a counter-example. It was created by qa-convert.ps1, whose
      payload carries a debtor; nothing about "the old order worked once" survives
-     that. */
+     that.
+
+     THE PURCHASE SIDE IS NOW PROVEN TOO, 2026-08-17 23:09, and it took a second
+     thing on top of the account: the typed three-argument FullTransfer. The GR
+     arm below carries that log verbatim. What closed it:
+
+       HC-GR-2608-001  (from HC-PO-2608-001, DtlKeys 908162 / 908164)
+       HC-PI-2608-001  (from HC-GR-2608-001, DtlKeys 908167 / 908169)
+
+     so all six ERP document types now exist in AED_HOUZS under the ERP's own
+     numbers. The purchase arms keep PurchaseHeader on BOTH sides of the transfer
+     - the reason is written at the trailing call - and that asymmetry with the
+     sales arms is now a measured shape rather than an unverified guess. */
   static string Convert_(string fromType, string toType, Dictionary<string, object> p) {
     var s = Session();
     var fromDocNo = Str(p, "FromDocNo");
@@ -1087,36 +1111,117 @@ class AcSyncService {
         case "GR": {
           var cmd = AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand.Create(s, s.DBSetting);
           var doc = cmd.AddNew();
-          /* This conversion has failed since 2026-08-12 with
+          /* This conversion failed from 2026-08-12 to 2026-08-17 with
                IndexOutOfRangeException: There is no row at position -1
              inside GeneralPurchasePartialTransferDetail..ctor - a master lookup
              returning -1 and used as an index. The frame names its arguments but
              not their VALUES, so they go in the log before the call. */
           Log("  po-to-gr: fromType=" + fromType + " transferMaster=true keys=[" + string.Join(",", Array.ConvertAll(dtlKeys, k => k.ToString())) + "]");
-          // transferMaster MUST be true on the purchase side. That flag copies the
-          // source PO's header master (supplier/currency/terms) onto the target; with
-          // false the GRN is built with no supplier, the purchase detail ctor looks
-          // that row up in the master table, IndexOf returns -1, and Save() dies with
-          // "there is no row at position -1". The sales classes tolerate false, so they
-          // are left alone — DO-011260 and DO-011262 were both created that way.
-          //
-          // SetMaster now assigns CreditorCode EXPLICITLY before the transfer, which is
-          // the carry-across of the PROVEN sales-side cause. The flag stays true because
-          // that is what has been running, and dropping it would be a second
-          // unverifiable change inside one call.
-          //
-          // NOT SYMMETRICAL WITH THE SALES ARMS, DELIBERATELY. PurchaseHeader stays
-          // AFTER the transfer. On the sales side moving the header before it is proven
-          // (00:55:30 on the host); here it is not, and it is not a free move: with
-          // transferMaster:true the transfer copies the SOURCE PO's master - supplier,
-          // currency, DisplayTerm - over the target, so a PurchaseHeader that ran first
-          // would be partly overwritten by it, and today's ordering is what lets the
-          // ERP's DocNo and DisplayTerm win. /po-to-gr has never once succeeded, so
-          // there is no run to compare against either way. Changing this needs the host.
-          // Run status does not belong in a comment:
-          // docs/generated/autocount-coverage.md is the one place that states it.
-          x.Primitive = () => { foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true); };
+          /* ── THE CALL THAT FINALLY MOVED IT, and it is FullTransfer ──────────
+             PROVEN on the host 2026-08-17 23:09, verbatim from
+             C:\Temp\ac-sync-service.log:
+
+               23:09:04  transfer: AddPartialTransferDetail per source document - the ERP named 2 line(s) and no quantity, so FullTransfer (which would move every outstanding line) is not used
+               23:09:04  target creditor before transfer = [400-H004]
+               23:09:04  trying purchase FullTransfer from=HC-PO-2608-001 tf=PurchaseOrder
+               23:09:04  purchase FullTransfer OK
+
+             POST /po-to-gr then answered ok with docNo HC-GR-2608-001 and
+             DtlKeys 908162 / 908164, and POST /gr-to-pi with HC-PI-2608-001 and
+             908167 / 908169. Those are the first purchase-side conversions this
+             service has ever put in AED_HOUZS.
+
+             THE FIRST LOG LINE CONTRADICTS THE THIRD, and that is honest rather
+             than tidy: RunTransfer decides the shape and says AddPartialTransfer-
+             Detail, then this block - which IS the primitive it hands to - tries
+             FullTransfer first and keeps the primitive as its fallback. The
+             wording stays because it is what the operator greps and because
+             pretending the two agree would hide divergence D16 below.
+
+             THE OLD COMMENT HERE WAS WRONG AND IS CORRECTED. It blamed
+             transferMaster:false for the IndexOutOfRangeException - "the GRN is
+             built with no supplier, the ctor's master lookup returns -1". The
+             host log refutes it: every failed attempt logged the flag as TRUE and
+             threw anyway.
+
+               2026-08-16 09:54:26   po-to-gr: fromType=PO transferMaster=true keys=[906268]
+               2026-08-16 09:54:26 ERROR /po-to-gr: System.IndexOutOfRangeException: There is no row at position -1.
+
+             The flag was never the cause. The cause is the SALES side's cause -
+             the target had no account before the transfer - and the low-level
+             primitive reports that as a contentless throw where FullTransfer
+             names it. transferMaster stays true because it is what has been
+             running and what ran on the successful build, not because it fixed
+             anything.
+
+             THE ENUM MEMBER IS GoodsReceiveNote, WITH NO 'd'. The first build of
+             this block failed CS0117 on `GoodsReceivedNote` - which is how the
+             enclosing SDK CLASS is spelled, so the wrong one reads right. The
+             members, reflected off AutoCount.Purchase.dll with FlattenHierarchy:
+             PurchaseRequest=0, RequestForQuotation=1, PurchaseOrder=2,
+             PurchaseInvoice=3, GoodsReceiveNote=4, SalesOrder=5,
+             PurchaseConsignment=6, PurchaseConsignmentReturn=7.
+
+             DUPLICATED IN THE PI ARM BELOW rather than factored into a helper.
+             `doc` is a different concrete SDK class in each arm, so a shared
+             method would have to take `dynamic` and every call in it would become
+             runtime-bound - a different binding mechanism from the one that is
+             proven, on a file that compiles nowhere but the office machine.
+
+             WARNING - DIVERGENCE D16, THIS CAN OVER-TRANSFER. FullTransfer moves EVERY
+             outstanding line on the source, and this path is reached when the ERP
+             has NAMED a subset. On the proven run the two sets were equal (the PO
+             had exactly the 2 lines the GRN took), so nothing was over-received.
+             A genuine partial receipt - 2 of 5 lines - would write all 5 into the
+             live account book. Registered as D16 in
+             src/services/autocount-writeback.contract.test.ts and written up in
+             docs/modules/autocount-writeback.md 7c4; the log line below is what
+             makes it findable in the meantime. It is NOT fixed here because the
+             only shape ever observed to work on this side is this one. */
+          x.Primitive = () => {
+            PurchaseHeader(doc, p);
+            /* GUARDED - the one deviation from the host build's bytes, and the
+               reason is that Str() turns an ABSENT key into "". The host test
+               supplied CreditorCode by hand, so the unguarded assignment was
+               never exercised without one; on an outbox row that carries no
+               creditor it would blank whatever SetMaster's book fallback had just
+               read off the source document, and re-create the exact empty-account
+               failure this whole block exists to fix. On the proven run the value
+               was "400-H004" and the guard is a no-op, so the observed behaviour
+               is unchanged. Same idiom as PurchaseHeader's own DocNo line. */
+            if (!string.IsNullOrEmpty(Str(p, "CreditorCode"))) Set(() => doc.CreditorCode = Str(p, "CreditorCode"));
+            Log("  target creditor before transfer = [" + doc.CreditorCode + "]");
+            var __ptf = fromType == "PO" ? AutoCount.Invoicing.Purchase.TransferFrom.PurchaseOrder
+                                         : AutoCount.Invoicing.Purchase.TransferFrom.GoodsReceiveNote;
+            Log("  D16: purchase FullTransfer moves EVERY outstanding line on " + fromDocNo +
+                ", and the ERP named " + dtlKeys.Length + " line(s). Equal sets today; a real partial would over-receive.");
+            try {
+              Log("  trying purchase FullTransfer from=" + fromDocNo + " tf=" + __ptf);
+              doc.FullTransfer(new string[]{ fromDocNo }, __ptf, AutoCount.Invoicing.FullTransferOption.FullDetails);
+              Log("  purchase FullTransfer OK");
+            } catch (Exception __pe) {
+              Log("  purchase FullTransfer refused: " + __pe.GetType().Name + ": " + __pe.Message.Trim() + " - falling back");
+              foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
+            }
+          };
           RunTransfer(doc, x);
+          /* THE TRAILING PurchaseHeader STAYS, and that is a decision rather than
+             an oversight - the primitive above now applies the header BEFORE the
+             transfer as well, so this is the second of two calls.
+
+             It stays for three reasons. (1) It is what the build that WORKED ran:
+             the host build of 2026-08-17T15:05:51Z carried both calls and produced
+             HC-GR-2608-001 and HC-PI-2608-001; dropping one is a change no run
+             covers. (2) FullTransfer copies the SOURCE document's master onto the
+             target, so a header applied only before it can be partly overwritten -
+             and the ERP is master for DocNo, DisplayTerm, Ref, Description and
+             PurchaseLocation. This call is what makes the ERP's values the ones
+             that survive, which is why both GRN and PI carry the ERP's own number.
+             (3) It is idempotent HERE: every field it touches is a plain property
+             assignment through Set(), and a CONVERSION payload carries no UDF at
+             all (enqueueConvert composes DocNo/DocDate/Ref/account/DtlKeys), so
+             ApplyUdf returns on its first line. The sales arms' "two calls would
+             write the UDFs twice" reason does not reach this path. */
           PurchaseHeader(doc, p);
           Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
           doc.Save();
@@ -1125,8 +1230,30 @@ class AcSyncService {
         case "PI": {
           var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
           var doc = cmd.AddNew();
-          // see the GR case above — purchase side needs transferMaster = true
-          x.Primitive = () => { foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true); };
+          /* THE SAME BLOCK AS THE GR ARM, deliberately duplicated - read that
+             one for the proof, the corrected transferMaster claim, the enum
+             spelling and divergence D16. `doc` is a PurchaseInvoice here and a
+             GoodsReceivedNote there, so sharing this would mean `dynamic` and
+             runtime binding in place of the binding that is proven. fromType is
+             "GR" on this arm, so __ptf resolves to GoodsReceiveNote. */
+          x.Primitive = () => {
+            PurchaseHeader(doc, p);
+            // guarded for the same reason as the GR arm: Str() of an absent key is ""
+            if (!string.IsNullOrEmpty(Str(p, "CreditorCode"))) Set(() => doc.CreditorCode = Str(p, "CreditorCode"));
+            Log("  target creditor before transfer = [" + doc.CreditorCode + "]");
+            var __ptf = fromType == "PO" ? AutoCount.Invoicing.Purchase.TransferFrom.PurchaseOrder
+                                         : AutoCount.Invoicing.Purchase.TransferFrom.GoodsReceiveNote;
+            Log("  D16: purchase FullTransfer moves EVERY outstanding line on " + fromDocNo +
+                ", and the ERP named " + dtlKeys.Length + " line(s). Equal sets today; a real partial would over-receive.");
+            try {
+              Log("  trying purchase FullTransfer from=" + fromDocNo + " tf=" + __ptf);
+              doc.FullTransfer(new string[]{ fromDocNo }, __ptf, AutoCount.Invoicing.FullTransferOption.FullDetails);
+              Log("  purchase FullTransfer OK");
+            } catch (Exception __pe) {
+              Log("  purchase FullTransfer refused: " + __pe.GetType().Name + ": " + __pe.Message.Trim() + " - falling back");
+              foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
+            }
+          };
           RunTransfer(doc, x);
           PurchaseHeader(doc, p);
           Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));

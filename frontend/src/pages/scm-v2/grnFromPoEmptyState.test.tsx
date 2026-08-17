@@ -44,9 +44,33 @@ afterEach(() => {
 const at = (url: string) =>
   render(<MemoryRouter initialEntries={[url]}><GrnFromPo /></MemoryRouter>);
 
-/** The three states the page's own query hook can be in. */
-const loaded = <T,>(data: T) => ({ data, isLoading: false, isError: false });
+/** The three states the page's own query hook can be in.
+ *
+ * `useOutstandingPoItems` returns the WHOLE endpoint payload — `{ items, scope }`
+ * — not a bare array. `scope` is the block that lets an empty grid name its
+ * cause, and it is optional on the wire (an older cached payload has none), so
+ * these helpers cover both shapes: `loaded(rows)` is the no-scope payload and
+ * `loadedWithScope(rows, scope)` is what the server sends today.
+ */
+const payload = (items: unknown[], scope?: unknown) => ({
+  data: { items, ...(scope === undefined ? {} : { scope }) },
+  isLoading: false,
+  isError: false,
+});
+const loaded = (items: unknown[]) => payload(items);
+const loadedWithScope = (items: unknown[], scope: unknown) => payload(items, scope);
 const failed = { data: undefined, isLoading: false, isError: true };
+
+/** A `scope` block as `GET /grns/outstanding-po-items` returns it. */
+const scopeFor = (pos: Array<Record<string, unknown>>, over: Record<string, unknown> = {}) => ({
+  requestedPoIds: pos.map((p) => p.poId),
+  pos,
+  unknownPoIds: [],
+  truncated: false,
+  headerReadFailed: false,
+  scanned: 0,
+  ...over,
+});
 
 const poLine = (over: Record<string, unknown> = {}) => ({
   poItemId: "poi-1", poId: "po-1", poDocNo: "HC-PO-2608-001",
@@ -124,5 +148,48 @@ describe("GRN-from-PO picker: an empty list never claims the work is done", () =
     expect(screen.getAllByText("HC-PO-2608-001").length).toBeGreaterThan(0);
     expect(screen.queryByText(/every line has been received/i)).toBeNull();
     expect(screen.queryByText(/match the filters on this screen/i)).toBeNull();
+  });
+});
+
+/* The payload the server actually sends now carries `scope`, so the page can name
+   the ONE thing the copy above could only hedge about. These pin the two verdicts
+   that matter — the status of a purchase order the picker will not open, and the
+   only shape entitled to say the work is finished. */
+describe("GRN-from-PO picker: the server's scope block names the cause", () => {
+  it("names a DRAFT purchase order as a draft instead of hedging about the company", () => {
+    noAppendTarget();
+    outstandingPoItems.mockReturnValue(loadedWithScope([], scopeFor([{
+      poId: "po-1", poDocNo: "HC-PO-2608-001", status: "DRAFT",
+      receivable: false, candidateLines: 0, outstandingLines: 0,
+    }])));
+    at(convertToLink("poToGrn", "po-1"));
+
+    expect(screen.getByText(/HC-PO-2608-001 is DRAFT/)).toBeTruthy();
+    expect(screen.getByText(/Submit the order first/)).toBeTruthy();
+    expect(screen.queryByText(/received in full/i)).toBeNull();
+  });
+
+  it("does NOT tell the operator to reopen a purchase order that is already fully received", () => {
+    noAppendTarget();
+    /* A RECEIVED purchase order reaches this screen with candidate rows counted
+       and none outstanding — the read SAW its lines. "Reopen it" on a finished
+       order invites a second receipt against lines already received in full. */
+    outstandingPoItems.mockReturnValue(loadedWithScope([], scopeFor([{
+      poId: "po-1", poDocNo: "HC-PO-2608-001", status: "RECEIVED",
+      receivable: false, candidateLines: 2, outstandingLines: 0,
+    }])));
+    at(convertToLink("poToGrn", "po-1"));
+
+    expect(screen.getByText(/already been received in full/i)).toBeTruthy();
+    expect(screen.queryByText(/reopen it/i)).toBeNull();
+  });
+
+  it("a truncated read says lines are MISSING, never that nothing is left", () => {
+    noAppendTarget();
+    outstandingPoItems.mockReturnValue(loadedWithScope([], scopeFor([], { truncated: true })));
+    at(convertToLink("poToGrn", "po-1"));
+
+    expect(screen.getByText(/cut short/i)).toBeTruthy();
+    expect(screen.getByText(/does NOT mean there is nothing left to receive/)).toBeTruthy();
   });
 });
