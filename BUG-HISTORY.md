@@ -401,7 +401,7 @@ useful protection was on the CLASSIFICATION, not on the rule.
 
 ## The card-style task block showed a dead Approve button on already-approved items [low]
 
-<!-- area: PMS checklist status / approvals -->
+<!-- area: Projects + PMS + fair report -->
 
 **Symptom.** Owner 2026-08-17: "i cant click approve" — on an APPROVED Stock In
 Transfer Record (approved by the Owner account that same day), the expanded
