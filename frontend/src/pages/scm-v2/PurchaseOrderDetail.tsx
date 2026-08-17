@@ -376,6 +376,44 @@ export const PurchaseOrderDetail = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, bindings, fabrics, maint, editLines]);
 
+  /* Client-side PO PDF generator. Shared by the header "Print PDF" and the
+     amendment banner's "Download Revised PO" — the same generator, just an
+     optional docTitle so the revised copy prints "Revised Purchase Order". The
+     operator downloads / prints / WhatsApps it themselves (Houzs's "Send" only
+     marks the amendment SENT — mirroring 2990, no server email here).
+
+     HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
+     until 2026-08-17, so the loading render called fewer hooks than the loaded
+     one and React threw #310 ("rendered more hooks than during the previous
+     render") the moment the query resolved — a blank "Something went wrong
+     loading this page." on every direct URL / refresh of a PO. Arriving from
+     the list hid it: react-query already had the detail cached, so the
+     isPending branch never rendered first. The generator therefore has to
+     tolerate a null po; it can only ever be CALLED from a button that does not
+     exist until the record has loaded. */
+  const generatePoPdf = (docTitle?: string, action: PdfAction = 'save') => {
+    if (!po) return;
+    // PR #102 — pre-resolve purchase_location name (PDF can't hit the API).
+    const wh = (warehousesQTop.data ?? []).find((w) => w.id === po.purchase_location_id);
+    const headerForPdf = {
+      ...po,
+      // Owner 2026-07-24: DELIVER TO shows the warehouse CODE only (was the
+      // dual "code · name", which read as a duplicated warehouse name).
+      purchase_location_name: wh ? wh.code : null,
+      // #1 (Commander 2026-06-18) — deliver-to address = the bound warehouse's
+      // location text, so the supplier knows where to ship.
+      delivery_address: wh?.location ?? null,
+      // your_ref_no / source_so_doc_no don't have columns yet; pass through
+      // when present on po (forward-compat). Schema follow-up adds them.
+      your_ref_no:      (po as unknown as { your_ref_no?: string | null }).your_ref_no      ?? null,
+      source_so_doc_no: (po as unknown as { source_so_doc_no?: string | null }).source_so_doc_no ?? null,
+    };
+    import('../../vendor/scm/lib/purchase-order-pdf').then(({ generatePurchaseOrderPdf }) =>
+      generatePurchaseOrderPdf(headerForPdf, items, { ...(docTitle ? { docTitle } : {}), action }),
+    ).catch((e) => notify({ title: 'PDF generation failed', body: `${e instanceof Error ? e.message : 'Something went wrong.'}`, tone: 'error' }));
+  };
+  const print = usePrintPreview((action: PdfAction) => generatePoPdf(undefined, action));
+
   if (detail.isPending) {
     return <SkeletonDetailPage />;
   }
@@ -672,33 +710,6 @@ export const PurchaseOrderDetail = () => {
       setSavingDraft(false);
     }
   };
-
-  /* Client-side PO PDF generator. Shared by the header "Print PDF" and the
-     amendment banner's "Download Revised PO" — the same generator, just an
-     optional docTitle so the revised copy prints "Revised Purchase Order". The
-     operator downloads / prints / WhatsApps it themselves (Houzs's "Send" only
-     marks the amendment SENT — mirroring 2990, no server email here). */
-  const generatePoPdf = (docTitle?: string, action: PdfAction = 'save') => {
-    // PR #102 — pre-resolve purchase_location name (PDF can't hit the API).
-    const wh = (warehousesQTop.data ?? []).find((w) => w.id === po.purchase_location_id);
-    const headerForPdf = {
-      ...po,
-      // Owner 2026-07-24: DELIVER TO shows the warehouse CODE only (was the
-      // dual "code · name", which read as a duplicated warehouse name).
-      purchase_location_name: wh ? wh.code : null,
-      // #1 (Commander 2026-06-18) — deliver-to address = the bound warehouse's
-      // location text, so the supplier knows where to ship.
-      delivery_address: wh?.location ?? null,
-      // your_ref_no / source_so_doc_no don't have columns yet; pass through
-      // when present on po (forward-compat). Schema follow-up adds them.
-      your_ref_no:      (po as unknown as { your_ref_no?: string | null }).your_ref_no      ?? null,
-      source_so_doc_no: (po as unknown as { source_so_doc_no?: string | null }).source_so_doc_no ?? null,
-    };
-    import('../../vendor/scm/lib/purchase-order-pdf').then(({ generatePurchaseOrderPdf }) =>
-      generatePurchaseOrderPdf(headerForPdf, items, { ...(docTitle ? { docTitle } : {}), action }),
-    ).catch((e) => notify({ title: 'PDF generation failed', body: `${e instanceof Error ? e.message : 'Something went wrong.'}`, tone: 'error' }));
-  };
-  const print = usePrintPreview((action: PdfAction) => generatePoPdf(undefined, action));
 
   /* ── SO-amendment banner state (Phase 1-C) ─────────────────────────────────
      The bound PO detail stamps `open_amendment` when its source SO has an
