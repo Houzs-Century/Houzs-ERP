@@ -53,8 +53,9 @@ four conversions the source document in the book HAS the account. `/so-to-po`'s
 source is a SALES order: it carries a `DebtorCode` and no creditor, and the
 supplier is a purchase decision that exists nowhere in AutoCount until we send
 it. The authority is the ERP's own purchase order, and the row already points at
-it — `payload.writeback` is `{ purchase_orders, id, <poId> }` on every row this
-path has written.
+it: `enqueuePoCreate` sets `payload.writeback` to `{ purchase_orders, id,
+<poId> }` unconditionally, outside the transfer/create branch, so it is there
+whichever shape the row took.
 
 **Unchanged, and deliberately: `po_to_gr` and `gr_to_pi`.** This finding says
 nothing about them. `PurchaseHeader` still runs after the transfer there for the
