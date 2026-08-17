@@ -18,7 +18,7 @@
 | GHL | CSV | line 1 | `2026-06-02 18:38:24.0` | fee column, printed **negative** | `gateway_tx_id` — present but **unusable**, see below |
 | PBB (2990 HOME) | CSV | line 1, every field quoted | `17062026` — DDMMYYYY, no separators | **gross − net** (see the trap below) | `Approval_code` ✓ |
 | AEON (instalment) | XLSX → CSV in the page | searched for | `14/08/2026` | fee column printed **negative**, PLUS a statement-level subvention fee (handled) | `APP. CODE` ✓ |
-| MBB (Maybank terminal) | — | — | — | — | **Maybank sends no settlement statement** — reconciles at layer 4 |
+| MBB (Maybank terminal) | **encrypted PDF** — reader built, not yet wired | searched for | `14/06/26` | none per line; MDR stated once in TOTAL | `Auth Code` ✓ |
 | CIMB | — | — | — | — | not in use (owner, 2026-08-17) |
 
 ### ⚠️ The file labelled "MBB (1).CSV" is a HONG LEONG statement
@@ -144,19 +144,44 @@ But two things say wait:
    too, and a CSV is worth far more than a PDF reader that breaks the first time
    the bank adjusts a column.
 
-**Owner, 2026-08-17: this is the only merchant report Maybank sends.** There is
-no ordinary settlement statement to upload. So Maybank cannot be reconciled at
-layer 3 the way the others are — its card money is only ever visible as the
-bank credits `CR/CARD SALES MN <merchant> DATED <DDMMYYYY>` (and
-`DR/CARD SALES M/N …` with its separate `BCHARGE`).
+**Correction (owner, 2026-08-17): this IS Maybank's card-machine report.** The
+earlier reading of it — "instalment only, so MBB reconciles at layer 4" — was
+wrong, and decoding the whole document rather than its first page shows why: the
+report carries the full daily settlement structure. A transaction table (Card
+Number, Amount, Tran Date, Auth Code, Reference No, Terminal No, Card Type,
+EzyPay Term, Interchange Fee), then TOTAL DEBIT / CREDIT, ITEMS WITHHELD, ITEMS
+REJECTED, then a breakdown across **every** card type Maybank acquires — VISA /
+MC / AMEX / MYDEBIT / UPI, each split Maybank-issued vs local vs foreign — and
+a TOTAL line carrying gross, MDR and net. On 14/06 that merchant happened to
+take one EzyPay transaction, so every other card-type row reads 0.00. The title
+is the section heading, not the scope of the report.
 
-Which is workable, because those credit lines carry exactly what a settlement
-statement would: merchant number, trading date, and amount — one line per
-merchant per trading day. **MBB reconciles at layer 4, against the bank
-statement, not at layer 3.** That is a design decision this document is making
-explicit rather than leaving to be discovered later, and it means the Maybank
-account report's format (pipe-delimited, sen zero-padded) has to be readable by
-phase 4 — it is on the list above.
+**So MBB belongs at layer 3 like the rest, and it matters more than any of
+them**: RM 251,840 settled into one Maybank account in the first half of August
+across eight merchant numbers, with the fee already deducted before the money
+arrives. Without this report those fees are invisible.
+
+`backend/src/acc/settlement-pdf.ts` is the reader. It decrypts (RC4-128 or
+AES-128, empty user password, refusing by name a file that genuinely needs one),
+inflates, reverses the producer's obfuscation — each glyph written two bytes
+wide with the character shifted by a constant, DETECTED rather than hardcoded by
+scoring candidate decodings — and lays the positioned text out as a table,
+assigning each cell to the column it was PRINTED in. That last part is not
+cosmetic: a PDF writes nothing for a blank cell, and Maybank's Terminal No is
+blank, so reading cells in sequence slides the card type into the terminal
+column and every mapped column after it reads its neighbour.
+
+**It is deliberately NOT wired into upload yet.** The one statement available
+carries a single transaction, and this page holds TWO tables side by side — the
+address block and card-type summary share y-rows with each other, so a flat
+grid interleaves them. One row cannot prove a table extractor. → **Needed: a
+busy Maybank statement (a day with a dozen or more transactions).** With that,
+the detail table can be isolated properly and MBB joins the others.
+
+Its shape is already clear: gross per line from the detail table, no per-line
+fee at all (only `Interchange Fee`), and the MDR stated once in the TOTAL row —
+so `prorated-summary` is the fee method, with the statement total read from the
+file rather than typed.
 
 **And a real accounting point falls out of this report.** Instalment sales cost
 much more than ordinary ones: MDR 97.20 on 3,240.00 is **3%**, against the
