@@ -61,7 +61,7 @@ NOT record its sales source in `FromDocType`: `PODTL` uses `FromSODtlKey` /
 AutoCount's own POs carry e.g. `SO-013000`. Whether the new send fills it in is
 open.
 
-**Ref.** PR #2368, 2026-08-17.
+**Ref.** PR #2369, 2026-08-17.
 
 ## The GRN picker sorted by a UUID and cut at 500, hiding 168 of 356 outstanding PO lines [high]
 
