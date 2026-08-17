@@ -24,7 +24,7 @@
 //   PATCH /fabric-tracking/:id/description
 // ----------------------------------------------------------------------------
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { activeCompanyId, scopeToCompany,
@@ -537,10 +537,12 @@ fabricTracking.patch('/:id/description', async (c) => {
   return c.json({ ok: true, description: next, pickerLabel: code ? colourLabelOf(code, next) : null, ...(pickerWarning ? { pickerWarning } : {}) });
 });
 
-/* Exported so the failed-count path has a test. Same shape as trips.ts's
-   patchTripHandler et al: the router below mounts this, and a test mounts it on
-   a bare Hono with a fake supabase. */
-export const patchFabricTierHandler = async (c: any) => {
+/* Exported so the failed-count path has a test: the router below mounts this,
+   and a test mounts it on a bare Hono with a fake supabase. trips.ts's
+   patchTripHandler et al. take `c: any`; this one takes the router's OWN
+   context type instead, because an extracted handler that widens to `any` pays
+   for its test with the type safety the inline handler had. */
+export const patchFabricTierHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const id = c.req.param('id');
   let body: { field?: string; tier?: string };
   try {

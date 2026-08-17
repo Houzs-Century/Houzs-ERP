@@ -101,8 +101,17 @@ export type StatusTally =
  * each) and the other reads a grouped aggregate whose weight is the group's own
  * count, and silently getting that wrong would produce a plausible number.
  */
+/* `data` is `T[] | null | undefined` on PURPOSE. Every call site reads through
+   an `sb: any` client, so "no data property at all" is a state that reaches
+   here, and the undefined arm of the guard below is what answers it. It was
+   typed `T[] | null` until 2026-08-18, which made no-unnecessary-condition
+   correct about the arm being dead — measured by deleting it: tsc then reports
+   `TS18048: 'res.data' is possibly 'undefined'` on the loop below, and the
+   'an ABSENT data property' test fails with `TypeError: res.data is not
+   iterable`. The repair for that warning was the honest type, not the shorter
+   guard. */
 export function tallyStatusRows<T extends { status?: string | null }>(
-  res: { data: T[] | null; error?: { message?: string | null } | null },
+  res: { data: T[] | null | undefined; error?: { message?: string | null } | null },
   weight: (row: T) => number,
 ): StatusTally {
   if (res.error) return { ok: false, reason: res.error.message || 'unknown error' };

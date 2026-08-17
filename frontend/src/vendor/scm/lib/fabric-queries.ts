@@ -159,14 +159,14 @@ export function useUpdateFabricTier() {
         /* The tier DID change; only the propagation count could not be read.
            Saying nothing would read as "nothing was affected", which is the
            same silence a `count ?? 0` produced on the server. */
-        serviceNotify({
+        void serviceNotify({
           title: `Tier updated → ${tierLabel}`,
           body:
             `The tier change was saved. How many ${fieldLabel} products it affects could not be read, ` +
             `so no number is shown.`,
         });
       } else if (res.affectedProducts > 0) {
-        serviceNotify({
+        void serviceNotify({
           title: `Tier updated → ${tierLabel}`,
           body:
             `${res.affectedProducts} ${fieldLabel} product${res.affectedProducts === 1 ? '' : 's'} ` +

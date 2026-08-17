@@ -76,6 +76,17 @@ describe('tallyStatusRows', () => {
     expect(read).toEqual({ ok: false, reason: 'status rows returned no value' });
   });
 
+  test('an ABSENT data property is the same failure as a null one', () => {
+    // The reason `data` is typed `T[] | null | undefined`: every caller reads
+    // through an `sb: any` client, so a response object with no `data` at all
+    // is a state that reaches here. Without the undefined arm of the guard this
+    // falls through to `for (const row of undefined)` — a TypeError, not an
+    // answer — and with the arm but a narrower type, lint calls the arm dead.
+    // This is what says the arm is live.
+    const read = tallyStatusRows({ data: undefined, error: null }, () => 1);
+    expect(read).toEqual({ ok: false, reason: 'status rows returned no value' });
+  });
+
   test('raw rows tally one each; blank and lowercase statuses are not lost', () => {
     const read = tallyStatusRows(
       { data: [{ status: 'DRAFT' }, { status: 'draft' }, { status: null }, { status: '' }], error: null },
@@ -87,7 +98,10 @@ describe('tallyStatusRows', () => {
   test('a grouped aggregate tallies by its OWN count, not one per group', () => {
     const read = tallyStatusRows<{ status: string | null; cnt: number }>(
       { data: [{ status: 'CONFIRMED', cnt: 35 }, { status: 'DELIVERED', cnt: 33 }], error: null },
-      (r) => Number(r.cnt ?? 0),
+      // `r.cnt`, not `Number(r.cnt ?? 0)`: the row shape is declared right here,
+      // so the `?? 0` could never fire and only made the assertion look like it
+      // covered a missing count when it does not.
+      (r) => r.cnt,
     );
     expect(read).toEqual({ ok: true, byStatus: { CONFIRMED: 35, DELIVERED: 33 } });
   });
