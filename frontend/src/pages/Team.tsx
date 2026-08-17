@@ -7,6 +7,11 @@ import { Button } from "../components/Button";
 import { ColorPicker } from "../components/ColorPicker";
 import { Panel, PanelSection } from "../components/Panel";
 import { StatusDot } from "../components/StatusDot";
+/* The house searchable dropdown (owner 2026-07-27, "全部下拉的 option 都要加上
+   搜索功能"), vendored where the long option lists first appeared. Team's people
+   pickers are the same problem, so they use the same control. */
+import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
+import { ORG_PICKER_CLS, isDescendantOf, managerOptions } from "./team/orgChartPickers";
 import { Avatar } from "../components/Avatar";
 import { useQuery } from "../hooks/useQuery";
 import { useQueryClient } from "@tanstack/react-query";
@@ -3357,25 +3362,24 @@ function EditMemberPanel({
       <PanelSection title="Organisation">
         <div>
           <label className={labelCls}>Primary department</label>
-          <select
-            value={deptId}
-            onChange={(e) => {
-              const next = e.target.value ? Number(e.target.value) : "";
+          <SearchableSelect
+            className={inputCls}
+            ariaLabel="Primary department"
+            placeholder="— None —"
+            value={String(deptId)}
+            onChange={(v) => {
+              const next = v ? Number(v) : "";
               setDeptId(next);
               setPositionId(""); // positions are department-scoped — reset
               // The primary is always part of the membership set.
               if (next !== "")
                 setDeptIds((prev) => (prev.includes(next) ? prev : [...prev, next]));
             }}
-            className={inputCls}
-          >
-            <option value="">— None —</option>
-            {departments.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: "", label: "— None —" },
+              ...departments.map((d) => ({ value: String(d.id), label: d.name })),
+            ]}
+          />
           <div className="mt-1 text-[10px] text-ink-muted">
             Drives the member's colour and position scope.
           </div>
@@ -3435,38 +3439,37 @@ function EditMemberPanel({
         </div>
         <div>
           <label className={labelCls}>Position</label>
-          <select
-            value={positionId}
-            onChange={(e) => setPositionId(e.target.value ? Number(e.target.value) : "")}
+          <SearchableSelect
             className={inputCls}
-          >
-            <option value="">— None —</option>
-            {positions
-              .filter((p) => deptId === "" || !p.department_id || p.department_id === deptId)
-              .map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-          </select>
+            ariaLabel="Position"
+            placeholder="— None —"
+            value={String(positionId)}
+            onChange={(v) => setPositionId(v ? Number(v) : "")}
+            options={[
+              { value: "", label: "— None —" },
+              ...positions
+                .filter((p) => deptId === "" || !p.department_id || p.department_id === deptId)
+                .map((p) => ({ value: String(p.id), label: p.name }))
+                .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" })),
+            ]}
+          />
           <div className="mt-1 text-[10px] text-ink-muted">
             Controls which pages this member can see (least-privilege per position).
           </div>
         </div>
         <div>
           <label className={labelCls}>Role</label>
-          <select
-            value={roleId}
-            onChange={(e) => setRoleId(e.target.value ? Number(e.target.value) : "")}
+          <SearchableSelect
             className={inputCls}
+            ariaLabel="Role"
+            placeholder="— Pick a role —"
             disabled={roleList.length === 0}
-          >
-            {roleList.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
-          </select>
+            value={String(roleId)}
+            onChange={(v) => setRoleId(v ? Number(v) : "")}
+            options={roleList
+              .map((r) => ({ value: String(r.id), label: r.name }))
+              .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }))}
+          />
           <div className="mt-1 text-[10px] text-ink-muted">
             Controls what this member can DO (actions + admin). Position above
             controls what they can SEE. "Super Admin" grants everything.
@@ -3514,22 +3517,25 @@ function EditMemberPanel({
         )}
         <div>
           <label className={labelCls}>Reports to</label>
-          <select
-            value={managerId}
-            onChange={(e) => setManagerId(e.target.value ? Number(e.target.value) : "")}
+          <SearchableSelect
             className={inputCls}
-          >
-            <option value="">— None —</option>
-            {members
-              .filter((m) => m.id !== user.id && m.status !== "disabled")
-              .slice()
-              .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email))
-              .map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name || m.email}
-                </option>
-              ))}
-          </select>
+            ariaLabel="Reports to"
+            placeholder="— None —"
+            value={String(managerId)}
+            onChange={(v) => setManagerId(v ? Number(v) : "")}
+            options={[
+              { value: "", label: "— None —" },
+              ...members
+                .filter((m) => m.id !== user.id && m.status !== "disabled")
+                .map((m) => ({
+                  value: String(m.id),
+                  label: m.department_name
+                    ? `${m.name || m.email} · ${m.department_name}`
+                    : m.name || m.email,
+                }))
+                .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" })),
+            ]}
+          />
         </div>
         <div>
           <label className={labelCls}>Set password</label>
@@ -3790,28 +3796,6 @@ function UserBrandsPanel({
 // Org hierarchy helpers
 // ──────────────────────────────────────────────────────────
 
-/**
- * Returns true if `candidateId` sits somewhere in `ancestorId`'s reporting
- * subtree — i.e. appointing them as ancestor's manager would create a loop.
- * Used only to hide bad options in the picker; the backend still validates.
- */
-function isDescendantOf(
-  candidateId: number,
-  ancestorId: number,
-  users: TeamMember[]
-): boolean {
-  const byId = new Map(users.map((u) => [u.id, u]));
-  const seen = new Set<number>();
-  let cursor: number | null = candidateId;
-  while (cursor != null && !seen.has(cursor)) {
-    seen.add(cursor);
-    const node: TeamMember | undefined = byId.get(cursor);
-    if (!node) return false;
-    if (node.manager_id === ancestorId) return true;
-    cursor = node.manager_id;
-  }
-  return false;
-}
 
 // One departmental box in the org chart (a dept with non-root members, or the
 // "Unassigned" catch-all). Shared between OrgChartTab (which owns per-box
@@ -4941,44 +4925,30 @@ function OrgCard({
             <label className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
               Reports to
             </label>
-            <select
-              autoFocus
-              defaultValue={user.manager_id ?? ""}
-              onChange={(e) => {
-                const v = e.target.value;
-                onPickManager(user.id, v ? Number(v) : null);
-              }}
-              className="h-8 w-full cursor-pointer rounded-md border border-border bg-surface px-2 text-[11px] text-ink outline-none focus:border-primary"
-            >
-              <option value="">— No manager —</option>
-              {users
-                .filter((m) => m.id !== user.id && !isDescendantOf(m.id, user.id, users))
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name || m.email}
-                  </option>
-                ))}
-            </select>
+            <SearchableSelect
+              className={ORG_PICKER_CLS}
+              ariaLabel="Reports to"
+              placeholder="— No manager —"
+              value={String(user.manager_id ?? "")}
+              onChange={(v) => onPickManager(user.id, v ? Number(v) : null)}
+              options={managerOptions(user, users)}
+            />
           </div>
           <div>
             <label className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
               Primary department
             </label>
-            <select
-              value={user.department_id ?? ""}
-              onChange={(e) => {
-                const v = e.target.value;
-                onChangeDept(user.id, v ? Number(v) : null);
-              }}
-              className="h-8 w-full cursor-pointer rounded-md border border-border bg-surface px-2 text-[11px] text-ink outline-none focus:border-primary"
-            >
-              <option value="">— No department —</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              className={ORG_PICKER_CLS}
+              ariaLabel="Primary department"
+              placeholder="— No department —"
+              value={String(user.department_id ?? "")}
+              onChange={(v) => onChangeDept(user.id, v ? Number(v) : null)}
+              options={[
+                { value: "", label: "— No department —" },
+                ...departments.map((d) => ({ value: String(d.id), label: d.name })),
+              ]}
+            />
           </div>
           {onChangeDivision && (
             <div>
