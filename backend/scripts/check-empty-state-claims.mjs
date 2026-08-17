@@ -208,6 +208,35 @@ function walk(dir, acc = []) {
    now hit five times.
 
    Newlines are preserved so line numbers survive. */
+/* A quote opens a STRING only where a JS string can begin. In TSX it very often
+   cannot: `<Muted danger>Couldn't load the convertible lines.</Muted>` is JSX
+   TEXT, and the first version of this scanner read that apostrophe as the start
+   of a string literal. Everything to the next apostrophe then sat in the wrong
+   state — which in MobileConvertWizard.tsx left two block comments unstripped
+   and reported them as claims, and which can flip parity such that a REAL string
+   is read as code and its `//` blanked. That second direction silently DELETES
+   source before the scan, and a checker whose number is too small is the exact
+   failure this repo has produced five times.
+
+   A WHITELIST, so the unknown case keeps the character as text. Keeping too much
+   costs an allowlist entry; dropping too much costs a missed lie. */
+const OPENERS = new Set(["=", "(", "[", "{", ",", ";", ":", "?", "+", "&", "|", "!", "\n", undefined]);
+const OPENER_WORDS = new Set(["return", "typeof", "case", "in", "of", "await", "throw", "new", "delete", "void", "yield", "do", "else", "from", "import", "export", "extends", "as", "satisfies"]);
+function opensString(src, at) {
+  let j = at - 1;
+  while (j >= 0 && (src[j] === " " || src[j] === "\t")) j--;
+  const prev = j < 0 ? undefined : src[j];
+  if (OPENERS.has(prev)) return true;
+  if (prev === undefined) return true;
+  // `return 'x'` / `case 'x':` — a keyword, not an identifier ending in text.
+  if (/[A-Za-z]/.test(prev)) {
+    let k = j;
+    while (k >= 0 && /[A-Za-z]/.test(src[k])) k--;
+    return OPENER_WORDS.has(src.slice(k + 1, j + 1));
+  }
+  return false;
+}
+
 function stripComments(src) {
   let out = "";
   let i = 0;
@@ -222,8 +251,8 @@ function stripComments(src) {
     if (state === 0) {
       if (ch === "/" && nx === "/") { state = 1; out += "  "; i += 2; continue; }
       if (ch === "/" && nx === "*") { state = 2; out += "  "; i += 2; continue; }
-      if (ch === "'") { state = 3; out += ch; i++; continue; }
-      if (ch === '"') { state = 4; out += ch; i++; continue; }
+      if (ch === "'" && opensString(src, i)) { state = 3; out += ch; i++; continue; }
+      if (ch === '"' && opensString(src, i)) { state = 4; out += ch; i++; continue; }
       if (ch === "`") { state = 5; out += ch; i++; continue; }
       if (ch === "}" && tplStack.length > 0 && tplDepth === 0) {
         state = 5; tplDepth = tplStack.pop(); out += ch; i++; continue;
@@ -307,6 +336,23 @@ const norm = (s) => s.trim().replace(/\s+/g, " ");
   }
   if (!/caught up/i.test(stripComments('const a = `you are caught up ${n}`;'))) {
     failures.push("stripComments ate a template literal's text");
+  }
+  /* THE JSX APOSTROPHE. An apostrophe in JSX text is not a string delimiter, and
+     reading it as one desynchronises everything after it. Both halves are
+     asserted: the comment after it must still be stripped, and the JSX text
+     itself must survive. */
+  {
+    const jsx = "if (e) return <M>Couldn't load them.</M>;\n/* everything is received */\nconst z = 1;";
+    const s = stripComments(jsx);
+    if (/everything is received/i.test(s)) failures.push("a JSX apostrophe left a later block comment unstripped");
+    if (!/Couldn't load them/.test(s)) failures.push("stripComments ate JSX text");
+  }
+  // …while a real single-quoted literal is still tracked, so its `//` survives.
+  if (!/http:\/\/a/.test(stripComments("const u = 'http://a';"))) {
+    failures.push("stripComments blanked the inside of a single-quoted literal");
+  }
+  if (!/caught up/i.test(stripComments("if (x) return 'you are caught up';"))) {
+    failures.push("stripComments lost a string opened after a keyword");
   }
   if (failures.length > 0) {
     warn("check-empty-state-claims: internal SELF-TEST FAILED — not reporting a number.");

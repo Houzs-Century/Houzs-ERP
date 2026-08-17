@@ -67,11 +67,29 @@ pins the step's presence in `ci.yml` and `package.json` — a check that cannot
 run reports nothing and reads as a pass, which this repo has now produced three
 times.
 
-**Deferred, deliberately and by name.** Five strings in
-`frontend/src/mobile/MobileConvertWizard.tsx`, one in `scm/routes/grns.ts` and
-one in `scm/routes/purchase-invoices.ts` belong to branch
-`fix/transfer-guards-and-empty-states`, which held those files. They are on the
-allowlist with the branch named, so they are visible rather than forgotten.
+**Then the gate earned itself, twice, inside one merge.** #2372 landed while
+this branch was open and the gate went red on eleven new claim-shaped strings —
+so each was read. Nine were the LEGITIMATE shape and are now recorded as such: a
+claim tied to a NAMED document whose lines the server COUNTED
+(`verifiedComplete` = `candidateLines > 0 && outstandingLines === 0`) is
+evidence, not inference, and `outstandingEmptyReason.ts` is the worked example
+the allowlist now points at. Two were not. #2372 gave the mobile wizard's GRN
+arm a counted per-document reason and left the SI / PO / DO arm of the SAME
+component saying "Nothing left to {noun} on this document" — the N-1 shape
+reproduced inside the fix for it, caught by a gate that had existed for an hour.
+Its backend twins (`grns.ts`, `purchase-invoices.ts`) were the last two claims
+whose five siblings this branch had already reworded, and they are reworded now
+too. Nothing is deferred.
+
+**Two defects in the gate itself, found by watching it rather than trusting it.**
+`console.log` to a pipe plus `process.exit()` truncated its own report at 9,146
+bytes under capture — a correct exit code beside a list that stopped
+mid-sentence, and CI captures. And the comment stripper read the apostrophe in
+JSX text (`<Muted>Couldn't load…</Muted>`) as the start of a string literal,
+desynchronising everything after it. That one was measured rather than assumed:
+the old and new hit sets were diffed, and the bug had added two false positives
+and hidden nothing. Both are pinned by the self-test, which refuses to report a
+number at all when it fails.
 
 ## Three more ways one goods receipt could be billed twice — and the confirm that clamped instead of refusing [high]
 

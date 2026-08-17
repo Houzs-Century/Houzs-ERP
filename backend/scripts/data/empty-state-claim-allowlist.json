@@ -5,15 +5,20 @@
     "what is TRUE OF THE BUSINESS. backend/scripts/check-empty-state-claims.mjs",
     "finds claim-SHAPED strings; a regex cannot read meaning, so this file is where",
     "a person records the judgement. Every entry needs a `why` that would survive",
-    "being read out loud. A string not listed here FAILS the build — that is the",
+    "being read out loud. A string not listed here FAILS the build - that is the",
     "whole point: silence becomes a decision.",
     "",
     "Keyed by (file, normalized line text) and NOT by line number, so a merge that",
     "moves a string keeps its review and an EDIT to a string re-opens it.",
     "",
-    "Entries whose string is gone are reported as STALE and printed, never failed —",
+    "Entries whose string is gone are reported as STALE and printed, never failed -",
     "a gate that punishes somebody for fixing a string is a gate that stops fixes.",
-    "Clear them anyway."
+    "Clear them anyway.",
+    "",
+    "The recurring legitimate case, so it does not have to be re-derived: a claim",
+    "tied to a NAMED document whose lines the server COUNTED is evidence, not",
+    "inference. frontend/src/lib/outstandingEmptyReason.ts is the worked example.",
+    "An absence is never evidence, however many documents it covers."
   ],
   "reviewed": [
     {
@@ -57,19 +62,9 @@
       "why": "A fact read off the cancelled DO's own row, explaining why reactivation is refused. The refusal is the safe direction."
     },
     {
-      "file": "backend/src/scm/routes/grns.ts",
-      "text": "if (itemList.length === 0) return c.json({ error: 'nothing_outstanding', message: 'All PO items are already fully received' }, 400);",
-      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states, which owns backend/src/scm/routes/grns.ts this hour. Its five siblings are reworded on this branch; re-review this one when that branch lands."
-    },
-    {
       "file": "backend/src/scm/routes/mfg-sales-orders.ts",
       "text": "reason: 'A cancelled Sales Order cannot be reactivated — its deposit was already converted to customer credit. Create a new SO instead.',",
       "why": "A fact read off the cancelled SO's own row, explaining a refusal. The refusal is the safe direction."
-    },
-    {
-      "file": "backend/src/scm/routes/purchase-invoices.ts",
-      "text": "if (lines.length === 0) return c.json({ error: 'nothing_to_invoice', message: 'GRN is fully invoiced' }, 400);",
-      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states, which owns backend/src/scm/routes/purchase-invoices.ts this hour. Reword with its MobileConvertWizard twin."
     },
     {
       "file": "backend/src/scm/shared/po-amendment.test.ts",
@@ -117,34 +112,54 @@
       "why": "Describes ONE outbox row the caller is looking at, not an absence: the row was replaced by a newer send, which is a fact about that row's own status column."
     },
     {
+      "file": "frontend/src/lib/outstandingEmptyReason.test.ts",
+      "text": "'every line has been received',",
+      "why": "An entry in that suite's BANNED list: the phrasing no branch may produce. Quoting it is how the ban is enforced."
+    },
+    {
+      "file": "frontend/src/lib/outstandingEmptyReason.test.ts",
+      "text": "'every submitted and partially_received order has been received',",
+      "why": "Another entry in the same BANNED list, added so the module cannot evade the rule by rewording it."
+    },
+    {
+      "file": "frontend/src/lib/outstandingEmptyReason.test.ts",
+      "text": "+ 'nothing left to put on a Goods Receipt.',",
+      "why": "Expected text for the counted, per-document branch - the fixture for a claim that is allowed because it was measured."
+    },
+    {
+      "file": "frontend/src/lib/outstandingEmptyReason.test.ts",
+      "text": "expect(m).toContain('does NOT mean there is nothing left to receive');",
+      "why": "Asserts the truncation branch denies the claim. A test pinning the denial, not making one."
+    },
+    {
+      "file": "frontend/src/lib/outstandingEmptyReason.ts",
+      "text": "+ 'It does NOT mean there is nothing left to receive. Open a single Purchase Order '",
+      "why": "The truncation branch, and it DENIES the claim - it exists to stop a short list reading as a finished one."
+    },
+    {
+      "file": "frontend/src/lib/outstandingEmptyReason.ts",
+      "text": "+ 'nothing left to put on a Goods Receipt.';",
+      "why": "Branch 5: every scoped, receivable PO verifiedComplete with serverRowCount 0. Named documents, counted lines - the one shape entitled to say the work is done."
+    },
+    {
+      "file": "frontend/src/lib/outstandingEmptyReason.ts",
+      "text": "+ 'so there is nothing further to add. Go back and save it.';",
+      "why": "About the operator's OWN unsaved draft - the lines are spoken for by the receipt being typed, which is not a claim about received goods."
+    },
+    {
+      "file": "frontend/src/lib/outstandingEmptyReason.ts",
+      "text": "+ 'There is nothing left to put on a Goods Receipt.';",
+      "why": "The second sentence of branch 4 above - same counted, per-document evidence; it is one message split across two source lines."
+    },
+    {
+      "file": "frontend/src/lib/outstandingEmptyReason.ts",
+      "text": "return `${list(parts)}, and every one of its lines has already been received in full. `",
+      "why": "Branch 4: names each Purchase Order and its status, and fires only when verifiedComplete counted its lines at zero with serverRowCount 0. A claim about a named document the server measured."
+    },
+    {
       "file": "frontend/src/mobile/MobileAnnouncements.tsx",
       "text": "<div className=\"empty-t\">You're all caught up</div>",
       "why": "Rendered only under !systemQ.isLoading && !systemQ.error, so a failed read shows the error arm instead. An announcement feed, not outstanding work."
-    },
-    {
-      "file": "frontend/src/mobile/MobileConvertWizard.tsx",
-      "text": "<Muted>Nothing left to {noun} on this document.</Muted>",
-      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states, which owns this file this hour. Re-review when it lands — do not let this entry outlive that branch."
-    },
-    {
-      "file": "frontend/src/mobile/MobileConvertWizard.tsx",
-      "text": "<Muted>Nothing left to receive on the selected order(s).</Muted>",
-      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states, which owns this file this hour. Re-review when it lands."
-    },
-    {
-      "file": "frontend/src/mobile/MobileConvertWizard.tsx",
-      "text": "nothing_outstanding: \"All selected Purchase Order lines are already fully received.\",",
-      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states. Mirrors grns.ts, also deferred — reword the pair together or the two surfaces disagree."
-    },
-    {
-      "file": "frontend/src/mobile/MobileConvertWizard.tsx",
-      "text": "nothing_to_invoice: \"This Goods Receipt is already fully invoiced.\",",
-      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states. Mirrors the backend refusal message in purchase-invoices.ts, which is also deferred — the pair must be reworded together."
-    },
-    {
-      "file": "frontend/src/mobile/MobileConvertWizard.tsx",
-      "text": "nothing_to_return: \"This Goods Receipt is already fully returned.\",",
-      "why": "DEFERRED to branch fix/transfer-guards-and-empty-states. Same pairing as nothing_to_invoice above."
     },
     {
       "file": "frontend/src/mobile/MobileDeliveryPlanning.tsx",
@@ -173,6 +188,11 @@
     },
     {
       "file": "frontend/src/pages/scm-v2/grnFromPoEmptyState.test.tsx",
+      "text": "expect(screen.getByText(/does NOT mean there is nothing left to receive/)).toBeTruthy();",
+      "why": "Asserts the truncation banner is rendered - the sentence that stops a cut-short list reading as a finished one."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/grnFromPoEmptyState.test.tsx",
       "text": "expect(screen.queryByText(/every line has been received/i)).toBeNull();",
       "why": "A negative assertion — .toBeNull() on the forbidden wording. Deleting it would delete the regression test for the defect this gate exists for."
     },
@@ -180,6 +200,11 @@
       "file": "frontend/src/pages/scm-v2/grnFromPoEmptyState.test.tsx",
       "text": "it(\"does not tell the operator every line was received when the query came back empty\", () => {",
       "why": "The test that ENFORCES this rule on the from-PO picker. It quotes the forbidden sentence in order to assert it is absent."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/grnFromPoEmptyState.test.tsx",
+      "text": "it(\"does NOT tell the operator to reopen a purchase order that is already fully received\", () => {",
+      "why": "A test NAME. It asserts the screen does NOT give that advice, because reopening a completed order invites a second receipt."
     },
     {
       "file": "frontend/src/portal/pages/PortalCaseDetail.tsx",
