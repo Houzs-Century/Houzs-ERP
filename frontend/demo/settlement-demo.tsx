@@ -2,7 +2,8 @@
 // The owner's local test harness for layer 3. DEV ONLY — this entry is not part
 // of the production build (index.html is), and nothing in src/ imports it.
 //
-// It mounts the REAL SettlementRecon page against the demo API server
+// It mounts the REAL settlement pages — BOTH of them, wired to each other by
+// the same links the app uses — against the demo API server
 // (backend/scripts/settlement-demo-server.ts), which runs the REAL handlers,
 // parser, matcher and posting engine over an in-memory database. Auth, the
 // route guard and the sidebar are skipped on purpose: the point is to click
@@ -15,13 +16,14 @@
 
 import { useEffect, useState } from 'react';
 import ReactDOM from 'react-dom/client';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { QueryClient, QueryClientProvider, useQuery } from '@tanstack/react-query';
 import '../src/index.css';
 import '../src/vendor/design-system/tokens.css';
 import { ToastProvider } from '../src/hooks/useToast';
 import { DialogProvider } from '../src/hooks/useDialog';
 import { SettlementRecon } from '../src/pages/scm-v2/SettlementRecon';
+import { SettlementBank } from '../src/pages/scm-v2/SettlementBank';
 import { fmtCenti } from '../src/vendor/shared/format';
 
 // authedFetch refuses to run without a token; the demo server ignores it.
@@ -126,15 +128,21 @@ const Harness = () => {
             重来一次
           </button>
         </div>
-        <SettlementRecon key={resetAt} />
+        {/* Both real screens, on their real paths, so the hand-off between
+            them is exercised too: reconcile here, then "Money into the bank". */}
+        <Routes key={resetAt}>
+          <Route path="/scm/settlement-bank" element={<SettlementBank />} />
+          <Route path="*" element={<SettlementRecon />} />
+        </Routes>
       </main>
       <LedgerPanel />
     </div>
   );
 };
 
-/* MemoryRouter, not BrowserRouter: PageHeader calls useNavigate and there is no
-   routing to do here — the harness is one page. */
+/* MemoryRouter, not BrowserRouter: this page is served as a static file, so a
+   real URL push would 404 on reload. In-memory routing lets the two screens
+   link to each other exactly as they do in the app. */
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <MemoryRouter>
     <QueryClientProvider client={queryClient}>

@@ -59,7 +59,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/track.ts` | 1 | 44 |
 | `backend/src/routes/udf.ts` | 4 | 251 |
 | `backend/src/routes/users.ts` | 22 | 2282 |
-| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 883 |
+| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 900 |
 | `backend/src/scm/routes/accounting.ts` | 34 | 1115 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
@@ -171,7 +171,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1379 files, 559908 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1382 files, 560216 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -199,7 +199,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 
 ## 4. Frontend desktop routes
 
-145 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+146 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -327,6 +327,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/sales-orders/new` | `frontend/src/pages/scm-v2/SalesOrderNew` |
 | `/scm/sales-orders/new/from-products` | `frontend/src/pages/scm-v2/SalesOrderNewFromProducts` |
 | `/scm/sales-orders/new/guided` | `frontend/src/pages/scm-v2/SalesOrderNewGuided` |
+| `/scm/settlement-bank` | `frontend/src/pages/scm-v2/SettlementBank` |
 | `/scm/settlement-recon` | `frontend/src/pages/scm-v2/SettlementRecon` |
 | `/scm/stock-adjustments` | `frontend/src/pages/scm-v2/StockAdjustments` |
 | `/scm/stock-adjustments/new` | `frontend/src/pages/scm-v2/StockAdjustmentNew` |
@@ -356,7 +357,7 @@ Page files by directory:
 |---|---|
 | `frontend/src/pages` | 33 |
 | `frontend/src/pages/MailCenter` | 3 |
-| `frontend/src/pages/scm-v2` | 121 |
+| `frontend/src/pages/scm-v2` | 122 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/team` | 1 |
 

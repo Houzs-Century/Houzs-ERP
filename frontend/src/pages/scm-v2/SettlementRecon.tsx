@@ -5,8 +5,12 @@
 // 320-0000. Upload the acquirer's statement, sort its lines into FOUR piles,
 // and confirm. Confirming posts the FEE immediately (Dr merchant charges / Cr
 // in-transit) — the single thing 系统3 never did, so its card fees never reached
-// the P&L. The money itself arrives days later, and the second step on the
-// statement books it (Dr bank / Cr in-transit) on the day the BANK says so.
+// the P&L.
+//
+// STEP ONE OF TWO, and only step one. The money itself arrives days later and
+// is recorded on its own screen, /scm/settlement-bank (SettlementBank.tsx) —
+// the owner asked for the split in these words: "就一页对卡机报告，对了没有问题
+// 就去对bank statement 或daily transaction report". Nothing here books the bank.
 //
 // The screen deliberately keeps 系统3's skeleton — four piles, bulk-confirm the
 // auto-matched, a candidate list with clues, two standing watchlists, an export
@@ -16,90 +20,44 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { AlertTriangle, CheckCheck, Download, Landmark, Undo2, Upload } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { AlertTriangle, ArrowRight, CheckCheck, Download, Upload } from 'lucide-react';
 import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
-  useSettlementWatchlist, useInTransit, useMarkBatchReceived, useUndoReceipt,
-  type AgeBucket,
+  useSettlementWatchlist,
   type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch,
 } from './settlement-queries';
-import { fmtCenti } from '../../vendor/shared/format';
+import {
+  ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel,
+  BUCKET_LABEL, refusalText, payableOf,
+} from './settlement-ui';
 import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
-
-const ICON = { size: 16, strokeWidth: 1.75 } as const;
-const fmt = (sen: number | null | undefined) => fmtCenti(sen ?? 0);
-
-const btn = (primary?: boolean, disabled?: boolean): React.CSSProperties => ({
-  display: 'inline-flex', alignItems: 'center', gap: 6,
-  padding: '6px 14px',
-  border: '1px solid var(--c-ink)',
-  borderRadius: 'var(--radius-md)',
-  background: primary ? 'var(--c-ink)' : 'transparent',
-  color: primary ? 'var(--c-cream)' : 'var(--c-ink)',
-  fontSize: 'var(--fs-13)', fontWeight: 600,
-  cursor: disabled ? 'not-allowed' : 'pointer',
-  opacity: disabled ? 0.5 : 1,
-});
-
-const cell: React.CSSProperties = { padding: '6px 8px', verticalAlign: 'top' };
-const num: React.CSSProperties = { ...cell, textAlign: 'right', whiteSpace: 'nowrap' };
-const table: React.CSSProperties = { width: '100%', fontSize: 'var(--fs-13)', borderCollapse: 'collapse' };
-const headRow: React.CSSProperties = { textAlign: 'left', borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.12))' };
-const softText: React.CSSProperties = { fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)' };
-const danger = 'var(--c-festive-b, #B8331F)';
-const good = 'var(--c-secondary-a, #2F5D4F)';
-
-/**
- * The server's OWN sentence, not the humanised one.
- *
- * authedFetch runs every failure through the shared `humanApiError`, which
- * drops any message containing "column" / "relation" / "constraint" as a
- * suspected database internal — and this feature's whole contract is that a
- * statement it cannot read says WHY ("no Txn Date heading; the file has: …").
- * That message was being replaced with "some details weren't accepted", which
- * is precisely the silence §2.14 forbids. The raw body is preserved on the
- * error object, so read it there and fall back to the humanised text.
- */
-export const refusalText = (err: unknown, fallback: string): string => {
-  const e = err as { body?: string; message?: string } | null;
-  try {
-    const parsed = JSON.parse(e?.body ?? '') as { message?: string; reason?: string };
-    const own = parsed.message ?? parsed.reason;
-    if (typeof own === 'string' && own.trim()) return own;
-  } catch { /* not JSON — fall through */ }
-  /* An EMPTY message is silence too — fall through to the caller's sentence
-     rather than render a blank red line. */
-  return e?.message?.trim() ? e.message : fallback;
-};
 
 /* The server sends the four piles as a plain tally; a bucket with nothing in it
    is simply absent, so read it as a lookup rather than a guaranteed key. */
 const bucketCount = (buckets: Record<string, number>, key: SettlementBucket): number =>
   Number(buckets[key] ?? 0);
 
-const BUCKET_LABEL: Record<SettlementBucket, string> = {
-  MATCHED: 'Matched',
-  NEEDS_CONFIRM: 'Needs confirming',
-  UNMATCHED: 'Not matched',
-  IGNORED: 'Set aside',
-};
-
 export const SettlementRecon = () => {
-  const [tab, setTab] = useState<'reconcile' | 'transit' | 'watchlists' | 'setup'>('reconcile');
+  const [tab, setTab] = useState<'reconcile' | 'watchlists' | 'setup'>('reconcile');
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance" title="Card settlement reconciliation" />
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
         <button type="button" style={btn(tab === 'reconcile')} onClick={() => setTab('reconcile')}>Reconcile</button>
-        <button type="button" style={btn(tab === 'transit')} onClick={() => setTab('transit')}>Paid, not yet in the bank</button>
         <button type="button" style={btn(tab === 'watchlists')} onClick={() => setTab('watchlists')}>Watchlists</button>
         <button type="button" style={btn(tab === 'setup')} onClick={() => setTab('setup')}>Acquirer setup</button>
+        <span style={{ flex: 1 }} />
+        {/* Step two lives on its own screen. The link is here so the next job
+            is one click away, not a hunt through the menu. */}
+        <Link to="/scm/settlement-bank" style={{ ...btn(), textDecoration: 'none' }}>
+          Money into the bank <ArrowRight {...ICON} />
+        </Link>
       </div>
       {tab === 'reconcile' && <ReconcileTab />}
-      {tab === 'transit' && <InTransitTab />}
       {tab === 'watchlists' && <WatchlistTab />}
       {tab === 'setup' && <SetupTab />}
     </div>
@@ -274,7 +232,7 @@ const ReconcileTab = () => {
             <tr style={headRow}>
               <th style={cell}>Acquirer</th><th style={cell}>File</th><th style={cell}>Period</th>
               <th style={num}>Lines</th><th style={num}>Gross</th><th style={num}>Fee</th><th style={num}>Net</th>
-              <th style={cell}>In the bank</th><th style={cell} />
+              <th style={cell}>Reconciled</th><th style={cell} />
             </tr>
           </thead>
           <tbody>
@@ -287,12 +245,13 @@ const ReconcileTab = () => {
                 <td style={num}>{fmt(b.gross_sen)}</td>
                 <td style={num}>{fmt(b.fee_sen)}</td>
                 <td style={num}>{fmt(b.net_sen)}</td>
-                {/* Not a status badge but the answer to the only question that
-                    matters about a settled statement: has the money come? */}
-                <td style={{ ...cell, color: b.received_on ? good : danger }}>
-                  {b.received_on ?? ((b.received_sen ?? 0) !== 0
-                    ? `${fmt(b.received_sen)} of ${fmt(b.stated_net_sen ?? b.net_sen)}`
-                    : 'not yet')}
+                {/* How far THIS screen's job has got. Whether the money came
+                   is the other screen's question, deliberately not answered
+                   twice in two places. */}
+                <td style={{ ...cell, color: (b.open_count ?? 0) === 0 ? good : danger }}>
+                  {(b.open_count ?? 0) === 0
+                    ? 'all lines done'
+                    : `${b.open_count} of ${b.row_count} still open`}
                 </td>
                 <td style={cell}>
                   <button type="button" style={btn(batchId === b.id)} onClick={() => setBatchId(b.id)}>Open</button>
@@ -375,7 +334,7 @@ const BatchView = ({ batchId }: { batchId: number }) => {
         </div>
       )}
 
-      {batch && <BatchReceipt batch={batch} unconfirmedLines={rows.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED').length} />}
+      {batch && <HandOff batch={batch} openLines={rows.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED').length} />}
 
       {confirmAll.data && (
         <div style={{ fontSize: 'var(--fs-13)', color: confirmAll.data.failed.length ? danger : good }}>
@@ -398,107 +357,35 @@ const BatchView = ({ batchId }: { batchId: number }) => {
   );
 };
 
-/* ── Step two: the money actually arrives ─────────────────────────────────────
-   The owner's correction, 2026-08-17: 全部卡机都是隔几天收到的。应该是先对卡机
-   报告，然后 match 了就会去 match bank statement. Reconciling the statement and
-   receiving the payout are days apart, so they are two buttons, and in between
-   the screen says plainly how much the acquirer still owes. */
+/* ── Where this statement goes next ───────────────────────────────────────────
+   The hand-off between the two screens, and the whole reason they are two: this
+   one is finished when the card machine's lines are reconciled. Whether the
+   money came is a different question asked on a different day, and the answer
+   is not repeated here — one fact, one place. */
 
-const BatchReceipt = ({ batch, unconfirmedLines }: { batch: SettlementBatch; unconfirmedLines: number }) => {
-  const receive = useMarkBatchReceived();
-  const undo = useUndoReceipt();
-  const [on, setOn] = useState('');
-  const [amount, setAmount] = useState('');
+const HandOff = ({ batch, openLines }: { batch: SettlementBatch; openLines: number }) => {
+  const payable = payableOf(batch);
+  const outstanding = batch.outstanding_sen ?? payable - (batch.received_sen ?? 0);
 
-  const payable = batch.stated_net_sen ?? batch.net_sen;
-  const receipts = batch.receipts ?? [];
-  const received = batch.received_sen ?? receipts.reduce((s, r) => s + r.amount_sen, 0);
-  const outstanding = batch.outstanding_sen ?? payable - received;
-  const done = outstanding === 0 && payable !== 0;
-
-  const send = () => {
-    /* Blank = the rest of it. The ordinary payout is one credit for the whole
-       statement, and nobody should retype a number the statement knows. */
-    const typed = amount.trim() ? Math.round(Number(amount) * 100) : null;
-    receive.mutate({ batchId: batch.id, receivedOn: on, amountSen: typed }, {
-      onSuccess: () => { setOn(''); setAmount(''); },
-    });
-  };
-
+  if (openLines > 0) {
+    return (
+      <div style={softText}>
+        {openLines} line(s) still need a decision. Once they are done, {batch.acquirer_code} owes {fmt(payable)} —
+        record it on <Link to="/scm/settlement-bank">Money into the bank</Link> when it arrives.
+      </div>
+    );
+  }
   return (
-    <div style={{
-      padding: 'var(--space-3)', borderRadius: 'var(--radius-md)',
-      border: `1px solid ${done ? good : 'var(--c-ink)'}`,
-      background: done ? 'rgba(47,93,79,0.08)' : undefined,
-      fontSize: 'var(--fs-13)',
-    }} className="space-y-2">
+    <div style={{ ...panel(outstanding === 0 ? 'good' : 'plain'), display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
       <b>
-        {done
-          ? `${fmt(payable)} reached the bank${receipts.length > 1 ? ` in ${receipts.length} credits` : ''}. This statement owes you nothing more.`
-          : `${batch.acquirer_code} still owes ${fmt(outstanding)}${received !== 0 ? ` of ${fmt(payable)}` : ''}.`}
+        {outstanding === 0
+          ? `Done, both sides: every line reconciled and ${fmt(payable)} is in the bank.`
+          : `Every line is reconciled. ${batch.acquirer_code} owes ${fmt(outstanding)}.`}
       </b>
-
-      {/* Every credit already recorded. One statement can be paid in several —
-          Hong Leong pays a multi-day statement one credit per trading day. */}
-      {receipts.length > 0 && (
-        <table style={table}>
-          <thead>
-            <tr style={headRow}>
-              <th style={cell}>Arrived in the bank</th><th style={num}>Amount</th>
-              <th style={cell}>Journal</th><th style={cell}>Recorded by</th><th style={cell} />
-            </tr>
-          </thead>
-          <tbody>
-            {receipts.map((r) => (
-              <tr key={r.id}>
-                <td style={cell}>{r.received_on}</td>
-                <td style={num}>{fmt(r.amount_sen)}</td>
-                <td style={cell}>{r.je_no ?? '—'}</td>
-                <td style={cell}>{r.created_by ?? '—'}</td>
-                <td style={cell}>
-                  <button type="button" style={btn(false, undo.isPending)} disabled={undo.isPending}
-                    onClick={() => undo.mutate(r.id)}
-                    title="Take this credit back off the statement — its entry is reversed">
-                    <Undo2 {...ICON} /> Undo
-                  </button>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
-
-      {!done && (
-        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <label htmlFor={`recv-${batch.id}`} style={{ fontWeight: 600 }}>Money arrived in the bank on</label>
-          <input id={`recv-${batch.id}`} type="date" value={on} aria-label="Money arrived in the bank on"
-            onChange={(e) => setOn(e.target.value)} style={{ padding: '5px 8px', fontSize: 'var(--fs-13)' }} />
-          <input id={`amt-${batch.id}`} value={amount} aria-label="Amount of this credit"
-            onChange={(e) => setAmount(e.target.value)}
-            placeholder={`Amount (blank = ${fmt(outstanding)})`}
-            style={{ padding: '5px 8px', fontSize: 'var(--fs-13)', width: 200 }} />
-          <button type="button" style={btn(true, !on || receive.isPending)} disabled={!on || receive.isPending}
-            onClick={send}>
-            <Landmark {...ICON} /> {receive.isPending ? 'Posting…' : 'Money received'}
-          </button>
-        </div>
-      )}
-
-      {!done && (
-        <div style={softText}>
-          Take the date and the amount off the BANK statement, not the acquirer&rsquo;s — this entry is what makes the
-          books agree with the bank. One statement is often paid in several credits; record each one as it lands.
-          {unconfirmedLines > 0
-            ? ` ${unconfirmedLines} line(s) here are still unconfirmed, so their fees are not booked yet; the payout can still be recorded, but this acquirer will not come to zero until they are done.`
-            : ' Every line is reconciled, so the last credit empties the acquirer.'}
-        </div>
-      )}
-
-      {receive.isError && (
-        <div style={{ color: danger, display: 'flex', gap: 6 }}>
-          <AlertTriangle {...ICON} />
-          <span>{refusalText(receive.error, 'The credit was not posted.')}</span>
-        </div>
+      {outstanding !== 0 && (
+        <Link to="/scm/settlement-bank" style={{ ...btn(true), textDecoration: 'none' }}>
+          Record the money <ArrowRight {...ICON} />
+        </Link>
       )}
     </div>
   );
@@ -625,135 +512,6 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
         <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
           {(confirm.error as { message?: string } | null)?.message ?? 'The line was not confirmed.'}
         </div>
-      )}
-    </div>
-  );
-};
-
-/* ── Paid by the customer, not yet in the bank ─────────────────────────────
-   The owner asked for this in these words: he needs to see that a customer HAS
-   paid while the money has not arrived or been reconciled, in DETAIL, not as a
-   balance. It is the brief's 在途结算款账龄 (§3.7) and it is the readable form
-   of the 320-0000 balance — same money, named to the document. */
-
-/* Three states, because each one is somebody else's job: chase the acquirer,
-   finish the reconciling, or wait for the payout. */
-const IN_TRANSIT_STATE: Record<string, string> = {
-  NOT_ON_A_STATEMENT: 'The acquirer has not reported it yet',
-  MATCHED_NOT_POSTED: 'On a statement, waiting to be confirmed',
-  RECONCILED_NOT_PAID: 'Reconciled — the payout has not arrived',
-};
-
-const AGE_BUCKETS: AgeBucket[] = ['0-7', '8-14', '15-30', 'over-30'];
-
-const InTransitTab = () => {
-  const q = useInTransit();
-  const data = q.data;
-  const lines = data?.lines ?? [];
-
-  const exportCsv = () => {
-    downloadCSV('paid-not-yet-in-the-bank.csv', toCSV(lines, [
-      { key: 'acq', label: 'Acquirer', getValue: (l) => l.acquirerCode },
-      { key: 'doc', label: 'Document', getValue: (l) => l.docNo },
-      { key: 'paid', label: 'Customer paid on', getValue: (l) => l.paidOn },
-      { key: 'age', label: 'Days', getValue: (l) => l.ageDays },
-      { key: 'amt', label: 'Amount', getValue: (l) => (l.amountSen / 100).toFixed(2) },
-      { key: 'auth', label: 'Approval', getValue: (l) => l.approvalCode ?? '' },
-      { key: 'who', label: 'Recorded by', getValue: (l) => l.recordedBy ?? '' },
-      { key: 'state', label: 'Status', getValue: (l) => IN_TRANSIT_STATE[l.state] ?? l.state },
-    ]));
-  };
-
-  return (
-    <div className="space-y-3">
-      <div style={softText}>
-        The customer has paid and the money has not reached the bank yet. This is the same money as the
-        settlement-in-transit balance on the trial balance — here it is named to the document, so you can see
-        WHOSE it is rather than just how much.
-      </div>
-
-      <div style={{
-        padding: 'var(--space-4)', borderRadius: 'var(--radius-md)',
-        background: 'rgba(47, 93, 79, 0.10)', border: '1px solid var(--c-secondary-a, #2F5D4F)',
-        display: 'flex', gap: 'var(--space-5)', alignItems: 'baseline', flexWrap: 'wrap',
-      }}>
-        <div>
-          <div style={softText}>Sitting with the acquirers right now</div>
-          <div style={{ fontSize: 'var(--fs-24, 22px)', fontWeight: 700 }}>{fmt(data?.totalSen)}</div>
-        </div>
-        <div style={softText}>{lines.length} payment{lines.length === 1 ? '' : 's'}</div>
-        <span style={{ flex: 1 }} />
-        <button type="button" style={btn()} onClick={exportCsv} disabled={lines.length === 0}>
-          <Download {...ICON} /> Export
-        </button>
-      </div>
-
-      {/* Ageing by acquirer — how long each one has been holding the money. */}
-      {data && Object.keys(data.ageing).length > 0 && (
-        <table style={table}>
-          <thead>
-            <tr style={headRow}>
-              <th style={cell}>Acquirer</th>
-              {AGE_BUCKETS.map((b) => <th key={b} style={num}>{b === 'over-30' ? 'over 30 days' : `${b} days`}</th>)}
-              <th style={num}>Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {Object.entries(data.ageing).map(([acq, buckets]) => {
-              const total = Object.values(buckets).reduce((s, b) => s + b.sen, 0);
-              return (
-                <tr key={acq} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' }}>
-                  <td style={cell}><span className={styles.codeChip}>{acq}</span></td>
-                  {AGE_BUCKETS.map((b) => {
-                    /* A bucket with nothing in it is simply absent from the
-                       server's tally, so this is a lookup, not a guaranteed key. */
-                    const inBucket = buckets[b];
-                    return (
-                      <td key={b} style={{ ...num, color: b === 'over-30' && inBucket ? danger : undefined }}>
-                        {inBucket ? fmt(inBucket.sen) : '—'}
-                      </td>
-                    );
-                  })}
-                  <td style={{ ...num, fontWeight: 700 }}>{fmt(total)}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-
-      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
-      {!q.isLoading && lines.length === 0 && (
-        <div style={{ fontSize: 'var(--fs-13)', color: good }}>
-          Nothing outstanding — every card payment recorded has reached the bank.
-        </div>
-      )}
-
-      {lines.length > 0 && (
-        <table style={table}>
-          <thead>
-            <tr style={headRow}>
-              <th style={cell}>Acquirer</th><th style={cell}>Document</th>
-              <th style={cell}>Customer paid on</th><th style={num}>Days</th>
-              <th style={num}>Amount</th><th style={cell}>Approval</th>
-              <th style={cell}>Recorded by</th><th style={cell}>Where it is</th>
-            </tr>
-          </thead>
-          <tbody>
-            {lines.map((l) => (
-              <tr key={`${l.source}:${l.paymentId}`} style={{ borderBottom: '1px solid var(--c-line, rgba(34,31,32,0.06))' }}>
-                <td style={cell}><span className={styles.codeChip}>{l.acquirerCode}</span></td>
-                <td style={cell}>{l.docNo}</td>
-                <td style={cell}>{l.paidOn}</td>
-                <td style={{ ...num, color: l.ageDays > 14 ? danger : undefined, fontWeight: l.ageDays > 14 ? 700 : undefined }}>{l.ageDays}</td>
-                <td style={num}>{fmt(l.amountSen)}</td>
-                <td style={cell}>{l.approvalCode ?? '—'}</td>
-                <td style={cell}>{l.recordedBy ?? '—'}</td>
-                <td style={cell}>{IN_TRANSIT_STATE[l.state] ?? l.state}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       )}
     </div>
   );

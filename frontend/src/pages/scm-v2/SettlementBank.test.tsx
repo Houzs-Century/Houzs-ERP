@@ -1,0 +1,140 @@
+// Step two's screen — the money the BANK received. Its own file because it is
+// its own screen (owner, 2026-08-17: 就一页对卡机报告，对了没有问题就去对bank
+// statement 或daily transaction report).
+//
+// What is proved here:
+//   • a statement waiting for money says how much is still owed, and how far
+//     the card-machine side got;
+//   • the credits already banked are listed, and one can be taken back off;
+//   • a credit is recorded with a date and an amount, blank meaning "the rest";
+//   • the paid-not-yet-in-the-bank detail lives here now, with its three states.
+
+import { fireEvent, render, screen } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
+import { describe, expect, test, vi } from 'vitest';
+import type { SettlementBatch } from './settlement-queries';
+
+const OWED: SettlementBatch = {
+  id: 1, acquirer_code: 'HLB', file_name: 'hlb-aug.csv',
+  period_from: '2026-08-16', period_to: '2026-08-16', row_count: 4,
+  gross_sen: 709400, fee_sen: 4755, net_sen: 704645, stated_net_sen: null,
+  adjustment_sen: 0, adjustment_je_no: null,
+  received_sen: 281858, receipt_count: 1, outstanding_sen: 422787, received_on: null,
+  confirmed_count: 4, open_count: 0,
+  status: 'OPEN', uploaded_by: null, created_at: '',
+};
+/* Reconciled by nobody yet — the money can still be recorded, but the screen
+   has to say the fees are not in the books. */
+const SETTLED: SettlementBatch = {
+  ...OWED, id: 2, acquirer_code: 'MBB', file_name: 'mbb-aug.csv',
+  net_sen: 227700, received_sen: 227700, outstanding_sen: 0, receipt_count: 1,
+  received_on: '2026-08-18', confirmed_count: 0, open_count: 1,
+};
+
+const receivedMutate = vi.fn();
+const undoMutate = vi.fn();
+
+vi.mock('./settlement-queries', () => ({
+  useSettlementBatches: () => ({ data: { batches: [OWED, SETTLED] }, isLoading: false }),
+  useSettlementBatch: () => ({
+    data: {
+      batch: {
+        ...OWED,
+        receipts: [{ id: 9, received_on: '2026-08-18', amount_sen: 281858, bank_ref: null, note: null, je_no: 'JE-2608-0017', created_by: 'Ah Chew' }],
+      },
+      rows: [{ id: 7, bucket: 'MATCHED', confirmed_at: '2026-08-17T00:00:00Z' }],
+    },
+    isLoading: false,
+  }),
+  useMarkBatchReceived: () => ({ mutate: receivedMutate, isPending: false, isError: false, error: null }),
+  useUndoReceipt: () => ({ mutate: undoMutate, isPending: false }),
+  useInTransit: () => ({ data: { from: '2026-02-17', to: '2026-08-17', totalSen: 357900, ageing: { MBB: { '0-7': { count: 1, sen: 230000 } }, GHL: { 'over-30': { count: 1, sen: 29400 } } }, lines: [
+    { acquirerCode: 'MBB', source: 'SOPAY', paymentId: 'm1', docNo: 'SO-2608-040', paidOn: '2026-08-14', amountSen: 230000, approvalCode: '861777', recordedBy: 'Siti at the KL till', recordedById: 'u1', ageDays: 3, state: 'MATCHED_NOT_POSTED' },
+    { acquirerCode: 'GHL', source: 'SOPAY', paymentId: 'g9', docNo: 'SO-2607-001', paidOn: '2026-07-02', amountSen: 29400, approvalCode: null, recordedBy: null, recordedById: null, ageDays: 46, state: 'NOT_ON_A_STATEMENT' },
+    { acquirerCode: 'PBB', source: 'SOPAY', paymentId: 'b3', docNo: 'SO-2608-050', paidOn: '2026-08-12', amountSen: 98500, approvalCode: '114220', recordedBy: null, recordedById: null, ageDays: 5, state: 'RECONCILED_NOT_PAID' },
+  ] }, isLoading: false }),
+}));
+
+import { SettlementBank } from './SettlementBank';
+
+const draw = () => render(<MemoryRouter><SettlementBank /></MemoryRouter>);
+
+describe('the statements waiting for money', () => {
+  test('lists what is still owed, and hides the settled ones until asked', () => {
+    draw();
+    /* The headline total and the one owed statement's line — same number, so
+       both must be on screen. */
+    expect(screen.getAllByText('RM 4,227.87')).toHaveLength(2);
+    expect(screen.getByText('RM 7,046.45')).toBeTruthy();       // what it should pay
+    expect(screen.getByText('hlb-aug.csv')).toBeTruthy();
+    expect(screen.queryByText('mbb-aug.csv')).toBeNull();
+
+    fireEvent.click(screen.getByLabelText('Show statements already settled'));
+    expect(screen.getByText('mbb-aug.csv')).toBeTruthy();
+    expect(screen.getByText('all in')).toBeTruthy();
+  });
+
+  /* The money can be recorded whatever the card-machine side is doing, but a
+     statement nobody has reconciled must say so — its fees are not booked. */
+  test('says how far the card machine side got, for each statement', () => {
+    draw();
+    fireEvent.click(screen.getByLabelText('Show statements already settled'));
+    expect(screen.getByText('4 line(s) reconciled')).toBeTruthy();
+    expect(screen.getByText('1 line(s) still open')).toBeTruthy();
+  });
+
+  test('a statement shows its credits, takes another, and can undo one', () => {
+    draw();
+    fireEvent.click(screen.getByText('Open'));
+    expect(screen.getByText(/RM 4,227.87 still to come of RM 7,046.45/)).toBeTruthy();
+    expect(screen.getByText('JE-2608-0017')).toBeTruthy();
+    expect(screen.getByText('Ah Chew')).toBeTruthy();
+
+    const post = screen.getByText('Money received') as HTMLButtonElement;
+    expect(post.disabled).toBe(true);            // no date, nothing to post
+    fireEvent.change(screen.getByLabelText('Money arrived in the bank on'), { target: { value: '2026-08-19' } });
+    fireEvent.click(screen.getByText('Money received'));
+    /* Amount blank = the rest of it; nobody retypes a number the statement
+       already knows. */
+    expect(receivedMutate).toHaveBeenCalledWith(
+      { batchId: 1, receivedOn: '2026-08-19', amountSen: null },
+      expect.anything(),
+    );
+
+    fireEvent.change(screen.getByLabelText('Amount of this credit'), { target: { value: '2000.00' } });
+    fireEvent.click(screen.getByText('Money received'));
+    expect(receivedMutate).toHaveBeenLastCalledWith(
+      { batchId: 1, receivedOn: '2026-08-19', amountSen: 200000 },
+      expect.anything(),
+    );
+
+    fireEvent.click(screen.getByText('Undo'));
+    expect(undoMutate).toHaveBeenCalledWith(9);
+  });
+});
+
+/* The owner's own words: he needs to see that a customer HAS paid while the
+   money has not arrived or been reconciled — in DETAIL, not as a balance. */
+describe('paid, not yet in the bank', () => {
+  test('names the document, the age, who keyed it in and where the money is', () => {
+    draw();
+    fireEvent.click(screen.getByText('Paid, not yet in the bank'));
+
+    expect(screen.getByText('RM 3,579.00')).toBeTruthy();          // sitting with acquirers
+    expect(screen.getByText('SO-2608-040')).toBeTruthy();          // named to the document
+    expect(screen.getByText('On a statement, waiting to be confirmed')).toBeTruthy();
+    expect(screen.getByText('The acquirer has not reported it yet')).toBeTruthy();
+    /* Three states, three different jobs: chase the acquirer, finish the
+       reconciling, or wait for a payout that is already agreed. */
+    expect(screen.getByText('Reconciled — the payout has not arrived')).toBeTruthy();
+    expect(screen.getByText('Siti at the KL till')).toBeTruthy();
+  });
+
+  test('ages it by acquirer so a stale balance cannot hide', () => {
+    draw();
+    fireEvent.click(screen.getByText('Paid, not yet in the bank'));
+    expect(screen.getByText('over 30 days')).toBeTruthy();
+    // 46 days on GHL — the number the operator is meant to chase.
+    expect(screen.getByText('46')).toBeTruthy();
+  });
+});

@@ -41,6 +41,7 @@ export const STAFF_ROUTE_PATTERNS = [
   "/scm/accounting",
   "/scm/daily-bank",
   "/scm/settlement-recon",
+  "/scm/settlement-bank",
   "/scm/outstanding",
   "/scm/unbilled-deliveries",
   "/scm/currencies",

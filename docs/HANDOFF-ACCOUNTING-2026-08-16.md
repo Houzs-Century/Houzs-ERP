@@ -66,11 +66,14 @@ What is on the branch:
   `routes/accounting.ts` (the route-capability audit only follows top-level
   `app.route`/`scm.route`, so a sub-router would have hidden them); handlers in
   `routes/accounting-settlement.ts`, each behind its own permission check.
-- **Page `/scm/settlement-recon`** (Finance menu, "Card Settlement"): upload,
-  four piles, multi-select candidates with combo hints, the "money arrived in
-  the bank" step on the open statement (with the credits banked so far), two
-  watchlists, CSV export, and an
-  **Acquirer setup tab that is where 决定4 gets typed in**.
+- **TWO pages, one per job** (his third correction: 就感觉很多东西挤在一页…就一
+  页对卡机报告，对了没有问题就去对bank statement 或daily transaction report).
+  `/scm/settlement-recon` "Card Settlement" = upload, four piles, candidates
+  with combo hints, watchlists, and the **Acquirer setup tab where 决定4 gets
+  typed in**. `/scm/settlement-bank` "Card Money In" = the statements still owed
+  money, the credits banked against each, the date+amount box for the next one,
+  undo, and the paid-not-yet-in-the-bank detail. Each links to the other; shared
+  presentation only (`settlement-ui.ts`), never shared rules.
 - **"Paid, not yet in the bank"** — the detail list he asked for (我需要看到说顾
   客还钱了，但是还没收款或还没对账。我要明细的), with WHO keyed each payment in
   (我还要看到谁记录这笔的) and three states: the acquirer has not reported it /
@@ -95,10 +98,13 @@ No database and no credentials needed — there is a rig:
 3. Test files are in `demo-statements/` at the worktree root — the owner's own
    exports with merchant/card numbers replaced. All five acquirers are already
    configured from those files, plus `wrong-file.csv` for the refusal.
-4. Walk him through: upload → the auto-matched pile → "confirm all matched"
-   (fee only) → **"Money arrived in the bank on"** → "Paid, not yet in the
-   bank" (the three states, the ageing, who keyed it in) → the two watchlists →
-   a wrong file (it must refuse by name, and keep the file selected).
+4. Walk him through, in the order the work happens: upload → the auto-matched
+   pile → "confirm all matched" (fee only) → **Money into the bank** (the
+   second page) → record a credit, then a second one → try one bigger than the
+   statement (it must refuse, naming both numbers) → Undo one → "Paid, not yet
+   in the bank" (three states, ageing, who keyed it in) → back to page one for
+   the watchlists and a wrong file (it must refuse by name, keeping the file
+   selected).
    `POST /api/scm/demo/reset` starts over; `GET /api/scm/demo/ledger` shows
    every entry that posted.
 5. Only after he approves: PR + merge.

@@ -142,13 +142,29 @@ date at upload time — that is the one moment he cannot know it.
 Thirteen endpoints under `/accounting/settlement/*` (setup read/write, upload,
 batch list/detail, confirm one, confirm-all-matched, received, receipt undo,
 ignore, watchlist, in-transit, CSV export), each carrying its own permission
-check on top of the area guard. Page `/scm/settlement-recon` (Finance menu):
-upload, four piles, multi-select candidates with combo hints, the credits-
-received step with its list of credits banked so far, the paid-not-yet-in-the-
-bank detail list (three states — the acquirer has not reported it / waiting to
-be confirmed / reconciled but not paid — each naming who keyed the payment in,
-and each showing what is STILL owed on it after fees, statement charges and
-part-payments), the two standing watchlists, Excel-ready export.
+check on top of the area guard.
+
+**Two pages, because it is two jobs on two days** (owner, 2026-08-17, on the one
+page that carried both: 就感觉很多东西挤在一页…就一页对卡机报告，对了没有问题就去
+对bank statement 或daily transaction report):
+
+- `/scm/settlement-recon` — **Card Settlement**: upload, the four piles,
+  multi-select candidates with combo hints, the two standing watchlists, the
+  acquirer setup tab (决定4), Excel-ready export. Its statement list answers only
+  its own question — how many lines are still open. It books fees; it never
+  books the bank.
+- `/scm/settlement-bank` — **Card Money In**: the statements already read off a
+  card machine and still owed money, each with the credits banked against it so
+  far, a date+amount box for the next one, and an undo; plus the
+  paid-not-yet-in-the-bank detail (three states — the acquirer has not reported
+  it / waiting to be confirmed / reconciled but not paid — each naming who keyed
+  the payment in, and each showing what is STILL owed after fees, statement
+  charges and part-payments). This is the screen layer 4 will feed from the bank
+  statement.
+
+Each links to the other where the work hands over. What they share is
+presentation only (`settlement-ui.ts`); every rule stays on the server, so the
+two screens cannot drift into two answers.
 
 SI auto-posts on create/confirm (`lib/post-si-revenue.ts`; resync
 void+reposts on post-issue edits). PI posts on demand + resyncs. PV posts on

@@ -303,6 +303,20 @@ export const settlementBatches = guard(async (c) => {
     .select('batch_id, received_on, amount_sen').eq('company_id', co.companyId);
   if (rcErr) return c.json({ error: 'load_failed', reason: rcErr.message }, 500);
 
+  /* How far the CARD MACHINE side has got. The two steps are two screens, so
+     each list has to say where the other one stands: the payouts screen must
+     not invite money against a statement nobody has reconciled. */
+  const { data: rowTally, error: rtErr } = await sb.from('acc_settlement_rows')
+    .select('batch_id, bucket, confirmed_at').eq('company_id', co.companyId);
+  if (rtErr) return c.json({ error: 'load_failed', reason: rtErr.message }, 500);
+  const reconciled = new Map<number, { confirmed: number; open: number }>();
+  for (const r of (rowTally ?? []) as Array<{ batch_id: number; bucket: string; confirmed_at: string | null }>) {
+    const at = reconciled.get(Number(r.batch_id)) ?? { confirmed: 0, open: 0 };
+    if (r.confirmed_at) at.confirmed += 1;
+    else if (r.bucket !== 'IGNORED') at.open += 1;
+    reconciled.set(Number(r.batch_id), at);
+  }
+
   const got = new Map<number, { sen: number; count: number; lastOn: string | null }>();
   for (const r of (recRaw ?? []) as Array<{ batch_id: number; received_on: string; amount_sen: number }>) {
     const at = got.get(Number(r.batch_id)) ?? { sen: 0, count: 0, lastOn: null };
@@ -315,9 +329,12 @@ export const settlementBatches = guard(async (c) => {
 
   const batches = ((data ?? []) as Array<Record<string, any>>).map((b) => {
     const at = got.get(Number(b.id)) ?? { sen: 0, count: 0, lastOn: null };
+    const done = reconciled.get(Number(b.id)) ?? { confirmed: 0, open: 0 };
     const payable = payableOf(b);
     return {
       ...b,
+      confirmed_count: done.confirmed,
+      open_count: done.open,
       received_sen: at.sen,
       receipt_count: at.count,
       /* The day it was FULLY received, and null while any of it is still out —
