@@ -7,16 +7,26 @@
 // HC-SO-2608-003. Both are naming a SALES ORDER, so they disagree about a fact,
 // and "the owner misremembered" is a story, not a finding.
 //
-// WHY THE LOG NAMES A SALES ORDER AT ALL, which is the first thing that
-// confuses a reader here. AcSyncService logs
+// WHY THE LOG NAMED A SALES ORDER, ON EVERY REQUEST UP TO 2026-08-17.
+// AcSyncService logs
 //
 //     Log(path + " " + Str(p, "DocType") + " " + Or(Str(p, "DocNo"), Str(p, "FromDocNo")))
 //
-// and `composeSoToPo` sends neither DocType nor DocNo -- it returns
-// { DtlKeys, Details } and nothing else. So `Or(...)` falls through to
-// FromDocNo, and the identifier in that log line is the SOURCE SALES ORDER,
-// never the purchase order. A reader who takes it for the PO number will search
-// for a document that does not exist.
+// and `composeSoToPo` used to send neither DocType nor DocNo -- it returned
+// { DtlKeys, Details } and nothing else. So `Or(...)` fell through to
+// FromDocNo, and the identifier in that log line was the SOURCE SALES ORDER,
+// never the purchase order. A reader who took it for the PO number searched for
+// a document that does not exist.
+//
+// CHANGED 2026-08-17, when divergence D5 was closed on this route: the payload
+// now carries `DocNo`, so `Or(...)` takes it and a NEW request line names the
+// PURCHASE ORDER. Both shapes are in the log file at once and neither is wrong
+// -- which of the two you are reading is decided by the date, so check it:
+//
+//     10:15:14  /so-to-po  HC-SO-2608-001   <- before; the SOURCE sales order
+//     ...       /so-to-po  HC-PO-2608-001   <- after;  the purchase order
+//
+// Section A below prints both numbers side by side for exactly this reason.
 //
 // THE THREE ANSWERS THIS CAN GIVE, and they are different repairs:
 //
@@ -137,9 +147,10 @@ async function main() {
 
   console.log('');
   notice('D — HOW TO READ THIS');
-  notice('  The service log identifies a /so-to-po call by its SOURCE SALES ORDER, not by the');
-  notice('  purchase order: composeSoToPo sends no DocNo, so AcSyncService falls through to FromDocNo.');
-  notice('  Section A, "from (SO)" column, is the same value that appears in that log line.');
+  notice('  A /so-to-po request line names the PURCHASE ORDER from 2026-08-17, when composeSoToPo');
+  notice('  started sending DocNo (divergence D5). BEFORE that date it named the SOURCE SALES ORDER,');
+  notice('  because Or(DocNo, FromDocNo) fell through. Both shapes are in the log; the date decides.');
+  notice('  Section A prints the ERP doc_no and the "from (SO)" column, so either one is findable.');
   if (mismatches) {
     notice(`  ${mismatches} MISMATCH row(s): the ERP resolved a different source than the purchase order's`);
     notice('  own lines imply. That is answer B — a mislinked so_item_id, the same class as the');

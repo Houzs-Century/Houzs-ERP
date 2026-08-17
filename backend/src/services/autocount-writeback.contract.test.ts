@@ -145,8 +145,24 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
        FROM THE SUPPLIER, so a PO saved with no creditor died on
        FK_PO_DisplayTerm - a foreign key naming the TERM, not the supplier. The
        payload had always carried a creditor; this route simply never read it. */
-    expect(headerKeys(CS_SO_TO_PO)).toEqual(['CreditorCode', 'CreditorName', 'Details', 'DtlKeys', 'FromDocNo']);
+    /* DocNo joined this list on 2026-08-17 and it closes divergence D5 on the
+       last route it was open on. The first /so-to-po that ever succeeded landed
+       as `PO-009968` while the ERP calls the same purchase order
+       `HC-PO-2608-001`, because `composeSoToPo` returned { DtlKeys, Details }
+       and nothing else — the create arm has always sent a number and the
+       transfer arm never had. SoToPo now carries the same RequireDocNo the two
+       create routes carry and assigns `po.DocNo` directly rather than through
+       PurchaseHeader's swallow-and-log Set(). */
+    expect(headerKeys(CS_SO_TO_PO)).toEqual(
+      ['CreditorCode', 'CreditorName', 'Details', 'DocNo', 'DtlKeys', 'FromDocNo'].sort(),
+    );
     expect(detailKeys(CS_SO_TO_PO)).toEqual(['DeliveryDate', 'DtlKey', 'Location', 'Qty', 'UnitPrice']);
+    /* The ASSIGNMENT, not just the read. A payload key that is parsed and then
+       applied through Set() would satisfy the line above and still leave the
+       book's own number on the document — Set() logs and swallows, which is how
+       a NULL Qty reached this same route. */
+    expect(CS_SO_TO_PO).toContain('po.DocNo = Str(p, "DocNo");');
+    expect(CS_SO_TO_PO).toContain('RequireDocNo(p, "/so-to-po");');
   });
 
   test('/create-po', () => {
@@ -576,12 +592,22 @@ export const DIVERGENCES: Divergence[] = [
     erp: 'sends only { DocDate, Ref } and both are null at every call site (autocount-outbox.ts:254; no caller passes docDate or ref).',
     severity: 'high',
   },
-  {
-    id: 'D5', flow: 'the four conversions', field: 'DocNo',
-    service: 'will use the ERP\'s number when one is sent (AcSyncService.cs:282/290) — which is exactly what the two CREATE routes do, so an ERP SO keeps its number in AutoCount.',
-    erp: 'never sends it for a conversion, so AutoCount auto-numbers every DO / GRN / invoice and four of the six flows have two different document numbers for one document.',
-    severity: 'medium',
-  },
+  /* D5 STRUCK 2026-08-17 — DocNo, on every flow that creates a document.
+     `enqueueConvert` closed it for the four conversions; `/so-to-po` was the one
+     route left, and it stayed open on purpose ("one variable at a time on a
+     route that has never succeeded"). The route succeeded on 2026-08-17 10:15
+     and immediately produced the thing D5 predicts: `PO-009968` in AED_HOUZS for
+     the purchase order the ERP calls `HC-PO-2608-001`. `composeSoToPo` now takes
+     the number as its first REQUIRED argument, `dispatchOne` backfills it from
+     `row.doc_no` for anything already queued, and `SoToPo` carries the same
+     `RequireDocNo` guard as the two create routes. It leaves the register
+     because it was a plain gap with no decision left in it — the owner's
+     instruction is 「那 Numbering 你要处理掉啊，怎么可以不一样 Numbering 呢？」 —
+     and the two tests below fail if either half is reverted.
+
+     WHAT THE FIX DOES NOT DO: `PO-009968` keeps its number. Nothing here renames
+     a document already in a live account book. See §7c3a for what has to happen
+     to that one. */
   {
     id: 'D6', flow: 'edit', field: 'Lines[].ItemCode',
     service: 'applies ItemCode ONLY to a line it is appending; for a line addressed by DtlKey it is never read (AcSyncService.cs:395-401). A product swap cannot change the AutoCount item code.',
@@ -937,6 +963,85 @@ describe('/so-to-po names the supplier', () => {
   });
 });
 
+/* ── /so-to-po: the document NUMBER (divergence D5, struck) ─────────────────
+   MEASURED ON THE LIVE HOST 2026-08-17 10:15, the first time this route ever
+   succeeded:
+
+     so-to-po PO-009968: 2 transferred, 2 line(s) costed in phase two
+
+   `PO-009968` is AutoCount's counter. The ERP calls that same purchase order
+   `HC-PO-2608-001`, and every other document type in the chain already carries
+   the ERP's number into AED_HOUZS — HC-SO-2608-001/2/3, HC-DO-2608-001/2,
+   HC-SI-2608-001. A document numbered differently on the two sides cannot be
+   reconciled by anyone, which is the owner's whole point:
+   「那 Numbering 你要处理掉啊，怎么可以不一样 Numbering 呢？」
+
+   Same shape as the CreditorCode defect directly above and it needs the same two
+   halves — the enqueue, and the drain for rows already in the queue. */
+describe('/so-to-po carries the ERP document number', () => {
+  test('the enqueued body carries DocNo, and it is the ERP purchase order number', async () => {
+    const sb = soToPoSb();
+    await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
+    const row = sb.tables.autocount_outbox[0];
+    /* The positive control at the top of the previous block proves this fixture
+       takes the TRANSFER arm; re-asserted here because the CREATE arm has always
+       sent a DocNo and would pass this test while testing nothing. */
+    expect(row.op).toBe('so_to_po');
+    const stored = (row.payload as any).body;
+    expect(stored.DocNo, 'the ERP numbers its own purchase orders').toBe(PO_HEADER.po_number);
+    // Still the transfer payload, not a create wearing its clothes.
+    expect(stored.DtlKeys).toEqual([4242]);
+  });
+
+  test('the number reaches the WIRE, not just the stored row', async () => {
+    const sb = soToPoSb();
+    await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
+    sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-PARENT-1';
+    const body = await wireBody(sb);
+    expect(body.DocNo).toBe(PO_HEADER.po_number);
+    /* And it must not be confused with the PARENT's number. `dispatchOne`
+       resolves FromDocNo from the sales order at drain and both keys are
+       strings on the same object; a fix that put the wrong one in DocNo would
+       satisfy a bare toBeTruthy. */
+    expect(body.FromDocNo).toBe('AC-PARENT-1');
+    expect(body.DocNo).not.toBe(body.FromDocNo);
+  });
+
+  test('a row stored WITHOUT one is backfilled at drain from the outbox row itself', async () => {
+    /* THE ROW ALREADY IN THE QUEUE. `dispatchOne` REPLAYS the stored payload and
+       never recomposes, so the enqueue fix alone leaves anything queued before
+       today auto-numbering for ever. Cheaper than the creditor's backfill and
+       with nothing to get wrong: the outbox row is KEYED by the ERP's number. */
+    const sb = soToPoSb();
+    await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
+    delete (sb.tables.autocount_outbox[0].payload as any).body.DocNo;
+    sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-PARENT-1';
+    const body = await wireBody(sb);
+    expect(body.DocNo, 'resolved at drain, so no requeue is needed').toBe(PO_HEADER.po_number);
+  });
+
+  test('the backfill does NOT overwrite a number the payload already names', async () => {
+    const sb = soToPoSb();
+    await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
+    (sb.tables.autocount_outbox[0].payload as any).body.DocNo = 'HC-PO-2608-999';
+    sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-PARENT-1';
+    expect((await wireBody(sb)).DocNo).toBe('HC-PO-2608-999');
+  });
+
+  test('the service REFUSES a /so-to-po with no number, so a silent auto-number is impossible', () => {
+    /* The ERP half above can only be trusted as far as the ERP. This is the
+       account book's own half: AcSyncService carries the same RequireDocNo the
+       two create routes carry, whose comment explains what a blank number costs
+       — a document that cannot be edited, converted or even cancelled through
+       this service. Asserted against the C# source, which is what layer 1 of
+       this file is for. */
+    expect(CS_SO_TO_PO).toContain('RequireDocNo(p, "/so-to-po");');
+    expect(acSyncSource).toContain(
+      'if (string.IsNullOrEmpty(Str(p, "DocNo").Trim()))',
+    );
+  });
+});
+
 describe('the four conversions', () => {
   const convert = async (op: any, docType: any, from: any, to: any, docNo: string) => {
     const sb = seeded();
@@ -1172,14 +1277,15 @@ describe('the divergence register', () => {
   });
 
   test('the count is pinned — a new divergence has to be written down to land', () => {
-    /* If this fails you have either found an eleventh or fixed one of the ten.
+    /* If this fails you have either found a new one or fixed one of these.
        Both are good news; update the list and the module guide's prose together
-       — 7b for D9/D10, 7c1 for D14, 7c3 for D15, 7d2 for D8, 7q for the
-       extract's own fields.
+       — 7b for D9/D10, 7c1 for D14, 7c3 for D15, 7c3a for the struck D5, 7d2 for
+       D8, 7q for the extract's own fields.
 
        Started at thirteen. D11 and D13 were struck off when #1855 fixed them,
-       and D3 (the line delivery date) on 2026-08-15 — all three were plain bugs,
-       not decisions; the ones that remain each need one.
+       D3 (the line delivery date) on 2026-08-15 and D5 (the document number) on
+       2026-08-17 — all four were plain bugs, not decisions; the ones that remain
+       each need one.
 
        D14 was ADDED on 2026-08-17. It is not new behaviour — the service has
        always transferred a line at its outstanding quantity — it is a gap that
@@ -1197,12 +1303,19 @@ describe('the divergence register', () => {
        out of the account book — and that workaround must not become invisible.
        When enqueueConvert starts sending the account, strike D15 and say so in
        §7c3; do not quietly delete the fallback with it, because it is the only
-       thing that drains a row queued before the change. */
-    expect(DIVERGENCES).toHaveLength(12);
+       thing that drains a row queued before the change.
+
+       D5 was STRUCK on 2026-08-17. It was the last one on the list that had no
+       decision left in it: the account book takes the ERP's number wherever it
+       is sent, and `/so-to-po` was the only route still not sending one. It goes
+       for the same reason D3 did — a plain bug on the ERP side — and, like D3,
+       its absence is now held by tests rather than by prose. */
+    expect(DIVERGENCES).toHaveLength(11);
     expect(DIVERGENCES.filter((d) => d.severity === 'critical').map((d) => d.id))
       .toEqual(['D9', 'D10']);
     // The struck ids are not reused: a register is a ledger, not a list.
     expect(DIVERGENCES.map((d) => d.id)).not.toContain('D3');
+    expect(DIVERGENCES.map((d) => d.id)).not.toContain('D5');
     expect(DIVERGENCES.map((d) => d.id)).not.toContain('D11');
     expect(DIVERGENCES.map((d) => d.id)).not.toContain('D13');
   });
