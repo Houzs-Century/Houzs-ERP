@@ -42,7 +42,7 @@ straight to APPLY it would have written nothing and exited 3 — the refusal was
 correct — but the assumption behind it ("one document, one outbox row") was
 invisible until a production dispatch printed the rows.
 
-**Ref.** PR #PRNUM2, 2026-08-17.
+**Ref.** PR #2344, 2026-08-17.
 
 ## Three documents were in the account book and the ERP still offered to send them again [critical]
 
