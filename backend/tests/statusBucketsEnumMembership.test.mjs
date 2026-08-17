@@ -66,19 +66,34 @@ const MIGRATIONS_PG = path.join(backendRoot, "src/db/migrations-pg");
 const SRC_ROOT = path.join(backendRoot, "src");
 
 /* The map's file -> the enum type its values are filtered against. The ONE
-   hand-written pairing in this test, and the "no stray map" check below makes it
-   self-completing: a new *_STATUS_BUCKETS anywhere under src/ that is not listed
-   here fails, so the next list endpoint cannot quietly opt out of the check.
+   hand-written pairing in this test. The "no stray map" check below is what
+   stops a new endpoint quietly opting out: a *_STATUS_BUCKETS declaration
+   anywhere under src/ that is not listed here FAILS.
 
-   CORRECTED 2026-08-18. That sentence was FALSE for the same-file case and the
-   hole was demonstrated, not theorised: the scan below keyed its results by FILE
-   PATH, so a SECOND *_STATUS_BUCKETS declaration in an already-registered file
-   overwrote the real map, and the real map was then never checked. Planting
-   'COMPLETED' back in GRN_STATUS_BUCKETS.posted AND appending a second, valid
-   GRN2_STATUS_BUCKETS to grns.ts made this suite report 12 passed. The
-   `maps.size === 5` guard could not see it because it was counting FILES. The
-   results are now keyed by `<file>::<MAP_NAME>`, every map found is checked on
-   its own, and parseBucketMaps() has its own two-map self-test below. */
+   WHAT THAT CLAIM IS WORTH, stated exactly, because the sentence it replaces
+   ("self-completing ... the next list endpoint cannot quietly opt out") was
+   false twice and both holes were found by someone else planting the case:
+
+   1. CORRECTED 2026-08-18 — the same-FILE case. The scan keyed its results by
+      FILE PATH, so a SECOND *_STATUS_BUCKETS declaration in an already-registered
+      file overwrote the real map and the real map stopped being checked. Planting
+      'COMPLETED' back in GRN_STATUS_BUCKETS.posted AND appending a second, valid
+      GRN2_STATUS_BUCKETS to grns.ts made this suite report 12 passed; `maps.size
+      === 5` could not see it because it was counting FILES. Results are now keyed
+      by `<file>::<MAP_NAME>` and parseBucketMaps() has a two-map self-test below.
+
+   2. CORRECTED 2026-08-18 (second round) — the UNANNOTATED case. BUCKET_DECL
+      required an explicit type annotation, so `export const XX_STATUS_BUCKETS =
+      { ... }` was invisible to the whole suite (13 passed with a bogus member in
+      it), and so was an `as const` variant. The annotation is now optional and
+      both shapes have a self-test below.
+
+   WHAT IT STILL CANNOT SEE, so nobody re-derives it by planting a third case: a
+   map assembled at RUNTIME (spread, Object.fromEntries, a function return), a map
+   whose closing brace is not at column 0, and a bucket list that is not a literal
+   array on one line. Those are not opt-outs anyone reaches for by accident, but
+   they are holes, and the honest statement is "every LITERAL declaration", not
+   "every map". */
 const BUCKET_OWNERS = {
   "src/scm/routes/mfg-purchase-orders.ts": "po_status",
   "src/scm/routes/purchase-invoices.ts": "purchase_invoice_status",
@@ -130,7 +145,16 @@ function readEnumVocabulary() {
 
 /* ── The bucket maps, out of the route sources ───────────────────────────── */
 
-const BUCKET_DECL = /const\s+(\w*_STATUS_BUCKETS)\s*:[^=]*=\s*\{([\s\S]*?)\n\};/g;
+/* The TYPE ANNOTATION IS OPTIONAL, and it was not until 2026-08-18. The pattern
+   used to be `const (\w*_STATUS_BUCKETS)\s*:[^=]*=` — the `:` mandatory — so a map
+   written the ordinary TS way, letting the type be inferred, was invisible to
+   this entire suite: `maps.size` stayed at 5, both the registration guard and the
+   one-map-per-file guard saw nothing, and a bucket full of non-members passed.
+   Demonstrated with `export const XX_STATUS_BUCKETS = { ... 'COMPLETELY_BOGUS' }`
+   dropped in src/scm/lib/ (13 passed), and again with an `as const` variant
+   (13 passed) — which is why the terminator accepts `} as const;` too. */
+const BUCKET_DECL =
+  /const\s+(\w*_STATUS_BUCKETS)\s*(?::[^=]*)?=\s*\{([\s\S]*?)\n\}(?:\s+as\s+const)?\s*;/g;
 
 function listSourceFiles(dir) {
   const out = [];
@@ -218,6 +242,21 @@ describe("the checker itself", () => {
     assert.deepEqual(parsed.map((p) => p.name), ["A_STATUS_BUCKETS", "B_STATUS_BUCKETS"]);
     assert.deepEqual(parsed[0].buckets.posted, ["POSTED", "CLOSED"]);
     assert.deepEqual(parsed[1].buckets.posted, ["POSTED"]);
+  });
+
+  /* THE SECOND WALK-PAST, pinned the same way. All five real maps carry a type
+     annotation, so nothing in the tree would notice this pattern demanding one. */
+  test("a map with no type annotation is still seen", () => {
+    const shapes = [
+      "export const C_STATUS_BUCKETS = {\n  draft: ['DRAFT'],\n  posted: ['POSTED'],\n};",
+      "export const D_STATUS_BUCKETS = {\n  draft: ['DRAFT'],\n  posted: ['POSTED'],\n} as const;",
+      "const E_STATUS_BUCKETS: Record<string, string[]> = {\n  draft: ['DRAFT'],\n  posted: ['POSTED'],\n};",
+    ];
+    for (const src of shapes) {
+      const parsed = parseBucketMaps(src);
+      assert.equal(parsed.length, 1, `this declaration shape is invisible to the scan:\n${src}`);
+      assert.deepEqual(parsed[0].buckets.posted, ["POSTED"]);
+    }
   });
 
   test("every *_STATUS_BUCKETS map under src/ is registered here", () => {

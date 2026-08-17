@@ -165,6 +165,31 @@ pinned by the lowered ceilings: reverting one to the inline destructure now take
 `purchase-invoices.ts` from 38 to 39 and fails `audit:swallowed-reads`, which at
 the old ceiling of 40 it would not have.
 
+### The second descent — the count that is DISPLAYED, not the one that decides
+
+*Added 2026-08-18.* The descent above ranked sites by what an absent read
+AUTHORISES, and a count that only feeds a display field was ranked low. That
+ranking hid a whole half of the class, and it cost production: the six paginated
+SCM lists (PO, PI, SI, GRN, DO, SO) each folded a failed `count:'exact'` query
+into `count ?? 0`, so the tab said zero while the rows were still there — measured
+against prod on 2026-08-17 as `all:27 delivered:0` on the DO list, with 37
+delivery orders reachable from no tab. Nothing was authorised; the operator was
+simply told a number that was not true, and a number on screen is acted on.
+
+Fixed through `backend/src/scm/lib/status-counts.ts` (`readStatusCounts`,
+`tallyStatusRows`), which refuses an `error` and refuses a null answer while
+keeping a genuine zero, and gated by
+`backend/tests/statusCountsFailLoud.test.mjs` — one entry per HANDLER, not per
+file, because a whole-file substring test answers "does some handler here guard
+its counts", which is not the question.
+
+`PATCH /fabric-tracking/:id/tier` belongs to this half and was first filed with
+the *authorising* half by mistake: its `affectedProducts` decides nothing on the
+server, it is returned and printed to the operator as a sentence. It cannot 500 —
+the tier write has already committed when the count runs — so it answers
+`affectedProducts: null` and the frontend says the number could not be read
+rather than showing nothing (`backend/tests/fabricTierAffectedCount.test.ts`).
+
 **Deliberately not touched:** the POST-insert over-receipt verifiers in `grns.ts`
 and `purchase-invoices.ts`. Those run after the row is committed, so refusing means
 deleting a receipt the operator watched succeed — the fail-closed answer is not free

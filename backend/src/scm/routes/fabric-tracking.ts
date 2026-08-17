@@ -29,6 +29,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { activeCompanyId, scopeToCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { readStatusCounts } from '../lib/status-counts';
 import type { Env, Variables } from '../env';
 
 export const fabricTracking = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -536,7 +537,10 @@ fabricTracking.patch('/:id/description', async (c) => {
   return c.json({ ok: true, description: next, pickerLabel: code ? colourLabelOf(code, next) : null, ...(pickerWarning ? { pickerWarning } : {}) });
 });
 
-fabricTracking.patch('/:id/tier', async (c) => {
+/* Exported so the failed-count path has a test. Same shape as trips.ts's
+   patchTripHandler et al: the router below mounts this, and a test mounts it on
+   a bare Hono with a fake supabase. */
+export const patchFabricTierHandler = async (c: any) => {
   const id = c.req.param('id');
   let body: { field?: string; tier?: string };
   try {
@@ -582,21 +586,41 @@ fabricTracking.patch('/:id/tier', async (c) => {
 
   // Count downstream products. Sofa tier change affects SOFA + ACCESSORY
   // SKUs (HOOKKA convention); bedframe tier change only affects BEDFRAME.
-  let affectedProducts = 0;
+  //
+  // `count ?? 0` here was the same bug this branch fixed on the six list
+  // endpoints, and it was first filed as a different class on the grounds that
+  // it decides nothing. It decides nothing — but it is REPORTED, as
+  // `affectedProducts`, and the frontend prints it as a sentence ("N sofa
+  // products now reflect the new tier"). A count that could not be read is not
+  // zero, and zero here is the reading that makes the operator do nothing.
+  //
+  // It cannot 500: the tier UPDATE above has already committed, so failing the
+  // request would tell the operator their change did not land. The count is
+  // served as null — unknown, and the caller says so — while ok stays true.
+  let affectedProducts: number | null = 0;
   if (fabricCode) {
     const targetCategories = body.field === 'bedframePriceTier'
       ? ['BEDFRAME']
       : ['SOFA', 'ACCESSORY'];
-    const { count } = await scopeToCompany(
-      supabase
-        .from('mfg_products')
-        .select('id', { head: true, count: 'exact' })
-        .eq('fabric_color', fabricCode)
-        .in('category', targetCategories),
-      c,
-    );
-    affectedProducts = count ?? 0;
+    const counted = readStatusCounts({
+      affectedProducts: await scopeToCompany(
+        supabase
+          .from('mfg_products')
+          .select('id', { head: true, count: 'exact' })
+          .eq('fabric_color', fabricCode)
+          .in('category', targetCategories),
+        c,
+      ),
+    });
+    if (counted.ok) {
+      affectedProducts = counted.counts.affectedProducts;
+    } else {
+      console.error(`fabric tier propagation hint: ${counted.reason}`);
+      affectedProducts = null;
+    }
   }
 
   return c.json({ ok: true, affectedProducts, fabricCode });
-});
+};
+
+fabricTracking.patch('/:id/tier', patchFabricTierHandler);
