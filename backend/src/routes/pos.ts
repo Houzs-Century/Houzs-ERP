@@ -212,8 +212,7 @@ pos.post("/verify-pin", auth, async (c) => {
 // KPI = the item-KPI-flagged add-on amount. The item-KPI split needs the HR
 // commission machinery, which has no Houzs home yet (#19) — so KPI is 0 and
 // Products = goods here, which is EXACTLY 2990's own value when no item-KPI flag
-// is active. status::text guards the enum (excludes CANCELLED/ON_HOLD/DRAFT
-// safely).
+// is active. status::text guards the enum (excludes CANCELLED/ON_HOLD safely).
 // ?salesperson (owner-tier targeting) is not yet honoured — the personal card
 // always follows the caller (TODO with the HR work).
 const KPI_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
@@ -244,15 +243,15 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   if (!me) return c.json(empty);
 
   // Shared period + company + status predicate.
-  // DRAFT is excluded because a draft is not a sale. This endpoint was the only
-  // place that counted one: mfg-sales-orders filters '("CANCELLED","DRAFT")' on
-  // its MTD aggregates and on /mine, and COMMISSION_EXCLUDED_STATUSES
-  // (scm/shared/hr-commission.ts) pays nothing on a DRAFT. So this card credited
-  // revenue that earns no commission and that no other report recognises.
-  // Reported from 2990 (company 2): the card read "28 orders / RM 73,975" for
-  // July over a board showing 1. The other 27 were drafts. The board reads
-  // /mine, which already excluded them, so the two could never agree.
-  const conds = ["status::text NOT IN ('CANCELLED','ON_HOLD','DRAFT')", "so_date >= ?"];
+  // DRAFT is COUNTED here, deliberately. #2356 excluded it on the reasoning that
+  // a draft is not a sale, which is true of commission and of the MTD reports —
+  // but this card is not a commission figure. It is the salesperson's pipeline
+  // for the month, and the owner wants a started order to appear in it.
+  // The mismatch #2356 was chasing (card 28, board 1) is closed from the other
+  // side instead: GET /mfg-sales-orders/mine now returns drafts too, so the
+  // board lists the same 28 orders this card counts. Change the two together or
+  // they drift apart again.
+  const conds = ["status::text NOT IN ('CANCELLED','ON_HOLD')", "so_date >= ?"];
   const binds: unknown[] = [monthStart];
   if (toYmd) { conds.push("so_date <= ?"); binds.push(toYmd); }
   if (companyId != null) { conds.push("company_id = ?"); binds.push(Number(companyId)); }
