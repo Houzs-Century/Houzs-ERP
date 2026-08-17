@@ -983,20 +983,20 @@ export const patchConsignmentOrderStatusHandler = async (c: any) => {
      downstream lock below, so an out-of-scope caller gets 404 rather than being
      told the order has a Consignment Note: a refusal must not leak existence. */
   if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
-  let body: { status?: string; notes?: string };
-  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  let body: { status?: string; notes?: string }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
-
+  /* NORMALISE FIRST, as the SO handler this clones does. Read RAW, a lowercase 'cancelled'
+     never entered coHasDownstream below — SI_STATUS_CANON's class; tests/lifecycleStatusCasing. */
+  const toStatus = String(body.status).trim().toUpperCase();
   const { data: prev } = await scopeToCompanyId(sb.from('consignment_sales_orders').select('status').eq('doc_no', docNo), co.companyId).maybeSingle();
   const fromStatus = (prev as { status: string } | null)?.status ?? null;
-
   /* Tier 2 downstream-lock — only the CANCELLED transition is gated. */
-  if (body.status === 'CANCELLED' && fromStatus !== 'CANCELLED') {
+  if (toStatus === 'CANCELLED' && fromStatus !== 'CANCELLED') {
     const childLock = await coHasDownstream(sb, docNo);
     if (childLock) return c.json(childLock, 409);
   }
 
-  const patch: Record<string, unknown> = { status: body.status, updated_at: new Date().toISOString() };
+  const patch: Record<string, unknown> = { status: toStatus, updated_at: new Date().toISOString() };
   const { data, error } = await scopeToCompanyId(sb.from('consignment_sales_orders').update(patch)
     .eq('doc_no', docNo), co.companyId).select('doc_no, status').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
@@ -1008,8 +1008,8 @@ export const patchConsignmentOrderStatusHandler = async (c: any) => {
     action: 'UPDATE_STATUS',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-    fieldChanges: [{ field: 'status', from: fromStatus, to: body.status }],
-    statusSnapshot: body.status,
+    fieldChanges: [{ field: 'status', from: fromStatus, to: toStatus }],
+    statusSnapshot: toStatus,
     note: body.notes ?? undefined,
   });
 

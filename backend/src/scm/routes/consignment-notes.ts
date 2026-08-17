@@ -1062,10 +1062,39 @@ export const patchConsignmentNoteStatusHandler = async (c: any) => {
   let body: { status?: string }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
 
+  /* NORMALISE FIRST, exactly as the Sales Order, Delivery Order and Sales
+     Invoice status handlers already do (`String(body.status).trim().toUpperCase()`
+     in mfg-sales-orders.ts / delivery-orders-mfg.ts, `canonicalSiStatus` in
+     sales-invoices.ts). This handler was the one that never got it, and the
+     asymmetry was inside this same FILE: `resyncNoteInventory` uppercases the
+     PERSISTED status before deciding `cancelled` (:293), while every gate below
+     compared the INCOMING status raw.
+
+     What a lowercase 'cancelled' did, before this line existed: it missed the
+     already-cancelled echo, missed `noteHasDownstream`, missed the atomic
+     `.neq('status','CANCELLED')` single-flight, fell into the plain `else`
+     write, and — the damage — never called `resyncNoteInventory`, so the CS_DO
+     inventory OUT was NEVER reversed. The note then read as cancelled
+     everywhere (the resync's own uppercasing agrees it is), with its stock still
+     shipped out. That is the Sales Invoice bug (`SI_STATUS_CANON`, "a lowercase
+     'cancelled' slipped past the `status === 'CANCELLED'` gate and skipped the
+     revenue reversal") reproduced on this document with stock instead of
+     revenue. No live caller sends lowercase HERE today — but
+     SalesOrderDetailV2 sends `"cancelled"` and SalesInvoicesListV2 sends
+     `"paid"`, so the assumption that callers send canonical case has already
+     been broken twice on sibling documents.
+
+     Deliberately NOT accompanied by a status whitelist. The DO handler can
+     afford `DO_STATUSES.has(...)` because that vocabulary is declared in one
+     place; this document's is not, and a guessed whitelist would refuse a
+     legitimate status. Rejecting an unknown value is written up as a
+     recommendation, not shipped here. */
+  const toStatus = String(body.status).trim().toUpperCase();
+
   const { data: cur } = await scopeToCompanyId(sb.from('consignment_delivery_orders').select('status').eq('id', id), co.companyId).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
-  if (body.status === 'CANCELLED' && prevStatus === 'CANCELLED') {
+  if (toStatus === 'CANCELLED' && prevStatus === 'CANCELLED') {
     return c.json({ consignmentNote: { id, status: 'CANCELLED' } });
   }
 
@@ -1078,23 +1107,23 @@ export const patchConsignmentNoteStatusHandler = async (c: any) => {
   }
 
   /* Downstream-lock — only the CANCELLED transition is gated. */
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     const childLock = await noteHasDownstream(sb, id);
     if (childLock) return c.json(childLock, 409);
   }
 
   const now = new Date().toISOString();
   const ts: Record<string, string> = { updated_at: now };
-  if (body.status === 'DISPATCHED') ts.dispatched_at = now;
-  if (body.status === 'SIGNED')     ts.signed_at = now;
-  if (body.status === 'DELIVERED')  ts.delivered_at = now;
+  if (toStatus === 'DISPATCHED') ts.dispatched_at = now;
+  if (toStatus === 'SIGNED')     ts.signed_at = now;
+  if (toStatus === 'DELIVERED')  ts.delivered_at = now;
 
   /* ATOMIC cancel guard — make the CANCELLED write conditional on the row still
      being non-cancelled so two concurrent cancels can't double-reverse. */
   let data: { id: string; status: string } | null;
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('consignment_delivery_orders')
-      .update({ status: body.status, ...ts })
+      .update({ status: toStatus, ...ts })
       .eq('id', id).neq('status', 'CANCELLED'), co.companyId)
       .select('id, status').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
@@ -1102,7 +1131,7 @@ export const patchConsignmentNoteStatusHandler = async (c: any) => {
     data = updated as { id: string; status: string };
   } else {
     const { data: updated, error } = await scopeToCompanyId(sb.from('consignment_delivery_orders')
-      .update({ status: body.status, ...ts }).eq('id', id), co.companyId).select('id, status').single();
+      .update({ status: toStatus, ...ts }).eq('id', id), co.companyId).select('id, status').single();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     data = updated as { id: string; status: string };
   }
@@ -1113,7 +1142,7 @@ export const patchConsignmentNoteStatusHandler = async (c: any) => {
   // Hoisted: the response is OUTSIDE this block, so a block-scoped
   // declaration would leave the cancel path unable to report.
   let resyncErrs: string[] = [];
-  if (SHIPPED_STATES.includes(body.status) || body.status === 'CANCELLED') {
+  if (SHIPPED_STATES.includes(toStatus) || toStatus === 'CANCELLED') {
     /* REPORTED, not discarded. The CREATE path returns this exact string[] as
     movementErrors; these mutations threw it away, so a resync that failed to
     book or drain stock returned a clean 200. writeMovements never throws, so
