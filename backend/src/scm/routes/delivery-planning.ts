@@ -61,7 +61,7 @@
 // Mounted at '/delivery-planning' in scm/index.ts.
 // ----------------------------------------------------------------------------
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
@@ -72,7 +72,8 @@ import { paginateAll } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
 import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
-import { soDeliverableRemaining } from './delivery-orders-mfg';
+import { boardDeliverableByDoc } from '../lib/board-deliverable';
+import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
 import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
@@ -383,7 +384,7 @@ const NOT_YOUR_JOB = "You can only update a delivery job assigned to you.";
    their DOs. delivery_state derived LIVE per SO. Region classified from the
    customer's STATE (stateToRegionsFromConfig).
    ─────────────────────────────────────────────────────────────────────────*/
-deliveryPlanning.get('/', async (c) => {
+export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase');
   const today = todayMyt();
 
@@ -407,7 +408,7 @@ deliveryPlanning.get('/', async (c) => {
   const { data: whRows, error: whErr } = await sb
     .from('warehouses')
     .select('id, code, name');
-  if (whErr) return c.json({ error: 'load_failed', reason: whErr.message }, 500);
+  if (whErr) return c.json(readFailure('warehouses', whErr), 500);
   const whCode = new Map<string, string>();
   const whName = new Map<string, string>();
   for (const w of (whRows ?? []) as Array<{ id: string; code: string | null; name: string | null }>) {
@@ -454,7 +455,7 @@ deliveryPlanning.get('/', async (c) => {
       .order('customer_delivery_date', { ascending: true, nullsFirst: false })
       .range(from, to),
   );
-  if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);
+  if (soErr) return c.json(readFailure('sales_orders', soErr), 500);
   /* Only SOs that actually need delivering — they carry a date signal
      (customer_delivery_date OR processing_date). Filtered
      in JS (not a PostgREST .or()) to keep the paginated query's row type clean. */
@@ -482,12 +483,13 @@ deliveryPlanning.get('/', async (c) => {
      view). Adding any of those here will 500 the Delivery Planning board. */
   const liveBalanceByDoc = new Map<string, number>();
   {
-    const { data: balRows } = await paginateAll<{ doc_no: string | null; balance_centi_live: number | null }>((from, to) =>
+    const { data: balRows, error: balErr } = await paginateAll<{ doc_no: string | null; balance_centi_live: number | null }>((from, to) =>
       sb.from('mfg_sales_orders_with_payment_totals')
         .select('doc_no, balance_centi_live')
         .in('doc_no', docNos)
         .range(from, to),
     );
+    noteDegradedRead('live_balance', balErr);
     for (const b of (balRows ?? [])) {
       if (b.doc_no != null && b.balance_centi_live != null) {
         liveBalanceByDoc.set(String(b.doc_no), Number(b.balance_centi_live));
@@ -502,7 +504,7 @@ deliveryPlanning.get('/', async (c) => {
         Ordered (doc_no, line_no, created_at ASC) — IDENTICAL to the SO list's
         item fetch so the FIRST line we see per doc_no is its earliest-created
         one; that drives the SO-list-matching Branding derivation below. */
-  const { data: itemRowsRaw } = await paginateAll<{
+  const { data: itemRowsRaw, error: itemErr } = await paginateAll<{
     doc_no: string; item_group: string | null; item_code: string | null;
     stock_status: string | null; cancelled: boolean | null; warehouse_id: string | null;
     branding: string | null; created_at: string | null;
@@ -516,6 +518,7 @@ deliveryPlanning.get('/', async (c) => {
       .order('created_at', { ascending: true })
       .range(from, to),
   );
+  noteDegradedRead('so_lines', itemErr);
   const linesByDoc = new Map<string, ReadinessLine[]>();
   const warehousesByDoc = new Map<string, Set<string>>();
   /* Branding auto-derive — REPLICATES the SO list grid exactly. The Branding
@@ -592,17 +595,16 @@ deliveryPlanning.get('/', async (c) => {
   }
 
   /* 4. Delivery progress per SO (live remaining) — drives DELIVERED detection.
-        soDeliverableRemaining excludes DRAFT / CANCELLED DOs already; an SO is
-        fully delivered once every line's remaining == 0 AND at least one qty has
-        shipped (delivered > 0). */
-  const deliveredByDoc = new Map<string, number>();
-  const remainingByDoc = new Map<string, number>();
-  {
-    const deliverableMap = await soDeliverableRemaining(sb, docNos);
-    for (const line of deliverableMap.values()) {
-      deliveredByDoc.set(line.docNo, (deliveredByDoc.get(line.docNo) ?? 0) + line.delivered);
-      remainingByDoc.set(line.docNo, (remainingByDoc.get(line.docNo) ?? 0) + line.remaining);
-    }
+        THE ONE STEP HERE THAT THROWS instead of returning an error: the
+        delivered-sum read fails loudly by design (lib/do-unlinked-coverage.ts).
+        Loud is right; ANONYMOUS is not — uncaught it reached the client as
+        index.ts's generic "Something went wrong", naming no stage at all. */
+  let deliveredByDoc: Map<string, number>;
+  let remainingByDoc: Map<string, number>;
+  try {
+    ({ deliveredByDoc, remainingByDoc } = await boardDeliverableByDoc(sb, docNos));
+  } catch (e) {
+    return c.json(readFailure('delivered_sum', e), 500);
   }
 
   /* 5. DOs for these SOs — the cut DO doc_no + status + per-DO crew (driver /
@@ -620,7 +622,7 @@ deliveryPlanning.get('/', async (c) => {
     // the planning grid "DO Date" column. From the SAME latest-DO lookup as crew.
     do_date: string | null;
   };
-  const { data: doRowsRaw } = await paginateAll<{
+  const { data: doRowsRaw, error: doErr } = await paginateAll<{
     id: string; do_number: string | null; so_doc_no: string | null; status: string | null;
     // driver_id — the DO header's quick-field driver, one half of the row-scope
     // assignment (the crew snapshot below carries the rest). dual-read camelCase.
@@ -644,6 +646,7 @@ deliveryPlanning.get('/', async (c) => {
       .in('so_doc_no', docNos)
       .range(from, to),
   );
+  noteDegradedRead('do_headers', doErr);
   const doByDoc = new Map<string, Array<{ id: string; doNumber: string; status: string }>>();
   /* DO header driver_id by DO id — half the row-scope assignment (crew ids are
      the other half). Only consulted when the caller is self-scoped. */
@@ -1498,7 +1501,8 @@ deliveryPlanning.get('/', async (c) => {
     : regionFiltered.filter((o) => o.delivery_state === stateParam);
 
   return c.json({ orders: stateFiltered, counts, regions: regionCfg.regions });
-});
+};
+deliveryPlanning.get('/', deliveryPlanningBoardHandler);
 
 /* ──────────────────────────────────────────────────────────────────────────
    GET /delivery-planning/geo?date=YYYY-MM-DD&region=<ALL|code>
