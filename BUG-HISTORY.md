@@ -108,6 +108,192 @@ widening those CHANGES WHICH OPTIONS APPEAR, which is the owner's call. And nobo
 has measured how many EXISTING SO lines already hold an out-of-pool variant; the
 PATCH gate at `mfg-sales-orders.ts:8396-8406` re-validates the whole merged blob,
 so such a line refuses an edit to an UNRELATED field.
+## The unlinked-line guard stopped at the INSERT, so two saves walked around it on four chains [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** None reported yet — this is the preventative half of a defect whose
+corrective half is already in the file. Five chains refuse an unlinked line whose
+code is on the parent the document names. All five refuse it only on the way IN.
+
+**Root cause.** The refusal is two saves away from being pointless:
+
+1. add a line whose code is NOT on the named parent — correctly allowed, because
+   that is the service / freight / ad-hoc carve-out the nullable link exists for;
+2. PATCH that line's code to one that IS on the parent — nothing looked.
+
+The stored link is still NULL after step 2, and NULL is what every cap and every
+recount on these chains keys on, so all three of them skip:
+
+- `grns.ts` — `if (poItemId && qtyReceived > prevQty)` skips the cap, and
+  `recomputePoReceived(sb, [purchase_order_item_id])` sums by the link, so the PO
+  line still reads fully outstanding and the delivery is received again.
+- `purchase-returns.ts` — `if (grnItemId && delta !== 0)` skips the cap and
+  `adjustGrnReturnedQty` is never called, so `grn_items.returned_qty` never moves.
+- `sales-invoices.ts` — `if (it.qty !== undefined && prev.do_item_id && …)` skips
+  the over-invoice cap, and the resync re-posts the revenue and re-enqueues the
+  invoice to AutoCount.
+
+Two further findings while verifying it:
+
+- **The purchase-return ADD-LINE path had no insert guard at all.** The other
+  four chains guard theirs; `addPurchaseReturnItemHandler` never did, so its
+  create-path refusal could be walked around in ONE save by adding the line
+  afterwards. Same N-1 shape, one file over.
+- **All four parent-set readers failed OPEN.** `soItemCodesOf`,
+  `poMaterialCodesOf`, `doItemCodesOf` and `grnMaterialCodesOf` each read
+  `const { data } = await sb…` with the error discarded. A failed read produced an
+  EMPTY set, and an empty set is exactly what the shared predicate treats as "the
+  parent orders nothing" — so a transient blip did not degrade the guard, it
+  DISABLED it, on the write it exists to refuse. Third occurrence of the class
+  after `piLocked` and `findServiceLineCodes`.
+
+**Why the delivery-return chain is in scope despite "no DO, no Return".** Both DR
+write paths refuse a null `do_item_id` outright (bug #16), so an unlinked DR line
+cannot be typed — but it can still ARRIVE: every one of these link columns is
+`ON DELETE SET NULL` (`2990s-full-schema.sql:1656, 1662, 1739, 1754`), so deleting
+a parent line orphans its children.
+
+**Fix.** `backend/src/scm/lib/unlinked-line-edit-guard.ts` — the rule ONCE, with
+the four chains' differences (which parent column, which reader, which vocabulary)
+declared as arguments in one `CHAINS` table. Each handler's change is a single
+`unlinkedEditRefusal(...)` call. The rule runs on the POST-edit code
+(`patch.code ?? stored.code`), only while the stored link is NULL, and only on the
+TRANSITION not-on-parent -> on-parent: a line that was ALREADY on the parent is
+left alone, because `ON DELETE SET NULL` means that state arrives through no act
+of the operator's and a check must only fail on what its actor could have done.
+The four readers now return `ParentCodes` and `ok: false` is refused, never read
+as "nothing on the parent"; `readParentCodes` is the one implementation.
+
+Not a boolean already-converted flag (owner ruling): nothing here counts
+conversions, so batch receiving and batch shipping are untouched. Nothing added on
+SO -> PO. Two DRAFT GRNs on one PO line still coexist.
+
+**Proof it is not vacuous.** Five wiring assertions slice each router's source per
+handler and require the guard symbol inside that handler's own body; all five were
+observed RED before the call sites existed and green after. `audit:swallowed-reads`
+caught two fail-open header reads in the fix itself — a discarded error there
+yields a null parent, which reads as "names no parent", which returns "allowed" —
+and both now bind `error` and refuse. The four guard libs left the swallowed-read
+baseline entirely (1/1/2 -> 0) and `sales-invoices.ts` went 30 -> 29.
+
+**One extraction, forced by the file-size ratchet and worth it anyway.** Three of
+the touched routers are already over their ceilings, so a touched file may not
+grow. The per-handler prose moved into the lib (which is where a shared rule's
+reasoning belongs — restating it four times is how it drifts), the two-step
+"refuse on unreadable, refuse on offenders" collapsed into one
+`unlinkedScanRefusal`, and `computeGrnFlags` left `routes/grns.ts` for
+`lib/grn-consumption-flags.ts`. That last one is the CANONICAL definition four
+other routers and migration 0267 defer to in prose — "mirrors computeGrnFlags in
+routes/grns.ts" — so it had no business being a private function halfway down a
+3,600-line router. Its body is byte-identical to the one it replaces, the four
+ROUTER pointers are updated, and it now has its own tests.
+
+Migration 0267's two mentions are deliberately NOT updated. They name the
+function, not its path, so they are still true — and 0267 is already applied.
+The working-agreement gate refused a comment-only edit to it, correctly: an
+applied migration that no longer matches what ran is a worse artefact than a
+prose pointer one directory stale, and pg-migrate tracks by full filename.
+
+**Residual, deliberately not smuggled in.** An orphaned line's QTY can still be
+raised without the guard firing (it fires on the code transition only), and
+`doLineRemaining` — which the SI chain's pending-code reader calls — is fail-open
+throughout and shared by many callers. Both are their own units.
+## BUG CLASS - party-code-unverified-identity: a valid code that names the wrong company [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**Symptom.** Owner, 2026-08-17. `HC-PO-2608-001`, `HC-GR-2608-001` and
+`HC-PI-2608-001` are in the live book `AED_HOUZS` under creditor `400-H004`.
+Measured on the host, that creditor is `HAO HUA FURNITURE`, of Jalan Bentara 1,
+Skudai. The ERP purchase order behind those three documents names `HOOKKA
+INDUSTRIES SDN. BHD.` Different company. Three real documents are booked against
+the wrong party — an accounting error, not a technical one, which is why nothing
+alerted.
+
+**The shape** — an identifier that is a FOREIGN KEY into a system this one cannot
+read. Every layer can check that the code is well-formed, present and accepted;
+not one can check that it names the same company the ERP thinks it does. So the
+only failure mode left is the silent one.
+
+**Root cause, traced.** Three steps, none of which is wrong on its own:
+
+1. `readPoHeader` (`backend/src/scm/lib/autocount-outbox.ts`) reads the supplier
+   through `supplier_id` — `sb.from('suppliers').select('code, name')` — and
+   returns `creditor_code: s?.code ?? null` beside `creditor_name: s?.name`.
+2. `composeCreatePo` (`backend/src/services/autocount-writeback.ts`) refuses an
+   EMPTY creditor code (`MissingCreditorError`) and sends anything else verbatim.
+   Emptiness is the only property it tests.
+3. The drain's `/ensure-masters` pre-flight is handed BOTH halves —
+   `mastersOf` (`backend/src/scm/lib/autocount-masters.ts`) builds
+   `Creditors: [{ AccNo, CompanyName }]` — and then throws the second half away.
+   `AcSyncService.cs`: `if (CreditorExists(da, acc)) { existed.Add(...); continue; }`,
+   where `CreditorExists` is `da.GetCreditor(acc) != null`. The entity is fetched,
+   its `CompanyName` is right there, and it is never compared to the one the ERP
+   sent. Only the CREATE arm ever touches `CompanyName`, and only for a code the
+   book does not already hold.
+
+`400-H004` is a perfectly valid creditor code. It exists, so step 3 short-circuits,
+and steps 1 and 2 have nothing to object to. The document saves cleanly.
+
+**Why it hides** — this class has no error state. The sibling class
+`writeback-reads-the-empty-column` at least ends in a foreign-key throw, because
+`""` is not a row in the master table. Here the code IS a row in the master table.
+The write-back succeeds, `linked_ac_docno` is written back, the outbox row goes
+`sent`, and the ERP and the account book agree about everything except who was
+bought from. The only reader who can see it is a human holding both masters side
+by side.
+
+**What would have caught it, and where the check belongs.** Cheapest first:
+
+- **Compare the name in `CreditorExists`, on the host** — the entity is already
+  fetched. Return the found `CompanyName` instead of a bool and have
+  `/ensure-masters` report `creditor:<acc> MISMATCH erp=<x> book=<y>` in the
+  response it already returns. Cost: a few lines of C# and a service rebuild.
+  This is the smallest change that closes the class, and it is the RIGHT layer —
+  it is the only layer that holds both names at once. It should REPORT, not
+  refuse: the ERP's name is often the shorter trading name and a hard refusal
+  would wedge the queue on a cosmetic difference.
+- **Refuse at bind time, not at send time.** The real defect is upstream of the
+  sync: `scm.suppliers.code` is a free-text field with no validation, so the
+  wrong value can be typed and then sits there being valid. A supplier-edit form
+  that resolved the code against the book and showed the CompanyName it maps to
+  would have made the error visible at the moment it was made, to the person who
+  made it. That needs a read route AcSyncService does not have — its ten are
+  `/health`, `/ensure-masters`, `/create-so`, `/create-po`, the four conversions,
+  `/edit` and `/cancel`, and **not one of them hands the book's contents back**.
+  `/ensure-masters` comes closest and still answers only created / existed /
+  failed. So this option costs a new route plus a UI, not a comparison.
+- **A periodic census, which is what this PR actually ships.** It cannot see the
+  AutoCount side at all, so it is a diff aid rather than a check: it prints the
+  ERP half in the book's own key order for a human to match against
+  `SELECT AccNo, CompanyName FROM Creditor`. That is honest about what an
+  ERP-side script can know, and it is worth having whatever else is built,
+  because it also finds the codes that are missing and the ones used twice.
+
+**What this PR does NOT do, deliberately.** It does not correct any mapping.
+Which creditor code is right for HOOKKA INDUSTRIES is the owner's call against
+the AutoCount masters, and a wrong "correction" moves three documents from one
+wrong company to another.
+
+**What the audit RULED OUT.** The customer side was suspected of carrying the
+same defect through `debtor_code`, and it does not. `composeCreateSo` sends
+`DebtorCode: AC_DEBTOR_CODE`, a CONSTANT (`autocount-writeback.ts`), and
+overwrites `DebtorName` per customer; `mastersOf` deliberately emits no debtor at
+all. So no per-customer code has ever been sent to the book and there is no
+customer-side mapping to be wrong. `scm.customers` has no AutoCount column
+either: its only code is `customer_code`, the `2990S-` value minted by
+`upsert_customer_by_name_phone` (mig 0164). The sales side has a DIFFERENT open
+question — every order lands on one AR account — and that is a decision, not a
+bug. Also checked and absent: a `/doc-read` route on AcSyncService, which does
+not exist in any form.
+
+**Ref** — 2026-08-17, this PR. Census:
+`backend/scripts/census-autocount-party-codes.mjs` +
+`.github/workflows/census-autocount-party-codes.yml` (read-only,
+`workflow_dispatch`, own concurrency group). Related:
+**BUG CLASS - writeback-reads-the-empty-column** below — same subsystem, opposite
+symptom: that one fails loudly on a foreign key, this one cannot fail at all.
 
 ## PO-to-GR and GR-to-PI worked on the office host and NOWHERE ELSE — the fix existed only as a hand-patched build [high]
 
