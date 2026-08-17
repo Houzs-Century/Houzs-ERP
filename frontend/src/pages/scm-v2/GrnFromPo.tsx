@@ -631,13 +631,29 @@ export const GrnFromPo = () => {
         toolbar={toolbar}
         groupBanner={false}
         isLoading={itemsQ.isLoading}
-        /* A failed read must NEVER render as the sentence below. "We couldn't
+        /* A failed read must NEVER render as the all-done sentence. "We couldn't
            load the lines" and "there are no lines left to do" are opposite
            facts, and the operator acts on the second one by walking away from
-           work that is still outstanding. */
-        emptyMessage={itemsQ.isError
-          ? "We couldn't load the outstanding lines, so this list is incomplete. That is not the same as there being none left — please refresh and try again."
-          : "No outstanding PO lines — every line has been received (or there are no outstanding POs)."}
+           work that is still outstanding.
+
+           NEITHER MAY AN EMPTY ONE (owner 2026-08-17). This screen said "every
+           line has been received" about HC-PO-2608-001 while the purchase order
+           itself showed two lines at Ordered 1 / Received 0 / Balance 1 — the
+           server had returned nothing because its read was truncated, and the
+           copy reported that absence as a finished job. An empty result is only
+           ever evidence that THE QUERY FOUND NOTHING; "everything is received"
+           is a stronger claim this page has no standing to make, since the read
+           is scoped to the active company and fails closed when that company
+           cannot be resolved. So the three cases are now told apart, and the
+           only one that says anything about received work is the one where the
+           rows came back and the operator's own filters hid them. */
+        emptyMessage={
+          itemsQ.isError
+            ? "We couldn't load the outstanding lines, so this list is incomplete. That is not the same as there being none left — please refresh and try again."
+            : items.length > 0
+              ? `None of the ${items.length} outstanding PO line(s) that loaded match the filters on this screen. Clear the filters${poIdSet.size > 0 ? ', or use "Show all POs" above,' : ''} to see them.`
+              : "This search came back with no outstanding PO lines. That is not the same as everything having been received — the list only covers the company you are working in, and lines it cannot see look identical to lines that are done. Open the purchase order and check its balance before treating this as nothing left to receive."
+        }
       />
 
       {dialog && (
