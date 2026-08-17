@@ -42,6 +42,7 @@ async function activeCompanyEmailIdentity(
 }
 import { getDb } from "../db/client";
 import { resolveDatabaseUrl } from "../db/pg";
+import { allowedCompanyIds } from "../scm/lib/companyScope";
 import {
   departments,
   invitations,
@@ -713,7 +714,7 @@ app.get("/:id/companies", requirePermission("users.read"), async (c) => {
  * Shared by PUT /:id/companies, POST /invite and PATCH /:id so the three write
  * paths never drift (see MEMORY: single logic layer / converge drifted copies).
  */
-async function setUserCompanies(
+export async function setUserCompanies(
   c: Context<{ Bindings: Env }>,
   userId: number,
   companyIds: number[],
@@ -726,14 +727,35 @@ async function setUserCompanies(
     ),
   );
   try {
-    // Validate against the canonical companies master (silent-drop unknowns).
+    /* Validate against the companies the CALLER themselves holds — not against
+       the whole master (silent-drop the rest).
+       `users.manage` is a flat, global permission: it carries no company
+       dimension, and this route has no self-guard (unlike PATCH /:id, which
+       refuses `id === me.id` at :1426). Validating against `SELECT id FROM
+       companies` therefore let any users.manage holder granted ONLY company 1
+       call this on their OWN id with [1, 2]; companyContext re-reads
+       user_companies on the very next request and would then accept
+       `X-Company-Id: 2`. That is self-service cross-tenant escalation — it hands
+       over the other company's entire book, read AND write.
+       A grantor can only ever pass on what they hold. `allowedCompanyIds`
+       degrades to `undefined` ONLY when the companies master is unreadable
+       (pre-migration / cold-start), where we keep the previous whole-master
+       behaviour so a single-company install still works; `[]` means the caller
+       holds nothing and may therefore grant nothing. See the three-state
+       sentinel in scm/lib/companyScope.ts. */
     let valid = requested;
     if (requested.length > 0) {
-      const r = await c.env.DB.prepare(`SELECT id FROM companies`).all<{
-        id: number | string;
-      }>();
-      const known = new Set((r.results ?? []).map((x) => Number(x.id)));
-      valid = requested.filter((cid) => known.has(cid));
+      const mine = allowedCompanyIds(c);
+      if (mine === undefined) {
+        const r = await c.env.DB.prepare(`SELECT id FROM companies`).all<{
+          id: number | string;
+        }>();
+        const known = new Set((r.results ?? []).map((x) => Number(x.id)));
+        valid = requested.filter((cid) => known.has(cid));
+      } else {
+        const known = new Set(mine);
+        valid = requested.filter((cid) => known.has(cid));
+      }
     }
 
     await c.env.DB.batch([
