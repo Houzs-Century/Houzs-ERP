@@ -1045,9 +1045,11 @@ function ProjectDetailView({ id, onBack }: { id: number; onBack: () => void }) {
     { label: "Exchange List", match: /^exchange list/i, readOnly: !canBdEdit },
     { label: "Event Complete Image", match: /^event complete image/i, readOnly: !canBdEdit },
     { label: "Dismantle Image", match: /^dismantle image/i, readOnly: !canBdEdit },
-    // Owner 2026-07-23: full-width ("make it big") — the odd 7th tile was
-    // dangling half-width at the bottom of the grid.
-    { label: "Stock In Transfer Record", match: /^stock in transfer/i, readOnly: !canBdEdit, fullWidth: true, mediaH: 108 },
+    // Owner 2026-07-31: a HALF tile again, so it sits beside Dismantle Image.
+    // It was pinned full-width on 2026-07-23 when it was the odd 7th tile;
+    // splitting Defect List into Setup + Dismantle made the count even (8), so
+    // full-width now strands Dismantle Image alone with a gap next to it.
+    { label: "Stock In Transfer Record", match: /^stock in transfer/i, readOnly: !canBdEdit },
   ];
   // Owner 2026-07-18: PIC assignment AND Sales-Attending assignment are open to
   // EVERYONE holding projects.write EXCEPT the Sales Director — same single
