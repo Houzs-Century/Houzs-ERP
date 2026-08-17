@@ -2010,7 +2010,6 @@ mfgSalesOrders.get('/mine', async (c) => {
      (so RLS can't clip another salesperson's rows/items/payments). Everyone
      else: the param is ignored and they stay self-scoped on their own client. */
   const wantSalesperson = c.req.query('salesperson') ?? null;
-  let client = sb;
   /* Self = the caller's REAL scm.staff uuid (mig 0066) — never user.id, the
      bridge's pinned system row shared by every caller (see /my-mtd note). The
      old `?? user.id` handed an unresolved caller every order ever mis-stamped
@@ -2022,15 +2021,13 @@ mfgSalesOrders.get('/mine', async (c) => {
   let viewingAll = false;
   if (wantSalesperson) {
     // Same view-all tier as the rest of this file (:772, :1161, :1877):
-    // `scm.so.view_all` OR a director position, via canViewAllSales. This was
-    // the ONE gate still on the flat key alone, so a Sales Director whose
-    // position matrix lacked the key saw every order on the SO list but a
-    // silently self-scoped "All salespeople" board (1 row under a 28 KPI).
+    // `scm.so.view_all` OR a director position, via canViewAllSales.
+    // No client swap here: `sb` IS the service-role client already
+    // (getSupabaseService), pointed at db.schema 'scm'. The ported 2990 branch
+    // built a raw createClient() for RLS bypass — which defaults to the PUBLIC
+    // schema, where mfg_sales_orders has no company_id, so the first caller to
+    // ever pass this gate got a 500 instead of a board.
     if (canViewAllSales(c)) {
-      const admin = createClient(c.env.SUPABASE_URL, c.env.SUPABASE_SERVICE_ROLE_KEY, {
-        auth: { persistSession: false, autoRefreshToken: false },
-      });
-      client = admin;
       viewingAll = wantSalesperson === 'all';
       targetSalespersonId = viewingAll ? null : wantSalesperson;
     }
@@ -2041,7 +2038,7 @@ mfgSalesOrders.get('/mine', async (c) => {
   if (!targetSalespersonId && !viewingAll) return c.json({ salesOrders: [] });
 
   let query = scopeToCompany(
-    client
+    sb
       .from('mfg_sales_orders')
       .select(
         'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
@@ -2052,7 +2049,7 @@ mfgSalesOrders.get('/mine', async (c) => {
     c,
   );
   /* Company scope is NOT optional here (owner 2026-08-10 cross-company audit).
-     The view_all branch above swaps in a SERVICE-ROLE client and clears
+     `sb` is the SERVICE-ROLE client, and the view_all branch above clears
      targetSalespersonId, so without this wrap the query degrades to "every
      non-cancelled SO in the database" — both companies, RLS bypassed, with
      customer PII and total_revenue_centi. */
@@ -2093,7 +2090,7 @@ mfgSalesOrders.get('/mine', async (c) => {
      floor-rule preview), so they ride the same fetch. */
   const itemsByDoc = new Map<string, Array<{ id: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_centi: number; discount_centi: number; total_centi: number; variants: unknown; remark: string | null }>>();
   if (docNos.length > 0) {
-    const { data: itemRows } = await client
+    const { data: itemRows } = await sb
       .from('mfg_sales_order_items')
       .select('id, doc_no, item_code, item_group, description, qty, unit_price_centi, discount_centi, total_centi, variants, remark')
       .in('doc_no', docNos)
@@ -2116,7 +2113,7 @@ mfgSalesOrders.get('/mine', async (c) => {
   const paidLedgerByDoc = new Map<string, number>();
   const depositInLedger = new Set<string>();
   if (docNos.length > 0) {
-    const { data: payRows } = await client
+    const { data: payRows } = await sb
       .from('mfg_sales_order_payments')
       .select('so_doc_no, amount_centi, is_deposit')
       .in('so_doc_no', docNos);
