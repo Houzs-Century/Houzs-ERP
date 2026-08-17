@@ -169,6 +169,7 @@ export const settlementUpload = guard(async (c) => {
        terminal statement prints "05-Jun"). The operator answers; nothing here
        guesses which year a payment belongs to. */
     statementMonth: /^\d{4}-\d{2}$/.test(String(body.statementMonth ?? '')) ? String(body.statementMonth) : null,
+    total_net_label: (acq.acquirer as { total_net_label?: string | null }).total_net_label ?? null,
   }, content);
   if (!parsed.ok) return c.json({ error: 'unreadable_statement', message: parsed.reason }, 400);
 

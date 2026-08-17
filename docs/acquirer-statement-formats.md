@@ -17,7 +17,8 @@
 | HLB (Hong Leong terminal) | CSV | **searched for** — merchant + SUMMARY blocks above, and repeated per terminal | `16-Aug` — **no year** | `MDR` column, an amount | `INVOICE/AUTHO` ✓ |
 | GHL | CSV | line 1 | `2026-06-02 18:38:24.0` | fee column, printed **negative** | `gateway_tx_id` — present but **unusable**, see below |
 | PBB (2990 HOME) | CSV | line 1, every field quoted | `17062026` — DDMMYYYY, no separators | **gross − net** (see the trap below) | `Approval_code` ✓ |
-| MBB (Maybank terminal) | — | — | — | — | **no merchant statement seen yet** — see below |
+| AEON (instalment) | XLSX -> CSV in the page | searched for | `14/08/2026` | fee column, printed **negative**, PLUS a statement-level subvention fee | `APP. CODE` OK |
+| MBB (Maybank terminal) | — | — | — | — | **Maybank sends no settlement statement** — reconciles at layer 4 |
 | CIMB | — | — | — | — | not in use (owner, 2026-08-17) |
 
 ### ⚠️ The file labelled "MBB (1).CSV" is a HONG LEONG statement
@@ -64,6 +65,44 @@ ended up, but now for a reason on the record rather than an assumption.
 → *Open improvement:* capture GHL's gateway id at the point of sale and GHL
 becomes auto-matchable. That is a sales-module change and the owner's call.
 
+## AEON — the charge that belongs to no transaction
+
+AEON's report is **XLSX**, which the page flattens to CSV before upload using
+the SheetJS the app already ships — no new dependency, no second parser. Its
+layout is straightforward: a merchant/address preamble, then
+`DATE, TRANSACTION DESCRIPTION, CARD TYPE, IPP PLAN, IF, CARD NUMBER, APP. CODE,
+GROSS AMOUNT (RM), MDR %, MDR AMOUNT (RM), NET AMOUNT (RM)`, with a real
+approval code and a fee printed negative.
+
+**What matters is the bottom of the file:**
+
+```
+sale                gross 6,000.00   MDR 1.2%  −72.00   net 5,928.00
+SUBVENTION FEE :                              −254.16
+TOTAL NET PAYMENT (RM) :                       5,673.84
+```
+
+The subvention fee is charged against the STATEMENT, not against any
+transaction. Book the lines and the bank receives 5,673.84 while the books say
+5,928.00 — **RM 254.16 stranded in 320-0000 on every AEON statement, for ever.**
+It is also 3.5× the fee the transaction line shows: the true cost of that
+instalment sale is 326.16 on 6,000.00 = **5.4%**, not 1.2%.
+
+So the config gained `total_net_label`: name the row where the statement states
+what it is really paying, and the parser checks the lines against it and
+**refuses** a difference, naming the amount. AEON therefore cannot be uploaded
+until statement-level charges exist — which is the honest state, and far better
+than a batch that books cleanly and quietly loses RM 254.16.
+
+→ **Next piece of work, and it is a real one:** a batch-level charge on
+`acc_settlement_batches` that posts Dr fee / Cr transit for the difference when
+the batch is confirmed. Until then AEON is read-only.
+
+AEON also settles into **Maybank 564418610346** (the file names the bank and
+account itself), and its merchant id `000458030215369` is exactly the
+`MA458030215369` reference the Maybank account report carries — so its bank-side
+rule is already known.
+
 ## MBB — the file received is the INSTALMENT report, not the settlement report
 
 `027012896718_EP41_713_20260614.PDF` decodes to:
@@ -89,8 +128,19 @@ But two things say wait:
    too, and a CSV is worth far more than a PDF reader that breaks the first time
    the bank adjusts a column.
 
-→ *Needed: Maybank's ordinary merchant settlement report, CSV if the portal
-offers one.*
+**Owner, 2026-08-17: this is the only merchant report Maybank sends.** There is
+no ordinary settlement statement to upload. So Maybank cannot be reconciled at
+layer 3 the way the others are — its card money is only ever visible as the
+bank credits `CR/CARD SALES MN <merchant> DATED <DDMMYYYY>` (and
+`DR/CARD SALES M/N …` with its separate `BCHARGE`).
+
+Which is workable, because those credit lines carry exactly what a settlement
+statement would: merchant number, trading date, and amount — one line per
+merchant per trading day. **MBB reconciles at layer 4, against the bank
+statement, not at layer 3.** That is a design decision this document is making
+explicit rather than leaving to be discovered later, and it means the Maybank
+account report's format (pipe-delimited, sen zero-padded) has to be readable by
+phase 4 — it is on the list above.
 
 **And a real accounting point falls out of this report.** Instalment sales cost
 much more than ordinary ones: MDR 97.20 on 3,240.00 is **3%**, against the

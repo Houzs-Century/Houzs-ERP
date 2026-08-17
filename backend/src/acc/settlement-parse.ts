@@ -37,6 +37,10 @@ export type ParseConfig = {
   /** YYYY-MM. Only used when the file's dates carry no year (Maybank prints
       "05-Jun"); supplying it is the operator's answer, never a guess. */
   statementMonth?: string | null;
+  /** The label of the row on which the statement states what it is ACTUALLY
+      paying, e.g. AEON's "TOTAL NET PAYMENT (RM) :". When set, the sum of the
+      transaction lines is checked against it — see the guard in parseStatement. */
+  total_net_label?: string | null;
 };
 
 export type ParsedRow = {
@@ -371,6 +375,38 @@ export function parseStatement(cfg: ParseConfig, text: string): ParseResult {
     });
     rows[biggest].feeSen += total - allocated;
     for (const r of rows) r.netSen = r.grossSen - (r.grossSen < 0 ? -r.feeSen : r.feeSen);
+  }
+
+  /* DOES THE STATEMENT PAY WHAT ITS LINES ADD UP TO?
+     AEON's does not. Its one sale reads gross 6,000.00 less MDR 72.00 = net
+     5,928.00, and then the statement charges a SUBVENTION FEE of 254.16 with no
+     transaction attached and pays 5,673.84. Book the lines and 320-0000 is left
+     holding 254.16 that will never clear — per statement, forever. The real
+     cost of that sale is 5.4%, not the 1.2% its line shows.
+     A statement-level charge cannot be attributed to any one transaction, so it
+     is not spread or guessed at: when the acquirer's config names the row where
+     the statement states what it is really paying, the arithmetic is checked
+     and a difference is REFUSED, with the amount named. */
+  if (cfg.total_net_label) {
+    const wanted = cfg.total_net_label.replace(/[\s:]+/g, '').toLowerCase();
+    let statedNet: number | null = null;
+    for (const line of lines) {
+      const cells = splitCsvLine(line);
+      if (cells[0].replace(/[\s:]+/g, '').toLowerCase() !== wanted) continue;
+      for (let k = cells.length - 1; k >= 1; k -= 1) {
+        const v = toSen(cells[k]);
+        if (v != null) { statedNet = v; break; }
+      }
+      break;
+    }
+    const lineNet = rows.reduce((s, r) => s + r.netSen, 0);
+    if (statedNet != null && statedNet !== lineNet) {
+      const gap = (lineNet - statedNet) / 100;
+      return {
+        ok: false,
+        reason: `The lines add up to ${(lineNet / 100).toFixed(2)} but ${cfg.code} says it is paying ${(statedNet / 100).toFixed(2)} — ${Math.abs(gap).toFixed(2)} is charged on the statement, not on any transaction. Clearing it needs statement-level charges, which are not built yet.`,
+      };
+    }
   }
 
   const dates = rows.map((r) => r.txnDate).sort();

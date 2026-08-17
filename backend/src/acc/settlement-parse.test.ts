@@ -355,6 +355,53 @@ describe('parseStatement — the rate-not-amount trap', () => {
   });
 });
 
+/* AEON's instalment statement charges a SUBVENTION FEE against the statement,
+   not against any transaction — and it is 3.5x the fee the transaction line
+   shows. Booking the lines would leave that money stranded in 320-0000 for ever
+   and understate the true cost of an instalment sale (5.4%, not 1.2%). */
+describe('parseStatement — a charge that belongs to no transaction', () => {
+  const AEON = [
+    'SETTLEMENT DATE :,14/08/2026',
+    'MERCHANT ID :,000458030215369',
+    'DATE,TRANSACTION DESCRIPTION,CARD TYPE,CARD NUMBER,APP. CODE,GROSS AMOUNT (RM),MDR %,MDR AMOUNT (RM),NET AMOUNT (RM)',
+    '14/08/2026,SALE PURCHASE,C,5522 28 ** **** 5492,R73811,6000,1.2,-72,5928',
+    'SUB TOTAL :,1,,,,6000,,-72,5928',
+    'SUBVENTION FEE :,,,,,,,,-254.16',
+    'TOTAL NET PAYMENT (RM) :,5673.84',
+  ].join('\n');
+
+  const aeonCfg = (over: Partial<ParseConfig> = {}): ParseConfig => ({
+    code: 'AEON', statement_format: 'CSV', fee_method: 'stated',
+    column_map: {
+      date: 'DATE', ref: 'APP. CODE', gross: 'GROSS AMOUNT (RM)',
+      fee: 'MDR AMOUNT (RM)', net: 'NET AMOUNT (RM)',
+    },
+    ...over,
+  });
+
+  it('refuses when the lines do not add up to what the statement says it is paying', () => {
+    const r = parseStatement(aeonCfg({ total_net_label: 'TOTAL NET PAYMENT (RM) :' }), AEON);
+    expect(r).toMatchObject({ ok: false });
+    const { reason } = r as { reason: string };
+    expect(reason).toMatch(/5928\.00/);   // what the lines come to
+    expect(reason).toMatch(/5673\.84/);   // what AEON actually pays
+    expect(reason).toMatch(/254\.16/);    // the charge with no transaction behind it
+  });
+
+  it('reads the line itself correctly — the negative fee and the approval code', () => {
+    const r = parseStatement(aeonCfg(), AEON);
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(r.rows[0]).toMatchObject({ txnDate: '2026-08-14', ref: 'R73811', grossSen: 600000, feeSen: 7200, netSen: 592800 });
+  });
+
+  it('says nothing when the statement pays exactly what its lines come to', () => {
+    const clean = AEON.replace('SUBVENTION FEE :,,,,,,,,-254.16\n', '').replace('5673.84', '5928');
+    const r = parseStatement(aeonCfg({ total_net_label: 'TOTAL NET PAYMENT (RM) :' }), clean);
+    expect(r.ok).toBe(true);
+  });
+});
+
 describe('toIsoDate — the year rule', () => {
   it('takes the year from the statement month, and rolls back for a December line on a January statement', () => {
     expect(toIsoDate('05-Jun', { year: 2026, month: 6 })).toBe('2026-06-05');

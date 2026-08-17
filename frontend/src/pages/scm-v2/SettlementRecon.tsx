@@ -124,11 +124,27 @@ const ReconcileTab = () => {
   const [busy, setBusy] = useState(false);
   const chosen = acquirers.find((a) => a.code === code) ?? null;
 
+  /**
+   * Read each file to CSV text.
+   *
+   * AEON sends .xlsx and the reader on the server speaks CSV, so the sheet is
+   * flattened HERE — the app already ships SheetJS for its other exports, so
+   * this costs no new dependency and no new parser. Loaded on demand so the
+   * library stays out of the page's initial bundle.
+   */
   const readFiles = (picked: FileList | null) => {
     setResults([]);
     if (!picked || picked.length === 0) { setFiles([]); return; }
-    void Promise.all([...picked].map(async (f) => ({ name: f.name, content: await f.text() })))
-      .then(setFiles);
+    void Promise.all([...picked].map(async (f) => {
+      if (!/\.xlsx?$/i.test(f.name)) return { name: f.name, content: await f.text() };
+      const XLSX = await import('xlsx');
+      const wb = XLSX.read(await f.arrayBuffer(), { type: 'array' });
+      /* First sheet only — every acquirer export seen so far is one sheet, and
+         a workbook with none reaches the server as an empty file, which it
+         already refuses by name rather than accepting as an empty batch. */
+      const first: string | undefined = wb.SheetNames[0];
+      return { name: f.name, content: first ? XLSX.utils.sheet_to_csv(wb.Sheets[first]) : '' };
+    })).then(setFiles);
   };
 
   const send = async () => {
@@ -184,7 +200,7 @@ const ReconcileTab = () => {
               </option>
             ))}
           </select>
-          <input type="file" accept=".csv,text/csv" multiple aria-label="Statement files"
+          <input type="file" accept=".csv,.xls,.xlsx,text/csv" multiple aria-label="Statement files"
             onChange={(e) => readFiles(e.target.files)} style={{ fontSize: 'var(--fs-13)' }} />
           {chosen?.fee_method === 'prorated-summary' && (
             <input value={summaryFee} onChange={(e) => setSummaryFee(e.target.value)}

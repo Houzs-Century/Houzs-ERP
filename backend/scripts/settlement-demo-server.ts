@@ -86,6 +86,21 @@ const ACQUIRER_CONFIG: Row[] = [
     fee_method: 'gross-minus-net', date_tolerance_days: 3, is_active: true,
     column_map: { date: 'Trans_date', ref: 'Approval_code', gross: 'Trans_amt', net: 'Sett_amt' },
   },
+  /* AEON instalment financing. Its report is XLSX (the page flattens it to CSV
+     before upload) and it carries a STATEMENT-LEVEL subvention fee that belongs
+     to no transaction: one sale of 6,000.00 less MDR 72.00 nets 5,928.00 on the
+     line, and AEON pays 5,673.84. `total_net_label` makes the parser check the
+     lines against what the statement says it is paying, so that 254.16 is
+     refused loudly instead of being left stranded in 320-0000 forever. */
+  {
+    code: 'AEON', display_name: 'AEON', statement_format: 'CSV', has_unique_ref: true,
+    fee_method: 'stated', date_tolerance_days: 7, is_active: true,
+    column_map: {
+      date: 'DATE', ref: 'APP. CODE', gross: 'GROSS AMOUNT (RM)',
+      fee: 'MDR AMOUNT (RM)', net: 'NET AMOUNT (RM)',
+    },
+    total_net_label: 'TOTAL NET PAYMENT (RM) :',
+  },
 ];
 
 const COMPANY_LINKS: Row[] = ACQUIRER_CONFIG.map((a) => ({
@@ -104,7 +119,8 @@ const acquirerView = (): Row[] => COMPANY_LINKS.map((l) => {
     bank_account_code: l.bank_account_code,
     statement_format: g.statement_format, has_unique_ref: g.has_unique_ref,
     fee_method: g.fee_method, date_tolerance_days: g.date_tolerance_days,
-    column_map: g.column_map, is_active: Boolean(g.is_active && l.is_active),
+    column_map: g.column_map, total_net_label: g.total_net_label ?? null,
+    is_active: Boolean(g.is_active && l.is_active),
   };
 });
 
