@@ -56,6 +56,8 @@ import {
 import { AuditHistoryPanel } from "../../components/audit/AuditHistoryPanel";
 import { SO_AUDIT_LABELS } from "./so-audit-labels";
 import { fmtDateTime } from "../../vendor/shared/format";
+import { brandingLabel } from "../../vendor/shared/so-branding-label";
+import { getBrandingCompanyCode } from "../../lib/branding";
 import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
@@ -97,6 +99,7 @@ type SoHeader = {
   ref: string | null;
   branding: string | null;
   first_item_branding: string | null;
+  first_item_category: string | null;
   status: string;
   local_total_centi: number;
   balance_centi: number;
@@ -199,8 +202,15 @@ const fmtMoney = fmtMoneyCenti;
 const refOf = (h: SoHeader): string =>
   h.po_doc_no || h.customer_so_no || h.ref || "—";
 
+/* HEADER FIRST, then the SAME shared rule the SO list falls back to — byte-for-
+   byte the list's brandOf. Owner 2026-08-18: "我要表头啊", so a filled header
+   still wins on both companies; what changes here is the FALLBACK. This page
+   used to end `|| "—"` over the raw brand TEXT, so an order with no header and a
+   rep line carrying no brand text — every sofa — printed a dash while the list
+   beside it printed a brand. */
 const brandOf = (h: SoHeader): string =>
-  h.branding || h.first_item_branding || "—";
+  (h.branding ?? "").trim() ||
+  brandingLabel(h.first_item_category, h.first_item_branding, getBrandingCompanyCode());
 
 const STATUS_TONE: Record<
   string,

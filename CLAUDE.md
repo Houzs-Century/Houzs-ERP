@@ -658,7 +658,7 @@ never nullish.
   | --- | --- |
   | `route-capability-matrix.csv` | YES — `audit:routes`, in `ci.yml` and both deploy workflows |
   | `codebase-map-facts.md` | YES — `audit:map`, in `ci.yml`'s `backend-typecheck` |
-  | `bug-index.md` | in CI, but it REPORTS drift and does not fail on it (see the job's own comment: with serial merges, gating it deadlocks every open PR on the previous author's entry) |
+  | `bug-index.md` | **NOT TRACKED since 2026-08-18** — it is gitignored. `audit:bug-index` regenerates it in memory and gates on the GENERATOR (parse failure, unresolvable area tag, zero entries), which never needed a copy in git. Run `npm --prefix backend run gen:bug-index` to read it locally. |
   | `route-locator.md` | NO. Re-run `npm --prefix backend run gen:route-locator` before trusting a LINE NUMBER from it. |
 
   > **CORRECTED 2026-08-15.** This bullet previously said, twice and in two

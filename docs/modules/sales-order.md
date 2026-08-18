@@ -2071,6 +2071,28 @@ Flow:
    'Houzs'/blank rows are repaired by **HC sofa branding fix (Zanotti)**
    (`fix-hc-sofa-branding.mjs`, DRY-RUN gated, #1723).
 
+   **The LABEL rule is `scm/shared/so-branding-label.ts`, and since 2026-08-18
+   the sofa half of it no longer depends on that data being repaired.** The
+   owner restated the same 2026-08-08 rule as two equations —「houzs
+   sofa=zanotti / 2990 sofa=2990s sofa」— so SOFA now returns the COMPANY's
+   house brand (`ZANOTTI` / `2990s Sofa`) and does not read the line at all.
+   That matters because the repair above did not reach everything: 11 ACTIVE
+   Houzs sofa SKUs (the whole `5526-*` family, 8 of them already on orders)
+   still carry blank branding, and the old rule printed the bare noun "Sofa"
+   for them. MATTRESS is the other half — it reads the **SKU's** branding for
+   BOTH companies («both company also»), falling back to the category noun
+   "Mattress" when the SKU carries none; the manufactured `2990 Mattress`
+   fallback and the regex that folded `2990` / `2990's` / `2990s` into it are
+   both deleted. Callers must therefore hand the rule the SKU's branding, not
+   the line's: `first_item_branding` is resolved SKU-first for a mattress line
+   in both the list handler and `so-display-branding.ts`.
+
+   Surfaces on the shared rule: SO list (desktop + mobile), Consignment Orders,
+   Delivery Planning. `SalesOrderDetailV2.tsx` is NOT — it still reads
+   `branding || first_item_branding || "—"` directly, so it can print a
+   different string than the list for the same order. That divergence predates
+   this change and is unfixed.
+
 `?summary=1` skips the view join + item read entirely (dashboard only needs status
 buckets) — do not fully-hydrate 500 rows for a count.
 
