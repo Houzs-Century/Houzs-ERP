@@ -37,15 +37,12 @@
 //
 // DELIVERY-DATE INTEGRITY (owner rule): the customer's ORIGINAL
 // customer_delivery_date is NEVER overwritten. The schedule action writes the
-// firm/new date to amended_delivery_date instead. The EFFECTIVE delivery date —
-// amended_delivery_date ?? customer_delivery_date — drives Days Left AND the
-// OVERDUE 3-day window; the Original column still shows customer_delivery_date.
-// That rule is no longer this file's private property: it lives in
-// scm/shared/effective-delivery.ts (effectiveSoDelivery) and MRP and the stock
-// allocator read the SAME function since 2026-08-18. Before that they ranked on
-// customer_delivery_date alone, so a rescheduled order moved on this board and
-// did not move in the queue that decides who gets stock. Owner: "我们都没有排产
-// 的…我们应该只是送货的日期而已" — one date, one answer, every screen.
+// firm/new date to amended_delivery_date instead. The EFFECTIVE delivery date
+// drives Days Left AND the OVERDUE 3-day window; the Original column still
+// shows customer_delivery_date. The rule is NOT this file's private property —
+// scm/shared/effective-delivery.ts owns it and MRP and the stock allocator have
+// read the same function since 2026-08-18 (before that they ranked on the
+// original alone, so a rescheduled order moved here and not in the stock queue).
 //
 // Region = CONFIG-DRIVEN, owner-maintained (migration 0053). The region buckets
 //   are a master list (delivery_planning_regions) and the per-STATE → region(s)
@@ -858,15 +855,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     const customerDD = r.customer_delivery_date ?? null;
     const procDate = r.processing_date ?? null;
     /* Amendment dates. The ORIGINAL customer_delivery_date is never overwritten;
-       the amended date (when set) is what we now commit to. EFFECTIVE date =
-       amended_delivery_date ?? customer_delivery_date — it drives days_left AND
-       the OVERDUE 3-day window. dual-read camelCase. */
+       the amended date (when set) is what we now commit to, and effectiveSoDelivery
+       is the ONE reader of that rule (shared/effective-delivery.ts) — this board's
+       chain was right all along; MRP and the allocator stopped disagreeing with it
+       on 2026-08-18. Drives days_left AND the OVERDUE window. dual-read camelCase. */
     const amendDateFromCustomer = r.amendDateFromCustomer ?? r.amend_date_from_customer ?? null;
     const amendedDD = r.amendedDeliveryDate ?? r.amended_delivery_date ?? null;
-    /* ONE reader — shared/effective-delivery.ts. This board's chain WAS the
-       correct one all along; what changed on 2026-08-18 is that MRP and the
-       stock allocator stopped disagreeing with it. The rule now lives in one
-       file so the next consumer inherits it instead of re-typing it. */
     const effectiveDD = effectiveSoDelivery(r);
 
     /* "Ready to ship" gate — see summariseReadiness.isShipReady. */
