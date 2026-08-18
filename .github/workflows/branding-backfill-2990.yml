@@ -1,0 +1,74 @@
+name: Branding backfill 2990 (plan / apply)
+
+# Aligns 2990's stored branding with its SKU catalogue — the vocabulary the
+# owner maintains in PMS (Project Maintenance -> BRANDS = project_brands).
+# Owner rule 2026-08-18: "如果那个 SKU 有 branding 就根据 branding", and on the
+# SO header "我要表头啊".
+#
+# WHY THIS EXISTS AS A WORKFLOW rather than a command someone runs: the owner is
+# not a database console, and applying this needs the production credential.
+# secrets.DATABASE_URL lives here and nowhere else, so the write happens behind
+# a button he presses — the DSN never goes near a chat window or a laptop.
+#
+# TWO SAFETIES, and they are independent on purpose:
+#   1. `mode` defaults to plan. A dispatch with nothing typed writes NOTHING.
+#   2. apply additionally requires `confirm` to be the exact phrase
+#      backfill-2990-branding-to-sku. The script refuses and exits 2 otherwise,
+#      so a mis-set mode cannot write on its own.
+#
+# The script re-reads on a FRESH connection after writing and asserts the SHAPE
+# — every written value equals its source, and no live line is left disagreeing
+# with its SKU. It is idempotent: a second apply reports 0 pending.
+#
+# AFTER APPLYING, run "Branding vocabulary check (read-only)" — it is the
+# independent reader, and it should report 0 NOT-IN-LIST across all four tables.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "plan prints every change and writes nothing. apply writes."
+        type: choice
+        options: [plan, apply]
+        default: plan
+      confirm:
+        description: "Required for apply — type: backfill-2990-branding-to-sku"
+        type: string
+        default: ""
+
+# Its own group, never the deploy's. A data repair must not queue behind, or
+# displace, a release — and two concurrent applies must not interleave.
+concurrency:
+  group: branding-backfill-2990
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+
+      - name: Backfill (${{ inputs.mode }})
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          MODE: ${{ inputs.mode }}
+          CONFIRM: ${{ inputs.confirm }}
+        run: node scripts/backfill-2990-branding-to-sku.mjs
+
+      # Independent confirmation, and only after a real write. The backfill
+      # verifies its OWN rows; this asks a different question over the whole
+      # population — is anything, anywhere, outside the brand list now.
+      - name: Vocabulary check after apply
+        if: ${{ inputs.mode == 'apply' }}
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/check-branding-vocabulary.mjs --strict
