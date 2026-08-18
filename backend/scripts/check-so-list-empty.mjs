@@ -70,7 +70,7 @@ try {
 
   // 2) The companies master, so a reader can map id -> code.
   const companies = await pg`
-    SELECT id, code, name, is_active FROM scm.companies ORDER BY id`;
+    SELECT id, code, name, is_active FROM public.companies ORDER BY id`;
   for (const co of companies) {
     notice(`company ${co.id} = ${co.code} (${co.name}) is_active=${co.is_active}`);
   }
