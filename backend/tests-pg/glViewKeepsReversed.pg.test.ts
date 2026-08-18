@@ -146,14 +146,6 @@ async function seedReversalPair(sql: Sql): Promise<void> {
   `);
 }
 
-/* The other company's copy of the SAME account code — the shape production took
-   when mig 0297 gave company 1 company 2's 31-account chart. Opt-in, because the
-   reversal tests above are about reversal and must not have their row counts
-   moved by a tenancy fixture. */
-async function seedOtherCompanySameCode(sql: Sql): Promise<void> {
-  await sql.unsafe(`INSERT INTO scm.accounts VALUES ('4000', 'Revenue', 'INCOME', 2);`);
-}
-
 describePg('scm.v_gl_entries — mig *_scm_gl_keep_reversed_originals', () => {
   beforeAll(() => { admin = postgres(url, { max: 2, onnotice: () => {} }); });
   afterAll(async () => { await admin?.end({ timeout: 5 }); });
@@ -200,28 +192,41 @@ describePg('scm.v_gl_entries — mig *_scm_gl_keep_reversed_originals', () => {
     expect(rows.find((r: Record<string, unknown>) => r.je_no === 'JE-1')!.reversed).toBe(true);
   });
 
-  /* mig 0302. Both companies now hold the SAME chart (mig 0297 gave company 1
-     company 2's 31-account template), so a join on the bare account_code matches
-     two account rows per line and emits each line twice. Measured on production
-     2026-08-18: /accounting/gl returned 12 rows holding 6 distinct line_id. */
-  test('the LIVE view double-counts once both companies hold the same account code', async () => {
-    await seedReversalPair(admin);
-    await seedOtherCompanySameCode(admin);
+  /* THE FAN-OUT, on its own terms. Deliberately does NOT reuse seedReversalPair:
+     the pre-state view carries `AND j.reversed = false`, so one of that pair's
+     two lines is hidden and the counts would be reasoning about the reversal
+     filter rather than about the join. One plain posted line, and both companies
+     holding the same account code — the shape production took when mig 0297 gave
+     company 1 company 2's 31-account chart. Measured there 2026-08-18:
+     /accounting/gl returned 12 rows holding 6 distinct line_id. */
+  async function seedOnePostedLineBothCompaniesOwnTheCode(): Promise<void> {
+    await admin.unsafe(`
+      INSERT INTO scm.accounts VALUES ('4000', 'Revenue', 'INCOME', 1),
+                                      ('4000', 'Revenue', 'INCOME', 2);
+      INSERT INTO scm.journal_entries (id, je_no, entry_date, posted, reversed, company_id)
+        VALUES ('${ORIGINAL}', 'JE-1', DATE '2026-08-01', true, false, 1);
+      INSERT INTO scm.journal_entry_lines (id, journal_entry_id, line_no, account_code, credit_sen, debit_sen)
+        VALUES ('${ORIGINAL}', '${ORIGINAL}', 1, '4000', 1000000, 0);
+    `);
+    // prove the fixture is what this test thinks it is, before it blames the view
+    const accts = await admin.unsafe(`SELECT company_id FROM scm.accounts WHERE account_code = '4000'`);
+    expect(accts.length).toBe(2);
+  }
+
+  test('the LIVE view emits one line twice once both companies hold the same code', async () => {
+    await seedOnePostedLineBothCompaniesOwnTheCode();
     const rows = await admin.unsafe(`SELECT line_id FROM scm.v_gl_entries`);
-    expect(rows.length).toBe(4);
-    expect(new Set(rows.map((r: Record<string, unknown>) => String(r.line_id))).size).toBe(2);
+    expect(rows.length).toBe(2);
+    expect(new Set(rows.map((r: Record<string, unknown>) => String(r.line_id))).size).toBe(1);
   });
 
-  test('mig 0302: one row per line, whichever company owns the code', async () => {
+  test('mig 0303: one row per line, and it belongs to the owning company', async () => {
     await admin.unsafe(await migrationSql('_scm_gl_keep_reversed_originals.sql'));
     await admin.unsafe(await migrationSql('_acc_gl_views_composite_account_key.sql'));
-    await seedReversalPair(admin);
-    await seedOtherCompanySameCode(admin);
+    await seedOnePostedLineBothCompaniesOwnTheCode();
     const rows = await admin.unsafe(`SELECT line_id, company_id FROM scm.v_gl_entries`);
-    expect(rows.length).toBe(2);
-    expect(new Set(rows.map((r: Record<string, unknown>) => String(r.line_id))).size).toBe(2);
-    // and the surviving rows belong to the company whose JOURNAL they are on
-    expect(rows.every((r: Record<string, unknown>) => Number(r.company_id) === 1)).toBe(true);
+    expect(rows.length).toBe(1);
+    expect(Number(rows[0]!.company_id)).toBe(1);
   });
 
   test('an UNPOSTED draft is still excluded — j.posted = true was kept', async () => {
