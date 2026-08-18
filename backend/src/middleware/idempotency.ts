@@ -147,11 +147,29 @@ const inFlight = (c: AppContext) => {
   );
 };
 
-const keyReuse = (c: AppContext) =>
+/* The collision answer has to say WHICH collision it is, because the two have
+   opposite remedies and only the server can tell them apart.
+ *
+ * `completed_status` is the status the EARLIER request under this key already
+ * answered with. It is present on every key_reused, and it is the whole point:
+ * a client that sees this code knows the handler for THIS request never ran,
+ * and knows nothing whatsoever about whether the earlier one wrote. A 201 here
+ * means a document exists. Nothing downstream may read this code as "nothing
+ * was saved" — the release path for a genuine no-write is
+ * markIdempotencyNoWrite, which DELETES the claim, so a proven no-write never
+ * reaches this response at all.
+ *
+ * The copy therefore sends the operator to CHECK, never to resubmit. It used
+ * to end "Please submit again", which is the same wrong instruction in the
+ * server's own voice. */
+const keyReuse = (c: AppContext, completedStatus: number) =>
   c.json(
     {
       error: "idempotency_key_reused",
-      message: "This request key was already used for different data. Please submit again.",
+      completed_status: completedStatus,
+      message:
+        "An earlier submission under this key already finished with different data. " +
+        "Refresh and check what was recorded before sending this again.",
     },
     409,
   );
@@ -258,8 +276,16 @@ export const idempotency: MiddlewareHandler<{ Bindings: Env }> = async (c, next)
       .first<IdempotencyRow>();
 
   const respondToExisting = (existing: IdempotencyRow): Response => {
-    if (existing.request_hash !== requestHash) return keyReuse(c);
+    /* STATUS FIRST, then the hash. The hash decides whether this request may be
+       REPLAYED; the status decides what the caller must be told, and it is the
+       stronger fact. Checked the other way round (which it was until
+       2026-08-18) a changed payload sent while the first request is still
+       RUNNING was answered "you reused the key", never `idempotency_in_flight`
+       — so in_flight was only ever reachable for the identical payload, i.e.
+       the one case that was already safe, and no caller could distinguish
+       "still running" from "already finished" at all. */
     if (existing.status_code == null) return inFlight(c);
+    if (existing.request_hash !== requestHash) return keyReuse(c, existing.status_code);
     return new Response(
       BODYLESS_STATUS.has(existing.status_code) ? null : (existing.response_body ?? ""),
       {

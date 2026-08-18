@@ -17,7 +17,7 @@
  * clean run" — CLAUDE.md).
  *
  * Supported: select with one level of embedding (`alias:table!inner(cols)` and
- * `alias:table(cols)`), eq / neq / in / gt / not(col,'is',null) /
+ * `alias:table(cols)`), eq / neq / in / gt / is(col,null) / not(col,'is',null) /
  * not(col,'in','("A","B")') on both top-level and embedded (`alias.col`)
  * columns, order, range, update, insert, delete, maybeSingle, and the `.or(...)`
  * form the allocation lock uses.
@@ -211,6 +211,13 @@ export function makeFakePostgrest(
             case 'neq': filters.push({ op: 'neq', path: String(args[0]), value: args[1] }); return builder;
             case 'gt':  filters.push({ op: 'gt',  path: String(args[0]), value: args[1] }); return builder;
             case 'in':  filters.push({ op: 'in',  path: String(args[0]), value: args[1] }); return builder;
+            /* `.is(col, null)` — the positive form of the `.not(col,'is',null)`
+               below. Needed to run the unlinked-DO coverage read, which selects
+               exactly the lines whose so_item_id was blanked. */
+            case 'is':
+              if (args[1] !== null) throw new Error(`fakePostgrest: unsupported .is(${String(args[1])})`);
+              filters.push({ op: 'is', path: String(args[0]), value: null });
+              return builder;
             case 'not':
               if (args[1] === 'is') filters.push({ op: 'is', path: String(args[0]), value: null, not: true });
               else if (args[1] === 'in') filters.push({ op: 'notin', path: String(args[0]), value: args[2] });

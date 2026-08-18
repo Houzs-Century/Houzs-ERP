@@ -21,6 +21,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeVariantKey, type VariantAttrs } from '../shared';
@@ -913,7 +914,7 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
     sales_invoice_id: (body.salesInvoiceId as string) ?? null,
     debtor_code: (body.debtorCode as string) ?? null,
     debtor_name: (body.debtorName ?? body.customerName) as string,
-    return_date: (body.returnDate as string) ?? todayMyt(),
+    return_date: dateOrNull(body.returnDate) ?? todayMyt(),
     reason: (body.reason as string) ?? null,
     address1: (body.address1 as string) ?? null,
     address2: (body.address2 as string) ?? null,
@@ -1439,6 +1440,9 @@ deliveryReturns.patch('/:id', async (c) => {
       updates[to] = body[from];
     }
   }
+  /* A cleared date input posts "" and this loop wrote it through to a date
+     column, which Postgres rejects and 500s the save. */
+  coerceEmptyDates(updates);
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
   const { data, error } = await scopeToCompanyId(sb.from('delivery_returns').update(updates).eq('id', id), co.companyId).select('id').maybeSingle();
@@ -1670,12 +1674,34 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
 
+  /* NORMALISE FIRST, as the Delivery Order handler this document sits beside
+     already does (`String(body.status).trim().toUpperCase()`,
+     delivery-orders-mfg.ts) — and as consignment-returns.ts, whose own
+     `dr_cancelled_final` comment cites THIS handler as its model, now does too.
+     The asymmetry was inside this file: resyncInventoryForReturn uppercases the
+     PERSISTED status (:448) while every gate below compared the INCOMING status
+     raw.
+
+     A lowercase 'cancelled' missed the already-cancelled echo, missed the
+     ATOMIC `.neq('status','CANCELLED')` single-flight, fell into the plain
+     `else` write, and never called resyncInventoryForReturn — so the return's
+     inventory IN was NEVER drained back out while the return read as cancelled.
+     That is the Sales Invoice bug (SI_STATUS_CANON) with stock in place of
+     revenue, and delivery-orders-mfg.ts records the same class shipping for real
+     on the DO ("Cancel DO and Mark signed on the V2 detail page both post
+     LOWERCASE, so both had been dead since that page shipped").
+
+     No status whitelist added: `delivery_return_status` is a real vocabulary
+     but it is not declared anywhere this handler can import, and a guessed list
+     would refuse a legitimate status. Recommended separately. */
+  const toStatus = String(body.status).trim().toUpperCase();
+
   // Read the current status so the CANCELLED reversal is idempotent.
   const { data: cur } = await scopeToCompanyId(sb.from('delivery_returns').select('status').eq('id', id), co.companyId).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
   // Already cancelled → echo back without re-reversing (would double-deduct).
-  if (body.status === 'CANCELLED' && prevStatus === 'CANCELLED') {
+  if (toStatus === 'CANCELLED' && prevStatus === 'CANCELLED') {
     return c.json({ deliveryReturn: { id, status: 'CANCELLED' } });
   }
   /* Audit 2026-06-10 #3 (IMPORTANT) — a CANCELLED DR is FINAL. Un-cancelling
@@ -1690,10 +1716,10 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   }
 
   const now = new Date().toISOString();
-  const ts: Record<string, string> = { updated_at: now, status: body.status };
-  if (body.status === 'RECEIVED') ts.received_at = now;
-  if (body.status === 'INSPECTED') { ts.inspected_at = now; if (body.inspectionNotes) ts.inspection_notes = body.inspectionNotes; }
-  if (body.status === 'REFUNDED') ts.refunded_at = now;
+  const ts: Record<string, string> = { updated_at: now, status: toStatus };
+  if (toStatus === 'RECEIVED') ts.received_at = now;
+  if (toStatus === 'INSPECTED') { ts.inspected_at = now; if (body.inspectionNotes) ts.inspection_notes = body.inspectionNotes; }
+  if (toStatus === 'REFUNDED') ts.refunded_at = now;
 
   /* Bug #3/#11 — ATOMIC cancel guard. The read-then-write above has a TOCTOU
      window: two concurrent cancels can both read a non-cancelled status and both
@@ -1703,7 +1729,7 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
      echo, NO second reversal. Postgres serialises the UPDATEs so exactly one wins
      the row and fires the single reversal. */
   let data: { id: string; status: string } | null;
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_returns')
       .update(ts).eq('id', id), co.companyId).neq('status', 'CANCELLED')
       .select('id, status').maybeSingle();
@@ -1731,7 +1757,7 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   // Hoisted: the response below is OUTSIDE this block, so a block-scoped
   // declaration would leave the cancel path unable to report its failures.
   let resyncErrs: string[] = [];
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     // Unified rollback: target net = 0 for a cancelled DR, so the resync drains
     // back out exactly the stock still booked by this return (the create IN minus
     // any line-edit adjustments). Same code path as line edit/delete — they can't

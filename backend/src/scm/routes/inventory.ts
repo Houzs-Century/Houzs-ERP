@@ -401,9 +401,15 @@ export const listInventoryHandler = async (c: any) => {
   /* Show active warehouses PLUS consignment/showroom warehouses (those are kept
      is_active=false so they stay out of the normal GRN/DO pickers) — so consigned
      stock sitting at a showroom is visible in Inventory. (2026-06-05) */
-  const { data: whs } = await sb.from('warehouses')
+  /* SCOPED like every other read in this handler. This one was missed: the
+     balances above are scoped, but the warehouse master was not, so the response
+     carried the OTHER company's warehouse codes, names and — the part that
+     mattered — their warehouse UUIDs. Those ids are what POST /stock-transfers
+     takes from a request body, so this read was the practical enabler for a
+     cross-company stock movement. Same helper as GET /warehouses (:127). */
+  const { data: whs } = await scopeToCompany(sb.from('warehouses')
     .select('id, code, name, is_consignment')
-    .or('is_active.eq.true,is_consignment.eq.true');
+    .or('is_active.eq.true,is_consignment.eq.true'), c);
   return c.json({ balances: data ?? [], warehouses: whs ?? [] });
 };
 

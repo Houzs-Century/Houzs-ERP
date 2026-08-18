@@ -277,6 +277,25 @@ stockTransfers.post('/', async (c) => {
   const items = (body.items as Array<Record<string, unknown>> | undefined) ?? [];
   if (items.length === 0) return c.json({ error: 'items_required' }, 400);
 
+  /* BOTH WAREHOUSES MUST BE THIS COMPANY'S. They arrive from the request body and
+     were previously only checked for presence and inequality. The header insert
+     below STAMPS the active company, which is not a predicate — so a caller could
+     name the OTHER company's warehouse as the source and the transfer would still
+     be booked as their own document.
+     That is not a bookkeeping-only defect: fn_stock_transfer_apply
+     (mig 0192) writes an OUT movement at from_warehouse_id, and the FIFO consumer
+     keys on (warehouse_id, product_code, variant_key) with no company argument —
+     so it consumes the other company's lots at their cost and opens the stock in
+     ours. Stock and valuation both move.
+     Checked as a SET so one round trip covers both ids; `scopeToCompany` keeps the
+     same degrade-when-unresolved behaviour as the rest of the file. */
+  const wanted = [...new Set([fromWarehouseId, toWarehouseId])];
+  const { data: ownWhs, error: whErr } = await scopeToCompany(
+    sb.from('warehouses').select('id').in('id', wanted), c,
+  );
+  if (whErr) return c.json({ error: 'warehouse_check_failed', reason: whErr.message }, 500);
+  if ((ownWhs ?? []).length !== wanted.length) return c.json(NOT_THIS_COMPANY, 404);
+
   const headerInsert: Record<string, unknown> = {
     company_id:         activeCompanyId(c), // multi-company: stamp the active company
     status:             'POSTED',

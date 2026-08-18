@@ -181,10 +181,19 @@ describe('SO stock-allocation sweep — read shape', () => {
        requests either way, but two of them no longer grow with the id count. */
     expect(db.reads.get('mfg_sales_order_items')).toBe(4);
 
-    /* The whole sweep: 20 SELECT round trips on the parent commit, 12 here.
-       The eight that went are six delivery_order_items chunks and two
-       purchase_order_items chunks; the two allocated_batch_no chunks were
-       traded for the two embedded reads counted above. */
-    expect(db.totalReads()).toBe(12);
+    /* The whole sweep: 20 SELECT round trips before the read inversion, 12
+       after it, 13 now. The eight that went are six delivery_order_items chunks
+       and two purchase_order_items chunks; the two allocated_batch_no chunks
+       were traded for the two embedded reads counted above.
+
+       The ONE that came back is the audit-row company backfill, which used to
+       put every changed SO's doc_no into a single `.in('doc_no', …)`. This sweep
+       runs unscoped over the whole tenant, so that list grows with the order
+       book — 300 docs here is ~5.7KB of URL and 2,726 would be ~52KB, i.e. a 400
+       rather than a query. Chunked at 200 it is 2 requests for this fixture. A
+       round trip is the currency this file is written in, so the trade is stated
+       rather than absorbed: one extra request, in exchange for a read that
+       cannot stop working as the customer imports. */
+    expect(db.totalReads()).toBe(13);
   });
 });

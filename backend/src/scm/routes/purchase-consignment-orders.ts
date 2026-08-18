@@ -48,6 +48,7 @@ import {
 } from '../shared/so-line-display';
 import { supabaseAuth } from '../middleware/auth';
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -351,10 +352,10 @@ purchaseConsignmentOrders.post('/', async (c) => {
       line_total_centi: lineTotal,
       notes: (it.notes as string | undefined) ?? null,
       discount_centi: discountCenti,
-      delivery_date: (it.deliveryDate as string | undefined) ?? null,
-      supplier_delivery_date_2: (it.supplierDeliveryDate2 as string | undefined) ?? null,
-      supplier_delivery_date_3: (it.supplierDeliveryDate3 as string | undefined) ?? null,
-      supplier_delivery_date_4: (it.supplierDeliveryDate4 as string | undefined) ?? null,
+      delivery_date: dateOrNull(it.deliveryDate),
+      supplier_delivery_date_2: dateOrNull(it.supplierDeliveryDate2),
+      supplier_delivery_date_3: dateOrNull(it.supplierDeliveryDate3),
+      supplier_delivery_date_4: dateOrNull(it.supplierDeliveryDate4),
       warehouse_id:  (it.warehouseId  as string | undefined) ?? null,
       item_group:   (it.itemGroup as string | undefined) ?? null,
       variants:     (it.variants as unknown) ?? null,
@@ -371,9 +372,9 @@ purchaseConsignmentOrders.post('/', async (c) => {
     submitted_at: new Date().toISOString(),
     currency,
     expected_at: expectedAt,
-    supplier_delivery_date_2: (body.supplierDeliveryDate2 as string | undefined) ?? null,
-    supplier_delivery_date_3: (body.supplierDeliveryDate3 as string | undefined) ?? null,
-    supplier_delivery_date_4: (body.supplierDeliveryDate4 as string | undefined) ?? null,
+    supplier_delivery_date_2: dateOrNull(body.supplierDeliveryDate2),
+    supplier_delivery_date_3: dateOrNull(body.supplierDeliveryDate3),
+    supplier_delivery_date_4: dateOrNull(body.supplierDeliveryDate4),
     notes: (body.notes as string | undefined) ?? null,
     subtotal_centi: subtotal,
     tax_centi: 0,
@@ -448,6 +449,10 @@ purchaseConsignmentOrders.patch('/:id', async (c) => {
   ] as const) {
     if (body[from] !== undefined) updates[to] = body[from];
   }
+  /* A cleared supplier date posts "" and this loop wrote it through to a date
+     column, which Postgres rejects and 500s the save (the same shape confirmed
+     in production on the mfg Purchase Order PATCH). */
+  coerceEmptyDates(updates);
   const { data, error } = await scopeToCompanyId(sb.from('purchase_consignment_orders').update(updates).eq('id', id), co.companyId).select('*').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
@@ -533,10 +538,10 @@ purchaseConsignmentOrders.post('/:id/items', async (c) => {
     uom: (it.uom as string) ?? 'UNIT',
     discount_centi: discountCenti,
     unit_cost_centi: Number(it.unitCostCenti ?? 0),
-    delivery_date: (it.deliveryDate as string) ?? null,
-    supplier_delivery_date_2: (it.supplierDeliveryDate2 as string) ?? null,
-    supplier_delivery_date_3: (it.supplierDeliveryDate3 as string) ?? null,
-    supplier_delivery_date_4: (it.supplierDeliveryDate4 as string) ?? null,
+    delivery_date: dateOrNull(it.deliveryDate),
+    supplier_delivery_date_2: dateOrNull(it.supplierDeliveryDate2),
+    supplier_delivery_date_3: dateOrNull(it.supplierDeliveryDate3),
+    supplier_delivery_date_4: dateOrNull(it.supplierDeliveryDate4),
     warehouse_id: (it.warehouseId as string) ?? null,
   };
   const { data, error } = await sb.from('purchase_consignment_order_items').insert({ company_id: activeCompanyId(c), ...row }).select('*').single();
@@ -587,6 +592,7 @@ purchaseConsignmentOrders.patch('/:id/items/:itemId', async (c) => {
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
   }
+  coerceEmptyDates(updates);
   /* Description 2 is server-owned: recompute from the effective itemGroup +
      variants (incoming patch, else stored row). */
   {
@@ -653,20 +659,28 @@ export const cancelPurchaseConsignmentOrderHandler = async (c: any) => {
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const curStatus = (cur as { status: string }).status;
   if (curStatus === 'RECEIVED') return c.json({ error: 'cannot_cancel', message: 'PC Order already received' }, 409);
-  if (curStatus === 'CANCELLED') {
-    return c.json({ purchaseConsignmentOrder: { id, status: 'CANCELLED' } });
-  }
+  // Advisory only: this read cannot see a cancel that lands after it. The atomic
+  // gate on the UPDATE below is what decides, and answers with the same body.
+  if (curStatus === 'CANCELLED') return c.json({ purchaseConsignmentOrder: { id, status: 'CANCELLED' } });
 
   /* Tier 2 downstream-lock — can't cancel a PC Order that has a downstream PC
      Receive; the receive must be CANCELLED first (it has no delete either). */
   const childLock = await pcoHasDownstream(supabase, id);
   if (childLock) return c.json(childLock, 409);
 
-  const { error: updErr } = await scopeToCompanyId(supabase
+  /* ATOMIC ACTIVE->CANCELLED, the same conditional UPDATE the six sibling cancels
+     carry (grns.ts:2566 has the full note). Two concurrent cancels race on the row
+     and exactly one flips it; the loser gets no row back and echoes. Nothing here
+     moves money — a PC Order never reaches AutoCount (mig 0277 pins the outbox
+     doc_type vocabulary to SO/PO/DO/IV/GR/PI) and there is no inventory reversal
+     on this path — so what the gate buys is one cancelled_at and one honest
+     response per cancel, instead of a second write silently restamping the time. */
+  const { data: updRow, error: updErr } = await scopeToCompanyId(supabase
     .from('purchase_consignment_orders')
     .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq('id', id), co.companyId);
+    .eq('id', id).neq('status', 'CANCELLED'), co.companyId).select('id').maybeSingle();
   if (updErr) return c.json({ error: 'cancel_failed', reason: updErr.message }, 500);
+  if (!updRow) return c.json({ purchaseConsignmentOrder: { id, status: 'CANCELLED' } });
 
   const { data: after } = await scopeToCompanyId(supabase
     .from('purchase_consignment_orders')

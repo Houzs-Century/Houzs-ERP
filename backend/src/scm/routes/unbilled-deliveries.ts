@@ -68,13 +68,13 @@ unbilledDeliveries.use('*', supabaseAuth);
        value the enum does NOT have makes Postgres throw ("invalid input value for
        enum do_status") — a 500, not an empty result. The tree's enum is
        {DRAFT, LOADED, DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED, INVOICED,
-       CANCELLED} (base schema + mig 0040 adds DRAFT), but delivery-orders-mfg.ts
-       ALSO carries 'COMPLETED' in DO_STATUSES / DO_STOCK_OUT_STATUSES, and the
-       scm schema is maintained OUTSIDE this migration tree (see BUG-HISTORY:
-       "audit vs PROD information_schema") — so the tree cannot settle whether
-       prod's enum has COMPLETED. Naming only the three values that certainly
-       exist makes this query correct EITHER WAY: it can never throw, and a
-       post-ship state we don't know about is INCLUDED rather than dropped.
+       CANCELLED} (base schema + mig 0040 adds DRAFT). This comment used to add
+       that delivery-orders-mfg.ts "ALSO carries 'COMPLETED'", and that the tree
+       therefore could not settle whether prod's enum had it. PROD SETTLED IT on
+       2026-08-17: `?status=delivered` returned 500 `invalid input value for enum
+       do_status: "COMPLETED"` in both tenants, so the enum is exactly the eight
+       above and COMPLETED has been removed from the shared declaration. This
+       report was the one place that guessed the safe way and never broke.
      • The fail direction is deliberate. An unknown status surfaces a row he can
        dismiss; a positive list would have hidden that row's money silently —
        which is the exact failure this whole report exists to catch. */
