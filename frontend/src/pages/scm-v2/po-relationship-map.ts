@@ -27,6 +27,7 @@ import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useDocumentFlow, usePoSoCoverage, floatingSoDocNos, type FlowNode, type FlowEdge } from '../../vendor/scm/lib/flow-queries';
+import { parseProvenanceNote } from '../../vendor/shared/transfer-vocabulary';
 import type { ChainNode, AmendmentChip, PairingKind } from '../../components/scm-v2/DocumentRelationshipMapModal';
 import { useDocChoice, type DocChoiceApi } from './doc-choice';
 
@@ -36,17 +37,20 @@ export type PoRelationshipHeader = {
   notes?: string | null;
 };
 
-/* The SO doc numbers a PO's "From SOs: …" note records. Frontend twin of the
-   backend's parseFromSosNote (document-flow.ts) — the note FORMAT's one home is
-   the writer `From SOs: ${docNos.join(', ')}` in mfg-purchase-orders.ts; both
-   parsers match that label (case-insensitive, optional plural) and split on
-   commas. Returns [] for a plain free-text note. */
-export const parsePoNoteSos = (note: string | null | undefined): string[] => {
-  if (!note) return [];
-  const m = /^\s*From SOs?:\s*(.+)$/im.exec(String(note).trim());
-  if (!m) return [];
-  return [...new Set(m[1]!.split(',').map((s) => s.trim()).filter(Boolean))];
-};
+/* The source SO doc numbers a PO's provenance note records.
+ *
+ * This was a hand-maintained twin of the backend's parser, with a comment
+ * pointing at the writer and asking the reader to keep the two in step. As of
+ * 2026-08-18 it is the SAME MODULE, mirrored into the frontend tree the way
+ * every other shared rule here is (vendor/shared, refereed by
+ * backend/scripts/check-shared-mirrors.mjs plus a byte-identity test).
+ *
+ * That matters more here than almost anywhere else: this node is the ONLY
+ * place a pre-MRP PO's source Sales Order appears on screen, so a parser that
+ * had learned the new label and forgotten the old one would not error — it
+ * would quietly render an empty Sales Order node for every PO raised before
+ * the rename. The shared module accepts both eras; see its comment. */
+export const parsePoNoteSos = parseProvenanceNote;
 
 const docCell = (labels: string[], plural: string, emptyDoc: string) =>
   labels.length === 0
