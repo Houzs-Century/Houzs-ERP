@@ -8467,25 +8467,9 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       max:      qty * unit,
     }, 422);
   }
-  /* Total floor (Loo 2026-06-11) — a POS sales caller may never save a line
-     change that lowers the bill below the original sales order total. The
-     header total is Σ line totals, so per line: the new total (0 when
-     cancelling) must be ≥ the stored one. Backend / office roles stay free
-     to discount or correct downward. */
-  if (posTablet) {
-    const prevLineTotal = prev.cancelled ? 0 : ((prev.qty * prev.unit_price_centi) - prev.discount_centi);
-    const cancelledAfter = it.cancelled !== undefined ? Boolean(it.cancelled) : Boolean(prev.cancelled);
-    const newLineTotal = cancelledAfter ? 0 : ((qty * unit) - discount);
-    if (newLineTotal < prevLineTotal) {
-      return c.json({
-        error:    'so_total_below_original',
-        reason:   'Changes cannot reduce the bill below the original sales order total.',
-        itemCode: itemCodeAfter,
-        previous: prevLineTotal,
-        next:     newLineTotal,
-      }, 422);
-    }
-  }
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18: a POS caller may lower a line. `posTablet` still gates
+     the pricing_drift check below, which is a different rule and stays. */
   /* Commander 2026-05-28 — cost snapshot on PATCH. Order of precedence:
        1. Client sent unitCostCenti > 0 → use it (explicit override).
        2. A recompute ran (variants/itemCode/price touched) AND produced a
@@ -8680,18 +8664,8 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
     | { item_code: string; qty: number; unit_price_centi: number; total_centi: number; photo_urls: string[] | null; cancelled?: boolean }
     | null;
 
-  /* Total floor (Loo 2026-06-11) — removing a priced line lowers the bill
-     below the original sales order total, so POS sales callers may not
-     delete one (a cancelled / zero line is fine). Backend roles stay free. */
-  if (prevTyped && !prevTyped.cancelled && prevTyped.total_centi > 0
-      && await isPosTabletCaller(c)) {
-    return c.json({
-      error:    'so_total_below_original',
-      reason:   'Removing a line would reduce the bill below the original sales order total.',
-      itemCode: prevTyped.item_code,
-    }, 422);
-  }
-
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18. A POS caller may delete a priced line. */
   /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
      afterwards the row is gone and its DtlKey with it, and an edit that does not
      NAME the removal leaves the line live and outstanding in the account book. */
@@ -8930,20 +8904,10 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
 
   /* Task 6 — grandfathering: a line carrying variants.freeItem was made free
      at create time and must STAY at RM 0 regardless of any fabric/option delta.
-     Treat it as a no-price-change TBC edit (the variant picks still land).
-     Also skip the POS floor check — a zero-priced line can never lower the
-     bill further; the check is meaningless and would compare 0 vs 0. */
+     Treat it as a no-price-change TBC edit (the variant picks still land). */
   const isFreeItemGrandfathered = isFreeItemLine(prevVariants);
-  const posTablet = await isPosTabletCaller(c);
-  if (!isFreeItemGrandfathered && posTablet && sellingDeltaCenti < 0) {
-    return c.json({
-      error:    'so_total_below_original',
-      reason:   'Changes cannot reduce the bill below the original sales order total.',
-      itemCode: prev.item_code,
-      deltaCenti: sellingDeltaCenti * Number(prev.qty),
-    }, 422);
-  }
-
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18. A TBC edit may lower the line. */
   const qty = Number(prev.qty);
   const newUnit = isFreeItemGrandfathered ? 0 : Math.max(0, Number(prev.unit_price_centi) + sellingDeltaCenti);
   /* The unit price just MOVED and the stored discount did not. newUnit is
@@ -9302,17 +9266,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     }, 422);
   }
   const newTotal = (qty * unitSen) - discount;
-  const prevTotal = Number(prev.total_centi ?? ((qty * Number(prev.unit_price_centi)) - discount));
-  if (newTotal < prevTotal && await isPosTabletCaller(c)) {
-    return c.json({
-      error:    'so_total_below_original',
-      reason:   'Changes cannot reduce the bill below the original sales order total.',
-      itemCode: newCode,
-      previous: prevTotal,
-      next:     newTotal,
-    }, 422);
-  }
-
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18. A swap may land on a cheaper product. */
   const newCost = Math.max(0, Math.round(Number(prod.cost_price_sen ?? 0)));
   const { error: upErr } = await sb.from('mfg_sales_order_items').update({
     item_code: newCode,
@@ -9836,15 +9791,10 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   }
   const newBuildTotal = (qty * unit) - discount;
   const oldBuildTotal = oldLines.reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
-  if (posTablet && newBuildTotal < oldBuildTotal) {
-    return c.json({
-      error: 'so_total_below_original',
-      reason: 'Changes cannot reduce the bill below the original sales order total.',
-      previous: oldBuildTotal,
-      next: newBuildTotal,
-    }, 422);
-  }
-
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18. A sofa may be exchanged for a cheaper build.
+     `posTablet` above still gates the pricing_drift check, which stays.
+     Both totals are still computed: the audit log reports the change. */
   /* A still-matched reward keeps its voucher markers — they ride every
      split line like at SO create. An unmatched one stays stripped (normal
      sale; the voucher releases below). */
