@@ -1036,6 +1036,13 @@ export function MfgSalesOrdersListV2() {
   // Server-side sort, formatted "<col>:<dir>" for the backend whitelist
   // (so_date/doc_no/debtor_name/status/local_total_centi/customer_delivery_date).
   const [sort, setSort] = useState<string | undefined>(undefined);
+  // Gate the list query until the DataTable has reported its localStorage-
+  // restored sort up to us (its one-shot mount effect → setSortAndReset below).
+  // Without this the first fetch fires sort-less, then the restored sort lands
+  // and immediately aborts+re-fires it — one wasted round trip on every open.
+  // The report ALWAYS arrives once (even null when nothing is persisted), so
+  // this never hangs the no-persisted-sort case.
+  const [sortReady, setSortReady] = useState(false);
   // Debounced search — the URL `q` updates on every keystroke (so the input
   // stays controlled + shareable) but we only re-query the server 300ms after
   // the user stops typing.
@@ -1055,6 +1062,7 @@ export function MfgSalesOrdersListV2() {
     status,
     q: debouncedSearch,
     sort,
+    enabled: sortReady,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -1143,6 +1151,9 @@ export function MfgSalesOrdersListV2() {
     setSort(s ? `${SORT_COL_MAP[s.key] ?? s.key}:${s.dir}` : undefined);
     if (!sortSyncedRef.current) {
       sortSyncedRef.current = true;
+      // First (mount) report: the restored sort is now in state, so release the
+      // gate — the one and only list fetch fires with `sort` already applied.
+      setSortReady(true);
       return;
     }
     setPageParam(0); // sort change → back to page 0

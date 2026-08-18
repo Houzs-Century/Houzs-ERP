@@ -26,6 +26,7 @@
 // anchors keep their existing vendor DocumentFlowModal map — these hooks are the
 // bespoke 5-node canvas the regular DO/SI/DR detail pages render.
 
+import { customerRefOf } from '../../lib/customer-ref';
 import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
@@ -77,7 +78,7 @@ export function buildDoChainNodes(
   siNodes: FlowNode[],
   canOpenGrn: boolean,
 ): ChainNode[] {
-  const poRef = (header.po_doc_no || header.customer_so_no || '').trim();
+  const poRef = customerRefOf(header);
   const so = docCell(soNodes, 'sales orders', header.so_doc_no || 'Not linked');
   const grn = docCell(grnNodes, 'GRNs', 'Not created');
   const si = docCell(siNodes, 'invoices', 'Not created');
@@ -228,7 +229,7 @@ export function buildSiChainNodes(
   doNodes: FlowNode[],
   paymentNodes: FlowNode[],
 ): ChainNode[] {
-  const poRef = (header.customer_so_no || header.po_doc_no || '').trim();
+  const poRef = customerRefOf(header);
   const so = docCell(soNodes, 'sales orders', header.so_doc_no || 'Not linked');
   const dov = docCell(doNodes, 'delivery orders', 'Not linked');
   const soLinked = soNodes.length > 0 || !!header.so_doc_no;
@@ -363,7 +364,7 @@ export function buildDrChainNodes(
   doNodes: FlowNode[],
   siNodes: FlowNode[],
 ): ChainNode[] {
-  const poRef = (header.customer_so_no || '').trim();
+  const poRef = customerRefOf(header);
   const so = docCell(soNodes, 'sales orders', 'Not linked');
   const dov = docCell(doNodes, 'delivery orders', header.do_doc_no || 'Not linked');
   const si = docCell(siNodes, 'invoices', 'Not created');
