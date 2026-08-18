@@ -113,6 +113,7 @@ import { Forbidden } from "./Forbidden";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { defaultBrandingForCompany, HOUZS_COMPANY_CODE } from "../lib/branding";
 import { resolutionRoute, isStageActive, assrSubStatus, assrSubStatusAddsInfo, assrSubStatusLabel, ASSR_SUB_STATUSES } from "../vendor/scm/lib/assr/stages";
+import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import type {
   Paginated,
   AssrCase,
@@ -138,7 +139,7 @@ const STAGE_OPTIONS: { value: StageFilter; label: string }[] = [
   { value: "pending_item_ready", label: "Pending Item Ready" },
   { value: "pending_delivery_service", label: "Delivery / Service" },
   { value: "completed", label: "Completed" },
-  { value: "voided", label: "Voided — Not Valid" },
+  { value: "voided", label: ASSR_STAGE_LABEL.voided },
 ];
 
 const RESOLUTION_OPTIONS = [
@@ -5727,7 +5728,7 @@ function WorkflowCard({
                 ))}
                 {/* Terminal alt-outcome — not a pipeline step, offered as
                     a final option (Nico 2026-07-29). */}
-                <option value="voided">Voided — Not Valid</option>
+                <option value="voided">{ASSR_STAGE_LABEL.voided}</option>
               </select>
               {onSubChange && ASSR_SUB_STATUSES[currentStage] && (
                 <select
@@ -5752,7 +5753,7 @@ function WorkflowCard({
             ✕
           </span>
           <div>
-            <div className="text-[13px] font-bold text-err">Voided — Not Valid</div>
+            <div className="text-[13px] font-bold text-err">{ASSR_STAGE_LABEL.voided}</div>
             <div className="text-[11px] text-ink-muted">
               {voidReason
                 ? `Reason: ${voidReason}`

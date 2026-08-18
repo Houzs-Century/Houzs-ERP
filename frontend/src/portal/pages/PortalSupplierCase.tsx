@@ -25,6 +25,7 @@ import { PortalFrame } from "../components/PortalFrame";
 import { StatusPill } from "../components/StatusPill";
 import { Button } from "../../components/Button";
 import { Skeleton } from "../../components/Skeleton";
+import { ASSR_STAGE_LABEL } from "../../vendor/scm/lib/assr-stage-labels";
 import { useDialog } from "../../hooks/useDialog";
 import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PortalStatusColor } from "../types";
@@ -102,7 +103,12 @@ const STAGE_LABEL: Record<string, string> = {
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Delivery / Service",
   completed: "Completed",
-  voided: "Voided — Not Valid",
+  // Read, not retyped. This exact string had six hand-written homes and the
+  // customer portal's copy — the only one a customer reads — had none at all
+  // and printed the raw slug. (The rows ABOVE are this screen's short pill
+  // vocabulary, a different question, and still a hand-written copy shared
+  // with the other pill screens — see BUG-HISTORY, not yet unified.)
+  voided: ASSR_STAGE_LABEL.voided,
 };
 
 // Map stage → StatusPill palette so the supplier header uses the
