@@ -313,6 +313,26 @@ const normaliseStem = (stem) =>
  * sales-order), which catches the sibling files a guide has not got around to
  * quoting.
  */
+/**
+ * Does this file's diff change CODE, as opposed to only comments, blank lines
+ * and import bookkeeping?
+ *
+ * Deliberately crude, and biased towards "no". A false NO costs one PR its
+ * guide update; a false YES makes the gate fire on a typo fix in a comment,
+ * and a gate that cries wolf is deleted within the week. The kinds of line
+ * discounted here are the ones that genuinely cannot change behaviour.
+ */
+export function changesLogic(file) {
+  const substantive = (t) => {
+    const line = String(t).trim();
+    if (line === "") return false;
+    if (line.startsWith("//") || line.startsWith("/*") || line.startsWith("*") || line.startsWith("*/")) return false;
+    if (/^import\s/.test(line) || /^export\s+\{[^}]*\}\s+from\s/.test(line)) return false;
+    return true;
+  };
+  return file.added.some((l) => substantive(l.text)) || file.removed.some((l) => substantive(l.text));
+}
+
 export function buildModuleIndex(guides) {
   const byPath = new Map();
   const byStem = new Map();
@@ -456,6 +476,30 @@ export function evaluate({ title, branch, body, labels, templateBody, files, gui
     if (changes.length) surfaces.push({ path: f.path, changes, file: f });
   }
 
+  /* LOGIC, not only surface (owner 2026-08-18: 「backend 逻辑更改 你要更新的啊」).
+     detectSurfaceChanges only fires on five shapes — a new route, permission,
+     status value, required-field flip or lock — so a change to a RULE sailed
+     past saying nothing. Measured on this repo the same day: of the last 30
+     merges, 19 touched a file some guide quotes and 8 of those never opened the
+     guide. One of the 8 is the commit that created the shared Branding rule.
+
+     Scope is deliberately the files a guide QUOTES BY PATH — 343 of 1454, the
+     ones somebody chose to document — and not mapPathToGuides' filename-stem
+     fallback, which is a guess. A guess that fails a PR is a gate people learn
+     to route around. So: if the guide claims to describe this file and the file's
+     logic moved, the guide is stale until proven otherwise. */
+  const surfacePaths = new Set(surfaces.map((s) => s.path));
+  for (const f of files) {
+    if (surfacePaths.has(f.path)) continue;
+    if (!index.byPath.has(f.path)) continue;
+    if (!changesLogic(f)) continue;
+    surfaces.push({
+      path: f.path,
+      changes: [{ kind: "logic", detail: "code changed in a file a module guide documents" }],
+      file: f,
+    });
+  }
+
   if (surfaces.length === 0) {
     add("info", "module-guide", "No module surface change detected (no new route, permission, status, required-field flip or lock).");
   } else {
@@ -484,7 +528,9 @@ export function evaluate({ title, branch, body, labels, templateBody, files, gui
         add(
           "fail",
           "module-guide",
-          `${m.path} changes this module's SURFACE, and its guide was not updated.`,
+          m.changes.every((c) => c.kind === "logic")
+            ? `${m.path} changed, and the guide that documents it was not updated.`
+            : `${m.path} changes this module's SURFACE, and its guide was not updated.`,
           [
             `Surface — ${m.what}`,
             `Guide — ${m.owners.map((g) => `${MODULE_GUIDE_DIR}${g}.md`).join(" or ")} (${m.reason})`,
