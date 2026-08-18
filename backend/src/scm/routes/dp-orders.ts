@@ -29,6 +29,7 @@ import {
   snapshotFromWorkshopName, type DpJobType, type DpPartySnapshot,
 } from '../lib/dp-party';
 import { mintNextDpNo, plateForLorry } from '../lib/dp-no-mint';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { dpLorryBlockReason } from '../lib/dp-lorry-block';
 import { normalizePhone } from '../shared/phone';
 import {
@@ -296,7 +297,7 @@ dpOrders.post('/', async (c) => {
     address1: merged.address1 ?? null, address2: merged.address2 ?? null,
     address3: merged.address3 ?? null, address4: merged.address4 ?? null,
     city: merged.city ?? null, postcode: merged.postcode ?? null, state: merged.state ?? null,
-    requested_date: p.requestedDate ?? null,
+    requested_date: dateOrNull(p.requestedDate),
     status: 'PENDING_SCHEDULE',
     remark: p.remark ?? null,
     created_by: user?.id ?? null,
@@ -385,6 +386,9 @@ dpOrders.patch('/:id', async (c) => {
   // Same E.164 normalisation the create path applies — a PATCH carries a raw
   // client value straight through PATCH_COLS otherwise.
   if (updates.contact_phone !== undefined) updates.contact_phone = normDpPhone(updates.contact_phone);
+  /* A cleared requested date arrives as "" — the schema accepts any string —
+     and Postgres rejects it on the date column, 500ing the save. */
+  coerceEmptyDates(updates);
   if (Object.keys(updates).length === 1) return c.json({ error: 'no_changes' }, 400);
 
   const sb = c.get('supabase');

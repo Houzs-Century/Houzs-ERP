@@ -53,6 +53,7 @@ import {
 import { resolveDeliveryScope, scopeMatchesAssignment, type CrewAssignment } from '../lib/deliveryScope';
 import { reconcileStopsToBoard, reconcileFieldsFor, type ReconcileStop } from '../lib/tripReconcile';
 import { validatePing, shouldAcceptPing, latestPerDriver, PING_ACCEPTED_STATUSES } from '../lib/tripLocation';
+import { dateOrNull } from '../lib/date-coerce';
 
 export const trips = new Hono<{ Bindings: Env; Variables: Variables }>();
 trips.use('*', supabaseAuth);
@@ -535,8 +536,10 @@ export const patchTripHandler = async (c: any) => {
   if (p.helper2Id !== undefined) updates.helper_2_id = p.helper2Id;
   if (p.warehouseId !== undefined) updates.warehouse_id = p.warehouseId;
   if (p.tripType !== undefined) updates.trip_type = p.tripType;
-  if (p.clockInAt !== undefined) updates.clock_in_at = p.clockInAt;
-  if (p.clockOutAt !== undefined) updates.clock_out_at = p.clockOutAt;
+  /* `z.string().nullable().optional()` accepts "", and both columns are
+     TIMESTAMPTZ (mig 0053) — blank CLEARS the stamp instead of 500ing. */
+  if (p.clockInAt !== undefined) updates.clock_in_at = dateOrNull(p.clockInAt);
+  if (p.clockOutAt !== undefined) updates.clock_out_at = dateOrNull(p.clockOutAt);
   if (p.totalDistanceKm !== undefined) updates.total_distance_km = toNumericOrNull(p.totalDistanceKm);
   if (p.notes !== undefined) updates.notes = p.notes;
   // is_outsourced: explicit value wins; else re-derive when the lorry changes.

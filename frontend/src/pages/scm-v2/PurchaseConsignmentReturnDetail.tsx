@@ -155,24 +155,9 @@ export const PurchaseConsignmentReturnDetail = () => {
     }
   }, [isLocked, isEditing]);
 
-  if (detail.isPending) {
-    return <SkeletonDetailPage />;
-  }
-  if (detail.isError || !pr) {
-    return (
-      <div className="space-y-4">
-        <Link to="/scm/purchase-consignment-returns" className={styles.backBtn}>
-          <ArrowLeft {...ICON} />
-          <span>Back</span>
-        </Link>
-        <div className={styles.bannerWarn}>
-          <strong>Purchase consignment return not found.</strong>
-          {detail.error instanceof Error ? ` ${detail.error.message}` : null}
-        </div>
-      </div>
-    );
-  }
-
+  /* The line-total helpers sit above the guards because usePrintPreview does —
+     `refundTotal` is what the PDF header's Value column reports, and it is
+     derived only from `items` + the drafts, neither of which needs `pr`. */
   const visibleItems = items;
   const lineOf = (it: PrItemRow): LineDraft => lineDrafts[it.id] ?? lineSnapshot(it);
   const lineTotalOf = (it: PrItemRow): number => {
@@ -182,9 +167,17 @@ export const PurchaseConsignmentReturnDetail = () => {
   };
   const refundTotal = visibleItems.reduce((s, it) => s + lineTotalOf(it), 0);
 
-  const headerView = headerDraft ?? headerSnapshot(pr);
-
+  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
+     until 2026-08-17, so the loading render called fewer hooks than the loaded
+     one and React threw #310 ("rendered more hooks than during the previous
+     render") the moment the query resolved — a blank "Something went wrong
+     loading this page." on a direct URL / refresh. Arriving from the list hid
+     it: react-query already had the detail cached, so the isPending branch
+     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
+     pr; it can only ever be CALLED from the preview dialog, which does not
+     exist until the record has loaded. */
   const deliverPrintPdf = (action: PdfAction) => {
+    if (!pr) return;
     const pdfHeader = {
       return_number: pr.return_number,
       status: String(pr.status),
@@ -212,6 +205,26 @@ export const PurchaseConsignmentReturnDetail = () => {
       .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
   };
   const print = usePrintPreview(deliverPrintPdf);
+
+  if (detail.isPending) {
+    return <SkeletonDetailPage />;
+  }
+  if (detail.isError || !pr) {
+    return (
+      <div className="space-y-4">
+        <Link to="/scm/purchase-consignment-returns" className={styles.backBtn}>
+          <ArrowLeft {...ICON} />
+          <span>Back</span>
+        </Link>
+        <div className={styles.bannerWarn}>
+          <strong>Purchase consignment return not found.</strong>
+          {detail.error instanceof Error ? ` ${detail.error.message}` : null}
+        </div>
+      </div>
+    );
+  }
+
+  const headerView = headerDraft ?? headerSnapshot(pr);
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(pr)), [k]: v }));

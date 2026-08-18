@@ -215,8 +215,11 @@ export const GrnNew = () => {
      refuses to rotate a key for, and it is live here rather than theoretical.
 
      THE RESIDUAL, STATED. Because the mount outlives the document, an operator
-     who closes the success dialog, re-authors the lines and submits AGAIN gets
-     the first GRN replayed — one document, not two. Accepted, not overlooked:
+     who closes the success dialog and submits AGAIN gets the first GRN back —
+     replayed if the lines are untouched, and refused with
+     idempotency_key_reused if they were re-authored, which names the status the
+     first submit finished with and sends them to refresh and check. Either way
+     one document, not two. Accepted, not overlooked:
      the lines are not reset on success, so a re-press submits the SAME goods and
      replay is the correct answer; raising a genuinely different receipt goes
      through the picker route (/scm/grns/from-po), which remounts this page and

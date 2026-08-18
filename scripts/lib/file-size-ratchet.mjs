@@ -212,6 +212,71 @@ export function lowerCeilings(measured, ceilings, newFileLimit = NEW_FILE_LIMIT)
 }
 
 /**
+ * Decide WHO PAYS for each violation — the ratchet's other half, and until
+ * 2026-08-18 the half that lived only inside check-file-size.mjs, tangled with
+ * three `git` shell-outs and therefore covered by no test at all.
+ *
+ * THE RULE, stated once, here, because this is the function that implements it:
+ *
+ *   The subject of this gate is GROWTH, not DEBT. A file that is already over
+ *   its ceiling may be edited freely — opened, refactored, bug-fixed — as long
+ *   as THIS change does not make it bigger. It fails only when the file ends up
+ *   larger than BOTH its ceiling and its own size at the merge base.
+ *
+ * Equivalently: a touched file may reach `max(ceiling, sizeAtBase)` and no more.
+ * A net-zero or net-negative diff on an over-ceiling file is moving it in the
+ * only direction the ratchet ever asks for, so charging it is the bug — that is
+ * PR #2162, which was blocked for shrinking a 3,591-line file to 3,586.
+ *
+ * The three buckets are kept DISTINCT because collapsing two of them is how the
+ * gate misleads. Before this function existed the reporter had only "mine" and
+ * "inherited", printed `inherited` under the heading "not touched by this
+ * change", and a TOUCHED-BUT-SHRUNK file landed in it — so the gate told the
+ * author it had not seen their edit at all. Measured 2026-08-18: deleting four
+ * blank lines from `grns.ts` passed, and the pass named the file as untouched.
+ *
+ * @param {Array<{path: string, lines: number, ceiling: number, over: number, grandfathered: boolean}>} violations
+ *        every file over its ceiling, from `verdict()`
+ * @param {Set<string> | null} touched paths this change modified against the
+ *        merge base, or null when the base could not be resolved — in which case
+ *        EVERY violation is charged, because a gate that cannot tell whose fault
+ *        it is must not let anything through
+ * @param {Map<string, number> | null} baseLines line counts at the merge base
+ * @returns {{
+ *   charged: Array<{path, lines, ceiling, over, grandfathered, wasAtBase: number|null, delta: number|null}>,
+ *   touchedNotGrown: Array<{path, lines, ceiling, over, grandfathered, wasAtBase: number, delta: number}>,
+ *   untouched: Array<{path, lines, ceiling, over, grandfathered}>,
+ * }}
+ */
+export function classifyViolations(violations, touched, baseLines) {
+  const charged = [];
+  const touchedNotGrown = [];
+  const untouched = [];
+
+  for (const v of violations) {
+    if (touched === null) {
+      charged.push({ ...v, wasAtBase: null, delta: null });
+      continue;
+    }
+    if (!touched.has(v.path)) {
+      untouched.push(v);
+      continue;
+    }
+    const was = baseLines instanceof Map ? baseLines.get(v.path) : undefined;
+    if (was === undefined) {
+      // Added on this branch, or the base could not be read for it. Nothing to
+      // compare against, so the whole size is this change's doing.
+      charged.push({ ...v, wasAtBase: null, delta: null });
+      continue;
+    }
+    const delta = v.lines - was;
+    (delta > 0 ? charged : touchedNotGrown).push({ ...v, wasAtBase: was, delta });
+  }
+
+  return { charged, touchedNotGrown, untouched };
+}
+
+/**
  * The "may only fall" check, run against the manifest as it exists on the merge
  * base. Returns every entry that got LOOSER — a raised ceiling, or a newly
  * grandfathered file.
