@@ -1050,6 +1050,76 @@ const nextDocNo = async (sb: any, c: any): Promise<string> => {
    mode — it is what the function does deliberately when it cannot vouch for its
    inputs. */
 
+type SoListMoneyKpis = { revenueCenti: number; outstandingCenti: number; paidCenti: number };
+
+/* Full-set money KPIs (Revenue / Outstanding / Paid) for the SO list's
+   paginated path. ONE grouped PostgREST aggregate — three server-side SUMs over
+   the SAME filtered set the page query pages, WITHOUT `.range()` — replaces
+   paging the WHOLE filtered set in 1000-row chunks and summing in JS. So an
+   unfiltered "All" tab at N orders goes from ceil(N/1000) sequential round trips
+   plus N rows over the wire down to ONE round trip returning three numbers.
+
+   `applyMoneyFilters` is the single filter closure the aggregate fast path AND
+   the paginateAll fallback share, so the two totals apply byte-identical
+   predicates and cannot drift.
+
+   Byte-identical to the old paginateAll JS reduce: `local_total_centi` is
+   `integer DEFAULT 0 NOT NULL` (backend/scripts/scm-schema/2990s-full-schema.sql),
+   and the view's `paid_total_centi` (= COALESCE(Σ payments, 0)) and
+   `balance_centi_live` (= local_total − paid) are never null when the view
+   exposes them — so SQL SUM (which skips nulls) equals the `?? 0` reduce over
+   the same rows, and SUM over zero rows is NULL, coalesced to 0 exactly like the
+   empty reduce. Both summed columns are view-COMPUTED, so this stays VIEW-TRAP
+   safe (see backend/docs/scm-view-trap-coe.md). If the view LACKS them
+   (old/absent view) the aggregate errors on the missing column and we fall
+   through to the paginateAll path, which reads `balance_centi` as its own
+   absent-`balance_centi_live` fallback — identical to the prior behaviour. */
+export async function soListMoneyKpis(
+  sb: { from(table: string): { select(columns: string): unknown } },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the dynamic aggregate `.select('...sum()')` defeats supabase-js's column-type inference (same reason as outstanding.ts /summary)
+  applyMoneyFilters: (q: any) => any,
+): Promise<{ data: SoListMoneyKpis | null; error: { message: string } | null }> {
+  /* FAST PATH — all aggregates, no plain column → one implicit group → one row.
+     Idiom: outstanding.ts /summary. */
+  const agg = await applyMoneyFilters(
+    sb
+      .from('mfg_sales_orders_with_payment_totals')
+      .select('rev:local_total_centi.sum(),outLive:balance_centi_live.sum(),paid:paid_total_centi.sum()'),
+  );
+  if (!agg.error) {
+    const row = ((agg.data ?? []) as Array<Record<string, unknown>>)[0] ?? {};
+    return {
+      data: {
+        revenueCenti: Number(row.rev ?? 0),
+        outstandingCenti: Number(row.outLive ?? 0),
+        paidCenti: Number(row.paid ?? 0),
+      },
+      error: null,
+    };
+  }
+  /* FALLBACK — aggregates disabled, or the computed columns absent from the
+     view: page the int cols and reduce in JS. Slower, never wrong. */
+  const fb = await paginateAll<{
+    local_total_centi: number | null;
+    balance_centi: number | null;
+    balance_centi_live: number | null;
+    paid_total_centi: number | null;
+  }>((mfrom, mto) =>
+    applyMoneyFilters(
+      sb
+        .from('mfg_sales_orders_with_payment_totals')
+        .select('local_total_centi, balance_centi, balance_centi_live, paid_total_centi'),
+    ).range(mfrom, mto),
+  );
+  if (fb.error) return { data: null, error: fb.error };
+  let revenueCenti = 0, outstandingCenti = 0, paidCenti = 0;
+  for (const m of fb.data ?? []) {
+    revenueCenti += m.local_total_centi ?? 0;
+    outstandingCenti += m.balance_centi_live ?? m.balance_centi ?? 0;
+    paidCenti += m.paid_total_centi ?? 0;
+  }
+  return { data: { revenueCenti, outstandingCenti, paidCenti }, error: null };
+}
 
 mfgSalesOrders.get('/', async (c) => {
   const sb = c.get('supabase');
@@ -1212,28 +1282,30 @@ mfgSalesOrders.get('/', async (c) => {
       return tallyStatusRows(fb, () => 1);
     })();
 
-    /* Full-set money KPIs — sum local_total_centi / balance_centi_live /
-       paid_total_centi over the SAME scope + company + status + search (+
-       optional so_date window) filters as the page query, but WITHOUT
-       `.range()`/pagination. paginateAll pages the int cols so the 1000-row
-       PostgREST cap can't truncate the total.
+    /* Full-set money KPIs — Revenue / Outstanding / Paid over the SAME scope +
+       company + status + search (+ optional so_date window) filters as the page
+       query, but WITHOUT `.range()`/pagination.
+
+       `applyMoneyFilters` is that predicate set, built ONCE, so the aggregate
+       fast path and its paginateAll fallback (both inside soListMoneyKpis) apply
+       byte-identical filters and cannot drift. These are the identical money
+       predicates this path applied before; the only change is that the SUM now
+       happens in ONE server-side grouped aggregate instead of paging the whole
+       filtered set and summing in JS.
 
        Paid + Outstanding read the view's LEDGER-DERIVED columns, not the stored
-       `paid_centi` / `balance_centi` this used to sum. Those two are not the
-       truth: `paid_centi` has no writer that maintains it (it is deprecated and
-       scheduled for drop), and `balance_centi` is set to the GROSS grandTotal
-       by recomputeTotals on every edit, so it never reflects a payment — the
-       old Outstanding tile was just Revenue restated. paid_total_centi
-       (= Σ payments) and balance_centi_live (= local_total − Σ payments) are
-       the same source-of-truth the row grid, the mobile SO list and
-       delivery-planning.ts already read. Both are view-COMPUTED columns, so
-       this select stays VIEW-TRAP safe (see backend/docs/scm-view-trap-coe.md);
-       `balance_centi` is kept in the select only as the absent-view fallback,
-       mirroring delivery-planning's. */
-    const moneyProm = paginateAll<{ local_total_centi: number | null; balance_centi: number | null; balance_centi_live: number | null; paid_total_centi: number | null }>((mfrom, mto) => {
-      let moneyQ = sb
-        .from('mfg_sales_orders_with_payment_totals')
-        .select('local_total_centi, balance_centi, balance_centi_live, paid_total_centi');
+       `paid_centi` / `balance_centi`. Those two are not the truth: `paid_centi`
+       has no writer that maintains it (deprecated, scheduled for drop), and
+       `balance_centi` is set to the GROSS grandTotal by recomputeTotals on every
+       edit, so it never reflects a payment — the old Outstanding tile was just
+       Revenue restated. paid_total_centi (= Σ payments) and balance_centi_live
+       (= local_total − Σ payments) are the same source-of-truth the row grid,
+       the mobile SO list and delivery-planning.ts already read, and both are
+       view-COMPUTED columns, so this stays VIEW-TRAP safe (see
+       backend/docs/scm-view-trap-coe.md). */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the shared closure is applied to both the aggregate `.select('...sum()')` builder and the paged builder; the aggregate select defeats supabase-js's column-type inference (same reason as outstanding.ts /summary)
+    const applyMoneyFilters = (moneyQ0: any): any => {
+      let moneyQ = moneyQ0;
       if (scopeIds) moneyQ = moneyQ.in('salesperson_id', scopeIds);
       moneyQ = scopeToCompany(moneyQ, c);
       if (status) moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : moneyQ.eq('status', status);
@@ -1243,8 +1315,9 @@ mfgSalesOrders.get('/', async (c) => {
       }
       if (from) moneyQ = moneyQ.gte('so_date', from);
       if (to) moneyQ = moneyQ.lte('so_date', to);
-      return moneyQ.range(mfrom, mto);
-    });
+      return moneyQ;
+    };
+    const moneyProm = soListMoneyKpis(sb, applyMoneyFilters);
 
     /* One concurrent wave. The page rows, the grouped status counts and the
        full-set money KPIs are mutually independent — each keys off scopeIds +
@@ -1268,14 +1341,8 @@ mfgSalesOrders.get('/', async (c) => {
       statusCounts.other = allCount - known;
     }
 
-    if (moneyRes.error) return c.json({ error: 'load_failed', reason: moneyRes.error.message }, 500);
-    let revenueCenti = 0, outstandingCenti = 0, paidCenti = 0;
-    for (const m of (moneyRes.data ?? [])) {
-      revenueCenti += m.local_total_centi ?? 0;
-      outstandingCenti += m.balance_centi_live ?? m.balance_centi ?? 0;
-      paidCenti += m.paid_total_centi ?? 0;
-    }
-    aggregates = { revenueCenti, outstandingCenti, paidCenti };
+    if (moneyRes.error || !moneyRes.data) return c.json({ error: 'load_failed', reason: moneyRes.error?.message ?? 'money_kpis_failed' }, 500);
+    aggregates = moneyRes.data;
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (countError) return c.json({ error: 'status_counts_failed', reason: countError }, 500);
@@ -8374,7 +8441,14 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       sofaModuleCostRowsPatch,
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
-      !posTablet, // owner ruling — non-POS author prices freely
+      /* owner ruling — non-POS author prices freely. 'operator-zero' when the
+         ERP editor states this 0 was TYPED, not unresolved (owner 2026-08-18;
+         see TrustSelling). Strict `=== true`, and only at 0, so every other
+         caller's 0 still means "not provided" and takes the catalogue fill. A
+         POS session never reaches it: posTablet short-circuits both arms. */
+      !posTablet && clientUnit === 0 && it.zeroPriceIntended === true
+        ? 'operator-zero'
+        : !posTablet,
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even
