@@ -92,6 +92,27 @@ export function hasSofaMixConflict(itemGroups: Array<string | null | undefined>)
     && cats.some((c) => c === 'BEDFRAME' || c === 'MATTRESS');
 }
 
+/** The EDIT-surface form of the same question, and the one an editor must ask.
+ *
+ *  hasSofaMixConflict is FLAT — "does this set of lines mix?" — which is the
+ *  right question for a NEW order, because the server's create path asks exactly
+ *  that. It is the WRONG question on a detail page: the server's line paths ask
+ *  whether the change INTRODUCES a mix (backend/src/scm/lib/main-mix.ts,
+ *  `mixesSofaWithOtherMain(after) && !mixesSofaWithOtherMain(before)`) so that an
+ *  order written before the rule existed stays editable. A flat client check in
+ *  front of a differential server gate refuses saves the server would have
+ *  accepted, and blames a rule the server itself grandfathers — the operator is
+ *  simply locked out of an order with no way forward.
+ *
+ *  `before` is the lines as the order is STORED; `after` is the lines as edited
+ *  (every existing line plus every staged add). */
+export function sofaMixIntroduced(
+  before: Array<string | null | undefined>,
+  after: Array<string | null | undefined>,
+): boolean {
+  return hasSofaMixConflict(after) && !hasSofaMixConflict(before);
+}
+
 /** One plain sentence for the sofa-mix block (owner standing rule: user errors
  *  = one plain sentence). Shared so desktop + mobile show identical copy. */
 export const SOFA_MIX_MESSAGE =
