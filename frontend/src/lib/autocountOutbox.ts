@@ -48,6 +48,17 @@
 //     TransferedQty=0.00000000 Transferable=T docCancelled=F`, four lines of it.
 //     Genuinely valuable, to an engineer. Not to a warehouse clerk.
 //
+// THE UNIT OF THIS SCREEN IS THE DOCUMENT, not the send (owner, 2026-08-16):
+// *"为什么在 AutoCount 里面一张 Sales Order 会出现两次呢?"* `HC-SO-2608-002` took
+// four of six rows under In AutoCount while the account book holds exactly one of
+// it. `scm.autocount_outbox` is append-only and writes one row per intended
+// operation, so a document that is created and then edited twice is three rows
+// for good. `acGroupByDocument` is where that lands: one row per document, its
+// newest send on the line, every earlier send kept and folded behind it. The
+// counts follow — `acDocTypeCounts` counts documents here and the status chips
+// count documents at the server, because two strips that count different things
+// cannot be read side by side.
+//
 // So the rule is now structural rather than a promise about wording, and it is
 // `acWhatWasSaid` below: NOTHING THE SERVER WROTE IS EVER THE PAGE'S OWN VOICE.
 // It appears only under the label saying who wrote it, and the part a reader
@@ -136,10 +147,10 @@ export const acDocTypePlural = (t: string): string =>
  * The document type is deliberately NOT in here. The type strip carries a count
  * per type, and a count per type cannot be computed from a list the server has
  * already narrowed to one type — every other chip would read zero. So the type
- * is a lens applied to the rows on this side (acDocTypeCounts / acRowsOfType)
- * while the state and the document number stay server-side, where they belong:
- * the state counts are exact and whole-company, and a document-number search
- * has to reach rows the 200-row page never loaded.
+ * is a lens applied on this side (acDocTypeCounts / acGroupsOfType) while the
+ * state and the document number stay server-side, where they belong: the state
+ * counts are exact and whole-company, and a document-number search has to reach
+ * rows the 200-row page never loaded.
  */
 export interface AcOutboxFilters {
   state: AcFilterState;
@@ -178,6 +189,13 @@ export interface AcOutboxRow {
 
 export interface AcOutboxResponse {
   writeback: { value: string | null; on: boolean; scope: string };
+  /**
+   * DOCUMENTS, not sends, on every one of these — see the route's own comment.
+   *
+   * They do NOT sum to `total` and must not be made to: a document that arrived
+   * and was later edited into a refusal is counted by `sent` and by `failed`,
+   * because both are true of it and both chips would list it.
+   */
   counts: {
     pending: number;
     sent: number;
@@ -187,6 +205,14 @@ export interface AcOutboxResponse {
     attention: number;
     total: number;
   };
+  /**
+   * False when the server's count scan stopped before the end of the queue, so
+   * every number above is a floor rather than a fact. Required in the type
+   * rather than optional: a response that forgot it would render as "complete"
+   * and the whole point of the flag is that an undercount must never read as a
+   * count.
+   */
+  counts_complete: boolean;
   oldest_pending: {
     doc_type: string;
     doc_no: string;
@@ -307,7 +333,7 @@ export const AC_REQUEUE_TODO: Record<string, string> = {
   "already-queued":
     "Nothing here. There is a live attempt for this document already — work that one.",
   "already-requeued":
-    "Find the newer row for this document. This one is only the record of what happened.",
+    "Find the newer send for this document. This one is only the record of what happened.",
   "still-refused":
     "Read the reason below. It is what is blocking the document NOW, which may not be what you just put right.",
   "not-recoverable":
@@ -446,7 +472,20 @@ const STATE_WORDS = {
   sent: "In AutoCount",
   failed: "Not accepted",
   skipped: "Held back",
-  requeued: "Sent again",
+  /**
+   * "REPLACED", NOT "SENT AGAIN" — owner, 2026-08-16, reading the live page:
+   * *"你写 Send Again，明明都已经进去了，为什么还要 Send Again？"*
+   *
+   * `Send again` is the BUTTON on this same screen, and it is an instruction:
+   * press me. The badge wearing the same two words read as that instruction on
+   * seven of seventeen rows — on exactly the rows where pressing it is the one
+   * thing a reader must not do, because the document is already through under a
+   * newer send. The state is not an action anybody should take; it is something
+   * that has already happened TO this record, so it is said in the passive and
+   * in a word the button does not use. Everything else on the row agrees with
+   * it: AC_REPLACED_LINE, acRowStatusLine and AC_STATE_PLAIN_MEANING below.
+   */
+  requeued: "Replaced",
 } as const;
 
 export const AC_STATE_LABEL: Record<string, string> = STATE_WORDS;
@@ -474,7 +513,7 @@ export const AC_STATE_PLAIN_MEANING: Record<string, string> = {
   skipped:
     "The ERP stopped it on purpose and never offered it to AutoCount. The row says why.",
   requeued:
-    "A refusal that has already been sent again. It is queued or in AutoCount under a newer row, so there is nothing to do here.",
+    "A refusal a newer send has replaced. The document is queued or in AutoCount under that newer send, so there is nothing to do here and nothing to press.",
 };
 
 /**
@@ -672,11 +711,17 @@ export const AC_REASON_COPY: Record<string, AcReasonCopy> = {
     toFix:
       "Raise it from the document it should follow. This one stays in the ERP only — sending it again will not help.",
   },
+  /* THIS ROW IS HISTORY, and the words say so rather than repeating a limit
+     that no longer holds. A merged conversion is sent now — the AutoCount side
+     learned to take several sources on 2026-08-16 and the ERP followed — so
+     nothing new lands in this class. What is still true of a row that CARRIES
+     it: it was recorded before the change, the ERP composed nothing for it, and
+     Send again therefore has nothing to send. */
   "no-autocount-shape": {
-    headline: "Several documents were merged into one, and AutoCount cannot hold that",
+    headline: "Merged from several documents, and recorded before we could send that",
     explain:
-      "This document was built from more than one earlier document at once, and AutoCount has no way to record that as a single document.",
-    toFix: "Enter it in AutoCount by hand. Sending it again will not help.",
+      "This document was built from more than one earlier document at once. AutoCount would not take that when this row was written, so nothing was ever composed for it. It can take it now — but only documents raised since then are sent automatically.",
+    toFix: "Raise the matching document in AutoCount by hand. Sending it again will not help, because nothing was composed to send.",
   },
   "mixed-source-lines": {
     headline: "Part of this invoice was never delivered on the document it follows",
@@ -876,11 +921,18 @@ export function acWhatWasSaid(row: AcOutboxRow, pageHasItsOwnWords: boolean): Ac
 
 // ── how much of a row is on screen before anybody clicks ────────────────────
 
-/** The one line a re-sent refusal gets. The rest of it is behind the opener. */
-export const AC_REQUEUED_LINE = "Already sent again — this row is history";
+/**
+ * The one line a replaced refusal gets. The rest of it is behind the opener.
+ *
+ * It used to read "Already sent again — this row is history", which is the badge
+ * defect one line down: it put the button's own words on the row and then said
+ * something a reader has to translate. Both halves are plainer now, and the
+ * second half says what to DO (nothing) rather than what the record IS.
+ */
+export const AC_REPLACED_LINE = "Replaced by a newer send — nothing to do on this one";
 
-export const AC_REQUEUED_NOTE =
-  "This row is the record of the first refusal, not something to act on — the document is queued or in AutoCount under a newer row.";
+export const AC_REPLACED_NOTE =
+  "This is the record of the first refusal, not something to act on — the document is queued or in AutoCount under a newer send.";
 
 /**
  * WHAT A ROW SAYS, split into the part that is always on screen and the part
@@ -938,7 +990,7 @@ export function acRowDetail(row: AcOutboxRow, reasonCleared: boolean): AcRowDeta
      unrecognised copy is excluded on purpose: it does NOT explain the row, it
      says nobody has written an explanation yet and points at the quote as the
      whole answer. Treating it as plain words would hide the only thing the row
-     has. A re-queued row counts — AC_REQUEUED_LINE and AC_REQUEUED_NOTE say all
+     has. A replaced row counts — AC_REPLACED_LINE and AC_REPLACED_NOTE say all
      of it, and the note under it is the first refusal's machinery. */
   const said = showSaid
     ? acWhatWasSaid(row, (copy !== null && copy !== AC_UNRECOGNISED_COPY) || showRequeuedNote)
@@ -946,7 +998,7 @@ export function acRowDetail(row: AcOutboxRow, reasonCleared: boolean): AcRowDeta
   const line = copy !== null
     ? copy.headline
     : showRequeuedNote
-      ? AC_REQUEUED_LINE
+      ? AC_REPLACED_LINE
       /* No plain-language copy exists for this one — a pending row carrying its
          last attempt's note is the case — so the line says WHO spoke and the
          words themselves stay behind the opener. */
@@ -956,76 +1008,212 @@ export function acRowDetail(row: AcOutboxRow, reasonCleared: boolean): AcRowDeta
   return { line, copy, said, showRequeuedNote, expandable };
 }
 
+// ── one line per DOCUMENT, not one line per SEND ────────────────────────────
+
+/**
+ * WHAT IDENTIFIES A DOCUMENT: its TYPE and its NUMBER, together.
+ *
+ * Not `doc_no` alone. Migration 0277's CHECK admits six types and the same
+ * number can legitimately belong to two of them, so a bare number would fold a
+ * delivery order into an invoice and show one row for two real documents —
+ * losing a document is a worse defect than showing one twice.
+ *
+ * Not `doc_id`. 0277 declares it nullable and deliberately untyped, in its own
+ * words: the six document tables do not share a key type and "an outbox row must
+ * survive its document being reworked". A key that is allowed to be absent
+ * cannot be the key.
+ *
+ * The pair is the TABLE'S own answer, not a choice made here:
+ * `autocount_outbox_doc_idx` is `(company_id, doc_type, doc_no)`, created by
+ * 0277 to answer "has this document been written to AutoCount, and as what".
+ * `company_id` is not in the key because the whole response is one company —
+ * every statement behind it carries the predicate. The backend's `acDocKey`
+ * joins the same two columns for the counts.
+ */
+export const acDocumentKey = (row: AcOutboxRow): string =>
+  `${row.doc_type}\u0000${row.doc_no}`;
+
+/** Every send for ONE document, and the one that says where it stands now. */
+export interface AcDocGroup {
+  key: string;
+  docType: string;
+  docNo: string;
+  /**
+   * The NEWEST send, which is what the row shows. Under a status filter that is
+   * the newest send MATCHING the filter, which is the honest answer to the
+   * question the filter asked — "In AutoCount" showing a document's arrival is
+   * right even if the document has since been edited into a refusal, and the
+   * Needs attention chip is where that refusal is somebody's job.
+   */
+  current: AcOutboxRow;
+  /** Every send, newest first. `current` is the first of them. */
+  sends: AcOutboxRow[];
+  /** The sends BEHIND the current one — the audit trail, kept, folded. */
+  earlier: AcOutboxRow[];
+}
+
+/** Newest first, treating an unreadable or absent timestamp as oldest. */
+const sendTime = (row: AcOutboxRow): number => {
+  const t = row.created_at === null ? NaN : new Date(row.created_at).getTime();
+  return Number.isFinite(t) ? t : -Infinity;
+};
+
+/**
+ * ONE ROW PER DOCUMENT. The owner, 2026-08-16, on the live page:
+ * *"为什么在 AutoCount 里面一张 Sales Order 会出现两次呢?"*
+ *
+ * `HC-SO-2608-002` took FOUR of the six rows under *In AutoCount → Sales
+ * orders* — three changes and the original create — while `AED_HOUZS` holds
+ * exactly one of it. Nothing was duplicated anywhere; the screen was listing one
+ * row per SEND and calling the count documents. `scm.autocount_outbox` is
+ * append-only and records one row per intended operation (0277's own words), so
+ * an ordinary document that is created and then edited twice is three rows
+ * forever, and the busier the document the louder it shouts.
+ *
+ * The sends are the AUDIT TRAIL and none of them is dropped — they move behind
+ * the document, which is `earlier`.
+ *
+ * Group order is FIRST APPEARANCE, so the server's ordering survives: the route
+ * returns `created_at` descending, which puts the document with the newest send
+ * first. The sends inside a group are sorted here rather than assumed, because a
+ * caller that hands over rows in another order must still get a truthful
+ * `current` — that is the field the whole row is drawn from.
+ */
+export function acGroupByDocument(rows: AcOutboxRow[]): AcDocGroup[] {
+  const byKey = new Map<string, AcOutboxRow[]>();
+  const order: string[] = [];
+  for (const r of rows) {
+    const key = acDocumentKey(r);
+    const bucket = byKey.get(key);
+    if (bucket) bucket.push(r);
+    else {
+      byKey.set(key, [r]);
+      order.push(key);
+    }
+  }
+  return order.map((key) => {
+    /* Non-null by construction — the key came out of the same loop that filled
+       the map — and asserted rather than defaulted, because a `?? []` here would
+       silently produce a group with no `current` to draw. */
+    const bucket = byKey.get(key)!;
+    const sends = [...bucket].sort((a, b) => sendTime(b) - sendTime(a));
+    const current = sends[0]!;
+    return {
+      key,
+      docType: current.doc_type,
+      docNo: current.doc_no,
+      current,
+      sends,
+      earlier: sends.slice(1),
+    };
+  });
+}
+
+/** What the fold over a document's earlier sends is called. */
+export function acEarlierSendsHeading(n: number): string {
+  return n === 1
+    ? "1 earlier send for this document"
+    : `${n} earlier sends for this document`;
+}
+
+export const AC_EARLIER_SENDS_NOTE =
+  "Every time this document was offered to AutoCount, oldest last. They are the record of what"
+  + " was sent and what came back; the line above is where the document stands now.";
+
+/**
+ * Which documents have their send history open.
+ *
+ * Keyed by the document rather than by a row id, and lifted out of the card for
+ * the same two reasons `useAcExpandedRows` is: the list is windowed, so a card
+ * that scrolls out of view is unmounted and would forget, and a fold that
+ * behaves differently on the phone is the split this shared layer exists to
+ * stop.
+ */
+export function useAcSendHistory() {
+  const [open, setOpen] = useState<Record<string, boolean>>({});
+  const isOpen = (g: AcDocGroup): boolean => open[g.key] ?? false;
+  const toggle = useCallback((g: AcDocGroup) => {
+    setOpen((prev) => ({ ...prev, [g.key]: !(prev[g.key] ?? false) }));
+  }, []);
+  return { isOpen, toggle };
+}
+
 // ── history is not a task list ──────────────────────────────────────────────
 
 /**
- * A row whose document has already been sent again under a NEWER row.
+ * A document whose latest send has already been REPLACED by a newer one.
  *
  * It is a record. Nothing on it can be worked, `can_requeue` is false on it, and
  * `acReasonCopy` deliberately gives it no To fix line — the server has said so
  * three separate ways. The one thing left saying otherwise was its POSITION:
  * mixed in with live rows, at the same size, in the same list.
+ *
+ * Judged on `current`, not on any send: a document whose refusal was re-sent has
+ * the LIVE row as its newest send, so grouping alone lifts it back into the list
+ * where it belongs and files the refusal underneath it. Only a document with
+ * nothing newer than a replaced send is a record.
  */
-export const acIsSuperseded = (row: AcOutboxRow): boolean => row.state === "requeued";
+export const acIsReplaced = (group: AcDocGroup): boolean => group.current.state === "requeued";
 
-export interface AcRowSplit {
-  /** The rows that are somebody's job. These are the list. */
-  live: AcOutboxRow[];
-  /** The rows that are a record. Folded away unless the reader asks. */
-  superseded: AcOutboxRow[];
+export interface AcDocSplit {
+  /** The documents that are somebody's job. These are the list. */
+  live: AcDocGroup[];
+  /** The documents that are a record. Folded away unless the reader asks. */
+  replaced: AcDocGroup[];
 }
 
 /**
- * Split the loaded rows into work and record.
+ * Split the loaded documents into work and record.
  *
- * Owner, 2026-08-16, reading the live page: fifteen rows, SIX of them "already
- * sent again, this row is history", with HC-DO-2608-001 and HC-DO-2608-002 each
- * appearing twice. Nearly half a screen of documents that are already in
- * AutoCount or already queued, sitting between him and the ones that are not.
- * The table is append-only, so this only gets worse — every refusal that is ever
- * put right leaves one of these behind forever.
+ * Owner, 2026-08-16, reading the live page: fifteen rows, SIX of them replaced
+ * refusals, with HC-DO-2608-001 and HC-DO-2608-002 each appearing twice. Nearly
+ * half a screen of documents that are already in AutoCount or already queued,
+ * sitting between him and the ones that are not. The table is append-only, so
+ * this only gets worse — every refusal that is ever put right leaves one of
+ * these behind forever.
  *
  * @param state the filter in force. When it IS `requeued` the reader has
  *   ASKED for the history, so it is the list and nothing is folded. Required
- *   rather than defaulted: a caller that forgot it would fold away the very rows
- *   the Sent again chip exists to show, and answer the chip with an empty page.
+ *   rather than defaulted: a caller that forgot it would fold away the very
+ *   documents the Replaced chip exists to show, and answer the chip with an
+ *   empty page.
  */
-export function acSplitSuperseded(rows: AcOutboxRow[], state: AcFilterState): AcRowSplit {
-  if (state === "requeued") return { live: rows, superseded: [] };
+export function acSplitReplaced(groups: AcDocGroup[], state: AcFilterState): AcDocSplit {
+  if (state === "requeued") return { live: groups, replaced: [] };
   return {
-    live: rows.filter((r) => !acIsSuperseded(r)),
-    superseded: rows.filter(acIsSuperseded),
+    live: groups.filter((g) => !acIsReplaced(g)),
+    replaced: groups.filter(acIsReplaced),
   };
 }
 
 /**
  * What the folded group is called.
  *
- * Both forms written out. `row` + "s" is right here and wrong six lines up in
+ * Both forms written out. `document` + "s" is right here and wrong further up in
  * AC_DOC_TYPE_PLURAL ("GOODS RECEIVEDS"), and a rule applied only where it
  * happens to work is not a rule anybody can follow.
  */
-export function acSupersededHeading(n: number): string {
+export function acReplacedHeading(n: number): string {
   return n === 1
-    ? "1 superseded row, kept as a record"
-    : `${n} superseded rows, kept as a record`;
+    ? "1 replaced document, kept as a record"
+    : `${n} replaced documents, kept as a record`;
 }
 
-export const AC_SUPERSEDED_NOTE =
-  "Each of these was refused once and has already been sent again. Their documents are queued or"
-  + " in AutoCount under a newer row, so there is nothing here to do — they are kept so the refusal"
-  + " that happened can still be found.";
+export const AC_REPLACED_GROUP_NOTE =
+  "Each of these was refused once and a newer send has replaced it. Their documents are queued or"
+  + " in AutoCount under that newer send, so there is nothing here to do — they are kept so the"
+  + " refusal that happened can still be found.";
 
 /**
- * What the list says when the filter matched rows and every one is history.
+ * What the list says when the filter matched documents and every one is history.
  *
  * Not `acEmptyLine`'s "try another status": there IS something here, it is
- * folded, and telling somebody to go elsewhere while six rows sit under the
+ * folded, and telling somebody to go elsewhere while six documents sit under the
  * message is the kind of small lie that makes a screen untrustworthy.
  */
-export const AC_ONLY_SUPERSEDED_LINE =
-  "Nothing live here. Everything the filters matched has already been sent again, and is folded"
-  + " below.";
+export const AC_ONLY_REPLACED_LINE =
+  "Nothing live here. Every document the filters matched has been replaced by a newer send, and is"
+  + " folded below.";
 
 /**
  * The folded group, FOLDED on arrival, on both surfaces.
@@ -1035,7 +1223,7 @@ export const AC_ONLY_SUPERSEDED_LINE =
  * desktop and the phone is one of the two surfaces quietly deciding history is
  * work again, and nothing would fail.
  */
-export function useAcSupersededGroup() {
+export function useAcReplacedGroup() {
   const [open, setOpen] = useState(false);
   const toggle = useCallback(() => { setOpen((v) => !v); }, []);
   return { open, toggle };
@@ -1081,7 +1269,12 @@ export function useAcExpandedRows() {
 // ── the type strip ──────────────────────────────────────────────────────────
 
 /**
- * How many of each type are in the rows currently loaded, plus `all`.
+ * How many DOCUMENTS of each type are in the rows currently loaded, plus `all`.
+ *
+ * DOCUMENTS since 2026-08-17, and that is the second half of the owner's
+ * duplicate report: the chip used to count rows, so one sales order sent four
+ * times made *Sales orders 4*. Both strips now say the same kind of thing, which
+ * is the only way a reader can compare them.
  *
  * Counted over the pool the STATE filter already produced, so the numbers move
  * when the state changes — which is the point of putting them on the chips.
@@ -1091,17 +1284,17 @@ export function useAcExpandedRows() {
  */
 export type AcDocTypeCounts = Record<AcDocType | "all", number>;
 
-export function acDocTypeCounts(rows: AcOutboxRow[]): AcDocTypeCounts {
+export function acDocTypeCounts(groups: AcDocGroup[]): AcDocTypeCounts {
   /* Written out rather than built in a loop so the COMPILER holds it to
      AcDocType: a seventh type added to AC_DOC_TYPES fails to compile here
      instead of quietly getting a chip that always reads zero. */
-  const out: AcDocTypeCounts = { all: rows.length, SO: 0, DO: 0, IV: 0, PO: 0, GR: 0, PI: 0 };
-  /* Everything is `rows.length`, so the six chips are allowed to sum to LESS
+  const out: AcDocTypeCounts = { all: groups.length, SO: 0, DO: 0, IV: 0, PO: 0, GR: 0, PI: 0 };
+  /* Everything is `groups.length`, so the six chips are allowed to sum to LESS
      than it: a doc_type 0277's CHECK does not admit is counted in `all` and
      nowhere else. That is the honest arithmetic — inventing a seventh chip for
      a value the database cannot hold would be worse. */
-  for (const r of rows) {
-    if ((AC_DOC_TYPES as readonly string[]).includes(r.doc_type)) out[r.doc_type as AcDocType] += 1;
+  for (const g of groups) {
+    if ((AC_DOC_TYPES as readonly string[]).includes(g.docType)) out[g.docType as AcDocType] += 1;
   }
   return out;
 }
@@ -1109,16 +1302,44 @@ export function acDocTypeCounts(rows: AcOutboxRow[]): AcDocTypeCounts {
 /**
  * The number on a STATUS chip. The server's, exact and whole-company, unlike
  * the type counts above — and `all` is the total rather than a seventh count.
+ *
+ * Also DOCUMENTS since 2026-08-17: the route counts distinct `doc_type + doc_no`
+ * rather than rows. The two strips therefore agree with one another and with the
+ * list under them, which they did not before.
  */
 export function acStateCount(d: AcOutboxResponse | null, s: AcFilterState): number {
   if (!d) return 0;
   return s === "all" ? d.counts.total : d.counts[s];
 }
 
-/** The rows the type lens leaves visible. An empty type means every type. */
-export function acRowsOfType(rows: AcOutboxRow[], docType: AcDocType | ""): AcOutboxRow[] {
-  return docType ? rows.filter((r) => r.doc_type === docType) : rows;
+/** The documents the type lens leaves visible. An empty type means every type. */
+export function acGroupsOfType(groups: AcDocGroup[], docType: AcDocType | ""): AcDocGroup[] {
+  return docType ? groups.filter((g) => g.docType === docType) : groups;
 }
+
+/**
+ * The line under the strips: how much of the company is on screen.
+ *
+ * Shared because it is a SENTENCE and because the two surfaces had already
+ * drifted — the desktop wrote "6 of 17 documents" and the phone wrote "6 of 17",
+ * two different claims from two hand-written template strings. Both halves are
+ * documents now; the left is what the filters left on screen, the right is what
+ * the whole company holds.
+ */
+export function acListCountLine(shown: number, total: number): string {
+  return `${shown} of ${total} document${total === 1 ? "" : "s"}`;
+}
+
+/**
+ * What to add when the server could not scan the whole queue for its counts.
+ *
+ * A separate sentence rather than a "+" on each chip: the numbers are still the
+ * best answer available and are right for everything the scan reached, and the
+ * one thing a reader must not conclude from them is "and that is all of it".
+ */
+export const AC_COUNTS_PARTIAL_LINE =
+  "The queue is now too long to count in one pass, so the numbers on the chips are at least this"
+  + " many and possibly more.";
 
 /**
  * The short line under a document number that says where it stands.
@@ -1143,7 +1364,7 @@ export function acRowStatusLine(row: AcOutboxRow, maxAttempts: number): string {
     case "skipped":
       return "Held back on purpose";
     case "requeued":
-      return "Already sent again under a newer row";
+      return "Replaced by a newer send";
     default:
       return "";
   }
@@ -1242,6 +1463,29 @@ export function acHeadline(d: AcOutboxResponse | null): { tone: AcTone; text: st
     return {
       tone: "bad",
       text: `${d.counts.attention} document${d.counts.attention === 1 ? "" : "s"} need${d.counts.attention === 1 ? "s" : ""} your attention — ${bits.join(", ")}. They are in the ERP and not in the account book.`,
+    };
+  }
+  /* THE COUNTS THEMSELVES CAN BE A FLOOR. The server SAYS SO — it sets
+     `counts_complete: false` when its scan stopped before the end of the queue
+     (scm/routes/autocount-outbox.ts) — and both screens already render a
+     separate banner for it. The HEADLINE ignored it, so the tone-setting line
+     read "Everything is in AutoCount" in green while a note underneath said the
+     numbers were incomplete: two contradictory statements on one screen, and
+     the reassuring one is the one people act on.
+
+     `attention > 0` is answered ABOVE this point and needs no such guard — a
+     floor that is already non-zero is still non-zero. It is only the reassuring
+     verdicts that a partial count cannot support (owner 2026-08-17: no empty
+     state may claim the work is done). */
+  if (!d.counts_complete) {
+    return {
+      tone: "muted",
+      /* Deliberately NOT a repeat of AC_COUNTS_PARTIAL_LINE, which both screens
+         already render beneath this. Saying the same sentence twice is how a
+         reader learns to stop reading either one. */
+      text:
+        "The queue was too long to count in one pass, so this line cannot say whether everything"
+        + " reached AutoCount. Filter to Not accepted or Held back to check the documents that matter.",
     };
   }
   if (d.counts.total === 0) {

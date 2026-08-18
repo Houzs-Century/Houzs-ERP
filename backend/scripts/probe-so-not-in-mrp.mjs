@@ -12,8 +12,8 @@
      4. line.qty > 0
      5. qty - (delivered - returned) > 0
      6. DATED: line_delivery_date OR so.customer_delivery_date is present.
-        An undated line stays in the allocation but the page hides it unless
-        SHOW NO-DATE is ticked (includeUndated).
+        An undated line stays in the allocation and, since 2026-08-18, is shown
+        on the page by default too (untick SHOW NO-DATE to hide it).
 
    Writes nothing. DOC=HC-SO-2608-003 node scripts/probe-so-not-in-mrp.mjs */
 import postgres from 'postgres';
@@ -70,10 +70,10 @@ async function main() {
       note(`      stock_status        ${l.stock_status ?? '(null)'}`);
       note(`      line_delivery_date  ${l.line_delivery_date ?? '(null)'}`);
       note(`      warehouse_id        ${l.warehouse_id ?? '(null)'}${l.warehouse_id ? '' : '   <-- no warehouse on the line'}`);
-      note(`      DATED for MRP?      ${dated ? 'yes' : 'NO — hidden unless SHOW NO-DATE is ticked'}`);
+      note(`      DATED for MRP?      ${dated ? 'yes' : 'NO — shown by default, marked "No date", sorted last'}`);
       note(`      variants            ${(l.variants ?? '').slice(0, 160)}`);
       if (fails.length) note(`      DROPPED FROM DEMAND: ${fails.join('; ')}`);
-      else if (!dated) note(`      IN the allocation, HIDDEN on the page (includeUndated=false)`);
+      else if (!dated) note(`      IN the allocation, and ON the page since 2026-08-18 (marked "No date")`);
       else note(`      passes every demand filter — it should be on the MRP page`);
     }
 

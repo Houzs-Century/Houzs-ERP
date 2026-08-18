@@ -47,6 +47,7 @@ import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -124,7 +125,7 @@ export const PurchaseReturnNew = () => {
   const navigate = useNavigate();
   const notify   = useNotify();
   const [params] = useSearchParams();
-  /* The GRN screens' "Convert to PR" sent ?fromGrn=<id> here while this page has
+  /* The GRN screens' "Transfer to Purchase Return" sent ?fromGrn=<id> here while this page has
      always read `grnId`, so the button opened a blank free-form return with no
      note attached and said nothing (fixed 2026-08-16 by routing both callers
      through lib/convertScope). The scope read now goes through the same module,
@@ -341,7 +342,7 @@ export const PurchaseReturnNew = () => {
         actions={
           <div className={styles.actions}>
             {/* Pull lines from a Goods Receipt — routes to the GRN list where the
-                user right-clicks "Convert to PR" (no dedicated picker page). */}
+                user right-clicks "Transfer to Purchase Return" (no dedicated picker page). */}
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/grns')}>
               <ArrowRightLeft {...ICON} /> From Goods Receipt
             </Button>
@@ -375,7 +376,7 @@ export const PurchaseReturnNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Return Date *</span>
-              <input type="date" value={returnDate} onChange={(e) => setReturnDate(e.target.value)} className={styles.fieldInput} required />
+              <DateField fullWidth value={returnDate} onChange={(iso) => setReturnDate(iso)} className={styles.fieldInput} required/>
             </label>
 
             <label className={styles.field}>

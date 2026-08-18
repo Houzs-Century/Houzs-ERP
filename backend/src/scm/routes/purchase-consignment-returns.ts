@@ -31,6 +31,7 @@ import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { qtyCapRefusal } from '../lib/qty-cap';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { buildVariantSummary, computeVariantKey, type VariantAttrs } from '../shared';
 import {
   orderSofaModuleRowsWithinBuilds,
@@ -514,7 +515,9 @@ purchaseConsignmentReturns.post('/', async (c) => {
   }).filter((r) => Number(r.qty_returned) > 0);
 
   if (itemRows.length === 0) {
-    return c.json({ error: 'no_returnable_qty', message: 'Every line is already fully returned (nothing left to return).' }, 400);
+    /* Computed from the REQUEST, not from a read — see the same guard in
+       purchase-returns.ts. */
+    return c.json({ error: 'no_returnable_qty', message: 'No line in this request carries a quantity to return. Enter a quantity above zero on at least one line.' }, 400);
   }
 
   // PC Return is created POSTED. The inventory OUT is booked by the resync below.
@@ -528,7 +531,7 @@ purchaseConsignmentReturns.post('/', async (c) => {
     pc_order_id: pcOrderId,
     pc_receive_id: pcReceiveId,
     supplier_id: body.supplierId,
-    return_date: (body.returnDate as string) ?? todayMyt(),
+    return_date: dateOrNull(body.returnDate) ?? todayMyt(),
     reason: (body.reason as string | undefined) ?? null,
     refund_centi: totalRefund,
     notes: (body.notes as string | undefined) ?? null,
@@ -732,7 +735,7 @@ export const createPcReturnFromPcReceiveHandler = async (c: Context<{ Bindings: 
   const lines = allLines
     .map((it) => ({ ...it, _remaining: (it.qty_accepted ?? 0) - (it.returned_qty ?? 0) }))
     .filter((it) => it._remaining > 0);
-  if (lines.length === 0) return c.json({ error: 'nothing_to_return', message: 'Receive is fully returned' }, 400);
+  if (lines.length === 0) return c.json({ error: 'nothing_to_return', message: 'No returnable lines came back for this receive. Open it and check its returned balance before treating it as returned in full.' }, 400);
 
   const totalRefund = lines.reduce((s, it) => s + (it._remaining * it.unit_price_centi), 0);
 
@@ -911,6 +914,9 @@ purchaseConsignmentReturns.patch('/:id', async (c) => {
   ] as const) {
     if (body[from] !== undefined) updates[to] = body[from];
   }
+  /* A cleared return date posts "" and this loop wrote it through to the date
+     column, which Postgres rejects and 500s the save. */
+  coerceEmptyDates(updates);
   const { data, error } = await scopeToCompanyId(sb.from('purchase_consignment_returns').update(updates).eq('id', id), co.companyId).select(HEADER).maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);

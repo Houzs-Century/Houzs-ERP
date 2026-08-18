@@ -34,7 +34,10 @@ import {
   type CollapsedLine,
   type SofaRefusal,
 } from './autocount-sofa-collapse';
-import { SO_PROCESSING_DATE_COLUMN } from '../scm/shared/so-processing-date';
+import {
+  SO_PROCESSING_DATE_AC_UDF,
+  SO_PROCESSING_DATE_COLUMN,
+} from '../scm/shared/so-processing-date';
 import { buildVariantSummary } from '../scm/shared/variant-summary';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
@@ -1180,7 +1183,16 @@ export function composeCreateSo(
       BRANDING: bookSpellingOrOwn(soBranding(header.branding, lines), BRANDING_MAP),
       VENUE: bookSpellingOrOwn(header.venue, VENUE_MAP),
       ToPONo: soCustomerRef(header),
-      PDate: acUdfDate(header.processing_date),
+      /* `PDate` IS AUTOCOUNT'S OWN NAME, NOT OURS — DO NOT "UNIFY" IT.
+         The ERP calls this date `processing_date` everywhere it owns; this key
+         is the UDF spelling on AutoCount's sales-order document
+         (`SO.UDF_PDate`), and it is the one name in the set that a naming
+         sweep must leave alone (owner asked 2026-08-18 which of the names was
+         the AutoCount write — this one). Renaming it renames nothing in
+         AutoCount: the connector drops an unknown UDF, the document posts 200
+         without it, and every Processing Date silently stops reaching the
+         account book. See SO_PROCESSING_DATE_AC_UDF. */
+      [SO_PROCESSING_DATE_AC_UDF]: acUdfDate(header.processing_date),
       BALANCE: acUdfMoney(outstandingCenti),
       /* The misspelling is AutoCount's own — the field is UDF_PAYEMENT in the
          book, and the cutover read it (import-ac-outstanding-so.mjs). */
@@ -1447,9 +1459,38 @@ export const AC_ROUTE = {
   cancel: '/cancel',
   edit: '/edit',
   ensure_masters: '/ensure-masters',
+  /* NOT a document operation, and the only route here that reads. It is in this
+     map so the drain can reach it through `callAcService` — same URL, same key,
+     same error classification — rather than growing a second HTTP client for
+     one call. The service answers it on GET or POST (the branch sits above the
+     POST-only check) and it is the ONLY thing that says which BUILD is running. */
+  health: '/health',
 } as const;
 
 export type AcOp = keyof typeof AC_ROUTE;
+
+/**
+ * A master the account book ALREADY HELD, under a DIFFERENT company name.
+ *
+ * `/ensure-masters` used to ask `CreditorExists(acc)` — `GetCreditor(acc) !=
+ * null` — and throw away the `CompanyName` it had just read, so a code that
+ * resolves to the WRONG company was indistinguishable from one that resolves to
+ * the right company at every layer. That is how HC-PO-2608-001 came to be
+ * booked against `400-H004`, which the book holds as HAO HUA FURNITURE, for a
+ * purchase order the ERP names HOOKKA INDUSTRIES SDN. BHD.
+ *
+ * IT REPORTS AND IT NEVER REFUSES. The ERP legitimately holds a shorter trading
+ * name than the book's registered one on many suppliers, so failing the document
+ * would block real purchasing in bulk. `ok` is untouched by a mismatch.
+ */
+export interface AcMasterMismatch {
+  /** `creditor:400-H004` — the kind and the account, as the service names it. */
+  master: string;
+  /** The name the ERP sent alongside the code. */
+  erp: string;
+  /** The name the account book holds against that code. */
+  book: string;
+}
 
 export interface AcCallResult {
   ok: boolean;
@@ -1465,6 +1506,21 @@ export interface AcCallResult {
    */
   lines: AcCreatedLine[];
   error: string | null;
+  /**
+   * Masters the book already held under a different name. ALWAYS EMPTY except
+   * on `/ensure-masters`, and empty is not the same as clean: a host still
+   * running a build older than this field simply does not send it, and
+   * `GET /health`'s `builtAt` / `mvid` is the only thing that says which build
+   * answered. Absent reads as "not reported", never as "compared and agreed".
+   */
+  mismatches: AcMasterMismatch[];
+  /**
+   * The parsed response object, for the one caller that needs a field this
+   * interface does not name: `/health` answers `builtAt` and `mvid`, and
+   * promoting those to first-class fields would put a diagnostic's shape into
+   * the type every document operation returns. Null when the body was not JSON.
+   */
+  body: Record<string, unknown> | null;
   /** False for a refusal a retry cannot fix (a 4xx, or AutoCount saying no). */
   retryable: boolean;
 }
@@ -1494,6 +1550,29 @@ export function parseCreatedLines(raw: unknown): AcCreatedLine[] {
   return out;
 }
 
+/**
+ * Read the `mismatched` array off an `/ensure-masters` response, keeping only
+ * entries that carry all three strings. A half-parsed entry is DROPPED rather
+ * than coerced — the same rule `parseCreatedLines` follows one function up, and
+ * for a sharper reason here: a mismatch line with a blank `book` would read as
+ * "the account book calls this supplier nothing", which is a claim about the
+ * book that nobody measured.
+ */
+export function parseAcMismatches(raw: unknown): AcMasterMismatch[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AcMasterMismatch[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const r = entry as Record<string, unknown>;
+    const master = typeof r.master === 'string' ? r.master.trim() : '';
+    const erp = typeof r.erp === 'string' ? r.erp.trim() : '';
+    const book = typeof r.book === 'string' ? r.book.trim() : '';
+    if (!master || !erp || !book) continue;
+    out.push({ master, erp, book });
+  }
+  return out;
+}
+
 /** Config, not a secret. Absent = the write-back cannot run, and says so. */
 export function acServiceConfig(env: Env): { url: string; key: string | null } | null {
   const url = (env as unknown as { AC_SYNC_URL?: string }).AC_SYNC_URL;
@@ -1520,7 +1599,10 @@ export async function callAcService(
 ): Promise<AcCallResult> {
   const cfg = acServiceConfig(env);
   if (!cfg) {
-    return { ok: false, status: 0, docNo: null, lines: [], error: 'AC_SYNC_URL is not configured', retryable: false };
+    return {
+      ok: false, status: 0, docNo: null, lines: [], mismatches: [], body: null,
+      error: 'AC_SYNC_URL is not configured', retryable: false,
+    };
   }
   let res: Response;
   try {
@@ -1539,13 +1621,15 @@ export async function callAcService(
       status: 0,
       docNo: null,
       lines: [],
+      mismatches: [],
+      body: null,
       error: e instanceof Error ? e.message : String(e),
       retryable: true,
     };
   }
 
   const text = await res.text().catch(() => '');
-  let body: { ok?: boolean; docNo?: string; error?: string; lines?: unknown } = {};
+  let body: { ok?: boolean; docNo?: string; error?: string; lines?: unknown; mismatched?: unknown } = {};
   try { body = text ? JSON.parse(text) : {}; } catch { /* keep the raw text below */ }
 
   if (res.ok && body.ok !== false) {
@@ -1554,6 +1638,8 @@ export async function callAcService(
       status: res.status,
       docNo: body.docNo ?? null,
       lines: parseCreatedLines(body.lines),
+      mismatches: parseAcMismatches(body.mismatched),
+      body: body as Record<string, unknown>,
       error: null,
       retryable: false,
     };
@@ -1564,6 +1650,11 @@ export async function callAcService(
     status: res.status,
     docNo: null,
     lines: [],
+    /* Carried on the failure path too. A payload can name ten creditors, have
+       nine of them agree, one of them disagree, and fail on an unrelated ITEM —
+       dropping the finding because the call failed would lose it for good. */
+    mismatches: parseAcMismatches(body.mismatched),
+    body: (body ?? null) as Record<string, unknown> | null,
     error,
     /* 4xx is configuration or a bad payload — a retry cannot fix either, so
        fail it now with the message intact. 5xx is ambiguous by construction:
@@ -1624,9 +1715,15 @@ export const SO_ADDRESS_FIELDS: readonly string[] = [
   'address1', 'address2', 'address3', 'address4', 'city', 'postcode', 'customer_state',
 ];
 
-/** `processing_date` is the owner's 账目日期; it leaves as the `PDate` UDF. */
+/** `processing_date` is the owner's 账目日期; it leaves as the `PDate` UDF.
+ *
+ *  EXTERNAL NAME ON THE RIGHT-HAND SIDE. The key is OUR column and follows our
+ *  unification; the value is AUTOCOUNT'S UDF and must never be renamed to match
+ *  it. This map is exactly where the two vocabularies meet, which is why both
+ *  sides are pinned to constants — `SO_PROCESSING_DATE_COLUMN` moves with a
+ *  rename, `SO_PROCESSING_DATE_AC_UDF` deliberately does not. */
 export const CLEARABLE_SO_UDF_FIELDS: Readonly<Record<string, string>> = {
-  processing_date: 'PDate',
+  [SO_PROCESSING_DATE_COLUMN]: SO_PROCESSING_DATE_AC_UDF,
 };
 
 /** Header dates with no foreign key behind them, so a cleared one may travel. */
@@ -1683,12 +1780,29 @@ export function clearedAcKeys(
  *
  * `DtlKeys` and `Details` are index-aligned by construction: both come from the
  * same decision, which refused unless every line mapped 1:1.
+ *
+ * THE ERP NUMBERS THIS DOCUMENT — divergence D5, closed here 2026-08-17 and the
+ * last route it was open on. The first `/so-to-po` that ever succeeded landed as
+ * `PO-009968` while the ERP calls the same purchase order `HC-PO-2608-001`
+ * (host log, 2026-08-17 10:15), because this function returned `{ DtlKeys,
+ * Details }` and nothing else. Every other type already carries its own number
+ * into the book — `enqueueConvert` closed D5 for the four conversions and
+ * `composeCreatePo` has always sent one — so the purchase order was the single
+ * document in the chain whose two sides could not be reconciled by anyone.
+ *
+ * `docNo` is REQUIRED and it is the FIRST parameter, not an option. It decides
+ * the document's identity in the account book, and an optional one would mean
+ * every caller that says nothing silently reverts to AutoCount's counter with no
+ * compile error — which is exactly how this stayed open (CLAUDE.md, "a parameter
+ * that DECIDES something is required, never optional").
  */
 export function composeSoToPo(
+  docNo: string,
   dtlKeys: readonly number[],
   details: readonly AcDetail[],
-): { DtlKeys: number[]; Details: Array<Record<string, unknown>> } {
+): { DocNo: string; DtlKeys: number[]; Details: Array<Record<string, unknown>> } {
   return {
+    DocNo: docNo,
     DtlKeys: [...dtlKeys],
     Details: details.map((d, i) => ({
       DtlKey: dtlKeys[i],

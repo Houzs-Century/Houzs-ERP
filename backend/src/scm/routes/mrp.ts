@@ -62,7 +62,7 @@
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
-import { computeVariantKey, buildVariantSummary, isServiceLine, splitSofaCode, effectiveDelivery, type VariantAttrs } from '../shared';
+import { computeVariantKey, buildVariantSummary, isServiceLine, splitSofaCode, effectiveDelivery, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import { soDeliverableRemaining } from './delivery-orders-mfg';
 import { activeCompanyId } from '../lib/companyScope';
@@ -83,6 +83,7 @@ import {
 } from '../lib/ship-commitment';
 import { WH_NONE, composite, loadCommittedShipments } from '../lib/committed-shipments';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
+import { mapBounded, eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
 
@@ -117,6 +118,15 @@ const SO_DONE = new Set<string>(SO_TERMINAL_STATES);
    draft PO would make an SO line look "covered" and hide a real shortage from
    MRP + the From-SO shortage cap (leak guard, Draft/Confirmed rollout). */
 const PO_DEAD = new Set(['CANCELLED', 'DRAFT']);
+
+/* How many of this engine's independent reads may be in flight at once.
+   6 is a BOUND, not a target: the reads it governs are I/O-bound round trips
+   through Hyperdrive's pooled connections, so the win is in overlapping latency
+   and the risk is exhausting the pool — past ~6 the curve flattens while the
+   pool pressure does not. Raising it is not free and is not a tuning knob to
+   turn without re-running backend/scripts/probe-mrp-roundtrip-cost.mjs, which
+   measures both arms against production and prints the round-trip count. */
+const MRP_READ_CONCURRENCY = 6;
 
 /* EVERY MULTI-ROW READ ON THIS PAGE IS PAGED (2026-08-16). It used to carry a
    `.limit(5000)` plus a `rows.length >= 5000` throw named `mrp_load_truncated`,
@@ -172,6 +182,11 @@ type DemandRow = {
      "warehouse follows the SO" block below. */
   warehouse_id: string | null;
   line_delivery_date: string | null;
+  /* TRUE only when a human typed a date on THIS line. FALSE means
+     `line_delivery_date` is a MIRROR of the header date (mig 0172's
+     apply_so_header_followers writes the pair), and a mirror goes stale the
+     moment the order is rescheduled — see effectiveSoDelivery. */
+  line_delivery_date_overridden: boolean | null;
   line_no: number | null;
   created_at: string | null;
   cancelled: boolean;
@@ -179,8 +194,12 @@ type DemandRow = {
     debtor_name: string | null;
     status: string;
     so_date: string | null;
-    customer_delivery_date: string | null;
-    processing_date: string | null; // processing date (drives when to order)
+    customer_delivery_date: string | null;   // the customer's ORIGINAL promise — never overwritten
+    amended_delivery_date: string | null;    // the reschedule Logistics confirmed; wins over the original
+    processing_date: string | null; /* Release-for-purchasing signal (owner 2026-08-18: "Processing Date
+       就代表这张单可以安排订货了"). Carried for DISPLAY only — this page's
+       "when to order" is orderByDate below, derived from the delivery date and
+       the category lead time. NOT a production date: there is no production. */
     customer_state: string | null;       // staff #8 — show the customer's state (info-only)
     sales_location: string | null;       // the SO's OWN warehouse of record (lib/so-warehouse.ts)
   } | null;
@@ -328,6 +347,22 @@ type SofaSet = {
   suppliers: Array<{ supplierId: string; code: string; name: string; isMain: boolean }>;
 };
 
+/* THE date for one demand line — the shared reader, and the ONLY place this
+   page decides "when is this due". Owner 2026-08-18: there is no production
+   here, only the delivery date, and every screen must plan on the same one.
+   This page used to read `line_delivery_date ?? so.customer_delivery_date`,
+   which is the customer's ORIGINAL promise plus a line MIRROR of it — so a
+   rescheduled order moved on the delivery board and did not move here, in the
+   queue that decides who gets scarce stock and what is ordered first. See
+   shared/effective-delivery.ts for the precedence and why the override flag
+   is load-bearing. */
+const deliveryOf = (r: DemandRow): string | null => effectiveSoDelivery({
+  line_delivery_date: r.line_delivery_date,
+  line_delivery_date_overridden: r.line_delivery_date_overridden,
+  amended_delivery_date: r.so?.amended_delivery_date,
+  customer_delivery_date: r.so?.customer_delivery_date,
+});
+
 /* Earliest-first comparator that pushes NULL dates to the end. */
 function byDateAsc(a: string | null, b: string | null): number {
   if (a === b) return 0;
@@ -470,6 +505,62 @@ export async function computeMrp(
   const scoped = <Q>(q: Q): Q =>
     companyId != null ? (q as unknown as { eq(c: string, v: unknown): Q }).eq('company_id', companyId) : q;
 
+  /* ── ONE WAVE FOR THE READS THAT NEED NOTHING FROM EACH OTHER (2026-08-17) ──
+     Four of this engine's reads depend on no earlier result — they key off the
+     function's own arguments and nothing else — yet they ran strictly one after
+     another, each paying a full round trip of latency before the next was even
+     issued. They are STARTED here and AWAITED at their original sites below, so
+     every line of arithmetic still runs in exactly the order it did; only the
+     waiting overlaps. Same idiom, and the same reason, as the SO list's
+     enrichment wave in mfg-sales-orders.ts.
+
+     `eager` rather than a bare promise: an un-awaited rejection is an unhandled
+     rejection, which in a Worker is a killed request instead of the 500 this
+     route returns today. eager holds the error and re-throws it at the point of
+     use, so BOTH the error and the order in which errors surface are unchanged —
+     leadBase still throws before the demand read is inspected, exactly as when
+     the two were sequential. That precedence is why this is not a Promise.all.
+
+     Deliberately NOT in this wave: mfg_products by code, the fabric enrichment,
+     suppliers and the bindings all read keys derived from the demand rows, and
+     loadCommittedShipments reads the PO rows. Those dependencies are real.
+
+     Also deliberately NOT in this wave: the `warehouses` and
+     `state_warehouse_mappings` masters, which are independent and would have
+     fitted. Both DISCARD their read error today, and check-swallowed-reads.mjs
+     finds that by matching `const { data … } = await …` at the use site — a
+     shape `eager` cannot preserve. Hoisting them took mrp.ts from 1 swallowed
+     read to 0 in that report while the read stayed exactly as swallowed as
+     before, which is the "a checker that cannot match reports a clean run"
+     trap in CLAUDE.md. They are two round trips out of ~105; the finding
+     staying visible is worth more than the two. Fixing the discarded error is
+     a behaviour change (today a failed read blanks the names and the plan
+     continues) and belongs in its own PR. */
+  const leadBaseProm = eager(loadLeadTimeBase(
+    scoped(sb.from('mrp_category_lead_times').select(LEAD_TIME_SELECT)),
+  ));
+  /* The category walk (section 2), the two warehouse masters (section 2) and the
+     stock + PO-supply reads (sections 3 and 4). Each is byte-identical to the
+     query that stood at its own site; only the moment it is ISSUED moved. */
+  const catRowsProm = eager(paginateAll<{ category: string | null }>((from, to) =>
+    scoped(sb.from('mfg_products').select('category')).order('id').range(from, to)));
+  const balancesProm = eager(paginateAll<BalanceRow>((from, to) => {
+    let q = scoped(sb.from('inventory_balances').select('product_code, warehouse_id, variant_key, qty'));
+    if (whFilter) q = q.eq('warehouse_id', whFilter);
+    return q.order('product_code').order('warehouse_id').order('variant_key').order('company_id').range(from, to);
+  }));
+  const poRawProm = eager(paginateAll<PoLineRow>((from, to) => scoped(sb
+    .from('purchase_order_items')
+    .select(`
+      material_code, item_group, variants, qty, received_qty, delivery_date,
+      supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
+      warehouse_id, so_item_id,
+      po:purchase_orders!inner ( po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id, supplier_id )
+    `)
+    .not('po.status', 'in', PO_DEAD_SQL))
+    .order('id')
+    .range(from, to)));
+
   // ── 0. Per-category lead times (Commander 2026-05-29), now per-WAREHOUSE
   //       (Commander 2026-06-22, migration 0184 / SCM mig 0036) ────────────
   // order-by date = delivery date − lead_days[warehouse, category].
@@ -485,9 +576,7 @@ export async function computeMrp(
   // zeroed EVERY lead time -> order-by date = production date = delivery date
   // for the whole plan. Fail loudly rather than emit a wrong-but-plausible
   // schedule.
-  const leadBase = await loadLeadTimeBase(
-    scoped(sb.from('mrp_category_lead_times').select(LEAD_TIME_SELECT)),
-  );
+  const leadBase = (await leadBaseProm)();
   /* supplierCode is the SKU's MAIN supplier — an approximation, and a stated
      one: the convert may end up on a different supplier via a per-pick or
      per-SKU override, in which case that supplier's buffer applies instead and
@@ -519,8 +608,8 @@ export async function computeMrp(
   const { data: demandRaw, error: demandErr } = await paginateAll<DemandRow>((from, to) => scoped(sb
     .from('mfg_sales_order_items')
     .select(`
-      id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_no, created_at, cancelled,
-      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, processing_date, customer_state, sales_location )
+      id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_delivery_date_overridden, line_no, created_at, cancelled,
+      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, amended_delivery_date, processing_date, customer_state, sales_location )
     `)
     .eq('cancelled', false)
     .not('so.status', 'in', SO_DONE_SQL))
@@ -528,9 +617,11 @@ export async function computeMrp(
     .range(from, to));
   if (demandErr) throw new Error(`mrp_load_failed: ${demandErr.message}`);
 
-  /* Undated lines (no line delivery date AND no SO delivery date) are not
-     ready to order, so the MRP page hides them by default — but they are STILL
-     DEMAND, and audit D6 (2026-08-01) proved the old shape of this switch let
+  /* Undated lines (no line delivery date AND no SO delivery date) are not ready
+     to order — the MRP page HIDES them by default (owner 2026-08-18;
+     ?includeUndated=true shows them, marked "No date" and sorted last) and
+     COUNTS them either way. They are STILL DEMAND either way, and audit D6
+     (2026-08-01) proved the old shape of this switch let
      two screens disagree: excluding them from the ALLOCATION itself meant the
      page (includeUndated=false) and the SO drill-down / PO Assigned-SO
      (includeUndated=true) computed over two different demand sets, breaking
@@ -543,8 +634,7 @@ export async function computeMrp(
   const demandActive = ((demandRaw ?? []) as unknown as DemandRow[]).filter(
     (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && r.qty > 0,
   );
-  const isDatedLine = (r: DemandRow): boolean =>
-    Boolean(r.line_delivery_date ?? r.so?.customer_delivery_date);
+  const isDatedLine = (r: DemandRow): boolean => deliveryOf(r) !== null;
 
   // A partially-delivered SO keeps its header status active (the header only
   // flips to DELIVERED once EVERY line is fully covered), so already-delivered
@@ -574,10 +664,27 @@ export async function computeMrp(
      groups by doc_no and walks each SO's own build order ("the walk MUST run per
      doc"), and it returns a Map keyed by mfg_sales_order_items.id, so merging the
      partial maps is a union of disjoint key sets. */
+  /* RUN THE BATCHES CONCURRENTLY, BOUNDED (2026-08-17). This loop is the single
+     largest cost in the engine: ~2,800 open docs / 200 = ~14 batches, each of
+     which is itself ~5 sequential reads, so ~70 of the engine's ~105 round trips
+     were spent here one at a time. Nothing about them is sequential — the very
+     paragraph above establishes it, because "merging the partial maps is a union
+     of disjoint key sets" is exactly the property that makes batch order
+     irrelevant. `mapBounded` preserves INPUT order anyway, so the merge below
+     writes the same keys in the same sequence a `for` loop did; a key can only
+     be written once either way.
+
+     BOUNDED, not Promise.all: Hyperdrive pools a finite number of connections
+     and an unbounded fan-out over every batch would trade latency for pool
+     exhaustion. The bound is stated once, here, rather than defaulted inside the
+     helper — see concurrency.ts on why it is a required argument. */
   const demandDocNos = [...new Set(demandActive.map((d) => d.doc_no).filter(Boolean))];
+  const docBatches: string[][] = [];
+  for (let i = 0; i < demandDocNos.length; i += 200) docBatches.push(demandDocNos.slice(i, i + 200));
   const deliverable: Awaited<ReturnType<typeof soDeliverableRemaining>> = new Map();
-  for (let i = 0; i < demandDocNos.length; i += 200) {
-    const part = await soDeliverableRemaining(sb, demandDocNos.slice(i, i + 200));
+  const parts = await mapBounded(docBatches, MRP_READ_CONCURRENCY, (batch) =>
+    soDeliverableRemaining(sb, batch));
+  for (const part of parts) {
     for (const [soItemId, d] of part) deliverable.set(soItemId, d);
   }
   const deliveredNetOf = (soItemId: string): number => {
@@ -637,8 +744,7 @@ export async function computeMrp(
   // 2026-08-16), so it must be paged — unpaged it saw the first 1000 products
   // and a category owned only by later rows would be missing from the tab list.
   const categorySet = new Set<string>();
-  const { data: catRows, error: catErr } = await paginateAll<{ category: string | null }>((from, to) =>
-    scoped(sb.from('mfg_products').select('category')).order('id').range(from, to));
+  const { data: catRows, error: catErr } = (await catRowsProm)();
   if (catErr) throw new Error(`mrp_load_failed: ${catErr.message}`);
   for (const c of catRows ?? []) {
     if (c.category) categorySet.add(c.category);
@@ -692,16 +798,13 @@ export async function computeMrp(
   // warehouse's balance lands in its own bucket.
   // PAGED: 1,065 balance rows in prod on 2026-08-16 — unpaged, the last ~65
   // buckets read as zero stock and MRP invented a shortage for each of them.
-  const { data: balances, error: balErr } = await paginateAll<BalanceRow>((from, to) => {
-    let q = scoped(sb.from('inventory_balances').select('product_code, warehouse_id, variant_key, qty'));
-    if (whFilter) q = q.eq('warehouse_id', whFilter);
-    // inventory_balances is a VIEW (migration 0084) grouped by
-    // (warehouse_id, product_code, variant_key, company_id) and has no id, so
-    // that four-column tuple IS its unique key — order by all four or the
-    // paging is not total. company_id matters precisely when it is NOT filtered
-    // (companyId null), which is the case that would otherwise tie.
-    return q.order('product_code').order('warehouse_id').order('variant_key').order('company_id').range(from, to);
-  });
+  // inventory_balances is a VIEW (migration 0084) grouped by
+  // (warehouse_id, product_code, variant_key, company_id) and has no id, so
+  // that four-column tuple IS its unique key — order by all four or the
+  // paging is not total. company_id matters precisely when it is NOT filtered
+  // (companyId null), which is the case that would otherwise tie. The query
+  // itself is unchanged; it is ISSUED in the wave at the top of this function.
+  const { data: balances, error: balErr } = (await balancesProm)();
   if (balErr) throw new Error(`mrp_load_failed: ${balErr.message}`);
   const stockByKey = new Map<string, number>();
   for (const b of balances ?? []) {
@@ -720,17 +823,7 @@ export async function computeMrp(
   // The read error is THROWN: it used to be silently discarded, and a failed
   // supply read produced a plan with ZERO PO supply — phantom shortage
   // everywhere, rendered as if it were true.
-  const { data: poRaw, error: poErr } = await paginateAll<PoLineRow>((from, to) => scoped(sb
-    .from('purchase_order_items')
-    .select(`
-      material_code, item_group, variants, qty, received_qty, delivery_date,
-      supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
-      warehouse_id, so_item_id,
-      po:purchase_orders!inner ( po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id, supplier_id )
-    `)
-    .not('po.status', 'in', PO_DEAD_SQL))
-    .order('id')
-    .range(from, to));
+  const { data: poRaw, error: poErr } = (await poRawProm)();
   if (poErr) throw new Error(`mrp_load_failed: ${poErr.message}`);
   // Commander 2026-05-31 — carry the covering PO's supplier so a covered line
   // can display it read-only (a raised PO's supplier is fixed). Name resolved
@@ -929,8 +1022,7 @@ export async function computeMrp(
     // lines share a delivery date, allocate by SO doc number ascending so the
     // greedy walk never flips nondeterministically (SO-2605-001 before -002).
     rows.sort((a, b) => {
-      const byDate = byDateAsc(a.line_delivery_date ?? a.so?.customer_delivery_date ?? null,
-                               b.line_delivery_date ?? b.so?.customer_delivery_date ?? null);
+      const byDate = byDateAsc(deliveryOf(a), deliveryOf(b));
       if (byDate !== 0) return byDate;
       return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
     });
@@ -1022,7 +1114,7 @@ export async function computeMrp(
         need > 0 ? 'shortage'
         : poNumber != null ? 'po'
         : 'stock';
-      const lineDelivery = r.line_delivery_date ?? r.so?.customer_delivery_date ?? null;
+      const lineDelivery = deliveryOf(r);
       lines.push({
         soItemId: r.id,
         soDocNo: r.doc_no,
@@ -1126,8 +1218,7 @@ export async function computeMrp(
     // Same deterministic tie-break as section 7: equal delivery date → SO doc
     // number ascending, so same-day sofa allocation is stable.
     rows.sort((a, b) => {
-      const byDate = byDateAsc(a.line_delivery_date ?? a.so?.customer_delivery_date ?? null,
-                               b.line_delivery_date ?? b.so?.customer_delivery_date ?? null);
+      const byDate = byDateAsc(deliveryOf(a), deliveryOf(b));
       if (byDate !== 0) return byDate;
       return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
     });
@@ -1157,7 +1248,7 @@ export async function computeMrp(
       const colour = [sstr(v.fabricCode), sstr(v.colorCode) || sstr(v.colourCode)].filter(Boolean).join(' ');
       const eff = effQtyOf(d);                        // set qty still to fulfil (ordered − delivered + returned)
       const prod = prodByCode.get(d.item_code);
-      const setDelivery = d.line_delivery_date ?? d.so?.customer_delivery_date ?? null;
+      const setDelivery = deliveryOf(d);
 
       let need = eff;
       const fromStock = Math.min(stockLeft, need);
@@ -1427,7 +1518,8 @@ export function mrpReverseCoverage(result: MrpResult): Map<string, PoCoverageAss
 }
 
 /* The accepted spellings of `?includeUndated`. Absent = the documented default
-   (false). Present-and-unrecognised THROWS — it is never quietly false.
+   (TRUE since 2026-08-18 — see parseIncludeUndated). Present-and-unrecognised
+   THROWS — it is never quietly false.
 
    `=== 'true'` was the whole parser until 2026-08-16, and `?includeUndated=1`
    — verified against production that day — returned the default plan with no
@@ -1450,9 +1542,38 @@ export class InvalidQueryFlag extends Error {
   }
 }
 
+/* THE DEFAULT IS FALSE — undated demand is HIDDEN until the operator asks for
+   it. Owner, 2026-08-18, ruling directly on a build that had flipped it to
+   shown: "这个应该是要把没有日期的藏起来的,不过我点 show no date 它才会出来."
+
+   THE EARLIER READING WAS WRONG, and the record should say so rather than
+   quietly changing. Measured on production 2026-08-16, the hidden-by-default
+   view returned 82 of 163 live 2990 SO-item ids and 8 of 68 short sofa sets, so
+   roughly half the demand was off-screen — and the owner's complaint that
+   started this work was "明明这个东西没有 ready,可是我的 MRP 却 show 不出来".
+   The inference drawn from that was that the rows should be shown by default.
+   It was the wrong inference. What he could not see was not the ROWS but the
+   FACT THAT ROWS EXISTED: nothing on the page said anything was being withheld.
+   The banner fixes that; the default does not need to move to fix it, and this
+   page is the ordering worklist, where undated demand is not yet orderable.
+
+   SO THE CONTRACT IS: hidden by default, ALWAYS counted and always announced,
+   one click away. Hiding is legitimate. Hiding SILENTLY is not.
+
+   43% of 2990's sales orders carry no delivery date, flat across June/July/
+   August — a habit, not an import artefact. Requiring a date was considered and
+   REJECTED: a forced date gets a fake one typed into it, and a fake date is
+   worse than a null one because allocation is BY DELIVERY DATE — a fake promise
+   would jump the queue ahead of a real one. So undated demand keeps its null
+   and stops being invisible instead.
+
+   SAFE ONLY BECAUSE THE FLAG IS DISPLAY-ONLY (audit D6, 2026-08-01). The
+   allocation always ran over the full active set with undated sorted LAST
+   (byDateAsc returns 1 for null), so flipping this changes which rows are
+   RENDERED and cannot change who gets supply. mrp.test.ts pins both halves. */
 /** Exported for `mrp.test.ts` — the spellings are the contract, so they get a test. */
 export function parseIncludeUndated(raw: string | undefined): boolean {
-  if (raw === undefined) return false;              // omitted = documented default
+  if (raw === undefined) return false;              // omitted = documented default (hidden)
   const v = raw.trim().toLowerCase();
   if (UNDATED_TRUE.has(v)) return true;
   if (UNDATED_FALSE.has(v)) return false;
@@ -1465,15 +1586,18 @@ mrp.get('/', async (c) => {
   const warehouseId = c.req.query('warehouseId');
   const catFilter = category && category !== 'all' ? category.toUpperCase() : null;
   const whFilter = warehouseId && warehouseId !== 'all' ? warehouseId : null;
-  // Commander 2026-05-29 — an SO line with NO delivery date means the customer
-  // isn't ready for goods yet, so it shouldn't drive ordering. HIDE undated
-  // demand by default; ?includeUndated=true shows it. Since audit D6
-  // (2026-08-01) the flag is display-only: the allocation itself always runs
-  // over the full demand set (undated last), so this page, the SO drill-down
-  // and the PO Assigned-SO column read ONE identical allocation.
+  // An SO line with NO delivery date means the customer isn't ready for goods
+  // yet, so it must not drive ordering — but it is still demand, so it is
+  // HIDDEN by default (?includeUndated=true shows it) and COUNTED either way.
+  // See parseIncludeUndated for why hiding is fine and hiding silently is not,
+  // the right observation. Since audit D6 (2026-08-01) the flag is display-only:
+  // the allocation itself always runs over the full demand set (undated last),
+  // so this page, the SO drill-down and the PO Assigned-SO column read ONE
+  // identical allocation, and this default cannot move a single unit of supply.
   //
-  // What is hidden is REPORTED either way — `result.undated` — so the page can
-  // never again render half the demand with nothing saying so.
+  // The undated tally is REPORTED under either flag — `result.undated`, counted
+  // before the visibility `continue` — so the page can state what it is showing
+  // or withholding rather than rendering a fraction of the demand in silence.
   let includeUndated: boolean;
   try {
     includeUndated = parseIncludeUndated(c.req.query('includeUndated'));

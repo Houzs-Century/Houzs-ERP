@@ -20,6 +20,7 @@
 // CRN-YYMM-NNN.
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -47,6 +48,7 @@ import { SoLineCard, emptySoLine, type SoLineDraft } from '../../vendor/scm/comp
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneyCenti } from '@2990s/shared';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -310,7 +312,7 @@ export const ConsignmentReturnNew = () => {
           <>
             <div className={styles.actions}>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/consignment-returns/from-note')}>
-                <ArrowRightLeft {...ICON} /> From Consignment Note
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('cn')}
               </Button>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/consignment-returns')}>
                 <X {...ICON} /> Cancel
@@ -362,11 +364,19 @@ export const ConsignmentReturnNew = () => {
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Salesperson</span>
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={salespersonId} onChange={(e) => setSalespersonId(e.target.value)}>
-                  <option value="">— Pick staff —</option>
-                  {sortByText(staffList).map((s) => <option key={s.id} value={s.id}>{s.name} ({s.staffCode})</option>)}
-                  {salespersonId && !staffList.some((s) => s.id === salespersonId) && <option value={salespersonId}>(former staff)</option>}
-                </select>
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  ariaLabel="Salesperson"
+                  placeholder="— Pick staff —"
+                  value={salespersonId}
+                  onChange={setSalespersonId}
+                  options={[
+                    ...sortByText(staffList).map((s) => ({ value: s.id, label: `${s.name} (${s.staffCode})` })),
+                    ...(salespersonId && !staffList.some((s) => s.id === salespersonId)
+                      ? [{ value: salespersonId, label: '(former staff)' }]
+                      : []),
+                  ]}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
@@ -381,7 +391,7 @@ export const ConsignmentReturnNew = () => {
           <div className={styles.formGrid4}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Return Date</span>
-              <input type="date" className={styles.fieldInput} value={returnDate} onChange={(e) => setReturnDate(e.target.value)} />
+              <DateField fullWidth className={styles.fieldInput} value={returnDate} onChange={(iso) => setReturnDate(iso)}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Building Type</span>

@@ -232,9 +232,18 @@ excluded, nothing ships *into* completion); `DO_STOCK_OUT_STATES` is the
 `DO_SHIPPED_STATES ∪ {COMPLETED}`. `tests/doShippedStatesMirror.test.ts` pins
 that relationship and the .mjs mirror.
 
-Filter buckets (`:2180-2185`): `open` = DRAFT+LOADED, `in_transit` =
-DISPATCHED+IN_TRANSIT, `delivered` = SIGNED+DELIVERED+INVOICED+COMPLETED,
-`cancelled` = CANCELLED.
+Filter buckets (`DO_STATUS_BUCKETS`): `open` = DRAFT+LOADED, `in_transit` =
+DISPATCHED+IN_TRANSIT, `delivered` = SIGNED+DELIVERED+INVOICED, `cancelled` =
+CANCELLED. Every member of `do_status` is in exactly one bucket, and no bucket
+holds a non-member — pinned by `backend/tests/statusBucketsEnumMembership.test.mjs`.
+
+> **FIXED 2026-08-17.** `delivered` carried `COMPLETED`, which is not an enum
+> member, so `?status=delivered` answered **500 `invalid input value for enum
+> do_status: "COMPLETED"`** and — worse — the delivered COUNT failed on the same
+> label and was being served as **0**. Measured in production that day: company 1
+> `all:27 open:0 in_transit:2 delivered:0 cancelled:0` (25 DOs in no tab),
+> company 2 `all:36 in_transit:23 delivered:0 cancelled:1` (12 in no tab). A
+> failed count now returns `500 status_counts_failed` instead of a zero.
 
 ### Who moves the DO status, and what each value blocks (2026-08-16)
 
@@ -250,7 +259,7 @@ status from a child document.
 | `LOADED` | `PATCH /:id/status` ("Mark loaded") | pre-ship |
 | `DISPATCHED` | create not-draft, or `PATCH /:id/status` | **The DRAFT-confirm hop, and the only status that emails the customer.** First entry into any shipped state fires the inventory OUT. |
 | `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD | shipped states; stock has already left |
-| `COMPLETED` | **nothing writes it.** It is in the code vocabulary (`DO_STOCK_OUT_STATES`, the `delivered` filter bucket) but is NOT a member of the `do_status` enum in any schema file or migration — see the bug note below | read-only |
+| `COMPLETED` | **nothing writes it.** Still in the code vocabulary (`DO_STOCK_OUT_STATES`, `DO_STATUSES`) but NOT a member of the `do_status` enum in any schema file or migration. Removed from the `delivered` filter bucket 2026-08-17. **CORRECTED 2026-08-18** — this cell used to end "the JS-side sets compare a status already in hand, where a value that can never occur is inert", and that was FALSE: `services/agents/delivery-agent.ts` mapped `DO_STATUSES` into one `.eq('status', st)` query per entry, so `COMPLETED` *was* being handed to Postgres to parse. That consumer no longer enumerates the list at all (it counts the rows it reads), so the claim is now true of every remaining reader — but it was a second live 22P02 for a day, and it was found by a reviewer, not by the sweep that wrote the sentence | read-only |
 | `CANCELLED` | `PATCH /:id/status`, atomic branch | **FINAL.** `A cancelled Delivery Order cannot be reactivated — its stock was already returned. Create a new DO to deliver again.` (409 `do_cancelled_final`) |
 
 Refusals the operator sees, in the order they fire:
@@ -269,10 +278,25 @@ Pickup, Done Shipout, Arrives EM Warehouse, Done Delivered, Confirm, House Not
 Ready, Request Hold) — refusal: `delivery_substatus must be one of: … (or
 blank).` It is not part of the lifecycle above.
 
-> **BUG (reported, not fixed): `COMPLETED` is in the code vocabulary but not in
-> the DB enum.** `PATCH /:id/status {status:'COMPLETED'}` passes the app-side
-> whitelist and would be rejected by Postgres. Verified by grepping every
-> `CREATE TYPE` / `ADD VALUE` under `migrations-pg/` and `scripts/scm-schema/`.
+> **BUG (partially fixed 2026-08-17): `COMPLETED` is in the code vocabulary but
+> not in the DB enum.** `PATCH /:id/status {status:'COMPLETED'}` passes the
+> app-side whitelist and would be rejected by Postgres — **still true**. What was
+> fixed is the READ half: the value is out of `DO_STATUS_BUCKETS`, so the
+> delivered tab and its count no longer fail on it. Verified by grepping every
+> `CREATE TYPE` / `ADD VALUE` under `migrations-pg/` and `scripts/scm-schema/`,
+> now pinned by `backend/tests/statusBucketsEnumMembership.test.mjs`.
+>
+> **The second READ site, found 2026-08-18 and now fixed.** The Delivery Agent's
+> brief (`services/agents/delivery-agent.ts`, `collectDoStatusCounts`) imported
+> `DO_STATUSES` and issued one `count:'exact'` query per entry with
+> `.eq('status', st)` — so `COMPLETED` reached the enum column there too, and the
+> await destructured only `count`, discarding `error`, so `(count ?? 0) > 0` left
+> the failed bucket ABSENT from the pipeline. It now pages the `status` column
+> and counts the rows it read: no vocabulary is sent to Postgres, and a failed
+> read is reported as `doPipeline.unavailableReason` (with `byStatus` empty)
+> instead of as a missing bucket. Statuses outside the vocabulary now appear too,
+> under their own key or `UNKNOWN` for a blank — previously counted nowhere.
+> `do-shipped-states.ts` itself is untouched by this branch.
 >
 > **BUG (reported, not fixed): the Consignment Note's status PATCH has NO
 > whitelist.** `consignment-notes.ts`'s handler writes `body.status` verbatim —

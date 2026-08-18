@@ -31,6 +31,7 @@ import {
   type MfgSeatHeightPrice,
   type SpecialAddonDef,
 } from '../shared/mfg-pricing';
+import { chunkIn } from './paginate-all';
 import {
   computeSofaSellingSen,
   comboChargedPrices,
@@ -230,6 +231,7 @@ const driftThresholdExceeded = (clientCenti: number, serverSen: number): boolean
  *                    hand-entered price wins, but only when they entered one.
  *                    0 still means "not provided" and takes the catalogue fill.
  *   'including-zero' additionally believes a stored 0.
+ *   'operator-zero'  believes a 0 the OPERATOR typed on THIS request.
  *
  * 'including-zero' exists for MIGRATED documents (linked_ac_docno IS NOT NULL)
  * and nothing else. Their prices came from AutoCount, where a sofa set is
@@ -238,11 +240,27 @@ const driftThresholdExceeded = (clientCenti: number, serverSen: number): boolean
  * on the next approved amendment and the customer would be billed for the set
  * several times over; under 'including-zero' the AutoCount shape survives.
  *
- * Do NOT reach for it on a line the operator is authoring now — there a 0 really
- * does mean the client could not resolve a price, and the catalogue fill is the
- * correct answer.
+ * Do NOT reach for 'including-zero' on a line the operator is authoring now —
+ * there a 0 really does mean the client could not resolve a price, and the
+ * catalogue fill is the correct answer. That instruction stands unchanged: the
+ * exception below is a DIFFERENT mode, so the migrated rationale is not diluted
+ * and `isMigratedTrust` keeps meaning exactly "migrated".
+ *
+ * 'operator-zero' is the sanctioned exception to the paragraph above, added
+ * 2026-08-18 on the owner's requirement that a salesperson be able to set an SO
+ * line to RM 0 in Houzs ERP. It exists because the ambiguity was never about
+ * trust — it was that `0` carries two meanings on one wire: "the client could
+ * not resolve a price" and "this line is free". The ERP line editor knows which
+ * it sent, so it now says so (`zeroPriceIntended`), and ONLY that explicit
+ * statement selects this mode. A 0 arriving without it is still "not provided"
+ * and still takes the catalogue fill, which is every other caller in the system.
+ *
+ * It is NOT 'including-zero' with another name. It deliberately does not make
+ * `isMigratedTrust` true, so the surcharge-suppression arm that protects the
+ * 10,856 zero-priced migrated lines stays exclusive to migrated documents; an
+ * operator-authored zero still prices its director-authored surcharges normally.
  */
-export type TrustSelling = boolean | 'including-zero';
+export type TrustSelling = boolean | 'including-zero' | 'operator-zero';
 
 /** Pure mapper from a (product, fabric, variants) snapshot to the
  *  breakdown + DB column values. Used by tests + the route helpers below
@@ -658,8 +676,15 @@ export function recomputeFromSnapshot(
      whole set price on ONE lead module line with 0 on its siblings, so under
      plain `true` every sibling would still be handed a catalogue price and the
      set would be billed several times over. Never use it for a line the operator
-     is authoring now — there a 0 really does mean "not provided". */
-  if (trustOperatorSelling && (manualUnitSelling > 0 || trustOperatorSelling === 'including-zero')) {
+     is authoring now — there a 0 really does mean "not provided".
+
+     'operator-zero' is the one sanctioned way for an authored 0 to survive: the
+     ERP line editor stated that the operator typed it (see TrustSelling). Same
+     effect HERE, deliberately different mode — it must not read as migrated. */
+  if (trustOperatorSelling
+      && (manualUnitSelling > 0
+          || trustOperatorSelling === 'including-zero'
+          || trustOperatorSelling === 'operator-zero')) {
     unitToPersistSen = manualUnitSelling;
   }
 
@@ -939,11 +964,20 @@ export async function loadFabricSellingTiersByIds(
 ): Promise<Map<string, { sofaTier: FabricTier | null; bedframeTier: FabricTier | null }>> {
   const uniq = Array.from(new Set(ids.map((i) => (i ?? '').trim()).filter(Boolean)));
   if (uniq.length === 0) return new Map();
-  const { data } = await sb
-    .from('fabric_library')
-    .select('id, sofa_tier, bedframe_tier')
-    .in('id', uniq);
-  return new Map((((data as Array<{ id: string; sofa_tier?: string | null; bedframe_tier?: string | null }>) ?? [])).map((r) => [
+  /* chunkIn — sales-analysis hands this the distinct fabricId of every SO line
+     in its window (uuids), while its two sibling reads there were already
+     chunked and this one was not. Keyed by id, so merging batches is a no-op on
+     the result. */
+  const { data } = await chunkIn<{ id: string; sofa_tier?: string | null; bedframe_tier?: string | null }>(
+    uniq,
+    (batch, from, to) => sb
+      .from('fabric_library')
+      .select('id, sofa_tier, bedframe_tier')
+      .in('id', batch)
+      .order('id')
+      .range(from, to),
+  );
+  return new Map(data.map((r) => [
     r.id,
     {
       sofaTier:     (r.sofa_tier ?? null) as FabricTier | null,

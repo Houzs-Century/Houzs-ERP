@@ -302,6 +302,11 @@ works and is multi-select at line level — but only for a line that is
      (`:467-474`), over the same company + supplier filter but **without** status,
      search or paging. (Seven, not six: the `outstanding` roll-up is counted
      separately rather than derived, so the pill and the filter share one source.)
+     A count that cannot be READ is now `500 { error: 'status_counts_failed' }`
+     naming the bucket (`lib/status-counts.ts`, 2026-08-17) — it used to fall
+     through `count ?? 0` and show a broken bucket as an empty one. A
+     legitimately empty bucket still answers 0. Same guard on the PI, SI, GRN and
+     DO lists.
 3. **Enrichment — TWO waves.** First one GRN query (`:496-512`): all
    non-cancelled GRNs for the listed PO ids, carrying `id` + `grn_number`. It
    powers both `has_children` (the downstream lock) and the "GRN No" column, so
@@ -477,7 +482,7 @@ linked and its SO lines as taken:
 | Tier | Evidence | What it proves |
 |---|---|---|
 | 1 | **Delivered chain.** A DO consumed a lot stamped `batch_no` = this PO number (or its OUT movement carries it); the SO comes from the DO's real `so_item_id`. | A record of what happened, not an inference. |
-| 2 | **Note names exactly ONE SO.** The `From SOs:` note written at raise time resolves to one valid, company-owned Sales Order. | With one order there is no question which it served. |
+| 2 | **Note names exactly ONE SO.** The provenance note written at raise time (`Transfer from Sales Order: …`, and the legacy `From SOs:` / `From SO:` — all three are accepted forever) resolves to one valid, company-owned Sales Order. | With one order there is no question which it served. |
 | 3 | **Consolidated PO — code unique across the NAMED SET.** The note names several SOs (one supplier order covering several customers, routine for mattresses). Every free line of every named SO is pooled, then the same 1:1 test runs against the pool. | If exactly one unlinked PO line and one free SO line in the whole set carry the code, no other named order could have absorbed it. |
 
 All three apply the *same* rule from `backend/scripts/lib/po-so-line-pairing.mjs`
@@ -857,8 +862,10 @@ inventory: `docs/generated/`.
 
 ## `so_item_id` on a MIGRATED purchase-order line (2026-08-11)
 
-`backfill-po-so-item-links.mjs` resolves this link from the PO's `From SOs:`
-note, written at raise time by the SO -> PO convert. A migrated PO has no such
+`backfill-po-so-item-links.mjs` resolves this link from the PO's PROVENANCE
+note, written at raise time by the SO -> PO convert (`Transfer from Sales
+Order: …` since 2026-08-18; the legacy `From SOs:` / `From SO:` spellings are
+accepted permanently — see document-conversion.md §10). A migrated PO has no such
 note — measured, not assumed: of the 181 company-1 sofa/bedframe PO lines with
 a NULL `so_item_id`, the notes of **zero** name a sales order. That script's
 three tiers are structurally blind to the cutover corpus.

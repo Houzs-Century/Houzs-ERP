@@ -37,9 +37,11 @@
 //
 // DELIVERY-DATE INTEGRITY (owner rule): the customer's ORIGINAL
 // customer_delivery_date is NEVER overwritten. The schedule action writes the
-// firm/new date to amended_delivery_date instead. The EFFECTIVE delivery date —
-// amended_delivery_date ?? customer_delivery_date — drives Days Left AND the
-// OVERDUE 3-day window; the Original column still shows customer_delivery_date.
+// firm/new date to amended_delivery_date instead. The EFFECTIVE delivery date
+// drives Days Left AND the OVERDUE window; Original still shows the customer's.
+// scm/shared/effective-delivery.ts OWNS that rule — MRP and the stock allocator
+// have read the same function since 2026-08-18; before that they ranked on the
+// original alone, so a rescheduled order moved here and not in the stock queue.
 //
 // Region = CONFIG-DRIVEN, owner-maintained (migration 0053). The region buckets
 //   are a master list (delivery_planning_regions) and the per-STATE → region(s)
@@ -61,18 +63,21 @@
 // Mounted at '/delivery-planning' in scm/index.ts.
 // ----------------------------------------------------------------------------
 
-import { Hono } from 'hono';
+import { Hono, type Context } from 'hono';
 import { z } from 'zod';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
 import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
-import { paginateAll } from '../lib/paginate-all';
+/* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
+import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
+import { effectiveSoDelivery } from '../shared';
 import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
-import { soDeliverableRemaining } from './delivery-orders-mfg';
+import { boardDeliverableByDoc } from '../lib/board-deliverable';
+import { readFailure, noteDegradedRead } from '../lib/read-failure';
 import { soProcessingLocked } from './mfg-sales-orders';
 import { soPoLocked, soPoLockedMany } from '../lib/so-po-lock';
 import { activeCompanyId, scopeToCompany, scopeToAllowedCompanies, companyCodeMap } from '../lib/companyScope';
@@ -90,6 +95,7 @@ import { MAP_COLS as ZONE_MAP_COLS, toPrefixMap, type MapRow as ZoneMapRow } fro
 import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
+import { dateOrNull } from '../lib/date-coerce';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
@@ -255,13 +261,13 @@ function daysBetween(fromISO: string, toISO: string | null | undefined): number 
      · OVERDUE          — NOT ready AND today >= EFFECTIVE delivery date − 3 days.
      · PENDING_DELIVERY — NOT ready and not yet inside the 3-day window.
 
-   `readiness` is the summariseReadiness() output; `effectiveDD` is the caller-
-   resolved amended_delivery_date ?? customer_delivery_date; `today` is MYT
-   (todayMyt()). Pure — no I/O. */
+   `readiness` carries ONLY the ship gate — narrowed so no caller can reach for
+   isMainReady, vacuously true on a line-less SO (BUG-HISTORY 2026-08-14, #2186).
+   `effectiveDD` comes from effectiveSoDelivery; `today` is MYT. Pure — no I/O. */
 export function derivePlanningState(input: {
   storedOverride: string | null | undefined;
   status: string | null | undefined;
-  readiness: { mainCount: number; isMainReady: boolean; isFullyReady: boolean; isShipReady: boolean };
+  readiness: { isShipReady: boolean };
   delivered: number;
   remaining: number;
   effectiveDD: string | null | undefined;
@@ -274,10 +280,8 @@ export function derivePlanningState(input: {
   const st = String(status ?? '').toUpperCase();
   if (st === 'DELIVERED' || (delivered > 0 && remaining <= 0)) return 'DELIVERED';
 
-  /* "Ready to ship" gate — see summariseReadiness.isShipReady for why bare
-     isMainReady must never be used here. This module derived the rule inline
-     first; it now lives in so-readiness so the auto-allocation sweep and the
-     manual stock toggle share it. */
+  /* "Ready to ship" gate — see summariseReadiness.isShipReady. The narrowed
+     parameter type above is what now keeps the wrong flag out of reach. */
   if (readiness.isShipReady) return 'PENDING_SCHEDULE';
 
   // NOT ready. OVERDUE once we're within 3 days of (or past) the EFFECTIVE
@@ -311,10 +315,10 @@ async function applyDeliveryRowScope<T extends { row_type: string; so_doc_no: st
   const tripCrewById = new Map<string, CrewAssignment>();
   const tripIds = [...new Set([...maps.dpTripIdByKey.values()].filter((x): x is string => !!x))];
   if (tripIds.length > 0) {
-    const { data: tripRows } = await sb.from('trips')
+    const { data: tripRows } = await chunkIn<Record<string, unknown>>(tripIds, (batch, from, to) => sb.from('trips')
       .select('id, driver_id, helper_1_id, helper_2_id')
-      .in('id', tripIds);
-    for (const t of (tripRows ?? []) as Array<Record<string, unknown>>) {
+      .in('id', batch).order('id').range(from, to));
+    for (const t of tripRows) {
       const id = String(t.id ?? '');
       if (!id) continue;
       tripCrewById.set(id, {
@@ -384,7 +388,7 @@ const NOT_YOUR_JOB = "You can only update a delivery job assigned to you.";
    their DOs. delivery_state derived LIVE per SO. Region classified from the
    customer's STATE (stateToRegionsFromConfig).
    ─────────────────────────────────────────────────────────────────────────*/
-deliveryPlanning.get('/', async (c) => {
+export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; Variables: Variables }>) => {
   const sb = c.get('supabase');
   const today = todayMyt();
 
@@ -408,7 +412,7 @@ deliveryPlanning.get('/', async (c) => {
   const { data: whRows, error: whErr } = await sb
     .from('warehouses')
     .select('id, code, name');
-  if (whErr) return c.json({ error: 'load_failed', reason: whErr.message }, 500);
+  if (whErr) return c.json(readFailure('warehouses', whErr), 500);
   const whCode = new Map<string, string>();
   const whName = new Map<string, string>();
   for (const w of (whRows ?? []) as Array<{ id: string; code: string | null; name: string | null }>) {
@@ -442,20 +446,21 @@ deliveryPlanning.get('/', async (c) => {
     possessionDate?: string | null; houseType?: string | null;
     replacementDisposal?: string | null;
   };
+  /* CROSS-COMPANY = the caller's GRANTED companies; unscoped, this read took every tenant's. */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
-    sb.from('mfg_sales_orders')
-      /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
-         has no `id` column at all. Selecting `id` makes PostgREST reject the whole
-         query ("column mfg_sales_orders.id does not exist") → soErr → the board 500s
-         with load_failed. The SO's identity on this board is its doc_no; every join
-         below keys on doc_no / so_doc_no, never an id. */
-      .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_centi, balance_centi, possession_date, house_type, replacement_disposal, referral')
-      .neq('status', 'DRAFT')
-      .neq('status', 'CANCELLED')
-      .order('customer_delivery_date', { ascending: true, nullsFirst: false })
-      .range(from, to),
+    scopeToAllowedCompanies(
+      sb.from('mfg_sales_orders')
+        /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
+           has no `id` column: selecting it makes PostgREST reject the whole query and
+           the board 500s. Identity here is doc_no; every join below keys on it. */
+        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_centi, balance_centi, possession_date, house_type, replacement_disposal, referral')
+        .neq('status', 'DRAFT')
+        .neq('status', 'CANCELLED')
+        .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
+      c,
+    ).range(from, to),
   );
-  if (soErr) return c.json({ error: 'load_failed', reason: soErr.message }, 500);
+  if (soErr) return c.json(readFailure('sales_orders', soErr), 500);
   /* Only SOs that actually need delivering — they carry a date signal
      (customer_delivery_date OR processing_date). Filtered
      in JS (not a PostgREST .or()) to keep the paginated query's row type clean. */
@@ -483,12 +488,12 @@ deliveryPlanning.get('/', async (c) => {
      view). Adding any of those here will 500 the Delivery Planning board. */
   const liveBalanceByDoc = new Map<string, number>();
   {
-    const { data: balRows } = await paginateAll<{ doc_no: string | null; balance_centi_live: number | null }>((from, to) =>
+    const { data: balRows, error: balErr } = await chunkIn<{ doc_no: string | null; balance_centi_live: number | null }>(docNos, (batch, from, to) =>
       sb.from('mfg_sales_orders_with_payment_totals')
         .select('doc_no, balance_centi_live')
-        .in('doc_no', docNos)
-        .range(from, to),
+        .in('doc_no', batch).order('doc_no').range(from, to),
     );
+    noteDegradedRead('live_balance', balErr);
     for (const b of (balRows ?? [])) {
       if (b.doc_no != null && b.balance_centi_live != null) {
         liveBalanceByDoc.set(String(b.doc_no), Number(b.balance_centi_live));
@@ -503,20 +508,21 @@ deliveryPlanning.get('/', async (c) => {
         Ordered (doc_no, line_no, created_at ASC) — IDENTICAL to the SO list's
         item fetch so the FIRST line we see per doc_no is its earliest-created
         one; that drives the SO-list-matching Branding derivation below. */
-  const { data: itemRowsRaw } = await paginateAll<{
+  const { data: itemRowsRaw, error: itemErr } = await chunkIn<{
     doc_no: string; item_group: string | null; item_code: string | null;
     stock_status: string | null; cancelled: boolean | null; warehouse_id: string | null;
     branding: string | null; created_at: string | null;
-  }>((from, to) =>
+  }>(docNos, (batch, from, to) =>
     sb.from('mfg_sales_order_items')
       .select('doc_no, item_group, item_code, stock_status, cancelled, warehouse_id, branding, created_at')
-      .in('doc_no', docNos)
+      .in('doc_no', batch)
       .eq('cancelled', false)
       .order('doc_no')
       .order('line_no', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: true })
       .range(from, to),
   );
+  noteDegradedRead('so_lines', itemErr);
   const linesByDoc = new Map<string, ReadinessLine[]>();
   const warehousesByDoc = new Map<string, Set<string>>();
   /* Branding auto-derive — REPLICATES the SO list grid exactly. The Branding
@@ -525,7 +531,7 @@ deliveryPlanning.get('/', async (c) => {
   const firstBranding = new Map<string, string | null>();
   const firstItemCode = new Map<string, string | null>();
   const allCodes = new Set<string>();
-  for (const it of (itemRowsRaw ?? [])) {
+  for (const it of itemRowsRaw) {
     const dn = it.doc_no;
     if (!dn) continue;
     const arr = linesByDoc.get(dn) ?? [];
@@ -581,7 +587,7 @@ deliveryPlanning.get('/', async (c) => {
   const repCat = new Map<string, string>();
   const repBranding = new Map<string, string | null>();
   const repCode = new Map<string, string | null>();
-  for (const it of (itemRowsRaw ?? [])) {
+  for (const it of itemRowsRaw) {
     const dn = it.doc_no;
     if (!dn || repCat.has(dn)) continue;
     const cat = resolveLineCat(it.item_code, it.item_group ?? '');
@@ -592,18 +598,13 @@ deliveryPlanning.get('/', async (c) => {
     }
   }
 
-  /* 4. Delivery progress per SO (live remaining) — drives DELIVERED detection.
-        soDeliverableRemaining excludes DRAFT / CANCELLED DOs already; an SO is
-        fully delivered once every line's remaining == 0 AND at least one qty has
-        shipped (delivered > 0). */
-  const deliveredByDoc = new Map<string, number>();
-  const remainingByDoc = new Map<string, number>();
-  {
-    const deliverableMap = await soDeliverableRemaining(sb, docNos);
-    for (const line of deliverableMap.values()) {
-      deliveredByDoc.set(line.docNo, (deliveredByDoc.get(line.docNo) ?? 0) + line.delivered);
-      remainingByDoc.set(line.docNo, (remainingByDoc.get(line.docNo) ?? 0) + line.remaining);
-    }
+  /* Loud is right; anonymous is not — this reached the client as a bare 500. readFailure names the stage. */
+  let deliveredByDoc: Map<string, number>;
+  let remainingByDoc: Map<string, number>;
+  try {
+    ({ deliveredByDoc, remainingByDoc } = await boardDeliverableByDoc(sb, docNos));
+  } catch (e) {
+    return c.json(readFailure('delivered_sum', e), 500);
   }
 
   /* 5. DOs for these SOs — the cut DO doc_no + status + per-DO crew (driver /
@@ -621,7 +622,7 @@ deliveryPlanning.get('/', async (c) => {
     // the planning grid "DO Date" column. From the SAME latest-DO lookup as crew.
     do_date: string | null;
   };
-  const { data: doRowsRaw } = await paginateAll<{
+  const { data: doRowsRaw, error: doErr } = await chunkIn<{
     id: string; do_number: string | null; so_doc_no: string | null; status: string | null;
     // driver_id — the DO header's quick-field driver, one half of the row-scope
     // assignment (the crew snapshot below carries the rest). dual-read camelCase.
@@ -639,12 +640,12 @@ deliveryPlanning.get('/', async (c) => {
     shipoutDate?: string | null; customerDeliveredDate?: string | null;
     etaArrivingPort?: string | null; deliverySubstatus?: string | null;
     arrivesEmWarehouseDate?: string | null;
-  }>((from, to) =>
+  }>(docNos, (batch, from, to) =>
     sb.from('delivery_orders')
       .select('id, do_number, so_doc_no, status, driver_id, delivery_state, customer_delivery_date, do_date, time_range, time_confirmed, arrival_at, departure_at, shipout_date, customer_delivered_date, eta_arriving_port, delivery_substatus, arrives_em_warehouse_date')
-      .in('so_doc_no', docNos)
-      .range(from, to),
+      .in('so_doc_no', batch).order('id').range(from, to),
   );
+  noteDegradedRead('do_headers', doErr);
   const doByDoc = new Map<string, Array<{ id: string; doNumber: string; status: string }>>();
   /* DO header driver_id by DO id — half the row-scope assignment (crew ids are
      the other half). Only consulted when the caller is self-scoped. */
@@ -653,7 +654,7 @@ deliveryPlanning.get('/', async (c) => {
      same DO whose crew is shown (the last in doByDoc). null when no DO. */
   const doExecByDoc = new Map<string, DoExecOut>();
   const doIds: string[] = [];
-  for (const d of (doRowsRaw ?? [])) {
+  for (const d of doRowsRaw) {
     const st = (d.status ?? '').toUpperCase();
     if (st === 'DRAFT' || st === 'CANCELLED') continue;  // exclude uncommitted / voided
     const dn = d.so_doc_no ?? '';
@@ -716,9 +717,9 @@ deliveryPlanning.get('/', async (c) => {
         /* ONE widened read serves both maps. The dp_no rule is unchanged — the
            filter that used to live in the query (`dp_no IS NOT NULL`) now lives
            in take(), same rows either way. */
-        const byDo = await sb.from('trip_stops')
-          .select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', doIds);
-        const stopRows = ((byDo as { data?: StopRow[] }).data ?? []);
+        const { data: stopRows } = await chunkIn<StopRow>(doIds, (batch, from, to) => sb.from('trip_stops')
+          .select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', batch)
+          .order('do_id').range(from, to));
         take(stopRows.filter((s) => s.dp_no != null));
 
         /* Resolve the stops' trips (bounded .in) and keep only live ones —
@@ -729,10 +730,10 @@ deliveryPlanning.get('/', async (c) => {
           .map((s) => (s.tripId ?? s.trip_id) as string | null)
           .filter((x): x is string => !!x))];
         if (tripIds.length) {
-          const { data: tripRowsRaw } = await sb.from('trips')
-            .select('id, trip_no, trip_date, status').in('id', tripIds);
+          const { data: tripRowsRaw } = await chunkIn<Record<string, unknown>>(tripIds, (batch, from, to) => sb.from('trips')
+            .select('id, trip_no, trip_date, status').in('id', batch).order('id').range(from, to));
           const liveTripById = new Map<string, { id: string; trip_no: string | null; trip_date: string | null }>();
-          for (const t of (tripRowsRaw ?? []) as Array<{
+          for (const t of tripRowsRaw as Array<{
             id: string; trip_no?: string | null; tripNo?: string | null;
             trip_date?: string | null; tripDate?: string | null; status?: string | null;
           }>) {
@@ -774,7 +775,7 @@ deliveryPlanning.get('/', async (c) => {
      above carries only NAMES, for display). Only consulted when self-scoped. */
   const crewIdsByDo = new Map<string, { driverIds: string[]; helperIds: string[] }>();
   if (doIds.length > 0) {
-    const { data: crewRows } = await paginateAll<{
+    const { data: crewRows } = await chunkIn<{
       do_id: string;
       driver_1_id: string | null; driver_2_id: string | null;
       helper_1_id: string | null; helper_2_id: string | null;
@@ -782,13 +783,12 @@ deliveryPlanning.get('/', async (c) => {
       driver_2_name: string | null;
       helper_1_name: string | null; helper_2_name: string | null; lorry_plate: string | null;
       driver1Id?: string | null; driver2Id?: string | null; helper1Id?: string | null; helper2Id?: string | null;
-    }>((from, to) =>
+    }>(doIds, (batch, from, to) =>
       sb.from('delivery_order_crew')
         .select('do_id, driver_1_id, driver_2_id, helper_1_id, helper_2_id, driver_1_name, driver_1_ic, driver_1_contact, driver_2_name, helper_1_name, helper_2_name, lorry_plate')
-        .in('do_id', doIds)
-        .range(from, to),
+        .in('do_id', batch).order('do_id').range(from, to),
     );
-    for (const cr of (crewRows ?? [])) {
+    for (const cr of crewRows) {
       crewIdsByDo.set(cr.do_id, {
         driverIds: [cr.driver1Id ?? cr.driver_1_id, cr.driver2Id ?? cr.driver_2_id].filter((x): x is string => !!x),
         helperIds: [cr.helper1Id ?? cr.helper_1_id, cr.helper2Id ?? cr.helper_2_id].filter((x): x is string => !!x),
@@ -840,20 +840,25 @@ deliveryPlanning.get('/', async (c) => {
       const code = hasRep ? repCode.get(docNo) : firstItemCode.get(docNo);
       fBranding = (code && productBranding.get(code)) || fBranding;
     }
-    const branding = deriveBranding(fCat, fBranding) || null;
+    /* Company comes PER ROW, not from the caller: this board is a SHARED queue,
+       so labelling a Houzs order "2990 Sofa" because a 2990 user opened it is a
+       WRONG label, not a missing one. The old `|| null` is gone — the rule
+       cannot return blank now (owner 2026-08-17), so it could only restore the
+       empty state. See scm/shared/so-branding-label.ts. */
+    const branding = deriveBranding(fCat, fBranding, codeMap.get(Number(r.company_id)) ?? null);
     const readiness = summariseReadiness(linesByDoc.get(docNo) ?? []);
     const delivered = deliveredByDoc.get(docNo) ?? 0;
     const remaining = remainingByDoc.get(docNo) ?? 0;
     const status = String(r.status ?? '').toUpperCase();
     const customerDD = r.customer_delivery_date ?? null;
     const procDate = r.processing_date ?? null;
-    /* Amendment dates. The ORIGINAL customer_delivery_date is never overwritten;
-       the amended date (when set) is what we now commit to. EFFECTIVE date =
-       amended_delivery_date ?? customer_delivery_date — it drives days_left AND
-       the OVERDUE 3-day window. dual-read camelCase. */
+    /* Amendment dates. The ORIGINAL is never overwritten; the amended date (when
+       set) is what we now commit to. effectiveSoDelivery is the ONE reader of that
+       rule (shared/effective-delivery.ts) — this board's chain was right all along;
+       MRP and the allocator stopped disagreeing with it on 2026-08-18. */
     const amendDateFromCustomer = r.amendDateFromCustomer ?? r.amend_date_from_customer ?? null;
     const amendedDD = r.amendedDeliveryDate ?? r.amended_delivery_date ?? null;
-    const effectiveDD = amendedDD ?? customerDD;
+    const effectiveDD = effectiveSoDelivery(r);
 
     /* "Ready to ship" gate — see summariseReadiness.isShipReady. */
     const readyToShip = readiness.isShipReady;
@@ -896,7 +901,9 @@ deliveryPlanning.get('/', async (c) => {
       debtor_code: r.debtor_code ?? null,
       debtor_name: r.debtor_name ?? null,
       phone: r.phone ?? null,
-      branding,
+      /* SO rows always carry a real label now; `| null` is union parity for the
+         three non-SO BoardRow kinds (ASSR / DP / project) that pass null. */
+      branding: branding as string | null,
       status,
       delivery_state: state,
       delivery_state_override: stored && (DELIVERY_STATES as string[]).includes(stored) ? stored : null,
@@ -1181,13 +1188,12 @@ deliveryPlanning.get('/', async (c) => {
   try {
     const assrCaseIds = [...new Set(assrOrders.map((o) => o.assr_id).filter((x): x is number => x != null))];
     if (assrCaseIds.length) {
-      const { data: stopsRaw } = await sb.from('trip_stops')
-        .select('assr_case_id, stop_type, trip_id').in('assr_case_id', assrCaseIds);
-      const stops = (stopsRaw ?? []) as Array<{ assr_case_id: number; stop_type: string; trip_id: string }>;
+      const { data: stops } = await chunkIn<{ assr_case_id: number; stop_type: string; trip_id: string }, number>(assrCaseIds, (batch, from, to) => sb.from('trip_stops')
+        .select('assr_case_id, stop_type, trip_id').in('assr_case_id', batch).order('assr_case_id').range(from, to));
       if (stops.length) {
         const tripIds = [...new Set(stops.map((s) => s.trip_id).filter(Boolean))];
-        const { data: tripsRaw } = await sb.from('trips').select('id, driver_id, lorry_id').in('id', tripIds);
-        const trips = (tripsRaw ?? []) as Array<{ id: string; driver_id: string | null; lorry_id: string | null }>;
+        const { data: trips } = await chunkIn<{ id: string; driver_id: string | null; lorry_id: string | null }>(tripIds,
+          (batch, from, to) => sb.from('trips').select('id, driver_id, lorry_id').in('id', batch).order('id').range(from, to));
         const tripById = new Map(trips.map((t) => [String(t.id), t]));
         const driverIds = [...new Set(trips.map((t) => t.driver_id).filter((x): x is string => !!x))];
         const lorryIds = [...new Set(trips.map((t) => t.lorry_id).filter((x): x is string => !!x))];
@@ -1499,7 +1505,8 @@ deliveryPlanning.get('/', async (c) => {
     : regionFiltered.filter((o) => o.delivery_state === stateParam);
 
   return c.json({ orders: stateFiltered, counts, regions: regionCfg.regions });
-});
+};
+deliveryPlanning.get('/', deliveryPlanningBoardHandler);
 
 /* ──────────────────────────────────────────────────────────────────────────
    GET /delivery-planning/geo?date=YYYY-MM-DD&region=<ALL|code>
@@ -1583,18 +1590,17 @@ deliveryPlanning.get('/geo', async (c) => {
         (every dispatcher/ops caller) skips this entirely. */
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
   if (scope.mode !== 'all' && docNos.length > 0) {
-    const { data: doRows } = await paginateAll<{
+    const { data: doRows } = await chunkIn<{
       id: string; so_doc_no: string | null; status: string | null;
       driver_id: string | null; driverId?: string | null;
-    }>((from, to) =>
+    }>(docNos, (batch, from, to) =>
       sb.from('delivery_orders')
         .select('id, so_doc_no, status, driver_id')
-        .in('so_doc_no', docNos)
-        .range(from, to),
+        .in('so_doc_no', batch).order('id').range(from, to),
     );
     const latestDoByDoc = new Map<string, { id: string; driverId: string | null }>();
     const scopeDoIds: string[] = [];
-    for (const d of (doRows ?? [])) {
+    for (const d of doRows) {
       const st = (d.status ?? '').toUpperCase();
       if (st === 'DRAFT' || st === 'CANCELLED') continue;
       const dn = d.so_doc_no ?? '';
@@ -1604,13 +1610,12 @@ deliveryPlanning.get('/geo', async (c) => {
     }
     const crewByDoId = new Map<string, { driverIds: Array<string | null>; helperIds: Array<string | null> }>();
     if (scopeDoIds.length > 0) {
-      const { data: crewRows } = await paginateAll<Record<string, unknown>>((from, to) =>
+      const { data: crewRows } = await chunkIn<Record<string, unknown>>(scopeDoIds, (batch, from, to) =>
         sb.from('delivery_order_crew')
           .select('do_id, driver_1_id, driver_2_id, helper_1_id, helper_2_id')
-          .in('do_id', scopeDoIds)
-          .range(from, to),
+          .in('do_id', batch).order('do_id').range(from, to),
       );
-      for (const cr of (crewRows ?? [])) {
+      for (const cr of crewRows) {
         crewByDoId.set(String(cr.do_id ?? cr.doId ?? ''), {
           driverIds: [(cr.driver1Id ?? cr.driver_1_id) as string | null, (cr.driver2Id ?? cr.driver_2_id) as string | null],
           helperIds: [(cr.helper1Id ?? cr.helper_1_id) as string | null, (cr.helper2Id ?? cr.helper_2_id) as string | null],
@@ -1644,21 +1649,21 @@ deliveryPlanning.get('/geo', async (c) => {
   /* 3. Line items → set counts (the packer's derivation: catalog category
         first, item_group fallback, deriveSetCount) + the per-order primary
         warehouse for the depot vote. */
-  const { data: itemRows } = await paginateAll<{
+  const { data: itemRows } = await chunkIn<{
     doc_no: string; item_group: string | null; item_code: string | null;
     qty: number | null; cancelled: boolean | null;
     warehouse_id: string | null; warehouseId?: string | null;
-  }>((from, to) =>
+  }>(docNos, (batch, from, to) =>
     scopeToAllowedCompanies(
       sb.from('mfg_sales_order_items')
         .select('doc_no, item_group, item_code, qty, cancelled, warehouse_id')
-        .in('doc_no', docNos)
+        .in('doc_no', batch)
         .eq('cancelled', false),
       c,
-    ).range(from, to),
+    ).order('doc_no').range(from, to),
   );
   const geoCodes = new Set<string>();
-  for (const it of (itemRows ?? [])) if (it.item_code) geoCodes.add(it.item_code);
+  for (const it of itemRows) if (it.item_code) geoCodes.add(it.item_code);
   const geoProductCategory = new Map<string, string>();
   {
     const codeList = [...geoCodes];
@@ -1673,7 +1678,7 @@ deliveryPlanning.get('/geo', async (c) => {
   }
   const setLinesByDoc = new Map<string, SetLine[]>();
   const primaryWhByDoc = new Map<string, string>();
-  for (const it of (itemRows ?? [])) {
+  for (const it of itemRows) {
     const dn = String(it.doc_no ?? '');
     if (!dn) continue;
     const cat = (it.item_code ? geoProductCategory.get(it.item_code) : undefined) ?? normCategory(it.item_group ?? '');
@@ -2037,7 +2042,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
      fields here (possession/house type/referral/DP amend dates) stay FREE. */
   if (soUpdates['replacement_disposal'] !== undefined && soDocNo) {
     const { data: lockRow } = await sb.from('mfg_sales_orders')
-      .select('processing_date, proceeded_at, status')
+      .select('processing_date, status')
       .eq('doc_no', soDocNo).maybeSingle();
     const before = await sb.from('mfg_sales_orders')
       .select('replacement_disposal').eq('doc_no', soDocNo).maybeSingle();
@@ -2053,7 +2058,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
        sentence — a second code here would need its own entry to avoid surfacing
        raw. */
     const dpLocked = genuineChange && (
-      soProcessingLocked(lockRow as { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null)
+      soProcessingLocked(lockRow as { processing_date?: string | null; status: string | null } | null)
       || await soPoLocked(sb, soDocNo)
     );
     if (dpLocked) {
@@ -2153,8 +2158,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
 const scheduleSchema = z.object({
   // The firm trip date the coordinator commits to. Written to the header's
   // amended_delivery_date — NEVER customer_delivery_date, which stays the
-  // customer's ORIGINAL pick. The effective date for Days Left / OVERDUE is
-  // amended_delivery_date ?? customer_delivery_date.
+  // customer's ORIGINAL pick. effectiveSoDelivery reads the pair.
   scheduleDate: z.string().nullable().optional(),  // YYYY-MM-DD
   // Optional MANUAL override of the derived delivery_state (cache column).
   deliveryState: z.enum(['PENDING_DELIVERY', 'PENDING_SCHEDULE', 'OVERDUE', 'DELIVERED']).nullable().optional(),
@@ -2316,7 +2320,8 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
      the SO (which exists only on mfg_sales_orders). For a :type=do schedule the SO
      header is not the target; the DO carries no amend column, so a date is a no-op
      there (the schedule date flows to the trip / leg below, not onto the DO date). */
-  if (p.scheduleDate !== undefined && type === 'so') updates.amended_delivery_date = p.scheduleDate;
+  /* scheduleDate is nullable+optional in zod, so "" reaches a DATE column; dateOrNull clears it. */
+  if (p.scheduleDate !== undefined && type === 'so') updates.amended_delivery_date = dateOrNull(p.scheduleDate);
   if (p.deliveryState !== undefined) updates.delivery_state = p.deliveryState;
   // A trip-only schedule (no date/state) is still a valid change — only 400 when
   // there's NOTHING to do at all.
@@ -2546,7 +2551,9 @@ async function scheduleOntoTrip(
 
     /* Find-or-create the trip. tripId given → use it; else find an existing
        PLANNED trip for (lorry, date) or create one. */
-    const tripDate = p.tripDate ?? p.scheduleDate ?? todayMyt();
+    /* `??` is nullish: a blank tripDate/scheduleDate walked into trips.trip_date
+       (`DATE NOT NULL`, mig 0053). Blank now falls to today like an absent key. */
+    const tripDate = dateOrNull(p.tripDate) ?? dateOrNull(p.scheduleDate) ?? todayMyt();
     let tripId = p.tripId ?? null;
     if (!tripId && p.lorryId) {
       const { data: found } = await sb.from('trips').select('id, trip_no')
@@ -2799,7 +2806,7 @@ async function scheduleAssrOntoTrip(
     const address = [a?.addr1, a?.addr2, a?.addr3, a?.addr4].filter(Boolean).join(', ') || null;
 
     /* Find-or-create the trip — same rule as scheduleOntoTrip. */
-    const tripDate = p.tripDate ?? p.scheduleDate ?? a?.leg_date ?? todayMyt();
+    const tripDate = dateOrNull(p.tripDate) ?? dateOrNull(p.scheduleDate) ?? dateOrNull(a?.leg_date) ?? todayMyt();
     let tripId = p.tripId ?? null;
     if (!tripId && p.lorryId) {
       const { data: found } = await sb.from('trips').select('id, trip_no')

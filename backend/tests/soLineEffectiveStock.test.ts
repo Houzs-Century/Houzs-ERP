@@ -114,8 +114,10 @@ describe('the rollup the owner reads, fed the two ways', () => {
    helper nobody calls is exactly how that ships again. */
 describe('the SO list rolls up the shared rule, not a raw stored column', () => {
   it('the list readiness rollup is fed the effective status, not the stored column', () => {
-    // The rollup's input is built by the shared module, with the live coverage.
-    expect(mfgSalesOrders).toContain('readinessLinesByDoc(itemRows ?? [], mrpForList ? mrpLineCoverage(mrpForList) : null)');
+    /* The rollup's input is built by the shared module, with the live coverage.
+       (`itemRows` lost its `?? []` when that read moved to chunkIn, which returns
+       a non-nullable array — the pin follows the call, not the fallback.) */
+    expect(mfgSalesOrders).toContain('readinessLinesByDoc(itemRows, mrpForList ? mrpLineCoverage(mrpForList) : null)');
     /* The pre-fix shape: the handler building ReadinessLine rows itself off the
        raw stored column. If any of these comes back the board has its own
        opinion again, which is the whole defect. */

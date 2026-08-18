@@ -27,7 +27,7 @@ import { writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
 import { ArrowRight, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash } from '@2990s/shared';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
   useOutstandingGrnItems,
   type OutstandingGrnItem,
@@ -51,7 +51,7 @@ export const PurchaseInvoiceFromGrn = () => {
 
   const [picks, setPicks] = useState<Record<string, { picked: boolean; qty: number }>>({});
 
-  /* "Convert to PI" on a GRN lands here with ?grnId=<id> so the operator sees
+  /* "Transfer to Purchase Invoice" on a GRN lands here with ?grnId=<id> so the operator sees
      the note they were just looking at, not every outstanding note in the
      company. The parameter was being constructed by both callers and dropped
      here until 2026-08-16. No parameter → the full picker, which is what the
@@ -225,12 +225,25 @@ export const PurchaseInvoiceFromGrn = () => {
             <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
               {/* The ternary went loading → empty with no error arm, so a failed
                   read announced that every posted GRN had already been invoiced
-                  — the opposite of the truth, and revenue goes unbilled on it. */}
+                  — the opposite of the truth, and revenue goes unbilled on it.
+
+                  AND THE EMPTY ARM SAID THE SAME THING (owner 2026-08-17). On
+                  the purchase side that sentence is the expensive one: an
+                  operator who believes a note is fully invoiced stops looking,
+                  and the unlinked-line defect means a receipt can read as
+                  outstanding while a PI already billed it — the two errors point
+                  opposite ways and both end in a supplier paid wrong. An empty
+                  read establishes nothing: scopeToCompany fails closed
+                  (scm/lib/companyScope.ts -> .in('company_id', []) returns []
+                  with error: null), PostgREST truncates at db-max-rows in
+                  silence, and a swallowed read error is shaped like an empty
+                  one. Say what was searched; let the note's own balance say
+                  what is true. */}
               {itemsQ.isLoading ? 'Loading…'
                 : itemsQ.isError ? "We couldn't load the outstanding lines — please refresh and try again."
-                : items.length === 0 ? (scope.keys.size > 0
-                    ? 'Nothing left to bill on the note you came from — it has already been fully invoiced. Other notes may still be outstanding.'
-                    : 'No outstanding lines — every posted GRN has already been invoiced.')
+                : items.length === 0 ? (allItems.length > 0
+                    ? `None of the ${allItems.length} outstanding line(s) that loaded belong to the note you came from — use “Show all outstanding notes” to see the rest.`
+                    : 'This search came back with no outstanding GRN lines. That is not the same as every posted note having been billed — the list only covers the company you are working in, and notes it cannot see look identical to notes that are done. Open the goods-received note and check its invoiced balance before treating this as nothing left to bill.')
                 : `${items.length} line${items.length === 1 ? '' : 's'} across ${grouped.length} GRN${grouped.length === 1 ? '' : 's'}`}
             </span>
           </div>

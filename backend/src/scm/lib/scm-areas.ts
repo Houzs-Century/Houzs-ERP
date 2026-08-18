@@ -60,6 +60,7 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
   ["/purchase-invoices/*", "scm.procurement.pi"],
   ["/mfg-sales-orders/*", "scm.sales.orders"],
   ["/so-amendments/*", "scm.sales.orders"],
+  ["/so-handover/*", "scm.sales.orders"],
   ["/delivery-orders-mfg/*", "scm.sales.delivery"],
   ["/sales-invoices/*", "scm.sales.invoices"],
   ["/delivery-returns/*", "scm.sales.returns"],
@@ -122,9 +123,6 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
    test that pins SCM_AREA_MOUNTS pins this list. */
 export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/categories",
-  "/pos-cart",
-  "/personal-quick-picks",
-  "/sales-analysis",
   "/state-warehouse-mappings",
   "/entity-audit-log",
   "/autocount-outbox",

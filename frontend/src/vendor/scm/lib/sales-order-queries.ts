@@ -63,8 +63,8 @@ export const useMfgSalesOrders = (status?: string) =>
 // useMfgSalesOrders above (no page) still returns all 500 for the dead V1 page.
 // Status tab values in the UI are lowercase (draft/confirmed/cancelled) but the
 // mfg_sales_orders.status column stores UPPERCASE — uppercase here to match.
-export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string }) {
-  const { page, pageSize, status, q, sort } = params;
+export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean }) {
+  const { page, pageSize, status, q, sort, enabled } = params;
   const usp = new URLSearchParams();
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
@@ -72,6 +72,11 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
   if (q && q.trim()) usp.set('q', q.trim());
   if (sort) usp.set('sort', sort);
   return useQuery({
+    // `enabled` (default true) lets the list page defer the FIRST fetch by one
+    // render until the DataTable's one-shot mount sort-report lands, so the
+    // initial query already carries any localStorage-restored `sort` instead of
+    // firing sort-less, getting aborted, and immediately re-firing with sort.
+    enabled: enabled ?? true,
     queryKey: ['mfg-sales-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
     // statusCounts carries ONE bucket per backend SO_STATUSES entry (lowercase:
     // draft/confirmed/in_production/ready_to_ship/shipped/delivered/invoiced/
@@ -88,14 +93,13 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
 }
 
 // Dashboard summary mode (`?summary=1`) — the backend returns only the 6 cols
-// the lifecycle-bucket KPIs need (doc_no, status, proceeded_at, local_total_centi,
+// the lifecycle-bucket KPIs need (doc_no, status, local_total_centi,
 // created_at, so_date), non-DRAFT, company + sales-scope scoped, so the dashboard
 // isn't paying for 500 fully-hydrated rows. Bucketing stays in the FE (single
 // source of truth). Ported from 2990's useMfgSalesOrdersSummary.
 export type SoSummaryRow = {
   doc_no: string;
   status: string;
-  proceeded_at: string | null;
   local_total_centi: number;
   created_at: string | null;
   so_date: string | null;
@@ -262,15 +266,35 @@ export const useCreateMfgSalesOrder = () => {
   });
 };
 
+/* `expectedStatus` is the server's compare-and-set on the status column: the
+   backend refuses with 409 `so_version_conflict` when it does not equal the
+   row's CURRENT status. So it must carry the status the operator was LOOKING
+   at, and the caller is the only thing that holds it.
+
+   It is REQUIRED, not optional, because it decides whether the CAS runs at all
+   (see CLAUDE.md, "a parameter that DECIDES something is required"). Pass an
+   explicit `null` where a surface genuinely does not know the current status —
+   the backend then skips the status half and the version CAS alone guards the
+   write.
+
+   IT MUST NOT BE READ BACK OUT OF THE QUERY CACHE. `onMutate` below paints the
+   TARGET status onto the detail + list caches, and react-query runs `onMutate`
+   BEFORE `mutationFn` — so a mutationFn that read the cache read its own
+   optimistic write and sent `expectedStatus === status`. Every transition off
+   a warm detail cache therefore failed the CAS and returned 409, which the
+   operator saw as "Status update failed — Someone else updated this order
+   while you were editing" on the very first click, with nobody else involved.
+   Cancel SO on the detail page was 100% reproducible; the list buttons happened
+   to work only because a cold detail cache made `onMutate`'s paint a no-op.
+   Pinned by sales-order-status-expected.test.tsx. */
 export const useUpdateMfgSalesOrderStatus = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ docNo, status }: { docNo: string; status: string }) => {
+    mutationFn: async ({ docNo, status, expectedStatus }: { docNo: string; status: string; expectedStatus: string | null }) => {
       const version = await resolveLoadedSoVersion(qc, docNo);
-      const cached = qc.getQueryData<{ salesOrder?: { status?: string } }>(['mfg-sales-order-detail', docNo]);
       return authedFetch<{ salesOrder: unknown; version: number }>(`/mfg-sales-orders/${docNo}/status`, {
         method: 'PATCH',
-        body: JSON.stringify({ status, version, expectedStatus: cached?.salesOrder?.status }),
+        body: JSON.stringify({ status, version, expectedStatus: expectedStatus ?? undefined }),
       });
     },
     onMutate: async ({ docNo, status }) => {

@@ -45,6 +45,8 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
+import { parseProvenanceNote } from '../shared/transfer-vocabulary';
+import { chunkIn } from '../lib/paginate-all';
 import type { Env, Variables } from '../env';
 
 export const documentFlow = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -94,23 +96,29 @@ const stripCompanyPrefix = (docNo: string): string => docNo.replace(/^\d+-/, '')
 const DOC_TOKEN_CHAR = /[A-Za-z0-9-]/;
 const escapeRegExp = (s: string): string => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-/* EXTRACT the SO doc numbers a PO's "From SOs: …" note records — the reverse of
-   noteMentionsToken (membership) for callers that need the tokens themselves
-   (e.g. resolving a single PO's origin SO(s) without scanning every company SO).
-   Co-located here so the note FORMAT lives in exactly one place: the writer is
-   `From SOs: ${docNos.join(', ')}` (mfg-purchase-orders.ts), so we match that
-   leading label (case-insensitive, optional plural) and split the list on
-   commas. Tokens are the doc numbers verbatim (company prefix already stripped
-   by the writer); the caller VALIDATES them against real SOs by an equality
-   lookup, which is what enforces whole-token matching — a split token "SO-1"
-   can only ever equal the SO "SO-1", never "SO-10". Returns [] for a note with
-   no "From SOs:" label (a plain free-text note). */
-export const parseFromSosNote = (note: string | null | undefined): string[] => {
-  if (!note) return [];
-  const m = /^\s*From SOs?:\s*(.+)$/im.exec(String(note).trim());
-  if (!m) return [];
-  return [...new Set(m[1].split(',').map((s) => s.trim()).filter(Boolean))];
-};
+/* EXTRACT the source SO doc numbers a PO's provenance note records — the
+   reverse of noteMentionsToken (membership) for callers that need the tokens
+   themselves (e.g. resolving a single PO's origin SO(s) without scanning every
+   company SO).
+
+   The note FORMAT no longer lives here. It moved to
+   `src/scm/shared/transfer-vocabulary.ts` on 2026-08-18, because it was never
+   only a backend concern: the frontend map, the printed PO and three .mjs
+   repair scripts each carried their own copy of this regex, and the label the
+   writer stamps has to be the SAME sentence the transfer BUTTON says (#2370's
+   rule). One home, four trees.
+
+   What that module guarantees, and the reason this is a re-export rather than a
+   second parser: it accepts the CURRENT label AND both pre-2026-08-18 spellings
+   ("From SOs:", "From SO:"). A PO raised before the rename records its source
+   orders nowhere else, so a parser that knew only today's wording would return
+   [] for it and this route would report a PO with no origin at all.
+
+   Tokens are the doc numbers verbatim (company prefix already stripped by the
+   writer); the caller VALIDATES them against real SOs by an equality lookup,
+   which is what enforces whole-token matching — a split token "SO-1" can only
+   ever equal the SO "SO-1", never "SO-10". */
+export { parseProvenanceNote };
 
 export const noteMentionsToken = (note: string, token: string): boolean => {
   if (!note || !token) return false;
@@ -163,7 +171,7 @@ async function resolveRootSos(sb: any, c: Context<any>, type: NodeType, id: stri
          .eq('company_id', cid)) is the equality validation that keeps only
          real, owned SOs — the same gate every other root passes through. */
       const { data: poHdr } = await scopeToCompany(sb.from('purchase_orders').select('notes').eq('id', id), c).maybeSingle();
-      return parseFromSosNote((poHdr as { notes?: string | null } | null)?.notes);
+      return parseProvenanceNote((poHdr as { notes?: string | null } | null)?.notes);
     }
     case 'grn': {
       const { data } = await scopeToCompany(sb.from('grns').select('purchase_order_id').eq('id', id), c).maybeSingle();
@@ -461,15 +469,21 @@ documentFlow.get('/candidate-pos/:soDocNo', async (c) => {
   const poIds = uniq((poItems ?? []).map((r: any) => r.purchase_order_id));
   if (poIds.length === 0) return c.json({ candidates: [] });
 
-  // Live (non-CANCELLED) POs only, company-scoped, newest first.
-  const { data: pos } = await scopeToCompany(
+  /* Live (non-CANCELLED) POs only, company-scoped, newest first. CHUNKED: the
+     read above collects EVERY unlinked PO line carrying one of this order's item
+     codes, with no date or status bound, so `poIds` grows with the whole PO
+     history of a common SKU rather than with this one order. The `.sort()` below
+     is a total order over the merged rows, so batching cannot reshuffle the
+     candidate list. */
+  type CandidatePoRow = { id: string; po_number: string; status: string | null; po_date: string | null };
+  const { data: pos } = await chunkIn<CandidatePoRow>(poIds, (batch, from, to) => scopeToCompany(
     sb.from('purchase_orders')
       .select('id, po_number, status, po_date')
-      .in('id', poIds)
+      .in('id', batch)
       .neq('status', 'CANCELLED'),
     c,
-  );
-  const candidates = ((pos ?? []) as any[])
+  ).order('id').range(from, to));
+  const candidates = pos
     .map((p) => ({ id: p.id, poNumber: p.po_number, status: p.status, poDate: p.po_date }))
     .sort((a, b) =>
       (b.poDate ?? '').localeCompare(a.poDate ?? '') || b.poNumber.localeCompare(a.poNumber));

@@ -59,6 +59,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -299,6 +300,24 @@ export const ConsignmentNoteDetail = () => {
     });
   };
 
+  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
+     until 2026-08-17, so the loading render called fewer hooks than the loaded
+     one and React threw #310 ("rendered more hooks than during the previous
+     render") the moment the query resolved — a blank "Something went wrong
+     loading this page." on a direct URL / refresh. Arriving from the list hid
+     it: react-query already had the detail cached, so the isPending branch
+     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
+     header; it can only ever be CALLED from the preview dialog, which does not
+     exist until the record has loaded. */
+  const deliverPrintPdf = (action: PdfAction) => {
+    if (!header) return;
+    return import('../../vendor/scm/lib/delivery-order-pdf')
+      .then(({ generateDeliveryOrderPdf }) =>
+        generateDeliveryOrderPdf(header as never, items as never, { docTitle: 'CONSIGNMENT NOTE', docNoLabel: 'CN No', showPicking: false, action }))
+      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+
   if (detail.isPending) {
     return <SkeletonDetailPage />;
   }
@@ -318,14 +337,6 @@ export const ConsignmentNoteDetail = () => {
 
   const isLocked = lockedStatuses.includes(header.status);
   const isCancelled = header.status === 'CANCELLED';
-
-  const deliverPrintPdf = (action: PdfAction) => {
-    return import('../../vendor/scm/lib/delivery-order-pdf')
-      .then(({ generateDeliveryOrderPdf }) =>
-        generateDeliveryOrderPdf(header as never, items as never, { docTitle: 'CONSIGNMENT NOTE', docNoLabel: 'CN No', showPicking: false, action }))
-      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
-  };
-  const print = usePrintPreview(deliverPrintPdf);
 
   const handleCancel = async () => {
     if (!(await askConfirm({
@@ -691,14 +702,20 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Salesperson</span>
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={form.salespersonId}
-                  disabled={inputsDisabled} onChange={(e) => set('salespersonId', e.target.value)}>
-                  <option value="">— Pick staff —</option>
-                  {sortByText(staffList).map((s) => <option key={s.id} value={s.id}>{s.name} ({s.staffCode})</option>)}
-                  {form.salespersonId && !staffList.some((s) => s.id === form.salespersonId) && (
-                    <option value={form.salespersonId}>(former staff)</option>
-                  )}
-                </select>
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  ariaLabel="Salesperson"
+                  placeholder="— Pick staff —"
+                  value={form.salespersonId}
+                  onChange={(v) => set('salespersonId', v)}
+                  disabled={inputsDisabled}
+                  options={[
+                    ...sortByText(staffList).map((s) => ({ value: s.id, label: `${s.name} (${s.staffCode})` })),
+                    ...(form.salespersonId && !staffList.some((s) => s.id === form.salespersonId)
+                      ? [{ value: form.salespersonId, label: '(former staff)' }]
+                      : []),
+                  ]}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
@@ -713,8 +730,13 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
           <div className={styles.formGrid4}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Note Date</span>
-              <input type="date" className={styles.fieldInput} value={form.doDate}
-                disabled={inputsDisabled} onChange={(e) => set('doDate', e.target.value)} />
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.doDate}
+                disabled={inputsDisabled}
+                onChange={(iso) => set('doDate', iso)}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Driver</span>
@@ -747,13 +769,23 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Expected Delivery</span>
-              <input type="date" className={styles.fieldInput} value={form.expectedDeliveryAt}
-                disabled={inputsDisabled} onChange={(e) => set('expectedDeliveryAt', e.target.value)} />
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.expectedDeliveryAt}
+                disabled={inputsDisabled}
+                onChange={(iso) => set('expectedDeliveryAt', iso)}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer Delivery Date</span>
-              <input type="date" className={styles.fieldInput} value={form.customerDeliveryDate}
-                disabled={inputsDisabled} onChange={(e) => set('customerDeliveryDate', e.target.value)} />
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.customerDeliveryDate}
+                disabled={inputsDisabled}
+                onChange={(iso) => set('customerDeliveryDate', iso)}
+              />
             </label>
             <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Note</span>

@@ -17,6 +17,7 @@ import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { qtyCapRefusal } from '../lib/qty-cap';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { writeMovements, reverseMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -30,6 +31,7 @@ import {
 } from '../shared/so-line-display';
 import { recomputePoReceived, resolvePoBatchByItem } from './grns';
 import { findUnlinkedPrLines, unlinkedReturnResponse } from '../lib/return-unlinked-lines';
+import { unlinkedEditRefusal, unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
@@ -684,7 +686,9 @@ purchaseReturns.post('/', async (c) => {
         soItemId: (it.grnItemId as string | undefined) ?? null,
       })),
     );
-    if (unlinked.length > 0) return c.json(unlinkedReturnResponse(unlinked, 'purchase'), 409);
+    // Refuses on an unreadable GRN too — see unlinkedScanRefusal.
+    const bad = unlinkedScanRefusal(unlinked, (o) => unlinkedReturnResponse(o, 'purchase'));
+    if (bad) return c.json(bad, 409);
   }
 
   /* Audit gap #7 — REJECT a GRN-linked over-return with the SAME 409 the
@@ -757,7 +761,10 @@ purchaseReturns.post('/', async (c) => {
   }).filter((r) => Number(r.qty_returned) > 0);
 
   if (itemRows.length === 0) {
-    return c.json({ error: 'no_returnable_qty', message: 'Every line is already fully returned (nothing left to return).' }, 400);
+    /* This is computed from the REQUEST, not from a read: itemRows is the
+       caller's own items filtered to qty_returned > 0. "Every line is already
+       fully returned" named a cause nothing here checked. */
+    return c.json({ error: 'no_returnable_qty', message: 'No line in this request carries a quantity to return. Enter a quantity above zero on at least one line.' }, 400);
   }
 
   /* PR-DRAFT-removal — PR is created POSTED, inventory OUT written inline. */
@@ -797,7 +804,7 @@ purchaseReturns.post('/', async (c) => {
     purchase_order_id: (body.purchaseOrderId as string | undefined) ?? null,
     grn_id: grnId,
     supplier_id: body.supplierId,
-    return_date: (body.returnDate as string) ?? todayMyt(),
+    return_date: dateOrNull(body.returnDate) ?? todayMyt(),
     reason: (body.reason as string | undefined) ?? null,
     refund_centi: totalRefund,
     notes: (body.notes as string | undefined) ?? null,
@@ -1043,7 +1050,10 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
   const lines = allLines
     .map((it) => ({ ...it, _remaining: (it.qty_accepted ?? 0) - (it.returned_qty ?? 0) }))
     .filter((it) => it._remaining > 0);
-  if (lines.length === 0) return c.json({ error: 'nothing_to_return', message: 'GRN is fully returned' }, 400);
+  /* An empty read is evidence that THE QUERY FOUND NOTHING, never that the
+     note is settled — the select is company-scoped and scopeToCompany fails
+     closed (scm/lib/companyScope.ts). Refusing is right; the verdict was not. */
+  if (lines.length === 0) return c.json({ error: 'nothing_to_return', message: 'No returnable lines came back for this GRN. Open it and check its returned balance before treating it as returned in full.' }, 400);
 
   /* Audit gap #7 — on-hand floor before the inventory OUT (soft-waivable via
      confirmShortStock, mirroring the DO ship side). */
@@ -1139,7 +1149,10 @@ purchaseReturns.patch('/:id/post', async (c) => {
   return c.json({ error: 'cannot_post', message: `Cannot post a ${row.status} return.` }, 409);
 });
 
-purchaseReturns.patch('/:id/complete', async (c) => {
+// Exported for the lifecycle tests: supabaseAuth cannot run in the vitest
+// harness, so the tests mount the handler rather than the router (same reason
+// cancelPurchaseReturnHandler below is exported).
+export const completePurchaseReturnHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -1158,12 +1171,21 @@ purchaseReturns.patch('/:id/complete', async (c) => {
   };
   if (body.creditNoteRef) updates.credit_note_ref = body.creditNoteRef;
 
+  /* maybeSingle, NOT single. The `.eq('status','POSTED')` gate makes a zero-row
+     result the ORDINARY outcome for a DRAFT/COMPLETED/CANCELLED return, and
+     PostgREST reports zero rows to `.single()` as PGRST116 — so `error` was set,
+     the 500 above fired, and the `409 not_posted` below could never be reached.
+     Same defect and same fix as stock-transfers.ts's cancel (`already_cancelled`
+     was unreachable and a repeat cancel 500'd) and as the sibling
+     purchase-consignment-returns.ts `/:id/complete`, which already uses
+     maybeSingle for exactly this reason. */
   const { data, error } = await scopeToCompanyId(sb.from('purchase_returns').update(updates)
-    .eq('id', id), co.companyId).eq('status', 'POSTED').select('id, status, completed_at').single();
+    .eq('id', id), co.companyId).eq('status', 'POSTED').select('id, status, completed_at').maybeSingle();
   if (error) return c.json({ error: 'complete_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_posted' }, 409);
   return c.json({ purchaseReturn: data });
-});
+};
+purchaseReturns.patch('/:id/complete', completePurchaseReturnHandler);
 
 /* ── PATCH /:id/cancel — cancel a PR + reverse its return ───────────────────
    Commander 2026-05-30 — the PR module is a Confirmed-clone of the PO module,
@@ -1289,6 +1311,9 @@ purchaseReturns.patch('/:id', async (c) => {
   ] as const) {
     if (body[from] !== undefined) updates[to] = body[from];
   }
+  /* A cleared return date posts "" and this loop wrote it through to the date
+     column, which Postgres rejects and 500s the save. */
+  coerceEmptyDates(updates);
   const sb = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -1323,9 +1348,29 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
   if (!co.ok) return c.json(co.refusal, 409);
   /* The child is stamped with the active company; the parent it hangs off must
      be this company's too, or a line lands on another company's return. */
-  const { data: parent } = await scopeToCompanyId(sb.from('purchase_returns').select('id').eq('id', prId), co.companyId).maybeSingle();
+  /* grn_id rides along on the ownership read (same row, no extra query) — the
+     unlinked guard below needs the GRN this return names. */
+  const { data: parent } = await scopeToCompanyId(sb.from('purchase_returns').select('id, grn_id').eq('id', prId), co.companyId).maybeSingle();
   if (!parent) return c.json(NOT_THIS_COMPANY, 404);
   { const lock = await prLineLock(sb, prId); if (lock) return c.json(lock, 409); }
+
+  /* The add-a-line half of the back door the CREATE path has closed since
+     2026-08-04 — this path never had it, so the create-path refusal could be
+     walked around in ONE save by adding the line afterwards. */
+  {
+    const unlinked = await findUnlinkedPrLines(
+      sb, (parent as { grn_id?: string | null } | null)?.grn_id ?? null, null,
+      [{
+        lineRef: 'add',
+        itemCode: String(it.materialCode ?? ''),
+        qty: Number(it.qty ?? 1),
+        soItemId: (it.grnItemId as string | undefined) ?? null,
+      }],
+    );
+    const bad = unlinkedScanRefusal(unlinked, (o) => unlinkedReturnResponse(o, 'purchase'));
+    if (bad) return c.json(bad, 409);
+  }
+
   const qtyReturned = Number(it.qty ?? 1);
   const unitPriceCenti = Number(it.unitPriceCenti ?? 0);
   const lineRefund = qtyReturned * unitPriceCenti;
@@ -1504,6 +1549,18 @@ export const patchPurchaseReturnItemHandler = async (c: any) => {
       requested: qtyReturned, ownPriorDraw: prevQty, what: 'GRN line',
     });
     if (capLock) return c.json(capLock, 409);
+  }
+
+  /* The EDIT half of the same back door: the cap above and adjustGrnReturnedQty
+     below are both gated on grnItemId. See unlinked-line-edit-guard. */
+  {
+    const repoint = await unlinkedEditRefusal(sb, 'purchase-return', {
+      parent: { table: 'purchase_returns', column: 'grn_id', id: prId, companyId: co.companyId },
+      storedLink: grnItemId,
+      storedCode: (prev as { material_code: string | null }).material_code,
+      patchCode: it.materialCode,
+    });
+    if (repoint) return c.json(repoint, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('purchase_return_items').update(updates).eq('id', itemId), co.companyId);

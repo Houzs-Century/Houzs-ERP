@@ -9,6 +9,7 @@
 // GENERATED, never hand-edited. `--check` fails when the index no longer matches
 // the ledger, and is wired into `audit:bug-index` so it cannot rot the way
 // codebase-map-facts.md did for three weeks.
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -114,19 +115,39 @@ function countHits(text, re) {
  * @returns {{area: string, tagged: boolean}} — `tagged` says the ENTRY named it,
  *          so the caller can report how much of the index is guessed.
  */
+/** Entries whose `<!-- area: -->` names nothing. Collected, not thrown on —
+ *  WHO introduced the tag decides whether it fails the run. See chargeBadAreaTags. */
+const badAreaTags = [];
+
 function areaOf(title, body) {
   const tag = AREA_TAG.exec(body)?.[1];
   if (tag) {
     if (!AREA_NAMES.has(tag)) {
-      console.error(
-        `\nBUG-INDEX: "${title.slice(0, 60)}" carries <!-- area: ${tag} -->, which is not an area.\n` +
-          `Valid areas:\n${[...AREA_NAMES].map((n) => `  ${n}`).join("\n")}\n\n` +
-          "Refusing rather than falling back to the keyword guess: a typo that silently\n" +
-          "reverts to guessing is the failure this tag exists to remove.",
-      );
-      process.exit(1);
+      /* This used to `process.exit(1)` right here, unconditionally, and that
+         turned one bad merge into a repo-wide CI blackout.
+
+         `audit:bug-index` runs inside `backend-typecheck`, which IS a required
+         status check, and this file is the ONE file the working agreement makes
+         every code PR append to. So an unparseable tag reaching `main` fails
+         every open PR AND makes the generator unrunnable, so nobody can even
+         regenerate their way out. Measured 2026-08-17: commit 6c9f8cbd landed a
+         `<!-- area: PMS My Pending lanes -->` at 04:00:21Z; between then and the
+         repair (#2351, merged 04:59:53Z) five of five PR-branch CI runs were
+         red, and three of those four branches had no connection to it at all.
+
+         The file already encodes the right rule for content DRIFT a few hundred
+         lines down — "a gate that every author trips for something the previous
+         author did is a deadlock, not a check" — and this validation simply
+         predated it. Same rule now applies here, and it is the same rule
+         check-file-size.mjs uses for an inherited ceiling violation: REPORT in
+         full, always; CHARGE only the change that introduced it. */
+      badAreaTags.push({ title, tag });
+      // Fall through to the keyword guess. The objection recorded here was to a
+      // typo reverting to guessing SILENTLY — it is not silent: every run prints
+      // the entry and the bad tag until somebody fixes it.
+    } else {
+      return { area: tag, tagged: true };
     }
-    return { area: tag, tagged: true };
   }
 
   let best = null;
@@ -151,21 +172,27 @@ function githubAnchor(heading) {
     .replace(/\s+/g, "-");
 }
 
+/** Split a ledger into entries. Shared with the merge-base copy, so "was this
+ *  entry already there?" is asked of the SAME shape it is asked of here. */
+function parseEntries(text) {
+  const out = [];
+  let cur = null;
+  text.split(/\r?\n/).forEach((line, i) => {
+    const m = /^##\s+(.*?)\s*(?:\[(\w+)\])?\s*$/.exec(line);
+    if (m) {
+      if (cur) out.push(cur);
+      cur = { title: m[1], severity: m[2] ?? "unspecified", line: i + 1, body: "" };
+    } else if (cur) {
+      cur.body += line + "\n";
+    }
+  });
+  if (cur) out.push(cur);
+  return out;
+}
+
 const src = fs.readFileSync(SRC, "utf8");
 const lines = src.split(/\r?\n/);
-
-const entries = [];
-let current = null;
-lines.forEach((line, i) => {
-  const m = /^##\s+(.*?)\s*(?:\[(\w+)\])?\s*$/.exec(line);
-  if (m) {
-    if (current) entries.push(current);
-    current = { title: m[1], severity: m[2] ?? "unspecified", line: i + 1, body: "" };
-  } else if (current) {
-    current.body += line + "\n";
-  }
-});
-if (current) entries.push(current);
+const entries = parseEntries(src);
 
 for (const e of entries) {
   const a = areaOf(e.title, e.body);
@@ -231,47 +258,149 @@ for (const [name, list] of byArea) {
   }
 }
 
-const existing = fs.existsSync(OUT) ? fs.readFileSync(OUT, "utf8") : "";
-if (checkOnly) {
-  /* TWO FAILURES LIVE HERE, and only one of them is the author's.
-
-     The one worth gating is the GENERATOR DYING — docs/staging-bench-rot-coe.md
-     records audit:map crashing unnoticed for three weeks, which is why this
-     runs on every PR at all. That is caught above: a parse failure or a missing
-     BUG-HISTORY.md throws before this point, and an empty entry list is refused
-     below.
-
-     The other is CONTENT DRIFT, and in this repo it carries no signal. The
-     working agreement REQUIRES every code PR to append an entry to
-     BUG-HISTORY.md, main-protection makes merges strictly serial, so the
-     moment any PR merges, this file is stale on every other open PR — through
-     no act of theirs. Measured 2026-08-14: five PRs failed here at once on
-     "175 entries", were regenerated, and were stale again one merge later. A
-     gate that every author trips for something the previous author did is a
-     deadlock, not a check.
-
-     So drift is REPORTED, in full, with both counts and the fix — and does not
-     fail the run. It is still visible on every PR, and `--strict` restores the
-     hard failure for anyone who wants it locally or in a job of their own. */
-  if (existing.replace(/\r\n/g, "\n") !== out) {
-    const had = (existing.match(/^\| /gm) ?? []).length;
-    const msg =
-      `docs/generated/bug-index.md is out of date: the index holds ${had} row(s), ` +
-      `BUG-HISTORY.md holds ${entries.length} entr(y/ies).\n` +
-      `Run: npm --prefix backend run gen:bug-index\n` +
-      `NOT failing the run: every PR must append an entry and merges are serial, ` +
-      `so this drifts on its own. Pass --strict to fail on it.`;
-    if (process.argv.includes("--strict")) { console.error(msg); process.exit(1); }
-    console.warn(msg);
-  } else {
-    console.log(`Bug index is current (${entries.length} entries).`);
+/**
+ * BUG-HISTORY.md as it stands at the merge base, or null when that cannot be
+ * resolved (shallow clone, no origin/main). Null means "cannot tell whose fault
+ * it is", and the caller then charges everything — the same choice
+ * check-file-size.mjs makes, for the same reason.
+ */
+function ledgerAtMergeBase() {
+  const git = (args) =>
+    execFileSync("git", args, {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 64 * 1024 * 1024,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+  try {
+    git(["rev-parse", "--verify", "--quiet", "origin/main"]);
+    const base = git(["merge-base", "HEAD", "origin/main"]).trim();
+    if (!base) return null;
+    return git(["show", `${base}:BUG-HISTORY.md`]);
+  } catch {
+    return null;
   }
+}
+
+/**
+ * Report every unparseable area tag; fail only on the ones THIS change added.
+ *
+ * Matched by ENTRY (title + the exact tag it carries), not by counting tag
+ * strings. Counting gets the verdict right but names the wrong entry whenever
+ * one broken tag appears twice — and a gate whose whole purpose is to blame the
+ * right person must not misidentify who that is.
+ */
+function chargeBadAreaTags() {
+  if (badAreaTags.length === 0) return;
+
+  const base = ledgerAtMergeBase();
+  /** `title\u0000tag` for every entry that ALREADY carried this bad tag at the base. */
+  const atBase = new Set();
+  if (base !== null) {
+    for (const e of parseEntries(base)) {
+      const tag = AREA_TAG.exec(e.body)?.[1];
+      if (tag && !AREA_NAMES.has(tag)) atBase.add(`${e.title}\u0000${tag}`);
+    }
+  }
+
+  const mine = [];
+  const inherited = [];
+  for (const bad of badAreaTags) {
+    if (base !== null && atBase.has(`${bad.title}\u0000${bad.tag}`)) inherited.push(bad);
+    else mine.push(bad);
+  }
+
+  const show = (b) => `  "${b.title.slice(0, 60)}" carries <!-- area: ${b.tag} -->`;
+
+  if (inherited.length) {
+    console.warn(
+      `\nBUG-INDEX: ${inherited.length} entr(y/ies) carry an area tag that names nothing, ` +
+        `and came from an earlier merge — reported, NOT charged to this change:\n` +
+        inherited.map(show).join("\n") +
+        `\nThese fall back to the keyword guess, so the index still builds. ` +
+        `They should be fixed, but not by whoever is holding this branch.`,
+    );
+  }
+
+  if (mine.length) {
+    console.error(
+      `\nBUG-INDEX: this change adds ${mine.length} entr(y/ies) whose area tag is not an area:\n` +
+        mine.map(show).join("\n") +
+        `\n\nValid areas:\n${[...AREA_NAMES].map((n) => `  ${n}`).join("\n")}\n\n` +
+        (base === null
+          ? "The merge base could not be resolved, so every bad tag is charged here — a gate\n" +
+            "that cannot tell whose fault it is must not let anything through.\n"
+          : "") +
+        "Refusing rather than falling back to the keyword guess: a typo that silently\n" +
+        "reverts to guessing is the failure this tag exists to remove.",
+    );
+    process.exit(1);
+  }
+}
+
+chargeBadAreaTags();
+
+if (checkOnly) {
+  /* THE INDEX IS NO LONGER TRACKED, so there is nothing to compare against and
+     CONTENT DRIFT no longer exists as a concept here. That is the point.
+
+     What used to live here was a drift comparison against the committed copy.
+     It never gated anything — it warned, because the working agreement REQUIRES
+     every code PR to append to BUG-HISTORY.md and main-protection makes merges
+     strictly serial, so the committed index went stale on every open PR the
+     moment any other PR merged, through no act of theirs. Measured 2026-08-14:
+     five PRs tripped it at once, were regenerated, and were stale again one
+     merge later.
+
+     Softening it to a warning removed the deadlock but kept the real cost: a
+     GENERATED file in git that every single PR rewrites. All 50 of the last 50
+     commits on main touched it, so any two concurrent PRs conflicted on it —
+     by construction, not by carelessness. Four conflicts on one small PR on
+     2026-08-18 is what finally bought this change.
+
+     Nothing read the committed copy: the only references to it in the tree were
+     this generator and this gate. So it was a file that existed to be checked
+     against itself, at the price of a guaranteed conflict per PR.
+
+     WHAT IS GIVEN UP, stated rather than hidden: the index is no longer
+     browsable on GitHub. That is a real loss and a small one — it was routinely
+     wrong anyway, since drift was tolerated by design. Anyone who wants it runs
+     `npm --prefix backend run gen:bug-index` and reads it locally.
+
+     WHAT IS KEPT is the failure this gate was built for: the GENERATOR DYING.
+     docs/staging-bench-rot-coe.md records audit:map crashing unnoticed for
+     three weeks. A parse failure or a missing BUG-HISTORY.md throws before this
+     point, an unresolvable area tag exits 1 in chargeBadAreaTags() above, and an
+     empty entry list is refused below. None of those ever needed a copy in git. */
+  console.log(`Bug index generates cleanly (${entries.length} entries parsed from BUG-HISTORY.md).`);
+
   /* The generator producing NOTHING is the failure this gate exists for.
      A scan that finds no entries is broken, not clean — the same rule the
      file-size gate encodes for an empty file list. */
   if (entries.length === 0) {
     console.error("BUG INDEX: parsed ZERO entries from BUG-HISTORY.md — that is a broken generator, not an empty history.");
     process.exit(2);
+  }
+  /* A verdict computed over a suspiciously small corpus is worth naming too:
+     the ledger only grows, so a sudden collapse is a parser regression rather
+     than a tidy-up.
+
+     REPORTED by default, FAILABLE with `--strict` — and that is deliberately the
+     same shape the drift check used to have. `derivedDocsDoNotDeadlock.test.mjs`
+     requires every derived-doc generator to keep a `--strict` escalation, so that
+     a soft signal can be made hard by anyone who wants it in a job of their own,
+     without being hard for every author by default. Untracking the index removed
+     the DRIFT signal; it did not remove the reason that rule exists, so the flag
+     now guards the signal that is left. Do not delete it to tidy up: the guard
+     test reads this source and will refuse. */
+  if (entries.length < 100) {
+    const thin =
+      `BUG INDEX: only ${entries.length} entries parsed. This ledger has held 300+ since 2026-08, ` +
+      `so a collapse is a parser regression rather than a tidy-up — check the parser before trusting it.\n` +
+      `NOT failing the run: the ledger's size is not this author's to answer for, and a floor here would ` +
+      `need maintaining, which is how the next stale number gets written. Pass --strict to fail on it.`;
+    if (process.argv.includes("--strict")) { console.error(thin); process.exit(1); }
+    console.warn(thin);
   }
 } else {
   fs.mkdirSync(path.dirname(OUT), { recursive: true });

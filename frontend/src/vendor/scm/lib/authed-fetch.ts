@@ -21,12 +21,13 @@
 // ---------------------------------------------------------------------------
 
 import { serviceConfirm } from './dialog-service';
+import { describeRefusal } from './refusal-detail';
 // Imported, NOT re-inlined as localStorage.getItem('auth:token'). Houzs stores
 // session-only logins (Remember me unchecked, and the owner's view-as hand-off)
 // in sessionStorage, so a localStorage-only read returns "" for a perfectly
 // authenticated user and every /scm/* page throws not_authenticated. This is
 // the vendor auth boundary — it is exactly where the host's answer belongs.
-import { readAuthToken } from '../../../lib/authToken';
+import { readAuthToken, readAuthPass } from '../../../lib/authToken';
 import {
   consumeCorrelated,
   correlateError,
@@ -221,6 +222,10 @@ async function confirmShortStock(raw: string): Promise<boolean> {
 
 export async function authedFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = readAuthToken();
+  // Stage 3: the signed staff pass, sent beside the token so the SCM list
+  // reads (the slowest surface) can authorize without a DB round trip. Absent
+  // -> the server takes the DB path. Bound to the token server-side.
+  const pass = readAuthPass();
   /* This throw reaches the operator through ~90 `err.message` sinks across the
      SCM tree, and it fires on every read/write once the token is missing or has
      expired mid-session — so it was the highest-frequency machine-code leak in
@@ -239,6 +244,7 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
   const headers = {
     ...(init?.headers ?? {}),
     authorization: `Bearer ${token}`,
+    ...(pass ? { 'x-session-pass': pass } : {}),
     ...companyHeader(),
     ...(typeof init?.body === 'string' ? { 'content-type': 'application/json' } : {}),
   };
@@ -461,8 +467,17 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
   // re-read this if a surface ever needs a subject-specific line.
   idempotency_in_flight:
     "This is already going through — give it a moment, then refresh to check. Please don't send it again.",
+  /* NEVER reword this into "nothing was saved, press Save again". The
+     middleware returns this code purely because the payload's hash differs
+     from the claim's, and the claim may hold a COMMITTED 201 (the body's
+     `completed_status` says which) — so this sentence cannot promise a clean
+     slate, and an instruction to resubmit books a second GRN, a second stock
+     IN and a second AutoCount enqueue. Refreshing is what SURFACES the
+     document that may already exist. A refusal that genuinely wrote nothing
+     never reaches here: the route releases the claim (markIdempotencyNoWrite)
+     and the corrected resubmit just works. */
   idempotency_key_reused:
-    'This request key was already used with different details. Refresh before trying again.',
+    'An earlier submission with different details already finished under this request key. Refresh and check what was recorded before sending it again.',
   idempotency_key_conflict:
     'This request key is already owned by another operation. Refresh and try again.',
   idempotency_unavailable:
@@ -571,6 +586,23 @@ export function humanApiError(status: number, body: string): string {
       const mapped = ERROR_CODE_MESSAGES[j.error];
       if (mapped) return mapped;
     }
+    // 1b. STRUCTURED REFUSAL — the server named the input, the value AND the
+    //     legal set, and we used to throw all three away. `variant_not_allowed`
+    //     (backend allowed-options-check.ts:81-86) is the one that cost a
+    //     salesperson a bedframe line: no curated entry, no `reason`, no
+    //     `message`, so it fell to the 400 catch-all and told him nothing.
+    //
+    //     Placed AFTER the curated map on purpose. A curated sentence is
+    //     hand-written for the operator and often names the exact box
+    //     (extra_addon_needs_description is the best example in the tree), so it
+    //     must keep winning; this only fires where the alternative is the
+    //     status-code catch-all. And it keys off the body's SHAPE, not a list of
+    //     codes, so the next structured refusal renders without anyone
+    //     remembering to add it here — which is the defect being fixed, not
+    //     just this one instance of it. Anything it cannot say honestly returns
+    //     null and falls through to the generic sentence below, unchanged.
+    const detail = describeRefusal(j);
+    if (detail) return detail;
     // 2. Server reason, but only if it's already a plain sentence (no internals).
     const r = (typeof j.reason === 'string' ? j.reason : typeof j.message === 'string' ? j.message : '') as string;
     // Skip nested JSON blobs (e.g. the raw GoTrue "session_not_found" body the

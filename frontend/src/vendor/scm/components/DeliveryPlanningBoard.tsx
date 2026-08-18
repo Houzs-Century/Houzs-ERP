@@ -8,7 +8,7 @@
 // from DeliveryPlanning.tsx so it can be reused UNCHANGED in two places:
 //
 //   1. DeliveryPlanning.tsx  — the full board: all 4 state tabs, every bulk
-//      action (Convert to DO, Schedule), region chips, expand, multiselect.
+//      action (Transfer to Delivery Order, Schedule), region chips, expand, multiselect.
 //   2. Trips.tsx "To schedule" panel — the SAME board LOCKED to
 //      state=PENDING_SCHEDULE (no state-tab row), still with the full column
 //      set, region chips, expandable line-item detail and multiselect wired to
@@ -21,7 +21,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { fmtCenti, fmtDateOrDash, fmtDateTime, buildVariantSummary } from '@2990s/shared';
+import { buildVariantSummary, fmtCenti, fmtDate, fmtDateOrDash, fmtDateTime } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import { DataGrid, type DataGridColumn } from './DataGrid';
 import { useConfirm } from './ConfirmDialog';
@@ -46,6 +46,7 @@ import {
 import { type DriverRow } from '../lib/drivers-queries';
 import { type LorryRow } from '../lib/lorries-queries';
 import styles from './DeliveryPlanningBoard.module.css';
+import { DateField } from "./DateField";
 
 /* HC "Remark 4" delivery sub-status → a small pill class (reuse the cream
    palette; unknown/blank → muted). Default-shown column. */
@@ -522,7 +523,7 @@ export type DeliveryPlanningBoardProps = {
   lorries: LorryRow[];
   msgStatuses?: Record<string, { success: boolean; http_code: number | null; created_at: string }>;
 
-  /* Extra buttons rendered at the right of the bulk bar (Convert to DO,
+  /* Extra buttons rendered at the right of the bulk bar (Transfer to Delivery Order,
      Schedule, …). The page injects them since they open page-owned drawers. */
   bulkExtras?: ReactNode;
 
@@ -823,7 +824,7 @@ export function DeliveryPlanningBoard({
         if (!s) return '—';
         return (
           <span style={{ fontWeight: 600, color: s.success ? '#2e7d32' : '#b3261e' }}>
-            {s.success ? `Sent ${String(s.created_at).slice(5, 10)}` : 'Failed'}
+            {s.success ? `Sent ${fmtDate(s.created_at)}` : 'Failed'}
           </span>
         );
       },
@@ -1240,7 +1241,7 @@ export function DeliveryPlanningBoard({
       {/* Compact bulk-edit bar — appears once one or more rows are ticked.
           "<N> selected · Set [field] → [value] [Apply]" mass-writes one field
           across every selected SO via useScheduleDelivery; the value control's
-          TYPE follows the chosen field. Page-specific actions (Convert to DO,
+          TYPE follows the chosen field. Page-specific actions (Transfer to Delivery Order,
           Schedule) are injected via `bulkExtras` on the right. */}
       {selectedKeys.size > 0 && (
         <div className={styles.bulkBar}>
@@ -1277,12 +1278,12 @@ export function DeliveryPlanningBoard({
             </select>
           )}
           {bulkField === 'DATE' && (
-            <input
-              type="date"
+            <DateField
+              fullWidth
               className={styles.bulkControl}
               value={bulkValue}
               disabled={bulkBusy}
-              onChange={(e) => setBulkValue(e.target.value)}
+              onChange={(iso) => setBulkValue(iso)}
               aria-label="New delivery date"
             />
           )}

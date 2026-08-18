@@ -7,6 +7,8 @@ import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { fmtCenti } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
+import { transferToLabel, transferFromLabel } from "../lib/convertScope";
+import { outstandingEmptyReason, type OutstandingScope } from "../lib/outstandingEmptyReason";
 import "./mobile.css";
 
 /* ---------------------------------------------------------------------------
@@ -60,20 +62,25 @@ type SourceKind = "so" | "do" | "po";
    • hasLinePicker  — SO→DO/PO, DO→SI pick lines + qty.
    • no line picker — GRN receives every PO line (whole-PO convert).
 
-   The spec (#convert) titles the screen "Convert to {target}" (convertTitle);
-   `docTitle` is the plain document name reused by the create button + error
-   notify. */
+   The screen title is the owner-approved "Transfer to <destination>", and both
+   it and the sub-line come from `transferToLabel` / `transferFromLabel` in
+   `lib/convertScope` rather than from literals here — desktop and mobile
+   wording each other is exactly what the shared generator exists to stop
+   (mobile used the full document name while desktop used the abbreviation, for
+   the same operation). `docTitle` is the plain document name reused by the create button +
+   error notify, and stays as-is: "Create Goods Receipt" is the English, while
+   the TRANSFER label is "Goods Received" per the approved table. */
 const META: Record<
   ConvertTarget,
   {
-    convertTitle: string; docTitle: string;
+    transferTitle: string; fromTitle: string; docTitle: string;
     eyebrow: string; source: SourceKind; sourceNoun: string; hasLinePicker: boolean;
   }
 > = {
-  do: { convertTitle: "Convert to Delivery Order", docTitle: "Delivery Order", eyebrow: "Logistics", source: "so", sourceNoun: "Sales Order", hasLinePicker: true },
-  si: { convertTitle: "Convert to Sales Invoice", docTitle: "Sales Invoice", eyebrow: "Finance", source: "do", sourceNoun: "Delivery Order", hasLinePicker: true },
-  grn: { convertTitle: "Convert to Goods Receipt", docTitle: "Goods Receipt", eyebrow: "Procurement", source: "po", sourceNoun: "Purchase Order", hasLinePicker: false },
-  po: { convertTitle: "Convert to Purchase Order", docTitle: "Purchase Order", eyebrow: "Procurement", source: "so", sourceNoun: "Sales Order", hasLinePicker: true },
+  do: { transferTitle: transferToLabel("do"), fromTitle: transferFromLabel("so"), docTitle: "Delivery Order", eyebrow: "Logistics", source: "so", sourceNoun: "Sales Order", hasLinePicker: true },
+  si: { transferTitle: transferToLabel("si"), fromTitle: transferFromLabel("do"), docTitle: "Sales Invoice", eyebrow: "Finance", source: "do", sourceNoun: "Delivery Order", hasLinePicker: true },
+  grn: { transferTitle: transferToLabel("grn"), fromTitle: transferFromLabel("po"), docTitle: "Goods Receipt", eyebrow: "Procurement", source: "po", sourceNoun: "Purchase Order", hasLinePicker: false },
+  po: { transferTitle: transferToLabel("po"), fromTitle: transferFromLabel("so"), docTitle: "Purchase Order", eyebrow: "Procurement", source: "so", sourceNoun: "Sales Order", hasLinePicker: true },
 };
 
 // ── Money / helpers ────────────────────────────────────────────────────────
@@ -382,9 +389,23 @@ export function MobileConvertWizard({
     enabled: target === "grn" && selectedPoIds.length > 0,
     queryKey: ["convert-grn-lines", [...selectedPoIds].sort().join(",")],
     queryFn: async () => {
-      const res = await authedFetch<{ items?: OutstandingPoLine[] }>(`/grns/outstanding-po-items`);
+      /* Scope the READ, not the result. This used to fetch the unscoped list and
+         filter by `selectedPoIds` here — and that list was capped at 500 raw PO
+         lines server-side, so a selected PO outside the window silently produced
+         zero lines (the owner's 2026-08-17 desktop screen, same endpoint, same
+         mechanism). The server now applies `?poId=` in SQL. The JS filter below
+         is kept as a belt-and-braces narrowing, not as the scope. */
+      const scoped = [...selectedPoIds].map((x) => str(x)).sort().join(',');
+      const res = await authedFetch<{ items?: OutstandingPoLine[]; scope?: OutstandingScope }>(
+        `/grns/outstanding-po-items?poId=${encodeURIComponent(scoped)}`,
+      );
       const set = new Set(selectedPoIds.map((x) => str(x)));
-      return (res.items ?? [])
+      /* `scope` is carried, not discarded. It is the WHY behind an empty list, and
+         mobile had the SAME defect the desktop screen was fixed for: it answered
+         "Nothing left to receive on the selected order(s)" — a claim about the
+         orders — from an absence of rows. One shared module now words both. */
+      const serverRows = res.items ?? [];
+      const lines = serverRows
         .filter((r) => set.has(str(r.poId)))
         .filter((r) => (Number(r.remainingQty) || 0) > 0)
         .map<GrnPickLine>((r) => ({
@@ -402,12 +423,28 @@ export function MobileConvertWizard({
           checked: true,
           qty: String(Number(r.remainingQty) || 0),
         }));
+      return { lines, scope: res.scope ?? null, serverRowCount: serverRows.length };
     },
     staleTime: 15_000,
   });
   useEffect(() => {
-    if (grnLinesQuery.data) setGrnLines(grnLinesQuery.data);
+    if (grnLinesQuery.data) setGrnLines(grnLinesQuery.data.lines);
   }, [grnLinesQuery.data]);
+  /* The sentence for an empty list, from the same module the desktop picker uses.
+     There is no toolbar and no unsaved draft on this screen, and the JS narrowing
+     below is the same `?poId=` set the server already applied — so `scopedRowCount`
+     is the server count and `filtersActive` is false. Saying that here, rather
+     than passing a convenient boolean, is what keeps the two surfaces honest. */
+  const grnEmptyReason = outstandingEmptyReason({
+    isError: !!grnLinesQuery.error,
+    isLoading: grnLinesQuery.isLoading,
+    scope: grnLinesQuery.data?.scope ?? null,
+    serverRowCount: grnLinesQuery.data?.serverRowCount ?? 0,
+    scopedRowCount: grnLinesQuery.data?.serverRowCount ?? 0,
+    visibleRowCount: grnLines.length,
+    filtersActive: false,
+    poScopeActive: false,
+  });
   const setGrnLine = (id: string, patch: Partial<GrnPickLine>) =>
     setGrnLines((prev) => prev.map((l) => (l.poItemId === id ? { ...l, ...patch } : l)));
   const grnPicks = useMemo(
@@ -560,13 +597,13 @@ export function MobileConvertWizard({
           <span style={{ fontSize: 11, color: "#767b6e" }}>Step {step} of 2 · {stepLabel}</span>
         </div>
         <div className="ey" style={{ color: "#a16a2e", marginTop: 6 }}>{meta.eyebrow}</div>
-        <div className="scr-title" style={{ marginTop: 2 }}>{meta.convertTitle}</div>
+        <div className="scr-title" style={{ marginTop: 2 }}>{meta.transferTitle}</div>
         <div className="tnum" style={{ fontSize: 11.5, color: "#767b6e", marginTop: 3 }}>
           {/* Spec sub-line: "From {{source_doc_no}}" once a source is chosen;
-              before that, the invitation to pick one. */}
-          {sourceLabel
-            ? `From ${sourceLabel}`
-            : `Convert from ${meta.source === "po" ? "one or more Purchase Orders" : `a ${meta.sourceNoun}`}`}
+              before that, the invitation to pick one. The invitation is SINGULAR
+              even where the picker takes several sources — it names the source
+              document TYPE, not the count (owner rule, 2026-08-17). */}
+          {sourceLabel ? `From ${sourceLabel}` : meta.fromTitle}
         </div>
         {/* Step-progress bar (spec markup): filled brand segments up to the current step. */}
         <div style={{ display: "flex", gap: 5, marginTop: 11 }}>
@@ -640,6 +677,7 @@ export function MobileConvertWizard({
             loading={grnLinesQuery.isLoading}
             error={!!grnLinesQuery.error}
             lines={grnLines}
+            emptyReason={grnEmptyReason}
             deliveryNoteRef={deliveryNoteRef}
             notes={notes}
             onSetLine={setGrnLine}
@@ -784,10 +822,22 @@ function LinesStep({
 
   const noun = target === "si" ? "invoice" : target === "po" ? "purchase" : "deliver";
   if (!lines.length) {
+    /* The GRN arm below was given a counted, per-document reason (#2372). THIS
+       arm — SI, PO and DO — was left saying "Nothing left to {noun} on this
+       document", which is the same claim from the same absence: the read is
+       company-scoped and scopeToCompany fails closed, so [] arrives with
+       error: null whether the work is done or the company could not be
+       resolved. Until this arm carries a line count of its own it has no
+       standing for a verdict, so it reports the read and points at the
+       document's own balance. */
     return (
       <>
         <ChangeSource onClick={onChangeSource} />
-        <Muted>Nothing left to {noun} on this document.</Muted>
+        <Muted>
+          No lines are showing to {noun} on this document. That is not the same as there
+          being nothing left — this list only covers the company you are working in. Open
+          the document and check its balance.
+        </Muted>
       </>
     );
   }
@@ -868,11 +918,14 @@ function LinesStep({
 // creates a DRAFT — nothing moves stock until they post the receipt. Mirrors the
 // desktop GrnFromPo Pick-Qty picker (GrnFromPo.tsx:376-398) + the New-GRN form.
 function GrnLinesStep({
-  loading, error, lines, deliveryNoteRef, notes, onSetLine, onRef, onNotes, onChangeSource,
+  loading, error, lines, emptyReason, deliveryNoteRef, notes, onSetLine, onRef, onNotes, onChangeSource,
 }: {
   loading: boolean;
   error: boolean;
   lines: GrnPickLine[];
+  /** Why the list is empty, from `lib/outstandingEmptyReason` — the same module
+   *  the desktop picker uses. Null only when there is nothing to explain. */
+  emptyReason: string | null;
   deliveryNoteRef: string;
   notes: string;
   onSetLine: (id: string, patch: Partial<GrnPickLine>) => void;
@@ -883,10 +936,15 @@ function GrnLinesStep({
   if (loading) return <><ChangeSource onClick={onChangeSource} label="Change selection" /><Muted>Loading lines…</Muted></>;
   if (error) return <><ChangeSource onClick={onChangeSource} label="Change selection" /><Muted danger>Couldn't load the receivable lines. Please try again.</Muted></>;
   if (!lines.length) {
+    /* "Nothing left to receive on the selected order(s)" used to be hard-coded
+       here — a completion claim made from an absence of rows, on a read that is
+       company-scoped and FAILS CLOSED. The shared module only says the work is
+       finished when the server counted the order's lines and found none
+       outstanding; every other absence gets its own true sentence. */
     return (
       <>
         <ChangeSource onClick={onChangeSource} label="Change selection" />
-        <Muted>Nothing left to receive on the selected order(s).</Muted>
+        <Muted>{emptyReason ?? 'No receivable lines are showing for the selected order(s).'}</Muted>
       </>
     );
   }
@@ -1010,8 +1068,13 @@ function humanize(msg: string): string {
     qty_exceeds_remaining: "One of the quantities is more than what's left to convert. Refresh and try again.",
     over_remaining: "One of the quantities is more than what's left to convert. Refresh and try again.",
     race_conflict: "Another operator just converted overlapping quantity. Refresh and try again.",
-    nothing_to_invoice: "This Goods Receipt is already fully invoiced.",
-    nothing_to_return: "This Goods Receipt is already fully returned.",
+    /* These three mirror the server's refusal messages, and they carried the
+       same claim it did: a 400 raised because a READ came back empty is not
+       evidence that the document is finished. Kept in step with grns.ts /
+       purchase-invoices.ts / purchase-returns.ts — if they drift, the same
+       document says two different things on two screens. */
+    nothing_to_invoice: "No billable lines came back for this Goods Receipt. Open it and check its invoiced balance before treating it as billed in full.",
+    nothing_to_return: "No returnable lines came back for this Goods Receipt. Open it and check its returned balance before treating it as returned in full.",
     /* migration 0280 — the zero-cost receipt gate. The per-line "Received free"
        tick lives on the desktop receipt screen, so this says where to go rather
        than leaving the operator at a code they cannot act on. */
@@ -1021,7 +1084,7 @@ function humanize(msg: string): string {
     grn_id_required: "Select a Goods Receipt first.",
     warehouse_required: "These Purchase Orders don't share one receive-into warehouse. Fix the PO line warehouses, or receive them per warehouse on the desktop.",
     po_not_receivable: "One of the selected Purchase Orders is no longer open for receipt. Refresh and try again.",
-    nothing_outstanding: "All selected Purchase Order lines are already fully received.",
+    nothing_outstanding: "No outstanding lines came back for the selected Purchase Order(s). Open the order and check its received balance before treating it as received in full.",
     supplier_required: "The selected lines are missing a supplier. Refresh and try again.",
     items_required: "Select at least one line to receive.",
     do_item_not_found: "One of the lines no longer exists. Refresh and try again.",

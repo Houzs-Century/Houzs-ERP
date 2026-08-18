@@ -4,7 +4,7 @@
 // customer. Outstanding here is what WE owe, not what customers owe us.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Plus,
@@ -21,6 +21,7 @@ import {
   Wallet,
   ArrowRightLeft,
 } from "lucide-react";
+import { transferFromLabel } from '../../lib/convertScope';
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { PageHeader } from "../../components/Layout";
@@ -113,12 +114,6 @@ type StatusTab = "all" | "draft" | "posted" | "partial" | "paid" | "cancelled";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtRm = (centi: number): string => fmtCenti(centi);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
 
 const supplierNameOf = (r: PiRow): string => r.supplier?.name || "—";
 const supplierCodeOf = (r: PiRow): string => r.supplier?.code || "—";
@@ -992,7 +987,7 @@ export function PurchaseInvoicesListV2() {
             primaryAction={
               <div className="flex items-stretch gap-2">
                 <Button variant="secondary" icon={<ArrowRightLeft size={14} />} onClick={goFromGrn}>
-                  From GRN
+                  {transferFromLabel('grn')}
                 </Button>
                 <div className="flex items-stretch">
                   <Button variant="primary" icon={<Plus size={14} />} onClick={goNewPi} className="rounded-r-none">

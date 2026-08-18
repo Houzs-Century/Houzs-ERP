@@ -13,6 +13,7 @@ import { idempotentInit } from '../../../lib/idempotency';
 import { invalidateSoLists } from './sales-order-queries';
 import { retryUnlessClientError } from '../../../lib/retryPolicy';
 import type { OriginAssignment } from './flow-queries';
+import type { OutstandingScope } from '../../../lib/outstandingEmptyReason';
 
 export type SupplierStatus = 'ACTIVE' | 'INACTIVE' | 'BLOCKED';
 export type Currency = 'MYR' | 'RMB' | 'USD' | 'SGD';
@@ -744,12 +745,31 @@ export type OutstandingPoItem = {
   warehouseLocationName: string | null;
 };
 
-export function useOutstandingPoItems() {
+/**
+ * `poIds` is REQUIRED, not optional, per CLAUDE.md's rule about a parameter that
+ * decides something — it decides whether the server reads ONE Purchase Order or
+ * every one in the company. An optional one defaults every forgetful caller to
+ * the unscoped read, which is the LOOSER direction and is exactly the shape that
+ * produced the owner's 2026-08-17 zero-row screen: the scope existed in the URL,
+ * was never sent to the server, and was applied in the browser to an
+ * already-truncated list. Pass `[]` for the open "From PO" picker.
+ *
+ * Returns the whole payload, `scope` included. That block is the WHY behind an
+ * empty `items` and dropping it is how "your PO is a draft" became "every line
+ * has been received" — see `lib/outstandingEmptyReason.ts`.
+ */
+export function useOutstandingPoItems(poIds: string[]) {
+  const scopeParam = [...poIds].sort().join(',');
   return useQuery({
-    queryKey: ['grns', 'outstanding-po-items'],
-    queryFn: () => authedFetch<{ items: OutstandingPoItem[] }>(
-      `/grns/outstanding-po-items`,
-    ).then((r) => r.items),
+    // The scope is part of the identity of this read now that the SERVER applies
+    // it; without it in the key, a scoped and an unscoped picker share a cache
+    // entry and one shows the other's rows.
+    queryKey: ['grns', 'outstanding-po-items', scopeParam],
+    queryFn: () => authedFetch<{ items: OutstandingPoItem[]; scope?: OutstandingScope }>(
+      scopeParam
+        ? `/grns/outstanding-po-items?poId=${encodeURIComponent(scopeParam)}`
+        : `/grns/outstanding-po-items`,
+    ),
     staleTime: 30_000,
   });
 }
@@ -858,7 +878,7 @@ export function useCreatePisFromGrnItems() {
     factual error under it and one real half:
 
     THE ERROR — this hook has TWO live callers, not one. PurchaseOrderFromSo.tsx
-    (routed at /scm/purchase-orders/from-so) is the "Convert from SO" / "Add Line
+    (routed at /scm/purchase-orders/from-so) is the "Transfer from Sales Order" / "Add Line
     Item" picker, and it is an ordinary route-level form: ONE post per mount, and
     it navigates to the PO on success. Its mount IS one intent, so a per-mount
     useIdempotencyKey() is correct there — the same shape as the other 17. That
@@ -905,7 +925,7 @@ export function useCreatePosFromSoItems() {
          ({ itemCode: supplierId }); wins over the main-supplier binding. */
       supplierByCode?: Record<string, string>;
       /* Commander 2026-05-29 — when set, APPEND the picked lines to this existing
-         PO (the "Convert from SO" / "Add Line Item" picker scoped to a PO)
+         PO (the "Transfer from Sales Order" / "Add Line Item" picker scoped to a PO)
          instead of creating new POs. */
       targetPoId?: string;
       /* Commander 2026-05-31 — converts raised from the MRP page are
@@ -1156,18 +1176,12 @@ export function useDeletePoLineAllocation() {
   });
 }
 
-export function useSubmitPurchaseOrder() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      authedFetch<{ purchaseOrder: { id: string; status: PoStatus; submitted_at: string } }>(
-        `/mfg-purchase-orders/${id}/submit`,
-        { method: 'PATCH' },
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] }),
-    onError: writeFailed,
-  });
-}
+/* useSubmitPurchaseOrder (PATCH /mfg-purchase-orders/:id/submit) was REMOVED
+   2026-08-18. Its endpoint had no write path — it read the row, echoed an
+   already-SUBMITTED PO and then returned 409 cannot_submit unconditionally — so
+   the only caller left, the read-only PO detail page, failed on every DRAFT it
+   was offered on. /confirm is the one verb that commits a draft; see
+   vendor/scm/lib/po-next-step.ts for the full account. */
 
 /** Confirm a DRAFT PO → SUBMITTED (Draft/Confirmed two-state). This is where a
     draft commits: it stamps submitted_at server-side and advances the source
@@ -1186,6 +1200,13 @@ export function useConfirmPurchaseOrder() {
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
       qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail', id] });
     },
+    /* Added 2026-08-18 with the retirement of useSubmitPurchaseOrder. This is
+       now the ONLY way to commit a draft PO, and /confirm has a refusal an
+       operator can act on: PO_WAREHOUSE_REQUIRED 409s a PO with no ship-to
+       warehouse and names the offending lines. Without an onError that refusal
+       reached nobody — the button would simply appear to do nothing, which is
+       the failure mode the retired endpoint already had. */
+    onError: writeFailed,
   });
 }
 

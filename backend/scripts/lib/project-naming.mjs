@@ -28,12 +28,12 @@ export function deriveProjectCode(input) {
 }
 
 export function deriveProjectName(input) {
+  // A picked organizer always wins the slot — solo events included (owner
+  // 2026-08-17, IOI Mall Damansara). "SOLO" is only the empty fallback.
+  // Mirrors services/project-naming.ts; projectNamingMirror.test.ts enforces.
   const state = (input.state || '').trim() || '—';
   const brand = (input.brand || '').trim() || '—';
   const venue = (input.venue || '').trim() || '—';
-  const isSolo = (input.event_type_slug || '').toLowerCase() === 'solo';
-  const organizer = isSolo
-    ? 'SOLO'
-    : ((input.organizer || '').trim() || 'SOLO');
+  const organizer = (input.organizer || '').trim() || 'SOLO';
   return `${state} [${brand}] ${organizer} @ ${venue}`;
 }

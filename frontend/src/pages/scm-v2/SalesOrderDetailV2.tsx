@@ -17,8 +17,9 @@
 // The old ledger-style SalesOrderDetail.tsx stays in the tree; App.tsx route
 // swap on /scm/sales-orders/:docNo decides which one users see.
 
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -55,6 +56,9 @@ import {
 import { AuditHistoryPanel } from "../../components/audit/AuditHistoryPanel";
 import { SO_AUDIT_LABELS } from "./so-audit-labels";
 import { fmtDateTime } from "../../vendor/shared/format";
+import { brandingLabel } from "../../vendor/shared/so-branding-label";
+import { getBrandingCompanyCode } from "../../lib/branding";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -70,7 +74,7 @@ import {
 } from "../../lib/paymentRetryHandoff";
 import { cn, formatDate } from "../../lib/utils";
 import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   isLocked as isSoLocked,
@@ -95,6 +99,7 @@ type SoHeader = {
   ref: string | null;
   branding: string | null;
   first_item_branding: string | null;
+  first_item_category: string | null;
   status: string;
   local_total_centi: number;
   balance_centi: number;
@@ -114,7 +119,6 @@ type SoHeader = {
   // The processing-date column the lock reads. Label, API field and column are
   // finally the same word (mig 0284 renamed it from internal_expected_dd).
   processing_date?: string | null;
-  proceeded_at?: string | null;
   // Server-derived SO-lock / amendment flags (see the /:docNo detail handler).
   // has_children = a non-cancelled DO/SI references this SO (hard lock);
   // amendment_eligible = processing-locked but still amendable; has_open_amendment
@@ -195,20 +199,18 @@ type SoItem = {
    shared helper renders "—" for a number the ERP does not have. */
 const fmtMoney = fmtMoneyCenti;
 
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  // Present as dd/mm/yyyy per Malaysian convention.
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
-
 const refOf = (h: SoHeader): string =>
   h.po_doc_no || h.customer_so_no || h.ref || "—";
 
+/* HEADER FIRST, then the SAME shared rule the SO list falls back to — byte-for-
+   byte the list's brandOf. Owner 2026-08-18: "我要表头啊", so a filled header
+   still wins on both companies; what changes here is the FALLBACK. This page
+   used to end `|| "—"` over the raw brand TEXT, so an order with no header and a
+   rep line carrying no brand text — every sofa — printed a dash while the list
+   beside it printed a brand. */
 const brandOf = (h: SoHeader): string =>
-  h.branding || h.first_item_branding || "—";
+  (h.branding ?? "").trim() ||
+  brandingLabel(h.first_item_category, h.first_item_branding, getBrandingCompanyCode());
 
 const STATUS_TONE: Record<
   string,
@@ -512,24 +514,31 @@ const SalesOrderDetailInlineEditor = lazy(() =>
 
 // ─── Main page ─────────────────────────────────────────────────────────────
 
-/* Thin router — the only hook it calls is useSearchParams, so Rules of Hooks
+/* Thin router — the only hooks it calls are useSearchParams and useLocation
+   (both unconditional, at the top), so Rules of Hooks
    are respected when the ?edit=1 flip swaps between the read-only body and
    the lazy inline editor (the two children have different hook counts;
    letting either side call hooks conditionally inside the same function
    would break on navigation). */
 export function SalesOrderDetailV2() {
   const [params] = useSearchParams();
+  const location = useLocation();
   /* `payments=1` used to forward to the legacy editor; since 2026-08-09 the
      read page hosts the SAME PaymentsTable component (owner: "点选 collect
      payment … 全部 UI 都不一样" — one page, one look; the flag now just seeds
      the payments Edit toggle below). Only full `edit=1` swaps bodies. */
   if (params.get("edit") === "1") {
+    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
+       so a failed editor chunk shows the panel in place of the editor and
+       clears when the operator moves to another document, instead of leaning
+       on a boundary in a file this one cannot see. */
     return (
-      <Suspense
+      <LazySlot
+        resetKey={`so-editor:${location.pathname}`}
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
       >
         <SalesOrderDetailInlineEditor />
-      </Suspense>
+      </LazySlot>
     );
   }
   return <SalesOrderDetailV2ReadOnly />;
@@ -595,6 +604,17 @@ function SalesOrderDetailV2ReadOnly() {
     : false;
   const canAmend = salesOrder ? soAmendmentEligible(salesOrder, hardLocked) : false;
   const hasOpenAmend = Boolean(salesOrder?.has_open_amendment);
+  /* Owner 2026-08-17 — a hard-locked order still opens for the ONE change a
+     DO / SI does not snapshot: who owns it. The editor keeps every other field
+     disabled (SalesOrderDetail's `inputsDisabled` still reads the lock), so
+     this door leads to exactly one dropdown. Without it, handing a delivered
+     order to a resigning rep's replacement meant Override — which unlocks the
+     whole order, addresses and lines included. */
+  const canAttributeOther = useHouzsAuth().can("scm.so.attribute_other");
+  const editDisabled = hardLocked && !canAttributeOther;
+  const lockedEditHint = hardLocked && canAttributeOther
+    ? "This order is locked by a downstream Delivery Order / Sales Invoice — only the Salesperson can still be changed."
+    : "This order is locked — it already has a downstream Delivery Order / Sales Invoice.";
   const editLabel = canAmend
     ? hasOpenAmend
       ? "View amendment"
@@ -657,7 +677,11 @@ function SalesOrderDetailV2ReadOnly() {
         `Cancel sales order ${salesOrder.doc_no}? This cannot be undone.`
       )
     ) {
-      updateStatus.mutate({ docNo: salesOrder.doc_no, status: "cancelled" });
+      updateStatus.mutate({
+        docNo: salesOrder.doc_no,
+        status: "cancelled",
+        expectedStatus: salesOrder.status,
+      });
     }
   };
   /* History (owner 2026-08-13: "点history的时候没有反应").
@@ -1129,10 +1153,10 @@ function SalesOrderDetailV2ReadOnly() {
               variant="primary"
               icon={<Edit3 size={14} />}
               onClick={goEdit}
-              disabled={hardLocked}
+              disabled={editDisabled}
               title={
                 hardLocked
-                  ? "This order is locked — it already has a downstream Delivery Order / Sales Invoice."
+                  ? lockedEditHint
                   : canAmend
                     ? "This order is processing-locked — changes go through the SO Amendment workflow."
                     : undefined
@@ -1512,7 +1536,8 @@ function SalesOrderDetailV2ReadOnly() {
           <button
             type="button"
             onClick={goEdit}
-            disabled={hardLocked}
+            disabled={editDisabled}
+            title={hardLocked ? lockedEditHint : undefined}
             className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink disabled:opacity-40"
           >
             <Edit3 size={16} /> {editLabel}

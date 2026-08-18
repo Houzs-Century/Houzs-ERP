@@ -145,8 +145,24 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
        FROM THE SUPPLIER, so a PO saved with no creditor died on
        FK_PO_DisplayTerm - a foreign key naming the TERM, not the supplier. The
        payload had always carried a creditor; this route simply never read it. */
-    expect(headerKeys(CS_SO_TO_PO)).toEqual(['CreditorCode', 'CreditorName', 'Details', 'DtlKeys', 'FromDocNo']);
+    /* DocNo joined this list on 2026-08-17 and it closes divergence D5 on the
+       last route it was open on. The first /so-to-po that ever succeeded landed
+       as `PO-009968` while the ERP calls the same purchase order
+       `HC-PO-2608-001`, because `composeSoToPo` returned { DtlKeys, Details }
+       and nothing else — the create arm has always sent a number and the
+       transfer arm never had. SoToPo now carries the same RequireDocNo the two
+       create routes carry and assigns `po.DocNo` directly rather than through
+       PurchaseHeader's swallow-and-log Set(). */
+    expect(headerKeys(CS_SO_TO_PO)).toEqual(
+      ['CreditorCode', 'CreditorName', 'Details', 'DocNo', 'DtlKeys', 'FromDocNo'].sort(),
+    );
     expect(detailKeys(CS_SO_TO_PO)).toEqual(['DeliveryDate', 'DtlKey', 'Location', 'Qty', 'UnitPrice']);
+    /* The ASSIGNMENT, not just the read. A payload key that is parsed and then
+       applied through Set() would satisfy the line above and still leave the
+       book's own number on the document — Set() logs and swallows, which is how
+       a NULL Qty reached this same route. */
+    expect(CS_SO_TO_PO).toContain('po.DocNo = Str(p, "DocNo");');
+    expect(CS_SO_TO_PO).toContain('RequireDocNo(p, "/so-to-po");');
   });
 
   test('/create-po', () => {
@@ -197,10 +213,16 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
 
        The service reads them PAYLOAD-FIRST and falls back to the SOURCE
        document's own header in the book. Both halves are load-bearing: the
-       payload half is what divergence D15 is about, and the book half is what
-       makes the outbox rows queued BEFORE that payload change drain at all.
-       Written out per side in the C# rather than through a ternary precisely so
-       this assertion can see all four names. */
+       payload half was divergence D15 (closed the same night — see the note in
+       the register), and the book half is what makes the outbox rows queued
+       BEFORE that payload change drain at all. Written out per side in the C#
+       rather than through a ternary precisely so this assertion can see all four
+       names.
+
+       CreditorCode is read a SECOND time inside the GR and PI arms, guarded on
+       being non-empty, and the guard is the point: Str() of an absent key is "",
+       so an unguarded assignment there would blank the account the book fallback
+       had just supplied. Asserted below. */
     expect(headerKeys(CS_CONVERT)).toEqual(
       ['CreditorCode', 'CreditorName', 'DebtorCode', 'DebtorName',
        'Details', 'DocDate', 'DtlKeys', 'FromDocNo', 'FromDocNos',
@@ -229,6 +251,75 @@ describe('layer 1 — the keys AcSyncService.cs parses, read out of its source',
     expect(headerKeys(CS_PURCHASE_HEADER)).toEqual(
       ['Description', 'DisplayTerm', 'DocDate', 'DocNo', 'PurchaseLocation', 'Ref'].sort(),
     );
+  });
+
+  /* ── the purchase arms' transfer call, asserted on the C# SOURCE ───────────
+     Layer 1 normally reads KEYS. This reads CALLS, because on 2026-08-17 the two
+     purchase arms stopped going through RunTransfer's late-bound path and
+     started naming a typed SDK overload directly — the only shape that has ever
+     moved a purchase conversion into AED_HOUZS (HC-GR-2608-001, HC-PI-2608-001,
+     host 23:09). A file that compiles nowhere but the office machine gets no
+     compiler here, so the properties that were bought with a failed build and a
+     week of outage are pinned as text.
+
+     Each assertion below is a thing that ALREADY went wrong once. */
+  test('the GR and PI arms call the typed FullTransfer, spelled the way the SDK spells it', () => {
+    /* THE ENUM MEMBER HAS NO 'd'. The first build of this block failed
+       CS0117: 'AutoCount.Invoicing.Purchase.TransferFrom' does not contain a
+       definition for 'GoodsReceivedNote' — which IS how the enclosing SDK class
+       is spelled, three namespace segments away, so the wrong one reads right.
+       Members reflected off AutoCount.Purchase.dll with FlattenHierarchy:
+       PurchaseRequest, RequestForQuotation, PurchaseOrder, PurchaseInvoice,
+       GoodsReceiveNote, SalesOrder, PurchaseConsignment,
+       PurchaseConsignmentReturn. */
+    expect(CS_CONVERT).toContain('AutoCount.Invoicing.Purchase.TransferFrom.GoodsReceiveNote');
+    expect(CS_CONVERT).not.toContain('TransferFrom.GoodsReceivedNote');
+
+    /* Two arms, GR and PI, each with its own copy — duplicated on purpose,
+       because `doc` is a different concrete SDK class in each and a shared
+       helper would have to take `dynamic`, replacing the binding that is proven
+       with one that is not. If this count changes, the duplication was either
+       factored away or spread further; both are decisions, neither is a tidy-up. */
+    const fullTransferCalls = CS_CONVERT.match(
+      /doc\.FullTransfer\(new string\[\]\{ fromDocNo \}, __ptf, AutoCount\.Invoicing\.FullTransferOption\.FullDetails\);/g,
+    );
+    expect(fullTransferCalls, 'the GR arm and the PI arm').toHaveLength(2);
+
+    /* THE FALLBACK IS STILL THERE. FullTransfer is tried first and
+       AddPartialTransferDetail catches; losing the catch would turn any refusal
+       into a failed conversion instead of the behaviour that ran for a week. */
+    expect(
+      (CS_CONVERT.match(/doc\.AddPartialTransferDetail\(fromType, g\.Value\.ToArray\(\), true\);/g) ?? []),
+      'one per purchase arm, inside the catch',
+    ).toHaveLength(2);
+
+    /* THE GUARD ON THE SECOND CreditorCode ASSIGNMENT. Str() of an absent key is
+       "", and SetMaster has already put the BOOK's creditor on the document by
+       the time this runs, so an unguarded assignment blanks it and re-creates
+       the empty-account failure that cost the week. The host build did not carry
+       this guard; it was never exercised without a payload creditor. */
+    expect(
+      (CS_CONVERT.match(
+        /if \(!string\.IsNullOrEmpty\(Str\(p, "CreditorCode"\)\)\) Set\(\(\) => doc\.CreditorCode = Str\(p, "CreditorCode"\)\);/g,
+      ) ?? []),
+      'guarded in both purchase arms',
+    ).toHaveLength(2);
+
+    /* PurchaseHeader RUNS TWICE ON EACH PURCHASE ARM, once inside the primitive
+       before the transfer and once after it, and that is deliberate: FullTransfer
+       copies the SOURCE document's master over the target, so the trailing call
+       is what makes the ERP's DocNo and DisplayTerm the ones that survive. Four
+       calls across the two arms. The sales arms call SalesHeader once each. */
+    expect((CS_CONVERT.match(/PurchaseHeader\(doc, p\);/g) ?? []), 'twice per purchase arm')
+      .toHaveLength(4);
+    expect((CS_CONVERT.match(/SalesHeader\(doc, p\);/g) ?? []), 'once per sales arm')
+      .toHaveLength(2);
+
+    /* THE CORRECTED CAUSE. The comment here used to blame transferMaster:false
+       for `IndexOutOfRangeException: There is no row at position -1`; the host
+       log refutes it — every failed attempt logged the flag as TRUE. Pinned so
+       the refuted explanation cannot quietly come back. */
+    expect(CS_CONVERT).toContain('The flag was never the cause.');
   });
 
   test.skip('/cancel takes exactly two fields', () => {
@@ -497,7 +588,15 @@ const seeded = (omit: Record<string, string[]> = {}) => fakeSb({
   suppliers: [{ ...SUPPLIER }],
   purchase_order_items: PO_ITEMS.map((r) => ({ ...r, linked_ac_dtlkey: null })),
   delivery_orders: [{ id: 'do-uuid-1', do_number: 'DO-2608-009', linked_ac_docno: null }],
-  grns: [{ id: 'grn-uuid-1', grn_number: 'GRN-2608-003', linked_ac_docno: null }],
+  /* supplier_id, because the real table has it — `CREATE TABLE "grns" (...
+     "supplier_id" uuid NOT NULL ...)` in the schema dump this fake enforces.
+     It was absent here while D15's purchase half was open on the recorded
+     grounds that the column did not exist, so the fixture agreed with the
+     mistake. `gr_to_pi` resolves its creditor through this row. */
+  grns: [{
+    id: 'grn-uuid-1', grn_number: 'GRN-2608-003', linked_ac_docno: null,
+    supplier_id: 'supplier-uuid-1',
+  }],
   sales_invoices: [{ id: 'si-uuid-1', invoice_number: 'SI-2608-002', linked_ac_docno: null }],
   purchase_invoices: [{ id: 'pi-uuid-1', invoice_number: 'PI-2608-002', linked_ac_docno: null }],
 }, omit);
@@ -576,12 +675,22 @@ export const DIVERGENCES: Divergence[] = [
     erp: 'sends only { DocDate, Ref } and both are null at every call site (autocount-outbox.ts:254; no caller passes docDate or ref).',
     severity: 'high',
   },
-  {
-    id: 'D5', flow: 'the four conversions', field: 'DocNo',
-    service: 'will use the ERP\'s number when one is sent (AcSyncService.cs:282/290) — which is exactly what the two CREATE routes do, so an ERP SO keeps its number in AutoCount.',
-    erp: 'never sends it for a conversion, so AutoCount auto-numbers every DO / GRN / invoice and four of the six flows have two different document numbers for one document.',
-    severity: 'medium',
-  },
+  /* D5 STRUCK 2026-08-17 — DocNo, on every flow that creates a document.
+     `enqueueConvert` closed it for the four conversions; `/so-to-po` was the one
+     route left, and it stayed open on purpose ("one variable at a time on a
+     route that has never succeeded"). The route succeeded on 2026-08-17 10:15
+     and immediately produced the thing D5 predicts: `PO-009968` in AED_HOUZS for
+     the purchase order the ERP calls `HC-PO-2608-001`. `composeSoToPo` now takes
+     the number as its first REQUIRED argument, `dispatchOne` backfills it from
+     `row.doc_no` for anything already queued, and `SoToPo` carries the same
+     `RequireDocNo` guard as the two create routes. It leaves the register
+     because it was a plain gap with no decision left in it — the owner's
+     instruction is 「那 Numbering 你要处理掉啊，怎么可以不一样 Numbering 呢？」 —
+     and the two tests below fail if either half is reverted.
+
+     WHAT THE FIX DOES NOT DO: `PO-009968` keeps its number. Nothing here renames
+     a document already in a live account book. See §7c3a for what has to happen
+     to that one. */
   {
     id: 'D6', flow: 'edit', field: 'Lines[].ItemCode',
     service: 'applies ItemCode ONLY to a line it is appending; for a line addressed by DtlKey it is never read (AcSyncService.cs:395-401). A product swap cannot change the AutoCount item code.',
@@ -635,11 +744,24 @@ export const DIVERGENCES: Divergence[] = [
     erp: 'never sends it. enqueueConvert composes { DocNo, DocDate?, Ref?, DtlKeys? } and readConvertSourceKeys resolves LINE IDENTITY only — its own doc comment says "NOT COVERED, and deliberately so: partial QUANTITY on a line". So partial SHIPMENT (a subset of lines) reaches AutoCount correctly and partial QUANTITY does not, and the two look identical from the ERP side.',
     severity: 'high',
   },
+  /* D15 (the account on a conversion target) is CLOSED and struck off. The sales
+     half closed on 2026-08-17 morning; the purchase half closed that night, when
+     the two grounds it was left open on both fell over. `grns` and
+     `purchase_invoices` DO carry `supplier_id uuid NOT NULL` — the schema dump
+     this file enforces says so — so there was never a join to build; and
+     `po_to_gr`, which "had never once succeeded", produced HC-GR-2608-001 at
+     23:09. enqueueConvert now sends the account on all four, and dispatchOne
+     backfills the creditor for rows queued before it. Proven by 'all four
+     conversions put their account on the wire' and the drain test beside it.
+
+     THE SERVICE'S BOOK FALLBACK IS NOT PART OF WHAT WAS STRUCK. It still reads
+     the account off the source document when the payload names none, and it must
+     stay: it is what answers when the ERP's own lookup returns nothing. */
   {
-    id: 'D15', flow: 'the four conversions', field: 'DebtorCode / CreditorCode',
-    service: 'MUST have an account on the target before the transfer runs, and this is PROVEN, not inferred: on the live host at 2026-08-17 00:55 the same conversion went from `AppException: Debtor Code is empty.` to `FullTransfer OK` on that assignment alone, and HC-DO-2608-001, HC-DO-2608-002 and HC-SI-2608-001 entered the book. cmd.AddNew() creates the target empty and neither SalesHeader nor PurchaseHeader sets one. The service now reads all four keys, payload first.',
-    erp: 'HALF CLOSED 2026-08-17. enqueueConvert now sends DebtorCode on the two SALES conversions (so_to_do, do_to_iv), asserted by "the SALES conversions put the debtor on the wire" below. The PURCHASE half is still open: grns and purchase_invoices carry no supplier column, so a CreditorCode would mean a grn -> purchase_order -> supplier join, and po_to_gr has never once succeeded anyway (IndexOutOfRangeException: There is no row at position -1). Those two rely on the service reading the creditor off the source document in the book. Keep that fallback whatever happens to this entry: it is the only thing that drains an outbox row composed before any of this.',
-    severity: 'medium',
+    id: 'D16', flow: 'po_to_gr + gr_to_pi', field: 'DtlKeys — the named subset is ignored',
+    service: 'the GR and PI arms try the typed three-argument FullTransfer FIRST and keep AddPartialTransferDetail only as a catch fallback. FullTransfer moves EVERY outstanding line on the source document, so a payload that NAMES two of five lines still transfers five. It is the only shape ever observed to move a purchase conversion into the live book (host 2026-08-17 23:09), and on that run the named set WAS every outstanding line, so nothing was over-received and the defect is unobserved rather than absent.',
+    erp: 'sends DtlKeys naming exactly the lines the GRN or purchase invoice took — readConvertSourceKeys refuses rather than guess — and has no way to say "and this really is all of them". So the ERP is correct and is ignored, which is the opposite failure to D14: there the ERP cannot express a partial QUANTITY, here it expresses a partial LINE SET that the service overrides. Cost: a partial receipt writes goods into a live account book that the ERP did not receive. The purchase side is deliberately not made to refuse instead, because refusing returns po_to_gr to the state it spent a week in.',
+    severity: 'high',
   },
 ];
 
@@ -937,6 +1059,96 @@ describe('/so-to-po names the supplier', () => {
   });
 });
 
+/* ── /so-to-po: the document NUMBER (divergence D5, struck) ─────────────────
+   MEASURED ON THE LIVE HOST 2026-08-17 10:15, the first time this route ever
+   succeeded:
+
+     so-to-po PO-009968: 2 transferred, 2 line(s) costed in phase two
+
+   `PO-009968` is AutoCount's counter. The ERP calls that same purchase order
+   `HC-PO-2608-001`, and every other document type in the chain already carries
+   the ERP's number into AED_HOUZS — HC-SO-2608-001/2/3, HC-DO-2608-001/2,
+   HC-SI-2608-001. A document numbered differently on the two sides cannot be
+   reconciled by anyone, which is the owner's whole point:
+   「那 Numbering 你要处理掉啊，怎么可以不一样 Numbering 呢？」
+
+   Same shape as the CreditorCode defect directly above and it needs the same two
+   halves — the enqueue, and the drain for rows already in the queue. */
+describe('/so-to-po carries the ERP document number', () => {
+  /* THE CASTS LIVE HERE AND NOWHERE ELSE IN THIS BLOCK. Every other test in this
+     file writes `sb as never` and `(payload as any)` at each call site, and this
+     file is already over its `no-restricted-syntax` and `no-explicit-any`
+     ceilings on main. Five more tests written the same way would be seven more
+     findings on a ceiling that may only fall, so the two shapes are named once
+     and the tests below read as tests. */
+  const enqueue = (sb: ReturnType<typeof soToPoSb>) =>
+    // eslint-disable-next-line no-restricted-syntax -- the fake PostgREST is not a SupabaseClient and enqueuePoCreate takes one; this is the file's existing bridge, named once instead of at five call sites
+    enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-uuid-1' });
+  const storedBody = (sb: ReturnType<typeof soToPoSb>): Record<string, unknown> =>
+    (sb.tables.autocount_outbox[0].payload as { body: Record<string, unknown> }).body;
+
+  test('the enqueued body carries DocNo, and it is the ERP purchase order number', async () => {
+    const sb = soToPoSb();
+    await enqueue(sb);
+    /* The positive control at the top of the previous block proves this fixture
+       takes the TRANSFER arm; re-asserted here because the CREATE arm has always
+       sent a DocNo and would pass this test while testing nothing. */
+    expect(sb.tables.autocount_outbox[0].op).toBe('so_to_po');
+    const stored = storedBody(sb);
+    expect(stored.DocNo, 'the ERP numbers its own purchase orders').toBe(PO_HEADER.po_number);
+    // Still the transfer payload, not a create wearing its clothes.
+    expect(stored.DtlKeys).toEqual([4242]);
+  });
+
+  test('the number reaches the WIRE, not just the stored row', async () => {
+    const sb = soToPoSb();
+    await enqueue(sb);
+    sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-PARENT-1';
+    const body = await wireBody(sb);
+    expect(body.DocNo).toBe(PO_HEADER.po_number);
+    /* And it must not be confused with the PARENT's number. `dispatchOne`
+       resolves FromDocNo from the sales order at drain and both keys are
+       strings on the same object; a fix that put the wrong one in DocNo would
+       satisfy a bare toBeTruthy. */
+    expect(body.FromDocNo).toBe('AC-PARENT-1');
+    expect(body.DocNo).not.toBe(body.FromDocNo);
+  });
+
+  test('a row stored WITHOUT one is backfilled at drain from the outbox row itself', async () => {
+    /* THE ROW ALREADY IN THE QUEUE. `dispatchOne` REPLAYS the stored payload and
+       never recomposes, so the enqueue fix alone leaves anything queued before
+       today auto-numbering for ever. Cheaper than the creditor's backfill and
+       with nothing to get wrong: the outbox row is KEYED by the ERP's number. */
+    const sb = soToPoSb();
+    await enqueue(sb);
+    delete storedBody(sb).DocNo;
+    sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-PARENT-1';
+    const body = await wireBody(sb);
+    expect(body.DocNo, 'resolved at drain, so no requeue is needed').toBe(PO_HEADER.po_number);
+  });
+
+  test('the backfill does NOT overwrite a number the payload already names', async () => {
+    const sb = soToPoSb();
+    await enqueue(sb);
+    storedBody(sb).DocNo = 'HC-PO-2608-999';
+    sb.tables.mfg_sales_orders[0].linked_ac_docno = 'AC-PARENT-1';
+    expect((await wireBody(sb)).DocNo).toBe('HC-PO-2608-999');
+  });
+
+  test('the service REFUSES a /so-to-po with no number, so a silent auto-number is impossible', () => {
+    /* The ERP half above can only be trusted as far as the ERP. This is the
+       account book's own half: AcSyncService carries the same RequireDocNo the
+       two create routes carry, whose comment explains what a blank number costs
+       — a document that cannot be edited, converted or even cancelled through
+       this service. Asserted against the C# source, which is what layer 1 of
+       this file is for. */
+    expect(CS_SO_TO_PO).toContain('RequireDocNo(p, "/so-to-po");');
+    expect(acSyncSource).toContain(
+      'if (string.IsNullOrEmpty(Str(p, "DocNo").Trim()))',
+    );
+  });
+});
+
 describe('the four conversions', () => {
   const convert = async (op: any, docType: any, from: any, to: any, docNo: string) => {
     const sb = seeded();
@@ -1007,7 +1219,16 @@ describe('the four conversions', () => {
      FullTransfer, the contentless `Invalid transfer item.` from
      AddPartialTransferDetail). The service reads the payload first and falls
      back to the source document in the book; this asserts the payload half. */
-  test('the SALES conversions put the debtor on the wire, and the purchase ones do not', async () => {
+  const PURCHASE_CONVERSIONS = [
+    ['po_to_gr', 'GR',
+      { table: 'purchase_orders', keyCol: 'id', key: 'po-uuid-1' },
+      { table: 'grns', keyCol: 'id', key: 'grn-uuid-1' }, 'GRN-2608-003'],
+    ['gr_to_pi', 'PI',
+      { table: 'grns', keyCol: 'id', key: 'grn-uuid-1' },
+      { table: 'purchase_invoices', keyCol: 'id', key: 'pi-uuid-1' }, 'PI-2608-002'],
+  ] as Array<[any, any, any, any, string]>;
+
+  test('all four conversions put their account on the wire — D15 closed', async () => {
     for (const [op, docType, from, to, docNo] of [
       ['so_to_do', 'DO',
         { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'SO-2608-011' },
@@ -1018,26 +1239,75 @@ describe('the four conversions', () => {
     ] as Array<[any, any, any, any, string]>) {
       const body = await convert(op, docType, from, to, docNo);
       expect(body.DebtorCode, `${op} must name the customer`).toBe(AC_DEBTOR_CODE);
+      expect(Object.keys(body), `${op} has no creditor`).not.toContain('CreditorCode');
     }
 
-    /* The purchase side is NOT symmetrical and the asymmetry is deliberate:
-       `grns` and `purchase_invoices` carry no supplier column, so a creditor
-       here would mean a new join, and `po_to_gr` has never once succeeded for
-       an unrelated reason. Those two stay on the service's book fallback, which
-       is why D15 is still on the register. Asserted so that changing it is a
-       decision someone makes on purpose. */
-    for (const [op, docType, from, to, docNo] of [
-      ['po_to_gr', 'GR',
-        { table: 'purchase_orders', keyCol: 'id', key: 'po-uuid-1' },
-        { table: 'grns', keyCol: 'id', key: 'grn-uuid-1' }, 'GRN-2608-003'],
-      ['gr_to_pi', 'PI',
-        { table: 'grns', keyCol: 'id', key: 'grn-uuid-1' },
-        { table: 'purchase_invoices', keyCol: 'id', key: 'pi-uuid-1' }, 'PI-2608-002'],
-    ] as Array<[any, any, any, any, string]>) {
+    /* THE PURCHASE HALF, CLOSED 2026-08-17. It was open on two grounds and both
+       have gone. The first was that `grns` / `purchase_invoices` carry no
+       supplier column so a creditor needs a `grn -> purchase_order -> supplier`
+       join: the schema dump THIS FAKE ENFORCES says otherwise — both tables
+       declare `supplier_id uuid NOT NULL`, so it is one hop, and if that were
+       wrong the fake would answer 42703 here rather than a code. The second was
+       that `po_to_gr` had never succeeded; HC-GR-2608-001 and HC-PI-2608-001
+       landed in AED_HOUZS that night.
+
+       The source document is the authority, not the target: `po_to_gr` reads the
+       purchase order it transfers, `gr_to_pi` the goods receipt. */
+    for (const [op, docType, from, to, docNo] of PURCHASE_CONVERSIONS) {
       const body = await convert(op, docType, from, to, docNo);
-      expect(Object.keys(body), `${op} has no creditor to send yet`).not.toContain('CreditorCode');
-      expect(Object.keys(body), `${op} must not send a DEBTOR either`).not.toContain('DebtorCode');
+      expect(body.CreditorCode, `${op} must name the supplier`).toBe(SUPPLIER.code);
+      expect(body.CreditorName, `${op} names it too`).toBe(SUPPLIER.name);
+      expect(Object.keys(body), `${op} must not send a DEBTOR`).not.toContain('DebtorCode');
     }
+  });
+
+  /* THE ROW ALREADY IN THE QUEUE — the same half of the fix `so_to_po` needed in
+     #2345, and needed here for the same mechanical reason: `dispatchOne` REPLAYS
+     the stored payload and never recomposes, so an enqueue-only fix leaves every
+     row queued before it going out with no account for ever.
+
+     It is belt-and-braces here rather than the only answer — the source of a
+     purchase conversion IS in the account book, so the service can read the
+     creditor off it — and it is still worth having, because a value the ERP
+     STATES cannot be wrong about which row the service happened to read. */
+  test('a purchase conversion stored WITHOUT a creditor is backfilled at drain', async () => {
+    for (const [op, docType, from, to, docNo] of PURCHASE_CONVERSIONS) {
+      const sb = seeded();
+      sb.tables[from.table][0].linked_ac_docno = 'AC-PARENT-1';
+      await enqueueConvert(sb as never, { companyId: 1, op, from, to, docType, docNo });
+      const row = sb.tables.autocount_outbox[0];
+      // Exactly what a row queued before today looks like.
+      delete (row.payload as any).body.CreditorCode;
+      delete (row.payload as any).body.CreditorName;
+
+      const body = await wireBody(sb);
+      expect(body.CreditorCode, `${op} resolved at drain, so no requeue is needed`)
+        .toBe(SUPPLIER.code);
+    }
+  });
+
+  test('the drain backfill does NOT overwrite a creditor the payload already names', async () => {
+    const [op, docType, from, to, docNo] = PURCHASE_CONVERSIONS[0];
+    const sb = seeded();
+    sb.tables[from.table][0].linked_ac_docno = 'AC-PARENT-1';
+    await enqueueConvert(sb as never, { companyId: 1, op, from, to, docType, docNo });
+    (sb.tables.autocount_outbox[0].payload as any).body.CreditorCode = '400-OTHER';
+    const body = await wireBody(sb);
+    expect(body.CreditorCode).toBe('400-OTHER');
+  });
+
+  /* A NEGATIVE CONTROL, because the two tests above would both pass if
+     `readConvertCreditor` returned a hard-coded string. Take the supplier row
+     away and the body must carry NO creditor at all — never an empty one, which
+     is the value AutoCount answers "Debtor Code is empty." to. */
+  test('no supplier row means NO CreditorCode key, not a blank one', async () => {
+    const [op, docType, from, to, docNo] = PURCHASE_CONVERSIONS[0];
+    const sb = seeded();
+    sb.tables[from.table][0].linked_ac_docno = 'AC-PARENT-1';
+    sb.tables.suppliers = [];
+    await enqueueConvert(sb as never, { companyId: 1, op, from, to, docType, docNo });
+    const body = await wireBody(sb);
+    expect(Object.keys(body)).not.toContain('CreditorCode');
   });
 
   test('a conversion whose parent has no AutoCount number waits, and posts nothing', async () => {
@@ -1172,14 +1442,16 @@ describe('the divergence register', () => {
   });
 
   test('the count is pinned — a new divergence has to be written down to land', () => {
-    /* If this fails you have either found an eleventh or fixed one of the ten.
+    /* If this fails you have either found a new one or fixed one of these.
        Both are good news; update the list and the module guide's prose together
-       — 7b for D9/D10, 7c1 for D14, 7c3 for D15, 7d2 for D8, 7q for the
-       extract's own fields.
+       — 7b for D9/D10, 7c1 for D14, 7c4 for D16, 7c3 for the struck D15, 7c3a
+       and 7c3b for the struck D5, 7d2 for
+       D8, 7q for the extract's own fields.
 
        Started at thirteen. D11 and D13 were struck off when #1855 fixed them,
-       and D3 (the line delivery date) on 2026-08-15 — all three were plain bugs,
-       not decisions; the ones that remain each need one.
+       D3 (the line delivery date) on 2026-08-15 and D5 (the document number) on
+       2026-08-17 — all four were plain bugs, not decisions; the ones that remain
+       each need one.
 
        D14 was ADDED on 2026-08-17. It is not new behaviour — the service has
        always transferred a line at its outstanding quantity — it is a gap that
@@ -1190,21 +1462,39 @@ describe('the divergence register', () => {
        and a decision about where the shipped quantity comes from, which is not
        a test author's to make.
 
-       D15 was ADDED on 2026-08-17, the morning after D14 and for a harder
-       reason: it is the PROVEN cause of a week-long production outage, measured
-       on the host rather than argued from source. It is a divergence and not
-       just a bug because the service now works around it — reading the account
-       out of the account book — and that workaround must not become invisible.
-       When enqueueConvert starts sending the account, strike D15 and say so in
-       §7c3; do not quietly delete the fallback with it, because it is the only
-       thing that drains a row queued before the change. */
-    expect(DIVERGENCES).toHaveLength(12);
+       D15 was ADDED on 2026-08-17 morning, the day after D14 and for a harder
+       reason: it was the PROVEN cause of a week-long production outage, measured
+       on the host rather than argued from source. It was STRUCK the same night —
+       the shortest life on this register — when the purchase half turned out to
+       need no join at all and `po_to_gr` started working. Striking it did NOT
+       delete the service's book fallback; read the note where the entry used to
+       be before assuming otherwise.
+
+       D16 was ADDED the same night, and it is the price of that fix rather than
+       a separate discovery: the only call that moves a purchase conversion into
+       this book is FullTransfer, and FullTransfer cannot take a subset. So the
+       ERP names the lines correctly and the service transfers all of them. It
+       is registered at HIGH because the cost lands in a licensed account book,
+       and it is not "fixed" by refusing, because refusing is the state
+       /po-to-gr spent a week in. Closing it needs the host: either
+       AddPartialTransferDetail works now that the target has a creditor (never
+       retested since), or the named set has to be compared against the source's
+       outstanding lines before FullTransfer is allowed.
+
+       D5 was STRUCK on 2026-08-17. It was the last one on the list that had no
+       decision left in it: the account book takes the ERP's number wherever it
+       is sent, and `/so-to-po` was the only route still not sending one. It goes
+       for the same reason D3 did — a plain bug on the ERP side — and, like D3,
+       its absence is now held by tests rather than by prose. */
+    expect(DIVERGENCES).toHaveLength(11);
     expect(DIVERGENCES.filter((d) => d.severity === 'critical').map((d) => d.id))
       .toEqual(['D9', 'D10']);
     // The struck ids are not reused: a register is a ledger, not a list.
     expect(DIVERGENCES.map((d) => d.id)).not.toContain('D3');
+    expect(DIVERGENCES.map((d) => d.id)).not.toContain('D5');
     expect(DIVERGENCES.map((d) => d.id)).not.toContain('D11');
     expect(DIVERGENCES.map((d) => d.id)).not.toContain('D13');
+    expect(DIVERGENCES.map((d) => d.id)).not.toContain('D15');
   });
 });
 

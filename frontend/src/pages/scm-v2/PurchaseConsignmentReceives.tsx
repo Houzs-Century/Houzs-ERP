@@ -10,7 +10,7 @@
 // (pc-receive hooks) and navigation points at /purchase-consignment-receive.
 //
 // Dropped from the GRN clone (per scope): the From-PO header button + the
-// right-click "Convert to PI / PR" actions (consignment receiving doesn't feed
+// right-click transfer-to-Purchase-Invoice / Purchase-Return actions (consignment receiving doesn't feed
 // real purchase-invoice / purchase-return flows — the parallel Purchase
 // Consignment Return flow handles returns). The Transfer-From (PO) column is
 // relabelled to the source Purchase Consignment Order.
@@ -34,6 +34,7 @@ import { fmtDateOrDash, buildVariantSummary, fmtMoneyCenti } from '@2990s/shared
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
+import { transferFromColumnLabel } from "../../lib/convertScope";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -86,7 +87,7 @@ const buildColumns = (): DataGridColumn<GrnRow>[] => [
     sortFn: (a, b) => (a.supplier?.code ?? '').localeCompare(b.supplier?.code ?? ''),
   },
   {
-    key: 'pc_number', label: 'Transfer From (Order)', width: 160, sortable: true, groupable: true,
+    key: 'pc_number', label: transferFromColumnLabel('pco'), width: 160, sortable: true, groupable: true,
     accessor: (g) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{g.purchase_consignment_order?.pc_number ?? '—'}</span>,
     searchValue: (g) => g.purchase_consignment_order?.pc_number ?? '',
     /* Accessor is JSX → export the source order doc-no string. */
@@ -152,7 +153,7 @@ const buildDrilldownColumns = (currency: string): DataGridColumn<GrnItem>[] => [
     sortFn: (a, b) => (a.material_code ?? '').localeCompare(b.material_code ?? ''),
   },
   {
-    key: 'source_po', label: 'Transfer From (Order)', width: 160,
+    key: 'source_po', label: transferFromColumnLabel('po'), width: 160,
     accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{it.source_po_number ?? '—'}</span>,
     searchValue: (it) => it.source_po_number ?? '',
     sortFn: (a, b) => (a.source_po_number ?? '').localeCompare(b.source_po_number ?? ''),

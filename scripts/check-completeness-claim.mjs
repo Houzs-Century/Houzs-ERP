@@ -234,6 +234,19 @@ function report(result, inputs) {
     if (b.plan) console.log(`${tag}   re-ran: ${b.plan.map((s) => s.join(' ')).join(' | ')}`);
     if (b.diff) {
       console.log(`${tag}   pasted ${b.diff.pastedCount} line(s); the tree has ${b.diff.actualCount}.`);
+      if (b.diff.coordinatesOnly) {
+        // A `path:NNN:` coordinate is already normalised away before the diff.
+        // This is the one shape that cannot be: `grep -n pattern onefile`
+        // prints a BARE `NNN:` with no path, and a leading number with nothing
+        // in front of it cannot be told apart from content. Say so, because the
+        // author is otherwise staring at two lists that look identical.
+        console.log(`${tag}   NOTE: every difference below is a LINE NUMBER and nothing else.`);
+        console.log(`${tag}   Your command printed bare \`NNN:\` coordinates with no file path, so the`);
+        console.log(`${tag}   gate cannot tell a moved line from changed content. The population itself`);
+        console.log(`${tag}   looks unchanged. Re-run the enumeration with the path included — \`git grep\``);
+        console.log(`${tag}   over a pathspec, or \`grep -Hn\` — and paste that; \`path:NNN:\` coordinates`);
+        console.log(`${tag}   ARE normalised, so an unrelated merge shifting the file will not fail you.`);
+      }
       if (b.diff.extra.length) {
         console.log(`${tag}   IN THE TREE BUT NOT IN YOUR LIST (${b.diff.extra.length}) — this is the stale-enumeration shape,`);
         console.log(`${tag}   and each of these is a member of the population your PR says it covered:`);

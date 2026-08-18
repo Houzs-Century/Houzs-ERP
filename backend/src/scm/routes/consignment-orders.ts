@@ -32,6 +32,8 @@ import {
   deriveCountryFromState, deriveSalesLocationFromState, snapshotUnitCostSen,
 } from '../lib/sales-doc-derive';
 import { escapeForOr } from '../lib/postgrest-search';
+import { createMixRefusal, lineMixRefusal } from '../lib/main-mix';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
@@ -627,43 +629,12 @@ consignmentOrders.post('/', async (c) => {
         : [],
     });
     if (coProblems.length > 0) return c.json(validationFailedBody(coProblems), 422);
-    if (items.length > 0) {
-      const lineCodes = items.map((it) => String(it.itemCode ?? '')).filter(Boolean);
-      const metaByCode = new Map<string, { category: string }>();
-      if (lineCodes.length > 0) {
-        const { data: meta } = await scopeToCompany(
-          sb
-            .from('mfg_products')
-            .select('code, category')
-            .in('code', lineCodes),
-          c,
-        );
-        for (const m of (meta ?? []) as Array<{ code: string; category: string }>) {
-          metaByCode.set(m.code, { category: m.category });
-        }
-      }
-      const normCat = (raw: string): string => {
-        const g = (raw ?? '').trim().toUpperCase();
-        if (g.includes('BEDFRAME')) return 'BEDFRAME';
-        if (g.includes('SOFA'))     return 'SOFA';
-        if (g.includes('MATTRESS')) return 'MATTRESS';
-        if (g.includes('ACCESSOR')) return 'ACCESSORY';
-        if (g.includes('SERVICE'))  return 'SERVICE';
-        return 'OTHERS';
-      };
-      const MAIN = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
-      const cats = items.map((it) =>
-        normCat(metaByCode.get(String(it.itemCode ?? ''))?.category ?? (it.itemGroup as string) ?? ''),
-      );
-      if (cats.includes('SOFA') && cats.some((cat) => cat !== 'SOFA' && MAIN.has(cat))) {
-        return c.json({
-          error: 'so_sofa_no_other_main',
-          reason: 'A sofa order cannot also contain a bedframe or mattress. Service and accessory items are fine.',
-        }, 400);
-      }
-      /* Loo 2026-06-07 — mattress brand mixing is allowed (old Rule 3
-         `so_mattress_one_brand` removed; mirrors mfg-sales-orders.ts). */
-    }
+    /* Sofa is exclusive among MAIN products — one rule, one home
+       (lib/main-mix.ts), shared with the SO paths and with this router's own
+       add-line / edit-line handlers below. Loo 2026-06-07 — mattress BRAND
+       mixing is allowed (old Rule 3 `so_mattress_one_brand` removed). */
+    const mainMix = await createMixRefusal(sb, items, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   // Minted inside insertWithDocNoRetry below so a concurrent-create collision
@@ -690,7 +661,7 @@ consignmentOrders.post('/', async (c) => {
   // Compute totals + category breakdown
   let mattressSofa = 0, bedframe = 0, accessories = 0, others = 0, total = 0, totalCost = 0;
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0;
-  const headerDeliveryDate = (body.customerDeliveryDate as string | null | undefined) ?? null;
+  const headerDeliveryDate = dateOrNull(body.customerDeliveryDate);
 
   const cachedConfig = await loadMaintenanceConfig(sb);
   const cachedSpecialAddons = await loadSpecialAddons(sb);
@@ -803,13 +774,13 @@ consignmentOrders.post('/', async (c) => {
     }
     const hasExplicitLineDate = it.lineDeliveryDate !== undefined && it.lineDeliveryDate !== null;
     const lineDeliveryDate = hasExplicitLineDate
-      ? (it.lineDeliveryDate as string | null)
+      ? dateOrNull(it.lineDeliveryDate)
       : headerDeliveryDate;
     const lineDeliveryDateOverridden = hasExplicitLineDate
       ? (it.lineDeliveryDateOverridden === undefined ? true : Boolean(it.lineDeliveryDateOverridden))
       : Boolean(it.lineDeliveryDateOverridden ?? false);
     return {
-      line_date: (it.lineDate as string) ?? todayMyt(),
+      line_date: dateOrNull(it.lineDate) ?? todayMyt(),
       debtor_code: (body.debtorCode as string) ?? null,
       debtor_name: body.debtorName,
       agent: (body.agent as string) ?? null,
@@ -859,7 +830,7 @@ consignmentOrders.post('/', async (c) => {
     company_id: activeCompanyId(c), // multi-company: stamp the active company
     doc_no: docNo,
     transfer_to: (body.transferTo as string) ?? null,
-    so_date: (body.soDate as string) ?? todayMyt(),
+    so_date: dateOrNull(body.soDate) ?? todayMyt(),
     branding: (body.branding as string) ?? null,
     debtor_code: (body.debtorCode ?? body.customerCode as string) ?? null,
     debtor_name: customerName,
@@ -902,12 +873,12 @@ consignmentOrders.post('/', async (c) => {
       ? (normalizePhone(body.emergencyContactPhone) ?? body.emergencyContactPhone)
       : null,
     emergency_contact_relationship: (body.emergencyContactRelationship as string) ?? null,
-    target_date: (body.targetDate as string) ?? null,
+    target_date: dateOrNull(body.targetDate),
     customer_id: orderCustomerId,
     customer_state: (body.customerState as string) ?? null,
     customer_country: customerCountrySnapshot,
-    customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
-    processing_date: (body.processingDate as string) ?? null,
+    customer_delivery_date: dateOrNull(body.customerDeliveryDate),
+    processing_date: dateOrNull(body.processingDate),
     customer_so_no: (body.customerSoNo as string) ?? null,
     customer_po: (body.customerPo as string) ?? null,
     hub_id: (body.hubId as string) ?? null,
@@ -918,7 +889,7 @@ consignmentOrders.post('/', async (c) => {
     installment_months: typeof body.installmentMonths === 'number' ? body.installmentMonths : null,
     merchant_provider:  (body.merchantProvider as string) ?? null,
     approval_code:      (body.approvalCode as string) ?? null,
-    payment_date:       (body.paymentDate as string) ?? null,
+    payment_date:       dateOrNull(body.paymentDate),
     /* Clamp >= 0 (the /mfg-sales-orders create path this was cloned from does;
        this copy didn't) — the header deposit is added on top of the ledger in
        the CO list's paid rollup, so a negative value would deflate it. */
@@ -983,20 +954,20 @@ export const patchConsignmentOrderStatusHandler = async (c: any) => {
      downstream lock below, so an out-of-scope caller gets 404 rather than being
      told the order has a Consignment Note: a refusal must not leak existence. */
   if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
-  let body: { status?: string; notes?: string };
-  try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
+  let body: { status?: string; notes?: string }; try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
-
+  /* NORMALISE FIRST, as the SO handler this clones does. Read RAW, a lowercase 'cancelled'
+     never entered coHasDownstream below — SI_STATUS_CANON's class; tests/lifecycleStatusCasing. */
+  const toStatus = String(body.status).trim().toUpperCase();
   const { data: prev } = await scopeToCompanyId(sb.from('consignment_sales_orders').select('status').eq('doc_no', docNo), co.companyId).maybeSingle();
   const fromStatus = (prev as { status: string } | null)?.status ?? null;
-
   /* Tier 2 downstream-lock — only the CANCELLED transition is gated. */
-  if (body.status === 'CANCELLED' && fromStatus !== 'CANCELLED') {
+  if (toStatus === 'CANCELLED' && fromStatus !== 'CANCELLED') {
     const childLock = await coHasDownstream(sb, docNo);
     if (childLock) return c.json(childLock, 409);
   }
 
-  const patch: Record<string, unknown> = { status: body.status, updated_at: new Date().toISOString() };
+  const patch: Record<string, unknown> = { status: toStatus, updated_at: new Date().toISOString() };
   const { data, error } = await scopeToCompanyId(sb.from('consignment_sales_orders').update(patch)
     .eq('doc_no', docNo), co.companyId).select('doc_no, status').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
@@ -1008,8 +979,8 @@ export const patchConsignmentOrderStatusHandler = async (c: any) => {
     action: 'UPDATE_STATUS',
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
-    fieldChanges: [{ field: 'status', from: fromStatus, to: body.status }],
-    statusSnapshot: body.status,
+    fieldChanges: [{ field: 'status', from: fromStatus, to: toStatus }],
+    statusSnapshot: toStatus,
     note: body.notes ?? undefined,
   });
 
@@ -1138,8 +1109,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
     ['customerPoDate', 'customer_po_date'], ['customerPoImageB64', 'customer_po_image_b64'],
     ['customerSoNo', 'customer_so_no'],
     ['hubId', 'hub_id'], ['hubName', 'hub_name'],
-    ['customerDeliveryDate', 'customer_delivery_date'],
-    ['processingDate', 'processing_date'],
+    ['customerDeliveryDate', 'customer_delivery_date'], ['processingDate', 'processing_date'],
     ['linkedDoDocNo', 'linked_do_doc_no'],
     ['shipToAddress', 'ship_to_address'], ['billToAddress', 'bill_to_address'],
     ['installToAddress', 'install_to_address'],
@@ -1284,7 +1254,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
     }
   }
 
-  const { data, error } = await scopeToCompanyId(sb.from('consignment_sales_orders').update(updates).eq('doc_no', docNo), co.companyId).select('doc_no').maybeSingle();
+  const { data, error } = await scopeToCompanyId(sb.from('consignment_sales_orders').update(coerceEmptyDates(updates)).eq('doc_no', docNo), co.companyId).select('doc_no').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
 
@@ -1294,7 +1264,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
     /* A cascaded clear has no body value to read — the header column was set to
        null above, so the lines must follow it, or MRP keeps ordering by a line
        date the header no longer holds. */
-    const newDate = coCascadedDeliveryClear ? null : (body['customerDeliveryDate'] as string | null);
+    const newDate = coCascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']); // header coerced, lines did not: the cascade 500'd after the header committed
     await scopeToCompanyId(sb.from('consignment_sales_order_items')
       .update({ line_delivery_date: newDate })
       .eq('doc_no', docNo), co.companyId)
@@ -1517,6 +1487,16 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   const childLock = await coHasDownstream(sb, docNo);
   if (childLock) return c.json(childLock, 409);
 
+  /* Composition guard. The create path above refuses a sofa that shares a
+     document with a bedframe / mattress; this path had NO copy of that rule, so
+     a CO created bedframe-only (which create legitimately permits — no sofa
+     present) accepted a sofa line and built a document the business rule says
+     cannot exist. coHasDownstream is not a substitute: it only blocks once a
+     DO / SI exists, and a fresh CO has neither. INTRODUCED, not flat — an order
+     that already mixes stays editable. */
+  const mainMix = await lineMixRefusal(sb, 'consignment_sales_order_items', docNo, null, String(it.itemCode), activeCompanyId(c));
+  if (mainMix) return c.json(mainMix.body, mainMix.status);
+
   const { data: header } = await scopeToCompanyId(sb.from('consignment_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state').eq('doc_no', docNo), co.companyId).maybeSingle();
   if (!header) return c.json(NOT_THIS_COMPANY, 404);
 
@@ -1591,14 +1571,14 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   const lineCost = unitCost * qty;
   const hasExplicitLineDate = it.lineDeliveryDate !== undefined && it.lineDeliveryDate !== null;
   const lineDeliveryDate = hasExplicitLineDate
-    ? (it.lineDeliveryDate as string | null)
+    ? dateOrNull(it.lineDeliveryDate)
     : (header.customer_delivery_date as string | null) ?? null;
   const lineDeliveryDateOverridden = hasExplicitLineDate
     ? (it.lineDeliveryDateOverridden === undefined ? true : Boolean(it.lineDeliveryDateOverridden))
     : Boolean(it.lineDeliveryDateOverridden ?? false);
   const row = {
     doc_no: docNo,
-    line_date: (it.lineDate as string) ?? todayMyt(),
+    line_date: dateOrNull(it.lineDate) ?? todayMyt(),
     debtor_code: header.debtor_code,
     debtor_name: header.debtor_name,
     agent: header.agent,
@@ -1673,6 +1653,15 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
     .select('qty, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, description2, uom, variants, remark, cancelled')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+  /* Composition guard — a product SWAP must not INTRODUCE a sofa x
+     (bedframe | mattress) mix. Same rule, same home as the create + add paths;
+     this path had no copy of it either. Only when the caller actually changes
+     the code: an untouched line cannot introduce anything. */
+  if (it.itemCode !== undefined) {
+    const mainMix = await lineMixRefusal(sb, 'consignment_sales_order_items', docNo, itemId, String(it.itemCode), activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
+  }
+
   const qty = it.qty !== undefined ? Number(it.qty) : prev.qty;
   const clientUnit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : prev.unit_price_centi;
   const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : prev.discount_centi;
@@ -1799,14 +1788,14 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
   }
 
   if (it.lineDeliveryDate !== undefined) {
-    updates['line_delivery_date'] = it.lineDeliveryDate as string | null;
+    updates['line_delivery_date'] = dateOrNull(it.lineDeliveryDate);
     updates['line_delivery_date_overridden'] = true;
   }
   if (it.lineDeliveryDateOverridden !== undefined) {
     updates['line_delivery_date_overridden'] = Boolean(it.lineDeliveryDateOverridden);
   }
 
-  const { error } = await scopeToCompanyId(sb.from('consignment_sales_order_items').update(updates).eq('id', itemId), co.companyId);
+  const { error } = await scopeToCompanyId(sb.from('consignment_sales_order_items').update(coerceEmptyDates(updates)).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   await recomputeTotals(sb, docNo);
 

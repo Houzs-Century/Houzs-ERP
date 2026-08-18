@@ -10,7 +10,7 @@
 // navigation points at /purchase-consignment.
 //
 // Dropped from the PO clone (per scope): the "From Sales Order" button + the
-// multi-select "Convert to GRN" batch flow + the per-line "Received (GRN)"
+// multi-select "Transfer to Goods Received" batch flow + the per-line "Received (GRN)"
 // breakdown column (consignment receiving lives on the parallel Purchase
 // Consignment Receive flow).
 // ----------------------------------------------------------------------------

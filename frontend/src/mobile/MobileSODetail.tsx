@@ -135,9 +135,6 @@ type SoHeader = {
   postcode: string | null;
   customer_delivery_date: string | null;
   processing_date: string | null;
-  /* proceeded_at — when the salesperson proceeded the order (server-stamped).
-     Used with processing_date to reflect the processing-date LOCK. */
-  proceeded_at: string | null;
   so_date: string | null;
   created_at: string | null;
   local_total_centi: number | null;
@@ -369,7 +366,7 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
     setActionError(null);
     setBusy(true);
     try {
-      await updateStatus.mutateAsync({ docNo, status });
+      await updateStatus.mutateAsync({ docNo, status, expectedStatus: h?.status ?? null });
     } catch (e) {
       setActionError(e instanceof Error ? e.message : "Something went wrong. Please try again.");
     } finally {
@@ -427,10 +424,11 @@ export function MobileSODetail({ docNo, onBack, onEdit, flowNav }: { docNo: stri
   const canCancel = CANCELLABLE_STATUSES.includes(rawStatus);
   const isLocked = isSoLocked(h?.status, hasChildren);
 
-  /* Processing LOCK — the shared procLockActive: once the SO has been PROCEEDED
-     (proceeded_at stamped) AND its processing day has passed (compared against
-     todayMyt() — the Malaysia calendar day, NOT the device's local day) the
-     line items are historical. Here we surface a banner and treat the SO as
+  /* Processing LOCK — the shared procLockActive: once the SO has a Processing
+     Date AND that day has passed (compared against todayMyt() — the Malaysia
+     calendar day, NOT the device's local day) the line items are historical.
+     Having a Processing Date IS being proceeded (owner, pinned 2026-08-13);
+     there is no separate stamp to consult. Here we surface a banner and treat the SO as
      edit-locked so the detail never offers line-item edits on a proceeded,
      past-processing order. */
   const processingLocked = h ? soProcLockActive(h) : false;

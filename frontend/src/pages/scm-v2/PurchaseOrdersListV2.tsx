@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   Plus,
@@ -65,7 +65,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { convertToLink } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
@@ -87,12 +87,6 @@ type StatusTab =
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtRm = (centi: number): string => fmtCenti(centi);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
 
 const supplierNameOf = (r: PoHeaderRow): string =>
   r.supplier?.name || r.supplier_id || "—";
@@ -595,7 +589,7 @@ function DetailDrawer({
                         icon={<CheckCircle2 size={14} />}
                         onClick={onConvertGrn}
                       >
-                        Convert to GRN
+                        {transferToLabel('grn')}
                       </Button>
                     )}
                   </>
@@ -855,7 +849,7 @@ export function PurchaseOrdersListV2() {
   const goEdit = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}?edit=1`);
   const goPrint = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}?print=1`);
   const goFullPage = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}`);
-  // Convert to GRN routes to the reviewable From-PO picker pre-scoped to this
+  // Transfer to Goods Received routes to the reviewable From-PO picker pre-scoped to this
   // PO (?poId=<id>); the picker pre-ticks the PO's outstanding lines so the
   // operator reviews a ready draft and only Save creates the GRN.
   const goGrnFromPo = (r: PoHeaderRow) =>
@@ -1247,7 +1241,7 @@ export function PurchaseOrdersListV2() {
                   icon={<ArrowRightLeft size={14} />}
                   onClick={goFromSo}
                 >
-                  From Sales Order
+                  {transferFromLabel('so')}
                 </Button>
                 <div className="flex items-stretch">
                   <Button

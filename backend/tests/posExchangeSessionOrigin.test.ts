@@ -220,10 +220,14 @@ describe("the population this ruling turns off", () => {
     );
   });
 
-  test("the refusals it gates are the five money floors and the four drift 400s", () => {
+  /* The five money floors were REMOVED on 2026-08-18 (owner ruling: a POS
+     caller may lower or cancel a line). What this gate turns off is now the
+     four drift 400s alone — see tests/soTotalFloorRemoved.test.ts, which pins
+     that the floors are gone AND that the drift rejects survived them. */
+  test("the refusals it gates are the four drift 400s", () => {
     const count = (rx: RegExp) => (soRouteSource.match(rx) ?? []).length;
-    expect(count(/error:\s*'so_total_below_original'/g)).toBe(5);
+    expect(count(/error:\s*'so_total_below_original'/g)).toBe(0);
     expect(count(/error:\s*'pricing_drift'/g)).toBe(4);
-    expect(count(/await isPosTabletCaller\(c\)/g)).toBe(9);
+    expect(count(/await isPosTabletCaller\(c\)/g)).toBe(6);
   });
 });

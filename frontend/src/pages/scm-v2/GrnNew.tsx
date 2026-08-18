@@ -54,6 +54,7 @@ import type { GrnFromPoPick } from './GrnFromPo';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -214,8 +215,11 @@ export const GrnNew = () => {
      refuses to rotate a key for, and it is live here rather than theoretical.
 
      THE RESIDUAL, STATED. Because the mount outlives the document, an operator
-     who closes the success dialog, re-authors the lines and submits AGAIN gets
-     the first GRN replayed — one document, not two. Accepted, not overlooked:
+     who closes the success dialog and submits AGAIN gets the first GRN back —
+     replayed if the lines are untouched, and refused with
+     idempotency_key_reused if they were re-authored, which names the status the
+     first submit finished with and sends them to refresh and check. Either way
+     one document, not two. Accepted, not overlooked:
      the lines are not reset on success, so a re-press submits the SAME goods and
      replay is the correct answer; raising a genuinely different receipt goes
      through the picker route (/scm/grns/from-po), which remounts this page and
@@ -839,7 +843,7 @@ export const GrnNew = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Received Date</span>
-              <input type="date" value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} className={styles.fieldInput} />
+              <DateField fullWidth value={receivedAt} onChange={(iso) => setReceivedAt(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>
@@ -923,9 +927,18 @@ export const GrnNew = () => {
               : selPoId
                 ? (poQ.isLoading
                     ? 'Loading PO items…'
-                    : lines.length === 0
-                      ? 'No outstanding lines on this PO (all qty already received)'
-                      : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalCenti, currency)}`)
+                    /* The ternary had no error arm and no honest empty arm: a
+                       FAILED PO read and a PO with work left both rendered as
+                       "all qty already received", and the operator receives
+                       nothing against a live order. An empty read proves only
+                       that the query found nothing — the read is company-scoped
+                       and scopeToCompany fails closed (scm/lib/companyScope.ts
+                       -> .in('company_id', []) returns [] with error: null). */
+                    : poQ.isError
+                      ? "We couldn't load this PO's lines — please refresh and try again."
+                      : lines.length === 0
+                        ? 'No outstanding lines came back for this PO. Open the purchase order and check its balance before treating it as received in full.'
+                        : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalCenti, currency)}`)
                 : lines.length === 0
                   ? 'Manual receipt — pick a supplier above, then add items below'
                   : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalCenti, currency)}`}

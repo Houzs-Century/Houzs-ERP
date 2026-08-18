@@ -20,6 +20,7 @@ import {
   hasAmendmentHeaderChanges,
   withFrozenHeaderFieldsReverted,
 } from "../vendor/scm/lib/so-amendment-header";
+import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
 import { diffHeaderPayload, hasHeaderChanges } from "../vendor/scm/lib/so-header-diff";
 import { LOCKED_STATUSES, procLockActive } from "../vendor/scm/lib/so-detail-gates";
 import {
@@ -2216,18 +2217,27 @@ export function MobileNewSO({
                       user with scm.so.attribute_other can re-pick (desktop parity).
                       Non-admins see a disabled select pinned to themselves. */}
                   <Field label="Salesperson" style={{ flex: 1 }}>
-                    <select
+                    <SearchableSelect
                       className="fld-i"
+                      ariaLabel="Salesperson"
+                      placeholder="— Pick staff —"
                       value={salespersonId}
-                      onChange={(e) => setSalespersonId(e.target.value)}
+                      onChange={setSalespersonId}
                       disabled={!canChangeSalesperson}
-                    >
-                      {!selfStaffMatch && <option value={SELF_SALESPERSON}>{selfDisplayName} (me)</option>}
-                      {!canChangeSalesperson && selfStaffMatch && (
-                        <option value={selfStaffMatch.id}>{selfStaffMatch.name}</option>
-                      )}
-                      {canChangeSalesperson && staffList.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-                    </select>
+                      options={[
+                        ...(!selfStaffMatch
+                          ? [{ value: SELF_SALESPERSON, label: `${selfDisplayName} (me)` }]
+                          : []),
+                        ...(canChangeSalesperson
+                          ? staffList
+                              .map((s) => ({ value: s.id, label: s.name }))
+                              .sort((a, b) =>
+                                a.label.localeCompare(b.label, undefined, { sensitivity: 'base' }))
+                          : selfStaffMatch
+                            ? [{ value: selfStaffMatch.id, label: selfStaffMatch.name }]
+                            : []),
+                      ]}
+                    />
                   </Field>
                 </div>
                 <Field label="Customer SO Ref" scanned={scanned("custRef", custRef)}>
@@ -2311,10 +2321,24 @@ export function MobileNewSO({
                       then both dates are editable and go out as an amendment
                       request for approval instead of saving directly. */}
                   <Field label="Processing Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("procDate", procDate)} onClear={procDate && !scheduleDatesLocked ? () => setProcDate("") : undefined}>
-                    <input className="fld-i" type="date" value={procDate} disabled={scheduleDatesLocked} min={procLocked ? undefined : today} onChange={(e) => setProcDate(e.target.value)} />
+                    <DateField
+                      fullWidth
+                      className="fld-i"
+                      value={procDate}
+                      disabled={scheduleDatesLocked}
+                      min={procLocked ? undefined : today}
+                      onChange={(iso) => setProcDate(iso)}
+                    />
                   </Field>
                   <Field label="Delivery Date" style={{ flex: 1 }} error={touched && dateXorErr} scanned={scanned("delivDate", delivDate)} onClear={delivDate && !scheduleDatesLocked ? () => setDelivDate("") : undefined}>
-                    <input className="fld-i" type="date" value={delivDate} disabled={scheduleDatesLocked} min={today} onChange={(e) => setDelivDate(e.target.value)} />
+                    <DateField
+                      fullWidth
+                      className="fld-i"
+                      value={delivDate}
+                      disabled={scheduleDatesLocked}
+                      min={today}
+                      onChange={(iso) => setDelivDate(iso)}
+                    />
                   </Field>
                 </div>
                 <div style={{ fontSize: 10, color: "#9aa093", marginTop: -3 }}>
@@ -3041,7 +3065,7 @@ function LineCard({
             />
           </Field>
           <Field label="Delivery date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
-            <input className="fld-i" type="date" value={line.ddate} onChange={(e) => onDdateChange(e.target.value)} />
+            <DateField fullWidth className="fld-i" value={line.ddate} onChange={(iso) => onDdateChange(iso)}/>
           </Field>
         </div>
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
@@ -3617,7 +3641,7 @@ function PayCard({ pay, staff, onChange, onRemove }: { pay: Payment; staff: Arra
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 9, alignItems: "flex-end" }}>
           <Field label="Date" style={{ flex: 1.1 }} onClear={pay.date ? () => onChange({ date: "" }) : undefined}>
-            <input className="fld-i" type="date" value={pay.date} onChange={(e) => onChange({ date: e.target.value })} />
+            <DateField fullWidth className="fld-i" value={pay.date} onChange={(iso) => onChange({ date: iso })}/>
           </Field>
           <Field label="Amount" style={{ flex: 1.1 }}>
             <input className="fld-i money" value={pay.amount} onChange={(e) => onChange({ amount: e.target.value })} />
@@ -3699,3 +3723,5 @@ const roItemBox: React.CSSProperties = {
   padding: "9px 11px",
   marginBottom: 7,
 };
+
+import { DateField } from "../vendor/scm/components/DateField";

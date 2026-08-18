@@ -89,6 +89,129 @@ source of wrong answers here — completeness is not a quality bar, and "these t
 facts disagree and I have not resolved it" is a better answer than a seamless
 one.
 
+## ⚠️ 用白话文跟老板讲 — MANDATORY (owner rule, 2026-08-18)
+
+His words: *"你跟我说的那些问题和做完的东西，都没有用白话文让人简单明白。因为我
+不是 IT 出身的。"*
+
+**He is the decision maker and he is not an engineer.** An answer he cannot read
+is not an answer — it is a bill for his time, and he pays it every single reply.
+This rule is about the OUTPUT, not the work: the rigour below stays exactly as
+it is, and only the way it reaches him changes.
+
+**Lead with what it means for the business. The mechanism comes after, if at
+all.**
+
+| do not open with | open with |
+| --- | --- |
+| "`readConvertSourceKeys` resolved line IDENTITY only, so `AddPartialTransferDetail` moved the whole outstanding quantity" | "出 5 件里的 2 件，AutoCount 那边开了 5 件 —— 库存对不上，而且完全没有声音" |
+| "`conversionIsPartial` compared one parent's line count against the total taken" | "两张单合并出货的时候，系统会把没出的货也算成出了" |
+| "the `no-autocount-shape` needle stays because the table is append-only" | "以前记下的那些单不会自己好，要人手补 —— 新的单不会再有这个问题" |
+
+Four rules that make that concrete:
+
+1. **The first sentence names the business effect.** A document did not reach
+   AutoCount; stock is wrong by N; a customer's invoice is short. Never a
+   function name, never a file path, never an identifier.
+2. **Identifiers are EVIDENCE and they go last.** File paths, function names,
+   PR numbers, column names belong at the end of a section or under a heading
+   that says what it is — so he can hand it to someone, not so he can decode it.
+3. **A number needs its denominator in his terms.** "10 of 60,939 lines" is
+   readable; "0.02% of the corpus" is not. "1 张 / 11,134 张交货单" beats
+   "0.0%".
+4. **If a technical word is unavoidable, define it once, in his vocabulary, the
+   first time.** He should never have to ask what a word means twice.
+
+**This does NOT license vagueness.** Labelling stays (PROVEN / LIKELY /
+UNKNOWN), numbers stay, the command that reproduces them stays. Plain language
+is a translation of the evidence, never a substitute for having it.
+
+## ⚠️ A root cause is a request for OPTIONS, not for agreement — MANDATORY (owner rule, 2026-08-18)
+
+His words: *"基本上我会跟你说一个 root cause，你应该给我方案怎么去解决，并且查看
+我们的代码，然后给我们解决方案"* and *"你需要稍微看一下市面上正常的 ERP 都是怎么做
+的，然后给我 proposal，给我 suggest，让我去选择"*.
+
+**When the owner hands you a cause, he has already done the diagnosis. Repeating
+it back to him is not work.** What he is asking for is the next step, and it has
+a required shape:
+
+1. **Read OUR code first.** The proposal must say what changes in THIS system —
+   which module, which table, what it breaks, what it costs. Generic advice is
+   worth nothing to him and he can get it anywhere.
+2. **Say what a normal ERP does.** He is choosing between our way and the
+   industry's, and he cannot make that choice without knowing there is one.
+   Name the convention (how AutoCount / SAP / Odoo / NetSuite handle it) and say
+   plainly whether ours differs and why.
+3. **Give 2 to 3 NAMED options**, each with its consequence: what it costs to
+   build, what it breaks, what it means for the documents already in the account
+   book, and what it is like to live with afterwards.
+4. **RECOMMEND one, and say why.** "It is your call" without a recommendation
+   pushes the work back onto him. Recommending is not deciding — he still picks.
+5. **Never end a diagnosis without options.** A finished investigation whose last
+   line is "this is broken" is half a deliverable.
+
+The judgement rule still holds and is not in tension with this one
+(`owner-rule-ask-when-unsure`): a PROVABLE defect gets fixed without asking; a
+JUDGEMENT — should this be required, labelled, charged, allowed — gets options
+and a recommendation, and he chooses.
+
+## ⚠️ 挖到真正的 ROOT CAUSE，从根本解决，不拿补丁当终局 — MANDATORY (owner rule, 2026-08-18)
+
+His words, three times in one session: *"所有的问题都要找出来真的 root cause 然后
+根本解决"*, *"做任何东西都要查找它真正的 root cause，尽量从根本上解决"*, *"一定要
+看一下最适合的方案，给我去做选择"*. And the sharp one that named the failure:
+*"为什么你不找根本 给我们更好的方案做呢"*.
+
+This SHARPENS the two rules "Do not guess, prove it" and "a root cause is a
+request for OPTIONS". Those say: prove the cause, answer with options. This adds
+the bar he keeps raising — **a fix that only stops the symptom is not the
+deliverable.**
+
+1. **Trace the REAL mechanism, with code evidence.** Read the code until you can
+   point at the line where it actually goes wrong — not the symptom, not the
+   first plausible story.
+2. **A workaround is a STOPGAP, and you must SAY it is one.** A switch, a retry,
+   a cache-bust, a flag may ship as immediate relief — but never presented as the
+   fix. Name it a stopgap, name the real root fix beside it, and say what the real
+   fix takes. Shipping the stopgap and calling it done is the exact failure he
+   caught here: flipping a session-fallback switch stopped the random logouts but
+   did NOT touch the latency, and calling that "solved" would have hidden the root
+   (every request re-reads the whole RBAC envelope from the DB on one serialized
+   connection).
+3. **Say how mainstream / large ERPs solve this CLASS of problem, plainly.** He is
+   choosing between our way and the industry's and cannot choose without knowing
+   there is one. The durable answer is usually the industry's; a per-request patch
+   usually is not.
+4. **Give 2-3 named options ranked stopgap → proper, each with effort/risk/benefit,
+   and RECOMMEND one.** He picks. Ending with only the stopgap, or with no
+   recommendation, is half a deliverable.
+
+## ⚠️ 任务清楚就一路做完，不要每步停下来问 — MANDATORY (owner rule, 2026-08-18)
+
+His words: *"不要一直问我 我不喜欢明明还有 tasks 却停下来问 好像故意不工作那样 你要
+记得这个"* and *"跟着你的 worktree 把所有 tasks complete 掉"*.
+
+Once the direction is CHOSEN (he chose it) and the remaining steps are
+unambiguous execution, drive them to completion — commit, PR, next step —
+**without pausing for approval between each one.** A pause-to-confirm on clear,
+already-decided work reads to him as finding an excuse not to work.
+
+This does NOT conflict with the two options rules above: give options WHEN
+CHOOSING a direction; once chosen, execute to the end without re-asking "shall I
+do the next one?".
+
+Reserve an interruption for exactly three things:
+1. a genuine business / judgement decision that is his to make (the
+   ask-when-unsure case);
+2. a destructive or irreversible action;
+3. a hard blocker only he can clear — setting a secret, flipping a repo setting.
+
+**Design around #3 so it does not halt the rest.** Write code that reads a
+not-yet-set secret as a NO-OP when absent, ship it zero-risk, and let him
+activate it with one action later — the work keeps moving instead of stopping to
+wait for him.
+
 ## ⚠️ Log every bug in `BUG-HISTORY.md` — MANDATORY (owner rule, everyone)
 
 Every bug you find and fix **must** get an entry in [`BUG-HISTORY.md`](./BUG-HISTORY.md) at the repo root — no exceptions. One short entry: **Symptom → Root cause (traced, not guessed) → Fix → Ref (PR/date)**, newest first, with a severity tag. This is how we stop re-introducing the same class of bug: **read it before touching a subsystem, and add to it in the same PR that fixes the bug.** This applies to every contributor and every agent/session.
@@ -315,11 +438,35 @@ the STALE-BRANCH mechanism behind the incidents below:
 > to 0286_*.sql` — and #2121 merged four minutes into that run anyway. **Branch
 > protection does not gate on it.** The required contexts are `backend-typecheck`
 > + `frontend` (`gh api repos/hello-houzs/Houzs-ERP/rules/branches/main`);
-> `migrationNumbers.test.ts` runs in `backend-tests (2)`, which the section below
-> forbids making required, for good reasons that remain good. So this class is
+> `migrationNumbers.test.ts` ran in `backend-tests (2)`, which the section below
+> forbids making required, for good reasons that remain good. So this class was
 > **structurally ungated**, and `gh pr merge --auto` — armed on 12 PRs in 27
 > seconds that morning — merges the moment the two required checks go green,
 > which is exactly what happened.
+>
+> **CLOSED 2026-08-17, and it closed by ACCIDENT three days before anyone
+> noticed.** `migrationNumbers.test.ts` is no longer in the workers shards. It is
+> in the LIGHT project, and `backend-typecheck` — a required context — runs
+> `npm run test:light` (`ci.yml`). So a duplicate number blocks the MERGE today.
+> Nothing was done about it on purpose: `d78d55bf` (#2131, *"perf(ci): 565s ->
+> 106s by not booting a Workers runtime for tests that never use one"*) created
+> the light project on 2026-08-14 and swept this suite into it as one of many.
+> The remedy below was written the day before and stayed marked "not done" for
+> three days while it was in fact done.
+>
+> Verify, do not believe this paragraph:
+> ```
+> grep -n "run: npm run test:light" .github/workflows/ci.yml
+> cd backend && npx vitest list --config vitest.light.config.mts | grep migrationNumbers
+> ```
+>
+> **What is still yours:** that gating is INCIDENTAL. `classifyTests()` decides
+> the split at config time from a regex over the comment-stripped source, so one
+> added string containing `cloudflare:test` or `env.DB` moves the suite back to
+> the shards and silently un-gates it. That is now pinned by the merge-gating
+> test in `backend/tests/classifyTests.test.mjs` — add a suite to its
+> `MUST_GATE_MERGE` list whenever an assertion must stop a merge rather than a
+> deploy.
 >
 > The deploy stayed broken from 13:06Z (#2121 merged) until #2124 landed:
 > `Deploy` runs 31703284503 and 31704506807 both concluded `failure` with the
@@ -330,7 +477,9 @@ the STALE-BRANCH mechanism behind the incidents below:
 > **Two remedies, neither of which is "be careful":**
 > 1. Move the duplicate-number assertion into `backend-typecheck` — the job that
 >    IS a required context — so a collision blocks the merge instead of only the
->    deploy. **Not done. This is the open item.**
+>    deploy. **DONE — see the CLOSED box above. It was already done when this
+>    line still said "Not done", which is the more useful lesson: check the
+>    tree before believing a remedy is outstanding.**
 > 2. Never arm `gh pr merge --auto` on a PR carrying a migration or an
 >    integration batch. Auto-merge structurally cannot wait for a check that is
 >    not required.
@@ -396,6 +545,64 @@ roll-up that is legitimately `skipped` on frontend-only PRs — a skipped requir
 check leaves the PR pending forever. This rule stands — but note what it costs:
 every assertion living only in a shard is advisory at merge time. If an assertion
 must BLOCK a merge, it belongs in `backend-typecheck`, not in a shard.
+
+### ⚠️ Update a behind branch by merging `main` LOCALLY. Never press *Update branch*
+
+*Added 2026-08-17.* The strict flag above means a busy day leaves your PR behind
+`main` constantly, so you will do this many times. **`git merge origin/main`
+locally, then push.** Do NOT use GitHub's *Update branch* button and do NOT run
+`gh pr update-branch`.
+
+`.gitattributes` carries `BUG-HISTORY.md merge=union` (PR #2133), because every
+open branch prepends an entry to the same first line of that file and git's
+default calls that a conflict when it is not one. The attribute only works for
+half the ways a branch gets updated:
+
+| how the branch is updated | `merge=union` applies |
+| --- | --- |
+| `git merge origin/main` locally, then push | **YES** |
+| *Update branch* button / `gh pr update-branch` | **NO** |
+
+The attribute is applied by whichever git PERFORMS the merge, and *Update branch*
+is GitHub's git reading its own configuration, not this repository's. Measured
+2026-08-13 on #1905, whose only conflict was `BUG-HISTORY.md`: `git merge
+origin/main` locally resolved it clean, `gh pr update-branch 1905` answered
+`Cannot update PR branch due to conflicts` — same two commits, opposite answers.
+
+So the button reports **CONFLICTING** on a file this repo's own merge driver
+would have resolved silently. The symptom is the confusing one: **GitHub says
+CONFLICTING while a local merge is clean.** That is not a contradiction to
+resolve, it is this. Merge locally and push, and the conflict never exists.
+
+**This was not undocumented — and that is the point.** The full trace is in
+`docs/ci-capacity-coe.md`, under *"The half of this that does NOT work"* (PR
+#2145 is where the correction was first written). It had simply never reached
+THIS file, and this is the file that is auto-loaded into every session, so
+sessions kept re-deriving it at a cost of hours each. A rule that lives only in
+a COE is a rule that is read after the damage, not before it.
+
+### ⚠️ `statusCheckRollup` LIES. Read `mergeStateStatus` and the newest run
+
+*Added 2026-08-17.* `gh pr view --json statusCheckRollup` serves **stale**
+entries. On 2026-08-16 it reported `completeness-claim` as `FAILURE` on #2295,
+#2300 and #2318 while each of those PRs' newest run of that same workflow had
+concluded `success`.
+
+Nothing in this repo can fix GitHub's API, so the remedy is what you read:
+
+```sh
+gh pr view <N> --json mergeable,mergeStateStatus          # the honest fields
+gh run list --workflow=<name>.yml --branch <branch> --limit 5 \
+  --json databaseId,conclusion,headSha,createdAt          # the newest REAL run
+```
+
+**Never react to a rollup entry without confirming it against the newest run for
+that workflow on that branch.** It has already cost real damage: a legitimate
+`enumeration` block was deleted out of another agent's PR to "fix" a failure that
+had stopped existing. That is the CLAUDE.md rule *"a contradiction is a finding —
+STOP, do not bridge it"* with a name: when the rollup and the run list disagree,
+**the run list is right**, and editing code to satisfy the stale one destroys
+working evidence.
 
 ## ⚠️ Run the audit scripts — they answer questions no doc can
 
@@ -503,6 +710,20 @@ never nullish.
 
 - `npm run lint` (root, or inside `backend/` / `frontend/`). CI job: **`lint`**,
   matrixed over the two apps. NOT a required status check yet.
+- **"ESLint cannot run locally" is a STALE `node_modules`, not a repo bug — the
+  fix is one command.** *Added 2026-08-17.* Every session in the week of
+  2026-08-15 reported the linter unrunnable and deferred to CI, and one shipped a
+  wrong lint fix it could not see was wrong. Traced: `eslint@^9.39.5` is in
+  `devDependencies` AND in both lockfiles (`node_modules/eslint`, `dev: true`,
+  no `os`/`cpu` gate), there is no `.npmrc`, and `npm config get omit` is empty —
+  so nothing skips it. The installed trees simply predate it: the install marker
+  npm writes inside each app's `node_modules` is dated 2026-07-31 for the backend
+  and 2026-08-02 for the frontend, while the linter landed 2026-08-13
+  (`cbdf03618`). Neither tree contains eslint or typescript-eslint at all.
+  **`npm ci` in the app directory** fixes it — measured 2026-08-17 at **4
+  seconds** for `frontend/`, after which `npm run lint` runs. `lint-ratchet.mjs`
+  already prints exactly this instruction when the binary is absent; read it
+  rather than concluding the gate is broken.
 - **The FRONTEND leg enforces; the BACKEND leg runs `-- --advisory` and only
   reports.** Not laziness — the backend ratchet is 16 file/rule pairs over
   ceiling, all of it debt `main` grew while the linter waited to land, and
@@ -560,7 +781,7 @@ never nullish.
   | --- | --- |
   | `route-capability-matrix.csv` | YES — `audit:routes`, in `ci.yml` and both deploy workflows |
   | `codebase-map-facts.md` | YES — `audit:map`, in `ci.yml`'s `backend-typecheck` |
-  | `bug-index.md` | in CI, but it REPORTS drift and does not fail on it (see the job's own comment: with serial merges, gating it deadlocks every open PR on the previous author's entry) |
+  | `bug-index.md` | **NOT TRACKED since 2026-08-18** — it is gitignored. `audit:bug-index` regenerates it in memory and gates on the GENERATOR (parse failure, unresolvable area tag, zero entries), which never needed a copy in git. Run `npm --prefix backend run gen:bug-index` to read it locally. |
   | `route-locator.md` | NO. Re-run `npm --prefix backend run gen:route-locator` before trusting a LINE NUMBER from it. |
 
   > **CORRECTED 2026-08-15.** This bullet previously said, twice and in two
@@ -799,6 +1020,14 @@ Not generic narrative.
   unverified-completeness-claim** at the top of `BUG-HISTORY.md`. As of
   2026-08-13 the detector fires on 13.6% of merged commit messages — roughly one
   PR in seven makes a claim of this shape; re-measure before quoting that.
+  **A `path:NNN:` line number in your pasted output is NORMALISED AWAY before
+  the diff** (since 2026-08-17): a merge that shifts a 12,000-line router no
+  longer fails a PR that changed no member of the population. Membership is
+  still exact — an added, removed, retexted or file-MOVED site fails as before —
+  so `git grep -n` is safe to paste. The one shape that is not normalised is a
+  BARE `NNN:` with no path (`grep -n pattern onefile`), because a leading number
+  with nothing in front of it is indistinguishable from content; the gate fails
+  and tells you to include the path.
 - **Drizzle ORM for new code.** New routes / services use Drizzle —
   schema in `backend/src/db/schema.ts`, client via
   `getDb(env)` from `backend/src/db/client.ts`. Raw

@@ -17,7 +17,7 @@ import { companyHeader } from "../lib/activeCompany";
 // AUTH_TOKEN_KEY is no longer imported here: tokenStore below now delegates to
 // writeAuthToken/clearAuthToken instead of poking both stores itself, so the
 // session-only-logout suppression rule lives in exactly one place.
-import { clearAuthToken, readAuthToken, writeAuthToken } from "../lib/authToken";
+import { clearAuthToken, readAuthToken, writeAuthToken, readAuthPass, writeAuthPass } from "../lib/authToken";
 import {
   consumeCorrelated,
   correlateError,
@@ -54,6 +54,27 @@ export const tokenStore = {
     clearAuthToken();
   },
 };
+
+/** The signed staff pass (stage 2). Written beside the token on login; cleared
+ *  by `tokenStore.clear()` because `clearAuthToken` clears both. It has no
+ *  `clear()` of its own so the pass and the token can never drift out of the
+ *  same lifecycle. Nothing sends or verifies it yet — stage 3 does. */
+export const passStore = {
+  get: readAuthPass,
+  set(pass: string, persistent = true) {
+    writeAuthPass(pass, persistent);
+  },
+};
+
+/** The signed pass header for a request (stage 3). Empty when there is no pass,
+ *  so a legacy client or a deployment without the signing secret sends nothing
+ *  and the server takes the DB path. Sent BESIDE the Bearer token, never instead
+ *  of it: the server binds the pass to the token and falls back to the token's
+ *  DB validation on any mismatch. */
+function passHeader(): Record<string, string> {
+  const p = readAuthPass();
+  return p ? { "X-Session-Pass": p } : {};
+}
 
 /**
  * Listeners for unauthenticated responses. The AuthContext subscribes
@@ -143,8 +164,16 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
   // operator it failed invites the double-submit the key exists to prevent.
   idempotency_in_flight:
     "This is already going through — give it a moment, then refresh to check. Please don't send it again.",
+  /* NEVER reword this into "nothing was saved, press Save again". The
+     middleware returns this code purely because the payload's hash differs
+     from the claim's, and the claim may hold a COMMITTED 201 (the body's
+     `completed_status` says which) — so this sentence cannot promise a clean
+     slate, and an instruction to resubmit books a second document. Refreshing
+     is what SURFACES the document that may already exist. A refusal that
+     genuinely wrote nothing never reaches here: the route releases the claim
+     (markIdempotencyNoWrite) and the corrected resubmit just works. */
   idempotency_key_reused:
-    "This request key was already used with different details. Refresh before trying again.",
+    "An earlier submission with different details already finished under this request key. Refresh and check what was recorded before sending it again.",
   idempotency_key_conflict:
     "This request key is already owned by another operation. Refresh and try again.",
   idempotency_unavailable:
@@ -429,7 +458,7 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
     const startedAt = performance.now();
     try {
       const headers = new Headers({
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(),
         "Content-Type": "application/json",
         ...companyHeader(),
       });
@@ -588,7 +617,7 @@ export const api = {
     const res = await binaryFetch(`${baseUrl}${path}`, {
       method: "PUT",
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(),
         "Content-Type": contentType,
         ...companyHeader(),
       },
@@ -613,7 +642,7 @@ export const api = {
     const res = await binaryFetch(`${baseUrl}${path}`, {
       method: "POST",
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(),
         "Content-Type": contentType,
         ...companyHeader(),
       },
@@ -643,7 +672,7 @@ export const api = {
     for (const f of files) form.append(fieldName, f);
     const res = await binaryFetch(`${baseUrl}${path}`, {
       method: "POST",
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
       body: form,
     }, UPLOAD_TIMEOUT_MS);
     if (!res.ok) {
@@ -670,7 +699,7 @@ export const api = {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
       method: "POST",
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
       body: form,
     }, UPLOAD_TIMEOUT_MS);
     if (!res.ok) {
@@ -691,7 +720,7 @@ export const api = {
   async fetchBlobUrl(path: string, typeHint?: string | null): Promise<string> {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
     }, BINARY_GET_TIMEOUT_MS);
     if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
     return consumeCorrelated(res, async () => {
@@ -720,7 +749,7 @@ export const api = {
   async downloadFile(path: string, fallbackName = "download"): Promise<void> {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
     }, BINARY_GET_TIMEOUT_MS);
     if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
     await consumeCorrelated(res, async () => {
@@ -748,7 +777,7 @@ export const api = {
   async getHtml(path: string): Promise<string> {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
     }, BINARY_GET_TIMEOUT_MS);
     if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
     let html = "";
@@ -761,7 +790,7 @@ export const api = {
   async openHtml(path: string): Promise<void> {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
     }, BINARY_GET_TIMEOUT_MS);
     if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
     await consumeCorrelated(res, async () => {

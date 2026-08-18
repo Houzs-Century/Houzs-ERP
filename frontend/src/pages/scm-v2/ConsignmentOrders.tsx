@@ -27,6 +27,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import { canViewScmCosting } from "../../auth/salesAccess";
+import { brandingLabel } from '../../vendor/shared/so-branding-label';
+import { getBrandingCompanyCode } from '../../lib/branding';
 import type { JSX } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -60,6 +62,7 @@ import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
 import soDetailStyles from './SalesOrderDetail.module.css';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
+import { transferToColumnLabel } from "../../lib/convertScope";
 
 /* Local payments hook — lazy-loaded per expanded SO row alongside the detail
    query. Kept local to this page (not exported to flow-queries.ts) because
@@ -130,7 +133,8 @@ type SoRow = {
      `processing_date` this row type used to ALSO carry (never written by
      anything) went with it. */
   processing_date: string | null;
-  /* PR #46 — POS handover target_date (Marketing-side "Target Date" stamp). */
+  /* PR #46 — POS handover target_date (Marketing-side "Target Date" stamp).
+     Live on the SO twin; see the SO create path's note before removing. */
   target_date: string | null;
   /* PR #143 — Header-level payment method (cash | transfer | merchant) +
      installment plan / merchant provider. Populated when the SO carries a
@@ -257,35 +261,27 @@ const liveBalance = (r: SoRow): number => {
 };
 
 /* Branding auto-derive (Commander 2026-05-28, refined PR #266). The Branding
-   column is derived per row — no longer stored free-text. It now FOLLOWS THE
-   FIRST LINE ITEM rather than collapsing to "Mixed" when categories differ.
-   The SO list API hands back the earliest-created line's normalized category
+   column is derived per row — no longer stored free-text. It FOLLOWS THE FIRST
+   LINE ITEM rather than collapsing to "Mixed" when categories differ. The SO
+   list API hands back the earliest-created line's normalized category
    (`first_item_category`) plus that line's own branding (`first_item_branding`,
-   the mattress brand). Rules:
-     · first item SOFA      → "2990 Sofa"
-     · first item BEDFRAME  → "Bedframe"
-     · first item MATTRESS  → the mattress's OWN brand (e.g. "HAPPISLEEP" /
-                              "CARRES" / "2990" / "MyMattress"); falls back to
-                              "2990 Mattress" when the brand is blank
-     · first item ACCESSORY / OTHERS → "2990" (no dedicated furniture brand)
-     · no items             → "" (column renders "—")
+   the mattress brand).
+
+   THE RULE IS NO LONGER WRITTEN HERE. It was, and the copy that used to sit in
+   this spot was the second of two — the backend's
+   scm/lib/so-display-branding.ts held the other, and its comment said this one
+   was "behaviourally identical today, verified 2026-08-15", which is a date,
+   not a guarantee. Both now come from the mirrored shared module, which
+   check-shared-mirrors.mjs --strict keeps identical across the two trees in CI.
+
+   The comment that used to be here also promised `ACCESSORY / OTHERS → "2990"`
+   while the code below it returned "". Owner 2026-08-17: there should be no
+   blank branding — a service order still says "Service". The shared rule can
+   no longer return "" for any input.
+
    Sortable + groupable + filterable via the same derived string. */
-const deriveBranding = (r: SoRow): string => {
-  const cat = r.first_item_category;
-  if (!cat) return '';                       // no items → "—"
-  if (cat === 'SOFA')     return '2990 Sofa';
-  if (cat === 'BEDFRAME') return 'Bedframe';
-  if (cat === 'MATTRESS') {
-    // Mattress brand follows the product's own branding. The 2990 house
-    // brand (stored as "2990" / "2990's") displays as "2990 Mattress";
-    // other brands (HAPPISLEEP, CARRES, MyMattress…) show as-is.
-    // (Commander 2026-05-28: "2990 mattress 而不是 2990".)
-    const b = (r.first_item_branding ?? '').trim();
-    if (!b || /^2990('?s)?$/i.test(b)) return '2990 Mattress';
-    return b;
-  }
-  return '';                                 // accessory / others → none ("—")  (Commander 2026-05-28)
-};
+const deriveBranding = (r: SoRow): string =>
+  brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
 
 const STATUS_CLASS: Record<string, string> = {
   // DRAFT removed in migration 0078 — SOs start at CONFIRMED.
@@ -495,7 +491,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
     sortFn: (a, b) => Number(a.qty ?? 0) - Number(b.qty ?? 0),
   },
   {
-    key: 'delivered', label: 'Transfer To (DO)', width: 130,
+    key: 'delivered', label: transferToColumnLabel('do'), width: 130,
     accessor: (it) => {
       const hasDeliveries = it.deliveries && it.deliveries.length > 0;
       if (!hasDeliveries) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
@@ -1258,10 +1254,13 @@ const buildAllColumns = (
   },
   {
     /* Branding — AUTO-DERIVED from the SO's FIRST line item (Commander PR
-       #266). See `deriveBranding`: first SOFA → "2990 Sofa", first BEDFRAME →
-       "Bedframe", first MATTRESS → its own brand (fallback "2990 Mattress"),
-       first accessory/other → "2990", none → "—". Rendered as the muted
-       BrandingPill; sortable + groupable on the derived label. */
+       #266). See `brandingLabel` (owner 2026-08-18): first SOFA → the company's
+       house sofa brand ("2990s Sofa" here, "ZANOTTI" under Houzs), first
+       BEDFRAME → "Bedframe", first MATTRESS → the SKU's brand falling back to
+       "Mattress", first accessory/service/other → its category noun, no
+       readable line → "No Items". The rule can no longer return blank, so the
+       old "—" case is gone. Rendered as the muted BrandingPill; sortable +
+       groupable on the derived label. */
     key: 'branding', label: 'Branding', width: 130, sortable: true, groupable: true,
     accessor: (r) => {
       const b = deriveBranding(r);

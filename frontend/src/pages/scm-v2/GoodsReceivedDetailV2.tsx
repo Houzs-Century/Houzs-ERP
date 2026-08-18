@@ -2,10 +2,11 @@
 // doc: goods land at a warehouse, PO's received_qty rolls up. Aside hero =
 // Received value + qty landed, tinted green once posted.
 
-import { lazy, Suspense, useCallback, useMemo, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { lazy, useCallback, useMemo, useState, type ReactNode } from "react";
+import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -37,7 +38,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { convertToLink } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { EntityHistoryPanel } from "./EntityHistoryPanel";
 import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
 import { resolveFxRate } from "./fx-rate";
@@ -110,14 +111,6 @@ type GrnItem = {
 const ALLOC_LABEL: Record<string, string> = { QTY: 'By quantity', VALUE: 'By value', CBM: 'By volume (CBM)' };
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneyCenti(centi, currency);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
 
 const supplierNameOf = (h: GrnHeader): string => h.supplier?.name || "—";
 const supplierCodeOf = (h: GrnHeader): string => h.supplier?.code || "—";
@@ -264,18 +257,25 @@ const GoodsReceivedDetailInlineEditor = lazy(() =>
   import("./GoodsReceivedDetail").then((m) => ({ default: m.GoodsReceivedDetail })),
 );
 
-/* Thin router — the only hook it calls is useSearchParams, so Rules of Hooks
+/* Thin router — the only hooks it calls are useSearchParams and useLocation
+   (both unconditional, at the top), so Rules of Hooks
    are respected when the ?edit=1 flip swaps between the read-only body and the
    lazy inline editor (the two children have different hook counts). */
 export function GoodsReceivedDetailV2() {
   const [params] = useSearchParams();
+  const location = useLocation();
   if (params.get("edit") === "1") {
+    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
+       so a failed editor chunk shows the panel in place of the editor and
+       clears when the operator moves to another document, instead of leaning
+       on a boundary in a file this one cannot see. */
     return (
-      <Suspense
+      <LazySlot
+        resetKey={`grn-editor:${location.pathname}`}
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
       >
         <GoodsReceivedDetailInlineEditor />
-      </Suspense>
+      </LazySlot>
     );
   }
   return <GoodsReceivedDetailV2ReadOnly />;
@@ -570,7 +570,7 @@ function GoodsReceivedDetailV2ReadOnly() {
                 {poOf(grn) !== "—" && (
                   <>
                     <Divider />
-                    <span>From PO <span className="font-mono font-semibold text-ink-secondary">{poOf(grn)}</span></span>
+                    <span>{transferFromColumnLabel('po')} <span className="font-mono font-semibold text-ink-secondary">{poOf(grn)}</span></span>
                   </>
                 )}
                 {grn.delivery_note_ref && (
@@ -587,8 +587,8 @@ function GoodsReceivedDetailV2ReadOnly() {
             <Button variant="secondary" icon={<Printer size={14} />} onClick={print.openPreview}>Print PDF</Button>
             {canCancel && <Button variant="danger" icon={<XCircle size={14} />} onClick={doCancel}>Cancel GRN</Button>}
             {canPost && <Button variant="secondary" icon={<Send size={14} />} onClick={doPost}>Post</Button>}
-            {canConvertToPi && <Button variant="secondary" icon={<Receipt size={14} />} onClick={goConvertToPi}>Convert to PI</Button>}
-            {canConvertToPr && <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={goConvertToPr}>Convert to PR</Button>}
+            {canConvertToPi && <Button variant="secondary" icon={<Receipt size={14} />} onClick={goConvertToPi}>{transferToLabel('pi')}</Button>}
+            {canConvertToPr && <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={goConvertToPr}>{transferToLabel('pr')}</Button>}
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>Edit</Button>
           </div>
         </div>
@@ -621,7 +621,7 @@ function GoodsReceivedDetailV2ReadOnly() {
             <Section title="Receipt info">
               <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-4">
                 <Field label="Received at" value={fmtDate(grn.received_at)} />
-                <Field label="From PO" value={poOf(grn)} mono={poOf(grn) !== "—"} muted={poOf(grn) === "—"} />
+                <Field label={transferFromColumnLabel('po')} value={poOf(grn)} mono={poOf(grn) !== "—"} muted={poOf(grn) === "—"} />
                 <Field label="Delivery note" value={grn.delivery_note_ref || "—"} muted={!grn.delivery_note_ref} mono={!!grn.delivery_note_ref} />
                 <Field label="Warehouse" value={grn.warehouse_code || "—"} muted={!grn.warehouse_code} mono={!!grn.warehouse_code} />
                 <Field label="Currency" value={grn.currency} />
@@ -696,7 +696,7 @@ function GoodsReceivedDetailV2ReadOnly() {
             </button>
           ) : canConvertToPi ? (
             <button type="button" onClick={goConvertToPi} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink">
-              <Receipt size={16} /> Convert to PI
+              <Receipt size={16} /> {transferToLabel('pi')}
             </button>
           ) : (
             <button type="button" onClick={goEdit} className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink">

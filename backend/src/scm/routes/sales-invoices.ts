@@ -44,6 +44,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
 import { insertSiPaymentRow } from '../lib/si-payment-row';
 import { postSiRevenue, reverseSiRevenue, resyncSiRevenue } from '../lib/post-si-revenue';
@@ -51,15 +52,17 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
+import { readStatusCounts } from '../lib/status-counts';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
-import { doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
+import { doLineRemaining, doRemainingByItemId, checkSiOverRemaining, checkSiReopenOverRemaining, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine } from '../lib/do-line-remaining';
+import { siShadowRefusal, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
-import { enqueueConvert, recordConvertSkipped, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { recordSiAutoCountSource } from '../lib/si-autocount-source';
 import { refuseMigratedSources } from '../lib/migrated-chain';
 
@@ -414,12 +417,6 @@ function buildItemRow(salesInvoiceId: string, it: Record<string, unknown>, lineN
   };
 }
 
-/* LINE-LEVEL, QUANTITY-BASED DO → Sales Invoice remaining. Wraps the shared
-   Pending formula: remaining_to_invoice = delivered − invoiced − returned. */
-async function doInvoiceableRemaining(sb: any, doIds: string[]): Promise<Map<string, DoRemainingLine>> {
-  return doLineRemaining(sb, doIds);
-}
-
 /* The migrated refusal for every path that can attach a DELIVERY to an invoice.
    `/from-dos` resolves its own delivery ids and calls refuseMigratedSources
    directly; the rest arrive holding either a do_item_id (POST /, POST
@@ -460,65 +457,8 @@ async function migratedRefusalForDeliveries(
   };
 }
 
-/* Remaining-to-invoice write guard. */
-async function checkSiOverRemaining(
-  sb: any,
-  lines: Array<Record<string, unknown>>,
-  excludeByDoItem?: Map<string, number>,
-): Promise<{ error: string; lines: Array<{ doItemId: string; requested: number; remaining: number }> } | null> {
-  const wanted = new Map<string, number>();
-  for (const it of lines) {
-    const doItemId = (it.doItemId as string | undefined) ?? null;
-    if (!doItemId) continue;
-    wanted.set(doItemId, (wanted.get(doItemId) ?? 0) + Number(it.qty ?? 0));
-  }
-  if (wanted.size === 0) return null;
-  const remainingMap = await doRemainingByItemId(sb, [...wanted.keys()]);
-  const offenders: Array<{ doItemId: string; requested: number; remaining: number }> = [];
-  for (const [doItemId, requested] of wanted) {
-    const cap = (remainingMap.get(doItemId) ?? 0) + (excludeByDoItem?.get(doItemId) ?? 0);
-    if (requested > cap) offenders.push({ doItemId, requested, remaining: cap });
-  }
-  return offenders.length > 0 ? { error: 'over_remaining', lines: offenders } : null;
-}
-
-/* FIX 3 (fix/si-cancel-revenue-qty) — a from-DO Sales Invoice (its header carries
-   delivery_order_id) must LINK its DO-derived lines via do_item_id, so they count
-   against the DO's Pending pool (do-line-remaining) and respect the
-   remaining-to-invoice ceiling. An UNLINKED line whose item code STILL has Pending
-   qty on the source DO is the double-invoice vector: the link was dropped, so both
-   the ceiling and the pool are bypassed and the same delivered goods can be billed
-   again. Such a line must instead be added through the DO picker so it links.
-
-   Genuinely-new manual lines ride free — the owner's ruling is that a Sales Invoice
-   MAY carry direct/standalone lines. We only block the clear shadow case (item on
-   the DO with Pending qty); a manual line for an item NOT on the DO, or one whose
-   DO line is already fully invoiced (remaining 0), is left alone. Returns the
-   offending item codes (empty = nothing to block, and no DB round-trip when there
-   are no unlinked lines — the common from-DO path is all-linked). */
-async function unlinkedFromDoOffenders(
-  sb: any,
-  doId: string,
-  lines: Array<Record<string, unknown>>,
-): Promise<string[]> {
-  const unlinked = lines.filter((l) => !l.doItemId && l.itemCode);
-  if (unlinked.length === 0) return [];
-  const { data: doItemRows } = await sb.from('delivery_order_items')
-    .select('id, item_code').eq('delivery_order_id', doId);
-  const rows = (doItemRows ?? []) as Array<{ id: string; item_code: string | null }>;
-  if (rows.length === 0) return [];
-  const remainingMap = await doRemainingByItemId(sb, rows.map((r) => r.id));
-  const pendingCodes = new Set<string>();
-  for (const r of rows) {
-    if (r.item_code && (remainingMap.get(r.id) ?? 0) > 0) pendingCodes.add(r.item_code.trim().toUpperCase());
-  }
-  const offenders = new Set<string>();
-  for (const l of unlinked) {
-    const code = String(l.itemCode).trim().toUpperCase();
-    if (pendingCodes.has(code)) offenders.add(String(l.itemCode));
-  }
-  return [...offenders];
-}
+/* FIX 3's shadow check now lives in unlinked-line-edit-guard (siShadowRefusal),
+   shared with the line PATCH that had no check at all. */
 
 /* ── Invoice price vs the AGREED ORDER price — WARN, never block ───────────
    Nothing downstream of the SO compares the two. The happy path is already
@@ -596,14 +536,16 @@ function withPriceWarnings<T extends object>(res: T, warnings: SiPriceWarning[])
 }
 
 /* Filter-pill bucket → the raw sales_invoices.status values it covers. Single
-   source of truth for BOTH the status-count queries and the list `status`
-   filter. sent / partial / paid are MULTI-status buckets; cancelled is 1:1. The
-   FE sends the BUCKET NAME as `status`; a raw DB status still works
-   (backward-compatible fallback). */
+   source of truth for the status-count queries AND the list `status` filter; the
+   FE sends the BUCKET NAME (a raw DB status still works). EVERY VALUE IS AN ENUM
+   MEMBER AND EVERY MEMBER IS IN A BUCKET — a non-member 500s the tab and used to
+   zero its count; a member in no bucket is a row in no tab. Pinned, with the
+   2026-08-17 prod evidence, by tests/statusBucketsEnumMembership.test.mjs: ISSUED / PARTIAL / COMPLETED
+   were never members (INPUT-only via SI_STATUS_CANON), OVERDUE was bucketless and joins `sent`, as the FE did. */
 const SI_STATUS_BUCKETS: Record<string, string[]> = {
-  sent: ['DRAFT', 'SENT', 'ISSUED'],
-  partial: ['PARTIALLY_PAID', 'PARTIAL'],
-  paid: ['PAID', 'COMPLETED'],
+  sent: ['DRAFT', 'SENT', 'OVERDUE'],
+  partial: ['PARTIALLY_PAID'],
+  paid: ['PAID'],
   cancelled: ['CANCELLED'],
 };
 
@@ -873,13 +815,10 @@ salesInvoices.get('/', async (c) => {
     countBase().in('status', SI_STATUS_BUCKETS.paid),
     countBase().in('status', SI_STATUS_BUCKETS.cancelled),
   ]);
-  const statusCounts = {
-    all: allC.count ?? 0,
-    sent: sentC.count ?? 0,
-    partial: partialC.count ?? 0,
-    paid: paidC.count ?? 0,
-    cancelled: cancelledC.count ?? 0,
-  };
+  // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
+  const counted = readStatusCounts({ all: allC, sent: sentC, partial: partialC, paid: paidC, cancelled: cancelledC });
+  if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
+  const statusCounts = counted.counts;
 
   await stampSoDates(sb, data);
   await stampDoNumber(sb, data);
@@ -894,10 +833,14 @@ salesInvoices.get('/invoiceable-do-lines', async (c) => {
   const sb = c.get('supabase');
   // Company scope (owner 2026-08-10 audit) — without it the no-doIds path
   // enumerated every company's delivery orders into this picker.
-  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
-  if (doIds.length === 0) return c.json({ lines: [] });
-  const remainingMap = await doInvoiceableRemaining(sb, doIds);
-  const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);
+  const candidates = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
+  // NOT `{ lines: [] }` — an empty picker claims every delivered line is already
+  // invoiced, and a failed read may not make that claim. Refuse to render.
+  if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
+  if (candidates.doIds.length === 0) return c.json({ lines: [] });
+  const remaining = await doLineRemaining(sb, candidates.doIds);
+  if (!remaining.ok) return c.json({ error: 'load_failed', reason: remaining.reason }, 500);
+  const lines = [...remaining.lines.values()].filter((l) => l.remaining > 0);
   return c.json({ lines });
 });
 
@@ -979,7 +922,7 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
 
   {
     const over = await checkSiOverRemaining(sb, items);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
 
   /* A delivery carried over from AutoCount is invoiced by the migrated-invoice
@@ -1002,14 +945,9 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
   {
     const fromDoId = (body.deliveryOrderId as string | undefined) ?? null;
     if (fromDoId) {
-      const shadow = await unlinkedFromDoOffenders(sb, fromDoId, items);
-      if (shadow.length > 0) {
-        return c.json({
-          error: 'unlinked_do_line',
-          message: `These items are still pending on the source Delivery Order and must be added through "Add from Delivery Order" so the delivered quantity is tracked: ${shadow.join(', ')}.`,
-          itemCodes: shadow,
-        }, 409);
-      }
+      const shadow = await siShadowRefusal(sb, fromDoId, items, (codes) =>
+        `These items are still pending on the source Delivery Order and must be added through "Add from Delivery Order" so the delivered quantity is tracked: ${codes.join(', ')}.`);
+      if (shadow) return c.json(shadow, 409);
     }
   }
 
@@ -1067,9 +1005,9 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
     delivery_order_id: (body.deliveryOrderId as string) ?? null,
     debtor_code: (body.debtorCode as string) ?? null,
     debtor_name: debtorName,
-    invoice_date: (body.invoiceDate as string) ?? todayMyt(),
-    due_date: (body.dueDate as string) ?? null,
-    customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
+    invoice_date: dateOrNull(body.invoiceDate) ?? todayMyt(),
+    due_date: dateOrNull(body.dueDate),
+    customer_delivery_date: dateOrNull(body.customerDeliveryDate),
     address1: (body.address1 as string) ?? null,
     address2: (body.address2 as string) ?? null,
     city: (body.city as string) ?? null,
@@ -1125,7 +1063,14 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
       .filter((x): x is string => !!x);
     if (pickedDoItemIds.length > 0) {
       const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
-      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck);
+      /* Recheck unreadable -> roll back, and never under the race message.
+         lib/do-line-remaining.ts's header argues the trade-off in full. */
+      if (!recheck.ok) {
+        await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
+        await sb.from('sales_invoices').delete().eq('id', h.id);
+        return c.json(remainingUnavailableResponse(recheck.reason), 503);
+      }
+      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck.remaining);
       if (over.length > 0) {
         // Undo: lines then header. Nothing else has happened yet — revenue is
         // posted further down, so there is no ledger entry to reverse.
@@ -1265,7 +1210,11 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
     if (mig.refusal) return c.json(mig.refusal, 409);
   }
 
-  const remainingMap = await doInvoiceableRemaining(sb, doIds);
+  const remainingResult = await doLineRemaining(sb, doIds);
+  /* Pre-write refusal — every qty below is capped by `line.remaining`, and an
+     empty map surfaced as a 404 blaming the pick for a database error. */
+  if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
+  const remainingMap = remainingResult.lines;
 
   const customers = new Set<string>();
   const customerNames = new Set<string>();
@@ -1410,7 +1359,13 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
       .filter((x): x is string => !!x);
     if (pickedDoItemIds.length > 0) {
       const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
-      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck);
+      // Recheck unreadable -> roll back, under the honest reason (as POST / above).
+      if (!recheck.ok) {
+        await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
+        await sb.from('sales_invoices').delete().eq('id', h.id);
+        return c.json(remainingUnavailableResponse(recheck.reason), 503);
+      }
+      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck.remaining);
       if (over.length > 0) {
         await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
         await sb.from('sales_invoices').delete().eq('id', h.id);
@@ -1431,27 +1386,19 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
     `Converted from ${distinctDoNumbers.length > 1 ? 'Delivery Orders' : 'Delivery Order'} ${distinctDoNumbers.join(', ')}`,
   );
 
-  /* ERP -> AutoCount DO->Invoice. One source DO only; an invoice merging
-     several DOs has no AutoCount shape and is recorded as skipped instead. */
-  if (doIds.length === 1) {
+  /* ERP -> AutoCount DO->Invoice, MERGED OR NOT. An invoice covering several
+     delivery orders names them all; AcSyncService takes FromDocNos. What this
+     used to skip on was the primitive's single-source key array, which the
+     service now works around by grouping per source document. */
+  if (doIds.length) {
     await enqueueConvert(sb, {
       companyId: activeCompanyId(c),
       op: 'do_to_iv',
-      from: { table: 'delivery_orders', keyCol: 'id', key: doIds[0] },
+      from: doIds.map((id) => ({ table: 'delivery_orders' as const, keyCol: 'id', key: id })),
       to: { table: 'sales_invoices', keyCol: 'id', key: h.id },
       docType: 'IV',
       docNo: h.invoice_number,
       docId: h.id,
-      createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  } else {
-    await recordConvertSkipped(sb, {
-      companyId: activeCompanyId(c),
-      op: 'do_to_iv',
-      docType: 'IV',
-      docNo: h.invoice_number,
-      docId: h.id,
-      reason: `merged from ${doIds.length} Delivery Orders (${distinctDoNumbers.join(', ')}) — AutoCount transfers from ONE source document, so this invoice has no AutoCount counterpart`,
       createdBy: c.get('houzsUser')?.id ?? null,
     });
   }
@@ -1549,7 +1496,7 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
   }
 
   // LINE-level half of the same source document, under the same predicate.
-  const { data: doItems } = await scopeToCompany(sb.from('delivery_order_items').select(
+  const { data: doItems, error: doItemsErr } = await scopeToCompany(sb.from('delivery_order_items').select(
     'id, item_code, item_group, description, description2, uom, qty, ' +
     'unit_price_centi, discount_centi, unit_cost_centi, variants, notes, ' +
     'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
@@ -1558,8 +1505,14 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
     .order('line_no', { ascending: true, nullsFirst: false })
     .order('created_at'), c);
 
+  /* NEITHER read may reach the code below as "no lines": unreadable candidates
+     become 409 `do_fully_invoiced` ("already invoiced in full") and an unreadable
+     ceiling became a silent 200 with nothing appended. Refuse before both. */
+  if (doItemsErr) return c.json(remainingUnavailableResponse(`delivery_order_items: ${doItemsErr.message}`), 503);
   const doLines = (doItems as Array<Record<string, unknown>> | null) ?? [];
-  const remainingMap = await doRemainingByItemId(sb, doLines.map((it) => it.id as string));
+  const remainingResult = await doRemainingByItemId(sb, doLines.map((it) => it.id as string));
+  if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
+  const remainingMap = remainingResult.remaining;
   const { data: maxNoRow } = await sb
     .from('sales_invoice_items')
     .select('line_no')
@@ -1700,13 +1653,11 @@ salesInvoices.patch('/:id', async (c) => {
     ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
     ['salesLocation', 'sales_location'], ['ref', 'ref'], ['poDocNo', 'po_doc_no'],
     ['venue', 'venue'], ['venueId', 'venue_id'], ['branding', 'branding'],
-    ['address1', 'address1'], ['address2', 'address2'],
+    ['address1', 'address1'], ['address2', 'address2'], ['note', 'note'], ['notes', 'notes'],
     ['city', 'city'], ['state', 'state'], ['postcode', 'postcode'], ['phone', 'phone'],
-    ['note', 'note'], ['notes', 'notes'],
     ['invoiceDate', 'invoice_date'], ['dueDate', 'due_date'], ['currency', 'currency'],
     ['customerState', 'customer_state'], ['customerCountry', 'customer_country'],
-    ['customerSoNo', 'customer_so_no'],
-    ['customerDeliveryDate', 'customer_delivery_date'],
+    ['customerSoNo', 'customer_so_no'], ['customerDeliveryDate', 'customer_delivery_date'],
     ['email', 'email'], ['customerType', 'customer_type'],
     ['salespersonId', 'salesperson_id'], ['buildingType', 'building_type'],
     ['emergencyContactName', 'emergency_contact_name'],
@@ -1726,7 +1677,8 @@ salesInvoices.patch('/:id', async (c) => {
   }
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
-  const { data, error } = await sb.from('sales_invoices').update(updates).eq('id', id).select('id').maybeSingle();
+  /* "" -> NULL: an unfilled date input would otherwise fail this whole UPDATE. */
+  const { data, error } = await sb.from('sales_invoices').update(coerceEmptyDates(updates)).eq('id', id).select('id').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
 
@@ -1778,7 +1730,7 @@ salesInvoices.post('/:id/items', async (c) => {
 
   {
     const over = await checkSiOverRemaining(sb, [it]);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
 
   /* Same refusal as every other path that can attach a delivery line. */
@@ -1794,14 +1746,9 @@ salesInvoices.post('/:id/items', async (c) => {
   {
     const fromDoId = (header as { delivery_order_id?: string | null }).delivery_order_id ?? null;
     if (fromDoId && !it.doItemId) {
-      const shadow = await unlinkedFromDoOffenders(sb, fromDoId, [it]);
-      if (shadow.length > 0) {
-        return c.json({
-          error: 'unlinked_do_line',
-          message: `${shadow.join(', ')} is still pending on the source Delivery Order — add it through "Add from Delivery Order" so the delivered quantity is tracked.`,
-          itemCodes: shadow,
-        }, 409);
-      }
+      const shadow = await siShadowRefusal(sb, fromDoId, [it], (codes) =>
+        `${codes.join(', ')} is still pending on the source Delivery Order — add it through "Add from Delivery Order" so the delivered quantity is tracked.`);
+      if (shadow) return c.json(shadow, 409);
     }
   }
 
@@ -1863,11 +1810,13 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
+  // Source DO, read on the gate query below and used by the re-point guard.
+  let siFromDoId: string | null = null;
   {
     /* The gate for the whole handler: every line write below keys on
        (itemId, sales_invoice_id), so proving the INVOICE is ours proves the
        chain. Unscoped, the status gate below read the OTHER company's status. */
-    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status').eq('id', id), co.companyId).maybeSingle();
+    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status, delivery_order_id').eq('id', id), co.companyId).maybeSingle();
     if (!hd) return c.json(NOT_THIS_COMPANY, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before editing lines.' }, 409);
@@ -1876,6 +1825,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     if (hd && isIssuedSi((hd as { status: string }).status)) {
       return c.json({ error: 'invoice_issued', message: SI_ISSUED_LINE_MESSAGE }, 409);
     }
+    siFromDoId = (hd as { delivery_order_id?: string | null } | null)?.delivery_order_id ?? null;
   }
 
   if (it.itemCode !== undefined) {
@@ -1903,7 +1853,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   if (it.qty !== undefined && prev.do_item_id && qty > Number(prev.qty)) {
     const exclude = new Map<string, number>([[prev.do_item_id as string, Number(prev.qty)]]);
     const over = await checkSiOverRemaining(sb, [{ doItemId: prev.do_item_id, qty }], exclude);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
   const unitPrice = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : Number(prev.unit_price_centi);
   const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : Number(prev.discount_centi);
@@ -1939,6 +1889,18 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     const effGroup = (it.itemGroup ?? prev.item_group) as string | null | undefined;
     const effVariants = (it.variants ?? prev.variants) as Record<string, unknown> | null | undefined;
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
+  }
+
+  /* The EDIT half of FIX 3 — see unlinked-line-edit-guard for why (the cap above
+     is gated on prev.do_item_id, so a re-typed unlinked code double-bills). */
+  {
+    const repoint = await unlinkedEditRefusal(sb, 'sales-invoice', {
+      parentId: siFromDoId,
+      storedLink: (prev as { do_item_id?: string | null }).do_item_id ?? null,
+      storedCode: (prev as { item_code?: string | null }).item_code ?? null,
+      patchCode: it.itemCode,
+    });
+    if (repoint) return c.json(repoint, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').update(updates).eq('id', itemId), co.companyId);
@@ -2427,19 +2389,18 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
      been invoiced elsewhere while this invoice sat cancelled. */
   const isReopen = prevStatus === 'CANCELLED' && status !== 'CANCELLED';
   if (isReopen && status === 'SENT') {
-    const { data: reopenLines } = await sb
-      .from('sales_invoice_items')
-      .select('do_item_id, qty')
-      .eq('sales_invoice_id', id);
-    const linesForCheck = ((reopenLines ?? []) as Array<{ do_item_id: string | null; qty: number }>)
-      .filter((l) => l.do_item_id)
-      .map((l) => ({ doItemId: l.do_item_id as string, qty: l.qty }));
-    const over = await checkSiOverRemaining(sb, linesForCheck);
+    /* The READ that builds the line list is part of this guard, so it lives with
+       it in the lib — swallowed here, it fed the ceiling an empty list and the
+       reopen sailed through at the full delivered quantity. */
+    const over = await checkSiReopenOverRemaining(sb, id);
+    /* An unreadable ledger refuses the reopen with the 503, not this 409:
+       "invoiced elsewhere" when a read timed out sends him hunting a duplicate. */
+    if (over?.status === 503) return c.json(over.body, 503);
     if (over) {
       return c.json({
         error: 'over_remaining',
         message: 'Cannot reopen — the delivered quantity has since been invoiced elsewhere. The DO lines no longer have room for this invoice.',
-        lines: over.lines,
+        lines: over.body.lines,
       }, 409);
     }
   }

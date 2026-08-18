@@ -40,7 +40,7 @@ import { enrichVariantKeyRowsWithFabricSupplierCode } from '../lib/fabric-suppli
 import {
   isConsignmentLotSource, isMakeToOrderCategory, distributeAssignedToLots,
 } from '../lib/inventory-movements';
-import { computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
+import { computeVariantKey, effectiveDelivery, effectiveSoDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
@@ -401,9 +401,15 @@ export const listInventoryHandler = async (c: any) => {
   /* Show active warehouses PLUS consignment/showroom warehouses (those are kept
      is_active=false so they stay out of the normal GRN/DO pickers) — so consigned
      stock sitting at a showroom is visible in Inventory. (2026-06-05) */
-  const { data: whs } = await sb.from('warehouses')
+  /* SCOPED like every other read in this handler. This one was missed: the
+     balances above are scoped, but the warehouse master was not, so the response
+     carried the OTHER company's warehouse codes, names and — the part that
+     mattered — their warehouse UUIDs. Those ids are what POST /stock-transfers
+     takes from a request body, so this read was the practical enabler for a
+     cross-company stock movement. Same helper as GET /warehouses (:127). */
+  const { data: whs } = await scopeToCompany(sb.from('warehouses')
     .select('id, code, name, is_consignment')
-    .or('is_active.eq.true,is_consignment.eq.true');
+    .or('is_active.eq.true,is_consignment.eq.true'), c);
   return c.json({ balances: data ?? [], warehouses: whs ?? [] });
 };
 
@@ -1539,7 +1545,7 @@ inventory.get('/reservations', async (c) => {
   const byBucket = new Map<string, Claim[]>();  // key: `${warehouse_id}|${item_code}|${variant_key}`
   for (const r of readyRows) {
     const so = Array.isArray(r.so) ? r.so[0] : r.so;
-    const deliveryDate = (so?.amended_delivery_date ?? so?.customer_delivery_date) ?? null;
+    const deliveryDate = so ? effectiveSoDelivery(so) : null;
     const bn = r.allocated_batch_no ?? null;
     const claim: Claim = { docNo: r.doc_no, soCreatedAt: so?.created_at ?? null, qtyReady: Number(r.stock_qty_ready ?? 0), deliveryDate, viaBatch: Boolean(bn) };
     if (bn) {

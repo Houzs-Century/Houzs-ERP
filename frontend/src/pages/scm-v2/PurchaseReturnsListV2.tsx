@@ -5,7 +5,7 @@
 // side where every other doc is money-out.
 
 import { useMemo, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -49,6 +49,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
+import { transferFromColumnLabel } from "../../lib/convertScope";
 
 type PrRow = {
   id: string;
@@ -87,11 +88,6 @@ type PrItem = {
 type StatusTab = "all" | "draft" | "posted" | "completed" | "cancelled";
 
 const fmtRm = (centi: number): string => fmtCenti(centi);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  return iso.replace(/T.*$/, "").replace(/-/g, "/");
-};
 
 const supplierNameOf = (r: PrRow): string => r.supplier?.name || "—";
 const supplierCodeOf = (r: PrRow): string => r.supplier?.code || "—";
@@ -203,7 +199,7 @@ function CardsGrid({ rows, onOpen }: { rows: PrRow[]; onOpen: (r: PrRow) => void
             )}
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div className="min-w-0">
-                <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">From GRN</div>
+                <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{transferFromColumnLabel('grn')}</div>
                 <div className="mt-0.5 truncate font-mono text-[12px] font-semibold text-ink-secondary">{sourceOf(r)}</div>
               </div>
               <div className="text-right">
@@ -280,7 +276,7 @@ function DetailDrawer({
               )}
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From GRN" v={sourceOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('grn')} v={sourceOf(row)} mono />
                 <MetaItem k="Return date" v={fmtDate(row.return_date)} />
                 <MetaItem k="Supplier code" v={supplierCodeOf(row)} mono />
                 <MetaItem k="Line count" v={row.line_count ?? items.length ?? "—"} />
@@ -671,7 +667,7 @@ export function PurchaseReturnsListV2() {
     },
     {
       key: "source",
-      label: "From GRN",
+      label: transferFromColumnLabel('grn'),
       width: "132px",
       getValue: (r) => sourceOf(r),
       render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{sourceOf(r)}</span>,

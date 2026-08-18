@@ -20,6 +20,7 @@
 // numbering is PCR-…
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -48,6 +49,7 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -427,7 +429,7 @@ export const PurchaseConsignmentReceiveNew = () => {
         actions={
           <div className={styles.actions}>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-consignment-receives/from-pc-order')}>
-              <ArrowRightLeft {...ICON} /> From Purchase Consignment Order
+              <ArrowRightLeft {...ICON} /> {transferFromLabel('pco')}
             </Button>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-consignment-receives')}>
               <X {...ICON} /> Cancel
@@ -533,7 +535,7 @@ export const PurchaseConsignmentReceiveNew = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Received Date</span>
-              <input type="date" value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} className={styles.fieldInput} />
+              <DateField fullWidth value={receivedAt} onChange={(iso) => setReceivedAt(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>
@@ -577,9 +579,14 @@ export const PurchaseConsignmentReceiveNew = () => {
             {selPoId
               ? (poQ.isLoading
                   ? 'Loading order items…'
-                  : lines.length === 0
-                    ? 'No outstanding lines on this order (all qty already received)'
-                    : `${lines.length} line${lines.length === 1 ? '' : 's'} · ${totalQty} qty · subtotal ${fmtRm(subtotalCenti, currency)}`)
+                  /* Same shape as GrnNew: no error arm, and an empty arm that
+                     reported the absence as a finished receipt. Both are now
+                     told apart, and neither claims the order is complete. */
+                  : poQ.isError
+                    ? "We couldn't load this order's lines — please refresh and try again."
+                    : lines.length === 0
+                      ? 'No outstanding lines came back for this order. Open the consignment order and check its balance before treating it as received in full.'
+                      : `${lines.length} line${lines.length === 1 ? '' : 's'} · ${totalQty} qty · subtotal ${fmtRm(subtotalCenti, currency)}`)
               : lines.length === 0
                 ? 'Manual receipt — pick a supplier above, then add items below'
                 : `${lines.length} line${lines.length === 1 ? '' : 's'} · ${totalQty} qty · subtotal ${fmtRm(subtotalCenti, currency)}`}

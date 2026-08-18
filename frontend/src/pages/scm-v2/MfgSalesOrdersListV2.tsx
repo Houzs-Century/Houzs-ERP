@@ -59,7 +59,8 @@ import { ListErrorPanel, SearchPendingPanel, SearchProgress } from "../../compon
 import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useBranding } from "../../hooks/useBranding";
-import { shortCompanyName } from "../../lib/branding";
+import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
+import { brandingLabel } from "../../vendor/shared/so-branding-label";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail } from "../../vendor/scm/lib/sales-order-queries";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
@@ -69,7 +70,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { convertToLink } from "../../lib/convertScope";
+import { convertToLink, transferToLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { ItemGroupPill } from "../../vendor/scm/lib/category-badges";
@@ -78,7 +79,7 @@ import { poCellChips } from "../../lib/soPoChips";
 import { useAuth } from "../../auth/AuthContext";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { capability } from "../../auth/capabilities";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -99,7 +100,7 @@ type SoRow = {
   po_doc_no: string | null;
   ref: string | null;
   branding: string | null;
-  first_item_branding: string | null;
+  first_item_branding: string | null; first_item_category: string | null;
   status: string;
   local_total_centi: number;
   /* Stored snapshots — NOT the truth, and never read without the live
@@ -211,13 +212,6 @@ const fmtRm = (centi: number): string => fmtCenti(centi);
 const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
-const fmtDate = (iso: string | null): string => {
-  if (!iso) return "—";
-  // Accept "2026-07-04" / "2026/07/04" / ISO datetime — normalise to yyyy/mm/dd.
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
-
 // Customer's PO / Ref number — spec: "Every list must show the customer SO
 // Ref number". Prefer po_doc_no (populated by the SO New form's "Customer
 // PO #"), then customer_so_no, then the legacy `ref` column, then dash.
@@ -225,10 +219,9 @@ const refOf = (r: SoRow): string =>
   r.po_doc_no || r.customer_so_no || r.ref || "—";
 
 // Branding badge tone. Spec: 2990 SOFA = success (green), AKEMI = neutral,
-// BEDFRAME = accent (bedframe-only SOs, derived server-side), other brands =
-// warning (amber). Falls back to first_item_branding when the header brand is
-// blank (mixed-line SOs / bedframe-only SOs).
-const brandOf = (r: SoRow): string => r.branding || r.first_item_branding || "—";
+// BEDFRAME = accent, other brands = warning (amber). brandOf's old `|| "—"`
+// dashed every sofa; the one shared rule cannot return blank (owner 2026-08-17).
+const brandOf = (r: SoRow): string => (r.branding ?? "").trim() || brandingLabel(r.first_item_category, r.first_item_branding, getBrandingCompanyCode());
 const brandTone = (b: string): "success" | "neutral" | "warning" | "accent" => {
   const s = (b || "").toUpperCase();
   if (s.includes("2990") || s.includes("SOFA")) return "success";
@@ -718,13 +711,16 @@ function DetailDrawer({
                 if (s === "confirmed") {
                   // ABSENT, not disabled, for anyone who may not operate a DO.
                   if (!canDeliver) return null;
+                  /* Was "Deliver" until 2026-08-17: the SO already reports a
+                     "Delivered" STATUS, so an action of the same name blurred
+                     the two. Statuses report; buttons act. */
                   return (
                     <Button
                       variant="primary"
                       icon={<Truck size={14} />}
                       onClick={onDeliver}
                     >
-                      Deliver
+                      {transferToLabel('do')}
                     </Button>
                   );
                 }
@@ -1040,6 +1036,13 @@ export function MfgSalesOrdersListV2() {
   // Server-side sort, formatted "<col>:<dir>" for the backend whitelist
   // (so_date/doc_no/debtor_name/status/local_total_centi/customer_delivery_date).
   const [sort, setSort] = useState<string | undefined>(undefined);
+  // Gate the list query until the DataTable has reported its localStorage-
+  // restored sort up to us (its one-shot mount effect → setSortAndReset below).
+  // Without this the first fetch fires sort-less, then the restored sort lands
+  // and immediately aborts+re-fires it — one wasted round trip on every open.
+  // The report ALWAYS arrives once (even null when nothing is persisted), so
+  // this never hangs the no-persisted-sort case.
+  const [sortReady, setSortReady] = useState(false);
   // Debounced search — the URL `q` updates on every keystroke (so the input
   // stays controlled + shareable) but we only re-query the server 300ms after
   // the user stops typing.
@@ -1059,6 +1062,7 @@ export function MfgSalesOrdersListV2() {
     status,
     q: debouncedSearch,
     sort,
+    enabled: sortReady,
   });
   const searchTransition = useSearchResultTransition({
     inputTerm: search,
@@ -1147,6 +1151,9 @@ export function MfgSalesOrdersListV2() {
     setSort(s ? `${SORT_COL_MAP[s.key] ?? s.key}:${s.dir}` : undefined);
     if (!sortSyncedRef.current) {
       sortSyncedRef.current = true;
+      // First (mount) report: the restored sort is now in state, so release the
+      // gate — the one and only list fetch fires with `sort` already applied.
+      setSortReady(true);
       return;
     }
     setPageParam(0); // sort change → back to page 0
@@ -1170,7 +1177,7 @@ export function MfgSalesOrdersListV2() {
   const goFullPage = (r: SoRow) => navigate(`/scm/sales-orders/${r.doc_no}`);
   const doConfirm = (r: SoRow) =>
     updateStatus.mutate(
-      { docNo: r.doc_no, status: "confirmed" },
+      { docNo: r.doc_no, status: "confirmed", expectedStatus: r.status },
       { onSuccess: () => setSelected(null) }
     );
   const doDeliver = (r: SoRow) => navigate(convertToLink('soToDo', r.doc_no));
@@ -1186,7 +1193,7 @@ export function MfgSalesOrdersListV2() {
     )
       return;
     updateStatus.mutate(
-      { docNo: r.doc_no, status: "CONFIRMED" },
+      { docNo: r.doc_no, status: "CONFIRMED", expectedStatus: r.status },
       {
         onSuccess: () => setSelected(null),
         onError: (e) =>

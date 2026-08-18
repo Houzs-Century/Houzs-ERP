@@ -20,6 +20,7 @@
 // numbering is CN-YYMM-NNN.
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -53,6 +54,7 @@ import {
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneyCenti } from '@2990s/shared';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -363,7 +365,7 @@ export const ConsignmentNoteNew = () => {
           <>
             <div className={styles.actions}>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/consignment-notes/from-order')}>
-                <ArrowRightLeft {...ICON} /> From Consignment Order
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('co')}
               </Button>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/consignment-notes')}>
                 <X {...ICON} /> Cancel
@@ -415,11 +417,19 @@ export const ConsignmentNoteNew = () => {
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Salesperson</span>
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={salespersonId} onChange={(e) => setSalespersonId(e.target.value)}>
-                  <option value="">— Pick staff —</option>
-                  {sortByText(staffList).map((s) => <option key={s.id} value={s.id}>{s.name} ({s.staffCode})</option>)}
-                  {salespersonId && !staffList.some((s) => s.id === salespersonId) && <option value={salespersonId}>(former staff)</option>}
-                </select>
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  ariaLabel="Salesperson"
+                  placeholder="— Pick staff —"
+                  value={salespersonId}
+                  onChange={setSalespersonId}
+                  options={[
+                    ...sortByText(staffList).map((s) => ({ value: s.id, label: `${s.name} (${s.staffCode})` })),
+                    ...(salespersonId && !staffList.some((s) => s.id === salespersonId)
+                      ? [{ value: salespersonId, label: '(former staff)' }]
+                      : []),
+                  ]}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
@@ -434,8 +444,7 @@ export const ConsignmentNoteNew = () => {
           <div className={styles.formGrid4}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Note Date</span>
-              <input type="date" className={styles.fieldInput} value={doDate}
-                onChange={(e) => setDoDate(e.target.value)} />
+              <DateField fullWidth className={styles.fieldInput} value={doDate} onChange={(iso) => setDoDate(iso)}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Driver</span>
@@ -474,11 +483,11 @@ export const ConsignmentNoteNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Expected Delivery</span>
-              <input type="date" className={styles.fieldInput} value={expectedDeliveryAt} onChange={(e) => setExpectedDeliveryAt(e.target.value)} />
+              <DateField fullWidth className={styles.fieldInput} value={expectedDeliveryAt} onChange={(iso) => setExpectedDeliveryAt(iso)}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer Delivery Date</span>
-              <input type="date" className={styles.fieldInput} value={customerDeliveryDate} onChange={(e) => setCustomerDeliveryDate(e.target.value)} />
+              <DateField fullWidth className={styles.fieldInput} value={customerDeliveryDate} onChange={(iso) => setCustomerDeliveryDate(iso)}/>
             </label>
             <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Note</span>

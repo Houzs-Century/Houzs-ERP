@@ -22,7 +22,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { Link, useParams, useSearchParams } from 'react-router-dom';
 import { ChevronDown, History, Pencil, Plus, Save, Send, Ban, Trash2, X } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash } from '@2990s/shared';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import {
   usePaymentVoucherDetail,
   useUpdatePaymentVoucher,

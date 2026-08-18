@@ -12,6 +12,7 @@
 //         chrome only.)
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { canViewScmCosting, canOperateSalesInvoices } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -68,7 +69,7 @@ import { cn } from "../../lib/utils";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -156,12 +157,6 @@ const fmtRm = (centi: number): string =>
 const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
 
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
-
 // Customer's PO / Ref — same fallback chain as SO/DO V2.
 const refOf = (r: SiRow): string =>
   r.po_doc_no || r.customer_so_no || r.ref || "—";
@@ -181,7 +176,17 @@ const brandTone = (b: string): "success" | "neutral" | "warning" => {
 };
 
 // SI status → filter bucket. Business flow: DRAFT → SENT → PARTIALLY_PAID →
-// PAID → CANCELLED. Buckets: sent (Draft + Sent) / partial / paid / cancelled.
+// PAID → CANCELLED. Buckets: sent (Draft + Sent + Overdue) / partial / paid /
+// cancelled — the same split SI_STATUS_BUCKETS uses server-side
+// (backend/src/scm/routes/sales-invoices.ts), which is what the tab COUNTS are
+// computed from. A row whose bucket here disagrees with the server's is a row
+// the operator sees in one tab and counted in another.
+//
+// `overdue` is spelled out rather than left to the fallback below. It reached
+// the same bucket either way, but only by accident of the fallback, and it read
+// as a raw "OVERDUE" chip in the neutral tone — the one status where the
+// operator most needs the badge to shout. The server puts OVERDUE in `sent` for
+// this reason: an overdue invoice is an issued, unpaid one.
 const STATUS_TONE: Record<
   string,
   { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }
@@ -189,6 +194,7 @@ const STATUS_TONE: Record<
   draft:           { tone: "warning", label: "Draft",       bucket: "sent" },
   sent:            { tone: "warning", label: "Sent",        bucket: "sent" },
   issued:          { tone: "warning", label: "Issued",      bucket: "sent" },
+  overdue:         { tone: "error",   label: "Overdue",     bucket: "sent" },
   partially_paid:  { tone: "warning", label: "Partial pay", bucket: "partial" },
   partial:         { tone: "warning", label: "Partial pay", bucket: "partial" },
   paid:            { tone: "success", label: "Paid",        bucket: "paid" },
@@ -489,8 +495,8 @@ function DetailDrawer({
               </div>
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From SO" v={soOf(row)} mono />
-                <MetaItem k="From DO" v={doOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('so')} v={soOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('do')} v={doOf(row)} mono />
                 <MetaItem k="Customer ref" v={refOf(row)} mono />
                 <MetaItem k="Due date" v={fmtDate(row.due_date)} />
                 {/* Owner 2026-07-24 — Processing (linked SO's
@@ -833,9 +839,11 @@ export function SalesInvoicesListV2() {
   const { requestTerm: debouncedSearch } = useDebouncedSearchTerm(search);
 
   // Send the active tab's BUCKET NAME as `status`; the backend resolves each
-  // bucket to the raw statuses it covers (sent = DRAFT+SENT+ISSUED, partial =
-  // PARTIALLY_PAID+PARTIAL, paid = PAID+COMPLETED, cancelled = CANCELLED).
-  // `all` omits the filter.
+  // bucket to the raw statuses it covers (sent = DRAFT+SENT+OVERDUE, partial =
+  // PARTIALLY_PAID, paid = PAID, cancelled = CANCELLED). `all` omits the filter.
+  // ISSUED / PARTIAL / COMPLETED were listed here until 2026-08-17 and are not
+  // members of the sales_invoice_status enum — sending them made each of those
+  // three tabs 500. The server-side map is the authority (SI_STATUS_BUCKETS).
   const apiStatus = status === "all" ? undefined : status;
 
   const { data, isLoading, isFetching, isPlaceholderData, error } = useSalesInvoicesPaged({
@@ -1107,7 +1115,7 @@ export function SalesInvoicesListV2() {
     },
     {
       key: "so_doc_no",
-      label: "From SO",
+      label: transferFromColumnLabel('so'),
       width: "128px",
       disableSort: true,
       getValue: (r) => r.so_doc_no ?? "",
@@ -1120,7 +1128,7 @@ export function SalesInvoicesListV2() {
          from. Previously only the raw delivery_order_id UUID was on the row, so
          the list could not show a readable source DO. */
       key: "do_number",
-      label: "From DO",
+      label: transferFromColumnLabel('do'),
       width: "128px",
       disableSort: true,
       getValue: (r) => r.do_number ?? "",
@@ -1623,7 +1631,7 @@ export function SalesInvoicesListV2() {
                     icon={<ArrowRightLeft size={14} />}
                     onClick={goFromDo}
                   >
-                    From Delivery Order
+                    {transferFromLabel('do')}
                   </Button>
                   <div className="flex items-stretch">
                     <Button

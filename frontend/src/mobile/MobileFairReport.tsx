@@ -521,10 +521,22 @@ function FilterSheet({ filters, opts, onApply, onClose }: {
           </FRow>
           <div className="fld-row">
             <FRow label="Date from">
-              <input type="date" className="fld-i" style={selStyle} value={draft.dateFrom ?? ""} onChange={(e) => set({ dateFrom: e.target.value || undefined })} />
+              <DateField
+                fullWidth
+                className="fld-i"
+                style={selStyle}
+                value={draft.dateFrom ?? ""}
+                onChange={(iso) => set({ dateFrom: iso || undefined })}
+              />
             </FRow>
             <FRow label="Date to">
-              <input type="date" className="fld-i" style={selStyle} value={draft.dateTo ?? ""} onChange={(e) => set({ dateTo: e.target.value || undefined })} />
+              <DateField
+                fullWidth
+                className="fld-i"
+                style={selStyle}
+                value={draft.dateTo ?? ""}
+                onChange={(iso) => set({ dateTo: iso || undefined })}
+              />
             </FRow>
           </div>
           <FRow label="Branding">
@@ -733,3 +745,5 @@ function FlowStep({ node, label, no, sub, done }: { node: string; label: string;
 }
 
 export default MobileFairReport;
+
+import { DateField } from "../vendor/scm/components/DateField";

@@ -15,6 +15,7 @@
 // Purchase Consignment Order, OR free manual entry. Numbering is PCT-…
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -40,6 +41,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -321,7 +323,7 @@ export const PurchaseConsignmentReturnNew = () => {
         actions={
           <div className={styles.actions}>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-consignment-returns/from-receive')}>
-              <ArrowRightLeft {...ICON} /> From Purchase Consignment Receive
+              <ArrowRightLeft {...ICON} /> {transferFromLabel('pcr')}
             </Button>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-consignment-returns')}>
               <X {...ICON} /> Cancel
@@ -353,7 +355,7 @@ export const PurchaseConsignmentReturnNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Return Date *</span>
-              <input type="date" value={returnDate} onChange={(e) => setReturnDate(e.target.value)} className={styles.fieldInput} required />
+              <DateField fullWidth value={returnDate} onChange={(iso) => setReturnDate(iso)} className={styles.fieldInput} required/>
             </label>
 
             <label className={styles.field}>

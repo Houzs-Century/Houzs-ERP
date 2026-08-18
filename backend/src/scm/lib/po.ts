@@ -2,6 +2,8 @@
 // Database-touching validation (lane state, !po_issued) lives in the route handler
 // since it requires Supabase client. This file is for pure logic + tests.
 
+import { fmtDate } from '../shared/format';
+
 export interface PoLineItem {
   order_id: string;
   sku: string;
@@ -45,14 +47,6 @@ function esc(s: string | null | undefined): string {
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
     .replace(/'/g, '&#39;');
-}
-
-function fmtDate(iso: string): string {
-  const d = new Date(iso);
-  const day = String(d.getUTCDate()).padStart(2, '0');
-  const month = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'][d.getUTCMonth()];
-  const year = d.getUTCFullYear();
-  return `${day} ${month} ${year}`;
 }
 
 export interface PoPrintInput {
