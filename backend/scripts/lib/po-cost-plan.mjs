@@ -31,7 +31,7 @@
         stores `sku: l.ItemCode` into it verbatim. That makes it a better key
         than the mapping CSV, because a sofa line whose ERP code was MINTED
         rather than mapped still carries the AutoCount code here.
-     3. material_code via the AutoCount<->ERP mapping CSV, the pair every other
+     3. item_code via the AutoCount<->ERP mapping CSV, the pair every other
         cutover script uses.
    All three carry the item code. A line no route reaches keeps its zero and is
    listed -- a blank the receipt gate refuses, never a plausible wrong number. */
@@ -108,9 +108,9 @@ export const SKIP = {
  * @param book     the AutoCount snapshot: { poLines, samePoGr, history }
  * @param erpRows  rows of scm.purchase_order_items already filtered to
  *                 imported + unpriced + open, each
- *                 { id, material_code, supplier_sku, description2, qty,
+ *                 { id, item_code, supplier_sku, description2, qty,
  *                   received_qty, linked_ac_dtlkey, ac_doc, po_number }
- * @param codeMap  AutoCount ItemCode -> ERP material_code (normalised keys)
+ * @param codeMap  AutoCount ItemCode -> ERP item_code (normalised keys)
  * @returns { plan, skipped, stats } — `plan` has ONE entry per ERP row id and
  *          is exactly the set APPLY writes; `skipped` is its complement over
  *          erpRows, so the two together account for every row read.
@@ -134,7 +134,7 @@ export function planStamps({ book, erpRows, codeMap = new Map() }) {
     }
     const s = sig(r.description2);
     if (r.supplier_sku) push(bySupplierSku, `${r.ac_doc}|${normCode(r.supplier_sku)}|${s}`, r);
-    push(byMaterialCode, `${r.ac_doc}|${normCode(r.material_code)}|${s}`, r);
+    push(byMaterialCode, `${r.ac_doc}|${normCode(r.item_code)}|${s}`, r);
   }
   /* A DtlKey claimed by two ERP rows is not an identity, so it is not used. */
   for (const dk of dupDtlKeys) byDtlKey.delete(dk);
@@ -164,7 +164,7 @@ export function planStamps({ book, erpRows, codeMap = new Map() }) {
       /* Trust the key only while it agrees with the code. A DtlKey pointing at
          a different item is a broken backfill, and following it would be the
          same wrong-size stamp this module exists to stop. */
-      if (normCode(keyed.material_code) !== erpCode) {
+      if (normCode(keyed.item_code) !== erpCode) {
         /* VETO, not merely "this line does not price it". A row whose stored
            AutoCount identity points at a different item has identity data we
            cannot trust, so no other route may rescue it either -- the whole
@@ -184,7 +184,7 @@ export function planStamps({ book, erpRows, codeMap = new Map() }) {
         targets = bySku; route = "supplier_sku+desc2"; stats.matchedBySupplierSku++;
       } else {
         targets = byMaterialCode.get(`${line.PoNo}|${erpCode}|${s}`) ?? [];
-        if (targets.length > 0) { route = "material_code+desc2"; stats.matchedByMaterialCode++; }
+        if (targets.length > 0) { route = "item_code+desc2"; stats.matchedByMaterialCode++; }
       }
     }
 
@@ -224,7 +224,7 @@ export function planStamps({ book, erpRows, codeMap = new Map() }) {
       id: row.id,
       poNumber: row.po_number,
       acDoc: row.ac_doc,
-      code: row.material_code,
+      code: row.item_code,
       description2: row.description2,
       qty: Number(row.qty) - Number(row.received_qty ?? 0),
       centi: win.centi,

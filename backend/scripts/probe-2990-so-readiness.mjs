@@ -328,7 +328,7 @@ async function main() {
                coalesce(b.variant_key,'') AS variant_key, b.qty
           FROM scm.inventory_balances b
           LEFT JOIN scm.warehouses w ON w.id = b.warehouse_id
-         WHERE b.company_id = ${CO}::bigint AND b.product_code = ${l.item_code} AND b.qty <> 0
+         WHERE b.company_id = ${CO}::bigint AND b.item_code = ${l.item_code} AND b.qty <> 0
          ORDER BY w.name, b.variant_key`;
       note(`    on-hand rows: ${bal.length}${bal.length === 0 ? '  -> no stock anywhere, so MRP cannot answer "stock"' : ''}`);
       for (const b of bal) {
@@ -340,7 +340,7 @@ async function main() {
                i.warehouse_id::text AS warehouse_id, i.so_item_id::text AS so_item_id
           FROM scm.purchase_order_items i
           JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-         WHERE i.company_id = ${CO}::bigint AND i.material_code = ${l.item_code}
+         WHERE i.company_id = ${CO}::bigint AND i.item_code = ${l.item_code}
            AND upper(p.status::text) NOT IN ('CANCELLED','CLOSED','DRAFT')
          ORDER BY p.po_number`;
       note(`    open PO lines: ${po.length}`);

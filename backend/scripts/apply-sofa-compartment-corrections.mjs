@@ -89,7 +89,7 @@ async function main() {
         else if (hit.po_number !== doc) log(`  ${doc}: found as ${hit.po_number} via linked_ac_docno`);
       }
       let rows = isPo
-        ? await sql`SELECT i.id, i.material_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total,
+        ? await sql`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total,
                            i.variants, i.description2, i.received_qty, i.so_item_id
                       FROM scm.purchase_order_items i
                      WHERE i.purchase_order_id = ${poId} AND i.item_group = 'sofa'
@@ -201,7 +201,7 @@ async function main() {
           }
           const name = (await tx`SELECT name FROM scm.mfg_products WHERE company_id = ${CO} AND upper(code) = ${p.to} LIMIT 1`)[0]?.name ?? p.to;
           if (p.op === "update") {
-            if (isPo) await tx`UPDATE scm.purchase_order_items SET material_code = ${p.to}, material_name = ${name},
+            if (isPo) await tx`UPDATE scm.purchase_order_items SET item_code = ${p.to}, material_name = ${name},
                                  unit_price_sen = ${p.price}, line_total_sen = ${p.tot}, variants = ${tx.json(p.v)} WHERE id = ${p.id}`;
             else await tx`UPDATE scm.mfg_sales_order_items SET item_code = ${p.to}, description = ${name},
                             unit_price_sen = ${p.price}, total_sen = ${p.tot}, balance_sen = ${p.tot},
@@ -210,7 +210,7 @@ async function main() {
           } else {
             const src = rows[0];
             if (isPo) await tx`INSERT INTO scm.purchase_order_items
-                (purchase_order_id, material_kind, material_code, material_name, item_group, description2,
+                (purchase_order_id, material_kind, item_code, material_name, item_group, description2,
                  qty, received_qty, unit_price_sen, line_total_sen, variants, warehouse_id, from_mrp, company_id)
                 SELECT i.purchase_order_id, 'mfg_product', ${p.to}, ${name}, 'sofa', ${src.description2 ?? null},
                        i.qty, 0, ${p.price}, ${p.tot}, ${tx.json(p.v)}, i.warehouse_id, false, ${CO}
@@ -247,19 +247,19 @@ async function main() {
       for (const t of touched) {
         if (isPo) {
           const g = await sql`UPDATE scm.grn_items
-            SET material_code = ${t.code}, variants = ${sql.json(t.v)}
+            SET item_code = ${t.code}, variants = ${sql.json(t.v)}
             WHERE purchase_order_item_id = ${t.id} RETURNING id`;
           if (g.length) { nGr += g.length; log(`      -> ${g.length} GRN line(s) follow ${compOf(t.code)}`); }
         } else {
           const po = await sql`UPDATE scm.purchase_order_items
-            SET material_code = ${t.code}, variants = ${sql.json(t.v)}
+            SET item_code = ${t.code}, variants = ${sql.json(t.v)}
             WHERE so_item_id = ${t.id} RETURNING id`;
           if (po.length) {
             nPo += po.length;
             log(`      -> ${po.length} PO line(s) follow ${compOf(t.code)}`);
             for (const r of po) {
               const g = await sql`UPDATE scm.grn_items
-                SET material_code = ${t.code}, variants = ${sql.json(t.v)}
+                SET item_code = ${t.code}, variants = ${sql.json(t.v)}
                 WHERE purchase_order_item_id = ${r.id} RETURNING id`;
               nGr += g.length;
             }

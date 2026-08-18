@@ -143,7 +143,7 @@ async function main() {
   const reclOf = (m) => RECL.some((s) => codeSet.has(norm(m + s)));
 
   const poRows = (await sql`
-    SELECT i.id, p.po_number AS doc, p.linked_ac_docno AS ac, i.material_code AS code,
+    SELECT i.id, p.po_number AS doc, p.linked_ac_docno AS ac, i.item_code AS code,
            i.item_group AS grp, i.description2 AS d2, i.variants, i.notes AS remark,
            i.qty, i.photo_urls, i.so_item_id
       FROM scm.purchase_order_items i

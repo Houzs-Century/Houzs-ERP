@@ -44,7 +44,7 @@ try {
           if (hit && e.sellingPriceSen == null) {
             gridRemoved++;
             if (APPLY) await tx`INSERT INTO scm.master_price_history
-              (product_code, field, old_value_sen, new_value_sen, reason, changed_at, company_id)
+              (item_code, field, old_value_sen, new_value_sen, reason, changed_at, company_id)
               VALUES (${sku}, ${"seat_height:" + e.height + "|" + (e.tier ?? "PRICE_2")}, ${e.priceSen}, ${null},
                       ${"remove derived 2RR/2 estimate (owner 2026-08-09)"}, ${now}, ${cid})`;
             continue;
@@ -63,7 +63,7 @@ try {
       const [b] = await tx`SELECT b.id, b.price_matrix FROM scm.supplier_material_bindings b
         JOIN scm.suppliers s ON s.id = b.supplier_id
         WHERE b.company_id = ${cid} AND b.material_kind = 'mfg_product'
-          AND b.material_code = ${sku} AND s.code = ${supCode}`;
+          AND b.item_code = ${sku} AND s.code = ${supCode}`;
       if (b && b.price_matrix && typeof b.price_matrix === "object") {
         const m = JSON.parse(JSON.stringify(b.price_matrix));
         let touched = false;

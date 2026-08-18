@@ -66,12 +66,12 @@ export async function loadCommittedShipments(
   if (batches.length === 0) return new Map();
   try {
     type MovRow = {
-      id: string; warehouse_id: string | null; product_code: string;
+      id: string; warehouse_id: string | null; item_code: string;
       variant_key: string | null; batch_no: string | null; qty: number; source_doc_id: string | null;
     };
     const { data: movs, error: movErr } = await chunkIn<MovRow>(batches, (batch, from, to) =>
       scoped(sb.from('inventory_movements')
-        .select('id, warehouse_id, product_code, variant_key, batch_no, qty, source_doc_id')
+        .select('id, warehouse_id, item_code, variant_key, batch_no, qty, source_doc_id')
         .eq('movement_type', 'OUT')
         .eq('source_doc_type', 'DO')
         .in('batch_no', batch))
@@ -138,9 +138,9 @@ export async function loadCommittedShipments(
       const d = doById.get(m.source_doc_id);
       const variantKey = m.variant_key ?? '';
       rows.push({
-        bucketKey: composite(m.warehouse_id ?? null, m.product_code, variantKey),
+        bucketKey: composite(m.warehouse_id ?? null, m.item_code, variantKey),
         warehouseId: m.warehouse_id ?? null,
-        itemCode: m.product_code,
+        itemCode: m.item_code,
         variantKey,
         batchNo: m.batch_no,
         outQty: Math.abs(Number(m.qty ?? 0)),
@@ -149,7 +149,7 @@ export async function loadCommittedShipments(
         // could not read (the honest default is "offer the supply").
         cancelled: !d || (d.status ?? '').toUpperCase() === 'CANCELLED',
         headerDropship: d?.is_dropship === true,
-        lineCommitted: committedLines.has(`${m.source_doc_id}|${m.product_code}|${variantKey}|${m.batch_no}`),
+        lineCommitted: committedLines.has(`${m.source_doc_id}|${m.item_code}|${variantKey}|${m.batch_no}`),
       });
     }
     return outstandingCommitments(rows);

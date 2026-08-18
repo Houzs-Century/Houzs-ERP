@@ -89,7 +89,6 @@ type PiHeader = {
 
 type PiItem = {
   id: string;
-  material_code?: string | null;
   item_code?: string | null;
   /* Supplier's own code — PI has no column of its own; the detail GET carries it
      down from the source GRN line (grn_item_id → grn_items.supplier_sku). */
@@ -469,14 +468,14 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       key: "item",
       label: "Item",
       alwaysVisible: true,
-      getValue: (l) => l.material_code || l.item_code || "",
+      getValue: (l) => l.item_code || l.item_code || "",
       /* Item CODE first, then the variant subtitle; description dropped (owner 2026-07-24) — the shared order-line rule
          (vendor/shared/line-identity.ts). Swept on SHAPE, not vocabulary: this
          was the pre-#647 SalesOrderDetailV2 cell exactly. The code still BINDS
          via getValue above. */
       render: (l) => {
         const { primary, secondary } = orderLineIdentity({
-          code: l.material_code || l.item_code,
+          code: l.item_code || l.item_code,
           description: l.description,
           variant: buildVariantSummary(l.item_group ?? "others", l.variants) || (l.description2 ?? ""),
         });
@@ -503,14 +502,14 @@ function PurchaseInvoiceDetailV2ReadOnly() {
       width: "132px",
       getValue: (l) => {
         const code = supplierCodeFor(
-          { material_code: (l.material_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
+          { item_code: (l.item_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
           skuByMaterialCode
         );
         return code === "—" ? "" : code;
       },
       render: (l) => {
         const code = supplierCodeFor(
-          { material_code: (l.material_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
+          { item_code: (l.item_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
           skuByMaterialCode
         );
         if (code === "—") return <span className="text-ink-muted">—</span>;

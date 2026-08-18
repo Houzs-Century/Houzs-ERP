@@ -97,7 +97,7 @@ export type BindingRow = {
   id: string;
   supplier_id: string;
   material_kind: MaterialKind;
-  material_code: string;
+  item_code: string;
   material_name: string;
   supplier_sku: string;
   unit_price_sen: number;
@@ -114,10 +114,10 @@ export type BindingRow = {
    *  that use the single unit_price_sen (mattress / accessory / service). */
   price_matrix: PriceMatrix | null;
   /** Migration 0177 — cost anchor. When true, this binding is THE cost anchor
-   *  for its material_code: editing either side's cost (this binding's
+   *  for its item_code: editing either side's cost (this binding's
    *  unit_price_sen / price_matrix, or the linked mfg_products
    *  base_price_sen / price1_sen) mirrors onto the other. At most one anchor
-   *  per material_code (enforced server-side). SOFA bindings can be anchored
+   *  per item_code (enforced server-side). SOFA bindings can be anchored
    *  but cost sync is skipped (per-height matrix vs single SKU cost). */
   is_cost_anchor: boolean;
   created_at: string;
@@ -166,7 +166,7 @@ export type PoHeaderRow = {
     address?: string | null;
   } | null;
   /** PR — Commander 2026-05-27: list endpoint embeds a tiny items summary
-      (material_code + qty per line) so the buyer can scan what's inside each
+      (item_code + qty per line) so the buyer can scan what's inside each
       PO row without drilling in. Detail endpoint returns full items[]
       separately, not on the header. Optional because not every consumer
       wants the join. */
@@ -204,7 +204,7 @@ export type PoHeaderRow = {
 };
 
 export type PoItemSummary = {
-  material_code: string;
+  item_code: string;
   material_name: string;
   qty: number;
   /** Supplier's own SKU for this line (owner 2026-08-05) — the list's
@@ -217,7 +217,7 @@ export type PoItemRow = {
   purchase_order_id: string;
   binding_id: string | null;
   material_kind: MaterialKind;
-  material_code: string;
+  item_code: string;
   material_name: string;
   supplier_sku: string | null;
   qty: number;
@@ -434,7 +434,7 @@ export function useUpdateSupplier() {
 
 export type NewBinding = {
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku: string;
   unitPriceSen?: number;
@@ -513,7 +513,7 @@ export function useDeleteBinding() {
 }
 
 /** Migration 0177 — set/clear this binding as the cost anchor for its
- *  material_code. Setting clears the flag on any other binding for the same
+ *  item_code. Setting clears the flag on any other binding for the same
  *  product (one anchor per code) and pushes the binding's current cost onto the
  *  product (initial sync). We invalidate the supplier detail (flag changed) AND
  *  the mfg-products cache (the product's cost may have just been mirrored). */
@@ -634,7 +634,7 @@ export const fetchPurchaseOrderDetail = (id: string) =>
 
 export type NewPoItem = {
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku?: string;
   qty: number;

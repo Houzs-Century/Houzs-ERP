@@ -415,9 +415,8 @@ function DetailDrawer({
 }) {
   const detailQ = useSalesInvoiceDetail(row?.id ?? null);
   const items: Array<{
-    product_code?: string;
-    product_name?: string;
     item_code?: string;
+    product_name?: string;
     description?: string;
     description2?: string;
     item_group?: string;
@@ -428,9 +427,8 @@ function DetailDrawer({
     total_sen?: number;
   }> =
     ((detailQ.data as { items?: unknown[] } | undefined)?.items as Array<{
-      product_code?: string;
-      product_name?: string;
       item_code?: string;
+      product_name?: string;
       description?: string;
       description2?: string;
       item_group?: string;
@@ -568,7 +566,7 @@ function DetailDrawer({
                     l.total_sen ??
                     (l.qty ?? 0) * (l.unit_price_sen ?? 0);
                   const { primary, secondary } = orderLineIdentity({
-                    code: l.item_code || l.product_code,
+                    code: l.item_code || l.item_code,
                     description: l.description || l.product_name,
                     variant:
                       buildVariantSummary(l.item_group ?? "others", l.variants ?? null) ||
@@ -775,7 +773,7 @@ function SiLinesExpansion({ id }: { id: string }) {
     ((detailQ.data as { items?: Array<DrillItemFields & { source_pos?: string[] | null; source_adj?: boolean }> } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => ({
     itemGroup: l.item_group ?? null,
-    code: l.item_code || l.product_code || null,
+    code: l.item_code || l.item_code || null,
     description: l.description || l.product_name || null,
     description2: l.description2 ?? null,
     variants: l.variants ?? null,

@@ -363,7 +363,7 @@ describe('Description 2 — AutoCount\'s Further Description, which is what the 
   });
 });
 
-describe('ItemCode resolution (D10) — no silent fallback to material_code', () => {
+describe('ItemCode resolution (D10) — no silent fallback to item_code', () => {
   test('a mapped code is replaced by its AutoCount ItemCode', () => {
     expect(createSo(header, [line()], SALESPERSON, opts).Details[0].ItemCode).toBe('AC-CODE-1');
   });

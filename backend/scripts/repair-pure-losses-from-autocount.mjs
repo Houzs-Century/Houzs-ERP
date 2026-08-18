@@ -54,7 +54,7 @@ async function main() {
   const acPo = new Map(snap.po.map((r) => [String(r.k), r]));
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}; AutoCount snapshot ${snap.exportedAt}, ${snap.po.length} PO lines`);
 
-  const po = await sql`SELECT i.id, p.po_number doc, i.material_code code, i.linked_ac_dtlkey k,
+  const po = await sql`SELECT i.id, p.po_number doc, i.item_code code, i.linked_ac_dtlkey k,
                               i.delivery_date::text dd, i.qty, i.received_qty
       FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
      WHERE p.company_id = 1`;

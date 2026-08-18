@@ -19,7 +19,7 @@ import { isConsignmentLotSource } from './inventory-movements';
 // value = RM 863.19 (the GRN lot only); consignment adds RM 1,701.00 → RM 2,564.19
 // if (wrongly) counted whole. remaining_value_sen = qty_remaining * unit_cost_sen.
 type OpenLot = {
-  product_code: string;
+  item_code: string;
   product_name: string;
   qty_remaining: number;
   remaining_value_sen: number;
@@ -28,9 +28,9 @@ type OpenLot = {
   source_doc_no: string;
 };
 const BOOQIT_LOTS: OpenLot[] = [
-  { product_code: 'BOOQIT-CNR', product_name: 'Booqit Corner', qty_remaining: 1, remaining_value_sen: 100_000, received_at: '2026-06-01T00:00:00Z', source_doc_type: 'PC_RECEIVE',     source_doc_no: '2990-PCR-2606-001' },
-  { product_code: 'BOOQIT-CNR', product_name: 'Booqit Corner', qty_remaining: 1, remaining_value_sen:  70_100, received_at: '2026-06-05T00:00:00Z', source_doc_type: 'STOCK_TRANSFER', source_doc_no: '2990-PCR-2606-002' },
-  { product_code: 'BOOQIT-CNR', product_name: 'Booqit Corner', qty_remaining: 1, remaining_value_sen:  86_319, received_at: '2026-07-01T00:00:00Z', source_doc_type: 'GRN',            source_doc_no: '2990-GRN-2607-023' },
+  { item_code: 'BOOQIT-CNR', product_name: 'Booqit Corner', qty_remaining: 1, remaining_value_sen: 100_000, received_at: '2026-06-01T00:00:00Z', source_doc_type: 'PC_RECEIVE',     source_doc_no: '2990-PCR-2606-001' },
+  { item_code: 'BOOQIT-CNR', product_name: 'Booqit Corner', qty_remaining: 1, remaining_value_sen:  70_100, received_at: '2026-06-05T00:00:00Z', source_doc_type: 'STOCK_TRANSFER', source_doc_no: '2990-PCR-2606-002' },
+  { item_code: 'BOOQIT-CNR', product_name: 'Booqit Corner', qty_remaining: 1, remaining_value_sen:  86_319, received_at: '2026-07-01T00:00:00Z', source_doc_type: 'GRN',            source_doc_no: '2990-GRN-2607-023' },
 ];
 const OWNED_VALUE_SEN = 86_319;      // RM 863.19 — the drawer's owned subtotal
 const ALL_LOTS_VALUE_SEN = 256_419;  // RM 2,564.19 — the pre-fix (wrong) figure
@@ -41,7 +41,7 @@ describe('inventory LIST value excludes consignment (matches the drawer)', () =>
     const ownedValueSen = new Map<string, number>();
     for (const l of BOOQIT_LOTS) {
       if (!isConsignmentLotSource(l.source_doc_type, l.source_doc_no)) {
-        ownedValueSen.set(l.product_code, (ownedValueSen.get(l.product_code) ?? 0) + Number(l.remaining_value_sen ?? 0));
+        ownedValueSen.set(l.item_code, (ownedValueSen.get(l.item_code) ?? 0) + Number(l.remaining_value_sen ?? 0));
       }
     }
     const value = Math.round(ownedValueSen.get('BOOQIT-CNR') ?? 0);
@@ -82,9 +82,9 @@ describe('inventory ANALYTICS value figures exclude consignment', () => {
     const bucket = aging[idx < 0 ? aging.length - 1 : idx];
     if (bucket) bucket.valueSen += l.remaining_value_sen;
     totalValueSen += l.remaining_value_sen;
-    const p = prod.get(l.product_code) ?? { qty: 0, valueSen: 0 };
+    const p = prod.get(l.item_code) ?? { qty: 0, valueSen: 0 };
     p.qty += l.qty_remaining; p.valueSen += l.remaining_value_sen;
-    prod.set(l.product_code, p);
+    prod.set(l.item_code, p);
   }
 
   it('total inventory value counts owned lots only', () => {

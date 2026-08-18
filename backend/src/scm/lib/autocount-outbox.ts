@@ -341,7 +341,7 @@ const PO_HEADER_COLS = 'id, company_id, po_number, po_date, supplier_id, notes, 
    D9 collapse echoes back. Leaving the column out of this list is what made the
    PO side fall back to a variants blob and throw the original build away. */
 const PO_ITEM_COLS =
-  'id, material_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, warehouse_id, delivery_date';
+  'id, item_code, item_group, description, description2, qty, unit_price_sen, variants, linked_ac_dtlkey, warehouse_id, delivery_date';
 
 /**
  * The four DOWNSTREAM document types, described once.
@@ -941,11 +941,11 @@ export async function enqueueConvert(
 /** The ItemCode column each line table spells its product in. */
 const LINE_CODE_COL: Record<AcLineTable, string> = {
   mfg_sales_order_items: 'item_code',
-  purchase_order_items: 'material_code',
+  purchase_order_items: 'item_code',
   delivery_order_items: 'item_code',
-  grn_items: 'material_code',
+  grn_items: 'item_code',
   sales_invoice_items: 'item_code',
-  purchase_invoice_items: 'material_code',
+  purchase_invoice_items: 'item_code',
 };
 
 /**
@@ -1501,7 +1501,7 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
  * What AutoCount calls each of these products, from the LIVE binding.
  *
  * `scm.supplier_material_bindings` is this ERP's own record of the cross-ref:
- * `material_code` is our internal code, `supplier_sku` is AutoCount's, one row
+ * `item_code` is our internal code, `supplier_sku` is AutoCount's, one row
  * per supplier. It was populated at the cutover precisely so ERP codes could be
  * pushed BACK, and it is the only one of the two sources that GROWS — the
  * compiled CSV is a snapshot of the book on 2026-08-05 and cannot know a
@@ -1542,15 +1542,15 @@ async function bindingsFor(
   const wanted = [...new Set([...raw, ...sofaBases])];
   if (!wanted.length) return out;
   let q = sb.from('supplier_material_bindings')
-    .select('material_code, supplier_id, supplier_sku, is_main_supplier')
-    .in('material_code', wanted)
+    .select('item_code, supplier_id, supplier_sku, is_main_supplier')
+    .in('item_code', wanted)
     .eq('material_kind', 'mfg_product')
     .order('is_main_supplier', { ascending: false });
   if (companyId != null) q = q.eq('company_id', companyId);
   const rows = await readOrThrow('supplier_material_bindings', q);
   const bySupplier = new Map<string, string>();
   for (const r of (rows ?? []) as Array<Record<string, unknown>>) {
-    const code = String(r.material_code ?? '').trim().toUpperCase();
+    const code = String(r.item_code ?? '').trim().toUpperCase();
     const sku = typeof r.supplier_sku === 'string' ? r.supplier_sku.trim() : '';
     if (!code || !sku) continue;
     if (supplierId && String(r.supplier_id ?? '') === supplierId && !bySupplier.has(code)) {

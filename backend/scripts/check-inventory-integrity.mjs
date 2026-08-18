@@ -147,7 +147,7 @@ async function main() {
     WITH mov AS (
       SELECT ${coSel},
              warehouse_id::text AS warehouse_id,
-             product_code,
+             item_code,
              COALESCE(variant_key,'') AS variant_key,
              SUM(CASE movement_type
                    WHEN 'IN' THEN qty
@@ -157,20 +157,20 @@ async function main() {
                    ELSE 0 END) AS mov_qty,
              MAX(product_name) AS product_name
         FROM ${M}
-       GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+       GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')${coGrp}
     ),
     lot AS (
       SELECT ${coSel},
              warehouse_id::text AS warehouse_id,
-             product_code,
+             item_code,
              COALESCE(variant_key,'') AS variant_key,
              SUM(qty_remaining) AS lot_qty
         FROM ${L}
-       GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+       GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')${coGrp}
     )
     SELECT COALESCE(mov.company_id, lot.company_id)       AS company_id,
            COALESCE(mov.warehouse_id, lot.warehouse_id)   AS warehouse_id,
-           COALESCE(mov.product_code, lot.product_code)   AS product_code,
+           COALESCE(mov.item_code, lot.item_code)   AS item_code,
            COALESCE(mov.variant_key, lot.variant_key)     AS variant_key,
            COALESCE(mov.product_name, '')                 AS product_name,
            COALESCE(mov.mov_qty, 0)                        AS mov_qty,
@@ -179,11 +179,11 @@ async function main() {
       FROM mov
       FULL OUTER JOIN lot
         ON  mov.warehouse_id = lot.warehouse_id
-        AND mov.product_code = lot.product_code
+        AND mov.item_code = lot.item_code
         AND mov.variant_key  = lot.variant_key
         ${byCompany ? "AND mov.company_id = lot.company_id" : ""}
      WHERE COALESCE(mov.mov_qty, 0) <> COALESCE(lot.lot_qty, 0)
-     ORDER BY ABS(COALESCE(mov.mov_qty, 0) - COALESCE(lot.lot_qty, 0)) DESC, product_code ASC`);
+     ORDER BY ABS(COALESCE(mov.mov_qty, 0) - COALESCE(lot.lot_qty, 0)) DESC, item_code ASC`);
 
   const totalDriftUnits = driftRows.reduce((a, r) => a + Math.abs(Number(r.delta)), 0);
   notice("================ (1) QUANTITY DRIFT — movement ledger vs FIFO lots ================");
@@ -195,7 +195,7 @@ async function main() {
     notice(`  sample (up to ${SAMPLE}, largest |delta| first):`);
     notice(`    ${pad("product", 22)} ${pad("variant", 10)} ${pad("co", 3)} ${pad("movQty", 7)} ${pad("lotQty", 7)} ${pad("delta", 7)} warehouse`);
     for (const r of driftRows.slice(0, SAMPLE)) {
-      notice(`    ${pad(short(r.product_code, 22), 22)} ${pad(short(r.variant_key, 10), 10)} ${pad(r.company_id ?? "-", 3)} ${pad(r.mov_qty, 7)} ${pad(r.lot_qty, 7)} ${pad(r.delta, 7)} ${short(r.warehouse_id, 40)}`);
+      notice(`    ${pad(short(r.item_code, 22), 22)} ${pad(short(r.variant_key, 10), 10)} ${pad(r.company_id ?? "-", 3)} ${pad(r.mov_qty, 7)} ${pad(r.lot_qty, 7)} ${pad(r.delta, 7)} ${short(r.warehouse_id, 40)}`);
     }
     if (driftRows.length > SAMPLE) notice(`    ... and ${driftRows.length - SAMPLE} more.`);
     notice("");
@@ -215,7 +215,7 @@ async function main() {
     WITH out_mov AS (
       SELECT ${coSel},
              m.warehouse_id::text AS warehouse_id,
-             m.product_code,
+             m.item_code,
              COALESCE(m.variant_key,'') AS variant_key,
              MAX(m.product_name) AS product_name,
              SUM(m.qty) AS out_qty,
@@ -228,23 +228,23 @@ async function main() {
            GROUP BY movement_id
         ) c ON c.movement_id = m.id
        WHERE m.movement_type = 'OUT'
-       GROUP BY m.warehouse_id, m.product_code, COALESCE(m.variant_key,'')${byCompany ? ", m.company_id" : ""}
+       GROUP BY m.warehouse_id, m.item_code, COALESCE(m.variant_key,'')${byCompany ? ", m.company_id" : ""}
     ),
     lotcost AS (
       SELECT ${coSel},
              warehouse_id::text AS warehouse_id,
-             product_code,
+             item_code,
              COALESCE(variant_key,'') AS variant_key,
              CASE WHEN SUM(qty_remaining) > 0
                   THEN SUM(qty_remaining * unit_cost_sen) / SUM(qty_remaining)
                   ELSE 0 END AS avg_cost_sen
         FROM ${L}
        WHERE qty_remaining > 0
-       GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+       GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')${coGrp}
     )
     SELECT o.company_id,
            o.warehouse_id,
-           o.product_code,
+           o.item_code,
            o.variant_key,
            COALESCE(o.product_name,'') AS product_name,
            o.out_qty,
@@ -256,11 +256,11 @@ async function main() {
       FROM out_mov o
       LEFT JOIN lotcost lc
         ON  o.warehouse_id = lc.warehouse_id
-        AND o.product_code = lc.product_code
+        AND o.item_code = lc.item_code
         AND o.variant_key  = lc.variant_key
         ${byCompany ? "AND o.company_id = lc.company_id" : ""}
      WHERE o.out_qty <> o.costed_qty
-     ORDER BY (o.out_qty - o.costed_qty) DESC, product_code ASC`);
+     ORDER BY (o.out_qty - o.costed_qty) DESC, item_code ASC`);
 
   const totalUncostedUnits = uncostedRows.reduce((a, r) => a + Number(r.uncosted_qty), 0);
   const totalExposureSen = uncostedRows.reduce((a, r) => a + Number(r.est_exposure_sen), 0);
@@ -274,7 +274,7 @@ async function main() {
     notice(`  sample (up to ${SAMPLE}, most uncosted units first):`);
     notice(`    ${pad("product", 22)} ${pad("variant", 10)} ${pad("co", 3)} ${pad("outQty", 7)} ${pad("costed", 7)} ${pad("uncost", 7)} ${pad("est.RM", 12)} warehouse`);
     for (const r of uncostedRows.slice(0, SAMPLE)) {
-      notice(`    ${pad(short(r.product_code, 22), 22)} ${pad(short(r.variant_key, 10), 10)} ${pad(r.company_id ?? "-", 3)} ${pad(r.out_qty, 7)} ${pad(r.costed_qty, 7)} ${pad(r.uncosted_qty, 7)} ${pad(rm(r.est_exposure_sen), 12)} ${short(r.warehouse_id, 40)}`);
+      notice(`    ${pad(short(r.item_code, 22), 22)} ${pad(short(r.variant_key, 10), 10)} ${pad(r.company_id ?? "-", 3)} ${pad(r.out_qty, 7)} ${pad(r.costed_qty, 7)} ${pad(r.uncosted_qty, 7)} ${pad(rm(r.est_exposure_sen), 12)} ${short(r.warehouse_id, 40)}`);
     }
     if (uncostedRows.length > SAMPLE) notice(`    ... and ${uncostedRows.length - SAMPLE} more.`);
     notice("");

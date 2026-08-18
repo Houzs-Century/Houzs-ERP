@@ -82,18 +82,18 @@ try {
     /* EVERY mfg_product binding, not just the ambiguous ones. "Bound" is not
        the same as "bound to something real", and the only way to tell is to
        check each supplier_sku against the codes the account book holds. */
-    pg`SELECT b.material_code, b.supplier_sku, b.is_main_supplier,
+    pg`SELECT b.item_code, b.supplier_sku, b.is_main_supplier,
               s.code AS supplier_code, s.name AS supplier_name
          FROM scm.supplier_material_bindings b
          LEFT JOIN scm.suppliers s ON s.id = b.supplier_id
         WHERE b.company_id = ${COMPANY}
           AND b.material_kind = 'mfg_product'
-        ORDER BY b.material_code, b.is_main_supplier DESC`,
+        ORDER BY b.item_code, b.is_main_supplier DESC`,
     /* For a sofa base code no ERP line ever carries, the ERP's own opinion of
        the supplier lives on the COMPARTMENT rows (9028-1A(LHF) and friends).
        That is the fact that decides which candidate is right, so read it
        rather than asking a human to pick. */
-    pg`SELECT upper(split_part(btrim(b.material_code), '-', 1)) AS model,
+    pg`SELECT upper(split_part(btrim(b.item_code), '-', 1)) AS model,
               s.code AS supplier_code, s.name AS supplier_name,
               bool_or(b.is_main_supplier) AS is_main,
               count(*)::int AS lines
@@ -101,7 +101,7 @@ try {
          LEFT JOIN scm.suppliers s ON s.id = b.supplier_id
         WHERE b.company_id = ${COMPANY}
           AND b.material_kind = 'mfg_product'
-          AND upper(split_part(btrim(b.material_code), '-', 1)) = ANY(${
+          AND upper(split_part(btrim(b.item_code), '-', 1)) = ANY(${
             ambiguous.filter(([k]) => isSofaBase(k)).map(([k]) => k.replace(/-1S$/, ""))
           })
         GROUP BY 1, 2, 3
@@ -110,7 +110,7 @@ try {
 
   const boundFor = new Map();
   for (const r of bindings) {
-    const k = String(r.material_code).trim().toUpperCase();
+    const k = String(r.item_code).trim().toUpperCase();
     if (!boundFor.has(k)) boundFor.set(k, []);
     boundFor.get(k).push(r);
   }

@@ -182,7 +182,7 @@ async function main() {
                coalesce(b.variant_key,'') AS variant_key, b.qty
           FROM scm.inventory_balances b
           LEFT JOIN scm.warehouses w ON w.id = b.warehouse_id
-         WHERE b.company_id = ${CO}::bigint AND b.product_code = ${l.item_code} AND b.qty <> 0
+         WHERE b.company_id = ${CO}::bigint AND b.item_code = ${l.item_code} AND b.qty <> 0
          ORDER BY w.name, b.variant_key`;
       note(`        on-hand rows for ${l.item_code}: ${bal.length}`);
       for (const b of bal) {
@@ -195,7 +195,7 @@ async function main() {
                coalesce(i.delivery_date::text, p.expected_at::text, '') AS eta
           FROM scm.purchase_order_items i
           JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-         WHERE i.company_id = ${CO}::bigint AND i.material_code = ${l.item_code}
+         WHERE i.company_id = ${CO}::bigint AND i.item_code = ${l.item_code}
            AND upper(p.status::text) NOT IN ('CANCELLED','CLOSED','DRAFT')
          ORDER BY p.po_number`;
       note(`        open PO lines for ${l.item_code}: ${po.length}`);
@@ -230,7 +230,7 @@ async function main() {
         SELECT movement_type::text AS movement_type, qty, coalesce(variant_key,'') AS variant_key,
                source_doc_type, source_doc_no, created_at::text AS created_at
           FROM scm.inventory_movements
-         WHERE company_id = ${CO}::bigint AND product_code = ${l.item_code}
+         WHERE company_id = ${CO}::bigint AND item_code = ${l.item_code}
          ORDER BY created_at DESC
          LIMIT 10`;
       note(`        last ${mv.length} inventory movement(s) for ${l.item_code}:`);
@@ -243,18 +243,18 @@ async function main() {
        the drill renders come from these. */
     const codes = [...new Set(live.map((x) => x.item_code).filter(Boolean))];
     const lots = codes.length === 0 ? [] : await sql`
-      SELECT l.batch_no, l.product_code, coalesce(l.variant_key,'') AS variant_key,
+      SELECT l.batch_no, l.item_code, coalesce(l.variant_key,'') AS variant_key,
              l.qty_remaining, l.source_doc_type, w.name AS warehouse,
              l.received_at::text AS received_at
         FROM scm.inventory_lots l
         LEFT JOIN scm.warehouses w ON w.id = l.warehouse_id
        WHERE l.company_id = ${CO}::bigint
          AND l.qty_remaining > 0
-         AND l.product_code IN ${sql(codes)}
-       ORDER BY l.product_code, l.received_at`;
+         AND l.item_code IN ${sql(codes)}
+       ORDER BY l.item_code, l.received_at`;
     note(`\n    --- open inventory lots for this order's codes: ${lots.length} ---`);
     for (const t of lots) {
-      note(`      ${String(t.product_code).padEnd(22)} batch=${String(t.batch_no ?? '(null)').padEnd(20)} left=${String(t.qty_remaining).padStart(4)} src=${t.source_doc_type ?? '-'} wh=${t.warehouse ?? '?'} recv=${t.received_at ?? '-'}`);
+      note(`      ${String(t.item_code).padEnd(22)} batch=${String(t.batch_no ?? '(null)').padEnd(20)} left=${String(t.qty_remaining).padStart(4)} src=${t.source_doc_type ?? '-'} wh=${t.warehouse ?? '?'} recv=${t.received_at ?? '-'}`);
     }
   }
 

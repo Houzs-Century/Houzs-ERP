@@ -640,10 +640,10 @@ function PurchaseOrderDetailV2ReadOnly() {
       key: "item",
       label: "Item",
       alwaysVisible: true,
-      getValue: (l) => l.material_code,
+      getValue: (l) => l.item_code,
       /* Item CODE first, then the variant subtitle; description dropped (owner 2026-07-24) — the shared order-line rule
          (vendor/shared/line-identity.ts). JUDGEMENT CALL, stated rather than
-         silently taken: this is PURCHASE vocabulary (material_code), and every
+         silently taken: this is PURCHASE vocabulary (item_code), and every
          owner precedent for the rule is sales-side, so it is not covered by the
          letter of any report. It is swept because the SHAPE is identical, not
          the vocabulary — this render was byte-for-byte the pre-#647
@@ -657,7 +657,7 @@ function PurchaseOrderDetailV2ReadOnly() {
          search / export value. */
       render: (l) => {
         const { primary, secondary } = orderLineIdentity({
-          code: l.material_code,
+          code: l.item_code,
           description: l.description || l.material_name,
           variant: buildVariantSummary(l.item_group ?? "others", l.variants) || (l.description2 ?? ""),
         });
@@ -867,7 +867,7 @@ function PurchaseOrderDetailV2ReadOnly() {
                 type="button"
                 onClick={() => setAllocLineId(l.id)}
                 title="Split this line across the Sales Orders it was bought for"
-                aria-label={`Edit allocations for ${l.material_code}`}
+                aria-label={`Edit allocations for ${l.item_code}`}
                 className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md border border-border bg-surface text-ink-secondary hover:border-primary/50 hover:text-primary"
               >
                 <Split size={12} />

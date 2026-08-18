@@ -106,9 +106,9 @@ async function main() {
   const prodBy = new Map(prods.map((p) => [norm(p.code), p]));
 
   // ERP current on-hand per product+warehouse (all variant keys summed)
-  const onhand = await sql`SELECT product_code, warehouse_id, SUM(qty)::int AS qty
-    FROM scm.inventory_balances WHERE company_id = 1 GROUP BY product_code, warehouse_id`;
-  const ohBy = new Map(onhand.map((r) => [`${norm(r.product_code)}|${r.warehouse_id}`, Number(r.qty)]));
+  const onhand = await sql`SELECT item_code, warehouse_id, SUM(qty)::int AS qty
+    FROM scm.inventory_balances WHERE company_id = 1 GROUP BY item_code, warehouse_id`;
+  const ohBy = new Map(onhand.map((r) => [`${norm(r.item_code)}|${r.warehouse_id}`, Number(r.qty)]));
 
   // movements table company_id presence (multicompany migration)
   const mvCols = (await sql`SELECT column_name FROM information_schema.columns WHERE table_schema='scm' AND table_name='inventory_movements'`).map((r) => r.column_name);
@@ -139,7 +139,7 @@ async function main() {
   const todo = NEG ? [...plan, ...negs] : plan;
   let done = 0;
   for (const x of todo) {
-    const cols = ["movement_type", "warehouse_id", "product_code", "product_name", "variant_key", "qty", "unit_cost_sen", "source_doc_type", "source_doc_no", "notes"];
+    const cols = ["movement_type", "warehouse_id", "item_code", "product_name", "variant_key", "qty", "unit_cost_sen", "source_doc_type", "source_doc_no", "notes"];
     const vals = ["'ADJUSTMENT'", `'${x.wh.id}'`, "$1", "$2", "''", `${x.delta}`, `${x.costSen}`, "'AC_CUTOVER'", "'AC-BAL-2026-08-09'", "$3"];
     if (hasCo) { cols.push("company_id"); vals.push("1"); }
     await sql.unsafe(

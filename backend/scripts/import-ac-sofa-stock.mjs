@@ -129,7 +129,7 @@ async function main() {
 
   /* ── 2. The ERP's imported sofa PO lines that carry received goods ──────── */
   const poLines = await sql`
-    SELECT i.id, i.purchase_order_id, i.material_code, i.material_name, i.supplier_sku,
+    SELECT i.id, i.purchase_order_id, i.item_code, i.material_name, i.supplier_sku,
            i.description2, i.notes, i.received_qty, i.qty, i.unit_price_sen,
            i.item_group, i.variants, i.warehouse_id, i.so_item_id,
            p.po_number, p.linked_ac_docno, p.po_date
@@ -255,8 +255,8 @@ async function main() {
     let lead = true;
     for (const l of b.lines) {
       plan.push({
-        code: l.material_code,
-        name: l.material_name ?? l.material_code,
+        code: l.item_code,
+        name: l.material_name ?? l.item_code,
         whId: l.warehouse_id,
         batch: l.po_number,
         variantKey: variantKeyMirror(l.item_group, l.variants),
@@ -275,10 +275,10 @@ async function main() {
      a previous run of this script is skipped. batch_no makes the key unique per
      build, so a top-up run adds only what is genuinely new. */
   const existing = new Set(
-    (await sql`SELECT product_code, warehouse_id, batch_no, COALESCE(variant_key,'') vk
+    (await sql`SELECT item_code, warehouse_id, batch_no, COALESCE(variant_key,'') vk
                  FROM scm.inventory_lots
                 WHERE source_doc_type = 'AC_CUTOVER' AND source_doc_no = ${SRC_DOC}`)
-      .map((r) => `${norm(r.product_code)}|${r.warehouse_id}|${r.batch_no}|${r.vk}`),
+      .map((r) => `${norm(r.item_code)}|${r.warehouse_id}|${r.batch_no}|${r.vk}`),
   );
   const todo = plan.filter((p) => !existing.has(`${norm(p.code)}|${p.whId}|${p.batch}|${p.variantKey}`));
   const skipped = plan.length - todo.length;
@@ -376,7 +376,7 @@ async function main() {
        date straight into the SQL text as `'${p.receivedAt}T00:00:00Z'`, which is
        how a `Date` object that stringified to "Wed Jun 24" became the literal
        `'Wed Jun 24T00:00:00Z'` and aborted the run on its first insert. */
-    const cols = ["movement_type", "warehouse_id", "product_code", "product_name", "variant_key",
+    const cols = ["movement_type", "warehouse_id", "item_code", "product_name", "variant_key",
       "qty", "unit_cost_sen", "batch_no", "source_doc_type", "source_doc_no", "notes"];
     const args = ["ADJUSTMENT", p.whId, p.code, p.name, p.variantKey, p.qty, p.costSen, p.batch,
       "AC_CUTOVER", SRC_DOC, `AutoCount sofa opening: ${p.acPo} received, batch ${p.batch}`];

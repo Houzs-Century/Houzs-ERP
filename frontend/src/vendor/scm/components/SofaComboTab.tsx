@@ -157,8 +157,8 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
   // Supplier-scoped only: derive base_model → the supplier's OWN model code so
   // each combo card can show "Booqit · 5539" — the code Hookka recognises on
   // their side. Source = this supplier's bindings (supplier_material_bindings).
-  // A binding's material_code equals the product code (see PurchaseOrderDetail
-  // pickProduct: materialCode = p.code), so we resolve base_model via products,
+  // A binding's item_code equals the product code (see PurchaseOrderDetail
+  // pickProduct: itemCode = p.code), so we resolve base_model via products,
   // then take the supplier_sku's leading code ("5539-2A(LHF)" → "5539"; bare
   // "5539" stays "5539"). When a base_model carries several supplier codes we
   // pick the most common one. Empty/unmapped → card just shows base_model.
@@ -175,7 +175,7 @@ export const SofaComboTab = ({ supplierId }: ComboTabProps) => {
     // base_model → { supplierCode → count } so we can pick the most common.
     const tally: Record<string, Record<string, number>> = {};
     for (const b of supplierDetailQ.data?.bindings ?? []) {
-      const bm = baseModelByCode.get(b.material_code);
+      const bm = baseModelByCode.get(b.item_code);
       if (!bm) continue;
       const sku = (b.supplier_sku ?? '').trim();
       if (!sku) continue;

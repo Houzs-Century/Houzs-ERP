@@ -238,7 +238,7 @@ describe('item 5 — stock take post (writes ADJUSTMENT movements)', () => {
     const t: Record<string, Row[]> = {
       stock_takes: takes(),
       stock_take_lines: [
-        { stock_take_id: 'st-b', product_code: 'SKU-B', product_name: 'B thing', variant_key: '', counted_qty: 40, notes: null },
+        { stock_take_id: 'st-b', item_code: 'SKU-B', product_name: 'B thing', variant_key: '', counted_qty: 40, notes: null },
       ],
       inventory_balances: [],
       inventory_movements: [],

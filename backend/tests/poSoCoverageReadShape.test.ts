@@ -74,7 +74,7 @@ function fixture(): Record<string, Row[]> {
   return {
     purchase_orders: [{ id: PO_ID, po_number: PO_NO, notes: null, company_id: CO, status: 'SUBMITTED' }],
     purchase_order_items: [{
-      id: 'poi-1', purchase_order_id: PO_ID, material_code: SKU, item_group: 'bedframe',
+      id: 'poi-1', purchase_order_id: PO_ID, item_code: SKU, item_group: 'bedframe',
       /* so_item_id is the layer-(b) stored raise-link: this PO line was raised
          FROM sales order SO-STORED. */
       so_item_id: 'si-stored', variants: {}, qty: 5, received_qty: 0,
@@ -82,7 +82,7 @@ function fixture(): Record<string, Row[]> {
       supplier_delivery_date_3: null, supplier_delivery_date_4: null,
       warehouse_id: 'W1', company_id: CO,
     }, {
-      id: 'poi-2', purchase_order_id: PO_ID, material_code: SKU_MRP, item_group: 'bedframe',
+      id: 'poi-2', purchase_order_id: PO_ID, item_code: SKU_MRP, item_group: 'bedframe',
       so_item_id: null, variants: {}, qty: 3, received_qty: 0,
       delivery_date: '2026-11-01', supplier_delivery_date_2: null,
       supplier_delivery_date_3: null, supplier_delivery_date_4: null,
@@ -110,7 +110,7 @@ function fixture(): Record<string, Row[]> {
     inventory_lots: [{ id: 'lot-1', batch_no: PO_NO, company_id: CO }],
     inventory_lot_consumptions: [{
       source_doc_type: 'DO', source_doc_id: 'do-1', lot_id: 'lot-1',
-      product_code: SKU, variant_key: '', qty_consumed: 1, company_id: CO,
+      item_code: SKU, variant_key: '', qty_consumed: 1, company_id: CO,
     }],
     inventory_movements: [],
     delivery_orders: [{ id: 'do-1', so_doc_no: 'SO-SHIPPED', do_number: 'DO-1', status: 'POSTED', company_id: CO }],

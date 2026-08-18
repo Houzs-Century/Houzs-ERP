@@ -158,7 +158,7 @@ const world = (over: {
        movements, DOs, SIs) is legitimately empty for a receipt nothing has sold yet. */
     grns: [{ id: 'grn-1', grn_number: '2990-GRN-2606-001', exchange_rate: 1, allocation_method: 'VALUE' }],
     grn_items: [{
-      id: 'gi-1', grn_id: 'grn-1', material_code: 'SOFA-A', item_group: null, variants: null,
+      id: 'gi-1', grn_id: 'grn-1', item_code: 'SOFA-A', item_group: null, variants: null,
       unit_price_sen: FACE_SEN, qty_accepted: 1, allocated_charge_sen: 0,
       purchase_order_item_id: null,
     }],
@@ -168,7 +168,7 @@ const world = (over: {
     }],
     inventory_lots: [{
       id: 'lot-1', source_doc_type: 'GRN', source_doc_id: 'grn-1',
-      product_code: 'SOFA-A', variant_key: '', batch_no: null,
+      item_code: 'SOFA-A', variant_key: '', batch_no: null,
       qty_received: 1, movement_id: 'mov-1', unit_cost_sen: FACE_SEN,
     }],
     inventory_movements: [{ id: 'mov-1', source_doc_type: 'GRN', source_doc_id: 'grn-1', unit_cost_sen: FACE_SEN, total_cost_sen: FACE_SEN }],

@@ -66,7 +66,7 @@ export interface PwpLineInput {
   /** Display label of the product (for the trigger reference on the invoice). */
   productName?: string;
   /** Product code (for the trigger reference). */
-  productCode?: string;
+  itemCode?: string;
   /** The salesperson toggled "use PWP price" on this reward line. */
   pwpRequested: boolean;
   /** This line IS a reward already (bought with a PWP/promo code). Reward
@@ -130,7 +130,7 @@ export function resolvePwp(rules: PwpRule[], lines: PwpLineInput[]): PwpGrant[] 
       if (rule.type === 'promo' && (line.isReward === true || line.pwpRequested)) continue;
       const units = safeQty(line.qty);
       for (let u = 0; u < units * qpt; u++) {
-        slots.push({ name: line.productName ?? '', code: line.productCode ?? '' });
+        slots.push({ name: line.productName ?? '', code: line.itemCode ?? '' });
       }
     }
 

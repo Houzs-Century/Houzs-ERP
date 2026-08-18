@@ -145,13 +145,13 @@ function baseStore(): Record<string, Row[]> {
   };
 }
 
-const binding = (material_code: string, supplier_id: string, unit_price_sen: number, sku = `SKU-${material_code}`): Row => ({
-  material_code, supplier_id, supplier_sku: sku, unit_price_sen, price_matrix: null,
+const binding = (item_code: string, supplier_id: string, unit_price_sen: number, sku = `SKU-${item_code}`): Row => ({
+  item_code, supplier_id, supplier_sku: sku, unit_price_sen, price_matrix: null,
   is_main_supplier: true, material_kind: 'mfg_product', company_id: 1,
 });
 const poLine = (over: Partial<Row>): Row => ({
   id: 'POI-x', purchase_order_id: 'POX', so_item_id: null, qty: 1, received_qty: 0,
-  material_code: 'BF', material_name: 'Bed', discount_sen: 0, line_total_sen: 0,
+  item_code: 'BF', material_name: 'Bed', discount_sen: 0, line_total_sen: 0,
   unit_price_sen: 0, delivery_date: null, warehouse_id: 'WH1', item_group: 'bedframe',
   variants: null, from_mrp: false, company_id: 1, ...over,
 });
@@ -168,8 +168,8 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2 })];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', material_code: 'BF-1', qty: 2, line_total_sen: 2000 }),
-      poLine({ id: 'POI-2', so_item_id: null, material_code: 'BF-2', material_name: 'Bed Two', qty: 1, line_total_sen: 1500 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 2, line_total_sen: 2000 }),
+      poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', material_name: 'Bed Two', qty: 1, line_total_sen: 1500 }),
     ];
     const c1 = await cost(store, 'BF-1');
 
@@ -189,8 +189,8 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2 })];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', material_code: 'BF-1', qty: 2, line_total_sen: 2000 }),
-      poLine({ id: 'POI-2', so_item_id: null, material_code: 'BF-2', material_name: 'Bed Two', qty: 1, received_qty: 1, line_total_sen: 1500 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 2, line_total_sen: 2000 }),
+      poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', material_name: 'Bed Two', qty: 1, received_qty: 1, line_total_sen: 1500 }),
     ];
     const c1 = await cost(store, 'BF-1');
 
@@ -211,8 +211,8 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     const store = baseStore();
     store.mfg_sales_order_items = [];   // both lines removed → SO empty, POX fully orphaned
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: null, material_code: 'BF-1', qty: 1, line_total_sen: 1000 }),
-      poLine({ id: 'POI-2', so_item_id: null, material_code: 'BF-2', qty: 1, line_total_sen: 1500 }),
+      poLine({ id: 'POI-1', so_item_id: null, item_code: 'BF-1', qty: 1, line_total_sen: 1000 }),
+      poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', qty: 1, line_total_sen: 1500 }),
     ];
 
     const res = await reviseBoundPo(fakeSb(store), AMD, 'user-1');
@@ -227,8 +227,8 @@ describe('reviseBoundPo — REMOVE reconciles the orphaned PO line', () => {
     const store = baseStore();
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 2 })];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', material_code: 'BF-1', qty: 2, line_total_sen: 2000 }),
-      poLine({ id: 'POI-2', so_item_id: null, material_code: 'BF-2', qty: 1, line_total_sen: 1500 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 2, line_total_sen: 2000 }),
+      poLine({ id: 'POI-2', so_item_id: null, item_code: 'BF-2', qty: 1, line_total_sen: 1500 }),
     ];
     const c1 = await cost(store, 'BF-1');
     const sb = fakeSb(store);
@@ -255,7 +255,7 @@ describe('reviseBoundPo — ADD reconciles the missing PO line', () => {
       soLine({ id: 'L3', item_code: 'BF-3', qty: 2, warehouse_id: 'WH1', line_delivery_date: '2026-08-01', description: 'Bed Three' }),
     ];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', material_code: 'BF-1', qty: 1, line_total_sen: 1000 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 1, line_total_sen: 1000 }),
     ];
     return store;
   }
@@ -270,7 +270,7 @@ describe('reviseBoundPo — ADD reconciles the missing PO line', () => {
     const added = store.purchase_order_items.find((i) => i.so_item_id === 'L3');
     expect(added).toBeDefined();
     expect(added).toMatchObject({
-      purchase_order_id: 'POX', material_code: 'BF-3', material_name: 'Bed Three',
+      purchase_order_id: 'POX', item_code: 'BF-3', material_name: 'Bed Three',
       supplier_sku: 'SKU-BF-3', qty: 2, warehouse_id: 'WH1', delivery_date: '2026-08-01',
       from_mrp: false, company_id: 1,
     });
@@ -340,7 +340,7 @@ describe('reviseBoundPo — unchanged contracts still hold', () => {
     store.mfg_sales_order_items = [soLine({ id: 'L1', item_code: 'BF-1', qty: 1 })];
     store.so_revisions = [{ amendment_id: AMD, revision: 1, snapshot: { lines: [{ id: 'L1' }], poLinks: { L1: ['POI-1'] } } }];
     store.purchase_order_items = [
-      poLine({ id: 'POI-1', so_item_id: 'L1', material_code: 'BF-1', qty: 5, received_qty: 3, line_total_sen: 5000 }),
+      poLine({ id: 'POI-1', so_item_id: 'L1', item_code: 'BF-1', qty: 5, received_qty: 3, line_total_sen: 5000 }),
     ];
 
     await expect(reviseBoundPo(fakeSb(store), AMD, 'user-1')).rejects.toMatchObject({ code: 'received_floor' });

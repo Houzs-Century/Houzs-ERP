@@ -96,7 +96,7 @@ type LineDraft = {
 
 type GrnItemRow = Record<string, unknown> & {
   id: string;
-  material_code: string;
+  item_code: string;
   material_name: string;
   qty_received: number;
   unit_price_sen: number;
@@ -196,7 +196,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
       supplier: grn.supplier ?? undefined,
     };
     const pdfItems = items.map((it) => ({
-      material_code: it.material_code,
+      item_code: it.item_code,
       material_name: it.material_name,
       qty_received: it.qty_received,
       qty_accepted: it.qty_received,
@@ -502,7 +502,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Item Code (Internal)</span>
                       <input
-                        type="text" readOnly value={it.material_code}
+                        type="text" readOnly value={it.item_code}
                         className={styles.fieldInput}
                         style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />
@@ -535,7 +535,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
                       <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-11)', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--fg-muted)', marginBottom: 'var(--space-2)' }}>{d.itemGroup} Variants</div>
                       <PcVariantEditor
                         category={d.itemGroup ?? ''}
-                        itemCode={it.material_code}
+                        itemCode={it.item_code}
                         variants={(d.variants ?? {}) as Record<string, unknown>}
                         onChange={(k, v) => setVariant(it, k, v)}
                         fabrics={fabrics}

@@ -101,7 +101,7 @@ const HEADER_COLS =
   'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
 
 const ITEM_COLS =
-  'id, purchase_consignment_order_id, binding_id, material_kind, material_code, material_name, ' +
+  'id, purchase_consignment_order_id, binding_id, material_kind, item_code, material_name, ' +
   'supplier_sku, qty, unit_price_sen, line_total_sen, received_qty, notes, created_at, ' +
   /* variant fields (migration 0056) */
   'item_group, description, description2, uom, discount_sen, unit_cost_sen, ' +
@@ -121,7 +121,7 @@ purchaseConsignmentOrders.get('/', async (c) => {
   let q = supabase
     .from('purchase_consignment_orders')
     .select(
-      `${HEADER_COLS}, supplier:suppliers(id, code, name), items:purchase_consignment_order_items(material_code, material_name, qty)`,
+      `${HEADER_COLS}, supplier:suppliers(id, code, name), items:purchase_consignment_order_items(item_code, material_name, qty)`,
     )
     .order('po_date', { ascending: false })
     .order('created_at', { ascending: false });
@@ -223,14 +223,14 @@ purchaseConsignmentOrders.get('/:id', async (c) => {
      "Received" column (which PC Receive took how much). */
   /* Canonical SKU/build order at READ (sofa modules LHF→NA→RHF, mains→
      accessories→services), mirroring the SO detail GET. The shared helper keys
-     on `item_code`; PC lines expose `material_code`, so sort a shimmed view
+     on `item_code`; PC lines expose `item_code`, so sort a shimmed view
      that carries the original row back unchanged. `.order('created_at')` above
      stays as the stable tiebreaker — pure ordering, no persistence touched. */
-  type PcoItemRow = Record<string, unknown> & { id: string; material_code: string; item_code: string };
+  type PcoItemRow = Record<string, unknown> & { id: string; item_code: string };
   const itemRows = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      ((itemsRes.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; material_code: string }>)
-        .map((it): PcoItemRow => ({ ...it, item_code: it.material_code })),
+      ((itemsRes.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; item_code: string }>)
+        .map((it): PcoItemRow => ({ ...it, item_code: it.item_code })),
       (r) => r.item_group as string | null | undefined,
     ),
   );
@@ -286,7 +286,7 @@ purchaseConsignmentOrders.get('/:id/linked', async (c) => {
 // ── Create ────────────────────────────────────────────────────────────
 // body: {
 //   supplierId, currency?, expectedAt?, purchaseLocationId?, notes?,
-//   items: [{ materialKind, materialCode, materialName, supplierSku?, qty, unitPriceSen, bindingId? }]
+//   items: [{ materialKind, itemCode, materialName, supplierSku?, qty, unitPriceSen, bindingId? }]
 // }
 purchaseConsignmentOrders.post('/', async (c) => {
   /* company-scope: the only by-id write here is the ROLLBACK — the header this
@@ -335,7 +335,7 @@ purchaseConsignmentOrders.post('/', async (c) => {
   const itemRows = items.map((it) => {
     const kind = it.materialKind as string;
     if (!VALID_KINDS.has(kind)) throw new Error(`invalid material_kind: ${kind}`);
-    if (!it.materialCode || !it.materialName) throw new Error('material_code + material_name required per item');
+    if (!it.itemCode || !it.materialName) throw new Error('item_code + material_name required per item');
     const qty = Math.max(0, Number(it.qty ?? 0));
     const unit = Math.max(0, Number(it.unitPriceSen ?? 0));
     const discountSen = Math.max(0, Number(it.discountSen ?? 0));
@@ -344,7 +344,7 @@ purchaseConsignmentOrders.post('/', async (c) => {
     return {
       binding_id: (it.bindingId as string | undefined) ?? null,
       material_kind: kind,
-      material_code: it.materialCode,
+      item_code: it.itemCode,
       material_name: it.materialName,
       supplier_sku: (it.supplierSku as string | undefined) ?? null,
       qty,
@@ -493,7 +493,7 @@ purchaseConsignmentOrders.post('/:id/items', async (c) => {
   const pcoId = c.req.param('id');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  if (!it.materialCode) return c.json({ error: 'material_code_required' }, 400);
+  if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
   if (!it.materialName) return c.json({ error: 'material_name_required' }, 400);
 
   const sb = c.get('supabase');
@@ -516,7 +516,7 @@ purchaseConsignmentOrders.post('/:id/items', async (c) => {
     purchase_consignment_order_id: pcoId,
     binding_id: (it.bindingId as string) ?? null,
     material_kind: (it.materialKind as string) ?? 'mfg_product',
-    material_code: it.materialCode,
+    item_code: it.itemCode,
     material_name: it.materialName,
     supplier_sku: (it.supplierSku as string) ?? null,
     qty,
@@ -576,7 +576,7 @@ purchaseConsignmentOrders.patch('/:id/items/:itemId', async (c) => {
     qty, unit_price_sen: unit, discount_sen: discount, line_total_sen: lineTotal,
   };
   for (const [from, to] of [
-    ['materialCode', 'material_code'], ['materialName', 'material_name'],
+    ['itemCode', 'item_code'], ['materialName', 'material_name'],
     ['supplierSku', 'supplier_sku'], ['itemGroup', 'item_group'],
     ['description', 'description'], ['description2', 'description2'],
     ['uom', 'uom'], ['unitCostSen', 'unit_cost_sen'], ['notes', 'notes'],
