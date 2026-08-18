@@ -1,6 +1,6 @@
 ## Every filter tab that named a status the enum never had returned 500, and its count silently read 0 [high]
 
-<!-- area: SCM lists — sales invoices, delivery orders, goods receipts -->
+<!-- area: Delivery, DO, returns -->
 
 **Symptom.** In BOTH companies: Sales Invoice `Sent`, `Partial` and `Paid` each
 answered 500, and all four of its pill counts read 0 beside a list whose `all`
@@ -34,7 +34,7 @@ Ref: PR #2382, 2026-08-18. Verified against production before and after.
 
 ## A blank optional date was sent as "" and written straight into a DATE column [high]
 
-<!-- area: SCM writes — purchase orders, invoices, consignment, projects -->
+<!-- area: Purchase orders + GRN + PI -->
 
 **Symptom.** "Save failed — The system hit a problem." on any Purchase Order
 that left Supplier Date 2/3/4 empty, which is most of them.
@@ -64,7 +64,7 @@ Ref: PR #2382, 2026-08-18.
 
 ## A hook after an early return crashed six document editors on refresh [high]
 
-<!-- area: Frontend — SCM detail pages, projects -->
+<!-- area: Frontend + mobile -->
 
 **Symptom.** Opening a Purchase Order, Purchase Invoice or Goods Receipt edit
 page by direct URL or browser refresh showed "Something went wrong loading this
@@ -90,7 +90,7 @@ Ref: PR #2382, 2026-08-18.
 
 ## A save the server refused could not be corrected and resubmitted [high]
 
-<!-- area: SCM create forms, desktop and mobile -->
+<!-- area: Purchase orders + GRN + PI -->
 
 **Symptom.** Creating a GRN from a PO was refused by a correct business guard
 (`zero_cost_receipt`). Entering the unit price it asked for and submitting again
@@ -118,7 +118,7 @@ Ref: PR #2382, 2026-08-18.
 
 ## An unbounded .in() list broke MRP in the larger tenant and Delivery Planning in both [high]
 
-<!-- area: SCM reads — MRP, delivery planning, sales order list -->
+<!-- area: Fleet, trips, TMS -->
 
 **Symptom.** `GET /api/scm/mrp?category=SOFA` 500'd in Houzs Century (2,726
 sales orders) and answered 200 in 2990's Home (100). `GET /api/scm/
@@ -149,7 +149,7 @@ Ref: PR #2382, 2026-08-18.
 
 ## COMPLETED was never a Delivery Order status, and four files believed it was [medium]
 
-<!-- area: SCM — delivery orders, delivery agent -->
+<!-- area: Delivery, DO, returns -->
 
 **Symptom.** `GET /api/scm/delivery-orders-mfg?status=delivered` 500'd in both
 tenants; the Delivery Agent's DO pipeline silently reported no COMPLETED bucket.
@@ -173,7 +173,7 @@ Ref: PR #2382, 2026-08-18.
 
 ## Three cross-tenant leaks: grant escalation, foreign-warehouse stock, pooled customer credit [high]
 
-<!-- area: Multi-company isolation -->
+<!-- area: Auth, permissions, sessions -->
 
 **Symptom.** None observed; found by audit. Two companies share one database and
 one service-role connection, so Postgres RLS never runs — tenancy holds only
