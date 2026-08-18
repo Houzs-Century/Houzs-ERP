@@ -104,6 +104,7 @@ export function useCreateRack() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse', 'racks'] }),
+    onError: writeFailedAs('Rack not created'),
   });
 }
 
@@ -116,6 +117,7 @@ export function useUpdateRack() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse', 'racks'] }),
+    onError: writeFailedAs('Rack not updated'),
   });
 }
 
@@ -183,6 +185,7 @@ export function useStockIn() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse'] }),
+    onError: writeFailedAs('Stock-in not saved'),
   });
 }
 
@@ -195,6 +198,7 @@ export function useStockOut() {
         body: JSON.stringify(body),
       }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['warehouse'] }),
+    onError: writeFailedAs('Stock-out not saved'),
   });
 }
 
