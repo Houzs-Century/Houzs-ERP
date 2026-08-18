@@ -20,12 +20,12 @@ import { useChoice } from "../vendor/scm/components/ChoiceDialog";
 import { todayMyt } from "../vendor/scm/lib/dates";
 import {
   ASSR_STAGES,
-  ASSR_STAGE_INDEX,
   activeAssrStages,
   type AssrStageDef,
   assrSubStatus,
   ASSR_SUB_STATUSES,
 } from "../vendor/scm/lib/assr/stages";
+import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import "./mobile.css";
 
 // The core /api/assr route (NOT scm). The list returns
@@ -78,7 +78,6 @@ const FIELD_BG = "#f4f6f3";
 type MStage = { key: string; label: string; long: string; owner: string };
 const toMStage = (s: AssrStageDef): MStage => ({ key: s.key, label: s.short, long: s.long, owner: s.owner });
 const STAGES: MStage[] = ASSR_STAGES.map(toMStage);
-const STAGE_INDEX: Record<string, number> = ASSR_STAGE_INDEX;
 // Active (resolution-filtered) canonical stages for a case, in the mobile
 // view-model shape. Internal resolution → Supplier Pickup + Item Ready drop.
 const activeMStages = (method: string | null | undefined, currentStage: string): MStage[] =>
@@ -276,11 +275,13 @@ const RESOLUTION_LABELS: Record<string, string> = {
   return_visit: "2nd Services",
 };
 const resolutionLabel = (v: string) => RESOLUTION_LABELS[v] ?? cap(v.replace(/_/g, " "));
-const prettyStage = (stage: string) => {
-  if (stage === "voided") return "Voided — Not Valid";
-  const idx = STAGE_INDEX[stage];
-  return idx != null ? STAGES[idx].long : cap(stage.replace(/_/g, " ")) || "—";
-};
+/* The `voided` literal that used to sit on line 1 of this function is gone —
+   it existed because the ordered stepper (STAGES) legitimately has no row for a
+   terminal alt-outcome, so mobile had to carry the word itself. The words now
+   come from the shared table, which answers for every stage the column can
+   hold, funnel step or not. STAGES still answers the ORDER question. */
+const prettyStage = (stage: string) =>
+  ASSR_STAGE_LABEL[stage] ?? (cap(stage.replace(/_/g, " ")) || "—");
 // Numeric DD/MM/YYYY (+ HH:mm) via the shared formatter — house rule, and it
 // UTC-tags bare SQLite timestamps so they don't shift by the device timezone.
 const dm = (d: string | null | undefined) => formatDate(d);
@@ -1012,7 +1013,12 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const transitionTo = async (target: string, withConfirm = true) => {
     if (!target || target === stageOf(c)) return;
     if (withConfirm) {
-      const label = STAGES[STAGE_INDEX[target]]?.long ?? target;
+      /* prettyStage, not the ordered stepper. This read the stepper by index
+         (`ASSR_STAGE_INDEX`), which has no row for a terminal alt-outcome, so
+         the confirm box asked "Move to voided?" — the same missing-row hole as
+         the portal's, in the file that had already patched around it once. Any
+         stage the column can hold is a legal target. */
+      const label = prettyStage(target);
       if (!(await confirm({ title: `Move to ${label}?`, confirmLabel: "Change stage" }))) return;
     }
     await runWrite(async () => {
