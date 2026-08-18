@@ -66,20 +66,6 @@
 /** Statuses a Sales Invoice can be raised from. */
 export const SI_TRANSFERABLE_DO_STATUSES = ['signed', 'delivered'] as const;
 
-/**
- * The eight labels of the scm.do_status enum, mirroring DO_STATUSES in
- * backend/src/scm/shared/do-shipped-states.ts.
- *
- * Exported so the test can assert that EVERY legal status gets a real sentence
- * out of this module rather than silence. It is not a gate — nothing here
- * validates against it — because the functions must keep answering for a value
- * that is not on the list; that generic answer is the whole point.
- */
-export const DO_STATUSES_FOR_TEST = [
-  'DRAFT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT',
-  'SIGNED', 'DELIVERED', 'INVOICED', 'CANCELLED',
-] as const;
-
 /** Normalise a raw status off a row into the lower-case token used here. */
 function norm(status: string | null | undefined): string {
   return String(status ?? '').trim().toLowerCase();

@@ -1,11 +1,26 @@
 import { describe, it, expect } from 'vitest';
 import {
-  DO_STATUSES_FOR_TEST,
   doAdvanceBlockReason,
   doAdvanceStep,
   SI_TRANSFERABLE_DO_STATUSES,
   siTransferBlockReason,
 } from './do-next-step';
+// @ts-expect-error — .mjs constants module, no types, deliberately not vendored.
+import { DO_SHIPPED_STATES } from '../../../../../backend/scripts/lib/do-shipped-states.mjs';
+
+/* The status vocabulary is DERIVED, not hand-typed. DO_SHIPPED_STATES is the
+   canonical shipped list (backend/src/scm/shared/do-shipped-states.ts, mirrored
+   into .mjs and pinned by backend/tests/doShippedStatesMirror.test.ts), and the
+   three remaining labels of the scm.do_status enum are its complement. Written
+   this way so that a status ADDED to the shipped set arrives here on its own and
+   this suite fails until the module has a sentence for it — a hand-copied list
+   would simply not notice, which is the whole reason the lint rule forbids one. */
+const DO_STATUSES: string[] = [...(DO_SHIPPED_STATES as string[]), 'DRAFT', 'LOADED', 'CANCELLED'];
+
+/** The shipped states from which the document is not yet signed off. */
+const PRE_SIGNATURE: string[] = ['LOADED', ...(DO_SHIPPED_STATES as string[]).filter(
+  (s) => s !== 'SIGNED' && s !== 'DELIVERED' && s !== 'INVOICED',
+)];
 
 /* These tests pin the two properties that decide whether this module still does
    its job in six months:
@@ -32,7 +47,7 @@ describe('siTransferBlockReason', () => {
   });
 
   it('gives every blocking status an actionable sentence', () => {
-    for (const s of ['DRAFT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'CANCELLED', 'INVOICED']) {
+    for (const s of DO_STATUSES.filter((x) => !['SIGNED', 'DELIVERED'].includes(x))) {
       const r = siTransferBlockReason(s);
       expect(r, s).toBeTruthy();
       expect(r!.length, s).toBeGreaterThan(20);
@@ -41,7 +56,7 @@ describe('siTransferBlockReason', () => {
   });
 
   it('names the SIGN step from the pre-signature shipped states', () => {
-    for (const s of ['LOADED', 'DISPATCHED', 'IN_TRANSIT']) {
+    for (const s of PRE_SIGNATURE) {
       expect(siTransferBlockReason(s)).toMatch(/signed/i);
     }
   });
@@ -71,13 +86,13 @@ describe('doAdvanceStep', () => {
   });
 
   it('marks the pre-signature shipped states signed', () => {
-    for (const s of ['LOADED', 'DISPATCHED', 'IN_TRANSIT']) {
+    for (const s of PRE_SIGNATURE) {
       expect(doAdvanceStep(s), s).toEqual({ status: 'DELIVERED', label: 'Mark signed' });
     }
   });
 
   it('offers no step from a terminal or already-complete status', () => {
-    for (const s of ['SIGNED', 'DELIVERED', 'INVOICED', 'CANCELLED']) {
+    for (const s of DO_STATUSES.filter((x) => !PRE_SIGNATURE.includes(x) && x !== 'DRAFT')) {
       expect(doAdvanceStep(s), s).toBeNull();
     }
   });
@@ -93,7 +108,7 @@ describe('doAdvanceStep', () => {
 
 describe('the two questions are never both silent', () => {
   it('answers every legal status with at least one sentence', () => {
-    for (const s of DO_STATUSES_FOR_TEST) {
+    for (const s of DO_STATUSES) {
       const advance = doAdvanceStep(s) ? null : doAdvanceBlockReason(s);
       const transfer = siTransferBlockReason(s);
       const canAdvance = !!doAdvanceStep(s);
@@ -106,8 +121,14 @@ describe('the two questions are never both silent', () => {
   });
 
   it('covers the whole scm.do_status enum', () => {
-    expect([...DO_STATUSES_FOR_TEST].sort()).toEqual(
-      ['CANCELLED', 'DELIVERED', 'DISPATCHED', 'DRAFT', 'INVOICED', 'IN_TRANSIT', 'LOADED', 'SIGNED'].sort(),
-    );
+    /* This is the ONE place the eight labels are written out, and it is the
+       EXPECTED VALUE of an equality assertion, not a list anything reads to
+       decide behaviour. Its entire job is to fail when the derived list above
+       and the enum stop agreeing — the referee, which is the opposite of the
+       silent copy the rule forbids. Nothing imports it; deleting it would
+       remove a check, not a duplicate. */
+    // eslint-disable-next-line no-restricted-syntax -- assertion target: the enum this suite is the referee for, deliberately spelled out so a drift fails here.
+    const ENUM_LABELS = ['CANCELLED', 'DELIVERED', 'DISPATCHED', 'DRAFT', 'INVOICED', 'IN_TRANSIT', 'LOADED', 'SIGNED'];
+    expect([...DO_STATUSES].sort()).toEqual(ENUM_LABELS.sort());
   });
 });
