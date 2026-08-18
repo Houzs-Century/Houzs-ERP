@@ -435,11 +435,15 @@ export const Mrp = () => {
   const [dateBasis, setDateBasis] = useState<'delivery' | 'processing' | 'soDate' | 'orderBy'>('delivery');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
-  /* SHOWN by default (owner, 2026-08-18). A planning screen that hides half its
-     demand cannot answer the question it exists to answer; undated rows are
-     marked "No date" and sort last, so they are visibly not-ready without being
-     invisible. Unticking still hides them. See parseIncludeUndated in mrp.ts. */
-  const [showUndated, setShowUndated] = useState<boolean>(true);
+  /* HIDDEN by default (owner, 2026-08-18, ruling on a build that had it shown):
+     "这个应该是要把没有日期的藏起来的,不过我点 show no date 它才会出来." This is
+     the ordering worklist and undated demand is not orderable yet, so it stays
+     off the list until asked for. What was actually broken was never the rows
+     being absent — it was the page saying NOTHING about withholding them; the
+     banner below carries the count in both directions, so the operator always
+     knows there is something behind the toggle. Ticking shows them, marked
+     "No date" and sorted last. See parseIncludeUndated in mrp.ts. */
+  const [showUndated, setShowUndated] = useState<boolean>(false);
   /* Commander 2026-05-29 — focus view: hide everything that's fully covered and
      show ONLY the rows that still need ordering (shortage > 0), so the operator
      can go straight to Proceed PO without wading past the Ready ones. */
@@ -950,12 +954,14 @@ export const Mrp = () => {
           demand was absent by default and the page said nothing, so a real
           shortage read as no shortage at all.
 
-          Since 2026-08-18 these rows are SHOWN by default; the banner did not
-          become unnecessary, it changed sides. A count that only appears while
-          rows are withheld goes quiet the moment the default flips, which is the
-          same silence in a new place — so this renders whenever there IS undated
-          demand and says which of the two things is true of it. The one-click
-          toggle works in whichever direction the operator is not currently in.
+          The rows stay HIDDEN by default (owner 2026-08-18: "这个应该是要把没有
+          日期的藏起来的,不过我点 show no date 它才会出来") — hiding is legitimate on
+          an ordering worklist, and it was never the hiding that broke; it was
+          the SILENCE. So the banner is the fix, not the default: it renders
+          whenever there IS undated demand and says which of the two things is
+          true of it, in either direction, so a later flip cannot reintroduce the
+          same silence. The one-click toggle works from whichever side the
+          operator is currently on.
 
           `hidden` comes from the RESPONSE, not from showUndated, so a request
           the server did not honour is described as it actually came back.

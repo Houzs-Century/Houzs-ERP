@@ -6,12 +6,15 @@
 // default view returned 82 of 163 live 2990 SO-item ids and 8 of 68 short sofa
 // sets.
 //
-// Since 2026-08-18 undated demand is SHOWN by default (owner's call: a forced
-// delivery date would be a FAKE one, and a fake date outranks a real one in an
-// allocation sorted by date — so the demand keeps its null and stops being
-// invisible instead). The banner therefore has to speak in BOTH directions:
-// what is on screen, or what is being withheld. Whichever state the page is in,
-// the number is never absent.
+// Owner, 2026-08-18, ruling on a build that had flipped the default to shown:
+// "这个应该是要把没有日期的藏起来的,不过我点 show no date 它才会出来." Undated demand
+// stays HIDDEN by default — this is the ordering worklist and an undated line is
+// not orderable — and a forced delivery date is not the answer either, because a
+// forced date gets a FAKE one typed into it and a fake date outranks a real one
+// in an allocation sorted by date. So the demand keeps its null, stays off the
+// list, and STOPS BEING SILENT. The banner therefore has to speak in BOTH
+// directions: what is being withheld, or what is on screen. Whichever state the
+// page is in, the number is never absent.
 //
 // What is pinned here is the visibility, not the arithmetic: the count itself is
 // computed and tested in backend/src/scm/routes/mrp.test.ts. The hook is mocked
@@ -109,7 +112,7 @@ describe('MRP — hidden undated demand is stated on the page', () => {
      the screen — the same silence the banner was built to end, moved one state
      to the left. The count is now unconditional on there BEING undated demand,
      and only its wording depends on which way the flag went. */
-  test('shown by default: the count is still on screen, now saying they are listed', () => {
+  test('toggled on: the count is still on screen, now saying they are listed', () => {
     mrpData = response({ lines: 81, shortageUnits: 60, sofaSets: 0, sofaShortageUnits: 0, hidden: false });
     renderPage();
     fireEvent.click(screen.getByRole('tab', { name: 'Bedframe' }));

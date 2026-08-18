@@ -147,12 +147,19 @@ count in BOTH states, with a one-click **Show them** / **Hide them** wired to th
 existing toggle; it reads `hidden` from the SERVER, not from its own checkbox, so
 a request the server did not honour is described as it came back.
 
-### The default FLIPPED to shown (owner, 2026-08-18)
+### The default STAYS hidden — what changed is the silence (owner, 2026-08-18)
 
-It was `false` from 2026-05-29 on the reasoning that an undated line is not
-orderable yet and this page is the ordering worklist. That was right about
-ordering and wrong about SEEING: a planning screen that withholds half its
-demand cannot answer the question it exists to answer.
+Owner, ruling on a build that had flipped it to shown: *"这个应该是要把没有日期的
+藏起来的,不过我点 show no date 它才会出来."*
+
+It has been `false` since 2026-05-29, on the reasoning that an undated line is
+not orderable yet and this page is the ordering worklist. That reasoning holds.
+The measurement that prompted a flip was real — the default view held 82 of 163
+live 2990 SO-item ids and 8 of 68 short sofa sets — but the inference was wrong.
+What the operator could not see was never the ROWS; it was that rows were being
+withheld at all, because the page said nothing. **Hiding is legitimate. Hiding
+SILENTLY is not.** The banner is the fix, and it speaks in both directions, so a
+future flip cannot restore the silence.
 
 **Requiring a delivery date was considered and REJECTED.** 43% of 2990's sales
 orders carry no delivery date, flat across June/July/August — a habit, not an
@@ -160,8 +167,9 @@ import artefact (HOUZS's 81.9% above IS one: its AutoCount importer's INSERT
 carries neither delivery nor processing date). Forcing the field makes people
 type a FAKE date, and a fake date is worse than a null one, because allocation is
 BY DELIVERY DATE — a fake promise would jump the queue ahead of a real one. So
-undated demand keeps its null and stops being invisible instead: shown by
-default, tagged **No date** on the row, sorted last.
+undated demand keeps its null and stops being SILENT instead: hidden by default
+but always counted and announced, one click from view, and when shown it is
+tagged **No date** on the row and sorted last.
 
 **This is safe only because the flag is display-only.** The allocation order is
 unchanged and pinned by `mrp.test.ts` ("a dated line wins the scarce bucket over

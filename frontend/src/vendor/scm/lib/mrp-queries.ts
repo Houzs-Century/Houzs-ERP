@@ -130,10 +130,12 @@ export type MrpResponse = {
 /** Stock Status Report / MRP — recomputed server-side on every call. */
 export function useMrp(params: { category: string; warehouseId: string; includeUndated?: boolean }) {
   const { category, warehouseId, includeUndated } = params;
-  /* Undated demand is SHOWN unless the caller says otherwise (server default
-     flipped to true 2026-08-18). Kept in one place so the cache key and the
-     query string can never disagree about what was asked for. */
-  const wantUndated = includeUndated ?? true;
+  /* Undated demand is HIDDEN unless the caller asks for it (owner 2026-08-18;
+     same default as the server's parseIncludeUndated). Kept in one place so the
+     cache key and the query string can never disagree about what was asked for
+     — and it must keep matching the server: two defaults for one flag is the
+     "one rule, two homes" shape that this codebase keeps paying for. */
+  const wantUndated = includeUndated ?? false;
   return useQuery({
     queryKey: ['mrp', category, warehouseId, wantUndated],
     queryFn: () => {

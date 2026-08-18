@@ -699,16 +699,26 @@ describe('parseIncludeUndated — a truthy-looking value must never be silently 
     }
   });
 
-  test('omitted is the documented default — TRUE since 2026-08-18', () => {
-    /* Flipped by the owner after the measurement that started this: the default
-       view held 82 of 163 live 2990 SO-item ids and 8 of 68 short sofa sets, so
-       a screen whose job is "what is short" was answering from half the book.
-       Requiring a delivery date was rejected — a forced date gets a fake one,
-       and a fake date outranks a real one in an allocation sorted BY date.
+  test('omitted is the documented default — FALSE, undated demand is hidden', () => {
+    /* Owner, 2026-08-18, ruling on a build that had flipped this to true:
+       "这个应该是要把没有日期的藏起来的,不过我点 show no date 它才会出来."
 
-       This flips VISIBILITY only; the allocation-order pin below is what makes
-       that claim checkable rather than asserted. */
-    expect(parseIncludeUndated(undefined)).toBe(true);
+       The measurement that started the work stands — the default view held 82 of
+       163 live 2990 SO-item ids and 8 of 68 short sofa sets — but the inference
+       drawn from it did not. What the owner could not see was never the ROWS; it
+       was that rows were being withheld at all, because the page said nothing.
+       Hiding is legitimate here: this is the ordering worklist and an undated
+       line is not orderable. Hiding SILENTLY is what was broken, and the banner
+       is what fixes it — mrpUndatedBanner.test.tsx pins that the count is on
+       screen in BOTH directions, so a future flip cannot restore the silence.
+
+       Requiring a delivery date was considered and rejected for a separate
+       reason that still holds: a forced date gets a FAKE one typed into it, and
+       a fake date outranks a real one in an allocation sorted BY date.
+
+       This is VISIBILITY only; the allocation-order pin below is what makes that
+       claim checkable rather than asserted. */
+    expect(parseIncludeUndated(undefined)).toBe(false);
   });
 
   test('an explicit "false" still hides — the toggle did not become decorative', () => {
