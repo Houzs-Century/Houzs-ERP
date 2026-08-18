@@ -105,7 +105,11 @@ No database and no credentials needed — there is a rig:
 
 1. `npx tsx scripts/settlement-demo-server.ts` from `backend/` (port 8788,
    in-memory; the REAL handlers, parser, matcher and posting engine).
-2. `npm run dev` in `frontend/`, then open `/demo-settlement.html`.
+2. `npm run dev:settlement-demo` in `frontend/`, then open
+   `/demo-settlement.html`. NOT plain `npm run dev`: authed-fetch falls back to
+   the PRODUCTION Worker when VITE_API_URL is unset, so the rig screens 401 and
+   render blank — an empty company picker with the reason only in the browser
+   console. The script (`frontend/demo/dev.mjs`) sets it and says so on boot.
 3. Test files are in `demo-statements/` at the worktree root — the owner's own
    exports with merchant/card numbers replaced. All five acquirers are already
    configured from those files, plus `wrong-file.csv` for the refusal.
