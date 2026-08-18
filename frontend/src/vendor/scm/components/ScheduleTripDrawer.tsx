@@ -47,7 +47,7 @@ import { DateField } from "./DateField";
 
 /* One order's effective delivery date — amended wins over the customer's
    original (the same rule derivePlanningState uses), null-safe. Sliced to the
-   YYYY-MM-DD a <input type="date"> wants. */
+   YYYY-MM-DD DateField takes. */
 function effectiveDateOf(o: PlanningOrder): string {
   const iso = o.effective_delivery_date ?? o.amended_delivery_date ?? o.customer_delivery_date ?? "";
   return iso ? iso.slice(0, 10) : "";

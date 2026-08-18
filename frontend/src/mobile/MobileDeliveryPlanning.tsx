@@ -2022,7 +2022,7 @@ function GoodsToDeliverCard({ order }: { order: BoardRow }) {
 // A TIMESTAMPTZ ISO → the value <input type="datetime-local"> wants.
 const toDtLocal = (iso: string | null | undefined): string =>
   iso ? String(iso).slice(0, 16) : "";
-// A YYYY-MM-DD date-ish string → the value <input type="date"> wants.
+// A YYYY-MM-DD date-ish string → the ISO value DateField takes.
 const toDateInput = (d: string | null | undefined): string =>
   d ? String(d).slice(0, 10) : "";
 

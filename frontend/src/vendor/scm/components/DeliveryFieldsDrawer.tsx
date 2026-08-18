@@ -43,7 +43,7 @@ const HOUSE_TYPES = ['New House', 'Replacement'] as const;
    (local-ish YYYY-MM-DDTHH:mm). Best-effort: slice the ISO; empty when null. */
 const toDtLocal = (iso: string | null): string =>
   iso ? String(iso).slice(0, 16) : '';
-/* A YYYY-MM-DD date string → the value a <input type="date"> wants. */
+/* A YYYY-MM-DD date string → the ISO value DateField takes. */
 const toDateInput = (d: string | null): string => (d ? String(d).slice(0, 10) : '');
 
 export const DeliveryFieldsDrawer = ({
