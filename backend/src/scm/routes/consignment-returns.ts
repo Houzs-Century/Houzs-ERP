@@ -27,6 +27,7 @@ import { buildVariantSummary } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { defaultWarehouseId, writeMovements, resolveWarehouseLotBatches, resolveWarehouseLotCosts } from '../lib/inventory-movements';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
@@ -650,7 +651,7 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
     consignment_do_id: (body.consignmentDoId as string) ?? (body.deliveryOrderId as string) ?? null,
     debtor_code: (body.debtorCode as string) ?? null,
     debtor_name: (body.debtorName ?? body.customerName) as string,
-    return_date: (body.returnDate as string) ?? todayMyt(),
+    return_date: dateOrNull(body.returnDate) ?? todayMyt(),
     reason: (body.reason as string) ?? null,
     address1: (body.address1 as string) ?? null,
     address2: (body.address2 as string) ?? null,
@@ -886,6 +887,9 @@ consignmentReturns.patch('/:id', async (c) => {
       updates[to] = body[from];
     }
   }
+  /* A cleared date input posts "" and this loop wrote it through to a date
+     column, which Postgres rejects and 500s the save. */
+  coerceEmptyDates(updates);
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
   const { data, error } = await scopeToCompanyId(sb.from('consignment_delivery_returns').update(updates).eq('id', id), co.companyId).select('id').maybeSingle();
@@ -1083,10 +1087,29 @@ export const patchConsignmentReturnStatusHandler = async (c: any) => {
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!body.status) return c.json({ error: 'status_required' }, 400);
 
+  /* NORMALISE FIRST — same fix, same reason, as the sibling
+     patchConsignmentNoteStatusHandler (consignment-notes.ts), and as the Sales
+     Order / Delivery Order / Sales Invoice handlers that already did it. The
+     asymmetry was inside this file: `resyncReturnInventory` uppercases the
+     PERSISTED status before deciding `cancelled` (:278), while every gate below
+     compared the INCOMING status raw.
+
+     A lowercase 'cancelled' missed the already-cancelled echo, missed the atomic
+     `.neq('status','CANCELLED')` single-flight, fell into the plain `else`
+     write, and never called `resyncReturnInventory` — so the CS_DR inventory IN
+     was NEVER reversed while the return read as cancelled everywhere. Same
+     mechanism as the Sales Invoice revenue-reversal bug that produced
+     SI_STATUS_CANON, with stock in place of revenue.
+
+     No status whitelist here either: this document's vocabulary is not declared
+     in one place, and a guessed one would refuse a legitimate status. Written up
+     as a recommendation instead. */
+  const toStatus = String(body.status).trim().toUpperCase();
+
   const { data: cur } = await scopeToCompanyId(sb.from('consignment_delivery_returns').select('status').eq('id', id), co.companyId).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
-  if (body.status === 'CANCELLED' && prevStatus === 'CANCELLED') {
+  if (toStatus === 'CANCELLED' && prevStatus === 'CANCELLED') {
     return c.json({ consignmentReturn: { id, status: 'CANCELLED' } });
   }
   /* Audit 2026-06-20 — a CANCELLED Consignment Return is FINAL (mirrors
@@ -1099,15 +1122,15 @@ export const patchConsignmentReturnStatusHandler = async (c: any) => {
   }
 
   const now = new Date().toISOString();
-  const ts: Record<string, string> = { updated_at: now, status: body.status };
-  if (body.status === 'RECEIVED') ts.received_at = now;
-  if (body.status === 'INSPECTED') { ts.inspected_at = now; if (body.inspectionNotes) ts.inspection_notes = body.inspectionNotes; }
-  if (body.status === 'REFUNDED') ts.refunded_at = now;
+  const ts: Record<string, string> = { updated_at: now, status: toStatus };
+  if (toStatus === 'RECEIVED') ts.received_at = now;
+  if (toStatus === 'INSPECTED') { ts.inspected_at = now; if (body.inspectionNotes) ts.inspection_notes = body.inspectionNotes; }
+  if (toStatus === 'REFUNDED') ts.refunded_at = now;
 
   /* ATOMIC cancel guard — the CANCELLED write is conditional on the row still
      being non-cancelled so two concurrent cancels can't double-reverse. */
   let data: { id: string; status: string } | null;
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('consignment_delivery_returns')
       .update(ts).eq('id', id).neq('status', 'CANCELLED'), co.companyId)
       .select('id, status').maybeSingle();
@@ -1126,7 +1149,7 @@ export const patchConsignmentReturnStatusHandler = async (c: any) => {
   // Hoisted: the response is OUTSIDE this block, so a block-scoped
   // declaration would leave the cancel path unable to report.
   let resyncErrs: string[] = [];
-  if (body.status === 'CANCELLED') {
+  if (toStatus === 'CANCELLED') {
     /* REPORTED, not discarded. The CREATE path returns this exact string[] as
     movementErrors; these mutations threw it away, so a resync that failed to
     book or drain stock returned a clean 200. writeMovements never throws, so

@@ -58,13 +58,35 @@ export async function addCustomerCredit(sb: any, args: AddCreditInput): Promise<
   return { ok: true, id: (data as { id: string }).id };
 }
 
-/** Sum the live credit balance for a customer. */
-export async function getCustomerCreditBalance(sb: any, debtorCode: string): Promise<number> {
+/** Sum the live credit balance for a customer, within ONE company.
+ *
+ *  `companyId` is REQUIRED, and required for the reason `pwp-claim-single.ts`
+ *  states for its own company argument: `debtor_code` is NOT globally unique.
+ *  Mig 0123 re-keyed `scm.customers` on `(customer_code, company_id)`, so the
+ *  same customer code legitimately names a DIFFERENT customer in each company,
+ *  while `scm.customer_credits.company_id` is NOT NULL (mig 0083). Summing on
+ *  `debtor_code` alone therefore pooled both companies' ledgers into one
+ *  balance — and the callers that SPEND it stamp the invoice's company on the
+ *  debit, so the stamp is what made the divergence silent (the same shape the
+ *  "A STAMP IS NOT A PREDICATE" note in check-company-scope.mjs describes).
+ *  An optional parameter would have defaulted every caller back to the pooled
+ *  read with no compile error, so it is positional and required.
+ *
+ *  `null` DEGRADES to no predicate, matching the three-state sentinel in
+ *  companyScope.ts: an unresolved company must not blank a single-company
+ *  install. Pass an explicit `null` only where that is the intent. */
+export async function getCustomerCreditBalance(
+  sb: any,
+  debtorCode: string,
+  companyId: number | null,
+): Promise<number> {
   if (!debtorCode || !debtorCode.trim()) return 0;
-  const { data } = await sb
+  let q = sb
     .from('customer_credits')
     .select('amount_centi')
     .eq('debtor_code', debtorCode);
+  if (companyId != null) q = q.eq('company_id', companyId);
+  const { data } = await q;
   let sum = 0;
   for (const r of (data ?? []) as Array<{ amount_centi: number }>) sum += Number(r.amount_centi ?? 0);
   return sum;
@@ -208,11 +230,6 @@ async function applyCustomerCreditToSiLegacy(
     return { applied: 0, reason: 'already_applied' };
   }
 
-  const balance = await getCustomerCreditBalance(sb, args.debtorCode);
-  if (balance <= 0) return { applied: 0, reason: 'no_balance' };
-  const apply = Math.min(balance, args.remainingDueCenti);
-  if (apply <= 0) return { applied: 0, reason: 'no_due' };
-
   // Multi-company (mig 0061): the payment + ledger rows inherit the SI's company.
   /* `?? null` does NOT fail closed here, which is the whole reason this aborts.
      company_id is NOT NULL (mig 0083) but mig 0091 also gave every scm/public
@@ -222,6 +239,11 @@ async function applyCustomerCreditToSiLegacy(
      A 2990 customer's credit and its payment row would be booked to Houzs's
      accounts with no error anywhere. Nothing is written at this point, so
      returning is free. */
+  /* READ BEFORE THE BALANCE, not after. This read used to sit BELOW the balance
+     sum, which meant the balance was necessarily computed without a company and
+     pooled both ledgers — the SI's company then stamped the debit, so a company-1
+     invoice could consume a company-2 credit row and only the debit carried a
+     company. The order is the fix; keep it. */
   const { data: siCo, error: siCoErr } = await sb.from('sales_invoices').select('company_id').eq('id', args.siId).maybeSingle();
   if (siCoErr) {
     /* eslint-disable-next-line no-console */
@@ -229,6 +251,11 @@ async function applyCustomerCreditToSiLegacy(
     return { applied: 0, reason: 'company_read_failed' };
   }
   const companyId = (siCo as { company_id?: number | null } | null)?.company_id ?? null;
+
+  const balance = await getCustomerCreditBalance(sb, args.debtorCode, companyId);
+  if (balance <= 0) return { applied: 0, reason: 'no_balance' };
+  const apply = Math.min(balance, args.remainingDueCenti);
+  if (apply <= 0) return { applied: 0, reason: 'no_due' };
 
   // 1. Payment row on the SI — marks the SI as (partly) paid.
   const { error: payErr } = await sb.from('sales_invoice_payments').insert({

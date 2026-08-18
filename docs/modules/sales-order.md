@@ -684,6 +684,20 @@ PostgREST aggregate over the base table (JS-reduce fallback if aggregates are
 disabled). `?status=OTHER` filters to exactly that catch-all bucket; every real
 status stays an exact match.
 
+> **FIXED 2026-08-18: a `statusCounts` that could not be READ was served as
+> zeros.** The aggregate's error was inspected, the FALLBACK's was not:
+> `paginateAll` answers `{ data: null, error }` on failure and the handler did
+> `for (const r of (fb.data ?? []))`, so both reads failing produced
+> `{ all: 0, draft: 0, … other: 0 }` beside a fully populated `salesOrders`
+> page — every tab reading zero with rows on screen, and `all` (the SUM of the
+> buckets) understating with them. It is now
+> `500 { error: 'status_counts_failed' }` naming both failures, held in a
+> variable so the LIST read's own error still reports first. Same guard as the
+> PO / PI / SI / GRN / DO lists (`backend/src/scm/lib/status-counts.ts`); this
+> list keeps its own reader because it counts by grouped aggregate rather than
+> one head-query per bucket. A legitimately empty result is still 0 — that is a
+> successful read of zero rows, not an absent answer.
+
 ### Per-line source-PO trace on the detail payload (owner rule 2026-08-01)
 
 `GET /:docNo` and `GET /:docNo/items` stamp, per line, on top of the existing

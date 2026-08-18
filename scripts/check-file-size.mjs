@@ -6,8 +6,14 @@
 // is the I/O around it: find the files, count the lines, print a verdict.
 //
 // Short version: files already over 2,000 lines carry a recorded ceiling and may
-// only SHRINK; every other file is capped at 2,000. Nothing here splits a big
-// file — that is a refactor with real risk. This only stops it growing.
+// not GROW past it; every other file is capped at 2,000. Nothing here splits a
+// big file — that is a refactor with real risk. This only stops it growing.
+//
+// "May not grow" is not "may only shrink", and the difference is the whole
+// usability of this gate: a file sitting ABOVE its ceiling is still editable, and
+// a net-zero or net-negative diff on it passes. Only a diff that leaves the file
+// bigger than both its ceiling and its size at the merge base is charged. See
+// `classifyViolations` in scripts/lib/file-size-ratchet.mjs.
 //
 // Usage:
 //   node scripts/check-file-size.mjs                  # the gate (CI + local)
@@ -41,6 +47,7 @@ import {
   ceilingFor,
   verdict,
   lowerCeilings,
+  classifyViolations,
   findRaisedCeilings, uncommittedSourcePaths } from './lib/file-size-ratchet.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -354,27 +361,16 @@ function main() {
     process.exit(2);
   }
   /* A file already over its ceiling may be TOUCHED without being charged, as
-     long as this change makes it smaller. The ratchet's subject is GROWTH: a PR
-     that opens a 3,591-line file and leaves it at 3,586 has moved it in the
-     only direction the ratchet asks for, and failing it there tells the author
-     to abandon the improvement or to pay off 104 lines of someone else's debt
-     before they may fix a bug. Measured 2026-08-14 on PR #2127, which did
-     exactly that and was blocked for it.
-     Growth is still charged from the FIRST line: a touched file may not exceed
-     its ceiling, nor its own size at the merge base, whichever is larger. */
+     long as this change does not make it BIGGER. The rule itself, and why it is
+     shaped this way, is written out over `classifyViolations` in
+     scripts/lib/file-size-ratchet.mjs — it lives there, pure and unit-tested,
+     rather than here among the shell-outs. */
   const baseLines = fileLinesAtBase(new Set(v.violations.map((x) => x.path)));
-  const charged = (x) => {
-    if (touched === null || !touched.has(x.path)) return false;
-    const was = baseLines?.get(x.path);
-    if (was === undefined) return true;              // new here, or no base to compare
-    return x.lines > was;                            // only if THIS change grew it
-  };
-  const mine = touched === null ? v.violations : v.violations.filter(charged);
-  const inherited = v.violations.filter((x) => !mine.includes(x));
+  const { charged: mine, touchedNotGrown, untouched } = classifyViolations(v.violations, touched, baseLines);
 
-  if (inherited.length) {
-    console.log(`\nOVER CEILING, but not touched by this change (${inherited.length}) — reported, not charged to this PR:`);
-    for (const x of inherited.sort((a, b) => b.over - a.over)) {
+  if (untouched.length) {
+    console.log(`\nOVER CEILING, but not touched by this change (${untouched.length}) — reported, not charged to this PR:`);
+    for (const x of untouched.sort((a, b) => b.over - a.over)) {
       console.log(`  ${x.path}: ${x.lines} lines, ceiling ${x.ceiling} (over by ${x.over})`);
     }
     /* "or re-baseline" used to end this line, and there is no such operation.
@@ -382,23 +378,53 @@ function main() {
        only LOWER, and `findRaisedCeilings` fails CI on a hand-edited number. So
        the reader was being sent to an escape hatch that does not exist, and the
        only real remedy went unnamed. Say the true one. */
-    const debt = inherited.reduce((n, x) => n + x.over, 0);
-    console.log(`  ${debt} line(s) of ceiling debt in ${inherited.length} file(s), carried from earlier merges.`);
+    const debt = untouched.reduce((n, x) => n + x.over, 0);
+    console.log(`  ${debt} line(s) of ceiling debt in ${untouched.length} file(s), carried from earlier merges.`);
     console.log('  These must SHRINK. `--update` cannot clear them — it only lowers a ceiling to');
     console.log('  match a file that already got smaller, and raising a number by hand fails CI.');
   }
 
-  if (mine.length) {
-    console.error('\nFILE-SIZE GATE FAILED\n');
-    for (const x of mine.sort((a, b) => b.over - a.over)) {
-      console.error(
-        x.grandfathered
-          ? `  ${x.path}\n      ${x.lines} lines, ceiling ${x.ceiling} (over by ${x.over}). This file may only SHRINK.`
-          : `  ${x.path}\n      ${x.lines} lines, cap ${x.ceiling} (over by ${x.over}). New files must come in under ${NEW_FILE_LIMIT}.`,
+  /* Printed as its OWN bucket, not folded into the one above. These files ARE in
+     the diff and the gate HAS looked at them; saying "not touched by this
+     change" about a file the author just edited reads as "the gate cannot see my
+     work", which is the opposite of what happened. */
+  if (touchedNotGrown.length) {
+    console.log(`\nOVER CEILING and TOUCHED by this change, but NOT GROWN (${touchedNotGrown.length}) — allowed:`);
+    for (const x of touchedNotGrown.sort((a, b) => a.delta - b.delta)) {
+      console.log(
+        `  ${x.path}: ${x.wasAtBase} at the merge base -> ${x.lines} (${x.delta > 0 ? '+' : ''}${x.delta}), ceiling ${x.ceiling}.`,
       );
     }
-    console.error('\nSplit the new code into its own module. Do NOT raise the ceiling: it is the');
-    console.error('record of what the file already was, and it only moves down.');
+    console.log('  The ratchet charges GROWTH, not the debt a file arrived with. Editing an');
+    console.log('  over-ceiling file is free as long as the diff does not make it bigger.');
+  }
+
+  if (mine.length) {
+    console.error('\nFILE-SIZE GATE FAILED — this change GREW a file past what it may be.\n');
+    for (const x of mine.sort((a, b) => b.over - a.over)) {
+      const head = x.grandfathered
+        ? `  ${x.path}\n      ${x.lines} lines, ceiling ${x.ceiling} (over by ${x.over}).`
+        : `  ${x.path}\n      ${x.lines} lines, cap ${x.ceiling} (over by ${x.over}). New files must come in under ${NEW_FILE_LIMIT}.`;
+      console.error(
+        x.delta === null
+          ? `${head}\n      No size at the merge base to compare against (added or renamed here), so all of it is this change's.`
+          : `${head}\n      THIS CHANGE GREW IT: ${x.wasAtBase} at the merge base -> ${x.lines} (+${x.delta}).`,
+      );
+    }
+    /* Say the rule, not just the number. The `over by N` figure above is the
+       file's TOTAL distance from its ceiling, most of which is usually debt this
+       author never wrote — and read alone it says "pay off N lines before you
+       may fix anything". On 2026-08-17 that reading cost a real correctness fix:
+       a +4-line change to grns.ts was reported as `over by 170` and reverted,
+       when the actual ask was to give back four lines. Print the delta, then the
+       rule that the delta is measured against. */
+    console.error('\nTHE RULE: the gate charges GROWTH, not debt. An over-ceiling file may be edited');
+    console.error('freely; it fails only when this change leaves it bigger than BOTH its ceiling and');
+    console.error('its own size at the merge base. The `over by N` above is the file\'s total debt —');
+    console.error('you are NOT being asked to pay that off, only not to add to it.');
+    console.error('\nTo land this: make the diff net-non-positive in that file (delete at least as many');
+    console.error('lines as you add), or move the new code into its own module. Do NOT raise the');
+    console.error('ceiling: it is the record of what the file already was, and it only moves down.');
     process.exit(1);
   }
 
