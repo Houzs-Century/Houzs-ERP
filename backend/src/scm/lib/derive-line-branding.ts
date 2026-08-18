@@ -118,7 +118,13 @@ export async function deriveHeaderBrandingFromLines(
   for (let i = 0; i < codes.length; i += 300) {
     let q = sb.from('mfg_products').select('code, branding, category').in('code', codes.slice(i, i + 300));
     if (cid != null) q = q.eq('company_id', cid);
-    const { data } = await q;
+    const { data, error } = await q;
+    /* An unreadable catalogue is NOT "this SKU has no brand". Swallowing it via
+       `data ?? []` would stamp a header derived from a partial catalogue, or
+       leave it blank while looking like a considered decision. Return null so
+       the caller leaves the header alone, and the SO list still derives a label
+       from the lines. */
+    if (error) return null;
     for (const p of (data ?? []) as Array<{ code: string; branding: string | null; category: string | null }>) {
       if (!isBlank(p.branding)) brandByCode.set(p.code, p.branding!.trim());
       if (p.category) catByCode.set(p.code, p.category.trim().toUpperCase());
