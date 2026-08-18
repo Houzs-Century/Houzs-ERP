@@ -31,10 +31,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-// Same exclusions as check-company-scope.mjs's NOT_IDENTITY, kept verbatim so
-// the two passes agree on what "identity" means.
+// Same exclusions as check-company-scope.mjs's NOT_IDENTITY, so the two passes
+// agree on what "identity" means. One deliberate difference: that copy carries
+// `.*_sen` TWICE — the blanket `_centi` -> `_sen` rename in #2438 rewrote both
+// alternatives into the same one. A duplicated alternative matches nothing
+// extra, so this is the deduplicated form of the identical rule.
 const NOT_IDENTITY =
-  /^(id|.*_id|status|state|.*_at|.*_centi|.*_sen|qty|.*_qty|type|kind|active|deleted)$/;
+  /^(id|.*_id|status|state|.*_at|.*_sen|qty|.*_qty|type|kind|active|deleted)$/;
 const NATURAL_KEY_EQ = /\.eq\(\s*['"`]([a-z][a-z0-9_]*)['"`]/g;
 const SCOPED =
   /scopeToCompany|scopeToCompanyId|scopeToAllowedCompanies|allowedCompaniesSql|company_id|requireActiveCompanyId|selfScopedSalesBlocked|activeCompanyId/;
