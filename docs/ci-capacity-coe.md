@@ -434,6 +434,24 @@ Fixed in #2146: the suite is invoked by name in `backend-typecheck`, the two
 assertions now match the invariant rather than the formatting, and a **new**
 assertion fails if the workflow ever stops calling this suite by name.
 
+> **The `scale-postgres-contract` assertion broke a THIRD time, on 2026-08-18
+> (#2412), and that is the useful part of this entry.** #2146 rewrote it to
+> "match the invariant rather than the formatting" — but the invariant it then
+> pinned was still *runs on `pull_request` in `ci.yml`*, which is a LOCATION.
+> When the job moved to `postsubmit.yml` the assertion failed again, on a change
+> that took nothing away from the evidence.
+>
+> The property it actually exists to protect is: the 100k run **executes once
+> per change, in a workflow that really triggers, and its report is retained**.
+> It now finds whichever workflow defines the job, asserts exactly one does, and
+> accepts `pull_request` or `push`. Moving the job again will not break it;
+> deleting it, duplicating it, or hiding it behind `workflow_dispatch` will.
+>
+> Twice is a coincidence, three times is a pattern: each rewrite pinned one
+> layer further out — YAML layout, then the event name, then the file. The guard
+> was verified RED against all three violations before being trusted, not merely
+> observed green.
+
 ## Lessons
 
 1. **Time the thing before optimising it.** The migration replay looked
