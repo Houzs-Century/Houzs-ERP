@@ -46,12 +46,29 @@ export interface ProceedGateInput {
  *  Date,又 Proceed,全系统直接统一一个叫 Processing Date... Processing Date 就是当天
  *  Proceed 的意思。如果分两个的话,会不会很乱?"*
  *
- *  It answers ONE question — may this order start production? — and every path
+ *  It answers ONE question — may this order be released for purchasing to order
+ *  goods? (owner 2026-08-18; there is no production here) — and every path
  *  that used to ask its own version now asks this: setting `processing_date`
- *  (the date the user picks), auto-stamping `proceeded_at` at create, and the two
- *  manual proceed paths. `proceeded_at` remains a separate COLUMN because it is a
- *  timestamp the system writes, not a date the user picks; what is unified is the
- *  RULE, not the storage.
+ *  (the date the user picks) and the two manual proceed paths.
+ *
+ *  ONE RULE AND ONE STORAGE (owner, 2026-08-18, naming the scope: frontend,
+ *  backend AND database). This docblock used to end: *"`proceeded_at` remains a
+ *  separate COLUMN because it is a timestamp the system writes, not a date the
+ *  user picks; what is unified is the RULE, not the storage."* That argument is
+ *  coherent — an audit stamp and a planned date really are different kinds of
+ *  fact — and the owner has OVERRULED it for the purpose of DECISIONS. His
+ *  reason is the one the bug record supports: every Processing-Date bug this
+ *  repo has had came from there being more than one of them.
+ *
+ *  So no decision anywhere may branch on a second column. What survives is the
+ *  question "WHEN did someone press Proceed", and that has no consumer: the
+ *  desktop Proceed Date field was deleted on 2026-06-05, the dashboard hook that
+ *  carried the value has zero callers, and no export, PDF or AutoCount payload
+ *  names it. Where the fact IS still wanted it belongs in scm.mfg_so_audit_log,
+ *  which nothing gates on.
+ *
+ *  Retirement state and the remaining step are in shared/so-processing-date.ts
+ *  under "RETIRING THE SECOND STORAGE".
  *
  *  WHAT CHANGED, and why each way:
  *   - **Threshold is per company** (HOUZS 30% / 2990 50%). Previously two
@@ -152,19 +169,20 @@ export const meetsDepositGate = (
  *  more than three times: *"只要有 Processing Date，就代表他 Proceed 了。没有
  *  processing date 就代表没有 proceed。"* Proceed is therefore not an event with a
  *  click time — it is the state of having a date — so a proceed with no date is
- *  not an order we can start: the factory queue is ordered BY that date.
+ *  not an order anyone has been released to act on. Owner 2026-08-18:
+ *  *"Processing Date 就代表这张单可以安排订货了"* — the date IS the release.
  *
- *  Refusing beats defaulting to today. A guessed start date is a real order in
- *  the real queue on the wrong day, and nobody would ever see that it was
- *  guessed. A refusal costs the operator one field. */
+ *  Refusing beats defaulting to today. A guessed date releases a real order to
+ *  purchasing on the wrong day, and nobody would ever see that it was guessed.
+ *  A refusal costs the operator one field. */
 export const PROCEED_NEEDS_DATE = {
   error: 'proceed_needs_processing_date',
-  reason: 'Proceeding an order means setting its Processing Date, and this order has none. Set the date the factory starts, then proceed.',
+  reason: 'Proceeding an order means setting its Processing Date, and this order has none. Set the date this order is released for ordering, then proceed.',
 } as const;
 
 export const PROCEED_DATE_UNREADABLE = {
   error: 'proceed_needs_processing_date',
-  reason: 'The Processing Date sent with this proceed is not a calendar date (expected YYYY-MM-DD). A wrong start date is a wrong factory queue, so nothing was changed.',
+  reason: 'The Processing Date sent with this proceed is not a calendar date (expected YYYY-MM-DD). A wrong date releases the order for ordering on the wrong day, so nothing was changed.',
 } as const;
 
 export type ProceedDateInput = {

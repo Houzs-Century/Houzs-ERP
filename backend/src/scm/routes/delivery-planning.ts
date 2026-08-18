@@ -2042,7 +2042,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
      fields here (possession/house type/referral/DP amend dates) stay FREE. */
   if (soUpdates['replacement_disposal'] !== undefined && soDocNo) {
     const { data: lockRow } = await sb.from('mfg_sales_orders')
-      .select('processing_date, proceeded_at, status')
+      .select('processing_date, status')
       .eq('doc_no', soDocNo).maybeSingle();
     const before = await sb.from('mfg_sales_orders')
       .select('replacement_disposal').eq('doc_no', soDocNo).maybeSingle();
@@ -2058,7 +2058,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
        sentence — a second code here would need its own entry to avoid surfacing
        raw. */
     const dpLocked = genuineChange && (
-      soProcessingLocked(lockRow as { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null)
+      soProcessingLocked(lockRow as { processing_date?: string | null; status: string | null } | null)
       || await soPoLocked(sb, soDocNo)
     );
     if (dpLocked) {
