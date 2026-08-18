@@ -231,21 +231,11 @@ export const HrCommission = () => {
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">From</span>
-          <DateField
-            fullWidth
-            className={INPUT_CLASS}
-            value={from}
-            onChange={(iso) => setFrom(iso)}
-          />
+          <DateField fullWidth className={INPUT_CLASS} value={from} onChange={(iso) => setFrom(iso)}/>
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">To</span>
-          <DateField
-            fullWidth
-            className={INPUT_CLASS}
-            value={to}
-            onChange={(iso) => setTo(iso)}
-          />
+          <DateField fullWidth className={INPUT_CLASS} value={to} onChange={(iso) => setTo(iso)}/>
         </label>
         <Button
           variant="primary"

@@ -444,12 +444,7 @@ export const ConsignmentNoteNew = () => {
           <div className={styles.formGrid4}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Note Date</span>
-              <DateField
-                fullWidth
-                className={styles.fieldInput}
-                value={doDate}
-                onChange={(iso) => setDoDate(iso)}
-              />
+              <DateField fullWidth className={styles.fieldInput} value={doDate} onChange={(iso) => setDoDate(iso)}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Driver</span>

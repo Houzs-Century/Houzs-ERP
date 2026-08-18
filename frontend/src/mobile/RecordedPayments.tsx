@@ -420,12 +420,7 @@ export function AddPaymentSheet({
             <div style={{ display: "flex", gap: 9 }}>
               <label className="fld" style={{ flex: 1.1 }}>
                 <span className="fld-l">Date</span>
-                <DateField
-                  fullWidth
-                  className="fld-i"
-                  value={date}
-                  onChange={(iso) => setDate(iso)}
-                />
+                <DateField fullWidth className="fld-i" value={date} onChange={(iso) => setDate(iso)}/>
               </label>
               <label className="fld" style={{ flex: 1.1 }}>
                 <span className="fld-l">Amount</span>

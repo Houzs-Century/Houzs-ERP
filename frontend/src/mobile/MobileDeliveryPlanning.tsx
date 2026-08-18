@@ -2150,11 +2150,7 @@ function DeliveryFieldsCard({
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">Shipout date (EM/SG)</span>
-            <DateField
-              value={form.shipoutDate}
-              onChange={(iso) => set("shipoutDate", iso)}
-              style={inputStyle}
-            />
+            <DateField value={form.shipoutDate} onChange={(iso) => set("shipoutDate", iso)} style={inputStyle}/>
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">Customer delivered date</span>

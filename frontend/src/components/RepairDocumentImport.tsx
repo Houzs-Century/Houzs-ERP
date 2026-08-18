@@ -415,12 +415,7 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
         </div>
         <div>
           <label className={LABEL}>Document date</label>
-          <DateField
-            fullWidth
-            className={FIELD}
-            value={docDate}
-            onChange={(iso) => setDocDate(iso)}
-          />
+          <DateField fullWidth className={FIELD} value={docDate} onChange={(iso) => setDocDate(iso)}/>
         </div>
         <div>
           <label className={LABEL}>Advisor</label>

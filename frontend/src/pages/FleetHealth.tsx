@@ -998,12 +998,7 @@ function PlanForm({ vehicleId, components, plan, taken, onCancel, onSaved }: {
         </div>
         <div>
           <label className={FIELD_LABEL}>Last done on</label>
-          <DateField
-            fullWidth
-            className={FIELD_CLS}
-            value={lastDoneDate}
-            onChange={(iso) => setLastDoneDate(iso)}
-          />
+          <DateField fullWidth className={FIELD_CLS} value={lastDoneDate} onChange={(iso) => setLastDoneDate(iso)}/>
         </div>
         <div>
           <label className={FIELD_LABEL}>Workshop</label>
@@ -1158,12 +1153,7 @@ export function MileageSection({ readings, vehicleId, onChanged }: {
             </div>
             <div>
               <label className={FIELD_LABEL}>Read on</label>
-              <DateField
-                fullWidth
-                className={FIELD_CLS}
-                value={date}
-                onChange={(iso) => setDate(iso)}
-              />
+              <DateField fullWidth className={FIELD_CLS} value={date} onChange={(iso) => setDate(iso)}/>
             </div>
             <div className="col-span-2">
               <label className={FIELD_LABEL}>Note</label>
@@ -1644,12 +1634,7 @@ function WorkOrderEdit({ wo, onSaved, onCancel }: { wo: WorkOrderView; onSaved: 
           <input className={FIELD_CLS} value={workshop} onChange={(e) => setWorkshop(e.target.value)} />
         </EditField>
         <EditField label="Warranty until">
-          <DateField
-            fullWidth
-            className={FIELD_CLS}
-            value={warranty}
-            onChange={(iso) => setWarranty(iso)}
-          />
+          <DateField fullWidth className={FIELD_CLS} value={warranty} onChange={(iso) => setWarranty(iso)}/>
         </EditField>
         <EditField label="Their quotation no">
           <input className={FIELD_CLS} value={quotationNo} onChange={(e) => setQuotationNo(e.target.value)} placeholder="e.g. WJO00403" />

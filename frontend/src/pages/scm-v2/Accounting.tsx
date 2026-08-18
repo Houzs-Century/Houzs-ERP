@@ -428,11 +428,7 @@ const NewJournalForm = ({ onDone }: { onDone: () => void }) => {
     <div style={cardStyle} className="space-y-3">
       <div style={{ fontWeight: 700 }}>New manual journal (draft — posting is a separate step)</div>
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <DateField
-          style={fieldStyle}
-          value={entryDate}
-          onChange={(iso) => setEntryDate(iso)}
-        />
+        <DateField style={fieldStyle} value={entryDate} onChange={(iso) => setEntryDate(iso)}/>
         <input style={{ ...fieldStyle, flex: 1, minWidth: 240 }} placeholder="Narration (what is this entry?)"
           value={narration} onChange={(e) => setNarration(e.target.value)} />
       </div>

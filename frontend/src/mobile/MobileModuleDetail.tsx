@@ -1234,11 +1234,7 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
         {kind === "si" && (
           <div style={{ marginBottom: 12 }}>
             <label style={labelStyle}>Date</label>
-            <DateField
-              value={date}
-              onChange={(iso) => setDate(iso)}
-              style={inputStyle}
-            />
+            <DateField value={date} onChange={(iso) => setDate(iso)} style={inputStyle}/>
           </div>
         )}
 

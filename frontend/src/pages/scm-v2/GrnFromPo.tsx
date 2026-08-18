@@ -535,19 +535,9 @@ export const GrnFromPo = () => {
       >
         {DATE_FIELD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
-      <DateField
-        value={dateFrom}
-        onChange={(iso) => setDateFrom(iso)}
-        style={FILTER_INPUT}
-        aria-label="Date from"
-      />
+      <DateField value={dateFrom} onChange={(iso) => setDateFrom(iso)} style={FILTER_INPUT} aria-label="Date from"/>
       <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-11)' }}>→</span>
-      <DateField
-        value={dateTo}
-        onChange={(iso) => setDateTo(iso)}
-        style={FILTER_INPUT}
-        aria-label="Date to"
-      />
+      <DateField value={dateTo} onChange={(iso) => setDateTo(iso)} style={FILTER_INPUT} aria-label="Date to"/>
       {(category !== 'all' || dateFrom || dateTo) && (
         <button
           type="button"

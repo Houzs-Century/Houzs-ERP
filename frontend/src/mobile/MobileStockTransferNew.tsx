@@ -210,12 +210,7 @@ export function MobileStockTransferNew({
         <div className="st-whrow">
           <div className="st-fld">
             <span className="st-fl">Date</span>
-            <DateField
-              fullWidth
-              className="cal-sel"
-              value={transferDate}
-              onChange={(iso) => setTransferDate(iso)}
-            />
+            <DateField fullWidth className="cal-sel" value={transferDate} onChange={(iso) => setTransferDate(iso)}/>
           </div>
           <div className="st-fld">
             <span className="st-fl">Notes</span>

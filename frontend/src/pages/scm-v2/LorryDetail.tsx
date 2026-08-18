@@ -623,8 +623,7 @@ const Field = ({
            DD/MM/YYYY on one machine and MM/DD/YYYY on another. Same ISO contract
            in and out. */}
     {type === 'date' ? (
-      <DateField className={styles.fieldInput} value={value} placeholder={placeholder}
-        onChange={onChange} fullWidth />
+      <DateField className={styles.fieldInput} value={value} placeholder={placeholder} onChange={onChange} fullWidth/>
     ) : (
       <input className={styles.fieldInput} value={value} placeholder={placeholder} type={type ?? 'text'}
         onChange={(e) => onChange(e.target.value)} />

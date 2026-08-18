@@ -1154,12 +1154,7 @@ export function EntryPanel({
         {/* Left column */}
         <div className="space-y-3">
           <Field label="Order Date">
-            <DateField
-              fullWidth
-              value={orderDate}
-              onChange={(iso) => setOrderDate(iso)}
-              className={inputCls}
-            />
+            <DateField fullWidth value={orderDate} onChange={(iso) => setOrderDate(iso)} className={inputCls}/>
           </Field>
           <Field label="Processing Date">
             <DateField

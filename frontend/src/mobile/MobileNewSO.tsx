@@ -3065,12 +3065,7 @@ function LineCard({
             />
           </Field>
           <Field label="Delivery date" style={{ flex: 1.1 }} onClear={line.ddate ? () => onDdateChange("") : undefined}>
-            <DateField
-              fullWidth
-              className="fld-i"
-              value={line.ddate}
-              onChange={(iso) => onDdateChange(iso)}
-            />
+            <DateField fullWidth className="fld-i" value={line.ddate} onChange={(iso) => onDdateChange(iso)}/>
           </Field>
         </div>
         <div style={{ display: "flex", alignItems: "flex-end", justifyContent: "space-between" }}>
@@ -3646,12 +3641,7 @@ function PayCard({ pay, staff, onChange, onRemove }: { pay: Payment; staff: Arra
       <div style={{ display: "flex", flexDirection: "column", gap: 7, padding: 10 }}>
         <div style={{ display: "flex", gap: 9, alignItems: "flex-end" }}>
           <Field label="Date" style={{ flex: 1.1 }} onClear={pay.date ? () => onChange({ date: "" }) : undefined}>
-            <DateField
-              fullWidth
-              className="fld-i"
-              value={pay.date}
-              onChange={(iso) => onChange({ date: iso })}
-            />
+            <DateField fullWidth className="fld-i" value={pay.date} onChange={(iso) => onChange({ date: iso })}/>
           </Field>
           <Field label="Amount" style={{ flex: 1.1 }}>
             <input className="fld-i money" value={pay.amount} onChange={(e) => onChange({ amount: e.target.value })} />

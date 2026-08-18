@@ -407,12 +407,7 @@ export const PurchaseConsignmentOrderNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Date *</span>
-              <DateField
-                fullWidth
-                value={poDate}
-                onChange={(iso) => setPoDate(iso)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={poDate} onChange={(iso) => setPoDate(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>

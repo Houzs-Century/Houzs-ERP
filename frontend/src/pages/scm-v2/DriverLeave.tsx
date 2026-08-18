@@ -132,18 +132,10 @@ export const DriverLeave = () => {
           </Ctl>
         )}
         <Ctl label="From">
-          <DateField
-            value={startDate}
-            onChange={(iso) => setStartDate(iso)}
-            style={selStyle}
-          />
+          <DateField value={startDate} onChange={(iso) => setStartDate(iso)} style={selStyle}/>
         </Ctl>
         <Ctl label="To">
-          <DateField
-            value={endDate}
-            onChange={(iso) => setEndDate(iso)}
-            style={selStyle}
-          />
+          <DateField value={endDate} onChange={(iso) => setEndDate(iso)} style={selStyle}/>
         </Ctl>
         <Ctl label="Reason (optional)">
           <input type="text" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="MC, annual leave…" style={{ ...selStyle, width: 200 }} />

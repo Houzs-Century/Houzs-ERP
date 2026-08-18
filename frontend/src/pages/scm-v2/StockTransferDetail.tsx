@@ -183,13 +183,7 @@ export const StockTransferDetail = () => {
               <span className={styles.fieldLabel}>Transfer Date</span>
               {/* Read-only: the transfer date is stamped on post and never
                   edited here, so there is no onChange to give. */}
-              <DateField
-                fullWidth
-                value={transferDate}
-                onChange={() => {}}
-                className={styles.fieldInput}
-                disabled
-              />
+              <DateField fullWidth value={transferDate} onChange={() => {}} className={styles.fieldInput} disabled/>
             </label>
 
             <label className={styles.field}>
