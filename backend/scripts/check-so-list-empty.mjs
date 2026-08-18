@@ -187,6 +187,64 @@ try {
       await pg.unsafe("RESET ROLE");
     }
   }
+
+  // 9) THE DECISIVE TWO-LAYER TEST. The app does NOT use direct pg — it reads
+  //    through HOSTED Supabase PostgREST over HTTP (getSupabaseService =
+  //    @supabase/supabase-js -> SUPABASE_URL, db.schema='scm', service_role).
+  //    Every count above is the DIRECT-pg answer. Now issue the app's EXACT
+  //    request against hosted PostgREST and report what IT returns. Same DB, and
+  //    if the two layers disagree the divergence IS the bug (a stale PostgREST
+  //    schema cache after 0305 dropped+recreated 11 views + a matview). Read-only:
+  //    every REST call is a GET.
+  const REST = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
+  const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  if (!REST || !KEY) {
+    notice("PostgREST layer: NOT TESTED (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY absent from this run).");
+  } else {
+    // GET against the scm schema, service_role, exactly like getSupabaseService.
+    const restGet = async (path, range) => {
+      const headers = {
+        apikey: KEY,
+        Authorization: `Bearer ${KEY}`,
+        "Accept-Profile": "scm",
+        Prefer: "count=exact",
+        Range: range,
+        "Range-Unit": "items",
+      };
+      const res = await fetch(`${REST}/rest/v1/${path}`, { method: "GET", headers });
+      const cr = res.headers.get("content-range");
+      const body = res.ok ? null : (await res.text()).slice(0, 200);
+      return { status: res.status, contentRange: cr, body };
+    };
+    notice("---- HOSTED PostgREST (the app's real path), service_role, scm schema ----");
+    // The VIEW the SO list reads, company_id=1, page 0 (Range 0-49) and page 1 (Range 50-99).
+    for (const [label, range] of [["page0 (0-49)", "0-49"], ["page1 (50-99)", "50-99"]]) {
+      const r = await restGet("mfg_sales_orders_with_payment_totals?select=doc_no&company_id=eq.1&order=so_date.desc", range);
+      notice(`VIEW company_id=1 ${label}: HTTP ${r.status} content-range=${r.contentRange ?? "(none)"}${r.body ? " body=" + r.body : ""}`);
+    }
+    // Isolate view vs base AT THE PostgREST LAYER: does PostgREST see the BASE
+    // table's 2726 while the VIEW returns 0? That pins the stale entry to the
+    // recreated view specifically.
+    const baseR = await restGet("mfg_sales_orders?select=doc_no&company_id=eq.1", "0-0");
+    notice(`BASE mfg_sales_orders company_id=1 (0-0): HTTP ${baseR.status} content-range=${baseR.contentRange ?? "(none)"}${baseR.body ? " body=" + baseR.body : ""}`);
+    notice("Direct-pg said view company_id=1 = 2726. If PostgREST's content-range total here is 0/absent, the divergence is the hosted-PostgREST schema cache.");
+  }
+
+  // 10) WHY IT PERSISTED. Supabase auto-reloads PostgREST's schema cache on DDL
+  //     via event triggers that NOTIFY pgrst. If they are missing/disabled, a
+  //     DROP+CREATE VIEW leaves the cache stale until a manual reload.
+  const evt = await pg`
+    SELECT evtname, evtevent,
+           CASE evtenabled WHEN 'O' THEN 'enabled' WHEN 'D' THEN 'DISABLED'
+                           WHEN 'R' THEN 'replica' WHEN 'A' THEN 'always' END AS state,
+           evtfoid::regprocedure::text AS fn
+      FROM pg_event_trigger
+     WHERE evtname ILIKE 'pgrst%' OR evtfoid::regprocedure::text ILIKE '%pgrst%'
+     ORDER BY evtname`;
+  notice("---- PostgREST DDL-watch event triggers (auto-reload on DDL) ----");
+  if (evt.length === 0) notice("NONE — no pgrst DDL-watch event trigger exists, so a DROP/CREATE VIEW does NOT auto-reload PostgREST's cache. This is why the outage did not self-heal.");
+  else for (const e of evt) notice(`${e.evtname} on ${e.evtevent} -> ${e.fn} [${e.state}]`);
+
 } finally {
   await pg.end({ timeout: 5 });
 }

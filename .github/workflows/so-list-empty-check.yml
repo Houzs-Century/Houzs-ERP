@@ -36,6 +36,10 @@ jobs:
       - run: node scripts/check-so-list-empty.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # The app reads the SO list through hosted Supabase PostgREST, not
+          # direct pg; these let the probe hit that exact layer (Production env).
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
           # for the full Happy-Eyeballs reasoning. Harmless on an IPv4-only host.
           NODE_OPTIONS: --dns-result-order=ipv4first
