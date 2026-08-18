@@ -55,7 +55,7 @@ import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { readStatusCounts } from '../lib/status-counts';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
-import { doLineRemaining, doRemainingByItemId, checkSiOverRemaining, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine } from '../lib/do-line-remaining';
+import { doLineRemaining, doRemainingByItemId, checkSiOverRemaining, checkSiReopenOverRemaining, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine } from '../lib/do-line-remaining';
 import { siShadowRefusal, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
@@ -1513,16 +1513,12 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
     .order('line_no', { ascending: true, nullsFirst: false })
     .order('created_at'), c);
 
-  /* Same trap one table earlier: zero candidate lines and the handler answers
-     409 `do_fully_invoiced` — "this delivery has already been invoiced in full"
-     — from a read that returned nothing at all. Refuse before that sentence. */
-  if (doItemsErr) {
-    return c.json(remainingUnavailableResponse(`delivery_order_items: ${doItemsErr.message}`), 503);
-  }
+  /* NEITHER read may reach the code below as "no lines": unreadable candidates
+     become 409 `do_fully_invoiced` ("already invoiced in full") and an unreadable
+     ceiling became a silent 200 with nothing appended. Refuse before both. */
+  if (doItemsErr) return c.json(remainingUnavailableResponse(`delivery_order_items: ${doItemsErr.message}`), 503);
   const doLines = (doItems as Array<Record<string, unknown>> | null) ?? [];
   const remainingResult = await doRemainingByItemId(sb, doLines.map((it) => it.id as string));
-  /* Selects the lines to append (`remaining > 0`) AND caps each one; unreadable,
-     the endpoint answered 200 with nothing appended. Refuse before any write. */
   if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
   const remainingMap = remainingResult.remaining;
   const { data: maxNoRow } = await sb
@@ -2401,23 +2397,10 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
      been invoiced elsewhere while this invoice sat cancelled. */
   const isReopen = prevStatus === 'CANCELLED' && status !== 'CANCELLED';
   if (isReopen && status === 'SENT') {
-    const { data: reopenLines, error: reopenErr } = await sb
-      .from('sales_invoice_items')
-      .select('do_item_id, qty')
-      .eq('sales_invoice_id', id);
-    /* AN UNREADABLE LINE LIST IS NOT AN EMPTY ONE. checkSiOverRemaining
-       short-circuits `if (wanted.size === 0) return null`, so discarding this
-       error handed it zero lines and the reopen sailed past the ceiling at the
-       full delivered quantity — re-posting AR/GL revenue for goods another
-       invoice had already billed. Refuse under the same 503 the picked-line
-       paths use: the check could not run, so nobody is being blamed. */
-    if (reopenErr) {
-      return c.json(remainingUnavailableResponse(`sales_invoice_items: ${reopenErr.message}`), 503);
-    }
-    const linesForCheck = ((reopenLines ?? []) as Array<{ do_item_id: string | null; qty: number }>)
-      .filter((l) => l.do_item_id)
-      .map((l) => ({ doItemId: l.do_item_id as string, qty: l.qty }));
-    const over = await checkSiOverRemaining(sb, linesForCheck);
+    /* The READ that builds the line list is part of this guard, so it lives with
+       it in the lib — swallowed here, it fed the ceiling an empty list and the
+       reopen sailed through at the full delivered quantity. */
+    const over = await checkSiReopenOverRemaining(sb, id);
     /* An unreadable ledger refuses the reopen with the 503, not this 409:
        "invoiced elsewhere" when a read timed out sends him hunting a duplicate. */
     if (over?.status === 503) return c.json(over.body, 503);

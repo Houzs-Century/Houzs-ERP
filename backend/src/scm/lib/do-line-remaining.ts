@@ -449,6 +449,34 @@ export async function checkSiOverRemaining(
   return offenders.length > 0 ? { status: 409, body: { error: 'over_remaining', lines: offenders } } : null;
 }
 
+/* REOPEN's ceiling, whole — the READ and the cap together.
+ *
+ * A cancelled invoice going back to SENT re-consumes every delivered unit it
+ * names, so it must be capped like any other write. The caller used to do the
+ * read itself and hand the rows to `checkSiOverRemaining`, which opens with
+ * `if (wanted.size === 0) return null`. That made a FAILED read indistinguishable
+ * from an invoice with no DO-linked lines: the ceiling was never consulted, the
+ * invoice went back to SENT, and `postSiRevenue` re-posted AR and GL revenue for
+ * goods a second invoice had already billed.
+ *
+ * The read is therefore part of the guard and belongs with it. A guard whose
+ * inputs are assembled somewhere else is a guard that can be starved.
+ */
+export async function checkSiReopenOverRemaining(
+  sb: any,
+  salesInvoiceId: string,
+): Promise<SiOverRemainingRefusal | null> {
+  const { data, error } = await sb
+    .from('sales_invoice_items')
+    .select('do_item_id, qty')
+    .eq('sales_invoice_id', salesInvoiceId);
+  if (error) return { status: 503, body: remainingUnavailableResponse(`sales_invoice_items: ${error.message}`) };
+  const lines = ((data ?? []) as Array<{ do_item_id: string | null; qty: number }>)
+    .filter((l) => l.do_item_id)
+    .map((l) => ({ doItemId: l.do_item_id as string, qty: l.qty }));
+  return checkSiOverRemaining(sb, lines);
+}
+
 /* The POST-INSERT half of the remaining-to-invoice invariant, extracted pure so
  * the money-path guard is unit testable without booting the route.
  *
