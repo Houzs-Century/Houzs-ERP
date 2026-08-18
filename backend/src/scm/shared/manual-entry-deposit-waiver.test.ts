@@ -26,7 +26,7 @@ const facts = (over: Partial<Parameters<typeof collectProcessingGateProblems>[0]
   delivDate: '2026-09-20',
   todayMY: '2026-08-18',
   completeness: { hasCustomerName: true, hasAddress: true, hasPostcode: true },
-  deposit: { paidCenti: 0, totalCenti: 500_000 },
+  deposit: { paidSen: 0, totalSen: 500_000 },
   ...over,
 });
 
@@ -58,6 +58,6 @@ describe('manualEntry deposit waiver', () => {
      vacuously true at total <= 0). The waiver must not be what makes that work,
      or removing it later would silently break zero-total orders. */
   test('a zero-total order needs no waiver to pass', () => {
-    expect(codes(facts({ deposit: { paidCenti: 0, totalCenti: 0 } }))).not.toContain('processing_date_unpaid');
+    expect(codes(facts({ deposit: { paidSen: 0, totalSen: 0 } }))).not.toContain('processing_date_unpaid');
   });
 });

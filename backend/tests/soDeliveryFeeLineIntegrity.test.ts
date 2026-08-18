@@ -4,7 +4,7 @@
 //  1. buildDeliveryFeeServiceLines — Σ(lines) === fee.total for every fee
 //     shape (the pure layer can never leave money off a line).
 //  2. rederiveDeliveryFee — an SO whose SVC-DELIVERY* lines are gone but whose
-//     header delivery_fee_centi still carries a fee (the 2990-SO-2608-006
+//     header delivery_fee_sen still carries a fee (the 2990-SO-2608-006
 //     shape: fee lines deleted, header dual-write snapshot orphaned) is
 //     RE-MATERIALISED through the one true derivation: the 0214 RPC
 //     (rebuild_mfg_so_delivery_lines) is called with the DERIVED fee as lines
@@ -84,18 +84,18 @@ function makeSb(resolve: (table: string, select: string, single: boolean) => unk
 const ctx = { get: () => undefined } as any;
 
 const GOODS_LINES = [
-  { item_code: 'XAMMAR-L(LHF)', item_group: 'sofa', total_centi: 0, line_no: 0, variants: null },
-  { item_code: 'XAMMAR-2A(RHF)', item_group: 'sofa', total_centi: 0, line_no: 1, variants: null },
+  { item_code: 'XAMMAR-L(LHF)', item_group: 'sofa', total_sen: 0, line_no: 0, variants: null },
+  { item_code: 'XAMMAR-2A(RHF)', item_group: 'sofa', total_sen: 0, line_no: 1, variants: null },
 ];
 
-function resolverFor(opts: { headerFeeCenti: number; feeLines?: Array<Record<string, unknown>> }) {
+function resolverFor(opts: { headerFeeSen: number; feeLines?: Array<Record<string, unknown>> }) {
   return (table: string, select: string, single: boolean): unknown => {
     if (table === 'mfg_sales_orders') {
       if (select.includes('cross_category_source_doc_no')) {
         return { data: { cross_category_source_doc_no: null }, error: null };
       }
-      if (select.includes('delivery_fee_centi')) {
-        return { data: { delivery_fee_centi: opts.headerFeeCenti }, error: null };
+      if (select.includes('delivery_fee_sen')) {
+        return { data: { delivery_fee_sen: opts.headerFeeSen }, error: null };
       }
       if (select.includes('debtor_name')) {
         return { data: { debtor_name: 'A CUSTOMER', venue: null, customer_delivery_date: null, company_id: 2 }, error: null };
@@ -103,7 +103,7 @@ function resolverFor(opts: { headerFeeCenti: number; feeLines?: Array<Record<str
       return single ? { data: null, error: null } : { data: [], error: null };
     }
     if (table === 'mfg_sales_order_items') {
-      return { data: [...GOODS_LINES, ...(opts.feeLines ?? [])].map((l, i) => ({ id: `it-${i}`, qty: 1, line_cost_centi: 0, ...l })), error: null };
+      return { data: [...GOODS_LINES, ...(opts.feeLines ?? [])].map((l, i) => ({ id: `it-${i}`, qty: 1, line_cost_sen: 0, ...l })), error: null };
     }
     if (table === 'delivery_fee_config') {
       // whole-MYR config, like production: base 250 → 25000 sen after ×100
@@ -116,7 +116,7 @@ function resolverFor(opts: { headerFeeCenti: number; feeLines?: Array<Record<str
 
 describe('rederiveDeliveryFee — no header back door', () => {
   test('an orphaned header fee with NO fee lines is re-materialised through the 0214 RPC', async () => {
-    const { sb, rpcCalls } = makeSb(resolverFor({ headerFeeCenti: 25000 }));
+    const { sb, rpcCalls } = makeSb(resolverFor({ headerFeeSen: 25000 }));
     await rederiveDeliveryFee(sb, '2990-SO-2608-006', ctx);
 
     expect(rpcCalls).toHaveLength(1);
@@ -124,43 +124,43 @@ describe('rederiveDeliveryFee — no header back door', () => {
     expect(call.name).toBe('rebuild_mfg_so_delivery_lines');
     expect(call.args.p_doc_no).toBe('2990-SO-2608-006');
     // the DERIVED fee (base 250 for a sofa order) — lines AND header stamp agree
-    expect(call.args.p_delivery_fee_centi).toBe(25000);
+    expect(call.args.p_delivery_fee_sen).toBe(25000);
     const rows = call.args.p_rows as Array<Record<string, unknown>>;
     expect(rows).toHaveLength(1);
     expect(rows[0]!.item_code).toBe('SVC-DELIVERY');
-    expect(rows[0]!.total_centi).toBe(25000);
+    expect(rows[0]!.total_sen).toBe(25000);
     // Σ(rebuilt lines) === header stamp: no ringgit rides the header alone
-    expect(rows.reduce((s, r) => s + Number(r.total_centi), 0)).toBe(call.args.p_delivery_fee_centi);
+    expect(rows.reduce((s, r) => s + Number(r.total_sen), 0)).toBe(call.args.p_delivery_fee_sen);
   });
 
   test('the derivation is the ONE truth — a ghost header amount never survives as-is', async () => {
     // Header claims RM999; the derivation (config base RM250) decides the fee.
-    const { sb, rpcCalls } = makeSb(resolverFor({ headerFeeCenti: 99900 }));
+    const { sb, rpcCalls } = makeSb(resolverFor({ headerFeeSen: 99900 }));
     await rederiveDeliveryFee(sb, '2990-SO-TEST-GHOST', ctx);
 
     expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0]!.args.p_delivery_fee_centi).toBe(25000);
+    expect(rpcCalls[0]!.args.p_delivery_fee_sen).toBe(25000);
     const rows = rpcCalls[0]!.args.p_rows as Array<Record<string, unknown>>;
-    expect(rows.reduce((s, r) => s + Number(r.total_centi), 0)).toBe(25000);
+    expect(rows.reduce((s, r) => s + Number(r.total_sen), 0)).toBe(25000);
   });
 
   test('no fee lines AND no header fee → dormant: the RPC is never called, totals still refresh', async () => {
-    const { sb, rpcCalls, updates } = makeSb(resolverFor({ headerFeeCenti: 0 }));
+    const { sb, rpcCalls, updates } = makeSb(resolverFor({ headerFeeSen: 0 }));
     await rederiveDeliveryFee(sb, 'HC-SO-2608-001', ctx);
 
     expect(rpcCalls).toHaveLength(0);
     // recomputeTotals still ran for the edit (header roll-up write attempted)
-    expect(updates.some((u) => u.table === 'mfg_sales_orders' && 'local_total_centi' in u.patch)).toBe(true);
+    expect(updates.some((u) => u.table === 'mfg_sales_orders' && 'local_total_sen' in u.patch)).toBe(true);
   });
 
   test('existing fee lines keep re-deriving exactly as before (regression pin)', async () => {
     const { sb, rpcCalls } = makeSb(resolverFor({
-      headerFeeCenti: 25000,
-      feeLines: [{ item_code: 'SVC-DELIVERY', item_group: 'service', total_centi: 25000, line_no: 2, variants: null }],
+      headerFeeSen: 25000,
+      feeLines: [{ item_code: 'SVC-DELIVERY', item_group: 'service', total_sen: 25000, line_no: 2, variants: null }],
     }));
     await rederiveDeliveryFee(sb, '2990-SO-2608-005', ctx);
 
     expect(rpcCalls).toHaveLength(1);
-    expect(rpcCalls[0]!.args.p_delivery_fee_centi).toBe(25000);
+    expect(rpcCalls[0]!.args.p_delivery_fee_sen).toBe(25000);
   });
 });

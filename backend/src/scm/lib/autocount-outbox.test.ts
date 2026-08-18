@@ -141,7 +141,7 @@ describe('the six flows each queue their operation', () => {
     address1: 'A1', address2: null, address3: null, address4: null,
     phone: '012', ref: 'R', po_doc_no: null, linked_ac_docno: null,
   };
-  const soItem = { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'Mattress', qty: 2, unit_price_centi: 12345 };
+  const soItem = { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'Mattress', qty: 2, unit_price_sen: 12345 };
   /* scm.purchase_orders as it ACTUALLY is: supplier_id, not a creditor code or
      name, and no agent or ref at all. The creditor is one join away. */
   const po = {
@@ -178,7 +178,7 @@ describe('the six flows each queue their operation', () => {
     const sb = withFlag('1', {
       purchase_orders: [{ ...po }],
       suppliers: [{ ...supplier }],
-      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, description: 'D', qty: 3, unit_price_centi: 5000, warehouse_id: 'wh-1' }],
+      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, description: 'D', qty: 3, unit_price_sen: 5000, warehouse_id: 'wh-1' }],
       warehouses: [{ id: 'wh-1', code: 'KL', name: 'KL WAREHOUSE' }],
     }, {
       /* The four columns the composer used to ask purchase_orders for and that
@@ -204,7 +204,7 @@ describe('the six flows each queue their operation', () => {
     const sb = withFlag('1', {
       purchase_orders: [{ ...po, linked_ac_docno: 'PO-000042' }],
       suppliers: [{ ...supplier }],
-      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, description: 'D', qty: 3, unit_price_centi: 5000, linked_ac_dtlkey: 7001 }],
+      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, description: 'D', qty: 3, unit_price_sen: 5000, linked_ac_dtlkey: 7001 }],
     }, { purchase_orders: ['creditor_code', 'creditor_name', 'agent', 'ref'] });
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: 'po-1' })).toBe(true);
     const [row] = outbox(sb);
@@ -280,7 +280,7 @@ describe('the six flows each queue their operation', () => {
     test('PO create: a header read that fails queues nothing', async () => {
       const sb = withFlag('1', {
         purchase_orders: [{ ...po }], suppliers: [{ ...supplier }],
-        purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, qty: 1, unit_price_centi: 1 }],
+        purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, qty: 1, unit_price_sen: 1 }],
       }, { purchase_orders: ['po_number'] });
       expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' })).toBe(false);
       const rows = outbox(sb);
@@ -372,7 +372,7 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
   test('editing before the create was sent REPLACES the pending create payload', async () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so }],
-      mfg_sales_order_items: [{ doc_no: 'HC-SO-9', item_code: ERP_A, description: 'before', qty: 1, unit_price_centi: 100 }],
+      mfg_sales_order_items: [{ doc_no: 'HC-SO-9', item_code: ERP_A, description: 'before', qty: 1, unit_price_sen: 100 }],
     });
     await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' });
     expect(outbox(sb)[0].payload.body.Details[0].Description).toBe('before');
@@ -395,8 +395,8 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so, linked_ac_docno: 'SO-000021' }],
       mfg_sales_order_items: [
-        { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'known line', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 4242 },
-        { doc_no: 'HC-SO-9', item_code: ERP_B, description: 'other line', qty: 1, unit_price_centi: 200, linked_ac_dtlkey: 4243 },
+        { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'known line', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 4242 },
+        { doc_no: 'HC-SO-9', item_code: ERP_B, description: 'other line', qty: 1, unit_price_sen: 200, linked_ac_dtlkey: 4243 },
       ],
     });
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(true);
@@ -417,8 +417,8 @@ describe('cancel and edit against a document still sitting in the outbox', () =>
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so, linked_ac_docno: 'SO-000021' }],
       mfg_sales_order_items: [
-        { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'keyed', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 4242 },
-        { doc_no: 'HC-SO-9', item_code: ERP_B, description: 'keyless', qty: 1, unit_price_centi: 200, linked_ac_dtlkey: null },
+        { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'keyed', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 4242 },
+        { doc_no: 'HC-SO-9', item_code: ERP_B, description: 'keyless', qty: 1, unit_price_sen: 200, linked_ac_dtlkey: null },
       ],
     });
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'SO', docNo: 'HC-SO-9' })).toBe(false);
@@ -460,7 +460,7 @@ describe('a removed line is retired in AutoCount, never just left out', () => {
   };
   const keyed = (over: Record<string, unknown> = {}) => ({
     id: 'so-item-1', doc_no: 'HC-SO-9', item_code: 'Y04-(K)', description: 'Mattress',
-    qty: 2, unit_price_centi: 100, linked_ac_dtlkey: 7001, cancelled: false, ...over,
+    qty: 2, unit_price_sen: 100, linked_ac_dtlkey: 7001, cancelled: false, ...over,
   });
 
   test('a HARD-DELETED line is named on the next edit with Retire: true', async () => {
@@ -657,7 +657,7 @@ describe('the salesperson reaches AutoCount even when `agent` is empty', () => {
     address1: 'A1', address2: null, address3: null, address4: null,
     phone: '012', ref: 'R', po_doc_no: null, linked_ac_docno: null,
   };
-  const soItem = { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'Mattress', qty: 1, unit_price_centi: 100 };
+  const soItem = { doc_no: 'HC-SO-9', item_code: ERP_A, description: 'Mattress', qty: 1, unit_price_sen: 100 };
 
   test('a create falls back to the name behind salesperson_id', async () => {
     const sb = withFlag('1', {
@@ -760,7 +760,7 @@ describe('an edit carries the fields a create carries', () => {
   };
   const item = {
     doc_no: 'HC-SO-9', item_code: ERP_A, description: 'M', qty: 1,
-    unit_price_centi: 100, linked_ac_dtlkey: 991,
+    unit_price_sen: 100, linked_ac_dtlkey: 991,
   };
 
   test('the salesperson, the location and the date reach AutoCount, mapped', async () => {
@@ -804,8 +804,8 @@ describe('a line the ERP just added is declared, never inferred', () => {
     branding: null, venue: null, address1: null, address2: null, address3: null, address4: null,
     phone: null, ref: null, po_doc_no: null, linked_ac_docno: 'SO-000021',
   };
-  const keyed = { id: 'row-old', doc_no: 'HC-SO-9', item_code: ERP_A, description: 'M', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 991 };
-  const fresh = { id: 'row-new', doc_no: 'HC-SO-9', item_code: ERP_B, description: 'added', qty: 1, unit_price_centi: 200, linked_ac_dtlkey: null };
+  const keyed = { id: 'row-old', doc_no: 'HC-SO-9', item_code: ERP_A, description: 'M', qty: 1, unit_price_sen: 100, linked_ac_dtlkey: 991 };
+  const fresh = { id: 'row-new', doc_no: 'HC-SO-9', item_code: ERP_B, description: 'added', qty: 1, unit_price_sen: 200, linked_ac_dtlkey: null };
 
   test('declared by the route, and every other line keyed: it goes as IsNewLine', async () => {
     const sb = withFlag('1', { mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...keyed }, { ...fresh }] });
@@ -873,7 +873,7 @@ describe('every document the ERP creates carries the ERP number', () => {
         branding: null, venue: null, address1: null, address2: null, address3: null,
         address4: null, phone: null, ref: null, po_doc_no: null, linked_ac_docno: null,
       }],
-      mfg_sales_order_items: [{ id: 'i1', doc_no: 'HC-SO-9', item_code: ERP_A, description: 'M', qty: 1, unit_price_centi: 100 }],
+      mfg_sales_order_items: [{ id: 'i1', doc_no: 'HC-SO-9', item_code: ERP_A, description: 'M', qty: 1, unit_price_sen: 100 }],
     });
     expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(true);
     expect((outbox(sb)[0].payload.body as Record<string, unknown>).DocNo).toBe('HC-SO-9');
@@ -1009,7 +1009,7 @@ describe('a sofa resolves through the binding recorded for its model', () => {
     description: `SOFA 9028 ${comp}`,
     description2: '1A(LHF) + 2A(RHF) (28")',
     qty: 1,
-    unit_price_centi: i === 0 ? 399000 : 0,
+    unit_price_sen: i === 0 ? 399000 : 0,
     location: 'KL',
   }));
 
@@ -1092,7 +1092,7 @@ describe('the columns the write-back reads are the columns the ERP writes', () =
   };
   const item = {
     doc_no: 'HC-SO-A', item_code: ERP_A, branding: 'DUNLOPILLO',
-    description: 'Mattress', qty: 1, unit_price_centi: 100,
+    description: 'Mattress', qty: 1, unit_price_sen: 100,
   };
   const seeded = () => withFlag('1', {
     mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...item }],
@@ -1197,16 +1197,16 @@ describe('the three fields the extract carries and the write-back did not send',
     phone: '012-1111111', emergency_contact_phone: '019-2222222',
     ref: null, po_doc_no: null, customer_po: null, customer_so_no: null,
     processing_date: null,
-    /* recomputeTotals writes local_total_centi = balance_centi =
-       total_revenue_centi = grandTotal on every edit. Only the third is read
-       here, and `balance_centi` is deliberately seeded to the GROSS total so a
+    /* recomputeTotals writes local_total_sen = balance_sen =
+       total_revenue_sen = grandTotal on every edit. Only the third is read
+       here, and `balance_sen` is deliberately seeded to the GROSS total so a
        composer that read it would be caught by the assertions below. */
-    total_revenue_centi: 500_00, balance_centi: 500_00, deposit_centi: 0,
+    total_revenue_sen: 500_00, balance_sen: 500_00, deposit_sen: 0,
     linked_ac_docno: null,
   };
   const item = {
     doc_no: 'HC-SO-B', item_code: ERP_A, description: 'Mattress',
-    qty: 1, unit_price_centi: 500_00, line_delivery_date: null,
+    qty: 1, unit_price_sen: 500_00, line_delivery_date: null,
   };
   const seed = (soOver: Row = {}, itemOver: Row = {}, extra: Record<string, Row[]> = {}) =>
     withFlag('1', {
@@ -1216,17 +1216,17 @@ describe('the three fields the extract carries and the write-back did not send',
     });
 
   // ── UDF_BALANCE — 2,339 of the extract's 13,015 headers carry a non-zero one
-  describe('BALANCE — the outstanding amount, from the payments ledger and NOT from balance_centi', () => {
-    /* THE TRAP THIS TEST EXISTS FOR. `mfg_sales_orders.balance_centi` is the
+  describe('BALANCE — the outstanding amount, from the payments ledger and NOT from balance_sen', () => {
+    /* THE TRAP THIS TEST EXISTS FOR. `mfg_sales_orders.balance_sen` is the
        column the cutover's own UDF_BALANCE landed in
        (check-migration-fidelity.mjs:95), which makes it look like the answer —
        and recomputeTotals overwrites it with the GROSS total on every edit, so
        it is 500.00 here while the customer owes 200.00. */
-    test('a create sends total minus the payments ledger, not the stored balance_centi', async () => {
+    test('a create sends total minus the payments ledger, not the stored balance_sen', async () => {
       const sb = seed({}, {}, {
         mfg_sales_order_payments: [
-          { so_doc_no: 'HC-SO-B', amount_centi: 200_00, is_deposit: true },
-          { so_doc_no: 'HC-SO-B', amount_centi: 100_00, is_deposit: false },
+          { so_doc_no: 'HC-SO-B', amount_sen: 200_00, is_deposit: true },
+          { so_doc_no: 'HC-SO-B', amount_sen: 100_00, is_deposit: false },
         ],
       });
       expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).toBe(true);
@@ -1234,18 +1234,18 @@ describe('the three fields the extract carries and the write-back did not send',
       expect(udf.BALANCE).toBe('200.00');
     });
 
-    /* The legacy half of the same rule (`soPaidCenti`): a deposit that never
+    /* The legacy half of the same rule (`soPaidSen`): a deposit that never
        reached the ledger still counts, and one that DID must not count twice. */
     test('a legacy header deposit counts once — and only when the ledger has no is_deposit row', async () => {
-      const legacy = seed({ deposit_centi: 150_00 }, {}, {
-        mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_centi: 50_00, is_deposit: false }],
+      const legacy = seed({ deposit_sen: 150_00 }, {}, {
+        mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_sen: 50_00, is_deposit: false }],
       });
       await enqueueSoCreate(client(legacy), { companyId: 1, docNo: 'HC-SO-B' });
       expect((outbox(legacy)[0].payload.body as Record<string, Record<string, string>>).UDF.BALANCE)
         .toBe('300.00');
 
-      const modern = seed({ deposit_centi: 150_00 }, {}, {
-        mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_centi: 150_00, is_deposit: true }],
+      const modern = seed({ deposit_sen: 150_00 }, {}, {
+        mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_sen: 150_00, is_deposit: true }],
       });
       await enqueueSoCreate(client(modern), { companyId: 1, docNo: 'HC-SO-B' });
       expect((outbox(modern)[0].payload.body as Record<string, Record<string, string>>).UDF.BALANCE)
@@ -1257,7 +1257,7 @@ describe('the three fields the extract carries and the write-back did not send',
        debt that has been paid, which is the staleness this field removes. */
     test('a fully paid order sends 0.00 rather than dropping the key', async () => {
       const sb = seed({}, {}, {
-        mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_centi: 500_00, is_deposit: true }],
+        mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_sen: 500_00, is_deposit: true }],
       });
       await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' });
       expect((outbox(sb)[0].payload.body as Record<string, Record<string, string>>).UDF.BALANCE)
@@ -1266,7 +1266,7 @@ describe('the three fields the extract carries and the write-back did not send',
 
     test('an EDIT carries it too, so a payment taken after the create reaches the book', async () => {
       const sb = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 }, {
-        mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_centi: 400_00, is_deposit: true }],
+        mfg_sales_order_payments: [{ so_doc_no: 'HC-SO-B', amount_sen: 400_00, is_deposit: true }],
       });
       expect(await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' })).toBe(true);
       const h = outbox(sb)[0].payload.body.Header as Record<string, Record<string, string>>;
@@ -1275,9 +1275,9 @@ describe('the three fields the extract carries and the write-back did not send',
 
     /* A DOCUMENT WITH NO VALUE SENDS NO KEY. Zero is "nothing outstanding" and
        would declare a real debt settled in a licensed ledger, so an order with
-       no `total_revenue_centi` says nothing and the book keeps its own. */
+       no `total_revenue_sen` says nothing and the book keeps its own. */
     test('an order with no total sends no BALANCE at all', async () => {
-      const sb = seed({ total_revenue_centi: null, linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 });
+      const sb = seed({ total_revenue_sen: null, linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 });
       await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
       const h = outbox(sb)[0].payload.body.Header as Record<string, unknown>;
       expect(h).not.toHaveProperty('UDF');
@@ -1378,8 +1378,8 @@ describe('the three fields the extract carries and the write-back did not send',
     test('a create carries the account sheet and approval code', async () => {
       const sb = seed({}, {}, {
         mfg_sales_order_payments: [
-          { so_doc_no: 'HC-SO-B', amount_centi: 200_00, is_deposit: true, account_sheet: 'MAYBANK', approval_code: '111', paid_at: '2026-08-01', id: 'p1' },
-          { so_doc_no: 'HC-SO-B', amount_centi: 100_00, is_deposit: false, account_sheet: 'CIMB', approval_code: '222', paid_at: '2026-08-02', id: 'p2' },
+          { so_doc_no: 'HC-SO-B', amount_sen: 200_00, is_deposit: true, account_sheet: 'MAYBANK', approval_code: '111', paid_at: '2026-08-01', id: 'p1' },
+          { so_doc_no: 'HC-SO-B', amount_sen: 100_00, is_deposit: false, account_sheet: 'CIMB', approval_code: '222', paid_at: '2026-08-02', id: 'p2' },
         ],
       });
       expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).toBe(true);
@@ -1390,7 +1390,7 @@ describe('the three fields the extract carries and the write-back did not send',
     test('an EDIT carries it too, so a reference typed after the create reaches the book', async () => {
       const sb = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 }, {
         mfg_sales_order_payments: [
-          { so_doc_no: 'HC-SO-B', amount_centi: 400_00, is_deposit: true, account_sheet: 'Cash', approval_code: null, paid_at: '2026-08-01', id: 'p1' },
+          { so_doc_no: 'HC-SO-B', amount_sen: 400_00, is_deposit: true, account_sheet: 'Cash', approval_code: null, paid_at: '2026-08-01', id: 'p1' },
         ],
       });
       expect(await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' })).toBe(true);
@@ -1404,7 +1404,7 @@ describe('the three fields the extract carries and the write-back did not send',
     test('payments with no references send no PAYEMENT key', async () => {
       const sb = seed({ linked_ac_docno: 'SO-000021' }, { linked_ac_dtlkey: 991 }, {
         mfg_sales_order_payments: [
-          { so_doc_no: 'HC-SO-B', amount_centi: 400_00, is_deposit: true, account_sheet: null, approval_code: null, paid_at: '2026-08-01', id: 'p1' },
+          { so_doc_no: 'HC-SO-B', amount_sen: 400_00, is_deposit: true, account_sheet: null, approval_code: null, paid_at: '2026-08-01', id: 'p1' },
         ],
       });
       await enqueueEdit(client(sb), { companyId: 1, docType: 'SO', docNo: 'HC-SO-B' });
@@ -1543,7 +1543,7 @@ describe('the three fields the extract carries and the write-back did not send',
         suppliers: [{ id: 'sup-1', code: '400-H004', name: 'Supplier' }],
         purchase_order_items: [{
           purchase_order_id: 'po-b', material_code: ERP_A, description: 'M',
-          qty: 1, unit_price_centi: 100, warehouse_id: 'wh-kl', delivery_date: '2026-10-02',
+          qty: 1, unit_price_sen: 100, warehouse_id: 'wh-kl', delivery_date: '2026-10-02',
         }],
         warehouses: [{ id: 'wh-kl', code: 'KL', name: 'KL WAREHOUSE' }],
       });
@@ -1619,7 +1619,7 @@ describe('every purchase order names a purchase agent (FK_PO_PurchaseAgent)', ()
     }],
     purchase_order_items: [{
       id: 'poi-1', purchase_order_id: 'po-1', material_code: ERP_A, description: 'M',
-      qty: 1, unit_price_centi: 100, warehouse_id: 'wh-kl',
+      qty: 1, unit_price_sen: 100, warehouse_id: 'wh-kl',
     }],
     warehouses: [{ id: 'wh-kl', code: 'KL', name: 'KL WAREHOUSE' }],
     suppliers: [{ id: 'sup-1', code: '400-N002', name: 'NICOLLO SDN BHD' }],

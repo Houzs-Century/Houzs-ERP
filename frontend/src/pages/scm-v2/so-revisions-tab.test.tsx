@@ -60,8 +60,8 @@ describe('RevisionsTab', () => {
           // The approve-so snapshot shape is not frozen, which is why the
           // component dual-reads. Mix the two here on purpose.
           snapshot: {
-            header: { debtorName: 'Test Debtor Sdn Bhd', local_total_centi: 123400 },
-            lines: [{ item_code: 'SOFA-A', qty: 2, unitPriceCenti: 61700 }],
+            header: { debtorName: 'Test Debtor Sdn Bhd', local_total_sen: 123400 },
+            lines: [{ item_code: 'SOFA-A', qty: 2, unitPriceSen: 61700 }],
           },
         }],
       },

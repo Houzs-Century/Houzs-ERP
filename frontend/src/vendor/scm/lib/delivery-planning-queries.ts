@@ -68,11 +68,11 @@ export type PlanningOrder = {
   status: string;
   delivery_state: DeliveryState;
   delivery_state_override: string | null;
-  balance_centi: number;
+  balance_sen: number;
   /* Live balance (= local_total − Σpayments, from the SO-list payment-totals
-     view); null when the view has no row → fall back to balance_centi. */
-  balance_centi_live: number | null;
-  local_total_centi: number;
+     view); null when the view has no row → fall back to balance_sen. */
+  balance_sen_live: number | null;
+  local_total_sen: number;
   so_date: string | null;
   /* The customer's ORIGINAL delivery date — never overwritten (migration 0199). */
   customer_delivery_date: string | null;
@@ -259,9 +259,9 @@ export type PlanningLineItem = {
   description2: string | null;
   uom: string | null;
   qty: number | null;
-  unit_price_centi: number | null;
-  discount_centi: number | null;
-  total_centi: number | null;
+  unit_price_sen: number | null;
+  discount_sen: number | null;
+  total_sen: number | null;
   variants: Record<string, unknown> | null;
   stock_status: string | null;
   cancelled: boolean | null;
@@ -662,7 +662,7 @@ export type ScheduleDeliveryVars = {
   /* Fleet A3: the captured cost (integer sen) when the chosen lorry is a 3PL
      carrier (OUTSOURCE). Written on a trip CREATE; ignored for an own-fleet
      lorry. This is the seam Module C's rate-card will compute against. */
-  threePlCostCenti?: number | null;
+  threePlCostSen?: number | null;
   /* Display-only, for optimistic UI (never posted). */
   driverNameOptimistic?: string | null;
   lorryPlateOptimistic?: string | null;
@@ -683,7 +683,7 @@ export type ScheduleDeliveryResult = {
 export function useScheduleDelivery() {
   const qc = useQueryClient();
   return useMutation<ScheduleDeliveryResult, Error, ScheduleDeliveryVars, { snapshots: Array<[readonly unknown[], PlanningResponse]> }>({
-    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, helper1Id, helper2Id, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS, threePlCostCenti }) => {
+    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, helper1Id, helper2Id, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS, threePlCostSen }) => {
       /* Only include keys the caller actually set, so an unrelated field is never
          nulled out by an inline single-field edit. */
       const body: Record<string, unknown> = {};
@@ -701,7 +701,7 @@ export function useScheduleDelivery() {
       if (etaOffsetS !== undefined) body.etaOffsetS = etaOffsetS;
       if (legDistanceM !== undefined) body.legDistanceM = legDistanceM;
       if (legDurationS !== undefined) body.legDurationS = legDurationS;
-      if (threePlCostCenti !== undefined) body.threePlCostCenti = threePlCostCenti;
+      if (threePlCostSen !== undefined) body.threePlCostSen = threePlCostSen;
       return authedFetch<ScheduleDeliveryResult>(`/delivery-planning/${type}/${id}/schedule`, {
         method: 'PATCH', body: JSON.stringify(body),
       });

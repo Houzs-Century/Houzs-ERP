@@ -3,7 +3,7 @@
 // WHY. The W1-W4 ledger repairs (doc-ref ids, the GRN inbound gap, the
 // variant-key relabel, the basis-cost seed) correct the MOVEMENT and LOT
 // layers. delivery_order_items carries a DERIVED copy of those costs
-// (unit_cost_centi / line_cost_centi / line_margin_centi, stamped by
+// (unit_cost_sen / line_cost_sen / line_margin_sen, stamped by
 // restampDoActualCost), and sales_invoice_items copies the DO's copy. Owner
 // ruling (2026-08-01): after the ledger is right, EVERY shipped DO must read
 // consistent — "已经错了的 DO ... 尽量统一掉吧，保持一致".
@@ -33,7 +33,7 @@
 // The real functions have no dry-run mode, so:
 //   DRY-RUN (default): READ-ONLY, DATABASE_URL only. Prints the scope (every
 //     shipped non-cancelled DO, both companies) and a per-DO STALENESS
-//     INDICATOR: Sigma(line_cost_centi) over non-service lines vs the signed
+//     INDICATOR: Sigma(line_cost_sen) over non-service lines vs the signed
 //     net movement cost booked under the DO (OUT total_cost_sen minus IN).
 //     The restamp derives line costs FROM those movements, so a nonzero delta
 //     is where APPLY is expected to move numbers (after W1-W4: the named W3
@@ -41,7 +41,7 @@
 //     answer — warehouse resolution and the sofa batch map belong to the real
 //     function and are deliberately not replicated here. Also read-only: the
 //     SI-vs-DO agreement report (sales_invoice_items.do_item_id whose
-//     unit_cost_centi differs from its DO line).
+//     unit_cost_sen differs from its DO line).
 //   APPLY (APPLY=1): DATABASE_URL only (see TRANSPORT above). Runs the
 //     canonical restamp per DO, reads each DO's lines before/after, and
 //     prints every changed line old -> new — the authoritative record of
@@ -112,7 +112,7 @@ async function staleness() {
   return pg`
     WITH line_side AS (
       SELECT di.delivery_order_id AS do_id,
-             SUM(COALESCE(di.line_cost_centi, 0))::bigint AS line_cost,
+             SUM(COALESCE(di.line_cost_sen, 0))::bigint AS line_cost,
              count(*)::int AS n_lines
         FROM scm.delivery_order_items di
        WHERE NOT (COALESCE(di.item_group, '') = 'SERVICE' OR di.item_code LIKE 'SVC-%')
@@ -155,14 +155,14 @@ async function siDisagreement() {
 async function siDisagreementQuery() {
   return pg`
     SELECT si.invoice_number, si.status::text AS si_status, d.do_number, count(*)::int AS lines,
-           SUM(ABS(COALESCE(sii.unit_cost_centi, 0) - COALESCE(di.unit_cost_centi, 0)))::bigint AS unit_cost_gap
+           SUM(ABS(COALESCE(sii.unit_cost_sen, 0) - COALESCE(di.unit_cost_sen, 0)))::bigint AS unit_cost_gap
       FROM scm.sales_invoice_items sii
       JOIN scm.sales_invoices si ON si.id = sii.sales_invoice_id
       JOIN scm.delivery_order_items di ON di.id = sii.do_item_id
       JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
      WHERE sii.do_item_id IS NOT NULL
        AND UPPER(si.status::text) <> 'CANCELLED'
-       AND COALESCE(sii.unit_cost_centi, 0) <> COALESCE(di.unit_cost_centi, 0)
+       AND COALESCE(sii.unit_cost_sen, 0) <> COALESCE(di.unit_cost_sen, 0)
      GROUP BY si.invoice_number, si.status, d.do_number
      ORDER BY unit_cost_gap DESC`;
 }
@@ -222,7 +222,7 @@ async function main() {
 
   const readLines = async (doId) => {
     const rows = await pg`
-      SELECT id::text AS id, item_code, qty, unit_cost_centi, line_cost_centi, line_margin_centi, ship_cost_centi
+      SELECT id::text AS id, item_code, qty, unit_cost_sen, line_cost_sen, line_margin_sen, ship_cost_sen
         FROM scm.delivery_order_items WHERE delivery_order_id = ${doId}::uuid ORDER BY id`;
     return new Map(rows.map((r) => [r.id, r]));
   };
@@ -242,10 +242,10 @@ async function main() {
     for (const [id, b] of before) {
       const a = after.get(id);
       if (!a) continue;
-      if (Number(a.unit_cost_centi ?? 0) !== Number(b.unit_cost_centi ?? 0)
-        || Number(a.line_cost_centi ?? 0) !== Number(b.line_cost_centi ?? 0)
-        || Number(a.line_margin_centi ?? 0) !== Number(b.line_margin_centi ?? 0)
-        || Number(a.ship_cost_centi ?? 0) !== Number(b.ship_cost_centi ?? 0)) {
+      if (Number(a.unit_cost_sen ?? 0) !== Number(b.unit_cost_sen ?? 0)
+        || Number(a.line_cost_sen ?? 0) !== Number(b.line_cost_sen ?? 0)
+        || Number(a.line_margin_sen ?? 0) !== Number(b.line_margin_sen ?? 0)
+        || Number(a.ship_cost_sen ?? 0) !== Number(b.ship_cost_sen ?? 0)) {
         diffs.push({ b, a });
       }
     }
@@ -255,7 +255,7 @@ async function main() {
       changedDoIds.add(d.id);
       notice(`  CHANGED ${d.do_number} (company ${d.company_id}, ${d.status}) — ${diffs.length} line(s):`);
       for (const { b, a } of diffs) {
-        notice(`    ${b.item_code} qty=${b.qty}: unit ${rm(b.unit_cost_centi)} -> ${rm(a.unit_cost_centi)}, line ${rm(b.line_cost_centi)} -> ${rm(a.line_cost_centi)}, margin ${rm(b.line_margin_centi)} -> ${rm(a.line_margin_centi)}${Number(b.ship_cost_centi ?? 0) !== Number(a.ship_cost_centi ?? 0) ? `, ship-cost freeze ${rm(b.ship_cost_centi)} -> ${rm(a.ship_cost_centi)}` : ""}`);
+        notice(`    ${b.item_code} qty=${b.qty}: unit ${rm(b.unit_cost_sen)} -> ${rm(a.unit_cost_sen)}, line ${rm(b.line_cost_sen)} -> ${rm(a.line_cost_sen)}, margin ${rm(b.line_margin_sen)} -> ${rm(a.line_margin_sen)}${Number(b.ship_cost_sen ?? 0) !== Number(a.ship_cost_sen ?? 0) ? `, ship-cost freeze ${rm(b.ship_cost_sen)} -> ${rm(a.ship_cost_sen)}` : ""}`);
       }
     }
   }

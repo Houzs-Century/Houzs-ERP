@@ -43,12 +43,12 @@ export interface AllocLine {
   materialCode: string | null | undefined;
   /** received/accepted qty driving inventory + allocation. */
   qty: number;
-  /** line amount in the GRN's OWN currency (unit_price_centi × qty − discount,
+  /** line amount in the GRN's OWN currency (unit_price_sen × qty − discount,
    *  or the SERVICE line's charge amount). For goods lines we allocate ONTO the
    *  base MYR cost; for service lines this is the charge to pool. */
-  amountCenti: number;
-  /** per-unit base cost in the GRN currency (unit_price_centi). */
-  unitPriceCenti: number;
+  amountSen: number;
+  /** per-unit base cost in the GRN currency (unit_price_sen). */
+  unitPriceSen: number;
   /** product volume m³ × 1000 (mfg_products.unit_m3_milli); 0 when unknown. */
   unitM3Milli: number;
 }
@@ -56,7 +56,7 @@ export interface AllocLine {
 export interface AllocatedGoodsLine {
   id: string;
   /** allocated freight for this line, MYR sen (Σ === chargePool exactly). */
-  allocatedChargeCenti: number;
+  allocatedChargeSen: number;
   /** base per-unit cost in MYR (unit_price × grnRate). */
   baseUnitCostMyr: number;
   /** landed per-unit cost in MYR = baseUnitCostMyr + round(allocated / qty). */
@@ -88,7 +88,7 @@ export function allocateLandedCharges(
 
   // Charge pool (MYR) = Σ service-line amounts converted at the GRN rate.
   const chargePoolMyr = serviceLines.reduce(
-    (s, l) => s + toMyrSen(Number(l.amountCenti ?? 0), grnRate),
+    (s, l) => s + toMyrSen(Number(l.amountSen ?? 0), grnRate),
     0,
   );
 
@@ -96,7 +96,7 @@ export function allocateLandedCharges(
   const base = goodsLines.map((l) => ({
     line: l,
     qty: Math.max(0, Number(l.qty ?? 0)),
-    baseUnitCostMyr: toMyrSen(Number(l.unitPriceCenti ?? 0), grnRate),
+    baseUnitCostMyr: toMyrSen(Number(l.unitPriceSen ?? 0), grnRate),
   }));
 
   // Pick the basis per line; fall back to QTY if the chosen basis sums to 0
@@ -140,7 +140,7 @@ export function allocateLandedCharges(
     const perUnitCharge = b.qty > 0 ? Math.round(alloc / b.qty) : 0;
     goods.push({
       id: b.line.id,
-      allocatedChargeCenti: alloc,
+      allocatedChargeSen: alloc,
       baseUnitCostMyr: b.baseUnitCostMyr,
       landedUnitCostMyr: b.baseUnitCostMyr + perUnitCharge,
       qty: b.qty,

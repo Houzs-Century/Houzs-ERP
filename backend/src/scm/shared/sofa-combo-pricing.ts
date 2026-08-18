@@ -349,7 +349,7 @@ export interface ComboMatch {
   /** The winning combo row. */
   row: SofaComboRow;
   /** Combo total (centi) for the requested height. Always a finite number. */
-  comboPriceCenti: number;
+  comboPriceSen: number;
   /** Sorted BUILT-module indices the combo consumed (one per slot). Built
    *  modules NOT in this list are extras priced at full master price. */
   matchedIndices: number[];
@@ -431,9 +431,9 @@ export function pickComboMatch(
   const winner = ranked[0];
   if (!winner) return null;
 
-  const comboPriceCenti = winner.row.pricesByHeight[args.height];
-  if (typeof comboPriceCenti !== 'number') return null;
-  return { row: winner.row, comboPriceCenti, matchedIndices: winner.subset };
+  const comboPriceSen = winner.row.pricesByHeight[args.height];
+  if (typeof comboPriceSen !== 'number') return null;
+  return { row: winner.row, comboPriceSen, matchedIndices: winner.subset };
 }
 
 /**
@@ -446,7 +446,7 @@ export function pickComboPrice(
   args: PickComboArgs,
   rows: readonly SofaComboRow[],
 ): number | null {
-  return pickComboMatch(args, rows)?.comboPriceCenti ?? null;
+  return pickComboMatch(args, rows)?.comboPriceSen ?? null;
 }
 
 /** Split a sofa product code into its base model + module size code. A
@@ -476,7 +476,7 @@ export function sofaHeightKey(variants: unknown): string {
 /**
  * Spread a combo's negotiated total across the matched lines, proportional to
  * each line's own base cost, rebalancing the rounding residual into the
- * highest-cost line so the returned values sum to EXACTLY `comboTotalCenti`.
+ * highest-cost line so the returned values sum to EXACTLY `comboTotalSen`.
  *
  * This is the cost-side mirror of HOOKKA's sales-order combo redistribution
  * (src/pages/sales/create.tsx — `ratio = comboTotal / groupSum` per line, then
@@ -487,42 +487,42 @@ export function sofaHeightKey(variants: unknown): string {
  * price. Lines OUTSIDE the matched subset ("extras") are not passed in here —
  * they keep their full per-module cost.
  *
- * @param baseCostsCenti  per-line base cost (already × qty if you spread totals,
+ * @param baseCostsSen  per-line base cost (already × qty if you spread totals,
  *                        or per-unit if per-unit — the function is unit-agnostic;
  *                        it preserves whatever scale you pass and the sum lands
- *                        on comboTotalCenti). Pass LINE TOTALS for parity with
+ *                        on comboTotalSen). Pass LINE TOTALS for parity with
  *                        HOOKKA.
- * @returns new per-line values, same length/order, summing to comboTotalCenti.
+ * @returns new per-line values, same length/order, summing to comboTotalSen.
  *          When the base costs sum to 0 (no signal to weight by) the total is
  *          split as evenly as possible. Pure — safe in Workers + React.
  */
 export function spreadComboTotal(
-  baseCostsCenti: readonly number[],
-  comboTotalCenti: number,
+  baseCostsSen: readonly number[],
+  comboTotalSen: number,
 ): number[] {
-  const n = baseCostsCenti.length;
+  const n = baseCostsSen.length;
   if (n === 0) return [];
-  const total = Math.max(0, Math.round(comboTotalCenti));
-  const sum = baseCostsCenti.reduce((s, c) => s + Math.max(0, c), 0);
+  const total = Math.max(0, Math.round(comboTotalSen));
+  const sum = baseCostsSen.reduce((s, c) => s + Math.max(0, c), 0);
 
   let out: number[];
   if (sum <= 0) {
     // No base-cost signal → split as evenly as possible.
     const each = Math.floor(total / n);
-    out = baseCostsCenti.map(() => each);
+    out = baseCostsSen.map(() => each);
   } else {
     const ratio = total / sum;
-    out = baseCostsCenti.map((c) => Math.max(0, Math.floor(Math.max(0, c) * ratio)));
+    out = baseCostsSen.map((c) => Math.max(0, Math.floor(Math.max(0, c) * ratio)));
   }
 
   // Rebalance the rounding residual into the highest base-cost line so the sum
-  // is exactly comboTotalCenti (HOOKKA pushes the residual into the dearest line).
+  // is exactly comboTotalSen (HOOKKA pushes the residual into the dearest line).
   const newSum = out.reduce((s, c) => s + c, 0);
   const residual = total - newSum;
   if (residual !== 0) {
     let target = 0;
     for (let i = 1; i < n; i++) {
-      if ((baseCostsCenti[i] ?? 0) > (baseCostsCenti[target] ?? 0)) target = i;
+      if ((baseCostsSen[i] ?? 0) > (baseCostsSen[target] ?? 0)) target = i;
     }
     out[target] = Math.max(0, (out[target] ?? 0) + residual);
   }

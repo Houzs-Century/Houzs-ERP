@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS scm.sales_invoice_payments (
   installment_months  integer,
   online_type         text,
   approval_code       text,
-  amount_centi        integer NOT NULL CHECK (amount_centi >= 0),
+  amount_sen        integer NOT NULL CHECK (amount_sen >= 0),
   account_sheet       text,
   collected_by        uuid REFERENCES scm.staff(id) ON DELETE SET NULL,
   note                text,
@@ -51,7 +51,7 @@ CREATE TABLE IF NOT EXISTS scm.customer_credits (
   debtor_code        text NOT NULL,
   debtor_name        text,
   entry_date         date NOT NULL DEFAULT CURRENT_DATE,
-  amount_centi       integer NOT NULL,              -- signed: + adds, − applies
+  amount_sen       integer NOT NULL,              -- signed: + adds, − applies
   source_type        text NOT NULL,                 -- SI_CANCEL_REFUND | OVERPAY | APPLIED_TO_SI | MANUAL_ADJUST
   source_doc_no      text,
   source_doc_id      uuid,
@@ -68,7 +68,7 @@ CREATE OR REPLACE VIEW scm.v_customer_credit_balances AS
 SELECT
   debtor_code,
   MAX(debtor_name)  AS debtor_name,
-  SUM(amount_centi) AS balance_centi,
+  SUM(amount_sen) AS balance_sen,
   COUNT(*)          AS entry_count,
   MAX(created_at)   AS last_entry_at
 FROM scm.customer_credits

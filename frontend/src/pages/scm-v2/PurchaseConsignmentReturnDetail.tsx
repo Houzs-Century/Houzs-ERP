@@ -80,7 +80,7 @@ type HeaderDraft = {
    free-add — this is the ONLY new editing capability here.) */
 type LineDraft = {
   qty: number;            // maps to qty_returned
-  unitPriceCenti: number;
+  unitPriceSen: number;
   materialName: string;
   itemGroup: string | null;
   variants: Record<string, unknown> | null;
@@ -91,8 +91,8 @@ type PrItemRow = Record<string, unknown> & {
   material_code: string;
   material_name: string;
   qty_returned: number;
-  unit_price_centi: number;
-  line_refund_centi?: number;
+  unit_price_sen: number;
+  line_refund_sen?: number;
   item_group?: string | null;
   material_kind?: string | null;
   description?: string | null;
@@ -113,7 +113,7 @@ const headerSnapshot = (p: any): HeaderDraft => ({
 
 const lineSnapshot = (it: PrItemRow): LineDraft => ({
   qty:            it.qty_returned,
-  unitPriceCenti: it.unit_price_centi,
+  unitPriceSen: it.unit_price_sen,
   materialName:   it.description ?? it.material_name ?? '',
   itemGroup:      it.item_group ?? null,
   variants:       (it.variants as Record<string, unknown> | null) ?? null,
@@ -161,9 +161,9 @@ export const PurchaseConsignmentReturnDetail = () => {
   const visibleItems = items;
   const lineOf = (it: PrItemRow): LineDraft => lineDrafts[it.id] ?? lineSnapshot(it);
   const lineTotalOf = (it: PrItemRow): number => {
-    if (!isEditing) return it.line_refund_centi ?? (it.qty_returned * it.unit_price_centi);
+    if (!isEditing) return it.line_refund_sen ?? (it.qty_returned * it.unit_price_sen);
     const d = lineOf(it);
-    return d.qty * d.unitPriceCenti;
+    return d.qty * d.unitPriceSen;
   };
   const refundTotal = visibleItems.reduce((s, it) => s + lineTotalOf(it), 0);
 
@@ -183,7 +183,7 @@ export const PurchaseConsignmentReturnDetail = () => {
       status: String(pr.status),
       return_date: pr.return_date ?? '',
       reason: pr.reason ?? null,
-      refund_centi: refundTotal,
+      refund_sen: refundTotal,
       credit_note_ref: pr.credit_note_ref ?? null,
       notes: pr.notes ?? null,
       supplier: pr.supplier ?? undefined,
@@ -192,8 +192,8 @@ export const PurchaseConsignmentReturnDetail = () => {
       material_code: it.material_code,
       material_name: it.material_name,
       qty_returned: it.qty_returned,
-      unit_price_centi: it.unit_price_centi,
-      line_refund_centi: it.line_refund_centi ?? (it.qty_returned * it.unit_price_centi),
+      unit_price_sen: it.unit_price_sen,
+      line_refund_sen: it.line_refund_sen ?? (it.qty_returned * it.unit_price_sen),
       reason: null,
     }));
     return import('../../vendor/scm/lib/purchase-return-pdf')
@@ -275,12 +275,12 @@ export const PurchaseConsignmentReturnDetail = () => {
         );
         const changed =
           d.qty !== it.qty_returned ||
-          d.unitPriceCenti !== it.unit_price_centi ||
+          d.unitPriceSen !== it.unit_price_sen ||
           identityChanged;
         if (changed) {
           await updateItem.mutateAsync({
             id: pr.id, itemId: it.id,
-            qty: d.qty, unitPriceCenti: d.unitPriceCenti,
+            qty: d.qty, unitPriceSen: d.unitPriceSen,
             /* T12 — only manual lines send identity/variants; the server
                recomputes description2 + resyncs the return's inventory. */
             ...(manual ? {
@@ -436,11 +436,11 @@ export const PurchaseConsignmentReturnDetail = () => {
                         <td className={styles.tableRight}>
                           <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
                             style={{ width: 110, textAlign: 'right' }}
-                            valueSen={d.unitPriceCenti}
+                            valueSen={d.unitPriceSen}
                             disabled={isLocked}
-                            onCommit={(sen) => setLine(it, { unitPriceCenti: sen ?? 0 })} />
+                            onCommit={(sen) => setLine(it, { unitPriceSen: sen ?? 0 })} />
                         </td>
-                        <td className={styles.priceCell}>{fmtRm(d.qty * d.unitPriceCenti)}</td>
+                        <td className={styles.priceCell}>{fmtRm(d.qty * d.unitPriceSen)}</td>
                         <td>
                           <span className={styles.actionsCell}>
                             <button type="button"
@@ -467,7 +467,7 @@ export const PurchaseConsignmentReturnDetail = () => {
                     ) : (
                       <>
                         <td className={styles.tableRight}>{it.qty_returned}</td>
-                        <td className={styles.tableRight}>{fmtRm(it.unit_price_centi)}</td>
+                        <td className={styles.tableRight}>{fmtRm(it.unit_price_sen)}</td>
                         <td className={styles.priceCell}>{fmtRm(lineTotalOf(it))}</td>
                       </>
                     )}

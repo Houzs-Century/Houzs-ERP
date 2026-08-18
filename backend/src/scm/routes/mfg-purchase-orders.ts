@@ -204,7 +204,7 @@ async function recordPoCreate(
   try {
     const { data } = await sb.from('purchase_orders')
       .select('id, po_number, status, company_id, supplier_id, po_date, expected_at, ' +
-        'currency, purchase_location_id, notes, subtotal_centi, total_centi')
+        'currency, purchase_location_id, notes, subtotal_sen, total_sen')
       .eq('id', poId).maybeSingle();
     row = (data ?? null) as Record<string, unknown> | null;
   } catch { /* best-effort */ }
@@ -227,7 +227,7 @@ async function recordPoCreate(
       fieldChange('purchaseLocationId', null, row.purchase_location_id ?? null),
       fieldChange('notes', null, row.notes ?? null),
       /* INTEGER SEN, straight off the column. */
-      fieldChange('totalCenti', null, row.total_centi ?? null),
+      fieldChange('totalSen', null, row.total_sen ?? null),
       fieldChange('lineCount', null, lineCount),
     ]),
   });
@@ -376,7 +376,7 @@ function soNotOrderableResponse(offender: { docNo: string; status: string }) {
 
 const HEADER_COLS =
   'id, po_number, supplier_id, status, po_date, expected_at, currency, ' +
-  'subtotal_centi, tax_centi, total_centi, notes, submitted_at, received_at, ' +
+  'subtotal_sen, tax_sen, total_sen, notes, submitted_at, received_at, ' +
   'cancelled_at, created_at, created_by, updated_at, ' +
   /* SO-amendment / revision workflow (2026-07-03) — bumped in place when a
      supplier-confirmed amendment revises this PO; prior versions snapshot to
@@ -391,9 +391,9 @@ const HEADER_COLS =
 
 const ITEM_COLS =
   'id, purchase_order_id, binding_id, material_kind, material_code, material_name, ' +
-  'supplier_sku, qty, unit_price_centi, line_total_centi, received_qty, notes, created_at, ' +
+  'supplier_sku, qty, unit_price_sen, line_total_sen, received_qty, notes, created_at, ' +
   /* PR #41 — variant fields (migration 0056) */
-  'item_group, description, description2, uom, discount_centi, unit_cost_centi, ' +
+  'item_group, description, description2, uom, discount_sen, unit_cost_sen, ' +
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
   'custom_specials, line_suffix, special_order_price_sen, variants, ' +
   /* PR #77 — per-line delivery date + ship-to warehouse */
@@ -471,7 +471,7 @@ mfgPurchaseOrders.get('/', async (c) => {
     const psRaw = Number(c.req.query('pageSize'));
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-    const SORT_COLS = new Set(['po_date', 'po_number', 'status', 'total_centi']);
+    const SORT_COLS = new Set(['po_date', 'po_number', 'status', 'total_sen']);
     const [rawCol, rawDir] = (c.req.query('sort') ?? 'po_date:desc').split(':');
     const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'po_date';
     const sortAsc = rawDir === 'asc';
@@ -621,7 +621,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
     supabase
       .from('mfg_sales_order_items')
       .select(`
-      id, doc_no, item_code, description, item_group, qty, po_qty_picked, unit_price_centi,
+      id, doc_no, item_code, description, item_group, qty, po_qty_picked, unit_price_sen,
       variants, line_suffix, cancelled, line_delivery_date,
       so:mfg_sales_orders!inner ( doc_no, debtor_name, branding, status, so_date, customer_delivery_date, processing_date, sales_location )
     `),
@@ -634,7 +634,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
 
   type Row = {
     id: string; doc_no: string; item_code: string; description: string | null;
-    item_group: string; qty: number; po_qty_picked: number; unit_price_centi: number;
+    item_group: string; qty: number; po_qty_picked: number; unit_price_sen: number;
     variants: unknown; line_suffix: string | null; cancelled: boolean;
     line_delivery_date: string | null;
     so: {
@@ -709,7 +709,7 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
         qty:             r.qty,
         poQtyPicked:     r.po_qty_picked,
         remainingQty:    remaining,
-        unitPriceCenti:  r.unit_price_centi,
+        unitPriceSen:  r.unit_price_sen,
         variants:        r.variants,
         lineSuffix:      r.line_suffix,
         // Commander 2026-05-28 — new fields for the redesigned PO-from-SO grid.
@@ -1118,7 +1118,7 @@ mfgPurchaseOrders.get('/:id/revisions', async (c) => {
 // ── Create ────────────────────────────────────────────────────────────
 // body: {
 //   supplierId, currency?, expectedAt?, notes?,
-//   items: [{ materialKind, materialCode, materialName, supplierSku?, qty, unitPriceCenti, bindingId? }]
+//   items: [{ materialKind, materialCode, materialName, supplierSku?, qty, unitPriceSen, bindingId? }]
 // }
 mfgPurchaseOrders.post('/', async (c) => {
   let body: Record<string, unknown>;
@@ -1240,8 +1240,8 @@ mfgPurchaseOrders.post('/', async (c) => {
   for (const [i, it] of items.entries()) {
     const parsed = parseLineNumbers({
       qty: { value: it.qty },
-      unitPriceCenti: { value: it.unitPriceCenti },
-      discountCenti: { value: it.discountCenti },
+      unitPriceSen: { value: it.unitPriceSen },
+      discountSen: { value: it.discountSen },
     });
     if (!parsed.ok) {
       const b = invalidLineNumberBody(parsed.invalid);
@@ -1258,11 +1258,11 @@ mfgPurchaseOrders.post('/', async (c) => {
     if (soItemId && qty > 0) {
       pickedQtyBySoItem.set(soItemId, (pickedQtyBySoItem.get(soItemId) ?? 0) + qty);
     }
-    const unit = Math.max(0, Number(it.unitPriceCenti ?? 0));
-    const discountCenti = Math.max(0, Number(it.discountCenti ?? 0));
+    const unit = Math.max(0, Number(it.unitPriceSen ?? 0));
+    const discountSen = Math.max(0, Number(it.discountSen ?? 0));
     // PR #97 — line total honours per-line discount when computed up front
     // (matches the AutoCount "Total" column in the new full-page form).
-    const lineTotal = Math.max(0, qty * unit - discountCenti);
+    const lineTotal = Math.max(0, qty * unit - discountSen);
     subtotal += lineTotal;
     return {
       binding_id: (it.bindingId as string | undefined) ?? null,
@@ -1271,12 +1271,12 @@ mfgPurchaseOrders.post('/', async (c) => {
       material_name: it.materialName,
       supplier_sku: (it.supplierSku as string | undefined) ?? null,
       qty,
-      unit_price_centi: unit,
-      line_total_centi: lineTotal,
+      unit_price_sen: unit,
+      line_total_sen: lineTotal,
       notes: (it.notes as string | undefined) ?? null,
       /* PR #97 — pass-through per-line variant + AutoCount fields. NULL
          when absent so the column default / nullable behaviour kicks in. */
-      discount_centi: discountCenti,
+      discount_sen: discountSen,
       delivery_date: dateOrNull(it.deliveryDate),
       /* Migration 0180 — line's own revised date wins, else the header's. */
       supplier_delivery_date_2: dateOrNull(it.supplierDeliveryDate2) ?? headerD2,
@@ -1322,9 +1322,9 @@ mfgPurchaseOrders.post('/', async (c) => {
     supplier_delivery_date_3: headerD3,
     supplier_delivery_date_4: headerD4,
     notes: (body.notes as string | undefined) ?? null,
-    subtotal_centi: subtotal,
-    tax_centi: 0,
-    total_centi: subtotal,
+    subtotal_sen: subtotal,
+    tax_sen: 0,
+    total_sen: subtotal,
     created_by: user.id,
     /* PR #97 — AutoCount Purchase Location at create time.
        PR #157 — now required (see validation above). */
@@ -1650,7 +1650,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   // + delivery date below.
   type SoItem = {
     id: string; doc_no: string; item_code: string; description: string | null;
-    qty: number; po_qty_picked: number; unit_price_centi: number;
+    qty: number; po_qty_picked: number; unit_price_sen: number;
     line_delivery_date: string | null;
     // Phase 3 (2026-05-29) — carry the SO line's category + variant bag so the
     // PO line cost can auto-price from the supplier matrix + maintenance
@@ -1670,7 +1670,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     so: { sales_location: string | null; customer_delivery_date: string | null } | null;
   };
   const SO_ITEM_SELECT =
-    'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_centi, line_delivery_date, warehouse_id, photo_urls, cancelled, ' +
+    'id, doc_no, item_code, description, item_group, variants, qty, po_qty_picked, unit_price_sen, line_delivery_date, warehouse_id, photo_urls, cancelled, ' +
     /* No company_id on this embed: both source reads below are SCOPED, so a
        cross-company line is never returned and there is nothing to compare. */
     'so:mfg_sales_orders!inner ( sales_location, customer_delivery_date )';
@@ -1758,7 +1758,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       pickedItems.push({
         row: row ?? {
           id: '', doc_no: it.soDocNo, item_code: it.itemCode, description: it.itemName,
-          qty: it.qty, po_qty_picked: 0, unit_price_centi: 0,
+          qty: it.qty, po_qty_picked: 0, unit_price_sen: 0,
           line_delivery_date: null, item_group: null, variants: null,
           // No SO line warehouse on the legacy fabricated row → falls back to
           // the SO header sales_location resolution below.
@@ -1843,7 +1843,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   const codes = [...new Set(soItems.map((it) => it.itemCode))];
   const { data: bindings } = await supabase
     .from('supplier_material_bindings')
-    .select('material_code, supplier_id, supplier_sku, unit_price_centi, currency, price_matrix')
+    .select('material_code, supplier_id, supplier_sku, unit_price_sen, currency, price_matrix')
     .in('material_code', codes)
     .eq('material_kind', 'mfg_product')
     .eq('company_id', activeCompanyId(c))
@@ -1898,7 +1898,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
      cost can auto-price from the supplier's own per-category price table. */
   type MainBinding = {
     material_code: string; supplier_id: string; supplier_sku: string;
-    unit_price_centi: number; currency: string;
+    unit_price_sen: number; currency: string;
     price_matrix: Record<string, unknown> | null;
   };
   /* Commander 2026-05-31 — per-pick supplier support. A single SKU can now be
@@ -1952,7 +1952,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     if (fallback && liveSupplierIds.has(fallback)) {
       return {
         material_code: it.itemCode, supplier_id: fallback, supplier_sku: '',
-        unit_price_centi: 0, currency: 'MYR', price_matrix: null,
+        unit_price_sen: 0, currency: 'MYR', price_matrix: null,
       };
     }
     return null;
@@ -2061,7 +2061,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
           {
             category,
             priceMatrix:    (b.price_matrix ?? null) as PoPriceMatrix,
-            unitPriceCenti: b.unit_price_centi,
+            unitPriceSen: b.unit_price_sen,
             fabricTier:     resolveFabricTier(it.itemGroup, it.variants),
             /* The spec fields, from the ONE constructor — this call used to
                hand-copy them and, like both other backend copies, left out the
@@ -2071,7 +2071,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
           maintBySupplier.get(b.supplier_id) ?? null,
         ).unitPriceSen
       // No category on the SO line → can't project a matrix; keep the flat price.
-      : b.unit_price_centi;
+      : b.unit_price_sen;
     baseCostByItem.set(it, base);
   }
 
@@ -2127,7 +2127,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     // cheaper to avoid inflating the customer price — that guard is dropped
     // here). e.g. 2A+L = 2200 → those two lines cost 2200 together; an extra
     // 1NA outside the matched subset keeps its own per-module cost (2200 + 1NA).
-    const comboTotal = match.comboPriceCenti;
+    const comboTotal = match.comboPriceSen;
     if (comboTotal <= 0) continue; // no price for this height → keep base cost
     /* Audit 2026-06-11 I1 — this spread works in PER-UNIT costs (the spread
        results are stored as per-unit prices and re-multiplied by qty on the
@@ -2155,7 +2155,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   // instead of one mixed-warehouse PO. effectiveSupplierId resolves per line as
   //   pick.supplierId ?? supplierByCode[itemCode] ?? <SKU main supplier id>.
   type Line = {
-    itemCode: string; itemName: string; qty: number; supplierSku: string; unitPriceCenti: number;
+    itemCode: string; itemName: string; qty: number; supplierSku: string; unitPriceSen: number;
     warehouseId: string | null; deliveryDate: string | null;
     itemGroup: string | null; variants: Record<string, unknown> | null;
     soItemId: string | null;
@@ -2221,16 +2221,16 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
 
     // Cost was resolved in the pre-pass above: a combo-redistributed cost wins,
     // else the per-line base cost (matrix + surcharges), else the flat price.
-    const autoCostCenti = adjustedCostByItem.get(it)
+    const autoCostSen = adjustedCostByItem.get(it)
       ?? baseCostByItem.get(it)
-      ?? b.unit_price_centi;
+      ?? b.unit_price_sen;
 
     bucket.lines.push({
       itemCode: it.itemCode,
       itemName: it.itemName,
       qty: it.qty,
       supplierSku: b.supplier_sku,
-      unitPriceCenti: autoCostCenti,
+      unitPriceSen: autoCostSen,
       warehouseId: lineWarehouseId,
       deliveryDate: lineDeliveryDate,
       itemGroup: it.itemGroup,
@@ -2285,8 +2285,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       material_name: l.itemName,
       supplier_sku: l.supplierSku,
       qty: l.qty,
-      unit_price_centi: l.unitPriceCenti,
-      line_total_centi: l.qty * l.unitPriceCenti,
+      unit_price_sen: l.unitPriceSen,
+      line_total_sen: l.qty * l.unitPriceSen,
       delivery_date: l.deliveryDate,
       warehouse_id:  l.warehouseId,
       item_group: l.itemGroup,
@@ -2333,7 +2333,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   for (const bucket of byGroup.values()) {
     const supplierId = bucket.supplierId;
     counter += 1;
-    const subtotal = bucket.lines.reduce((s, l) => s + l.qty * l.unitPriceCenti, 0);
+    const subtotal = bucket.lines.reduce((s, l) => s + l.qty * l.unitPriceSen, 0);
 
     /* Commander 2026-05-28 — derive the PO HEADER fields from this PO's lines:
          expected_at          = earliest non-null line delivery date, else null
@@ -2376,9 +2376,9 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       status: (asDraft || !headerPurchaseLocationId) ? 'DRAFT' : 'SUBMITTED',
       submitted_at: (asDraft || !headerPurchaseLocationId) ? null : new Date().toISOString(),
       currency: bucket.currency,
-      subtotal_centi: subtotal,
-      tax_centi: 0,
-      total_centi: subtotal,
+      subtotal_sen: subtotal,
+      tax_sen: 0,
+      total_sen: subtotal,
       notes: provenanceNote('so', [...bucket.soDocNos]), // a STORED CONTRACT, 8 readers: transfer-vocabulary.ts
       created_by: user.id,
       expected_at: headerExpectedAt, // Commander 2026-05-28 — derived from the source SO lines, not asked.
@@ -2415,8 +2415,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       material_name: l.itemName,
       supplier_sku: l.supplierSku,
       qty: l.qty,
-      unit_price_centi: l.unitPriceCenti,
-      line_total_centi: l.qty * l.unitPriceCenti,
+      unit_price_sen: l.unitPriceSen,
+      line_total_sen: l.qty * l.unitPriceSen,
       /* Commander 2026-05-28 — per-line delivery date = the source SO LINE's
          date; per-line warehouse = the SO's sales_location warehouse. Both
          may be null when the SO didn't carry them — that's allowed. */
@@ -2814,10 +2814,10 @@ mfgPurchaseOrders.post('/bulk-supplier-date', async (c) => {
    See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputePoTotals(sb: any, poId: string) {
   const { data: items, error: itemsErr } = await sb.from('purchase_order_items')
-    .select('line_total_centi')
+    .select('line_total_sen')
     .eq('purchase_order_id', poId);
   /* A failed READ is not an empty PO, and `?? []` cannot tell them apart — it
-     folded a transient blip into subtotal_centi / total_centi ZERO on an order
+     folded a transient blip into subtotal_sen / total_sen ZERO on an order
      whose lines were intact, i.e. a PO the supplier is owed for silently claimed
      to be worth nothing. The ERROR is the signal, never the emptiness: a
      genuinely empty PO resolves error === null with data === [] and MUST still
@@ -2827,10 +2827,10 @@ async function recomputePoTotals(sb: any, poId: string) {
     console.error('[po-recompute] item read failed — header left unchanged:', poId, itemsErr.message);
     return;
   }
-  const subtotal = (items ?? []).reduce((s: number, r: any) => s + (r.line_total_centi ?? 0), 0);
+  const subtotal = (items ?? []).reduce((s: number, r: any) => s + (r.line_total_sen ?? 0), 0);
   const { error: updErr } = await sb.from('purchase_orders').update({
-    subtotal_centi: subtotal,
-    total_centi: subtotal,
+    subtotal_sen: subtotal,
+    total_sen: subtotal,
     updated_at: new Date().toISOString(),
   }).eq('id', poId);
   if (updErr) {
@@ -3057,20 +3057,20 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   if (childLock) return c.json(childLock, 409);
 
   /* Non-finite guard — the clamp below cannot catch NaN (Math.max(0, NaN) is
-     NaN), so a junk qty/price reached line_total_centi and the PO total. */
+     NaN), so a junk qty/price reached line_total_sen and the PO total. */
   const parsedLine = parseLineNumbers({
     qty: { value: it.qty, fallback: 1 },
-    unitPriceCenti: { value: it.unitPriceCenti },
-    discountCenti: { value: it.discountCenti },
+    unitPriceSen: { value: it.unitPriceSen },
+    discountSen: { value: it.discountSen },
   });
   if (!parsedLine.ok) return c.json(invalidLineNumberBody(parsedLine.invalid), 400);
-  const { qty, unitPriceCenti, discountCenti } = parsedLine.nums as {
-    qty: number; unitPriceCenti: number; discountCenti: number;
+  const { qty, unitPriceSen, discountSen } = parsedLine.nums as {
+    qty: number; unitPriceSen: number; discountSen: number;
   };
   // Audit (ported from 2990 21163bde) — clamp like the create path (mfg-purchase-orders POST /):
   // a per-line discount exceeding qty×price must not persist a negative
-  // line_total_centi (it sums straight into the PO subtotal/total).
-  const lineTotal = Math.max(0, (qty * unitPriceCenti) - discountCenti);
+  // line_total_sen (it sums straight into the PO subtotal/total).
+  const lineTotal = Math.max(0, (qty * unitPriceSen) - discountSen);
 
   /* Audit fix — Add-item dropped the source SO link. Without so_item_id the
      line never counts toward the SO's po_qty_picked, so the From-SO picker
@@ -3096,8 +3096,8 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     material_name: it.materialName,
     supplier_sku: (it.supplierSku as string) ?? null,
     qty,
-    unit_price_centi: unitPriceCenti,
-    line_total_centi: lineTotal,
+    unit_price_sen: unitPriceSen,
+    line_total_sen: lineTotal,
     notes: (it.notes as string) ?? null,
     /* PR #41 — variant fields */
     gap_inches: (it.gapInches as number) ?? null,
@@ -3114,8 +3114,8 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     /* Commander 2026-05-28 — Description 2 auto-generated from variants. */
     description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
     uom: (it.uom as string) ?? 'UNIT',
-    discount_centi: discountCenti,
-    unit_cost_centi: Number(it.unitCostCenti ?? 0),
+    discount_sen: discountSen,
+    unit_cost_sen: Number(it.unitCostSen ?? 0),
     // PR #77 — per-line ship-to. Both nullable; empty = inherit from header.
     delivery_date: dateOrNull(it.deliveryDate),
     // Migration 0180 — per-line supplier-revised dates (nullable, default NULL).
@@ -3194,12 +3194,12 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
      exactly; this guard is about NaN, not semantics. */
   const parsedEdit = parseLineNumbers({
     qty: { value: it.qty !== undefined ? it.qty : prev.qty },
-    unitPriceCenti: { value: it.unitPriceCenti !== undefined ? it.unitPriceCenti : prev.unit_price_centi },
-    discountCenti: { value: it.discountCenti !== undefined ? it.discountCenti : prev.discount_centi },
+    unitPriceSen: { value: it.unitPriceSen !== undefined ? it.unitPriceSen : prev.unit_price_sen },
+    discountSen: { value: it.discountSen !== undefined ? it.discountSen : prev.discount_sen },
   });
   if (!parsedEdit.ok) return c.json(invalidLineNumberBody(parsedEdit.invalid), 400);
-  const { qty, unitPriceCenti: unit, discountCenti: discount } = parsedEdit.nums as {
-    qty: number; unitPriceCenti: number; discountCenti: number;
+  const { qty, unitPriceSen: unit, discountSen: discount } = parsedEdit.nums as {
+    qty: number; unitPriceSen: number; discountSen: number;
   };
   // Audit (ported from 2990 21163bde) — clamp like the create path (see POST /:id/items).
   const lineTotal = Math.max(0, (qty * unit) - discount);
@@ -3228,13 +3228,13 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
   }
 
   const updates: Record<string, unknown> = {
-    qty, unit_price_centi: unit, discount_centi: discount, line_total_centi: lineTotal,
+    qty, unit_price_sen: unit, discount_sen: discount, line_total_sen: lineTotal,
   };
   for (const [from, to] of [
     ['materialCode', 'material_code'], ['materialName', 'material_name'],
     ['supplierSku', 'supplier_sku'], ['itemGroup', 'item_group'],
     ['description', 'description'], ['description2', 'description2'],
-    ['uom', 'uom'], ['unitCostCenti', 'unit_cost_centi'], ['notes', 'notes'],
+    ['uom', 'uom'], ['unitCostSen', 'unit_cost_sen'], ['notes', 'notes'],
     ['gapInches', 'gap_inches'], ['divanHeightInches', 'divan_height_inches'],
     ['divanPriceSen', 'divan_price_sen'], ['legHeightInches', 'leg_height_inches'],
     ['legPriceSen', 'leg_price_sen'], ['customSpecials', 'custom_specials'],
@@ -3816,7 +3816,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
   // it used to re-copy full qty on every call → double-ordering).
   const { data: soItems, error: soErr } = await scopeToCompany(sb
     .from('mfg_sales_order_items')
-    .select('id, item_code, description, description2, item_group, qty, po_qty_picked, unit_price_centi, discount_centi, unit_cost_centi, variants, uom, remark, photo_urls')
+    .select('id, item_code, description, description2, item_group, qty, po_qty_picked, unit_price_sen, discount_sen, unit_cost_sen, variants, uom, remark, photo_urls')
     .eq('doc_no', soDocNo)
     .eq('cancelled', false), c);
   if (soErr) return c.json({ error: 'so_load_failed', reason: soErr.message }, 500);
@@ -3857,8 +3857,8 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
     id: string;
     item_code: string; description: string | null; description2: string | null;
     item_group: string | null; qty: number; po_qty_picked: number | null;
-    unit_price_centi: number;
-    discount_centi: number | null; unit_cost_centi: number | null;
+    unit_price_sen: number;
+    discount_sen: number | null; unit_cost_sen: number | null;
     variants: unknown; uom: string | null; remark: string | null;
     photo_urls: string[] | null;
   };
@@ -3882,13 +3882,13 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
   const codesToPrice = toInsert.map((r) => r.item_code);
   type BindLite = {
     material_code: string; supplier_sku: string | null;
-    unit_price_centi: number; price_matrix: Record<string, unknown> | null;
+    unit_price_sen: number; price_matrix: Record<string, unknown> | null;
   };
   const bindByCode = new Map<string, BindLite>();
   if (codesToPrice.length > 0) {
     const { data: binds } = await sb
       .from('supplier_material_bindings')
-      .select('material_code, supplier_sku, unit_price_centi, price_matrix')
+      .select('material_code, supplier_sku, unit_price_sen, price_matrix')
       .eq('supplier_id', po.supplier_id)
       .eq('material_kind', 'mfg_product')
       .in('material_code', codesToPrice);
@@ -3925,7 +3925,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
     if (!b) return { cost: 0, supplierSku: null }; // unbound — key in at PI
     const category = (it.item_group ?? '').toUpperCase() as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
-    if (!category) return { cost: b.unit_price_centi, supplierSku: b.supplier_sku };
+    if (!category) return { cost: b.unit_price_sen, supplierSku: b.supplier_sku };
     const variants = (it.variants ?? {}) as Record<string, unknown>;
     const fc = String(variants.fabricCode ?? '');
     const ft = fc ? (tierByFabric.get(fc) ?? null) : null;
@@ -3935,7 +3935,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
       {
         category,
         priceMatrix:    (b.price_matrix ?? null) as PoPriceMatrix,
-        unitPriceCenti: b.unit_price_centi,
+        unitPriceSen: b.unit_price_sen,
         fabricTier,
         ...poVariantPricingInput(category, variants), // incl. the totalHeight this path dropped
       },
@@ -3954,16 +3954,16 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
       material_name:    it.description ?? it.item_code,
       supplier_sku:     supplierSku,
       qty:              remaining,
-      unit_price_centi: cost,
-      line_total_centi: remaining * cost,
+      unit_price_sen: cost,
+      line_total_sen: remaining * cost,
       received_qty:     0,
       notes:            it.remark ?? null,
       item_group:       it.item_group ?? null,
       description:      it.description ?? null,
       description2:     it.description2 ?? null,
       uom:              it.uom ?? 'UNIT',
-      discount_centi:   0,
-      unit_cost_centi:  cost,
+      discount_sen:   0,
+      unit_cost_sen:  cost,
       variants:         (it.variants as unknown) ?? null,
       // Release-on-delete link (migration 0098) — convert-from-SO now stamps the
       // source SO line too, so these lines drop the SO from the picker and get
@@ -4073,7 +4073,7 @@ export const confirmMfgPurchaseOrderHandler = async (c: any) => {
 
   const { data: cur, error: readErr } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .select('id, status, po_number, company_id, supplier_id, total_centi, currency')
+    .select('id, status, po_number, company_id, supplier_id, total_sen, currency')
     .eq('id', id), co.companyId)
     .maybeSingle();
   if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
@@ -4100,10 +4100,10 @@ export const confirmMfgPurchaseOrderHandler = async (c: any) => {
 
   /* Recorded before the SO-quota recount below, which is itself best-effort:
      the PO is SUBMITTED from this point regardless of whether the counter
-     recount lands, and that is the fact worth keeping. totalCenti is the
+     recount lands, and that is the fact worth keeping. totalSen is the
      INTEGER SEN the supplier is now owed. */
   {
-    const po = cur as { po_number?: string | null; company_id?: number | null; supplier_id?: string | null; total_centi?: number | null; currency?: string | null };
+    const po = cur as { po_number?: string | null; company_id?: number | null; supplier_id?: string | null; total_sen?: number | null; currency?: string | null };
     await recordEntityAudit(supabase, {
       entityType: 'PURCHASE_ORDER',
       entityId: id,
@@ -4115,7 +4115,7 @@ export const confirmMfgPurchaseOrderHandler = async (c: any) => {
       fieldChanges: compactChanges([
         ...statusChange('DRAFT', 'SUBMITTED'),
         fieldChange('supplierId', null, po.supplier_id ?? null),
-        fieldChange('totalCenti', null, Number(po.total_centi ?? 0)),
+        fieldChange('totalSen', null, Number(po.total_sen ?? 0)),
         fieldChange('currency', null, po.currency ?? null),
       ]),
     });
@@ -4190,7 +4190,7 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
 
   const { data: po, error } = await scopeToCompanyId(supabase
     .from('purchase_orders')
-    .select('id, po_number, status, total_centi, currency, po_date, company_id, po_email_sent_at, po_email_sent_to, supplier:suppliers(name, email)')
+    .select('id, po_number, status, total_sen, currency, po_date, company_id, po_email_sent_at, po_email_sent_to, supplier:suppliers(name, email)')
     .eq('id', id), co.companyId)
     .maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
@@ -4345,7 +4345,7 @@ export const cancelPurchaseOrderHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur, error: readErr } = await scopeToCompanyId(supabase
-    .from('purchase_orders').select('id, status, po_number, company_id, total_centi')
+    .from('purchase_orders').select('id, status, po_number, company_id, total_sen')
     .eq('id', id), co.companyId).maybeSingle();
   if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
@@ -4380,7 +4380,7 @@ export const cancelPurchaseOrderHandler = async (c: any) => {
      recorded here so the release always has an author even if the recount
      hiccups. */
   {
-    const po = cur as { po_number?: string | null; company_id?: number | null; total_centi?: number | null };
+    const po = cur as { po_number?: string | null; company_id?: number | null; total_sen?: number | null };
     await recordEntityAudit(supabase, {
       entityType: 'PURCHASE_ORDER',
       entityId: id,
@@ -4391,7 +4391,7 @@ export const cancelPurchaseOrderHandler = async (c: any) => {
       statusSnapshot: 'CANCELLED',
       fieldChanges: compactChanges([
         ...statusChange(curStatus, 'CANCELLED'),
-        fieldChange('totalCenti', null, Number(po.total_centi ?? 0)),
+        fieldChange('totalSen', null, Number(po.total_sen ?? 0)),
       ]),
     });
   }

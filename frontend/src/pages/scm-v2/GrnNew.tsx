@@ -121,7 +121,7 @@ type DraftLine = {
   qtyReceived:       number;
   qtyAccepted:       number;
   qtyRejected:       number;
-  unitPriceCenti:    number;
+  unitPriceSen:    number;
   notes:             string;
   /* Commander 2026-06-04 — optional per-line destination Rack (warehouse-scoped).
      Persists to grn_items.rack_id when the create payload forwards rackId. */
@@ -326,7 +326,7 @@ export const GrnNew = () => {
         qtyReceived:         p._pickQty,
         qtyAccepted:         p._pickQty,
         qtyRejected:         0,
-        unitPriceCenti:      p.unitPriceCenti ?? 0,
+        unitPriceSen:      p.unitPriceSen ?? 0,
         notes:               '',
         rackId:              '',
       }));
@@ -366,7 +366,7 @@ export const GrnNew = () => {
         qtyReceived:         1,
         qtyAccepted:         1,
         qtyRejected:         0,
-        unitPriceCenti:      0,
+        unitPriceSen:      0,
         notes:               '',
         rackId:              '',
       }]);
@@ -389,7 +389,7 @@ export const GrnNew = () => {
           qtyReceived:       outstanding,
           qtyAccepted:       outstanding,
           qtyRejected:       0,
-          unitPriceCenti:    it.unit_price_centi ?? 0,
+          unitPriceSen:    it.unit_price_sen ?? 0,
           notes:             '',
           rackId:            '',
         };
@@ -417,8 +417,8 @@ export const GrnNew = () => {
     navigate('/scm/grns/from-po');
   };
 
-  const subtotalCenti = useMemo(
-    () => lines.reduce((s, l) => s + l.qtyReceived * l.unitPriceCenti, 0),
+  const subtotalSen = useMemo(
+    () => lines.reduce((s, l) => s + l.qtyReceived * l.unitPriceSen, 0),
     [lines],
   );
 
@@ -432,9 +432,9 @@ export const GrnNew = () => {
     const goods = lines.filter((l) => l.materialCode.trim() && !isSvc(l));
     const chargePool = lines
       .filter((l) => l.materialCode.trim() && isSvc(l))
-      .reduce((s, l) => s + l.qtyReceived * l.unitPriceCenti, 0);
+      .reduce((s, l) => s + l.qtyReceived * l.unitPriceSen, 0);
     const basisOf = (l: DraftLine): number => {
-      if (allocationMethod === 'VALUE') return l.qtyReceived * l.unitPriceCenti;
+      if (allocationMethod === 'VALUE') return l.qtyReceived * l.unitPriceSen;
       if (allocationMethod === 'CBM') return l.qtyReceived; // volume unknown client-side → qty proxy
       return l.qtyReceived;
     };
@@ -587,7 +587,7 @@ export const GrnNew = () => {
       qtyReceived:         1,
       qtyAccepted:         1,
       qtyRejected:         0,
-      unitPriceCenti:      0,
+      unitPriceSen:      0,
       notes:               '',
       rackId:              '',
     }]);
@@ -617,7 +617,7 @@ export const GrnNew = () => {
       materialCode:   b.material_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku ?? null,
-      unitPriceCenti: b.unit_price_centi,
+      unitPriceSen: b.unit_price_sen,
       itemGroup:      categoryForCode(b.material_code) ?? null,
     });
   };
@@ -683,7 +683,7 @@ export const GrnNew = () => {
           // rollup keep working with the simplified single-qty UI.
           qtyAccepted:         l.qtyReceived,
           qtyRejected:         0,
-          unitPriceCenti:      l.unitPriceCenti,
+          unitPriceSen:      l.unitPriceSen,
           notes:               l.notes || undefined,
           // Commander 2026-05-29 — persist the line's category + variant
           // selections (manual bedframe/sofa lines pick these below; PO-sourced
@@ -865,7 +865,7 @@ export const GrnNew = () => {
               exchangeRate={exchangeRate}
               onRateChange={(v) => { setRateTouched(true); setExchangeRate(v); }}
               disabled={currencyLocked}
-              rateHint={<>≈ {fmtRm(Math.round(subtotalCenti * rateNum), 'MYR')} recorded as inventory cost</>}
+              rateHint={<>≈ {fmtRm(Math.round(subtotalSen * rateNum), 'MYR')} recorded as inventory cost</>}
               styles={styles}
             />
             {/* Landed-cost allocation — choose how a SERVICE-line freight charge
@@ -923,7 +923,7 @@ export const GrnNew = () => {
           <h2 className={styles.cardTitle}>Items</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
             {hasPicks
-              ? `${lines.length} line${lines.length === 1 ? '' : 's'} from picks · subtotal ${fmtRm(subtotalCenti, currency)}`
+              ? `${lines.length} line${lines.length === 1 ? '' : 's'} from picks · subtotal ${fmtRm(subtotalSen, currency)}`
               : selPoId
                 ? (poQ.isLoading
                     ? 'Loading PO items…'
@@ -938,10 +938,10 @@ export const GrnNew = () => {
                       ? "We couldn't load this PO's lines — please refresh and try again."
                       : lines.length === 0
                         ? 'No outstanding lines came back for this PO. Open the purchase order and check its balance before treating it as received in full.'
-                        : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalCenti, currency)}`)
+                        : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalSen, currency)}`)
                 : lines.length === 0
                   ? 'Manual receipt — pick a supplier above, then add items below'
-                  : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalCenti, currency)}`}
+                  : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalSen, currency)}`}
             {/* Commander 2026-05-29 — same supplier-binding hint New PO shows:
                 once a supplier is chosen the manual picker filters to that
                 supplier's bound SKUs (or falls back to the full catalogue when
@@ -970,14 +970,14 @@ export const GrnNew = () => {
                picker (manual) / read-only code (PO-sourced), description, the
                per-category variant editor, then a fields row. */
             lines.map((l, idx) => {
-              const lineValueCenti = l.qtyReceived * l.unitPriceCenti;
+              const lineValueSen = l.qtyReceived * l.unitPriceSen;
               const variantSummary = buildVariantSummary(l.itemGroup, l.variants);
               /* Landed-cost allocation (Phase 1-A) — this goods line's share of the
                  freight pool + its landed unit cost (base + per-unit freight),
                  shown only when there's a charge to spread. Service lines get 0. */
               const lineIsSvc = isServiceLine({ itemGroup: l.itemGroup, itemCode: l.materialCode });
-              const lineAllocCenti = allocPreview.allocByRid.get(l.rid) ?? 0;
-              const landedUnitCenti = l.unitPriceCenti + (l.qtyReceived > 0 ? Math.round(lineAllocCenti / l.qtyReceived) : 0);
+              const lineAllocSen = allocPreview.allocByRid.get(l.rid) ?? 0;
+              const landedUnitSen = l.unitPriceSen + (l.qtyReceived > 0 ? Math.round(lineAllocSen / l.qtyReceived) : 0);
               // Manual lines have no outstanding cap — qty inputs go uncapped.
               const cap = l.outstanding;
               const isManualLine = l.purchaseOrderItemId === null;
@@ -1031,18 +1031,18 @@ export const GrnNew = () => {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                       <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                        <span className={styles.previewPrice}>{fmtRm(lineValueCenti, currency)}</span>
+                        <span className={styles.previewPrice}>{fmtRm(lineValueSen, currency)}</span>
                         {/* Landed-cost core — MYR cost preview for a foreign GRN. */}
                         {isForeign && (
                           <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
-                            ≈ {fmtRm(Math.round(lineValueCenti * rateNum), 'MYR')}
+                            ≈ {fmtRm(Math.round(lineValueSen * rateNum), 'MYR')}
                           </span>
                         )}
                         {/* Landed-cost allocation — +freight & landed unit cost, on
                             goods lines only when there's a charge pool. */}
                         {allocPreview.chargePool > 0 && !lineIsSvc && (
                           <span style={{ fontSize: 'var(--fs-11)', color: 'var(--c-accent, #8a6d3b)', marginTop: 2 }}>
-                            +{fmtRm(lineAllocCenti, currency)} freight · landed {fmtRm(landedUnitCenti, currency)}/unit
+                            +{fmtRm(lineAllocSen, currency)} freight · landed {fmtRm(landedUnitSen, currency)}/unit
                           </span>
                         )}
                       </span>
@@ -1109,7 +1109,7 @@ export const GrnNew = () => {
                             {supplierId && bindings.length > 0
                               ? sortByText(bindings).map((b) => (
                                   <option key={b.id} value={b.material_code}>
-                                    {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_centi, b.currency)}
+                                    {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                                   </option>
                                 ))
                               : sortByText(productsQ.data ?? []).map((p) => (
@@ -1255,8 +1255,8 @@ export const GrnNew = () => {
                       <span className={styles.fieldLabel}>Unit Price ({currency})</span>
                       {/* Editable unit price — carried from the PO / manual entry,
                           adjustable at receiving time (Commander 2026-05-29). */}
-                      <MoneyInput bare valueSen={l.unitPriceCenti}
-                        onCommit={(sen) => setLine(l.rid, { unitPriceCenti: sen ?? 0 })}
+                      <MoneyInput bare valueSen={l.unitPriceSen}
+                        onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
                         inputClassName={styles.fieldInput} selectOnFocus />
                     </label>
                     <label className={styles.field}>
@@ -1264,7 +1264,7 @@ export const GrnNew = () => {
                       <input
                         type="text"
                         readOnly
-                        value={fmtRm(lineValueCenti, currency)}
+                        value={fmtRm(lineValueSen, currency)}
                         className={styles.fieldInput}
                         style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />
@@ -1343,17 +1343,17 @@ export const GrnNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
               <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700, borderTop: '1px solid var(--line)', paddingTop: 'var(--space-2)' }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
             {/* Landed-cost core — MYR inventory cost for a foreign GRN. */}
             {isForeign && (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', marginTop: 'var(--space-2)' }}>
                 <span>Inventory cost (MYR)</span>
-                <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(Math.round(subtotalCenti * rateNum), 'MYR')}</span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(Math.round(subtotalSen * rateNum), 'MYR')}</span>
               </div>
             )}
           </div>

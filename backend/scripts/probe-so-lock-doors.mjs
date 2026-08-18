@@ -207,7 +207,7 @@ async function main() {
      requested figure with the catalog one (mfg-pricing-recompute.ts:643). */
   const applied = await sql`
     SELECT a.amendment_no, a.status::text AS status, l.change_type,
-           l.new_unit_price_sen AS requested, i.unit_price_centi AS line_now,
+           l.new_unit_price_sen AS requested, i.unit_price_sen AS line_now,
            (so.linked_ac_docno IS NOT NULL) AS so_migrated
       FROM scm.so_amendment_lines l
       JOIN scm.so_amendments a     ON a.id = l.amendment_id

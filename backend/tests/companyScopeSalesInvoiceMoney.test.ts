@@ -13,7 +13,7 @@
  * company" above `company_id: activeCompanyId(c)` — it stamped the ACTIVE
  * company and never compared it to the invoice's, so a payment against company
  * B's invoice was filed under company A while recomputePaid moved B's
- * paid_centi and AR status.
+ * paid_sen and AR status.
  *
  * The second handler here is the FIFTH converter of the DO -> SI shape.
  * companyScope.ts names four (SO->DO, SO->SI, DO->SI, PO->GRN) and every one
@@ -129,13 +129,13 @@ const postJson = (app: Hono, url: string, body?: Row) =>
     body: JSON.stringify(body ?? {}),
   });
 
-const PAYMENT = { paidAt: '2026-08-13', method: 'cash', amountCenti: 5000 };
+const PAYMENT = { paidAt: '2026-08-13', method: 'cash', amountSen: 5000 };
 
 // ── POST /:id/payments — money IN on the other company's receivable ──────────
 describe('SI payment create is company-scoped', () => {
   const invoices = (): Row[] => [
-    { id: 'si-a', invoice_number: 'HC-SI-2608-001', company_id: CO_A, status: 'SENT', total_centi: 10000, paid_centi: 0 },
-    { id: 'si-b', invoice_number: '2990-SI-2608-001', company_id: CO_B, status: 'SENT', total_centi: 10000, paid_centi: 0 },
+    { id: 'si-a', invoice_number: 'HC-SI-2608-001', company_id: CO_A, status: 'SENT', total_sen: 10000, paid_sen: 0 },
+    { id: 'si-b', invoice_number: '2990-SI-2608-001', company_id: CO_B, status: 'SENT', total_sen: 10000, paid_sen: 0 },
   ];
 
   test("A cannot record a payment against B's invoice, and B's ledger is untouched", async () => {
@@ -144,7 +144,7 @@ describe('SI payment create is company-scoped', () => {
     expect(res.status).toBe(404);
     // A refusal that still wrote would pass a status-only assertion.
     expect(t.sales_invoice_payments).toHaveLength(0);
-    expect(t.sales_invoices.find((r) => r.id === 'si-b')!.paid_centi).toBe(0);
+    expect(t.sales_invoices.find((r) => r.id === 'si-b')!.paid_sen).toBe(0);
     expect(t.sales_invoices.find((r) => r.id === 'si-b')!.status).toBe('SENT');
   });
 
@@ -153,7 +153,7 @@ describe('SI payment create is company-scoped', () => {
     const res = await postJson(harness(t, CO_A).app, '/sales-invoices/si-a/payments', PAYMENT);
     expect(res.status).toBe(201);
     expect(t.sales_invoice_payments).toHaveLength(1);
-    expect(t.sales_invoices.find((r) => r.id === 'si-a')!.paid_centi).toBe(5000);
+    expect(t.sales_invoices.find((r) => r.id === 'si-a')!.paid_sen).toBe(5000);
   });
 
   test('the stamped company_id is the invoice\'s, not merely whatever was active', async () => {
@@ -262,8 +262,8 @@ describe('SI convert-from-DO-lines cannot see a cross-company source', () => {
     { id: 'do-b', do_number: '2990-DO-2608-001', company_id: CO_B, status: 'SHIPPED', debtor_code: 'C9', debtor_name: 'Other', currency: 'MYR' },
   ];
   const doItems = (): Row[] => [
-    { id: 'doi-a', delivery_order_id: 'do-a', company_id: CO_A, item_code: 'M1', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_centi: 100, unit_cost_centi: 50, discount_centi: 0, variants: null, line_no: 0 },
-    { id: 'doi-b', delivery_order_id: 'do-b', company_id: CO_B, item_code: 'M9', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_centi: 100, unit_cost_centi: 50, discount_centi: 0, variants: null, line_no: 0 },
+    { id: 'doi-a', delivery_order_id: 'do-a', company_id: CO_A, item_code: 'M1', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_sen: 100, unit_cost_sen: 50, discount_sen: 0, variants: null, line_no: 0 },
+    { id: 'doi-b', delivery_order_id: 'do-b', company_id: CO_B, item_code: 'M9', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_sen: 100, unit_cost_sen: 50, discount_sen: 0, variants: null, line_no: 0 },
   ];
   const tables = (): Record<string, Row[]> => ({
     delivery_orders: dos(), delivery_order_items: doItems(),
@@ -425,8 +425,8 @@ describe('DR convert-from-DO-lines cannot see a cross-company source', () => {
     { id: 'do-b', do_number: '2990-DO-2608-001', company_id: CO_B, status: 'SHIPPED', debtor_code: 'C9', debtor_name: 'Other', currency: 'MYR' },
   ];
   const doItems = (): Row[] => [
-    { id: 'doi-a', delivery_order_id: 'do-a', company_id: CO_A, item_code: 'M1', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_centi: 100, unit_cost_centi: 50, discount_centi: 0, variants: null, line_no: 0 },
-    { id: 'doi-b', delivery_order_id: 'do-b', company_id: CO_B, item_code: 'M9', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_centi: 100, unit_cost_centi: 50, discount_centi: 0, variants: null, line_no: 0 },
+    { id: 'doi-a', delivery_order_id: 'do-a', company_id: CO_A, item_code: 'M1', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_sen: 100, unit_cost_sen: 50, discount_sen: 0, variants: null, line_no: 0 },
+    { id: 'doi-b', delivery_order_id: 'do-b', company_id: CO_B, item_code: 'M9', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_sen: 100, unit_cost_sen: 50, discount_sen: 0, variants: null, line_no: 0 },
   ];
   const tables = (): Record<string, Row[]> => ({
     delivery_orders: dos(), delivery_order_items: doItems(),

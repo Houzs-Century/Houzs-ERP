@@ -284,7 +284,7 @@ describe("LOCKSTEP mirrors — the script-side copies must equal the app's real 
 });
 
 describe("deriveGrnLineBasis (W2 fallback) — the line's own landed cost, single-valued facts or refusal", () => {
-  const line = { unit_price_centi: 55000, item_group: "mattress", variants: null };
+  const line = { unit_price_sen: 55000, item_group: "mattress", variants: null };
 
   test("THE LIVE WOUND: no sibling movement — the line's own price x rate becomes the basis", () => {
     const v = deriveGrnLineBasis({
@@ -305,7 +305,7 @@ describe("deriveGrnLineBasis (W2 fallback) — the line's own landed cost, singl
 
   test("a foreign-currency line converts at the GRN's rate (the toMyrSen path)", () => {
     const v = deriveGrnLineBasis({
-      lines: [{ ...line, unit_price_centi: 10000 }],
+      lines: [{ ...line, unit_price_sen: 10000 }],
       qty: 2, headerWarehouseId: "wh", exchangeRate: 4.45,
       grnMovementWarehouses: [], grnMovementBatches: [], companyId: 2,
     });
@@ -326,12 +326,12 @@ describe("deriveGrnLineBasis (W2 fallback) — the line's own landed cost, singl
   });
 
   test("a zero price is not a basis — refused, same rule as pickCostBasis", () => {
-    expect(deriveGrnLineBasis({ lines: [{ ...line, unit_price_centi: 0 }], qty: 1, headerWarehouseId: "wh", exchangeRate: 1, companyId: 2 }).verdict).toBe("zero-cost");
+    expect(deriveGrnLineBasis({ lines: [{ ...line, unit_price_sen: 0 }], qty: 1, headerWarehouseId: "wh", exchangeRate: 1, companyId: 2 }).verdict).toBe("zero-cost");
   });
 
   test("the variant key comes from the line's own variants via the lockstep mirror", () => {
     const v = deriveGrnLineBasis({
-      lines: [{ unit_price_centi: 100, item_group: "sofa", variants: { fabricCode: "FVI", legHeight: "5" } }],
+      lines: [{ unit_price_sen: 100, item_group: "sofa", variants: { fabricCode: "FVI", legHeight: "5" } }],
       qty: 1, headerWarehouseId: "wh", exchangeRate: 1,
       grnMovementWarehouses: [], grnMovementBatches: [], companyId: 2,
     });

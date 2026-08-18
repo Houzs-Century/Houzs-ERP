@@ -37,7 +37,7 @@ describe("operator-zero wiring", () => {
   });
 
   test('the ERP line editor sends the claim, and only at zero', () => {
-    expect(EDITOR).toMatch(/unitPriceCenti === 0 \? \{ zeroPriceIntended: true \}/);
+    expect(EDITOR).toMatch(/unitPriceSen === 0 \? \{ zeroPriceIntended: true \}/);
   });
 
   /* The migrated-document arm must stay exclusive to migrated documents: it

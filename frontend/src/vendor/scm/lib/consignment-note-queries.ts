@@ -42,14 +42,14 @@ export const useConsignmentNotes = (status?: string) => useQuery({
    above (no page) still returns the historical unpaginated array. `q` searches
    do_number + debtor_name (columns the CN list already searches + in the header
    select). `sort` is 'col:dir' over
-   { do_date, do_number, debtor_name, status, local_total_centi } (default
+   { do_date, do_number, debtor_name, status, local_total_sen } (default
    do_date:desc). placeholderData keepPrevious so paging doesn't flash empty. */
 /* Full-set money KPIs returned by the paginated CN list (mirrors the SO list
    `aggregates` contract) — summed over the SAME filters as the page.
-   costCenti / marginCenti are FINANCE-ONLY: the server omits them for a
+   costSen / marginSen are FINANCE-ONLY: the server omits them for a
    non-finance caller (canViewScmFinance), so they are optional here and the
    Cost / Margin tiles are not rendered for such a viewer. */
-export type ConsignmentNoteAggregates = { revenueCenti: number; costCenti?: number; marginCenti?: number };
+export type ConsignmentNoteAggregates = { revenueSen: number; costSen?: number; marginSen?: number };
 export const useConsignmentNotesPaged = (params: {
   page: number;
   pageSize: number;
@@ -97,9 +97,9 @@ export type DeliverableOrderLine = {
   ordered: number;
   delivered: number;
   outstanding: number;
-  unitPriceCenti: number;
-  discountCenti: number;
-  unitCostCenti: number;
+  unitPriceSen: number;
+  discountSen: number;
+  unitCostSen: number;
   variants: unknown;
 };
 
@@ -218,7 +218,7 @@ export type ConsignmentNotePayment = {
   installment_months: number | null;
   online_type: string | null;
   approval_code: string | null;
-  amount_centi: number;
+  amount_sen: number;
   account_sheet: string | null;
   collected_by: string | null;
   collected_by_name: string | null;

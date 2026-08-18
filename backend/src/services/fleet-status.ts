@@ -505,7 +505,7 @@ export function assessMileageReading(input: MileageGuardInput): MileageAssessmen
 //      grounds the lorry (feeds breakdownActive → BREAKDOWN status).
 //   6. work-order state machine — canTransitionWorkOrder() + workOrderSeam():
 //      an OPEN work order in IN_REPAIR feeds PLANNED_MAINTENANCE; one in
-//      WAITING_PARTS feeds WAITING_PARTS. workOrderTotalCenti() sums the legs.
+//      WAITING_PARTS feeds WAITING_PARTS. workOrderTotalSen() sums the legs.
 //   7. deriveComponentLife()    — km_used + cost_per_km for a fitted/removed
 //      tyre/battery/etc., plus warranty state.
 //
@@ -653,17 +653,17 @@ export function workOrderSeam(
 
 /** A work order's money legs. Parts are summed separately (qty × unit price). */
 export interface WorkOrderTotalInput {
-  labourCenti?: number | null;
-  outsideServiceCenti?: number | null;
-  towingCenti?: number | null;
-  taxCenti?: number | null;
+  labourSen?: number | null;
+  outsideServiceSen?: number | null;
+  towingSen?: number | null;
+  taxSen?: number | null;
   parts?: readonly WorkOrderLineInput[];
 }
 
 /** One billed line of a repair, in the shape a workshop invoice prints it. */
 export interface WorkOrderLineInput {
   qty?: number | null;
-  unitPriceCenti?: number | null;
+  unitPriceSen?: number | null;
   /** Per-line discount PERCENT. Workshop invoices discount per line, not per
    *  document — WJO00403 carries 15% on 14 of its 19 lines and none on the
    *  other 5. Absent / invalid means no discount, never a silent 100%. */
@@ -671,7 +671,7 @@ export interface WorkOrderLineInput {
   /** The amount PRINTED on the document. When present it WINS: the vendor's
    *  own rounding is theirs, and a stored record that quietly disagrees with
    *  the paper is worse than one that repeats it. Null means not printed. */
-  amountCenti?: number | null;
+  amountSen?: number | null;
 }
 
 const num = (v: unknown): number =>
@@ -682,11 +682,11 @@ const num = (v: unknown): number =>
  *
  *  Verified against T FORCE quotation WJO00403 line by line — e.g. 4 x RM1,100
  *  at 15% prints RM3,740.00, and the 19 lines sum to its RM22,208.50 total. */
-export function workOrderLineCenti(line: WorkOrderLineInput): number {
-  if (line.amountCenti != null && Number.isFinite(line.amountCenti)) {
-    return Math.max(0, Math.round(line.amountCenti));
+export function workOrderLineSen(line: WorkOrderLineInput): number {
+  if (line.amountSen != null && Number.isFinite(line.amountSen)) {
+    return Math.max(0, Math.round(line.amountSen));
   }
-  const gross = num(line.qty) * num(line.unitPriceCenti);
+  const gross = num(line.qty) * num(line.unitPriceSen);
   const pct = Math.min(100, Math.max(0, num(line.discountPct)));
   return Math.max(0, Math.round(gross * (1 - pct / 100)));
 }
@@ -694,18 +694,18 @@ export function workOrderLineCenti(line: WorkOrderLineInput): number {
 /** The derived work-order total: lines + labour + outside service + towing + tax.
  *  Never stored (see the migration header) — it cannot drift from the legs.
  *
- *  `labourCenti` is the HEADER scalar, which pre-dates LABOUR-section lines
+ *  `labourSen` is the HEADER scalar, which pre-dates LABOUR-section lines
  *  (mig 0241). The two must never both be filled for one record — the route is
  *  the single writer that enforces it — so summing both here is correct and
  *  costs nothing while the scalar defaults to 0. */
-export function workOrderTotalCenti(wo: WorkOrderTotalInput): number {
-  const partsCenti = (wo.parts ?? []).reduce((sum, p) => sum + workOrderLineCenti(p), 0);
+export function workOrderTotalSen(wo: WorkOrderTotalInput): number {
+  const partsSen = (wo.parts ?? []).reduce((sum, p) => sum + workOrderLineSen(p), 0);
   return (
-    Math.round(wo.labourCenti ?? 0) +
-    partsCenti +
-    Math.round(wo.outsideServiceCenti ?? 0) +
-    Math.round(wo.towingCenti ?? 0) +
-    Math.round(wo.taxCenti ?? 0)
+    Math.round(wo.labourSen ?? 0) +
+    partsSen +
+    Math.round(wo.outsideServiceSen ?? 0) +
+    Math.round(wo.towingSen ?? 0) +
+    Math.round(wo.taxSen ?? 0)
   );
 }
 
@@ -763,7 +763,7 @@ export interface ComponentLifeInput {
   status: string;
   fittedKm?: number | null;
   removedKm?: number | null;
-  purchasePriceCenti?: number | null;
+  purchasePriceSen?: number | null;
   warrantyUntil?: string | null;
 }
 
@@ -771,9 +771,9 @@ export interface ComponentLife {
   /** Km run on this component: removed_km − fitted_km once removed, else the
    *  current odometer − fitted_km while still fitted. Null without the inputs. */
   kmUsed: number | null;
-  /** purchase_price_centi / km_used, rounded to whole cents. Null when km_used is
+  /** purchase_price_sen / km_used, rounded to whole cents. Null when km_used is
    *  0/absent or there is no purchase price (cannot divide). */
-  costPerKmCenti: number | null;
+  costPerKmSen: number | null;
   /** Whether the component is under warranty as of `today` (warranty_until in the
    *  future). Null when no warranty date is on file. */
   underWarranty: boolean | null;
@@ -798,14 +798,14 @@ export function deriveComponentLife(
   let kmUsed: number | null = null;
   if (fitted !== null && endKm !== null && endKm >= fitted) kmUsed = endKm - fitted;
 
-  let costPerKmCenti: number | null = null;
-  if (kmUsed !== null && kmUsed > 0 && typeof comp.purchasePriceCenti === "number" && comp.purchasePriceCenti >= 0) {
-    costPerKmCenti = Math.round(comp.purchasePriceCenti / kmUsed);
+  let costPerKmSen: number | null = null;
+  if (kmUsed !== null && kmUsed > 0 && typeof comp.purchasePriceSen === "number" && comp.purchasePriceSen >= 0) {
+    costPerKmSen = Math.round(comp.purchasePriceSen / kmUsed);
   }
 
   let underWarranty: boolean | null = null;
   const d = daysUntil(comp.warrantyUntil ?? null, today);
   if (d !== null) underWarranty = d >= 0;
 
-  return { kmUsed, costPerKmCenti, underWarranty };
+  return { kmUsed, costPerKmSen, underWarranty };
 }

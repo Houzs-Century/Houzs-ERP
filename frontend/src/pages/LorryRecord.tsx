@@ -123,7 +123,7 @@ export function LorryRecord() {
           <DateFact
             label="Purchased"
             value={v.purchaseDate ?? null}
-            hint={v.purchasePriceCenti != null ? money(v.purchasePriceCenti) : undefined}
+            hint={v.purchasePriceSen != null ? money(v.purchasePriceSen) : undefined}
           />
         </div>
         {/* The lorry master stays the SINGLE writer for lorry columns — a second
@@ -194,7 +194,7 @@ export function LorryRecord() {
                           <div className="text-[10.5px] text-ink-muted">
                             {doc.issueDate ? `Issued ${doc.issueDate}` : "No issue date"}
                             {doc.owner ? ` · ${doc.owner}` : ""}
-                            {doc.costCenti != null ? ` · ${money(doc.costCenti)}` : ""}
+                            {doc.costSen != null ? ` · ${money(doc.costSen)}` : ""}
                             {doc.result ? ` · ${doc.result}` : ""}
                             {doc.result === "FAIL" && doc.reinspectionDeadline ? ` · reinspect by ${doc.reinspectionDeadline}` : ""}
                           </div>

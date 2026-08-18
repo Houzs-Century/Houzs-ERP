@@ -69,7 +69,7 @@ import { cn } from "../../lib/utils";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
-import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -115,9 +115,9 @@ type SiRow = {
   city: string | null;
   postcode: string | null;
   customer_state: string | null;
-  local_total_centi: number;
-  total_centi: number;
-  paid_centi: number;
+  local_total_sen: number;
+  total_sen: number;
+  paid_sen: number;
   status: string;
   currency: string;
   line_count?: number;
@@ -128,18 +128,18 @@ type SiRow = {
   building_type: string | null;
   // ── Phase 2 FINANCE: backend OMITS these keys for non-finance callers
   //    (canViewScmFinance), so each is optional. margin_pct_basis = basis points.
-  mattress_sofa_centi?: number;
-  bedframe_centi?: number;
-  accessories_centi?: number;
-  others_centi?: number;
-  service_centi?: number;
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?: number;
-  accessories_cost_centi?: number;
-  others_cost_centi?: number;
-  service_cost_centi?: number;
-  total_cost_centi?: number;
-  total_margin_centi?: number;
+  mattress_sofa_sen?: number;
+  bedframe_sen?: number;
+  accessories_sen?: number;
+  others_sen?: number;
+  service_sen?: number;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?: number;
+  accessories_cost_sen?: number;
+  others_cost_sen?: number;
+  service_cost_sen?: number;
+  total_cost_sen?: number;
+  total_margin_sen?: number;
   margin_pct_basis?: number;
 };
 
@@ -214,7 +214,7 @@ const statusFor = (
 
 // Derived outstanding (Total − Paid). Guards against negative from over-payment.
 const outstandingOf = (r: SiRow): number =>
-  Math.max(0, (r.total_centi || r.local_total_centi || 0) - (r.paid_centi || 0));
+  Math.max(0, (r.total_sen || r.local_total_sen || 0) - (r.paid_sen || 0));
 
 // ─── Split-menu dropdown ────────────────────────────────────────────────────
 
@@ -378,7 +378,7 @@ function CardsGrid({ rows, onOpen }: { rows: SiRow[]; onOpen: (r: SiRow) => void
                 </div>
               </div>
               <span className="font-money text-[15px] font-bold text-ink">
-                {fmtRm(r.total_centi || r.local_total_centi)}
+                {fmtRm(r.total_sen || r.local_total_sen)}
               </span>
             </div>
           </button>
@@ -423,9 +423,9 @@ function DetailDrawer({
     item_group?: string;
     variants?: Record<string, unknown> | null;
     qty?: number;
-    unit_price_centi?: number;
-    amount_centi?: number;
-    total_centi?: number;
+    unit_price_sen?: number;
+    amount_sen?: number;
+    total_sen?: number;
   }> =
     ((detailQ.data as { items?: unknown[] } | undefined)?.items as Array<{
       product_code?: string;
@@ -436,17 +436,17 @@ function DetailDrawer({
       item_group?: string;
       variants?: Record<string, unknown> | null;
       qty?: number;
-      unit_price_centi?: number;
-      amount_centi?: number;
-      total_centi?: number;
+      unit_price_sen?: number;
+      amount_sen?: number;
+      total_sen?: number;
     }>) ?? [];
 
   const open = !!row;
   const st = row ? statusFor(row.status) : null;
 
-  const totalCenti = row?.total_centi ?? row?.local_total_centi ?? 0;
-  const paidCenti = row?.paid_centi ?? 0;
-  const outstanding = Math.max(0, totalCenti - paidCenti);
+  const totalSen = row?.total_sen ?? row?.local_total_sen ?? 0;
+  const paidSen = row?.paid_sen ?? 0;
+  const outstanding = Math.max(0, totalSen - paidSen);
 
   return (
     <ResizableDetailDrawer
@@ -564,9 +564,9 @@ function DetailDrawer({
                 )}
                 {items.map((l, i) => {
                   const amt =
-                    l.amount_centi ??
-                    l.total_centi ??
-                    (l.qty ?? 0) * (l.unit_price_centi ?? 0);
+                    l.amount_sen ??
+                    l.total_sen ??
+                    (l.qty ?? 0) * (l.unit_price_sen ?? 0);
                   const { primary, secondary } = orderLineIdentity({
                     code: l.item_code || l.product_code,
                     description: l.description || l.product_name,
@@ -593,7 +593,7 @@ function DetailDrawer({
                         {l.qty ?? 0}
                       </span>
                       <span className="text-right font-money text-[12.5px] text-ink-secondary">
-                        {fmtRm(l.unit_price_centi ?? 0)}
+                        {fmtRm(l.unit_price_sen ?? 0)}
                       </span>
                       <span className="text-right font-money text-[12.5px] font-semibold text-ink">
                         {fmtRm(amt)}
@@ -607,8 +607,8 @@ function DetailDrawer({
                   what the operator actually reads on this doc. Subtotal / SST
                   are 6%-inclusive in Malaysia so we don't split them out. */}
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
-                <TotalRow k="Invoice total" v={fmtRm(totalCenti)} strong />
-                <TotalRow k="Paid" v={fmtRm(paidCenti)} tone="success" />
+                <TotalRow k="Invoice total" v={fmtRm(totalSen)} strong />
+                <TotalRow k="Paid" v={fmtRm(paidSen)} tone="success" />
                 <TotalRow
                   k="Outstanding"
                   v={outstanding > 0 ? fmtRm(outstanding) : "Cleared"}
@@ -753,11 +753,11 @@ function TotalRow({
 }
 
 // Table column key → backend sort-whitelist column. SI backend whitelist is
-// { invoice_date, invoice_number, debtor_name, status, total_centi }; only the
+// { invoice_date, invoice_number, debtor_name, status, total_sen }; only the
 // `amount` (Total) column key differs from its backend name. Non-whitelisted
 // columns carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
-  amount: "total_centi",
+  amount: "total_sen",
 };
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
@@ -780,10 +780,10 @@ function SiLinesExpansion({ id }: { id: string }) {
     description2: l.description2 ?? null,
     variants: l.variants ?? null,
     qty: Number(l.qty ?? 0),
-    amountCenti:
-      l.amount_centi ??
-      l.total_centi ??
-      Number(l.qty ?? 0) * (l.unit_price_centi ?? 0),
+    amountSen:
+      l.amount_sen ??
+      l.total_sen ??
+      Number(l.qty ?? 0) * (l.unit_price_sen ?? 0),
     // An SI is invoiced from a DO — show which PO the goods were procured on
     // (batch_no = source PO), not an Assigned SO (owner 2026-07-31).
     sourcePos: l.source_pos ?? [],
@@ -890,17 +890,17 @@ export function SalesInvoicesListV2() {
   // Money KPIs sum the rows ON SCREEN (the paginated contract has no full-set
   // money sums), so the cards and the table can never disagree.
   const money = useMemo(() => {
-    let revenueCenti = 0;
-    let outstandingCenti = 0;
-    let paidCenti = 0;
+    let revenueSen = 0;
+    let outstandingSen = 0;
+    let paidSen = 0;
     for (const r of visible.rows) {
-      const t = r.total_centi ?? r.local_total_centi ?? 0;
-      const paid = r.paid_centi ?? 0;
-      revenueCenti += t;
-      paidCenti += paid;
-      outstandingCenti += Math.max(0, t - paid);
+      const t = r.total_sen ?? r.local_total_sen ?? 0;
+      const paid = r.paid_sen ?? 0;
+      revenueSen += t;
+      paidSen += paid;
+      outstandingSen += Math.max(0, t - paid);
     }
-    return { revenueCenti, outstandingCenti, paidCenti };
+    return { revenueSen, outstandingSen, paidSen };
   }, [visible.rows]);
 
   const setPageParam = (p: number) => {
@@ -1234,10 +1234,10 @@ export function SalesInvoicesListV2() {
       label: "Total",
       width: "128px",
       align: "right",
-      getValue: (r) => r.total_centi ?? r.local_total_centi,
+      getValue: (r) => r.total_sen ?? r.local_total_sen,
       render: (r) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtRm(r.total_centi || r.local_total_centi)}
+          {fmtRm(r.total_sen || r.local_total_sen)}
         </span>
       ),
     },
@@ -1293,9 +1293,9 @@ export function SalesInvoicesListV2() {
       align: "right",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.paid_centi ?? 0,
+      getValue: (r) => r.paid_sen ?? 0,
       render: (r) => (
-        <span className="font-money text-[13px] text-ink">{fmtRm(r.paid_centi ?? 0)}</span>
+        <span className="font-money text-[13px] text-ink">{fmtRm(r.paid_sen ?? 0)}</span>
       ),
     },
     {
@@ -1426,147 +1426,147 @@ export function SalesInvoicesListV2() {
     ...(canFinance
       ? ([
           {
-            key: "mattress_sofa_centi",
+            key: "mattress_sofa_sen",
             label: "Mattress/Sofa",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_centi ?? 0,
+            getValue: (r) => r.mattress_sofa_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_centi",
+            key: "bedframe_sen",
             label: "Bedframe",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_centi ?? 0,
+            getValue: (r) => r.bedframe_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_centi",
+            key: "accessories_sen",
             label: "Accessories",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_centi ?? 0,
+            getValue: (r) => r.accessories_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
             ),
           },
           {
-            key: "others_centi",
+            key: "others_sen",
             label: "Others",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_centi ?? 0,
+            getValue: (r) => r.others_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
             ),
           },
           {
-            key: "service_centi",
+            key: "service_sen",
             label: "Service",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.service_centi ?? 0,
+            getValue: (r) => r.service_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_sen ?? 0)}</span>
             ),
           },
           {
-            key: "mattress_sofa_cost_centi",
+            key: "mattress_sofa_cost_sen",
             label: "Mattress/Sofa Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_cost_centi ?? 0,
+            getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_cost_centi",
+            key: "bedframe_cost_sen",
             label: "Bedframe Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_cost_centi ?? 0,
+            getValue: (r) => r.bedframe_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_cost_centi",
+            key: "accessories_cost_sen",
             label: "Accessories Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_cost_centi ?? 0,
+            getValue: (r) => r.accessories_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "others_cost_centi",
+            key: "others_cost_sen",
             label: "Others Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_cost_centi ?? 0,
+            getValue: (r) => r.others_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "service_cost_centi",
+            key: "service_cost_sen",
             label: "Service Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.service_cost_centi ?? 0,
+            getValue: (r) => r.service_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "total_cost_centi",
+            key: "total_cost_sen",
             label: "Total Cost",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_cost_centi ?? 0,
+            getValue: (r) => r.total_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "total_margin_centi",
+            key: "total_margin_sen",
             label: "Margin",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_margin_centi ?? 0,
+            getValue: (r) => r.total_margin_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
             ),
           },
           {
@@ -1611,7 +1611,7 @@ export function SalesInvoicesListV2() {
           </h1>
           <div className="mt-0.5 text-[12.5px] text-ink-muted">
             {total} invoice{total === 1 ? "" : "s"} ·{" "}
-            <span className="font-money">{fmtRm(money.revenueCenti)}</span> billed
+            <span className="font-money">{fmtRm(money.revenueSen)}</span> billed
           </div>
         </div>
       </div>
@@ -1673,14 +1673,14 @@ export function SalesInvoicesListV2() {
             <StatCard
               pending={statsPending}
               label="Billed"
-              value={fmtRm(money.revenueCenti)}
+              value={fmtRm(money.revenueSen)}
               subtitle={visible.filtered ? "Filtered · sum shown below" : "Sum on this page"}
               rail="bg-accent"
             />
             <StatCard
               pending={statsPending}
               label="Outstanding"
-              value={fmtRm(money.outstandingCenti)}
+              value={fmtRm(money.outstandingSen)}
               subtitle={visible.filtered ? "Balance · filtered" : "Balance on this page"}
               tone="error"
               rail="bg-err"
@@ -1688,7 +1688,7 @@ export function SalesInvoicesListV2() {
             <StatCard
               pending={statsPending}
               label="Paid"
-              value={fmtRm(money.paidCenti)}
+              value={fmtRm(money.paidSen)}
               subtitle={visible.filtered ? "Receipts · filtered" : "Receipts on this page"}
               tone="success"
               rail="bg-synced"

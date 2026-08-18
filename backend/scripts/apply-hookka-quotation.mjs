@@ -125,14 +125,14 @@ try {
         if (!b) {
           if (APPLY) await tx`INSERT INTO scm.supplier_material_bindings
             (supplier_id, material_kind, material_code, material_name, supplier_sku,
-             unit_price_centi, price_matrix, is_main_supplier, notes, company_id, created_at, updated_at)
+             unit_price_sen, price_matrix, is_main_supplier, notes, company_id, created_at, updated_at)
             VALUES (${supBy[supCode]}, 'mfg_product', ${m.erp}, ${prodBy.get(m.erp).name}, ${m.sku},
                     ${m.flat}, ${tx.json(m.matrix)}, false, ${REASON}, ${cid}, ${now}, ${now})`;
           bindBy.set(key, { placeholder: true });
           bump("bind_insert");
         } else {
           if (APPLY) await tx`UPDATE scm.supplier_material_bindings
-            SET unit_price_centi = ${m.flat}, price_matrix = ${tx.json(m.matrix)}, updated_at = ${now}
+            SET unit_price_sen = ${m.flat}, price_matrix = ${tx.json(m.matrix)}, updated_at = ${now}
             WHERE company_id = ${cid} AND material_kind = 'mfg_product' AND material_code = ${m.erp}
               AND supplier_id = ${supBy[supCode]}`;
           bump("bind_refresh");

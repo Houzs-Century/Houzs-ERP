@@ -222,7 +222,7 @@ export const PurchaseConsignmentReturnFromReceive = () => {
           description: r.description,
           uom: r.uom,
           qty: v.qty,
-          unitPriceCenti: r.unitPriceCenti,
+          unitPriceSen: r.unitPriceSen,
           variants: r.variants,
         };
       })

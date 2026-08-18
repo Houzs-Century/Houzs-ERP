@@ -82,16 +82,16 @@ export type ProposeBody = {
   depotWarehouseId?: string | null;
   startDate?: string;
   defaultMaxSets?: number;
-  defaultMaxRevenueCenti?: number;
+  defaultMaxRevenueSen?: number;
 };
 
 export type PackedLorry = {
   lorryId: string;
   plate: string;
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
   ceilingSets: number | null;
-  ceilingRevenueCenti: number | null;
+  ceilingRevenueSen: number | null;
   layer: 'SETS' | 'REVENUE' | 'BOTH';
   partial: boolean;
   overCeiling: boolean;
@@ -112,7 +112,7 @@ export type PackProposal = {
   lorryId: string;
   plate: string;
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
   debtorName: string | null;
 };
 
@@ -121,7 +121,7 @@ export type ProposeResponse = {
   usingDefaultZoneMap: boolean;
   depotWarehouseId: string | null;
   lorryCount: number;
-  capacityDefaults: { maxSets: number; maxRevenueCenti: number };
+  capacityDefaults: { maxSets: number; maxRevenueSen: number };
   proposals: PackProposal[];
   days: PackedDay[];
   unassigned: { ref: string; zone: string | null; reason: string }[];
@@ -144,7 +144,7 @@ export type SequenceAssignBody = {
   startDate?: string;
   departTime?: string;
   defaultMaxSets?: number;
-  defaultMaxRevenueCenti?: number;
+  defaultMaxRevenueSen?: number;
   /** A3: own-fleet trips per lorry per day before the rest spill to 3PL overflow. */
   maxTripsPerLorryPerDay?: number;
 };
@@ -188,9 +188,9 @@ export type AssignedTrip = {
   helperId: string | null;
   helperName: string | null;
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
   ceilingSets: number | null;
-  ceilingRevenueCenti: number | null;
+  ceilingRevenueSen: number | null;
   overCeiling: boolean;
   departTime: string;
   stops: AssignedTripStop[];
@@ -214,7 +214,7 @@ export type OverflowGroup = {
   group: string;
   orders: string[];
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
   reason: string;
 };
 

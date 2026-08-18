@@ -4,7 +4,7 @@
 // customer. Outstanding here is what WE owe, not what customers owe us.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Plus,
@@ -67,8 +67,8 @@ type PiRow = {
   status: string;
   invoice_date: string | null;
   due_date: string | null;
-  total_centi?: number;
-  paid_centi?: number;
+  total_sen?: number;
+  paid_sen?: number;
   currency?: string;
   notes?: string | null;
   supplier?: {
@@ -105,21 +105,21 @@ type PiItem = {
   variants?: Record<string, unknown> | null;
   uom?: string;
   qty?: number;
-  unit_price_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen?: number;
+  line_total_sen?: number;
 };
 
 type StatusTab = "all" | "draft" | "posted" | "partial" | "paid" | "cancelled";
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtRm = (centi: number): string => fmtCenti(centi);
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 const supplierNameOf = (r: PiRow): string => r.supplier?.name || "—";
 const supplierCodeOf = (r: PiRow): string => r.supplier?.code || "—";
 
-const totalOf = (r: PiRow): number => r.total_centi ?? 0;
-const paidOf = (r: PiRow): number => r.paid_centi ?? 0;
+const totalOf = (r: PiRow): number => r.total_sen ?? 0;
+const paidOf = (r: PiRow): number => r.paid_sen ?? 0;
 const outstandingOf = (r: PiRow): number => Math.max(0, totalOf(r) - paidOf(r));
 
 const sourceOf = (r: PiRow): string =>
@@ -427,10 +427,10 @@ function DetailDrawer({
                     </div>
                     <span className="text-right font-money text-[12.5px] text-ink-secondary">{l.qty ?? 0}</span>
                     <span className="text-right font-money text-[12.5px] text-ink-secondary">
-                      {fmtRm(l.unit_price_centi ?? 0)}
+                      {fmtRm(l.unit_price_sen ?? 0)}
                     </span>
                     <span className="text-right font-money text-[12.5px] font-semibold text-ink">
-                      {fmtRm(l.line_total_centi ?? 0)}
+                      {fmtRm(l.line_total_sen ?? 0)}
                     </span>
                   </div>
                   );
@@ -528,10 +528,10 @@ function TotalRow({
 }
 
 // Table column key → backend sort-whitelist column. PI backend whitelist is
-// { invoice_date, invoice_number, status, total_centi }; only `total` differs
+// { invoice_date, invoice_number, status, total_sen }; only `total` differs
 // from its backend name. Non-whitelisted columns carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
-  total: "total_centi",
+  total: "total_sen",
 };
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
@@ -561,7 +561,7 @@ function PiLinesExpansion({ id }: { id: string }) {
       description2: l.description2 ?? null,
       variants: l.variants ?? null,
       qty: Number(l.qty ?? 0),
-      amountCenti: l.line_total_centi ?? 0,
+      amountSen: l.line_total_sen ?? 0,
       assignedSos: byCode.get(code) ?? [],
       sourceLinked: linkedSkus.has(code),
       provenance: provByCode.get(code) ?? [],
@@ -807,7 +807,7 @@ export function PurchaseInvoicesListV2() {
     navigate(`/scm/purchase-invoices/${r.id}?tab=payments&record=1`);
   const doMarkPaid = (r: PiRow) => {
     if (window.confirm(`Mark invoice ${r.invoice_number} as paid?`)) {
-      recordPayment.mutate({ id: r.id, amountCenti: outstandingOf(r) }, { onSuccess: () => setSelected(null) });
+      recordPayment.mutate({ id: r.id, amountSen: outstandingOf(r) }, { onSuccess: () => setSelected(null) });
     }
   };
 

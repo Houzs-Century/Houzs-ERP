@@ -26,7 +26,7 @@ type GrnHeader = {
 type GrnItem = {
   material_code: string; material_name: string;
   qty_received: number; qty_accepted: number; qty_rejected: number;
-  rejection_reason: string | null; unit_price_centi: number;
+  rejection_reason: string | null; unit_price_sen: number;
   /* Dual-code extras — all optional so older call sites keep compiling. */
   supplier_sku?: string | null;
   item_group?: string | null;
@@ -136,7 +136,7 @@ export async function renderGrnInto(
       String(it.qty_accepted),
       String(it.qty_rejected),
       it.rejection_reason ?? (it.qty_rejected > 0 ? '—' : ''),
-      fmtRm(it.unit_price_centi),
+      fmtRm(it.unit_price_sen),
     ];
   });
   autoTable(doc, {

@@ -13,7 +13,7 @@
 import { memo, useState, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { History, X, ChevronDown, ChevronRight } from 'lucide-react';
-import { fmtCenti, fmtDate, fmtDateTime } from '@2990s/shared';
+import { fmtSen, fmtDate, fmtDateTime } from '@2990s/shared';
 import { Button } from '../Button';
 import {
   auditActionLabel,
@@ -28,7 +28,7 @@ const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
 const fmtValue = (field: string, val: unknown, dict: AuditLabelDictionary): string => {
   if (val === null || val === undefined || val === '') return '—';
-  if (dict.moneyFields?.has(field) && typeof val === 'number') return fmtCenti(val);
+  if (dict.moneyFields?.has(field) && typeof val === 'number') return fmtSen(val);
   if (typeof val === 'object') return JSON.stringify(val);
   return String(val).replace(/_/g, ' ');
 };

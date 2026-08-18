@@ -34,7 +34,7 @@ import {
   type MfgFabricTier,
 } from '@2990s/shared/mfg-pricing';
 import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
-import { activeOptions, isColourKiv, lineIdentity, maintPickerValues, fmtMoneyCenti } from '@2990s/shared';
+import { activeOptions, isColourKiv, lineIdentity, maintPickerValues, fmtMoneySen } from '@2990s/shared';
 import {
   useMfgProducts,
   useMaintenanceConfig,
@@ -63,7 +63,7 @@ import { DateField } from "./DateField";
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 const isBlankVariant = (v: unknown): boolean =>
   v === undefined || v === null || String(v).trim() === '';
@@ -97,9 +97,9 @@ export type SoLineDraft = {
   description:    string;
   uom:            string;
   qty:            number;
-  unitPriceCenti: number;
-  discountCenti:  number;
-  unitCostCenti:  number;
+  unitPriceSen: number;
+  discountSen:  number;
+  unitCostSen:  number;
   variants:       Record<string, unknown>;
   remark:         string;
   overriddenKeys?: string[];
@@ -118,7 +118,7 @@ export type SoLineDraft = {
 /** Factory for a fresh empty SO line draft. */
 export const emptySoLine = (): SoLineDraft => ({
   itemCode: '', itemGroup: 'others', description: '', uom: 'UNIT',
-  qty: 1, unitPriceCenti: 0, discountCenti: 0, unitCostCenti: 0,
+  qty: 1, unitPriceSen: 0, discountSen: 0, unitCostSen: 0,
   variants: {}, remark: '',
   lineDeliveryDate: null,
   lineDeliveryDateOverridden: false,
@@ -278,7 +278,7 @@ const SoLineCardInner = ({
      every keystroke (which jumps the cursor and blocks typing). Synced back
      from the canonical centi only when it changes from outside, e.g. a
      product pick resets it to 0. */
-  const [priceText, setPriceText] = useState((draft.unitPriceCenti / 100).toFixed(2));
+  const [priceText, setPriceText] = useState((draft.unitPriceSen / 100).toFixed(2));
   /* Task #102 — Same gate the debtor autocomplete got in PR #99. Without
      this the product picker fired one /mfg-products?search=… request per
      keystroke even when the picker wasn't open (every render of an
@@ -373,9 +373,9 @@ const SoLineCardInner = ({
   // local text box, but leave the operator's in-progress typing untouched.
   useEffect(() => {
     const parsed = Math.round(Number(priceText) * 100) || 0;
-    if (parsed !== draft.unitPriceCenti) setPriceText((draft.unitPriceCenti / 100).toFixed(2));
+    if (parsed !== draft.unitPriceSen) setPriceText((draft.unitPriceSen / 100).toFixed(2));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.unitPriceCenti]);
+  }, [draft.unitPriceSen]);
 
   const pickProduct = (p: MfgProductRow) => {
     setPicked(p);
@@ -396,7 +396,7 @@ const SoLineCardInner = ({
          predates the cost/sell split; base_price_sen remains COST and still
          never auto-populates). The server recompute stays authoritative at
          save; sofa module / seat-height pools land their exact figure there. */
-      unitPriceCenti: p.sell_price_sen ?? 0,
+      unitPriceSen: p.sell_price_sen ?? 0,
       variants:       seedVariants,
       overriddenKeys: [],
     });
@@ -629,8 +629,8 @@ const SoLineCardInner = ({
     : 0;
 
   const lineTotal = useMemo(
-    () => Math.max(0, draft.qty * draft.unitPriceCenti - draft.discountCenti),
-    [draft.qty, draft.unitPriceCenti, draft.discountCenti],
+    () => Math.max(0, draft.qty * draft.unitPriceSen - draft.discountSen),
+    [draft.qty, draft.unitPriceSen, draft.discountSen],
   );
 
   /* Colour KIV (owner 2026-07-24, SO-2607-016) — the line committed to a
@@ -857,9 +857,9 @@ const SoLineCardInner = ({
           onChange={(e) => {
             const t = e.target.value;
             setPriceText(t);
-            onChange({ unitPriceCenti: Math.round(Number(t) * 100) || 0 });
+            onChange({ unitPriceSen: Math.round(Number(t) * 100) || 0 });
           }}
-          onBlur={() => setPriceText((draft.unitPriceCenti / 100).toFixed(2))}
+          onBlur={() => setPriceText((draft.unitPriceSen / 100).toFixed(2))}
         />
 
         {/* 6. Delivery Date (2990 addition between Unit Price and Amount) */}
@@ -1082,12 +1082,12 @@ const SoLineCardInner = ({
                 <span className={styles.priceLabel}>
                   Unit × {draft.qty}
                 </span>
-                <span className={styles.priceValue}>{fmtRm(draft.unitPriceCenti)}</span>
+                <span className={styles.priceValue}>{fmtRm(draft.unitPriceSen)}</span>
               </div>
-              {draft.discountCenti > 0 && (
+              {draft.discountSen > 0 && (
                 <div className={styles.priceRow}>
                   <span className={styles.priceLabel}>− Discount</span>
-                  <span className={styles.priceValue}>{fmtRm(draft.discountCenti)}</span>
+                  <span className={styles.priceValue}>{fmtRm(draft.discountSen)}</span>
                 </div>
               )}
               <div className={styles.priceTotalRow}>

@@ -53,7 +53,7 @@ const DRAFT = (): Row => ({
   id: 'pv-1', pv_number: 'HC-PV-2608-001', voucher_date: '2026-08-01',
   payee_name: 'Acme Timber', supplier_id: null, credit_account_code: '100-0000',
   currency: 'MYR', exchange_rate: 1, purpose: 'OTHER', notes: null,
-  total_centi: 50000, status: 'DRAFT', posted_at: null,
+  total_sen: 50000, status: 'DRAFT', posted_at: null,
   created_at: '2026-08-01T00:00:00Z', created_by: '7',
   updated_at: '2026-08-01T00:00:00Z', company_id: 1,
 });
