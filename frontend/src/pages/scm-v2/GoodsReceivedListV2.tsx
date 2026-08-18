@@ -4,7 +4,7 @@
 // outstanding/owed.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -57,7 +57,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
@@ -107,19 +107,22 @@ type StatusTab = "all" | "draft" | "posted" | "cancelled";
 
 const fmtRm = (centi: number): string => fmtCenti(centi);
 
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  return iso.replace(/T.*$/, "").replace(/-/g, "/");
-};
-
 const supplierNameOf = (r: GrnRow): string => r.supplier?.name || "—";
 const supplierCodeOf = (r: GrnRow): string => r.supplier?.code || "—";
 const poOf = (r: GrnRow): string => r.purchase_order?.po_number || "—";
 const totalOf = (r: GrnRow): number => r.total_centi ?? 0;
 
+// grns.status → filter bucket. Must match GRN_STATUS_BUCKETS server-side
+// (backend/src/scm/routes/grns.ts), which is what the tab COUNTS are computed
+// from — a row bucketed differently here is shown in one tab and counted in
+// another. CLOSED is spelled out rather than left to the fallback below: it is
+// a real enum member (grn_status = DRAFT / POSTED / CLOSED / CANCELLED) and it
+// files under `posted` because its stock IN stands — only CANCELLED had its
+// receipt reversed.
 const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }> = {
   DRAFT:     { tone: "warning", label: "Draft",     bucket: "draft" },
   POSTED:    { tone: "success", label: "Posted",    bucket: "posted" },
+  CLOSED:    { tone: "neutral", label: "Closed",    bucket: "posted" },
   CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
 };
 
@@ -216,7 +219,7 @@ function CardsGrid({ rows, onOpen }: { rows: GrnRow[]; onOpen: (r: GrnRow) => vo
             </div>
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div className="min-w-0">
-                <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">From PO</div>
+                <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{transferFromColumnLabel('po')}</div>
                 <div className="mt-0.5 truncate font-mono text-[12px] font-semibold text-ink-secondary">{poOf(r)}</div>
               </div>
               <span className="font-money text-[15px] font-bold text-ink">{fmtRm(totalOf(r))}</span>
@@ -285,7 +288,7 @@ function DetailDrawer({
               </div>
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From PO" v={poOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('po')} v={poOf(row)} mono />
                 <MetaItem k="Received at" v={fmtDate(row.received_at)} />
                 <MetaItem k="Delivery note" v={row.delivery_note_ref || "—"} mono={!!row.delivery_note_ref} />
                 <MetaItem k="Currency" v={row.currency || "MYR"} />
@@ -728,7 +731,7 @@ export function GoodsReceivedListV2() {
     },
     {
       key: "po",
-      label: "From PO",
+      label: transferFromColumnLabel('po'),
       width: "128px",
       disableSort: true,
       getValue: (r) => poOf(r),

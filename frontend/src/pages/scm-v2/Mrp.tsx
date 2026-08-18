@@ -32,7 +32,7 @@ import { authedFetch } from '../../vendor/scm/lib/authed-fetch';
 import { useAuth, isAdminLevel } from '../../vendor/scm/lib/auth';
 import { useCreatePosFromSoItems } from '../../vendor/scm/lib/suppliers-queries';
 import { newIdempotencyKey } from '../../lib/idempotency';
-import { fmtDateOrDash } from '@2990s/shared';
+import { fmtDate } from '../../vendor/shared/format';
 import { DateField } from '../../vendor/scm/components/DateField';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { Button } from '../../components/Button';
@@ -47,8 +47,6 @@ const ICON = { size: 14, strokeWidth: 1.75 } as const;
 const TOOLBAR_BTN =
   'inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary disabled:cursor-default disabled:opacity-50';
 
-// Canonical date format (Commander 2026-05-29) — shared @2990s/shared helper.
-const fmtDate = (iso: string | null): string => fmtDateOrDash(iso);
 
 /* The Delivery cell for an SO line. A missing delivery date is NOT the same
    fact as a missing debtor name or warehouse, and since 2026-08-18 these rows

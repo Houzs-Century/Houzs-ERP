@@ -42,16 +42,12 @@ import {
   ChevronDown, RotateCcw, History, Check, Download, Send,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDateTime } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
+import { buildVariantSummary, fmtDate, fmtDateTime } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
 import { poDisplayNumber } from '../../vendor/scm/lib/po-status';
 import { convertToLink } from '../../lib/convertScope';
 
-/* dd/mm/yyyy — the V2 detail header's date shape, for the meta line. */
-const fmtDmy = (iso: string | null | undefined): string => {
-  if (!iso) return '—';
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})/.exec(iso);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
-};
+/* dd/mm/yyyy — the one rule, under the name this file already uses. */
+const fmtDmy = fmtDate;
 import { formatPhone } from '@2990s/shared/phone';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
@@ -95,6 +91,7 @@ import {
   type SoRevisionRow,
 } from '../../vendor/scm/lib/so-amendment-queries';
 import styles from './SalesOrderDetail.module.css';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -137,6 +134,18 @@ const SUPPLIER_DATE_LABEL: Record<SupplierDateKey, string> = {
   supplierDeliveryDate2: 'Supplier Date 2',
   supplierDeliveryDate3: 'Supplier Date 3',
   supplierDeliveryDate4: 'Supplier Date 4',
+};
+
+/* An unfilled <input type="date"> holds '', and the header draft is spread
+   straight into the PATCH — so a blank Supplier Date 2/3/4 posted "" and the
+   whole save came back 500 "invalid input syntax for type date" (production,
+   2026-08-17). The BACKEND is the fix (scm/lib/date-coerce coerces this on every
+   date write, and the mobile app and any direct API caller never pass through
+   this form at all); this is the second layer, so the payload says what it
+   means: a cleared date is NULL. */
+const blankDateToNull = (v: string | null | undefined): string | null => {
+  const s = (v ?? '').trim();
+  return s === '' ? null : s;
 };
 
 const headerSnapshot = (p: any): HeaderDraft => ({
@@ -376,6 +385,44 @@ export const PurchaseOrderDetail = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isEditing, bindings, fabrics, maint, editLines]);
 
+  /* Client-side PO PDF generator. Shared by the header "Print PDF" and the
+     amendment banner's "Download Revised PO" — the same generator, just an
+     optional docTitle so the revised copy prints "Revised Purchase Order". The
+     operator downloads / prints / WhatsApps it themselves (Houzs's "Send" only
+     marks the amendment SENT — mirroring 2990, no server email here).
+
+     HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
+     until 2026-08-17, so the loading render called fewer hooks than the loaded
+     one and React threw #310 ("rendered more hooks than during the previous
+     render") the moment the query resolved — a blank "Something went wrong
+     loading this page." on every direct URL / refresh of a PO. Arriving from
+     the list hid it: react-query already had the detail cached, so the
+     isPending branch never rendered first. The generator therefore has to
+     tolerate a null po; it can only ever be CALLED from a button that does not
+     exist until the record has loaded. */
+  const generatePoPdf = (docTitle?: string, action: PdfAction = 'save') => {
+    if (!po) return;
+    // PR #102 — pre-resolve purchase_location name (PDF can't hit the API).
+    const wh = (warehousesQTop.data ?? []).find((w) => w.id === po.purchase_location_id);
+    const headerForPdf = {
+      ...po,
+      // Owner 2026-07-24: DELIVER TO shows the warehouse CODE only (was the
+      // dual "code · name", which read as a duplicated warehouse name).
+      purchase_location_name: wh ? wh.code : null,
+      // #1 (Commander 2026-06-18) — deliver-to address = the bound warehouse's
+      // location text, so the supplier knows where to ship.
+      delivery_address: wh?.location ?? null,
+      // your_ref_no / source_so_doc_no don't have columns yet; pass through
+      // when present on po (forward-compat). Schema follow-up adds them.
+      your_ref_no:      (po as unknown as { your_ref_no?: string | null }).your_ref_no      ?? null,
+      source_so_doc_no: (po as unknown as { source_so_doc_no?: string | null }).source_so_doc_no ?? null,
+    };
+    import('../../vendor/scm/lib/purchase-order-pdf').then(({ generatePurchaseOrderPdf }) =>
+      generatePurchaseOrderPdf(headerForPdf, items, { ...(docTitle ? { docTitle } : {}), action }),
+    ).catch((e) => notify({ title: 'PDF generation failed', body: `${e instanceof Error ? e.message : 'Something went wrong.'}`, tone: 'error' }));
+  };
+  const print = usePrintPreview((action: PdfAction) => generatePoPdf(undefined, action));
+
   if (detail.isPending) {
     return <SkeletonDetailPage />;
   }
@@ -596,7 +643,17 @@ export const PurchaseOrderDetail = () => {
     setSavingDraft(true);
     try {
       if (headerDraft) {
-        await updateHeader.mutateAsync({ id: po.id, ...(headerDraft as Record<string, unknown>) });
+        await updateHeader.mutateAsync({
+          id: po.id,
+          ...(headerDraft as Record<string, unknown>),
+          /* Only the three OPTIONAL slots are nulled here. `po_date` is
+             `date DEFAULT now() NOT NULL` (scm-schema/2990s-full-schema.sql)
+             and both poDate and expectedAt are required inputs on this form, so
+             nulling them would trade one refusal for another. */
+          supplierDeliveryDate2: blankDateToNull(headerDraft.supplierDeliveryDate2),
+          supplierDeliveryDate3: blankDateToNull(headerDraft.supplierDeliveryDate3),
+          supplierDeliveryDate4: blankDateToNull(headerDraft.supplierDeliveryDate4),
+        });
       }
       const byId = new Map(items.map((it) => [it.id, it]));
       for (const d of editLines) {
@@ -650,11 +707,11 @@ export const PurchaseOrderDetail = () => {
           qty:            d.qty,
           unitPriceCenti: d.unitPriceCenti,
           discountCenti:  d.discountCenti ?? 0,
-          deliveryDate:   d.deliveryDate ?? null,
+          deliveryDate:   blankDateToNull(d.deliveryDate),
           /* Mig 0026 — per-line supplier-revised delivery dates. */
-          supplierDeliveryDate2: d.supplierDeliveryDate2 ?? null,
-          supplierDeliveryDate3: d.supplierDeliveryDate3 ?? null,
-          supplierDeliveryDate4: d.supplierDeliveryDate4 ?? null,
+          supplierDeliveryDate2: blankDateToNull(d.supplierDeliveryDate2),
+          supplierDeliveryDate3: blankDateToNull(d.supplierDeliveryDate3),
+          supplierDeliveryDate4: blankDateToNull(d.supplierDeliveryDate4),
           warehouseId:    d.warehouseId ?? null,
           itemGroup:      d.category,
           variants:       d.variants ?? {},
@@ -672,33 +729,6 @@ export const PurchaseOrderDetail = () => {
       setSavingDraft(false);
     }
   };
-
-  /* Client-side PO PDF generator. Shared by the header "Print PDF" and the
-     amendment banner's "Download Revised PO" — the same generator, just an
-     optional docTitle so the revised copy prints "Revised Purchase Order". The
-     operator downloads / prints / WhatsApps it themselves (Houzs's "Send" only
-     marks the amendment SENT — mirroring 2990, no server email here). */
-  const generatePoPdf = (docTitle?: string, action: PdfAction = 'save') => {
-    // PR #102 — pre-resolve purchase_location name (PDF can't hit the API).
-    const wh = (warehousesQTop.data ?? []).find((w) => w.id === po.purchase_location_id);
-    const headerForPdf = {
-      ...po,
-      // Owner 2026-07-24: DELIVER TO shows the warehouse CODE only (was the
-      // dual "code · name", which read as a duplicated warehouse name).
-      purchase_location_name: wh ? wh.code : null,
-      // #1 (Commander 2026-06-18) — deliver-to address = the bound warehouse's
-      // location text, so the supplier knows where to ship.
-      delivery_address: wh?.location ?? null,
-      // your_ref_no / source_so_doc_no don't have columns yet; pass through
-      // when present on po (forward-compat). Schema follow-up adds them.
-      your_ref_no:      (po as unknown as { your_ref_no?: string | null }).your_ref_no      ?? null,
-      source_so_doc_no: (po as unknown as { source_so_doc_no?: string | null }).source_so_doc_no ?? null,
-    };
-    import('../../vendor/scm/lib/purchase-order-pdf').then(({ generatePurchaseOrderPdf }) =>
-      generatePurchaseOrderPdf(headerForPdf, items, { ...(docTitle ? { docTitle } : {}), action }),
-    ).catch((e) => notify({ title: 'PDF generation failed', body: `${e instanceof Error ? e.message : 'Something went wrong.'}`, tone: 'error' }));
-  };
-  const print = usePrintPreview((action: PdfAction) => generatePoPdf(undefined, action));
 
   /* ── SO-amendment banner state (Phase 1-C) ─────────────────────────────────
      The bound PO detail stamps `open_amendment` when its source SO has an
@@ -1483,15 +1513,19 @@ const SupplierCard = ({
           <div />
           <label className={styles.field}>
             <span className={styles.fieldLabel}>PO Date</span>
-            <input type="date" className={styles.fieldInput} value={draft.poDate} disabled={locked}
-              onChange={(e) => onField('poDate', e.target.value)} />
+            <DateField fullWidth className={styles.fieldInput} value={draft.poDate} disabled={locked} onChange={(iso) => onField('poDate', iso)}/>
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Expected Delivery</span>
             {/* Commander 2026-05-29 — changing this cascades to every line's
                 Delivery Date (handled in the page's setHeaderField). */}
-            <input type="date" className={styles.fieldInput} value={draft.expectedAt} disabled={locked}
-              onChange={(e) => onField('expectedAt', e.target.value)} />
+            <DateField
+              fullWidth
+              className={styles.fieldInput}
+              value={draft.expectedAt}
+              disabled={locked}
+              onChange={(iso) => onField('expectedAt', iso)}
+            />
           </label>
           {/* Mig 0026 — supplier-revised header delivery dates. Typing one fans
               it down to lines that have NO value in that slot (setHeaderField).
@@ -1526,8 +1560,7 @@ const SupplierCard = ({
                   )
                 )}
               </span>
-              <input type="date" className={styles.fieldInput} value={draft[k]} disabled={locked}
-                onChange={(e) => onField(k, e.target.value)} />
+              <DateField fullWidth className={styles.fieldInput} value={draft[k]} disabled={locked} onChange={(iso) => onField(k, iso)}/>
             </label>
           ))}
           {/* PR #77 — Purchase Location: default ship-to warehouse for

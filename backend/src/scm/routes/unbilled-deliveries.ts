@@ -68,13 +68,13 @@ unbilledDeliveries.use('*', supabaseAuth);
        value the enum does NOT have makes Postgres throw ("invalid input value for
        enum do_status") — a 500, not an empty result. The tree's enum is
        {DRAFT, LOADED, DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED, INVOICED,
-       CANCELLED} (base schema + mig 0040 adds DRAFT), but delivery-orders-mfg.ts
-       ALSO carries 'COMPLETED' in DO_STATUSES / DO_STOCK_OUT_STATUSES, and the
-       scm schema is maintained OUTSIDE this migration tree (see BUG-HISTORY:
-       "audit vs PROD information_schema") — so the tree cannot settle whether
-       prod's enum has COMPLETED. Naming only the three values that certainly
-       exist makes this query correct EITHER WAY: it can never throw, and a
-       post-ship state we don't know about is INCLUDED rather than dropped.
+       CANCELLED} (base schema + mig 0040 adds DRAFT). This comment used to add
+       that delivery-orders-mfg.ts "ALSO carries 'COMPLETED'", and that the tree
+       therefore could not settle whether prod's enum had it. PROD SETTLED IT on
+       2026-08-17: `?status=delivered` returned 500 `invalid input value for enum
+       do_status: "COMPLETED"` in both tenants, so the enum is exactly the eight
+       above and COMPLETED has been removed from the shared declaration. This
+       report was the one place that guessed the safe way and never broke.
      • The fail direction is deliberate. An unknown status surfaces a row he can
        dismiss; a positive list would have hidden that row's money silently —
        which is the exact failure this whole report exists to catch. */
@@ -257,7 +257,15 @@ unbilledDeliveries.get('/', async (c) => {
      remaining = delivered − invoiced − returned formula here: a second copy of
      that formula is how the report and the SI picker would start disagreeing
      about what is billable, which is worse than a slow report. */
-  const remainingByItem = await doLineRemaining(sb, headers.map((h) => h.id));
+  const ledger = await doLineRemaining(sb, headers.map((h) => h.id));
+  /* REFUSE TO RENDER rather than report a clean book. Every row of this report
+     is gated on `a.unbilled > 0` below, so an unreadable ledger drops EVERY row
+     and the answer becomes "nothing is outstanding" — on the one screen whose
+     entire job is to find money that was delivered and never billed. The
+     headers read above already answers a failure this way; the ledger is the
+     more expensive half of the same question and gets the same answer. */
+  if (!ledger.ok) return c.json({ error: 'load_failed', reason: ledger.reason }, 500);
+  const remainingByItem = ledger.lines;
 
   // Fold the line ledger up to one row per DO.
   type Agg = { delivered: number; invoiced: number; returned: number; unbilled: number; lines: number; pending: number };

@@ -10,6 +10,8 @@
 // exclusive upper bound is the MY-midnight of the following day.
 // ─────────────────────────────────────────────────────────────────────────
 
+import { fmtDate } from '../shared/format';
+
 const MY_OFFSET_MS = 8 * 60 * 60 * 1000;
 const MY_TZ = 'Asia/Kuala_Lumpur';
 
@@ -86,14 +88,9 @@ export function monthBoundsMy(year: number, month0: number): PeriodBounds {
   };
 }
 
-function fmtDay(d: Date): string {
-  return new Intl.DateTimeFormat('en-MY', {
-    day: 'numeric',
-    month: 'short',
-    year: 'numeric',
-    timeZone: MY_TZ,
-  }).format(d);
-}
+/* Was `{ day: 'numeric', month: 'short' }` — "16 Aug 2026", a month NAME in a
+   filter label sitting next to DD/MM/YYYY everywhere else on the same screen. */
+const fmtDay = fmtDate;
 
 /**
  * From–to date range (MY calendar days, `to` inclusive) → UTC bounds.

@@ -29,6 +29,10 @@ import {
   type ErpLine,
   type ErpPaymentRef,
 } from '../../services/autocount-writeback';
+import {
+  SO_PROCESSING_DATE_AC_UDF,
+  SO_PROCESSING_DATE_COLUMN,
+} from '../shared/so-processing-date';
 
 /** Drops every null, so an absent value never reaches the service as "". */
 const present = (o: Record<string, string | null>): Record<string, string> => {
@@ -152,13 +156,21 @@ export function soEditHeader(
   if (venue) udf.VENUE = venue;
   const customerRef = soCustomerRef(h);
   if (customerRef) udf.ToPONo = customerRef;
-  /* The SO's "Processing date" (owner: 账目日期). Owner 2026-08-12: editing it
-     in the ERP must reach AutoCount. Same omit-when-absent rule as the rest of
-     this function — a cleared date sends nothing rather than blanking the
-     account book's value, which is the conservative half of the pair and the
-     one that cannot destroy data. */
-  const pdate = acUdfDate(h.processing_date as string | null | undefined);
-  if (pdate) udf.PDate = pdate;
+  /* The SO's "Processing date" — the date this order is RELEASED for purchasing
+     to order goods (owner 2026-08-18; also the owner's 账目日期). Owner
+     2026-08-12: editing it in the ERP must reach AutoCount. Same omit-when-absent
+     rule as the rest of this function — a cleared date sends nothing rather than
+     blanking the account book's value, which is the conservative half of the pair
+     and the one that cannot destroy data.
+
+     `PDate` IS AUTOCOUNT'S OWN NAME, NOT OURS — DO NOT "UNIFY" IT. Every other
+     name for this date is being collapsed onto `processing_date` /
+     `processingDate`; this one belongs to the other system and stays. Renaming
+     it does not rename anything in AutoCount — the connector drops an unknown
+     UDF, the edit posts 200, and the date silently stops arriving in the account
+     book. See SO_PROCESSING_DATE_AC_UDF. */
+  const pdate = acUdfDate(h[SO_PROCESSING_DATE_COLUMN] as string | null | undefined);
+  if (pdate) udf[SO_PROCESSING_DATE_AC_UDF] = pdate;
   /* The outstanding balance, and the one UDF whose ZERO must be sent: an order
      the customer has now settled has to stop showing a debt in the account
      book, and `acUdfMoney` renders that as "0.00" precisely so this `if` does

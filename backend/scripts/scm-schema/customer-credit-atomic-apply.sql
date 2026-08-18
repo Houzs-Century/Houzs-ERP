@@ -83,8 +83,21 @@ BEGIN
   -- to sales_invoices then fails, rolling the whole call back — never a partial.
   SELECT company_id INTO v_company_id FROM sales_invoices WHERE id = p_si_id;
 
+  -- SCOPED TO THE SI's COMPANY. `debtor_code` is NOT globally unique: mig 0123
+  -- re-keyed scm.customers on (customer_code, company_id), so the same code names
+  -- a DIFFERENT customer in each company, while customer_credits.company_id is
+  -- NOT NULL (mig 0083). Summing on debtor_code alone pooled BOTH companies'
+  -- ledgers into one balance while the two INSERTs below stamp v_company_id — so
+  -- a company-A invoice could consume a company-B credit row and only the debit
+  -- carried a company. The stamp is what made it silent.
+  --
+  -- v_company_id NULL (the missing-SI case named above) makes this predicate
+  -- match nothing, so the call returns 'no_balance' and writes nothing, instead
+  -- of reaching the payment insert's FK failure. Both outcomes write nothing;
+  -- this one is reached earlier and says why.
   SELECT COALESCE(SUM(amount_centi), 0) INTO v_balance
-  FROM customer_credits WHERE debtor_code = p_debtor_code;
+  FROM customer_credits
+  WHERE debtor_code = p_debtor_code AND company_id = v_company_id;
   IF v_balance <= 0 THEN
     RETURN QUERY SELECT 0, 'no_balance'::text; RETURN;
   END IF;

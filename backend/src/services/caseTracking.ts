@@ -2,6 +2,10 @@ import type { Env } from "../types";
 import { generateToken, isoIn } from "./auth";
 import { cleanPhone } from "./autocount";
 import { normalizePhone } from "../scm/shared/phone";
+import {
+  assrCustomerStatus,
+  type AssrStageColor,
+} from "../scm/shared/assr-stage-labels";
 
 // Per-case tokenised tracking. Three flows produce a token:
 //   1. Customer hits /track, enters ASSR number + phone → server
@@ -274,31 +278,23 @@ export async function revokeCaseTokens(env: Env, assrId: number): Promise<void> 
 
 // ── Status mapping (customer-facing, server-authoritative) ──
 
+/**
+ * What the customer's portal calls this stage.
+ *
+ * THE WORDS ARE NOT HERE ANY MORE. This used to be a hand-written switch, and
+ * being hand-written in a layer the print route and the frontend could not
+ * reach is exactly why four more copies grew and why this one — the only
+ * CUSTOMER-facing copy — was the one that never learned `voided` and rendered
+ * the raw database slug. The table now lives in scm/shared/assr-stage-labels.ts,
+ * mirrored to frontend/src/vendor/scm/lib, where every surface can reach it and
+ * where check-shared-mirrors.mjs --strict referees the two copies.
+ *
+ * Kept as a named export because portal.ts calls it three times and the name
+ * says what it is for: the answer for a CUSTOMER, not the app's wording.
+ */
 export function customerStatusFor(stage: string | null | undefined): {
   label: string;
-  color: "grey" | "blue" | "amber" | "violet" | "green";
+  color: AssrStageColor;
 } {
-  switch (stage) {
-    // v3.1 9-stage workflow (mig 074)
-    case "pending_review":            return { label: "Pending Review", color: "grey" };
-    case "under_verification":        return { label: "Under Verification", color: "blue" };
-    case "pending_solution":          return { label: "Pending Solution", color: "amber" };
-    // Retired stage (mig 0105) — legacy alias for anything mid-flight.
-    case "pending_inspection":        return { label: "Under Verification", color: "blue" };
-    // Retired stage (mig 0110) — the customer-side collection lives in
-    // the Supplier stage now; alias for anything mid-flight.
-    case "pending_item_pickup":       return { label: "Pending Supplier Pickup", color: "violet" };
-    case "pending_supplier_pickup":   return { label: "Pending Supplier Pickup", color: "violet" };
-    case "pending_item_ready":        return { label: "Pending Item Ready", color: "violet" };
-    case "pending_delivery_service":  return { label: "Pending Delivery / Service", color: "violet" };
-    case "completed":                 return { label: "Completed", color: "green" };
-    // Legacy aliases — covers any unmigrated row label.
-    case "registration":              return { label: "Pending Review", color: "grey" };
-    case "triage":                    return { label: "Under Verification", color: "blue" };
-    case "action":                    return { label: "Pending Solution", color: "amber" };
-    case "logistics":                 return { label: "Pending Item Pickup", color: "violet" };
-    case "resolution":                return { label: "Pending Delivery / Service", color: "violet" };
-    case "closed":                    return { label: "Completed", color: "green" };
-    default:                          return { label: stage || "Unknown", color: "grey" };
-  }
+  return assrCustomerStatus(stage);
 }

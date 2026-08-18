@@ -58,6 +58,7 @@ import { hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-r
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneyCenti } from '@2990s/shared';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -740,23 +741,23 @@ export const ConsignmentOrderNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Processing Date</span>
-              <input
-                type="date"
+              <DateField
+                fullWidth
                 className={styles.fieldInput}
                 value={processingDate}
                 min={today}
-                onChange={(e) => setProcessingDate(e.target.value)}
+                onChange={(iso) => setProcessingDate(iso)}
                 style={datesXor && !processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Delivery Date</span>
-              <input
-                type="date"
+              <DateField
+                fullWidth
                 className={styles.fieldInput}
                 value={deliveryDate}
                 min={today}
-                onChange={(e) => setDeliveryDate(e.target.value)}
+                onChange={(iso) => setDeliveryDate(iso)}
                 style={datesXor && !deliveryDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
             </label>

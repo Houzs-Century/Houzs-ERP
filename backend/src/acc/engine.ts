@@ -30,6 +30,7 @@
 
 import { nextJeNo, jePrefixForCompany } from '../scm/lib/doc-no';
 import { todayMyt } from '../scm/lib/my-time';
+import { dateOrNull } from '../scm/lib/date-coerce';
 import { REVERSAL_SOURCE, CONTROL_ROLES, resolveRoles } from './rules';
 import type { RuleLine } from './rules';
 
@@ -117,7 +118,14 @@ async function checkAccounts(
 }
 
 export async function postJournal(sb: any, input: PostJournalInput): Promise<PostJournalResult> {
-  const { companyId, entryDate, sourceType, sourceDocNo, narration } = input;
+  const { companyId, sourceType, sourceDocNo, narration } = input;
+  /* `entryDate: string` does not stop `""` — an unfilled <input type="date">
+     posts one, and journal_entries.entry_date is `date NOT NULL`. Blank would
+     500 the whole post AND poison nextJeNo (`new Date("")` is Invalid Date,
+     so the month prefix comes out NaN). Today is the only sane document date
+     for a journal being written today, and it is what every caller that omits
+     the key already gets. */
+  const entryDate = dateOrNull(input.entryDate) ?? todayMyt();
   const postNow = input.postNow !== false;
   const lines = input.lines ?? [];
 
@@ -367,7 +375,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
       .insert({
         ...companyCol,
         je_no: revJeNo,
-        entry_date: input.entryDate ?? todayMyt(),
+        entry_date: dateOrNull(input.entryDate) ?? todayMyt(),
         source_type: revType,
         source_doc_no: input.sourceDocNo ?? orig.source_doc_no ?? null,
         narration: input.narration(orig),

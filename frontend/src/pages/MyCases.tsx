@@ -15,6 +15,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { Send, User, Package, MessageSquare, Search, X } from "lucide-react";
 import { api } from "../api/client";
 import { formatPhone } from "../vendor/shared/phone";
+import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import { useQuery } from "../hooks/useQuery";
 import { useToast } from "../hooks/useToast";
 import { PageHeader } from "../components/Layout";
@@ -49,7 +50,12 @@ const STAGE_LABEL: Record<string, string> = {
   pending_item_ready: "Pending Item Ready",
   pending_delivery_service: "Delivery / Service",
   completed: "Completed",
-  voided: "Voided — Not Valid",
+  // Read, not retyped. This exact string had six hand-written homes and the
+  // customer portal's copy — the only one a customer reads — had none at all
+  // and printed the raw slug. (The rows ABOVE are this screen's short pill
+  // vocabulary, a different question, and still a hand-written copy shared
+  // with the other pill screens — see BUG-HISTORY, not yet unified.)
+  voided: ASSR_STAGE_LABEL.voided,
 };
 
 const STAGE_COLOR: Record<string, string> = {

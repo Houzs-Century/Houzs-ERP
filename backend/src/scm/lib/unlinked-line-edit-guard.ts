@@ -91,13 +91,13 @@ export { unlinkedCheckUnavailableResponse } from './do-unlinked-so-lines';
  * line already fully invoiced is left alone. Shared with the SI insert path so
  * both ends of that chain speak one definition of "shadow".
  *
- * FAIL-CLOSED SCOPE, stated honestly: the DO-lines read below is the load-bearing
- * one — it decides which codes are on the DO at all — and its failure is
- * reported. The remaining computation (doLineRemaining, via doRemainingByItemId)
- * is fail-open throughout and shared by many callers; a failure there reads as
- * remaining 0, i.e. "not pending", i.e. allowed. Closing that is a refactor of
- * do-line-remaining.ts with its own blast radius and is filed separately rather
- * than smuggled in here.
+ * FAIL-CLOSED, BOTH HALVES. The DO-lines read decides which codes are on the DO
+ * at all; the remaining computation decides which of those still have qty open.
+ * Until the do-line-remaining refactor landed, only the first was reported — a
+ * failure in the second read as remaining 0, i.e. "not pending", i.e. ALLOWED,
+ * which is the whole exploit this guard exists to stop, reachable by nothing
+ * more than a five-second database blip. Both now return `ok: false`, which
+ * unlinkedScanRefusal turns into a refusal instead of "no offenders".
  */
 export async function doPendingItemCodesOf(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -114,9 +114,10 @@ export async function doPendingItemCodesOf(
   const rows = (data ?? []) as Array<{ id: string; item_code: string | null }>;
   if (rows.length === 0) return { ok: true, codes: new Set() };
   const remaining = await doRemainingByItemId(sb, rows.map((r) => r.id));
+  if (!remaining.ok) return { ok: false, reason: `remaining unreadable: ${remaining.reason}` };
   const out = new Set<string>();
   for (const r of rows) {
-    if ((remaining.get(r.id) ?? 0) <= 0) continue;
+    if ((remaining.remaining.get(r.id) ?? 0) <= 0) continue;
     const k = itemCodeKey(r.item_code);
     if (k) out.add(k);
   }

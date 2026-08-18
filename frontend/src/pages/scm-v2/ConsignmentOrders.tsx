@@ -62,6 +62,7 @@ import { PageHeader } from '../../components/Layout';
 import { StatCard } from '../../components/StatCard';
 import soDetailStyles from './SalesOrderDetail.module.css';
 import { retryUnlessClientError } from '../../lib/retryPolicy';
+import { transferToColumnLabel } from "../../lib/convertScope";
 
 /* Local payments hook — lazy-loaded per expanded SO row alongside the detail
    query. Kept local to this page (not exported to flow-queries.ts) because
@@ -132,7 +133,8 @@ type SoRow = {
      `processing_date` this row type used to ALSO carry (never written by
      anything) went with it. */
   processing_date: string | null;
-  /* PR #46 — POS handover target_date (Marketing-side "Target Date" stamp). */
+  /* PR #46 — POS handover target_date (Marketing-side "Target Date" stamp).
+     Live on the SO twin; see the SO create path's note before removing. */
   target_date: string | null;
   /* PR #143 — Header-level payment method (cash | transfer | merchant) +
      installment plan / merchant provider. Populated when the SO carries a
@@ -489,7 +491,7 @@ const buildDrilldownColumns = (paymentRefs: string, canFinance: boolean): DataGr
     sortFn: (a, b) => Number(a.qty ?? 0) - Number(b.qty ?? 0),
   },
   {
-    key: 'delivered', label: 'Transfer To (DO)', width: 130,
+    key: 'delivered', label: transferToColumnLabel('do'), width: 130,
     accessor: (it) => {
       const hasDeliveries = it.deliveries && it.deliveries.length > 0;
       if (!hasDeliveries) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;

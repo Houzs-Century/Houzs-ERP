@@ -44,6 +44,7 @@ import { useNotify } from './NotifyDialog';
 // precedent as DataGrid's activeCompany subscription.
 import { api } from '../../../api/client';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
+import { DateField } from "./DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -526,8 +527,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                 <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
                   Job date <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}>— required</span>
                 </div>
-                <input type="date" className={styles.searchInput} style={inputStyle}
-                  value={jobDate} onChange={(e) => setJobDate(e.target.value)} />
+                <DateField fullWidth className={styles.searchInput} style={inputStyle} value={jobDate} onChange={(iso) => setJobDate(iso)}/>
               </label>
             </>
           ) : (
@@ -685,7 +685,13 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
             </label>
             <label style={fieldRow}>
               <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Requested date</div>
-              <input type="date" className={styles.searchInput} style={inputStyle} value={form.requestedDate} onChange={(e) => set('requestedDate', e.target.value)} />
+              <DateField
+                fullWidth
+                className={styles.searchInput}
+                style={inputStyle}
+                value={form.requestedDate}
+                onChange={(iso) => set('requestedDate', iso)}
+              />
             </label>
           </div>
           <label style={fieldRow}>

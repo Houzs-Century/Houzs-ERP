@@ -43,6 +43,8 @@ export type ExpectedBatch = {
   multiPo?: boolean;
 };
 
+import { chunkIn } from './paginate-all';
+
 /** PO statuses that can still receive a GRN under their number. A CANCELLED
  *  PO never will; a DRAFT PO is reference-only (mirrors recomputeSoPicked's
  *  dead-PO set in mfg-purchase-orders.ts). */
@@ -85,32 +87,38 @@ export async function resolveExpectedBatchBySoItem(
 
   try {
     // PO items that came from these SO lines -> their PO ids (mig 0098 port).
-    const { data: poiRows, error: poiErr } = await sb
+    /* CHUNKED: `ids` is bounded when the ship path calls this with one DO, but
+       source-po-trace hands it every unresolved line of a whole DO list page —
+       uuids, straight into the URL. The picks below are made per so_item_id from
+       the full `links` set, so batching the read changes nothing. */
+    type LinkRow = { so_item_id: string | null; purchase_order_id: string | null; created_at: string | null };
+    const { data: links, error: poiErr } = await chunkIn<LinkRow>(ids, (batch, from, to) => sb
       .from('purchase_order_items')
       .select('so_item_id, purchase_order_id, created_at')
-      .in('so_item_id', ids)
-      .not('purchase_order_id', 'is', null);
+      .in('so_item_id', batch)
+      .not('purchase_order_id', 'is', null)
+      .order('id')
+      .range(from, to));
     if (poiErr) return out;
-    const links = (poiRows ?? []) as Array<{
-      so_item_id: string | null; purchase_order_id: string | null; created_at: string | null;
-    }>;
     if (links.length === 0) return out;
 
     const poIds = [...new Set(links.map((r) => r.purchase_order_id).filter((x): x is string => !!x))];
     /* H1 — status joins the read so dead (CANCELLED / DRAFT) POs never satisfy
        the drop-ship guardrail. Filtered app-side so a schema without the
        status column can never silently widen the filter. */
-    const { data: poRows, error: poErr } = await sb
-      .from('purchase_orders')
-      .select('id, po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4')
-      .in('id', poIds);
-    if (poErr) return out;
     type PoRow = {
       id: string; po_number: string | null; status: string | null; expected_at: string | null;
       supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null;
     };
+    const { data: poRows, error: poErr } = await chunkIn<PoRow>(poIds, (batch, from, to) => sb
+      .from('purchase_orders')
+      .select('id, po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4')
+      .in('id', batch)
+      .order('id')
+      .range(from, to));
+    if (poErr) return out;
     const poById = new Map<string, PoRow>();
-    for (const p of (poRows ?? []) as PoRow[]) {
+    for (const p of poRows) {
       if (DEAD_PO_STATUSES.has((p.status ?? '').toUpperCase())) continue; // H1
       poById.set(p.id, p);
     }

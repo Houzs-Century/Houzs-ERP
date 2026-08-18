@@ -17,8 +17,9 @@
 // The old ledger-style SalesOrderDetail.tsx stays in the tree; App.tsx route
 // swap on /scm/sales-orders/:docNo decides which one users see.
 
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -71,7 +72,7 @@ import {
 } from "../../lib/paymentRetryHandoff";
 import { cn, formatDate } from "../../lib/utils";
 import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   isLocked as isSoLocked,
@@ -195,15 +196,6 @@ type SoItem = {
    absent / non-numeric cost rendered the literal "MYR NaN" at the user; the
    shared helper renders "—" for a number the ERP does not have. */
 const fmtMoney = fmtMoneyCenti;
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  // Present as dd/mm/yyyy per Malaysian convention.
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
 
 const refOf = (h: SoHeader): string =>
   h.po_doc_no || h.customer_so_no || h.ref || "—";
@@ -513,24 +505,31 @@ const SalesOrderDetailInlineEditor = lazy(() =>
 
 // ─── Main page ─────────────────────────────────────────────────────────────
 
-/* Thin router — the only hook it calls is useSearchParams, so Rules of Hooks
+/* Thin router — the only hooks it calls are useSearchParams and useLocation
+   (both unconditional, at the top), so Rules of Hooks
    are respected when the ?edit=1 flip swaps between the read-only body and
    the lazy inline editor (the two children have different hook counts;
    letting either side call hooks conditionally inside the same function
    would break on navigation). */
 export function SalesOrderDetailV2() {
   const [params] = useSearchParams();
+  const location = useLocation();
   /* `payments=1` used to forward to the legacy editor; since 2026-08-09 the
      read page hosts the SAME PaymentsTable component (owner: "点选 collect
      payment … 全部 UI 都不一样" — one page, one look; the flag now just seeds
      the payments Edit toggle below). Only full `edit=1` swaps bodies. */
   if (params.get("edit") === "1") {
+    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
+       so a failed editor chunk shows the panel in place of the editor and
+       clears when the operator moves to another document, instead of leaning
+       on a boundary in a file this one cannot see. */
     return (
-      <Suspense
+      <LazySlot
+        resetKey={`so-editor:${location.pathname}`}
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
       >
         <SalesOrderDetailInlineEditor />
-      </Suspense>
+      </LazySlot>
     );
   }
   return <SalesOrderDetailV2ReadOnly />;

@@ -1886,6 +1886,18 @@ export async function dispatchOne(
     const masters = mastersOf(body);
     if (masters) {
       const ensured = await callAcService(env, 'ensure_masters', masters, fetchImpl);
+      /* THE DOCUMENT STILL GOES. A creditor code the book resolves to a DIFFERENT
+         company is an accounting error, not a technical one — the ERP holds a
+         trading name where the book holds the registered one on many suppliers,
+         so refusing here would block legitimate purchasing every day. Reported,
+         and reported BEFORE the ok check, because a payload can name several
+         masters and fail on an unrelated one; the finding must not be lost with
+         the call. `mismatches` is empty when the host runs a build older than
+         the comparison, which is "not reported", not "compared and agreed" —
+         GET /health's builtAt says which build answered. */
+      for (const m of ensured.mismatches) {
+        console.warn(`MISMATCH ${m.master} erp=${m.erp} book=${m.book} — ${row.doc_type} ${row.doc_no} sent anyway`);
+      }
       if (!ensured.ok) {
         await mark(sb, row.id, {
           attempts,

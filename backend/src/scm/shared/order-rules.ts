@@ -46,7 +46,8 @@ export interface ProceedGateInput {
  *  Date,又 Proceed,全系统直接统一一个叫 Processing Date... Processing Date 就是当天
  *  Proceed 的意思。如果分两个的话,会不会很乱?"*
  *
- *  It answers ONE question — may this order start production? — and every path
+ *  It answers ONE question — may this order be released for purchasing to order
+ *  goods? (owner 2026-08-18; there is no production here) — and every path
  *  that used to ask its own version now asks this: setting `processing_date`
  *  (the date the user picks), auto-stamping `proceeded_at` at create, and the two
  *  manual proceed paths. `proceeded_at` remains a separate COLUMN because it is a
@@ -69,11 +70,63 @@ export interface ProceedGateInput {
  *  now proceed) and TIGHTENS the processing-date path by four. Both are the
  *  owner's stated intent, both measured before shipping. */
 export const meetsProceedGate = (i: ProceedGateInput): boolean =>
-  i.hasCustomerName &&
-  i.hasAddress &&
-  i.hasPostcode &&
-  i.hasDeliveryDate &&
-  meetsDepositGate(i.paid, i.total, i.companyCode);
+  proceedGateFailures(i).length === 0;
+
+/** The five conditions of the gate above, as stable KEYS. No sentences here:
+ *  this module owns the rule; so-save-problems.ts owns the words. */
+export type ProceedGateCondition =
+  | 'customer_name'
+  | 'address'
+  | 'postcode'
+  | 'delivery_date'
+  | 'deposit';
+
+/** Every condition of the proceed gate THIS order fails, in the reading order of
+ *  the form: identity, then where it goes, then when, then the money. [] means
+ *  the gate is met — which is literally what meetsProceedGate above asks.
+ *
+ *  WHY THE GATE IS DEFINED AS "THIS LIST IS EMPTY" rather than the list being a
+ *  second reading of a separate boolean expression. Until 2026-08-18 the refusal
+ *  was ONE stored sentence naming ALL FIVE conditions, returned whenever ANY ONE
+ *  failed:
+ *
+ *      "A Processing Date can only be set once the order has a customer name, a
+ *       full delivery address (line 1 and postcode), a delivery date, and the
+ *       deposit its company requires (Houzs 30%, 2990 50%)."
+ *
+ *  On 2026-08-17 the owner hit it on a ZERO-TOTAL order, read the word
+ *  "deposit", and spent a day chasing a money bug that did not exist — the
+ *  deposit term had PASSED (meetsDepositGate is vacuously true at total <= 0,
+ *  see its docblock), and what had actually failed was the postcode. Live
+ *  population the same day: of 561 processing-dated SOs, 21 lack a postcode and
+ *  8 lack a delivery date, so this is the common shape of the refusal, not a
+ *  corner.
+ *
+ *  Writing the verdict and the reasons as two expressions is how a rule stated
+ *  at N places ends up true at N-1 — this repo's repeat offender. One
+ *  expression, read two ways: the caller who wants a boolean asks whether the
+ *  list is empty, the caller who wants to explain itself reads the list.
+ *
+ *  The order above is stable, so the refusal reads the same way every time.
+ *
+ *  NOT a short-circuit, deliberately: every condition is evaluated so ALL
+ *  failures are reported at once (owner 2026-07-18 — a surface renders every
+ *  reason, not the one-at-a-time sequence the backend used to return). Safe to
+ *  evaluate unconditionally because meetsDepositGate is pure and total-safe: its
+ *  `total <= 0` branch runs first, so the division can never be 0/0. */
+export const proceedGateFailures = (i: ProceedGateInput): ProceedGateCondition[] => {
+  const out: ProceedGateCondition[] = [];
+  if (!i.hasCustomerName) out.push('customer_name');
+  if (!i.hasAddress) out.push('address');
+  if (!i.hasPostcode) out.push('postcode');
+  if (!i.hasDeliveryDate) out.push('delivery_date');
+  /* Absent for a free order, and that absence is the whole point of this file
+     changing. `paid` / `total` here are ratio-only (see ProceedGateInput); a
+     caller that wants to PRINT the shortfall must hand centi to
+     so-save-problems.ts, which fixes the unit because it formats currency. */
+  if (!meetsDepositGate(i.paid, i.total, i.companyCode)) out.push('deposit');
+  return out;
+};
 
 /** The money half of the gate above, on its own — for the aggregated save
  *  report, which names the deposit shortfall as its own fixable problem instead
@@ -100,19 +153,20 @@ export const meetsDepositGate = (
  *  more than three times: *"只要有 Processing Date，就代表他 Proceed 了。没有
  *  processing date 就代表没有 proceed。"* Proceed is therefore not an event with a
  *  click time — it is the state of having a date — so a proceed with no date is
- *  not an order we can start: the factory queue is ordered BY that date.
+ *  not an order anyone has been released to act on. Owner 2026-08-18:
+ *  *"Processing Date 就代表这张单可以安排订货了"* — the date IS the release.
  *
- *  Refusing beats defaulting to today. A guessed start date is a real order in
- *  the real queue on the wrong day, and nobody would ever see that it was
- *  guessed. A refusal costs the operator one field. */
+ *  Refusing beats defaulting to today. A guessed date releases a real order to
+ *  purchasing on the wrong day, and nobody would ever see that it was guessed.
+ *  A refusal costs the operator one field. */
 export const PROCEED_NEEDS_DATE = {
   error: 'proceed_needs_processing_date',
-  reason: 'Proceeding an order means setting its Processing Date, and this order has none. Set the date the factory starts, then proceed.',
+  reason: 'Proceeding an order means setting its Processing Date, and this order has none. Set the date this order is released for ordering, then proceed.',
 } as const;
 
 export const PROCEED_DATE_UNREADABLE = {
   error: 'proceed_needs_processing_date',
-  reason: 'The Processing Date sent with this proceed is not a calendar date (expected YYYY-MM-DD). A wrong start date is a wrong factory queue, so nothing was changed.',
+  reason: 'The Processing Date sent with this proceed is not a calendar date (expected YYYY-MM-DD). A wrong date releases the order for ordering on the wrong day, so nothing was changed.',
 } as const;
 
 export type ProceedDateInput = {

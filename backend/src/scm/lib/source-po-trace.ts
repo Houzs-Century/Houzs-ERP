@@ -50,6 +50,7 @@
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { isServiceLine } from '../shared/service-sku';
 import { resolveExpectedBatchBySoItem } from './dropship-batch';
+import { chunkIn, UUID_CHUNK } from './paginate-all';
 import type { MrpResult } from '../routes/mrp';
 
 /* One bucket's forward trace: the source PO numbers (sorted, GRN-healed) plus
@@ -62,7 +63,9 @@ export type ReadySourceChip = {
   kind: 'po' | 'adjustment';  // adjustment → the UI renders "STOCK ADJ"
 };
 
-const CHUNK = 300;
+/* Sized in URL BYTES, not rows: every list this slices is uuids, and the old
+   literal 300 was ~11.7KB of `in.(…)` filter. See UUID_CHUNK. */
+const CHUNK = UUID_CHUNK;
 
 const bucketKey = (doId: string, code: string, vk: string | null): string =>
   `${doId}::${code}::${vk ?? ''}`;
@@ -753,9 +756,14 @@ export async function tracePoDeliveredLedger(
   if (poNumbers.length === 0) return { qtyByPoDo, qtyByPoDoCode, bucketsByPo, doIds };
   // 1. Consumptions FIRST (the primary qty source, no double count).
   try {
-    const { data: lots } = await sb.from('inventory_lots').select('id, batch_no').in('batch_no', poNumbers);
+    /* chunkIn — `poNumbers` is every PO on a LIST PAGE (po-so-coverage hands
+       this the page's whole PO set), so it went into the URL un-batched and past
+       the 1000-row cap un-paged. The two maps built from it are keyed, so the
+       merge is order-free. */
+    const { data: lots } = await chunkIn<{ id: string; batch_no: string | null }>(poNumbers, (batch, from, to) =>
+      sb.from('inventory_lots').select('id, batch_no').in('batch_no', batch).order('id').range(from, to));
     const lotPo = new Map<string, string>();
-    for (const l of (lots ?? []) as Array<{ id: string; batch_no: string | null }>) {
+    for (const l of lots) {
       if (l.id && l.batch_no) lotPo.set(l.id, l.batch_no);
     }
     const lotIds = [...lotPo.keys()];
@@ -778,10 +786,14 @@ export async function tracePoDeliveredLedger(
   // 2. Batched OUT movements — buckets always (the ship DID come from this PO);
   //    qty only where NO consumption covered the bucket (drop-ship).
   try {
-    const { data: movs } = await sb.from('inventory_movements')
+    /* chunkIn — same page-sized `poNumbers` as the lot read above. This one also
+       gains PAGING, which it needs more: OUT movements are the highest-volume
+       table here, so the un-paged form was dropping shipped qty past row 1000 —
+       an under-count of what a PO delivered. */
+    const { data: movs } = await chunkIn<{ source_doc_id: string | null; product_code: string | null; variant_key: string | null; batch_no: string | null; qty: number | null }>(poNumbers, (batch, from, to) => sb.from('inventory_movements')
       .select('source_doc_id, product_code, variant_key, batch_no, qty')
-      .eq('source_doc_type', 'DO').eq('movement_type', 'OUT').in('batch_no', poNumbers);
-    for (const m of (movs ?? []) as Array<{ source_doc_id: string | null; product_code: string | null; variant_key: string | null; batch_no: string | null; qty: number | null }>) {
+      .eq('source_doc_type', 'DO').eq('movement_type', 'OUT').in('batch_no', batch).order('id').range(from, to));
+    for (const m of movs) {
       addBucket(m.batch_no, m.source_doc_id, m.product_code, m.variant_key);
       if (m.batch_no && m.source_doc_id && m.product_code
         && consumedBuckets.has(`${m.batch_no}::${m.source_doc_id}::${m.product_code}`)) {
@@ -824,20 +836,28 @@ export async function resolveDoSourceSos(
   const out = new Map<string, string[]>();
   if (ids.length === 0) return out;
   try {
-    const { data: lines } = await sb
+    /* chunkIn on both hops — `ids` is a whole DO LIST PAGE of uuids
+       (delivery-orders-mfg hands this `rows.map(r => r.id)`), and `soItemIds` is
+       one more uuid per line of it. resolveDoHeaderSources above already chunks
+       the identical read on the identical table; this path did not. Both results
+       feed keyed maps / per-DO Sets, so batching cannot change the answer. */
+    const { data: rows } = await chunkIn<{ delivery_order_id: string; so_item_id: string | null }>(ids, (batch, from, to) => sb
       .from('delivery_order_items')
       .select('delivery_order_id, so_item_id')
-      .in('delivery_order_id', ids);
-    const rows = (lines ?? []) as Array<{ delivery_order_id: string; so_item_id: string | null }>;
+      .in('delivery_order_id', batch)
+      .order('id')
+      .range(from, to));
     const soItemIds = [...new Set(rows.map((r) => r.so_item_id).filter((x): x is string => Boolean(x)))];
     if (soItemIds.length === 0) return out;
 
-    const { data: soItems } = await sb
+    const { data: soItems } = await chunkIn<{ id: string; doc_no: string | null }>(soItemIds, (batch, from, to) => sb
       .from('mfg_sales_order_items')
       .select('id, doc_no')
-      .in('id', soItemIds);
+      .in('id', batch)
+      .order('id')
+      .range(from, to));
     const docByItem = new Map<string, string>(
-      ((soItems ?? []) as Array<{ id: string; doc_no: string | null }>)
+      soItems
         .filter((r) => r.doc_no)
         .map((r) => [r.id, r.doc_no as string]),
     );
