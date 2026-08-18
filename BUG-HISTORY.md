@@ -1,3 +1,122 @@
+## The Processing Date had two storages, and one gate read the other one [high]
+
+<!-- area: Sales orders + pricing -->
+
+**The ruling, three times.** 2026-07-31: *"不要又 Processing Date,又 Proceed,全
+系统直接统一一个叫 Processing Date... Processing Date 就是当天 Proceed 的意思。"*
+2026-08-13: *"把 internal expected date、processing date 和 process date 都直接
+整合变成一个... 因为每一次讨论到 processing date 的时候,你就有各种各样的 bug,
+原因就是因为你有太多个了。"* 2026-08-18, naming the scope himself: frontend,
+backend AND database.
+
+**What had actually survived.** The 2026-08-13 work unified the DATA (519
+company-1 orders) and the NAME (mig 0286). It deliberately kept
+`scm.mfg_sales_orders.proceeded_at` as a second COLUMN, on a stated and coherent
+argument recorded at `order-rules.ts:51-53`: *"it is a timestamp the system
+writes, not a date the user picks; what is unified is the RULE, not the
+storage."* The owner has overruled that for the purpose of DECISIONS.
+
+**Measured before touching anything** (`backend/scripts/probe-proceed-split.mjs`,
+prod, run `32093080121`, read-only, counts and statuses only):
+
+| | company 1 (2724 live) | company 2 (77 live) |
+|---|---|---|
+| date + stamp | 519 | 21 |
+| date only | 0 | 5 (all CONFIRMED) |
+| **stamp only** | **0** | **16 (12 CONFIRMED, 4 READY_TO_SHIP)** |
+| neither | 2205 | 35 |
+
+**Three claims the measurement REFUTED, each of which had been repeated as fact.**
+
+1. *"`so-detail-gates.ts:95` is the lock decision, on `proceeded_at` ALONE."* It
+   is not. Both that function and its backend twin read `processing_date` first
+   and decisively (`if (!proc) return false`), and reach `proceeded_at` only when
+   `status` is falsy — which never happens, because every caller's SELECT names
+   `status` and the census found no NULL-status row in either company across
+   2826 orders. Dead code, not a second opinion.
+2. *"The split regenerates daily through Remove-Processing-Date."* Not shown. No
+   `proceeded_at` value younger than 36 days exists on any dateless order in
+   either company, which rules out both STAMPING paths as recent producers. It
+   does not rule out the paths that make a row stamp-only WITHOUT writing a
+   stamp, and those are real — so the leak was closed anyway.
+3. *"Every write site is accounted for."* The **2990 mirror** was missed.
+   `routes/so-mirror.ts` upserts `applyMap(body.header, …)`, which keeps every
+   inbound key present on the Houzs table, so `proceeded_at` arriving from 2990
+   is written straight through. It needs no code change — `applyMap` filters
+   against `information_schema`, so the eventual DROP silently ends it — but an
+   audit that says "zero writers" and has not looked at the mirror is wrong.
+
+Also corrected while in there: the 2026-08-13 post-check that reported "every
+migrated date equals `proceeded_at`'s day" used
+`(proceeded_at AT TIME ZONE 'UTC')::date`, off by one for any evening-MYT stamp.
+Re-run in Malaysia time: company 1 agrees 519/519; company 2 agrees 32/35, and
+the 3 that differ do so under UTC too, so they are real, not a timezone artifact.
+No gate compares the two columns, so nothing depends on it either way.
+
+**Shipped — every item provably moves nothing in production.** Locks
+(`soProcessingLocked`, `procLockActive`, the amendment door, Delivery Planning's
+board guard) decide on `processing_date` + `status` alone. Payloads that merely
+CARRIED the column stopped: SO list, detail, POS board, dashboard summary,
+`/status` response — nothing consumed any of them (the desktop "Proceed Date"
+field was deleted 2026-06-05, and `useMfgSalesOrdersSummary` has zero callers in
+`frontend/src`, `native/` or `e2e/`). The frontend now contains no
+`proceeded_at` at all.
+
+**The replacement for the deleted fallback is a type, not a column.** The old
+`return Boolean(header.proceeded_at)` existed "so we never over-lock a
+status-blind header". `status` is now REQUIRED on both predicates' parameters, so
+a caller that has not fetched one fails to COMPILE instead of quietly deciding
+out of a different fact; an empty status at runtime answers *not locked*, the
+same side the marker protected.
+
+**The leak, closed.** Remove-Processing-Date cleared the date and left the stamp
+behind; the stamp-once filter (`:6745`) then made that stamp permanent — the one
+live path that manufactures a row saying "proceeded" out of one column and "not
+proceeded" out of the other. The header PATCH now clears both in the same CAS
+write. It changes no existing row; it stops the next one.
+
+**Deferred, deliberately, and coupled.** `so-stock-allocation.ts`'s `allocGated`
+still reads `proceeded_at` — the one reachable decision left, and the one whose
+own comment has described the *Processing Date* rule since 2026-08-10 while the
+code read the other column. Flipping it gates all 16 company-2 stamp-only orders
+and visibly drops 4 out of READY_TO_SHIP. The two server-side stamps cannot be
+removed BEFORE that flip either: with the allocator still reading the stamp,
+every new order would land NULL and be gated out of allocation forever. So they
+are one change, and it waits on a human supplying the 16 missing dates or
+accepting those orders as un-proceeded. The fix is never to invent a date
+(`PROCEED_NEEDS_DATE`: a guessed start date is a real order in the factory queue
+on the wrong day, with nothing to show it was guessed).
+
+**And the DROP is one deploy behind the code, on purpose.** `deploy.yml` runs
+`pg-migrate` BEFORE `wrangler deploy`, so a column dropped in the same release
+that stops selecting it leaves the still-live old Worker doing a PostgREST select
+on a missing column — 42703 on every SO read for the length of the deploy. That
+is exactly #1191/0189. `scm.mfg_sales_orders_with_payment_totals` also projects
+it (`SELECT so.*`), and 0189 → 0190 → 0191 is the record of what happens when
+that view is dropped and recreated: prod died twice with *permission denied for
+view* because a recreated view is a NEW object whose ACL and owner do not
+survive. The drop SQL and that constraint are written out at
+`shared/so-processing-date.ts` under "RETIRING THE SECOND STORAGE".
+
+**A tripwire that was green while describing the wrong world.**
+`tests/scaleRouteDrift.test.mjs` reconstructs the SO list projection from
+`HEADER` plus a HAND-COPIED suffix and compares it to the scale benchmark's
+column list. Removing `proceeded_at` from the route's real `LIST_COLS` left both
+sides of that comparison unchanged, so the drift test stayed green while the
+contract it guards no longer matched production. Both sides updated, and the
+negative control run to confirm it does go red.
+
+**Regression pins.** `backend/tests/soProcessingDateOneStorage.test.ts` (19) and
+`frontend/src/vendor/scm/lib/so-detail-gates.one-storage.test.ts` (12). Source-
+level, because re-adding `|| header.proceeded_at` to a lock passes every
+behavioural test, reads as defensive in review, and only surfaces as an order
+somebody cannot edit. Watched RED against pre-change source (5 backend / 1
+frontend), green after. The behavioural half pins the lock against the four
+presence classes at the statuses actually measured, so a future edit cannot
+silently change who may edit an order. The count assertion enumerates the
+surviving `proceeded_at` sites, so the follow-up cannot drift away from the plan
+without going red.
+
 ## The deploy uploaded secrets before deploying, and Cloudflare refused both — 8 merges stuck out of production [high]
 
 **Symptom.** Eight consecutive `Deploy` runs failed from 2026-08-18T01:08 MYT.

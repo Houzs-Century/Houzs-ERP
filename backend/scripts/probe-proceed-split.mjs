@@ -94,15 +94,15 @@ async function main() {
     const [tab] = await sql`
       SELECT
         count(*)::int AS total,
-        count(*) FILTER (WHERE status <> ALL(${TERMINAL}))::int AS live,
+        count(*) FILTER (WHERE status::text <> ALL(${TERMINAL}))::int AS live,
         count(*) FILTER (WHERE processing_date IS NOT NULL AND proceeded_at IS NOT NULL)::int AS both_all,
         count(*) FILTER (WHERE processing_date IS NOT NULL AND proceeded_at IS NULL)::int     AS date_only_all,
         count(*) FILTER (WHERE processing_date IS NULL     AND proceeded_at IS NOT NULL)::int AS stamp_only_all,
         count(*) FILTER (WHERE processing_date IS NULL     AND proceeded_at IS NULL)::int     AS neither_all,
-        count(*) FILTER (WHERE status <> ALL(${TERMINAL}) AND processing_date IS NOT NULL AND proceeded_at IS NOT NULL)::int AS both_live,
-        count(*) FILTER (WHERE status <> ALL(${TERMINAL}) AND processing_date IS NOT NULL AND proceeded_at IS NULL)::int     AS date_only_live,
-        count(*) FILTER (WHERE status <> ALL(${TERMINAL}) AND processing_date IS NULL     AND proceeded_at IS NOT NULL)::int AS stamp_only_live,
-        count(*) FILTER (WHERE status <> ALL(${TERMINAL}) AND processing_date IS NULL     AND proceeded_at IS NULL)::int     AS neither_live
+        count(*) FILTER (WHERE status::text <> ALL(${TERMINAL}) AND processing_date IS NOT NULL AND proceeded_at IS NOT NULL)::int AS both_live,
+        count(*) FILTER (WHERE status::text <> ALL(${TERMINAL}) AND processing_date IS NOT NULL AND proceeded_at IS NULL)::int     AS date_only_live,
+        count(*) FILTER (WHERE status::text <> ALL(${TERMINAL}) AND processing_date IS NULL     AND proceeded_at IS NOT NULL)::int AS stamp_only_live,
+        count(*) FILTER (WHERE status::text <> ALL(${TERMINAL}) AND processing_date IS NULL     AND proceeded_at IS NULL)::int     AS neither_live
       FROM scm.mfg_sales_orders
       WHERE company_id = ${company}`;
 
@@ -121,8 +121,10 @@ async function main() {
     /* ── B. the same classes BY STATUS — the decision-relevant gap ────────── */
     const byStatus = await sql`
       SELECT
-        coalesce(status, '(null)') AS status,
-        (status <> ALL(${TERMINAL})) AS is_live,
+        /* status is the ENUM scm.mfg_so_status — coalesce against a non-member
+           literal is a 22P02 at parse time, so cast to text BEFORE defaulting. */
+        coalesce(status::text, '(null)') AS status,
+        (status::text <> ALL(${TERMINAL})) AS is_live,
         CASE
           WHEN processing_date IS NOT NULL AND proceeded_at IS NOT NULL THEN 'date+stamp'
           WHEN processing_date IS NOT NULL AND proceeded_at IS NULL     THEN 'date only'
@@ -163,10 +165,10 @@ async function main() {
 
     /* ── D. the flip, as a count, by status ───────────────────────────────── */
     const flips = await sql`
-      SELECT coalesce(status, '(null)') AS status, count(*)::int AS cnt
+      SELECT coalesce(status::text, '(null)') AS status, count(*)::int AS cnt
       FROM scm.mfg_sales_orders
       WHERE company_id = ${company}
-        AND status <> ALL(${TERMINAL})
+        AND status::text <> ALL(${TERMINAL})
         AND processing_date IS NULL AND proceeded_at IS NOT NULL
       GROUP BY 1 ORDER BY 2 DESC, 1`;
     const flipTotal = flips.reduce((a, r) => a + n(r.cnt), 0);
@@ -178,10 +180,10 @@ async function main() {
     if (flipTotal > 0) hardFail = true;
 
     const unflips = await sql`
-      SELECT coalesce(status, '(null)') AS status, count(*)::int AS cnt
+      SELECT coalesce(status::text, '(null)') AS status, count(*)::int AS cnt
       FROM scm.mfg_sales_orders
       WHERE company_id = ${company}
-        AND status <> ALL(${TERMINAL})
+        AND status::text <> ALL(${TERMINAL})
         AND processing_date IS NOT NULL AND proceeded_at IS NULL
       GROUP BY 1 ORDER BY 2 DESC, 1`;
     const unflipTotal = unflips.reduce((a, r) => a + n(r.cnt), 0);

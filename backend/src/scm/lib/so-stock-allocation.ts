@@ -214,7 +214,38 @@ async function runSoStockAllocation(
        5 READY_TO_SHIP-without-processing-date — both regress to CONFIRMED on
        the next recompute, which is the owner's intent). Gated lines still walk
        (so an already-READY line regresses on this same run) but are forced
-       PENDING and never consume a bucket or a sofa batch. */
+       PENDING and never consume a bucket or a sofa batch.
+
+       ─────────────────────────────────────────────────────────────────────────
+       THE SENTENCE ABOVE AND THE LINE BELOW DISAGREE, AND THAT IS THE POINT OF
+       THE OWNER'S RULING. The comment says Processing Date; the code reads
+       `proceeded_at`, the second storage. This is the ONE reachable decision
+       left in the system that answers a Processing-Date question out of a
+       different column — every lock, every payload and the whole frontend were
+       moved onto `processing_date` on 2026-08-18.
+
+       IT IS STILL HERE ON PURPOSE, and not for want of the one-line edit. The
+       flip is `!o[SO_PROCESSING_DATE_COLUMN]` plus the same swap in the select
+       above, and it MOVES LIVE ORDERS. Measured on prod that day
+       (backend/scripts/probe-proceed-split.mjs, run 32093080121):
+
+         company 1 — 2724 live orders, ZERO in either disagreement class. No-op.
+         company 2 — 16 live orders carry a stamp with NO Processing Date
+           (12 CONFIRMED, 4 READY_TO_SHIP). All 16 flip from allocating to
+           gated: their lines are forced PENDING on the next recompute and the 4
+           READY_TO_SHIP orders visibly drop back to CONFIRMED. A further 5
+           (all CONFIRMED) flip the other way, which is a correction — the
+           operator already sees a Processing Date on them while this gate
+           refuses to allocate.
+
+       By the owner's own rule those 16 are not proceeded, so gating them is the
+       rule being applied correctly rather than a regression to paper over — and
+       the repair is never to invent a date (PROCEED_NEEDS_DATE in
+       shared/order-rules.ts). But it is 16 live orders in an operator's book, so
+       a human supplies the missing dates or accepts them as un-proceeded FIRST.
+       The full plan, and what must ship in the same change as this flip, is
+       "RETIRING THE SECOND STORAGE" in shared/so-processing-date.ts.
+       ───────────────────────────────────────────────────────────────────────── */
     const allocGated = new Set(
       orders.filter((o) => !o.proceeded_at).map((o) => o.doc_no),
     );

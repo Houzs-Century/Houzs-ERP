@@ -136,12 +136,23 @@ never bare `isMainReady`** — see §0.5 for why that distinction exists.
 
 Two things gate it that are easy to miss:
 
-- **No Processing Date, no allocation.** An SO with `proceeded_at` NULL is in
-  `allocGated`: its lines still walk, but they are FORCED to `PENDING`, never
-  consume a stock bucket and never claim a sofa batch. Owner's rule, 2026-08-10:
-  *"有 processing date 才来分配"*. So an order with stock physically available
-  will sit at PENDING / CONFIRMED until it is proceeded. This is intended, and it
-  is the single most common "why is my order not READY".
+- **No Processing Date, no allocation.** An SO in `allocGated` still has its
+  lines walked, but they are FORCED to `PENDING`, never consume a stock bucket
+  and never claim a sofa batch. Owner's rule, 2026-08-10: *"有 processing date
+  才来分配"*. So an order with stock physically available will sit at PENDING /
+  CONFIRMED until it is proceeded. This is intended, and it is the single most
+  common "why is my order not READY".
+
+  **The gate reads `proceeded_at`, not `processing_date` — and that is the ONE
+  place left where the two disagree.** Everything else moved onto
+  `processing_date` on 2026-08-18. This did not, because the flip moves live
+  orders: measured on prod that day (`probe-proceed-split`, run 32092… see
+  §"One storage" below) company 1 has ZERO orders in either disagreement class,
+  but company 2 has 16 live orders carrying a Proceed stamp with no Processing
+  Date — 12 CONFIRMED and 4 READY_TO_SHIP — every one of which would flip from
+  allocating to gated, the 4 visibly. Until the owner rules on those 16, read
+  this bullet as: *the gate is the Processing-Date rule, implemented on the old
+  column.*
 - **A human editing the order defers the header, not the lines.** If the SO's
   edit lease is held, the line-level flip commits and the header transition is
   recorded in `deferredDocNos` for a later sweep. A deferral is not an error.
@@ -1273,8 +1284,9 @@ No path guesses a date: a proceed with none returns 422
 a guessed start date is a real order sitting in the factory queue on the wrong
 day with nothing to show it was guessed. A date already on the order is never
 MOVED by a proceed — rescheduling belongs to the header PATCH, which owns the
-lock and the gate table. `proceeded_at` is still written and still read (the
-stock allocator sorts by it), but it is no longer what makes an order proceeded.
+lock and the gate table. `proceeded_at` is still written and still read by ONE
+consumer (the stock allocator's gate), but it is no longer what makes an order
+proceeded, and no lock or payload consults it any more.
 Net effect: the proceed paths LOOSENED by one condition (email), the
 processing-date path TIGHTENED by four (name / address / postcode / delivery
 date), and the threshold became per-company.
@@ -1307,13 +1319,36 @@ processing date 和 process date 都直接整合变成一个"* — PR #2077 / #2
 519 company-1 orders out of `proceeded_at` into the SO's own Processing-Date
 column; both companies reported zero split **when measured on 2026-08-13**. Mig
 `0286` then renamed that column `internal_expected_dd` → `processing_date` on
-`scm.mfg_sales_orders` and on the consignment twin. **`proceeded_at` is NOT being retired**, and this paragraph said it was
-("stop-writing / stop-reading ahead of a drop, not a second fact") — which
-also contradicted the registry row below. It is a live, separate column on
-`scm.mfg_sales_orders`: `lib/so-stock-allocation.ts` selects and GATES on it,
-`routes/mfg-sales-orders.ts` maps `proceededAt → proceeded_at`, and
-`routes/delivery-planning.ts` selects it. Only the CONSIGNMENT twin was
-dropped (mig 0284), because that one had zero readers and zero writers.
+`scm.mfg_sales_orders` and on the consignment twin.
+
+**AND NOW `proceeded_at` IS BEING RETIRED (owner 2026-08-18).** This paragraph
+said the opposite for five days — *"`proceeded_at` is NOT being retired … it is
+a live, separate column"* — on the argument recorded in `order-rules.ts`: an
+audit stamp is a different KIND of fact from a date a user picks, so what was
+unified was the RULE, not the storage. The owner has overruled that FOR THE
+PURPOSE OF DECISIONS, naming the scope himself: frontend, backend and database.
+His reason is the one the bug record supports — every Processing-Date bug this
+repo has had came from there being more than one of them.
+
+Where it stands after 2026-08-18:
+
+| layer | state |
+|---|---|
+| frontend | **Done.** No type, no query select list, no component field mentions it. `procLockActive` decides on `processing_date` + `status`; `status` is now a REQUIRED parameter, which is what replaced the status-blind `proceeded_at` fallback. |
+| backend, locks | **Done.** `soProcessingLocked`, `soEditLocked`, the amendment door and `delivery-planning`'s board guard all read `processing_date` + `status` only. |
+| backend, payloads | **Done.** The SO list projection, the detail select, the POS board select, the dashboard summary and the `/status` response no longer carry it. Nothing consumed any of them. |
+| backend, the leak | **Done.** Remove-Processing-Date used to clear the date and leave the stamp, which the stamp-once filter then froze permanently — the one live path that manufactures a split row. The header PATCH now clears both together. |
+| backend, the allocator + the two writes | **Deferred, and coupled.** See the bullet in §"Allocation" above. Stop-write and gate-flip must ship together, or every new order lands with a NULL stamp and is gated out of allocation forever. |
+| database | **Deferred, one deploy behind the code.** `deploy.yml` runs `pg-migrate` BEFORE `wrangler deploy`, so a column dropped in the same release that stops selecting it 42703s every SO read for the length of the deploy (that is #1191/0189). The exact drop SQL, and the view-ACL trap it has to clear, are in `shared/so-processing-date.ts` under "RETIRING THE SECOND STORAGE". |
+
+One writer nobody had counted: **the 2990 mirror.** `routes/so-mirror.ts` upserts
+`applyMap(body.header, …)`, which keeps every inbound key that exists on the
+Houzs table — so a `proceeded_at` arriving from 2990 (a separate repo on its own
+deploy schedule) is written straight through. It needs no code change: `applyMap`
+filters against `information_schema`, so the drop silently ends it.
+
+Only the CONSIGNMENT twin is already gone (mig 0284), because that one had zero
+readers and zero writers.
 
 #### The client-side address marks — all three surfaces now say the same thing (2026-08-13)
 
@@ -1386,7 +1421,7 @@ table is the whole answer.
 |--------|--------------------|--------|
 | `scm.mfg_sales_orders.processing_date` | **THE Processing Date.** The SO's one user-picked date, behind the UI label "Processing Date". Named `internal_expected_dd` until mig 0286 (2026-08-13). | **The only storage this concept has. Use this one** — via `SO_PROCESSING_DATE_COLUMN` in `backend/src/scm/shared/so-processing-date.ts:41`, never a hand-typed literal. In a `.mjs` script, which cannot import TypeScript, via the pinned mirror `backend/scripts/lib/so-processing-date.mjs`. |
 | `scm.consignment_sales_orders.processing_date` | The same concept for a Consignment Order. CO create + PATCH read/write only this. Renamed by the same mig 0286. | Live, correct. |
-| `scm.mfg_sales_orders.proceeded_at` | **A different fact:** the TIMESTAMP the system stamps when the order is Proceeded — not a date a user picks. `recomputeSoStockAllocation` gates on it (NULL ⇒ every line forced PENDING). | Live. Stays a separate column ON PURPOSE. What was unified with the Processing Date is the RULE (`meetsProceedGate`), never the storage. |
+| `scm.mfg_sales_orders.proceeded_at` | The TIMESTAMP the system stamped when the order was Proceeded. `recomputeSoStockAllocation` still gates on it (NULL ⇒ every line forced PENDING) and is now its ONLY reader. | **RETIRING (owner 2026-08-18).** This row said "stays a separate column ON PURPOSE" — overruled: one concept, one storage, all three layers. Locks, payloads and the whole frontend were moved off it on 2026-08-18; the allocator gate, the two server stamps and the DROP are one follow-up, blocked on the owner ruling on 16 live company-2 orders. Nothing reads the value AS a timestamp: the desktop Proceed Date field was deleted 2026-06-05, the dashboard hook carrying it has zero callers, and no export or AutoCount payload names it. The "when" is already in `scm.mfg_so_audit_log`, which nothing gates on. |
 | `scm.mfg_sales_orders.processing_date` **(the OLD one, 2025–2026-08)** | Dead legacy snapshot that squatted on this name. Had no writer after PR #140, so it was NULL on every SO created/edited since — and rendered blank wherever someone bound to it (BUG-HISTORY: "SO read views showed a blank Processing date"). | **DROPPED — mig 0189.** The name was then free, which is why 0286 could take it. Do not confuse this dead column with the live one in row 1. |
 | `scm.consignment_sales_orders.proceeded_at` | Never anything. Existed only because the consignment module was cloned from `mfg_sales_orders` wholesale; on this table it had zero readers and zero writers, ever. | **DROPPED — mig 0284** (`0284_retire_consignment_proceeded_at.sql`). |
 | `scm.consignment_sales_orders.processing_date` **(the OLD one, mig 0153)** | Same clone artifact. Zero writers ever (the create INSERT omits it; the header PATCH builds its update from a closed allowlist that never contained it), so it was NULL on every row. | **DROPPED — mig 0286, step 1.** No longer a follow-up: 0286 had to clear this dead name before it could rename the live column onto it, and its guard drops it only while BOTH names are present, so a re-run cannot take the users' dates. |

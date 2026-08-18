@@ -31,7 +31,6 @@ export const CANCELLABLE_STATUSES: readonly string[] = [
 export type SoDetailGateHeader = {
   status?: string | null;
   has_children?: boolean | null;
-  proceeded_at?: string | null;
   processing_date?: string | null;
   /* Server-computed: a live (non-cancelled) Purchase Order already claims one of
      this SO's lines — 2990 only (owner 2026-08-12). NOT derivable client-side —
@@ -75,9 +74,24 @@ export function isLocked(
    is committed whether or not the explicit Proceed (IN_PRODUCTION) toggle was ever
    pressed. The prior rule ALSO required `proceeded_at` (only stamped at
    IN_PRODUCTION), which let a CONFIRMED SO past its processing date stay directly
-   editable. DRAFT / CANCELLED stay editable; when status is absent we fall back to
-   the `proceeded_at` marker so we never over-lock a status-blind header. Mirrors
-   the backend soProcessingLocked exactly.
+   editable. DRAFT / CANCELLED stay editable. Mirrors the backend
+   soProcessingLocked exactly.
+
+   THE STATUS-BLIND FALLBACK IS GONE (owner 2026-08-18 — one Processing Date
+   across frontend, backend and database). This function used to end
+   `return Boolean(header.proceeded_at)`, reached only when `status` was absent,
+   and the reason given was "so we never over-lock a status-blind header": with
+   no status we cannot tell a DRAFT from a CONFIRMED, and over-locking a DRAFT
+   blocks an edit the operator is entitled to make, with no way round it.
+
+   That protection is PRESERVED, not dropped, and by a stronger mechanism than a
+   second column: `status` is now REQUIRED on SoDetailGateHeader, so a caller
+   that has not got one cannot reach here at all — it fails to compile instead of
+   silently consulting a different fact. The runtime empty-string case answers
+   "not locked", which is the same side the old marker was chosen to protect.
+   Nothing rendered changes: the detail payload has always carried `status`
+   (HEADER in backend/src/scm/routes/mfg-sales-orders.ts includes it), so the
+   deleted line was unreachable in production, not a second opinion.
 
    Owner 2026-08-12 — the same soft lock now has a SECOND road: `po_locked`, set
    by the server when a live PO already claims one of this SO's lines (2990
@@ -86,13 +100,19 @@ export function isLocked(
    and a CANCELLED one releases via cancelling the PO, not by editing the SO. So
    there is no state where po_locked is true and the date exemptions should win.
    Mirrors the backend pair soProcessingLocked || soPoLocked. */
-export function procLockActive(header: SoDetailGateHeader): boolean {
+export function procLockActive(
+  /* `status` is REQUIRED here and optional on SoDetailGateHeader, which the
+     money helpers below also take. Narrowing it at the one gate that DECIDES on
+     it is what makes "a caller without a status cannot ask this question" a
+     compile error rather than a comment. */
+  header: SoDetailGateHeader & { status: string | null },
+): boolean {
   if (header.po_locked === true) return true;
   const orig = (header.processing_date ?? '').slice(0, 10);
   if (orig === '' || !(orig < todayMyt())) return false;
   const status = (header.status ?? '').toUpperCase();
-  if (status) return status !== 'DRAFT' && status !== 'CANCELLED';
-  return Boolean(header.proceeded_at);
+  if (!status) return false;
+  return status !== 'DRAFT' && status !== 'CANCELLED';
 }
 
 /* amendmentEligible — the SO is processing-locked (already PO'd) but still
