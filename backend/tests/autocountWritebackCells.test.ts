@@ -123,7 +123,10 @@ describe('the four downstream document types queue an edit on every line and hea
 
   test('Sales Invoice — header PATCH and line add / edit / delete', () => {
     expect(between(SI, "salesInvoices.patch('/:id',", 'return c.json({ ok: true, id });')).toContain('queueAcSiEdit(c, id)');
-    expect(between(SI, "salesInvoices.post('/:id/items',", 'return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);')).toContain('queueAcSiEdit(c, id)');
+    /* Anchored on the DECLARATION, not the registration: this handler was extracted
+     as a named export in 2026-08-19's company-scope fix so a test could mount it,
+     which moved `salesInvoices.post('/:id/items', ...)` below the body. */
+  expect(between(SI, 'export const appendSalesInvoiceItemHandler =', 'return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);')).toContain('queueAcSiEdit(c, id)');
     expect(between(SI, "salesInvoices.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcSiEdit(c, id)');
     expect(between(SI, "salesInvoices.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcSiEdit(c, id, retire)');
   });

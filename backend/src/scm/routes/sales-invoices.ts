@@ -1705,19 +1705,18 @@ salesInvoices.patch('/:id', async (c) => {
 });
 
 // ── Item CRUD ─────────────────────────────────────────────────────────────
-salesInvoices.post('/:id/items', async (c) => {
+// STRICT like PATCH/DELETE here; named so a test can mount it. What a company STAMP hid: docs/modules/sales-invoice.md.
+export const appendSalesInvoiceItemHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
+  const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
-
-  {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
-    if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
-  }
-
-  const { data: header } = await sb.from('sales_invoices').select('id, invoice_number, status, delivery_order_id').eq('id', id).maybeSingle();
-  if (!header) return c.json({ error: 'not_found' }, 404);
+  // TENANCY BEFORE the item-code check: that answered about an invoice they cannot see.
+  const { data: header } = await scopeToCompanyId(sb.from('sales_invoices').select('id, invoice_number, status, delivery_order_id').eq('id', id), co.companyId).maybeSingle();
+  if (!header) return c.json(NOT_THIS_COMPANY, 404);
+  const codeCheck = await validateItemCodes(sb, [it.itemCode as string], co.companyId);
+  if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   if (((header as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
     return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before adding lines.' }, 409);
   }
@@ -1766,7 +1765,7 @@ salesInvoices.post('/:id/items', async (c) => {
   const priceWarnings = await siPriceDriftWarnings(sb, [it]);
 
   const row = buildItemRow(id, it, nextLineNo);
-  const { data, error } = await sb.from('sales_invoice_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
+  const { data, error } = await sb.from('sales_invoice_items').insert({ ...row, company_id: co.companyId }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
   await recomputePaid(sb, id);
@@ -1795,7 +1794,8 @@ salesInvoices.post('/:id/items', async (c) => {
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-add-line resync failed:', e); }
   await queueAcSiEdit(c, id);
   return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);
-});
+};
+salesInvoices.post('/:id/items', appendSalesInvoiceItemHandler);
 
 salesInvoices.patch('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId');
