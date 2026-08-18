@@ -4261,25 +4261,15 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  /* Crew assignment WRITES the DO header (driver/vehicle) and UPSERTS the crew
-     row — a per-company write. Strict gate: refuse an unresolved company rather
-     than degrade to "every company". Without this, `id` from the path was the
-     whole boundary and the SCM client is service-role, so a company-A staffer
-     could overwrite a company-B DO's driver/crew with a known uuid. Mirrors the
-     PATCH /:id handler below. */
+  /* Per-company write (DO header + crew upsert). Service-role bypasses RLS, so without
+     this gate `id` alone was the boundary — company-A could overwrite company-B's crew. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-
-  // The DO must exist IN THIS COMPANY (FK target + so the header sync below has a
-  // row to update). Scoped read: another company's DO is invisible here.
   const { data: doRow, error: doErr } = await scopeToCompanyId(sb.from('delivery_orders')
     .select('id, company_id, do_number, status').eq('id', id), co.companyId).maybeSingle();
   if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
-  if (!doRow) return c.json(NOT_THIS_COMPANY, 404);
-
-  /* The crew row as it stands BEFORE the upsert. This endpoint is a PUT, so a
-     re-assign silently overwrites whoever was on the job — without this read the
-     history could only say who is on it now, never who was taken off it. */
+  if (!doRow) return c.json(NOT_THIS_COMPANY, 404); // another company's DO is invisible here
+  // Crew row BEFORE the upsert: this PUT re-assign overwrites who was on the job.
   const { data: crewBeforeRow } = await sb.from('delivery_order_crew')
     .select('driver_1_id, driver_2_id, helper_1_id, helper_2_id, lorry_id, driver_1_name, driver_2_name, helper_1_name, helper_2_name, lorry_plate')
     .eq('do_id', id).maybeSingle();
