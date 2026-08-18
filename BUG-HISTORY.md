@@ -66,6 +66,76 @@ rollback cases carry a CONTROL proving the same request succeeds when every read
 works, so the 503 is the post-insert recheck and not the pre-check.
 `audit:swallowed-reads` records the direction: `do-line-remaining.ts` 8 -> 0
 (dropped from the baseline entirely), `delivery-returns.ts` 20 -> 19.
+## The deploy uploaded secrets before deploying, and Cloudflare refused both — 8 merges stuck out of production [high]
+
+**Symptom.** Eight consecutive `Deploy` runs failed from 2026-08-18T01:08 MYT.
+Every test in every one of them passed; only the `backend` job failed. Nobody
+reported it — it was found on a morning state check. `notify-failed-release` ran
+and concluded `success` on each failure, so the alerts fired overnight and the
+pipeline stayed broken anyway.
+
+**Measured against production, not inferred:**
+
+```
+$ curl -fsS https://autocount-sync-api.houzs-erp.workers.dev/health
+{"ok":true,"sha":"3697d41e50166ba8c2b36feceb954497dd1ef63f"}   # #2373, 00:11 MYT
+```
+
+8 commits and 75 files under `backend/src` on `main` and not live. **0 new
+migrations in the stuck set** — luck, not design: `pg-migrate` runs BEFORE the
+Worker deploy and kept succeeding, so a migration in that set would have left old
+code on a new schema for nine hours.
+
+**Root cause (traced).** `cloudflare/wrangler-action` uploads `secrets:` BEFORE
+it runs `command:`, and the two were one step. The upload failed:
+
+```
+🚨 Secrets failed to upload
+✘ [ERROR] Secret edit failed. You attempted to modify a secret, but the latest
+  version of your Worker isn't currently deployed. ... [code: 10215]
+```
+
+Cloudflare refuses `secret bulk` when the Worker's newest VERSION is not the
+DEPLOYED one. The action aborted, so `deploy` never ran.
+
+**The deadlock is the finding, not the error.** The action that clears the
+condition is `deploy` — and `deploy` was what the failing check was blocking. It
+could not drain, which is why it survived eight merges instead of one.
+
+**Fix.** `deploy` and the secret upload are now two steps, deploy first. That
+publishes the newest version — exactly the state 10215 demands — so the upload
+runs against a Worker that accepts it and the pipeline heals itself. Remedy (2)
+in Cloudflare's own error text. Secrets are piped on stdin via `jq -n --arg`, so
+no value reaches a logged argv.
+
+**NOT PROVEN.** A workflow is not shipped until it has run once and reported
+success, and this cannot be exercised without a real production deploy. The first
+`Deploy` after this merges is the test.
+
+**Ruled out, each refuted rather than argued away:** a newly added secret
+(`FORM_INTAKE_KEY` dates to 2026-07-05, #280); a failed migration (`298
+migration(s), 316 applied, 0 pending` on every failed run); our own CI creating
+the stray version (`grep -rn "versions upload"` is empty); an earlier failed
+deploy half-publishing (both show `backend: skipped` — a test shard failed, so
+wrangler never ran); the staging deploy clobbering prod (`[env.staging]` names a
+different Worker).
+
+**Second defect, found while auditing the first.** `deploy-watchdog.yml` knew
+production was stale for nine hours, said so in a `::warning::` annotation, and
+concluded `success` every 15 minutes — its "deploys are failing, do not retry
+into them" branch is `exit 0`. The reasoning is right and the exit code is not: a
+watchdog whose green means "I looked and chose not to act" is indistinguishable
+from "all is well". Third instance of that class here, after `audit:map` and the
+nightly staging E2E. Left as an owner decision — see the COE.
+
+**Still UNKNOWN:** what created a Worker version that was uploaded but never
+deployed. Nothing in the repo does it. Candidates are all outside CI (Workers
+Builds git integration, a dashboard edit, a hand-run `wrangler versions upload`,
+a gradual rollout below 100%) and one look at the Worker's Deployments tab
+settles it.
+
+**Ref.** `docs/deploy-secret-version-deadlock-coe.md`, 2026-08-18.
+
 ## Every filter tab that named a status the enum never had returned 500, and its count silently read 0 [high]
 
 <!-- area: Delivery, DO, returns -->
@@ -355,6 +425,73 @@ suffix, and the codes whose letter is not the name's initial. No repair is in it
 and none may be added to it.
 
 **Ref.** PR #2380, 2026-08-18.
+## The alarm for a cause we never found, and a guard that only ran on Linux [medium]
+
+Two unrelated things, both about a check that is not measuring what it looks
+like it measures.
+
+### 1. No alarm existed for the DO->SO link corruption
+
+**Symptom.** None — that is the point. On 2026-08-17, 26 live delivery lines
+were found with `so_item_id` NULL under a DO whose header still named the order
+(#2355 has the trace). #2225 closed the write-side hole and #2355 gave both
+coverage engines a second reading off `delivery_orders.so_doc_no`, so the
+SYMPTOM — MRP re-ordering goods already delivered — is covered twice.
+
+**Root cause of the remaining exposure (stated, not guessed).** The MECHANISM
+was never identified, and both closed theories are refuted by the data:
+
+- the FK is `ON DELETE SET NULL`, so deleting an SO line blanks the pointer —
+  but every affected SO line is still present, carrying its ORIGINAL
+  `created_at` (2990-SO-2607-012's seven lines still read
+  `2026-07-12 11:03:50.664`, the second the order was created). Nothing was
+  deleted and re-inserted;
+- #2225's diagnosis was a client omitting the field on write — but
+  2990-DO-2608-008 came through `POST /from-sos`, which sets `so_item_id`
+  explicitly, and its SO flipped to DELIVERED six seconds later, a transition
+  unreachable without the links.
+
+A third mechanism blanked them and it is still live. **The fix makes it
+silent**: before, the corruption announced itself as a wrong MRP row somebody
+complained about; now the fallback absorbs it and nothing looks wrong.
+
+**Fix.** Instrumentation, not a repair:
+
+- `backend/scripts/do-link-orphan-sentinel.mjs` + a scheduled workflow. Read-only,
+  exits non-zero on alarm so the owner gets the failed-workflow email (the same
+  and only notifier `mirror-sentinel.yml` uses). Baseline is a committed 1 —
+  the one deliberately refused pillow on 2990-DO-2607-013 — and raising that
+  number to get green is called out in both files as the thing not to do.
+  It also alarms on a stricter shape the fallback cannot reach: a line with no
+  per-line link AND no `so_doc_no`, against which stock moved. Zero today.
+- Migration 0302 logs every SO-line DELETE with the PostgREST JWT claims, the
+  db role, `application_name`, pid and txid. It is a FALSIFICATION TEST as much
+  as a log: if the sentinel fires and this table has no matching row, the FK
+  path is disproved and that theory can finally be retired.
+
+Deliberately learned from `mirror-drift-sentinel.mjs`, whose header records
+months of `SKIP` + exit 0 against secrets nobody set, with a real stall sitting
+under the green tick. This one exits **1** when `DATABASE_URL` is absent: a
+missing secret is a misconfiguration, not a reason to report health.
+
+### 2. `unlinked-line-edit-guard.test.ts` could not run on Windows
+
+**Symptom.** `npm run test:light` failed 5 assertions locally with
+`handler end not found in grns.ts` — on a clean checkout of main, with no local
+changes. CI was green throughout.
+
+**Root cause.** `handlerSlice` finds a route handler's end with
+`rest.search(/\n\}\)?;\n/)`. This repo is developed on Windows, where the
+checkout is CRLF, so the LF-only pattern matched nothing and every slice came
+back `-1`. Linux CI, with LF, never saw it.
+
+**Fix.** `/\r?\n\}\)?;\r?\n/`. Same family as the shebang trap in #2062, and the
+inverse of the usual danger: this one failed LOUDLY rather than passing empty,
+so nothing was silently unmeasured — but the whole local suite was unusable on
+the platform the repo is developed on, which is how a red local run stops being
+information.
+
+**Ref.** PR (branch `chore/do-link-orphan-sentinel`), 2026-08-17.
 
 ## The refusal that already knew the answer printed a sentence with none of it in — and half the bedframes it refused were a curly quote [high]
 
