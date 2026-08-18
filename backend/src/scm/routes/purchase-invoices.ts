@@ -32,7 +32,7 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { PI_LINE_AUDIT_FIELDS, PI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
-import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { refuseMigratedSources } from '../lib/migrated-chain';
 /* Extracted 2026-08-17 to make room for the guards in this file. Mechanical
    blocks only — every guard stayed, because the unlinked-line suite proves them
@@ -1685,26 +1685,18 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     );
 
     /* ERP -> AutoCount GRN->Purchase Invoice, per bucket: each bucket IS its
-       own document. A bucket billing several GRNs has no AutoCount shape. */
-    if (bucket.grnIds.length === 1) {
+       own document, and a bucket billing several GRNs names every one of them.
+       The bucket is already grouped by supplier, so all its sources share one
+       creditor — which is what makes the merged transfer well-formed. */
+    if (bucket.grnIds.length) {
       await enqueueConvert(sb, {
         companyId: activeCompanyId(c),
         op: 'gr_to_pi',
-        from: { table: 'grns', keyCol: 'id', key: bucket.grnIds[0] },
+        from: bucket.grnIds.map((id) => ({ table: 'grns' as const, keyCol: 'id', key: id })),
         to: { table: 'purchase_invoices', keyCol: 'id', key: h.id },
         docType: 'PI',
         docNo: h.invoice_number,
         docId: h.id,
-        createdBy: c.get('houzsUser')?.id ?? null,
-      });
-    } else {
-      await recordConvertSkipped(sb, {
-        companyId: activeCompanyId(c),
-        op: 'gr_to_pi',
-        docType: 'PI',
-        docNo: h.invoice_number,
-        docId: h.id,
-        reason: `bills ${bucket.grnIds.length} Goods Receipts (${bucket.grnNumbers.join(', ')}) — AutoCount transfers from ONE source document, so this invoice has no AutoCount counterpart`,
         createdBy: c.get('houzsUser')?.id ?? null,
       });
     }

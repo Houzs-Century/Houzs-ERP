@@ -53,3 +53,10 @@ backend/scale-*.json
 # Internal specs (kept local, not published)
 PROJECT_BRIEF.md
 FRONTEND_PROMPT.md
+
+# GENERATED from BUG-HISTORY.md by backend/scripts/gen-bug-index.mjs.
+# NOT tracked: every PR must append to BUG-HISTORY.md and merges are strictly
+# serial, so a committed copy conflicts on every pair of concurrent PRs — all
+# 50 of the last 50 commits touched it. `audit:bug-index` regenerates and gates
+# on the generator working, which needs no copy in git.
+docs/generated/bug-index.md

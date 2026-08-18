@@ -1,0 +1,45 @@
+name: Branding vocabulary check (read-only)
+
+# Every branding stored across SCM must be a brand the owner maintains in PMS
+# (Project Maintenance -> BRANDS = project_brands, per company). Owner asked for
+# a standing check rather than a one-off repair, 2026-08-18.
+#
+# MANUAL ONLY. A production database read on a schedule turns a real query into
+# CI noise nobody reads (CLAUDE.md, the read-only diagnostic rules), and this
+# answers a question you ask deliberately — after a backfill, after adding a
+# brand, or when a Branding column looks wrong.
+#
+# The check exits 0 for every legitimate answer, findings included: the answer is
+# the output, and a red job would read as "the check broke". Pass strict=true to
+# make drift fail the run instead.
+
+on:
+  workflow_dispatch:
+    inputs:
+      strict:
+        description: "Fail the run when a value is outside its company's brand list"
+        type: boolean
+        default: false
+
+# Its own group. A diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: branding-vocabulary-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - name: Check branding vocabulary
+        working-directory: backend
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: node scripts/check-branding-vocabulary.mjs ${{ inputs.strict && '--strict' || '' }}

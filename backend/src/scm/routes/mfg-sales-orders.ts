@@ -49,7 +49,7 @@ export type { SoPaymentRowInput };
    build's compartment codes from its persisted module lines for the TBC path. */
 import { buildCompartmentsFromModuleLines } from '../lib/compartments-from-module-lines';
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-import { meetsProceedGate, resolveProceedProcessingDate, PROCEED_NEEDS_DATE } from '../shared/order-rules';
+import { resolveProceedProcessingDate, PROCEED_NEEDS_DATE } from '../shared/order-rules';
 /* The SO edit-policy table (Owner 2026-07-17): FREE fields Save writes straight
    through; CONTROLLED fields Save routes into the amendment. Both the lock Set
    and the amendment allow-list below are DERIVED from it so the three lists
@@ -93,7 +93,7 @@ import { soPaidCenti, soBalanceCenti, soPaidInputsOf } from '../shared/so-outsta
 import { buildOneShotMints, type OneShotMintReq } from '../lib/one-shot-mint';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { canonicalizeMyState } from '../lib/canonical-state';
-import { deriveLineBrandingFromProduct } from '../lib/derive-line-branding';
+import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines } from '../lib/derive-line-branding';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { correctedSizeDescription, loadSizeSkuMap } from '../lib/size-variant-description';
 import {
@@ -187,9 +187,14 @@ import { collectProcessingGateProblems, validationFailedBody } from '../shared/s
 /* The gate's DB reads and its refusals. Lifted out of this file (2026-08-18)
    when the proceed refusal grew the per-condition detail it now carries — this
    router is at its file-size ceiling, and the three helpers were already a
-   coherent unit: docNo in, gate FACTS out, judged by the shared pure rules. */
+   coherent unit: docNo in, gate FACTS out, judged by the shared pure rules.
+
+   Only ONE of the three is imported now. `soProceedGateBlocked` lost both of
+   its call sites here on the same day, with the second Processing-Date storage;
+   `soDepositFacts` is reached through the helper below. Where the proceed rule
+   is actually enforced after that, and what it leaves orphaned, is written at
+   soProceedGateBlocked itself in that module. */
 import {
-  soProceedGateBlocked,
   soProcessingDateProblemsForDoc,
 } from '../lib/so-proceed-gate';
 import {
@@ -233,7 +238,7 @@ import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveLineStockStatus, readinessLinesByDoc, type LiveStockState } from '../lib/so-line-effective-stock';
 import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
-import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
+import { deriveDisplayBrandingRowByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
 import { soLineReadySourcePos, unionSoLineChips } from '../lib/source-po-trace';
@@ -496,7 +501,7 @@ export function scopeSoItemToDocument<T>(
    the CONTROLLED replacement_disposal field with the SAME predicate, so the
    two surfaces can never disagree about when the lock is on. */
 export function soProcessingLocked(
-  header: { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null | undefined,
+  header: { processing_date?: string | null; status: string | null } | null | undefined,
 ): boolean {
   if (!header) return false;
   const proc = header.processing_date ?? null;
@@ -507,10 +512,12 @@ export function soProcessingLocked(
      Locked strictly AFTER the processing day — procYmd === today stays open. */
   const todayMY = new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10);
   if (!(procYmd < todayMY)) return false;
-  /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
+  /* "THE PAIR RULE" + "RETIRING THE SECOND STORAGE" in so-processing-date.ts.
+     `status` is REQUIRED on the parameter type, and that requirement is what
+     replaced the `Boolean(header.proceeded_at)` fallback. */
   const status = String(header.status ?? '').toUpperCase();
-  if (status) return status !== 'DRAFT' && status !== 'CANCELLED';
-  return Boolean(header.proceeded_at);
+  if (!status) return false;
+  return status !== 'DRAFT' && status !== 'CANCELLED';
 }
 
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
@@ -519,9 +526,9 @@ async function soProcessingLockBlocked(
   docNo: string,
 ): Promise<typeof SO_PROCESSING_LOCKED_RESPONSE | typeof SO_PO_LOCKED_RESPONSE | null> {
   const { data } = await sb.from('mfg_sales_orders')
-    .select('processing_date, proceeded_at, status')
+    .select('processing_date, status')
     .eq('doc_no', docNo).maybeSingle();
-  if (soProcessingLocked(data as { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null)) {
+  if (soProcessingLocked(data as { processing_date?: string | null; status: string | null } | null)) {
     return SO_PROCESSING_LOCKED_RESPONSE;
   }
   return (await soPoLocked(sb, docNo)) ? SO_PO_LOCKED_RESPONSE : null;
@@ -533,7 +540,7 @@ async function soProcessingLockBlocked(
 async function soEditLocked(
   sb: any,
   docNo: string,
-  header: { processing_date?: string | null; proceeded_at?: string | null; status?: string | null } | null | undefined,
+  header: { processing_date?: string | null; status: string | null } | null | undefined,
 ): Promise<boolean> {
   return soProcessingLocked(header) || await soPoLocked(sb, docNo);
 }
@@ -898,7 +905,7 @@ function extractSofaComboLookupArgs(
    through it. Adding a column here REQUIRES a same-PR migration that recreates
    the view (CREATE OR REPLACE VIEW … AS SELECT so.* …) — else the SO LIST 500s
    ("Failed to load") in prod. For a field only the detail needs, append it on
-   the detail SELECT (see slip_image_key/receipt_image_key/proceeded_at at the
+   the detail SELECT (see slip_image_key/receipt_image_key at the
    `/:docNo` handler), NOT here. 2990 hit this 2026-06-26 (their mig 0200). */
 const HEADER =
   'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, po_doc_no, venue, venue_id, ' +
@@ -1083,15 +1090,16 @@ mfgSalesOrders.get('/', async (c) => {
   const scopeIds = await resolveSalesScopeIds(sb, c.env, c.get('houzsUser')?.id, canViewAllSales(c));
 
   /* Dashboard summary mode (`?summary=1`): the landing page only needs to bucket
-     SOs by status/proceeded_at and count "new today" — it does NOT need the
-     payment-totals view join or the per-line stock-status second query. Return
-     just those 6 columns so the Dashboard isn't paying for 500 fully-hydrated
-     rows + a line-item aggregation on first paint. Bucketing stays in the
-     frontend (single source of truth — no SQL duplication). */
+     SOs by status and count "new today" — it does NOT need the payment-totals
+     view join or the per-line stock-status second query. Return just those 5
+     columns so the Dashboard isn't paying for 500 fully-hydrated rows + a
+     line-item aggregation on first paint. Bucketing stays in the frontend.
+     `proceeded_at` rode along until 2026-08-18 and nothing read it —
+     useMfgSalesOrdersSummary has zero callers. */
   if (c.req.query('summary')) {
     let sq = sb
       .from('mfg_sales_orders')
-      .select('doc_no, status, proceeded_at, local_total_centi, created_at, so_date')
+      .select('doc_no, status, local_total_centi, created_at, so_date')
       .neq('status', 'DRAFT')
       .order('so_date', { ascending: false })
       .limit(500);
@@ -1112,17 +1120,17 @@ mfgSalesOrders.get('/', async (c) => {
      add to HEADER above MUST already exist in the view — else this query 500s
      the whole SO list page in prod. If you're adding a new base-table column,
      ship a recreate-view migration in the SAME PR FIRST, or keep the col out
-     of HEADER (detail-only). proceeded_at + paid_total_centi + balance_centi_live
-     are all view-native (paid_total_centi/balance_centi_live are the view's
-     computed cols; proceeded_at was added to the base table BEFORE the view
-     was last recreated by the 2990-views script, so it IS present). */
+     of HEADER (detail-only). paid_total_centi + balance_centi_live are the
+     view's own computed columns, so they are always present. The view still
+     projects proceeded_at; the follow-up drop must clear that WITHOUT dropping
+     the view ("RETIRING…" carries the 0189/0190/0191 ACL trap). */
   /* customer_po_image_b64 is a base64 PO-slip image that ONLY the SO detail
      page renders (SalesOrderDetail.tsx) — it is never a list-grid column.
      Streaming it per row (up to 500 rows) bloated the SO-list payload for every
      POS-origin SO that carries one. Strip it from the LIST projection only; the
      detail select (~L2241) still reads full HEADER, so nothing the detail shows
      changes. Dropping a column from a SELECT is always VIEW-TRAP safe. */
-  const LIST_COLS = `${HEADER.replace(/,\s*customer_po_image_b64/, '')}, proceeded_at, paid_total_centi, balance_centi_live`;
+  const LIST_COLS = `${HEADER.replace(/,\s*customer_po_image_b64/, '')}, paid_total_centi, balance_centi_live`;
 
   /* Opt-in server-side pagination + search + sort + status-counts.
      WHY: keep this endpoint flat as the SO table grows — the legacy path streams
@@ -1390,8 +1398,12 @@ mfgSalesOrders.get('/', async (c) => {
        The header revenue columns merge mattress + sofa into one bucket, so the
        grid can't tell SOFA from MATTRESS at the header level — hence this
        per-line first-item read (from the same fetch already running for stock
-       status). The UI maps SOFA → "2990 Sofa", BEDFRAME → "Bedframe", MATTRESS
-       → first_item_branding (its own brand) ?? "2990 Mattress", else → "2990". */
+       status). The UI maps these through shared/so-branding-label (owner
+       2026-08-18): SOFA → the COMPANY's house sofa brand ("ZANOTTI" for Houzs,
+       "2990s Sofa" for 2990 — the line's own text is not consulted), BEDFRAME →
+       "Bedframe", MATTRESS → first_item_branding, which is the SKU's brand
+       (resolved SKU-first below), falling back to "Mattress" when the SKU
+       carries none; everything else names its category. */
     const cats = new Map<string, Set<string>>();
     const firstCat = new Map<string, string>();
     const firstBranding = new Map<string, string | null>();
@@ -1696,9 +1708,17 @@ mfgSalesOrders.get('/', async (c) => {
       const fCat = (hasRep ? repCat.get(docNo) : firstCat.get(docNo)) ?? null;
       (r as Record<string, unknown>).first_item_category = fCat ?? null;
       let fBranding = (hasRep ? repBranding.get(docNo) : firstBranding.get(docNo)) ?? null;
-      if (fCat === 'MATTRESS' && (!fBranding || !fBranding.trim())) {
+      /* MATTRESS reads the SKU FIRST, not just as a fallback (owner 2026-08-18:
+         «mattress follow SKU branding»). The line's own text only survives when
+         the catalog has none. Six live 2990 lines carry the loose spellings
+         "2990" / "2990s" while their SKU says "2990s Mattress"; under the old
+         blank-only borrow they kept the loose text and the label rule needed a
+         normalisation regex to recover from it. Reading the catalog first makes
+         that regex unnecessary — and it is deleted, not left dormant. */
+      if (fCat === 'MATTRESS') {
         const code = hasRep ? repCode.get(docNo) : firstItemCode.get(docNo);
-        fBranding = (code && productBranding.get(code)) || fBranding;
+        const skuBrand = code ? productBranding.get(code) : undefined;
+        if (skuBrand && skuBrand.trim()) fBranding = skuBrand;
       }
       /* Bedframe-only SO → "BEDFRAME" pill (only when no explicit brand text
          is present, so an AKEMI/2990 line always wins). */
@@ -1902,11 +1922,10 @@ mfgSalesOrders.get('/my-mtd', async (c) => {
    captured as a doc-no param. */
 mfgSalesOrders.get('/mine', async (c) => {
   const sb = c.get('supabase'); const user = c.get('user');
-  /* Read the BASE table (NOT the mfg_sales_orders_with_payment_totals view):
-     a Postgres view fixes its column list at creation, and that view predates
-     proceeded_at (migration 0110) — selecting proceeded_at from the view 500s
-     at runtime. The base table has every column incl. proceeded_at +
-     deposit_centi. Paid is summed from the payments ledger separately below. */
+  /* Read the BASE table (NOT the mfg_sales_orders_with_payment_totals view): a
+     Postgres view fixes its column list at creation, so any column newer than
+     the last recreation is missing and selecting one 500s at runtime. Paid is
+     summed from the payments ledger separately below. */
   /* Board filters (POS My-orders toolbar):
        ?q=   free-text → searches doc_no / debtor_name / phone across ALL dates
              (the period is intentionally ignored — search is a global lookup).
@@ -1958,7 +1977,7 @@ mfgSalesOrders.get('/mine', async (c) => {
       .select(
         'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
         'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
-        'proceeded_at, total_revenue_centi, line_count, deposit_centi',
+        'total_revenue_centi, line_count, deposit_centi',
       )
       .not('status', 'in', '("CANCELLED","ON_HOLD")'), // DRAFT shown on purpose — pairs with /pos/sales-stats; BUG-HISTORY 2026-08-17
     c,
@@ -2426,16 +2445,13 @@ mfgSalesOrders.get('/active-venue', async (c) => {
 mfgSalesOrders.get('/:docNo', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
   const [h, i] = await Promise.all([
-    /* `${HEADER}, proceeded_at` — proceeded_at lives ONLY on the base table,
-       NOT the mfg_sales_orders_with_payment_totals view that the LIST route
-       (LIST_COLS = HEADER + …) reads. Keeping it out of the shared HEADER and
-       appending it only here means the detail page still gets the Proceed Date
-       while the list view query stays valid. amend_date_from_customer /
-       amended_delivery_date / amend_reason (mig 0053, port of 2990 0199 + 0201)
-       are in the SAME boat — the payment-totals view's frozen column set
-       (see VIEW-TRAP note above) does NOT carry them, so they're appended on
-       the base-table detail read only. POST/PATCH persist them. */
-    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, proceeded_at, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version`).eq('doc_no', docNo), c).maybeSingle(),
+    /* amend_date_from_customer / amended_delivery_date / amend_reason (mig 0053)
+       are appended here rather than in the shared HEADER: the payment-totals
+       view's frozen column set (see VIEW-TRAP above) does not carry them and the
+       LIST route reads that view, so the base-table detail read is the only
+       place they are valid. (`proceeded_at` was appended here until 2026-08-18,
+       feeding a "Proceed Date" the desktop deleted on 2026-06-05.) */
+    scopeToCompany(sb.from('mfg_sales_orders').select(`${HEADER}, amend_date_from_customer, amended_delivery_date, amend_reason, revision, signature_b64, slip_key, slip_state, slip_image_key, receipt_image_key, version`).eq('doc_no', docNo), c).maybeSingle(),
     /* line_no = the persisted listing order (0165); NULLS LAST so pre-0165
        docs fall back to created_at + the rule re-derive below. */
     sb.from('mfg_sales_order_items').select(ITEM).eq('doc_no', docNo)
@@ -2509,7 +2525,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      Reuses the SAME soProcessingLocked helper the edit endpoints use + the
      doCount/siCount already computed above for the hard-lock signal. */
   const amendDateLocked = soProcessingLocked(
-    h.data as { processing_date?: string | null; proceeded_at?: string | null },
+    h.data as { processing_date?: string | null; status: string | null },
   );
   /* Owner 2026-08-12 — the PO lock feeds the SAME flag, so a 2990 SO with a live
      PO flips the FE's Save into "Submit amendment request" exactly as an elapsed
@@ -2633,9 +2649,17 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      covers mains-first + mattress-brand fallback + bedframe-only in one place,
      so both surfaces resolve the identical value. */
   {
-    const derived = await deriveDisplayBrandingByDoc(sb, c, [docNo]);
-    const b = derived.get(docNo);
-    if (b) (salesOrder as Record<string, unknown>).first_item_branding = b;
+    /* 2026-08-18: emit the CATEGORY too. The detail page used to render
+       `branding || first_item_branding || "—"` — its own rule, not the list's —
+       so it printed a dash for any order whose rep line carries no brand text,
+       which is every sofa. It now calls the shared brandingLabel, and that needs
+       both inputs. */
+    const derived = await deriveDisplayBrandingRowByDoc(sb, c, [docNo]);
+    const row = derived.get(docNo);
+    if (row) {
+      (salesOrder as Record<string, unknown>).first_item_category = row.category;
+      if (row.branding) (salesOrder as Record<string, unknown>).first_item_branding = row.branding;
+    }
   }
   /* Brand letterhead resolution (owner 2026-07) — stamp the R2 key of the
      brand logo the SO PDF should print IN PLACE OF the company logo (the
@@ -4793,47 +4817,43 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
 
      A HANDOVER WITH NO PROCESSING DATE IS NOT PROCEEDED, however complete it is
      (owner, pinned 2026-08-13: *"没有 processing date 就代表没有 proceed"*). This
-     used to stamp proceeded_at anyway, minting exactly the order the rule says
-     cannot exist: proceeded, released, with no day it was released ON. The
-     create refuses nothing extra for it — the order is simply created un-
-     proceeded, and gets its date (and its Proceed) when someone picks one. */
-  /* Read through the shared helper, not a literal. This line said
+     used to stamp a separate Proceed marker anyway, minting exactly the order
+     the rule says cannot exist: proceeded, released, with no day it was released
+     ON. That marker is gone entirely (2026-08-18): the order is simply created
+     un-proceeded and gets its Proceed when someone picks a date.
+
+     Read through the shared helper, not a literal. This said
      `body.internalExpectedDd`, a key NO client sends — desktop New SO, both
      mobile surfaces, from-products and this route's own INSERT all send
-     `processingDate` — so `autoProceed` was always false and an order created
-     WITH a Processing Date was created UN-proceeded, the inverse of the owner's
-     pinned rule. An absent property is `undefined`, not an error, so nothing
-     said a word. The helper accepts the legacy spelling too. */
+     `processingDate` — so the create's auto-proceed test was always false and an
+     order created WITH a Processing Date was created UN-proceeded, the inverse
+     of the owner's pinned rule. An absent property is `undefined`, not an error,
+     so nothing said a word. The helper accepts the legacy spelling too. */
   const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
   const depositTotalCenti = posPaymentsTotalCenti
     ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0);
-  /* THE ONE meetsProceedGate CALLER THAT CARRIES NO PROBLEM LIST, and that is
-     the honest answer rather than an oversight. This site REFUSES NOTHING: a
-     handover that misses the gate is simply created un-proceeded, in Order
-     Placed, for the salesperson to complete and proceed manually — there is no
-     refusal here to name a condition in. (The create path's Processing-Date
-     refusal is a different gate, further down, and it already ships the
-     aggregated `problems` list.) The two paths that DO refuse a proceed both go
-     through soProceedGateBlocked → collectProceedGateProblems. */
-  const autoProceed = !!procDateOnCreate && meetsProceedGate({
-    hasCustomerName: !!customerName?.trim(),
-    hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),
-    hasPostcode: typeof body.postcode === 'string' && !!body.postcode.trim(),
-    hasDeliveryDate: typeof body.customerDeliveryDate === 'string' && !!body.customerDeliveryDate.trim(),
-    paid: depositTotalCenti,
-    total: grandTotal,
-    companyCode: c.get('companyCode') ?? null,
-  });
+  /* `autoProceed` — the boolean that decided whether to stamp `proceeded_at`
+     here — is GONE with the stamp (2026-08-18), and with it this file's last
+     `meetsProceedGate` call. #2383 had just documented this site as "THE ONE
+     meetsProceedGate CALLER THAT CARRIES NO PROBLEM LIST", because it REFUSES
+     NOTHING: a handover that missed the gate was simply created un-proceeded for
+     the salesperson to complete manually. That is exactly why it can go —
+     `autoProceed` could only ever be true when a Processing Date was ALSO being
+     written, and the create already refuses (422, below) to write that date
+     unless the same conditions pass. "Proceeded at create" is now the date
+     landing on the row, and the 422 block below is the gate that refuses. */
 
   /* Processing-Date payment gate (Loo 2026-06-30) — a Processing Date RELEASES
      the order to purchasing (owner 2026-08-18: "Processing Date 就代表这张单可以
      安排订货了，然后过了一天我们才会落下来，然后采购才会去订货"). So it must NOT
      be set until the company's deposit is collected (processingDateThresholdFor — Houzs 30%,
-     2990 50%). The SAME deposit rule autoProceed weighs above, because they are
-     the same act. depositTotalCenti = the POS deposit on this create;
-     grandTotal = order total — both in scope from the autoProceed block. */
+     2990 50%). THE deposit rule for this create: since the auto-proceed marker
+     went with the second storage, this is the only place the create weighs
+     money, which is the point of one storage. depositTotalCenti = the POS
+     deposit on this create; grandTotal = the order total. */
   {
-    const procDateOnCreate = (body.processingDate as string | null | undefined) || null;
+    /* Same helper as the INSERT, or a legacy create writes an unjudged date. */
+    const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
     /* Emits the SAME aggregated `validation_failed` shape as the early gate block
        (owner 2026-07-18) so the client renders every Processing-Date failure the
        same way — this gate simply can't live up there because the order total
@@ -4850,9 +4870,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        a Processing Date and a hand-entered deposit could not be saved at all.
        `pendingDepositCenti` is the total the client is about to post; the client
        only sends it for drafts that already carry a verified slip session, and it
-       is counted HERE and NOWHERE ELSE — not in deposit_centi, not in autoProceed,
-       not in any ledger — so it cannot double-book and cannot mark an order
-       proceeded against money that has not landed. */
+       is counted HERE and NOWHERE ELSE — not in deposit_centi, not in any
+       ledger — so it cannot double-book and cannot mark an order proceeded
+       against money that has not landed. */
     const pendingDepositCenti = Math.max(
       0,
       typeof body.pendingDepositCenti === 'number' && Number.isFinite(body.pendingDepositCenti)
@@ -4868,8 +4888,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
           procDate: procDateOnCreate,
           delivDate: (body.customerDeliveryDate as string | null | undefined) || null,
           todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
-          /* The SAME facts autoProceed reads a few lines above — one rule
-             (owner 2026-07-31: Processing Date IS Proceed). No email. */
+          /* One rule (owner 2026-07-31: Processing Date IS Proceed), and since
+             2026-08-18 one place that applies it on this path. No email. */
           completeness: {
             hasCustomerName: !!customerName?.trim(),
             hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),
@@ -4904,7 +4924,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     (dn) => sb.from('mfg_sales_orders').insert({
     company_id: companyId, // multi-company: stamp the active company
     doc_no: dn,
-    proceeded_at: autoProceed ? new Date().toISOString() : null,
     transfer_to: (body.transferTo as string) ?? null,
     so_date: dateOrNull(body.soDate) ?? todayMyt(),
     branding: (body.branding as string) ?? null,
@@ -5020,7 +5039,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        processing_date was wired on PATCH (update header) but missed
        on the POST (create) — so the New SO form's Processing Date field
        never persisted; reopening the SO showed an empty field. */
-    processing_date: dateOrNull(body.processingDate),
+    /* The SAME helper the create gate reads; this said
+       `dateOrNull(body.processingDate)`, so a legacy create wrote NO date. */
+    processing_date: dateOrNull(procDateOnCreate),
     /* Mig 0053 (port of 2990 0199 + 0201) — amendment carriers. The customer's
        ORIGINAL `customer_delivery_date` above is NEVER overwritten by an
        amend; the customer's REQUESTED-changed date lands here, the date WE
@@ -5323,6 +5344,27 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     await deriveLineBrandingFromProduct(sb, rowsWithDoc as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>, activeCompanyId(c) ?? null);
     const { error: iErr } = await sb.from('mfg_sales_order_items').insert(stampCo(rowsWithDoc));
     if (iErr) { await rollbackPwpClaims(); await sb.from('mfg_sales_orders').delete().eq('doc_no', docNo); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
+    /* Stamp the HEADER branding from the representative line's SKU (owner
+       2026-08-18, "我要表头啊"). The insert above wrote `body.branding ?? null`
+       and no shipped client sends that field, so every ERP-created order landed
+       with a blank header — which is exactly the hole the 2990 backfill had to
+       fill for 100 orders, and would have re-opened on the next order created.
+       Only ever fills a BLANK header: an explicit body.branding is the caller's
+       decision and is not second-guessed. A null result leaves it blank rather
+       than inventing one. */
+    if (String((body.branding as string | null | undefined) ?? '').trim() === '') {
+      const headerBrand = await deriveHeaderBrandingFromLines(
+        sb,
+        rowsWithDoc as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>,
+        activeCompanyId(c) ?? null,
+      );
+      if (headerBrand) {
+        await scopeToCompany(
+          sb.from('mfg_sales_orders').update({ branding: headerBrand }).eq('doc_no', docNo),
+          c,
+        );
+      }
+    }
     /* Commander 2026-05-29 — re-roll the header through recomputeTotals so a
        matched sofa SET picks up its MASTER combo cost (spread across the lines).
        The inline rollup above set per-module costs; this corrects them + the
@@ -5661,11 +5703,9 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
     if (txErr) return c.json({ error: txErr.error, reason: txErr.reason }, txErr.code);
   }
 
-  /* POS "Proceed" → stamp proceeded_at ONCE, on the first move into
-     IN_PRODUCTION. Read the existing value first so re-entering IN_PRODUCTION
-     (or toggling status back and forth) never overwrites the original Proceed
-     date the coordinator sees on the SO detail page. (Merged with main's
-     CANCELLED downstream-lock guard above — both apply.) */
+  /* POS "Proceed" → stamp ONCE, on the first move into IN_PRODUCTION: the
+     existing value is read first so a re-entry never overwrites it. (Merged
+     with main's CANCELLED downstream-lock guard above — both apply.) */
   if (fromNorm === toStatus) {
     return c.json({ salesOrder: prev, version: currentVersion, unchanged: true });
   }
@@ -5688,11 +5728,8 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
      moment the draft becomes a real order and gets enqueued for AutoCount (see
      the enqueueSoCreate below), so it is the second and last place a create is
      queued, and a draft that never got a State has to be resolved HERE rather
-     than refused by the account book afterwards.
-
-     Condition mirrors that enqueue exactly: out of DRAFT, and not a cancel (a
-     cancelled draft queues no create, so gating it would only strand junk scan
-     drafts that the operator is trying to throw away). */
+     than refused by the account book. Condition mirrors that enqueue exactly:
+     out of DRAFT, not a cancel (a cancelled draft queues no create). */
   if (fromNorm === 'DRAFT' && toStatus !== 'CANCELLED') {
     const locationProblem = await soLocationProblemForDoc(sb, docNo, c.get('companyCode') ?? null);
     if (locationProblem) return c.json(validationFailedBody([locationProblem]), 422);
@@ -5702,20 +5739,20 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
     /* Column bound to the constant — see "WHY A CONSTANT" in
        shared/so-processing-date.ts. */
     const { data: cur } = await scopeToCompanyId(sb.from('mfg_sales_orders')
-      .select(`proceeded_at, ${SO_PROCESSING_DATE_COLUMN}, debtor_name, email, address1, postcode, customer_delivery_date`), co.companyId)
+      .select(`${SO_PROCESSING_DATE_COLUMN}, debtor_name, email, address1, postcode, customer_delivery_date`), co.companyId)
       .eq('doc_no', docNo).maybeSingle();
     const curRow = cur as {
-      proceeded_at?: string | null; processing_date?: string | null;
+      processing_date?: string | null;
       debtor_name?: string | null; email?: string | null;
       address1?: string | null; postcode?: string | null; customer_delivery_date?: string | null;
     } | null;
     /* PROCEED IS THE DATE (owner, pinned 2026-08-13: *"只要有 Processing Date,
        就代表他 Proceed 了。Proceed 的日期是他填入 Processing Date 的日期。"*).
-       This route used to stamp proceeded_at with the click time and write NO
+       This route used to stamp a Proceed marker with the click time and write NO
        date, so an order could sit IN_PRODUCTION with no release date at all —
-       nothing ever told purchasing it was theirs to order.
-       The date the proceed proceeds WITH is either already on the order or comes
-       in on this request; there is no third source, and today is a guess. */
+       nothing ever told purchasing it was theirs to order. The date the proceed
+       proceeds WITH is either already on the order or comes in on this request;
+       there is no third source, and today is a guess. */
     const resolved = resolveProceedProcessingDate({
       /* Both spellings — the canonical `processingDate` every live client
          actually sends, and the legacy `internalExpectedDd` this route's
@@ -5733,8 +5770,8 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
       if (lock) return c.json(lock, 409);
       /* Setting the date here must clear what setting it on the header clears —
          variants, colour-KIV, deposit, completeness, the date rules — or this
-         route is the way around them. Supersedes soProceedGateBlocked below on
-         this branch: the aggregated list already carries both its conditions. */
+         route is the way around them, and it supersedes the proceed gate below
+         (the aggregated list already carries both of that gate's conditions). */
       const problems = await soProcessingDateProblemsForDoc(sb, docNo, resolved.date, {
         customerName: curRow?.debtor_name,
         address1: curRow?.address1, postcode: curRow?.postcode,
@@ -5742,10 +5779,9 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
       }, c.get('companyCode') ?? null);
       if (problems.length > 0) return c.json(validationFailedBody(problems), 422);
       /* The pair rule, on the one write path that reaches the date without a
-         header patch. soProcessingDateProblemsForDoc above already refuses a
-         missing delivery date through the completeness gate; this is the same
-         invariant stated where the WRITE is, so a future edit to that helper's
-         facts cannot quietly re-open the hole. */
+         header patch. The helper above already refuses a missing delivery date
+         through completeness; stating it again at the WRITE is what stops a
+         future edit to that helper quietly re-opening the hole. */
       const pairRefusal = soDatePairRefusal({
         nextProc: resolved.date,
         nextDeliv: curRow?.customer_delivery_date ?? null,
@@ -5755,28 +5791,19 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
       if (pairRefusal) return c.json(pairRefusal, 400);
       patch[SO_PROCESSING_DATE_COLUMN] = resolved.date;
     }
-    if (!curRow?.proceeded_at) {
-      /* FIX 2 (2026-07-16) — gate the FIRST proceed on the same paid + full-
-         address rule as CREATE auto-proceed. An already-stamped SO re-entering
-         IN_PRODUCTION is a no-op and is NOT re-gated. */
-      if (!resolved.write) {
-        const gate = await soProceedGateBlocked(sb, docNo, {
-          customerName: curRow?.debtor_name,
-          address1: curRow?.address1, postcode: curRow?.postcode,
-          deliveryDate: curRow?.customer_delivery_date,
-        }, c.get('companyCode') ?? null);
-        if (gate) return c.json(gate, 422);
-      }
-      /* Kept, not replaced by the date: the date says WHEN the order is released
-         for ordering, this says when a human pressed go. Stamp-once, so
-         re-entering IN_PRODUCTION never rewrites it.
-
-         NO LONGER READ BY ANY DECISION — #2396 moved the stock allocator's gate
-         onto processing_date, which was its last reachable reader. The column's
-         retirement is on `feat/processing-date-has-one-storage`; do not add a
-         new reader here. */
-      patch.proceeded_at = new Date().toISOString();
-    }
+    /* NO STAMP, AND NO SECOND GATE (2026-08-18). This ended
+       `if (!curRow?.proceeded_at) { …gate…; patch.proceeded_at = now }`, and
+       both halves go with the second storage:
+       · the stamp had exactly ONE consumer, the allocator, and #2396 moved that
+         onto `processing_date`. Nothing reads the value as a timestamp — the
+         desktop Proceed Date field was deleted 2026-06-05, no export, PDF or
+         AutoCount payload names it — so writing it recorded nothing.
+       · the gate inside it fired only when `!resolved.write`, i.e. when the
+         order ALREADY carried a Processing Date. Under the owner's rule that
+         order is already proceeded, so this re-gated a state that had passed —
+         and inconsistently, since an order that also had a stamp was NOT
+         re-gated. The first proceed IS `resolved.write`, and that branch above
+         already runs soProcessingDateProblemsForDoc, a superset of this gate. */
   }
   /* PWP settlement on cancel (2026-07-29) — a cancel must also settle the
      vouchers the order touched, and it must do so in the SAME unit of work as
@@ -5800,7 +5827,7 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
       .eq('status', fromStatus)
       .or(`edit_lease_token.is.null,edit_lease_expires_at.lt.${new Date().toISOString()}`), co.companyId)
       .eq('doc_no', docNo)
-      .select('doc_no, status, proceeded_at, version').maybeSingle();
+      .select('doc_no, status, version').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     // Stale/missing docNo (deleted, wrong tab) matches 0 rows → a clean 404
     // ("no longer found, refresh") instead of an opaque 500 (bug-hunt 2026-06-20).
@@ -6534,8 +6561,6 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['amendDateFromCustomer', 'amend_date_from_customer'],
     ['amendedDeliveryDate', 'amended_delivery_date'],
     ['amendReason', 'amend_reason'],
-    /* POS "Proceed" — sales-side done marker; stamp-once guard below. */
-    ['proceededAt', 'proceeded_at'],
     ['linkedDoDocNo', 'linked_do_doc_no'],
     ['shipToAddress', 'ship_to_address'], ['billToAddress', 'bill_to_address'],
     ['installToAddress', 'install_to_address'],
@@ -6651,15 +6676,6 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     if (!(to in updates) || norm(updates[to]) !== norm(beforeRecord[to])) continue;
     delete updates[to];
     delete body[from];
-  }
-
-  /* Stamp-once filtering is part of normalisation, not an afterthought. A
-     repeated Proceed timestamp is a true no-op and must not demand/bump a
-     version merely because the incoming timestamp string differs. */
-  if (updates['proceeded_at'] !== undefined && updates['proceeded_at'] !== null
-      && beforeRecord['proceeded_at']) {
-    delete updates['proceeded_at'];
-    delete body['proceededAt'];
   }
 
   const reserveForLineWrites = body['reserveLineWrites'] === true;
@@ -6915,7 +6931,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      rejection and a future CONTROLLED-column change cannot land on one and miss
      the other. */
   const patchDateLocked = soProcessingLocked(
-    before as unknown as { processing_date?: string | null; proceeded_at?: string | null } | null,
+    before as unknown as { processing_date?: string | null; status: string | null } | null,
   );
   const patchPoLocked = patchDateLocked ? false : await soPoLocked(sb, docNo);
   if (patchDateLocked || patchPoLocked) {
@@ -6980,39 +6996,16 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     }
   }
 
-  /* FIX 2 (2026-07-16) — gate a genuine forward Proceed on the header PATCH path
-     too (mobile / API set proceededAt directly here). After the stamp-once drop
-     above, a still-present non-null proceeded_at means the SO had NONE before →
-     this is the first Proceed, so it must pass the SAME paid + full-address
-     gate the /status → IN_PRODUCTION path and CREATE auto-proceed use. An explicit
-     null (un-proceed) and an already-proceeded re-save (dropped above) are
-     unaffected. Effective header values = the patch value when this request sets
-     the field, else the stored `before` value. */
-  if (updates['proceeded_at'] !== undefined && updates['proceeded_at'] !== null) {
-    const beforeProceed = before as unknown as Record<string, unknown> | null;
-    const effOf = (snake: string): string | null => {
-      const v = updates[snake] !== undefined ? updates[snake] : beforeProceed?.[snake];
-      return v == null ? null : String(v);
-    };
-    const gate = await soProceedGateBlocked(sb, docNo, {
-      customerName: effOf('debtor_name'),
-      address1: effOf('address1'),
-      postcode: effOf('postcode'),
-      deliveryDate: effOf('customer_delivery_date'),
-    }, c.get('companyCode') ?? null);
-    if (gate) return c.json(gate, 422);
-    /* And it must land ON a Processing Date — proceeding IS setting that date
-       (owner, pinned 2026-08-13). This PATCH is the one proceed path that can
-       set both in the same request, so the date may come from this patch or
-       already be on the row; what it may not do is mark an order proceeded with
-       no day it was released on. A date arriving in THIS patch is gated by the
-       aggregated Processing-Date block below, which runs before any write. */
-    /* Bound to the constant — this read named `internal_expected_dd`, which
-       migration 0286 renamed away, so `effOf` resolved undefined for EVERY
-       order and this line refused every proceed that came through the header
-       PATCH, including ones whose date arrived in the same request. */
-    if (!effOf(SO_PROCESSING_DATE_COLUMN)?.trim()) return c.json(PROCEED_NEEDS_DATE, 422);
-  }
+  /* THE `proceededAt` PROCEED PATH IS GONE (2026-08-18), not merely ungated.
+     `['proceededAt','proceeded_at']` left the map above, so no request body can
+     reach the column at all — which DELETES this block rather than loosening it.
+     What stood here gated a "genuine forward Proceed" arriving as a bare
+     timestamp from mobile / API. Nothing ever sent one: `grep -rn proceededAt`
+     over frontend/src, native/ and e2e/ returns type declarations and comments,
+     never a request body. Proceeding through this route now means one thing —
+     setting `processingDate` — and that is gated by the aggregated
+     Processing-Date block below, which carries the same deposit + completeness
+     conditions this did, plus the variant / KIV / date rules it did not. */
 
   /* Commander 2026-05-28 / Owner 2026-06-01 — Processing & Delivery Date may
      only be today or a future date, BUT an already-past value the edit does NOT
@@ -7056,6 +7049,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       origDeliv,
     });
     for (const col of cascadeCols) updates[col] = null;
+    /* THE ORPHAN-STAMP LEAK was here: this cleared the date and LEFT
+       `proceeded_at`, which the stamp-once filter then froze permanently — the
+       shape 25 company-2 rows carry today, and the one live path that made new
+       ones. It is closed by there being no stamp at all rather than by a second
+       clear: since 2026-08-18 nothing on this route reads or writes that column,
+       so a removed Processing Date can no longer leave anything behind. */
     /* The header column is only half the write: apply_so_header_cas cascades a
        delivery-date change down to every line_delivery_date behind
        p_apply_delivery_date, which keys off the request body. A cascade the
@@ -7092,11 +7091,11 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       variantOffenders,
       kivOffenders,
       /* Effective header values — the patch value when THIS request sets the
-         field, else the stored one. Identical semantics to the `effOf` in the
-         proceed block above; it cannot be reused because that one is scoped
-         inside `if (updates['proceeded_at'] ...)`, and this gate runs whether or
-         not the request also proceeds. One rule, one set of facts (owner
-         2026-07-31: Processing Date IS Proceed). Email is deliberately absent. */
+         field, else the stored one. Since 2026-08-18 this is the ONLY proceed
+         gate on the route: the separate `proceededAt` branch that carried its
+         own copy of these facts went with the second storage. One rule, one set
+         of facts (owner 2026-07-31: Processing Date IS Proceed). Email is
+         deliberately absent. */
       completeness: (() => {
         const beforeRow = before as unknown as Record<string, unknown> | null;
         const eff = (snake: string): string => {
@@ -7626,13 +7625,13 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   /* PR-E — pull customer_delivery_date alongside debtor/agent/venue so a
      line added later still inherits the SO header's delivery date by
      default. Client can override by sending lineDeliveryDate explicitly. */
-  const { data: header } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state, processing_date, proceeded_at, status, customer_id').eq('doc_no', docNo).maybeSingle();
+  const { data: header } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state, processing_date, status, customer_id').eq('doc_no', docNo).maybeSingle();
   if (!header) return c.json({ error: 'not_found' }, 404);
   /* Owner 2026-06-12 — processing-date lock: no line ADD once a CONFIRMED-or-later
      SO's processing day has passed (already PO'd to the supplier). Owner
      2026-08-12 — nor once a live PO actually exists (2990), which is the case
      this rule was always describing and only sometimes catching. */
-  if (soProcessingLocked(header as { processing_date?: string | null; proceeded_at?: string | null; status?: string | null })) {
+  if (soProcessingLocked(header as { processing_date?: string | null; status: string | null })) {
     return c.json(SO_PROCESSING_LOCKED_RESPONSE, 409);
   }
   if (await soPoLocked(sb, docNo)) {
@@ -11606,11 +11605,11 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
   };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  // Guard 1 — SO exists. Pull the lock columns (processing-date + proceeded_at
-  // + status) plus salesperson_id for the ownership scope check below, plus the
-  // amendable header columns for the header-change snapshot / date checks.
+  // Guard 1 — SO exists. Pull the lock columns (processing_date + status) plus
+  // salesperson_id for the ownership scope check below, plus the amendable
+  // header columns for the header-change snapshot / date checks.
   const { data: soRow } = await scopeToCompany(sb.from('mfg_sales_orders')
-    .select('doc_no, status, revision, processing_date, proceeded_at, salesperson_id, ' +
+    .select('doc_no, status, revision, processing_date, salesperson_id, ' +
       'customer_delivery_date, customer_state, postcode')
     .eq('doc_no', docNo), c).maybeSingle();
   if (!soRow) return c.json({ error: 'not_found' }, 404);
@@ -11638,7 +11637,7 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
      PO-locked SO would be refused BOTH roads (409 on the direct edit, 409 here
      for "not locked yet") and the operator would have no way to change anything
      at all. Keep the two definitions in lock-step. */
-  if (!await soEditLocked(sb, docNo, soRow as { processing_date?: string | null; proceeded_at?: string | null; status?: string | null })) {
+  if (!await soEditLocked(sb, docNo, soRow as unknown as { processing_date?: string | null; status: string | null })) {
     return c.json({
       error: 'not_locked_no_amendment_needed',
       reason: 'This Sales Order is not processing-locked yet — edit it directly instead of raising an amendment.',
