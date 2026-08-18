@@ -49,8 +49,17 @@
 // current, so a row already migrated is not planned at all. A second APPLY run
 // plans zero rows and writes nothing. Same for revert.
 //
+// RE-RUN: a second run plans and writes NOTHING. relabelProvenanceNote returns
+// its input by identity once the label is already current, so an already
+// migrated row is never planned; the census still prints, the manifest is
+// written with zero rows, and the post-condition verifies zero rows. Revert is
+// idempotent the same way — it only restores rows that still hold exactly what
+// the migration wrote, so a second revert matches nothing and reports it.
+//
 //   DATABASE_URL  required (env, or .dev.vars for local use)
 //   APPLY=1       write. Anything else is a DRY RUN.
+//   CONFIRM       required when APPLY=1: the exact phrase below. A dry run
+//                 ignores it.
 //   MODE          relabel (default) | revert
 //   MANIFEST      manifest path (default out/relabel-provenance-notes.json)
 //   COMPANY       optional company_id filter; default every company
@@ -79,6 +88,17 @@ if (!["relabel", "revert"].includes(MODE)) {
 }
 if (COMPANY !== null && !Number.isInteger(COMPANY)) {
   console.error(`COMPANY must be an integer company_id (got "${process.env.COMPANY}")`);
+  process.exit(2);
+}
+
+/* A phrase that has to be TYPED, on the run that writes. APPLY=1 is one
+   character away from a dry run and lives in a dispatch form's default; this
+   does not. A dry run ignores it entirely, so the review pass stays one click. */
+const CONFIRM_PHRASE = "relabel provenance notes";
+if (APPLY && (process.env.CONFIRM ?? "").trim() !== CONFIRM_PHRASE) {
+  console.error(
+    `APPLY=1 needs CONFIRM="${CONFIRM_PHRASE}" — this rewrites stored provenance on every matching purchase order. Refusing.`,
+  );
   process.exit(2);
 }
 
@@ -315,34 +335,45 @@ try {
   // the only one that matters. Every touched row must parse to the SAME set of
   // doc numbers it parsed to before.
   log("");
-  log("=== post-condition — re-reading every touched row ===");
+  log("=== post-condition — re-reading every touched row on a FRESH connection ===");
   const touched = plan.filter((p) => !stale.includes(p));
   const ids = touched.map((p) => p.id);
   let verified = 0;
   const violations = [];
-  if (ids.length > 0) {
-    const back = await pg`
-      SELECT id, po_number, notes FROM scm.purchase_orders WHERE id = ANY(${ids})`;
-    const nowById = new Map(back.map((r) => [String(r.id), r]));
-    for (const p of touched) {
-      const row = nowById.get(String(p.id));
-      if (!row) {
-        violations.push(`${p.po_number}: row disappeared between write and verify`);
-        continue;
+  // A SECOND client, opened after the write. The session that did the writing is
+  // the worst possible witness that the writing landed — it can be inside an
+  // open transaction, or reading its own uncommitted view. This one sees only
+  // what is actually committed and visible to the application.
+  const verifyPg = postgres(url, { ssl: "require", prepare: false, max: 1 });
+  try {
+    if (ids.length > 0) {
+      const back = await verifyPg`
+        SELECT id, po_number, notes FROM scm.purchase_orders WHERE id = ANY(${ids})`;
+      const nowById = new Map(back.map((r) => [String(r.id), r]));
+      for (const p of touched) {
+        const row = nowById.get(String(p.id));
+        if (!row) {
+          violations.push(`${p.po_number}: row disappeared between write and verify`);
+          continue;
+        }
+        // THE SHAPE, not a count: what the value now IS. A row count would have
+        // said "7 of 7" while all 7 were re-corrupted.
+        const nowSet = parseProvenanceNote(row.notes);
+        if (!sameSet(nowSet, p.doc_nos)) {
+          violations.push(
+            `${p.po_number}: doc numbers CHANGED [${p.doc_nos.join(", ")}] -> [${nowSet.join(", ")}]`,
+          );
+          continue;
+        }
+        if (row.notes !== p.after) {
+          violations.push(`${p.po_number}: stored bytes are not what was written`);
+          continue;
+        }
+        verified += 1;
       }
-      const nowSet = parseProvenanceNote(row.notes);
-      if (!sameSet(nowSet, p.doc_nos)) {
-        violations.push(
-          `${p.po_number}: doc numbers CHANGED [${p.doc_nos.join(", ")}] -> [${nowSet.join(", ")}]`,
-        );
-        continue;
-      }
-      if (row.notes !== p.after) {
-        violations.push(`${p.po_number}: stored bytes are not what was written`);
-        continue;
-      }
-      verified += 1;
     }
+  } finally {
+    await verifyPg.end({ timeout: 5 });
   }
   log(`verified ${verified} of ${touched.length} touched row(s): same doc numbers, new wording.`);
   for (const v of violations) {

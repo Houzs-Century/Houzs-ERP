@@ -723,7 +723,10 @@ title, two document types, one screen.
 
 `backend/scripts/relabel-provenance-notes.mjs` +
 `.github/workflows/relabel-provenance-notes.yml`. Dry-run by default; the owner
-dispatches the apply. It counts by exact form per company first, refuses any row
+dispatches the apply, and the apply additionally requires `CONFIRM` typed out in
+full (`relabel provenance notes`) — `apply=1` is one character away from a dry
+run and sits in a dropdown, so it is not on its own enough to rewrite stored
+provenance. It counts by exact form per company first, refuses any row
 whose doc numbers would change, writes a complete `{id, po_number, company_id,
 before, after}` manifest as a 90-day artifact on every run, updates each row
 `WHERE notes = <exact prior value>`, then **re-reads every touched row and

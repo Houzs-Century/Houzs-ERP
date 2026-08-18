@@ -26,7 +26,7 @@ name: Relabel PO provenance notes (DRY-RUN gated)
 # workflow with mode=revert and pass the manifest path. Revert only restores
 # rows that still hold exactly what the migration wrote.
 #
-# DRY-RUN unless apply=1.
+# DRY-RUN unless apply=1 AND confirm is typed out in full.
 on:
   workflow_dispatch:
     inputs:
@@ -52,6 +52,11 @@ on:
         description: "manifest path — for mode=revert, the file restored from"
         required: false
         default: "out/relabel-provenance-notes.json"
+        type: string
+      confirm:
+        description: 'apply=1 only: type exactly  relabel provenance notes'
+        required: false
+        default: ""
         type: string
 
 concurrency:
@@ -86,6 +91,9 @@ jobs:
           MODE: ${{ inputs.mode }}
           COMPANY: ${{ inputs.company }}
           MANIFEST: ${{ inputs.manifest }}
+          # A phrase that has to be TYPED on the run that writes. apply=1 is one
+          # character away from a dry run and sits in a dropdown; this does not.
+          CONFIRM: ${{ inputs.confirm }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
           # for the full Happy-Eyeballs reasoning.
           NODE_OPTIONS: --dns-result-order=ipv4first
