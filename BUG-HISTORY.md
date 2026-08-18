@@ -13,8 +13,8 @@ date MEANS, and the correction contradicts most of the comments in this repo.
 GOODS**. Raising an order is not acting on it. And: *"我们都没有排产的，我们都不是
 Production"* — **there is no production scheduling in this business**. Every
 comment calling this a "go-to-production" date or reasoning about a "factory
-queue" described a company that does not exist. Twenty of them, across ten files
-and two doc sections, now say what he said. **Two were user-facing refusal
+queue" described a company that does not exist. Twenty-three of them, across
+thirteen files and two doc sections, now say what he said. **Two were user-facing refusal
 strings** — an operator was being told to *"set the date the factory starts"* and
 warned about *"a wrong factory queue"*.
 

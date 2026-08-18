@@ -41,6 +41,9 @@ import consignmentRoutesSrc from '../routes/consignment-orders.ts?raw';
 import mfgSoSrc from '../routes/mfg-sales-orders.ts?raw';
 import reportsSrc from '../routes/reports.ts?raw';
 import orderRulesSrc from './order-rules.ts?raw';
+import orderRulesTestSrc from './order-rules.test.ts?raw';
+import soSaveProblemsTestSrc from './so-save-problems.test.ts?raw';
+import variantSummarySrc from './variant-summary.ts?raw';
 import registrySrc from './so-processing-date.ts?raw';
 import soDatePairTestSrc from './so-date-pair.test.ts?raw';
 import soSaveProblemsSrc from './so-save-problems.ts?raw';
@@ -220,11 +223,20 @@ describe('no surface still calls this a production date', () => {
     ['scm/routes/mfg-sales-orders.ts', mfgSoSrc],
     ['frontend so-detail-gates.ts', feSoDetailGatesSrc],
     ['scripts/probe-so-date-xor.mjs', probeSoDateXorSrc],
+    /* The TESTS too, and the KIV helper. #2383 showed the framing travels by
+       copy-paste from wherever it still reads naturally, and a test comment is
+       exactly as readable as the code's. */
+    ['scm/shared/order-rules.test.ts', orderRulesTestSrc],
+    ['scm/shared/so-save-problems.test.ts', soSaveProblemsTestSrc],
+    ['scm/shared/variant-summary.ts', variantSummarySrc],
   ];
 
   it.each(CORRECTED)('%s', (_name, src) => {
-    /* Non-vacuous: the file must still be ABOUT this date. */
-    expect(src.toLowerCase()).toContain('processing date');
+    /* Non-vacuous: the file must still be ABOUT this date. Hyphen OR space —
+       "Processing-Date gate" is as much a mention as "Processing Date", and an
+       anchor that missed the hyphen would let a hyphen-using file pass this
+       whole block by being unrecognised. */
+    expect(src).toMatch(/processing[- ]date/i);
     for (const re of FRAMING) expect(src).not.toMatch(re);
   });
 

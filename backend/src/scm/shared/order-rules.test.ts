@@ -125,8 +125,8 @@ describe('resolveProceedProcessingDate', () => {
   });
 
   it('falls through an unreadable STORED value to the supplied date', () => {
-    // A row we cannot read a day out of is not a date the factory can queue by,
-    // so it must not silently stand in for one.
+    // A row we cannot read a day out of is not a date anyone can be released
+    // against, so it must not silently stand in for one.
     expect(resolveProceedProcessingDate({ supplied: '2026-09-01', stored: 'unknown' }))
       .toEqual({ ok: true, date: '2026-09-01', write: true });
   });
