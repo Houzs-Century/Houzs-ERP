@@ -51,6 +51,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
+import { readStatusCounts } from '../lib/status-counts';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
@@ -562,14 +563,16 @@ function withPriceWarnings<T extends object>(res: T, warnings: SiPriceWarning[])
 }
 
 /* Filter-pill bucket → the raw sales_invoices.status values it covers. Single
-   source of truth for BOTH the status-count queries and the list `status`
-   filter. sent / partial / paid are MULTI-status buckets; cancelled is 1:1. The
-   FE sends the BUCKET NAME as `status`; a raw DB status still works
-   (backward-compatible fallback). */
+   source of truth for the status-count queries AND the list `status` filter; the
+   FE sends the BUCKET NAME (a raw DB status still works). EVERY VALUE IS AN ENUM
+   MEMBER AND EVERY MEMBER IS IN A BUCKET — a non-member 500s the tab and used to
+   zero its count; a member in no bucket is a row in no tab. Pinned, with the
+   2026-08-17 prod evidence, by tests/statusBucketsEnumMembership.test.mjs: ISSUED / PARTIAL / COMPLETED
+   were never members (INPUT-only via SI_STATUS_CANON), OVERDUE was bucketless and joins `sent`, as the FE did. */
 const SI_STATUS_BUCKETS: Record<string, string[]> = {
-  sent: ['DRAFT', 'SENT', 'ISSUED'],
-  partial: ['PARTIALLY_PAID', 'PARTIAL'],
-  paid: ['PAID', 'COMPLETED'],
+  sent: ['DRAFT', 'SENT', 'OVERDUE'],
+  partial: ['PARTIALLY_PAID'],
+  paid: ['PAID'],
   cancelled: ['CANCELLED'],
 };
 
@@ -839,13 +842,10 @@ salesInvoices.get('/', async (c) => {
     countBase().in('status', SI_STATUS_BUCKETS.paid),
     countBase().in('status', SI_STATUS_BUCKETS.cancelled),
   ]);
-  const statusCounts = {
-    all: allC.count ?? 0,
-    sent: sentC.count ?? 0,
-    partial: partialC.count ?? 0,
-    paid: paidC.count ?? 0,
-    cancelled: cancelledC.count ?? 0,
-  };
+  // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
+  const counted = readStatusCounts({ all: allC, sent: sentC, partial: partialC, paid: paidC, cancelled: cancelledC });
+  if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
+  const statusCounts = counted.counts;
 
   await stampSoDates(sb, data);
   await stampDoNumber(sb, data);

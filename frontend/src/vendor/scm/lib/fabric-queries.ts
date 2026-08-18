@@ -141,7 +141,7 @@ export function useUpdateFabricTier() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (args: { id: string; field: FabricTierField; tier: FabricTier }) => {
-      return authedFetch<{ ok: true; affectedProducts: number; fabricCode: string | null }>(
+      return authedFetch<{ ok: true; affectedProducts: number | null; fabricCode: string | null }>(
         `/fabric-tracking/${args.id}/tier`,
         {
           method: 'PATCH',
@@ -152,11 +152,21 @@ export function useUpdateFabricTier() {
     onSuccess: (res, vars) => {
       qc.invalidateQueries({ queryKey: ['fabric-tracking'] });
       qc.invalidateQueries({ queryKey: ['mfg-products'] });  // price display might shift
-      if (res.affectedProducts > 0) {
-        const tierLabel = vars.tier.replace('PRICE_', 'P');
-        const fieldLabel = vars.field === 'bedframePriceTier' ? 'bedframe' : 'sofa';
-        // Light-touch in-app toast via the app-wide NotifyDialog (serviceNotify bridge).
-        serviceNotify({
+      const tierLabel = vars.tier.replace('PRICE_', 'P');
+      const fieldLabel = vars.field === 'bedframePriceTier' ? 'bedframe' : 'sofa';
+      // Light-touch in-app toast via the app-wide NotifyDialog (serviceNotify bridge).
+      if (res.affectedProducts === null) {
+        /* The tier DID change; only the propagation count could not be read.
+           Saying nothing would read as "nothing was affected", which is the
+           same silence a `count ?? 0` produced on the server. */
+        void serviceNotify({
+          title: `Tier updated → ${tierLabel}`,
+          body:
+            `The tier change was saved. How many ${fieldLabel} products it affects could not be read, ` +
+            `so no number is shown.`,
+        });
+      } else if (res.affectedProducts > 0) {
+        void serviceNotify({
           title: `Tier updated → ${tierLabel}`,
           body:
             `${res.affectedProducts} ${fieldLabel} product${res.affectedProducts === 1 ? '' : 's'} ` +
