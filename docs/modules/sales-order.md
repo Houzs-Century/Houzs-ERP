@@ -1150,6 +1150,55 @@ Related short-circuit gates: remove-date is super-admin only
 elapses (`so-field-policy`). POS "Proceed" stamps `proceeded_at` only — it never
 writes `processing_date`.
 
+### A sofa never shares an order — `so_sofa_no_other_main`
+
+A SOFA line may not sit on the same document as a BEDFRAME or a MATTRESS line
+(PR #519). SERVICE / ACCESSORY / OTHERS ride on any order. One home,
+`backend/src/scm/lib/main-mix.ts`, and **every server path that can put a
+caller-supplied item code on a line calls it** — the same shape as the date-pair
+rule above, and for the same reason: it was hand-written five times and reached
+five of eight paths.
+
+| Write path | File | Form |
+|---|---|---|
+| SO create | `routes/mfg-sales-orders.ts` (`createSalesOrderCore`) | `createMixRefusal` — FLAT |
+| SO add-line | `routes/mfg-sales-orders.ts` `POST /:docNo/items` | `lineMixRefusal` — differential |
+| SO edit-line | `routes/mfg-sales-orders.ts` `PATCH /:docNo/items/:itemId` | `lineMixRefusal` |
+| SO TBC swap | `routes/mfg-sales-orders.ts` `tbcSwapCommandHandler` | `lineMixRefusal` |
+| SO amendment SUBMIT | `routes/mfg-sales-orders.ts` `POST /:docNo/amendments` | `amendmentMixRefusal` |
+| CO create | `routes/consignment-orders.ts` `POST /` | `createMixRefusal` — FLAT |
+| CO add-line | `routes/consignment-orders.ts` `POST /:docNo/items` | `lineMixRefusal` |
+| CO edit-line | `routes/consignment-orders.ts` `PATCH /:docNo/items/:itemId` | `lineMixRefusal` |
+
+**FLAT on create, DIFFERENTIAL everywhere else, and the difference is the whole
+rule.** A create asks "does this document mix?". Every other path asks "does this
+change INTRODUCE a mix?" — `mixesSofaWithOtherMain(after) && !mixesSofaWithOtherMain(before)`
+— so an order written before the rule existed stays editable. Putting the create
+form on an edit path would make every historic mixed order permanently
+uneditable, which is worse than the rule's own failure.
+
+**The sofa EXCHANGE path (`tbc-swap-sofa`) is exempt and says why**: it refuses
+`prev.item_group !== 'sofa'` and refuses a replacement whose catalogue category
+is not SOFA, so it is SOFA → SOFA by construction and cannot move a MAIN
+category. That exemption is recorded in the wiring test, not in prose.
+
+**A failed read is not a pass.** Each function returns `MixRefusal | null`, never
+a boolean: 400 `so_sofa_no_other_main` when it mixes, 409
+`sofa_mix_check_unavailable` when the line or catalogue read failed. The earlier
+helper discarded its read error, which made a blip look like an empty order and
+an empty order can never mix.
+
+**The client check is a SECOND implementation on purpose** — it must refuse
+before a request, and it reads free-text `itemGroup` where the server reads the
+catalogue enum. It has the same two forms: `hasSofaMixConflict` (flat) on the
+New-order surfaces, `sofaMixIntroduced(before, after)` on the Detail pages, both
+in `frontend/src/vendor/shared/so-variant-rule.ts`. A Detail page using the flat
+form refuses saves the server would accept.
+
+**The enumeration is a TEST, not prose**: `backend/tests/mainMixOneHome.test.ts`.
+Its population is every unit in the two routers that runs `validateItemCodes`, so
+a NEW line-write path fails it without anyone remembering to add a row here.
+
 ### Both dates or neither — `processing_delivery_must_pair`
 
 *"processing date 和 delivery date 必须同时有或者同时没有"* (owner, restated
@@ -1754,6 +1803,7 @@ Every by-code read on the order path therefore takes a `companyId`:
 | `validateItemCodes` | `scm/lib/validate-item-codes.ts` |
 | `findServiceLineCodes` | `scm/lib/service-line-guard.ts` |
 | `findSofaLinesWithoutCompleteBatch` / `detectSofaSoItemIds` / `findIncompleteSofaSets` | `scm/lib/sofa-batch-guard.ts` |
+| `createMixRefusal` / `lineMixRefusal` / `amendmentMixRefusal` | `scm/lib/main-mix.ts` |
 | `snapshotUnitCostSen`, GRN + PI landed-charge CBM, delivery-planning / delivery-zones category maps, `scan-so`'s OCR catalogue | in their route files |
 
 **`base_model` is a partial key too.** It is plain text on the same per-company
