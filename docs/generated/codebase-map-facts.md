@@ -161,7 +161,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1457 files, 580714 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1460 files, 581154 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -179,7 +179,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/mobile/MobilePMS.tsx` | 4489 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4199 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3727 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3730 |
 | `backend/src/scm/routes/grns.ts` | 3638 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
@@ -376,7 +376,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileModuleDetail.tsx` | 1934 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
-| `frontend/src/mobile/MobileNewSO.tsx` | 3727 |
+| `frontend/src/mobile/MobileNewSO.tsx` | 3730 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4489 |
 | `frontend/src/mobile/MobilePOD.tsx` | 536 |
 | `frontend/src/mobile/MobilePoAmendmentDetail.tsx` | 448 |
