@@ -55,7 +55,6 @@ async function queueAcPiEdit(c: any, id: string, retire: AcRetiredLine[] = []): 
 export const purchaseInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoices.use('*', supabaseAuth);
 
-
 /* CREATE joined the post/payment/cancel/header pass late; recorded the same way. */
 
 const HEADER =

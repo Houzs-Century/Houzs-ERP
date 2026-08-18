@@ -1133,12 +1133,10 @@ grns.get('/', async (c) => {
       countBase().in('status', GRN_STATUS_BUCKETS.posted),
       countBase().in('status', GRN_STATUS_BUCKETS.cancelled),
     ]));
-
     const res = await q;
     data = res.data;
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
-
     const [allC, draftC, postedC, cancelledC] = (await countsProm)();
     // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
     const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, cancelled: cancelledC });

@@ -68,8 +68,7 @@ import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
 import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
-/* chunkIn on EVERY read filtering by an id/doc-no set: the list rides in the URL,
-   and an unbounded one is refused before PostgREST answers. */
+/* chunkIn on every id/doc-no filter: the list rides in the URL and an unbounded one is refused. */
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
@@ -445,8 +444,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     possessionDate?: string | null; houseType?: string | null;
     replacementDisposal?: string | null;
   };
-  /* CROSS-COMPANY means the caller's GRANTED companies, never "no predicate":
-     unscoped, this board assembled every tenant's documents. */
+  /* CROSS-COMPANY = the caller's GRANTED companies; unscoped, this read took every tenant's. */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
     scopeToAllowedCompanies(
       sb.from('mfg_sales_orders')
@@ -598,8 +596,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     }
   }
 
-  /* Loud is right; anonymous is not — uncaught, this reached the client as a bare
-   500 and cost a wrangler tail to identify. readFailure names the stage. */
+  /* Loud is right; anonymous is not — this reached the client as a bare 500. readFailure names the stage. */
   let deliveredByDoc: Map<string, number>;
   let remainingByDoc: Map<string, number>;
   try {
@@ -2322,8 +2319,7 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
      the SO (which exists only on mfg_sales_orders). For a :type=do schedule the SO
      header is not the target; the DO carries no amend column, so a date is a no-op
      there (the schedule date flows to the trip / leg below, not onto the DO date). */
-  /* scheduleDate is `z.string().nullable().optional()`, so "" passes zod and reaches
-     a DATE column. dateOrNull makes a cleared field NULL, not a 500. */
+  /* scheduleDate is nullable+optional in zod, so "" reaches a DATE column; dateOrNull clears it. */
   if (p.scheduleDate !== undefined && type === 'so') updates.amended_delivery_date = dateOrNull(p.scheduleDate);
   if (p.deliveryState !== undefined) updates.delivery_state = p.deliveryState;
   // A trip-only schedule (no date/state) is still a valid change — only 400 when

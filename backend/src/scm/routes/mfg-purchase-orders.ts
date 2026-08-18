@@ -519,12 +519,10 @@ mfgPurchaseOrders.get('/', async (c) => {
       countBase().in('status', PO_STATUS_BUCKETS.received),
       countBase().in('status', PO_STATUS_BUCKETS.cancelled),
     ]));
-
     const res = await q;
     data = res.data;
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
-
     const [allC, draftC, outstandingC, openC, partialC, receivedC, cancelledC] = (await countsProm)();
     // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
     const counted = readStatusCounts({ all: allC, draft: draftC, outstanding: outstandingC, open: openC, partial: partialC, received: receivedC, cancelled: cancelledC });
