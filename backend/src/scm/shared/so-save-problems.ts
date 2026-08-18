@@ -222,8 +222,9 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
   //     confirmed later (variants carry fabricId/fabricLabel, no fabricCode).
   //     Owner rule 2026-07-24 (verbatim intent: "如果它一有 processing date,
   //     就一定要有我们维护里面的选项,不能这样子随便选,要不然我们过不到单"),
-  //     after SO-2607-016 reached production planning with two KIV sofa lines
-  //     and the factory could not proceed. Only fires when a Processing Date is
+  //     after an SO was released for ordering with two KIV sofa lines and
+  //     purchasing had nothing to order against — a fabric series with no colour
+  //     is not a thing anyone can buy. Only fires when a Processing Date is
   //     actually being set on this save — the routes additionally pass
   //     kivOffenders only when the date genuinely changes, so an unrelated edit
   //     to an old KIV order (or clearing the date) is never blocked.
@@ -240,8 +241,8 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
   }
 
   // 1c. Customer + delivery completeness. Unified with the Proceed gate (owner
-  //     2026-07-31) — the Processing Date IS the go-to-production signal, so the
-  //     same facts must be present for either. Only when a date is being SET;
+  //     2026-07-31) — the Processing Date IS the signal that releases the order
+  //     to purchasing, so the same facts must be present for either. Only when a date is being SET;
   //     clearing it, or editing something else on a dated order, never blocks.
   if (facts.procDate && facts.completeness) {
     const { hasCustomerName, hasAddress, hasPostcode } = facts.completeness;
@@ -253,8 +254,8 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
     if (!facts.delivDate) out.push(completenessProblem('delivery_date', 'processing_date'));
   }
 
-  // 2. Deposit — a Processing Date is production's "ready to build" signal,
-  //    so it can't be set until >=30% is collected. Reported with the concrete
+  // 2. Deposit — a Processing Date releases the order to purchasing to go and
+  //    order the goods, so it can't be set until >=30% is collected. Reported with the concrete
   //    amount + threshold. The SAME predicate the Proceed gate weighs
   //    (meetsDepositGate) — one deposit rule, since setting the date IS
   //    proceeding. Only fires when a date is actually being set.
@@ -310,7 +311,8 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
       field: procDate ? 'Delivery Date' : 'Processing Date',
     });
   }
-  // Factory start can't fall after the promised delivery. Both plain ISO
+  // The release date can't fall after the date it is promised for: purchasing
+  // cannot be released to buy AFTER the goods were due. Both plain ISO
   // YYYY-MM-DD, so a string compare is correct.
   if (procDate && delivDate && procDate > delivDate) {
     out.push({

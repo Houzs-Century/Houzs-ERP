@@ -111,9 +111,10 @@ describe('collectProcessingGateProblems', () => {
     expect(ps).toEqual([]);
   });
 
-  /* Colour-KIV gate (owner rule 2026-07-24, after SO-2607-016 reached
-     production planning with two KIV sofa lines): a Processing Date may not be
-     set or changed while any non-cancelled line's fabric colour is still KIV. */
+  /* Colour-KIV gate (owner rule 2026-07-24, after an SO was released for
+     ordering with two KIV sofa lines and purchasing had nothing to buy against):
+     a Processing Date may not be set or changed while any non-cancelled line's
+     fabric colour is still KIV. */
   describe('fabric_colour_kiv', () => {
     it('KIV line + a Processing Date being set -> rejected, naming the line + series', () => {
       const ps = collectProcessingGateProblems({
