@@ -56,6 +56,46 @@ The checker scans 5,722 branded rows and reports exactly the 11 this fixes.
 
 **Ref.** 2026-08-18, branch `fix/branding-backfill-2990`.
 
+## Chunking the .in() lists fixed the 500s and made every list twice as slow [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** Measured on production 2026-08-18, after the chunking fix deployed
+and before this one: Sales Orders 2450ms -> 5674-6276ms, Purchase Orders 2767 ->
+5759-6230, GRN 2566 -> 4693-5554, Purchase Invoices fast -> 4425-4956. Three
+runs each, so not noise. `pageSize=5` and `pageSize=50` stayed equally slow, so
+it was still a fixed cost — the fixed cost had simply doubled.
+
+**Root cause (traced, and it was mine).** `chunkIn`'s default batch went from a
+literal `size = 200` to `chunkSizeForUrl()`, which computes 76 for a uuid. The
+sizing is right — the failure it prevents is a gateway refusing an over-long
+URI, which no row count predicts. But `chunkIn` walks its batches in a `for`
+loop, one `await` at a time, and roughly 27 call sites already used the default.
+So the same work became 2.6x as many SERIAL round trips, everywhere, at once.
+
+**What the mistake actually was.** The production evidence was "the URL was
+refused", and the fix was written against that sentence: make the URL shorter.
+The question not asked was why the code materialises tens of thousands of ids in
+the application layer at all — the standard answer to "filter by a large id set"
+is to push the join into the database (a view, an RPC, a WHERE EXISTS), which
+removes the URI limit AND the round trips. Chunking treats the symptom. It was
+also shipped without measuring: the four 500s were re-tested and confirmed
+fixed, latency was not re-tested at all, and the regression surfaced only
+because the owner asked for a QA pass.
+
+**Fix.** The batches are independent, so they now run through `mapBounded` at 6
+in flight. Subrequest count is unchanged — only the wall clock is. `mapBounded`
+returns results in INPUT order, so the merged output is byte-identical to the
+sequential form, and the first failing batch in input order still wins with the
+earlier batches kept. `backend/tests/chunkInOverlaps.test.ts` pins the answer,
+the ordering, the error semantics and the overlap itself; setting the limit back
+to 1 fails it with "expected 1 to be greater than 1".
+
+**Still open.** The deeper fix is not to build the id list. And three list
+endpoints run the whole-tenant MRP engine (~105 round trips) on every page load
+to render one column, which is now the dominant remaining cost.
+
+Ref: 2026-08-18.
 ## Houzs sofas displayed "Sofa", and blank mattresses were claimed for a 2990 house brand — the Branding label rule read the line instead of the company and the SKU [medium]
 
 **Symptom.** Owner, 2026-08-18, restating a rule he had already given on
@@ -105,6 +145,57 @@ reads `branding || first_item_branding || "—"` — so the detail page can stil
 print a different string than the list for the same order.
 
 **Ref.** 2026-08-18, branch `fix/branding-sofa-mattress`.
+## The tidy-up for the quote bug would have split the inventory buckets [medium]
+
+**Symptom.** None — caught before it ran, which is the only reason it is a
+paragraph and not an incident.
+
+**Root cause.** #2358 shipped `normalise-maintenance-quotes.mjs` with a working
+APPLY path, on my reasoning that straightening `17“` to `17"` in the maintenance
+pools was cosmetic: the PRICING consequence was already closed in code (the
+lookup matches exactly first, then quote-insensitively, so either spelling finds
+the right tier).
+
+That missed what those values ALSO are. `gaps` and `totalHeights` are
+components of `variant_key` — the inventory bucket identity:
+
+    fabriccode=bf-18|gap=12“|divanheight=8"|legheight=2"|totalheight=22"
+
+Rewriting the POOL touches no stored document, which is exactly why it looks
+safe. It changes what the PICKER offers from then on: new documents would get
+`gap=12"` while existing stock sits in `gap=12“`. Measured on prod 2026-08-18
+before anything was written: **12 inventory lots (11 units), 12 balances, 15
+movements and 21 document lines** carry a typographic mark in their key. One
+physical spec would have split into two buckets, and MRP would report a
+shortage against stock on the shelf — the same defect class the 2026-08-17
+investigation was about, recreated by its own tidy-up.
+
+**Fix.** The script is REPORT-ONLY: the INSERT path is gone (0 write statements
+remain), and `APPLY=true` exits 2 naming the reason. The header carries the
+measurement and the ordering a real unification would need — migrate
+`variant_key` across the five tables WITH a bucket-merge reconciliation first,
+pools second, never the reverse.
+
+**Owner decision 2026-08-18:** leave the pools mixed. The spelling costs nothing
+now that the lookup handles both, and a tidier Maintenance screen does not buy a
+rewrite of inventory identity.
+
+**What the script is still for.** Conflicting duplicates — one tier spelled two
+ways at two prices, where the answer depends on array order. That detection
+found the two zero-priced curly duplicates under HOOKKA MANUFACTURING (`19"`
+and `25"`, both shadowing a straight entry at RM40 and both sitting EARLIER in
+the array, so a curly-typed document priced at 0). Owner ruled both are RM40;
+the spurious entries were removed by hand as new config versions
+(`mch-9a8c9a8e42b3`, `mch-7d096cc126d8`) with zero documents affected. The
+report exits non-zero while any conflict remains.
+
+**The lesson worth keeping.** "It only changes a label" is a claim about the
+whole system, not about the column. The check is not "does this rewrite a
+document" but "is this string an IDENTITY anywhere" — and here it was, two
+joins away.
+
+**Ref.** PR (branch `chore/quote-normalise-report-only`), 2026-08-18.
+
 ## One order, two due dates — the delivery board moved on a reschedule and MRP kept allocating stock against the date the customer had already changed [high]
 
 <!-- area: Sales orders + pricing -->
