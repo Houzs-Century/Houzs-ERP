@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
+import { siTransferBlockReason } from "../../vendor/scm/lib/do-next-step";
 import { DataTable, type Column } from "../../components/DataTable";
 import { DATA_TABLE_LAYOUT_FAMILIES } from "../../components/dataTableLayoutFamilies";
 import { CommittedBatchCell } from "../../components/DocumentLinesExpansion";
@@ -1081,12 +1082,25 @@ export function DeliveryOrderDetailV2() {
             )}
             {/* The transfer takes the PRIMARY slot; "Mark signed" above stays
                 secondary because it changes THIS document's own status rather
-                than producing the next document (owner rule, 2026-08-17). */}
-            {canConvertToSi && canWriteDo && (
+                than producing the next document (owner rule, 2026-08-17).
+
+                IT IS RENDERED EVEN WHEN IT CANNOT RUN — disabled, with the
+                reason — and that is the point. Owner, 2026-08-18, looking at two
+                delivery orders side by side: "一个公司显示 Transfer to Sales
+                Invoice，另一个公司却是 Mark signed，这不是同一个系统会统一的东西
+                来的吗？我又不是两套系统." The two documents differed only in
+                STATUS, but hiding the action made the second company look like a
+                product without the feature. Same primary slot, two different
+                verbs, no explanation — the operator had to read a status badge
+                to know what the green button would do. Absence is not a message;
+                a disabled control with a reason is. */}
+            {canWriteDo && (
               <Button
                 variant="primary"
                 icon={<Receipt size={14} />}
                 onClick={goConvertToSi}
+                disabled={!canConvertToSi}
+                title={siTransferBlockReason(deliveryOrder.status) ?? undefined}
               >
                 {transferToLabel('si')}
               </Button>
