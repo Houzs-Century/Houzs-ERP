@@ -49,21 +49,39 @@
 // So the blank Branding cell was never a corner case about accessories: it was
 // most of the Houzs catalogue.
 //
-// ── THE SPEC (owner, 2026-08-17, stated per company) ─────────────────────────
-//   2990   SOFA -> "2990 Sofa"; BEDFRAME -> "Bedframe"; MATTRESS -> the item's
-//          own brand, falling back to "2990 Mattress"; ACCESSORY -> "Accessory";
-//          SERVICE -> "Service"; anything else -> a truthful label from the
-//          category, never "".
-//   HOUZS  BEDFRAME -> the bedframe label; SERVICE -> "Service";
-//          ACCESSORY -> "Accessory"; MATTRESS and SOFA -> the item's own brand.
+// ── THE SPEC (owner, 2026-08-18 — supersedes the 2026-08-17 reading) ─────────
+//   SOFA      the COMPANY's house sofa brand, not the line's: HOUZS -> "ZANOTTI",
+//             2990 -> "2990s Sofa". Stated as two equations —「houzs sofa=zanotti
+//             / 2990 sofa=2990s sofa」— and each company sells exactly one sofa
+//             brand, so the line's own text is ignored on BOTH sides.
+//   MATTRESS  the SKU's branding, for BOTH companies; when the SKU carries none,
+//             the category noun ("Mattress"). 「mattress follow SKU branding if
+//             SKU no brand mean matress」+「both company also」.
+//   BEDFRAME  the bedframe noun, both companies.
+//   EVERYTHING ELSE  the truthful category noun ("Accessory", "Service",
+//             "Dining", ... , "Other"), never "".
 //
-// The house-brand labels are 2990's, so an unknown / unstated company keeps the
-// 2990 reading — that is the behaviour every existing caller already had, and
-// changing the default would have silently restyled 2990's whole SO list.
+// WHAT CHANGED, and why the old wording is not worth resurrecting:
+//   · Houzs SOFA used to read the line's brand and print "Sofa" when it was
+//     blank. 11 live SKUs (the whole 5526 model family) carry no branding, so
+//     that path printed "Sofa" on a Zanotti sofa. The equation removes the
+//     dependency instead of asking anyone to keep 724 SKUs filled.
+//   · 2990 SOFA read "2990 Sofa"; the owner's own brand master (and his
+//     message) spell it "2990s Sofa" — 193 SKUs and the Brands screen agree.
+//   · MATTRESS had a "2990 Mattress" fallback and a regex that folded the
+//     spellings "2990" / "2990's" / "2990s" into it. Both are GONE: the value
+//     now comes from the SKU, and the six live lines that carried those loose
+//     spellings resolve through their SKU ("2990s Mattress") instead of through
+//     a normalisation table that had to know every spelling in advance.
 //
-// A Houzs order NEVER falls back to a "2990 ..." label. "2990 Mattress" on a
-// Houzs order is not a missing label, it is a WRONG one, so the Houzs blank
-// mattress reads "Mattress".
+// The SKU is the source for mattresses, so CALLERS must hand this rule the
+// SKU's branding — not the line's — whenever the two disagree. Both live
+// callers do (so-display-branding.ts and the /mfg-sales-orders list handler);
+// their `first_item_branding` is SKU-first for a mattress line.
+//
+// A Houzs order NEVER falls back to a "2990 ..." label — after this change no
+// order of either company does, because no "2990 ..." string is synthesised
+// here at all. The only 2990 literal left is the sofa equation.
 //
 // ── WHAT THIS FILE MAY NOT DO ────────────────────────────────────────────────
 // It is MIRRORED byte-for-byte into frontend/src/vendor/shared/so-branding-label.ts
@@ -162,9 +180,12 @@ export function brandingCategoryNoun(category: string | null | undefined): { buc
   return { bucket: 'OTHER', noun: upper === 'OTHERS' ? 'Other' : titleCase(raw) };
 }
 
-/** The 2990 house brand, in every spelling it is stored in ("2990", "2990's",
- *  "2990s"). A brand that merely CONTAINS 2990 ("2990 PLUS") is not it. */
-const HOUSE_BRAND = /^2990('?s)?$/i;
+/** The house sofa brand per company. Each company sells exactly one, so these
+ *  are the whole SOFA rule — see THE SPEC above. Not a lookup that grows: a
+ *  second sofa brand at either company makes the equation false, and the fix
+ *  then is to read the SKU again, not to add a row here. */
+const SOFA_BRAND_HOUZS = 'ZANOTTI';
+const SOFA_BRAND_2990 = '2990s Sofa';
 
 /**
  * Shown when an order has NO readable line at all (every line cancelled, or
@@ -196,11 +217,11 @@ export function brandingLabel(
   const isHouzs = (companyCode ?? '').trim().toUpperCase() === HOUZS;
 
   if (bucket === 'SOFA') {
-    /* 2990 sofas are all 2990's own — the line's brand text is deliberately
-       IGNORED (pinned since 2026-05-28). Houzs resells other people's sofas,
-       so there the brand on the line is the answer. */
-    if (!isHouzs) return '2990 Sofa';
-    return brand || noun;
+    /* The line's brand text is deliberately IGNORED for BOTH companies now.
+       2990's side has been pinned this way since 2026-05-28; Houzs joined it on
+       2026-08-18 («houzs sofa=zanotti»), which also retires the "Sofa" label
+       that the 11 unbranded 5526 SKUs used to produce. */
+    return isHouzs ? SOFA_BRAND_HOUZS : SOFA_BRAND_2990;
   }
 
   if (bucket === 'BEDFRAME') {
@@ -212,14 +233,13 @@ export function brandingLabel(
   }
 
   if (bucket === 'MATTRESS') {
-    /* A mattress shows its OWN brand (HAPPISLEEP / CARRES / ...). The house
-       brand normalises to "2990 Mattress" for either company, because a line
-       that literally says 2990 IS a 2990 mattress. A BLANK brand is the only
-       place the companies differ: under 2990 an unbranded mattress is ours,
-       under Houzs claiming that would be false. */
-    if (brand && !HOUSE_BRAND.test(brand)) return brand;
-    if (brand) return '2990 Mattress';
-    return isHouzs ? noun : '2990 Mattress';
+    /* IDENTICAL for both companies (owner: «both company also»): whatever the
+       SKU says — "2990s Mattress", "Happi.S Mattress", "AKEMI", "DUNLOPILLO" —
+       and the noun when it says nothing. `brand` is the SKU's value here, not
+       the line's; see the caller contract in THE SPEC above. Nothing is
+       synthesised: an unbranded mattress reads "Mattress" rather than being
+       claimed for a house brand. */
+    return brand || noun;
   }
 
   /* ACCESSORY / SERVICE / DINING / BEDLINES / DIFFUSER / CARPET / OTHERS, both

@@ -1470,8 +1470,12 @@ mfgSalesOrders.get('/', async (c) => {
        The header revenue columns merge mattress + sofa into one bucket, so the
        grid can't tell SOFA from MATTRESS at the header level — hence this
        per-line first-item read (from the same fetch already running for stock
-       status). The UI maps SOFA → "2990 Sofa", BEDFRAME → "Bedframe", MATTRESS
-       → first_item_branding (its own brand) ?? "2990 Mattress", else → "2990". */
+       status). The UI maps these through shared/so-branding-label (owner
+       2026-08-18): SOFA → the COMPANY's house sofa brand ("ZANOTTI" for Houzs,
+       "2990s Sofa" for 2990 — the line's own text is not consulted), BEDFRAME →
+       "Bedframe", MATTRESS → first_item_branding, which is the SKU's brand
+       (resolved SKU-first below), falling back to "Mattress" when the SKU
+       carries none; everything else names its category. */
     const cats = new Map<string, Set<string>>();
     const firstCat = new Map<string, string>();
     const firstBranding = new Map<string, string | null>();
@@ -1776,9 +1780,17 @@ mfgSalesOrders.get('/', async (c) => {
       const fCat = (hasRep ? repCat.get(docNo) : firstCat.get(docNo)) ?? null;
       (r as Record<string, unknown>).first_item_category = fCat ?? null;
       let fBranding = (hasRep ? repBranding.get(docNo) : firstBranding.get(docNo)) ?? null;
-      if (fCat === 'MATTRESS' && (!fBranding || !fBranding.trim())) {
+      /* MATTRESS reads the SKU FIRST, not just as a fallback (owner 2026-08-18:
+         «mattress follow SKU branding»). The line's own text only survives when
+         the catalog has none. Six live 2990 lines carry the loose spellings
+         "2990" / "2990s" while their SKU says "2990s Mattress"; under the old
+         blank-only borrow they kept the loose text and the label rule needed a
+         normalisation regex to recover from it. Reading the catalog first makes
+         that regex unnecessary — and it is deleted, not left dormant. */
+      if (fCat === 'MATTRESS') {
         const code = hasRep ? repCode.get(docNo) : firstItemCode.get(docNo);
-        fBranding = (code && productBranding.get(code)) || fBranding;
+        const skuBrand = code ? productBranding.get(code) : undefined;
+        if (skuBrand && skuBrand.trim()) fBranding = skuBrand;
       }
       /* Bedframe-only SO → "BEDFRAME" pill (only when no explicit brand text
          is present, so an AKEMI/2990 line always wins). */

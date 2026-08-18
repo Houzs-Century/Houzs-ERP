@@ -26,7 +26,8 @@
 // been, which is worth knowing before you assume a fix to one touched the
 // other.
 //   · deriveBranding (re-exported from ../shared/so-branding-label) maps a
-//     CATEGORY to a display label — "2990 Sofa", "Bedframe", "Service".
+//     CATEGORY to a display label — "2990s Sofa" / "ZANOTTI" per company,
+//     "Bedframe", "Service".
 //   · deriveDisplayBrandingByDoc, below, returns the line's RAW branding text
 //     and the literal "BEDFRAME" (upper case, not "Bedframe") for a
 //     bedframe-only order, and omits a doc entirely when nothing resolves.
@@ -150,8 +151,15 @@ export async function deriveDisplayBrandingByDoc(
     const rep = repLine.get(docNo) ?? firstLine.get(docNo);
     if (!rep) continue;
     let brand = rep.branding;
-    if (isBlank(brand) && resolveLineCat(rep) === 'MATTRESS' && rep.item_code) {
-      brand = productBranding.get(rep.item_code) ?? brand;
+    /* SKU-FIRST for a mattress, in lockstep with the list handler (owner
+       2026-08-18: «mattress follow SKU branding»). It used to borrow the
+       catalog only when the line was blank, which left the loose "2990" /
+       "2990s" line spellings in place here while the list resolved them — the
+       exact kind of divergence between these two copies this file's header
+       warns about. */
+    if (resolveLineCat(rep) === 'MATTRESS' && rep.item_code) {
+      const skuBrand = productBranding.get(rep.item_code);
+      if (!isBlank(skuBrand)) brand = skuBrand!;
     }
     if (isBlank(brand)) {
       const s = catsByDoc.get(docNo);

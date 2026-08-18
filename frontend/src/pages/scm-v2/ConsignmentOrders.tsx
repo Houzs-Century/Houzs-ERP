@@ -1252,10 +1252,13 @@ const buildAllColumns = (
   },
   {
     /* Branding — AUTO-DERIVED from the SO's FIRST line item (Commander PR
-       #266). See `deriveBranding`: first SOFA → "2990 Sofa", first BEDFRAME →
-       "Bedframe", first MATTRESS → its own brand (fallback "2990 Mattress"),
-       first accessory/other → "2990", none → "—". Rendered as the muted
-       BrandingPill; sortable + groupable on the derived label. */
+       #266). See `brandingLabel` (owner 2026-08-18): first SOFA → the company's
+       house sofa brand ("2990s Sofa" here, "ZANOTTI" under Houzs), first
+       BEDFRAME → "Bedframe", first MATTRESS → the SKU's brand falling back to
+       "Mattress", first accessory/service/other → its category noun, no
+       readable line → "No Items". The rule can no longer return blank, so the
+       old "—" case is gone. Rendered as the muted BrandingPill; sortable +
+       groupable on the derived label. */
     key: 'branding', label: 'Branding', width: 130, sortable: true, groupable: true,
     accessor: (r) => {
       const b = deriveBranding(r);
