@@ -377,10 +377,6 @@
       "reads": 5,
       "catches": 0
     },
-    "backend/src/scm/routes/sales-analysis.ts": {
-      "reads": 2,
-      "catches": 0
-    },
     "backend/src/scm/routes/sales-invoices.ts": {
       "reads": 27,
       "catches": 0
