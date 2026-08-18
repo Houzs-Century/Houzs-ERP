@@ -5,7 +5,7 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback } from 'react';
-import { fmtDateOrDash } from '@2990s/shared';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useDeliveryOrderDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import type { DataGridColumn } from '../../vendor/scm/components/DataGrid';

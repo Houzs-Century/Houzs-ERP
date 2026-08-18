@@ -48,6 +48,7 @@ import {
   type FairPnlResponse,
   type FairCostByCategory,
 } from '../../vendor/scm/lib/fair-report-queries';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 // ── money / number formatting ────────────────────────────────────────────────
 /** Table-cell money — no currency prefix, 2 decimals, zero/null → em dash so a
@@ -344,11 +345,11 @@ export const FairReport = () => {
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Date from</span>
-            <input type="date" className={inputCls} value={filters.dateFrom ?? ''} onChange={(e) => setParam('date_from', e.target.value)} />
+            <DateField fullWidth className={inputCls} value={filters.dateFrom ?? ''} onChange={(iso) => setParam('date_from', iso)}/>
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Date to</span>
-            <input type="date" className={inputCls} value={filters.dateTo ?? ''} onChange={(e) => setParam('date_to', e.target.value)} />
+            <DateField fullWidth className={inputCls} value={filters.dateTo ?? ''} onChange={(iso) => setParam('date_to', iso)}/>
           </label>
           <SelectFilter label="Branding" value={filters.branding ?? ''} onChange={(v) => setParam('branding', v)}
             options={opts.brandings.map((b) => ({ value: b, label: b }))} allLabel="All brands" />

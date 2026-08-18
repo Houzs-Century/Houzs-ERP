@@ -55,6 +55,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -623,10 +624,12 @@ export const PurchaseConsignmentReceiveDetail = () => {
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Delivery Date</span>
                       {isEditing ? (
-                        <input
-                          type="date" className={styles.fieldInput}
-                          value={d.deliveryDate ?? ''} disabled={isLocked}
-                          onChange={(e) => setLine(it, { deliveryDate: e.target.value || null })}
+                        <DateField
+                          fullWidth
+                          className={styles.fieldInput}
+                          value={d.deliveryDate ?? ''}
+                          disabled={isLocked}
+                          onChange={(iso) => setLine(it, { deliveryDate: iso || null })}
                         />
                       ) : (
                         <input
@@ -756,8 +759,13 @@ const SupplierCard = ({
           <div />
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Received Date</span>
-            <input type="date" className={styles.fieldInput} value={draft.receivedAt} disabled={locked}
-              onChange={(e) => onField('receivedAt', e.target.value)} />
+            <DateField
+              fullWidth
+              className={styles.fieldInput}
+              value={draft.receivedAt}
+              disabled={locked}
+              onChange={(iso) => onField('receivedAt', iso)}
+            />
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Delivery Note Ref</span>

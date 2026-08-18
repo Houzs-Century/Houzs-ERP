@@ -34,7 +34,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import { fmtDate as fmtDateShared, fmtDateOrDash, fmtQty } from '@2990s/shared';
+import { fmtDateOrDash, fmtDateTime, fmtQty } from '@2990s/shared';
 import {
   useStockTakeDetail,
   useUpdateStockTakeLines,
@@ -53,15 +53,6 @@ import { groupByModel } from './stock-take-grouping';
 import { useStaffLookup } from '../../hooks/useStaffLookup';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
-
-const fmtDateTime = (iso: string | null): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  const date = fmtDateShared(d);
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} ${time}`;
-};
 
 const scopeLabel = (scopeType: string, scopeValue: string | null): string => {
   if (scopeType === 'ALL') return 'All SKUs';

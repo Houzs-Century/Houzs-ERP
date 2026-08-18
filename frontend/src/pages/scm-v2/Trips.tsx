@@ -94,6 +94,7 @@ import { LiveTripMap, type LiveMarker } from '../../vendor/scm/components/LiveTr
 import { useTripLatestLocations } from '../../vendor/scm/lib/trip-locations-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -766,11 +767,10 @@ export function Trips() {
           headerControls={
             <>
               {/* REQUIRED picked date — the map always shows exactly one day. */}
-              <input
-                type="date"
+              <DateField
                 required
                 value={mapDate}
-                onChange={(e) => { if (e.target.value) { setMapDate(e.target.value); setMapFocus(null); } }}
+                onChange={(iso) => { if (iso) { setMapDate(iso); setMapFocus(null); } }}
                 title="The day the map shows"
                 style={{ ...selStyle, width: 140 }}
               />

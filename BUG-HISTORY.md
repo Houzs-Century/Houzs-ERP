@@ -125,6 +125,435 @@ table and drawer used the new one. Before this PR each of those screens said one
 thing. Eight hand-written labels now call `transferFromColumnLabel` like the
 other twenty-four sites, so the count of live wordings for that relationship is
 one everywhere it is a document lineage.
+## The refusal named all five conditions and checked one — a free order was told it owed a deposit [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Proceeding a Sales Order was refused with:
+
+```
+A Processing Date can only be set once the order has a customer name, a full
+delivery address (line 1 and postcode), a delivery date, and the deposit its
+company requires (Houzs 30%, 2990 50%).
+```
+
+The order was worth zero and nothing had been paid. The owner read "deposit",
+concluded the system was demanding 50% of nothing, and spent a day on a money
+bug that did not exist.
+
+**It was never the deposit.** `meetsDepositGate` short-circuits at `total <= 0`
+and its own docblock says why — *"Free order (total ≤ 0 …): nothing to collect,
+so the gate is vacuously met"*. The deposit term PASSED. The order was missing
+its **postcode**. `meetsProceedGate` weighs FIVE conditions
+(`backend/src/scm/shared/order-rules.ts`) and `SO_PROCEED_GATE_RESPONSE`
+(`backend/src/scm/routes/mfg-sales-orders.ts`) was ONE stored sentence naming all
+five, returned whenever ANY ONE failed. The refusal could not distinguish the
+condition it checked from the four it recited.
+
+**Not a corner case.** Live population 2026-08-17: of 561 processing-dated SOs,
+21 lack a postcode and 8 lack a delivery date. Every one of those refusals would
+have said "deposit" too.
+
+**Root cause, stated as a shape.** The verdict and the explanation were two
+separate expressions over the same five facts — a boolean chain in one file and
+a hand-written sentence in another. Two expressions for one rule is this repo's
+repeat offender in its other costume: not "expressed at N sites, present at
+N-1", but "checked in one place, described in another, and nothing keeps the
+description true".
+
+**Fix.**
+
+- `meetsProceedGate` is now **defined as** `proceedGateFailures(i).length === 0`.
+  One expression, read two ways: a caller wanting a boolean asks whether the list
+  is empty, a caller wanting to explain itself reads the list. No input can make
+  them disagree. `proceedGateFailures` returns stable condition KEYS, no prose —
+  `order-rules.ts` owns the rule, `so-save-problems.ts` owns the words.
+- The refusal is now the aggregated `problems` contract the save gate already
+  used (owner 2026-07-18, "every reason at once"), under an **unchanged**
+  `error: 'proceed_gate_unmet'` so clients matching on the code notice nothing.
+  `reason` stays a plain sentence for surfaces that read only that key — it now
+  names what failed instead of reciting all five. No frontend change was needed:
+  `humanApiError` and `parseSaveProblems` key off the presence of `problems`,
+  not off the `validation_failed` code.
+- The completeness and deposit sentences are ONE table
+  (`completenessProblem` / `depositProblem`), shared with
+  `collectProcessingGateProblems`. Only a trailing clause differs — "before a
+  Processing Date can be set" for the save path, "before this order can be
+  proceeded" for the proceed paths, because the second operator has already
+  pressed a button and his order already carries its date.
+- `depositProblem` asks `meetsDepositGate` for its verdict instead of testing
+  `totalCenti > 0` itself. A free order therefore CANNOT raise a deposit line —
+  structurally, not by a guard that reads the same today and drifts tomorrow.
+
+- `soDepositFacts`, `soProceedGateBlocked` and `soProcessingDateProblemsForDoc`
+  moved out of `mfg-sales-orders.ts` into
+  `backend/src/scm/lib/so-proceed-gate.ts`. Not tidying: that router sits under
+  a file-size ceiling that may only FALL, and the detail the refusal now carries
+  pushed it over. They were already one unit — docNo in, gate FACTS out, judged
+  by the shared pure rules — so the ceiling picked the split, it did not invent
+  it. The router lost 96 lines and is back under its ceiling.
+
+**Outcomes did not move, and that is tested, not asserted.**
+`so-save-problems.test.ts` runs a 576-input matrix (4 completeness booleans x 4
+company codes x 9 paid/total pairs) and requires
+`collectProceedGateProblems(f).length === 0` to equal the pre-change predicate
+written out literally, and `meetsProceedGate` to equal it too. Only the words
+changed.
+
+**Watchers.**
+
+- `backend/tests/soProceedRefusalNamesCondition.test.ts` — the owner's exact
+  order through the real handler: total 0, paid 0, no postcode. Asserts the body
+  names `Postcode` and that the string "deposit" appears NOWHERE in it. Fails on
+  the pre-fix code (`problems` is undefined).
+- `backend/tests/soProceedRefusalWiring.test.ts` — source-anchored, in the style
+  of `soDatePairWiring.test.ts`: the gate is the empty-list expression, the five
+  conditions are enumerated once, both refusing call sites go through the one
+  builder, the routes mint no `proceed_gate_unmet` of their own, and no
+  `message:` / `reason:` literal in the three modules names more than one gate
+  condition. Eight of its nine tests fail on the pre-fix code.
+- `frontend/src/vendor/scm/lib/authed-fetch.proceed-refusal.test.ts` — what the
+  operator actually reads, composed by the real client code.
+
+**The one `meetsProceedGate` caller with no problem list, and why that is
+correct.** CREATE auto-proceed refuses nothing: a handover that misses the gate
+is simply created un-proceeded, in Order Placed, for the salesperson to complete
+manually. There is no refusal there to name a condition in. The wiring test
+asserts that site returns no body, so if it ever starts refusing, it fails and
+has to be classified rather than quietly shipping an anonymous sentence.
+## A money ceiling rested on a column no migration created — and a blip on the read that derives it raised the ceiling to infinity [high]
+
+<!-- area: Delivery, DO, returns -->
+
+Two defects, one mechanism: `remaining = delivered − invoiced − returned`, the
+cap every DO → Sales Invoice and DO → Delivery Return write is checked against.
+One defect made the `invoiced` term undeclarable; the other made it silently
+zero.
+
+**A — the column.** `grep -rn --include='*.sql' do_item_id
+backend/src/db/migrations-pg/` returns rc=1 and ZERO hits, and
+`backend/scripts/scm-schema/2990s-full-schema.sql` gives `sales_invoice_items` a
+`so_item_id` and no `do_item_id`. Yet `lib/do-line-remaining.ts` sums
+`sales_invoice_items.qty` linked by `do_item_id` to derive `invoiced`. A
+`pg_dump --schema-only --schema=scm` of production (Actions -> "Dump scm schema
+snapshot (read-only)", target=prod, run 32089111719) settles what is really
+there: `do_item_id uuid`, nullable, no default, with
+`sales_invoice_items_do_item_id_fkey` referencing `scm.delivery_order_items(id)`
+`ON DELETE SET NULL`, and no index. Migration `0303_scm_si_items_do_item_id.sql`
+declares exactly that and nothing else — `ADD COLUMN IF NOT EXISTS` plus a
+`pg_constraint`-guarded `ADD CONSTRAINT`, so it is a no-op where the column
+already exists. Note the sibling gap it does NOT close: `unit_cost_centi`,
+`line_cost_centi` and `line_margin_centi` on the same table are undeclared too.
+Same class, different change.
+
+**B — the read.** Every read in `do-line-remaining.ts` destructured `{ data }`
+and dropped `error`. supabase-js does not throw, so a failed select resolves
+`{ data: null, error }` and arrived as ZERO invoiced rows — indistinguishable
+from a delivery nobody has invoiced. `remaining` then came out at the FULL
+delivered quantity on a line already billed in full. Six reads, each
+individually sufficient: the two that ARE `invoiced`/`returned`, the two
+cancelled-filter reads (lose them and every parent document looks cancelled,
+which zeroes the term just as completely), and the two that build the ledger at
+all. `resolveCandidateDoIds` had the same shape, and its empty list is what both
+pickers render as "nothing left to invoice".
+
+This was deferred out of #2374 with a stated reason — "a refactor with many
+callers and its own blast radius" — which was right then. Every entry point now
+returns `{ ok: true, … } | { ok: false, reason }`, and each of the ten callers
+decides for itself:
+
+- **write guards** (`checkSiOverRemaining`, `checkDrOverRemaining`, both
+  convert pre-checks, the from-DO append) refuse with **503
+  `remaining_check_failed`** — never 409 `over_remaining`, because the operator
+  did not ask for too much;
+- **display surfaces** (both pickers, the unbilled-deliveries report) answer
+  **500 `load_failed`** rather than an empty list, because "nothing left to
+  invoice" and "nothing came back" look identical on screen;
+- **post-insert race rechecks** roll back and say **`remaining_check_failed`**,
+  never `race_conflict` — nothing has escaped at that point (no revenue posted,
+  no stock moved), so undoing costs a keystroke, and blaming a colleague who did
+  not race would send the operator hunting for a duplicate that does not exist;
+- **`doPendingItemCodesOf`** (the shadow guard) returns `ok: false`, which
+  `unlinkedScanRefusal` already turns into a refusal at every call site. Its own
+  header used to say this half was fail-open and filed separately. It is closed.
+
+`checkDrOverRemaining` also carried an explicit `if (error) return null; // load
+failure -> don't block; the insert will surface real errors`. It does not: the
+insert has no cap of its own, so that read WAS the guard.
+
+**Proof it is not vacuous.** `backend/tests/doRemainingFailsClosed.test.ts`
+drives the real exported handlers with one table's SELECT failing. Against the
+pre-fix tree six of its ten cases fail with `expected 201 to be 503` — the
+invoice and the return were actually created for goods already billed. The two
+rollback cases carry a CONTROL proving the same request succeeds when every read
+works, so the 503 is the post-insert recheck and not the pre-check.
+`audit:swallowed-reads` records the direction: `do-line-remaining.ts` 8 -> 0
+(dropped from the baseline entirely), `delivery-returns.ts` 20 -> 19,
+`sales-invoices.ts` 29 -> 27.
+
+**C — the two doors the first pass left half-shut.** Review found the guard was
+consulted at ten call sites but that two of them never reached it, because the
+list they hand it was itself built from a swallowed read.
+
+`PATCH /sales-invoices/:id/status` (REOPEN, CANCELLED -> SENT) read its own
+`sales_invoice_items` with `const { data: reopenLines }` and no `error`, then
+passed the result to `checkSiOverRemaining`, whose first act is `if
+(wanted.size === 0) return null`. So a failed read produced an EMPTY line list
+and the ceiling was never consulted — the 503 branch two lines below it was
+unreachable by construction. The invoice went back to SENT and `postSiRevenue`
+re-posted AR and GL revenue for goods a second invoice had already billed. This
+is the worst of the set: it fails open on the money path, and it does so
+silently, with a 200.
+
+`POST /sales-invoices/:id/items/from-do/:doId` (APPEND) has the same shape one
+table earlier. Its `delivery_order_items` read dropped `error`, so a failure
+yielded zero candidate lines and the handler answered 409 `do_fully_invoiced` —
+"this delivery has already been invoiced in full" — from a read that returned
+nothing at all. A caller that believes it records delivered-but-unbilled goods
+as billed.
+
+Both now bind the error and refuse with the same 503 `remaining_check_failed`
+the other eight callers use. Four cases in `doRemainingFailsClosed.test.ts`
+pin it, two of them CONTROLs; against the pre-fix tree the two new assertions
+fail `expected 200 to be 503` and `expected 409 to be 503`, which is the
+reopen waving the double-bill through and the append claiming completion.
+## A Sales Order with a Processing Date was refused stock forever — the mfg-sales allocation gate read a field no client writes [high]
+
+**Symptom.** A Sales Order given a Processing Date locked, appeared on the
+delivery board and pushed to AutoCount as `PDate` — and never became READY. Every
+line was forced `PENDING` with the goods physically in the warehouse. No error, no
+log, nothing on screen. Owner, this morning: *"明明这个东西没有 ready,可是我的 MRP
+却 show 不出来"* and *"明明那个东西是没有货的,可是状态却去 show STATUS: READY"*.
+
+**Root cause (read, not inferred).** `so-stock-allocation.ts` built its
+`allocGated` set from `orders.filter((o) => !o.proceeded_at)`, while every path
+that sets a Processing Date writes `processing_date`:
+
+| path | writes `processing_date` | stamps `proceeded_at` |
+| --- | --- | --- |
+| CREATE (`mfg-sales-orders.ts`, `processing_date: dateOrNull(body.processingDate)`) | always | only when `autoProceed` — the date PLUS the paid + full-address gate |
+| header PATCH (the detail screen's save) | yes | never |
+| `PATCH /:docNo/status` → `IN_PRODUCTION` | ensures one, 422 if it cannot | yes |
+
+`grep -rn "proceededAt" frontend/src` returns **0 hits**: no shipped client sends
+it. So the ordinary act of setting a Processing Date produced `processing_date`
+set / `proceeded_at` NULL — gated, silently, forever. The gate's own comment
+claimed to implement *"有 processing date 才来分配"*, and the rule was right; the
+column was not.
+
+**Both directions were wrong, and the test caught the second one.** On the
+pre-fix code the new test fails TWICE: an order with a Processing Date stayed
+`PENDING` (refused stock it should get), and an order with a bare `proceeded_at`
+and NO Processing Date came back `READY` (took stock it should not) — the second
+being the shape the owner saw as a false READY.
+
+**Fix.** The gate reads `processing_date`, via `SO_PROCESSING_DATE_COLUMN` so the
+next rename has one home. It reads that column **alone**: consulting both "to be
+safe" would give the rule a second home, which is exactly how it acquired a wrong
+one. This is the stop-reading step for `proceeded_at` and its last reachable
+decision.
+
+**Blast radius on production: UNKNOWN, and deliberately not invented.** The
+measurement needs `probe-proceed-split.yml` (branch
+`feat/processing-date-has-one-storage`, not yet on the default branch, so
+`workflow_dispatch` 404s). `unify-processing-date.yml` IS dispatchable and would
+answer it, but it prints document numbers into logs that are public on this repo,
+so it was not run. What IS established from source: the flip can only *regress* an
+order whose date sits in `proceeded_at` with `processing_date` NULL, and **no live
+path can create that row** — `autoProceed` requires a date, and the
+`IN_PRODUCTION` transition refuses without one. The historical population was
+migrated on 2026-08-13 (mig 0286 header: 519 company-1 orders moved, both
+companies verified at zero split). Run the probe once its branch lands.
+
+**Deferred, with reason — not fixed here.** `delivery-planning.ts` and
+`frontend/src/vendor/scm/lib/so-detail-gates.ts` still pass/read `proceeded_at`,
+but both go through the `soProcessingLocked` shape, which returns false as soon as
+`processing_date` is NULL and only falls back to `proceeded_at` when `status` is
+absent. Neither refuses anything today, so neither is bleeding. The dashboard
+summary endpoint also still ships `proceeded_at` to the client for bucketing
+(`mfg-sales-orders.ts`, `?summary=1`) — a display inconsistency, not a stock
+refusal. All three belong with the `proceeded_at` retirement.
+
+**The doc blessed the bug, which is why it survived.** `docs/modules/sales-order.md`
+described this exact behaviour and called it *"intended … the single most common
+'why is my order not READY'"*. The frequency it observed was real; the explanation
+was not, and anyone who read it went hunting for a missing proceed instead of a
+gate on the wrong column. That bullet now carries a dated correction quoting what
+it used to say.
+
+## One date format, written by hand at thirty sites and left to the operating system at a hundred and seventy-five more [high]
+
+<!-- area: Frontend + mobile -->
+
+**Symptom.** The owner sent a screenshot of New Sales Order and asked why the
+date format is not standardised across the system. The header read
+`Aug 16, 2026` and `Sep 12, 2026`; the line rows under it read `12/09/2026`. One
+screen, two spellings of the same kind of fact.
+
+**`Aug 16, 2026` is not a format this codebase authors.** Grepping for it returns
+nothing, because nothing writes it. `SalesOrderNew.tsx` Processing Date and
+Delivery Date were native `<input type="date">`, and a native date input renders
+its ISO value **in the operating system's locale**. On the owner's machine that
+is `Aug 16, 2026`; on a colleague's it is `16/08/2026` or `08/16/2026`. That is
+the same 「有时候 MMDDYYYY」 bug he reported on **2026-06-18**, for which
+`DateField` was built the same day — and which had reached **14** of 189 date
+inputs. 175 native ones remained, including both fields in the screenshot.
+
+**Underneath it, the rule had been written down twice and re-derived thirty
+times.** `frontend/src/lib/utils.ts` said *"House style is numeric DD/MM/YYYY
+(owner requirement — no 'Jun'/'Jul' month names anywhere on the desktop app)"*.
+`frontend/src/vendor/shared/format.ts` said *"System-wide canonical display
+format (Commander 2026-06-18)"* under a header claiming to be the *"SOLE source
+of truth — no inline duplicates anywhere in client OR server"*. Between and
+around them:
+
+- all **11** V2 LIST pages emitted `2026/08/16` from their own
+  `iso.replace(/-/g,'/')`, while all **8** V2 DETAIL pages emitted `16/08/2026`
+  from a copied regex reorder — so a list row and the page it opens spelled one
+  date two ways;
+- month-NAME arrays in the PO print template, the project run sheets and the POS
+  period labels produced `16 Aug 2026`, contradicting the owner's own recorded
+  instruction about month names;
+- Fleet rendered the storage shape (`2026-08-16`) straight at the user;
+- three screens called bare `.toLocaleString()` and got whatever the machine said;
+- timestamps existed in three spellings, one of whose docstrings claimed an
+  output (`"4 May 2026, 11:20 AM"`) the code has never produced.
+
+The same files that hand-wrote `fmtDate` were **already importing `fmtCenti`
+from the shared module on the line above**. Money had gone the other way; dates
+had not.
+
+**Two live defects in the shared formatter, invisible from Malaysia.** `fmtDate`
+was `new Date(d).toLocaleDateString('en-GB', …)`. `new Date('2026-08-16')` is
+parsed as UTC midnight, so under `TZ=America/Los_Angeles` it rendered
+**`15/08/2026`** — the wrong day — while under `TZ=Asia/Kuala_Lumpur` it was
+correct, which is why nobody in the office could ever reproduce it.
+`fmtDate(null)` returned **`01/01/1970`** and `fmtDate('16/08/2026')` returned
+**`Invalid Date`**. `SalesOrderDetail.tsx` documents dodging the first of these
+by hand rather than fixing it.
+
+**Fix.** One rule with one home. `fmtDate` / `fmtDateTime` / `fmtTimestamp` /
+`fmtTime` in `frontend/src/vendor/shared/format.ts`, mirrored byte-identically
+into `backend/src/scm/shared/format.ts` (`check-shared-mirrors.mjs` is the
+referee), branching on the input's SHAPE: a value carrying no timezone is shown
+verbatim, a real instant is converted once into GMT+8 by fixed offset
+arithmetic rather than an ICU lookup. Null-safe, invalid-safe and idempotent.
+~30 local helpers deleted and pointed at it; every one of the 175 native date
+inputs now renders through `DateField`, five of them via the wrapper components
+they sit behind. CSV export emits ISO independently of display, because
+converging the list pages onto DD/MM/YYYY would otherwise have broken sorting in
+every exported sheet.
+
+**The class, for next time.** This is `docs/bug-classes.md` **class E**, and the
+third instance in one week — the transfer-label vocabulary and the
+both-dates-or-neither rule were each found written five times, each enforced
+slightly differently, each missing from at least one path. The rule here was not
+forgotten: it was written down, in the right words, in the file most likely to
+be read, and reproduced anyway, because **there was no import that would have
+given it to you**. Writing it down a third time was the move that had already
+failed twice, so it is enforced instead:
+`backend/scripts/check-date-formatting.mjs`, wired into the required
+`backend-typecheck` job, fails on a new hand-spelled date unless somebody adds
+it to a reviewed allowlist with a reason.
+
+The gate is proved rather than assumed. `backend/tests/dateFormatGate.test.ts`
+plants a date format outside the source tree on every CI run, asserts exit 1,
+removes it and asserts exit 0 — and separately asserts it does NOT fire on money
+or row counts, because a gate that cries wolf is a gate somebody deletes. Run by
+hand during this work, the planted line
+(`toLocaleDateString('en-US', { month: 'short', … })`) produced the string
+`Aug 16, 2026` — the owner's screenshot, reproduced from source and then caught.
+## The word a customer saw for a rejected service case was `voided` — and it was a step label on every sales-portal page [high]
+
+<!-- area: Service cases (ASSR) -->
+
+**Symptom.** The customer tracking portal rendered the raw database slug
+`voided` where a stage name belongs. The printed service report, for the same
+case, said "Voided — Not Valid".
+
+**Not one page. Every sales-portal page.** `portal.ts:120-135` builds the
+salesperson stepper by mapping `ALL_STAGES` through `customerStatusFor`, and
+`voided` is in `ALL_STAGES` (`backend/src/services/assr.ts:100-109`). So the
+slug appeared as a STEP LABEL on every sales view of every case, whatever stage
+that case was on — not only on the voided ones. The obvious refutation, that a
+voided case never reaches the portal, does not hold either: `resolveTrackToken`
+(`caseTracking.ts:204-234`) gates on token existence, `revoked_at` and
+`expires_at`, and `caseTrack.ts:19-29` adds nothing. No code path consults the
+case's stage.
+
+**Root cause — one rule, five hand-written homes, and the customer-facing one
+was the copy that never learned.** `customerStatusFor`
+(`caseTracking.ts:277-304`) was a switch over nine stages plus six legacy
+aliases ending `default: return { label: stage || "Unknown" }`. It had no
+`voided` arm — `grep -n voided backend/src/services/caseTracking.ts` returned
+rc=1, zero hits. The other four copies:
+
+| Copy | `voided` |
+|---|---|
+| `caseTracking.ts` `customerStatusFor` — THE CUSTOMER'S | absent → raw slug |
+| `assr_print.ts:95-110` `STAGE_LABEL` | "Voided — Not Valid" |
+| `assrFormIntake.ts:360-369` `SHEET_STATUS` | "Voided" |
+| `vendor/scm/lib/assr/stages.ts` `ASSR_STAGES.long` | absent (correctly) |
+| `MobileServiceCase.tsx` `prettyStage` | a literal bolted on top of the above |
+
+Three different answers for one stage, and the one the customer read was not
+English. Nobody was careless. `customerStatusFor` predates `voided`; the ordered
+stepper legitimately has no row for a terminal alt-outcome yet also owned the
+WORDS, so every surface that needed a word for a non-step had to invent one.
+`assr_print.ts:111-115` states the lesson in the file itself — "the document and
+the app showing the same case different words is what sent us looking in the
+first place" — and it was written over `RESOLUTION_LABEL` and never applied to
+`STAGE_LABEL`, the map immediately above it in the same file.
+
+**Fix.** `backend/src/scm/shared/assr-stage-labels.ts`, mirrored byte-identically
+to `frontend/src/vendor/scm/lib/assr-stage-labels.ts`. That pair of paths is the
+point: `check-shared-mirrors.mjs` enumerates `backend/src/scm/shared` with
+`readdirSync` (non-recursive) and looks the basename up in
+`frontend/src/vendor/shared` and `frontend/src/vendor/scm/lib`, so landing the
+table there puts the EXISTING `--strict` CI gate in front of any future drift
+with no new script — and is why the file sits at the top level of `scm/lib` and
+not in the `assr/` subdirectory. Seven surfaces now read it: `caseTracking.ts`,
+`assr_print.ts`, `assrFormIntake.ts`, `assr/stages.ts` (`long` is read, never
+retyped), `MobileServiceCase.tsx`, `ServiceCases.tsx`, `MyCases.tsx`,
+`PortalSupplierCase.tsx`.
+
+**A sixth instance, found while wiring.** `MobileServiceCase.tsx`'s stage-change
+confirm read `STAGES[STAGE_INDEX[target]]?.long ?? target` — the same
+missing-row hole, in the same file that had already patched around it once, so
+moving a case to voided on mobile asked "Move to voided?". It calls
+`prettyStage` now.
+
+**Which answer was chosen, and why.** The copies had drifted, so this is a
+choice and not a no-op. `voided` → "Voided — Not Valid": five of the six
+app-side literals already said exactly that, and a raw slug is nobody's intended
+copy. The pill colour stays grey — what `voided` already resolved to through the
+missing-arm default — so only the word changes. Every other stage's label and
+colour is asserted byte-for-byte against the pre-change switch.
+
+**Two things deliberately NOT swept up.**
+1. `SHEET_STATUS` overlaps but is not the same map. `assrFormIntake.ts:355-359`
+   records that the ops sheet's stats block counts these EXACT strings and that
+   "Pending Delivery/Service" has no spaces around the slash. It moved into the
+   shared file as its own named export, explicitly the SHEET's vocabulary, with
+   its strings pinned byte-identical to what shipped. Folding it into the app's
+   words would silently break a spreadsheet's counters.
+2. `pending_supplier_pickup` has two owner-visible wordings — "Supplier Pickup /
+   Return" in the app and on paper, "Pending Supplier Pickup" in the portal — and
+   both look deliberate. That is a wording decision, not a bug, so both are
+   preserved exactly and the difference is reduced to a two-line
+   `ASSR_CUSTOMER_STAGE_LABEL` override map that is a question for the owner. If
+   he unifies them, the map is deleted.
+
+**What stops the sixth copy.** `backend/tests/assrStageLabelOneHome.test.ts`
+scans the three backend files that own the question and fails on any re-typed
+stage label, on any of them dropping the import, and on `portal.ts` answering
+any of its three questions another way;
+`frontend/src/vendor/scm/lib/assr-stage-labels.canonical.test.ts` does the same
+for the four frontend surfaces and asserts the two copies are byte-identical.
+Both were proven by un-wiring: deleting the `voided` row failed 5 assertions with
+`voided has no customer wording: expected 'voided' not to be 'voided'` — the
+original bug, reproduced; re-growing a local map in `assr_print.ts` failed with
+`src/routes/assr_print.ts:323`, naming the file and line.
 ## The deploy uploaded secrets before deploying, and Cloudflare refused both — 8 merges stuck out of production [high]
 
 **Symptom.** Eight consecutive `Deploy` runs failed from 2026-08-18T01:08 MYT.

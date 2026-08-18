@@ -30,6 +30,7 @@ import {
 } from '../../vendor/scm/lib/stock-queries';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -340,12 +341,7 @@ export const StockTransferNew = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Transfer Date *</span>
-              <input
-                type="date"
-                value={transferDate}
-                onChange={(e) => setTransferDate(e.target.value)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={transferDate} onChange={(iso) => setTransferDate(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>

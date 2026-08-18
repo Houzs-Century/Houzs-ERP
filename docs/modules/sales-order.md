@@ -136,12 +136,37 @@ never bare `isMainReady`** — see §0.5 for why that distinction exists.
 
 Two things gate it that are easy to miss:
 
-- **No Processing Date, no allocation.** An SO with `proceeded_at` NULL is in
+- **No Processing Date, no allocation.** An SO with `processing_date` NULL is in
   `allocGated`: its lines still walk, but they are FORCED to `PENDING`, never
   consume a stock bucket and never claim a sofa batch. Owner's rule, 2026-08-10:
-  *"有 processing date 才来分配"*. So an order with stock physically available
-  will sit at PENDING / CONFIRMED until it is proceeded. This is intended, and it
-  is the single most common "why is my order not READY".
+  *"有 processing date 才来分配"*. So an order that genuinely has no Processing
+  Date will sit at PENDING / CONFIRMED however much stock is on the shelf. That
+  much is intended.
+
+  > **CORRECTION (2026-08-18) — the previous version of this bullet described a
+  > BUG and called it intended, which is why the bug survived.**
+  >
+  > It read: *"An SO with `proceeded_at` NULL is in `allocGated` … This is
+  > intended, and it is the single most common 'why is my order not READY'."*
+  >
+  > The gate really did read `proceeded_at`, and that was the defect, not the
+  > design. No shipped client writes `proceeded_at` when an operator sets a
+  > Processing Date: CREATE persists the date to `processing_date` and stamps
+  > `proceeded_at` only when the order *also* clears the proceed gate
+  > (`autoProceed`); the header PATCH writes the date and never stamps a proceed;
+  > and no frontend sends `proceededAt` at all. So an order given a Processing
+  > Date on the detail screen locked, showed on the delivery board and pushed to
+  > AutoCount as PDate while **every line was forced PENDING** — never consuming
+  > a bucket, never claiming a sofa batch, never reaching READY_TO_SHIP — with
+  > the goods physically in the warehouse, and with no error, no log and nothing
+  > on screen. The frequency the old text observed was real; the explanation was
+  > not. Anyone who read this page went looking for a missing proceed instead of
+  > a gate on the wrong column.
+  >
+  > The gate now reads `processing_date`, the one column every write path
+  > actually sets. It reads that column ALONE and deliberately does not also
+  > consult `proceeded_at`: a second home for the rule is how it acquired a wrong
+  > one. See BUG-HISTORY 2026-08-18.
 - **A human editing the order defers the header, not the lines.** If the SO's
   edit lease is held, the line-level flip commits and the header transition is
   recorded in `deferredDocNos` for a later sweep. A deferral is not an error.
@@ -1286,14 +1311,51 @@ that is not what the code does:
 
 | path | enforced by |
 |---|---|
-| create-time auto-stamp of `proceeded_at`, and both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`) | `meetsProceedGate` (`order-rules.ts:71`), called at `mfg-sales-orders.ts:624` and `:5110` — its ONLY two call sites |
-| setting the processing date | `so-save-problems.ts` — the four completeness checks written out INLINE, plus `meetsDepositGate` for the money (imported at `:20`, called at `:187`). It contains **zero** references to `meetsProceedGate` |
+| create-time auto-stamp of `proceeded_at`, and both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`) | `meetsProceedGate` (`order-rules.ts`). The create site reads it directly; both manual proceed paths reach it through `soProceedGateBlocked` (`backend/src/scm/lib/so-proceed-gate.ts`) → `collectProceedGateProblems` (`so-save-problems.ts`) |
+| setting the processing date | `so-save-problems.ts` `collectProcessingGateProblems` — the four completeness conditions plus `meetsDepositGate` for the money. It contains **zero** references to `meetsProceedGate` |
 
 Both sites read the same per-company threshold through the shared
 `processingDateThresholdFor` and demand the same four facts, so the rule is one
-rule TODAY. It is one rule by agreement, not by construction — edit either and
-re-check the other. Believing the two shared a function is how a rule change
-would land on half the system.
+rule TODAY. The two PREDICATES are still one rule by agreement, not by
+construction — edit either and re-check the other. Believing the two shared a
+function is how a rule change would land on half the system.
+
+Their WORDING, since 2026-08-18, is one table by construction: both render every
+condition through `completenessProblem` / `depositProblem` in `so-save-problems.ts`,
+which differ only in a trailing clause ("before a Processing Date can be set" vs
+"before this order can be proceeded"). `tests/soProceedRefusalWiring.test.ts`
+fails if either grows its own sentence.
+
+**A REFUSAL NAMES THE CONDITION THAT FAILED (2026-08-18).** The proceed paths
+used to refuse with ONE stored sentence naming all five conditions whenever any
+single one was unmet. On 2026-08-17 that cost the owner a day: he read the word
+"deposit" on a ZERO-TOTAL order and chased a money bug that did not exist — the
+deposit term is vacuously met at `total <= 0` (`meetsDepositGate`), and the order
+was missing its postcode. The 422 body now is:
+
+```json
+{
+  "error": "proceed_gate_unmet",
+  "reason": "Delivery postcode is required before this order can be proceeded",
+  "problems": [
+    { "code": "processing_date_incomplete",
+      "message": "Delivery postcode is required before this order can be proceeded",
+      "field": "Postcode" }
+  ]
+}
+```
+
+`error` is unchanged — clients match on it, and this is additive. `problems` is
+the SAME aggregated key the save gate uses (`validationFailedBody`), so the
+surfaces that already render every reason at once (`parseSaveProblems`, owner
+2026-07-18) picked it up with no client change. The deposit line states the real
+shortfall (paid, needed, company %) and **never appears for a zero-or-negative
+total** — `depositProblem` asks `meetsDepositGate` rather than testing the total
+itself, so it cannot drift back.
+
+`meetsProceedGate` is now DEFINED as `proceedGateFailures(i).length === 0`. The
+verdict and the list of reasons are one expression, not two readings of one rule
+— which is the only shape in which they cannot disagree about an input.
 
 > A note on the money predicate, because the name is a trap: there is no
 > `meetsProcessingDatePaymentGate` any more. `order-rules.ts:82-87` records it
