@@ -66,7 +66,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/autocount-outbox.ts` | 2 | 598 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1162 |
-| `backend/src/scm/routes/consignment-orders.ts` | 19 | 2332 |
+| `backend/src/scm/routes/consignment-orders.ts` | 19 | 2321 |
 | `backend/src/scm/routes/consignment-returns.ts` | 9 | 1164 |
 | `backend/src/scm/routes/currencies.ts` | 3 | 148 |
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
@@ -103,7 +103,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1226 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4591 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11887 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11836 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1615 |
@@ -171,13 +171,13 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1461 files, 581795 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1463 files, 582509 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15120 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11887 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11836 |
 | `frontend/src/pages/ServiceCases.tsx` | 8844 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5790 |
@@ -188,7 +188,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4591 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4489 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4189 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4199 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3727 |
 | `backend/src/scm/routes/grns.ts` | 3648 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
