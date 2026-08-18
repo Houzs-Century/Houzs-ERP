@@ -26,7 +26,7 @@ test("uses production relation names, payment view and hot indexes, never perf_*
     "trgm_mfg_prod_code",
     "trgm_users_name",
   ]) assert.match(PG_REAL_SCHEMA_DDL, new RegExp(index));
-  assert.match(PG_REAL_SCHEMA_DDL, /sum\(amount_centi\).*paid_total/s);
+  assert.match(PG_REAL_SCHEMA_DDL, /sum\(amount_sen\).*paid_total/s);
 });
 
 test("seeds requested cardinality for each of two tenants", () => {

@@ -127,9 +127,9 @@ CREATE TABLE IF NOT EXISTS purchase_consignment_orders (
   po_date             DATE NOT NULL DEFAULT current_date,
   expected_at         DATE,
   currency            currency_code NOT NULL DEFAULT 'MYR',
-  subtotal_centi      INTEGER NOT NULL DEFAULT 0,
-  tax_centi           INTEGER NOT NULL DEFAULT 0,
-  total_centi         INTEGER NOT NULL DEFAULT 0,
+  subtotal_sen      INTEGER NOT NULL DEFAULT 0,
+  tax_sen           INTEGER NOT NULL DEFAULT 0,
+  total_sen         INTEGER NOT NULL DEFAULT 0,
   notes               TEXT,
   submitted_at        TIMESTAMPTZ,
   received_at         TIMESTAMPTZ,
@@ -154,8 +154,8 @@ CREATE TABLE IF NOT EXISTS purchase_consignment_order_items (
   material_name           TEXT NOT NULL,
   supplier_sku            TEXT,
   qty                     INTEGER NOT NULL,
-  unit_price_centi        INTEGER NOT NULL,
-  line_total_centi        INTEGER NOT NULL,
+  unit_price_sen        INTEGER NOT NULL,
+  line_total_sen        INTEGER NOT NULL,
   received_qty            INTEGER NOT NULL DEFAULT 0,
   notes                   TEXT,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -173,8 +173,8 @@ CREATE TABLE IF NOT EXISTS purchase_consignment_order_items (
   description             TEXT,
   description2            TEXT,
   uom                     TEXT NOT NULL DEFAULT 'UNIT',
-  discount_centi          INTEGER NOT NULL DEFAULT 0,
-  unit_cost_centi         INTEGER NOT NULL DEFAULT 0,
+  discount_sen          INTEGER NOT NULL DEFAULT 0,
+  unit_cost_sen         INTEGER NOT NULL DEFAULT 0,
   -- ── 0065 per-line delivery date + ship-to warehouse ────────────────────────
   delivery_date           DATE,
   warehouse_id            UUID REFERENCES warehouses(id) ON DELETE SET NULL
@@ -209,9 +209,9 @@ CREATE TABLE IF NOT EXISTS purchase_consignment_receives (
   updated_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- ── 0101 currency + per-document money rollups ─────────────────────────────
   currency            currency_code NOT NULL DEFAULT 'MYR',
-  subtotal_centi      INTEGER NOT NULL DEFAULT 0,
-  tax_centi           INTEGER NOT NULL DEFAULT 0,
-  total_centi         INTEGER NOT NULL DEFAULT 0
+  subtotal_sen      INTEGER NOT NULL DEFAULT 0,
+  tax_sen           INTEGER NOT NULL DEFAULT 0,
+  total_sen         INTEGER NOT NULL DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_pcr_po       ON purchase_consignment_receives(purchase_consignment_order_id);
 CREATE INDEX IF NOT EXISTS idx_pcr_supplier ON purchase_consignment_receives(supplier_id);
@@ -231,7 +231,7 @@ CREATE TABLE IF NOT EXISTS purchase_consignment_receive_items (
   qty_accepted            INTEGER NOT NULL,
   qty_rejected            INTEGER NOT NULL DEFAULT 0,
   rejection_reason        TEXT,
-  unit_price_centi        INTEGER NOT NULL,
+  unit_price_sen        INTEGER NOT NULL,
   notes                   TEXT,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
   -- ── 0057 variant + pricing columns ─────────────────────────────────────────
@@ -248,11 +248,11 @@ CREATE TABLE IF NOT EXISTS purchase_consignment_receive_items (
   description             TEXT,
   description2            TEXT,
   uom                     TEXT NOT NULL DEFAULT 'UNIT',
-  discount_centi          INTEGER NOT NULL DEFAULT 0,
+  discount_sen          INTEGER NOT NULL DEFAULT 0,
   -- ── 0101 line money + date + cost + supplier sku ───────────────────────────
-  line_total_centi        INTEGER NOT NULL DEFAULT 0,
+  line_total_sen        INTEGER NOT NULL DEFAULT 0,
   delivery_date           DATE,
-  unit_cost_centi         INTEGER NOT NULL DEFAULT 0,
+  unit_cost_sen         INTEGER NOT NULL DEFAULT 0,
   supplier_sku            TEXT,
   -- ── 0106 consumption tracking (invoiced / returned against this line) ───────
   invoiced_qty            INTEGER NOT NULL DEFAULT 0,
@@ -280,7 +280,7 @@ CREATE TABLE IF NOT EXISTS purchase_consignment_returns (
   posted_at         TIMESTAMPTZ,
   completed_at      TIMESTAMPTZ,
   credit_note_ref   TEXT,
-  refund_centi      INTEGER NOT NULL DEFAULT 0,
+  refund_sen      INTEGER NOT NULL DEFAULT 0,
   notes             TEXT,
   created_at        TIMESTAMPTZ NOT NULL DEFAULT now(),
   created_by        UUID NOT NULL REFERENCES staff(id) ON DELETE RESTRICT,
@@ -303,8 +303,8 @@ CREATE TABLE IF NOT EXISTS purchase_consignment_return_items (
   material_code           TEXT NOT NULL,
   material_name           TEXT NOT NULL,
   qty_returned            INTEGER NOT NULL,
-  unit_price_centi        INTEGER NOT NULL DEFAULT 0,
-  line_refund_centi       INTEGER NOT NULL DEFAULT 0,
+  unit_price_sen        INTEGER NOT NULL DEFAULT 0,
+  line_refund_sen       INTEGER NOT NULL DEFAULT 0,
   reason                  TEXT,
   notes                   TEXT,
   created_at              TIMESTAMPTZ NOT NULL DEFAULT now(),
