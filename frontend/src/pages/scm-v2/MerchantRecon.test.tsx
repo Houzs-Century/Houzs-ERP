@@ -168,8 +168,13 @@ describe('the reconcile tab', () => {
      transaction 吧. Both kinds of not-matched, named, on the landing view. */
   test('the landing shows only what is not matched yet, from both sides', () => {
     draw();
-    // a report with lines still to decide, split by which kind of problem
-    expect(screen.getByText('1 to confirm · 1 to choose · 1 with no sale in the ERP')).toBeTruthy();
+    /* The report's OWN LINES, with the sale each matched — the same two columns
+       as the upload summary. A file name is not a transaction. */
+    expect(screen.getAllByText(/The merchant.s line/).length).toBeGreaterThan(0);
+    expect(screen.getByText('SO-2608-043')).toBeTruthy();          // the matched sale
+    expect(screen.getByText('Reconcile')).toBeTruthy();
+    /* Lines already decided are not work, so they are not on the work list. */
+    expect(screen.queryByText('JE-2608-0011')).toBeNull();
     // and the payments the sales team keyed in that no report has reported
     expect(screen.getByText('Card payments no merchant report has reported yet (1)')).toBeTruthy();
     expect(screen.getByText('SO-2607-088')).toBeTruthy();

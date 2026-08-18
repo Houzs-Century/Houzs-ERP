@@ -250,38 +250,13 @@ const ReconcileTab = () => {
             Nothing to reconcile — every merchant report you have uploaded is done.
           </div>
         )}
-        {open.length > 0 && (
-          <table style={table}>
-            <thead>
-              <tr style={headRow}>
-                <th style={cell}>Merchant</th><th style={cell}>Report</th><th style={cell}>Period</th>
-                <th style={num}>Lines</th><th style={cell}>What is left</th><th style={cell} />
-              </tr>
-            </thead>
-            <tbody>
-              {open.map((b) => (
-                <tr key={b.id} style={rowLine}>
-                  <td style={cell}><span className={styles.codeChip}>{b.acquirer_code}</span></td>
-                  <td style={cell}>{b.file_name}</td>
-                  <td style={cell}>{b.period_from} → {b.period_to}</td>
-                  <td style={num}>{b.row_count}</td>
-                  {/* THREE kinds of not-done, named, because each is a different
-                      amount of work: press a button, make a choice, or find a
-                      sale nobody recorded. */}
-                  <td style={cell}>
-                    {[(b.to_confirm_count ?? 0) > 0 ? `${b.to_confirm_count} to confirm` : null,
-                      (b.to_choose_count ?? 0) > 0 ? `${b.to_choose_count} to choose` : null,
-                      (b.no_record_count ?? 0) > 0 ? `${b.no_record_count} with no sale in the ERP` : null]
-                      .filter(Boolean).join(' · ') || `${b.open_count} to decide`}
-                  </td>
-                  <td style={cell}>
-                    <button type="button" style={btn(true)} onClick={() => setBatchId(b.id)}>Reconcile</button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
+        {/* Every line still to do, with the sale it matched — the same two
+            columns as the upload summary, for the same reason: a file name is
+            not a transaction (owner: 显示 transaction detail 和 sales order
+            detail, 而不是 document 罢了). */}
+        {open.map((b) => (
+          <BatchLines key={b.id} batch={b} openOnly onOpen={setBatchId} />
+        ))}
         {/* Done, and therefore not on this screen's list — but say so, and say
             where they went, so "it disappeared" never has to be a question. */}
         {cleared.length > 0 && (
@@ -447,9 +422,14 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
   );
 };
 
-const BatchLines = ({ batch, onOpen }: { batch: SettlementBatch; onOpen: (id: number) => void }) => {
+const BatchLines = ({ batch, onOpen, openOnly }: {
+  batch: SettlementBatch; onOpen: (id: number) => void; openOnly?: boolean;
+}) => {
   const q = useSettlementBatch(batch.id);
-  const rows = q.data?.rows ?? [];
+  const all = q.data?.rows ?? [];
+  /* On the work list, only what is still to do — a line already decided is not
+     work. On the upload summary, everything the file contained. */
+  const rows = openOnly ? all.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED') : all;
 
   return (
     <section className="space-y-2">
@@ -460,7 +440,9 @@ const BatchLines = ({ batch, onOpen }: { batch: SettlementBatch; onOpen: (id: nu
           {batch.period_from} → {batch.period_to} · {batch.row_count} line(s) · net {fmt(batch.net_sen)}
         </span>
         <span style={{ flex: 1 }} />
-        <button type="button" style={btn()} onClick={() => onOpen(batch.id)}>Open</button>
+        <button type="button" style={btn(openOnly === true)} onClick={() => onOpen(batch.id)}>
+          {openOnly ? 'Reconcile' : 'Open'}
+        </button>
       </div>
 
       {q.isLoading && <div style={softText}>Reading its lines…</div>}
