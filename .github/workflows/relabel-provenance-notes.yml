@@ -22,9 +22,12 @@ name: Relabel PO provenance notes (DRY-RUN gated)
 # IDEMPOTENT: a note already on the current label is not planned, so a second
 # apply run writes nothing.
 #
-# ROLLBACK: download the manifest artifact from the run, then dispatch this
-# workflow with mode=revert and pass the manifest path. Revert only restores
-# rows that still hold exactly what the migration wrote.
+# ROLLBACK: dispatch this workflow with mode=revert and set manifest_run_id to
+# the RUN ID of the apply run. The job downloads that run's manifest artifact
+# into backend/out/ for you — a fresh checkout has no manifest, so before this
+# step existed mode=revert died on ENOENT during the one event it exists for.
+# Revert only restores rows that still hold exactly what the migration wrote,
+# and it now FAILS (non-zero, every row named) on any it could not put back.
 #
 # DRY-RUN unless apply=1 AND confirm is typed out in full.
 on:
@@ -53,6 +56,11 @@ on:
         required: false
         default: "out/relabel-provenance-notes.json"
         type: string
+      manifest_run_id:
+        description: "mode=revert: run id of the APPLY run whose manifest artifact to restore from"
+        required: false
+        default: ""
+        type: string
       confirm:
         description: 'apply=1 only: type exactly  relabel provenance notes'
         required: false
@@ -67,6 +75,11 @@ jobs:
   relabel:
     runs-on: ubuntu-latest
     environment: Production
+    # `actions: read` is what lets download-artifact reach ANOTHER run's
+    # artifact, which is the only place a rollback manifest ever lives.
+    permissions:
+      contents: read
+      actions: read
     defaults:
       run:
         working-directory: backend
@@ -78,6 +91,20 @@ jobs:
           cache: npm
           cache-dependency-path: backend/package-lock.json
       - run: npm ci
+
+      # THE ROLLBACK'S MISSING HALF. The manifest is the entire restore image and
+      # it lives in the apply run's artifacts, not in git — so a revert dispatch
+      # on a fresh checkout used to reach `readFileSync` on a path that does not
+      # exist and die with a stack trace, during an incident.
+      - name: Fetch the apply run's manifest
+        if: inputs.mode == 'revert'
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ inputs.manifest_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          pattern: relabel-provenance-notes-apply-*
+          merge-multiple: true
+          path: backend/out
 
       # The invariant this migration rests on is a unit test, so prove it on
       # this commit BEFORE touching production rather than after.

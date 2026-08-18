@@ -362,7 +362,7 @@ function CardsGrid({ rows, onOpen }: { rows: DoRow[]; onOpen: (r: DoRow) => void
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div className="min-w-0">
                 <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
-                  From SO
+                  {transferFromColumnLabel('so')}
                 </div>
                 <div className="mt-0.5 truncate font-mono text-[12px] font-semibold text-ink-secondary">
                   {soOf(r)}

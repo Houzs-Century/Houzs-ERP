@@ -578,7 +578,7 @@ function GoodsReceivedDetailV2ReadOnly() {
                 {poOf(grn) !== "—" && (
                   <>
                     <Divider />
-                    <span>From PO <span className="font-mono font-semibold text-ink-secondary">{poOf(grn)}</span></span>
+                    <span>{transferFromColumnLabel('po')} <span className="font-mono font-semibold text-ink-secondary">{poOf(grn)}</span></span>
                   </>
                 )}
                 {grn.delivery_note_ref && (

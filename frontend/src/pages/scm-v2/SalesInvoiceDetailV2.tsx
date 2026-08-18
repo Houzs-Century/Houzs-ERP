@@ -1117,7 +1117,7 @@ export function SalesInvoiceDetailV2() {
                   <>
                     <Divider />
                     <span>
-                      From DO{" "}
+                      {transferFromColumnLabel('do')}{" "}
                       <span className="font-mono font-semibold text-ink-secondary">
                         {doOf(salesInvoice)}
                       </span>
@@ -1128,7 +1128,7 @@ export function SalesInvoiceDetailV2() {
                   <>
                     <Divider />
                     <span>
-                      From SO{" "}
+                      {transferFromColumnLabel('so')}{" "}
                       <span className="font-mono font-semibold text-ink-secondary">
                         {soOf(salesInvoice)}
                       </span>

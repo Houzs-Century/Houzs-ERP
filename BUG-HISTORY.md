@@ -76,6 +76,55 @@ migration wrote. Exercised end to end against an in-memory driver: 7 of 12 rows
 migrated, second apply wrote zero, revert returned every note byte-exact. The
 post-condition was then verified non-vacuous by corrupting one write and
 confirming the job fails and prints the revert command.
+
+**What review found in the rollback, and what it now does.** The rollback could
+not restore the rows its own failure message pointed at, and said it had.
+`MODE=revert` updates `WHERE id = <id> AND notes = <after>` — only rows still
+holding exactly what the migration wrote. But every row that can trip the
+post-condition is, by construction, a row whose `notes` is NOT `after`: the
+violation is literally "stored bytes are not what was written". So the apply run
+would fail, print `Revert with the manifest artifact`, and the revert it named
+would match zero of those rows — reporting each through `warn()` (a
+`::warning::` does not fail an Actions job) and ending on an unconditional
+`process.exit(0)`. A green job, an operator who believes the rollback completed,
+and the corrupted provenance still there. Three changes: an unrestorable row is
+now a `fail()` with its PO number and exits NON-ZERO; a revert that restores
+zero of a non-empty manifest is itself a failure; and the apply run's
+instruction now says plainly that rows flagged "stored bytes are not what was
+written" will NOT be restored by that command and must be recovered by hand from
+the manifest's `before`.
+
+A DRY-RUN revert was weaker still — `if (!APPLY) continue` skipped the loop
+entirely and then printed `would attempt N restore(s)`, N being the manifest's
+own length, which is true even when not one row could come back. It now READS
+each row and answers the question actually being asked: how many would restore.
+
+**The rollback route itself was inoperable.** The workflow's header documented
+"download the manifest artifact from the run, then dispatch with mode=revert",
+but the job had no `download-artifact` step and no input carrying the manifest's
+CONTENTS — only a path defaulting to `out/relabel-provenance-notes.json`, which
+does not exist in a fresh checkout. `readFileSync` would throw ENOENT during the
+one event the path exists for. There is now a `manifest_run_id` input and a
+`download-artifact` step (with `actions: read`) that pulls the apply run's
+artifact into `backend/out/`, and the script answers a missing manifest with a
+sentence naming the fix instead of a stack trace.
+
+**The leftover count was miscounting successes as failures.** The closing check
+excluded rows matching `^\s*Transfer from Sales Order:`. Postgres ARE is not
+newline-sensitive by default, so `^` anchors to the start of the whole string
+and `\s*` cannot consume `Rush job.\n` — a correctly migrated multi-line note
+(a first-class case the corpus carries) was counted as NOT migrated. The
+predicate now asks whether the note contains the current label at all, which
+needs no anchor and no newline flag.
+
+**The rename had left three screens speaking two languages.** `GoodsReceivedDetailV2`
+showed `From PO HC-PO-…` in its header and `Transfer From (PO)  HC-PO-…` in the
+Receipt-info grid below it; `SalesInvoiceDetailV2` and `DeliveryReturnDetailV2`
+the same, and four list pages kept the old wording in the card view while the
+table and drawer used the new one. Before this PR each of those screens said one
+thing. Eight hand-written labels now call `transferFromColumnLabel` like the
+other twenty-four sites, so the count of live wordings for that relationship is
+one everywhere it is a document lineage.
 ## The deploy uploaded secrets before deploying, and Cloudflare refused both — 8 merges stuck out of production [high]
 
 **Symptom.** Eight consecutive `Deploy` runs failed from 2026-08-18T01:08 MYT.

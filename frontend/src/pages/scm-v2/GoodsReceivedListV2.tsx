@@ -224,7 +224,7 @@ function CardsGrid({ rows, onOpen }: { rows: GrnRow[]; onOpen: (r: GrnRow) => vo
             </div>
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div className="min-w-0">
-                <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">From PO</div>
+                <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{transferFromColumnLabel('po')}</div>
                 <div className="mt-0.5 truncate font-mono text-[12px] font-semibold text-ink-secondary">{poOf(r)}</div>
               </div>
               <span className="font-money text-[15px] font-bold text-ink">{fmtRm(totalOf(r))}</span>

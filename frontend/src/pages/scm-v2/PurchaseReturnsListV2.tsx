@@ -204,7 +204,7 @@ function CardsGrid({ rows, onOpen }: { rows: PrRow[]; onOpen: (r: PrRow) => void
             )}
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div className="min-w-0">
-                <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">From GRN</div>
+                <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{transferFromColumnLabel('grn')}</div>
                 <div className="mt-0.5 truncate font-mono text-[12px] font-semibold text-ink-secondary">{sourceOf(r)}</div>
               </div>
               <div className="text-right">

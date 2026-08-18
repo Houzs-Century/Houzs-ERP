@@ -44,6 +44,14 @@
 // `after` — so a note a human edited after the migration is left alone and
 // reported, never silently overwritten with a stale value.
 //
+// A ROW IT CANNOT RESTORE IS A FAILURE, NOT A WARNING. That is the whole point:
+// the rows most likely to be unrestorable are the ones the post-condition
+// flagged as "stored bytes are not what was written", i.e. exactly the rows the
+// apply run tells you to roll back. The revert exits NON-ZERO and names every
+// one of them, and a dry-run revert READS each row so it can tell you in advance
+// how many would actually come back — rather than reporting the manifest's own
+// length as if it were a restore count.
+//
 // ── IDEMPOTENCE ─────────────────────────────────────────────────────────────
 // relabelProvenanceNote returns its input BY IDENTITY when the label is already
 // current, so a row already migrated is not planned at all. A second APPLY run
@@ -170,34 +178,83 @@ try {
 
   // ── REVERT ────────────────────────────────────────────────────────────────
   if (MODE === "revert") {
-    const manifest = JSON.parse(readFileSync(MANIFEST, "utf8"));
+    /* The manifest is the whole restore image and it is NOT in git — it is an
+       artifact of the apply run. Say that, rather than letting readFileSync
+       throw ENOENT with a stack trace at the one moment this path is used. */
+    let manifestRaw;
+    try {
+      manifestRaw = readFileSync(MANIFEST, "utf8");
+    } catch (e) {
+      fail(`no manifest at ${MANIFEST} (${e?.code ?? e?.message ?? e}).`);
+      fail(`The manifest is an ARTIFACT of the apply run, not a file in the repo.`);
+      fail(`In Actions: dispatch with mode=revert and manifest_run_id=<the apply run's id>.`);
+      fail(`Locally: download it from that run's artifacts and pass MANIFEST=<path>.`);
+      await pg.end({ timeout: 5 });
+      process.exit(1);
+    }
+    const manifest = JSON.parse(manifestRaw);
     const rows = manifest.rows ?? [];
     log(`manifest ${MANIFEST}: ${rows.length} row(s), written ${manifest.generated_at}`);
     if (rows.length === 0) {
       log("nothing to revert.");
     } else {
       let restored = 0;
-      let skipped = 0;
+      const stuck = [];
       for (const r of rows) {
-        if (!APPLY) continue;
-        // Only where the row still holds exactly what we wrote. A note edited
-        // by a human since the migration is NOT ours to overwrite.
+        if (!APPLY) {
+          /* A DRY RUN THAT SKIPS THE LOOP TESTS NOTHING. This used to `continue`
+             and then print "would attempt N restore(s)" — N being the manifest's
+             own length, which is true before the rollback is even possible and
+             stays true when the rollback cannot restore a single row. Read the
+             row instead, so a dry run answers the only question worth asking:
+             would this actually put them back? */
+          const [cur] = await pg`
+            SELECT notes FROM scm.purchase_orders WHERE id = ${r.id}`;
+          if (cur && cur.notes === r.after) restored += 1;
+          else stuck.push({ po: r.po_number, why: cur ? "note no longer matches" : "row gone" });
+          continue;
+        }
+        /* Only where the row still holds exactly what we wrote. A note edited by
+           a human since the migration is NOT ours to overwrite — but see the
+           refusal below: "left alone" is a FAILURE, never a quiet warning. */
         const res = await pg`
           UPDATE scm.purchase_orders
              SET notes = ${r.before}
            WHERE id = ${r.id}
              AND notes = ${r.after}`;
         if (res.count === 1) restored += 1;
-        else {
-          skipped += 1;
-          warn(`${r.po_number}: note no longer matches what this run wrote — left as-is.`);
-        }
+        else stuck.push({ po: r.po_number, why: "note no longer matches what this run wrote" });
       }
-      if (APPLY) log(`reverted ${restored} row(s); ${skipped} left alone.`);
-      else log(`DRY-RUN: would attempt ${rows.length} restore(s). Re-run with APPLY=1.`);
+      log(
+        APPLY
+          ? `reverted ${restored} row(s); ${stuck.length} NOT restored.`
+          : `DRY-RUN: ${restored} of ${rows.length} row(s) would restore; ${stuck.length} would NOT.`,
+      );
+
+      /* THE BUG THIS CLOSES. Every row that can trip the post-condition is, by
+         construction, a row whose `notes` is not `after` — which is exactly the
+         predicate this UPDATE requires. So the rollback the apply run tells the
+         operator to run could not restore the rows it was pointing at, logged
+         them through `warn()` (a ::warning:: does not fail an Actions job) and
+         exited 0. The operator read a green job as "rolled back".
+         A rollback that restored nothing is a FAILED rollback. Say so. */
+      if (stuck.length > 0) {
+        for (const s of stuck) fail(`${s.po}: NOT restored — ${s.why}.`);
+        fail(
+          `${stuck.length} row(s) could not be put back because the stored note is ` +
+          `no longer the bytes this manifest wrote. Someone edited them since, or ` +
+          `the write did not land as planned. Their original text is in the ` +
+          `manifest's "before" field — restore those by hand after reading them.`,
+        );
+        exitCode = 1;
+      }
+      if (APPLY && restored === 0 && rows.length > 0) {
+        fail("rollback restored ZERO of the manifest's rows — nothing was put back.");
+        exitCode = 1;
+      }
     }
     await pg.end();
-    process.exit(0);
+    process.exit(exitCode);
   }
 
   // ── 1. COUNT FIRST — the blast radius, by exact form, per company ─────────
@@ -383,6 +440,12 @@ try {
   if (violations.length > 0) {
     fail(`INVARIANT BROKEN on ${violations.length} row(s). Revert with the manifest artifact:`);
     fail(`  MODE=revert MANIFEST=${MANIFEST} APPLY=1 node scripts/relabel-provenance-notes.mjs`);
+    /* READ THIS BEFORE BELIEVING THE LINE ABOVE. Revert restores only rows whose
+       note is still exactly what this run wrote, and a "stored bytes are not
+       what was written" violation means precisely that it is NOT. Those rows
+       will come back as NOT RESTORED (a failure now, not a warning) and their
+       original text has to be put back by hand from the manifest's "before". */
+    fail(`  Rows flagged "stored bytes are not what was written" will NOT be restored by that command — recover them from the manifest's "before" field by hand.`);
   }
 
   // A last independent check: nothing anywhere still carries a legacy label
@@ -391,13 +454,21 @@ try {
     ? await pg`
         SELECT count(*)::int AS n FROM scm.purchase_orders
          WHERE notes IS NOT NULL AND notes ~* ${pattern}
-           AND notes !~* ${`^\\s*${provenanceNoteLabel("so")}:`}`
+           AND notes !~* ${`${provenanceNoteLabel("so")}:`}`
     : await pg`
         SELECT count(*)::int AS n FROM scm.purchase_orders
          WHERE notes IS NOT NULL AND notes ~* ${pattern}
-           AND notes !~* ${`^\\s*${provenanceNoteLabel("so")}:`}
+           AND notes !~* ${`${provenanceNoteLabel("so")}:`}
            AND company_id = ${COMPANY}`;
-  log(`notes still not on the current label (mid-line labels included): ${leftover[0].n}`);
+  /* NO `^` ANCHOR, deliberately. Postgres ARE is not newline-sensitive by
+     default, so `^\s*LABEL:` could not match a note whose provenance line is not
+     the FIRST line — and "Rush job.\nTransfer from Sales Order: …" is a
+     first-class case the corpus carries and relabelProvenanceNote handles. That
+     anchor therefore counted correctly-migrated rows as leftovers, and the
+     operator reads a non-zero leftover count as an incomplete migration.
+     Asking "does this note contain the current label at all" needs no anchor and
+     no newline flag; the label is plain words with no regex metacharacters. */
+  log(`notes still not on the current label (anywhere in the note): ${leftover[0].n}`);
 } catch (err) {
   fail(String(err?.stack ?? err));
   exitCode = 1;

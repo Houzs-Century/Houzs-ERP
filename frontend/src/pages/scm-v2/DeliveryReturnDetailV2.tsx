@@ -840,7 +840,7 @@ export function DeliveryReturnDetailV2() {
                   <>
                     <Divider />
                     <span>
-                      From DO{" "}
+                      {transferFromColumnLabel('do')}{" "}
                       <span className="font-mono font-semibold text-ink-secondary">
                         {doOf(deliveryReturn)}
                       </span>
