@@ -13,28 +13,35 @@ import { describe, expect, it } from 'vitest';
 import { siTransferBlockReason, SI_TRANSFERABLE_DO_STATUSES } from './do-next-step';
 
 describe('siTransferBlockReason', () => {
-  it('is available on exactly the statuses a Sales Invoice can be raised from', () => {
+  it('is available on exactly the statuses where the stock has already left', () => {
     for (const s of SI_TRANSFERABLE_DO_STATUSES) {
       expect([s, siTransferBlockReason(s)]).toEqual([s, null]);
     }
-    /* The ladder from routes/delivery-orders-mfg.ts. Every rung that is NOT
-       transferable must be blocked — a new status added upstream lands here as
-       the generic sentence, never as a silently-enabled transfer. */
-    for (const s of ['draft', 'dispatched', 'loaded', 'in_transit', 'cancelled']) {
+    /* THE REGRESSION THIS PINS. `canConvertToSi` was a hand-typed
+       ["signed","delivered"] literal in two desktop files while the server
+       picker and the mobile wizard used the wide predicate. Eight of 2990's
+       delivery orders sat at DISPATCHED — goods gone, nothing billed — with no
+       transfer button anywhere. Narrow this back and the first line fails. */
+    expect(siTransferBlockReason('dispatched')).toBeNull();
+    expect(siTransferBlockReason('in_transit')).toBeNull();
+    expect(siTransferBlockReason('invoiced')).toBeNull();
+    /* Pre-ship and terminal rungs stay blocked. LOADED is deliberately NOT
+       billable: no inventory OUT movement exists yet. */
+    for (const s of ['draft', 'loaded', 'cancelled']) {
       expect([s, siTransferBlockReason(s) === null]).toEqual([s, false]);
     }
   });
 
-  it('tells an in-flight order to get signed, naming the step', () => {
-    for (const s of ['loaded', 'dispatched', 'in_transit']) {
-      expect(siTransferBlockReason(s)).toMatch(/sign this delivery order first/i);
-    }
+  it('tells a loaded order the goods have not left, not to go and sign itself', () => {
+    const r = siTransferBlockReason('loaded');
+    expect(r).toMatch(/have not left/i);
+    expect(r).toMatch(/dispatch/i);
   });
 
-  it('does not tell a cancelled order to go and sign itself', () => {
+  it('does not tell a cancelled order to go and dispatch itself', () => {
     const r = siTransferBlockReason('cancelled');
     expect(r).toMatch(/cancelled/i);
-    expect(r).not.toMatch(/sign this delivery order first/i);
+    expect(r).not.toMatch(/dispatch it/i);
   });
 
   it('does not tell a draft to sign before it has been dispatched', () => {
@@ -50,7 +57,7 @@ describe('siTransferBlockReason', () => {
     for (const s of [null, undefined, '', 'wat', 'PENDING_UNICORN']) {
       const r = siTransferBlockReason(s);
       expect([s, typeof r === 'string' && r.length > 0]).toEqual([s, true]);
-      expect(r).not.toMatch(/sign this delivery order first/i);
+      expect(r).not.toMatch(/have not left/i);
     }
   });
 });

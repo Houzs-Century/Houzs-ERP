@@ -66,6 +66,7 @@ import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
+import { siTransferBlockReason } from "../../vendor/scm/lib/do-next-step";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
@@ -599,42 +600,59 @@ function DetailDrawer({
               <div className="flex-1" />
               {canWrite && (() => {
                 const s = (row.status || "").toLowerCase();
-                if (["loaded", "dispatched", "in_transit"].includes(s)) {
-                  return (
-                    <Button
-                      variant="primary"
-                      icon={<CheckCircle2 size={14} />}
-                      onClick={onMarkSigned}
-                    >
-                      Mark signed
-                    </Button>
-                  );
-                }
-                if (["signed", "delivered"].includes(s)) {
-                  return (
-                    <Button
-                      variant="primary"
-                      icon={<Receipt size={14} />}
-                      onClick={onConvertToSi}
-                    >
-                      {transferToLabel('si')}
-                    </Button>
-                  );
-                }
-                // Reopen a cancelled DO back to LOADED (2990
-                // MfgDeliveryOrdersList "Reopen DO" parity).
-                if (s === "cancelled" || s === "cancel") {
-                  return (
-                    <Button
-                      variant="primary"
-                      icon={<RotateCcw size={14} />}
-                      onClick={onReopen}
-                    >
-                      Reopen
-                    </Button>
-                  );
-                }
-                return null;
+                /* THE TRANSFER IS ALWAYS OFFERED. This used to be an if/else-IF
+                   chain whose first arm caught loaded / dispatched / in_transit
+                   and RETURNED, so on a dispatched delivery order the transfer
+                   button was never rendered at all — the primary slot showed
+                   "Mark signed" instead. Two real consequences: the same slot
+                   performed a different act depending on a status the operator
+                   had to read elsewhere, and 2990 — whose imported DOs sit at
+                   DISPATCHED because its source system had no "delivered" step —
+                   saw a product that did not have the feature. Owner 2026-08-18:
+                   "我又不是两套系统". The reason comes from lib/do-next-step.ts,
+                   derived from the ONE declaration of "the stock has left", not
+                   re-typed here — re-typing it is what caused this. */
+                const siBlocked = siTransferBlockReason(row.status);
+                const signable = ["loaded", "dispatched", "in_transit"].includes(s);
+                return (
+                  <>
+                    {signable && (
+                      <Button
+                        variant="secondary"
+                        icon={<CheckCircle2 size={14} />}
+                        onClick={onMarkSigned}
+                      >
+                        Mark signed
+                      </Button>
+                    )}
+                    {(() => {
+                      /* A cancelled DO gets Reopen INSTEAD of a dead transfer —
+                         reopening IS its next step, so the slot is not silent. */
+                      if (s === "cancelled" || s === "cancel") {
+                        return (
+                          <Button
+                            variant="primary"
+                            icon={<RotateCcw size={14} />}
+                            onClick={onReopen}
+                          >
+                            Reopen
+                          </Button>
+                        );
+                      }
+                      return (
+                        <Button
+                          variant="primary"
+                          icon={<Receipt size={14} />}
+                          onClick={onConvertToSi}
+                          disabled={siBlocked !== null}
+                          title={siBlocked ?? undefined}
+                        >
+                          {transferToLabel('si')}
+                        </Button>
+                      );
+                    })()}
+                  </>
+                );
               })()}
             </div>
           </>

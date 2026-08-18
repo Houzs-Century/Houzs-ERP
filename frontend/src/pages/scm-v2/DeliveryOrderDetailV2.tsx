@@ -953,8 +953,12 @@ export function DeliveryOrderDetailV2() {
     rawStatus === "loaded" ||
     rawStatus === "dispatched" ||
     rawStatus === "in_transit";
-  const canConvertToSi =
-    rawStatus === "signed" || rawStatus === "delivered";
+  /* Billable = the stock has left, i.e. DO_SHIPPED_STATES — the same
+     predicate the server picker and the mobile wizard use. This was a
+     hand-typed ["signed","delivered"] literal, which is why eight of
+     2990's dispatched delivery orders had no transfer button while the
+     server was happy to invoice them. See lib/do-next-step.ts. */
+  const canConvertToSi = siTransferBlockReason(deliveryOrder.status) === null;
   const isCancelled = rawStatus === "cancelled";
 
   const soNo = deliveryOrder.so_doc_no;

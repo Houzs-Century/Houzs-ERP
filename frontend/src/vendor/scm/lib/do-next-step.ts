@@ -20,9 +20,34 @@
 // states and refusals: the thing may be unavailable, but it may not be silent.
 // The control stays on screen, disabled, carrying the reason and the next step.
 //
-// THE LADDER, from routes/delivery-orders-mfg.ts:
-//   DRAFT → DISPATCHED → SIGNED → DELIVERED, with CANCELLED terminal.
-// A Sales Invoice may be raised from SIGNED or DELIVERED only.
+// WHAT THE FIRST VERSION OF THIS FILE GOT WRONG, kept here because the mistake
+// is more instructive than the fix. It read the gate off the screen — "signed
+// or delivered" — and wrote a confident sentence around it: "sign this delivery
+// order first". The gate itself was the bug. `canConvertToSi` was a HAND-TYPED
+// two-status literal in two desktop files, while the rest of the system has
+// exactly one declaration of "this delivery has moved stock", the five-state
+// DO_SHIPPED_STATES in shared/do-shipped-states.ts. The server's own picker
+// (GET /sales-invoices/invoiceable-do-lines) and the mobile convert wizard both
+// use the wide predicate; only the two desktop buttons did not. So the door was
+// open on the server and painted shut on the screen — and turning "absent" into
+// "disabled with a reason" would have shipped a confidently WRONG instruction.
+//
+// WHY IT LOOKED LIKE A COMPANY DIFFERENCE. 2990's source system never had a
+// "delivered" step, so its imported delivery orders sit at DISPATCHED; HOUZS's
+// are AutoCount carry-overs written with the literal 'DELIVERED' (25 of 27).
+// Measured on production 2026-08-18: eight of 2990's delivery orders are
+// DISPATCHED, belong to sales orders 2990's own system calls delivered, and
+// have no sales invoice at all. Goods gone, nothing billed, no button. The
+// predicate was company-neutral; the DATA SHAPE was not.
+//
+// The owner's ruling is on record and says the opposite of the narrow gate —
+// backfill-2990-delivered-dos.mjs:7 quotes him: "我们开了 DO 就是 consider 出货
+// delivered 了". DISPATCHED is where the inventory OUT is written.
+//
+// THE LADDER: DRAFT → LOADED → DISPATCHED → IN_TRANSIT → SIGNED → DELIVERED →
+// INVOICED, with CANCELLED terminal. Billable = the stock has left, i.e.
+// DO_SHIPPED_STATES. LOADED is deliberately NOT billable: it is a pre-ship
+// state and no OUT movement exists yet.
 //
 // SCOPE. This answers "why not yet", not "may this user do it" — permission is a
 // separate question and stays with the caller. A status this module does not
@@ -30,8 +55,13 @@
 // does not exist would be worse than saying the state is unexpected.
 // ----------------------------------------------------------------------------
 
-/** Statuses a Sales Invoice can be raised from. */
-export const SI_TRANSFERABLE_DO_STATUSES = ['signed', 'delivered'] as const;
+import { DO_SHIPPED_STATES } from '../../shared/do-shipped-states';
+
+/** Statuses a Sales Invoice can be raised from: the stock has left the building.
+ *  Derived from the ONE declaration, never re-typed — re-typing it is the whole
+ *  defect this module documents. */
+export const SI_TRANSFERABLE_DO_STATUSES =
+  DO_SHIPPED_STATES.map((s) => s.toLowerCase()) as readonly string[];
 
 /**
  * `null` when the transfer is available. Otherwise the sentence to show on the
@@ -44,10 +74,10 @@ export function siTransferBlockReason(status: string | null | undefined): string
     return 'This delivery order was cancelled, so it cannot be invoiced.';
   }
   if (s === 'draft') {
-    return 'This delivery order is still a draft — dispatch it, then sign it, before raising a Sales Invoice.';
+    return 'This delivery order is still a draft — dispatch it before raising a Sales Invoice.';
   }
-  if (s === 'loaded' || s === 'dispatched' || s === 'in_transit') {
-    return 'Sign this delivery order first — a Sales Invoice can only be raised once it is signed or delivered.';
+  if (s === 'loaded') {
+    return 'These goods have not left yet — dispatch this delivery order, then raise the Sales Invoice.';
   }
-  return 'A Sales Invoice can only be raised from a signed or delivered delivery order.';
+  return 'A Sales Invoice can only be raised once this delivery order has been dispatched.';
 }
