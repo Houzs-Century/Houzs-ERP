@@ -20,7 +20,7 @@ import {
 type Row = { dp_no: string };
 
 /** A fake PostgREST that serves each table its own rows and can be told to fail. */
-function stubSb(tables: { trip_stops?: Row[]; dp_orders?: Row[]; lorries?: { plate: string } | null }, opts: { throwOn?: string } = {}) {
+function stubSb(tables: { trip_stops?: Row[]; dp_orders?: Row[]; lorries?: { plate: string } | null }, opts: { throwOn?: string; errorOn?: string } = {}) {
   return {
     from: (t: string) => ({
       select: () => ({
@@ -32,6 +32,8 @@ function stubSb(tables: { trip_stops?: Row[]; dp_orders?: Row[]; lorries?: { pla
         }),
         like: async () => {
           if (opts.throwOn === t) throw new Error(`cannot read ${t}`);
+          // The REAL PostgREST shape on failure: a RESOLVED { data:null, error }, not a throw.
+          if (opts.errorOn === t) return { data: null, error: { message: `cannot read ${t}` } };
           return { data: (tables as Record<string, Row[] | undefined>)[t] ?? [] };
         },
       }),
@@ -101,6 +103,14 @@ describe("mintNextDpNo", () => {
 
   test("THE FAILURE DIRECTION: an unreadable registry yields NO number, not a low one", async () => {
     const sb = stubSb({ trip_stops: [], dp_orders: [] }, { throwOn: "trip_stops" });
+    expect(await mintNextDpNo(sb, { tripDate: "2026-07-18", plate: "WPX 4471" })).toBeNull();
+  });
+
+  test("THE REAL FAILURE SHAPE: a resolved { data:null, error } is NOT a throw — still NO number", async () => {
+    // supabase-js resolves a failed select; it does not throw. The try/catch alone
+    // never fires, so without an explicit error check the mint reads data:null as an
+    // empty registry and reissues 01. This is the shape the throwOn test above misses.
+    const sb = stubSb({ trip_stops: [], dp_orders: [] }, { errorOn: "trip_stops" });
     expect(await mintNextDpNo(sb, { tripDate: "2026-07-18", plate: "WPX 4471" })).toBeNull();
   });
 

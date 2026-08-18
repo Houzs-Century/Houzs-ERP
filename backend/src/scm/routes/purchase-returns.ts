@@ -487,7 +487,7 @@ async function checkPrStockAvailability(
   }
   const shortages: StockShortage[] = [];
   for (const [wh, reqs] of byWh) {
-    shortages.push(...(await checkStockAvailability(sb, wh, reqs)));
+    shortages.push(...(await checkStockAvailability(sb, wh, reqs, companyId)));
   }
   return shortages;
 }

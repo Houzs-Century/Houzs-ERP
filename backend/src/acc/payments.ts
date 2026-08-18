@@ -202,6 +202,7 @@ export async function backfillSoPayments(
         .from('journal_entries')
         .select('source_doc_no, reversed')
         .eq('source_type', 'SOPAY')
+        .order('id')
         .range(from, from + page - 1);
       if (error) return { ok: false, scanned: 0, posted: 0, skipped: 0, failed: [], remaining: -1, reason: `journal scan: ${error.message}` };
       const rows = (data ?? []) as Array<{ source_doc_no: string | null; reversed: boolean | null }>;

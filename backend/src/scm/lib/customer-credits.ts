@@ -86,7 +86,17 @@ export async function getCustomerCreditBalance(
     .select('amount_centi')
     .eq('debtor_code', debtorCode);
   if (companyId != null) q = q.eq('company_id', companyId);
-  const { data } = await q;
+  const { data, error } = await q;
+  /* A FAILED MONEY READ MUST NOT READ AS 0 — the pattern every other read in
+     this file follows (bind `error`, refuse). Folding a failed balance read to 0
+     understates a real credit: it hides balance the customer holds on the two
+     display routes, and on the spend path (applyCustomerCreditToSiLegacy) it is
+     only accidentally fail-closed. This function returns a bare number with no
+     `reason` channel, so the refusal is to THROW — the caller's route surfaces a
+     failure instead of trusting a wrong 0. An empty ledger is NOT an error: it
+     resolves error === null with data === [] and correctly sums to 0. Nothing is
+     written before this read on any path, so throwing strands no partial state. */
+  if (error) throw new Error(`getCustomerCreditBalance read failed: ${error.message}`);
   let sum = 0;
   for (const r of (data ?? []) as Array<{ amount_centi: number }>) sum += Number(r.amount_centi ?? 0);
   return sum;

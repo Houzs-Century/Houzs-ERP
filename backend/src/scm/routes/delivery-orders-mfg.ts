@@ -1067,7 +1067,7 @@ async function checkDoStockAvailability(
     byWh.set(wh, arr);
   }
   const shortages: StockShortage[] = [];
-  for (const [wh, reqs] of byWh) shortages.push(...(await checkStockAvailability(sb, wh, reqs)));
+  for (const [wh, reqs] of byWh) shortages.push(...(await checkStockAvailability(sb, wh, reqs, companyId)));
   return shortages;
 }
 
@@ -4261,15 +4261,15 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  // The DO must exist (FK target + so the header sync below has a row to update).
-  const { data: doRow, error: doErr } = await sb.from('delivery_orders')
-    .select('id, company_id, do_number, status').eq('id', id).maybeSingle();
+  /* Per-company write (DO header + crew upsert). Service-role bypasses RLS, so without
+     this gate `id` alone was the boundary — company-A could overwrite company-B's crew. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const { data: doRow, error: doErr } = await scopeToCompanyId(sb.from('delivery_orders')
+    .select('id, company_id, do_number, status').eq('id', id), co.companyId).maybeSingle();
   if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
-  if (!doRow) return c.json({ error: 'not_found' }, 404);
-
-  /* The crew row as it stands BEFORE the upsert. This endpoint is a PUT, so a
-     re-assign silently overwrites whoever was on the job — without this read the
-     history could only say who is on it now, never who was taken off it. */
+  if (!doRow) return c.json(NOT_THIS_COMPANY, 404); // another company's DO is invisible here
+  // Crew row BEFORE the upsert: this PUT re-assign overwrites who was on the job.
   const { data: crewBeforeRow } = await sb.from('delivery_order_crew')
     .select('driver_1_id, driver_2_id, helper_1_id, helper_2_id, lorry_id, driver_1_name, driver_2_name, helper_1_name, helper_2_name, lorry_plate')
     .eq('do_id', id).maybeSingle();
@@ -4362,12 +4362,12 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
   /* Keep the DO header's primary-driver quick-fields in lock-step with driver 1
      (driver_id / driver_name / vehicle), so the existing Driver / Vehicle fields
      on the DO still reflect the first crew driver. Clearing driver 1 clears them. */
-  await sb.from('delivery_orders').update({
+  await scopeToCompanyId(sb.from('delivery_orders').update({
     driver_id: driver1Id,
     driver_name: d1?.name ?? null,
     vehicle: d1?.vehicle ?? lorry?.plate ?? null,
     updated_at: now,
-  }).eq('id', id);
+  }).eq('id', id), co.companyId);
 
   /* Who was assigned to drive the goods, and who they replaced. The NAMES are
      recorded alongside the ids for the same reason the crew row snapshots them:
@@ -4674,7 +4674,7 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
       variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
       qty: Number(it.qty ?? 0),
     }];
-    addShortages = await checkStockAvailability(sb, addWarehouseId, stockLines);
+    addShortages = await checkStockAvailability(sb, addWarehouseId, stockLines, activeCompanyId(c));
   }
 
   /* Binding follows the fact (mig 0230). Decided at WRITE time on every path,
@@ -4972,7 +4972,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
            never be short (shared/service-sku.ts, P1 §4.6). */
         const shortages = isServiceLine({ itemGroup: effGroup, itemCode: effCode })
           ? []
-          : await checkStockAvailability(sb, targetWh, stockLines);
+          : await checkStockAvailability(sb, targetWh, stockLines, activeCompanyId(c));
         /* priorShippedQty/priorBatchNo are what stop this re-bucketing a line
            that ALREADY shipped: resyncInventoryForDo keys its delta on
            (warehouse, code, variant, BATCH), so stamping a batch onto a line
