@@ -63,7 +63,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
-| `backend/src/scm/routes/autocount-outbox.ts` | 2 | 598 |
+| `backend/src/scm/routes/autocount-outbox.ts` | 2 | 632 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1162 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2332 |
@@ -142,7 +142,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/trips.ts` | 14 | 1211 |
 | `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 412 |
 | `backend/src/scm/routes/venues.ts` | 4 | 283 |
-| `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 164 |
+| `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 185 |
 | `backend/src/scm/routes/warehouse.ts` | 8 | 571 |
 | `backend/src/scm/routes/write-freeze-status.ts` | 1 | 122 |
 
@@ -161,7 +161,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1455 files, 580000 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1456 files, 580378 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
