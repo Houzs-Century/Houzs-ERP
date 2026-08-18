@@ -16,7 +16,7 @@ backend/src/db/migrations-pg/` returns rc=1 and ZERO hits, and
 snapshot (read-only)", target=prod, run 32089111719) settles what is really
 there: `do_item_id uuid`, nullable, no default, with
 `sales_invoice_items_do_item_id_fkey` referencing `scm.delivery_order_items(id)`
-`ON DELETE SET NULL`, and no index. Migration `0302_scm_si_items_do_item_id.sql`
+`ON DELETE SET NULL`, and no index. Migration `0303_scm_si_items_do_item_id.sql`
 declares exactly that and nothing else — `ADD COLUMN IF NOT EXISTS` plus a
 `pg_constraint`-guarded `ADD CONSTRAINT`, so it is a no-op where the column
 already exists. Note the sibling gap it does NOT close: `unit_cost_centi`,
