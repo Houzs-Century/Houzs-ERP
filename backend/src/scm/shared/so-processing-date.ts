@@ -44,109 +44,81 @@ export const SO_PROCESSING_DATE_COLUMN = 'processing_date' as const;
  *
  * THE RULING. Owner 2026-07-31, 2026-08-13 and again 2026-08-18, the last time
  * naming the scope himself: one Processing Date across FRONTEND, BACKEND and
- * DATABASE. `scm.mfg_sales_orders.proceeded_at` is the second storage.
+ * DATABASE. `scm.mfg_sales_orders.proceeded_at` was the second storage.
  *
- * WHAT LANDED 2026-08-18 (this commit) — everything that moves nothing:
- *   · Every LOCK decision reads `processing_date` alone. soProcessingLocked
- *     (routes/mfg-sales-orders.ts) and procLockActive (frontend
- *     vendor/scm/lib/so-detail-gates.ts) both dropped their `proceeded_at`
- *     fallback; `status` is now a required key on each, which is the mechanism
- *     that replaces it. Both branches were unreachable in production.
- *   · Every payload that merely SHIPPED the column stopped: the SO list
- *     projection, the detail select, the POS board select, the dashboard summary
- *     and the /status response. Nothing consumed any of them — the desktop
+ * DONE, 2026-08-18. NO CODE anywhere reads or writes it:
+ *   · the STOCK ALLOCATOR gate moved to `processing_date` (#2396) — the one
+ *     reachable decision that had been answering a Processing-Date question out
+ *     of the other column.
+ *   · every LOCK decides on `processing_date` + `status` alone —
+ *     soProcessingLocked / soEditLocked, the amendment door, delivery-planning's
+ *     board guard, and the frontend's procLockActive. `status` became a REQUIRED
+ *     key on both predicates, and THAT is what replaced the status-blind
+ *     `proceeded_at` fallback: a caller without one fails to compile instead of
+ *     silently deciding out of a second fact.
+ *   · every PAYLOAD stopped carrying it: SO list, detail, POS board, dashboard
+ *     summary, /status response. Nothing consumed any of them — the desktop
  *     Proceed Date field was deleted 2026-06-05 and useMfgSalesOrdersSummary has
  *     zero callers in frontend/src, native/ or e2e/.
- *   · The frontend carries no `proceeded_at` at all any more: no type, no query
- *     select list, no component field.
- *   · THE LEAK IS CLOSED. Remove-Processing-Date used to clear the date and
- *     leave the stamp behind, and the stamp-once filter then made that stamp
- *     permanent — the one live code path that manufactures a row saying
- *     "proceeded" out of one column and "not proceeded" out of the other. The
- *     header PATCH now clears both together.
+ *   · every WRITE went with the reader, and had to go WITH it and not before:
+ *     the create INSERT's stamp (and `autoProceed`, which existed only to decide
+ *     it), the /status IN_PRODUCTION stamp, the ['proceededAt','proceeded_at']
+ *     PATCH-map entry and the stamp-once filter hanging off it. Stopping the
+ *     writes while the allocator still read the column would have landed every
+ *     NEW order with a NULL stamp and gated it out of allocation forever.
+ *   · the FRONTEND carries no `proceeded_at` at all: no type, no query select
+ *     list, no component field.
  *
- * WHAT IS DELIBERATELY NOT DONE YET, and why — read this before "finishing" it:
+ * WHAT THAT DELETED BESIDES THE COLUMN'S USES. `soProceedGateBlocked` lost both
+ * call sites and went with them; the RULE it enforced did not move — every path
+ * that sets a Processing Date still goes through meetsProceedGate via
+ * soProcessingDateProblemsForDoc / collectProcessingGateProblems, and after
+ * unification that is every path that proceeds an order. The /status branch it
+ * guarded fired only when the order ALREADY had a date, i.e. re-gated a state
+ * that had passed — and inconsistently, since an order that also carried a stamp
+ * was not re-gated.
  *
- *   THE ALLOCATOR STILL READS THE COLUMN. lib/so-stock-allocation.ts gates an SO
- *   out of stock allocation when it has no Processing Date; until that read
- *   moves, the two server-side stamps (the create INSERT and the /status
- *   IN_PRODUCTION transition) must keep writing, or every NEW order lands with a
- *   NULL stamp and is gated out of allocation forever. Stop-write and gate-flip
- *   are ONE change; they cannot ship apart.
+ * THE ONE STEP LEFT: DROP THE COLUMN, and NOT in this release.
+ * deploy.yml runs `node scripts/pg-migrate.mjs` BEFORE `wrangler deploy`, so for
+ * about a minute the OLD Worker is live against the NEW schema. The currently
+ * deployed code still SELECTs `proceeded_at` in LIST_COLS, the detail read, the
+ * POS board and the dashboard summary — a drop shipped alongside the code that
+ * stops selecting it is therefore a 42703 on every SO read for the length of the
+ * deploy. That is exactly what blocked prod for hours in #1191/0189. Once THIS
+ * commit is live, nothing reads it and the follow-up is 0284's shape:
  *
- *   AND THE FLIP MOVES LIVE ORDERS. Measured on prod 2026-08-18
- *   (backend/scripts/probe-proceed-split.mjs, run 32093080121):
+ *   -- Pre-flight, as 0284 does: name any object that still projects the column
+ *   -- rather than failing with a bare catalog error.
+ *   -- scm.mfg_sales_orders_with_payment_totals DOES project it (`SELECT so.*`),
+ *   -- so this WILL fire. DO NOT drop and recreate that view: a recreated view is
+ *   -- a NEW object whose ACL and owner do not survive, and prod died twice with
+ *   -- "permission denied for view" before 0191 copied the grant set back off a
+ *   -- never-dropped sibling. Prefer CREATE OR REPLACE VIEW with the column
+ *   -- omitted (same object, ACL intact); if REPLACE is refused because the
+ *   -- column list changes, copy the grants the way 0191 did and say so.
+ *   ALTER TABLE scm.mfg_sales_orders DROP COLUMN IF EXISTS proceeded_at;
+ *   NOTIFY pgrst, 'reload schema';
  *
- *     company 1 — 2724 live orders: 519 both set, 2205 neither, ZERO in either
- *       disagreement class. The flip is a NO-OP here, and the 519 agree on the
- *       Malaysian calendar day 519/519.
- *     company 2 — 77 live orders: 21 both set, 35 neither, 5 carry a date with
- *       no stamp (they are gated TODAY on the retired column and would correctly
- *       start allocating), and 16 carry a STAMP WITH NO DATE. Those 16 —
- *       12 CONFIRMED and 4 READY_TO_SHIP — would flip from allocating to gated:
- *       their lines are forced PENDING on the next 5-minute recompute and the
- *       4 READY_TO_SHIP orders visibly drop back to CONFIRMED.
+ * THE 2990 MIRROR needs no change and earlier audits missed it entirely:
+ * routes/so-mirror.ts upserts `applyMap(body.header, …)`, which keeps every
+ * inbound key that exists on the Houzs table, so a `proceeded_at` arriving from
+ * 2990 (a separate repo on its own deploy schedule) was written straight
+ * through. applyMap filters against information_schema, so the drop above ends
+ * that silently and correctly.
  *
- *   By the owner's own rule ("没有 processing date 就代表没有 proceed") those 16
- *   are NOT proceeded and gating them is the rule being applied correctly, not a
- *   regression. But it is 16 live orders in an operator's book, so it is his call
- *   and not a script's — and the fix is never to invent a date (see
- *   PROCEED_NEEDS_DATE in order-rules.ts: a guessed start date is a real order in
- *   the real queue on the wrong day).
+ * WHAT THE DATA LOOKED LIKE WHEN THE READ MOVED (probe-proceed-split, prod,
+ * 2026-08-18, run 32093080121 — #2396 shipped saying this was UNKNOWN):
+ *   company 1, 2724 live: 519 both set, 2205 neither, ZERO disagreeing. No-op.
+ *   company 2, 77 live: 5 CONFIRMED gained allocation (the bug #2396 fixed);
+ *     16 lost it — 12 CONFIRMED and 4 READY_TO_SHIP carrying a stamp with no
+ *     date. Those 4 visibly drop back to CONFIRMED on the next recompute. By the
+ *     owner's rule they are not proceeded, so that is the rule applied
+ *     correctly; the repair is a human supplying the date, never a script
+ *     inventing one (PROCEED_NEEDS_DATE in order-rules.ts).
  *
- *   NOT PROVEN, and do not repeat it as if it were: an earlier reading held that
- *   this population REGENERATES daily through Remove-Processing-Date. The probe's
- *   age check shows no proceeded_at value younger than 36 days on any dateless
- *   order in either company, which rules out the two paths that STAMP (create and
- *   /status) as recent producers. It does NOT rule out the two paths that make a
- *   row stamp-only WITHOUT writing a stamp — Remove-Processing-Date clearing the
- *   date, and the 2990 mirror replicating a row whose stamp is old. Both are shut
- *   by this commit and by the drop below.
- *
- *   THE 2990 MIRROR IS A WRITER, and earlier audits missed it. routes/so-mirror.ts
- *   upserts `applyMap(body.header, …)`, which keeps every inbound key that exists
- *   on the Houzs table — so `proceeded_at` arriving from 2990 (a separate repo on
- *   its own deploy schedule, which never got the 2026-08-13 unification) is
- *   written straight through. It needs no code change: applyMap filters against
- *   information_schema, so the moment the column is dropped the key is silently
- *   ignored, which is exactly the behaviour wanted.
- *
- * THE REMAINING STEP, in order:
- *   1. The owner rules on company 2's 16 stamp-only live orders — either a human
- *      supplies each one's missing Processing Date, or they are accepted as not
- *      proceeded. Re-run probe-proceed-split to confirm the class is empty (or
- *      knowingly not).
- *   2. ONE change: lib/so-stock-allocation.ts already reads `processing_date`
- *      (done here); delete the create INSERT's `proceeded_at` key, the /status
- *      stamp, the ['proceededAt','proceeded_at'] PATCH-map entry and the
- *      stamp-once filter that hangs off it.
- *   3. ONE MORE DEPLOY LATER, never the same one: drop the column. deploy.yml
- *      runs `node scripts/pg-migrate.mjs` BEFORE `wrangler deploy`, so for about a
- *      minute the OLD Worker is live against the NEW schema — a column dropped in
- *      the same release that stops selecting it is a 42703 on every SO read for
- *      the length of the deploy. That is what blocked prod for hours in
- *      #1191/0189. Follow migration 0284's shape exactly (it proved zero writers
- *      before dropping, and it pre-flights the dependency check):
- *
- *        -- pre-flight: name any view that still projects it, rather than
- *        -- failing with a bare catalog error. scm.mfg_sales_orders_with_payment_totals
- *        -- DOES project it (`SELECT so.*`), so this WILL fire until the view is
- *        -- handled. DO NOT drop-and-recreate that view: a recreated view is a
- *        -- NEW object whose ACL and owner do not survive, and prod died twice
- *        -- with "permission denied for view" before 0191 copied the grant set
- *        -- back off a never-dropped sibling. Prefer CREATE OR REPLACE VIEW with
- *        -- the column omitted (same object, ACL intact); if a REPLACE is refused
- *        -- because the column list changes, copy the grants the way 0191 did and
- *        -- say so in the migration.
- *        ALTER TABLE scm.mfg_sales_orders DROP COLUMN IF EXISTS proceeded_at;
- *        NOTIFY pgrst, 'reload schema';
- *
- * THE AUDIT FACT. "When did someone press Proceed" is already recorded without
- * the column: diffFields (lib/so-audit.ts) walks the header PATCH map, so a
- * change lands in scm.mfg_so_audit_log.field_changes as a from/to entry, and
- * nothing gates on that table. Nothing anywhere reads the timestamp AS a
- * timestamp. The column carries no information processing_date does not, and it
- * should die rather than be preserved out of sentiment.
+ * THE AUDIT FACT. "When did someone press Proceed" has no consumer and needs no
+ * column: nothing ever read the value AS a timestamp, and a change to the field
+ * already lands in scm.mfg_so_audit_log.field_changes, which nothing gates on.
  * ─────────────────────────────────────────────────────────────────────────── */
 
 /** The camelCase key the header PATCH and amendment payloads carry it under. */

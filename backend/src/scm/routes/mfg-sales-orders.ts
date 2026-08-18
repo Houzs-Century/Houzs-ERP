@@ -554,32 +554,15 @@ async function soDepositFacts(
   };
 }
 
-async function soProceedGateBlocked(
-  sb: any,
-  docNo: string,
-  /* No `email` — the unified gate dropped it (owner 2026-07-31). Left OUT of
-     this shape rather than accepted-and-ignored, so a caller cannot believe it
-     still matters. */
-  eff: {
-    customerName?: string | null;
-    address1?: string | null; postcode?: string | null; deliveryDate?: string | null;
-  },
-  /* Picks the deposit fraction (Houzs 30% / 2990 50%). Absent falls back to the
-     looser 30% — see processingDateThresholdFor for why never the stricter. */
-  companyCode?: string | null,
-): Promise<typeof SO_PROCEED_GATE_RESPONSE | null> {
-  const { paidCenti, totalCenti } = await soDepositFacts(sb, docNo);
-  const ok = meetsProceedGate({
-    hasCustomerName: !!eff.customerName?.trim(),
-    hasAddress: !!eff.address1?.trim(),
-    hasPostcode: !!eff.postcode?.trim(),
-    hasDeliveryDate: !!eff.deliveryDate?.trim(),
-    paid: paidCenti,
-    total: totalCenti,
-    companyCode,
-  });
-  return ok ? null : SO_PROCEED_GATE_RESPONSE;
-}
+/* `soProceedGateBlocked` lived here and has NO CALLERS LEFT (2026-08-18). Its
+   two sites were the /status stamp block and the header PATCH's `proceededAt`
+   branch, and both went with the second storage. The RULE it enforced did not
+   go anywhere: `meetsProceedGate` is still the gate, reached through
+   soProcessingDateProblemsForDoc / collectProcessingGateProblems on every path
+   that sets a Processing Date — which, after unification, is every path that
+   proceeds an order. Its refusal body SO_PROCEED_GATE_RESPONSE is likewise
+   superseded by the aggregated `validation_failed` list, which names WHICH
+   condition failed instead of reciting all five. */
 
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 async function soProcessingDateProblemsForDoc(
@@ -4880,15 +4863,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
   const depositTotalCenti = posPaymentsTotalCenti
     ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0);
-  const autoProceed = !!procDateOnCreate && meetsProceedGate({
-    hasCustomerName: !!customerName?.trim(),
-    hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),
-    hasPostcode: typeof body.postcode === 'string' && !!body.postcode.trim(),
-    hasDeliveryDate: typeof body.customerDeliveryDate === 'string' && !!body.customerDeliveryDate.trim(),
-    paid: depositTotalCenti,
-    total: grandTotal,
-    companyCode: c.get('companyCode') ?? null,
-  });
+  /* `autoProceed` — the boolean that decided whether to stamp `proceeded_at`
+     here — is GONE with the stamp (2026-08-18). It could only ever be true when
+     a Processing Date was ALSO being written, and the create already refuses
+     (422, below) to write that date unless the same gate passes, so "this order
+     proceeded at create" is now fully expressed by the date landing on the row.
+     The 422 block below is what actually protects the shop floor. */
 
   /* Processing-Date payment gate (Loo 2026-06-30) — a Processing Date is
      production's "ready to build" signal: once set, the backend orders materials
@@ -4970,9 +4950,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     (dn) => sb.from('mfg_sales_orders').insert({
     company_id: companyId, // multi-company: stamp the active company
     doc_no: dn,
-    /* SURVIVES ONE RELEASE ONLY — "RETIRING THE SECOND STORAGE" in
-       shared/so-processing-date.ts; `autoProceed` already requires the date. */
-    proceeded_at: autoProceed ? new Date().toISOString() : null,
     transfer_to: (body.transferTo as string) ?? null,
     so_date: dateOrNull(body.soDate) ?? todayMyt(),
     branding: (body.branding as string) ?? null,
@@ -5754,10 +5731,10 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
     /* Column bound to the constant — see "WHY A CONSTANT" in
        shared/so-processing-date.ts. */
     const { data: cur } = await scopeToCompanyId(sb.from('mfg_sales_orders')
-      .select(`proceeded_at, ${SO_PROCESSING_DATE_COLUMN}, debtor_name, email, address1, postcode, customer_delivery_date`), co.companyId)
+      .select(`${SO_PROCESSING_DATE_COLUMN}, debtor_name, email, address1, postcode, customer_delivery_date`), co.companyId)
       .eq('doc_no', docNo).maybeSingle();
     const curRow = cur as {
-      proceeded_at?: string | null; processing_date?: string | null;
+      processing_date?: string | null;
       debtor_name?: string | null; email?: string | null;
       address1?: string | null; postcode?: string | null; customer_delivery_date?: string | null;
     } | null;
@@ -5805,23 +5782,19 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
       if (pairRefusal) return c.json(pairRefusal, 400);
       patch[SO_PROCESSING_DATE_COLUMN] = resolved.date;
     }
-    if (!curRow?.proceeded_at) {
-      /* FIX 2 (2026-07-16) — gate the FIRST proceed on the same paid + full-
-         address rule as CREATE auto-proceed. An already-stamped SO re-entering
-         IN_PRODUCTION is a no-op and is NOT re-gated. */
-      if (!resolved.write) {
-        const gate = await soProceedGateBlocked(sb, docNo, {
-          customerName: curRow?.debtor_name,
-          address1: curRow?.address1, postcode: curRow?.postcode,
-          deliveryDate: curRow?.customer_delivery_date,
-        }, c.get('companyCode') ?? null);
-        if (gate) return c.json(gate, 422);
-      }
-      /* SURVIVES ONE RELEASE ONLY ("RETIRING THE SECOND STORAGE" in
-         shared/so-processing-date.ts): written only because the stock allocator
-         gates on it. Stamp-once, so a re-entry never rewrites it. */
-      patch.proceeded_at = new Date().toISOString();
-    }
+    /* NO STAMP, AND NO SECOND GATE (2026-08-18). This ended
+       `if (!curRow?.proceeded_at) { …gate…; patch.proceeded_at = now }`, and
+       both halves go with the second storage:
+       · the stamp had exactly ONE consumer, the allocator, and #2396 moved that
+         onto `processing_date`. Nothing reads the value as a timestamp — the
+         desktop Proceed Date field was deleted 2026-06-05, no export, PDF or
+         AutoCount payload names it — so writing it recorded nothing.
+       · the gate inside it fired only when `!resolved.write`, i.e. when the
+         order ALREADY carried a Processing Date. Under the owner's rule that
+         order is already proceeded, so this re-gated a state that had passed —
+         and inconsistently, since an order that also had a stamp was NOT
+         re-gated. The first proceed IS `resolved.write`, and that branch above
+         already runs soProcessingDateProblemsForDoc, a superset of this gate. */
   }
   /* PWP settlement on cancel (2026-07-29) — a cancel must also settle the
      vouchers the order touched, and it must do so in the SAME unit of work as
@@ -6579,10 +6552,6 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['amendDateFromCustomer', 'amend_date_from_customer'],
     ['amendedDeliveryDate', 'amended_delivery_date'],
     ['amendReason', 'amend_reason'],
-    /* POS "Proceed" — stamp-once guard below. SURVIVES ONE RELEASE ONLY (see
-       shared/so-processing-date.ts): no client sends the key, so its only live
-       effect is keeping the column in `beforeCols` for the clear below. */
-    ['proceededAt', 'proceeded_at'],
     ['linkedDoDocNo', 'linked_do_doc_no'],
     ['shipToAddress', 'ship_to_address'], ['billToAddress', 'bill_to_address'],
     ['installToAddress', 'install_to_address'],
@@ -6697,15 +6666,6 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     if (!(to in updates) || norm(updates[to]) !== norm(beforeRecord[to])) continue;
     delete updates[to];
     delete body[from];
-  }
-
-  /* Stamp-once filtering is part of normalisation, not an afterthought. A
-     repeated Proceed timestamp is a true no-op and must not demand/bump a
-     version merely because the incoming timestamp string differs. */
-  if (updates['proceeded_at'] !== undefined && updates['proceeded_at'] !== null
-      && beforeRecord['proceeded_at']) {
-    delete updates['proceeded_at'];
-    delete body['proceededAt'];
   }
 
   const reserveForLineWrites = body['reserveLineWrites'] === true;
@@ -7026,39 +6986,16 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     }
   }
 
-  /* FIX 2 (2026-07-16) — gate a genuine forward Proceed on the header PATCH path
-     too (mobile / API set proceededAt directly here). After the stamp-once drop
-     above, a still-present non-null proceeded_at means the SO had NONE before →
-     this is the first Proceed, so it must pass the SAME paid + full-address
-     gate the /status → IN_PRODUCTION path and CREATE auto-proceed use. An explicit
-     null (un-proceed) and an already-proceeded re-save (dropped above) are
-     unaffected. Effective header values = the patch value when this request sets
-     the field, else the stored `before` value. */
-  if (updates['proceeded_at'] !== undefined && updates['proceeded_at'] !== null) {
-    const beforeProceed = before as unknown as Record<string, unknown> | null;
-    const effOf = (snake: string): string | null => {
-      const v = updates[snake] !== undefined ? updates[snake] : beforeProceed?.[snake];
-      return v == null ? null : String(v);
-    };
-    const gate = await soProceedGateBlocked(sb, docNo, {
-      customerName: effOf('debtor_name'),
-      address1: effOf('address1'),
-      postcode: effOf('postcode'),
-      deliveryDate: effOf('customer_delivery_date'),
-    }, c.get('companyCode') ?? null);
-    if (gate) return c.json(gate, 422);
-    /* And it must land ON a Processing Date — proceeding IS setting that date
-       (owner, pinned 2026-08-13). This PATCH is the one proceed path that can
-       set both in the same request, so the date may come from this patch or
-       already be on the row; what it may not do is mark an order proceeded with
-       no day the factory starts. A date arriving in THIS patch is gated by the
-       aggregated Processing-Date block below, which runs before any write. */
-    /* Bound to the constant — this read named `internal_expected_dd`, which
-       migration 0286 renamed away, so `effOf` resolved undefined for EVERY
-       order and this line refused every proceed that came through the header
-       PATCH, including ones whose date arrived in the same request. */
-    if (!effOf(SO_PROCESSING_DATE_COLUMN)?.trim()) return c.json(PROCEED_NEEDS_DATE, 422);
-  }
+  /* THE `proceededAt` PROCEED PATH IS GONE (2026-08-18), not merely ungated.
+     `['proceededAt','proceeded_at']` left the map above, so no request body can
+     reach the column at all — which DELETES this block rather than loosening it.
+     What stood here gated a "genuine forward Proceed" arriving as a bare
+     timestamp from mobile / API. Nothing ever sent one: `grep -rn proceededAt`
+     over frontend/src, native/ and e2e/ returns type declarations and comments,
+     never a request body. Proceeding through this route now means one thing —
+     setting `processingDate` — and that is gated by the aggregated
+     Processing-Date block below, which carries the same deposit + completeness
+     conditions this did, plus the variant / KIV / date rules it did not. */
 
   /* Commander 2026-05-28 / Owner 2026-06-01 — Processing & Delivery Date may
      only be today or a future date, BUT an already-past value the edit does NOT
@@ -7102,12 +7039,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       origDeliv,
     });
     for (const col of cascadeCols) updates[col] = null;
-    /* THE ORPHAN-STAMP LEAK, closed 2026-08-18: this cleared the date and LEFT
-       the stamp, which the stamp-once filter above then froze permanently — the
-       shape prod carries on 25 company-2 orders. *"没有 processing date 就代表没有
-       proceed"*, so the stamp goes with the date in the same CAS write and audit
-       diff. Changes no existing row; stops the next one. */
-    if (superAdminClearsProc) updates['proceeded_at'] = null;
+    /* THE ORPHAN-STAMP LEAK was here: this cleared the date and LEFT
+       `proceeded_at`, which the stamp-once filter then froze permanently — the
+       shape 25 company-2 rows carry today, and the one live path that made new
+       ones. It is closed by there being no stamp at all rather than by a second
+       clear: since 2026-08-18 nothing on this route reads or writes that column,
+       so a removed Processing Date can no longer leave anything behind. */
     /* The header column is only half the write: apply_so_header_cas cascades a
        delivery-date change down to every line_delivery_date behind
        p_apply_delivery_date, which keys off the request body. A cascade the
@@ -7144,11 +7081,11 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       variantOffenders,
       kivOffenders,
       /* Effective header values — the patch value when THIS request sets the
-         field, else the stored one. Identical semantics to the `effOf` in the
-         proceed block above; it cannot be reused because that one is scoped
-         inside `if (updates['proceeded_at'] ...)`, and this gate runs whether or
-         not the request also proceeds. One rule, one set of facts (owner
-         2026-07-31: Processing Date IS Proceed). Email is deliberately absent. */
+         field, else the stored one. Since 2026-08-18 this is the ONLY proceed
+         gate on the route: the separate `proceededAt` branch that carried its
+         own copy of these facts went with the second storage. One rule, one set
+         of facts (owner 2026-07-31: Processing Date IS Proceed). Email is
+         deliberately absent. */
       completeness: (() => {
         const beforeRow = before as unknown as Record<string, unknown> | null;
         const eff = (snake: string): string => {

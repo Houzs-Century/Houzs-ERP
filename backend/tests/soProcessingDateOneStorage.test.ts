@@ -16,16 +16,14 @@ import { soProcessingLocked } from '../src/scm/routes/mfg-sales-orders';
  * edit. So this asserts on the SOURCE of the deciding files, the way
  * frontend/src/pages/adminResetLink.test.ts pins the reset-link invariant.
  *
- * WHAT IT DOES NOT CLAIM, and this is the honest half. The column still EXISTS,
- * is still written, and ONE decision still reads it: the stock allocator's
- * `allocGated`. That read cannot move until the owner rules on 16 live
- * company-2 orders that carry a Proceed stamp with no Processing Date — moving
- * it gates all 16 and visibly drops 4 of them out of READY_TO_SHIP. So the
- * allocator is pinned here in its CURRENT state, deliberately, together with
- * the evidence that the divergence is known rather than forgotten. When the
- * follow-up flips it, these assertions fail and must be updated — which is how
- * a deferral stays a deferral instead of becoming the status quo. See
- * "RETIRING THE SECOND STORAGE" in shared/so-processing-date.ts. */
+ * WHAT IT DOES NOT CLAIM. The COLUMN still exists in Postgres. Dropping it is a
+ * separate, later deploy and must be: deploy.yml runs pg-migrate BEFORE
+ * wrangler deploy, so a column dropped in the release that stops selecting it
+ * leaves the still-live OLD Worker doing a PostgREST select on a missing column
+ * — 42703 on every SO read for the length of the deploy, which is #1191/0189.
+ * What this file pins is that no CODE reads or writes it any more, which is the
+ * precondition that makes the drop a one-liner. See "RETIRING THE SECOND
+ * STORAGE" in shared/so-processing-date.ts. */
 
 const sources = import.meta.glob(
   [
@@ -94,65 +92,64 @@ describe('no LOCK decision reads a second storage', () => {
   });
 });
 
-describe('the stock allocator is the ONE remaining reader, and it is pinned', () => {
-  /* THE decision the owner was actually complaining about: its comment has
-     described the Processing Date rule since 2026-08-10 while the code reads the
-     other column. Not flipped here — see the file header. */
-  test('there is exactly one gate, and today it still reads the stamp', () => {
+describe('the stock allocator gates on the Processing Date', () => {
+  /* THE decision the owner was complaining about: its comment described the
+     Processing Date rule from 2026-08-10 while the code read the other column.
+     Flipped by #2396; pinned here so it cannot drift back. */
+  test('there is exactly one gate and it reads the Processing Date column', () => {
     const src = codeOnly(srcOf('so-stock-allocation.ts'));
     const gates = [...src.matchAll(/const allocGated/g)];
     expect(gates).toHaveLength(1);
     const window = src.slice(gates[0]!.index, gates[0]!.index + 200);
-    expect(window).toContain('!o.proceeded_at');
-    /* FLIPPING THIS IS THE FOLLOW-UP. Replace with SO_PROCESSING_DATE_COLUMN
-       here AND in the select above, delete the three write sites counted below,
-       and update this test — after the owner has ruled on the 16. */
+    expect(window).toContain('SO_PROCESSING_DATE_COLUMN');
+    expect(window).not.toContain('proceeded_at');
   });
 
   test('the gate and the select name the SAME column — no mixing', () => {
     const src = codeOnly(srcOf('so-stock-allocation.ts'));
-    /* The failure this forbids is subtler than either column alone: selecting
-       the date and gating on the stamp (or the reverse) would read `undefined`
-       for every row and gate the ENTIRE book, or none of it. */
-    const selects = [...src.matchAll(/\.select\('doc_no, status, created_at[^']*'\)/g)];
+    /* Subtler than either column alone: selecting one and gating on the other
+       reads `undefined` for every row and gates the ENTIRE book, or none of it.
+       That is precisely the shape of the bug #2396 fixed. */
+    const selects = [...src.matchAll(/\.select\(`doc_no, status, created_at[^`]*`\)/g)];
     expect(selects).toHaveLength(1);
-    expect(selects[0]![0]).toContain('proceeded_at');
+    expect(selects[0]![0]).toContain('SO_PROCESSING_DATE_COLUMN');
+    expect(selects[0]![0]).not.toContain('proceeded_at');
   });
 
-  test('the divergence is documented with its measured blast radius', () => {
-    /* Comments included on purpose here — the assertion IS about the comment.
-       A silent flip would leave these numbers describing the wrong world. */
+  test('its measured blast radius is recorded where the gate is', () => {
+    /* Comments on purpose — the assertion IS about the comment. #2396 shipped
+       saying the production impact was UNKNOWN; it is known now, and a later
+       edit that drops these numbers should have to notice it is doing so. */
     const raw = srcOf('so-stock-allocation.ts');
-    expect(raw).toContain('THE SENTENCE ABOVE AND THE LINE BELOW DISAGREE');
     expect(raw).toContain('probe-proceed-split');
-    expect(raw).toContain('12 CONFIRMED, 4 READY_TO_SHIP');
+    expect(raw).toContain('12 CONFIRMED and 4');
     expect(raw).toContain('RETIRING THE SECOND STORAGE');
   });
 });
 
-describe('the retired column survives at exactly the sites the plan names', () => {
-  /* This is the deferral, made mechanical. If someone deletes one of these, or
-     adds a fourth, the count moves and this fails — which is how the follow-up
-     change gets forced to update the plan instead of drifting away from it. */
-  test('mfg-sales-orders.ts names it exactly 15 times and no more', () => {
+describe('nothing writes the retired column either', () => {
+  /* The write sites were the other half. They could not go until the allocator
+     stopped reading (#2396) — a stop-write with a live reader would have landed
+     every NEW order with a NULL stamp and gated it out of allocation forever.
+     With the reader moved, all of them go, and the column is inert. */
+  test('no executable line in mfg-sales-orders.ts names it', () => {
     const src = codeOnly(srcOf('mfg-sales-orders.ts'));
-    const hits = [...src.matchAll(/proceeded_at|proceededAt/g)].length;
-    /* 1  create INSERT key
-       2  /status IN_PRODUCTION read (select)
-       3  ...its row type
-       4  ...the first-proceed test
-       5  ...the stamp write
-       6  the PATCH map entry (camel)
-       7  the PATCH map entry (snake)
-       8  stamp-once filter: incoming !== undefined
-       9  stamp-once filter: incoming !== null
-      10  stamp-once filter: stored value
-      11  stamp-once filter: delete updates
-      12  stamp-once filter: delete body (camel)
-      13  the header-PATCH proceed gate: !== undefined
-      14  ...!== null
-      15  the Remove-Processing-Date clear (this commit's leak fix) */
-    expect(hits).toBe(15);
+    expect([...src.matchAll(/proceeded_at|proceededAt/g)]).toHaveLength(0);
+  });
+
+  test('nor in the allocator or the delivery-planning board', () => {
+    for (const f of ['so-stock-allocation.ts', 'delivery-planning.ts']) {
+      expect(codeOnly(srcOf(f))).not.toContain('proceeded_at');
+    }
+  });
+
+  test('the create path no longer carries an auto-proceed stamp decision', () => {
+    /* `autoProceed` existed ONLY to decide that stamp, and could only ever be
+       true when a Processing Date was also being written — which the create
+       already refuses (422) unless the same gate passes. Being proceeded at
+       create is now the date landing on the row, full stop. */
+    const src = codeOnly(srcOf('mfg-sales-orders.ts'));
+    expect(src).not.toContain('autoProceed');
   });
 });
 

@@ -69,25 +69,46 @@ a caller that has not fetched one fails to COMPILE instead of quietly deciding
 out of a different fact; an empty status at runtime answers *not locked*, the
 same side the marker protected.
 
-**The leak, closed.** Remove-Processing-Date cleared the date and left the stamp
-behind; the stamp-once filter (`:6745`) then made that stamp permanent — the one
-live path that manufactures a row saying "proceeded" out of one column and "not
-proceeded" out of the other. The header PATCH now clears both in the same CAS
-write. It changes no existing row; it stops the next one.
+**The leak, closed by removal rather than by a second clear.** Remove-Processing-
+Date cleared the date and left the stamp; the stamp-once filter then made that
+stamp permanent — the one live path that manufactures a row saying "proceeded"
+out of one column and "not proceeded" out of the other, and the source of the 25
+company-2 rows that carry that shape. An interim fix cleared both together; the
+final state is stronger and simpler — there is no stamp to orphan, because
+nothing writes one.
 
-**Deferred, deliberately, and coupled.** `so-stock-allocation.ts`'s `allocGated`
-still reads `proceeded_at` — the one reachable decision left, and the one whose
-own comment has described the *Processing Date* rule since 2026-08-10 while the
-code read the other column. Flipping it gates all 16 company-2 stamp-only orders
-and visibly drops 4 out of READY_TO_SHIP. The two server-side stamps cannot be
-removed BEFORE that flip either: with the allocator still reading the stamp,
-every new order would land NULL and be gated out of allocation forever. So they
-are one change, and it waits on a human supplying the 16 missing dates or
-accepting those orders as un-proceeded. The fix is never to invent a date
+**The allocator, and why the ORDER mattered.** `so-stock-allocation.ts`'s
+`allocGated` was the one reachable decision left — the one whose own comment had
+described the *Processing Date* rule since 2026-08-10 while the code read the
+other column. #2396 moved it while this work was in flight, and shipped saying
+so: *"Blast radius on production is UNKNOWN and not invented — the probe that
+measures it is on a branch that is not yet dispatchable."* **That probe is this
+one, and the radius is above:** company 1 no-op; company 2 gains 5 and loses 16,
+of which 4 are READY_TO_SHIP and drop visibly to CONFIRMED. Those 4 are the rule
+working — *"没有 processing date 就代表没有 proceed"* — not a new fault, and the
+repair is a human supplying the date, never a script inventing one
 (`PROCEED_NEEDS_DATE`: a guessed start date is a real order in the factory queue
 on the wrong day, with nothing to show it was guessed).
 
-**And the DROP is one deploy behind the code, on purpose.** `deploy.yml` runs
+That flip is also what UNBLOCKED the writes, and the order was not optional: the
+create stamp, the `/status` stamp, the `['proceededAt','proceeded_at']` map entry
+and its stamp-once filter could only go once nothing read the column. Removing
+them first would have landed every NEW order with a NULL stamp and gated it out
+of allocation forever. They are gone now, along with `autoProceed` (which existed
+only to decide the create stamp — and could only ever be true when a Processing
+Date was ALSO being written, which the create already refuses to do unless the
+same gate passes) and `soProceedGateBlocked` (both call sites gone; the RULE it
+enforced did not move — every path that sets a Processing Date still reaches
+`meetsProceedGate`, and after unification that is every path that proceeds). The
+`/status` branch it guarded fired only when the order ALREADY had a date, so it
+re-gated a state that had passed — and inconsistently, since an order carrying a
+stamp as well was not re-gated at all.
+
+**No code anywhere reads or writes `proceeded_at`.** That is the precondition the
+DROP needed.
+
+**The DROP is the one step left, and it is one deploy behind the code on
+purpose.** `deploy.yml` runs
 `pg-migrate` BEFORE `wrangler deploy`, so a column dropped in the same release
 that stops selecting it leaves the still-live old Worker doing a PostgREST select
 on a missing column — 42703 on every SO read for the length of the deploy. That
@@ -98,7 +119,13 @@ view* because a recreated view is a NEW object whose ACL and owner do not
 survive. The drop SQL and that constraint are written out at
 `shared/so-processing-date.ts` under "RETIRING THE SECOND STORAGE".
 
-**A tripwire that was green while describing the wrong world.**
+**Two tests that were green while describing the wrong world.**
+`tests/soDatePairWiring.test.ts` anchored its "the pair rule runs before the
+`/status` proceed writes the date" assertion on `patch.proceeded_at` — a
+neighbouring statement, not the write. When that statement stopped existing the
+test failed loudly, which is the good outcome; it is now anchored on
+`patch[SO_PROCESSING_DATE_COLUMN] = resolved.date`, the write it was always
+about. And:
 `tests/scaleRouteDrift.test.mjs` reconstructs the SO list projection from
 `HEADER` plus a HAND-COPIED suffix and compares it to the scale benchmark's
 column list. Removing `proceeded_at` from the route's real `LIST_COLS` left both
@@ -106,7 +133,7 @@ sides of that comparison unchanged, so the drift test stayed green while the
 contract it guards no longer matched production. Both sides updated, and the
 negative control run to confirm it does go red.
 
-**Regression pins.** `backend/tests/soProcessingDateOneStorage.test.ts` (19) and
+**Regression pins.** `backend/tests/soProcessingDateOneStorage.test.ts` (21) and
 `frontend/src/vendor/scm/lib/so-detail-gates.one-storage.test.ts` (12). Source-
 level, because re-adding `|| header.proceeded_at` to a lock passes every
 behavioural test, reads as defensive in review, and only surfaces as an order
