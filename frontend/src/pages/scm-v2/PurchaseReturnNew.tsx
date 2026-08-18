@@ -102,7 +102,7 @@ type DraftLine = {
   itemGroup:      string | null;
   variants:       Record<string, unknown> | null;
   qtyReturned:    number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   reason:         string;
   notes:          string;
 };
@@ -116,7 +116,7 @@ const newLine = (): DraftLine => ({
   itemGroup:      null,
   variants:       null,
   qtyReturned:    1,
-  unitPriceCenti: 0,
+  unitPriceSen: 0,
   reason:         '',
   notes:          '',
 });
@@ -202,7 +202,7 @@ export const PurchaseReturnNew = () => {
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
         qtyReturned:    it.qty_rejected ?? 0,        // pre-fill with rejected qty if any
-        unitPriceCenti: it.unit_price_centi ?? 0,
+        unitPriceSen: it.unit_price_sen ?? 0,
         reason:         it.rejection_reason ?? '',
         notes:          '',
       }));
@@ -223,7 +223,7 @@ export const PurchaseReturnNew = () => {
       itemGroup:      it.item_group ?? null,
       variants:       (it.variants as Record<string, unknown> | null) ?? null,
       qtyReturned:    0,                              // commander enters
-      unitPriceCenti: it.unit_price_centi ?? 0,
+      unitPriceSen: it.unit_price_sen ?? 0,
       reason:         '',
       notes:          '',
     }));
@@ -235,8 +235,8 @@ export const PurchaseReturnNew = () => {
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
   const addLine  = () => setLines((prev) => [...prev, newLine()]);
 
-  const subtotalCenti = useMemo(
-    () => lines.filter((l) => l.qtyReturned > 0).reduce((s, l) => s + l.qtyReturned * l.unitPriceCenti, 0),
+  const subtotalSen = useMemo(
+    () => lines.filter((l) => l.qtyReturned > 0).reduce((s, l) => s + l.qtyReturned * l.unitPriceSen, 0),
     [lines],
   );
 
@@ -302,8 +302,8 @@ export const PurchaseReturnNew = () => {
           materialCode:   l.materialCode,
           materialName:   l.materialName,
           qtyReturned:    l.qtyReturned,
-          unitPriceCenti: l.unitPriceCenti,
-          lineRefundCenti: l.qtyReturned * l.unitPriceCenti,
+          unitPriceSen: l.unitPriceSen,
+          lineRefundSen: l.qtyReturned * l.unitPriceSen,
           reason:         l.reason || undefined,
           notes:          l.notes || undefined,
           // Commander 2026-05-29 — send the line's category + variant selections
@@ -406,7 +406,7 @@ export const PurchaseReturnNew = () => {
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items to Return</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-            {validLines.length} line{validLines.length === 1 ? '' : 's'} · refund {fmtRm(subtotalCenti)}
+            {validLines.length} line{validLines.length === 1 ? '' : 's'} · refund {fmtRm(subtotalSen)}
           </span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -420,7 +420,7 @@ export const PurchaseReturnNew = () => {
             </p>
           ) : (
             lines.map((l, idx) => {
-              const lineRefundCenti = l.qtyReturned * l.unitPriceCenti;
+              const lineRefundSen = l.qtyReturned * l.unitPriceSen;
               const variantSummary = buildVariantSummary(l.itemGroup, l.variants);
               // Manual lines (no grn linkage AND free-form mode) get the inline
               // picker + editable variant block. Sourced lines stay read-only.
@@ -470,7 +470,7 @@ export const PurchaseReturnNew = () => {
                       {l.itemGroup && <ItemGroupPill group={l.itemGroup} />}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                      <span className={styles.previewPrice}>{fmtRm(lineRefundCenti)}</span>
+                      <span className={styles.previewPrice}>{fmtRm(lineRefundSen)}</span>
                       <button
                         type="button"
                         onClick={() => dropLine(l.rid)}
@@ -620,8 +620,8 @@ export const PurchaseReturnNew = () => {
                     </label>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Unit Price (MYR)</span>
-                      <MoneyInput bare valueSen={l.unitPriceCenti}
-                        onCommit={(sen) => setLine(l.rid, { unitPriceCenti: sen ?? 0 })}
+                      <MoneyInput bare valueSen={l.unitPriceSen}
+                        onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
                         inputClassName={styles.fieldInput} selectOnFocus />
                     </label>
                     <label className={styles.field}>
@@ -636,7 +636,7 @@ export const PurchaseReturnNew = () => {
                       <input
                         type="text"
                         readOnly
-                        value={fmtRm(lineRefundCenti)}
+                        value={fmtRm(lineRefundSen)}
                         className={styles.fieldInput}
                         style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />
@@ -682,11 +682,11 @@ export const PurchaseReturnNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
               <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700, borderTop: '1px solid var(--line)', paddingTop: 'var(--space-2)' }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen)}</span>
             </div>
           </div>
         </section>

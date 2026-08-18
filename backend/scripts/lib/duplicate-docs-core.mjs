@@ -10,7 +10,7 @@
 // unit suite can hold it still.
 //
 // THE COMPARISON KEY is the line MULTISET: each line reduced to
-// (item_code, variant_key, qty, unit_price_centi), the whole document to the
+// (item_code, variant_key, qty, unit_price_sen), the whole document to the
 // sorted multiset of those tuples. Two documents with the SAME multiset ordered
 // the same physical goods at the same prices — for the same counterparty within
 // a few days, that is a duplicate CANDIDATE (never a verdict on its own: the
@@ -24,7 +24,7 @@ export const lineTupleKey = (l) =>
     String(l.itemCode ?? "").trim().toUpperCase(),
     String(l.variantKey ?? "").trim(),
     String(Math.max(0, Number(l.qty ?? 0))),
-    l.unitPriceCenti == null ? "?" : String(Number(l.unitPriceCenti)),
+    l.unitPriceSen == null ? "?" : String(Number(l.unitPriceSen)),
   ].join("|");
 
 /* Document → sorted multiset key (the exact-duplicate fingerprint). */
@@ -56,7 +56,7 @@ export function lineMultisetMatchPct(aLines = [], bLines = []) {
 export function isSiblingShape(aLines = [], bLines = []) {
   if (aLines.length === 0 || aLines.length !== bLines.length) return false;
   const qp = (lines) => lines
-    .map((l) => `${Math.max(0, Number(l.qty ?? 0))}|${l.unitPriceCenti == null ? "?" : Number(l.unitPriceCenti)}`)
+    .map((l) => `${Math.max(0, Number(l.qty ?? 0))}|${l.unitPriceSen == null ? "?" : Number(l.unitPriceSen)}`)
     .sort()
     .join("::");
   if (qp(aLines) !== qp(bLines)) return false;

@@ -100,6 +100,21 @@ export const VOCABULARY = [
       "The VALUES are maintained by the owner in PMS -> Project Maintenance -> BRANDS " +
       "(`project_brands`, per company) and checked by `audit:branding-vocabulary`.",
   },
+  {
+    concept: "Money (minor unit)",
+    canonical: "_sen",
+    alsoCanonical: [],
+    retired: ["_centi"],
+    declaredIn: "backend/src/scm/lib/money.ts",
+    allow: ["scripts/lib/vocabulary.mjs", "scripts/lib/drift-catalogue.mjs"],
+    note:
+      "Money is stored as an INTEGER count of sen (the Malaysian subunit AutoCount " +
+      "speaks; 100 sen = RM 1) and displayed as RM at the edge. The column/field " +
+      "suffix is `_sen` / `Sen`; `_centi` was the drift (291 columns across 70 tables, " +
+      "renamed by migration 0305 on 2026-08-18). Storing decimals is what money.ts " +
+      "exists to prevent — the retirement is of the NAME, not the integer type. Bare " +
+      "`centi` local helpers in one-off scripts are not `_centi` and are not retired.",
+  },
 ];
 
 /** A retired spelling may appear here without being a defect. */

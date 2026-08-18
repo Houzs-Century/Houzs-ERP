@@ -19,7 +19,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Plus } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDateOrDash, fmtMoneyCenti } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtMoneySen } from '@2990s/shared';
 import {
   usePurchaseConsignmentOrders,
   usePurchaseConsignmentOrderDetail,
@@ -48,7 +48,7 @@ const STATUS_CHIPS: { value: StatusFilter; label: string }[] = [
   { value: 'all', label: 'All' },
 ];
 
-const fmtMoney = (centi: number, currency: Currency): string => fmtMoneyCenti(centi, currency);
+const fmtMoney = (centi: number, currency: Currency): string => fmtMoneySen(centi, currency);
 
 // The backend PC-orders list returns pc_number (the consignment doc number),
 // but the shared PoHeaderRow type carries po_number. Read pc_number first with
@@ -145,17 +145,17 @@ const buildColumns = (): DataGridColumn<PoHeaderRow>[] => [
     groupValue: (po) => po.currency,
   },
   {
-    key: 'total_centi', label: 'Total', width: 130, sortable: true, align: 'right', groupable: false,
+    key: 'total_sen', label: 'Total', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (po) => (
       <span style={{ fontFamily: 'var(--font-mark)', color: '#16695f', fontWeight: 800 }}>
-        {fmtMoney(po.total_centi, po.currency)}
+        {fmtMoney(po.total_sen, po.currency)}
       </span>
     ),
-    searchValue: (po) => fmtMoney(po.total_centi, po.currency),
+    searchValue: (po) => fmtMoney(po.total_sen, po.currency),
     /* Accessor is JSX → export the NUMBER in ringgit (not "MYR 1,234.00") so
        Excel can SUM the column. */
-    exportValue: (po) => (po.total_centi ?? 0) / 100,
-    sortFn: (a, b) => a.total_centi - b.total_centi,
+    exportValue: (po) => (po.total_sen ?? 0) / 100,
+    sortFn: (a, b) => a.total_sen - b.total_sen,
   },
   {
     key: 'status', label: 'Status', width: 160, sortable: true, groupable: true,
@@ -329,15 +329,15 @@ const buildDrilldownColumns = (
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 100, align: 'right',
-    accessor: (it) => fmtMoney(Number(it.unit_price_centi ?? 0), currency),
-    searchValue: (it) => String(it.unit_price_centi ?? 0),
-    sortFn: (a, b) => Number(a.unit_price_centi ?? 0) - Number(b.unit_price_centi ?? 0),
+    accessor: (it) => fmtMoney(Number(it.unit_price_sen ?? 0), currency),
+    searchValue: (it) => String(it.unit_price_sen ?? 0),
+    sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
   },
   {
     key: 'line_total', label: 'Line Total', width: 110, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_total_centi ?? 0), currency)}</span>,
-    searchValue: (it) => String(it.line_total_centi ?? 0),
-    sortFn: (a, b) => Number(a.line_total_centi ?? 0) - Number(b.line_total_centi ?? 0),
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_total_sen ?? 0), currency)}</span>,
+    searchValue: (it) => String(it.line_total_sen ?? 0),
+    sortFn: (a, b) => Number(a.line_total_sen ?? 0) - Number(b.line_total_sen ?? 0),
   },
 ];
 
@@ -371,7 +371,7 @@ const ExpandedLines = ({ po }: { po: PoHeaderRow }) => {
   }
 
   let subtotal = 0;
-  for (const it of items) subtotal += Number(it.line_total_centi ?? 0);
+  for (const it of items) subtotal += Number(it.line_total_sen ?? 0);
 
   const columns = buildDrilldownColumns(po.currency, po.expected_at ?? null);
 

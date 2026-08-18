@@ -13,14 +13,14 @@
 // presentational so no list's field mapping leaks into another's.
 
 import { useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, orderLineIdentity } from "@2990s/shared";
 import { ItemGroupPill } from "../vendor/scm/lib/category-badges";
 import type { OriginAssignment } from "../vendor/scm/lib/flow-queries";
 import { cn, formatDate } from "../lib/utils";
 
 // A single normalised drill line. Callers resolve `code` (e.g. material_code ||
 // item_code), `qty` (ordered / received / returned as the document means) and
-// `amountCenti` (line_total_centi / total_centi) themselves; `itemGroup` +
+// `amountSen` (line_total_sen / total_sen) themselves; `itemGroup` +
 // `variants` feed the same live buildVariantSummary the detail drawers use.
 export type DocumentDrillLine = {
   itemGroup: string | null;
@@ -29,7 +29,7 @@ export type DocumentDrillLine = {
   description2: string | null;
   variants: Record<string, unknown> | null;
   qty: number;
-  amountCenti: number;
+  amountSen: number;
   // The REAL origin Sales Order(s) this line was raised from, matched by SKU
   // (purchase docs only). Empty / absent → the Assigned SO + delivery cells show
   // a dash, exactly like the SO detail's Stock / Incoming PO columns.
@@ -82,14 +82,14 @@ export type DrillItemFields = {
   qty?: number | null;
   received_qty?: number | null;
   qty_returned?: number | null;
-  unit_price_centi?: number | null;
-  line_total_centi?: number | null;
-  total_centi?: number | null;
-  amount_centi?: number | null;
+  unit_price_sen?: number | null;
+  line_total_sen?: number | null;
+  total_sen?: number | null;
+  amount_sen?: number | null;
 };
 
 // Shared centi → RM string, same helper the lists use.
-const fmtRm = (centi: number): string => fmtCenti(centi);
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 /* ── Three visual identities for a cross-document assignment chip ──────────
    Decision (docs/modules/purchase-order.md, owner 2026-08-06): soft until DO,
@@ -631,7 +631,7 @@ export function DocumentLinesExpansion({
                 {l.qty}
               </span>
               <span className="text-right font-money text-[12px] font-semibold text-ink">
-                {fmtRm(l.amountCenti)}
+                {fmtRm(l.amountSen)}
               </span>
               {paired && (
                 accessory

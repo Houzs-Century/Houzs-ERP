@@ -27,7 +27,7 @@ import { StatCard } from '../../components/StatCard';
 import { SearchProgress } from '../../components/SearchProgress';
 import { SearchScopeHint } from '../../components/SearchScopeHint';
 import { useDebouncedSearchTerm, useSearchResultTransition } from '../../hooks/useServerSearch';
-import { adjustmentReasonLabel, fmtCenti, fmtDate, fmtDateTime, fmtQty, formatVariantKey } from '@2990s/shared';
+import { adjustmentReasonLabel, fmtSen, fmtDate, fmtDateTime, fmtQty, formatVariantKey } from '@2990s/shared';
 import { DataTable, type Column } from '../../components/DataTable';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import {
@@ -100,7 +100,7 @@ const CATEGORIES: { value: Category; label: string }[] = [
   { value: 'SERVICE',   label: 'Service' },
 ];
 
-const fmtRm = (sen: number | null | undefined): string => fmtCenti(sen);
+const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 /* Age of the stock — days since the oldest open FIFO lot was received
    (Commander 2026-05-29: "寿命" replaces Last Movement). */

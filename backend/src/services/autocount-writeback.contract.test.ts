@@ -521,34 +521,34 @@ const SO_ITEMS = [
   {
     doc_no: 'SO-2608-011', item_code: 'AKEMI-SOLITUDE-Q', item_group: 'mattress',
     description: 'AKEMI SOLITUDE MATTRESS QUEEN', description2: 'QUEEN 5x6.5',
-    qty: 1, unit_price_centi: 199_900, discount_centi: 0, variants: null,
+    qty: 1, unit_price_sen: 199_900, discount_sen: 0, variants: null,
     location: null, warehouse_id: 'wh-kl', line_delivery_date: '2026-09-01',
   },
   {
     doc_no: 'SO-2608-011', item_code: 'ANNSA-1B(LHF)', item_group: 'sofa',
     description: 'SOFA ANNSA', description2: null,
-    qty: 1, unit_price_centi: 150_000, discount_centi: 30_000,
+    qty: 1, unit_price_sen: 150_000, discount_sen: 30_000,
     variants: { buildKey: 'build-1', cellIndex: 0, fabricColor: 'HR805-30', fabricLabel: 'Linen' },
     location: null, warehouse_id: 'wh-kl', line_delivery_date: '2026-09-15',
   },
   {
     doc_no: 'SO-2608-011', item_code: 'ANNSA-CNR', item_group: 'sofa',
     description: 'SOFA ANNSA', description2: null,
-    qty: 1, unit_price_centi: 150_000, discount_centi: 0,
+    qty: 1, unit_price_sen: 150_000, discount_sen: 0,
     variants: { buildKey: 'build-1', cellIndex: 1, fabricColor: 'HR805-30', fabricLabel: 'Linen' },
     location: null, warehouse_id: 'wh-kl', line_delivery_date: '2026-09-15',
   },
   {
     doc_no: 'SO-2608-011', item_code: 'ANNSA-2A(RHF)', item_group: 'sofa',
     description: 'SOFA ANNSA', description2: null,
-    qty: 1, unit_price_centi: 150_000, discount_centi: 0,
+    qty: 1, unit_price_sen: 150_000, discount_sen: 0,
     variants: { buildKey: 'build-1', cellIndex: 2, fabricColor: 'HR805-30', fabricLabel: 'Linen' },
     location: null, warehouse_id: 'wh-kl', line_delivery_date: '2026-09-15',
   },
   {
     doc_no: 'SO-2608-011', item_code: 'SVC-DELIVERY', item_group: 'service',
     description: 'Delivery', description2: null,
-    qty: 1, unit_price_centi: 15_000, discount_centi: 0, variants: null,
+    qty: 1, unit_price_sen: 15_000, discount_sen: 0, variants: null,
     location: null, warehouse_id: null, line_delivery_date: null,
   },
 ];
@@ -569,8 +569,8 @@ const SUPPLIER = {
 const PO_ITEMS = [
   {
     purchase_order_id: 'po-uuid-1', material_code: 'AKEMI-SOLITUDE-Q', item_group: 'mattress',
-    description: 'AKEMI SOLITUDE MATTRESS QUEEN', qty: 2, unit_price_centi: 90_000,
-    discount_centi: 0, variants: null, warehouse_id: 'wh-kl', delivery_date: '2026-09-20',
+    description: 'AKEMI SOLITUDE MATTRESS QUEEN', qty: 2, unit_price_sen: 90_000,
+    discount_sen: 0, variants: null, warehouse_id: 'wh-kl', delivery_date: '2026-09-20',
   },
 ];
 
@@ -729,7 +729,7 @@ export const DIVERGENCES: Divergence[] = [
   {
     id: 'D12', flow: 'create_so + create_po + edit', field: 'Details[] — line discount',
     service: 'reads no discount field; SalesOrderDetail exposes Discount and DiscountAmt (sdk-api-reference.txt:468) and neither is in the payload contract.',
-    erp: 'has discount_centi on both item tables and never sends it, so the AutoCount document total is the undiscounted one. On a sofa the discount sits on ONE compartment row (mfg-sales-orders.ts:4398), which makes it easy to miss.',
+    erp: 'has discount_sen on both item tables and never sends it, so the AutoCount document total is the undiscounted one. On a sofa the discount sits on ONE compartment row (mfg-sales-orders.ts:4398), which makes it easy to miss.',
     severity: 'high',
   },
   /* D13 (every line dropped, because the line select named linked_ac_dtlkey and

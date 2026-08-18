@@ -125,7 +125,7 @@ async function main() {
   note(`\n${'='.repeat(78)}\n1. IDENTITY — does an order matching the screenshot exist, and is it "James Pak"?`);
   const heads = await sql`
     SELECT doc_no, company_id, status::text AS status, branding, debtor_name,
-           local_total_centi, so_date::text AS so_date,
+           local_total_sen, so_date::text AS so_date,
            processing_date::text AS processing_date,
            proceeded_at::text AS proceeded_at,
            updated_at::text AS updated_at, line_count
@@ -136,7 +136,7 @@ async function main() {
   note(`  orders in company ${CO} with debtor_name ILIKE '%${DEBTOR}%': ${heads.length}`);
   for (const h of heads) {
     note(`    ${h.doc_no}  debtor_name=${JSON.stringify(h.debtor_name)}  status=${h.status}  branding=${JSON.stringify(h.branding)}`);
-    note(`        RM ${(Number(h.local_total_centi) / 100).toFixed(2)}  so_date=${h.so_date}  processing_date=${h.processing_date ?? '(null)'}`);
+    note(`        RM ${(Number(h.local_total_sen) / 100).toFixed(2)}  so_date=${h.so_date}  processing_date=${h.processing_date ?? '(null)'}`);
     note(`        proceeded_at=${h.proceeded_at ?? '(NULL → ALLOC-GATED)'}  updated_at=${h.updated_at}  line_count=${h.line_count}`);
   }
   /* Also: is RM 3,220.00 unique in company 2? A same-total decoy would mean the
@@ -144,9 +144,9 @@ async function main() {
   const sameTotal = await sql`
     SELECT doc_no, debtor_name, status::text AS status
       FROM scm.mfg_sales_orders
-     WHERE company_id = ${CO}::bigint AND local_total_centi = ${322000}::bigint
+     WHERE company_id = ${CO}::bigint AND local_total_sen = ${322000}::bigint
      ORDER BY doc_no`;
-  note(`  company ${CO} orders with local_total_centi = 322000 (RM 3,220.00): ${sameTotal.length}`);
+  note(`  company ${CO} orders with local_total_sen = 322000 (RM 3,220.00): ${sameTotal.length}`);
   for (const s of sameTotal) note(`    ${s.doc_no}  ${JSON.stringify(s.debtor_name)}  ${s.status}`);
 
   const target = heads[0];

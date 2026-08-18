@@ -57,18 +57,18 @@ const TYPES = [
     headerFp: (h, ctx) => ({
       date: day(h.po_date), status: h.status,
       supplier: ctx.supplierName(h.supplier_id),
-      subtotal_centi: h.subtotal_centi, total_centi: h.total_centi,
+      subtotal_sen: h.subtotal_sen, total_sen: h.total_sen,
     }),
-    lineFp: (l) => `${l.material_code}|qty=${l.qty}|unit=${l.unit_price_centi}|disc=${l.discount_centi ?? 0}|total=${l.line_total_centi}`,
+    lineFp: (l) => `${l.material_code}|qty=${l.qty}|unit=${l.unit_price_sen}|disc=${l.discount_sen ?? 0}|total=${l.line_total_sen}`,
   },
   {
     name: "SO", header: "mfg_sales_orders", headerKey: "doc_no",
     items: "mfg_sales_order_items", itemRef: "doc_no", joinBy: "doc_no",
     headerFp: (h) => ({
       date: day(h.so_date), status: h.status, debtor: h.debtor_name,
-      local_total_centi: h.local_total_centi, balance_centi: h.balance_centi,
+      local_total_sen: h.local_total_sen, balance_sen: h.balance_sen,
     }),
-    lineFp: (l) => `${l.item_code}|qty=${l.qty}|unit=${l.unit_price_centi}|disc=${l.discount_centi ?? 0}|total=${l.total_centi}${l.cancelled ? "|CANCELLED" : ""}`,
+    lineFp: (l) => `${l.item_code}|qty=${l.qty}|unit=${l.unit_price_sen}|disc=${l.discount_sen ?? 0}|total=${l.total_sen}${l.cancelled ? "|CANCELLED" : ""}`,
   },
   {
     name: "GRN", header: "grns", headerKey: "grn_number",
@@ -77,9 +77,9 @@ const TYPES = [
       date: day(h.received_at), status: h.status,
       supplier: ctx.supplierName(h.supplier_id),
       po: ctx.poNumberById(h.purchase_order_id),
-      total_centi: h.total_centi,
+      total_sen: h.total_sen,
     }),
-    lineFp: (l) => `${l.material_code}|recv=${l.qty_received}|acc=${l.qty_accepted}|rej=${l.qty_rejected ?? 0}|unit=${l.unit_price_centi}|total=${l.line_total_centi ?? 0}`,
+    lineFp: (l) => `${l.material_code}|recv=${l.qty_received}|acc=${l.qty_accepted}|rej=${l.qty_rejected ?? 0}|unit=${l.unit_price_sen}|total=${l.line_total_sen ?? 0}`,
   },
   {
     name: "DO", header: "delivery_orders", headerKey: "do_number",
@@ -88,16 +88,16 @@ const TYPES = [
       date: day(h.do_date), status: h.status, debtor: h.debtor_name,
       so: strip(h.so_doc_no),
     }),
-    lineFp: (l) => `${l.item_code}|qty=${l.qty}|unit=${l.unit_price_centi ?? 0}`,
+    lineFp: (l) => `${l.item_code}|qty=${l.qty}|unit=${l.unit_price_sen ?? 0}`,
   },
   {
     name: "SI", header: "sales_invoices", headerKey: "invoice_number",
     items: "sales_invoice_items", itemRef: "sales_invoice_id", joinBy: "id",
     headerFp: (h) => ({
       date: day(h.invoice_date), status: h.status, debtor: h.debtor_name,
-      total_centi: h.total_centi, so: strip(h.so_doc_no),
+      total_sen: h.total_sen, so: strip(h.so_doc_no),
     }),
-    lineFp: (l) => `${l.item_code}|qty=${l.qty}|unit=${l.unit_price_centi ?? 0}|total=${l.line_total_centi ?? 0}`,
+    lineFp: (l) => `${l.item_code}|qty=${l.qty}|unit=${l.unit_price_sen ?? 0}|total=${l.line_total_sen ?? 0}`,
   },
   {
     name: "PI", header: "purchase_invoices", headerKey: "invoice_number",
@@ -105,9 +105,9 @@ const TYPES = [
     headerFp: (h, ctx) => ({
       date: day(h.invoice_date), status: h.status,
       supplier: ctx.supplierName(h.supplier_id),
-      total_centi: h.total_centi,
+      total_sen: h.total_sen,
     }),
-    lineFp: (l) => `${l.material_code}|qty=${l.qty}|unit=${l.unit_price_centi}|total=${l.line_total_centi}`,
+    lineFp: (l) => `${l.material_code}|qty=${l.qty}|unit=${l.unit_price_sen}|total=${l.line_total_sen}`,
   },
 ];
 
@@ -264,10 +264,10 @@ async function main() {
   for (const s of specialDump) console.log(s);
 
   // Raw money view of the suspect POs on both sides for the verdict.
-  const suspects = await dst`SELECT po_number, status, po_date, subtotal_centi, total_centi, created_at, created_by FROM scm.purchase_orders WHERE company_id = ${cid} AND (po_number LIKE '%PO-2606-023' OR po_number LIKE '%PO-2606-024') ORDER BY po_number`;
-  for (const p of suspects) console.log(`TARGET-RAW ${p.po_number} status=${p.status} date=${day(p.po_date)} subtotal=${rm(p.subtotal_centi)} total=${rm(p.total_centi)} created_at=${p.created_at} created_by=${p.created_by}`);
-  const { data: sp } = await src.schema("public").from("purchase_orders").select("po_number,status,po_date,subtotal_centi,total_centi,created_at,created_by").in("po_number", ["PO-2606-023", "PO-2606-024"]);
-  for (const p of sp ?? []) console.log(`SOURCE-RAW ${p.po_number} status=${p.status} date=${day(p.po_date)} subtotal=${rm(p.subtotal_centi)} total=${rm(p.total_centi)} created_at=${p.created_at} created_by=${p.created_by}`);
+  const suspects = await dst`SELECT po_number, status, po_date, subtotal_sen, total_sen, created_at, created_by FROM scm.purchase_orders WHERE company_id = ${cid} AND (po_number LIKE '%PO-2606-023' OR po_number LIKE '%PO-2606-024') ORDER BY po_number`;
+  for (const p of suspects) console.log(`TARGET-RAW ${p.po_number} status=${p.status} date=${day(p.po_date)} subtotal=${rm(p.subtotal_sen)} total=${rm(p.total_sen)} created_at=${p.created_at} created_by=${p.created_by}`);
+  const { data: sp } = await src.schema("public").from("purchase_orders").select("po_number,status,po_date,subtotal_sen,total_sen,created_at,created_by").in("po_number", ["PO-2606-023", "PO-2606-024"]);
+  for (const p of sp ?? []) console.log(`SOURCE-RAW ${p.po_number} status=${p.status} date=${day(p.po_date)} subtotal=${rm(p.subtotal_sen)} total=${rm(p.total_sen)} created_at=${p.created_at} created_by=${p.created_by}`);
   console.log("DONE");
 }
 

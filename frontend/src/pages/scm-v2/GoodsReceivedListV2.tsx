@@ -4,7 +4,7 @@
 // outstanding/owed.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -67,7 +67,7 @@ type GrnRow = {
   status: string;
   received_at: string | null;
   delivery_note_ref: string | null;
-  total_centi?: number;
+  total_sen?: number;
   currency?: string;
   notes?: string | null;
   supplier?: { id: string; code: string; name: string; contact_person?: string | null; phone?: string | null; email?: string | null; address?: string | null } | null;
@@ -98,19 +98,19 @@ type GrnItem = {
   uom?: string;
   qty?: number;
   received_qty?: number;
-  unit_price_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen?: number;
+  line_total_sen?: number;
   warehouse_code?: string | null;
 };
 
 type StatusTab = "all" | "draft" | "posted" | "cancelled";
 
-const fmtRm = (centi: number): string => fmtCenti(centi);
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 const supplierNameOf = (r: GrnRow): string => r.supplier?.name || "—";
 const supplierCodeOf = (r: GrnRow): string => r.supplier?.code || "—";
 const poOf = (r: GrnRow): string => r.purchase_order?.po_number || "—";
-const totalOf = (r: GrnRow): number => r.total_centi ?? 0;
+const totalOf = (r: GrnRow): number => r.total_sen ?? 0;
 
 // grns.status → filter bucket. Must match GRN_STATUS_BUCKETS server-side
 // (backend/src/scm/routes/grns.ts), which is what the tab COUNTS are computed
@@ -344,8 +344,8 @@ function DetailDrawer({
                       )}
                     </div>
                     <span className="text-right font-money text-[12.5px] text-ink-secondary">{l.received_qty ?? l.qty ?? 0}</span>
-                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtRm(l.unit_price_centi ?? 0)}</span>
-                    <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtRm(l.line_total_centi ?? 0)}</span>
+                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtRm(l.unit_price_sen ?? 0)}</span>
+                    <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtRm(l.line_total_sen ?? 0)}</span>
                   </div>
                   );
                 })}
@@ -433,10 +433,10 @@ function TotalRow({ k, v, strong }: { k: string; v: string; strong?: boolean }) 
 }
 
 // Table column key → backend sort-whitelist column. GRN backend whitelist is
-// { received_at, grn_number, status, total_centi }; only `total` differs from
+// { received_at, grn_number, status, total_sen }; only `total` differs from
 // its backend name. Non-whitelisted columns carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
-  total: "total_centi",
+  total: "total_sen",
 };
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
@@ -465,7 +465,7 @@ function GrnLinesExpansion({ id }: { id: string }) {
       description2: l.description2 ?? null,
       variants: l.variants ?? null,
       qty: Number(l.received_qty ?? l.qty ?? 0),
-      amountCenti: l.line_total_centi ?? 0,
+      amountSen: l.line_total_sen ?? 0,
       assignedSos: byCode.get(code) ?? [],
       sourceLinked: linkedSkus.has(code),
       provenance: provByCode.get(code) ?? [],

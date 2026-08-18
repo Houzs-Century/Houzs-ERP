@@ -45,7 +45,7 @@ export function resolveFxRate(raw: unknown): number {
  * number they would have to work out, and working it out by hand is how a rate ends
  * up wrong by a factor of ten on a document that silently re-costs inventory.
  *
- * Both inputs are INTEGER SEN / CENTI in their own currency, which is how every
+ * Both inputs are INTEGER SEN / SEN in their own currency, which is how every
  * money field in this codebase travels. The rate is MYR per 1 unit of the foreign
  * currency, so the units cancel and the division is simply myr / foreign.
  *
@@ -62,10 +62,10 @@ export function resolveFxRate(raw: unknown): number {
  */
 export function deriveRateFromMyrPaid(
   myrPaidSen: number | null | undefined,
-  foreignFaceCenti: number | null | undefined,
+  foreignFaceSen: number | null | undefined,
 ): number | null {
   const myr = Number(myrPaidSen);
-  const foreign = Number(foreignFaceCenti);
+  const foreign = Number(foreignFaceSen);
   if (!Number.isFinite(myr) || myr <= 0) return null;
   if (!Number.isFinite(foreign) || foreign <= 0) return null;
   const rate = Math.round((myr / foreign) * 1e6) / 1e6;

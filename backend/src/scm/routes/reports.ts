@@ -110,20 +110,20 @@ reports.get('/sales-order-detail-listing', async (c) => {
       .from('mfg_sales_order_items')
       .select(`
         id, doc_no, line_date, debtor_code, debtor_name, agent, item_group, item_code,
-        description, description2, uom, location, qty, unit_price_centi, discount_centi,
-        total_centi, tax_centi, total_inc_centi, balance_centi, payment_status, venue,
+        description, description2, uom, location, qty, unit_price_sen, discount_sen,
+        total_sen, tax_sen, total_inc_sen, balance_sen, payment_status, venue,
         branding, remark, cancelled, variants, created_at,
-        unit_cost_centi, line_cost_centi, line_margin_centi,
+        unit_cost_sen, line_cost_sen, line_margin_sen,
         divan_height_inches, leg_height_inches, custom_specials,
         mfg_sales_orders!inner (
           doc_no, so_date, debtor_code, debtor_name, agent, branding, venue, ref,
           po_doc_no, phone, address1, address2, address3, address4,
           currency, status, remark2, remark3, remark4, note,
           sales_exemption_expiry, approval_code,
-          local_total_centi, balance_centi, deposit_centi,
-          mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, service_centi,
-          mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, service_cost_centi,
-          total_cost_centi, total_margin_centi, margin_pct_basis,
+          local_total_sen, balance_sen, deposit_sen,
+          mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, service_sen,
+          mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, service_cost_sen,
+          total_cost_sen, total_margin_sen, margin_pct_basis,
           customer_delivery_date, processing_date, target_date,
           customer_state, customer_country, customer_po, customer_po_id, customer_po_date, customer_so_no,
           hub_name
@@ -162,8 +162,8 @@ reports.get('/sales-order-detail-listing', async (c) => {
   };
   const itemsRaw = (data ?? []) as unknown as ItemRow[];
 
-  // paid_centi is derived live from the mfg_sales_order_payments ledger.
-  // Aggregate once for all docs in this result and attach as paid_total_centi.
+  // paid_sen is derived live from the mfg_sales_order_payments ledger.
+  // Aggregate once for all docs in this result and attach as paid_total_sen.
   // Also capture per-doc: last_payment_at (MAX paid_at) + the most-recent
   // payment's account_sheet / approval_code / collected_by. collected_by is a
   // staff.id uuid, so resolve once via a second batch query to staff.
@@ -185,21 +185,21 @@ reports.get('/sales-order-detail-listing', async (c) => {
     // paid totals are never UNDERSTATED (which would overstate outstanding).
     const { data: paymentTotals, error: payErr } = await chunkIn(docNos, (batch, pFrom, pTo) => scopeToCompany(sb
       .from('mfg_sales_order_payments')
-      .select('so_doc_no, amount_centi, paid_at, account_sheet, approval_code, collected_by')
+      .select('so_doc_no, amount_sen, paid_at, account_sheet, approval_code, collected_by')
       .in('so_doc_no', batch), c)
       .range(pFrom, pTo));
     if (payErr) return c.json({ error: 'load_failed', reason: payErr.message }, 500);
     for (const p of paymentTotals ?? []) {
       const row = p as {
         so_doc_no: string;
-        amount_centi: number | null;
+        amount_sen: number | null;
         paid_at: string | null;
         account_sheet: string | null;
         approval_code: string | null;
         collected_by: string | null;
       };
       const key = row.so_doc_no;
-      paidByDoc.set(key, (paidByDoc.get(key) ?? 0) + Number(row.amount_centi ?? 0));
+      paidByDoc.set(key, (paidByDoc.get(key) ?? 0) + Number(row.amount_sen ?? 0));
       if (row.approval_code && row.approval_code.trim() !== '') {
         const arr = approvalCodesByDoc.get(key) ?? [];
         arr.push({ paidAt: row.paid_at ?? null, code: row.approval_code.trim() });
@@ -263,8 +263,8 @@ reports.get('/sales-order-detail-listing', async (c) => {
       flat.currency = h.currency ?? 'MYR';
       flat.status   = h.status   ?? null;
       flat.customer_delivery_date = h.customer_delivery_date ?? null;
-      // Per-doc paid total from the payments ledger (replaces legacy paid_centi).
-      flat.paid_total_centi = paidByDoc.get(r.doc_no) ?? 0;
+      // Per-doc paid total from the payments ledger (replaces legacy paid_sen).
+      flat.paid_total_sen = paidByDoc.get(r.doc_no) ?? 0;
       /* Light the Fabric / Divan / Leg columns from what SO lines ACTUALLY
          carry. Fabric: three sources, most specific first — fabricColor
          (GRN hand-keyed) ?? colourLabel (POS human label) ?? fabricCode (the
@@ -334,8 +334,8 @@ reports.get('/sales-order-detail-listing', async (c) => {
 //   SI  : sales_invoice_items      joined with sales_invoices
 //   DR  : delivery_return_items    joined with delivery_returns
 //
-// Delivery Return has a `refund_centi` instead of revenue — surfaced as
-// `total_centi` so the column reuse is straightforward.
+// Delivery Return has a `refund_sen` instead of revenue — surfaced as
+// `total_sen` so the column reuse is straightforward.
 //
 // FINANCE: none of these three SELECT a cost or margin column (DO/SI carry
 // unit_price/discount/tax/line_total, DR carries unit_price/refund) — all
@@ -397,7 +397,7 @@ reports.get('/delivery-order-detail-listing', async (c) => {
       .from('delivery_order_items')
       .select(`
         id, delivery_order_id, so_item_id, item_code, description, description2,
-        qty, m3_milli, unit_price_centi, discount_centi, line_total_centi,
+        qty, m3_milli, unit_price_sen, discount_sen, line_total_sen,
         uom, item_group, variants, line_suffix, notes, created_at,
         delivery_orders!inner (
           id, do_number, so_doc_no, debtor_code, debtor_name, do_date,
@@ -421,7 +421,7 @@ reports.get('/delivery-order-detail-listing', async (c) => {
       // Normalise common field names used by the L2 page.
       flat.doc_no = flat.do_number;
       flat.line_date = flat.do_date;
-      flat.total_centi = flat.line_total_centi ?? 0;
+      flat.total_sen = flat.line_total_sen ?? 0;
       return flat;
     })
     .filter((r) => {
@@ -453,12 +453,12 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
       .from('sales_invoice_items')
       .select(`
         id, sales_invoice_id, so_item_id, item_code, description, description2,
-        qty, unit_price_centi, discount_centi, tax_centi, line_total_centi,
+        qty, unit_price_sen, discount_sen, tax_sen, line_total_sen,
         uom, item_group, variants, line_suffix, notes, created_at,
         sales_invoices!inner (
           id, invoice_number, so_doc_no, delivery_order_id, debtor_code, debtor_name,
           invoice_date, due_date, currency,
-          subtotal_centi, discount_centi, tax_centi, total_centi, paid_centi,
+          subtotal_sen, discount_sen, tax_sen, total_sen, paid_sen,
           status, notes, sent_at, paid_at
         )
       `);
@@ -474,28 +474,28 @@ reports.get('/sales-invoice-detail-listing', async (c) => {
   const rows = ((data ?? []) as unknown as AnyRow[])
     .map((r) => {
       // Capture header totals before flatten — line items have their own
-      // discount_centi / tax_centi, and the LINE values win in flatten, so the
+      // discount_sen / tax_sen, and the LINE values win in flatten, so the
       // header values must be snapshotted up front for the outstanding calc.
       const headerRaw = r.sales_invoices as AnyRow | AnyRow[] | null;
       const headerObj: AnyRow = Array.isArray(headerRaw)
         ? ((headerRaw[0] as AnyRow) ?? {})
         : ((headerRaw as AnyRow) ?? {});
-      const headerTotal = Number(headerObj.total_centi ?? 0);
-      const headerPaid  = Number(headerObj.paid_centi ?? 0);
-      const headerDiscount = Number(headerObj.discount_centi ?? 0);
-      const headerTax      = Number(headerObj.tax_centi ?? 0);
+      const headerTotal = Number(headerObj.total_sen ?? 0);
+      const headerPaid  = Number(headerObj.paid_sen ?? 0);
+      const headerDiscount = Number(headerObj.discount_sen ?? 0);
+      const headerTax      = Number(headerObj.tax_sen ?? 0);
 
       const flat = flattenJoin(r, 'sales_invoices');
       flat.doc_no = flat.invoice_number;
       flat.line_date = flat.invoice_date;
       // Use the LINE total, not the header total, for revenue column on L2.
-      flat.total_centi = flat.line_total_centi ?? 0;
+      flat.total_sen = flat.line_total_sen ?? 0;
       // Outstanding = header total − header paid (per doc, repeated per line).
-      flat.header_total_centi    = headerTotal;
-      flat.header_paid_centi     = headerPaid;
-      flat.header_discount_centi = headerDiscount;
-      flat.header_tax_centi      = headerTax;
-      flat.balance_centi = Math.max(headerTotal - headerPaid, 0);
+      flat.header_total_sen    = headerTotal;
+      flat.header_paid_sen     = headerPaid;
+      flat.header_discount_sen = headerDiscount;
+      flat.header_tax_sen      = headerTax;
+      flat.balance_sen = Math.max(headerTotal - headerPaid, 0);
       return flat;
     })
     .filter((r) => {
@@ -537,10 +537,10 @@ reports.get('/delivery-return-detail-listing', async (c) => {
       .from('delivery_return_items')
       .select(`
         id, delivery_return_id, do_item_id, item_code, description,
-        qty_returned, condition, unit_price_centi, refund_centi, notes, created_at,
+        qty_returned, condition, unit_price_sen, refund_sen, notes, created_at,
         delivery_returns!inner (
           id, return_number, delivery_order_id, sales_invoice_id, debtor_code,
-          debtor_name, return_date, reason, status, refund_centi,
+          debtor_name, return_date, reason, status, refund_sen,
           received_at, inspected_at, refunded_at, inspection_notes, notes
         )
       `);
@@ -554,25 +554,25 @@ reports.get('/delivery-return-detail-listing', async (c) => {
 
   const rows = ((data ?? []) as unknown as AnyRow[])
     .map((r) => {
-      // Both line and header have refund_centi. Capture each explicitly
+      // Both line and header have refund_sen. Capture each explicitly
       // before flattenJoin's "line wins" rule discards the header value.
-      const lineRefund = Number(r.refund_centi ?? 0);
+      const lineRefund = Number(r.refund_sen ?? 0);
       const headerRaw = r.delivery_returns as AnyRow | AnyRow[] | null;
       const headerObj: AnyRow = Array.isArray(headerRaw)
         ? ((headerRaw[0] as AnyRow) ?? {})
         : ((headerRaw as AnyRow) ?? {});
-      const headerRefund = Number(headerObj.refund_centi ?? 0);
+      const headerRefund = Number(headerObj.refund_sen ?? 0);
       const flat = flattenJoin(r, 'delivery_returns');
-      flat.line_refund_centi = lineRefund;
-      flat.refund_centi_header = headerRefund;
+      flat.line_refund_sen = lineRefund;
+      flat.refund_sen_header = headerRefund;
       flat.doc_no = flat.return_number;
       flat.line_date = flat.return_date;
-      flat.total_centi = lineRefund;
+      flat.total_sen = lineRefund;
       // "Outstanding" for a return = pending payout (status not yet REFUNDED
       // / CREDIT_NOTED / REJECTED).
       const headerStatus = String(flat.status ?? '');
       const settled = headerStatus === 'REFUNDED' || headerStatus === 'CREDIT_NOTED' || headerStatus === 'REJECTED';
-      flat.balance_centi = settled ? 0 : headerRefund;
+      flat.balance_sen = settled ? 0 : headerRefund;
       return flat;
     })
     .filter((r) => {
@@ -624,10 +624,10 @@ function fairCaller(c: { get(key: 'houzsUser'): Variables['houzsUser'] }): AuthU
 /* The SO-header columns every stage needs — fair dims + the money split. */
 const FAIR_SO_COLS = `
   doc_no, so_date, ref, venue, venue_id, customer_state, salesperson_id, project_id, branding,
-  local_total_centi, balance_centi, deposit_centi, paid_centi,
-  mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, service_centi,
-  mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, service_cost_centi,
-  total_cost_centi
+  local_total_sen, balance_sen, deposit_sen, paid_sen,
+  mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, service_sen,
+  mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, service_cost_sen,
+  total_cost_sen
 `;
 
 type FairSoHeader = {
@@ -640,10 +640,10 @@ type FairSoHeader = {
   salesperson_id: string | null;
   project_id: number | null;
   branding: string | null;
-  local_total_centi: number | null; balance_centi: number | null; deposit_centi: number | null; paid_centi: number | null;
-  mattress_sofa_centi: number | null; bedframe_centi: number | null; accessories_centi: number | null; others_centi: number | null; service_centi: number | null;
-  mattress_sofa_cost_centi: number | null; bedframe_cost_centi: number | null; accessories_cost_centi: number | null; others_cost_centi: number | null; service_cost_centi: number | null;
-  total_cost_centi: number | null;
+  local_total_sen: number | null; balance_sen: number | null; deposit_sen: number | null; paid_sen: number | null;
+  mattress_sofa_sen: number | null; bedframe_sen: number | null; accessories_sen: number | null; others_sen: number | null; service_sen: number | null;
+  mattress_sofa_cost_sen: number | null; bedframe_cost_sen: number | null; accessories_cost_sen: number | null; others_cost_sen: number | null; service_cost_sen: number | null;
+  total_cost_sen: number | null;
 };
 
 /* Read the `stage` + shared filter query params off the request. */
@@ -742,12 +742,12 @@ async function fetchPaymentsByDoc(c: any, docNos: string[]): Promise<Map<string,
   if (uniq.length === 0) return byDoc;
   const { data } = await chunkIn(uniq, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
     .from('mfg_sales_order_payments')
-    .select('so_doc_no, method, amount_centi, merchant_provider, installment_months, is_deposit')
+    .select('so_doc_no, method, amount_sen, merchant_provider, installment_months, is_deposit')
     .in('so_doc_no', batch), c)
     .range(pFrom, pTo));
-  for (const p of (data ?? []) as Array<{ so_doc_no: string; method: string | null; amount_centi: number | null }>) {
+  for (const p of (data ?? []) as Array<{ so_doc_no: string; method: string | null; amount_sen: number | null }>) {
     const arr = byDoc.get(p.so_doc_no) ?? [];
-    arr.push({ method: p.method, amount_centi: p.amount_centi });
+    arr.push({ method: p.method, amount_sen: p.amount_sen });
     byDoc.set(p.so_doc_no, arr);
   }
   return byDoc;
@@ -857,23 +857,23 @@ export const fairReportHandler = async (c: FairCtx) => {
     const rows = soRows.map((h) => {
       const money = fairSoMoney(h);
       const payments = payByDoc.get(h.doc_no) ?? [];
-      const paidTotal = payments.reduce((s, p) => s + Number(p.amount_centi ?? 0), 0);
+      const paidTotal = payments.reduce((s, p) => s + Number(p.amount_sen ?? 0), 0);
       const tender = depositByTender(payments);
-      const below = belowDeposit({ balanceCenti: h.balance_centi, depositCenti: h.deposit_centi, paidCenti: paidTotal });
+      const below = belowDeposit({ balanceSen: h.balance_sen, depositSen: h.deposit_sen, paidSen: paidTotal });
       return {
         ...fairDims(h, staffNames, projects),
         so_date: h.so_date,
         so_no: h.doc_no,
         order_form: h.ref,
-        amount_centi: money.amount_centi,
-        selling_centi: money.selling_centi,
-        service_rev_centi: money.service_rev_centi,
+        amount_sen: money.amount_sen,
+        selling_sen: money.selling_sen,
+        service_rev_sen: money.service_rev_sen,
         cost_by_category: money.cost_by_category,
-        total_so_cost_centi: money.total_so_cost_centi,
+        total_so_cost_sen: money.total_so_cost_sen,
         margin_pct: money.margin_pct,
-        balance_centi: money.balance_centi,
-        paid_total_centi: paidTotal,
-        deposit_centi: Number(h.deposit_centi ?? 0),
+        balance_sen: money.balance_sen,
+        paid_total_sen: paidTotal,
+        deposit_sen: Number(h.deposit_sen ?? 0),
         payment_methods: paymentMethodsUsed(payments),
         deposit_by_tender: tender,
         below_deposit: below,
@@ -900,7 +900,7 @@ export const fairReportHandler = async (c: FairCtx) => {
 
     const pnlDocNos = soRows.map((r) => r.doc_no);
 
-    // DO cost per SO — Σ COALESCE(ship_cost_centi, unit_cost_centi) × qty over
+    // DO cost per SO — Σ COALESCE(ship_cost_sen, unit_cost_sen) × qty over
     // the SO's delivery-order lines. Absent (null) when the SO has no DO.
     const doCostBySo = new Map<string, number>();
     if (pnlDocNos.length > 0) {
@@ -916,20 +916,20 @@ export const fairReportHandler = async (c: FairCtx) => {
       if (doIds.length > 0) {
         const { data: liData, error: liErr } = await chunkIn(doIds, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
           .from('delivery_order_items')
-          .select('delivery_order_id, qty, unit_cost_centi, ship_cost_centi')
+          .select('delivery_order_id, qty, unit_cost_sen, ship_cost_sen')
           .in('delivery_order_id', batch), c)
           .range(pFrom, pTo));
         if (liErr) return c.json({ error: 'load_failed', reason: liErr.message }, 500);
-        const linesByDo = new Map<string, Array<{ qty: number | null; unit_cost_centi: number | null; ship_cost_centi: number | null }>>();
-        for (const l of (liData ?? []) as Array<{ delivery_order_id: string; qty: number | null; unit_cost_centi: number | null; ship_cost_centi: number | null }>) {
+        const linesByDo = new Map<string, Array<{ qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null }>>();
+        for (const l of (liData ?? []) as Array<{ delivery_order_id: string; qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null }>) {
           const arr = linesByDo.get(l.delivery_order_id) ?? [];
-          arr.push({ qty: l.qty, unit_cost_centi: l.unit_cost_centi, ship_cost_centi: l.ship_cost_centi });
+          arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, ship_cost_sen: l.ship_cost_sen });
           linesByDo.set(l.delivery_order_id, arr);
         }
         for (const [doId, lines] of linesByDo) {
           const so = doIdToSo.get(doId);
           if (!so) continue;
-          doCostBySo.set(so, (doCostBySo.get(so) ?? 0) + doCostTotal(lines).total_do_cost_centi);
+          doCostBySo.set(so, (doCostBySo.get(so) ?? 0) + doCostTotal(lines).total_do_cost_sen);
         }
       }
     }
@@ -950,14 +950,14 @@ export const fairReportHandler = async (c: FairCtx) => {
       if (siIds.length > 0) {
         const { data: liData, error: liErr } = await chunkIn(siIds, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
           .from('sales_invoice_items')
-          .select('sales_invoice_id, qty, unit_cost_centi, line_cost_centi')
+          .select('sales_invoice_id, qty, unit_cost_sen, line_cost_sen')
           .in('sales_invoice_id', batch), c)
           .range(pFrom, pTo));
         if (liErr) return c.json({ error: 'load_failed', reason: liErr.message }, 500);
-        const linesBySi = new Map<string, Array<{ qty: number | null; unit_cost_centi: number | null; line_cost_centi: number | null }>>();
-        for (const l of (liData ?? []) as Array<{ sales_invoice_id: string; qty: number | null; unit_cost_centi: number | null; line_cost_centi: number | null }>) {
+        const linesBySi = new Map<string, Array<{ qty: number | null; unit_cost_sen: number | null; line_cost_sen: number | null }>>();
+        for (const l of (liData ?? []) as Array<{ sales_invoice_id: string; qty: number | null; unit_cost_sen: number | null; line_cost_sen: number | null }>) {
           const arr = linesBySi.get(l.sales_invoice_id) ?? [];
-          arr.push({ qty: l.qty, unit_cost_centi: l.unit_cost_centi, line_cost_centi: l.line_cost_centi });
+          arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, line_cost_sen: l.line_cost_sen });
           linesBySi.set(l.sales_invoice_id, arr);
         }
         for (const [siId, lines] of linesBySi) {
@@ -975,37 +975,37 @@ export const fairReportHandler = async (c: FairCtx) => {
       const doCost = doCostBySo.has(h.doc_no) ? (doCostBySo.get(h.doc_no) as number) : null;
       const siCost = siCostBySo.has(h.doc_no) ? (siCostBySo.get(h.doc_no) as number) : null;
       const cost = fairPnlLineCost({
-        amount_centi: money.amount_centi,
-        so_cost_centi: money.total_so_cost_centi,
-        do_cost_centi: doCost,
-        si_cost_centi: siCost,
+        amount_sen: money.amount_sen,
+        so_cost_sen: money.total_so_cost_sen,
+        do_cost_sen: doCost,
+        si_cost_sen: siCost,
       });
       return {
         ...fairDims(h, staffNames, projects),
         so_date: h.so_date,
         so_no: h.doc_no,
         order_form: h.ref,
-        revenue_centi: money.amount_centi,
-        product_rev_centi: money.selling_centi,
-        service_rev_centi: money.service_rev_centi,
-        so_cost_centi: money.total_so_cost_centi,
-        do_cost_centi: doCost,
-        si_cost_centi: siCost,
-        effective_cost_centi: cost.effective_cost_centi,
+        revenue_sen: money.amount_sen,
+        product_rev_sen: money.selling_sen,
+        service_rev_sen: money.service_rev_sen,
+        so_cost_sen: money.total_so_cost_sen,
+        do_cost_sen: doCost,
+        si_cost_sen: siCost,
+        effective_cost_sen: cost.effective_cost_sen,
         effective_cost_stage: cost.effective_cost_stage,
-        gross_profit_centi: cost.gross_profit_centi,
+        gross_profit_sen: cost.gross_profit_sen,
         margin_pct: cost.margin_pct,
       };
     });
 
     const summaryRows: FairPnlSummaryRow[] = rows.map((r) => ({
-      amount_centi: r.revenue_centi,
-      selling_centi: r.product_rev_centi,
-      service_rev_centi: r.service_rev_centi,
-      so_cost_centi: r.so_cost_centi,
-      do_cost_centi: r.do_cost_centi,
-      si_cost_centi: r.si_cost_centi,
-      effective_cost_centi: r.effective_cost_centi,
+      amount_sen: r.revenue_sen,
+      selling_sen: r.product_rev_sen,
+      service_rev_sen: r.service_rev_sen,
+      so_cost_sen: r.so_cost_sen,
+      do_cost_sen: r.do_cost_sen,
+      si_cost_sen: r.si_cost_sen,
+      effective_cost_sen: r.effective_cost_sen,
     }));
     const summary = summarizeFairPnl(summaryRows, rate);
     return c.json({
@@ -1035,18 +1035,18 @@ export const fairReportHandler = async (c: FairCtx) => {
     const dos = (doData ?? []) as Array<{ id: string; do_number: string; so_doc_no: string | null; do_date: string | null; delivered_at: string | null; status: string | null }>;
 
     // Their lines (cost), grouped per DO id.
-    const linesByDo = new Map<string, Array<{ qty: number | null; unit_cost_centi: number | null; ship_cost_centi: number | null }>>();
+    const linesByDo = new Map<string, Array<{ qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null }>>();
     const doIds = dos.map((d) => d.id);
     if (doIds.length > 0) {
       const { data: liData, error: liErr } = await chunkIn(doIds, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
         .from('delivery_order_items')
-        .select('delivery_order_id, qty, unit_cost_centi, ship_cost_centi')
+        .select('delivery_order_id, qty, unit_cost_sen, ship_cost_sen')
         .in('delivery_order_id', batch), c)
         .range(pFrom, pTo));
       if (liErr) return c.json({ error: 'load_failed', reason: liErr.message }, 500);
-      for (const l of (liData ?? []) as Array<{ delivery_order_id: string; qty: number | null; unit_cost_centi: number | null; ship_cost_centi: number | null }>) {
+      for (const l of (liData ?? []) as Array<{ delivery_order_id: string; qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null }>) {
         const arr = linesByDo.get(l.delivery_order_id) ?? [];
-        arr.push({ qty: l.qty, unit_cost_centi: l.unit_cost_centi, ship_cost_centi: l.ship_cost_centi });
+        arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, ship_cost_sen: l.ship_cost_sen });
         linesByDo.set(l.delivery_order_id, arr);
       }
     }
@@ -1054,8 +1054,8 @@ export const fairReportHandler = async (c: FairCtx) => {
     const rows = dos.map((d) => {
       const h = d.so_doc_no ? soByDoc.get(d.so_doc_no) : undefined;
       const doCost = doCostTotal(linesByDo.get(d.id) ?? []);
-      const totalSoCost = Number(h?.total_cost_centi ?? 0);
-      const costDelta = doCost.total_do_cost_centi - totalSoCost;
+      const totalSoCost = Number(h?.total_cost_sen ?? 0);
+      const costDelta = doCost.total_do_cost_sen - totalSoCost;
       return {
         ...(h ? fairDims(h, staffNames, projects) : {}),
         delivery_date: d.delivered_at ?? d.do_date,
@@ -1065,13 +1065,13 @@ export const fairReportHandler = async (c: FairCtx) => {
         qty: doCost.qty,
         // The linked SO's amount (product + service) — same value the SO tab
         // shows in its Amount column, so the two stages reconcile per SO.
-        so_amount_centi: h ? fairSoMoney(h).amount_centi : null,
-        total_so_cost_centi: totalSoCost,
-        total_do_cost_centi: doCost.total_do_cost_centi,
+        so_amount_sen: h ? fairSoMoney(h).amount_sen : null,
+        total_so_cost_sen: totalSoCost,
+        total_do_cost_sen: doCost.total_do_cost_sen,
         do_cost_is_legacy: doCost.is_legacy,
-        cost_delta_centi: costDelta,
-        so_margin_pct: marginPct(Number(h?.local_total_centi ?? 0), totalSoCost),
-        do_margin_pct: marginPct(Number(h?.local_total_centi ?? 0), doCost.total_do_cost_centi),
+        cost_delta_sen: costDelta,
+        so_margin_pct: marginPct(Number(h?.local_total_sen ?? 0), totalSoCost),
+        do_margin_pct: marginPct(Number(h?.local_total_sen ?? 0), doCost.total_do_cost_sen),
       };
     });
     const summary = summarizeDo(rows);
@@ -1083,25 +1083,25 @@ export const fairReportHandler = async (c: FairCtx) => {
   // DO's cost; landed(SI) cost = Σ SI line cost.
   const { data: siData, error: siErr } = await chunkIn(docNos, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
     .from('sales_invoices')
-    .select('id, invoice_number, so_doc_no, delivery_order_id, invoice_date, total_centi, status')
+    .select('id, invoice_number, so_doc_no, delivery_order_id, invoice_date, total_sen, status')
     .in('so_doc_no', batch), c)
     .range(pFrom, pTo));
   if (siErr) return c.json({ error: 'load_failed', reason: siErr.message }, 500);
-  const sis = (siData ?? []) as Array<{ id: string; invoice_number: string; so_doc_no: string | null; delivery_order_id: string | null; invoice_date: string | null; total_centi: number | null; status: string | null }>;
+  const sis = (siData ?? []) as Array<{ id: string; invoice_number: string; so_doc_no: string | null; delivery_order_id: string | null; invoice_date: string | null; total_sen: number | null; status: string | null }>;
 
   // SI line costs grouped per SI id.
-  const siLinesById = new Map<string, Array<{ qty: number | null; unit_cost_centi: number | null; line_cost_centi: number | null }>>();
+  const siLinesById = new Map<string, Array<{ qty: number | null; unit_cost_sen: number | null; line_cost_sen: number | null }>>();
   const siIds = sis.map((s) => s.id);
   if (siIds.length > 0) {
     const { data: liData, error: liErr } = await chunkIn(siIds, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
       .from('sales_invoice_items')
-      .select('sales_invoice_id, qty, unit_cost_centi, line_cost_centi')
+      .select('sales_invoice_id, qty, unit_cost_sen, line_cost_sen')
       .in('sales_invoice_id', batch), c)
       .range(pFrom, pTo));
     if (liErr) return c.json({ error: 'load_failed', reason: liErr.message }, 500);
-    for (const l of (liData ?? []) as Array<{ sales_invoice_id: string; qty: number | null; unit_cost_centi: number | null; line_cost_centi: number | null }>) {
+    for (const l of (liData ?? []) as Array<{ sales_invoice_id: string; qty: number | null; unit_cost_sen: number | null; line_cost_sen: number | null }>) {
       const arr = siLinesById.get(l.sales_invoice_id) ?? [];
-      arr.push({ qty: l.qty, unit_cost_centi: l.unit_cost_centi, line_cost_centi: l.line_cost_centi });
+      arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, line_cost_sen: l.line_cost_sen });
       siLinesById.set(l.sales_invoice_id, arr);
     }
   }
@@ -1112,22 +1112,22 @@ export const fairReportHandler = async (c: FairCtx) => {
   if (linkedDoIds.length > 0) {
     const { data: liData } = await chunkIn(linkedDoIds, (batch: string[], pFrom: number, pTo: number) => scopeToCompany(sb
       .from('delivery_order_items')
-      .select('delivery_order_id, qty, unit_cost_centi, ship_cost_centi')
+      .select('delivery_order_id, qty, unit_cost_sen, ship_cost_sen')
       .in('delivery_order_id', batch), c)
       .range(pFrom, pTo));
-    const byDo = new Map<string, Array<{ qty: number | null; unit_cost_centi: number | null; ship_cost_centi: number | null }>>();
-    for (const l of (liData ?? []) as Array<{ delivery_order_id: string; qty: number | null; unit_cost_centi: number | null; ship_cost_centi: number | null }>) {
+    const byDo = new Map<string, Array<{ qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null }>>();
+    for (const l of (liData ?? []) as Array<{ delivery_order_id: string; qty: number | null; unit_cost_sen: number | null; ship_cost_sen: number | null }>) {
       const arr = byDo.get(l.delivery_order_id) ?? [];
-      arr.push({ qty: l.qty, unit_cost_centi: l.unit_cost_centi, ship_cost_centi: l.ship_cost_centi });
+      arr.push({ qty: l.qty, unit_cost_sen: l.unit_cost_sen, ship_cost_sen: l.ship_cost_sen });
       byDo.set(l.delivery_order_id, arr);
     }
-    for (const [id, lines] of byDo) doCostById.set(id, doCostTotal(lines).total_do_cost_centi);
+    for (const [id, lines] of byDo) doCostById.set(id, doCostTotal(lines).total_do_cost_sen);
   }
 
   const rows = sis.map((s) => {
     const h = s.so_doc_no ? soByDoc.get(s.so_doc_no) : undefined;
-    const invoiced = Number(s.total_centi ?? 0);
-    const soCost = Number(h?.total_cost_centi ?? 0);
+    const invoiced = Number(s.total_sen ?? 0);
+    const soCost = Number(h?.total_cost_sen ?? 0);
     const doCost = s.delivery_order_id ? doCostById.get(s.delivery_order_id) ?? 0 : 0;
     const siCost = siCostTotal(siLinesById.get(s.id) ?? []);
     return {
@@ -1137,10 +1137,10 @@ export const fairReportHandler = async (c: FairCtx) => {
       so_no: s.so_doc_no,
       do_id: s.delivery_order_id,
       status: s.status,
-      invoiced_centi: invoiced,
-      so_cost_centi: soCost,
-      do_cost_centi: doCost,
-      si_cost_centi: siCost,
+      invoiced_sen: invoiced,
+      so_cost_sen: soCost,
+      do_cost_sen: doCost,
+      si_cost_sen: siCost,
       margin_pct: marginPct(invoiced, siCost),
     };
   });
@@ -1187,15 +1187,15 @@ export const fairReportDetailHandler = async (c: FairCtx) => {
     // Fair Report's "Order lines · selling & cost" line reads the same
     // "code / SEAT / LEG / fabric" subtitle every other order-line surface shows
     // (owner 2026-07-24: the variant must appear consistently system-wide).
-    .select('item_group, item_code, description, description2, variants, qty, unit_price_centi, total_centi, unit_cost_centi, line_cost_centi, cancelled')
+    .select('item_group, item_code, description, description2, variants, qty, unit_price_sen, total_sen, unit_cost_sen, line_cost_sen, cancelled')
     .eq('doc_no', docNo), c)
     .range(pFrom, pTo));
   if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
   const lines = ((itemData ?? []) as Array<Record<string, unknown>>).map((r) => ({
     item_group: r.item_group, item_code: r.item_code, description: r.description,
     description2: r.description2, variants: r.variants, qty: r.qty,
-    unit_price_centi: r.unit_price_centi, amount_centi: r.total_centi,
-    unit_cost_centi: r.unit_cost_centi, line_cost_centi: r.line_cost_centi,
+    unit_price_sen: r.unit_price_sen, amount_sen: r.total_sen,
+    unit_cost_sen: r.unit_cost_sen, line_cost_sen: r.line_cost_sen,
     cancelled: r.cancelled,
   }));
   // Stamp each line's supplier fabric code so the Fair Report line reads
@@ -1205,12 +1205,12 @@ export const fairReportDetailHandler = async (c: FairCtx) => {
   // Deposit-by-tender + merchant bank / plan.
   const { data: payData, error: pErr } = await paginateAll((pFrom: number, pTo: number) => scopeToCompany(sb
     .from('mfg_sales_order_payments')
-    .select('method, amount_centi, merchant_provider, installment_months, approval_code, paid_at, is_deposit')
+    .select('method, amount_sen, merchant_provider, installment_months, approval_code, paid_at, is_deposit')
     .eq('so_doc_no', docNo), c)
     .range(pFrom, pTo));
   if (pErr) return c.json({ error: 'load_failed', reason: pErr.message }, 500);
-  const payments = (payData ?? []) as Array<{ method: string | null; amount_centi: number | null; merchant_provider: string | null; installment_months: number | null; approval_code: string | null; paid_at: string | null; is_deposit: boolean | null }>;
-  const paidTotal = payments.reduce((s, p) => s + Number(p.amount_centi ?? 0), 0);
+  const payments = (payData ?? []) as Array<{ method: string | null; amount_sen: number | null; merchant_provider: string | null; installment_months: number | null; approval_code: string | null; paid_at: string | null; is_deposit: boolean | null }>;
+  const paidTotal = payments.reduce((s, p) => s + Number(p.amount_sen ?? 0), 0);
   const money = fairSoMoney(h);
 
   // SO → DO → Invoice linkage doc numbers.
@@ -1224,20 +1224,20 @@ export const fairReportDetailHandler = async (c: FairCtx) => {
     so_no: h.doc_no,
     order_form: h.ref,
     so_date: h.so_date,
-    amount_centi: money.amount_centi,
-    selling_centi: money.selling_centi,
-    service_rev_centi: money.service_rev_centi,
+    amount_sen: money.amount_sen,
+    selling_sen: money.selling_sen,
+    service_rev_sen: money.service_rev_sen,
     cost_by_category: money.cost_by_category,
-    total_so_cost_centi: money.total_so_cost_centi,
+    total_so_cost_sen: money.total_so_cost_sen,
     margin_pct: money.margin_pct,
-    balance_centi: money.balance_centi,
-    deposit_centi: Number(h.deposit_centi ?? 0),
-    paid_total_centi: paidTotal,
-    below_deposit: belowDeposit({ balanceCenti: h.balance_centi, depositCenti: h.deposit_centi, paidCenti: paidTotal }),
+    balance_sen: money.balance_sen,
+    deposit_sen: Number(h.deposit_sen ?? 0),
+    paid_total_sen: paidTotal,
+    below_deposit: belowDeposit({ balanceSen: h.balance_sen, depositSen: h.deposit_sen, paidSen: paidTotal }),
     payment_methods: paymentMethodsUsed(payments),
     deposit_by_tender: depositByTender(payments),
     payments: payments.map((p) => ({
-      tender: p.method, amount_centi: p.amount_centi, merchant_provider: p.merchant_provider,
+      tender: p.method, amount_sen: p.amount_sen, merchant_provider: p.merchant_provider,
       installment_months: p.installment_months, approval_code: p.approval_code, paid_at: p.paid_at, is_deposit: p.is_deposit,
     })),
     lines,

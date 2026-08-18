@@ -665,7 +665,7 @@ const CreateLorryDrawer = ({ onClose }: { onClose: () => void }) => {
       capacityM3: m3 !== null && Number.isFinite(m3) ? m3 : null,
       capacityKg: kg !== null && Number.isFinite(kg) ? kg : null,
       maxSets: sets !== null && Number.isInteger(sets) && sets >= 0 ? sets : null,
-      maxRevenueCenti: revRm !== null && Number.isFinite(revRm) && revRm >= 0 ? Math.round(revRm * 100) : null,
+      maxRevenueSen: revRm !== null && Number.isFinite(revRm) && revRm >= 0 ? Math.round(revRm * 100) : null,
       capacityLayer,
       notes: form.notes.trim() || undefined,
       active: true,

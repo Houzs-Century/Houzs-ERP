@@ -252,7 +252,7 @@ const norm = (s) => s.trim().replace(/\s+/g, " ");
    pattern that could not match — one of them (check-shared-mirrors.mjs) shipped
    a dead pattern precisely because it had no self-test. Assert the machinery on
    known inputs before trusting a single count out of it. The MISS list matters
-   as much as the HIT list: `fmtCenti` is `toLocaleString('en-MY', {...})` and a
+   as much as the HIT list: `fmtSen` is `toLocaleString('en-MY', {...})` and a
    gate that fires on money is a gate somebody switches off. */
 {
   const failures = [];
@@ -276,7 +276,7 @@ const norm = (s) => s.trim().replace(/\s+/g, " ");
     else if (id && hit.id !== id) failures.push(`expected shape ${id}, got ${hit.id}, on: ${text}`);
   }
   const mustMiss = [
-    // MONEY. fmtCenti/fmtMoneyCenti/fmtQty are all toLocaleString with options.
+    // MONEY. fmtSen/fmtMoneySen/fmtQty are all toLocaleString with options.
     "return `RM ${(n / 100).toLocaleString('en-MY', { minimumFractionDigits: 2 })}`;",
     'value={total.toLocaleString("en-MY")}',
     "{r.count.toLocaleString()}",

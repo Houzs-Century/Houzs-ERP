@@ -89,12 +89,12 @@ async function main() {
         else if (hit.po_number !== doc) log(`  ${doc}: found as ${hit.po_number} via linked_ac_docno`);
       }
       let rows = isPo
-        ? await sql`SELECT i.id, i.material_code AS code, i.qty, i.unit_price_centi, i.line_total_centi AS total,
+        ? await sql`SELECT i.id, i.material_code AS code, i.qty, i.unit_price_sen, i.line_total_sen AS total,
                            i.variants, i.description2, i.received_qty, i.so_item_id
                       FROM scm.purchase_order_items i
                      WHERE i.purchase_order_id = ${poId} AND i.item_group = 'sofa'
                      ORDER BY i.id`
-        : await sql`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_centi, i.total_centi AS total,
+        : await sql`SELECT i.id, i.item_code AS code, i.qty, i.unit_price_sen, i.total_sen AS total,
                            i.variants, i.description2, i.line_no
                       FROM scm.mfg_sales_order_items i
                       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
@@ -143,7 +143,7 @@ async function main() {
 
       const totalBefore = rows.reduce((s, r) => s + Number(r.total ?? 0), 0);
       const lead = rows.reduce((a, r) => (Number(r.total ?? 0) > Number(a.total ?? 0) ? r : a), rows[0]);
-      const unit = Number(lead.unit_price_centi ?? 0);
+      const unit = Number(lead.unit_price_sen ?? 0);
       const qty = Number(lead.qty ?? 1) || 1;
       const totalAfter = unit * qty;
       if (totalAfter !== totalBefore) {
@@ -202,22 +202,22 @@ async function main() {
           const name = (await tx`SELECT name FROM scm.mfg_products WHERE company_id = ${CO} AND upper(code) = ${p.to} LIMIT 1`)[0]?.name ?? p.to;
           if (p.op === "update") {
             if (isPo) await tx`UPDATE scm.purchase_order_items SET material_code = ${p.to}, material_name = ${name},
-                                 unit_price_centi = ${p.price}, line_total_centi = ${p.tot}, variants = ${tx.json(p.v)} WHERE id = ${p.id}`;
+                                 unit_price_sen = ${p.price}, line_total_sen = ${p.tot}, variants = ${tx.json(p.v)} WHERE id = ${p.id}`;
             else await tx`UPDATE scm.mfg_sales_order_items SET item_code = ${p.to}, description = ${name},
-                            unit_price_centi = ${p.price}, total_centi = ${p.tot}, balance_centi = ${p.tot},
+                            unit_price_sen = ${p.price}, total_sen = ${p.tot}, balance_sen = ${p.tot},
                             variants = ${tx.json(p.v)} WHERE id = ${p.id}`;
             touched.push({ id: p.id, code: p.to, v: p.v });
           } else {
             const src = rows[0];
             if (isPo) await tx`INSERT INTO scm.purchase_order_items
                 (purchase_order_id, material_kind, material_code, material_name, item_group, description2,
-                 qty, received_qty, unit_price_centi, line_total_centi, variants, warehouse_id, from_mrp, company_id)
+                 qty, received_qty, unit_price_sen, line_total_sen, variants, warehouse_id, from_mrp, company_id)
                 SELECT i.purchase_order_id, 'mfg_product', ${p.to}, ${name}, 'sofa', ${src.description2 ?? null},
                        i.qty, 0, ${p.price}, ${p.tot}, ${tx.json(p.v)}, i.warehouse_id, false, ${CO}
                   FROM scm.purchase_order_items i WHERE i.id = ${src.id}`;
             else await tx`INSERT INTO scm.mfg_sales_order_items
                 (doc_no, line_no, item_group, item_code, description, description2, uom, location, qty,
-                 unit_price_centi, total_centi, balance_centi, company_id, variants, remark, photo_urls)
+                 unit_price_sen, total_sen, balance_sen, company_id, variants, remark, photo_urls)
                 SELECT i.doc_no, (SELECT COALESCE(MAX(line_no),0)+1 FROM scm.mfg_sales_order_items WHERE doc_no = i.doc_no),
                        'sofa', ${p.to}, ${name}, i.description2, i.uom, i.location, i.qty,
                        ${p.price}, ${p.tot}, ${p.tot}, ${CO}, ${tx.json(p.v)},

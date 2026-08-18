@@ -17,6 +17,7 @@ fails when one appears in CODE.
 | **Processing Date** | `processing_date` / `processingDate` | ~~`internal_expected_dd`~~ | `backend/scripts/lib/so-processing-date.mjs` |
 | **Transfer (document conversion)** | `Transfer to / Transfer from` | — | `backend/src/scm/shared/transfer-vocabulary.ts` |
 | **Branding** | `branding` | — | `backend/src/scm/shared/so-branding-label.ts` |
+| **Money (minor unit)** | `_sen` | ~~`_centi`~~ | `backend/src/scm/lib/money.ts` |
 
 ## What each one means
 
@@ -34,6 +35,12 @@ One rule generates every transfer label. "Transfer to" names the DOCUMENT a docu
 
 The label rule: SOFA is the company's house brand (ZANOTTI / 2990s Sofa) and does not read the line; MATTRESS is the SKU's branding, falling back to the category noun. The VALUES are maintained by the owner in PMS -> Project Maintenance -> BRANDS (`project_brands`, per company) and checked by `audit:branding-vocabulary`.
 
+### Money (minor unit)
+
+Money is stored as an INTEGER count of sen (the Malaysian subunit AutoCount speaks; 100 sen = RM 1) and displayed as RM at the edge. The column/field suffix is `_sen` / `Sen`; `_centi` was the drift (291 columns across 70 tables, renamed by migration 0305 on 2026-08-18). Storing decimals is what money.ts exists to prevent — the retirement is of the NAME, not the integer type. Bare `centi` local helpers in one-off scripts are not `_centi` and are not retired.
+
+Entitled to spell a retired name in code: `scripts/lib/vocabulary.mjs`, `scripts/lib/drift-catalogue.mjs`.
+
 ## Concepts still carrying several spellings — the unification worklist
 
 Found by the 2026-08-18 full-codebase screening. These are DOCUMENTED, not yet
@@ -42,7 +49,7 @@ Until then, prefer the **Target** spelling in new code.
 
 | Sev | Concept | Target | Also seen as |
 | --- | --- | --- | --- |
-| high | Money minor unit (1/100 MYR) | `*_sen` | `*_centi` `*_cents` `amountSen` |
+| high | Money minor unit (1/100 MYR) | `*_sen` | `*_cents` `amountSen` |
 | high | Salesperson / sales rep | `salesperson_id` | `agent` `sales_reps` `sales_agent` `salesRep` |
 | high | Delivery date (customer promise / per-line / effective) | `customer_delivery_date (header) / line_delivery_date (line)` | `customer_delivery_date` `line_delivery_date` `amended_delivery_date` `expected_at` `supplier_delivery_date_2/3/4` |
 | high | Processing date (release-to-purchasing signal) | `processing_date` | `internal_expected_dd` `proceeded_at` `PDate` `target_date` `so_processing_date` |
@@ -71,7 +78,7 @@ Until then, prefer the **Target** spelling in new code.
 | low | Sofa leg-height axis | `legHeight` | `sofaLegHeight` |
 | low | Exchange / FX rate | `exchange_rate` | `rate_to_myr` `operatorRate` `fxRate` |
 | low | Payment slip / proof / R2 media key | `*_r2_key (per artifact type)` | `slip_key` `podKey` `photoRef` `logoR2Key` |
-| low | Paid total (running paid figure) | `paid_total_centi` | `paid_centi` `paidCenti` |
+| low | Paid total (running paid figure) | `paid_total_sen` | `paid_sen` `paidSen` |
 | low | Installment / online payment sub-fields | `installment_months / online_type` | `installment_plan` `online_type` |
 | low | Amendment SO_APPROVED label | `one label per context, documented` | `'SO` `'Applied'` |
 | low | ASSR case number vs SO document number (overload) | `assr_no (cases) / doc_no (SO)` | `assr_no` `doc_no` `case_no` |

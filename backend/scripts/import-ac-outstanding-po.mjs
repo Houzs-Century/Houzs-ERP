@@ -288,7 +288,7 @@ async function main() {
       const headerEta = o.items.map((it) => it.deliv).filter(Boolean).map((d) => String(d).slice(0, 10)).sort()[0] ?? null;
       const ins = await tx`INSERT INTO scm.purchase_orders
         (po_number, linked_ac_docno, supplier_id, status, po_date, expected_at, purchase_location_id, currency,
-         subtotal_centi, tax_centi, total_centi, revision, company_id, created_by, notes)
+         subtotal_sen, tax_sen, total_sen, revision, company_id, created_by, notes)
         VALUES (${o.poNo}, ${o.acPo}, ${o.supId}, ${o.status}, ${o.poDate || sql`CURRENT_DATE`}, ${headerEta}, ${o.locWh}, 'MYR',
          ${o.subtotal}, 0, ${o.subtotal}, 1, 1, ${SYS_USER}, ${"imported from AutoCount " + o.acPo})
         ON CONFLICT (po_number) DO NOTHING RETURNING id`;
@@ -297,7 +297,7 @@ async function main() {
       for (const i of o.items) {
         await tx`INSERT INTO scm.purchase_order_items
           (purchase_order_id, material_kind, material_code, material_name, supplier_sku,
-           qty, unit_price_centi, line_total_centi, received_qty, item_group,
+           qty, unit_price_sen, line_total_sen, received_qty, item_group,
            description, description2, uom, notes, gap_inches, divan_height_inches, leg_height_inches,
            custom_specials, variants, warehouse_id, delivery_date, from_mrp, company_id,
            so_item_id, linked_ac_dtlkey)

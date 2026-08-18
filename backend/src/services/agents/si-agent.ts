@@ -42,9 +42,9 @@ interface SoRow {
   venue?: string | null;
   branding?: string | null;
   customer_state?: string | null;
-  local_total_centi?: number | null;
-  total_cost_centi?: number | null;
-  total_revenue_centi?: number | null;
+  local_total_sen?: number | null;
+  total_cost_sen?: number | null;
+  total_revenue_sen?: number | null;
 }
 
 const n = (v: unknown): number => {
@@ -74,7 +74,7 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
   const res = await db
     .prepare(
       `SELECT doc_no, so_date, status, agent, venue, branding, customer_state,
-              local_total_centi, total_cost_centi, total_revenue_centi
+              local_total_sen, total_cost_sen, total_revenue_sen
          FROM scm.mfg_sales_orders
         WHERE status <> 'DRAFT' AND so_date >= ?
         LIMIT 5000`,
@@ -92,9 +92,9 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
     cur.orders++;
     if (cancelled) cur.cancelled++;
     else {
-      cur.sales += n(r.local_total_centi);
-      cur.cost += n(r.total_cost_centi);
-      cur.revenue += n(r.total_revenue_centi);
+      cur.sales += n(r.local_total_sen);
+      cur.cost += n(r.total_cost_sen);
+      cur.revenue += n(r.total_revenue_sen);
     }
     m.set(k, cur);
   };
@@ -107,9 +107,9 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
     all.orders++;
     if (cancelled) all.cancelled++;
     else {
-      all.sales += n(r.local_total_centi);
-      all.cost += n(r.total_cost_centi);
-      all.revenue += n(r.total_revenue_centi);
+      all.sales += n(r.local_total_sen);
+      all.cost += n(r.total_cost_sen);
+      all.revenue += n(r.total_revenue_sen);
     }
     bump(byAgent, key(r.agent), r, cancelled);
     bump(byVenue, key(r.venue), r, cancelled);
@@ -120,15 +120,15 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
        not a loss, and calling it one would be the confident lie this codebase
        keeps recording. */
     if (!cancelled) {
-      const rev = n(r.total_revenue_centi);
-      const cost = n(r.total_cost_centi);
+      const rev = n(r.total_revenue_sen);
+      const cost = n(r.total_cost_sen);
       if (rev > 0 && cost > rev) {
         const lossRm = ((cost - rev) / 100).toFixed(2);
         desired.set(`NEGATIVE_MARGIN\0${r.doc_no}`, {
           kind: 'NEGATIVE_MARGIN', severity: 'CRIT', subjectType: 'ORDER',
           metric: `-RM ${lossRm}`,
           summary: `${r.doc_no}: cost exceeds revenue by RM ${lossRm} — check pricing / costing before the next one like it.`,
-          payload: { docNo: r.doc_no, revenueCenti: rev, costCenti: cost, agent: r.agent ?? null, venue: r.venue ?? null },
+          payload: { docNo: r.doc_no, revenueSen: rev, costSen: cost, agent: r.agent ?? null, venue: r.venue ?? null },
         });
       }
     }
@@ -198,8 +198,8 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
       .slice(0, limit)
       .map(([name, r]) => ({
         name,
-        salesCenti: r.sales,
-        marginCenti: r.revenue - r.cost,
+        salesSen: r.sales,
+        marginSen: r.revenue - r.cost,
         orders: r.orders,
         cancelled: r.cancelled,
       }));
@@ -210,10 +210,10 @@ export async function patrolSalesIntelligence(env: Env): Promise<SiPatrolResult>
     orders: all.orders,
     cancelled: all.cancelled,
     cancellationRate: all.orders ? all.cancelled / all.orders : 0,
-    salesCenti: all.sales,
+    salesSen: all.sales,
     // Margin sits NEXT TO sales everywhere — revenue growth must never read as
     // profit growth (§8.3).
-    marginCenti: all.revenue - all.cost,
+    marginSen: all.revenue - all.cost,
     topSalespeople: top(byAgent),
     topVenues: top(byVenue),   // the roadshow / PMS view
     topStates: top(byState),

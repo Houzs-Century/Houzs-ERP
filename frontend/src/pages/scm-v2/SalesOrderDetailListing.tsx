@@ -40,7 +40,7 @@
 // AutoCount layout.
 //
 // ── Temporary placeholders ────────────────────────────────────────────────
-// Malaysia is in a no-SST regime, so `tax_centi` is always 0; the Inclusive?
+// Malaysia is in a no-SST regime, so `tax_sen` is always 0; the Inclusive?
 // / Tax (header/line) / Detail Tax Code columns render constants ("Yes" /
 // "0.00" / "SR" in AutoCount convention) but live in the default-hidden
 // long tail. SO→PO linking isn't tracked yet so Creditor Code / Post to PO
@@ -117,7 +117,7 @@ const PaymentPill = ({ raw }: { raw: string | null | undefined }) => {
 
 /* Task #63 — `custom_specials` is a jsonb array with mixed element shape
    across PRs: some lines store plain strings ("Memory Foam Top"), others
-   store objects (`{ label, priceCenti }` per the latest schema, or the
+   store objects (`{ label, priceSen }` per the latest schema, or the
    older `{ description, surchargeSen }`). Render each element's most
    user-facing string and comma-join. */
 const formatSpecials = (raw: unknown): string => {
@@ -133,9 +133,9 @@ const formatSpecials = (raw: unknown): string => {
       /* SO-SKU spec P5 (D8) — show the surcharge next to the name, marked
          "incl." because the amount is ALREADY folded into the line price
          (custom_specials is the price COMPOSITION, not an extra charge).
-         Shapes across PRs: { surchargeSen } (older) | { priceCenti } (0134) —
+         Shapes across PRs: { surchargeSen } (older) | { priceSen } (0134) —
          both are sen. */
-      const sen = Number(o.surchargeSen ?? o.priceCenti ?? 0);
+      const sen = Number(o.surchargeSen ?? o.priceSen ?? 0);
       return sen > 0
         ? `${label} (+RM${(sen / 100).toLocaleString('en-MY', { maximumFractionDigits: 2 })} incl.)`
         : label;
@@ -267,46 +267,46 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
     },
     /* 10 */ {
       key: 'unit_price', label: 'Unit Price', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.unit_price_centi),
-      searchValue: (r) => fmtRm(r.unit_price_centi),
-      sortFn: (a, b) => (a.unit_price_centi ?? 0) - (b.unit_price_centi ?? 0),
+      accessor: (r) => fmtRm(r.unit_price_sen),
+      searchValue: (r) => fmtRm(r.unit_price_sen),
+      sortFn: (a, b) => (a.unit_price_sen ?? 0) - (b.unit_price_sen ?? 0),
     },
     /* 11 */ {
       key: 'total', label: 'Total', width: 120, align: 'right', sortable: true,
-      accessor: (r) => <span style={{ fontWeight: 600 }}>{fmtRm(r.total_centi)}</span>,
-      searchValue: (r) => fmtRm(r.total_centi),
-      sortFn: (a, b) => (a.total_centi ?? 0) - (b.total_centi ?? 0),
-      filterType: 'number', numberValue: (r) => r.total_centi ?? 0,
+      accessor: (r) => <span style={{ fontWeight: 600 }}>{fmtRm(r.total_sen)}</span>,
+      searchValue: (r) => fmtRm(r.total_sen),
+      sortFn: (a, b) => (a.total_sen ?? 0) - (b.total_sen ?? 0),
+      filterType: 'number', numberValue: (r) => r.total_sen ?? 0,
     },
     /* 12-14 — FINANCE ONLY (fix/c1-reports). Declared only for a
-       finance-viewer. The server strips line_cost_centi / line_margin_centi
+       finance-viewer. The server strips line_cost_sen / line_margin_sen
        for everyone else (canViewScmFinance), so rendering these for a
        non-finance viewer would not read blank — it would read cost RM 0.00 and
        margin 100%, a confident lie. Cut, not blanked: off, not hidden. */
     ...(canFinance ? ([
       /* 12 */ {
         key: 'line_cost', label: 'Line Cost', width: 110, align: 'right', sortable: true,
-        accessor: (r) => (r.line_cost_centi ?? 0) > 0 ? fmtRm(r.line_cost_centi) : <span style={{ color: 'var(--fg-muted)' }}>—</span>,
-        searchValue: (r) => fmtRm(r.line_cost_centi ?? 0),
-        sortFn: (a, b) => (a.line_cost_centi ?? 0) - (b.line_cost_centi ?? 0),
+        accessor: (r) => (r.line_cost_sen ?? 0) > 0 ? fmtRm(r.line_cost_sen) : <span style={{ color: 'var(--fg-muted)' }}>—</span>,
+        searchValue: (r) => fmtRm(r.line_cost_sen ?? 0),
+        sortFn: (a, b) => (a.line_cost_sen ?? 0) - (b.line_cost_sen ?? 0),
       },
       /* 13 */ {
         key: 'line_margin', label: 'Margin RM', width: 110, align: 'right', sortable: true,
         accessor: (r) => {
-          const m = r.line_margin_centi ?? 0;
-          if ((r.total_centi ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
+          const m = r.line_margin_sen ?? 0;
+          if ((r.total_sen ?? 0) <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
           const color = m > 0 ? 'var(--c-secondary-a, #2F5D4F)' : m < 0 ? 'var(--c-festive-b, #B8331F)' : 'var(--fg-muted)';
           return <span style={{ color, fontWeight: 600 }}>{fmtRm(m)}</span>;
         },
-        searchValue: (r) => fmtRm(r.line_margin_centi ?? 0),
-        sortFn: (a, b) => (a.line_margin_centi ?? 0) - (b.line_margin_centi ?? 0),
+        searchValue: (r) => fmtRm(r.line_margin_sen ?? 0),
+        sortFn: (a, b) => (a.line_margin_sen ?? 0) - (b.line_margin_sen ?? 0),
       },
       /* 14 */ {
         key: 'margin_pct', label: 'Margin %', width: 90, align: 'right', sortable: true,
         accessor: (r) => {
-          const rev = r.total_centi ?? 0;
+          const rev = r.total_sen ?? 0;
           if (rev <= 0) return <span style={{ color: 'var(--fg-muted)' }}>—</span>;
-          const pct = ((r.line_margin_centi ?? 0) / rev) * 100;
+          const pct = ((r.line_margin_sen ?? 0) / rev) * 100;
           const color = pct >= 50 ? 'var(--c-secondary-a, #2F5D4F)'
             : pct >= 30 ? 'var(--c-festive-a, #C77F3E)'
             : pct > 0   ? 'var(--c-burnt)'
@@ -314,22 +314,22 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
           return <span style={{ color, fontWeight: 700, fontVariantNumeric: 'tabular-nums' }}>{pct.toFixed(1)}%</span>;
         },
         searchValue: (r) => {
-          const rev = r.total_centi ?? 0;
+          const rev = r.total_sen ?? 0;
           if (rev <= 0) return '';
-          return `${(((r.line_margin_centi ?? 0) / rev) * 100).toFixed(1)}%`;
+          return `${(((r.line_margin_sen ?? 0) / rev) * 100).toFixed(1)}%`;
         },
         sortFn: (a, b) => {
-          const aPct = (a.total_centi ?? 0) > 0 ? (a.line_margin_centi ?? 0) / a.total_centi! : 0;
-          const bPct = (b.total_centi ?? 0) > 0 ? (b.line_margin_centi ?? 0) / b.total_centi! : 0;
+          const aPct = (a.total_sen ?? 0) > 0 ? (a.line_margin_sen ?? 0) / a.total_sen! : 0;
+          const bPct = (b.total_sen ?? 0) > 0 ? (b.line_margin_sen ?? 0) / b.total_sen! : 0;
           return aPct - bPct;
         },
       },
     ] as DataGridColumn<SoDetailListingRow>[]) : []),
     /* 15 */ {
       key: 'balance', label: 'Balance', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.balance_centi ?? 0),
-      searchValue: (r) => fmtRm(r.balance_centi ?? 0),
-      sortFn: (a, b) => (a.balance_centi ?? 0) - (b.balance_centi ?? 0),
+      accessor: (r) => fmtRm(r.balance_sen ?? 0),
+      searchValue: (r) => fmtRm(r.balance_sen ?? 0),
+      sortFn: (a, b) => (a.balance_sen ?? 0) - (b.balance_sen ?? 0),
     },
     /* 16 */ {
       key: 'payment', label: 'Payment', width: 100, sortable: true, groupable: true,
@@ -447,9 +447,9 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
     },
     /* 30 */ {
       key: 'paid', label: 'Paid', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.paid_total_centi ?? 0),
-      searchValue: (r) => fmtRm(r.paid_total_centi ?? 0),
-      sortFn: (a, b) => (a.paid_total_centi ?? 0) - (b.paid_total_centi ?? 0),
+      accessor: (r) => fmtRm(r.paid_total_sen ?? 0),
+      searchValue: (r) => fmtRm(r.paid_total_sen ?? 0),
+      sortFn: (a, b) => (a.paid_total_sen ?? 0) - (b.paid_total_sen ?? 0),
     },
     /* 31 — Task #63: last payment date sourced server-side as MAX(paid_at)
        from mfg_sales_order_payments per SO. */
@@ -545,11 +545,11 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
     {
       key: 'total_ex', label: 'Total (Ex)', width: 110, align: 'right', sortable: true,
       defaultHidden: true,
-      accessor: (r) => fmtRm((r.total_centi ?? 0) - (r.tax_centi ?? 0)),
-      searchValue: (r) => fmtRm((r.total_centi ?? 0) - (r.tax_centi ?? 0)),
+      accessor: (r) => fmtRm((r.total_sen ?? 0) - (r.tax_sen ?? 0)),
+      searchValue: (r) => fmtRm((r.total_sen ?? 0) - (r.tax_sen ?? 0)),
       sortFn: (a, b) =>
-        ((a.total_centi ?? 0) - (a.tax_centi ?? 0)) -
-        ((b.total_centi ?? 0) - (b.tax_centi ?? 0)),
+        ((a.total_sen ?? 0) - (a.tax_sen ?? 0)) -
+        ((b.total_sen ?? 0) - (b.tax_sen ?? 0)),
     },
     /* ── 2990-extra (default-hidden) ─ surfaced fields the report can show
        but Houzs doesn't have. Right-click "Show column" to enable. ─── */
@@ -623,7 +623,7 @@ export const SalesOrderDetailListing = () => {
      docs whose (local_total − paid) <= 0. */
   const baseRows = useMemo<SoDetailListingRow[]>(() => {
     if (!outstandingOnly) return rawRows;
-    return rawRows.filter((r) => (r.local_total_centi ?? 0) - (r.paid_total_centi ?? 0) > 0);
+    return rawRows.filter((r) => (r.local_total_sen ?? 0) - (r.paid_total_sen ?? 0) > 0);
   }, [rawRows, outstandingOnly]);
 
   /* The outstanding-only overlay (?outstanding=1) narrows the rows; the
@@ -638,7 +638,7 @@ export const SalesOrderDetailListing = () => {
         the line-flat row format repeats it per line.
 
         cost / margin / marginPct are NULL for a non-finance viewer, not 0:
-        the server omits line_cost_centi for them, so summing it would total
+        the server omits line_cost_sen for them, so summing it would total
         zero and paint margin as 100% of revenue. Returning null makes the
         absence explicit — a tile added later can't silently inherit the lie. */
   const kpis = useMemo(() => {
@@ -649,11 +649,11 @@ export const SalesOrderDetailListing = () => {
     const outstandingByDoc = new Map<string, number>();
     for (const r of visibleRows) {
       uniqueDocs.add(r.doc_no);
-      revenue += r.total_centi ?? 0;
-      if (canFinance) cost += r.line_cost_centi ?? 0;
+      revenue += r.total_sen ?? 0;
+      if (canFinance) cost += r.line_cost_sen ?? 0;
       if (!outstandingByDoc.has(r.doc_no)) {
-        const ltc = r.local_total_centi ?? 0;
-        const ptc = r.paid_total_centi ?? 0;
+        const ltc = r.local_total_sen ?? 0;
+        const ptc = r.paid_total_sen ?? 0;
         outstandingByDoc.set(r.doc_no, Math.max(ltc - ptc, 0));
       }
     }

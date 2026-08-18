@@ -4,12 +4,12 @@
 //
 // When a customer overpays, or when a paid Sales Invoice is cancelled, the
 // excess turns into a CREDIT BALANCE the customer can spend on future invoices.
-// Each event = one row in customer_credits. Sum of amount_centi per
+// Each event = one row in customer_credits. Sum of amount_sen per
 // debtor_code = current credit balance. Apply-to-SI writes a NEGATIVE entry
-// AND a payment row on the new SI, so paid_centi advances naturally and the
+// AND a payment row on the new SI, so paid_sen advances naturally and the
 // SI shows as "covered by previous credit".
 //
-// This also handles Edge #9: when an SI with paid_centi > 0 is cancelled, the
+// This also handles Edge #9: when an SI with paid_sen > 0 is cancelled, the
 // cash on the books stays put — the customer just carries the equivalent as a
 // credit. No automatic refund.
 // ----------------------------------------------------------------------------
@@ -17,7 +17,7 @@
 import { isMissingRpc } from './rpc-missing';
 
 export type CreditSourceType =
-  | 'SI_CANCEL_REFUND'   // SI was cancelled with paid_centi > 0 → credit equal to paid_centi
+  | 'SI_CANCEL_REFUND'   // SI was cancelled with paid_sen > 0 → credit equal to paid_sen
   | 'SI_REOPEN_CONTRA'   // a cancelled SI was reopened → reverse the SI_CANCEL_REFUND credit
   | 'SO_CANCEL_REFUND'   // SO was cancelled with paid deposit > 0 → credit equal to paid deposit
   | 'OVERPAY'            // payment recorded > remaining due → excess turned into credit
@@ -27,7 +27,7 @@ export type CreditSourceType =
 export type AddCreditInput = {
   debtorCode: string;
   debtorName?: string | null;
-  amountCenti: number;                    // signed: + adds, − applies
+  amountSen: number;                    // signed: + adds, − applies
   sourceType: CreditSourceType;
   sourceDocNo?: string | null;
   sourceDocId?: string | null;
@@ -42,12 +42,12 @@ export type AddCreditInput = {
  *  calling addCustomerCredit. */
 export async function addCustomerCredit(sb: any, args: AddCreditInput): Promise<{ ok: boolean; id?: string; reason?: string }> {
   if (!args.debtorCode || !args.debtorCode.trim()) return { ok: false, reason: 'debtor_code_required' };
-  if (!Number.isFinite(args.amountCenti) || args.amountCenti === 0) return { ok: false, reason: 'amount_zero' };
+  if (!Number.isFinite(args.amountSen) || args.amountSen === 0) return { ok: false, reason: 'amount_zero' };
   const { data, error } = await sb.from('customer_credits').insert({
     ...(args.companyId != null ? { company_id: args.companyId } : {}),
     debtor_code:   args.debtorCode,
     debtor_name:   args.debtorName ?? null,
-    amount_centi:  Math.round(args.amountCenti),
+    amount_sen:  Math.round(args.amountSen),
     source_type:   args.sourceType,
     source_doc_no: args.sourceDocNo ?? null,
     source_doc_id: args.sourceDocId ?? null,
@@ -83,7 +83,7 @@ export async function getCustomerCreditBalance(
   if (!debtorCode || !debtorCode.trim()) return 0;
   let q = sb
     .from('customer_credits')
-    .select('amount_centi')
+    .select('amount_sen')
     .eq('debtor_code', debtorCode);
   if (companyId != null) q = q.eq('company_id', companyId);
   const { data, error } = await q;
@@ -98,7 +98,7 @@ export async function getCustomerCreditBalance(
      written before this read on any path, so throwing strands no partial state. */
   if (error) throw new Error(`getCustomerCreditBalance read failed: ${error.message}`);
   let sum = 0;
-  for (const r of (data ?? []) as Array<{ amount_centi: number }>) sum += Number(r.amount_centi ?? 0);
+  for (const r of (data ?? []) as Array<{ amount_sen: number }>) sum += Number(r.amount_sen ?? 0);
   return sum;
 }
 
@@ -107,7 +107,7 @@ type ApplyCreditArgs = {
   debtorName?: string | null;
   siId: string;
   siNumber: string;
-  remainingDueCenti: number;
+  remainingDueSen: number;
   createdBy?: string | null;
 };
 
@@ -131,7 +131,7 @@ type ApplyCreditArgs = {
  *
  * FALLBACK — until that function is applied to a given database, the RPC is
  * absent; we detect that (and ONLY that) and fall back to the legacy two-write
- * path, so behaviour is unchanged pre-apply. paid_centi is not touched here: it
+ * path, so behaviour is unchanged pre-apply. paid_sen is not touched here: it
  * is a cache the callers re-derive from the payments table via recomputePaid.
  *
  * No-op when balance ≤ 0. Idempotent: if a credit-payment for this SI already
@@ -142,7 +142,7 @@ export async function applyCustomerCreditToSi(
   args: ApplyCreditArgs,
 ): Promise<{ applied: number; reason?: string }> {
   if (!args.debtorCode || !args.debtorCode.trim()) return { applied: 0, reason: 'no_debtor' };
-  if (!(args.remainingDueCenti > 0)) return { applied: 0, reason: 'no_due' };
+  if (!(args.remainingDueSen > 0)) return { applied: 0, reason: 'no_due' };
 
   /* MIGRATED PAPERWORK SPENDS NO CREDIT (migration 0280). A migrated SI mirrors
      an invoice AutoCount already raised and already settled in its own book.
@@ -177,14 +177,14 @@ export async function applyCustomerCreditToSi(
     p_debtor_code: args.debtorCode,
     p_si_id: args.siId,
     p_si_number: args.siNumber,
-    p_remaining_due_centi: Math.round(args.remainingDueCenti),
+    p_remaining_due_sen: Math.round(args.remainingDueSen),
     p_debtor_name: args.debtorName ?? null,
     p_created_by: args.createdBy ?? null,
   });
   if (!error) {
     // RETURNS TABLE(...) → PostgREST hands back an array of one row.
-    const row = (Array.isArray(data) ? data[0] : data) as { applied_centi?: number; reason?: string } | undefined;
-    const applied = Number(row?.applied_centi ?? 0);
+    const row = (Array.isArray(data) ? data[0] : data) as { applied_sen?: number; reason?: string } | undefined;
+    const applied = Number(row?.applied_sen ?? 0);
     return applied > 0 ? { applied } : { applied: 0, reason: row?.reason ?? 'no_apply' };
   }
   if (!isMissingRpc(error)) {
@@ -213,7 +213,7 @@ async function applyCustomerCreditToSiLegacy(
   // Idempotency — already applied to this SI?
   const { data: existing, error: existErr } = await sb
     .from('sales_invoice_payments')
-    .select('id, amount_centi')
+    .select('id, amount_sen')
     .eq('sales_invoice_id', args.siId)
     .eq('method', 'credit')
     .limit(1);
@@ -221,7 +221,7 @@ async function applyCustomerCreditToSiLegacy(
      failed select to { data: null, error } and does NOT throw, so a transient blip
      (Hyperdrive cold-start) used to leave `existing` null, fall straight through
      this guard, and apply the customer's credit a SECOND time — a duplicate
-     payment row, a duplicate APPLIED_TO_SI debit, and paid_centi bumped twice, all
+     payment row, a duplicate APPLIED_TO_SI debit, and paid_sen bumped twice, all
      reported as success. Unlike a stale roll-up this is not recoverable by the next
      write: the money has already moved twice.
      Aborting is safe HERE and nowhere later — this guard runs before this function
@@ -264,7 +264,7 @@ async function applyCustomerCreditToSiLegacy(
 
   const balance = await getCustomerCreditBalance(sb, args.debtorCode, companyId);
   if (balance <= 0) return { applied: 0, reason: 'no_balance' };
-  const apply = Math.min(balance, args.remainingDueCenti);
+  const apply = Math.min(balance, args.remainingDueSen);
   if (apply <= 0) return { applied: 0, reason: 'no_due' };
 
   // 1. Payment row on the SI — marks the SI as (partly) paid.
@@ -272,7 +272,7 @@ async function applyCustomerCreditToSiLegacy(
     ...(companyId != null ? { company_id: companyId } : {}),
     sales_invoice_id: args.siId,
     method: 'credit',
-    amount_centi: apply,
+    amount_sen: apply,
     note: `Applied customer credit balance toward ${args.siNumber}`,
     created_by: args.createdBy ?? null,
   });
@@ -285,7 +285,7 @@ async function applyCustomerCreditToSiLegacy(
      invoice is paid from a credit that was never debited — the customer keeps the
      balance and can spend it again. Neither branch fixes that: returning early
      strands the committed payment row AND lets the guard above read it as
-     'already_applied' forever; continuing bumps paid_centi on a debit that does
+     'already_applied' forever; continuing bumps paid_sen on a debit that does
      not exist. Only a transaction makes this right — which is exactly what the
      atomic RPC in applyCustomerCreditToSi does when present. The reason is
      recorded, not swallowed. See BUG-HISTORY 2026-07-18 (fix/credit-ledger-atomic)
@@ -293,7 +293,7 @@ async function applyCustomerCreditToSiLegacy(
   const ledger = await addCustomerCredit(sb, {
     debtorCode: args.debtorCode,
     debtorName: args.debtorName ?? null,
-    amountCenti: -apply,
+    amountSen: -apply,
     sourceType: 'APPLIED_TO_SI',
     sourceDocNo: args.siNumber,
     sourceDocId: args.siId,
@@ -306,17 +306,17 @@ async function applyCustomerCreditToSiLegacy(
     console.error('[customer-credit] HALF-APPLIED — payment row committed but the ledger debit did NOT:', args.siNumber, ledger.reason);
   }
 
-  // 3. Bump SI's paid_centi — optimistic-concurrency loop (Bug#5 class, ported
+  // 3. Bump SI's paid_sen — optimistic-concurrency loop (Bug#5 class, ported
   //    from 2990 ce04e468). The old read-modify-write lost a concurrent SI
   //    payment; gate the UPDATE on the value we read and retry on a 0-row
   //    (concurrent) result.
   for (let attempt = 0; attempt < 6; attempt += 1) {
-    const { data: cur } = await sb.from('sales_invoices').select('paid_centi').eq('id', args.siId).maybeSingle();
-    const prev = Number((cur as { paid_centi: number } | null)?.paid_centi ?? 0);
+    const { data: cur } = await sb.from('sales_invoices').select('paid_sen').eq('id', args.siId).maybeSingle();
+    const prev = Number((cur as { paid_sen: number } | null)?.paid_sen ?? 0);
     const { data: upd } = await sb.from('sales_invoices')
-      .update({ paid_centi: prev + apply })
+      .update({ paid_sen: prev + apply })
       .eq('id', args.siId)
-      .eq('paid_centi', prev)
+      .eq('paid_sen', prev)
       .select('id');
     if (upd && upd.length > 0) break; // applied; else a concurrent change → re-read + retry
   }
@@ -326,8 +326,8 @@ async function applyCustomerCreditToSiLegacy(
 
 /**
  * Reconcile the OVERPAY ledger entry for one Sales Invoice. After any change
- * to paid_centi (payment add / delete), the customer's credit balance must
- * match (paid_centi − total_centi) clamped at zero. Edge #A.
+ * to paid_sen (payment add / delete), the customer's credit balance must
+ * match (paid_sen − total_sen) clamped at zero. Edge #A.
  *
  *   target_overpay = max(0, paid − total)
  *   existing_overpay = Σ OVERPAY entries for this SI
@@ -345,7 +345,7 @@ export async function reconcileSiOverpay(
 ): Promise<{ delta: number; reason?: string }> {
   const { data: si, error: siErr } = await sb
     .from('sales_invoices')
-    .select('invoice_number, total_centi, paid_centi, debtor_code, debtor_name, status, company_id')
+    .select('invoice_number, total_sen, paid_sen, debtor_code, debtor_name, status, company_id')
     .eq('id', siId)
     .maybeSingle();
   /* Distinct from `!si` below: that is a genuinely missing invoice (error null,
@@ -358,12 +358,12 @@ export async function reconcileSiOverpay(
     return { delta: 0, reason: 'header_read_failed' };
   }
   if (!si) return { delta: 0, reason: 'not_found' };
-  const s = si as { invoice_number: string; total_centi: number | null; paid_centi: number | null; debtor_code: string | null; debtor_name: string | null; status: string | null; company_id: number | null };
+  const s = si as { invoice_number: string; total_sen: number | null; paid_sen: number | null; debtor_code: string | null; debtor_name: string | null; status: string | null; company_id: number | null };
   if (!s.debtor_code) return { delta: 0, reason: 'no_debtor' };
   if ((s.status ?? '').toUpperCase() === 'CANCELLED') return { delta: 0, reason: 'cancelled' };
 
-  const paid  = Number(s.paid_centi ?? 0);
-  const total = Number(s.total_centi ?? 0);
+  const paid  = Number(s.paid_sen ?? 0);
+  const total = Number(s.total_sen ?? 0);
   const target = Math.max(0, paid - total);
 
   // Σ existing OVERPAY entries already booked for this SI (signed).
@@ -377,7 +377,7 @@ export async function reconcileSiOverpay(
      this point, so returning strands nothing. */
   const { data: existing, error: existErr } = await sb
     .from('customer_credits')
-    .select('amount_centi')
+    .select('amount_sen')
     .eq('source_type', 'OVERPAY')
     .eq('source_doc_no', s.invoice_number);
   if (existErr) {
@@ -385,8 +385,8 @@ export async function reconcileSiOverpay(
     console.error('[customer-credit] overpay Σ read failed — overpay NOT reconciled:', s.invoice_number, existErr.message);
     return { delta: 0, reason: 'existing_read_failed' };
   }
-  const existingTotal = ((existing ?? []) as Array<{ amount_centi: number }>)
-    .reduce((acc, r) => acc + Number(r.amount_centi ?? 0), 0);
+  const existingTotal = ((existing ?? []) as Array<{ amount_sen: number }>)
+    .reduce((acc, r) => acc + Number(r.amount_sen ?? 0), 0);
 
   const delta = target - existingTotal;
   if (delta === 0) return { delta: 0 };
@@ -394,7 +394,7 @@ export async function reconcileSiOverpay(
   const r = await addCustomerCredit(sb, {
     debtorCode: s.debtor_code,
     debtorName: s.debtor_name,
-    amountCenti: delta,
+    amountSen: delta,
     sourceType: 'OVERPAY',
     sourceDocNo: s.invoice_number,
     sourceDocId: siId,
@@ -408,15 +408,15 @@ export async function reconcileSiOverpay(
 
 /**
  * Record a refund-as-credit when a paid Sales Invoice is cancelled. Looks at
- * paid_centi > 0 → writes a positive credit row for the customer (idempotent
+ * paid_sen > 0 → writes a positive credit row for the customer (idempotent
  * on source_doc_no, so a second cancel-PATCH no-ops).
  */
 export async function creditFromCancelledSi(
   sb: any,
-  args: { siId: string; siNumber: string; debtorCode: string | null; debtorName: string | null; paidCenti: number; createdBy?: string | null },
+  args: { siId: string; siNumber: string; debtorCode: string | null; debtorName: string | null; paidSen: number; createdBy?: string | null },
 ): Promise<{ credited: number; reason?: string }> {
   if (!args.debtorCode || !args.debtorCode.trim()) return { credited: 0, reason: 'no_debtor' };
-  if (!(args.paidCenti > 0)) return { credited: 0, reason: 'no_paid' };
+  if (!(args.paidSen > 0)) return { credited: 0, reason: 'no_paid' };
 
   // Idempotency — is a cancel-refund credit for this invoice STILL STANDING?
   // We net SI_CANCEL_REFUND against any SI_REOPEN_CONTRA (written when the
@@ -425,7 +425,7 @@ export async function creditFromCancelledSi(
   // fresh cancel after reopen correctly credits again. (Wei Siang 2026-06-03)
   const { data: priorRows, error: priorErr } = await sb
     .from('customer_credits')
-    .select('amount_centi')
+    .select('amount_sen')
     .eq('source_doc_no', args.siNumber)
     .in('source_type', ['SI_CANCEL_REFUND', 'SI_REOPEN_CONTRA']);
   /* A failed read folded to standing = 0, which reads as "never credited" and
@@ -438,24 +438,24 @@ export async function creditFromCancelledSi(
     console.error('[customer-credit] cancel-refund guard read failed — NOT credited:', args.siNumber, priorErr.message);
     return { credited: 0, reason: 'guard_read_failed' };
   }
-  const standing = ((priorRows ?? []) as Array<{ amount_centi: number }>)
-    .reduce((s, r) => s + Number(r.amount_centi ?? 0), 0);
+  const standing = ((priorRows ?? []) as Array<{ amount_sen: number }>)
+    .reduce((s, r) => s + Number(r.amount_sen ?? 0), 0);
   if (standing > 0) {
     return { credited: 0, reason: 'already_credited' };
   }
 
   /* Audit 2026-06-11 H2 — an over-paid SI already booked its excess as a live
      OVERPAY credit (reconcileSiOverpay, which skips CANCELLED invoices and so
-     never corrects it). Crediting the full paid_centi here would hand the
+     never corrects it). Crediting the full paid_sen here would hand the
      excess out twice, so the cancel credit is paid − Σ live OVERPAY entries
      for this SI (net, never negative). */
   const { data: overRows, error: overErr } = await sb
     .from('customer_credits')
-    .select('amount_centi')
+    .select('amount_sen')
     .eq('source_type', 'OVERPAY')
     .eq('source_doc_no', args.siNumber);
   /* The H2 note above is exactly what a failed read undoes: `?? []` folds to
-     liveOverpay = 0, the subtraction becomes a no-op, and the full paid_centi is
+     liveOverpay = 0, the subtraction becomes a no-op, and the full paid_sen is
      credited — handing out the already-booked excess twice, the precise double
      that this block exists to prevent. An SI with no OVERPAY row resolves
      error === null with data === [] and correctly credits the full paid amount. */
@@ -464,10 +464,10 @@ export async function creditFromCancelledSi(
     console.error('[customer-credit] live-overpay read failed — NOT credited:', args.siNumber, overErr.message);
     return { credited: 0, reason: 'overpay_read_failed' };
   }
-  const liveOverpay = ((overRows ?? []) as Array<{ amount_centi: number }>)
-    .reduce((s, r) => s + Number(r.amount_centi ?? 0), 0);
-  const creditCenti = Math.max(0, args.paidCenti - Math.max(0, liveOverpay));
-  if (creditCenti <= 0) return { credited: 0, reason: 'covered_by_overpay' };
+  const liveOverpay = ((overRows ?? []) as Array<{ amount_sen: number }>)
+    .reduce((s, r) => s + Number(r.amount_sen ?? 0), 0);
+  const creditSen = Math.max(0, args.paidSen - Math.max(0, liveOverpay));
+  if (creditSen <= 0) return { credited: 0, reason: 'covered_by_overpay' };
 
   // Multi-company (mig 0061): the ledger row inherits the SI's company.
   // Aborts on a read error — an omitted company_id defaults to HOUZS (mig 0091),
@@ -483,21 +483,21 @@ export async function creditFromCancelledSi(
   const r = await addCustomerCredit(sb, {
     debtorCode: args.debtorCode,
     debtorName: args.debtorName ?? null,
-    amountCenti: creditCenti,
+    amountSen: creditSen,
     sourceType: 'SI_CANCEL_REFUND',
     sourceDocNo: args.siNumber,
     sourceDocId: args.siId,
-    notes: `Cancelled invoice ${args.siNumber} carried ${creditCenti / 100} as customer credit.`,
+    notes: `Cancelled invoice ${args.siNumber} carried ${creditSen / 100} as customer credit.`,
     createdBy: args.createdBy ?? null,
     companyId,
   });
-  return r.ok ? { credited: creditCenti } : { credited: 0, reason: r.reason };
+  return r.ok ? { credited: creditSen } : { credited: 0, reason: r.reason };
 }
 
 /**
  * Reverse the SI_CANCEL_REFUND credit when a cancelled Sales Invoice is REOPENED.
  * On reopen the invoice goes live again and its payments ledger restores
- * paid_centi — so the credit handed out at cancel must be clawed back, or the
+ * paid_sen — so the credit handed out at cancel must be clawed back, or the
  * customer is credited twice. Writes a NEGATIVE contra row (SI_REOPEN_CONTRA) of
  * the net standing cancel-refund. Idempotent: once net ≤ 0, no-op. (2026-06-03)
  */
@@ -508,7 +508,7 @@ export async function reverseCancelledSiCredit(
   if (!args.debtorCode || !args.debtorCode.trim()) return { reversed: 0, reason: 'no_debtor' };
   const { data: rows, error: rowsErr } = await sb
     .from('customer_credits')
-    .select('amount_centi')
+    .select('amount_sen')
     .eq('source_doc_no', args.siNumber)
     .in('source_type', ['SI_CANCEL_REFUND', 'SI_REOPEN_CONTRA']);
   /* This one leans the other way and is still wrong: a failed read folds to
@@ -522,8 +522,8 @@ export async function reverseCancelledSiCredit(
     console.error('[customer-credit] standing-credit read failed — cancel refund NOT clawed back on reopen:', args.siNumber, rowsErr.message);
     return { reversed: 0, reason: 'standing_read_failed' };
   }
-  const standing = ((rows ?? []) as Array<{ amount_centi: number }>)
-    .reduce((s, r) => s + Number(r.amount_centi ?? 0), 0);
+  const standing = ((rows ?? []) as Array<{ amount_sen: number }>)
+    .reduce((s, r) => s + Number(r.amount_sen ?? 0), 0);
   if (standing <= 0) return { reversed: 0, reason: 'nothing_to_reverse' };
 
   // Multi-company (mig 0061): the contra row inherits the SI's company.
@@ -539,7 +539,7 @@ export async function reverseCancelledSiCredit(
   const r = await addCustomerCredit(sb, {
     debtorCode: args.debtorCode,
     debtorName: args.debtorName ?? null,
-    amountCenti: -standing,
+    amountSen: -standing,
     sourceType: 'SI_REOPEN_CONTRA',
     sourceDocNo: args.siNumber,
     sourceDocId: args.siId,
@@ -590,15 +590,15 @@ export async function creditFromCancelledSo(
      credit row) but it is reported honestly instead of as "nothing was paid". */
   const { data: pays, error: paysErr } = await sb
     .from('mfg_sales_order_payments')
-    .select('amount_centi, company_id')
+    .select('amount_sen, company_id')
     .eq('so_doc_no', args.docNo);
   if (paysErr) {
     /* eslint-disable-next-line no-console */
     console.error('[customer-credit] SO deposit read failed — cancel refund NOT credited:', args.docNo, paysErr.message);
     return { credited: 0, reason: 'deposits_read_failed' };
   }
-  const payRows = (pays ?? []) as Array<{ amount_centi: number; company_id?: number | null }>;
-  const total = payRows.reduce((s, p) => s + Number(p.amount_centi ?? 0), 0);
+  const payRows = (pays ?? []) as Array<{ amount_sen: number; company_id?: number | null }>;
+  const total = payRows.reduce((s, p) => s + Number(p.amount_sen ?? 0), 0);
   if (total <= 0) return { credited: 0, reason: 'no_paid' };
   // Multi-company (mig 0061): the ledger row inherits the SO's company (via its payments).
   const companyId = payRows.find((p) => p.company_id != null)?.company_id ?? null;
@@ -606,7 +606,7 @@ export async function creditFromCancelledSo(
   const r = await addCustomerCredit(sb, {
     debtorCode: args.debtorCode,
     debtorName: args.debtorName ?? null,
-    amountCenti: total,
+    amountSen: total,
     sourceType: 'SO_CANCEL_REFUND',
     sourceDocNo: args.docNo,
     notes: `Cancelled Sales Order ${args.docNo} carried deposit ${total / 100} as customer credit.`,

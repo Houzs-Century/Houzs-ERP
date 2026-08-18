@@ -179,12 +179,12 @@ async function main() {
   }
   notice(`of those: ${withGr} carry AutoCount GR number(s) on their PO; ${withPinv} already carry AutoCount PI number(s)`);
 
-  // Lines, with the exact AutoCount PO line key. unit_price_centi is what the
+  // Lines, with the exact AutoCount PO line key. unit_price_sen is what the
   // GRN line costs TODAY — 0 means the cost is missing, which is the thing the
   // conversion is meant to fix.
   const gLines = await sql.unsafe(`
     SELECT g.grn_number, gi.material_code, gi.qty_received,
-           COALESCE(gi.unit_price_centi, 0) AS unit_price_centi,
+           COALESCE(gi.unit_price_sen, 0) AS unit_price_sen,
            pi2.linked_ac_dtlkey
     FROM ${G} g
     JOIN ${GI} gi ON gi.grn_id = g.id
@@ -195,8 +195,8 @@ async function main() {
   for (const r of gLines) {
     gl++;
     if (r.linked_ac_dtlkey != null) glKeyed++;
-    if (Number(r.unit_price_centi) === 0) glZero++;
-    row(`GRNLINE\t${r.grn_number}\t${r.material_code}\t${r.qty_received}\t${r.unit_price_centi}\t${r.linked_ac_dtlkey ?? ""}`);
+    if (Number(r.unit_price_sen) === 0) glZero++;
+    row(`GRNLINE\t${r.grn_number}\t${r.material_code}\t${r.qty_received}\t${r.unit_price_sen}\t${r.linked_ac_dtlkey ?? ""}`);
   }
   notice(`migrated GRN lines: ${gl}; with an exact AutoCount PO line key: ${glKeyed}; currently ZERO cost: ${glZero}`);
 
@@ -237,15 +237,15 @@ async function main() {
   notice("═══ Q4 — zero-cost lines and zero-cost stock on hand ═══");
   const [poZero] = await sql.unsafe(`
     SELECT COUNT(*)::int AS total,
-           COUNT(*) FILTER (WHERE COALESCE(i.unit_price_centi,0) = 0)::int AS zero_cost,
-           COUNT(*) FILTER (WHERE COALESCE(i.unit_price_centi,0) = 0 AND i.linked_ac_dtlkey IS NOT NULL)::int AS zero_cost_keyed
+           COUNT(*) FILTER (WHERE COALESCE(i.unit_price_sen,0) = 0)::int AS zero_cost,
+           COUNT(*) FILTER (WHERE COALESCE(i.unit_price_sen,0) = 0 AND i.linked_ac_dtlkey IS NOT NULL)::int AS zero_cost_keyed
     FROM ${PI_} i JOIN ${P} p ON p.id = i.purchase_order_id
     WHERE p.company_id = ${CO}`);
   notice(`PO lines (company ${CO}): ${poZero.total}; ZERO cost: ${poZero.zero_cost}; of those with an AutoCount line key: ${poZero.zero_cost_keyed}`);
 
   const [grnZero] = await sql.unsafe(`
     SELECT COUNT(*)::int AS total,
-           COUNT(*) FILTER (WHERE COALESCE(gi.unit_price_centi,0) = 0)::int AS zero_cost
+           COUNT(*) FILTER (WHERE COALESCE(gi.unit_price_sen,0) = 0)::int AS zero_cost
     FROM ${GI} gi JOIN ${G} g ON g.id = gi.grn_id
     WHERE g.company_id = ${CO}`);
   notice(`GRN lines (company ${CO}, all GRNs): ${grnZero.total}; ZERO cost: ${grnZero.zero_cost}`);
@@ -300,16 +300,16 @@ async function main() {
   // exercises exactly the matching the plan depends on.
   const poLines = await sql.unsafe(`
     SELECT p.linked_ac_docno AS ac_po_no, i.material_code,
-           COALESCE(i.unit_price_centi,0) AS unit_price_centi,
+           COALESCE(i.unit_price_sen,0) AS unit_price_sen,
            COALESCE(i.qty,0) AS qty, COALESCE(i.received_qty,0) AS received_qty,
            COALESCE(i.linked_ac_dtlkey::text,'') AS dtlkey
     FROM ${PI_} i JOIN ${P} p ON p.id = i.purchase_order_id
     WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL
     ORDER BY p.linked_ac_docno, i.material_code`);
   for (const r of poLines) {
-    row(`POLINE\t${r.ac_po_no}\t${r.material_code}\t${r.unit_price_centi}\t${r.qty}\t${r.received_qty}\t${r.dtlkey}`);
+    row(`POLINE\t${r.ac_po_no}\t${r.material_code}\t${r.unit_price_sen}\t${r.qty}\t${r.received_qty}\t${r.dtlkey}`);
   }
-  const pricedN = poLines.filter((r) => Number(r.unit_price_centi) > 0).length;
+  const pricedN = poLines.filter((r) => Number(r.unit_price_sen) > 0).length;
   notice(`our PO lines on cutover POs: ${poLines.length}; of those with a non-zero cost: ${pricedN}`);
 
   notice("END — read-only, nothing was written.");

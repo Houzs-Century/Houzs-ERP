@@ -14,7 +14,7 @@
 //      Writes nothing — the admin "cost calculator" test panel and the
 //      reconciliation both use it.
 //   3. GET /reconcile — the 3PL charge reconciliation. Lists OUTSOURCE trips that
-//      carry a captured billed cost (scm.trips.three_pl_cost_centi, set in A3),
+//      carry a captured billed cost (scm.trips.three_pl_cost_sen, set in A3),
 //      matches each to its carrier's rate card, derives the drop's facts from the
 //      trip's stops (set count + destination zone), computes the EXPECTED cost,
 //      and flags the delta (billed - expected). COST verification, not billing.
@@ -75,9 +75,9 @@ const RULE_TYPE_SET = new Set<string>(RULE_TYPES);
 
 const CARD_COLS =
   'id, name, carrier_lorry_id, carrier_company_id, carrier_label, is_own_fleet, basis, aggregation, ' +
-  'min_charge_centi, cap_centi, rounding, is_active, notes, created_at, updated_at';
+  'min_charge_sen, cap_sen, rounding, is_active, notes, created_at, updated_at';
 const RULE_COLS =
-  'id, card_id, rule_type, tier_position, bracket_min, bracket_max, zone, amount_centi, params, sort_order';
+  'id, card_id, rule_type, tier_position, bracket_min, bracket_max, zone, amount_sen, params, sort_order';
 
 type Row = Record<string, unknown>;
 const s = (v: unknown): string | null => (v == null ? null : String(v));
@@ -101,8 +101,8 @@ function cardOut(r: Row) {
        than silently becoming free. Never collapse to DROP: that would now
        change the count, not just the label. */
     aggregation: (AGGREGATION_UNITS.has(String(r.aggregation ?? '')) ? String(r.aggregation) : 'UNIT') as AggregationUnit,
-    minChargeCenti: n(r.min_charge_centi),
-    capCenti: n(r.cap_centi),
+    minChargeSen: n(r.min_charge_sen),
+    capSen: n(r.cap_sen),
     rounding: String(r.rounding ?? 'NONE'),
     isActive: r.is_active !== false,
     notes: s(r.notes),
@@ -120,7 +120,7 @@ function ruleOut(r: Row) {
     bracketMin: n(r.bracket_min),
     bracketMax: n(r.bracket_max),
     zone: s(r.zone),
-    amountCenti: Number(r.amount_centi ?? 0),
+    amountSen: Number(r.amount_sen ?? 0),
     params: (r.params ?? null) as Record<string, unknown> | null,
     sortOrder: Number(r.sort_order ?? 0),
   };
@@ -134,7 +134,7 @@ function toRuleSpecs(rules: ReturnType<typeof ruleOut>[]): RateRuleSpec[] {
     bracketMin: r.bracketMin,
     bracketMax: r.bracketMax,
     zone: r.zone,
-    amountCenti: r.amountCenti,
+    amountSen: r.amountSen,
   }));
 }
 
@@ -142,8 +142,8 @@ function toCardSpec(card: ReturnType<typeof cardOut>, rules: ReturnType<typeof r
   return {
     basis: card.basis,
     aggregation: card.aggregation,
-    minChargeCenti: card.minChargeCenti,
-    capCenti: card.capCenti,
+    minChargeSen: card.minChargeSen,
+    capSen: card.capSen,
     rounding: card.rounding as RateCardSpec['rounding'],
     rules: toRuleSpecs(rules),
   };
@@ -205,8 +205,8 @@ const cardCreateSchema = z.object({
      own cost structure. Accepting the two independently let them contradict. */
   basis: z.enum(['ITEM', 'SET']).optional(),
   aggregation: z.enum(['UNIT', 'DROP', 'CUSTOMER', 'TRIP']).optional(),
-  minChargeCenti: z.number().int().min(0).nullable().optional(),
-  capCenti: z.number().int().min(0).nullable().optional(),
+  minChargeSen: z.number().int().min(0).nullable().optional(),
+  capSen: z.number().int().min(0).nullable().optional(),
   rounding: z.enum(['NONE', 'NEAREST_10C', 'NEAREST_RM']).optional(),
   isActive: z.boolean().optional(),
   notes: z.string().trim().max(1000).nullable().optional(),
@@ -243,8 +243,8 @@ deliveryRateCards.post('/', async (c) => {
     is_own_fleet: (p.carrierCompanyId ?? null) === null,
     basis: p.basis ?? 'SET',
     aggregation: p.aggregation ?? 'UNIT',
-    min_charge_centi: p.minChargeCenti ?? null,
-    cap_centi: p.capCenti ?? null,
+    min_charge_sen: p.minChargeSen ?? null,
+    cap_sen: p.capSen ?? null,
     rounding: p.rounding ?? 'NONE',
     is_active: p.isActive ?? true,
     notes: p.notes ?? null,
@@ -296,8 +296,8 @@ deliveryRateCards.patch('/:id', async (c) => {
   if (p.carrierLabel !== undefined) updates.carrier_label = p.carrierLabel;
   if (p.basis !== undefined) updates.basis = p.basis;
   if (p.aggregation !== undefined) updates.aggregation = p.aggregation;
-  if (p.minChargeCenti !== undefined) updates.min_charge_centi = p.minChargeCenti;
-  if (p.capCenti !== undefined) updates.cap_centi = p.capCenti;
+  if (p.minChargeSen !== undefined) updates.min_charge_sen = p.minChargeSen;
+  if (p.capSen !== undefined) updates.cap_sen = p.capSen;
   if (p.rounding !== undefined) updates.rounding = p.rounding;
   if (p.isActive !== undefined) updates.is_active = p.isActive;
   if (p.notes !== undefined) updates.notes = p.notes;
@@ -338,7 +338,7 @@ const ruleCreateSchema = z.object({
   bracketMin: z.number().int().min(0).nullable().optional(),
   bracketMax: z.number().int().min(0).nullable().optional(),
   zone: z.string().trim().max(40).nullable().optional(),
-  amountCenti: z.number().int().min(0),
+  amountSen: z.number().int().min(0),
   params: z.record(z.string(), z.unknown()).nullable().optional(),
   sortOrder: z.number().int().optional(),
 });
@@ -372,7 +372,7 @@ deliveryRateCards.post('/:id/rules', async (c) => {
     bracket_min: p.bracketMin ?? null,
     bracket_max: p.bracketMax ?? null,
     zone: (p.ruleType === 'OUTSTATION' || p.ruleType === 'OUTSTATION_TRIP') && p.zone ? p.zone.toUpperCase() : (p.zone ?? null),
-    amount_centi: p.amountCenti,
+    amount_sen: p.amountSen,
     params: p.params ?? null,
     sort_order: p.sortOrder ?? 0,
   }).select(RULE_COLS).single();
@@ -402,7 +402,7 @@ deliveryRateCards.patch('/:id/rules/:ruleId', async (c) => {
   if (p.bracketMin !== undefined) updates.bracket_min = p.bracketMin;
   if (p.bracketMax !== undefined) updates.bracket_max = p.bracketMax;
   if (p.zone !== undefined) updates.zone = p.zone ? p.zone.toUpperCase() : null;
-  if (p.amountCenti !== undefined) updates.amount_centi = p.amountCenti;
+  if (p.amountSen !== undefined) updates.amount_sen = p.amountSen;
   if (p.params !== undefined) updates.params = p.params;
   if (p.sortOrder !== undefined) updates.sort_order = p.sortOrder;
   if (Object.keys(updates).length === 0) return c.json({ error: 'no_changes' }, 400);
@@ -505,8 +505,8 @@ deliveryRateCards.get('/reconcile', async (c) => {
   // 1) OUTSOURCE trips carrying a captured billed cost, in the date window.
   const { data: tripData, error: tripErr } = await paginateAll<Row>((lo, hi) => {
     let q = sb.from('trips')
-      .select('company_id, id, trip_no, trip_date, lorry_id, warehouse_id, is_outsourced, three_pl_cost_centi, status')
-      .eq('is_outsourced', true).not('three_pl_cost_centi', 'is', null)
+      .select('company_id, id, trip_no, trip_date, lorry_id, warehouse_id, is_outsourced, three_pl_cost_sen, status')
+      .eq('is_outsourced', true).not('three_pl_cost_sen', 'is', null)
       .order('trip_date', { ascending: false }).range(lo, hi);
     if (from) q = q.gte('trip_date', from);
     if (to) q = q.lte('trip_date', to);
@@ -614,7 +614,7 @@ deliveryRateCards.get('/reconcile', async (c) => {
     const lorryId = s(t.lorry_id);
     const companyId = lorryId ? lorryCompany.get(lorryId) ?? null : null;
     const card = (companyId ? cardByCompany.get(companyId) : null) ?? (lorryId ? cardByLorry.get(lorryId) : null) ?? null;
-    const billedCenti = Number(t.three_pl_cost_centi ?? 0);
+    const billedSen = Number(t.three_pl_cost_sen ?? 0);
     const soDocs = [...new Set((doIdsByTrip.get(tripId) ?? []).map((d) => soDocByDoId.get(d)).filter((v): v is string => !!v))];
     /* Aggregate the trip's sets across its drops, and collect EVERY zone it
        touches. It used to take whichever zone came first out of the query —
@@ -635,7 +635,7 @@ deliveryRateCards.get('/reconcile', async (c) => {
        for. Two drops to the same buyer at the same address collapse to one. */
     const customerCount = new Set(soDocs.map((d) => customerKeyBySo.get(d) ?? d)).size;
     const dropCount = soDocs.length;
-    let expectedCenti: number | null = null;
+    let expectedSen: number | null = null;
     let breakdown: ReturnType<typeof computeDeliveryCost> | null = null;
     if (card) {
       const spec = toCardSpec(card, rulesByCard.get(card.id) ?? []);
@@ -643,9 +643,9 @@ deliveryRateCards.get('/reconcile', async (c) => {
          calculator, before the min/cap/rounding envelope. It used to be added
          here afterwards, which let a capped card bill above its own cap. */
       breakdown = computeDeliveryCost(spec, { setCount, dropCount, customerCount, destinationZone, destinationZones: zones }, { perTrip: true });
-      expectedCenti = breakdown.totalCenti;
+      expectedSen = breakdown.totalSen;
     }
-    const deltaCenti = expectedCenti == null ? null : billedCenti - expectedCenti;
+    const deltaSen = expectedSen == null ? null : billedSen - expectedSen;
     const base = {
       tripId,
       tripNo: s(t.trip_no),
@@ -658,10 +658,10 @@ deliveryRateCards.get('/reconcile', async (c) => {
       dropCount,
       derivedSetCount: setCount,
       derivedZone: destinationZone,
-      billedCenti,
-      expectedCenti,
-      deltaCenti,
-      flagged: deltaCenti != null && deltaCenti !== 0,
+      billedSen,
+      expectedSen,
+      deltaSen,
+      flagged: deltaSen != null && deltaSen !== 0,
       // Occurrence charges + sofa compartments are not derivable from trip data.
       factsComplete: false,
       breakdown,

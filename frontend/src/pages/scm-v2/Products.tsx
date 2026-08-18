@@ -51,7 +51,7 @@ import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
-import { fmtCenti, fmtDate, fmtDateTime, maintActiveValues, maintEntryActive, maintEntryValue, maintEntryWithActive, maintEntryWithValue, maintValues, normalizeSofaTier, resolveSofaQuickPresets, SOFA_MODULES, type MaintPoolEntry, type SofaQuickPreset } from '@2990s/shared';
+import { fmtSen, fmtDate, fmtDateTime, maintActiveValues, maintEntryActive, maintEntryValue, maintEntryWithActive, maintEntryWithValue, maintValues, normalizeSofaTier, resolveSofaQuickPresets, SOFA_MODULES, type MaintPoolEntry, type SofaQuickPreset } from '@2990s/shared';
 import {
   useMfgProducts,
   useUpdateMfgProductPrices,
@@ -228,7 +228,7 @@ const CATEGORIES: { value: MfgCategory | 'all'; label: string }[] = [
   { value: 'SERVICE', label: 'Service' },
 ];
 
-const fmtRm = (sen: number | null): string => fmtCenti(sen);
+const fmtRm = (sen: number | null): string => fmtSen(sen);
 
 const fmtUnit = (milli: number): string =>
   (milli / 1000).toFixed(3);
@@ -1967,7 +1967,7 @@ const countItems = (cfg: MaintenanceConfig, key: MaintenanceListKey): number => 
 type CompartmentMeta = {
   imageKey?: string;
   description?: string;
-  defaultPriceCenti?: number;
+  defaultPriceSen?: number;
 };
 
 // Canonicalize any compartment input to the parens form (mirror of the
@@ -2070,7 +2070,7 @@ const seedCompartmentMeta = (code: string): CompartmentMeta => {
       // SOFA_MODULES carries no base price — POS reads pricing from
       // product_compartments per Model. Default to 0 here; commander can
       // type the back-office default into the input.
-      defaultPriceCenti: 0,
+      defaultPriceSen: 0,
     };
   }
   // Fallback for codes NOT in SOFA_MODULES (the Console/WC alias). These
@@ -2084,7 +2084,7 @@ const seedCompartmentMeta = (code: string): CompartmentMeta => {
     return {
       imageKey:    `sofa-modules/${extraStem}.svg`,
       description: desc,
-      defaultPriceCenti: 0,
+      defaultPriceSen: 0,
     };
   }
   return {};
@@ -2100,16 +2100,16 @@ const resolveCompartmentMeta = (
   return {
     imageKey:          stored?.imageKey          ?? seed.imageKey,
     description:       stored?.description       ?? seed.description,
-    defaultPriceCenti: stored?.defaultPriceCenti ?? seed.defaultPriceCenti,
+    defaultPriceSen: stored?.defaultPriceSen ?? seed.defaultPriceSen,
   };
 };
 
-const formatRmFromCenti = (centi: number | undefined): string => {
+const formatRmFromSen = (centi: number | undefined): string => {
   const n = centi ?? 0;
   return (n / 100).toFixed(2);
 };
 
-const parseRmToCenti = (rm: string): number => {
+const parseRmToSen = (rm: string): number => {
   const n = Number(rm);
   if (!Number.isFinite(n) || n < 0) return 0;
   return Math.round(n * 100);
@@ -2458,8 +2458,8 @@ const SofaCompartmentsList = ({
                   type="number"
                   step="0.01"
                   min="0"
-                  value={formatRmFromCenti(stored?.defaultPriceCenti ?? resolved.defaultPriceCenti)}
-                  onChange={(e) => writeMeta(code, { defaultPriceCenti: parseRmToCenti(e.target.value) })}
+                  value={formatRmFromSen(stored?.defaultPriceSen ?? resolved.defaultPriceSen)}
+                  onChange={(e) => writeMeta(code, { defaultPriceSen: parseRmToSen(e.target.value) })}
                   style={{
                     fontFamily: 'var(--font-mono)',
                     fontSize: 'var(--fs-14)',
@@ -2475,11 +2475,11 @@ const SofaCompartmentsList = ({
               ) : (
                 <span
                   className={`${styles.maintRowPrice} ${
-                    (resolved.defaultPriceCenti ?? 0) === 0 ? styles.maintRowPriceMuted : ''
+                    (resolved.defaultPriceSen ?? 0) === 0 ? styles.maintRowPriceMuted : ''
                   }`}
                   style={{ minWidth: 0 }}
                 >
-                  {formatRmFromCenti(resolved.defaultPriceCenti)}
+                  {formatRmFromSen(resolved.defaultPriceSen)}
                 </span>
               )}
             </div>
@@ -4039,12 +4039,12 @@ const Field = ({
    ════════════════════════════════════════════════════════════════════════ */
 
 
-const fmtRmCenti = (centi: number): string => fmtCenti(centi);
+const fmtRmSen = (centi: number): string => fmtSen(centi);
 
 /* Effective-dated SELLING price timeline (Pricing "Option B", ph.2). Lives on the
    SKU detail drawer: shows the current price, a "Next: RM X from <date>" badge for
    the pending change, the dated history (date · RM · who), and an "add future
-   price" form. Money is integer sen (MoneyInput + fmtCenti). Mirrors the
+   price" form. Money is integer sen (MoneyInput + fmtSen). Mirrors the
    maintenance-config effective-date editor's shape.
 
    NOTE the price amount is held in a REF, not just state: MoneyInput commits on
@@ -4104,7 +4104,7 @@ const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
           fontSize: 'var(--fs-12)', color: '#3a3f36',
         }}>
           <span style={{ color: '#767b6e', textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: 'var(--fs-11)', fontWeight: 700 }}>Now</span>
-          {fmtCenti(current)}
+          {fmtSen(current)}
         </span>
         {pending && (
           <span style={{
@@ -4113,7 +4113,7 @@ const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
             borderRadius: 'var(--radius-pill)', fontSize: 'var(--fs-12)', color: '#b64a1e',
           }}>
             <span style={{ textTransform: 'uppercase', letterSpacing: '0.04em', fontSize: 'var(--fs-11)', fontWeight: 700 }}>Next</span>
-            {fmtCenti(pending.sellPriceSen)} from {pending.effectiveFrom}
+            {fmtSen(pending.sellPriceSen)} from {pending.effectiveFrom}
           </span>
         )}
       </div>
@@ -4159,7 +4159,7 @@ const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
         <p style={{ color: '#767b6e', fontSize: 'var(--fs-13)' }}>Loading price timeline…</p>
       ) : history.length === 0 ? (
         <p style={{ color: '#767b6e', fontSize: 'var(--fs-13)' }}>
-          No scheduled prices yet. The flat price {fmtCenti(current)} applies until you schedule one.
+          No scheduled prices yet. The flat price {fmtSen(current)} applies until you schedule one.
         </p>
       ) : (
         <table className={styles.table} style={{ width: '100%' }}>
@@ -4182,7 +4182,7 @@ const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
                       <span className={styles.codeChip} style={{ marginLeft: 6, fontSize: 'var(--fs-11)' }}>Scheduled</span>
                     )}
                   </td>
-                  <td className={styles.numCell}>{fmtCenti(h.sell_price_sen)}</td>
+                  <td className={styles.numCell}>{fmtSen(h.sell_price_sen)}</td>
                   <td style={{ color: '#3a3f36' }}>{h.created_by || '—'}</td>
                   <td style={{ color: '#767b6e', fontSize: 'var(--fs-12)' }}>{h.notes || ''}</td>
                 </tr>
@@ -4365,7 +4365,7 @@ const ProductSuppliersDrawer = ({
                         : <span style={{ color: '#767b6e' }}>(same as our code)</span>}
                     </td>
                     <td className={styles.numCell}>
-                      {fmtRmCenti(s.unit_price_centi)}{s.currency !== 'MYR' ? ` ${s.currency}` : ''}
+                      {fmtRmSen(s.unit_price_sen)}{s.currency !== 'MYR' ? ` ${s.currency}` : ''}
                     </td>
                     <td className={styles.numCell}>{s.lead_time_days || '—'}</td>
                     <td className={styles.numCell}>{s.moq || '—'}</td>
@@ -4870,7 +4870,7 @@ const MaintenanceHistoryDialog = ({
    CSV Export + Import
    ════════════════════════════════════════════════════════════════════════ */
 
-// PR #104 — Commander 2026-05-26: "fabric_usage_centi / production_time_minutes
+// PR #104 — Commander 2026-05-26: "fabric_usage_sen / production_time_minutes
 // / fabric_color 全删 不需要这个功能". These manufacturing-specific fields
 // were ported in from HOOKKA but don't apply to 2990's retail catalogue;
 // dropping them from the CSV export so commander's spreadsheet stays focused.

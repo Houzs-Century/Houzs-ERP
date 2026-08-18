@@ -86,7 +86,7 @@ import { splitSofaBuildIntoModuleLines, distributeBuildDiscount } from '../share
    so every surface ranks identically. */
 import { orderSofaModuleRowsWithinBuilds, sortSoLinesByGroupRank } from '../shared/so-line-display';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
-import { soPaidCenti, soBalanceCenti, soPaidInputsOf } from '../shared/so-outstanding';
+import { soPaidSen, soBalanceSen, soPaidInputsOf } from '../shared/so-outstanding';
 /* Task 5 — mint one-shot SKUs at SO create when a line carries an extra add-on
    charge (gated by so_settings.pos_remark_extra_auto_sku). Pure code-resolution
    + row-build lives in the lib; this route batches the DB collision check. */
@@ -754,7 +754,7 @@ function stripFreeItem(v: unknown): unknown {
 
 /* POS line quantity (Loo 2026-06-12) — line qty is a money input the
    unit-price drift gate does NOT cover: qty 0 zeroes a line for free, a
-   fraction / NaN corrupts total_centi math, and the discount ceiling is
+   fraction / NaN corrupts total_sen math, and the discount ceiling is
    qty × unit. An absent qty (defaults to 1 downstream) is fine; anything
    else must be a positive integer. Returns the 422 payload, or null when
    valid. Shared by POST /, POST /:docNo/items and PATCH /:docNo/items/:itemId. */
@@ -886,12 +886,12 @@ function extractSofaComboLookupArgs(
 const HEADER =
   'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, po_doc_no, venue, venue_id, ' +
   'address1, address2, address3, address4, phone, ' +
-  'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, service_centi, local_total_centi, balance_centi, ' +
+  'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, service_sen, local_total_sen, balance_sen, ' +
   /* Task #114 — per-category cost columns (migration 0079). Mirrors the
      four category revenue columns above so the SO list grid + Totals card
      can show category-level margins without per-item rollups. */
-  'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, service_cost_centi, ' +
-  'total_cost_centi, total_revenue_centi, total_margin_centi, margin_pct_basis, line_count, ' +
+  'mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, service_cost_sen, ' +
+  'total_cost_sen, total_revenue_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   'currency, status, remark2, remark3, remark4, note, sales_exemption_expiry, ' +
   /* PR #35 + #46 — extended PO + POS handover fields */
   'customer_id, customer_po, customer_po_id, customer_po_date, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
@@ -903,9 +903,9 @@ const HEADER =
   'email, customer_type, salesperson_id, city, postcode, building_type, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, target_date, ' +
   /* PR #143 + #150 + #157 — Payment (migrations 0068 + 0069 + 0070) */
-  'payment_method, installment_months, merchant_provider, approval_code, payment_date, deposit_centi, paid_centi, ' +
+  'payment_method, installment_months, merchant_provider, approval_code, payment_date, deposit_sen, paid_sen, ' +
   /* Delivery fee snapshot (migration 0133) — folded into local_total/revenue/margin. */
-  'delivery_fee_centi, ' +
+  'delivery_fee_sen, ' +
   'created_at, created_by, updated_at';
 /* FINANCE-GATED keys — cost / margin / per-category revenue+cost subtotals +
    deposit (header) and unit/line cost+margin (line). The lists moved to
@@ -931,8 +931,8 @@ function gateSoFinance(
 
 const ITEM =
   'id, doc_no, line_date, debtor_code, debtor_name, agent, item_group, item_code, description, description2, ' +
-  'uom, location, qty, unit_price_centi, discount_centi, total_centi, tax_centi, total_inc_centi, balance_centi, ' +
-  'payment_status, venue, branding, remark, cancelled, variants, unit_cost_centi, line_cost_centi, line_margin_centi, ' +
+  'uom, location, qty, unit_price_sen, discount_sen, total_sen, tax_sen, total_inc_sen, balance_sen, ' +
+  'payment_status, venue, branding, remark, cancelled, variants, unit_cost_sen, line_cost_sen, line_margin_sen, ' +
   /* PR-E — per-item delivery date + cascade override flag (migration 0074) */
   'line_delivery_date, line_delivery_date_overridden, ' +
   /* PR-F — per-line photo keys (migration 0076) */
@@ -1018,7 +1018,7 @@ const nextDocNo = async (sb: any, c: any): Promise<string> => {
 
 /* ─────────────────────────── Cost snapshot ────────────────────────────
    Task #114 — Pull cost_price_sen off mfg_products on line create so the
-   header's total_cost_centi / category cost columns get populated even
+   header's total_cost_sen / category cost columns get populated even
    when the client doesn't snapshot the cost themselves. Falls through in
    order: explicit client value (when > 0) → mfg_products.cost_price_sen
    → 0. Returns sen (integer). itemCode is matched on mfg_products.code
@@ -1030,7 +1030,7 @@ const nextDocNo = async (sb: any, c: any): Promise<string> => {
 /* Money guard (2026-07-16) — every sen figure that enters the totals arithmetic
    passes through here first. The roll-up accumulators used to take `unitCost *
    qty` on trust: a single non-finite input (an unknown cost arriving as
-   undefined / NaN, or a 0/0 percentage) poisoned totalCost → total_margin_centi
+   undefined / NaN, or a 0/0 percentage) poisoned totalCost → total_margin_sen
    → margin_pct_basis in one go, because NaN is contagious across +, -, * and /.
    A cost the ERP does not know is 0 — never NaN. Postgres would reject the NaN
    anyway (these columns are `integer NOT NULL`, and supabase-js serializes NaN
@@ -1050,7 +1050,7 @@ const nextDocNo = async (sb: any, c: any): Promise<string> => {
    mode — it is what the function does deliberately when it cannot vouch for its
    inputs. */
 
-type SoListMoneyKpis = { revenueCenti: number; outstandingCenti: number; paidCenti: number };
+type SoListMoneyKpis = { revenueSen: number; outstandingSen: number; paidSen: number };
 
 /* Full-set money KPIs (Revenue / Outstanding / Paid) for the SO list's
    paginated path. ONE grouped PostgREST aggregate — three server-side SUMs over
@@ -1063,17 +1063,17 @@ type SoListMoneyKpis = { revenueCenti: number; outstandingCenti: number; paidCen
    the paginateAll fallback share, so the two totals apply byte-identical
    predicates and cannot drift.
 
-   Byte-identical to the old paginateAll JS reduce: `local_total_centi` is
+   Byte-identical to the old paginateAll JS reduce: `local_total_sen` is
    `integer DEFAULT 0 NOT NULL` (backend/scripts/scm-schema/2990s-full-schema.sql),
-   and the view's `paid_total_centi` (= COALESCE(Σ payments, 0)) and
-   `balance_centi_live` (= local_total − paid) are never null when the view
+   and the view's `paid_total_sen` (= COALESCE(Σ payments, 0)) and
+   `balance_sen_live` (= local_total − paid) are never null when the view
    exposes them — so SQL SUM (which skips nulls) equals the `?? 0` reduce over
    the same rows, and SUM over zero rows is NULL, coalesced to 0 exactly like the
    empty reduce. Both summed columns are view-COMPUTED, so this stays VIEW-TRAP
    safe (see backend/docs/scm-view-trap-coe.md). If the view LACKS them
    (old/absent view) the aggregate errors on the missing column and we fall
-   through to the paginateAll path, which reads `balance_centi` as its own
-   absent-`balance_centi_live` fallback — identical to the prior behaviour. */
+   through to the paginateAll path, which reads `balance_sen` as its own
+   absent-`balance_sen_live` fallback — identical to the prior behaviour. */
 export async function soListMoneyKpis(
   sb: { from(table: string): { select(columns: string): unknown } },
   // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the dynamic aggregate `.select('...sum()')` defeats supabase-js's column-type inference (same reason as outstanding.ts /summary)
@@ -1084,15 +1084,15 @@ export async function soListMoneyKpis(
   const agg = await applyMoneyFilters(
     sb
       .from('mfg_sales_orders_with_payment_totals')
-      .select('rev:local_total_centi.sum(),outLive:balance_centi_live.sum(),paid:paid_total_centi.sum()'),
+      .select('rev:local_total_sen.sum(),outLive:balance_sen_live.sum(),paid:paid_total_sen.sum()'),
   );
   if (!agg.error) {
     const row = ((agg.data ?? []) as Array<Record<string, unknown>>)[0] ?? {};
     return {
       data: {
-        revenueCenti: Number(row.rev ?? 0),
-        outstandingCenti: Number(row.outLive ?? 0),
-        paidCenti: Number(row.paid ?? 0),
+        revenueSen: Number(row.rev ?? 0),
+        outstandingSen: Number(row.outLive ?? 0),
+        paidSen: Number(row.paid ?? 0),
       },
       error: null,
     };
@@ -1100,25 +1100,25 @@ export async function soListMoneyKpis(
   /* FALLBACK — aggregates disabled, or the computed columns absent from the
      view: page the int cols and reduce in JS. Slower, never wrong. */
   const fb = await paginateAll<{
-    local_total_centi: number | null;
-    balance_centi: number | null;
-    balance_centi_live: number | null;
-    paid_total_centi: number | null;
+    local_total_sen: number | null;
+    balance_sen: number | null;
+    balance_sen_live: number | null;
+    paid_total_sen: number | null;
   }>((mfrom, mto) =>
     applyMoneyFilters(
       sb
         .from('mfg_sales_orders_with_payment_totals')
-        .select('local_total_centi, balance_centi, balance_centi_live, paid_total_centi'),
+        .select('local_total_sen, balance_sen, balance_sen_live, paid_total_sen'),
     ).range(mfrom, mto),
   );
   if (fb.error) return { data: null, error: fb.error };
-  let revenueCenti = 0, outstandingCenti = 0, paidCenti = 0;
+  let revenueSen = 0, outstandingSen = 0, paidSen = 0;
   for (const m of fb.data ?? []) {
-    revenueCenti += m.local_total_centi ?? 0;
-    outstandingCenti += m.balance_centi_live ?? m.balance_centi ?? 0;
-    paidCenti += m.paid_total_centi ?? 0;
+    revenueSen += m.local_total_sen ?? 0;
+    outstandingSen += m.balance_sen_live ?? m.balance_sen ?? 0;
+    paidSen += m.paid_total_sen ?? 0;
   }
-  return { data: { revenueCenti, outstandingCenti, paidCenti }, error: null };
+  return { data: { revenueSen, outstandingSen, paidSen }, error: null };
 }
 
 mfgSalesOrders.get('/', async (c) => {
@@ -1145,7 +1145,7 @@ mfgSalesOrders.get('/', async (c) => {
   if (c.req.query('summary')) {
     let sq = sb
       .from('mfg_sales_orders')
-      .select('doc_no, status, local_total_centi, created_at, so_date')
+      .select('doc_no, status, local_total_sen, created_at, so_date')
       .neq('status', 'DRAFT')
       .order('so_date', { ascending: false })
       .limit(500);
@@ -1158,15 +1158,15 @@ mfgSalesOrders.get('/', async (c) => {
 
   /* Follow-up #83 — read from the view that joins payments ledger totals so
      Balance column is live (= local_total − sum(payments)). Header column
-     `balance_centi` is still in the SELECT for backward compat (the grid
-     falls back to it if the view's `balance_centi_live` is absent). */
+     `balance_sen` is still in the SELECT for backward compat (the grid
+     falls back to it if the view's `balance_sen_live` is absent). */
   /* VIEW-TRAP (see backend/docs/scm-view-trap-coe.md): this select hits the
      VIEW `mfg_sales_orders_with_payment_totals`, which has a FROZEN column set
      captured at CREATE VIEW time (2990 mig 0155, `SELECT so.*`). Any column you
      add to HEADER above MUST already exist in the view — else this query 500s
      the whole SO list page in prod. If you're adding a new base-table column,
      ship a recreate-view migration in the SAME PR FIRST, or keep the col out
-     of HEADER (detail-only). paid_total_centi + balance_centi_live are the
+     of HEADER (detail-only). paid_total_sen + balance_sen_live are the
      view's own computed columns, so they are always present. The view still
      projects proceeded_at; the follow-up drop must clear that WITHOUT dropping
      the view ("RETIRING…" carries the 0189/0190/0191 ACL trap). */
@@ -1176,7 +1176,7 @@ mfgSalesOrders.get('/', async (c) => {
      POS-origin SO that carries one. Strip it from the LIST projection only; the
      detail select (~L2241) still reads full HEADER, so nothing the detail shows
      changes. Dropping a column from a SELECT is always VIEW-TRAP safe. */
-  const LIST_COLS = `${HEADER.replace(/,\s*customer_po_image_b64/, '')}, paid_total_centi, balance_centi_live`;
+  const LIST_COLS = `${HEADER.replace(/,\s*customer_po_image_b64/, '')}, paid_total_sen, balance_sen_live`;
 
   /* Opt-in server-side pagination + search + sort + status-counts.
      WHY: keep this endpoint flat as the SO table grows — the legacy path streams
@@ -1201,7 +1201,7 @@ mfgSalesOrders.get('/', async (c) => {
      summed these three view columns over the whole status+search-filtered set;
      paging broke that (the client could only sum the current page → "on this
      page"). We recompute the identical full-set sums server-side here. */
-  let aggregates: { revenueCenti: number; outstandingCenti: number; paidCenti: number } | undefined;
+  let aggregates: { revenueSen: number; outstandingSen: number; paidSen: number } | undefined;
 
   if (!paginate) {
     /* --- LEGACY PATH (unchanged) --- */
@@ -1220,7 +1220,7 @@ mfgSalesOrders.get('/', async (c) => {
     pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
     /* sort whitelist — map to the view's columns; anything else → so_date. */
-    const SORT_COLS = new Set(['so_date', 'doc_no', 'debtor_name', 'status', 'local_total_centi', 'customer_delivery_date']);
+    const SORT_COLS = new Set(['so_date', 'doc_no', 'debtor_name', 'status', 'local_total_sen', 'customer_delivery_date']);
     const [rawCol, rawDir] = (c.req.query('sort') ?? 'so_date:desc').split(':');
     const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'so_date';
     const sortAsc = rawDir === 'asc';
@@ -1294,11 +1294,11 @@ mfgSalesOrders.get('/', async (c) => {
        filtered set and summing in JS.
 
        Paid + Outstanding read the view's LEDGER-DERIVED columns, not the stored
-       `paid_centi` / `balance_centi`. Those two are not the truth: `paid_centi`
+       `paid_sen` / `balance_sen`. Those two are not the truth: `paid_sen`
        has no writer that maintains it (deprecated, scheduled for drop), and
-       `balance_centi` is set to the GROSS grandTotal by recomputeTotals on every
+       `balance_sen` is set to the GROSS grandTotal by recomputeTotals on every
        edit, so it never reflects a payment — the old Outstanding tile was just
-       Revenue restated. paid_total_centi (= Σ payments) and balance_centi_live
+       Revenue restated. paid_total_sen (= Σ payments) and balance_sen_live
        (= local_total − Σ payments) are the same source-of-truth the row grid,
        the mobile SO list and delivery-planning.ts already read, and both are
        view-COMPUTED columns, so this stays VIEW-TRAP safe (see
@@ -1822,7 +1822,7 @@ type CustomerSoRow = {
   status: string;
   debtor_name: string | null;
   phone: string | null;
-  local_total_centi: number | null;
+  local_total_sen: number | null;
   created_at: string | null;
   so_date: string | null;
   line_count: number | null;
@@ -1832,7 +1832,7 @@ type CustomerOrder = {
   status: string;
   so_date: string | null;
   created_at: string | null;
-  local_total_centi: number;
+  local_total_sen: number;
   line_count: number;
 };
 type CustomerEntry = {
@@ -1840,7 +1840,7 @@ type CustomerEntry = {
   name: string;
   phone: string | null;
   order_count: number;
-  lifetime_value_centi: number;
+  lifetime_value_sen: number;
   last_order_at: string;
   orders: CustomerOrder[];
 };
@@ -1857,7 +1857,7 @@ mfgSalesOrders.get('/customers', async (c) => {
   const { data, error } = await paginateAll<CustomerSoRow>((from, to) => {
     let q = sb
       .from('mfg_sales_orders')
-      .select('doc_no, status, debtor_name, phone, local_total_centi, created_at, so_date, line_count')
+      .select('doc_no, status, debtor_name, phone, local_total_sen, created_at, so_date, line_count')
       .order('so_date', { ascending: false });
     if (scopeIds) q = q.in('salesperson_id', scopeIds);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
@@ -1872,21 +1872,21 @@ mfgSalesOrders.get('/customers', async (c) => {
     const key = o.phone?.trim() || `name:${(o.debtor_name ?? '').toLowerCase().trim()}`;
     if (!key || key === 'name:') continue;
 
-    const totalCenti = o.local_total_centi ?? 0;
+    const totalSen = o.local_total_sen ?? 0;
     const when = customerSoDateOf(o);
     const order: CustomerOrder = {
       doc_no: o.doc_no,
       status: o.status,
       so_date: o.so_date,
       created_at: o.created_at,
-      local_total_centi: totalCenti,
+      local_total_sen: totalSen,
       line_count: o.line_count ?? 0,
     };
 
     const existing = map.get(key);
     if (existing) {
       existing.order_count += 1;
-      existing.lifetime_value_centi += totalCenti;
+      existing.lifetime_value_sen += totalSen;
       existing.orders.push(order);
       // Denormalised name/phone snapshots can drift — keep the most recent.
       if (when > existing.last_order_at) {
@@ -1900,7 +1900,7 @@ mfgSalesOrders.get('/customers', async (c) => {
         name: o.debtor_name || 'Walk-in',
         phone: o.phone ?? null,
         order_count: 1,
-        lifetime_value_centi: totalCenti,
+        lifetime_value_sen: totalSen,
         last_order_at: when,
         orders: [order],
       });
@@ -1929,7 +1929,7 @@ mfgSalesOrders.get('/my-mtd', async (c) => {
      returned the SAME (system-attributed) orders for every caller instead
      of the person's own. No sync row → zero stats, not someone else's. */
   const myStaffId = await resolveCallerStaffId(sb, c.get('houzsUser')?.id);
-  if (!myStaffId) return c.json({ mtd_orders: 0, mtd_sales_centi: 0 });
+  if (!myStaffId) return c.json({ mtd_orders: 0, mtd_sales_sen: 0 });
   // Current month in Malaysia time → UTC [start, end) bounds for created_at.
   const ymd = todayMyt();
   const { startUtc, endUtc } = monthBoundsMy(Number(ymd.slice(0, 4)), Number(ymd.slice(5, 7)) - 1);
@@ -1939,7 +1939,7 @@ mfgSalesOrders.get('/my-mtd', async (c) => {
   const { data, error } = await scopeToCompany(
     sb
       .from('mfg_sales_orders')
-      .select('local_total_centi, total_revenue_centi')
+      .select('local_total_sen, total_revenue_sen')
       .eq('salesperson_id', myStaffId)
       .not('status', 'in', '("CANCELLED","DRAFT")')
       .gte('created_at', startUtc)
@@ -1947,12 +1947,12 @@ mfgSalesOrders.get('/my-mtd', async (c) => {
     c,
   ).limit(1000);
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
-  const rows = (data ?? []) as Array<{ local_total_centi: number | null; total_revenue_centi: number | null }>;
-  const mtd_sales_centi = rows.reduce(
-    (sum, r) => sum + Number(r.local_total_centi ?? r.total_revenue_centi ?? 0),
+  const rows = (data ?? []) as Array<{ local_total_sen: number | null; total_revenue_sen: number | null }>;
+  const mtd_sales_sen = rows.reduce(
+    (sum, r) => sum + Number(r.local_total_sen ?? r.total_revenue_sen ?? 0),
     0,
   );
-  return c.json({ mtd_orders: rows.length, mtd_sales_centi });
+  return c.json({ mtd_orders: rows.length, mtd_sales_sen });
 });
 
 /* POS "My orders" board — the salesperson's OWN Sales Orders, lightweight
@@ -2020,7 +2020,7 @@ mfgSalesOrders.get('/mine', async (c) => {
       .select(
         'doc_no, debtor_name, phone, email, address1, address2, city, postcode, customer_state, ' +
         'customer_delivery_date, processing_date, status, payment_method, approval_code, note, so_date, created_at, ' +
-        'total_revenue_centi, line_count, deposit_centi',
+        'total_revenue_sen, line_count, deposit_sen',
       )
       .not('status', 'in', '("CANCELLED","ON_HOLD")'), // DRAFT shown on purpose — pairs with /pos/sales-stats; BUG-HISTORY 2026-08-17
     c,
@@ -2029,7 +2029,7 @@ mfgSalesOrders.get('/mine', async (c) => {
      `sb` is the SERVICE-ROLE client, and the view_all branch above clears
      targetSalespersonId, so without this wrap the query degrades to "every
      non-cancelled SO in the database" — both companies, RLS bypassed, with
-     customer PII and total_revenue_centi. */
+     customer PII and total_revenue_sen. */
   if (targetSalespersonId) query = query.eq('salesperson_id', targetSalespersonId);
 
   if (q) {
@@ -2056,27 +2056,27 @@ mfgSalesOrders.get('/mine', async (c) => {
   // Cast via `unknown` first — supabase-js types a view select as
   // GenericStringError[] until the schema cache materialises (same pattern as
   // the list route's joined-select casts above).
-  const rows = (data ?? []) as unknown as Array<{ doc_no?: string; deposit_centi?: number } & Record<string, unknown>>;
+  const rows = (data ?? []) as unknown as Array<{ doc_no?: string; deposit_sen?: number } & Record<string, unknown>>;
 
   /* Attach the line items so the drawer can render the cart without a second
      fetch. Group non-cancelled lines by doc_no → each item the board needs:
-     { item_code, description, qty, total_centi, variants }. */
+     { item_code, description, qty, total_sen, variants }. */
   const docNos = rows.map((r) => r.doc_no).filter((x): x is string => !!x);
   /* TBC fill-in (Loo 2026-06-11) — the editor needs the line id (mutation
      target), item_group (which picker set to render) and unit/discount (the
      floor-rule preview), so they ride the same fetch. */
-  const itemsByDoc = new Map<string, Array<{ id: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_centi: number; discount_centi: number; total_centi: number; variants: unknown; remark: string | null }>>();
+  const itemsByDoc = new Map<string, Array<{ id: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_sen: number; discount_sen: number; total_sen: number; variants: unknown; remark: string | null }>>();
   if (docNos.length > 0) {
     /* chunkIn — `docNos` is this board's whole page (LIMIT 300) and the read had neither batching nor paging, so past the 1000-row cap a later order's drawer rendered empty. */
-    const { data: itemRows } = await chunkIn<{ id: string; doc_no: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_centi: number; discount_centi: number; total_centi: number; variants: unknown; remark: string | null }>(docNos, (batch, from, to) => sb
+    const { data: itemRows } = await chunkIn<{ id: string; doc_no: string; item_code: string; item_group: string | null; description: string | null; qty: number; unit_price_sen: number; discount_sen: number; total_sen: number; variants: unknown; remark: string | null }>(docNos, (batch, from, to) => sb
       .from('mfg_sales_order_items')
-      .select('id, doc_no, item_code, item_group, description, qty, unit_price_centi, discount_centi, total_centi, variants, remark')
+      .select('id, doc_no, item_code, item_group, description, qty, unit_price_sen, discount_sen, total_sen, variants, remark')
       .in('doc_no', batch).eq('cancelled', false)
       .order('doc_no').order('line_no', { ascending: true, nullsFirst: false })
       .order('created_at', { ascending: true }).range(from, to));
     for (const it of itemRows) {
       const arr = itemsByDoc.get(it.doc_no) ?? [];
-      arr.push({ id: it.id, item_code: it.item_code, item_group: it.item_group ?? null, description: it.description, qty: it.qty, unit_price_centi: it.unit_price_centi, discount_centi: it.discount_centi, total_centi: it.total_centi, variants: it.variants, remark: it.remark ?? null });
+      arr.push({ id: it.id, item_code: it.item_code, item_group: it.item_group ?? null, description: it.description, qty: it.qty, unit_price_sen: it.unit_price_sen, discount_sen: it.discount_sen, total_sen: it.total_sen, variants: it.variants, remark: it.remark ?? null });
       itemsByDoc.set(it.doc_no, arr);
     }
   }
@@ -2086,30 +2086,30 @@ mfgSalesOrders.get('/mine', async (c) => {
      the SO create path writes the deposit as an is_deposit ledger row (and
      0155 backfilled history), so adding the header column on top would double
      count — the is_deposit marker tells the two worlds apart. The header
-     `paid_centi` is deprecated; not read. One batched ledger query. */
+     `paid_sen` is deprecated; not read. One batched ledger query. */
   const paidLedgerByDoc = new Map<string, number>();
   const depositInLedger = new Set<string>();
   if (docNos.length > 0) {
-    const { data: payRows } = await chunkIn<{ so_doc_no: string; amount_centi: number; is_deposit?: boolean | null }>(docNos, (batch, from, to) => sb
+    const { data: payRows } = await chunkIn<{ so_doc_no: string; amount_sen: number; is_deposit?: boolean | null }>(docNos, (batch, from, to) => sb
       .from('mfg_sales_order_payments')
-      .select('so_doc_no, amount_centi, is_deposit')
+      .select('so_doc_no, amount_sen, is_deposit')
       .in('so_doc_no', batch).order('so_doc_no').range(from, to));
     for (const p of payRows) {
-      paidLedgerByDoc.set(p.so_doc_no, (paidLedgerByDoc.get(p.so_doc_no) ?? 0) + (p.amount_centi ?? 0));
+      paidLedgerByDoc.set(p.so_doc_no, (paidLedgerByDoc.get(p.so_doc_no) ?? 0) + (p.amount_sen ?? 0));
       if (p.is_deposit) depositInLedger.add(p.so_doc_no);
     }
   }
 
   const salesOrders = rows.map((r) => {
     const docNo = r.doc_no ?? '';
-    const deposit = typeof r.deposit_centi === 'number' ? r.deposit_centi : 0;
+    const deposit = typeof r.deposit_sen === 'number' ? r.deposit_sen : 0;
     const ledger = paidLedgerByDoc.get(docNo) ?? 0;
     const soItems = itemsByDoc.get(docNo) ?? [];
     return {
       ...r,
       // Total received = ledger payments (+ header deposit only when the
       // ledger doesn't already carry it as an is_deposit row).
-      paid_centi_total: (depositInLedger.has(docNo) ? 0 : deposit) + ledger,
+      paid_sen_total: (depositInLedger.has(docNo) ? 0 : deposit) + ledger,
       items: soItems,
     };
   });
@@ -2534,30 +2534,30 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      response so the page can show "Customer has RM X available" without a
      second round-trip. 0 when no debtor / no credit history. */
   const debtorCode = (h.data as { debtor_code?: string | null }).debtor_code ?? null;
-  const customerCreditCenti = debtorCode ? await getCustomerCreditBalance(sb, debtorCode, activeCompanyId(c) ?? null) : 0;
+  const customerCreditSen = debtorCode ? await getCustomerCreditBalance(sb, debtorCode, activeCompanyId(c) ?? null) : 0;
   /* Live paid rollup — same rule as the LIST route (lines ~678): sum the
      payments ledger, and add the header deposit ONLY for legacy SOs whose
      deposit never reached the ledger (is_deposit marker distinguishes them).
      Without this the single-SO response carried only the deprecated
-     `paid_centi` (0 for a balance payment recorded via the drawer), so the
+     `paid_sen` (0 for a balance payment recorded via the drawer), so the
      customer-facing print showed "Deposit paid 0.00" + a wrong balance even
      though money had been collected (Loo 2026-06-09). */
-  let paidLedgerCenti = 0;
+  let paidLedgerSen = 0;
   let depositInLedger = false;
   {
     const { data: payRows } = await sb
       .from('mfg_sales_order_payments')
-      .select('amount_centi, is_deposit')
+      .select('amount_sen, is_deposit')
       .eq('so_doc_no', docNo);
-    for (const p of (payRows ?? []) as Array<{ amount_centi: number; is_deposit?: boolean | null }>) {
-      paidLedgerCenti += p.amount_centi ?? 0;
+    for (const p of (payRows ?? []) as Array<{ amount_sen: number; is_deposit?: boolean | null }>) {
+      paidLedgerSen += p.amount_sen ?? 0;
       if (p.is_deposit) depositInLedger = true;
     }
   }
   /* ONE rule, shared with the AutoCount write-back's BALANCE UDF so the account
-     book and this page cannot disagree. Why not `balance_centi`: so-outstanding.ts. */
-  const paidInputs = soPaidInputsOf(h.data as Record<string, unknown>, paidLedgerCenti, depositInLedger);
-  const paidCentiTotal = soPaidCenti(paidInputs);
+     book and this page cannot disagree. Why not `balance_sen`: so-outstanding.ts. */
+  const paidInputs = soPaidInputsOf(h.data as Record<string, unknown>, paidLedgerSen, depositInLedger);
+  const paidSenTotal = soPaidSen(paidInputs);
   /* SO amendment gate (port of 2990 110a472 — flags only, no 409 change).
      `amendment_eligible` tells the frontend that direct edits here must instead
      go through the amendment request flow: the SO IS processing-locked (already
@@ -2630,15 +2630,15 @@ mfgSalesOrders.get('/:docNo', async (c) => {
     has_open_amendment: openAmendment != null,
     open_amendment: openAmendment,
     open_amendments: openAmendments,
-    customer_credit_centi: customerCreditCenti,
+    customer_credit_sen: customerCreditSen,
     // Authoritative received-to-date + remaining balance for the detail page
-    // and the customer-facing print (so-doc.ts reads paid_centi_total).
-    paid_centi_total: paidCentiTotal,
+    // and the customer-facing print (so-doc.ts reads paid_sen_total).
+    paid_sen_total: paidSenTotal,
     /* SIGNED (owner 2026-08-16) — negative = over-collected, painted red by the
        detail page, the mobile detail and the SO print. The write-back keeps the
-       CLAMPED `soOutstandingCenti`: a screen can say "you hold RM 250 of his
+       CLAMPED `soOutstandingSen`: a screen can say "you hold RM 250 of his
        money", AutoCount's UDF_BALANCE cannot. Same inputs, two audiences. */
-    balance_centi: soBalanceCenti(paidInputs),
+    balance_sen: soBalanceSen(paidInputs),
   };
   /* Owner batch 2026-07 — resolve the salesperson's display name + contact
      phone (scm.staff) so the SO PDF's ORDER DETAILS can print "Salesperson:
@@ -2981,7 +2981,7 @@ mfgSalesOrders.get('/customer-credit/:debtorCode', async (c) => {
   const sb = c.get('supabase');
   const debtorCode = c.req.param('debtorCode');
   const balance = await getCustomerCreditBalance(sb, debtorCode, activeCompanyId(c) ?? null);
-  return c.json({ debtorCode, balanceCenti: balance });
+  return c.json({ debtorCode, balanceSen: balance });
 });
 
 /* Loo 2026-06-05 — 409 gate for the maintained SO dropdown header fields.
@@ -4036,7 +4036,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       itemCode,
       itemGroup:      String(it.itemGroup ?? 'others'),
       qty:            Number(it.qty ?? 1),
-      unitPriceCenti: Number(it.unitPriceCenti ?? 0),
+      unitPriceSen: Number(it.unitPriceSen ?? 0),
       variants:       (it.variants as MfgItemForRecompute['variants']) ?? null,
     };
     // PWP grant for this line when its code was claimed: a per-SKU base (non-
@@ -4055,8 +4055,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      the line's selling price with a cheaper whole-build combo total, or
      clamped/rejected an out-of-band client price) is therefore retired — it
      would clobber or reject the operator's manual selling price. The COST
-     path (computeMfgLineCost → unit_cost_centi / line_cost_centi /
-     line_margin_centi) is untouched; combos never fed it.
+     path (computeMfgLineCost → unit_cost_sen / line_cost_sen /
+     line_margin_sen) is untouched; combos never fed it.
 
      Combos DO feed the COST side now (Commander 2026-05-29): recomputeTotals
      applies the master sofa-combo price to a matched sofa set's cost. They are
@@ -4078,14 +4078,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
           reason:   'The price for this item is out of date — please refresh and try again.',
           lineIdx:  i,
           itemCode: r.itemCode,
-          client:   Number(items[i]?.unitPriceCenti ?? 0),
+          client:   Number(items[i]?.unitPriceSen ?? 0),
           server:   r.unit_price_sen,
           breakdown: r.breakdown,
         }, 400);
       }
     }
   }
-  /* Audit 2026-06-11 C-2 — discountCenti is client-authored and was NOT covered
+  /* Audit 2026-06-11 C-2 — discountSen is client-authored and was NOT covered
      by the drift gate: a tampered POS could submit the correct catalog unit
      price (passing drift) then zero the line out with an arbitrary discount —
      or inflate the total with a negative one. Reject any discount outside
@@ -4095,13 +4095,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     if (!it) continue;
     const r = recomputes[i];
     const qtyI = Number(it.qty ?? 1);
-    const unitI = freeItemByIdx.has(i) ? 0 : (r ? r.unit_price_sen : Number(it.unitPriceCenti ?? 0));
-    const discI = Number(it.discountCenti ?? 0);
+    const unitI = freeItemByIdx.has(i) ? 0 : (r ? r.unit_price_sen : Number(it.unitPriceSen ?? 0));
+    const discI = Number(it.discountSen ?? 0);
     if (!Number.isFinite(discI) || discI < 0 || discI > qtyI * unitI) {
       await rollbackPwpClaims();  // don't burn a voucher on a rejected order
       return c.json({
         error:    'invalid_discount',
-        reason:   'discountCenti must be between 0 and qty × unit price.',
+        reason:   'discountSen must be between 0 and qty × unit price.',
         lineIdx:  i,
         itemCode: String(it.itemCode ?? ''),
         discount: discI,
@@ -4163,10 +4163,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     // buildUnitPriceSen below, every sofa module row of the build.
     const unit = freeItemByIdx.has(idx)
       ? 0
-      : (recomputed ? recomputed.unit_price_sen : Number(it.unitPriceCenti ?? 0));
-    const discount = Number(it.discountCenti ?? 0);
+      : (recomputed ? recomputed.unit_price_sen : Number(it.unitPriceSen ?? 0));
+    const discount = Number(it.discountSen ?? 0);
     /* senOrZero at the DEFINITION, not just at the accumulator: lineTotal also
-       lands on the persisted row (total_centi / total_inc_centi / balance_centi)
+       lands on the persisted row (total_sen / total_inc_sen / balance_sen)
        and feeds the per-category buckets, so guarding only the roll-up would
        still write a non-finite figure onto the line itself. */
     const lineTotal = senOrZero((qty * unit) - discount);
@@ -4178,13 +4178,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const unitCost = senOrZero(
       recomputed && recomputed.unit_cost_sen > 0
         ? recomputed.unit_cost_sen
-        : await snapshotUnitCostSen(sb, itemCode, Number(it.unitCostCenti ?? 0), c),
+        : await snapshotUnitCostSen(sb, itemCode, Number(it.unitCostSen ?? 0), c),
     );
     const lineCost = senOrZero(unitCost * qty);
     const group = String(it.itemGroup ?? '').toLowerCase();
     /* lineTotal / lineCost are senOrZero'd above. recomputeTotals (the
-       re-derive path) has always folded with `it.total_centi || 0` /
-       `it.line_cost_centi || 0`, so a stray non-finite there collapses to 0;
+       re-derive path) has always folded with `it.total_sen || 0` /
+       `it.line_cost_sen || 0`, so a stray non-finite there collapses to 0;
        this CREATE path folded raw — the one totals accumulator in the file with
        no guard. The two are now in lockstep: one non-finite line must never
        decide the whole header. */
@@ -4236,11 +4236,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       })(),
       uom: (it.uom as string) ?? 'UNIT',
       qty,
-      unit_price_centi: unit,
-      discount_centi: discount,
-      total_centi: lineTotal,
-      total_inc_centi: lineTotal,
-      balance_centi: lineTotal,
+      unit_price_sen: unit,
+      discount_sen: discount,
+      total_sen: lineTotal,
+      total_inc_sen: lineTotal,
+      balance_sen: lineTotal,
       /* Variants-vocabulary unification (port of 2990 73aeeb1e) — canonicalize
          at the LAST step before the DB write. Every depth-keyed read
          (recompute, split, fabricCode/fabricId loads) above ran on the raw
@@ -4248,9 +4248,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
          canonical Backend keys (seatHeight/legHeight/fabricCode) and the read
          seams in DO/SI/PO/GRN/PI/PR editors never render blank dropdowns. */
       variants: canonicalizeVariants(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null),
-      unit_cost_centi: unitCost,
-      line_cost_centi: lineCost,
-      line_margin_centi: lineTotal - lineCost,
+      unit_cost_sen: unitCost,
+      line_cost_sen: lineCost,
+      line_margin_sen: lineTotal - lineCost,
       // MFG-PRICING-ENGINE — Persist the line-level breakdown columns from
       // the server recompute so the SO detail page + cost reports show the
       // canonical surcharge mix without re-deriving from the variants blob.
@@ -4352,21 +4352,21 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
             item_code: s.itemCode,
             description: s.description,
             description2: buildVariantSummary('sofa', moduleVariants) || null,
-            unit_price_centi: s.unitPriceSen,
-            discount_centi: moduleDiscounts[i] ?? 0,
-            total_centi: moduleLineTotal,
-            total_inc_centi: moduleLineTotal,
-            balance_centi: moduleLineTotal,
+            unit_price_sen: s.unitPriceSen,
+            discount_sen: moduleDiscounts[i] ?? 0,
+            total_sen: moduleLineTotal,
+            total_inc_sen: moduleLineTotal,
+            balance_sen: moduleLineTotal,
             variants: moduleVariants,
-            unit_cost_centi: s.unitCostSen,
-            line_cost_centi: moduleLineCost,
-            line_margin_centi: moduleLineTotal - moduleLineCost,
+            unit_cost_sen: s.unitCostSen,
+            line_cost_sen: moduleLineCost,
+            line_margin_sen: moduleLineTotal - moduleLineCost,
             divan_price_sen:         i === 0 ? (recomputed?.divan_price_sen ?? 0) : 0,
             leg_price_sen:           i === 0 ? (recomputed?.leg_price_sen ?? 0) : 0,
             special_order_price_sen: i === 0 ? (recomputed?.special_order_sen ?? 0) : 0,
             /* Loo 2026-06-13 — custom_specials is the DISPLAY composition of the
                line's specials (incl. the POS special add-on note), NOT a money
-               figure: the money lives in unit_price_centi (split across modules)
+               figure: the money lives in unit_price_sen (split across modules)
                + the i===0 breakdown columns above. So, like the remark below, it
                rides EVERY module line of a split sofa — each row of the internal
                Detail Listing then shows the same specials, matching the per-module
@@ -4415,7 +4415,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       }
     }
     /* Task 5 — non-sofa (or non-splittable) line: mint a single one-shot SKU
-       when an extra charge was declared. unit_price_centi already carries the
+       when an extra charge was declared. unit_price_sen already carries the
        D9 list price (base + extra, N=1) from the recompute, so reuse it as the
        minted SKU's sell price. */
     if (extraRM > 0 && lineProducts[idx]) {
@@ -4430,7 +4430,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         branding: (product as { branding?: string | null }).branding ?? null,
         compartment: '',
         remarkText: remarkTextOf(it),
-        sellPriceSen: Number(baseRow.unit_price_centi ?? 0), // base + extra (N=1)
+        sellPriceSen: Number(baseRow.unit_price_sen ?? 0), // base + extra (N=1)
       });
     }
     {
@@ -4451,7 +4451,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   /* ── Delivery fee (migration 0133) — POS handover path only ──────────────
      Activates the dormant delivery fee on the LIVE SO. Gated on the explicit
      applyDeliveryFee flag the POS handover sends, so backend-authored SOs are
-     untouched (delivery_fee_centi stays 0). Fully server-recomputed via the
+     untouched (delivery_fee_sen stays 0). Fully server-recomputed via the
      pure computeSoDeliveryFee — the only client value trusted is the free-form
      additionalDeliveryFee (clamped >= 0). Categories are the cart's distinct
      DELIVERABLE item_groups (sofa/mattress/bedframe); accessories/others don't
@@ -4460,7 +4460,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      into the grand totals + margin like the fabric-tier add-on; the per-
      category revenue buckets stay goods-only. (Phase 1 special-model fees +
      Phase 2 cross-order follow-up plug into the same call.) */
-  let deliveryFeeCenti = 0;
+  let deliveryFeeSen = 0;
   let deliveryFee: SoDeliveryFeeResult | null = null;
   let crossCategorySourceDocNo: string | null = null;
   if (body.applyDeliveryFee) {
@@ -4540,15 +4540,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       { categoryIds, specialModels, isCrossCategoryFollowup, additionalFee: additionalSen },
       cfgSen,
     );
-    deliveryFeeCenti = deliveryFee.total;
+    deliveryFeeSen = deliveryFee.total;
   }
 
   /* ── SO-SKU spec P2 (§4.1 + §4.2, D2/D6/D9 final) — every charge is a SKU
      line. The delivery fee just computed decomposes into SVC-DELIVERY* lines
-     (Σ lines === deliveryFeeCenti always); POS handover add-ons (dispose /
+     (Σ lines === deliveryFeeSen always); POS handover add-ons (dispose /
      lift) are re-priced server-side from the addons table — the client's
      amounts are never trusted — and become SVC-DISPOSE-* / SVC-LIFT-CARRY
-     lines. The header delivery_fee_centi keeps being written (dual-write
+     lines. The header delivery_fee_sen keeps being written (dual-write
      transition; recomputeTotals only folds it back in when NO fee lines
      exist, so nothing double-counts). Lines ride the whole SO→DO→SI chain;
      they are not goods — P1 guards keep them out of allocation / inventory /
@@ -4580,7 +4580,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     );
   }
   const serviceSpecs = [...feeServiceSpecs, ...addonServiceSpecs];
-  const serviceCenti = serviceSpecs.reduce((s, l) => s + senOrZero(l.totalSen), 0);
+  const serviceSen = serviceSpecs.reduce((s, l) => s + senOrZero(l.totalSen), 0);
   if (serviceSpecs.length > 0) {
     /* Same Edge #4 contract as goods lines: a SERVICE line's SKU must exist in
        the catalog (seeded by migration 0155). A 409 here means the seed is
@@ -4607,15 +4607,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         remark: spec.remark ?? null,
         uom: 'UNIT',
         qty: spec.qty,
-        unit_price_centi: spec.unitPriceSen,
-        discount_centi: 0,
-        total_centi: spec.totalSen,
-        total_inc_centi: spec.totalSen,
-        balance_centi: spec.totalSen,
+        unit_price_sen: spec.unitPriceSen,
+        discount_sen: 0,
+        total_sen: spec.totalSen,
+        total_inc_sen: spec.totalSen,
+        balance_sen: spec.totalSen,
         variants: null,
-        unit_cost_centi: 0,
-        line_cost_centi: 0,
-        line_margin_centi: spec.totalSen,
+        unit_cost_sen: 0,
+        line_cost_sen: 0,
+        line_margin_sen: spec.totalSen,
         divan_price_sen: 0,
         leg_price_sen: 0,
         special_order_price_sen: 0,
@@ -4638,10 +4638,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     }
   }
 
-  const grandTotal          = total + serviceCenti;
-  /* Service lines carry zero cost, so the whole serviceCenti is margin —
+  const grandTotal          = total + serviceSen;
+  /* Service lines carry zero cost, so the whole serviceSen is margin —
      same treatment the header-only delivery fee got before. */
-  const grandMargin         = margin + serviceCenti;
+  const grandMargin         = margin + serviceSen;
   const grandMarginPctBasis = grandTotal > 0 ? Math.round((grandMargin / grandTotal) * 10000) : 0;
 
   /* SO-SKU spec P3 — Edge #4 for the ASSEMBLED rows. The payload-level gate
@@ -4765,9 +4765,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      A handover deposit can now arrive as SEVERAL transactions (e.g. half
      cash + half card). Validated STRICTLY (unlike the tolerant single-deposit
      fallback below, a money row must never be silently dropped) and booked
-     atomically with the order: deposit_centi on the header = Σ rows, each row
+     atomically with the order: deposit_sen on the header = Σ rows, each row
      lands in mfg_sales_order_payments as an is_deposit row. Absent payments[]
-     → the legacy single depositCenti/paymentMethod path runs unchanged, so
+     → the legacy single depositSen/paymentMethod path runs unchanged, so
      old PWA clients keep working.
 
      Each row's `uploadSessionId` is OPTIONAL (Owner 2026-08-13) — schema and
@@ -4781,8 +4781,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     }
     posPayments = parsed.data;
   }
-  const posPaymentsTotalCenti = posPayments
-    ? posPayments.reduce((acc, p) => acc + p.amountCenti, 0)
+  const posPaymentsTotalSen = posPayments
+    ? posPayments.reduce((acc, p) => acc + p.amountSen, 0)
     : null;
 
   /* Resolve each split payment's slip session → R2 key up front, for the rows
@@ -4841,8 +4841,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      of the owner's pinned rule. An absent property is `undefined`, not an error,
      so nothing said a word. The helper accepts the legacy spelling too. */
   const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
-  const depositTotalCenti = posPaymentsTotalCenti
-    ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0);
+  const depositTotalSen = posPaymentsTotalSen
+    ?? Math.max(0, typeof body.depositSen === 'number' ? body.depositSen : 0);
   /* `autoProceed` — the boolean that decided whether to stamp `proceeded_at`
      here — is GONE with the stamp (2026-08-18), and with it this file's last
      `meetsProceedGate` call. #2383 had just documented this site as "THE ONE
@@ -4860,7 +4860,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      be set until the company's deposit is collected (processingDateThresholdFor — Houzs 30%,
      2990 50%). THE deposit rule for this create: since the auto-proceed marker
      went with the second storage, this is the only place the create weighs
-     money, which is the point of one storage. depositTotalCenti = the POS
+     money, which is the point of one storage. depositTotalSen = the POS
      deposit on this create; grandTotal = the order total. */
   {
     /* Same helper as the INSERT, or a legacy create writes an unjudged date. */
@@ -4873,21 +4873,21 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        every other bail in this pricing block). */
     /* GATE-ONLY money, never booked (owner 2026-07-31). The desktop New-SO screen
        books a manually-added payment through the strict per-payment route AFTER
-       the order exists, so at CREATE time `depositTotalCenti` sees only a
+       the order exists, so at CREATE time `depositTotalSen` sees only a
        receipt-backed deposit (SalesOrderNew.tsx requires `receiptImageKey`) and
        reads 0 for a hand-entered one. The operator then gets
        "Deposit RM 0 of RM X needed" with the money plainly on screen, the create
        422s, and the post-create payment flush never runs — a DEADLOCK: an SO with
        a Processing Date and a hand-entered deposit could not be saved at all.
-       `pendingDepositCenti` is the total the client is about to post; the client
+       `pendingDepositSen` is the total the client is about to post; the client
        only sends it for drafts that already carry a verified slip session, and it
-       is counted HERE and NOWHERE ELSE — not in deposit_centi, not in any
+       is counted HERE and NOWHERE ELSE — not in deposit_sen, not in any
        ledger — so it cannot double-book and cannot mark an order proceeded
        against money that has not landed. */
-    const pendingDepositCenti = Math.max(
+    const pendingDepositSen = Math.max(
       0,
-      typeof body.pendingDepositCenti === 'number' && Number.isFinite(body.pendingDepositCenti)
-        ? Math.trunc(body.pendingDepositCenti)
+      typeof body.pendingDepositSen === 'number' && Number.isFinite(body.pendingDepositSen)
+        ? Math.trunc(body.pendingDepositSen)
         : 0,
     );
     /* Strict `=== true`: a stray truthy value must not waive a money condition. */
@@ -4922,7 +4922,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
              legitimately. The flag routes; it grants nothing new. */
           deposit: manualEntry
             ? null
-            : { paidCenti: depositTotalCenti + pendingDepositCenti, totalCenti: grandTotal },
+            : { paidSen: depositTotalSen + pendingDepositSen, totalSen: grandTotal },
         })
       : [];
     if (depositProblems.length > 0) {
@@ -4989,29 +4989,29 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        holds a half-typed format. Falls back to the raw value if normalize
        returns null (e.g. non-MY international numbers we don't recognise). */
     phone: normPhone,
-    mattress_sofa_centi: mattressSofa,
-    bedframe_centi: bedframe,
-    accessories_centi: accessories,
-    others_centi: others,
+    mattress_sofa_sen: mattressSofa,
+    bedframe_sen: bedframe,
+    accessories_sen: accessories,
+    others_sen: others,
     // Task #114 — per-category cost (migration 0079).
-    mattress_sofa_cost_centi: mattressSofaCost,
-    bedframe_cost_centi:      bedframeCost,
-    accessories_cost_centi:   accessoriesCost,
-    others_cost_centi:        othersCost,
+    mattress_sofa_cost_sen: mattressSofaCost,
+    bedframe_cost_sen:      bedframeCost,
+    accessories_cost_sen:   accessoriesCost,
+    others_cost_sen:        othersCost,
     /* SO-SKU spec P2 (D1, migration 0155) — SERVICE bucket = fee + addon
        lines (cost 0). Keeps Finance's "Others" goods-only. */
-    service_centi: serviceCenti,
-    service_cost_centi: 0,
-    local_total_centi: grandTotal,
-    balance_centi: grandTotal,
-    total_cost_centi: totalCost,
-    total_revenue_centi: grandTotal,
-    total_margin_centi: grandMargin,
+    service_sen: serviceSen,
+    service_cost_sen: 0,
+    local_total_sen: grandTotal,
+    balance_sen: grandTotal,
+    total_cost_sen: totalCost,
+    total_revenue_sen: grandTotal,
+    total_margin_sen: grandMargin,
     margin_pct_basis: grandMarginPctBasis,
     // Delivery fee snapshot (migration 0133) — DUAL-WRITE transition (P2):
     // still written for view/report back-compat, but recomputeTotals now folds
     // it in ONLY when no SVC-DELIVERY* lines exist (they are the new truth).
-    delivery_fee_centi: deliveryFeeCenti,
+    delivery_fee_sen: deliveryFeeSen,
     // Cross-category follow-up link (migration 0141) — null unless sales linked
     // this SO back to an earlier one for the reduced delivery rate.
     cross_category_source_doc_no: crossCategorySourceDocNo,
@@ -5108,7 +5108,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        proof. null for manually-keyed orders / scans with no receipt photo. */
     receipt_image_key: receiptImageKey,
     /* PR #148 + #150 — Payment fields on create (mirror PATCH handler).
-       Lets commander set payment_method + deposit_centi straight from the
+       Lets commander set payment_method + deposit_sen straight from the
        New SO form, including approval_code for merchant transactions. */
     payment_method:     (body.paymentMethod as string) ?? null,
     installment_months: typeof body.installmentMonths === 'number' ? body.installmentMonths : null,
@@ -5118,13 +5118,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     // Clamped ≥ 0 — a negative deposit would deflate the live paid rollup.
     // Split payment (Loo 2026-06-06): with payments[] the deposit IS the sum
     // of the validated rows (each positive by schema), not the legacy field.
-    deposit_centi:      posPaymentsTotalCenti ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0),
+    deposit_sen:      posPaymentsTotalSen ?? Math.max(0, typeof body.depositSen === 'number' ? body.depositSen : 0),
     /* SERVER-OWNED — never the client's number. Paid is derived from the
-       payments ledger (the view's paid_total_centi); taking body.paidCenti here
+       payments ledger (the view's paid_total_sen); taking body.paidSen here
        let a create book an order as already-paid with zero payment rows. A
        deposit does NOT belong here either: it posts an is_deposit ledger row
        below, which is what the rollups read. Always 0 at birth. */
-    paid_centi:         0,
+    paid_sen:         0,
     /* PR #154 — Commander 2026-05-27: "我们的整个系统是没有 Draft 功能的，
        把 Draft 的功能去除掉, 我们 create 的全部都是 confirm 的". 2990 is a
        trading company; we don't need a DRAFT staging step. Every new SO is
@@ -5151,7 +5151,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   /* ── SO-SKU spec P2 (D5, migration 0155) — the POS deposit becomes a real
      payments-ledger row at create, so Paid / Last Payment / Account Sheet /
      Collected By / Balance derive live instead of sitting dead in the
-     deposit_centi header. is_deposit=true marks it so the list paid-rollup
+     deposit_sen header. is_deposit=true marks it so the list paid-rollup
      doesn't ALSO add the header column (double count) and Finance can tell
      deposits from balance payments. Method-scoped fields mirror the manual
      POST /:docNo/payments route. Best-effort: a ledger failure must never
@@ -5185,7 +5185,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         /* Account Sheet auto-fill (Loo 2026-06-07) — split rows carry no
            onlineType, so transfer falls back to 'Bank transfer'. */
         account_sheet:      deriveAccountSheet(p.method, merchantProvider, null),
-        amount_centi:       p.amountCenti,
+        amount_sen:       p.amountSen,
         /* Who took the money. The fallback was the bridge's pinned system uuid,
            so an unnamed collector recorded as "System" on the money ledger; the
            column is a NULLABLE FK to staff (the /payments writer stamps null
@@ -5240,7 +5240,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         fieldChanges: [
           { field: 'paidAt',      from: null, to: paidAt },
           { field: 'method',      from: null, to: p.method },
-          { field: 'amountCenti', from: null, to: p.amountCenti },
+          { field: 'amountSen', from: null, to: p.amountSen },
           ...(merchantProvider ? [{ field: 'merchantProvider', from: null, to: merchantProvider } satisfies FieldChange] : []),
           ...(installmentMonths ? [{ field: 'installmentMonths', from: null, to: installmentMonths } satisfies FieldChange] : []),
           ...(p.approvalCode ? [{ field: 'approvalCode', from: null, to: p.approvalCode } satisfies FieldChange] : []),
@@ -5248,14 +5248,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       });
     }
   } else {
-    const depositCenti = typeof body.depositCenti === 'number' ? body.depositCenti : 0;
+    const depositSen = typeof body.depositSen === 'number' ? body.depositSen : 0;
     /* Whitelist — the ledger's method vocabulary is closed; an arbitrary
        string must not reach Finance reports. Unknown method → header-only
        (the deposit still shows via the legacy fallback), no ledger row. */
     const VALID_METHODS = new Set(['cash', 'merchant', 'transfer', 'installment']);
     const rawMethod = typeof body.paymentMethod === 'string' ? body.paymentMethod.trim() : '';
     const depositMethod = VALID_METHODS.has(rawMethod) ? rawMethod : null;
-    if (depositCenti > 0 && depositMethod) {
+    if (depositSen > 0 && depositMethod) {
       /* 'installment' is a merchant transaction with a term — both keep the
          provider/months fields (prod uses both method values). */
       const merchantLike = depositMethod === 'merchant' || depositMethod === 'installment';
@@ -5275,7 +5275,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         slip_key:           slipKey ?? receiptImageKey,        // handover slip, else the scanned receipt = the deposit's proof
         /* Account Sheet auto-fill (Loo 2026-06-07). */
         account_sheet:      deriveAccountSheet(depositMethod, merchantProvider, null),
-        amount_centi:       depositCenti,
+        amount_sen:       depositSen,
         // Same as the split-payment row above: never the pin on the money ledger.
         collected_by:       (body.salespersonId as string) ?? callerStaffId,
         created_by:         user.id,
@@ -5296,7 +5296,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
           fieldChanges: [
             { field: 'paidAt',      from: null, to: paidAt },
             { field: 'method',      from: null, to: depositMethod },
-            { field: 'amountCenti', from: null, to: depositCenti },
+            { field: 'amountSen', from: null, to: depositSen },
             ...(merchantProvider ? [{ field: 'merchantProvider', from: null, to: merchantProvider } satisfies FieldChange] : []),
             ...(body.approvalCode ? [{ field: 'approvalCode', from: null, to: body.approvalCode as string } satisfies FieldChange] : []),
           ],
@@ -5491,9 +5491,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   captureIfSet('email', body.email);
   captureIfSet('soDate', body.soDate);
   captureIfSet('lineCount', items.length);
-  captureIfSet('localTotalCenti', total);
+  captureIfSet('localTotalSen', total);
   captureIfSet('paymentMethod', body.paymentMethod);
-  captureIfSet('depositCenti', body.depositCenti);
+  captureIfSet('depositSen', body.depositSen);
   captureIfSet('processingDate', body.processingDate);
   captureIfSet('customerSoNo', body.customerSoNo);
   captureIfSet('customerPo', body.customerPo);
@@ -6096,7 +6096,7 @@ mfgSalesOrders.get('/:docNo/audit-log', async (c) => {
     .order('created_at', { ascending: false });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   /* The audit HISTORY is a finance read too — this route's own line PATCH does
-     `cmp('unitCostCenti', prev.unit_cost_centi, unitCost)`, so field_changes
+     `cmp('unitCostSen', prev.unit_cost_sen, unitCost)`, so field_changes
      carries the old AND new unit cost. gateSoFinance strips the DETAIL, so
      leaving this open just moves the leak one endpoint over. Shared vocabulary
      (lib/finance-keys) — the consignment audit-log reads this SAME table. */
@@ -6177,25 +6177,25 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
   if (!Number.isFinite(newPrice) || newPrice < 0) return c.json({ error: 'invalid_price' }, 400);
 
   const { data: item } = await sb.from('mfg_sales_order_items')
-    .select('id, doc_no, item_code, unit_price_centi, qty, discount_centi')
+    .select('id, doc_no, item_code, unit_price_sen, qty, discount_sen')
     .eq('id', itemId).maybeSingle();
   if (!item) return c.json({ error: 'item_not_found' }, 404);
-  const i = item as { id: string; doc_no: string; item_code: string; unit_price_centi: number; qty: number; discount_centi: number };
+  const i = item as { id: string; doc_no: string; item_code: string; unit_price_sen: number; qty: number; discount_sen: number };
   if (i.doc_no !== docNo) return c.json({ error: 'item_doc_mismatch' }, 400);
   /* Audit 2026-06-11 C-2 — the override recomputes total as qty × newPrice −
      stored discount; reject an override price that would push the line total
      negative (discount invariant: 0 ≤ discount ≤ qty × unit). */
-  if (Number(i.discount_centi ?? 0) > i.qty * newPrice) {
+  if (Number(i.discount_sen ?? 0) > i.qty * newPrice) {
     return c.json({
       error:    'invalid_discount',
       reason:   'Stored line discount exceeds qty × override price — the line total would go negative.',
-      discount: Number(i.discount_centi ?? 0),
+      discount: Number(i.discount_sen ?? 0),
       max:      i.qty * newPrice,
     }, 422);
   }
 
   // Audit first (so we don't lose original even if the update fails)
-  const originalPriceSen = i.unit_price_centi;
+  const originalPriceSen = i.unit_price_sen;
   const overridePriceSen = newPrice;
   await sb.from('mfg_so_price_overrides').insert({
     company_id: activeCompanyId(c), // multi-company: match the SO's company
@@ -6208,25 +6208,25 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
     approved_by: user.id,
   });
 
-  const newLineTotal = (i.qty * newPrice) - i.discount_centi;
-  /* Task #114 — pull current line_cost_centi so the price override
-     recomputes line_margin_centi correctly. Previous code used `- 0`
+  const newLineTotal = (i.qty * newPrice) - i.discount_sen;
+  /* Task #114 — pull current line_cost_sen so the price override
+     recomputes line_margin_sen correctly. Previous code used `- 0`
      which silently broke margin tracking on every override. */
   const { data: costRow } = await sb.from('mfg_sales_order_items')
-    .select('line_cost_centi')
+    .select('line_cost_sen')
     .eq('id', itemId)
     .maybeSingle();
-  const currentLineCost = Number((costRow as { line_cost_centi?: number } | null)?.line_cost_centi ?? 0);
+  const currentLineCost = Number((costRow as { line_cost_sen?: number } | null)?.line_cost_sen ?? 0);
   const { error } = await sb.from('mfg_sales_order_items').update({
-    unit_price_centi: newPrice,
-    total_centi: newLineTotal,
-    total_inc_centi: newLineTotal,
-    balance_centi: newLineTotal,
-    line_margin_centi: newLineTotal - currentLineCost,
+    unit_price_sen: newPrice,
+    total_sen: newLineTotal,
+    total_inc_sen: newLineTotal,
+    balance_sen: newLineTotal,
+    line_margin_sen: newLineTotal - currentLineCost,
   }).eq('id', itemId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   /* Task #114 — also refresh the header totals after the override so
-     total_cost_centi / total_margin_centi / category cost columns stay
+     total_cost_sen / total_margin_sen / category cost columns stay
      consistent with the new line revenue + margin. */
   await recomputeTotals(sb, docNo, c);
 
@@ -6238,12 +6238,12 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
     actorId: user.id,
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
     fieldChanges: [
-      { field: 'unitPriceCenti', from: originalPriceSen, to: overridePriceSen },
+      { field: 'unitPriceSen', from: originalPriceSen, to: overridePriceSen },
     ],
     note: (body.reason as string) || undefined,
   });
 
-  /* ERP -> AutoCount edit. This route writes unit_price_centi, which IS an
+  /* ERP -> AutoCount edit. This route writes unit_price_sen, which IS an
      AutoCount field (UnitPrice on SODTL) — so an override that never reached
      the account book left the two sides quoting different money for the same
      order line. It was missed because it is the one price path that does not go
@@ -6273,7 +6273,7 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
    (recovered from the existing SVC-DELIVERY-ADD line), recomputes on the
    authoritative computeSoDeliveryFee, and rebuilds the SVC-DELIVERY* lines. Only
    runs when the SO already carries a delivery fee — as SVC-DELIVERY* LINES, or
-   as an orphaned header delivery_fee_centi that lost its lines (see the bail
+   as an orphaned header delivery_fee_sen that lost its lines (see the bail
    below); a genuinely fee-less SO returns null BEFORE recomputeTotals (the
    caller is responsible for any totals refresh), so nothing here ever STARTS a
    fee on a backend-authored SO. Best-effort: logs DB errors, never throws. */
@@ -6281,12 +6281,12 @@ async function recomputeDeliveryFeeCore(
   sb: any, docNo: string, sourceDocNo: string | null, c: any,
 ): Promise<{ isFollowup: boolean; sourceDocNo: string | null; total: number } | null> {
   const { data: lineRows } = await sb.from('mfg_sales_order_items')
-    .select('item_code, item_group, total_centi, line_no, variants')
+    .select('item_code, item_group, total_sen, line_no, variants')
     .eq('doc_no', docNo).eq('cancelled', false);
-  const lines = (lineRows ?? []) as Array<{ item_code: string; item_group: string | null; total_centi: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
+  const lines = (lineRows ?? []) as Array<{ item_code: string; item_group: string | null; total_sen: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
   const deliveryLines = lines.filter((l) => isDeliveryFeeServiceCode(l.item_code));
   /* Owner ruling 2026-08-07 ("全部都会有 SKU 的 … 怎么可以走后门呢?"): every
-     ringgit on a Sales Order is a LINE. The header delivery_fee_centi is a
+     ringgit on a Sales Order is a LINE. The header delivery_fee_sen is a
      dual-write MIRROR of the SVC-DELIVERY* lines, never money of its own — but
      2990-SO-2608-006 proved the mirror could outlive the lines: delete (or
      cancel) every fee line and the old `length === 0 → return null` bail turned
@@ -6301,7 +6301,7 @@ async function recomputeDeliveryFeeCore(
      here ever STARTS a fee — only the create path's applyDeliveryFee does). */
   if (deliveryLines.length === 0) {
     const { data: feeHdr, error: feeHdrErr } = await sb.from('mfg_sales_orders')
-      .select('delivery_fee_centi').eq('doc_no', docNo).maybeSingle();
+      .select('delivery_fee_sen').eq('doc_no', docNo).maybeSingle();
     /* Fail CLOSED (the 2026-07-17 zeroing lesson): a failed read is not "no
        fee". Bail without writing — the shape self-heals on the next edit. */
     if (feeHdrErr) {
@@ -6309,8 +6309,8 @@ async function recomputeDeliveryFeeCore(
       console.error('[so-redetect] header fee read failed — delivery derivation skipped:', docNo, feeHdrErr.message);
       return null;
     }
-    const headerFeeCenti = Number((feeHdr as { delivery_fee_centi?: number } | null)?.delivery_fee_centi ?? 0);
-    if (headerFeeCenti <= 0) return null; // no lines AND no header fee → genuinely fee-less
+    const headerFeeSen = Number((feeHdr as { delivery_fee_sen?: number } | null)?.delivery_fee_sen ?? 0);
+    if (headerFeeSen <= 0) return null; // no lines AND no header fee → genuinely fee-less
   }
 
   // The rebuilt SVC-DELIVERY* lines append AFTER the kept lines (services sort
@@ -6324,7 +6324,7 @@ async function recomputeDeliveryFeeCore(
   // Operator free-form fee — preserved across the recompute.
   const additionalSen = deliveryLines
     .filter((l) => l.item_code === SVC_DELIVERY_ADD)
-    .reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
+    .reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
 
   // Deliverable categories (sofa / mattress / bedframe) + their special-model fees.
   const DELIVERABLE = new Set(['sofa', 'mattress', 'bedframe']);
@@ -6425,15 +6425,15 @@ async function recomputeDeliveryFeeCore(
       remark: spec.remark ?? null,
       uom: 'UNIT',
       qty: spec.qty,
-      unit_price_centi: spec.unitPriceSen,
-      discount_centi: 0,
-      total_centi: spec.totalSen,
-      total_inc_centi: spec.totalSen,
-      balance_centi: spec.totalSen,
+      unit_price_sen: spec.unitPriceSen,
+      discount_sen: 0,
+      total_sen: spec.totalSen,
+      total_inc_sen: spec.totalSen,
+      balance_sen: spec.totalSen,
       variants: null,
-      unit_cost_centi: 0,
-      line_cost_centi: 0,
-      line_margin_centi: spec.totalSen,
+      unit_cost_sen: 0,
+      line_cost_sen: 0,
+      line_margin_sen: spec.totalSen,
       divan_price_sen: 0,
       leg_price_sen: 0,
       special_order_price_sen: 0,
@@ -6450,7 +6450,7 @@ async function recomputeDeliveryFeeCore(
     const { error: rebuildErr } = await sb.rpc('rebuild_mfg_so_delivery_lines', {
       p_doc_no: docNo,
       p_source_doc_no: sourceDocNo,
-      p_delivery_fee_centi: fee.total,
+      p_delivery_fee_sen: fee.total,
       p_rows: rows,
     });
     if (rebuildErr) {
@@ -6469,16 +6469,16 @@ async function recomputeDeliveryFeeCore(
          Only a real move is recorded (an unchanged re-derivation runs on every
          line edit and would otherwise flood the timeline). Best-effort by
          recordSoAudit's design; the fee is already committed either way. */
-      const priorFeeCenti = deliveryLines.reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
-      if (priorFeeCenti !== fee.total) {
+      const priorFeeSen = deliveryLines.reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
+      if (priorFeeSen !== fee.total) {
         await recordSoAudit(sb, {
           docNo,
-          action: priorFeeCenti === 0 ? 'ADD_LINE' : (fee.total === 0 ? 'DELETE_LINE' : 'UPDATE_LINE'),
+          action: priorFeeSen === 0 ? 'ADD_LINE' : (fee.total === 0 ? 'DELETE_LINE' : 'UPDATE_LINE'),
           source: 'automation',
           note: 'Auto: delivery fee lines re-derived',
           fieldChanges: [
             { field: 'itemCode', to: 'SVC-DELIVERY' },
-            { field: 'deliveryFeeCenti', from: priorFeeCenti, to: fee.total },
+            { field: 'deliveryFeeSen', from: priorFeeSen, to: fee.total },
           ],
         });
       }
@@ -6537,7 +6537,7 @@ async function redetectCrossCategoryDelivery(
    pinned cross-category source link. Only the FEE re-derives (special-delivery
    triggers + sofa↔mattress cross-category mix follow the current items). When
    the SO carries no delivery fee — no SVC-DELIVERY* lines AND no header
-   delivery_fee_centi (the core checks both; an orphaned header fee is
+   delivery_fee_sen (the core checks both; an orphaned header fee is
    re-materialised as lines, never left header-only) — the core early-bails
    (null) before recomputeTotals, so we still refresh the header totals for
    the edit. Best-effort. */
@@ -6606,14 +6606,14 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['merchantProvider', 'merchant_provider'],
     ['approvalCode', 'approval_code'],
     ['paymentDate', 'payment_date'],
-    ['depositCenti', 'deposit_centi'],
-    /* `paidCenti` is deliberately NOT mapped — paid is SERVER-OWNED. It is
+    ['depositSen', 'deposit_sen'],
+    /* `paidSen` is deliberately NOT mapped — paid is SERVER-OWNED. It is
        derived from the mfg_sales_order_payments ledger (the view's
-       paid_total_centi); the stored `paid_centi` column has no writer that
+       paid_total_sen); the stored `paid_sen` column has no writer that
        keeps it true and is already documented deprecated + scheduled for drop
        (see the /:docNo/payments PAYMENT_COLS note and the list rollup). While
        it was mapped here, a self-scoped salesperson could PATCH
-       {paidCenti: <order total>} onto their OWN order and book it fully paid
+       {paidSen: <order total>} onto their OWN order and book it fully paid
        with zero payment rows. Record a payment; never set a total. */
   ];
   /* Task #91 — phone columns get normalized to E.164 storage form before any
@@ -6621,12 +6621,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      misbehaving client could still PATCH a raw "+60 12 345 6789". */
   const PHONE_FIELDS = new Set(['phone', 'emergencyContactPhone']);
   /* A caller who cannot READ deposit must not WRITE it. gateSoFinance strips
-     deposit_centi (an SO_FINANCE_KEY since #574) from the detail payload, and
+     deposit_sen (an SO_FINANCE_KEY since #574) from the detail payload, and
      this map accepts ANY defined value — so a client that seeded its header
      draft off that stripped payload would round-trip the missing field as a
      genuine 0 and wipe the deposit (the #632 trap). consignment-orders.ts
      already carries this exact guard; the SO it was CLONED FROM never got it.
-     No Houzs caller sends depositCenti on PATCH today (SalesOrderNew posts it
+     No Houzs caller sends depositSen on PATCH today (SalesOrderNew posts it
      on CREATE only), so this is defence-in-depth that keeps the strip safe by
      construction rather than by the frontend's current shape. A finance caller
      is unaffected. */
@@ -6634,7 +6634,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   const updates: Record<string, unknown> = {};
   for (const [from, to] of map) {
     if (body[from] === undefined) continue;
-    if (from === 'depositCenti' && !canFinance) continue;
+    if (from === 'depositSen' && !canFinance) continue;
     if (PHONE_FIELDS.has(from) && typeof body[from] === 'string') {
       const raw = body[from] as string;
       updates[to] = normalizePhone(raw) ?? raw;
@@ -6660,7 +6660,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
         continue;
       }
       updates[to] = venueIdValue;
-    } else if (from === 'depositCenti') {
+    } else if (from === 'depositSen') {
       /* Clamp >= 0, matching the create path: the header deposit is still added
          on top of the ledger for legacy SOs whose deposit never landed as an
          is_deposit row, so a negative value would deflate that paid rollup. */
@@ -6870,7 +6870,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      problems, and each carries a distinct HTTP status. */
   let variantOffenders: VariantOffender[] = [];
   let kivOffenders: ColourKivOffender[] = [];
-  let depositFacts: { paidCenti: number; totalCenti: number } | null = null;
+  let depositFacts: { paidSen: number; totalSen: number } | null = null;
 
   /* PR — Commander 2026-05-28 — Server-side variant rule enforcement.
      When the caller sets processingDate (Processing Date) to a non-null
@@ -7000,8 +7000,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
      change (clearing it, or an unchanged re-save, passes — so an unrelated edit on
      an already-dated, since-refunded SO isn't blocked). Money-only — customer-info
      / address are deliberately not gated (they resolve later in Proceed). `paid` =
-     sum(mfg_sales_order_payments.amount_centi), mirroring the paid_total_centi the
-     payment view computes; `total` = the header local_total_centi. */
+     sum(mfg_sales_order_payments.amount_sen), mirroring the paid_total_sen the
+     payment view computes; `total` = the header local_total_sen. */
   {
     const proc = body['processingDate'];
     if (typeof proc === 'string' && proc) {
@@ -7010,15 +7010,15 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       ).slice(0, 10);
       if (proc.slice(0, 10) !== origProc) {
         const [{ data: totRow }, { data: pays }] = await Promise.all([
-          sb.from('mfg_sales_orders').select('local_total_centi').eq('doc_no', docNo).maybeSingle(),
-          sb.from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo),
+          sb.from('mfg_sales_orders').select('local_total_sen').eq('doc_no', docNo).maybeSingle(),
+          sb.from('mfg_sales_order_payments').select('amount_sen').eq('so_doc_no', docNo),
         ]);
-        const totalCenti = Number((totRow as { local_total_centi?: number } | null)?.local_total_centi ?? 0);
-        const paidCenti = ((pays ?? []) as Array<{ amount_centi?: number | null }>)
-          .reduce((s, p) => s + Number(p.amount_centi ?? 0), 0);
+        const totalSen = Number((totRow as { local_total_sen?: number } | null)?.local_total_sen ?? 0);
+        const paidSen = ((pays ?? []) as Array<{ amount_sen?: number | null }>)
+          .reduce((s, p) => s + Number(p.amount_sen ?? 0), 0);
         // Collected (not returned) — the aggregated report weighs this alongside
         // any variant / date problems and reports the concrete amount + threshold.
-        depositFacts = { paidCenti, totalCenti };
+        depositFacts = { paidSen, totalSen };
       }
     }
   }
@@ -7338,7 +7338,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
       deliveryRedetected: true,
       crossCategory: crossCategoryRedetect.isFollowup,
       crossCategorySourceDocNo: crossCategoryRedetect.sourceDocNo,
-      deliveryFeeCenti: crossCategoryRedetect.total,
+      deliveryFeeSen: crossCategoryRedetect.total,
     } : {}),
   });
 };
@@ -7370,7 +7370,7 @@ mfgSalesOrders.patch('/:docNo', patchMfgSalesOrderHeaderHandler);
 // so-revision.ts already wraps this path in.
 export async function recomputeTotals(sb: any, docNo: string, c: any) {
   const { data: items, error: itemsErr } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code, item_group, variants, qty, total_centi, line_cost_centi')
+    .select('id, item_code, item_group, variants, qty, total_sen, line_cost_sen')
     .eq('doc_no', docNo).eq('cancelled', false);
   /* A failed READ is not an empty SO — and `?? []` cannot tell them apart.
      supabase-js resolves a failed select to { data: null, error } and does NOT
@@ -7389,7 +7389,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
     console.error('[so-recompute] item read failed — header left unchanged:', docNo, itemsErr.message);
     return;
   }
-  type Row = { id: string; item_code: string; item_group: string; variants: Record<string, unknown> | null; qty: number; total_centi: number; line_cost_centi: number };
+  type Row = { id: string; item_code: string; item_group: string; variants: Record<string, unknown> | null; qty: number; total_sen: number; line_cost_sen: number };
   const rows = (items ?? []) as Row[];
 
   /* ── Master sofa-combo COST spread (Commander 2026-05-29) ──────────────────
@@ -7397,7 +7397,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
      match a MASTER combo (sofa_combo_pricing where supplier_id IS NULL — the
      Product-Maintenance combo), the set's COST = the combo price, spread across
      the matched lines (mirror of the PO side, but master-scoped). We spread off
-     the stored per-line line_cost_centi (the per-module base cost). Idempotent:
+     the stored per-line line_cost_sen (the per-module base cost). Idempotent:
      spreadComboTotal re-normalises an already-spread group to the same total. */
   const sofaRows = rows.filter((r) => (r.item_group ?? '').toLowerCase() === 'sofa');
   if (sofaRows.length > 0) {
@@ -7460,7 +7460,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
         if (!match) continue;
         const matched = match.matchedIndices.map((i) => members[i]).filter((m): m is Row => !!m);
         if (matched.length === 0) continue;
-        /* Audit 2026-06-11 I1 — the combo price is ONE set; line_cost_centi is
+        /* Audit 2026-06-11 I1 — the combo price is ONE set; line_cost_sen is
            a LINE total (unit × qty). Owner rule: combo cost MUST multiply by
            qty. Uniform qty q across the matched lines → q sets → comboTotal×q.
            Mixed qtys → no clean set count → SKIP the combo and keep the
@@ -7468,16 +7468,16 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
         const qtySet = new Set(matched.map((m) => Math.max(1, m.qty || 1)));
         if (qtySet.size !== 1) continue;
         const uniformQty = [...qtySet][0]!;
-        const comboTotal = match.comboPriceCenti * uniformQty;
+        const comboTotal = match.comboPriceSen * uniformQty;
         if (comboTotal <= 0) continue;
-        const spread = spreadComboTotal(matched.map((m) => m.line_cost_centi || 0), comboTotal);
+        const spread = spreadComboTotal(matched.map((m) => m.line_cost_sen || 0), comboTotal);
         for (let i = 0; i < matched.length; i++) {
           const m = matched[i]!; const newLineCost = spread[i] ?? 0; const q = Math.max(1, m.qty || 1);
-          m.line_cost_centi = newLineCost; // mutate in place so the rollup below sees it
+          m.line_cost_sen = newLineCost; // mutate in place so the rollup below sees it
           const { error: spreadErr } = await sb.from('mfg_sales_order_items').update({
-            line_cost_centi:   newLineCost,
-            unit_cost_centi:   Math.round(newLineCost / q),
-            line_margin_centi: (m.total_centi || 0) - newLineCost,
+            line_cost_sen:   newLineCost,
+            unit_cost_sen:   Math.round(newLineCost / q),
+            line_margin_sen: (m.total_sen || 0) - newLineCost,
           }).eq('id', m.id);
           /* The in-memory mutation above already fed this cost to the roll-up,
              so a failed line write would have the header assert a cost its own
@@ -7500,13 +7500,13 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
 
   let mattressSofa = 0, bedframe = 0, accessories = 0, others = 0, service = 0, total = 0, totalCost = 0;
   // Task #114 — per-category cost mirrors the revenue accumulators. Each
-  // bucket below tracks both revenue (total_centi) and cost (line_cost_centi)
+  // bucket below tracks both revenue (total_sen) and cost (line_cost_sen)
   // so the SO header's cost columns (migration 0079 + 0155) stay in sync
   // with the revenue columns.
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0, serviceCost = 0;
   for (const it of rows) {
-    const lineTotal = it.total_centi || 0;
-    const lineCost  = it.line_cost_centi || 0;
+    const lineTotal = it.total_sen || 0;
+    const lineCost  = it.line_cost_sen || 0;
     total += lineTotal;
     totalCost += lineCost;
     const g = (it.item_group ?? '').toLowerCase();
@@ -7534,7 +7534,7 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
   // LINES are the truth when they exist (their amounts are already inside
   // `service`/`total` above — folding the header snapshot back in would
   // double-count); only a line-less legacy SO still reads the header back.
-  // ⚠️ DO NOT DELETE this fallback without retiring the delivery_fee_centi
+  // ⚠️ DO NOT DELETE this fallback without retiring the delivery_fee_sen
   // header column itself (SO-SKU spec §5 P6 — Loo decides the retirement).
   //
   // ⚠️ This fallback is for LEGACY line-less SOs ONLY, and it is the half of
@@ -7549,11 +7549,11 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
   // backend/scripts/check-so-fee-line-integrity.mjs and repaired (DRY-RUN
   // gated) by repair-so-fee-line-integrity.mjs.
   const hasDeliveryFeeLines = rows.some((r) => isDeliveryFeeServiceCode(r.item_code));
-  let deliveryCenti = 0;
+  let deliverySen = 0;
   if (!hasDeliveryFeeLines) {
     const { data: hdrFee, error: hdrErr } = await sb
       .from('mfg_sales_orders')
-      .select('delivery_fee_centi')
+      .select('delivery_fee_sen')
       .eq('doc_no', docNo)
       .maybeSingle();
     /* A failed read here reads as "this legacy SO carries no delivery fee" and
@@ -7564,28 +7564,28 @@ export async function recomputeTotals(sb: any, docNo: string, c: any) {
       console.error('[so-recompute] delivery fee read failed — header left unchanged:', docNo, hdrErr.message);
       return;
     }
-    deliveryCenti = Number((hdrFee as { delivery_fee_centi?: number } | null)?.delivery_fee_centi ?? 0);
+    deliverySen = Number((hdrFee as { delivery_fee_sen?: number } | null)?.delivery_fee_sen ?? 0);
   }
-  const grandTotal  = total + deliveryCenti;
+  const grandTotal  = total + deliverySen;
   const grandMargin = grandTotal - totalCost;
   const { error: updErr } = await sb.from('mfg_sales_orders').update({
-    mattress_sofa_centi: mattressSofa,
-    bedframe_centi: bedframe,
-    accessories_centi: accessories,
-    others_centi: others,
+    mattress_sofa_sen: mattressSofa,
+    bedframe_sen: bedframe,
+    accessories_sen: accessories,
+    others_sen: others,
     /* SO-SKU spec P2 (D1, migration 0155). */
-    service_centi: service,
-    service_cost_centi: serviceCost,
+    service_sen: service,
+    service_cost_sen: serviceCost,
     // Task #114 — per-category cost (migration 0079).
-    mattress_sofa_cost_centi: mattressSofaCost,
-    bedframe_cost_centi:      bedframeCost,
-    accessories_cost_centi:   accessoriesCost,
-    others_cost_centi:        othersCost,
-    local_total_centi: grandTotal,
-    balance_centi: grandTotal,
-    total_cost_centi: totalCost,
-    total_revenue_centi: grandTotal,
-    total_margin_centi: grandMargin,
+    mattress_sofa_cost_sen: mattressSofaCost,
+    bedframe_cost_sen:      bedframeCost,
+    accessories_cost_sen:   accessoriesCost,
+    others_cost_sen:        othersCost,
+    local_total_sen: grandTotal,
+    balance_sen: grandTotal,
+    total_cost_sen: totalCost,
+    total_revenue_sen: grandTotal,
+    total_margin_sen: grandMargin,
     margin_pct_basis: grandTotal > 0 ? Math.round((grandMargin / grandTotal) * 10000) : 0,
     line_count: rows.length,
     updated_at: new Date().toISOString(),
@@ -7674,7 +7674,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   const badExtra = unexplainedExtraAddonResponse(it.variants, it.itemCode);
   if (badExtra) return c.json(badExtra, 422);
   const qty = Number(it.qty ?? 1);
-  const discount = Number(it.discountCenti ?? 0);
+  const discount = Number(it.discountSen ?? 0);
   // MFG-PRICING-ENGINE — Recompute unit price server-side. Same path as
   // POST /. Drift > 0.5% returns HTTP 400 with the breakdown so the UI can
   // show what went wrong.
@@ -7869,7 +7869,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
       itemCode:       itemCodeStr,
       itemGroup:      String(it.itemGroup ?? 'others'),
       qty,
-      unitPriceCenti: Number(it.unitPriceCenti ?? 0),
+      unitPriceSen: Number(it.unitPriceSen ?? 0),
       variants:       variantsObj,
     },
     productLite,
@@ -7901,7 +7901,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
       error:    'pricing_drift',
       reason:   'The price for this item is out of date — please refresh and try again.',
       itemCode: itemCodeStr,
-      client:   Number(it.unitPriceCenti ?? 0),
+      client:   Number(it.unitPriceSen ?? 0),
       server:   recomputed.unit_price_sen,
       breakdown: recomputed.breakdown,
     }, 400);
@@ -7917,7 +7917,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     if (addLinePwpClaimed) await rollbackSinglePwpClaim(sb, addLinePwpClaimed);
     return c.json({
       error:    'invalid_discount',
-      reason:   'discountCenti must be between 0 and qty × unit price.',
+      reason:   'discountSen must be between 0 and qty × unit price.',
       itemCode: itemCodeStr,
       discount,
       max:      qty * unit,
@@ -7929,7 +7929,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   // client cost only when the recompute produced no cost.
   const unitCost = recomputed.unit_cost_sen > 0
     ? recomputed.unit_cost_sen
-    : await snapshotUnitCostSen(sb, itemCodeStr, Number(it.unitCostCenti ?? 0), c);
+    : await snapshotUnitCostSen(sb, itemCodeStr, Number(it.unitCostSen ?? 0), c);
   const lineCost = unitCost * qty;
   /* Same size-variant description guard the create path runs — an added line
      must not be able to smuggle in another size's SKU name either. */
@@ -7971,11 +7971,11 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
       ?? ((it.description as string) ?? null),
     uom: (it.uom as string) ?? 'UNIT',
     qty,
-    unit_price_centi: unit,
-    discount_centi: discount,
-    total_centi: lineTotal,
-    total_inc_centi: lineTotal,
-    balance_centi: lineTotal,
+    unit_price_sen: unit,
+    discount_sen: discount,
+    total_sen: lineTotal,
+    total_inc_sen: lineTotal,
+    balance_sen: lineTotal,
     venue: header.venue,
     branding: header.branding,
     /* Anti-tamper (Task 6) — strip any client-supplied freeItem marker from a
@@ -7995,9 +7995,9 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
         ? { ...(stripFreeItem(it.variants) as Record<string, unknown> | null ?? {}), freeItem: addLineFreeItem }
         : ((stripFreeItem(it.variants) as Record<string, unknown> | null) ?? null),
     ),
-    unit_cost_centi: unitCost,
-    line_cost_centi: lineCost,
-    line_margin_centi: lineTotal - lineCost,
+    unit_cost_sen: unitCost,
+    line_cost_sen: lineCost,
+    line_margin_sen: lineTotal - lineCost,
     // MFG-PRICING-ENGINE — Persist breakdown columns (same as POST /).
     divan_price_sen:         recomputed.divan_price_sen,
     leg_price_sen:           recomputed.leg_price_sen,
@@ -8077,15 +8077,15 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
           item_code: s.itemCode,
           description: s.description,
           description2: buildVariantSummary('sofa', moduleVariants) || null,
-          unit_price_centi: s.unitPriceSen,
-          discount_centi: moduleDiscounts[i] ?? 0,
-          total_centi: moduleLineTotal,
-          total_inc_centi: moduleLineTotal,
-          balance_centi: moduleLineTotal,
+          unit_price_sen: s.unitPriceSen,
+          discount_sen: moduleDiscounts[i] ?? 0,
+          total_sen: moduleLineTotal,
+          total_inc_sen: moduleLineTotal,
+          balance_sen: moduleLineTotal,
           variants: moduleVariants,
-          unit_cost_centi: s.unitCostSen,
-          line_cost_centi: moduleLineCost,
-          line_margin_centi: moduleLineTotal - moduleLineCost,
+          unit_cost_sen: s.unitCostSen,
+          line_cost_sen: moduleLineCost,
+          line_margin_sen: moduleLineTotal - moduleLineCost,
           /* Breakdown columns (divan/leg/special) on first row only; custom_specials + remark on every row (display, same as create). */
           divan_price_sen:         i === 0 ? (recomputed.divan_price_sen ?? 0) : 0,
           leg_price_sen:           i === 0 ? (recomputed.leg_price_sen ?? 0) : 0,
@@ -8124,8 +8124,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
         fieldChanges: [
           { field: 'itemCode', to: String(firstRow.item_code ?? itemCodeStr) },
           { field: 'qty', to: qty },
-          { field: 'unitPriceCenti', to: unit },
-          { field: 'totalCenti', to: lineTotal },
+          { field: 'unitPriceSen', to: unit },
+          { field: 'totalSen', to: lineTotal },
         ],
       });
 
@@ -8178,8 +8178,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     fieldChanges: [
       { field: 'itemCode', to: row.item_code },
       { field: 'qty', to: row.qty },
-      { field: 'unitPriceCenti', to: row.unit_price_centi },
-      { field: 'totalCenti', to: row.total_centi },
+      { field: 'unitPriceSen', to: row.unit_price_sen },
+      { field: 'totalSen', to: row.total_sen },
     ],
   });
 
@@ -8247,7 +8247,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   // human-facing columns (item_code, description, uom) for the audit diff.
   const { data: prev } = await scopeSoItemToDocument(
     sb.from('mfg_sales_order_items')
-      .select('qty, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, description2, uom, variants, remark, cancelled'),
+      .select('qty, unit_price_sen, discount_sen, unit_cost_sen, item_code, item_group, description, description2, uom, variants, remark, cancelled'),
     docNo,
     itemId,
   ).maybeSingle();
@@ -8282,11 +8282,11 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       reason: 'A PWP reward line redeems one unit per code — quantity stays 1.',
     }, 422);
   }
-  const clientUnit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : prev.unit_price_centi;
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : prev.discount_centi;
+  const clientUnit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : prev.unit_price_sen;
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : prev.discount_sen;
 
   /* MFG-PRICING-ENGINE — Server-side recompute on PATCH. Triggered when
-     the caller touches variants OR unitPriceCenti (qty alone doesn't move
+     the caller touches variants OR unitPriceSen (qty alone doesn't move
      the unit price). For variant-driven edits we use the merged item shape
      (prev + patch) so omitted variants stay sticky. The manual-override
      audit path (POST /:docNo/items/:itemId/override → mfg_so_price_overrides)
@@ -8319,7 +8319,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   const variantsChanged = it.variants !== undefined
     && canonJson(variantsAfter ?? null) !== canonJson((prev as { variants?: unknown }).variants ?? null);
   const itemCodeChangedOnPatch = it.itemCode !== undefined && String(it.itemCode) !== prev.item_code;
-  const priceChanged = it.unitPriceCenti !== undefined && Number(it.unitPriceCenti) !== prev.unit_price_centi;
+  const priceChanged = it.unitPriceSen !== undefined && Number(it.unitPriceSen) !== prev.unit_price_sen;
   const shouldRecompute = variantsChanged || itemCodeChangedOnPatch || priceChanged;
 
   /* PR #216 — allowed_options check on PATCH. Only when the caller actually
@@ -8404,7 +8404,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
         itemCode:       itemCodeAfter,
         itemGroup:      itemGroupAfter,
         qty,
-        unitPriceCenti: clientUnit,
+        unitPriceSen: clientUnit,
         variants:       variantsAfter,
       },
       prodLite,
@@ -8461,7 +8461,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
        Backend, not being a POS tablet, would save that silently — turning a
        RM490 加购 into RM990 with no warning (Loo 2026-06-28). */
     : prevIsReward
-    ? prev.unit_price_centi
+    ? prev.unit_price_sen
     : (recomputedPatch ? recomputedPatch.unit_price_sen : clientUnit);
   /* Audit 2026-06-11 C-2 — same discount gate as POST /: the effective
      (patch-else-stored) discount must sit in [0, qty × unit] against the
@@ -8469,7 +8469,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   if (!Number.isFinite(discount) || discount < 0 || discount > qty * unit) {
     return c.json({
       error:    'invalid_discount',
-      reason:   'discountCenti must be between 0 and qty × unit price.',
+      reason:   'discountSen must be between 0 and qty × unit price.',
       itemCode: itemCodeAfter,
       discount,
       max:      qty * unit,
@@ -8479,15 +8479,15 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
      relayed 2026-08-18: a POS caller may lower a line. `posTablet` still gates
      the pricing_drift check below, which is a different rule and stays. */
   /* Commander 2026-05-28 — cost snapshot on PATCH. Order of precedence:
-       1. Client sent unitCostCenti > 0 → use it (explicit override).
+       1. Client sent unitCostSen > 0 → use it (explicit override).
        2. A recompute ran (variants/itemCode/price touched) AND produced a
           cost > 0 → use the server-computed cost (base + Σ backend priceSen
           surcharges via computeMfgLineCost). This is the source of truth.
        3. Client changed itemCode but recompute had no cost → re-snapshot
           mfg_products under the new code.
-       4. Otherwise keep the prior unit_cost_centi unchanged. */
+       4. Otherwise keep the prior unit_cost_sen unchanged. */
   let unitCost: number;
-  const explicitCost = it.unitCostCenti !== undefined ? Number(it.unitCostCenti) : 0;
+  const explicitCost = it.unitCostSen !== undefined ? Number(it.unitCostSen) : 0;
   const itemCodeChanged = it.itemCode !== undefined && it.itemCode !== prev.item_code;
   if (explicitCost > 0) {
     unitCost = explicitCost;
@@ -8496,19 +8496,19 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   } else if (itemCodeChanged) {
     unitCost = await snapshotUnitCostSen(sb, String(it.itemCode ?? ''), 0, c);
   } else {
-    /* Case 4 "keep the prior cost" — a legacy row whose unit_cost_centi was
+    /* Case 4 "keep the prior cost" — a legacy row whose unit_cost_sen was
        never stamped reads back null/undefined here, and `undefined * qty` is
-       NaN, which then rides into line_cost_centi / line_margin_centi and the
+       NaN, which then rides into line_cost_sen / line_margin_sen and the
        header roll-up. Unknown prior cost = 0. */
-    unitCost = senOrZero(prev.unit_cost_centi);
+    unitCost = senOrZero(prev.unit_cost_sen);
   }
   const lineTotal = senOrZero((qty * unit) - discount);
   const lineCost = senOrZero(unitCost * qty);
 
   const updates: Record<string, unknown> = {
-    qty, unit_price_centi: unit, discount_centi: discount, unit_cost_centi: unitCost,
-    total_centi: lineTotal, total_inc_centi: lineTotal, balance_centi: lineTotal,
-    line_cost_centi: lineCost, line_margin_centi: lineTotal - lineCost,
+    qty, unit_price_sen: unit, discount_sen: discount, unit_cost_sen: unitCost,
+    total_sen: lineTotal, total_inc_sen: lineTotal, balance_sen: lineTotal,
+    line_cost_sen: lineCost, line_margin_sen: lineTotal - lineCost,
   };
   // MFG-PRICING-ENGINE — Refresh the persisted breakdown columns when we
   // ran a recompute. Without this they'd drift from `variants` over time.
@@ -8664,12 +8664,12 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
   // the row is the source of truth for which keys belong to this line.
   const { data: prev } = await scopeSoItemToDocument(
     sb.from('mfg_sales_order_items')
-      .select('item_code, qty, unit_price_centi, total_centi, photo_urls, cancelled'),
+      .select('item_code, qty, unit_price_sen, total_sen, photo_urls, cancelled'),
     docNo,
     itemId,
   ).maybeSingle();
   const prevTyped = prev as
-    | { item_code: string; qty: number; unit_price_centi: number; total_centi: number; photo_urls: string[] | null; cancelled?: boolean }
+    | { item_code: string; qty: number; unit_price_sen: number; total_sen: number; photo_urls: string[] | null; cancelled?: boolean }
     | null;
 
   /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
@@ -8722,8 +8722,8 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
       fieldChanges: [
         { field: 'itemCode', from: prevTyped.item_code },
         { field: 'qty', from: prevTyped.qty },
-        { field: 'unitPriceCenti', from: prevTyped.unit_price_centi },
-        { field: 'totalCenti', from: prevTyped.total_centi },
+        { field: 'unitPriceSen', from: prevTyped.unit_price_sen },
+        { field: 'totalSen', from: prevTyped.total_sen },
         // Task #93 — note the photo cleanup so the timeline shows
         // "deleted N photos" alongside the line removal.
         ...(photoKeys.length > 0
@@ -8806,7 +8806,7 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
   }
 
   const { data: prev } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code, item_group, qty, unit_price_centi, discount_centi, unit_cost_centi, variants, cancelled')
+    .select('id, item_code, item_group, qty, unit_price_sen, discount_sen, unit_cost_sen, variants, cancelled')
     .eq('id', itemId).eq('doc_no', docNo).maybeSingle();
   if (!prev) return c.json({ error: 'not_found' }, 404);
   if (prev.cancelled) return c.json({ error: 'line_cancelled' }, 409);
@@ -8862,7 +8862,7 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
         itemCode:       prev.item_code,
         itemGroup:      String(prev.item_group ?? 'others'),
         qty:            Number(prev.qty),
-        unitPriceCenti: Number(prev.unit_price_centi),
+        unitPriceSen: Number(prev.unit_price_sen),
         variants:       variants as MfgItemForRecompute['variants'],
       },
       prodLite, fab, cfg, null, null, null, null, null, null, specialDefs, null, null,
@@ -8903,12 +8903,12 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
     }
   }
   const tbcOverride = resolveFabricTierOverride(tbcCells, tbcBaseOverride, compartmentOverrides ?? new Map());
-  const tierDeltaCenti = (addonCfg && (category === 'SOFA' || category === 'BEDFRAME'))
+  const tierDeltaSen = (addonCfg && (category === 'SOFA' || category === 'BEDFRAME'))
     ? (fabricTierAddon(category, (category === 'SOFA' ? tiersNext?.sofaTier : tiersNext?.bedframeTier) ?? null, addonCfg, tbcOverride)
      - fabricTierAddon(category, (category === 'SOFA' ? tiersPrev?.sofaTier : tiersPrev?.bedframeTier) ?? null, addonCfg, tbcOverride)) * 100
     : 0;
-  const sellingDeltaCenti = (after.breakdown.unitPriceSen - before.breakdown.unitPriceSen) + tierDeltaCenti;
-  const costDeltaCenti = after.unit_cost_sen - before.unit_cost_sen;
+  const sellingDeltaSen = (after.breakdown.unitPriceSen - before.breakdown.unitPriceSen) + tierDeltaSen;
+  const costDeltaSen = after.unit_cost_sen - before.unit_cost_sen;
 
   /* Task 6 — grandfathering: a line carrying variants.freeItem was made free
      at create time and must STAY at RM 0 regardless of any fabric/option delta.
@@ -8917,7 +8917,7 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
   /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
      relayed 2026-08-18. A TBC edit may lower the line. */
   const qty = Number(prev.qty);
-  const newUnit = isFreeItemGrandfathered ? 0 : Math.max(0, Number(prev.unit_price_centi) + sellingDeltaCenti);
+  const newUnit = isFreeItemGrandfathered ? 0 : Math.max(0, Number(prev.unit_price_sen) + sellingDeltaSen);
   /* The unit price just MOVED and the stored discount did not. newUnit is
      clamped at 0, newTotal is not, so a variant edit that LOWERS the price drives
      the line total NEGATIVE — and downstream Math.max(0, ...) then deletes the
@@ -8925,7 +8925,7 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
      in this file already sets that house rule (discount invariant:
      0 <= discount <= qty * unit), and silently shrinking a discount changes the
      money without telling anyone. */
-  const prevDiscount = Number(prev.discount_centi ?? 0);
+  const prevDiscount = Number(prev.discount_sen ?? 0);
   if (prevDiscount > qty * newUnit) {
     return c.json({
       error: 'discount_exceeds_new_price',
@@ -8937,17 +8937,17 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
     }, 422);
   }
   const newTotal = (qty * newUnit) - prevDiscount;
-  const newUnitCost = Math.max(0, Number(prev.unit_cost_centi ?? 0) + costDeltaCenti);
+  const newUnitCost = Math.max(0, Number(prev.unit_cost_sen ?? 0) + costDeltaSen);
   const { error: upErr } = await sb.from('mfg_sales_order_items').update({
     variants: nextVariants,
     description2: buildVariantSummary(String(prev.item_group ?? ''), nextVariants) || null,
-    unit_price_centi: newUnit,
-    total_centi: newTotal,
-    total_inc_centi: newTotal,
-    balance_centi: newTotal,
-    unit_cost_centi: newUnitCost,
-    line_cost_centi: newUnitCost * qty,
-    line_margin_centi: newTotal - (newUnitCost * qty),
+    unit_price_sen: newUnit,
+    total_sen: newTotal,
+    total_inc_sen: newTotal,
+    balance_sen: newTotal,
+    unit_cost_sen: newUnitCost,
+    line_cost_sen: newUnitCost * qty,
+    line_margin_sen: newTotal - (newUnitCost * qty),
     divan_price_sen: after.breakdown.divanSurchargeSen,
     leg_price_sen: after.breakdown.legSurchargeSen,
     special_order_price_sen: after.breakdown.specialsSurchargeSen,
@@ -9002,14 +9002,14 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
         from: buildVariantSummary(String(prev.item_group ?? ''), (prev.variants ?? null) as Record<string, unknown> | null) || null,
         to: buildVariantSummary(String(prev.item_group ?? ''), nextVariants) || null,
       },
-      ...(sellingDeltaCenti !== 0
-        ? [{ field: 'unitPriceCenti', from: prev.unit_price_centi, to: newUnit } satisfies FieldChange]
+      ...(sellingDeltaSen !== 0
+        ? [{ field: 'unitPriceSen', from: prev.unit_price_sen, to: newUnit } satisfies FieldChange]
         : []),
     ],
   });
 
   await scheduleStockAllocationAfterCommand(c, sb, `tbc-update:${docNo}`);
-  return c.json({ ok: true, unitPriceCenti: newUnit, deltaCenti: sellingDeltaCenti, totalCenti: newTotal });
+  return c.json({ ok: true, unitPriceSen: newUnit, deltaSen: sellingDeltaSen, totalSen: newTotal });
 }
 mfgSalesOrders.post('/:docNo/items/:itemId/tbc-update', async (c) => {
   const company = requireActiveCompanyId(c);
@@ -9052,7 +9052,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   }
 
   const { data: prev } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code, item_group, qty, unit_price_centi, discount_centi, total_centi, variants, cancelled')
+    .select('id, item_code, item_group, qty, unit_price_sen, discount_sen, total_sen, variants, cancelled')
     .eq('id', itemId).eq('doc_no', docNo).maybeSingle();
   if (!prev) return c.json({ error: 'not_found' }, 404);
   if (prev.cancelled) return c.json({ error: 'line_cancelled' }, 409);
@@ -9103,8 +9103,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   };
   type SwapRewardRevertLine = {
     id: string; item_code: string; item_group: string; qty: number;
-    unit_price_centi: number; discount_centi: number | null;
-    unit_cost_centi: number | null; variants: Record<string, unknown> | null;
+    unit_price_sen: number; discount_sen: number | null;
+    unit_cost_sen: number | null; variants: Record<string, unknown> | null;
   };
   let triggerCodesToRestamp: string[] = [];
   const pwpDeleteCodes: string[] = [];
@@ -9216,7 +9216,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
         }
         if (pwpRevertCodes.length > 0) {
           const { data: pwpLines } = await sb.from('mfg_sales_order_items')
-            .select('id, item_code, item_group, qty, unit_price_centi, discount_centi, unit_cost_centi, variants')
+            .select('id, item_code, item_group, qty, unit_price_sen, discount_sen, unit_cost_sen, variants')
             .eq('doc_no', docNo).eq('cancelled', false)
             .filter('variants->>pwp', 'eq', 'true');
           const revertSet = new Set(pwpRevertCodes);
@@ -9257,7 +9257,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   }
 
   const qty = Number(prev.qty);
-  const discount = Number(prev.discount_centi ?? 0);
+  const discount = Number(prev.discount_sen ?? 0);
   // Same invariant as the price-override path and the variant edit above: a SWAP
   // to a cheaper SKU must not strand a discount that no longer fits, because the
   // negative total is then clamped away downstream.
@@ -9281,13 +9281,13 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     description: prod.name,
     description2: null,
     variants: variantsAfterSwap,
-    unit_price_centi: unitSen,
-    total_centi: newTotal,
-    total_inc_centi: newTotal,
-    balance_centi: newTotal,
-    unit_cost_centi: newCost,
-    line_cost_centi: newCost * qty,
-    line_margin_centi: newTotal - (newCost * qty),
+    unit_price_sen: unitSen,
+    total_sen: newTotal,
+    total_inc_sen: newTotal,
+    balance_sen: newTotal,
+    unit_cost_sen: newCost,
+    line_cost_sen: newCost * qty,
+    line_margin_sen: newTotal - (newCost * qty),
     divan_price_sen: 0,
     leg_price_sen: 0,
     special_order_price_sen: 0,
@@ -9320,8 +9320,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     const { id: uid, ...cols } = u;
     const { error } = await sb.from('mfg_sales_order_items').update({
       ...cols,
-      total_inc_centi: cols.total_centi,
-      balance_centi: cols.total_centi,
+      total_inc_sen: cols.total_sen,
+      balance_sen: cols.total_sen,
     }).eq('id', uid);
     throwAtomicCommandWrite(sb, error, `TBC sofa reward revert failed for ${uid}`);
     if (error) console.error('[tbc-swap] sofa reward revert failed for', uid, error.message); // eslint-disable-line no-console
@@ -9347,22 +9347,22 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
         loadFabricSellingTiers(sb, (v.fabricId as string | undefined) ?? null),
       ]);
       const rec = recomputeFromSnapshot(
-        { itemCode: line.item_code, itemGroup: String(line.item_group ?? 'others'), qty: Number(line.qty), unitPriceCenti: 0, variants: v as MfgItemForRecompute['variants'] },
+        { itemCode: line.item_code, itemGroup: String(line.item_group ?? 'others'), qty: Number(line.qty), unitPriceSen: 0, variants: v as MfgItemForRecompute['variants'] },
         rp, rfab, cfgX, null, null, rtiers, addonCfgX, null, null, specialDefsX, null, modelOverridesX, compartmentOverridesX,
       );
-      const revertUnit = rec.unit_price_sen > 0 ? rec.unit_price_sen : Number(line.unit_price_centi);
+      const revertUnit = rec.unit_price_sen > 0 ? rec.unit_price_sen : Number(line.unit_price_sen);
       const lqty = Number(line.qty);
-      const ldisc = Number(line.discount_centi ?? 0);
+      const ldisc = Number(line.discount_sen ?? 0);
       const lTotal = (lqty * revertUnit) - ldisc;
-      const lCost = Number(line.unit_cost_centi ?? 0);
+      const lCost = Number(line.unit_cost_sen ?? 0);
       const { error } = await sb.from('mfg_sales_order_items').update({
         variants: v,
         description2: buildVariantSummary(String(line.item_group ?? ''), v) || null,
-        unit_price_centi: revertUnit,
-        total_centi: lTotal,
-        total_inc_centi: lTotal,
-        balance_centi: lTotal,
-        line_margin_centi: lTotal - (lCost * lqty),
+        unit_price_sen: revertUnit,
+        total_sen: lTotal,
+        total_inc_sen: lTotal,
+        balance_sen: lTotal,
+        line_margin_sen: lTotal - (lCost * lqty),
         divan_price_sen: rec.breakdown.divanSurchargeSen,
         leg_price_sen: rec.breakdown.legSurchargeSen,
         special_order_price_sen: rec.breakdown.specialsSurchargeSen,
@@ -9443,8 +9443,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     actorName: (user.user_metadata as { name?: string } | undefined)?.name ?? null,
     fieldChanges: [
       { field: 'itemCode', from: prev.item_code, to: newCode },
-      { field: 'unitPriceCenti', from: prev.unit_price_centi, to: unitSen },
-      { field: 'totalCenti', from: prev.total_centi, to: newTotal },
+      { field: 'unitPriceSen', from: prev.unit_price_sen, to: unitSen },
+      { field: 'totalSen', from: prev.total_sen, to: newTotal },
       ...(rewardPwpCode ? [{ field: 'pwpCode', to: rewardPwpCode } satisfies FieldChange] : []),
       ...(pwpRevertCodes.length > 0
         ? [{ field: 'pwpRewardsReverted', to: pwpRevertCodes.join(', ') } satisfies FieldChange] : []),
@@ -9461,8 +9461,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   return c.json({
     ok: true,
     itemCode: newCode,
-    unitPriceCenti: unitSen,
-    totalCenti: newTotal,
+    unitPriceSen: unitSen,
+    totalSen: newTotal,
     pwp: {
       kept: triggerCodesToRestamp.length,
       reverted: pwpRevertCodes.length,
@@ -9493,9 +9493,9 @@ mfgSalesOrders.post('/:docNo/items/:itemId/tbc-swap', async (c) => {
    mismatch) returns ok:false and the caller blocks for the coordinator. */
 type SofaRewardRevertUpdate = {
   id: string;
-  unit_price_centi: number;
-  total_centi: number;
-  line_margin_centi: number;
+  unit_price_sen: number;
+  total_sen: number;
+  line_margin_sen: number;
   variants: Record<string, unknown>;
   description2: string | null;
   divan_price_sen: number;
@@ -9510,13 +9510,13 @@ async function planSofaRewardRevert(
   c: any,
 ): Promise<{ ok: true; updates: SofaRewardRevertUpdate[] } | { ok: false }> {
   const { data } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code, item_group, qty, unit_price_centi, discount_centi, unit_cost_centi, line_cost_centi, variants')
+    .select('id, item_code, item_group, qty, unit_price_sen, discount_sen, unit_cost_sen, line_cost_sen, variants')
     .eq('doc_no', docNo).eq('cancelled', false)
     .filter('variants->>pwpCode', 'eq', pwpCode);
   type Row = {
     id: string; item_code: string; item_group: string; qty: number;
-    unit_price_centi: number; discount_centi: number | null;
-    unit_cost_centi: number | null; line_cost_centi: number | null;
+    unit_price_sen: number; discount_sen: number | null;
+    unit_cost_sen: number | null; line_cost_sen: number | null;
     variants: Record<string, unknown> | null;
   };
   const lines = (((data ?? []) as Row[]))
@@ -9561,7 +9561,7 @@ async function planSofaRewardRevert(
   delete pricingVariants.buildKey; delete pricingVariants.cellIndex;
   delete pricingVariants.x; delete pricingVariants.y; delete pricingVariants.rot;
   const rec = recomputeFromSnapshot(
-    { itemCode: lead.item_code, itemGroup: 'sofa', qty: Number(lead.qty), unitPriceCenti: 0, variants: pricingVariants as MfgItemForRecompute['variants'] },
+    { itemCode: lead.item_code, itemGroup: 'sofa', qty: Number(lead.qty), unitPriceSen: 0, variants: pricingVariants as MfgItemForRecompute['variants'] },
     prodLite, fabLite, cfg, combos, modulePrices, sellingTiers, addonCfg,
     null, null,   // NO pwp grant — this IS the revert
     specialDefs, null, modelOverridesLead,
@@ -9580,14 +9580,14 @@ async function planSofaRewardRevert(
     delete v.pwp; delete v.pwpCode; delete v.pwpTriggerLabel;
     const unitSenI = split[i]!.unitPriceSen;
     const lqty = Number(l.qty);
-    const ldisc = Number(l.discount_centi ?? 0);
+    const ldisc = Number(l.discount_sen ?? 0);
     const lTotal = (lqty * unitSenI) - ldisc;
-    const lCost = Number(l.line_cost_centi ?? (Number(l.unit_cost_centi ?? 0) * lqty));
+    const lCost = Number(l.line_cost_sen ?? (Number(l.unit_cost_sen ?? 0) * lqty));
     return {
       id: l.id,
-      unit_price_centi: unitSenI,
-      total_centi: lTotal,
-      line_margin_centi: lTotal - lCost,
+      unit_price_sen: unitSenI,
+      total_sen: lTotal,
+      line_margin_sen: lTotal - lCost,
       variants: v,
       description2: buildVariantSummary('sofa', v) || null,
       divan_price_sen: i === 0 ? rec.breakdown.divanSurchargeSen : 0,
@@ -9615,7 +9615,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId'); const user = c.get('user');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const item = (body.item ?? null) as { itemCode?: unknown; qty?: unknown; unitPriceCenti?: unknown; description?: unknown; variants?: Record<string, unknown> | null } | null;
+  const item = (body.item ?? null) as { itemCode?: unknown; qty?: unknown; unitPriceSen?: unknown; description?: unknown; variants?: Record<string, unknown> | null } | null;
   const newCode = String(item?.itemCode ?? '').trim();
   if (!item || !newCode) return c.json({ error: 'item_code_required' }, 400);
 
@@ -9635,11 +9635,11 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   if (leaseBlocked) return leaseBlocked;
 
   const { data: prevRow } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code, item_group, qty, discount_centi, total_centi, variants, cancelled, line_date, debtor_code, debtor_name, agent, venue, branding, line_delivery_date, line_delivery_date_overridden, warehouse_id, remark')
+    .select('id, item_code, item_group, qty, discount_sen, total_sen, variants, cancelled, line_date, debtor_code, debtor_name, agent, venue, branding, line_delivery_date, line_delivery_date_overridden, warehouse_id, remark')
     .eq('id', itemId).eq('doc_no', docNo).maybeSingle();
   const prev = prevRow as {
-    id: string; item_code: string; item_group: string; qty: number; discount_centi: number | null;
-    total_centi: number | null; variants: Record<string, unknown> | null; cancelled: boolean;
+    id: string; item_code: string; item_group: string; qty: number; discount_sen: number | null;
+    total_sen: number | null; variants: Record<string, unknown> | null; cancelled: boolean;
     line_date: string | null; debtor_code: string | null; debtor_name: string | null; agent: string | null;
     venue: string | null; branding: string | null; line_delivery_date: string | null;
     line_delivery_date_overridden: boolean | null; warehouse_id: string | null; remark: string | null;
@@ -9654,17 +9654,17 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
 
   /* The whole OLD build — every non-cancelled line sharing the buildKey
      (legacy single-line sofas have no buildKey → just the requested line). */
-  let oldLines: Array<{ id: string; item_code: string; total_centi: number | null; variants: Record<string, unknown> | null; photo_urls: string[] | null; line_no?: number | null }> = [];
+  let oldLines: Array<{ id: string; item_code: string; total_sen: number | null; variants: Record<string, unknown> | null; photo_urls: string[] | null; line_no?: number | null }> = [];
   if (buildKey) {
     const { data: rows } = await sb.from('mfg_sales_order_items')
-      .select('id, item_code, total_centi, variants, photo_urls, line_no')
+      .select('id, item_code, total_sen, variants, photo_urls, line_no')
       .eq('doc_no', docNo).eq('cancelled', false)
       .filter('variants->>buildKey', 'eq', buildKey);
     oldLines = ((rows ?? []) as typeof oldLines);
   }
   if (oldLines.length === 0) {
     const { data: solo } = await sb.from('mfg_sales_order_items')
-      .select('id, item_code, total_centi, variants, photo_urls, line_no').eq('id', itemId).maybeSingle();
+      .select('id, item_code, total_sen, variants, photo_urls, line_no').eq('id', itemId).maybeSingle();
     if (solo) oldLines = [solo as (typeof oldLines)[number]];
   }
   /* PWP REWARD build (Loo 2026-06-12) — exchangeable: the new build
@@ -9741,7 +9741,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     loadCompartmentFabricTierOverrides(sb), // migration 0025 — per-compartment Δ
   ]);
   const qty = Math.max(1, Math.floor(Number(item.qty ?? 1)));
-  const clientUnit = Math.max(0, Math.round(Number(item.unitPriceCenti ?? 0)));
+  const clientUnit = Math.max(0, Math.round(Number(item.unitPriceSen ?? 0)));
   /* Does the NEW build match one of the voucher's reward combos? Same
      matcher the engine + POS use. Matched -> the recompute charges those
      combos' PWP prices (pwpSofaComboIds); unmatched -> normal selling. */
@@ -9757,7 +9757,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     });
   })();
   const recomputed = recomputeFromSnapshot(
-    { itemCode: newCode, itemGroup: 'sofa', qty, unitPriceCenti: clientUnit, variants: newVariants as MfgItemForRecompute['variants'] },
+    { itemCode: newCode, itemGroup: 'sofa', qty, unitPriceSen: clientUnit, variants: newVariants as MfgItemForRecompute['variants'] },
     prodLite, fabLite, cfg, combos, modulePrices, sellingTiers, fabricAddonCfg,
     null,
     rewardComboMatch && rewardCtx ? rewardCtx.comboIds : null,
@@ -9782,7 +9782,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   const unitCost = recomputed.unit_cost_sen > 0
     ? recomputed.unit_cost_sen
     : await snapshotUnitCostSen(sb, newCode, 0, c);
-  const discount = Number(prev.discount_centi ?? 0);
+  const discount = Number(prev.discount_sen ?? 0);
   // Same invariant as :6199 / the variant edit / the product swap — a sofa
   // exchange to a cheaper build must not strand a discount that no longer fits.
   if (discount > qty * unit) {
@@ -9796,7 +9796,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     }, 422);
   }
   const newBuildTotal = (qty * unit) - discount;
-  const oldBuildTotal = oldLines.reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
+  const oldBuildTotal = oldLines.reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
   /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
      relayed 2026-08-18. A sofa may be exchanged for a cheaper build.
      `posTablet` above still gates the pricing_drift check, which stays.
@@ -9854,8 +9854,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   };
   type RewardRevertLine = {
     id: string; item_code: string; item_group: string; qty: number;
-    unit_price_centi: number; discount_centi: number | null;
-    unit_cost_centi: number | null; variants: Record<string, unknown> | null;
+    unit_price_sen: number; discount_sen: number | null;
+    unit_cost_sen: number | null; variants: Record<string, unknown> | null;
   };
   const pwpKeepCodes: string[] = [];
   const pwpDeleteCodes: string[] = [];
@@ -9931,7 +9931,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     }
     if (pwpRevertCodes.length > 0) {
       const { data: pwpLines } = await sb.from('mfg_sales_order_items')
-        .select('id, item_code, item_group, qty, unit_price_centi, discount_centi, unit_cost_centi, variants')
+        .select('id, item_code, item_group, qty, unit_price_sen, discount_sen, unit_cost_sen, variants')
         .eq('doc_no', docNo).eq('cancelled', false)
         .filter('variants->>pwp', 'eq', 'true');
       const revertSet = new Set(pwpRevertCodes);
@@ -9993,15 +9993,15 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
         item_code: s.itemCode,
         description: s.description,
         description2: buildVariantSummary('sofa', moduleVariants) || null,
-        unit_price_centi: s.unitPriceSen,
-        discount_centi: moduleDiscounts[i] ?? 0,
-        total_centi: moduleLineTotal,
-        total_inc_centi: moduleLineTotal,
-        balance_centi: moduleLineTotal,
+        unit_price_sen: s.unitPriceSen,
+        discount_sen: moduleDiscounts[i] ?? 0,
+        total_sen: moduleLineTotal,
+        total_inc_sen: moduleLineTotal,
+        balance_sen: moduleLineTotal,
         variants: moduleVariants,
-        unit_cost_centi: s.unitCostSen,
-        line_cost_centi: moduleLineCost,
-        line_margin_centi: moduleLineTotal - moduleLineCost,
+        unit_cost_sen: s.unitCostSen,
+        line_cost_sen: moduleLineCost,
+        line_margin_sen: moduleLineTotal - moduleLineCost,
         divan_price_sen: i === 0 ? recomputed.breakdown.divanSurchargeSen : 0,
         leg_price_sen: i === 0 ? recomputed.breakdown.legSurchargeSen : 0,
         special_order_price_sen: i === 0 ? recomputed.breakdown.specialsSurchargeSen : 0,
@@ -10016,15 +10016,15 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
       item_code: newCode,
       description: String(item.description ?? newCode),
       description2: buildVariantSummary('sofa', persistVariants) || null,
-      unit_price_centi: unit,
-      discount_centi: discount,
-      total_centi: lineTotal,
-      total_inc_centi: lineTotal,
-      balance_centi: lineTotal,
+      unit_price_sen: unit,
+      discount_sen: discount,
+      total_sen: lineTotal,
+      total_inc_sen: lineTotal,
+      balance_sen: lineTotal,
       variants: persistVariants,
-      unit_cost_centi: unitCost,
-      line_cost_centi: unitCost * qty,
-      line_margin_centi: lineTotal - (unitCost * qty),
+      unit_cost_sen: unitCost,
+      line_cost_sen: unitCost * qty,
+      line_margin_sen: lineTotal - (unitCost * qty),
       divan_price_sen: recomputed.breakdown.divanSurchargeSen,
       leg_price_sen: recomputed.breakdown.legSurchargeSen,
       special_order_price_sen: recomputed.breakdown.specialsSurchargeSen,
@@ -10108,8 +10108,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     const { id: uid, ...cols } = u;
     const { error } = await sb.from('mfg_sales_order_items').update({
       ...cols,
-      total_inc_centi: cols.total_centi,
-      balance_centi: cols.total_centi,
+      total_inc_sen: cols.total_sen,
+      balance_sen: cols.total_sen,
     }).eq('id', uid);
     throwAtomicCommandWrite(sb, error, `TBC sofa reward revert failed for ${uid}`);
     if (error) console.error('[tbc-swap-sofa] sofa reward revert failed for', uid, error.message); // eslint-disable-line no-console
@@ -10152,22 +10152,22 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
         loadFabricSellingTiers(sb, (v.fabricId as string | undefined) ?? null),
       ]);
       const rec = recomputeFromSnapshot(
-        { itemCode: line.item_code, itemGroup: String(line.item_group ?? 'others'), qty: Number(line.qty), unitPriceCenti: 0, variants: v as MfgItemForRecompute['variants'] },
+        { itemCode: line.item_code, itemGroup: String(line.item_group ?? 'others'), qty: Number(line.qty), unitPriceSen: 0, variants: v as MfgItemForRecompute['variants'] },
         rp, rfab, cfg, null, null, rtiers, fabricAddonCfg, null, null, specialDefs, null, modelOverridesSwap, compartmentOverridesSwap,
       );
-      const revertUnit = rec.unit_price_sen > 0 ? rec.unit_price_sen : Number(line.unit_price_centi);
+      const revertUnit = rec.unit_price_sen > 0 ? rec.unit_price_sen : Number(line.unit_price_sen);
       const lqty = Number(line.qty);
-      const ldisc = Number(line.discount_centi ?? 0);
+      const ldisc = Number(line.discount_sen ?? 0);
       const lTotal = (lqty * revertUnit) - ldisc;
-      const lCost = Number(line.unit_cost_centi ?? 0);
+      const lCost = Number(line.unit_cost_sen ?? 0);
       const { error } = await sb.from('mfg_sales_order_items').update({
         variants: v,
         description2: buildVariantSummary(String(line.item_group ?? ''), v) || null,
-        unit_price_centi: revertUnit,
-        total_centi: lTotal,
-        total_inc_centi: lTotal,
-        balance_centi: lTotal,
-        line_margin_centi: lTotal - (lCost * lqty),
+        unit_price_sen: revertUnit,
+        total_sen: lTotal,
+        total_inc_sen: lTotal,
+        balance_sen: lTotal,
+        line_margin_sen: lTotal - (lCost * lqty),
         divan_price_sen: rec.breakdown.divanSurchargeSen,
         leg_price_sen: rec.breakdown.legSurchargeSen,
         special_order_price_sen: rec.breakdown.specialsSurchargeSen,
@@ -10248,7 +10248,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     fieldChanges: [
       { field: 'itemCode', from: prev.item_code, to: split?.[0]?.itemCode ?? newCode },
       { field: 'sofaBuild', from: `${oldLines.length} lines`, to: `${rows.length} lines` },
-      { field: 'totalCenti', from: oldBuildTotal, to: newBuildTotal },
+      { field: 'totalSen', from: oldBuildTotal, to: newBuildTotal },
       ...(pwpRevertCodes.length > 0
         ? [{ field: 'pwpRewardsReverted', to: pwpRevertCodes.join(', ') } satisfies FieldChange] : []),
       ...(pwpDeleteCodes.length > 0
@@ -10271,7 +10271,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
 
   return c.json({
     ok: true,
-    totalCenti: newBuildTotal,
+    totalSen: newBuildTotal,
     lines: rows.length,
     soLinks: soLinkResult,
     pwp: {
@@ -10652,7 +10652,7 @@ mfgSalesOrders.delete('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
 //
 // HOOKKA-style transaction ledger per SO. Each row is one receipt /
 // auth slip. UI lists them, sums into a "Deposit Paid" total, and the
-// balance computes from header.local_total_centi − sum(amount_centi).
+// balance computes from header.local_total_sen − sum(amount_sen).
 //
 // Legacy single-row payment fields on mfg_sales_orders (payment_method,
 mfgSalesOrders.get('/:docNo/payments', async (c) => {
@@ -10696,7 +10696,7 @@ const paymentCreateSchema = z.object({
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
   approvalCode:       z.string().optional().nullable(),
-  amountCenti:        z.number().int().nonnegative(),
+  amountSen:        z.number().int().nonnegative(),
   accountSheet:       z.string().optional().nullable(),
   collectedBy:        z.string().uuid().optional().nullable(),
   note:               z.string().optional().nullable(),
@@ -10737,7 +10737,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
      legitimate one-shot card payment; the Plan is deliberately NOT gated. Slip
      stays optional (owner 2026-07-13). Only amount > 0 rows are checked, matching
      the desktop guard (a zeroed row carries no method commitment). */
-  if (p.amountCenti > 0) {
+  if (p.amountSen > 0) {
     let missing: string | null = null;
     let methodName = '';
     if (p.method === 'merchant' && !p.merchantProvider?.trim()) { missing = 'bank'; methodName = 'card / merchant'; }
@@ -10751,7 +10751,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
   }
 
   /* OVER-COLLECTION IS ALLOWED (owner 2026-08-16). Spec D6's guard used to
-     refuse Σ(ledger) + this payment > total_revenue_centi. It is deleted, not
+     refuse Σ(ledger) + this payment > total_revenue_sen. It is deleted, not
      relaxed, and the two reads it needed went with it.
 
      WHAT THE GUARD ACTUALLY COST. It never stopped an over-collection; it
@@ -10759,7 +10759,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
      already in hand was to go back and re-price the ORDER until the total
      covered it — which is what happened to HC-SO-2608-002 on 2026-08-16:
      UPDATE_LINE at 08:26:22 put RM 250 of "Right Drawer" special onto a
-     JAGER-(K) line (unitPriceCenti 0 → 25000), and the RM 2,250 payment landed
+     JAGER-(K) line (unitPriceSen 0 → 25000), and the RM 2,250 payment landed
      76 seconds later at 08:27:38, accepted because the total was now exactly
      425000. The receipt balanced and the customer's order silently grew a
      drawer he never bought. Refusing money the business is holding does not
@@ -10767,7 +10767,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
      manufactured and delivered.
 
      So the excess is simply recorded, and the balance goes negative (red on
-     the screen: soBalanceCenti). Nothing here touches lines, prices or the
+     the screen: soBalanceSen). Nothing here touches lines, prices or the
      order total — a payment is a payment. */
 
   /* Owner 2026-07-13 — the slip is OPTIONAL here, and since 2026-08-13 it is
@@ -10808,7 +10808,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
     installmentMonths: p.installmentMonths,
     onlineType:        p.onlineType,
     approvalCode:      p.approvalCode,
-    amountCenti:       p.amountCenti,
+    amountSen:       p.amountSen,
     accountSheet:      p.accountSheet,
     slipKey:           paymentSlipKey,
     collectedBy:       p.collectedBy,
@@ -10853,7 +10853,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
    approval code, collected-by. The whole editable set is rewritten each call so
    a method change can't leave a stale sub-field behind. Paid / balance / status
    are DERIVED live from the payments ledger (the list/detail rollup + the
-   payment view sum amount_centi) — exactly as the DELETE path relies on — so no
+   payment view sum amount_sen) — exactly as the DELETE path relies on — so no
    header recompute is needed here; the amended amount flows straight through. */
 const paymentPatchSchema = z.object({
   version:           z.number().int().min(1).optional(),
@@ -10863,7 +10863,7 @@ const paymentPatchSchema = z.object({
   installmentMonths: z.number().int().min(0).max(60).optional().nullable(),
   onlineType:        z.string().trim().min(1).optional().nullable(),
   approvalCode:      z.string().optional().nullable(),
-  amountCenti:       z.number().int().nonnegative().optional(),
+  amountSen:       z.number().int().nonnegative().optional(),
   accountSheet:      z.string().optional().nullable(),
   collectedBy:       z.string().uuid().optional().nullable(),
 });
@@ -10916,7 +10916,7 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     method: 'merchant' | 'transfer' | 'cash' | 'installment';
     merchant_provider: string | null; installment_months: number | null;
     online_type: string | null; approval_code: string | null;
-    amount_centi: number; account_sheet: string | null; collected_by: string | null;
+    amount_sen: number; account_sheet: string | null; collected_by: string | null;
   };
   if (before.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
 
@@ -10972,7 +10972,7 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
     : null;
   const rawOnline = p.onlineType !== undefined ? p.onlineType : before.online_type;
   const nextOnline = nextMethod === 'transfer' ? (rawOnline ?? null) : null;
-  const nextAmount = p.amountCenti ?? before.amount_centi;
+  const nextAmount = p.amountSen ?? before.amount_sen;
   const nextPaidAt = p.paidAt ?? before.paid_at;
   const nextApproval = p.approvalCode !== undefined ? (p.approvalCode ?? null) : before.approval_code;
   const nextCollectedBy = p.collectedBy !== undefined ? (p.collectedBy ?? null) : before.collected_by;
@@ -11044,7 +11044,7 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
       installment_months: nextInstallment,
       online_type:        nextOnline,
       approval_code:      nextApproval,
-      amount_centi:       nextAmount,
+      amount_sen:       nextAmount,
       account_sheet:      nextAccountSheet,
       collected_by:       nextCollectedBy,
       version:             expectedPaymentVersion + 1,
@@ -11072,7 +11072,7 @@ mfgSalesOrders.patch('/:docNo/payments/:id', async (c) => {
   const changes: FieldChange[] = [];
   if (nextPaidAt !== before.paid_at) changes.push({ field: 'paidAt', from: before.paid_at, to: nextPaidAt });
   if (nextMethod !== before.method) changes.push({ field: 'method', from: before.method, to: nextMethod });
-  if (nextAmount !== before.amount_centi) changes.push({ field: 'amountCenti', from: before.amount_centi, to: nextAmount });
+  if (nextAmount !== before.amount_sen) changes.push({ field: 'amountSen', from: before.amount_sen, to: nextAmount });
   if ((nextMerchantProvider ?? null) !== (before.merchant_provider ?? null)) changes.push({ field: 'merchantProvider', from: before.merchant_provider, to: nextMerchantProvider });
   if ((nextInstallment ?? null) !== (before.installment_months ?? null)) changes.push({ field: 'installmentMonths', from: before.installment_months, to: nextInstallment });
   if ((nextOnline ?? null) !== (before.online_type ?? null)) changes.push({ field: 'onlineType', from: before.online_type, to: nextOnline });
@@ -11109,7 +11109,7 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
   // mis-routed call from nuking another SO's payment.
   const { data: row } = await scopeToCompany(sb.from('mfg_sales_order_payments').select('*').eq('id', id), c).maybeSingle();
   if (!row) return c.json({ error: 'not_found' }, 404);
-  const rowTyped = row as { so_doc_no: string; paid_at: string; method: string; amount_centi: number; approval_code: string | null; version: number };
+  const rowTyped = row as { so_doc_no: string; paid_at: string; method: string; amount_sen: number; approval_code: string | null; version: number };
   if (rowTyped.so_doc_no !== docNo) return c.json({ error: 'payment_doc_mismatch' }, 400);
   const currentVersion = Number(rowTyped.version ?? 1);
   const versionCheck = paymentVersionGuard(c.req.query('version'), currentVersion, soCasGrace(c));
@@ -11201,7 +11201,7 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     fieldChanges: [
       { field: 'paidAt',       from: rowTyped.paid_at,       to: null },
       { field: 'method',       from: rowTyped.method,        to: null },
-      { field: 'amountCenti',  from: rowTyped.amount_centi,  to: null },
+      { field: 'amountSen',  from: rowTyped.amount_sen,  to: null },
       ...(rowTyped.approval_code ? [{ field: 'approvalCode', from: rowTyped.approval_code, to: null } satisfies FieldChange] : []),
     ],
   });
@@ -11262,7 +11262,7 @@ mfgSalesOrders.get('/:docNo/payments/:id/slip-url', async (c) => {
    window exists because the day's cash-up settles the MONEY, and a settled
    amount must not move afterwards. This route moves no money: amount, method,
    date and collector are all untouched, and the paid/balance rollups (which sum
-   amount_centi) cannot shift. Gating it would defeat the entire point, since
+   amount_sen) cannot shift. Gating it would defeat the entire point, since
    the proof that arrives late is precisely the proof that arrives on a later
    day.
 

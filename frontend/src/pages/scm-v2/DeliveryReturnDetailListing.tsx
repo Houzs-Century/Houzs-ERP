@@ -23,8 +23,8 @@ type DrRow = DetailListingRow & {
   refunded_at?: string | null;
   qty_returned?: number;
   condition?: string | null;
-  line_refund_centi?: number;
-  refund_centi_header?: number;
+  line_refund_sen?: number;
+  refund_sen_header?: number;
 };
 
 const fmtRm = (centi: number | null | undefined): string => {
@@ -92,15 +92,15 @@ export const DeliveryReturnDetailListing = () => {
     },
     {
       key: 'unit_price', label: 'Unit Price', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.unit_price_centi),
-      searchValue: (r) => fmtRm(r.unit_price_centi),
-      sortFn: (a, b) => Number(a.unit_price_centi ?? 0) - Number(b.unit_price_centi ?? 0),
+      accessor: (r) => fmtRm(r.unit_price_sen),
+      searchValue: (r) => fmtRm(r.unit_price_sen),
+      sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
     },
     {
       key: 'line_refund', label: 'Line Refund', width: 120, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.line_refund_centi ?? r.total_centi),
-      searchValue: (r) => fmtRm(r.line_refund_centi ?? r.total_centi),
-      sortFn: (a, b) => Number(a.line_refund_centi ?? a.total_centi ?? 0) - Number(b.line_refund_centi ?? b.total_centi ?? 0),
+      accessor: (r) => fmtRm(r.line_refund_sen ?? r.total_sen),
+      searchValue: (r) => fmtRm(r.line_refund_sen ?? r.total_sen),
+      sortFn: (a, b) => Number(a.line_refund_sen ?? a.total_sen ?? 0) - Number(b.line_refund_sen ?? b.total_sen ?? 0),
     },
     {
       key: 'received_at', label: 'Received', width: 130, sortable: true,
@@ -116,9 +116,9 @@ export const DeliveryReturnDetailListing = () => {
     },
     {
       key: 'balance', label: 'Pending Refund', width: 130, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.balance_centi),
-      searchValue: (r) => fmtRm(r.balance_centi),
-      sortFn: (a, b) => Number(a.balance_centi ?? 0) - Number(b.balance_centi ?? 0),
+      accessor: (r) => fmtRm(r.balance_sen),
+      searchValue: (r) => fmtRm(r.balance_sen),
+      sortFn: (a, b) => Number(a.balance_sen ?? 0) - Number(b.balance_sen ?? 0),
     },
     {
       key: 'status', label: 'Status', width: 130, sortable: true, groupable: true,

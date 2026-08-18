@@ -21,7 +21,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { buildVariantSummary, fmtCenti, fmtDate, fmtDateOrDash, fmtDateTime } from '@2990s/shared';
+import { buildVariantSummary, fmtSen, fmtDate, fmtDateOrDash, fmtDateTime } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import { DataGrid, type DataGridColumn } from './DataGrid';
 import { useConfirm } from './ConfirmDialog';
@@ -348,10 +348,10 @@ function LorryEditCell({ order, sched, lorries }: { order: PlanningOrder; sched:
 }
 
 /* Balance source-of-truth (mirrors the SO list's liveBalance, PR #83):
-   the payment-totals view's balance_centi_live (local_total − Σpayments) when
-   present, else the header's stored balance_centi. */
+   the payment-totals view's balance_sen_live (local_total − Σpayments) when
+   present, else the header's stored balance_sen. */
 const liveBalance = (o: PlanningOrder): number =>
-  typeof o.balance_centi_live === 'number' ? o.balance_centi_live : o.balance_centi;
+  typeof o.balance_sen_live === 'number' ? o.balance_sen_live : o.balance_sen;
 
 /* The days_left cell renderer lived here until the owner's 2026-08-04 column
    pass removed that column. It is gone rather than left dangling — the Overdue
@@ -762,7 +762,7 @@ export function DeliveryPlanningBoard({
       // Crew detail — the Driver / Lorry columns above carry the summary
       'driver_ic', 'driver_contact', 'driver_2', 'helper_1', 'helper_2',
       // Document + money
-      'so_date', 'warehouse', 'do_date', 'balance_centi',
+      'so_date', 'warehouse', 'do_date', 'balance_sen',
     ];
     const pos = new Map(DP_DEFAULT_ORDER.map((k, i) => [k, i] as const));
     const cols: DataGridColumn<PlanningOrder>[] = [
@@ -1093,7 +1093,7 @@ export function DeliveryPlanningBoard({
          what a dispatcher actually needs from the money side — already rides on
          the row; the raw balance is a finance figure, and it is 0 on every ASSR /
          DP / project row by construction. */
-      key: 'balance_centi', label: 'Balance', width: 130, align: 'right', sortable: true, defaultHidden: true,
+      key: 'balance_sen', label: 'Balance', width: 130, align: 'right', sortable: true, defaultHidden: true,
       /* Below zero is an OVER-COLLECTION, not a settled row — it must not share
          the muted grey that means "nothing owed" (owner 2026-08-16). */
       accessor: (o) => (
@@ -1102,7 +1102,7 @@ export function DeliveryPlanningBoard({
           fontWeight: 700,
           color: liveBalance(o) < 0 ? 'var(--c-festive-b, #B8331F)' : liveBalance(o) > 0 ? '#0c3f39' : '#767b6e',
         }}>
-          {fmtCenti(liveBalance(o))}
+          {fmtSen(liveBalance(o))}
         </span>
       ),
       searchValue: (o) => String(liveBalance(o)),

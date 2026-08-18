@@ -24,7 +24,7 @@ import { statusLabel } from '../../vendor/scm/lib/status-pill';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useAuth as useHouzsAuth } from '../../auth/AuthContext';
-import { fmtDateOrDash, fmtMoneyCenti } from '@2990s/shared';
+import { fmtDateOrDash, fmtMoneySen } from '@2990s/shared';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
@@ -34,7 +34,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 // payment_voucher_status enum: DRAFT / POSTED / CANCELLED.
 const STATUS_CHIPS = ['all', 'DRAFT', 'POSTED', 'CANCELLED'] as const;
 
-const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 const PV_LIST_STORAGE_KEY = 'pv-list.layout.v1';
 
@@ -67,15 +67,15 @@ const buildPvColumns = (): DataGridColumn<PaymentVoucherRow>[] => [
     filterType: 'date', dateValue: (r) => r.voucher_date,
   },
   {
-    key: 'total_centi', label: 'Total', width: 130, sortable: true, align: 'right', groupable: false,
+    key: 'total_sen', label: 'Total', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (r) => (
       <span style={{ fontFamily: 'var(--font-mark)', color: '#16695f', fontWeight: 800 }}>
-        {fmtMoney(Number(r.total_centi ?? 0), r.currency)}
+        {fmtMoney(Number(r.total_sen ?? 0), r.currency)}
       </span>
     ),
-    searchValue: (r) => fmtMoney(Number(r.total_centi ?? 0), r.currency),
-    exportValue: (r) => Number(r.total_centi ?? 0) / 100,
-    sortFn: (a, b) => Number(a.total_centi ?? 0) - Number(b.total_centi ?? 0),
+    searchValue: (r) => fmtMoney(Number(r.total_sen ?? 0), r.currency),
+    exportValue: (r) => Number(r.total_sen ?? 0) / 100,
+    sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
   },
   {
     key: 'status', label: 'Status', width: 120, sortable: true, groupable: true,

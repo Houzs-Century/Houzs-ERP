@@ -540,7 +540,7 @@ const LIB_WRITE = /\.(update|delete|upsert)\s*\(/;
 
    1. `id` / `*_id` — a uuid primary key is globally unique, so addressing by one
       cannot cross a company boundary.
-   2. CONCURRENCY GUARDS — `.eq('paid_centi', prev)`, `.eq('updated_at', prev)`.
+   2. CONCURRENCY GUARDS — `.eq('paid_sen', prev)`, `.eq('updated_at', prev)`.
       These are compare-and-swap predicates, not identity: they narrow a row the
       caller already chose. Flagging them buried the real signal under money
       columns.
@@ -549,7 +549,7 @@ const LIB_WRITE = /\.(update|delete|upsert)\s*\(/;
 
    What is left is what bit us: a HUMAN-MEANINGFUL key that two companies can
    each hold their own of. */
-const NOT_IDENTITY = /^(id|.*_id|status|state|.*_at|.*_centi|.*_sen|qty|.*_qty|type|kind|active|deleted)$/;
+const NOT_IDENTITY = /^(id|.*_id|status|state|.*_at|.*_sen|.*_sen|qty|.*_qty|type|kind|active|deleted)$/;
 const NATURAL_KEY_EQ_G = /\.eq\(\s*['"`]([a-z][a-z0-9_]*)['"`]/g;
 /* SELF-TEST for this pass, same rule as the one at the top of the file: a
    pattern that cannot match produces a plausible report. Both assertions below
@@ -561,7 +561,7 @@ const NATURAL_KEY_EQ_G = /\.eq\(\s*['"`]([a-z][a-z0-9_]*)['"`]/g;
     keysOf(".eq('code', args.code)").length === 1 &&
     keysOf(".eq('id', x)").length === 0 &&
     keysOf(".eq('so_item_id', x)").length === 0 &&
-    keysOf(".eq('paid_centi', prev)").length === 0 &&   // concurrency guard, not identity
+    keysOf(".eq('paid_sen', prev)").length === 0 &&   // concurrency guard, not identity
     keysOf(".eq('status', 'USED')").length === 0 &&     // state filter, not identity
     MANUAL_SCOPE.test(".eq('company_id', args.companyId)") &&
     /* A stamp is not a predicate. Asserted so the fifth blind spot cannot
