@@ -63,6 +63,243 @@ runs the pair rule (`routes/so-mirror.ts` deliberately does not) are corrected i
 place, and a stale three-row table that had been left standing above its own
 corrections is deleted rather than appended to. The full census is the new
 `docs/modules/dates.md`.
+## Opening the Sales Orders list wasted a request every time — it fetched, aborted itself, then fetched again [medium]
+
+<!-- area: Frontend + mobile -->
+
+**Symptom.** Every open of the Sales Orders list (`MfgSalesOrdersListV2`) fired
+`GET /api/scm/mfg-sales-orders` TWICE: the first request was immediately aborted
+(`AbortError: signal is aborted without reason`), then a second one carrying a
+`sort` param succeeded. One wasted round trip per open, for every operator who
+has ever clicked a column header (their sort is persisted).
+
+**Root cause traced — the sort-sync handshake raced the first fetch.** The page
+mounts with `sort=undefined` and the list query (`useMfgSalesOrdersPaged`) fires
+straight away = fetch #1, no sort param. Meanwhile `DataTable` restores its sort
+from `localStorage` (`dt:sort:sales-orders-v2`) and in a one-shot mount effect
+(`reportServerSort`) pushes it up via `onSortChange` → the page's
+`setSortAndReset` → `setSort(...)`. That changes the React Query key, so fetch #2
+starts and aborts the still-in-flight fetch #1. The handshake was correct; it
+just landed one render too late.
+
+**Fix.** Defer the first fetch by one render until the mount report lands.
+`useMfgSalesOrdersPaged` gains an `enabled` param (default `true`, so its other
+caller is unchanged). The page promotes the existing `sortSyncedRef` handshake to
+state — `const [sortReady, setSortReady] = useState(false)`, set `true` inside the
+first `setSortAndReset` call — and passes `enabled: sortReady`. The DataTable's
+mount effect ALWAYS reports exactly once (even `null` when nothing is persisted,
+because `serverSort` + `onSortChange` are both present), so the no-persisted-sort
+case still enables and never hangs. Now the first and ONLY fetch already carries
+the restored sort.
+
+**Ref.** 2026-08-18, branch `fix/so-list-double-fetch`. Test:
+`frontend/src/vendor/scm/lib/sales-order-queries.paged-enabled.test.tsx`.
+## Journal-entry number prefix was keyed on a hardcoded company id, so it could land under the wrong company in some environments [medium]
+
+<!-- area: Accounting + GL -->
+
+**Symptom.** `jePrefixForCompany` (backend/src/scm/lib/doc-no.ts) — the one
+minter for every JE number's company prefix — decided the prefix with
+`companyId == null || Number(companyId) === 1 ? '' : '2990-'`. This was the only
+place in the codebase that keyed company behaviour on a hardcoded numeric id and
+a literal `'2990-'`. Everywhere else resolves the company from `companies.code`
+ON PURPOSE, because (companyScope.ts) the `companies.id` bigint differs across
+staging and prod.
+
+**Root cause.** Keying on the id, not the code. Two failure modes, both latent:
+(a) in any environment where 2990 is not id 2, a HOUZS document's JE would be
+minted with `2990-` or a 2990 document's with `''`, landing accounting vouchers
+under the wrong company's running number; (b) a future THIRD company would fall
+into the `'2990-'` else-branch and mint into 2990's sequence. Not yet observed
+in prod (today HOUZS is id 1 / 2990 is id 2), so this was a latent trap, not a
+live corruption — labelled [medium] accordingly.
+
+**Fix.** Resolve the prefix from the company CODE, via the same
+`docPrefixForCode` resolver the SO/PO minters use. New pure helper
+`jePrefixForCode(code)`: HOUZS → `''` (its JEs are historically BARE —
+`JE-2607-0001` — deliberately unlike its `HC-` SO/PO doc numbers, so this is
+preserved BYTE-IDENTICAL and not renamed), 2990 → `'2990-'`, a third company →
+`'<CODE>-'`. `jePrefixForCompany(sb, companyId)` is now async: it reads the code
+from the companies master by id and calls `jePrefixForCode`; an unresolved
+company degrades to base bare `''`, matching companyDocPrefix's base fallback.
+The two callers (acc/engine.ts postJournal + reverseJournal) now `await` it.
+What stays identical: every HOUZS JE (`JE-YYMM-NNNN`) and every 2990 JE
+(`2990-JE-YYMM-NNNN`) in the CURRENT prod id layout. Unit test
+`scm/lib/doc-no.test.ts` pins both — resolves from code, and asserts HOUZS/2990
+output under a deliberately non-prod id layout (HOUZS=7, 2990=3).
+
+**Ref.** PR fix/je-prefix-company-code, 2026-08-18.
+## Four relationship-map builders resolved the customer reference with three different fallback orders [low]
+
+**Symptom.** The screening found it; the DATA audit confirmed why it matters.
+On the document relationship maps, the "Customer PO" cell could show a different
+value on the DO map than on the SI map for the same order.
+
+**Root cause (traced).** Four builders each inlined their own fallback:
+`buildDoChainNodes` read `po_doc_no || customer_so_no`, `buildSiChainNodes` read
+`customer_so_no || po_doc_no`, `buildDrChainNodes` read `customer_so_no` only,
+and `useSoRelationshipMap` read `po_doc_no || customer_so_no || ref`. An order
+carrying both `customer_so_no` and `po_doc_no` therefore resolved differently per
+surface. Audited against production 2026-08-18: `customer_so_no` is the filled
+value (96%), `po_doc_no`/`customer_po` are 0%-filled dead columns, and `ref`
+duplicates `customer_so_no` — so in practice `po_doc_no` never wins today, but
+the code disagreed with itself.
+
+**Fix.** One shared `customerRefOf(header)` in `frontend/src/lib/customer-ref.ts`,
+reading `customer_so_no || po_doc_no || ref` (the data-correct order), routed
+through all four builders. A unit test pins the order and the regression (a
+header with both fields resolves to ONE value everywhere).
+
+**Scope.** DISPLAY only. The dead columns are dropped in a separate migration
+(they are projected by a view — the 0189 grant-loss hazard), and the vocabulary
+guard for `po_doc_no`/`customer_po` waits for that drop because the backend
+router still selects them until then. First concrete step of the batch-2
+vocabulary unification (customer-reference concept).
+
+**Ref.** 2026-08-18, branch `fix/unify-customer-ref-builders`.
+
+## The whole system's vocabulary drift, screened and catalogued; the SO guide still claimed a retired column was written [medium]
+
+**Symptom.** Owner, 2026-08-18: read the whole system once, find every place the
+same thing has more than one spelling and every place the docs disagree with the
+code, and put something in place so it never has to be done by hand again.
+
+**Root cause / findings (a 12-agent full-codebase read, 1,360 source files,
+2.8M tokens).** 33 concepts carry more than one genuine spelling — money
+(`_centi`/`_sen`/`_cents`), salesperson (`salesperson_id`/`agent`/`sales_reps`),
+customer vs debtor, supplier vs creditor, item vs material vs product code,
+warehouse vs sales_location, the delivery date under five names, and more. 21
+defects surfaced in passing (0 high; a tenant-predicate gap on PUT
+delivery-orders crew, a DP-number mint that swallows a read error, a DO
+cancelled-detection that only matches "T", and others). One doc-drift:
+`docs/modules/sales-order.md` line 101 and line 1207 still said the
+`IN_PRODUCTION` transition and POS "Proceed" stamp `proceeded_at`, a column
+neither written nor read since #2396 / mig 0286 — the guide even contradicted
+itself, correcting the claim at line 1316.
+
+**Fix (batch 1 — stop the bleeding, this PR).**
+- The full report is saved as `docs/system-screening-2026-08-18.md`, the batch-2 worklist.
+- `drift-catalogue.mjs` holds the 33 concepts as REFERENCE data; the generated
+  `docs/generated/GLOSSARY.md` now prints a "say this / also seen as" row per
+  concept, so anyone can look up the agreed word. Nothing is retired here —
+  retiring a live column is a migration, one concept per PR (batch 2) — so the
+  guard's contract is unchanged and stays honest.
+- The two stale `sales-order.md` claims are corrected.
+- `docs/VOCABULARY-UNIFICATION-PROGRESS.md` tracks the programme's stages and worktrees.
+
+**Money is a display rule, not a storage change.** Exports read `35.00` by
+formatting the stored integer as RM at the edge; storage stays an integer minor
+unit because decimals reintroduce the float-rounding bugs `money.ts` exists to
+prevent. Batch 2 unifies the NAME, not the type.
+
+**Ref.** 2026-08-18, branch `feat/one-vocabulary`.
+
+## Same thing, several spellings — and adding a fourth concept meant remembering to write a fourth guard [medium]
+
+**Symptom.** Owner, 2026-08-18: 「我跟你讲 Processing Date, 你却去找成 Process
+Date ... 这种问题其实也是名词的统一」. Branding, the Processing Date and
+Transfer to/from each carry more than one spelling, so every conversation starts
+by re-agreeing which word is meant, and an audit script that guesses wrong
+queries a column that does not exist — 42703 fails the WHOLE statement, so it
+answers nothing rather than answering less.
+
+**Root cause (the pattern, not the words).** The repo had already solved this
+THREE times, by hand each time: `so-processing-date.mjs` plus an 80-line
+directory-walking test, `transfer-vocabulary.ts` plus another, the catalogue
+series plus a third. Every one works. But a FOURTH concept costs somebody
+remembering to write a fourth test, and the concept nobody remembers is exactly
+the one that drifts. The cost of guarding a word was the defect.
+
+Separately, nothing existed for a HUMAN to read. The canonical spelling was in
+the tree in plain text — and only programs ever opened the file.
+
+**Fix.** One registry (`scripts/lib/vocabulary.mjs`), three consumers:
+
+| | |
+| --- | --- |
+| `audit:vocabulary` | ONE guard for every concept. Comments, migrations and tests may name a retired spelling — a rename is a story worth telling; CODE may not |
+| `audit:glossary` | `docs/generated/GLOSSARY.md`, GENERATED. A hand-written glossary is one more document to keep in sync, which is the problem, not the fix |
+| working-agreement rule 2 | now fires on a LOGIC change in a documented file, not only the five surface shapes |
+
+**THE REGISTRY'S FIRST DRAFT WAS WRONG TWICE, both caught by running it rather
+than by reasoning, and both are now regression tests.** `proceeded_at` was
+listed as retired: the column still exists on `scm.mfg_sales_orders` and the
+diagnostic probes read it on purpose, so the guard produced **175 findings,
+essentially all false** — the exact failure the file's own header warns about,
+committed by its author. Then `internalExpectedDd` was listed: that is the
+PAYLOAD key the status route still accepts from old clients deliberately, a
+different thing from the dropped COLUMN it resembles. Only
+`internal_expected_dd`, which `information_schema` no longer has, survived.
+
+**Proven red before being trusted green.** A planted `internal_expected_dd` in
+code exits 1; the same word in a comment exits 0; the guard self-tests its
+matcher at startup and exits 2 rather than reporting a verdict it could not have
+computed.
+
+**Blast radius of the working-agreement half, measured:** of the last 30 merges,
+19 touched a file some guide quotes and **8 never opened the guide** — one of
+them the commit that created the shared Branding rule. Those 8 would now be
+asked for the guide, or for the `no-guide-change` label, which prints the waiver
+into the log.
+
+**Ref.** 2026-08-18, branch `feat/one-vocabulary`.
+## A salesperson could not set an SO line to RM 0 — the save succeeded and silently reverted [medium]
+
+**Symptom.** In Houzs ERP, a salesperson edited a line from RM 2,990 to 0 and
+pressed Save. No error. On reload the line read RM 2,990 again. Reducing to a
+NON-zero figure (2,990 → 2,000) worked and persisted; only exactly 0 came back.
+
+A silent revert is worse than a refusal: nothing told the operator the order
+still carried the old price, and the customer-facing figure was wrong until
+someone happened to reload.
+
+**Root cause (traced, not guessed).** `0` carries two meanings on this wire, and
+the engine could only read one of them. `mfg-pricing-recompute`:
+
+```
+if (trustOperatorSelling && (manualUnitSelling > 0 || trustOperatorSelling === 'including-zero')) {
+  unitToPersistSen = manualUnitSelling;
+}
+```
+
+An ERP session is origin-less, so `trustOperatorSelling` was already `true` —
+which is why 2,000 persisted. The `manualUnitSelling > 0` arm is what dropped the
+zero, and it is deliberate everywhere else: a client `unitPriceCenti` of 0 means
+"I could not resolve a price, you decide", and the drift gate carves it out on
+exactly that reading (`clientCenti === 0 && serverSen > 0` → no drift). So the
+line fell through to the catalogue fill, which is the correct answer for every
+caller that cannot state its intent.
+
+Three separate notes defended that reading — the `TrustSelling` docblock ("Do
+NOT reach for it on a line the operator is authoring now"), the amendment path
+("plain `true`, never 'including-zero', on a native order"), and the add-line
+note. None of them is wrong. The gap they leave is that no caller had a way to
+say "this zero is deliberate", so the ambiguous reading was the only safe one.
+
+**Fix.** Give the one caller that knows a way to say so. The ERP line editor now
+sends `zeroPriceIntended: true` alongside a 0, and only then does the route
+select a NEW trust mode, `'operator-zero'`, which believes it.
+
+Deliberately a distinct mode rather than reuse of `'including-zero'`:
+`isMigratedTrust` also suppresses selling surcharges, because a MIGRATED
+document must never be re-priced (10,856 of 13,909 migrated lines are priced 0).
+An operator-authored zero is not migrated history and must keep pricing its
+director-authored surcharges, so it must not read as migrated. Owner
+requirement, relayed 2026-08-18.
+
+**Residual risk, and what holds it.** A salesperson can now zero a line in the
+ERP, and nothing refuses it — that is the requested behaviour, not an oversight.
+What remains is visibility: the edit lands in `mfg_so_audit_log` with from → to,
+so a line taken to RM 0 is answerable after the fact.
+
+The narrow part is deliberate and is what the tests pin: the mode needs an
+explicit `=== true` claim, at a zero price, off a POS session. A 0 arriving
+without the claim — every other caller in the system, including the POS — still
+means "not provided" and still takes the catalogue fill. If that ever stops
+being true the wiring test fails, because the risk here is not a wrong verdict
+but the mode becoming reachable without the claim, which no test over the engine
+alone would notice.
+
 ## A control that vanishes cannot be argued with — the delivery order's next step, the purchase order's dead Submit [high]
 
 <!-- area: Delivery, DO, returns -->
