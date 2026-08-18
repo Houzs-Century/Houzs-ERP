@@ -21,7 +21,7 @@ import { writeFailed } from './mutation-error';
 import { useMemo } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { API_URL, authedFetch, humanApiError } from './authed-fetch';
-import type { SoListMrpEnrichment } from '../../../lib/soListEnrichment';
+import { applySoListMrpEnrichment, type EnrichableSoRow, type SoListMrpEnrichment } from '../../../lib/soListEnrichment';
 // The photo PROXY fallback streams raw bytes, which authedFetch would try to
 // JSON-parse — so it uses the shared correlated transport + token accessor
 // directly, exactly as slip.ts does for the same reason.
@@ -149,6 +149,25 @@ export function useSoListMrpEnrichmentMap(
   }, [sig]);
 
   return { byDoc, isFetching };
+}
+
+/* The overlay both SO-list surfaces apply: take the rows the list endpoint
+   returned (SHIPPED chips + stored-status placeholders), fetch the deferred MRP
+   enrichment for their docs, and return the healed rows. One hook so desktop and
+   mobile cannot drift. */
+export function useEnrichedSoListRows<T extends EnrichableSoRow>(
+  rows: T[],
+  enabled: boolean,
+): T[] {
+  const docNos = useMemo(
+    () => rows.map((r) => r.doc_no).filter((x): x is string => !!x),
+    [rows],
+  );
+  const { byDoc } = useSoListMrpEnrichmentMap(docNos, enabled);
+  return useMemo(
+    () => rows.map((r) => applySoListMrpEnrichment(r, r.doc_no ? byDoc.get(r.doc_no) : undefined)),
+    [rows, byDoc],
+  );
 }
 
 // Dashboard summary mode (`?summary=1`) — the backend returns only the 6 cols

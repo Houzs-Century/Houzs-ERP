@@ -17,8 +17,7 @@ import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { SourcePosRowMobile } from "./source-chips";
 import { poCellChips } from "../lib/soPoChips";
-import { applySoListMrpEnrichment } from "../lib/soListEnrichment";
-import { useSoListMrpEnrichmentMap } from "../vendor/scm/lib/sales-order-queries";
+import { useEnrichedSoListRows } from "../vendor/scm/lib/sales-order-queries";
 import { identityStorageKey } from "../lib/storageIdentity";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../hooks/useServerSearch";
 import "./mobile.css";
@@ -264,18 +263,10 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
   });
   const listLoading = isLoading || searchTransition.isSearching;
   const rows = useMemo(() => data?.pages.flatMap((p) => p.salesOrders ?? []) ?? [], [data]);
-  /* Deferred MRP enrichment — READY-arm PO chips + the MRP-corrected readiness
-     and planning badges, for every loaded card. The list paints first with
-     stored-status placeholders; this heals them a beat later. Infinite scroll
-     can load many pages, so the hook chunks the doc set at 100 and caches each
-     chunk — a page already enriched is not re-fetched when the next loads (see
-     soListEnrichment.ts / useSoListMrpEnrichmentMap). */
-  const pageDocNos = useMemo(() => rows.map((r) => r.doc_no).filter(Boolean), [rows]);
-  const { byDoc: mrpEnrichment } = useSoListMrpEnrichmentMap(pageDocNos, !listLoading);
-  const enrichedRows = useMemo(
-    () => rows.map((r) => applySoListMrpEnrichment(r, r.doc_no ? mrpEnrichment.get(r.doc_no) : undefined)),
-    [rows, mrpEnrichment],
-  );
+  // Deferred MRP enrichment for every loaded card (READY chips + readiness /
+  // planning badges), healed a beat later. Shared with desktop; the hook chunks
+  // the doc set at 100 so infinite scroll stays bounded (soListEnrichment.ts).
+  const enrichedRows = useEnrichedSoListRows(rows, !listLoading);
   const totalCount = data?.pages[0]?.total ?? 0;
 
   /* Summary bar totals — full-set rev/out from the server `aggregates` (page-0

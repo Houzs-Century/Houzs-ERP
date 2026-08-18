@@ -62,8 +62,7 @@ import { useBranding } from "../../hooks/useBranding";
 import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
 import { brandingLabel } from "../../vendor/shared/so-branding-label";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
-import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useSoListMrpEnrichmentMap } from "../../vendor/scm/lib/sales-order-queries";
-import { applySoListMrpEnrichment } from "../../lib/soListEnrichment";
+import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows } from "../../vendor/scm/lib/sales-order-queries";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -1085,18 +1084,7 @@ export function MfgSalesOrdersListV2() {
   // The server already filtered (status + search) and sorted this page; the
   // rows are rendered verbatim — NO client re-filter / re-sort (that would be
   // wrong on a partial page).
-  const rows = (data?.salesOrders ?? []) as SoRow[];
-  /* Deferred MRP enrichment — the READY-arm PO chips and the MRP-corrected
-     Stock Remark for the page just rendered. The list paints immediately with
-     stored-status placeholders (shipped-only chips, stored readiness); this
-     fetch heals them a beat later (see soListEnrichment.ts). Enabled once the
-     first page has settled, so it never races the list's own load. */
-  const pageDocNos = useMemo(() => rows.map((r) => r.doc_no).filter(Boolean), [rows]);
-  const { byDoc: mrpEnrichment } = useSoListMrpEnrichmentMap(pageDocNos, !listLoading);
-  const enrichedRows = useMemo(
-    () => rows.map((r) => applySoListMrpEnrichment(r, r.doc_no ? mrpEnrichment.get(r.doc_no) : undefined)),
-    [rows, mrpEnrichment],
-  );
+  const rows = useEnrichedSoListRows((data?.salesOrders ?? []) as SoRow[], !listLoading); // SHIPPED chips + stored placeholders; deferred MRP heals 4 fields a beat later
   const total = data?.total ?? 0;
   // Status tab counts come from the server over the FULL scoped set (not the
   // page), so the pills stay correct while paging / searching.
@@ -2193,7 +2181,7 @@ export function MfgSalesOrdersListV2() {
         ) : searchTransition.resultsAreStale ? (
           <SearchPendingPanel label={searchTransition.statusText} />
         ) : (
-          <CardsGrid rows={enrichedRows} onOpen={(r) => setSelected(r)} />
+          <CardsGrid rows={rows} onOpen={(r) => setSelected(r)} />
         )}
         {!searchTransition.resultsAreStale && <div className="pb-24">
           <ListPager
@@ -2245,7 +2233,7 @@ export function MfgSalesOrdersListV2() {
             tableId="sales-orders-v2"
             documentLabel="Sales Orders"
             layoutPresets={layoutPresets}
-            rows={enrichedRows}
+            rows={rows}
             loading={listLoading}
             error={error ? (error as Error).message ?? "Failed to load" : null}
             columns={columns}
@@ -2325,7 +2313,7 @@ export function MfgSalesOrdersListV2() {
             <ListErrorPanel message={(error as Error).message} />
           ) : searchTransition.resultsAreStale ? (
             <SearchPendingPanel label={searchTransition.statusText} />
-          ) : <><CardsGrid rows={enrichedRows} onOpen={(r) => setSelected(r)} />
+          ) : <><CardsGrid rows={rows} onOpen={(r) => setSelected(r)} />
           <ListPager
             page={page}
             pageSize={pageSize}
