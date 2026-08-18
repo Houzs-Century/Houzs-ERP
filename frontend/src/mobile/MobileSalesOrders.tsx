@@ -17,6 +17,7 @@ import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { SourcePosRowMobile } from "./source-chips";
 import { poCellChips } from "../lib/soPoChips";
+import { useEnrichedSoListRows } from "../vendor/scm/lib/sales-order-queries";
 import { identityStorageKey } from "../lib/storageIdentity";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../hooks/useServerSearch";
 import "./mobile.css";
@@ -262,6 +263,10 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
   });
   const listLoading = isLoading || searchTransition.isSearching;
   const rows = useMemo(() => data?.pages.flatMap((p) => p.salesOrders ?? []) ?? [], [data]);
+  // Deferred MRP enrichment for every loaded card (READY chips + readiness /
+  // planning badges), healed a beat later. Shared with desktop; the hook chunks
+  // the doc set at 100 so infinite scroll stays bounded (soListEnrichment.ts).
+  const enrichedRows = useEnrichedSoListRows(rows, !listLoading);
   const totalCount = data?.pages[0]?.total ?? 0;
 
   /* Summary bar totals — full-set rev/out from the server `aggregates` (page-0
@@ -576,7 +581,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
           <>
             {rows.length > 0 && (
               <MobileVirtualList
-                items={rows}
+                items={enrichedRows}
                 getKey={(r) => r.doc_no}
                 estimateHeight={140}
                 renderItem={(r) => {
