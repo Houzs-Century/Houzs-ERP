@@ -93,10 +93,17 @@ async function resetToPreState(sql: Sql): Promise<void> {
     DROP TABLE IF EXISTS scm.accounts;
     CREATE SCHEMA IF NOT EXISTS scm;
 
+    /* The key is COMPOSITE, as migration 0188 made it. The old fixture used a
+       bare account_code PRIMARY KEY, which meant the same code could not exist
+       twice — so the double-count this view shipped to production on 2026-08-18
+       was STRUCTURALLY UNREACHABLE here and the suite stayed green through it.
+       A fixture that cannot express the bug is not covering the view. */
     CREATE TABLE scm.accounts (
-      account_code text PRIMARY KEY,
+      account_code text NOT NULL,
       account_name text NOT NULL,
-      account_type text NOT NULL
+      account_type text NOT NULL,
+      company_id integer NOT NULL,
+      PRIMARY KEY (company_id, account_code)
     );
     CREATE TABLE scm.journal_entries (
       id uuid PRIMARY KEY,
@@ -114,7 +121,7 @@ async function resetToPreState(sql: Sql): Promise<void> {
       id uuid PRIMARY KEY,
       journal_entry_id uuid NOT NULL REFERENCES scm.journal_entries(id),
       line_no integer NOT NULL,
-      account_code text NOT NULL REFERENCES scm.accounts(account_code),
+      account_code text NOT NULL,
       debit_sen bigint NOT NULL DEFAULT 0,
       credit_sen bigint NOT NULL DEFAULT 0,
       party_type text, party_code text, party_name text, notes text
@@ -129,7 +136,8 @@ const CONTRA = '22222222-2222-2222-2222-222222222222';
 /** An issued invoice, then cancelled: the original flagged, a contra posted. */
 async function seedReversalPair(sql: Sql): Promise<void> {
   await sql.unsafe(`
-    INSERT INTO scm.accounts VALUES ('4000', 'Revenue', 'INCOME');
+    INSERT INTO scm.accounts VALUES ('4000', 'Revenue', 'INCOME', 1),
+                                ('4000', 'Revenue', 'INCOME', 2);
     INSERT INTO scm.journal_entries (id, je_no, entry_date, posted, reversed, reversed_by_je, company_id)
       VALUES ('${ORIGINAL}', 'JE-1', DATE '2026-08-01', true, true, '${CONTRA}', 1),
              ('${CONTRA}',   'JE-2', DATE '2026-08-02', true, false, NULL, 1);
@@ -185,10 +193,33 @@ describePg('scm.v_gl_entries — mig *_scm_gl_keep_reversed_originals', () => {
     expect(rows.find((r: Record<string, unknown>) => r.je_no === 'JE-1')!.reversed).toBe(true);
   });
 
+  /* mig 0302. Both companies now hold the SAME chart (mig 0297 gave company 1
+     company 2's 31-account template), so a join on the bare account_code matches
+     two account rows per line and emits each line twice. Measured on production
+     2026-08-18: /accounting/gl returned 12 rows holding 6 distinct line_id. */
+  test('the LIVE view double-counts once both companies hold the same account code', async () => {
+    await seedReversalPair(admin);
+    const rows = await admin.unsafe(`SELECT line_id FROM scm.v_gl_entries`);
+    expect(rows.length).toBe(4);
+    expect(new Set(rows.map((r: Record<string, unknown>) => String(r.line_id))).size).toBe(2);
+  });
+
+  test('mig 0302: one row per line, whichever company owns the code', async () => {
+    await admin.unsafe(await migrationSql('_scm_gl_keep_reversed_originals.sql'));
+    await admin.unsafe(await migrationSql('_acc_gl_views_composite_account_key.sql'));
+    await seedReversalPair(admin);
+    const rows = await admin.unsafe(`SELECT line_id, company_id FROM scm.v_gl_entries`);
+    expect(rows.length).toBe(2);
+    expect(new Set(rows.map((r: Record<string, unknown>) => String(r.line_id))).size).toBe(2);
+    // and the surviving rows belong to the company whose JOURNAL they are on
+    expect(rows.every((r: Record<string, unknown>) => Number(r.company_id) === 1)).toBe(true);
+  });
+
   test('an UNPOSTED draft is still excluded — j.posted = true was kept', async () => {
     await admin.unsafe(await migrationSql('_scm_gl_keep_reversed_originals.sql'));
     await admin.unsafe(`
-      INSERT INTO scm.accounts VALUES ('4000', 'Revenue', 'INCOME');
+      INSERT INTO scm.accounts VALUES ('4000', 'Revenue', 'INCOME', 1),
+                                ('4000', 'Revenue', 'INCOME', 2);
       INSERT INTO scm.journal_entries (id, je_no, entry_date, posted, company_id)
         VALUES ('${ORIGINAL}', 'JE-DRAFT', DATE '2026-08-01', false, 1);
       INSERT INTO scm.journal_entry_lines (id, journal_entry_id, line_no, account_code, credit_sen)

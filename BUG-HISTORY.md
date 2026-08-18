@@ -1,3 +1,42 @@
+## The general ledger counted every posted line twice, and each company's balances carried the other company's lines [high]
+
+<!-- area: Accounting + GL -->
+
+**Symptom.** Every figure on the GL page, the control-account self-check and
+Daily Bank read exactly 2x. Measured on production 2026-08-18 before the fix:
+`GET /api/scm/accounting/gl` for company 1 returned **12 rows holding 6 distinct
+`line_id` values** — every line exactly twice.
+
+**Root cause (traced).** Migration 0188 moved the accounts natural key from
+`UNIQUE(account_code)` to `UNIQUE(company_id, account_code)`, and converted the
+three FKs to composites for exactly this reason — its own header asks "which
+company's 200-0000?". Two views kept joining on the bare code:
+`v_gl_entries` (0290:110) and `v_account_balances` (0106:74). That was harmless
+only while the two companies held disjoint code sets. It stopped being harmless
+when `0297_acc_autocount_chart.sql` gave company 1 "the same 31-account template
+company 2 carries": every code then existed twice, each journal line matched two
+account rows, and the view fanned out. The routes' `.eq('company_id', …)` could
+not filter it — `v_gl_entries` selects `j.company_id`, identical on both fan-out
+rows, and `v_account_balances` grouped by `a.company_id`, so each company's
+bucket summed the other's lines.
+
+**Why no test caught it.** `backend/tests-pg/glViewKeepsReversed.pg.test.ts`
+built its fixture as `accounts (account_code text PRIMARY KEY)` — no
+`company_id` at all — so the same code could not exist twice and the fan-out was
+**structurally unreachable** in the only suite covering these views. A fixture
+that cannot express the bug is not covering the view.
+
+**Fix.** Mig 0302 joins on both halves of the key, via `CREATE OR REPLACE` and
+never `DROP` (0189 -> 0190 -> 0191 is the recorded precedent where dropping a
+view lost its grants and the API 403'd). In `v_account_balances` the company
+predicate rides on the JOURNAL — `journal_entry_lines` has no `company_id` of
+its own — and sits in the `ON` clause, not `WHERE`, so an account with no posted
+lines still reports zero instead of vanishing from the chart. The fixture is now
+composite-keyed and seeds BOTH companies with the same code, and two tests pin
+the before and after.
+
+Ref: 2026-08-18.
+
 ## The deploy uploaded secrets before deploying, and Cloudflare refused both — 8 merges stuck out of production [high]
 
 **Symptom.** Eight consecutive `Deploy` runs failed from 2026-08-18T01:08 MYT.

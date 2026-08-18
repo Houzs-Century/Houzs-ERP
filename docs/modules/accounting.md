@@ -65,6 +65,19 @@ marker other teams can rely on.
 Reads: `GET /accounts`, `/journal-entries`, `/journal-entries/:id`, `/gl`
 (v_gl_entries), `/balances` (v_account_balances), `/ar-aging`, `/ap-aging` —
 all company-scoped, all paginated past PostgREST's 1000-row cap.
+
+> **The account join is COMPOSITE, and the route's own company filter cannot
+> substitute for it (mig 0302).** `scm.accounts` is keyed `(company_id,
+> account_code)` since mig 0188. Both GL views used to join on the bare code, so
+> once mig 0297 gave company 1 the same 31-account chart company 2 already had,
+> every code existed twice and **every posted line was emitted twice**. Measured
+> on production 2026-08-18: `/gl` returned 12 rows holding 6 distinct `line_id`.
+> `.eq('company_id', …)` on the route does not filter it — `v_gl_entries` selects
+> `j.company_id`, which is identical on both fan-out rows, and
+> `v_account_balances` grouped by `a.company_id`, so each company's bucket summed
+> the other's lines. Anything reading these views inherits the join, including the
+> control-account self-check (`bal += debit − credit`, which read exactly 2×) and
+> Daily Bank. If you add a view over `accounts`, join on BOTH columns.
 Writes: `POST /journal-entries` (manual JV **draft** through the gate; source
 type is FORCED to MANUAL and the chart is validated), `POST
 /journal-entries/:id/post`, `POST /journal-entries/:id/reverse` (MANUAL only
