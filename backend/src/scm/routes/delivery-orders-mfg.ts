@@ -517,7 +517,7 @@ async function resolveShipCommitments(
   lines: ShipCandidateLine[],
   warehouseId: string | null,
   shortages: StockShortage[],
-  companyId?: number | null,
+  companyId: number | null,
   /* Where the shadow's evidence rows should hang. The create paths run this
      helper BEFORE any DO row exists, so they pass nothing and the rows land
      under the 'pre-create' placeholder (same convention as the audit
@@ -796,7 +796,7 @@ async function resolveDoSofaBatchMap(
      two rows agree on category (true for all 17 colliding codes on production)
      and the same accepted risk documented in so-stock-allocation.ts. Pass it
      the moment one of those helpers learns its company. */
-  companyId?: number | null,
+  companyId: number | null,
 ): Promise<Map<string, string>> {
   const batchBySoItem = new Map<string, string>();
   const soItemIds = [...new Set(items.map((it) => it.so_item_id ?? null).filter((x): x is string => !!x))];
@@ -872,6 +872,7 @@ export async function restampDoActualCost(sb: any, deliveryOrderId: string) {
       sb,
       items as Array<{ so_item_id?: string | null; item_code: string; item_group?: string | null }>,
       isDropship,
+      (doHeader as { company_id?: number | null }).company_id ?? null,
     );
     const batchAware = batchBySoItem.size > 0;
 
@@ -1273,6 +1274,7 @@ async function deductInventoryForDo(sb: any, deliveryOrderId: string, performedB
     sb,
     items as Array<{ so_item_id?: string | null; item_code: string; item_group?: string | null }>,
     isDropship,
+    (doHeader as { company_id?: number | null } | null)?.company_id ?? null,
   );
 
   /* Collapse identical (warehouse_id, product_code, variant_key, batch_no) lines
@@ -1615,6 +1617,7 @@ async function resyncInventoryForDo(sb: any, deliveryOrderId: string, performedB
     sb,
     (items ?? []) as Array<{ so_item_id?: string | null; item_code: string; item_group?: string | null }>,
     isDropship,
+      (doHeader as { company_id?: number | null }).company_id ?? null,
   );
   const batchAware = batchBySoItem.size > 0;
 
@@ -3357,7 +3360,7 @@ deliveryOrdersMfg.post('/', async (c) => {
       })),
       shipWarehouseId,
       shortages,
-      activeCompanyId(c),
+      activeCompanyId(c) ?? null,
     );
     /* One PO IS one batch number: refuse a set split across two dye lots rather
        than pick one of them. Ahead of the short-stock 409 because there is no
@@ -4006,7 +4009,7 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     shortages,
     /* The incoming-PO batch a short line binds against belongs to the SOURCE
        company's purchasing, not the dispatcher's. */
-    doCompanyId,
+    doCompanyId ?? null,
   );
   // One PO IS one batch number — a set split across two dye lots is refused.
   if (commitmentPlan.setConflicts.length > 0) {
@@ -4688,7 +4691,7 @@ deliveryOrdersMfg.post('/:id/items', async (c) => {
     itemGroup: (it.itemGroup as string | null) ?? null,
     variantKey: computeVariantKey((it.itemGroup as string | null) ?? null, (it.variants as VariantAttrs | null) ?? null),
     qty: Number(it.qty ?? 0),
-  }], addWarehouseId ?? null, addShortages, activeCompanyId(c),
+  }], addWarehouseId ?? null, addShortages, activeCompanyId(c) ?? null,
   { doId: id, doNumber: (header as { do_number?: string | null }).do_number ?? null });
   // One PO IS one batch number — a set split across two dye lots is refused.
   if (addPlan.setConflicts.length > 0) {
@@ -4989,7 +4992,7 @@ deliveryOrdersMfg.patch('/:id/items/:itemId', async (c) => {
           qty: delta,
           priorShippedQty: Number(prev.qty ?? 0),
           priorBatchNo: (prev.committed_po_batch_no as string | null) ?? null,
-        }], targetWh, shortages, activeCompanyId(c), { doId: id });
+        }], targetWh, shortages, activeCompanyId(c) ?? null, { doId: id });
         if (patchPlan.setConflicts.length > 0) {
           return c.json(sofaSetPoSplitResponse(patchPlan.setConflicts), 409);
         }
