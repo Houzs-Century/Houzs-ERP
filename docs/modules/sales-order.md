@@ -136,12 +136,33 @@ never bare `isMainReady`** — see §0.5 for why that distinction exists.
 
 Two things gate it that are easy to miss:
 
-- **No Processing Date, no allocation.** An SO with `proceeded_at` NULL is in
-  `allocGated`: its lines still walk, but they are FORCED to `PENDING`, never
-  consume a stock bucket and never claim a sofa batch. Owner's rule, 2026-08-10:
-  *"有 processing date 才来分配"*. So an order with stock physically available
-  will sit at PENDING / CONFIRMED until it is proceeded. This is intended, and it
-  is the single most common "why is my order not READY".
+- **No Processing Date, no allocation — EXCEPT THE GATE READS THE WRONG COLUMN.**
+  An SO with **`proceeded_at`** NULL is in `allocGated`: its lines still walk, but
+  they are FORCED to `PENDING`, never consume a stock bucket and never claim a
+  sofa batch. So an order with stock physically available sits at PENDING /
+  CONFIRMED, and this is the single most common "why is my order not READY".
+
+  > **CORRECTED 2026-08-18 — this paragraph used to end "This is intended." It is
+  > not.** The owner's rule (2026-08-10, quoted in the code's own comment at
+  > `lib/so-stock-allocation.ts:211-218`) is *"有 processing date 才来分配"* — it
+  > names the **Processing Date**. The gate at `:219` reads `proceeded_at`, and
+  > the `.select()` at `:190` does not fetch `processing_date` at all. Those are
+  > two different columns and they diverge on the ordinary path: the SO Detail
+  > screen (and both mobile surfaces, and the amendment approve, and the 2990
+  > mirror) write `processing_date` and leave `proceeded_at` NULL. `proceeded_at`
+  > has only two writers left — create-time auto-proceed
+  > (`routes/mfg-sales-orders.ts:4984`) and `PATCH /:docNo/status` → IN_PRODUCTION
+  > (`:5838`) — and **no shipped client reaches either after create**
+  > (`grep -rn proceededAt frontend/` → 0; nothing in `frontend/src` POSTs
+  > `IN_PRODUCTION`). So an existing order given a Processing Date is locked, on
+  > the delivery board, pushed to AutoCount as `PDate` — and silently refused
+  > stock, with no error anywhere.
+  >
+  > `backend/scripts/unify-processing-date.mjs` records why: the 2026-08-13 data
+  > move landed, and the **reader flip** on this gate was left as a follow-up. It
+  > has not happened. Fix is one line at `:219` plus one column at `:190`; see
+  > `docs/modules/dates.md` §5.1. Calling the current reading "intended" is what
+  > stopped anyone noticing.
 - **A human editing the order defers the header, not the lines.** If the SO's
   edit lease is held, the line-level flip commits and the header transition is
   recorded in `deferredDocNos` for a later sweep. A deferral is not an error.
@@ -1147,17 +1168,45 @@ shape that silently applies no exemption at all. Five scripts are covered:
 
 Related short-circuit gates: remove-date is super-admin only
 (`processing_date_remove_forbidden`), and the processing-date LOCK once the day
-elapses (`so-field-policy`). POS "Proceed" stamps `proceeded_at` only — it never
-writes `processing_date`.
+elapses (`so-field-policy`).
+
+> **CORRECTED 2026-08-18.** This paragraph ended *"POS "Proceed" stamps
+> `proceeded_at` only — it never writes `processing_date`."* That is false, and
+> the same document already says the opposite 80 lines below (*"Proceeding
+> therefore WRITES `processing_date`"*). The source settles it:
+> `routes/mfg-sales-orders.ts:5821`, inside the `/status` → IN_PRODUCTION branch,
+> is `patch[SO_PROCESSING_DATE_COLUMN] = resolved.date;`. The proceed writes the
+> Processing Date — that is the entire point of the 2026-08-13 change. It ALSO
+> stamps `proceeded_at` (`:5838`), stamp-once.
 
 ### Both dates or neither — `processing_delivery_must_pair`
 
 *"processing date 和 delivery date 必须同时有或者同时没有"* (owner, restated
 2026-08-13). One predicate, `soDatePairRefusal` in
 `backend/src/scm/shared/so-processing-date.ts`, and **every server write path
-that can set or clear either date calls it**. It is not a UI rule: the client
-guard (`so-form-validate.ts` `soDateGuardError`) still runs first for the
-message, but nothing depends on it.
+where HOUZS AUTHORS the write calls it** — SO create, SO header PATCH, CO create,
+CO header PATCH, amendment submit, amendment approve, the `/status` proceed. It
+is not a UI rule: the client guard (`so-form-validate.ts` `soDateGuardError`)
+still runs first for the message, but nothing depends on it.
+
+> **CORRECTED 2026-08-18.** This sentence read *"**every** server write path that
+> can set or clear either date calls it"*, without qualification. Three writers
+> do not, and one of them is deployed:
+>
+> * `routes/so-mirror.ts` — **deliberately**, and the file says so in a header
+>   comment dated 2026-08-14: refusing an unpaired mirror row keeps it PENDING in
+>   2990's outbox and the `pg_cron` drainer retries forever, so one legacy
+>   company-2 order would wedge the queue behind it. The rule for company 2
+>   belongs in 2990's own write paths. **Company-2 rows are therefore NOT covered
+>   by this invariant**; count them with `backend/scripts/probe-so-date-xor.mjs`,
+>   which reports per company.
+> * `backend/scripts/import-ac-outstanding-so.mjs` and
+>   `backend/scripts/backfill-so-dates.mjs` — hand-run CLI scripts, not request
+>   paths, and both write dates straight into the header.
+>
+> The absolute wording is what would let someone add a seventh caller assuming
+> company 2 is covered, or file an incident when an audit finds unpaired
+> company-2 rows.
 
 | Write path | File | Response |
 |---|---|---|
@@ -1219,12 +1268,20 @@ production queues by that date.
 
 | Path | Where the date comes from |
 |------|---------------------------|
-| `PATCH /:docNo/status` → IN_PRODUCTION | the order's own `processing_date`, else the `internalExpectedDd` REQUEST KEY (the payload name is unchanged — only the column was renamed, and a payload rename would break every deployed client); a date written here clears the FULL gate table above **and the pair rule**, read live off the row |
-| `PATCH /:docNo` `proceededAt` | this patch's `internalExpectedDd`, else the stored one |
-| CREATE auto-proceed | `internalExpectedDd` on the create — no date means the order is created UN-proceeded, never refused |
-| `PATCH /:docNo/status` → IN_PRODUCTION | the order's own `processing_date`, else `internalExpectedDd` on the request body (which the route now accepts); a date written here clears the FULL gate table above, read live off the row |
-| `PATCH /:docNo` `proceededAt` | this patch's `processingDate`, else the stored one |
+| `PATCH /:docNo/status` → IN_PRODUCTION | the order's own `processing_date`, else the **`processingDate`** request key (`readSoProcessingDateFromBody`, which reads the canonical key FIRST and still accepts the legacy `internalExpectedDd` for the 2990 mirror); a date written here clears the FULL gate table above **and the pair rule**, read live off the row |
+| `PATCH /:docNo` `proceededAt` | this patch's `processingDate`, else the stored one — read through `effOf(SO_PROCESSING_DATE_COLUMN)`, i.e. off the COLUMN, not a payload key |
 | CREATE auto-proceed | `processingDate` on the create — no date means the order is created UN-proceeded, never refused |
+
+> **CORRECTED 2026-08-18 — this table had SIX rows, three stale ones sitting
+> above their three corrections.** The stale rows said each proceed path reads
+> the `internalExpectedDd` REQUEST KEY. It does not read it *first*:
+> `shared/so-processing-date.ts` `readSoProcessingDateFromBody` returns the
+> canonical `processingDate` when present and only then falls back to the legacy
+> spelling, and the header PATCH's proceed check reads the **column** constant
+> (`mfg-sales-orders.ts`, `effOf(SO_PROCESSING_DATE_COLUMN)`), not a payload key
+> at all. Corrections were APPENDED rather than APPLIED, which left the document
+> asserting both. Appending a correction below a wrong row does not retire the
+> wrong row — delete it.
 
 > **RESOLVED 2026-08-14 — the table above now describes what the route does.**
 > It did not for a day, and the story is worth keeping. Mig `0286` applied on
@@ -1260,7 +1317,16 @@ a guessed start date is a real order sitting in the factory queue on the wrong
 day with nothing to show it was guessed. A date already on the order is never
 MOVED by a proceed — rescheduling belongs to the header PATCH, which owns the
 lock and the gate table. `proceeded_at` is still written and still read (the
-stock allocator sorts by it), but it is no longer what makes an order proceeded.
+stock allocator GATES on it — see below), but it is no longer what makes an order
+proceeded.
+
+> **CORRECTED 2026-08-18 — "sorts by it" understated this into invisibility.**
+> The allocator does not sort by `proceeded_at`; it **gates** on it
+> (`lib/so-stock-allocation.ts:219`, `orders.filter((o) => !o.proceeded_at)`).
+> Its sort keys are different columns entirely (`:195-196`,
+> `customer_delivery_date` then `created_at`). "Sorts by" reads like a tie-break;
+> the truth is that a NULL forces **every line on the order to PENDING**. That is
+> the difference between a cosmetic leftover and the live defect in §0.2.
 Net effect: the proceed paths LOOSENED by one condition (email), the
 processing-date path TIGHTENED by four (name / address / postcode / delivery
 date), and the threshold became per-company.
