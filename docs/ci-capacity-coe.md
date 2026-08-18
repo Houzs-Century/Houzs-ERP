@@ -315,14 +315,44 @@ gh api users/hello-houzs --jq '.type'   ->  "User"
 
 **GitHub's merge queue is organization-only.** `hello-houzs` is a personal
 account, so the "Require merge queue" checkbox never appears on the ruleset
-page no matter what else is configured. This was found the slow way — by
+page no matter what else is configured. *(True as written on 2026-08-14; the
+repo has since moved to an organization — see the resolution note below.)* This was found the slow way — by
 recommending it, watching the owner look for a checkbox that does not exist,
 and only then checking the account type. Check `owner.type` before proposing
 anything org-scoped.
 
-The `merge_group` work already merged is not wasted: the trigger and the
-`scale-postgres-contract` gate are correct, and they become live the moment the
-repo moves under an organization. Until then:
+> **RESOLVED 2026-08-18. The repo moved, and the queue is on.**
+> `hello-houzs/Houzs-ERP` -> **`Houzs-Century/Houzs-ERP`**, by TRANSFER, not by
+> converting the account. That distinction is the point: converting a user into
+> an organization is irreversible, kills the ability to sign in as that user,
+> uninstalls its GitHub Apps, and **disables Actions until someone re-enables
+> them**. Transferring a repository keeps secrets, webhooks, deploy keys, issues,
+> PRs, stars and watchers — verified after the move: the `main-protection`
+> ruleset survived intact with the same two required contexts, all 10 Actions
+> secrets came across, and CI ran on the new owner within three minutes.
+>
+> The queue is configured `merge_method: SQUASH`, `max_entries_to_build: 3`,
+> `grouping_strategy: HEADGREEN` (only the head commit of a group must be green,
+> which is the cheap setting and the right one against a slot ceiling), and
+> `check_response_timeout_minutes: 30`.
+>
+> **Measured on the first real queued merge (#2409):** entered the queue and its
+> CI started at 07:03:50, CI finished 07:07:22, merged 07:07:40. **212s of CI,
+> 18s of queue overhead, 230s total.** The `min_entries_to_merge_wait_minutes: 5`
+> setting does NOT add five minutes to a lone PR — a single entry already meets
+> `min_entries_to_merge: 1`, so nothing waits for a group to fill. That was an
+> open question when the queue was switched on and it was settled by measurement,
+> not by reading the docs, which do not say.
+>
+> One trap did NOT bite, because `ci.yml` had carried the `merge_group` trigger
+> since before any of this: **a required check whose workflow does not run on
+> `merge_group` leaves every queued PR hanging forever.** Both required contexts
+> (`backend-typecheck`, `frontend`) live in `ci.yml`, so both fire in the queue.
+> Verify that before enabling a queue anywhere else.
+
+The `merge_group` work already merged was not wasted: the trigger and the
+`scale-postgres-contract` gate were correct, and went live the moment the repo
+moved. The options weighed at the time, kept for the reasoning:
 
 | option | effect | cost |
 | --- | --- | --- |
