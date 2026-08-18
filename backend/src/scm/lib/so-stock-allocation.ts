@@ -771,11 +771,13 @@ async function runSoStockAllocation(
         // Batch-resolve each SO's company so an auto-allocation audit row inherits
         // the company of the SO it describes. Best-effort (the insert is swallowed).
         try {
+          /* chunkIn — the unscoped sweep flips lines across the WHOLE tenant, so
+             `docNos` is one entry per SO that changed and grows with the order
+             book; every other `.in()` in this file is already chunked. */
           const docNos = [...new Set(auditRows.map((r) => r.so_doc_no as string))];
-          const { data: coRows } = await sb.from('mfg_sales_orders')
-            .select('doc_no, company_id').in('doc_no', docNos);
-          const coByDoc = new Map(((coRows ?? []) as Array<{ doc_no: string; company_id: number | null }>)
-            .map((r) => [r.doc_no, r.company_id]));
+          const { data: coRows } = await chunkIn<{ doc_no: string; company_id: number | null }>(docNos, (batch, from, to) =>
+            sb.from('mfg_sales_orders').select('doc_no, company_id').in('doc_no', batch).order('doc_no').range(from, to));
+          const coByDoc = new Map(coRows.map((r) => [r.doc_no, r.company_id]));
           for (const r of auditRows) {
             const cid = coByDoc.get(r.so_doc_no as string);
             if (cid != null) r.company_id = cid;

@@ -74,7 +74,9 @@ describe('scan draft dates', () => {
 
 describe('status route', () => {
   test('DRAFT→CONFIRMED runs the confirm gate before the status write commits', () => {
-    const block = between(routeSource, "mfgSalesOrders.patch('/:docNo/status',", 'const commitStatusChange');
+    // Anchor changed 2026-08-18 — the handler is now a named export, mounted at the
+    // bottom of the file; the old route-mount anchor slices nothing.
+    const block = between(routeSource, 'export const patchMfgSalesOrderStatusHandler', 'const commitStatusChange');
     expect(block).toContain("fromNorm === 'DRAFT' && toStatus === 'CONFIRMED'");
     expect(block).toContain('soConfirmProblemsForDoc(sb, docNo)');
     expect(block).toContain('validationFailedBody(confirmProblems)');

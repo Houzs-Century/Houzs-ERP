@@ -273,6 +273,25 @@ export const GoodsReceivedDetail = () => {
     }
   }, [isLocked, isEditing]);
 
+  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
+     until 2026-08-17, so the loading render called fewer hooks than the loaded
+     one and React threw #310 ("rendered more hooks than during the previous
+     render") the moment the query resolved — a blank "Something went wrong
+     loading this page." on every direct URL / refresh of a GRN. Arriving from
+     the list hid it: react-query already had the detail cached, so the
+     isPending branch never rendered first. `deliverPrintPdf` therefore has to
+     tolerate a null grn; it can only ever be CALLED from the preview dialog,
+     which does not exist until the record has loaded. */
+  const deliverPrintPdf = (action: PdfAction) => {
+    if (!grn) return;
+    // GRN PDF (AutoCount layout) — mirrors PO's print wiring its own
+    // purchase-order-pdf helper, here the GRN-specific grn-pdf helper.
+    return import('../../vendor/scm/lib/grn-pdf').then(({ generateGrnPdf }) =>
+      generateGrnPdf(grn, items as any, { action }),
+    ).catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+
   if (detail.isPending) {
     return <SkeletonDetailPage />;
   }
@@ -399,15 +418,6 @@ export const GoodsReceivedDetail = () => {
       setSavingDraft(false);
     }
   };
-
-  const deliverPrintPdf = (action: PdfAction) => {
-    // GRN PDF (AutoCount layout) — mirrors PO's print wiring its own
-    // purchase-order-pdf helper, here the GRN-specific grn-pdf helper.
-    return import('../../vendor/scm/lib/grn-pdf').then(({ generateGrnPdf }) =>
-      generateGrnPdf(grn, items as any, { action }),
-    ).catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
-  };
-  const print = usePrintPreview(deliverPrintPdf);
 
   return (
     <div className={styles.page}>

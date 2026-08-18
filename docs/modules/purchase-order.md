@@ -302,6 +302,11 @@ works and is multi-select at line level — but only for a line that is
      (`:467-474`), over the same company + supplier filter but **without** status,
      search or paging. (Seven, not six: the `outstanding` roll-up is counted
      separately rather than derived, so the pill and the filter share one source.)
+     A count that cannot be READ is now `500 { error: 'status_counts_failed' }`
+     naming the bucket (`lib/status-counts.ts`, 2026-08-17) — it used to fall
+     through `count ?? 0` and show a broken bucket as an empty one. A
+     legitimately empty bucket still answers 0. Same guard on the PI, SI, GRN and
+     DO lists.
 3. **Enrichment — TWO waves.** First one GRN query (`:496-512`): all
    non-cancelled GRNs for the listed PO ids, carrying `id` + `grn_number`. It
    powers both `has_children` (the downstream lock) and the "GRN No" column, so

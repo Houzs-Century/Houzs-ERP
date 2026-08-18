@@ -36,9 +36,11 @@ import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers'
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
 import { poHasDownstream } from '../lib/downstream-lock';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
+import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
@@ -79,6 +81,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { PO_LINE_AUDIT_FIELDS, PO_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { computeMrp } from './mrp';
+import { eager } from '../lib/concurrency';
 import { resolvePoSoCoverageForPos, resolveDeliveredDosForPos } from './po-so-coverage';
 import { provenanceNote } from '../shared/transfer-vocabulary';
 import type { Env, Variables } from '../env';
@@ -134,10 +137,8 @@ async function loadSupplierSofaCombos(
    No REVERSE: a PO posts nothing to the ledger, so there is nothing to contra. */
 const PO_AUDIT_FIELDS: Array<[string, string]> = [
   ['poDate', 'po_date'], ['expectedAt', 'expected_at'], ['currency', 'currency'],
-  ['notes', 'notes'], ['supplierId', 'supplier_id'],
-  ['purchaseLocationId', 'purchase_location_id'],
-  ['supplierDeliveryDate2', 'supplier_delivery_date_2'],
-  ['supplierDeliveryDate3', 'supplier_delivery_date_3'],
+  ['notes', 'notes'], ['supplierId', 'supplier_id'], ['purchaseLocationId', 'purchase_location_id'],
+  ['supplierDeliveryDate2', 'supplier_delivery_date_2'], ['supplierDeliveryDate3', 'supplier_delivery_date_3'],
   ['supplierDeliveryDate4', 'supplier_delivery_date_4'],
 ];
 
@@ -446,6 +447,7 @@ mfgPurchaseOrders.get('/', async (c) => {
   let page = 0;
   let pageSize = 50;
   let statusCounts: { all: number; draft: number; outstanding: number; open: number; partial: number; received: number; cancelled: number } | undefined;
+  let countError: string | null = null; // held, not returned here, so the LIST read's own error still wins the report
 
   if (!paginate) {
     /* --- LEGACY PATH (unchanged) --- */
@@ -496,10 +498,6 @@ mfgPurchaseOrders.get('/', async (c) => {
     const from = c.req.query('from'); if (from) q = q.gte('po_date', from);
     const to = c.req.query('to'); if (to) q = q.lte('po_date', to);
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
-    const res = await q;
-    data = res.data;
-    error = res.error;
-    total = res.count ?? (res.data?.length ?? 0);
 
     /* Status counts mirror the FE filter-pill buckets (draft / outstanding /
        open / partial / received / cancelled) over the SAME company + supplier
@@ -511,7 +509,9 @@ mfgPurchaseOrders.get('/', async (c) => {
       cq = scopeToCompany(cq, c);
       return cq;
     };
-    const [allC, draftC, outstandingC, openC, partialC, receivedC, cancelledC] = await Promise.all([
+    /* PERF: the seven head-only counts read nothing the page query produces, so
+       they are issued alongside it rather than after it. Semantics unchanged. */
+    const countsProm = eager(Promise.all([
       countBase(),
       countBase().in('status', PO_STATUS_BUCKETS.draft),
       countBase().in('status', PO_STATUS_BUCKETS.outstanding),
@@ -519,18 +519,18 @@ mfgPurchaseOrders.get('/', async (c) => {
       countBase().in('status', PO_STATUS_BUCKETS.partial),
       countBase().in('status', PO_STATUS_BUCKETS.received),
       countBase().in('status', PO_STATUS_BUCKETS.cancelled),
-    ]);
-    statusCounts = {
-      all: allC.count ?? 0,
-      draft: draftC.count ?? 0,
-      outstanding: outstandingC.count ?? 0,
-      open: openC.count ?? 0,
-      partial: partialC.count ?? 0,
-      received: receivedC.count ?? 0,
-      cancelled: cancelledC.count ?? 0,
-    };
+    ]));
+    const res = await q;
+    data = res.data;
+    error = res.error;
+    total = res.count ?? (res.data?.length ?? 0);
+    const [allC, draftC, outstandingC, openC, partialC, receivedC, cancelledC] = (await countsProm)();
+    // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
+    const counted = readStatusCounts({ all: allC, draft: draftC, outstanding: outstandingC, open: openC, partial: partialC, received: receivedC, cancelled: cancelledC });
+    if (counted.ok) statusCounts = counted.counts; else countError = counted.reason;
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (countError) return c.json({ error: 'status_counts_failed', reason: countError }, 500);
 
   /* Tier 2 downstream-lock (mirror computeGrnFlags in lib/grn-consumption-flags) — one
      extra query: pull the distinct purchase_order_ids that have any non-
@@ -1142,9 +1142,9 @@ mfgPurchaseOrders.post('/', async (c) => {
      These fan out to each line below the same way expected_at fans to
      delivery_date, but a line's OWN override survives (mirrors the per-line
      delivery_date override pattern). */
-  const headerD2 = (body.supplierDeliveryDate2 as string | undefined) ?? null;
-  const headerD3 = (body.supplierDeliveryDate3 as string | undefined) ?? null;
-  const headerD4 = (body.supplierDeliveryDate4 as string | undefined) ?? null;
+  const headerD2 = dateOrNull(body.supplierDeliveryDate2);
+  const headerD3 = dateOrNull(body.supplierDeliveryDate3);
+  const headerD4 = dateOrNull(body.supplierDeliveryDate4);
 
   // PR #41 — allow blank-draft creation (no items). Commander 2026-05-26:
   // PO needs to be "raw" — start with just supplier + date, add items
@@ -1277,12 +1277,11 @@ mfgPurchaseOrders.post('/', async (c) => {
       /* PR #97 — pass-through per-line variant + AutoCount fields. NULL
          when absent so the column default / nullable behaviour kicks in. */
       discount_centi: discountCenti,
-      delivery_date: (it.deliveryDate as string | undefined) ?? null,
-      /* Migration 0180 — per-line revised dates: line's own value wins, else
-         fan the header revision down (mirrors expected_at → delivery_date). */
-      supplier_delivery_date_2: (it.supplierDeliveryDate2 as string | undefined) ?? headerD2,
-      supplier_delivery_date_3: (it.supplierDeliveryDate3 as string | undefined) ?? headerD3,
-      supplier_delivery_date_4: (it.supplierDeliveryDate4 as string | undefined) ?? headerD4,
+      delivery_date: dateOrNull(it.deliveryDate),
+      /* Migration 0180 — line's own revised date wins, else the header's. */
+      supplier_delivery_date_2: dateOrNull(it.supplierDeliveryDate2) ?? headerD2,
+      supplier_delivery_date_3: dateOrNull(it.supplierDeliveryDate3) ?? headerD3,
+      supplier_delivery_date_4: dateOrNull(it.supplierDeliveryDate4) ?? headerD4,
       warehouse_id:  (it.warehouseId  as string | undefined) ?? null,
       /* Commander 2026-05-28 — persist the per-line category + variants the PO
          form now collects (mirroring SO), and auto-generate Description 2 from
@@ -2604,7 +2603,10 @@ mfgPurchaseOrders.patch('/:id', async (c) => {
   for (const [from, to] of PO_AUDIT_FIELDS) {
     if (body[from] !== undefined) updates[to] = body[from];
   }
-  const { data, error } = await scopeToCompanyId(sb.from('purchase_orders').update(updates).eq('id', id), co.companyId).select('*').single();
+  /* A cleared Supplier Date 2/3/4 posts "", which Postgres rejects on a date
+     column, so every PO that left one blank failed to save (production,
+     2026-08-17). It mutates `updates`, so the audit below records the NULL. */
+  const { data, error } = await scopeToCompanyId(sb.from('purchase_orders').update(coerceEmptyDates(updates)).eq('id', id), co.companyId).select('*').single();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   {
@@ -3113,11 +3115,11 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     discount_centi: discountCenti,
     unit_cost_centi: Number(it.unitCostCenti ?? 0),
     // PR #77 — per-line ship-to. Both nullable; empty = inherit from header.
-    delivery_date: (it.deliveryDate as string) ?? null,
+    delivery_date: dateOrNull(it.deliveryDate),
     // Migration 0180 — per-line supplier-revised dates (nullable, default NULL).
-    supplier_delivery_date_2: (it.supplierDeliveryDate2 as string) ?? null,
-    supplier_delivery_date_3: (it.supplierDeliveryDate3 as string) ?? null,
-    supplier_delivery_date_4: (it.supplierDeliveryDate4 as string) ?? null,
+    supplier_delivery_date_2: dateOrNull(it.supplierDeliveryDate2),
+    supplier_delivery_date_3: dateOrNull(it.supplierDeliveryDate3),
+    supplier_delivery_date_4: dateOrNull(it.supplierDeliveryDate4),
     warehouse_id: (it.warehouseId as string) ?? null,
   };
   const { data, error } = await sb.from('purchase_order_items').insert({ ...row, company_id: activeCompanyId(c) }).select('*').single();
@@ -3239,8 +3241,7 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     // PR #77 — per-line delivery + ship-to overrides
     ['deliveryDate', 'delivery_date'], ['warehouseId', 'warehouse_id'],
     // Migration 0180 — per-line supplier-revised delivery dates.
-    ['supplierDeliveryDate2', 'supplier_delivery_date_2'],
-    ['supplierDeliveryDate3', 'supplier_delivery_date_3'],
+    ['supplierDeliveryDate2', 'supplier_delivery_date_2'], ['supplierDeliveryDate3', 'supplier_delivery_date_3'],
     ['supplierDeliveryDate4', 'supplier_delivery_date_4'],
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
@@ -3285,7 +3286,7 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     if (over) return c.json({ error: 'qty_exceeds_remaining', ...over }, 409);
   }
 
-  const { error } = await scopeToCompanyId(sb.from('purchase_order_items').update(updates).eq('id', itemId), co.companyId);
+  const { error } = await scopeToCompanyId(sb.from('purchase_order_items').update(coerceEmptyDates(updates)).eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff `updates` — the EFFECTIVE values written — against the stored row. qty,
@@ -4337,7 +4338,7 @@ mfgPurchaseOrders.post('/:id/send-to-supplier', async (c) => {
   return c.json({ sent: res.status === 'sent', result: res, to: supplierEmail });
 });
 
-mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
+export const cancelPurchaseOrderHandler = async (c: any) => {
   const id = c.req.param('id');
   const supabase = c.get('supabase');
 
@@ -4348,18 +4349,14 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur, error: readErr } = await scopeToCompanyId(supabase
-    .from('purchase_orders')
-    .select('id, status, po_number, company_id, total_centi')
-    .eq('id', id), co.companyId)
-    .maybeSingle();
+    .from('purchase_orders').select('id, status, po_number, company_id, total_centi')
+    .eq('id', id), co.companyId).maybeSingle();
   if (readErr) return c.json({ error: 'load_failed', reason: readErr.message }, 500);
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const curStatus = (cur as { status: string }).status;
   if (curStatus === 'RECEIVED') return c.json({ error: 'cannot_cancel', message: 'PO already received' }, 409);
-  // Idempotent — already cancelled, just echo back.
-  if (curStatus === 'CANCELLED') {
-    return c.json({ purchaseOrder: { id, status: 'CANCELLED' } });
-  }
+  // Idempotent echo. ADVISORY — this read cannot see a cancel that lands after it; the atomic gate on the UPDATE below is what decides.
+  if (curStatus === 'CANCELLED') return c.json({ purchaseOrder: { id, status: 'CANCELLED' } });
 
   /* Tier 2 downstream-lock — can't cancel a PO that has a downstream GRN; the
      GRN must be cancelled/deleted first (mirrors grnHasDownstream cancel guard). */
@@ -4373,11 +4370,13 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
     supabase, (cur as { po_number?: string | null }).po_number);
   if (dropshipLock) return c.json(dropshipLock, 409);
 
-  const { error: updErr } = await scopeToCompanyId(supabase
+  /* ATOMIC ACTIVE->CANCELLED: only one of two concurrent cancels flips the row, so the audit row + SO-quota release below fire once (full note at grns.ts:2566). */
+  const { data: updRow, error: updErr } = await scopeToCompanyId(supabase
     .from('purchase_orders')
     .update({ status: 'CANCELLED', cancelled_at: new Date().toISOString(), updated_at: new Date().toISOString() })
-    .eq('id', id), co.companyId);
+    .eq('id', id).neq('status', 'CANCELLED'), co.companyId).select('id').maybeSingle();
   if (updErr) return c.json({ error: 'cancel_failed', reason: updErr.message }, 500);
+  if (!updRow) return c.json({ purchaseOrder: { id, status: 'CANCELLED' } });   // lost the race
 
   /* The prior status comes from the guarded read above, so this records the real
      transition (SUBMITTED / PARTIALLY_RECEIVED -> CANCELLED) rather than
@@ -4453,7 +4452,8 @@ mfgPurchaseOrders.patch('/:id/cancel', async (c) => {
   });
 
   return c.json({ purchaseOrder: after ?? { id, status: 'CANCELLED' } });
-});
+};
+mfgPurchaseOrders.patch('/:id/cancel', cancelPurchaseOrderHandler);
 
 /* Reopen — the inverse of cancel (Commander 2026-06-16: "PO cancel 了,不可以
    uncancel 回来吗?"). Only a CANCELLED PO can be reopened; it returns to

@@ -48,6 +48,7 @@ import { Hono } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
+import { dateOrNull } from '../lib/date-coerce';
 import { postJournal, reverseJournal } from '../../acc/engine';
 import { pvLines } from '../../acc/rules';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -337,7 +338,7 @@ export const createPaymentVoucherHandler = async (c: any) => {
     (pvNumber) => sb.from('payment_vouchers').insert({
       company_id:          activeCompanyId(c), // multi-company: stamp the active company
       pv_number:           pvNumber,
-      voucher_date:        (body.voucherDate as string) ?? todayMyt(),
+      voucher_date:        dateOrNull(body.voucherDate) ?? todayMyt(),
       payee_name:          payeeName,
       supplier_id:         (body.supplierId as string | undefined) ?? null,
       credit_account_code: creditAccountCode,
@@ -437,7 +438,15 @@ paymentVouchers.patch('/:id', async (c) => {
     if (!v) return c.json({ error: 'credit_account_required' }, 400);
     updates.credit_account_code = v;
   }
-  if (body.voucherDate !== undefined) updates.voucher_date = body.voucherDate;
+  /* voucher_date is `date NOT NULL DEFAULT current_date` (mig 0081), and the
+     detail form sends this key on every save — cleared, DateField emits "".
+     NULL would trade one 500 for another, so a blank is refused by NAME here,
+     exactly as payeeName and creditAccountCode above are. */
+  if (body.voucherDate !== undefined) {
+    const d = dateOrNull(body.voucherDate);
+    if (!d) return c.json({ error: 'voucher_date_required' }, 400);
+    updates.voucher_date = d;
+  }
   if (body.supplierId !== undefined) updates.supplier_id = (body.supplierId as string | null) || null;
   if (body.notes !== undefined) updates.notes = (body.notes as string | null) ?? null;
   // PV→PI settlement (0202) — purpose is editable while DRAFT.

@@ -46,6 +46,7 @@ import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { parseProvenanceNote } from '../shared/transfer-vocabulary';
+import { chunkIn } from '../lib/paginate-all';
 import type { Env, Variables } from '../env';
 
 export const documentFlow = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -468,15 +469,21 @@ documentFlow.get('/candidate-pos/:soDocNo', async (c) => {
   const poIds = uniq((poItems ?? []).map((r: any) => r.purchase_order_id));
   if (poIds.length === 0) return c.json({ candidates: [] });
 
-  // Live (non-CANCELLED) POs only, company-scoped, newest first.
-  const { data: pos } = await scopeToCompany(
+  /* Live (non-CANCELLED) POs only, company-scoped, newest first. CHUNKED: the
+     read above collects EVERY unlinked PO line carrying one of this order's item
+     codes, with no date or status bound, so `poIds` grows with the whole PO
+     history of a common SKU rather than with this one order. The `.sort()` below
+     is a total order over the merged rows, so batching cannot reshuffle the
+     candidate list. */
+  type CandidatePoRow = { id: string; po_number: string; status: string | null; po_date: string | null };
+  const { data: pos } = await chunkIn<CandidatePoRow>(poIds, (batch, from, to) => scopeToCompany(
     sb.from('purchase_orders')
       .select('id, po_number, status, po_date')
-      .in('id', poIds)
+      .in('id', batch)
       .neq('status', 'CANCELLED'),
     c,
-  );
-  const candidates = ((pos ?? []) as any[])
+  ).order('id').range(from, to));
+  const candidates = pos
     .map((p) => ({ id: p.id, poNumber: p.po_number, status: p.status, poDate: p.po_date }))
     .sort((a, b) =>
       (b.poDate ?? '').localeCompare(a.poDate ?? '') || b.poNumber.localeCompare(a.poNumber));
