@@ -436,7 +436,7 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
         </div>
       )}
 
-      {batch && <HandOff batch={batch} openLines={openRows.length} />}
+      {batch && <HandOff batch={batch} toConfirm={toConfirm} toDecide={toDecide} />}
 
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading the report…</div>}
       {shown.map((r) => <SettlementLine key={r.id} row={r} />)}
@@ -449,15 +449,17 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
    statement 的 reconciliation. Until every line is decided, this says what is
    left; after that, it says what the merchant owes and offers the next step. */
 
-const HandOff = ({ batch, openLines }: { batch: SettlementBatch; openLines: number }) => {
+const HandOff = ({ batch, toConfirm, toDecide }: { batch: SettlementBatch; toConfirm: number; toDecide: number }) => {
   const payable = payableOf(batch);
   const outstanding = batch.outstanding_sen ?? payable - (batch.received_sen ?? 0);
 
-  if (openLines > 0) {
+  /* The counts are stated once, at the top. This line says only what happens
+     next — repeating "1 to confirm" two inches below "1 to confirm" is the
+     duplication the owner was looking at. */
+  if (toConfirm > 0 || toDecide > 0) {
     return (
       <div style={softText}>
-        {openLines} line(s) still need a decision. Bank statement reconciliation opens for this report once they
-        are done.
+        Bank statement reconciliation opens for this report once every line is done.
       </div>
     );
   }
@@ -513,7 +515,11 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
         <span style={softText}>− {fmt(row.fee_sen)} fee = {fmt(row.net_sen)} net</span>
       </div>
 
-      {row.clue && <div style={softText}>{row.clue}</div>}
+      {/* A matched line says it ONCE. The clue ("Reference 969745 matches
+          SO-2608-043") and the line below it ("Matched to SO-2608-043") were
+          the same sentence twice — which is what still looked wrong after the
+          contradiction was fixed. */}
+      {row.clue && row.linked.length === 0 && <div style={softText}>{row.clue}</div>}
 
       {row.posted_je_no && (
         <div style={{ fontSize: 'var(--fs-13)', color: good }}>
@@ -524,7 +530,8 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
 
       {!row.confirmed_at && row.linked.length > 0 && (
         <div style={{ fontSize: 'var(--fs-13)' }}>
-          Matched to {row.linked.map((l) => l.doc_no ?? l.payment_id).join(', ')} — not posted yet.
+          Matched to <b>{row.linked.map((l) => l.doc_no ?? l.payment_id).join(', ')}</b>
+          {row.ref ? ' by its reference' : ''} — press <b>Confirm</b> to book its fee.
         </div>
       )}
 

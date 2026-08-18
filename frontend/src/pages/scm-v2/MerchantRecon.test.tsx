@@ -41,6 +41,15 @@ const DONE_ROW: SettlementRow = {
   candidates: [], comboHints: [], clue: null,
 };
 
+/* The state the owner was looking at: matched by its reference, not yet
+   confirmed. One button away, and the screen must say so once. */
+const MATCHED_ROW: SettlementRow = {
+  ...ROW, id: 9, line_no: 3, ref: '969745', bucket: 'MATCHED', match_reason: 'ref',
+  confirmed_at: null, posted_je_no: null,
+  linked: [{ settlement_row_id: 9, payment_source: 'SOPAY', payment_id: 'm4', doc_no: 'SO-2608-043', amount_sen: 258800 }],
+  candidates: [], comboHints: [], clue: 'Reference 969745 matches SO-2608-043',
+};
+
 const confirmMutate = vi.fn();
 const uploadMutateAsync = vi.fn();
 const saveMutate = vi.fn();
@@ -59,7 +68,7 @@ vi.mock('./settlement-queries', () => ({
       },
       acquirer: { code: 'MBB', hasUniqueRef: true, dateToleranceDays: 3 },
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 1, UNMATCHED: 0, IGNORED: 0 },
-      rows: [ROW, DONE_ROW],
+      rows: [ROW, MATCHED_ROW, DONE_ROW],
     },
     isLoading: false,
   }),
@@ -145,13 +154,30 @@ describe('the reconcile tab', () => {
 
   /* Opening a report shows the lines still to decide and NOTHING else — the
      upload row, the other reports and the finished lines are all gone. */
+  /* A matched line says it ONCE, in the words of the work it needs — the owner
+     looked at two lines saying the same thing and said 好像还是一样. */
+  test('a matched line says it once, and is not called a decision', () => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    fireEvent.click(screen.getByLabelText('Show lines already decided'));
+    /* The counts are stated ONCE, at the top. */
+    expect(screen.getAllByText(/still to decide/)).toHaveLength(1);
+    expect(screen.getByText(/1 matched, waiting for you to confirm/)).toBeTruthy();
+    expect(screen.getByText(/opens for this report once every line is done/)).toBeTruthy();
+    /* The line that needs a person still carries its clue… */
+    expect(screen.getByText('No single payment matches; 1 pair(s) of payments add up to this amount')).toBeTruthy();
+    /* …and the matched one names its match once, in the words of the work. */
+    expect(screen.getByText(/Matched to/)).toBeTruthy();
+    /* …and does NOT also repeat that as a grey clue above it. */
+    expect(screen.queryByText('Reference 969745 matches SO-2608-043')).toBeNull();
+  });
+
   test('a report opens on the lines still to decide, with its clue and candidates', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
-    /* The open ROW here has no links, so it is a decision. A matched-and-
-       unconfirmed line would say "waiting for you to confirm" instead — the
-       two are different amounts of work and the screen says which. */
-    expect(screen.getByText('1 still to decide')).toBeTruthy();
+    /* Two kinds of not-done on this report, and the screen names both: one
+       matched by reference (a button) and one that needs a person. */
+    expect(screen.getByText('1 matched, waiting for you to confirm · 1 still to decide')).toBeTruthy();
     expect(screen.getByText(/pair\(s\) of payments add up/)).toBeTruthy();
     expect(screen.getByText('SO-2608-001')).toBeTruthy();
     // the list it came from is off the screen
