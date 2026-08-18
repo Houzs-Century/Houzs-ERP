@@ -45,8 +45,8 @@ export const useOutstanding = (
 
 export type OutstandingSummary = Record<OutstandingModule, {
   count: number;
-  total_centi?: number;
-  total_outstanding_centi?: number;
+  total_sen?: number;
+  total_outstanding_sen?: number;
 }>;
 
 export const useOutstandingSummary = (opts?: { from?: string; to?: string }) => {

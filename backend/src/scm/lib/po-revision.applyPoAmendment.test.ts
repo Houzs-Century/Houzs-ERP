@@ -94,11 +94,11 @@ function baseStore(): Record<string, Row[]> {
     po_amendment_lines: [],
     purchase_orders: [{
       id: POID, po_number: PONO, supplier_id: 'S1', expected_at: null, notes: null,
-      subtotal_centi: 3000, tax_centi: 0, total_centi: 3000, revision: 1, company_id: 1, status: 'SUBMITTED',
+      subtotal_sen: 3000, tax_sen: 0, total_sen: 3000, revision: 1, company_id: 1, status: 'SUBMITTED',
     }],
     purchase_order_items: [
-      { id: 'POI-1', purchase_order_id: POID, material_code: 'BF-1', material_name: 'Bed One', qty: 1, unit_price_centi: 1000, discount_centi: 0, line_total_centi: 1000, received_qty: 0, variants: null, delivery_date: null, company_id: 1 },
-      { id: 'POI-2', purchase_order_id: POID, material_code: 'BF-2', material_name: 'Bed Two', qty: 1, unit_price_centi: 2000, discount_centi: 0, line_total_centi: 2000, received_qty: 0, variants: null, delivery_date: null, company_id: 1 },
+      { id: 'POI-1', purchase_order_id: POID, material_code: 'BF-1', material_name: 'Bed One', qty: 1, unit_price_sen: 1000, discount_sen: 0, line_total_sen: 1000, received_qty: 0, variants: null, delivery_date: null, company_id: 1 },
+      { id: 'POI-2', purchase_order_id: POID, material_code: 'BF-2', material_name: 'Bed Two', qty: 1, unit_price_sen: 2000, discount_sen: 0, line_total_sen: 2000, received_qty: 0, variants: null, delivery_date: null, company_id: 1 },
     ],
     po_revisions: [],
     entity_audit_log: [],
@@ -110,7 +110,7 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
   it('snapshots the PO, bumps the revision, and writes ONE audit row', async () => {
     const store = baseStore();
     store.po_amendment_lines = [
-      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'QTY', new_qty: 3, new_unit_price_centi: null, new_material_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'QTY', new_qty: 3, new_unit_price_sen: null, new_material_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
     ];
 
     const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
@@ -130,49 +130,49 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
   it('QTY diff rewrites the line and rolls the PO total', async () => {
     const store = baseStore();
     store.po_amendment_lines = [
-      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'QTY', new_qty: 3, new_unit_price_centi: null, new_material_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'QTY', new_qty: 3, new_unit_price_sen: null, new_material_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
     ];
     const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
     const line = store.purchase_order_items.find((i) => i.id === 'POI-1')!;
     expect(line.qty).toBe(3);
-    expect(line.line_total_centi).toBe(3000);           // 3 * 1000
-    expect(store.purchase_orders[0].subtotal_centi).toBe(3000 + 2000);
-    expect(store.purchase_orders[0].total_centi).toBe(5000);
+    expect(line.line_total_sen).toBe(3000);           // 3 * 1000
+    expect(store.purchase_orders[0].subtotal_sen).toBe(3000 + 2000);
+    expect(store.purchase_orders[0].total_sen).toBe(5000);
     expect(res.linesUpdated).toBe(1);
   });
 
   it('PRICE diff rewrites the unit price', async () => {
     const store = baseStore();
     store.po_amendment_lines = [
-      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-2', change_type: 'PRICE', new_qty: null, new_unit_price_centi: 2500, new_material_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: {} },
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-2', change_type: 'PRICE', new_qty: null, new_unit_price_sen: 2500, new_material_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: {} },
     ];
     await applyPoAmendment(fakeSb(store), AMD, 'user-1');
     const line = store.purchase_order_items.find((i) => i.id === 'POI-2')!;
-    expect(line.unit_price_centi).toBe(2500);
-    expect(line.line_total_centi).toBe(2500);
-    expect(store.purchase_orders[0].subtotal_centi).toBe(1000 + 2500);
+    expect(line.unit_price_sen).toBe(2500);
+    expect(line.line_total_sen).toBe(2500);
+    expect(store.purchase_orders[0].subtotal_sen).toBe(1000 + 2500);
   });
 
   it('ADD inserts a line and lifts the total', async () => {
     const store = baseStore();
     store.po_amendment_lines = [
-      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: null, change_type: 'ADD', new_qty: 2, new_unit_price_centi: 1500, new_material_code: 'BF-3', new_material_name: 'Bed Three', new_variants: null, new_delivery_date: '2026-08-01', old_snapshot: null },
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: null, change_type: 'ADD', new_qty: 2, new_unit_price_sen: 1500, new_material_code: 'BF-3', new_material_name: 'Bed Three', new_variants: null, new_delivery_date: '2026-08-01', old_snapshot: null },
     ];
     const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
     const added = store.purchase_order_items.find((i) => i.material_code === 'BF-3')!;
-    expect(added).toMatchObject({ qty: 2, unit_price_centi: 1500, line_total_centi: 3000, purchase_order_id: POID, delivery_date: '2026-08-01' });
-    expect(store.purchase_orders[0].subtotal_centi).toBe(1000 + 2000 + 3000);
+    expect(added).toMatchObject({ qty: 2, unit_price_sen: 1500, line_total_sen: 3000, purchase_order_id: POID, delivery_date: '2026-08-01' });
+    expect(store.purchase_orders[0].subtotal_sen).toBe(1000 + 2000 + 3000);
     expect(res.linesAdded).toBe(1);
   });
 
   it('REMOVE deletes the line and drops it from the total', async () => {
     const store = baseStore();
     store.po_amendment_lines = [
-      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-2', change_type: 'REMOVE', new_qty: null, new_unit_price_centi: null, new_material_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-2', change_type: 'REMOVE', new_qty: null, new_unit_price_sen: null, new_material_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
     ];
     const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
     expect(store.purchase_order_items.find((i) => i.id === 'POI-2')).toBeUndefined();
-    expect(store.purchase_orders[0].subtotal_centi).toBe(1000);
+    expect(store.purchase_orders[0].subtotal_sen).toBe(1000);
     expect(res.linesRemoved).toBe(1);
   });
 
@@ -180,7 +180,7 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
     const store = baseStore();
     store.purchase_order_items.find((i) => i.id === 'POI-2')!.received_qty = 1;
     store.po_amendment_lines = [
-      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-2', change_type: 'REMOVE', new_qty: null, new_unit_price_centi: null, new_material_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-2', change_type: 'REMOVE', new_qty: null, new_unit_price_sen: null, new_material_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 1 } },
     ];
     const res = await applyPoAmendment(fakeSb(store), AMD, 'user-1');
     expect(store.purchase_order_items.find((i) => i.id === 'POI-2')).toBeDefined();  // preserved
@@ -189,14 +189,14 @@ describe('applyPoAmendment — snapshot + revision + audit', () => {
     expect(res.warnings[0]).toContain('Bed Two');
     expect(res.warnings[0].toLowerCase()).toContain('already received');
     // Plain language: no codes / keys / jargon.
-    expect(res.warnings[0]).not.toMatch(/_centi|uuid|received_qty/i);
+    expect(res.warnings[0]).not.toMatch(/_sen|uuid|received_qty/i);
   });
 
   it('aborts (received floor) when a surviving line drops below received qty, changing nothing', async () => {
     const store = baseStore();
     store.purchase_order_items.find((i) => i.id === 'POI-1')!.received_qty = 3;
     store.po_amendment_lines = [
-      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'QTY', new_qty: 1, new_unit_price_centi: null, new_material_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 3 } },
+      { id: 'AL-1', amendment_id: AMD, purchase_order_item_id: 'POI-1', change_type: 'QTY', new_qty: 1, new_unit_price_sen: null, new_material_code: null, new_material_name: null, new_variants: null, new_delivery_date: null, old_snapshot: { qty: 3 } },
     ];
     await expect(applyPoAmendment(fakeSb(store), AMD, 'user-1')).rejects.toBeInstanceOf(ReceivedFloorError);
     // Nothing changed — no snapshot, no revision bump.

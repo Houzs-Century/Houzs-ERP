@@ -65,7 +65,7 @@ export function classifyGrnInboundGap({ productCode, lineQty, buckets = [] }) {
 
 /** W2 fallback (live run 2026-08-01: the short line had NO sibling movement to
  *  copy from — `no-sibling`). The GRN line's OWN landed cost is the fallback
- *  basis: round(unit_price_centi x exchange_rate) — the exact `toMyrSen` path
+ *  basis: round(unit_price_sen x exchange_rate) — the exact `toMyrSen` path
  *  grns.ts uses for movements written outside the allocation (warehouse-change
  *  precedent, grns.ts:2463). MIRROR of lib/fx.ts `toMyrSen`/`safeRate`; the
  *  lockstep test pins the two together. */
@@ -126,7 +126,7 @@ export function variantKeyMirror(itemGroup, attrs) {
  *    - batch: the single batch the GRN's other movements share, else NULL
  *      (a plain unbatched lot — printed, not guessed)
  *    - variant: the line's own variants via the computeVariantKey mirror
- *    - cost: round(line unit_price_centi x GRN exchange_rate); refused at <= 0
+ *    - cost: round(line unit_price_sen x GRN exchange_rate); refused at <= 0
  *  Verdicts: line-insert | multi-line | no-warehouse | zero-cost */
 export function deriveGrnLineBasis({
   lines = [],
@@ -142,7 +142,7 @@ export function deriveGrnLineBasis({
   const whs = [...new Set(grnMovementWarehouses.filter(Boolean))];
   const warehouseId = whs.length === 1 ? whs[0] : headerWarehouseId;
   if (!warehouseId) return { verdict: "no-warehouse" };
-  const unitCostSen = toMyrSenMirror(Number(line.unit_price_centi ?? 0), exchangeRate);
+  const unitCostSen = toMyrSenMirror(Number(line.unit_price_sen ?? 0), exchangeRate);
   if (!(unitCostSen > 0)) return { verdict: "zero-cost", unitCostSen };
   const batches = [...new Set(grnMovementBatches.filter(Boolean))];
   return {
@@ -155,7 +155,7 @@ export function deriveGrnLineBasis({
       companyId,
       unitCostSen,
     },
-    costSource: `line unit_price_centi ${line.unit_price_centi} x rate ${exchangeRate}`,
+    costSource: `line unit_price_sen ${line.unit_price_sen} x rate ${exchangeRate}`,
   };
 }
 

@@ -214,7 +214,7 @@ async function main() {
        fresh-connection check at the end asserts. A row count would pass while
        every field on it was wrong. */
     const [src] = await db`
-      SELECT doc_no, status, company_id, debtor_name, so_date, local_total_centi,
+      SELECT doc_no, status, company_id, debtor_name, so_date, local_total_sen,
              (SELECT count(*)::int FROM scm.mfg_sales_order_items    i WHERE i.doc_no    = s.doc_no) AS items,
              (SELECT count(*)::int FROM scm.mfg_sales_order_payments y WHERE y.so_doc_no = s.doc_no) AS payments
         FROM scm.mfg_sales_orders s WHERE doc_no = ${p.from}`;
@@ -224,7 +224,7 @@ async function main() {
     if (dst) refuse(`${p.to} is already taken — renaming ${p.from} onto it would collide`);
     p.shape = {
       status: src.status, company_id: String(src.company_id), debtor_name: src.debtor_name,
-      so_date: String(src.so_date), local_total_centi: String(src.local_total_centi),
+      so_date: String(src.so_date), local_total_sen: String(src.local_total_sen),
       items: src.items, payments: src.payments,
     };
     out(`PLAN  ${p.from} -> ${p.to}  (status=${src.status}, company_id=${src.company_id}, ` +
@@ -327,7 +327,7 @@ async function main() {
   try {
     for (const p of todo) {
       const [now] = await verify`
-        SELECT status, company_id, debtor_name, so_date, local_total_centi,
+        SELECT status, company_id, debtor_name, so_date, local_total_sen,
                (SELECT count(*)::int FROM scm.mfg_sales_order_items    i WHERE i.doc_no    = s.doc_no) AS items,
                (SELECT count(*)::int FROM scm.mfg_sales_order_payments y WHERE y.so_doc_no = s.doc_no) AS payments
           FROM scm.mfg_sales_orders s WHERE doc_no = ${p.to}`;
@@ -337,7 +337,7 @@ async function main() {
       if (!now) { bad.push(`${p.to} is NOT PRESENT on a fresh read`); continue; }
       const got = {
         status: now.status, company_id: String(now.company_id), debtor_name: now.debtor_name,
-        so_date: String(now.so_date), local_total_centi: String(now.local_total_centi),
+        so_date: String(now.so_date), local_total_sen: String(now.local_total_sen),
         items: now.items, payments: now.payments,
       };
       const diffs = Object.keys(p.shape).filter((k) => String(p.shape[k]) !== String(got[k]))
@@ -349,7 +349,7 @@ async function main() {
       out(`VERIFY  ${p.from} -> ${p.to} | old gone: ${old.n === 0 ? "yes" : "NO"} | ` +
           `references to old: ${left.length ? left.map((l) => l.table).join(",") : "none"} | ` +
           `shape: ${diffs.length ? "MISMATCH" : "identical"} ` +
-          `(status=${got.status}, customer=${got.debtor_name}, items=${got.items}, payments=${got.payments}, total_centi=${got.local_total_centi})`);
+          `(status=${got.status}, customer=${got.debtor_name}, items=${got.items}, payments=${got.payments}, total_sen=${got.local_total_sen})`);
     }
   } finally {
     await verify.end();

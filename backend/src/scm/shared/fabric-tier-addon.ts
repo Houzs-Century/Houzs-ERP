@@ -1,7 +1,7 @@
 // The SOLE source of truth for the POS selling fabric-tier add-on. Pure — no I/O.
 // POST /mfg-sales-orders (server recompute) and the POS configurator import THIS
 // same function so the figure cannot drift. Returns WHOLE MYR for ONE configured
-// item; callers multiply by qty and convert to the order's unit (×100 for *_centi).
+// item; callers multiply by qty and convert to the order's unit (×100 for *_sen).
 // COST is unaffected: this is selling-only.
 
 export type FabricTier = 'PRICE_1' | 'PRICE_2' | 'PRICE_3';

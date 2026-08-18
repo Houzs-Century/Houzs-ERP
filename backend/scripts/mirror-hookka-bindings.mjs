@@ -8,7 +8,7 @@
 //
 // What it does (HOUZS company only):
 //   1. For every 400-O002 binding (material_kind mfg_product): create the
-//      SAME binding (supplier_sku / unit_price_centi / price_matrix /
+//      SAME binding (supplier_sku / unit_price_sen / price_matrix /
 //      material_name) under 400-H003 HOOKKA MANUFACTURING and
 //      400-H004 HOOKKA INDUSTRIES — skip any that already exist.
 //   2. main flag: demote every other main on those materials (incl. OHANA),
@@ -60,10 +60,10 @@ try {
         if (APPLY) {
           await tx`INSERT INTO scm.supplier_material_bindings
             (supplier_id, material_kind, material_code, material_name, supplier_sku,
-             unit_price_centi, currency, lead_time_days, moq, price_matrix,
+             unit_price_sen, currency, lead_time_days, moq, price_matrix,
              is_main_supplier, notes, company_id, created_at, updated_at)
             VALUES (${sid}, 'mfg_product', ${b.material_code}, ${b.material_name}, ${b.supplier_sku},
-                    ${b.unit_price_centi}, ${b.currency}, ${b.lead_time_days}, ${b.moq},
+                    ${b.unit_price_sen}, ${b.currency}, ${b.lead_time_days}, ${b.moq},
                     ${b.price_matrix === null ? null : tx.json(b.price_matrix)},
                     false, ${"mirrored from 400-O002 (owner 2026-08-09)"}, ${cid}, ${now}, ${now})`;
         }

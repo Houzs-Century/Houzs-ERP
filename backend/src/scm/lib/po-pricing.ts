@@ -77,7 +77,7 @@ export async function resolveMaintenanceConfigForSupplier(
    per-line base-cost derivation the "Create PO from SO" path runs in its
    auto-cost pre-pass (mfg-purchase-orders.ts /from-sos, the `baseCostByItem`
    loop): the supplier's own material binding (`price_matrix` P2/P1 cells + flat
-   `unit_price_centi` fallback) projected through the fabric tier resolved from
+   `unit_price_sen` fallback) projected through the fabric tier resolved from
    the line's fabricCode, plus the supplier's maintenance surcharges (divan /
    leg / total height / specials), via the shared pure `computeMfgPoUnitCost`.
 
@@ -94,7 +94,7 @@ export async function resolveMaintenanceConfigForSupplier(
    revision — only the per-module matrix/surcharge cost is re-derived.
 
    Returns the per-unit supplier cost in sen. When the SO line has NO item_group
-   (can't project a matrix) it returns the binding's flat `unit_price_centi`,
+   (can't project a matrix) it returns the binding's flat `unit_price_sen`,
    mirroring the create path's non-category fallback. When the SKU has no live
    binding for this supplier it returns 0 (the create path's zero-priced
    pseudo-binding — price keyed in at PI time). */
@@ -146,7 +146,7 @@ export async function deriveMfgPoUnitCost(
   // (1) The supplier's own binding for this SKU (price_matrix + flat fallback).
   const { data: bindingRow } = await sb
     .from('supplier_material_bindings')
-    .select('unit_price_centi, price_matrix')
+    .select('unit_price_sen, price_matrix')
     .eq('material_code', input.itemCode)
     .eq('material_kind', 'mfg_product')
     .eq('supplier_id', input.supplierId)
@@ -154,18 +154,18 @@ export async function deriveMfgPoUnitCost(
     .limit(1)
     .maybeSingle();
   const binding = bindingRow as
-    | { unit_price_centi?: number | null; price_matrix?: Record<string, unknown> | null }
+    | { unit_price_sen?: number | null; price_matrix?: Record<string, unknown> | null }
     | null;
   // No live binding for this supplier → zero-priced (mirrors the create path's
   // pseudo-binding; real cost is keyed in at Purchase Invoice time).
-  const flatPriceCenti = Number(binding?.unit_price_centi ?? 0);
+  const flatPriceSen = Number(binding?.unit_price_sen ?? 0);
   const priceMatrix = (binding?.price_matrix ?? null) as PoPriceMatrix;
 
   const variants = (input.variants ?? {}) as Record<string, unknown>;
   const category = (input.itemGroup?.toUpperCase() ?? '') as
     'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
   // No category on the SO line → can't project a matrix; keep the flat price.
-  if (!category) return flatPriceCenti;
+  if (!category) return flatPriceSen;
 
   // (2) Fabric tier from the line's fabricCode (sofa vs bedframe column),
   //     mirroring the create path's resolveFabricTier.
@@ -178,7 +178,7 @@ export async function deriveMfgPoUnitCost(
     {
       category,
       priceMatrix,
-      unitPriceCenti: flatPriceCenti,
+      unitPriceSen: flatPriceSen,
       fabricTier,
       ...poVariantPricingInput(category, variants),
     },

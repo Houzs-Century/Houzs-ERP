@@ -11,7 +11,7 @@ describe('poAmendmentToPdfInput', () => {
       amendment: { amendment_no: 'PO-2607-001/A1', status: 'REQUESTED', reason: 'Supplier raised cost', created_at: '2026-07-24', requested_by_name: 'Wei' },
       lines: [{
         change_type: 'QTY', new_material_code: 'BF-1', new_material_name: 'Bed One',
-        new_qty: 5, new_unit_price_centi: 1200, old_snapshot: { qty: 2, unit_price_centi: 1000, material_code: 'BF-1' },
+        new_qty: 5, new_unit_price_sen: 1200, old_snapshot: { qty: 2, unit_price_sen: 1000, material_code: 'BF-1' },
       }],
       purchaseOrder: { po_number: 'PO-2607-001', revision: 1 },
       supplierName: 'Acme Supplier',
@@ -61,7 +61,7 @@ describe('poAmendmentToPdfInput', () => {
     const out = poAmendmentToPdfInput({
       amendment: { amendment_no: 'PO-1/A2', status: 'APPROVED', created_at: '2026-07-24' },
       lines: [
-        { change_type: 'ADD', new_material_code: 'BF-9', new_material_name: 'Bed Nine', new_qty: 3, new_unit_price_centi: 1500 },
+        { change_type: 'ADD', new_material_code: 'BF-9', new_material_name: 'Bed Nine', new_qty: 3, new_unit_price_sen: 1500 },
         { change_type: 'REMOVE', old_snapshot: { material_name: 'Bed Two', qty: 1 } },
       ],
       purchaseOrder: { po_number: 'PO-1', revision: 2 },

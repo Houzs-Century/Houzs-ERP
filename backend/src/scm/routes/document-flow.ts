@@ -747,10 +747,10 @@ documentFlow.get('/:type/:id', async (c) => {
   const siIds = [...siById.keys()];
   if (siIds.length) {
     const { data: pays } = await sb.from('sales_invoice_payments')
-      .select('id, sales_invoice_id, method, approval_code, amount_centi').in('sales_invoice_id', siIds);
+      .select('id, sales_invoice_id, method, approval_code, amount_sen').in('sales_invoice_id', siIds);
     for (const p of (pays ?? []) as any[]) {
       const k = keyOf('payment', p.id);
-      const label = p.approval_code?.trim() ? p.approval_code.trim() : `${(p.method ?? 'Payment')} ${(Number(p.amount_centi ?? 0) / 100).toFixed(0)}`;
+      const label = p.approval_code?.trim() ? p.approval_code.trim() : `${(p.method ?? 'Payment')} ${(Number(p.amount_sen ?? 0) / 100).toFixed(0)}`;
       nodes.set(k, { key: k, type: 'payment', id: p.id, label, status: null, isAnchor: k === anchorKey });
       addEdge(keyOf('si', p.sales_invoice_id), k, 'payment');
     }

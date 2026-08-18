@@ -40,10 +40,10 @@ export type SoDetailGateHeader = {
      so the gate degrades to the date rule alone. */
   po_locked?: boolean | null;
   amendment_eligible?: boolean | null;
-  balance_centi?: number | null;
-  paid_centi_total?: number | null;
-  local_total_centi?: number | null;
-  total_revenue_centi?: number | null;
+  balance_sen?: number | null;
+  paid_sen_total?: number | null;
+  local_total_sen?: number | null;
+  total_revenue_sen?: number | null;
 };
 
 const upper = (s: string | null | undefined): string => (s ?? '').toUpperCase();
@@ -126,24 +126,24 @@ export function amendmentEligible(header: SoDetailGateHeader, locked: boolean): 
 }
 
 /* deriveBalance — balance in centi, SIGNED: negative means over-collected
-   (owner 2026-08-16). Prefers the server-stamped balance_centi, which GET
-   /:docNo computes with soBalanceCenti and which is already signed; otherwise
-   total (local_total ?? total_revenue) minus paid (paid_centi_total, falling
+   (owner 2026-08-16). Prefers the server-stamped balance_sen, which GET
+   /:docNo computes with soBalanceSen and which is already signed; otherwise
+   total (local_total ?? total_revenue) minus paid (paid_sen_total, falling
    back to the sum of the payments ledger).
 
    The floor is gone, but only where a total is KNOWN. A zero total means the
    header has not been recomputed (true of every AutoCount-imported order,
-   where total_revenue_centi is 0), not that the customer owes nothing — so it
+   where total_revenue_sen is 0), not that the customer owes nothing — so it
    still answers 0 rather than painting the whole legacy book red. Same rule,
-   and the same reason, as soBalanceCenti on the server. */
+   and the same reason, as soBalanceSen on the server. */
 export function deriveBalance(
   header: SoDetailGateHeader,
-  payments?: ReadonlyArray<{ amount_centi?: number | null }>,
+  payments?: ReadonlyArray<{ amount_sen?: number | null }>,
 ): number {
-  if (header.balance_centi != null) return header.balance_centi;
-  const total = header.local_total_centi ?? header.total_revenue_centi ?? 0;
-  const paid = header.paid_centi_total
-    ?? (payments ? payments.reduce((s, p) => s + (p.amount_centi ?? 0), 0) : 0);
+  if (header.balance_sen != null) return header.balance_sen;
+  const total = header.local_total_sen ?? header.total_revenue_sen ?? 0;
+  const paid = header.paid_sen_total
+    ?? (payments ? payments.reduce((s, p) => s + (p.amount_sen ?? 0), 0) : 0);
   if (!(total > 0)) return 0;
   return total - paid;
 }

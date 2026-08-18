@@ -62,7 +62,7 @@ async function nextSeq(table, col, prefix) {
 async function doGrns() {
   log("═══ GRN — receipts AutoCount already made ═══");
   const lines = await sql`SELECT i.id, i.purchase_order_id, i.material_code, i.material_name,
-      i.received_qty, i.unit_price_centi, i.item_group, i.variants, i.warehouse_id,
+      i.received_qty, i.unit_price_sen, i.item_group, i.variants, i.warehouse_id,
       p.po_number, p.linked_ac_docno, p.supplier_id, p.purchase_location_id, p.linked_ac_grn_docnos
     FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
     WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL AND COALESCE(i.received_qty,0) > 0
@@ -150,10 +150,10 @@ async function doGrns() {
       for (const it of g.items) {
         await tx`INSERT INTO scm.grn_items
             (grn_id, purchase_order_item_id, material_kind, material_code, material_name, item_group,
-             qty_received, qty_accepted, qty_rejected, unit_price_centi, line_total_centi, variants, company_id)
+             qty_received, qty_accepted, qty_rejected, unit_price_sen, line_total_sen, variants, company_id)
           VALUES (${hdr.id}, ${it.id}, 'mfg_product', ${it.material_code}, ${it.material_name}, ${it.item_group},
-                  ${it.received_qty}, ${it.received_qty}, 0, ${it.unit_price_centi},
-                  ${Math.round(Number(it.received_qty) * Number(it.unit_price_centi || 0))},
+                  ${it.received_qty}, ${it.received_qty}, 0, ${it.unit_price_sen},
+                  ${Math.round(Number(it.received_qty) * Number(it.unit_price_sen || 0))},
                   ${it.variants ? sql.json(it.variants) : null}, ${CO})`;
       }
     });

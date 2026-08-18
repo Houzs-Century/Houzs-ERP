@@ -13,8 +13,8 @@
 //   - Identity strings (title, route, storage key)
 //
 // Outstanding filter is wired here: when ?outstanding=1 is in the URL, we
-// filter rows where (balance_centi ?? 0) > 0. Module endpoints compute
-// balance_centi server-side so each module decides what "outstanding"
+// filter rows where (balance_sen ?? 0) > 0. Module endpoints compute
+// balance_sen server-side so each module decides what "outstanding"
 // means for its doc type.
 //
 // ── HOUZS VENDOR ADAPTATIONS ───────────────────────────────────────────────
@@ -31,7 +31,7 @@
 
 import { useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
-import { fmtMoneyCenti } from '../../vendor/shared/format';
+import { fmtMoneySen } from '../../vendor/shared/format';
 import { ArrowLeft, ClipboardList, Printer, Eye, Filter, X, SlidersHorizontal, FileSearch } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
@@ -92,7 +92,7 @@ export interface DetailListingShellProps<R extends DetailListingRow> {
    *  selection state if needed (mirrors the SO L2 pattern). */
   buildColumns: (state: { checked: Record<string, boolean>; onToggle: (id: string) => void }) => DataGridColumn<R>[];
   /** Compute KPI values from the (already outstanding-filtered) row set.
-   *  Default: revenue = sum(total_centi), outstanding = sum(balance_centi)
+   *  Default: revenue = sum(total_sen), outstanding = sum(balance_sen)
    *  deduped by doc_no, no cost/margin. */
   computeKpis?: (rows: R[]) => DetailListingKpis;
 }
@@ -101,7 +101,7 @@ export interface DetailListingShellProps<R extends DetailListingRow> {
 // non-finite amount, never "MYR NaN". Kept under the local name so the shell's
 // callsites are unchanged.
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string =>
-  fmtMoneyCenti(centi, currency);
+  fmtMoneySen(centi, currency);
 
 const defaultComputeKpis = <R extends DetailListingRow>(rows: R[]): DetailListingKpis => {
   const totalLines = rows.length;
@@ -110,9 +110,9 @@ const defaultComputeKpis = <R extends DetailListingRow>(rows: R[]): DetailListin
   const outstandingByDoc = new Map<string, number>();
   for (const r of rows) {
     uniqueDocs.add(r.doc_no);
-    revenue += Number(r.total_centi ?? 0);
+    revenue += Number(r.total_sen ?? 0);
     if (!outstandingByDoc.has(r.doc_no)) {
-      outstandingByDoc.set(r.doc_no, Number(r.balance_centi ?? 0));
+      outstandingByDoc.set(r.doc_no, Number(r.balance_sen ?? 0));
     }
   }
   const outstanding = [...outstandingByDoc.values()].reduce((s, v) => s + v, 0);
@@ -157,7 +157,7 @@ export function DetailListingShell<R extends DetailListingRow>({
   // Outstanding overlay: keep only rows whose document has balance > 0.
   const rows = useMemo<R[]>(() => {
     if (!outstandingOnly) return rawRows;
-    return rawRows.filter((r) => Number(r.balance_centi ?? 0) > 0);
+    return rawRows.filter((r) => Number(r.balance_sen ?? 0) > 0);
   }, [rawRows, outstandingOnly]);
 
   const kpis = useMemo(

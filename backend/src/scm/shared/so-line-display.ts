@@ -20,7 +20,7 @@
 // guess.
 //
 // Money: the P3 split floors every share and puts the rounding residue on the
-// last line, so summing unit_price_centi / total_centi across a buildKey group
+// last line, so summing unit_price_sen / total_sen across a buildKey group
 // reconstructs the build total EXACTLY (discount is netted on the lead line's
 // total already).
 //
@@ -39,9 +39,9 @@ export interface RawSoDisplayLine {
   description?: string | null;
   description2?: string | null;
   qty?: number | null;
-  unit_price_centi?: number | null;
-  discount_centi?: number | null;
-  total_centi?: number | null;
+  unit_price_sen?: number | null;
+  discount_sen?: number | null;
+  total_sen?: number | null;
   variants?: unknown;
   /** Per-line operator remark (mfg_sales_order_items.remark). Optional —
    *  legacy callers that don't select it simply fold without remarks. */
@@ -64,9 +64,9 @@ export interface SoDisplayGroup<T extends RawSoDisplayLine> {
     /** Shared per-line variant summary (e.g. 'EZ-003 / SEAT 28 / LEG 4"'). */
     description2: string | null;
     qty: number;
-    unitPriceCenti: number;
-    discountCenti: number;
-    totalCenti: number;
+    unitPriceSen: number;
+    discountSen: number;
+    totalSen: number;
     /** First non-empty remark in display order across the group; null if none. */
     remark: string | null;
   };
@@ -198,12 +198,12 @@ export function groupSoLinesForDisplay<T extends RawSoDisplayLine>(
         composition: compositionOf(ordered),
         description2: lead.description2 ?? null,
         qty: 1,
-        unitPriceCenti: ordered.reduce((s, l) => s + Number(l.unit_price_centi ?? 0), 0),
+        unitPriceSen: ordered.reduce((s, l) => s + Number(l.unit_price_sen ?? 0), 0),
         /* Summed, not lead-read: the discount is persisted on the CREATE
            path's first line, which the left-to-right walk may no longer put
            first. Only one line ever carries it, so Σ === the build figure. */
-        discountCenti: ordered.reduce((s, l) => s + Number(l.discount_centi ?? 0), 0),
-        totalCenti: ordered.reduce((s, l) => s + Number(l.total_centi ?? 0), 0),
+        discountSen: ordered.reduce((s, l) => s + Number(l.discount_sen ?? 0), 0),
+        totalSen: ordered.reduce((s, l) => s + Number(l.total_sen ?? 0), 0),
         remark: ordered.find((l) => typeof l.remark === 'string' && l.remark.trim() !== '')?.remark ?? null,
       },
     });

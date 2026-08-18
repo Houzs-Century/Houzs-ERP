@@ -210,11 +210,11 @@ async function resyncPcReturnInventory(sb: any, returnId: string, performedBy: s
 
 const HEADER =
   'id, return_number, pc_order_id, pc_receive_id, supplier_id, return_date, ' +
-  'reason, status, posted_at, completed_at, credit_note_ref, refund_centi, ' +
+  'reason, status, posted_at, completed_at, credit_note_ref, refund_sen, ' +
   'notes, created_at, created_by, updated_at';
 const ITEM =
   'id, purchase_consignment_return_id, pc_receive_item_id, material_kind, material_code, ' +
-  'material_name, qty_returned, unit_price_centi, line_refund_centi, reason, notes, ' +
+  'material_name, qty_returned, unit_price_sen, line_refund_sen, reason, notes, ' +
   /* item_group + variants drive the canonical SKU/build read-order sort (the
      sofa module walk + category rank); selected here so the PC Return detail +
      PDF order matches the sales side. */
@@ -230,18 +230,18 @@ const nextNum = async (sb: any, c: any): Promise<string> => {
 };
 
 /* ── Recompute PC Return header money rollup ───────────────────────────────
-   Sum line_refund_centi across return_items → write refund_centi on the header.
-   A return is qty × unit price (no tax/discount), so refund_centi is the total.
+   Sum line_refund_sen across return_items → write refund_sen on the header.
+   A return is qty × unit price (no tax/discount), so refund_sen is the total.
 
    Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
    recomputeTotals (mfg-sales-orders.ts), which carries the full rationale.
    See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputePcReturnTotals(sb: any, prId: string) {
   const { data: items, error: itemsErr } = await sb.from('purchase_consignment_return_items')
-    .select('line_refund_centi')
+    .select('line_refund_sen')
     .eq('purchase_consignment_return_id', prId);
   /* A failed READ is not an empty return, and `?? []` cannot tell them apart — it
-     folded a transient blip into refund_centi ZERO, i.e. a refund owed silently
+     folded a transient blip into refund_sen ZERO, i.e. a refund owed silently
      became no refund. The ERROR is the signal, never the emptiness: a genuinely
      empty return resolves error === null with data === [] and MUST still fall
      through to zero the header. */
@@ -250,9 +250,9 @@ async function recomputePcReturnTotals(sb: any, prId: string) {
     console.error('[pcret-recompute] item read failed — header left unchanged:', prId, itemsErr.message);
     return;
   }
-  const refund = (items ?? []).reduce((s: number, r: any) => s + (r.line_refund_centi ?? 0), 0);
+  const refund = (items ?? []).reduce((s: number, r: any) => s + (r.line_refund_sen ?? 0), 0);
   const { error: updErr } = await sb.from('purchase_consignment_returns').update({
-    refund_centi: refund,
+    refund_sen: refund,
     updated_at: new Date().toISOString(),
   }).eq('id', prId);
   if (updErr) {
@@ -337,7 +337,7 @@ purchaseConsignmentReturns.get('/returnable-receive-lines', async (c) => {
 
   const { data: items, error: iErr } = await chunkIn<Record<string, unknown>>(recvIds, (batch, from, to) => sb
     .from('purchase_consignment_receive_items')
-    .select('id, pc_receive_id, material_kind, material_code, material_name, item_group, description, uom, qty_accepted, returned_qty, unit_price_centi, variants')
+    .select('id, pc_receive_id, material_kind, material_code, material_name, item_group, description, uom, qty_accepted, returned_qty, unit_price_sen, variants')
     .in('pc_receive_id', batch)
     .range(from, to));
   if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
@@ -362,7 +362,7 @@ purchaseConsignmentReturns.get('/returnable-receive-lines', async (c) => {
       accepted,
       returned,
       remaining: accepted - returned,
-      unitPriceCenti: Number(it.unit_price_centi ?? 0),
+      unitPriceSen: Number(it.unit_price_sen ?? 0),
       variants: it.variants ?? null,
     };
   }).filter((l) => l.remaining > 0);
@@ -489,7 +489,7 @@ purchaseConsignmentReturns.post('/', async (c) => {
   const itemRows = items.map((it) => {
     const receiveItemId = (it.pcReceiveItemId as string | undefined) ?? null;
     const qty = Number(it.qtyReturned ?? 0);
-    const unit = Number(it.unitPriceCenti ?? 0);
+    const unit = Number(it.unitPriceSen ?? 0);
     const lineRefund = qty * unit;
     totalRefund += lineRefund;
     return {
@@ -498,8 +498,8 @@ purchaseConsignmentReturns.post('/', async (c) => {
       material_code: it.materialCode,
       material_name: it.materialName,
       qty_returned: qty,
-      unit_price_centi: unit,
-      line_refund_centi: lineRefund,
+      unit_price_sen: unit,
+      line_refund_sen: lineRefund,
       reason: (it.reason as string | undefined) ?? null,
       notes: (it.notes as string | undefined) ?? null,
       item_group: (it.itemGroup as string | null | undefined) ?? null,
@@ -533,7 +533,7 @@ purchaseConsignmentReturns.post('/', async (c) => {
     supplier_id: body.supplierId,
     return_date: dateOrNull(body.returnDate) ?? todayMyt(),
     reason: (body.reason as string | undefined) ?? null,
-    refund_centi: totalRefund,
+    refund_sen: totalRefund,
     notes: (body.notes as string | undefined) ?? null,
     status: 'POSTED',
     posted_at: new Date().toISOString(),
@@ -612,14 +612,14 @@ export const createPcReturnFromPcReceivesHandler = async (c: Context<{ Bindings:
   // read above, because `.in('pc_receive_id', receiveIds)` is itself an id-keyed
   // read and that is the shape this sweep exists for.
   const { data: items } = await scopeToCompany(sb.from('purchase_consignment_receive_items')
-    .select('id, pc_receive_id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_centi, item_group, variants, description, description2, uom')
+    .select('id, pc_receive_id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_sen, item_group, variants, description, description2, uom')
     .in('pc_receive_id', receiveIds)
     .gt('qty_rejected', 0), c);
   // Cap each line's return at its remaining (qty_accepted - returned_qty) — a
   // receive line can be returned across multiple PRs. Drop fully-returned lines.
   const rejectedItems = ((items ?? []) as Array<{
     id: string; pc_receive_id: string; material_kind: string; material_code: string; material_name: string;
-    qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_centi: number;
+    qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_sen: number;
     item_group: string | null; variants: Record<string, unknown> | null; description: string | null; description2: string | null; uom: string | null;
   }>)
     .map((it) => {
@@ -632,7 +632,7 @@ export const createPcReturnFromPcReceivesHandler = async (c: Context<{ Bindings:
   }
 
   const recvNumbersJoined = recvList.map((g) => g.receive_number).join(', ');
-  const totalRefund = rejectedItems.reduce((s, it) => s + (it._qty * it.unit_price_centi), 0);
+  const totalRefund = rejectedItems.reduce((s, it) => s + (it._qty * it.unit_price_sen), 0);
 
   const primaryReceiveId = recvList[0]!.id;
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; return_number: string }>(
@@ -645,7 +645,7 @@ export const createPcReturnFromPcReceivesHandler = async (c: Context<{ Bindings:
     supplier_id: supplierId,
     return_date: todayMyt(),
     reason: body.reason ?? `Batch from ${recvList.length} receives: ${recvNumbersJoined}`,
-    refund_centi: totalRefund,
+    refund_sen: totalRefund,
     notes: body.notes ?? null,
     status: 'POSTED',
     posted_at: new Date().toISOString(),
@@ -662,8 +662,8 @@ export const createPcReturnFromPcReceivesHandler = async (c: Context<{ Bindings:
     material_code: it.material_code,
     material_name: it.material_name,
     qty_returned: it._qty,
-    unit_price_centi: it.unit_price_centi,
-    line_refund_centi: it._qty * it.unit_price_centi,
+    unit_price_sen: it.unit_price_sen,
+    line_refund_sen: it._qty * it.unit_price_sen,
     reason: it.rejection_reason,
     item_group: it.item_group,
     variants: it.variants,
@@ -724,12 +724,12 @@ export const createPcReturnFromPcReceiveHandler = async (c: Context<{ Bindings: 
 
   // LINE-level half of the same source document, under the same predicate.
   const { data: items } = await scopeToCompany(sb.from('purchase_consignment_receive_items')
-    .select('id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_centi, item_group, variants, description, description2, uom')
+    .select('id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_sen, item_group, variants, description, description2, uom')
     .eq('pc_receive_id', receiveId)
     .gt('qty_accepted', 0), c);
   const allLines = ((items ?? []) as Array<{
     id: string; material_kind: string; material_code: string; material_name: string;
-    qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_centi: number;
+    qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_sen: number;
     item_group: string | null; variants: Record<string, unknown> | null; description: string | null; description2: string | null; uom: string | null;
   }>);
   const lines = allLines
@@ -737,7 +737,7 @@ export const createPcReturnFromPcReceiveHandler = async (c: Context<{ Bindings: 
     .filter((it) => it._remaining > 0);
   if (lines.length === 0) return c.json({ error: 'nothing_to_return', message: 'No returnable lines came back for this receive. Open it and check its returned balance before treating it as returned in full.' }, 400);
 
-  const totalRefund = lines.reduce((s, it) => s + (it._remaining * it.unit_price_centi), 0);
+  const totalRefund = lines.reduce((s, it) => s + (it._remaining * it.unit_price_sen), 0);
 
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; return_number: string }>(
     () => nextNum(sb, c),
@@ -749,7 +749,7 @@ export const createPcReturnFromPcReceiveHandler = async (c: Context<{ Bindings: 
     supplier_id: g.supplier_id,
     return_date: todayMyt(),
     reason: body.reason ?? `From ${g.receive_number}`,
-    refund_centi: totalRefund,
+    refund_sen: totalRefund,
     notes: body.notes ?? null,
     status: 'POSTED',
     posted_at: new Date().toISOString(),
@@ -766,8 +766,8 @@ export const createPcReturnFromPcReceiveHandler = async (c: Context<{ Bindings: 
     material_code: it.material_code,
     material_name: it.material_name,
     qty_returned: it._remaining,
-    unit_price_centi: it.unit_price_centi,
-    line_refund_centi: it._remaining * it.unit_price_centi,
+    unit_price_sen: it.unit_price_sen,
+    line_refund_sen: it._remaining * it.unit_price_sen,
     reason: it.rejection_reason,
     item_group: it.item_group,
     variants: it.variants,
@@ -893,8 +893,8 @@ purchaseConsignmentReturns.patch('/:id/cancel', cancelPurchaseConsignmentReturnH
 /* ════════════════════════════════════════════════════════════════════════
    PC Return CRUD (PATCH header + line add / edit / delete) — mirrors the PR
    detail page editing. The editable line quantity is qty_returned;
-   line_refund_centi = qty_returned * unit_price_centi (no discount);
-   recomputePcReturnTotals rolls the header refund_centi. Line CRUD recounts
+   line_refund_sen = qty_returned * unit_price_sen (no discount);
+   recomputePcReturnTotals rolls the header refund_sen. Line CRUD recounts
    returned_qty onto the PC Receive AND resyncs the inventory OUT (on-ledger).
    ════════════════════════════════════════════════════════════════════════ */
 
@@ -951,8 +951,8 @@ purchaseConsignmentReturns.post('/:id/items', async (c) => {
   if (!parent) return c.json(NOT_THIS_COMPANY, 404);
   { const lock = await pcReturnLineLock(sb, prId); if (lock) return c.json(lock, 409); }
   const qtyReturned = Number(it.qty ?? 1);
-  const unitPriceCenti = Number(it.unitPriceCenti ?? 0);
-  const lineRefund = qtyReturned * unitPriceCenti;
+  const unitPriceSen = Number(it.unitPriceSen ?? 0);
+  const lineRefund = qtyReturned * unitPriceSen;
 
   // PC-receive-linked line: cap qty at that receive line's remaining.
   const receiveItemId = (it.pcReceiveItemId as string) ?? null;
@@ -972,8 +972,8 @@ purchaseConsignmentReturns.post('/:id/items', async (c) => {
     material_code: it.materialCode,
     material_name: it.materialName,
     qty_returned: qtyReturned,
-    unit_price_centi: unitPriceCenti,
-    line_refund_centi: lineRefund,
+    unit_price_sen: unitPriceSen,
+    line_refund_sen: lineRefund,
     reason: (it.reason as string) ?? null,
     notes: (it.notes as string) ?? null,
     gap_inches: (it.gapInches as number) ?? null,
@@ -1045,20 +1045,20 @@ purchaseConsignmentReturns.patch('/:id/items/:itemId', async (c) => {
   { const lock = await pcReturnLineLock(sb, prId); if (lock) return c.json(lock, 409); }
 
   const { data: prev } = await scopeToCompanyId(sb.from('purchase_consignment_return_items')
-    .select('qty_returned, unit_price_centi, item_group, variants, pc_receive_item_id, material_code, material_name')
+    .select('qty_returned, unit_price_sen, item_group, variants, pc_receive_item_id, material_code, material_name')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
   const prevQty = (prev as { qty_returned: number }).qty_returned;
   const receiveItemId = (prev as { pc_receive_item_id: string | null }).pc_receive_item_id ?? null;
   const qtyReturned = it.qty !== undefined ? Number(it.qty) : prevQty;
-  const unit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : (prev as { unit_price_centi: number }).unit_price_centi;
+  const unit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : (prev as { unit_price_sen: number }).unit_price_sen;
   const lineRefund = qtyReturned * unit;
 
   const updates: Record<string, unknown> = {
     qty_returned: qtyReturned,
-    unit_price_centi: unit,
-    line_refund_centi: lineRefund,
+    unit_price_sen: unit,
+    line_refund_sen: lineRefund,
   };
   for (const [from, to] of [
     ['materialCode', 'material_code'], ['materialName', 'material_name'],

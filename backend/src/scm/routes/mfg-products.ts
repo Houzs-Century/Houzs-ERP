@@ -140,7 +140,7 @@ export const listMfgProductsHandler = async (c: AppContext) => {
   const search = c.req.query('search');
   const supabase = c.get('supabase');
 
-  // PR #104 — Commander 2026-05-26: dropped fabric_usage_centi /
+  // PR #104 — Commander 2026-05-26: dropped fabric_usage_sen /
   // production_time_minutes / fabric_color from the public shape. The
   // columns still exist in the DB (historical data preserved) but
   // 2990's retail catalogue doesn't surface or write them anymore.
@@ -272,7 +272,7 @@ mfgProducts.post('/', async (c) => {
     branding: (body.branding as string) ?? null,
     // 0166 — optional free-text barcode on create.
     barcode: typeof body.barcode === 'string' && body.barcode.trim() ? body.barcode.trim() : null,
-    /* PR #104 — fabric_usage_centi / production_time_minutes /
+    /* PR #104 — fabric_usage_sen / production_time_minutes /
        fabric_color removed (not used by 2990's retail catalogue). */
   };
 
@@ -1021,14 +1021,14 @@ mfgProducts.get('/:id/suppliers', async (c) => {
   const { data, error } = await supabase
     .from('supplier_material_bindings')
     .select(`
-      id, supplier_id, supplier_sku, unit_price_centi, currency,
+      id, supplier_id, supplier_sku, unit_price_sen, currency,
       lead_time_days, moq, is_main_supplier, notes,
       suppliers(code, name, phone)
     `)
     .eq('material_code', (product as { code: string }).code)
     .eq('company_id', activeCompanyId(c))
     .order('is_main_supplier', { ascending: false })
-    .order('unit_price_centi', { ascending: true });
+    .order('unit_price_sen', { ascending: true });
 
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ product, suppliers: data ?? [] });

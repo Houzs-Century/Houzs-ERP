@@ -100,7 +100,7 @@ type DraftLine = {
   qtyReceived:       number;
   qtyAccepted:       number;
   qtyRejected:       number;
-  unitPriceCenti:    number;
+  unitPriceSen:    number;
   notes:             string;
 };
 
@@ -161,7 +161,7 @@ export const PurchaseConsignmentReceiveNew = () => {
       orderItemId: string; purchaseConsignmentOrderId: string;
       materialKind: string; materialCode: string; materialName: string;
       supplierSku: string | null; itemGroup: string | null; description: string | null;
-      uom: string | null; qty: number; unitPriceCenti: number; variants: unknown;
+      uom: string | null; qty: number; unitPriceSen: number; variants: unknown;
     };
     const stash = readScmHandoff<Stash[]>('pcrFromOrderPicks');
     if (!stash || stash.length === 0) return;
@@ -177,7 +177,7 @@ export const PurchaseConsignmentReceiveNew = () => {
       qtyReceived:         Number(s.qty ?? 0),
       qtyAccepted:         Number(s.qty ?? 0),
       qtyRejected:         0,
-      unitPriceCenti:      Number(s.unitPriceCenti ?? 0),
+      unitPriceSen:      Number(s.unitPriceSen ?? 0),
       notes:               '',
     })));
     removeScmHandoff('pcrFromOrderPicks');
@@ -201,7 +201,7 @@ export const PurchaseConsignmentReceiveNew = () => {
         qtyReceived:         1,
         qtyAccepted:         1,
         qtyRejected:         0,
-        unitPriceCenti:      0,
+        unitPriceSen:      0,
         notes:               '',
       }]);
       return;
@@ -223,7 +223,7 @@ export const PurchaseConsignmentReceiveNew = () => {
           qtyReceived:       outstandingQty,
           qtyAccepted:       outstandingQty,
           qtyRejected:       0,
-          unitPriceCenti:    it.unit_price_centi ?? 0,
+          unitPriceSen:    it.unit_price_sen ?? 0,
           notes:             '',
         };
       })
@@ -236,8 +236,8 @@ export const PurchaseConsignmentReceiveNew = () => {
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
-  const subtotalCenti = useMemo(
-    () => lines.reduce((s, l) => s + l.qtyReceived * l.unitPriceCenti, 0),
+  const subtotalSen = useMemo(
+    () => lines.reduce((s, l) => s + l.qtyReceived * l.unitPriceSen, 0),
     [lines],
   );
   const totalQty = useMemo(
@@ -302,7 +302,7 @@ export const PurchaseConsignmentReceiveNew = () => {
       qtyReceived:         1,
       qtyAccepted:         1,
       qtyRejected:         0,
-      unitPriceCenti:      0,
+      unitPriceSen:      0,
       notes:               '',
     }]);
   };
@@ -320,7 +320,7 @@ export const PurchaseConsignmentReceiveNew = () => {
     setLine(rid, {
       materialCode:   b.material_code,
       materialName:   b.material_name,
-      unitPriceCenti: b.unit_price_centi,
+      unitPriceSen: b.unit_price_sen,
       itemGroup:      categoryForCode(b.material_code) ?? null,
     });
   };
@@ -344,7 +344,7 @@ export const PurchaseConsignmentReceiveNew = () => {
         qtyReceived:         1,
         qtyAccepted:         1,
         qtyRejected:         0,
-        unitPriceCenti:      b?.unit_price_centi ?? 0,
+        unitPriceSen:      b?.unit_price_sen ?? 0,
         notes:               '',
       };
     };
@@ -359,7 +359,7 @@ export const PurchaseConsignmentReceiveNew = () => {
   const pickerItems = useMemo(() => {
     const q = pickerSearch.trim().toLowerCase();
     const base = (supplierId && bindings.length > 0)
-      ? bindings.map((b) => ({ code: b.material_code, name: b.material_name, sub: `${b.supplier_sku ?? ''} · ${fmtRm(b.unit_price_centi, b.currency)}` }))
+      ? bindings.map((b) => ({ code: b.material_code, name: b.material_name, sub: `${b.supplier_sku ?? ''} · ${fmtRm(b.unit_price_sen, b.currency)}` }))
       : (allSkusQ.data ?? []).map((p) => ({ code: p.code, name: p.name, sub: p.category }));
     if (!q) return base;
     return base.filter((it) => it.code.toLowerCase().includes(q) || it.name.toLowerCase().includes(q));
@@ -404,7 +404,7 @@ export const PurchaseConsignmentReceiveNew = () => {
           qtyReceived:         l.qtyReceived,
           qtyAccepted:         l.qtyReceived,
           qtyRejected:         0,
-          unitPriceCenti:      l.unitPriceCenti,
+          unitPriceSen:      l.unitPriceSen,
           notes:               l.notes || undefined,
           itemGroup:           l.itemGroup,
           variants:            l.variants,
@@ -586,10 +586,10 @@ export const PurchaseConsignmentReceiveNew = () => {
                     ? "We couldn't load this order's lines — please refresh and try again."
                     : lines.length === 0
                       ? 'No outstanding lines came back for this order. Open the consignment order and check its balance before treating it as received in full.'
-                      : `${lines.length} line${lines.length === 1 ? '' : 's'} · ${totalQty} qty · subtotal ${fmtRm(subtotalCenti, currency)}`)
+                      : `${lines.length} line${lines.length === 1 ? '' : 's'} · ${totalQty} qty · subtotal ${fmtRm(subtotalSen, currency)}`)
               : lines.length === 0
                 ? 'Manual receipt — pick a supplier above, then add items below'
-                : `${lines.length} line${lines.length === 1 ? '' : 's'} · ${totalQty} qty · subtotal ${fmtRm(subtotalCenti, currency)}`}
+                : `${lines.length} line${lines.length === 1 ? '' : 's'} · ${totalQty} qty · subtotal ${fmtRm(subtotalSen, currency)}`}
             {isManual && supplierId && (
               <span style={{ display: 'block', marginTop: 2, color: 'var(--c-burnt)' }}>
                 {bindings.length > 0
@@ -608,7 +608,7 @@ export const PurchaseConsignmentReceiveNew = () => {
             </p>
           ) : (
             lines.map((l, idx) => {
-              const lineValueCenti = l.qtyReceived * l.unitPriceCenti;
+              const lineValueSen = l.qtyReceived * l.unitPriceSen;
               const variantSummary = buildVariantSummary(l.itemGroup, l.variants);
               const cap = l.outstanding;
               const isManualLine = l.purchaseOrderItemId === null;
@@ -655,7 +655,7 @@ export const PurchaseConsignmentReceiveNew = () => {
                       {l.itemGroup && <ItemGroupPill group={l.itemGroup} />}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                      <span className={styles.previewPrice}>{fmtRm(lineValueCenti, currency)}</span>
+                      <span className={styles.previewPrice}>{fmtRm(lineValueSen, currency)}</span>
                       <button
                         type="button"
                         onClick={() => dropLine(l.rid)}
@@ -705,7 +705,7 @@ export const PurchaseConsignmentReceiveNew = () => {
                             {supplierId && bindings.length > 0
                               ? sortByText(bindings).map((b) => (
                                   <option key={b.id} value={b.material_code}>
-                                    {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_centi, b.currency)}
+                                    {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                                   </option>
                                 ))
                               : sortByText(productsQ.data ?? []).map((p) => (
@@ -788,8 +788,8 @@ export const PurchaseConsignmentReceiveNew = () => {
                     </label>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Unit Price ({currency})</span>
-                      <MoneyInput bare valueSen={l.unitPriceCenti}
-                        onCommit={(sen) => setLine(l.rid, { unitPriceCenti: sen ?? 0 })}
+                      <MoneyInput bare valueSen={l.unitPriceSen}
+                        onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
                         inputClassName={styles.fieldInput} selectOnFocus />
                     </label>
                     <label className={styles.field}>
@@ -797,7 +797,7 @@ export const PurchaseConsignmentReceiveNew = () => {
                       <input
                         type="text"
                         readOnly
-                        value={fmtRm(lineValueCenti, currency)}
+                        value={fmtRm(lineValueSen, currency)}
                         className={styles.fieldInput}
                         style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />
@@ -851,11 +851,11 @@ export const PurchaseConsignmentReceiveNew = () => {
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
               <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700, borderTop: '1px solid var(--line)', paddingTop: 'var(--space-2)' }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
           </div>
         </section>

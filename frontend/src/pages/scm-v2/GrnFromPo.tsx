@@ -42,12 +42,12 @@ import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 /* DataGrid localStorage layout key. */
 const STORAGE_KEY = 'grn-from-po.layout.v1';
@@ -441,11 +441,11 @@ export const GrnFromPo = () => {
         const pickQty = p?.picked ? p.qty : effRemaining(r);
         return (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
-            {fmtRm(pickQty * r.unitPriceCenti)}
+            {fmtRm(pickQty * r.unitPriceSen)}
           </span>
         );
       },
-      sortFn: (a, b) => a.remainingQty * a.unitPriceCenti - b.remainingQty * b.unitPriceCenti,
+      sortFn: (a, b) => a.remainingQty * a.unitPriceSen - b.remainingQty * b.unitPriceSen,
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- column accessors derive from the pick/qty state already in deps; listing the helpers would only rebuild the columns for no behavioural change
   ], [picks]);
@@ -479,7 +479,7 @@ export const GrnFromPo = () => {
             itemGroup:           r.itemGroup || undefined,
             variants:            (r.variants as Record<string, unknown> | null) ?? undefined,
             qty:                 r._pickQty,
-            unitPriceCenti:      r.unitPriceCenti,
+            unitPriceSen:      r.unitPriceSen,
             deliveryDate:        r.deliveryDate ?? undefined,
           });
         }

@@ -101,7 +101,7 @@ const AGING_BASES = new Set(['INVOICE_DATE', 'DUE_DATE']);
 
 const BINDING_COLS =
   'id, supplier_id, material_kind, material_code, material_name, supplier_sku, ' +
-  'unit_price_centi, currency, lead_time_days, payment_terms_override, moq, ' +
+  'unit_price_sen, currency, lead_time_days, payment_terms_override, moq, ' +
   'price_valid_from, price_valid_to, is_main_supplier, notes, price_matrix, ' +
   'is_cost_anchor, created_at, updated_at';
 
@@ -115,7 +115,7 @@ const BINDING_COLS =
      SOFA      → { "<height>": { "P1"?: n, "P2"?: n, "P3"?: n }, ... }
      BEDFRAME  → { "P1"?: n, "P2"?: n }
      MATTRESS / ACCESSORY / SERVICE → must be null/undefined (single price
-                                       flows via unit_price_centi).
+                                       flows via unit_price_sen).
    Unknown / null / empty → undefined (caller should write NULL). */
 const TIER_KEYS = new Set(['P1', 'P2', 'P3']);
 function validatePriceMatrix(
@@ -219,7 +219,7 @@ async function syncAnchoredProductFromBinding(
     is_cost_anchor?: boolean | null;
     material_kind?: string | null;
     material_code?: string | null;
-    unit_price_centi?: number | null;
+    unit_price_sen?: number | null;
     price_matrix?: unknown;
   },
   companyId?: number,
@@ -239,7 +239,7 @@ async function syncAnchoredProductFromBinding(
 
     const result = bindingToProductPatch({
       category: (product as { category: string | null }).category,
-      unit_price_centi: binding.unit_price_centi ?? null,
+      unit_price_sen: binding.unit_price_sen ?? null,
       price_matrix: binding.price_matrix ?? null,
     });
     if (result.skipped) return;
@@ -568,7 +568,7 @@ suppliers.post('/:id/bindings', async (c) => {
     material_code: body.materialCode,
     material_name: body.materialName,
     supplier_sku: body.supplierSku,
-    unit_price_centi: typeof body.unitPriceCenti === 'number' ? body.unitPriceCenti : 0,
+    unit_price_sen: typeof body.unitPriceSen === 'number' ? body.unitPriceSen : 0,
     currency,
     lead_time_days: typeof body.leadTimeDays === 'number' ? body.leadTimeDays : 0,
     payment_terms_override: (body.paymentTermsOverride as string) ?? null,
@@ -639,7 +639,7 @@ suppliers.post('/:id/bindings/batch', async (c) => {
       material_code: b.materialCode,
       material_name: b.materialName,
       supplier_sku: b.supplierSku,
-      unit_price_centi: typeof b.unitPriceCenti === 'number' ? b.unitPriceCenti : 0,
+      unit_price_sen: typeof b.unitPriceSen === 'number' ? b.unitPriceSen : 0,
       currency,
       lead_time_days: typeof b.leadTimeDays === 'number' ? b.leadTimeDays : 0,
       moq: typeof b.moq === 'number' ? b.moq : 0,
@@ -688,7 +688,7 @@ suppliers.patch('/:id/bindings/:bindingId', async (c) => {
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   const map: Array<[keyof typeof body, string]> = [
     ['materialCode', 'material_code'], ['materialName', 'material_name'],
-    ['supplierSku', 'supplier_sku'], ['unitPriceCenti', 'unit_price_centi'],
+    ['supplierSku', 'supplier_sku'], ['unitPriceSen', 'unit_price_sen'],
     ['leadTimeDays', 'lead_time_days'], ['paymentTermsOverride', 'payment_terms_override'],
     ['moq', 'moq'], ['priceValidFrom', 'price_valid_from'], ['priceValidTo', 'price_valid_to'],
     ['notes', 'notes'],
@@ -870,7 +870,7 @@ suppliers.get('/:id/scorecard', async (c) => {
   const { data: pos, error: posErr } = await scopeToCompany(
     supabase
       .from('purchase_orders')
-      .select('id, po_number, status, po_date, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, received_at, total_centi')
+      .select('id, po_number, status, po_date, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, received_at, total_sen')
       .eq('supplier_id', id),
     c,
   )
@@ -964,7 +964,7 @@ suppliers.get('/:id/scorecard', async (c) => {
       poDate: po.po_date,
       expectedDate: po.expected_at,
       receivedDate: po.received_at,
-      totalCenti: po.total_centi,
+      totalSen: po.total_sen,
       orderedQty: agg.orderedQty,
       receivedQty: agg.receivedQty,
     };
@@ -1000,7 +1000,7 @@ suppliers.get('/material/:kind/:code', async (c) => {
     c,
   )
     .order('is_main_supplier', { ascending: false })
-    .order('unit_price_centi', { ascending: true });
+    .order('unit_price_sen', { ascending: true });
   if (mainOnly) q = q.eq('is_main_supplier', true);
 
   const { data, error } = await q;

@@ -92,10 +92,10 @@ const FIELD_MAP = [
   ["SO header", "branding", "SO.UDF_BRANDING", "COMPARED", ""],
   ["SO header", "address1..address4", "SO.InvAddr1..InvAddr4", "COMPARED", ""],
   ["SO header", "phone", "SO.Phone1", "COMPARED", ""],
-  ["SO header", "balance_centi", "SO.UDF_BALANCE x 100", "COMPARED", ""],
+  ["SO header", "balance_sen", "SO.UDF_BALANCE x 100", "COMPARED", ""],
   ["SO header", "proceeded_at", "SO.UDF_PDate", "COMPARED", ""],
-  ["SO header", "local_total_centi", "SUM over SODTL of round(UnitPrice x100) x round(Qty)", "DERIVED", "the ERP's own line sum is printed beside it, so a header/line disagreement is distinguishable from a missing line"],
-  ["SO header", "paid_centi / deposit_centi", "local_total - UDF_BALANCE", "DERIVED", ""],
+  ["SO header", "local_total_sen", "SUM over SODTL of round(UnitPrice x100) x round(Qty)", "DERIVED", "the ERP's own line sum is printed beside it, so a header/line disagreement is distinguishable from a missing line"],
+  ["SO header", "paid_sen / deposit_sen", "local_total - UDF_BALANCE", "DERIVED", ""],
   ["SO header", "salesperson_id", "SO.SalesAgent via agent-staff-binding.csv", "DECLARED", "a UUID, not an AutoCount value; the source text is compared as `agent`"],
   ["SO header", "venue_id", "SO.UDF_VENUE resolved to scm.venues", "DECLARED", "a UUID; the source text is compared as `venue`"],
   ["SO header", "postcode / city / customer_state", "parsed out of InvAddr1..4", "DECLARED", "derived from a free-text address, no AutoCount column to compare against"],
@@ -107,8 +107,8 @@ const FIELD_MAP = [
   ["SO line", "linked_ac_dtlkey", "SODTL.DtlKey", "COMPARED", "the exact join key where present; a key pointing at no AutoCount row is reported"],
   ["SO line", "item_code", "SODTL.ItemCode via autocount-erp-mapping-1561.csv", "COMPARED", "sofa compared by model prefix only - see declared differences"],
   ["SO line", "qty", "round(SODTL.Qty)", "COMPARED", "importer floors at 1 (`Math.round(qty) || 1`)"],
-  ["SO line", "unit_price_centi", "round(SODTL.UnitPrice x 100)", "COMPARED", "sofa: price rides the lead compartment, compared as a group total"],
-  ["SO line", "total_centi / balance_centi", "unit_price_centi x qty", "COMPARED", ""],
+  ["SO line", "unit_price_sen", "round(SODTL.UnitPrice x 100)", "COMPARED", "sofa: price rides the lead compartment, compared as a group total"],
+  ["SO line", "total_sen / balance_sen", "unit_price_sen x qty", "COMPARED", ""],
   ["SO line", "description2", "SODTL.Desc2", "COMPARED", ""],
   ["SO line", "location", "SODTL.Location", "COMPARED", ""],
   ["SO line", "description", "the ERP product NAME", "DECLARED", "deliberately not SODTL.Description: a picker-selected line stores the ERP name"],
@@ -121,7 +121,7 @@ const FIELD_MAP = [
   ["PO header", "po_date", "PO.DocDate", "COMPARED", ""],
   ["PO header", "supplier_id", "PO.CreditorCode -> scm.suppliers.code", "COMPARED", "compared via the supplier's code"],
   ["PO header", "expected_at", "earliest PODTL.DeliveryDate", "DERIVED", ""],
-  ["PO header", "subtotal_centi / total_centi", "SUM over PODTL of round(UnitPrice x100) x round(Qty)", "DERIVED", ""],
+  ["PO header", "subtotal_sen / total_sen", "SUM over PODTL of round(UnitPrice x100) x round(Qty)", "DERIVED", ""],
   ["PO header", "status", "RECEIVED / PARTIALLY_RECEIVED / SUBMITTED from received vs ordered", "DERIVED", "recomputed from PODTL.TransferedQty"],
   ["PO header", "purchase_location_id", "first PODTL.Location via SALESLOC map", "DECLARED", "a UUID; the source text is compared per line as `location`"],
   ["PO header", "currency / revision / created_by / notes", "constant", "DECLARED", "not from AutoCount"],
@@ -131,8 +131,8 @@ const FIELD_MAP = [
   ["PO line", "supplier_sku", "PODTL.ItemCode", "COMPARED", "sofa: AutoCount code + compartment"],
   ["PO line", "qty", "round(PODTL.Qty)", "COMPARED", ""],
   ["PO line", "received_qty", "PODTL.TransferedQty", "COMPARED", "*** the field the cutover got wrong ***"],
-  ["PO line", "unit_price_centi", "round(PODTL.UnitPrice x 100)", "COMPARED", "sofa: price rides the lead compartment"],
-  ["PO line", "line_total_centi", "unit_price_centi x qty", "COMPARED", ""],
+  ["PO line", "unit_price_sen", "round(PODTL.UnitPrice x 100)", "COMPARED", "sofa: price rides the lead compartment"],
+  ["PO line", "line_total_sen", "unit_price_sen x qty", "COMPARED", ""],
   ["PO line", "description2", "PODTL.Desc2", "COMPARED", ""],
   ["PO line", "delivery_date", "PODTL.DeliveryDate", "COMPARED", ""],
   ["PO line", "description", "PODTL.Description", "NOT-CHECKED", "one importer writes AutoCount's text, the other the ERP product name; both are legitimate, so a comparison here only measures which importer ran"],
@@ -144,7 +144,7 @@ const FIELD_MAP = [
   ["GRN header", "grn_number", "'HC-' + AutoCount GR number", "DECLARED", "one ERP GRN per PURCHASE ORDER; an AutoCount receipt can span several"],
   ["GRN header", "linked_ac_docno", "the PO's AutoCount DocNo", "COMPARED", "note: the PO number, not the GR number - by design"],
   ["GRN line", "qty_received / qty_accepted", "purchase_order_items.received_qty", "COMPARED", "against PODTL.TransferedQty - inherits any received_qty defect"],
-  ["GRN line", "unit_price_centi / line_total_centi", "the PO line's price", "DERIVED", ""],
+  ["GRN line", "unit_price_sen / line_total_sen", "the PO line's price", "DERIVED", ""],
   ["GRN", "inventory movement", "none", "DECLARED", "migrated_no_stock (migration 0276): the balance snapshot already counted these units"],
   // ---- migrated DO ----
   ["DO header", "do_number", "'HC-' + DO.DocNo", "DECLARED", "cutover numbering rule"],
@@ -268,12 +268,12 @@ async function main() {
   const erpSoH = await sql`
     SELECT doc_no, linked_ac_docno, so_date::text AS so_date, debtor_name, debtor_code, agent, sales_location,
            ref, customer_so_no, venue, branding, address1, address2, address3, address4,
-           phone, balance_centi, local_total_centi, paid_centi, proceeded_at::text AS proceeded_at
+           phone, balance_sen, local_total_sen, paid_sen, proceeded_at::text AS proceeded_at
       FROM scm.mfg_sales_orders
      WHERE company_id = ${CO} AND linked_ac_docno IS NOT NULL`;
   const erpSoL = await sql`
     SELECT i.id, i.doc_no, i.line_no, i.item_code, i.description2, i.location, i.qty,
-           i.unit_price_centi, i.total_centi, i.balance_centi, i.item_group, i.linked_ac_dtlkey,
+           i.unit_price_sen, i.total_sen, i.balance_sen, i.item_group, i.linked_ac_dtlkey,
            h.linked_ac_docno AS ac
       FROM scm.mfg_sales_order_items i
       JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no AND h.company_id = i.company_id
@@ -281,13 +281,13 @@ async function main() {
      ORDER BY h.linked_ac_docno, i.line_no`;
   const erpPoH = await sql`
     SELECT p.id, p.po_number, p.linked_ac_docno, p.po_date::text AS po_date, p.expected_at::text AS expected_at,
-           p.status, p.subtotal_centi, p.total_centi, s.code AS supplier_code
+           p.status, p.subtotal_sen, p.total_sen, s.code AS supplier_code
       FROM scm.purchase_orders p
       LEFT JOIN scm.suppliers s ON s.id = p.supplier_id
      WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
   const erpPoL = await sql`
     SELECT i.id, i.purchase_order_id, i.material_code, i.supplier_sku, i.description2,
-           i.qty, i.received_qty, i.unit_price_centi, i.line_total_centi, i.delivery_date::text AS delivery_date,
+           i.qty, i.received_qty, i.unit_price_sen, i.line_total_sen, i.delivery_date::text AS delivery_date,
            i.item_group, i.linked_ac_dtlkey, p.linked_ac_docno AS ac
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
@@ -445,11 +445,11 @@ async function main() {
       cmpNum("SO line", "qty", kk, e.qty, acQty, how);
       cmpText("SO line", "description2", kk, e.description2, a.Desc2, how);
       cmpText("SO line", "location", kk, e.location, a.Location, how);
-      cmpNum("SO line", "balance_centi (must equal total_centi)", kk, e.balance_centi, e.total_centi, how);
+      cmpNum("SO line", "balance_sen (must equal total_sen)", kk, e.balance_sen, e.total_sen, how);
     }
     if (isSofa) {
-      const gTotal = p.erp.reduce((s, e) => s + n0(e.total_centi), 0);
-      cmpNum("SO line", "sofa build total_centi", k0, gTotal, acUp * acQty, how);
+      const gTotal = p.erp.reduce((s, e) => s + n0(e.total_sen), 0);
+      cmpNum("SO line", "sofa build total_sen", k0, gTotal, acUp * acQty, how);
       const model = sofaModelOf(a.ItemCode);
       for (const e of p.erp) {
         const pref = String(e.item_code || "").split("-")[0].toUpperCase();
@@ -457,8 +457,8 @@ async function main() {
       }
     } else {
       const e = p.erp[0];
-      cmpNum("SO line", "unit_price_centi", `${k0} ${e.item_code}`, e.unit_price_centi, acUp, how);
-      cmpNum("SO line", "total_centi", `${k0} ${e.item_code}`, e.total_centi, acUp * acQty, how);
+      cmpNum("SO line", "unit_price_sen", `${k0} ${e.item_code}`, e.unit_price_sen, acUp, how);
+      cmpNum("SO line", "total_sen", `${k0} ${e.item_code}`, e.total_sen, acUp * acQty, how);
       const want = erpCodeOf(a.ItemCode);
       if (want && norm(want) !== norm(e.item_code)) F.add("SO line", "item_code", k0, e.item_code, `${want} (from ${a.ItemCode})`, null, how);
     }
@@ -487,7 +487,7 @@ async function main() {
     cmpText("SO header", "address3", k, h.address3, a.InvAddr3);
     cmpText("SO header", "address4", k, h.address4, a.InvAddr4);
     cmpText("SO header", "phone", k, h.phone, a.Phone1);
-    cmpNum("SO header", "balance_centi", k, h.balance_centi, centi(a.UDF_BALANCE));
+    cmpNum("SO header", "balance_sen", k, h.balance_sen, centi(a.UDF_BALANCE));
     cmpDate("SO header", "proceeded_at", k, h.proceeded_at, a.UDF_PDate);
     // venue: separate a canonicalised LABEL from a different PLACE
     if (norm(h.venue) !== norm(a.UDF_VENUE)) {
@@ -502,11 +502,11 @@ async function main() {
     const erpLs = erpLinesBySoDoc.get(h.linked_ac_docno) ?? [];
     if (acLs.length) {
       const acTotal = acLs.reduce((s, l) => s + centi(l.UnitPrice) * Math.round(n0(l.Qty)), 0);
-      const erpLineSum = erpLs.reduce((s, l) => s + n0(l.total_centi), 0);
-      if (Math.round(n0(h.local_total_centi)) !== acTotal)
-        F.add("SO header", "local_total_centi (derived)", k, `${Math.round(n0(h.local_total_centi))} (its own lines sum to ${erpLineSum})`, acTotal);
-      const wantPaid = Math.max(0, acTotal - n0(h.balance_centi));
-      cmpNum("SO header", "paid_centi (derived)", k, h.paid_centi, wantPaid);
+      const erpLineSum = erpLs.reduce((s, l) => s + n0(l.total_sen), 0);
+      if (Math.round(n0(h.local_total_sen)) !== acTotal)
+        F.add("SO header", "local_total_sen (derived)", k, `${Math.round(n0(h.local_total_sen))} (its own lines sum to ${erpLineSum})`, acTotal);
+      const wantPaid = Math.max(0, acTotal - n0(h.balance_sen));
+      cmpNum("SO header", "paid_sen (derived)", k, h.paid_sen, wantPaid);
     }
   }
 
@@ -532,8 +532,8 @@ async function main() {
       if (sku && !norm(sku).startsWith(norm(a.ItemCode))) F.add("PO line", "supplier_sku", kk, sku, a.ItemCode, null, how);
     }
     if (isSofa) {
-      const gTotal = p.erp.reduce((s, e) => s + n0(e.line_total_centi), 0);
-      cmpNum("PO line", "sofa build line_total_centi", k0, gTotal, acUp * acQty, how);
+      const gTotal = p.erp.reduce((s, e) => s + n0(e.line_total_sen), 0);
+      cmpNum("PO line", "sofa build line_total_sen", k0, gTotal, acUp * acQty, how);
       const model = sofaModelOf(a.ItemCode);
       for (const e of p.erp) {
         const pref = String(e.material_code || "").split("-")[0].toUpperCase();
@@ -541,8 +541,8 @@ async function main() {
       }
     } else {
       const e = p.erp[0];
-      cmpNum("PO line", "unit_price_centi", `${k0} ${e.material_code}`, e.unit_price_centi, acUp, how);
-      cmpNum("PO line", "line_total_centi", `${k0} ${e.material_code}`, e.line_total_centi, acUp * acQty, how);
+      cmpNum("PO line", "unit_price_sen", `${k0} ${e.material_code}`, e.unit_price_sen, acUp, how);
+      cmpNum("PO line", "line_total_sen", `${k0} ${e.material_code}`, e.line_total_sen, acUp * acQty, how);
       const want = erpCodeOf(a.ItemCode);
       if (want && norm(want) !== norm(e.material_code)) F.add("PO line", "material_code", k0, e.material_code, `${want} (from ${a.ItemCode})`, null, how);
     }
@@ -563,10 +563,10 @@ async function main() {
     const ls = acLinesByPoDoc.get(h.linked_ac_docno) ?? [];
     if (ls.length) {
       const acTotal = ls.reduce((s, l) => s + centi(l.UnitPrice) * Math.round(n0(l.Qty)), 0);
-      const erpLineSum = (erpLinesByPoDoc.get(h.linked_ac_docno) ?? []).reduce((s, l) => s + n0(l.line_total_centi), 0);
-      if (Math.round(n0(h.subtotal_centi)) !== acTotal)
-        F.add("PO header", "subtotal_centi (derived)", k, `${Math.round(n0(h.subtotal_centi))} (its own lines sum to ${erpLineSum})`, acTotal);
-      cmpNum("PO header", "total_centi (derived)", k, h.total_centi, acTotal);
+      const erpLineSum = (erpLinesByPoDoc.get(h.linked_ac_docno) ?? []).reduce((s, l) => s + n0(l.line_total_sen), 0);
+      if (Math.round(n0(h.subtotal_sen)) !== acTotal)
+        F.add("PO header", "subtotal_sen (derived)", k, `${Math.round(n0(h.subtotal_sen))} (its own lines sum to ${erpLineSum})`, acTotal);
+      cmpNum("PO header", "total_sen (derived)", k, h.total_sen, acTotal);
       const eta = ls.map((l) => day(l.DeliveryDate)).filter(Boolean).sort()[0] ?? null;
       cmpDate("PO header", "expected_at (derived)", k, h.expected_at, eta);
       /* Ordered quantity 0 is not "fully received"; counting it as such made
@@ -751,7 +751,7 @@ async function main() {
   log(`  3. A quantity of 0 in AutoCount becomes 1 in the ERP.`);
   log(`     Both importers write \`Math.round(num(l.Qty)) || 1\`; JavaScript's \`||\` treats 0 as absent, so a`);
   log(`     deliberately zero-quantity AutoCount line is silently ordered once.`);
-  log(`     effect: ${qFloor.length} lines, and the money follows - ${rowsOf("PO line", "line_total_centi").length} PO lines carry a line total AutoCount puts at 0.`);
+  log(`     effect: ${qFloor.length} lines, and the money follows - ${rowsOf("PO line", "line_total_sen").length} PO lines carry a line total AutoCount puts at 0.`);
   log("");
 
   // ═════════════════════ VERDICT ═════════════════════

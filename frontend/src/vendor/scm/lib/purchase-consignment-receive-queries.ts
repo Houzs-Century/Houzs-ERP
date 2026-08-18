@@ -61,7 +61,7 @@ export type OutstandingPcOrderLine = {
   ordered: number;
   received: number;
   outstanding: number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   variants: unknown;
 };
 

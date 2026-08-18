@@ -572,7 +572,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
   const headerChanges = canonicaliseSoHeaderChanges(amendment.header_changes ?? null);
   if (headerChanges && ('processingDate' in headerChanges || 'customerDeliveryDate' in headerChanges)) {
     const { data: soDates } = await sb.from('mfg_sales_orders')
-      .select('processing_date, customer_delivery_date, debtor_name, address1, postcode, local_total_centi')
+      .select('processing_date, customer_delivery_date, debtor_name, address1, postcode, local_total_sen')
       .eq('doc_no', amendment.so_doc_no)
       .maybeSingle();
     const cur = (soDates ?? {}) as { processing_date?: string | null; customer_delivery_date?: string | null };
@@ -637,12 +637,12 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
     if (nextProc !== '' && 'processingDate' in headerChanges) {
       const soRow = (soDates ?? {}) as {
         debtor_name?: string | null; address1?: string | null;
-        postcode?: string | null; local_total_centi?: number | null;
+        postcode?: string | null; local_total_sen?: number | null;
       };
       const { data: payRows } = await sb.from('mfg_sales_order_payments')
-        .select('amount_centi').eq('so_doc_no', amendment.so_doc_no);
-      const paidCenti = ((payRows ?? []) as Array<{ amount_centi?: number | null }>)
-        .reduce((sum, p) => sum + Number(p.amount_centi ?? 0), 0);
+        .select('amount_sen').eq('so_doc_no', amendment.so_doc_no);
+      const paidSen = ((payRows ?? []) as Array<{ amount_sen?: number | null }>)
+        .reduce((sum, p) => sum + Number(p.amount_sen ?? 0), 0);
       const gateProblems = collectProcessingGateProblems({
         procDate: nextProc,
         delivDate: nextDeliv || null,
@@ -659,7 +659,7 @@ export async function approveSoCommandHandler(c: any, sb: any): Promise<Response
           hasAddress: !!String(soRow.address1 ?? '').trim(),
           hasPostcode: !!String(soRow.postcode ?? '').trim(),
         },
-        deposit: { paidCenti, totalCenti: Number(soRow.local_total_centi ?? 0) },
+        deposit: { paidSen, totalSen: Number(soRow.local_total_sen ?? 0) },
       });
       if (gateProblems.length > 0) {
         return c.json({

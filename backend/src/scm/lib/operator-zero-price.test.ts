@@ -20,9 +20,9 @@ import { recomputeFromSnapshot, type TrustSelling } from './mfg-pricing-recomput
 
 /** A plain catalogue line: product priced RM 2,990. `trustOperatorSelling` is
  *  the 15th positional, so the intervening optionals are passed explicitly. */
-const run = (trust: TrustSelling, clientUnitCenti: number) =>
+const run = (trust: TrustSelling, clientUnitSen: number) =>
   recomputeFromSnapshot(
-    { itemCode: 'X-1', itemGroup: 'others', qty: 1, unitPriceCenti: clientUnitCenti, variants: {} } as never,
+    { itemCode: 'X-1', itemGroup: 'others', qty: 1, unitPriceSen: clientUnitSen, variants: {} } as never,
     { code: 'X-1', category: 'OTHERS', sell_price_sen: 299_000 } as never,
     null, // fabric
     null, // config

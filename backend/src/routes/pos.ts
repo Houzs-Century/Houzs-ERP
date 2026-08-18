@@ -258,8 +258,8 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
 
   const aggSql = (extraWhere: string) =>
     `SELECT count(*)::int AS cnt,
-            COALESCE(sum(total_revenue_centi),0)::bigint AS total_centi,
-            COALESCE(sum(COALESCE(mattress_sofa_centi,0)+COALESCE(bedframe_centi,0)+COALESCE(accessories_centi,0)+COALESCE(others_centi,0)),0)::bigint AS goods_centi
+            COALESCE(sum(total_revenue_sen),0)::bigint AS total_sen,
+            COALESCE(sum(COALESCE(mattress_sofa_sen,0)+COALESCE(bedframe_sen,0)+COALESCE(accessories_sen,0)+COALESCE(others_sen,0)),0)::bigint AS goods_sen
        FROM scm.mfg_sales_orders
       WHERE ${[...conds, extraWhere].join(" AND ")}`;
 
@@ -275,14 +275,14 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
     showroomBinds.push(...ids);
   }
 
-  type Agg = { cnt: number; total_centi: number; goods_centi: number };
+  type Agg = { cnt: number; total_sen: number; goods_sen: number };
   const showroomRow = await DB.prepare(aggSql(showroomWhere)).bind(...binds, ...showroomBinds).first<Agg>();
   const personalRow = await DB.prepare(aggSql("salesperson_id = ?")).bind(...binds, me.id).first<Agg>();
 
   const toMyr = (centi: number) => Math.round(Number(centi) / 100);
   const card = (r: Agg | null) => {
-    const total = Number(r?.total_centi ?? 0);
-    const goods = Number(r?.goods_centi ?? 0);
+    const total = Number(r?.total_sen ?? 0);
+    const goods = Number(r?.goods_sen ?? 0);
     return {
       total: toMyr(total),
       count: Number(r?.cnt ?? 0),

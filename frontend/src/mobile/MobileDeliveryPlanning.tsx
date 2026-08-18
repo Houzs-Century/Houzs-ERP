@@ -12,7 +12,7 @@ import {
   useDeliveryPlanningLines,
   type PlanningLineItem,
 } from "../vendor/scm/lib/delivery-planning-queries";
-import { fmtCenti } from "../lib/scm";
+import { fmtSen } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateDeliveryOrders } from "../auth/salesAccess";
@@ -53,9 +53,9 @@ type BoardRow = {
   branding: string | null;
   status: string | null;
   delivery_state: Bucket;
-  balance_centi: number | null;
-  balance_centi_live: number | null;
-  local_total_centi: number | null;
+  balance_sen: number | null;
+  balance_sen_live: number | null;
+  local_total_sen: number | null;
   so_date: string | null;
   customer_delivery_date: string | null;
   amended_delivery_date: string | null;
@@ -735,7 +735,7 @@ function StopCard({
   const st = trackState(o, isToday);
   const [chipBg, chipFg] = STATE_COLORS[st];
   const seqBg = seqBgFor(st);
-  const bal = o.balance_centi_live ?? o.balance_centi ?? 0;
+  const bal = o.balance_sen_live ?? o.balance_sen ?? 0;
   const fullyPaid = bal <= 0;
   const cust = o.debtor_name || o.so_doc_no || EM;
   const subId = latestDo(o)?.do_number || o.so_doc_no || EM;
@@ -912,7 +912,7 @@ function StopCard({
             className="tnum"
             style={{ fontSize: 16, fontWeight: 800, color: "#8a4b12" }}
           >
-            {fmtCenti(bal)}
+            {fmtSen(bal)}
           </span>
         </div>
       )}
@@ -1193,7 +1193,7 @@ function StopDetail({
   const [chipBg, chipFg] = STATE_COLORS[st];
   const doRef = latestDo(order);
   const doId = doRef?.id || null;
-  const bal = order.balance_centi_live ?? order.balance_centi ?? 0;
+  const bal = order.balance_sen_live ?? order.balance_sen ?? 0;
   const fullyPaid = bal <= 0;
   const eff = dm(effDateOf(order));
   const timeWindow = (order.time_range && order.time_range.trim()) || "";
@@ -1883,7 +1883,7 @@ function StopDetail({
               className="tnum"
               style={{ fontSize: 19, fontWeight: 800, color: "#8a4b12" }}
             >
-              {fmtCenti(bal)}
+              {fmtSen(bal)}
             </span>
           </div>
         )}

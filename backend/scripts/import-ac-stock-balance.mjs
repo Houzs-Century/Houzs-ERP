@@ -101,8 +101,8 @@ async function main() {
   // ERP product cost fallback + product names
   const prodCols = await sql`SELECT column_name FROM information_schema.columns WHERE table_schema='scm' AND table_name='mfg_products'`;
   const pcn = prodCols.map((r) => r.column_name);
-  const costCol = ["cost_centi", "unit_cost_centi", "cost_sen", "base_cost_centi"].find((c) => pcn.includes(c));
-  const prods = await sql.unsafe(`SELECT code, name${costCol ? `, ${costCol} AS cost_centi` : ""} FROM scm.mfg_products WHERE company_id = 1`);
+  const costCol = ["cost_sen", "unit_cost_sen", "cost_sen", "base_cost_sen"].find((c) => pcn.includes(c));
+  const prods = await sql.unsafe(`SELECT code, name${costCol ? `, ${costCol} AS cost_sen` : ""} FROM scm.mfg_products WHERE company_id = 1`);
   const prodBy = new Map(prods.map((p) => [norm(p.code), p]));
 
   // ERP current on-hand per product+warehouse (all variant keys summed)
@@ -125,7 +125,7 @@ async function main() {
     const cur = ohBy.get(`${norm(erp)}|${wh.id}`) ?? 0;
     const delta = Math.round(r.BalQty) - cur;
     if (delta === 0) continue;
-    const costRm = utdCost.get(norm(r.ItemCode)) ?? iucCost.get(norm(r.ItemCode)) ?? (p?.cost_centi ? p.cost_centi / 100 : 0);
+    const costRm = utdCost.get(norm(r.ItemCode)) ?? iucCost.get(norm(r.ItemCode)) ?? (p?.cost_sen ? p.cost_sen / 100 : 0);
     const costSen = Math.round(costRm * 100);
     if (delta > 0 && costSen === 0) zeroCost++;
     (delta > 0 ? plan : negs).push({ code: erp, name: p?.name ?? erp, wh, delta, costSen, ac: r.ItemCode, loc: r.Location, acQty: Math.round(r.BalQty), cur });

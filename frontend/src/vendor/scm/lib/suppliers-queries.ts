@@ -81,7 +81,7 @@ export type SupplierRow = {
 /** PR — Commander 2026-05-27 ("跟着 Product Maintenance 的排版"):
  *  Per-category supplier cost matrix on supplier_material_bindings
  *  (migration 0089). Two concrete shapes the UI cares about; everything
- *  else (or null) → fall back to unit_price_centi.
+ *  else (or null) → fall back to unit_price_sen.
  *
  *  SOFA:     { [seatHeight]: { P1?: centi, P2?: centi, P3?: centi } }
  *  BEDFRAME: { P1?: centi, P2?: centi }
@@ -100,7 +100,7 @@ export type BindingRow = {
   material_code: string;
   material_name: string;
   supplier_sku: string;
-  unit_price_centi: number;
+  unit_price_sen: number;
   currency: Currency;
   lead_time_days: number;
   payment_terms_override: string | null;
@@ -111,11 +111,11 @@ export type BindingRow = {
   notes: string | null;
   /** PR — Commander 2026-05-27: per-category cost matrix mirroring the
    *  Products Maintenance page shape. NULL on existing rows + on categories
-   *  that use the single unit_price_centi (mattress / accessory / service). */
+   *  that use the single unit_price_sen (mattress / accessory / service). */
   price_matrix: PriceMatrix | null;
   /** Migration 0177 — cost anchor. When true, this binding is THE cost anchor
    *  for its material_code: editing either side's cost (this binding's
-   *  unit_price_centi / price_matrix, or the linked mfg_products
+   *  unit_price_sen / price_matrix, or the linked mfg_products
    *  base_price_sen / price1_sen) mirrors onto the other. At most one anchor
    *  per material_code (enforced server-side). SOFA bindings can be anchored
    *  but cost sync is skipped (per-height matrix vs single SKU cost). */
@@ -136,9 +136,9 @@ export type PoHeaderRow = {
   supplier_delivery_date_3?: string | null;
   supplier_delivery_date_4?: string | null;
   currency: Currency;
-  subtotal_centi: number;
-  tax_centi: number;
-  total_centi: number;
+  subtotal_sen: number;
+  tax_sen: number;
+  total_sen: number;
   notes: string | null;
   submitted_at: string | null;
   received_at: string | null;
@@ -221,8 +221,8 @@ export type PoItemRow = {
   material_name: string;
   supplier_sku: string | null;
   qty: number;
-  unit_price_centi: number;
-  line_total_centi: number;
+  unit_price_sen: number;
+  line_total_sen: number;
   received_qty: number;
   notes: string | null;
   /* PR #41 — variant fields (migration 0056) */
@@ -230,8 +230,8 @@ export type PoItemRow = {
   description?: string | null;
   description2?: string | null;
   uom?: string;
-  discount_centi?: number;
-  unit_cost_centi?: number;
+  discount_sen?: number;
+  unit_cost_sen?: number;
   gap_inches?: number | null;
   divan_height_inches?: number | null;
   divan_price_sen?: number;
@@ -385,7 +385,7 @@ export type SupplierScorecard = {
     poDate: string;
     expectedDate: string | null;
     receivedDate: string | null;
-    totalCenti: number;
+    totalSen: number;
     orderedQty: number;
     receivedQty: number;
   }>;
@@ -437,7 +437,7 @@ export type NewBinding = {
   materialCode: string;
   materialName: string;
   supplierSku: string;
-  unitPriceCenti?: number;
+  unitPriceSen?: number;
   currency?: Currency;
   leadTimeDays?: number;
   moq?: number;
@@ -638,7 +638,7 @@ export type NewPoItem = {
   materialName: string;
   supplierSku?: string;
   qty: number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   bindingId?: string;
   notes?: string;
   /* PR #41 — variant fields */
@@ -646,8 +646,8 @@ export type NewPoItem = {
   description?: string;
   description2?: string;
   uom?: string;
-  discountCenti?: number;
-  unitCostCenti?: number;
+  discountSen?: number;
+  unitCostSen?: number;
   gapInches?: number | null;
   divanHeightInches?: number | null;
   divanPriceSen?: number;
@@ -686,7 +686,7 @@ export type OutstandingSoItem = {
   qty:            number;
   poQtyPicked:    number;
   remainingQty:   number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   variants:       unknown;
   lineSuffix:     string | null;
   /* Commander 2026-05-28 — PO-from-SO redesign extras. processingDate +
@@ -728,7 +728,7 @@ export type OutstandingPoItem = {
   qty:            number;
   receivedQty:    number;
   remainingQty:   number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   warehouseId:    string | null;
   variants:       unknown;
   /* Delivery-carry — the PO line's delivery date, carried into the GRN line. */
@@ -819,7 +819,7 @@ export type OutstandingGrnItem = {
   itemGroup:       string;
   qtyAccepted:     number;
   remaining:       number;
-  unitPriceCenti:  number;
+  unitPriceSen:  number;
   variants:        unknown;
   /* Source note's currency + FX rate (owner 2026-08-06) — one invoice may bill
      several of a supplier's notes, but a PI header carries ONE currency + rate,

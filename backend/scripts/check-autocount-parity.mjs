@@ -346,12 +346,12 @@ async function main() {
   const so = gz("ac-outstanding-so.json.gz");
   const acBal = new Map();
   for (const r of so) if (r.UDF_BALANCE != null && !acBal.has(r.DocNo)) acBal.set(r.DocNo, Number(r.UDF_BALANCE) || 0);
-  /* `h.total_centi` does not exist and crashed this section with 42703 on
-     2026-08-10. The header total is `local_total_centi`; more to the point, the
+  /* `h.total_sen` does not exist and crashed this section with 42703 on
+     2026-08-10. The header total is `local_total_sen`; more to the point, the
      ERP already HAS an outstanding balance and this comparison should use it
      rather than re-deriving total-minus-payments, which is a second
      implementation of the same rule that can silently disagree with the screen.
-     `balance_centi_live` is the VIEW's computed column and is exactly what the
+     `balance_sen_live` is the VIEW's computed column and is exactly what the
      SO list renders (see the VIEW-TRAP note in scm/routes/mfg-sales-orders.ts).
      The view is joined on doc_no rather than selected from directly, because the
      view froze its column set at CREATE VIEW time and `linked_ac_docno` was
@@ -359,15 +359,15 @@ async function main() {
      through the view. Column presence is printed, not assumed. */
   const viewCols = new Set((await sql`SELECT column_name FROM information_schema.columns
     WHERE table_schema = 'scm' AND table_name = 'mfg_sales_orders_with_payment_totals'`).map((r) => r.column_name));
-  log(`view mfg_sales_orders_with_payment_totals: balance_centi_live=${viewCols.has("balance_centi_live")} paid_total_centi=${viewCols.has("paid_total_centi")} local_total_centi=${viewCols.has("local_total_centi")} linked_ac_docno=${viewCols.has("linked_ac_docno")}`);
+  log(`view mfg_sales_orders_with_payment_totals: balance_sen_live=${viewCols.has("balance_sen_live")} paid_total_sen=${viewCols.has("paid_total_sen")} local_total_sen=${viewCols.has("local_total_sen")} linked_ac_docno=${viewCols.has("linked_ac_docno")}`);
   const [{ n: dupDoc }] = await sql`SELECT COUNT(*)::int n FROM (
       SELECT doc_no FROM scm.mfg_sales_orders GROUP BY doc_no HAVING COUNT(*) > 1) t`;
   log(`doc_no values shared by more than one sales order (would fan the join out): ${dupDoc}`);
 
   const erpBal = await sql`WITH v AS (
-      SELECT doc_no, paid_total_centi, balance_centi_live FROM scm.mfg_sales_orders_with_payment_totals)
-    SELECT h.linked_ac_docno ac, h.doc_no, h.local_total_centi, h.balance_centi,
-      v.paid_total_centi, v.balance_centi_live, h.status::text status
+      SELECT doc_no, paid_total_sen, balance_sen_live FROM scm.mfg_sales_orders_with_payment_totals)
+    SELECT h.linked_ac_docno ac, h.doc_no, h.local_total_sen, h.balance_sen,
+      v.paid_total_sen, v.balance_sen_live, h.status::text status
     FROM scm.mfg_sales_orders h LEFT JOIN v ON v.doc_no = h.doc_no
     WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL
       AND h.status::text NOT IN ('CANCELLED','CLOSED')`;
@@ -378,16 +378,16 @@ async function main() {
     seenDoc.add(r.doc_no);
     const ac = acBal.get(r.ac);
     if (ac == null) continue;
-    if (r.balance_centi_live == null) balNoLive++;
-    const erpOutstanding = Number(r.balance_centi_live ?? r.local_total_centi ?? 0) / 100;
+    if (r.balance_sen_live == null) balNoLive++;
+    const erpOutstanding = Number(r.balance_sen_live ?? r.local_total_sen ?? 0) / 100;
     if (Math.abs(erpOutstanding - ac) < 0.01) balMatch++;
     else {
       balDiff++;
-      if (balBad.length < 15) balBad.push(`${r.ac} (${r.doc_no}): AutoCount balance ${ac.toFixed(2)}; ERP balance_centi_live ${erpOutstanding.toFixed(2)} (total ${(Number(r.local_total_centi ?? 0) / 100).toFixed(2)}, paid ${(Number(r.paid_total_centi ?? 0) / 100).toFixed(2)})`);
+      if (balBad.length < 15) balBad.push(`${r.ac} (${r.doc_no}): AutoCount balance ${ac.toFixed(2)}; ERP balance_sen_live ${erpOutstanding.toFixed(2)} (total ${(Number(r.local_total_sen ?? 0) / 100).toFixed(2)}, paid ${(Number(r.paid_total_sen ?? 0) / 100).toFixed(2)})`);
     }
   }
   log(`orders compared: ${balMatch + balDiff}; balance agrees: ${balMatch}; differs: ${balDiff}`);
-  if (balNoLive) log(`   orders with no balance_centi_live from the view (fell back to local_total_centi): ${balNoLive}`);
+  if (balNoLive) log(`   orders with no balance_sen_live from the view (fell back to local_total_sen): ${balNoLive}`);
   for (const b of balBad) log(`   ${b}`);
 
   log("");

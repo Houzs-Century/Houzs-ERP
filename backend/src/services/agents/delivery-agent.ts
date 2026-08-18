@@ -178,7 +178,7 @@ export interface PoolSo {
   /** amended_delivery_date ?? customer_delivery_date (the board's effective date). */
   effectiveDeliveryDate: string | null;
   daysLeft: number | null;
-  localTotalCenti: number;
+  localTotalSen: number;
 }
 
 interface DeliverySnapshot {
@@ -194,7 +194,7 @@ type SoHeaderRow = {
   customer_state: string | null; customer_country: string | null;
   customer_delivery_date: string | null; amended_delivery_date: string | null;
   processing_date: string | null;
-  local_total_centi: number | null;
+  local_total_sen: number | null;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -207,7 +207,7 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
      delivery_state / amended_delivery_date are NOT in the payment-totals view). */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
     sb.from('mfg_sales_orders')
-      .select('doc_no, debtor_code, debtor_name, status, delivery_state, customer_state, customer_country, customer_delivery_date, amended_delivery_date, processing_date, local_total_centi')
+      .select('doc_no, debtor_code, debtor_name, status, delivery_state, customer_state, customer_country, customer_delivery_date, amended_delivery_date, processing_date, local_total_sen')
       .neq('status', 'DRAFT')
       .neq('status', 'CANCELLED')
       .order('customer_delivery_date', { ascending: true, nullsFirst: false })
@@ -294,7 +294,7 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
       regions,
       effectiveDeliveryDate: effectiveDD ?? null,
       daysLeft: daysUntil(today, effectiveDD),
-      localTotalCenti: Math.round(n(r.local_total_centi)),
+      localTotalSen: Math.round(n(r.local_total_sen)),
     };
   });
 
@@ -441,12 +441,12 @@ async function generateDeliveryProposalsCore(
         debtorName: group[0]!.debtorName,
         state: group[0]!.customerState,
         soCount: group.length,
-        valueCenti: group.reduce((sum, x) => sum + x.localTotalCenti, 0),
+        valueSen: group.reduce((sum, x) => sum + x.localTotalSen, 0),
         sos: group.map((x) => ({
           docNo: x.docNo,
           effectiveDeliveryDate: x.effectiveDeliveryDate,
           daysLeft: x.daysLeft,
-          valueCenti: x.localTotalCenti,
+          valueSen: x.localTotalSen,
         })),
       }))
       // Most date-pressed customer first (dateless customers last). 9999
@@ -456,7 +456,7 @@ async function generateDeliveryProposalsCore(
         const db2 = Math.min(...b.sos.map((x) => x.daysLeft ?? 9999));
         return da - db2;
       });
-    const valueCenti = sos.reduce((sum, x) => sum + x.localTotalCenti, 0);
+    const valueSen = sos.reduce((sum, x) => sum + x.localTotalSen, 0);
     const multi = customers.filter((cu) => cu.soCount > 1).length;
     proposals.push({
       kind: 'LOAD_PLAN',
@@ -467,12 +467,12 @@ async function generateDeliveryProposalsCore(
         date: snapshot.today,
         soCount: sos.length,
         customerCount: customers.length,
-        valueCenti,
+        valueSen,
         customers,
       },
       summary:
         `Load plan ${regionLabel.get(region) ?? region}: ${sos.length} ready-to-deliver SO(s) across ` +
-        `${customers.length} customer(s), worth ${rm(valueCenti)}` +
+        `${customers.length} customer(s), worth ${rm(valueSen)}` +
         (multi > 0 ? ` (${multi} customer(s) with multiple orders — keep each customer's orders on one trip)` : '') +
         `. Proposal only — schedule the trip(s) on the Delivery Planning board.`,
     });
@@ -536,15 +536,15 @@ export interface DeliveryBriefData {
     total: number;
     byPlanningState: Record<DeliveryState, number>;
     /** Ready-to-deliver (PENDING_SCHEDULE) buckets, largest value first. */
-    readyByRegion: Array<{ region: string; label: string; count: number; customers: number; valueCenti: number }>;
+    readyByRegion: Array<{ region: string; label: string; count: number; customers: number; valueSen: number }>;
     /** Ready-to-deliver by canonical customer-state code (SEL/KL/…/UNKNOWN). */
-    readyByState: Array<{ stateCode: string; count: number; valueCenti: number }>;
+    readyByState: Array<{ stateCode: string; count: number; valueSen: number }>;
   };
   overdueToDeliver: {
     count: number;
     rows: Array<{
       docNo: string; debtorName: string | null; region: string;
-      effectiveDeliveryDate: string | null; daysLeft: number | null; valueCenti: number;
+      effectiveDeliveryDate: string | null; daysLeft: number | null; valueSen: number;
     }>;
   };
   /** DO counts per raw status. `unavailableReason` non-null means the read
@@ -725,12 +725,12 @@ async function collectDeliveryBriefCore(
   const regionLabel = new Map(
     snapshot.regionCfg.regions.map((r) => [r.key, r.label] as [string, string]),
   );
-  const regionAgg = new Map<string, { count: number; valueCenti: number; customers: Set<string> }>();
+  const regionAgg = new Map<string, { count: number; valueSen: number; customers: Set<string> }>();
   for (const so of snapshot.pool) {
     if (so.planningState !== 'PENDING_SCHEDULE') continue;
-    const agg = regionAgg.get(so.region) ?? { count: 0, valueCenti: 0, customers: new Set<string>() };
+    const agg = regionAgg.get(so.region) ?? { count: 0, valueSen: 0, customers: new Set<string>() };
     agg.count += 1;
-    agg.valueCenti += so.localTotalCenti;
+    agg.valueSen += so.localTotalSen;
     agg.customers.add(s(so.debtorCode) || s(so.debtorName) || so.docNo);
     regionAgg.set(so.region, agg);
   }
@@ -740,21 +740,21 @@ async function collectDeliveryBriefCore(
       label: regionLabel.get(region) ?? region,
       count: a.count,
       customers: a.customers.size,
-      valueCenti: a.valueCenti,
+      valueSen: a.valueSen,
     }))
-    .sort((a, b) => b.valueCenti - a.valueCenti);
+    .sort((a, b) => b.valueSen - a.valueSen);
 
-  const stateAgg = new Map<string, { count: number; valueCenti: number }>();
+  const stateAgg = new Map<string, { count: number; valueSen: number }>();
   for (const so of snapshot.pool) {
     if (so.planningState !== 'PENDING_SCHEDULE') continue;
-    const agg = stateAgg.get(so.stateCode) ?? { count: 0, valueCenti: 0 };
+    const agg = stateAgg.get(so.stateCode) ?? { count: 0, valueSen: 0 };
     agg.count += 1;
-    agg.valueCenti += so.localTotalCenti;
+    agg.valueSen += so.localTotalSen;
     stateAgg.set(so.stateCode, agg);
   }
   const readyByState = [...stateAgg.entries()]
-    .map(([stateCode, a]) => ({ stateCode, count: a.count, valueCenti: a.valueCenti }))
-    .sort((a, b) => b.valueCenti - a.valueCenti);
+    .map(([stateCode, a]) => ({ stateCode, count: a.count, valueSen: a.valueSen }))
+    .sort((a, b) => b.valueSen - a.valueSen);
 
   /* Overdue-to-deliver: the board's OVERDUE bucket (not ready + inside the
      3-day window / past the effective date), most negative days-left first. */
@@ -767,7 +767,7 @@ async function collectDeliveryBriefCore(
       region: so.region,
       effectiveDeliveryDate: so.effectiveDeliveryDate,
       daysLeft: so.daysLeft,
-      valueCenti: so.localTotalCenti,
+      valueSen: so.localTotalSen,
     }));
 
   const brief: DeliveryBriefData = {

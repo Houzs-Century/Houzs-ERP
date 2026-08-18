@@ -86,8 +86,8 @@ type HeaderDraft = {
    Edit mode; PCO-sourced lines keep them read-only. */
 type LineDraft = {
   qty: number;            // maps to qty_received
-  unitPriceCenti: number;
-  discountCenti: number;
+  unitPriceSen: number;
+  discountSen: number;
   deliveryDate: string | null;
   materialName: string;
   itemGroup: string | null;
@@ -99,9 +99,9 @@ type GrnItemRow = Record<string, unknown> & {
   material_code: string;
   material_name: string;
   qty_received: number;
-  unit_price_centi: number;
-  discount_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen: number;
+  discount_sen?: number;
+  line_total_sen?: number;
   delivery_date?: string | null;
   item_group?: string | null;
   material_kind?: string | null;
@@ -127,8 +127,8 @@ const headerSnapshot = (g: any): HeaderDraft => ({
 
 const lineSnapshot = (it: GrnItemRow): LineDraft => ({
   qty:            it.qty_received,
-  unitPriceCenti: it.unit_price_centi,
-  discountCenti:  it.discount_centi ?? 0,
+  unitPriceSen: it.unit_price_sen,
+  discountSen:  it.discount_sen ?? 0,
   deliveryDate:   it.delivery_date ?? null,
   materialName:   it.description ?? it.material_name ?? '',
   itemGroup:      it.item_group ?? null,
@@ -202,7 +202,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
       qty_accepted: it.qty_received,
       qty_rejected: 0,
       rejection_reason: null,
-      unit_price_centi: it.unit_price_centi,
+      unit_price_sen: it.unit_price_sen,
     }));
     return import('../../vendor/scm/lib/grn-pdf')
       .then(({ generateGrnPdf }) =>
@@ -232,12 +232,12 @@ export const PurchaseConsignmentReceiveDetail = () => {
   const visibleItems = items;
   const lineOf = (it: GrnItemRow): LineDraft => lineDrafts[it.id] ?? lineSnapshot(it);
   const lineTotalOf = (it: GrnItemRow): number => {
-    if (!isEditing) return it.line_total_centi ?? (it.qty_received * it.unit_price_centi - (it.discount_centi ?? 0));
+    if (!isEditing) return it.line_total_sen ?? (it.qty_received * it.unit_price_sen - (it.discount_sen ?? 0));
     const d = lineOf(it);
-    return d.qty * d.unitPriceCenti - d.discountCenti;
+    return d.qty * d.unitPriceSen - d.discountSen;
   };
   const itemsSubtotal = visibleItems.reduce((s, it) => s + lineTotalOf(it), 0);
-  const grandTotal = itemsSubtotal + (grn.tax_centi ?? 0);
+  const grandTotal = itemsSubtotal + (grn.tax_sen ?? 0);
   const totalQty = visibleItems.reduce((s, it) => s + (isEditing ? lineOf(it).qty : (it.qty_received ?? 0)), 0);
 
   const headerView = headerDraft ?? headerSnapshot(grn);
@@ -300,15 +300,15 @@ export const PurchaseConsignmentReceiveDetail = () => {
         );
         const changed =
           d.qty !== it.qty_received ||
-          d.unitPriceCenti !== it.unit_price_centi ||
-          d.discountCenti !== (it.discount_centi ?? 0) ||
+          d.unitPriceSen !== it.unit_price_sen ||
+          d.discountSen !== (it.discount_sen ?? 0) ||
           (d.deliveryDate ?? null) !== (it.delivery_date ?? null) ||
           identityChanged;
         if (changed) {
           await updateItem.mutateAsync({
             grnId: grn.id, itemId: it.id,
-            qty: d.qty, unitPriceCenti: d.unitPriceCenti,
-            discountCenti: d.discountCenti, deliveryDate: d.deliveryDate,
+            qty: d.qty, unitPriceSen: d.unitPriceSen,
+            discountSen: d.discountSen, deliveryDate: d.deliveryDate,
             /* T12 — only manual lines send identity/variants; the server
                recomputes description2 + resyncs inventory. */
             ...(manual ? {
@@ -427,7 +427,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
             {visibleItems.map((it, idx) => {
               const d = lineOf(it);
-              const lineValueCenti = lineTotalOf(it);
+              const lineValueSen = lineTotalOf(it);
               const variantSummary = buildVariantSummary(it.item_group ?? null, it.variants as Record<string, unknown> | null)
                 || it.description
                 || it.material_name;
@@ -464,7 +464,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
                       {it.item_group && <ItemGroupPill group={it.item_group} />}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                      <span className={styles.previewPrice}>{fmtRm(lineValueCenti, grn.currency)}</span>
+                      <span className={styles.previewPrice}>{fmtRm(lineValueSen, grn.currency)}</span>
                       {isEditing && (
                         <button
                           type="button"
@@ -596,11 +596,11 @@ export const PurchaseConsignmentReceiveDetail = () => {
                       <span className={styles.fieldLabel}>Unit Price ({grn.currency})</span>
                       {isEditing ? (
                         <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
-                          valueSen={d.unitPriceCenti} disabled={isLocked}
-                          onCommit={(sen) => setLine(it, { unitPriceCenti: sen ?? 0 })} />
+                          valueSen={d.unitPriceSen} disabled={isLocked}
+                          onCommit={(sen) => setLine(it, { unitPriceSen: sen ?? 0 })} />
                       ) : (
                         <input
-                          type="text" readOnly value={fmtRm(it.unit_price_centi, grn.currency)}
+                          type="text" readOnly value={fmtRm(it.unit_price_sen, grn.currency)}
                           className={styles.fieldInput}
                           style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
@@ -610,12 +610,12 @@ export const PurchaseConsignmentReceiveDetail = () => {
                       <span className={styles.fieldLabel}>Discount</span>
                       {isEditing ? (
                         <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
-                          valueSen={d.discountCenti} disabled={isLocked}
-                          onCommit={(sen) => setLine(it, { discountCenti: sen ?? 0 })} />
+                          valueSen={d.discountSen} disabled={isLocked}
+                          onCommit={(sen) => setLine(it, { discountSen: sen ?? 0 })} />
                       ) : (
                         <input
                           type="text" readOnly
-                          value={(it.discount_centi ?? 0) > 0 ? fmtRm(it.discount_centi, grn.currency) : '—'}
+                          value={(it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen, grn.currency) : '—'}
                           className={styles.fieldInput}
                           style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />

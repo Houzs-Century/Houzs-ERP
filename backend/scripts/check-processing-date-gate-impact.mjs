@@ -51,14 +51,14 @@ async function main() {
            NULLIF(BTRIM(COALESCE(so.address1, '')), '')  AS addr,
            NULLIF(BTRIM(COALESCE(so.postcode, '')), '')  AS postcode,
            so.customer_delivery_date                     AS deliv,
-           COALESCE(so.local_total_centi, 0)             AS total_centi,
+           COALESCE(so.local_total_sen, 0)             AS total_sen,
            /* Mirrors soProceedGateRefusal exactly (mfg-sales-orders.ts:513):
-              payments join on so_doc_no, sum amount_centi, NO status filter.
+              payments join on so_doc_no, sum amount_sen, NO status filter.
               A different paid figure here would make this detector measure a
               gate the app does not run. */
-           COALESCE((SELECT SUM(p.amount_centi)
+           COALESCE((SELECT SUM(p.amount_sen)
                        FROM scm.mfg_sales_order_payments p
-                      WHERE p.so_doc_no = so.doc_no), 0) AS paid_centi
+                      WHERE p.so_doc_no = so.doc_no), 0) AS paid_sen
       FROM scm.mfg_sales_orders so
       LEFT JOIN public.companies c ON c.id = so.company_id
      WHERE so.processing_date IS NOT NULL
@@ -75,7 +75,7 @@ async function main() {
     byCo.get(co).push(r);
   }
 
-  const ratio = (r) => (Number(r.total_centi) > 0 ? Number(r.paid_centi) / Number(r.total_centi) : 1);
+  const ratio = (r) => (Number(r.total_sen) > 0 ? Number(r.paid_sen) / Number(r.total_sen) : 1);
 
   notice("================ (A) THRESHOLD ONLY — scope the % per company ================");
   notice("  Today EVERY company is gated at 30% for the Processing Date. Scoping means");

@@ -36,7 +36,7 @@
 // autotable didDrawPage hook + jsPDF putTotalPages.
 // ----------------------------------------------------------------------------
 
-import { buildDefaultSofaCells, effectiveDelivery, findModule, fmtMoneyCenti, SOFA_MODULES, type Cell, type Depth } from '@2990s/shared';
+import { buildDefaultSofaCells, effectiveDelivery, findModule, fmtMoneySen, SOFA_MODULES, type Cell, type Depth } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import { parseProvenanceNote } from '../../shared/transfer-vocabulary';
 import {
@@ -73,9 +73,9 @@ type PoHeader = {
   supplier_delivery_date_3?: string | null;
   supplier_delivery_date_4?: string | null;
   currency:      string;
-  subtotal_centi: number;
-  tax_centi:     number;
-  total_centi:   number;
+  subtotal_sen: number;
+  tax_sen:     number;
+  total_sen:   number;
   notes:         string | null;
   /** PR #102 — header extras for the AutoCount layout. All optional; the PDF
       renders dashes when blank so old POs without these fields still print. */
@@ -107,11 +107,11 @@ type PoItem = {
   material_name: string;
   supplier_sku:  string | null;
   qty:           number;
-  unit_price_centi: number;
-  line_total_centi: number;
+  unit_price_sen: number;
+  line_total_sen: number;
   /** PR #102 — AutoCount layout extras. All optional. */
   uom?:           string | null;
-  discount_centi?: number | null;
+  discount_sen?: number | null;
   delivery_date?: string | null;
   /* Migration 0180 — per-line supplier-revised dates; the printed per-line
      "Delivery:" uses the EFFECTIVE (latest) of these + delivery_date. */
@@ -136,7 +136,7 @@ type PoItem = {
   so_doc_no?:     string | null;
 };
 
-const fmtMoney = (centi: number, currency: string): string => fmtMoneyCenti(centi, currency);
+const fmtMoney = (centi: number, currency: string): string => fmtMoneySen(centi, currency);
 
 const fmtAmount = (centi: number): string =>
   (centi / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -422,9 +422,9 @@ async function renderPurchaseOrderInto(
       [...new Set(descParts)].join('\n'),
       (it.uom ?? 'UNIT').toUpperCase(),
       String(it.qty),
-      fmtAmount(it.unit_price_centi),
-      it.discount_centi ? fmtAmount(it.discount_centi) : '',
-      fmtAmount(it.line_total_centi),
+      fmtAmount(it.unit_price_sen),
+      it.discount_sen ? fmtAmount(it.discount_sen) : '',
+      fmtAmount(it.line_total_sen),
     ];
   });
 
@@ -480,17 +480,17 @@ async function renderPurchaseOrderInto(
   };
   doc.setFontSize(9);
   let totY = lastY;
-  drawRow('Subtotal', fmtMoney(header.subtotal_centi, header.currency), totY); totY += 4;
-  if (header.tax_centi > 0) {
-    drawRow('Tax',    fmtMoney(header.tax_centi,      header.currency), totY); totY += 4;
+  drawRow('Subtotal', fmtMoney(header.subtotal_sen, header.currency), totY); totY += 4;
+  if (header.tax_sen > 0) {
+    drawRow('Tax',    fmtMoney(header.tax_sen,      header.currency), totY); totY += 4;
   }
   doc.setFontSize(11);
-  drawRow('TOTAL',    fmtMoney(header.total_centi,    header.currency), totY + 2, true, true);
+  drawRow('TOTAL',    fmtMoney(header.total_sen,    header.currency), totY + 2, true, true);
 
   /* Amount in words — wrapped to the left half so a long amount never
      collides with the totals column. */
   doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5);
-  const words = doc.splitTextToSize(amountInWordsMyr(header.total_centi), totalsX - margin - 6) as string[];
+  const words = doc.splitTextToSize(amountInWordsMyr(header.total_sen), totalsX - margin - 6) as string[];
   doc.text(words, margin, lastY);
   doc.setFont('helvetica', 'normal');
   const wordsY = lastY + words.length * 3.6 + 2;

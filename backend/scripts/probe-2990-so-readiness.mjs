@@ -135,7 +135,7 @@ async function main() {
      auto-advance/regress arms govern, plus the two neighbours so a wrong answer
      is visible rather than filtered out. */
   const headers = await sql`
-    SELECT doc_no, status, branding, debtor_name, local_total_centi,
+    SELECT doc_no, status, branding, debtor_name, local_total_sen,
            proceeded_at::text AS proceeded_at, processing_date::text AS processing_date,
            customer_delivery_date::text AS customer_delivery_date, so_date::text AS so_date
       FROM scm.mfg_sales_orders
@@ -208,7 +208,7 @@ async function main() {
   const bedframe = catOnly.filter((s) => s.r.stockRemark === 'BEDFRAME');
   note(`\n  --- remark exactly "BEDFRAME": ${bedframe.length} ---`);
   for (const s of bedframe.slice(0, 25)) {
-    note(`  ${pad(s.h.doc_no, 20)} ${pad(s.h.status, 16)} branding=${pad(s.h.branding, 18)} RM ${(Number(s.h.local_total_centi ?? 0) / 100).toFixed(2)}  main ${s.r.mainReady}/${s.r.mainCount} acc ${s.r.accReady}/${s.r.accCount} proceeded_at=${s.h.proceeded_at ?? 'NULL'}  ${s.h.debtor_name ?? ''}`);
+    note(`  ${pad(s.h.doc_no, 20)} ${pad(s.h.status, 16)} branding=${pad(s.h.branding, 18)} RM ${(Number(s.h.local_total_sen ?? 0) / 100).toFixed(2)}  main ${s.r.mainReady}/${s.r.mainCount} acc ${s.r.accReady}/${s.r.accCount} proceeded_at=${s.h.proceeded_at ?? 'NULL'}  ${s.h.debtor_name ?? ''}`);
     for (const l of s.ls) {
       note(`        ${pad(l.item_code, 26)} group=${pad(l.item_group, 14)} qty=${pad(l.qty, 5)} stock_status=${pad(l.stock_status, 9)} cancelled=${l.cancelled} cat=${normCategory(l.item_group)}${isServiceLine(l) ? ' (SERVICE — skipped)' : ''}`);
     }
@@ -222,7 +222,7 @@ async function main() {
     for (const h of hits) {
       const ls = byDoc.get(h.doc_no) ?? [];
       const r = summariseReadiness(ls);
-      note(`\n  ${h.doc_no}  status=${h.status}  branding=${h.branding}  RM ${(Number(h.local_total_centi ?? 0) / 100).toFixed(2)}  debtor=${h.debtor_name}`);
+      note(`\n  ${h.doc_no}  status=${h.status}  branding=${h.branding}  RM ${(Number(h.local_total_sen ?? 0) / 100).toFixed(2)}  debtor=${h.debtor_name}`);
       note(`    so_date=${h.so_date} processing_date=${h.processing_date ?? 'NULL'} proceeded_at=${h.proceeded_at ?? 'NULL'} customer_delivery_date=${h.customer_delivery_date ?? 'NULL'}`);
       note(`    computed: stock_remark=${JSON.stringify(r.stockRemark)} isShipReady=${r.isShipReady} isMainReady=${r.isMainReady} isFullyReady=${r.isFullyReady} main ${r.mainReady}/${r.mainCount} acc ${r.accReady}/${r.accCount} pending=[${r.pendingCategories.join(',')}]`);
       for (const l of ls) {

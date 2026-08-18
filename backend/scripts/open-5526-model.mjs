@@ -244,10 +244,10 @@ async function main() {
         if (hit.po_number !== doc) note(`  ${doc}: found as ${hit.po_number} via linked_ac_docno`);
       }
       const all = e.kind === "po"
-        ? await tx`SELECT i.id, i.material_code AS code, i.description2, i.line_total_centi AS total
+        ? await tx`SELECT i.id, i.material_code AS code, i.description2, i.line_total_sen AS total
                      FROM scm.purchase_order_items i
                     WHERE i.purchase_order_id = ${poId} AND i.item_group = 'sofa' ORDER BY i.id`
-        : await tx`SELECT i.id, i.item_code AS code, i.description2, i.total_centi AS total, i.line_no
+        : await tx`SELECT i.id, i.item_code AS code, i.description2, i.total_sen AS total, i.line_no
                      FROM scm.mfg_sales_order_items i
                      JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
                     WHERE h.company_id = ${cid} AND (i.doc_no = ${doc} OR h.linked_ac_docno = ${e.ac})
@@ -334,9 +334,9 @@ async function main() {
       /* Re-read the same build (description2 is never written, so it still
          selects the same rows) and prove the total is unchanged to the cent. */
       const reread = e.kind === "po"
-        ? await tx`SELECT i.description2, i.line_total_centi AS total FROM scm.purchase_order_items i
+        ? await tx`SELECT i.description2, i.line_total_sen AS total FROM scm.purchase_order_items i
                     WHERE i.purchase_order_id = ${poId} AND i.item_group = 'sofa'`
-        : await tx`SELECT i.description2, i.total_centi AS total FROM scm.mfg_sales_order_items i
+        : await tx`SELECT i.description2, i.total_sen AS total FROM scm.mfg_sales_order_items i
                      JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
                     WHERE h.company_id = ${cid} AND (i.doc_no = ${doc} OR h.linked_ac_docno = ${e.ac})
                       AND i.item_group = 'sofa'`;

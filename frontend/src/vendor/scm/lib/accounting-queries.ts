@@ -174,9 +174,9 @@ export type ArAgingRow = {
   debtor_name: string;
   invoice_date: string;
   due_date: string | null;
-  total_centi: number;
-  paid_centi: number;
-  outstanding_centi: number;
+  total_sen: number;
+  paid_sen: number;
+  outstanding_sen: number;
   days_overdue: number;
   aging_bucket: 'CURRENT' | '1-30' | '31-60' | '61-90' | '90+';
   status: string;
@@ -194,9 +194,9 @@ export type ApAgingRow = {
   supplier_name: string | null;
   invoice_date: string;
   due_date: string | null;
-  total_centi: number;
-  paid_centi: number;
-  outstanding_centi: number;
+  total_sen: number;
+  paid_sen: number;
+  outstanding_sen: number;
   days_overdue: number;
   aging_bucket: 'CURRENT' | '1-30' | '31-60' | '61-90' | '90+';
   status: string;

@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
 import { adjustmentReasonLabel, formatVariantKey } from "@2990s/shared";
-import { fmtCenti } from "../lib/scm";
+import { fmtSen } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import {
   useInventoryMovements,
@@ -96,7 +96,7 @@ function LotCard({ l, consignment, first }: { l: InventoryReservation; consignme
           )}
         </span>
         <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "var(--ink)", flex: "none" }}>
-          {consignment ? "—" : value > 0 ? fmtCenti(value) : "—"}
+          {consignment ? "—" : value > 0 ? fmtSen(value) : "—"}
         </span>
       </div>
 
@@ -114,7 +114,7 @@ function LotCard({ l, consignment, first }: { l: InventoryReservation; consignme
           {l.received_at ? ` · ${formatDate(l.received_at)}` : ""}
         </span>
         <span className="tnum" style={{ flex: "none" }}>
-          {l.qty_remaining} · {fmtCenti(l.unit_cost_sen)}
+          {l.qty_remaining} · {fmtSen(l.unit_cost_sen)}
         </span>
       </div>
 
@@ -222,7 +222,7 @@ export function MobileStockCard({
               opacity: 0.85,
             }}
           >
-            Owned value · <span className="tnum">{fmtCenti(bd.ownedValueSen)}</span>
+            Owned value · <span className="tnum">{fmtSen(bd.ownedValueSen)}</span>
           </div>
         </div>
 
@@ -310,7 +310,7 @@ export function MobileStockCard({
                         shows both as columns; the money must be visible here too. */}
                     <div className="rf">
                       {whName(m.warehouse_id)}
-                      {m.unit_cost_sen != null && m.unit_cost_sen > 0 ? ` · ${fmtCenti(m.unit_cost_sen)}` : ""}
+                      {m.unit_cost_sen != null && m.unit_cost_sen > 0 ? ` · ${fmtSen(m.unit_cost_sen)}` : ""}
                     </div>
                   </div>
                   <span className={`sc-mq tnum${sq < 0 ? " neg" : ""}`}>{sq > 0 ? `+${sq}` : sq}</span>

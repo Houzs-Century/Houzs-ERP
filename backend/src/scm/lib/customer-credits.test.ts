@@ -25,7 +25,7 @@ type Store = {
   existingCreditPayments: Row[];
   creditRows: Row[]; // customer_credits balance rows for the debtor
   companyId: number | null;
-  paidCenti: number;
+  paidSen: number;
   /** scm.sales_invoices.migrated_no_stock for the SI under test (migration 0294). */
   migrated: boolean;
   /** when set, the migrated pre-flight read fails with this message */
@@ -76,8 +76,8 @@ function fakeSb(store: Store) {
           const row = { migrated_no_stock: store.migrated };
           return { data: this.singleRow ? row : [row], error: null };
         }
-        const row = this.cols.includes('paid_centi')
-          ? { paid_centi: store.paidCenti }
+        const row = this.cols.includes('paid_sen')
+          ? { paid_sen: store.paidSen }
           : { company_id: store.companyId };
         return { data: this.singleRow ? row : [row], error: null };
       }
@@ -105,7 +105,7 @@ function baseStore(over: Partial<Store> = {}): Store {
     existingCreditPayments: [],
     creditRows: [],
     companyId: 1,
-    paidCenti: 0,
+    paidSen: 0,
     migrated: false,
     migratedReadError: null,
     ...over,
@@ -117,14 +117,14 @@ const ARGS = {
   debtorName: 'Alice',
   siId: 'si-uuid-1',
   siNumber: 'SI-2607-001',
-  remainingDueCenti: 5000,
+  remainingDueSen: 5000,
   createdBy: 'staff-1',
 };
 
 describe('applyCustomerCreditToSi — atomic RPC path', () => {
   test('routes through the single atomic RPC and does NO direct table writes', async () => {
     const store = baseStore({
-      rpcResponse: { data: [{ applied_centi: 3000, reason: null }], error: null },
+      rpcResponse: { data: [{ applied_sen: 3000, reason: null }], error: null },
     });
     const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
 
@@ -137,20 +137,20 @@ describe('applyCustomerCreditToSi — atomic RPC path', () => {
   });
 
   test('passes the SI + debtor through to the function params', async () => {
-    const store = baseStore({ rpcResponse: { data: [{ applied_centi: 5000, reason: null }], error: null } });
+    const store = baseStore({ rpcResponse: { data: [{ applied_sen: 5000, reason: null }], error: null } });
     await applyCustomerCreditToSi(fakeSb(store), ARGS);
     expect(store.rpcCalls[0].params).toMatchObject({
       p_debtor_code: 'CUST-1',
       p_si_id: 'si-uuid-1',
       p_si_number: 'SI-2607-001',
-      p_remaining_due_centi: 5000,
+      p_remaining_due_sen: 5000,
       p_created_by: 'staff-1',
     });
   });
 
   test("the function's idempotent no-op (already_applied) surfaces without any write", async () => {
     const store = baseStore({
-      rpcResponse: { data: [{ applied_centi: 0, reason: 'already_applied' }], error: null },
+      rpcResponse: { data: [{ applied_sen: 0, reason: 'already_applied' }], error: null },
     });
     const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
     expect(res).toEqual({ applied: 0, reason: 'already_applied' });
@@ -176,7 +176,7 @@ describe('applyCustomerCreditToSi — legacy fallback (function not yet applied)
   test('falls back to the two-write path when the RPC is absent', async () => {
     const store = baseStore({
       rpcResponse: { data: null, error: MISSING },
-      creditRows: [{ amount_centi: 8000 }], // balance 8000, due 5000 → apply 5000
+      creditRows: [{ amount_sen: 8000 }], // balance 8000, due 5000 → apply 5000
     });
     const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
 
@@ -185,14 +185,14 @@ describe('applyCustomerCreditToSi — legacy fallback (function not yet applied)
     const tables = store.inserts.map((i) => i.table).sort();
     expect(tables).toEqual(['customer_credits', 'sales_invoice_payments']);
     const ledger = store.inserts.find((i) => i.table === 'customer_credits');
-    expect(ledger?.payload).toMatchObject({ amount_centi: -5000, source_type: 'APPLIED_TO_SI' });
+    expect(ledger?.payload).toMatchObject({ amount_sen: -5000, source_type: 'APPLIED_TO_SI' });
   });
 
   test('fallback still honours the credit-payment idempotency guard', async () => {
     const store = baseStore({
       rpcResponse: { data: null, error: MISSING },
-      existingCreditPayments: [{ id: 'pay-1', amount_centi: 5000 }],
-      creditRows: [{ amount_centi: 8000 }],
+      existingCreditPayments: [{ id: 'pay-1', amount_sen: 5000 }],
+      creditRows: [{ amount_sen: 8000 }],
     });
     const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
     expect(res).toEqual({ applied: 0, reason: 'already_applied' });
@@ -217,7 +217,7 @@ describe('applyCustomerCreditToSi — guards (no DB touched)', () => {
 
   test('nothing due → no_due, no RPC', async () => {
     const store = baseStore();
-    const res = await applyCustomerCreditToSi(fakeSb(store), { ...ARGS, remainingDueCenti: 0 });
+    const res = await applyCustomerCreditToSi(fakeSb(store), { ...ARGS, remainingDueSen: 0 });
     expect(res).toEqual({ applied: 0, reason: 'no_due' });
     expect(store.rpcCalls).toHaveLength(0);
   });
@@ -233,7 +233,7 @@ describe('applyCustomerCreditToSi — guards (no DB touched)', () => {
    accident is all that stands here without the guard. */
 describe('applyCustomerCreditToSi — migrated source (migration 0280)', () => {
   test('migrated SI → applies nothing, and never reaches the write', async () => {
-    const store = baseStore({ migrated: true, creditRows: [{ balance_centi: 900000 }] });
+    const store = baseStore({ migrated: true, creditRows: [{ balance_sen: 900000 }] });
     const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
     expect(res).toEqual({ applied: 0, reason: 'migrated_source' });
     /* The money assertions are the point: no RPC, no ledger row, no payment row.
@@ -247,7 +247,7 @@ describe('applyCustomerCreditToSi — migrated source (migration 0280)', () => {
   test('an ordinary SI is untouched by the guard — it still applies credit', async () => {
     const store = baseStore({
       migrated: false,
-      rpcResponse: { data: [{ applied_centi: 5000 }], error: null },
+      rpcResponse: { data: [{ applied_sen: 5000 }], error: null },
     });
     const res = await applyCustomerCreditToSi(fakeSb(store), ARGS);
     expect(res).toEqual({ applied: 5000 });
@@ -284,7 +284,7 @@ describe('applyCustomerCreditToSi — migrated source (migration 0280)', () => {
 // Hyperdrive; the test harness is D1), so the pure rule is pinned directly and
 // the client interaction is driven through a fake PostgREST.
 // ============================================================================
-import { computePiSettlement, settlePiPaidCenti } from './pi-settlement';
+import { computePiSettlement, settlePiPaidSen } from './pi-settlement';
 
 describe('computePiSettlement — behaviour with no concurrency is unchanged', () => {
   /* The old rule, verbatim from payment-vouchers.ts before this change. When
@@ -305,16 +305,16 @@ describe('computePiSettlement — behaviour with no concurrency is unchanged', (
 
   for (const { paid, total, delta } of cases) {
     test(`paid ${paid} total ${total} delta ${delta} settles exactly as before`, () => {
-      const got = computePiSettlement({ paidCenti: paid, totalCenti: total, status: 'POSTED', deltaCenti: delta });
-      expect(got.newPaidCenti).toBe(oldRule(paid, delta));
-      expect(got.clampedCenti).toBe(0);
+      const got = computePiSettlement({ paidSen: paid, totalSen: total, status: 'POSTED', deltaSen: delta });
+      expect(got.newPaidSen).toBe(oldRule(paid, delta));
+      expect(got.clampedSen).toBe(0);
     });
   }
 
   test('re-derives status the same way', () => {
-    expect(computePiSettlement({ paidCenti: 0, totalCenti: 10_000, status: 'POSTED', deltaCenti: 10_000 }).newStatus).toBe('PAID');
-    expect(computePiSettlement({ paidCenti: 0, totalCenti: 10_000, status: 'POSTED', deltaCenti: 4_000 }).newStatus).toBe('PARTIALLY_PAID');
-    expect(computePiSettlement({ paidCenti: 4_000, totalCenti: 10_000, status: 'PARTIALLY_PAID', deltaCenti: -4_000 }).newStatus).toBe('POSTED');
+    expect(computePiSettlement({ paidSen: 0, totalSen: 10_000, status: 'POSTED', deltaSen: 10_000 }).newStatus).toBe('PAID');
+    expect(computePiSettlement({ paidSen: 0, totalSen: 10_000, status: 'POSTED', deltaSen: 4_000 }).newStatus).toBe('PARTIALLY_PAID');
+    expect(computePiSettlement({ paidSen: 4_000, totalSen: 10_000, status: 'PARTIALLY_PAID', deltaSen: -4_000 }).newStatus).toBe('POSTED');
   });
 });
 
@@ -323,70 +323,70 @@ describe('computePiSettlement — the over-payment the clamp exists to stop', ()
     const TOTAL = 10_000;
     /* Both vouchers were raised against an unpaid invoice and both ask for the
        full amount. Serialised by the row lock, they now run one after the other
-       instead of both reading paid_centi 0. */
-    const first = computePiSettlement({ paidCenti: 0, totalCenti: TOTAL, status: 'POSTED', deltaCenti: TOTAL });
-    expect(first.appliedCenti).toBe(TOTAL);
-    expect(first.clampedCenti).toBe(0);
+       instead of both reading paid_sen 0. */
+    const first = computePiSettlement({ paidSen: 0, totalSen: TOTAL, status: 'POSTED', deltaSen: TOTAL });
+    expect(first.appliedSen).toBe(TOTAL);
+    expect(first.clampedSen).toBe(0);
 
-    const second = computePiSettlement({ paidCenti: first.newPaidCenti, totalCenti: TOTAL, status: 'POSTED', deltaCenti: TOTAL });
-    expect(second.newPaidCenti).toBe(TOTAL);   // NOT 20_000
-    expect(second.appliedCenti).toBe(0);       // nothing moved
-    expect(second.clampedCenti).toBe(TOTAL);   // and we can say exactly how much was refused
+    const second = computePiSettlement({ paidSen: first.newPaidSen, totalSen: TOTAL, status: 'POSTED', deltaSen: TOTAL });
+    expect(second.newPaidSen).toBe(TOTAL);   // NOT 20_000
+    expect(second.appliedSen).toBe(0);       // nothing moved
+    expect(second.clampedSen).toBe(TOTAL);   // and we can say exactly how much was refused
   });
 
   test('a partial over-allocation applies what fits and reports the rest', () => {
-    const got = computePiSettlement({ paidCenti: 8_000, totalCenti: 10_000, status: 'POSTED', deltaCenti: 5_000 });
-    expect(got.newPaidCenti).toBe(10_000);
-    expect(got.appliedCenti).toBe(2_000);
-    expect(got.clampedCenti).toBe(3_000);
+    const got = computePiSettlement({ paidSen: 8_000, totalSen: 10_000, status: 'POSTED', deltaSen: 5_000 });
+    expect(got.newPaidSen).toBe(10_000);
+    expect(got.appliedSen).toBe(2_000);
+    expect(got.clampedSen).toBe(3_000);
     expect(got.newStatus).toBe('PAID');
   });
 
   test('applied + clamped always equals what was asked for', () => {
     for (const delta of [1, 500, 10_000, 25_000]) {
-      const got = computePiSettlement({ paidCenti: 3_000, totalCenti: 10_000, status: 'POSTED', deltaCenti: delta });
-      expect(got.appliedCenti + got.clampedCenti).toBe(delta);
+      const got = computePiSettlement({ paidSen: 3_000, totalSen: 10_000, status: 'POSTED', deltaSen: delta });
+      expect(got.appliedSen + got.clampedSen).toBe(delta);
     }
   });
 });
 
 describe('computePiSettlement — reversals are never clamped upward', () => {
   test('a cancel floors at zero, and says how much the floor absorbed', () => {
-    /* The floor lands on the same paid_centi the old rule did — but reversing
+    /* The floor lands on the same paid_sen the old rule did — but reversing
        5,000 off an invoice carrying only 1,000 means the allocation and the
        invoice disagree about what was ever applied. The old rule absorbed that
        silently; a negative clamp is how it now gets said out loud. */
-    const got = computePiSettlement({ paidCenti: 1_000, totalCenti: 10_000, status: 'PARTIALLY_PAID', deltaCenti: -5_000 });
-    expect(got.newPaidCenti).toBe(0);        // unchanged from the old rule
+    const got = computePiSettlement({ paidSen: 1_000, totalSen: 10_000, status: 'PARTIALLY_PAID', deltaSen: -5_000 });
+    expect(got.newPaidSen).toBe(0);        // unchanged from the old rule
     expect(got.newStatus).toBe('POSTED');
-    expect(got.appliedCenti).toBe(-1_000);   // only 1,000 was actually there to take off
-    expect(got.clampedCenti).toBe(-4_000);   // the other 4,000 never existed on this PI
+    expect(got.appliedSen).toBe(-1_000);   // only 1,000 was actually there to take off
+    expect(got.clampedSen).toBe(-4_000);   // the other 4,000 never existed on this PI
   });
 
   test('an ALREADY over-paid invoice can still unwind completely', () => {
     /* Rows the race already produced (paid > total) must stay reversible, or
        the excess is stranded on the invoice with no way to take it off. */
-    const got = computePiSettlement({ paidCenti: 20_000, totalCenti: 10_000, status: 'PAID', deltaCenti: -20_000 });
-    expect(got.newPaidCenti).toBe(0);
-    expect(got.appliedCenti).toBe(-20_000);
-    expect(got.clampedCenti).toBe(0);
+    const got = computePiSettlement({ paidSen: 20_000, totalSen: 10_000, status: 'PAID', deltaSen: -20_000 });
+    expect(got.newPaidSen).toBe(0);
+    expect(got.appliedSen).toBe(-20_000);
+    expect(got.clampedSen).toBe(0);
   });
 
   test('a positive settle never drags an already over-paid invoice DOWN to total', () => {
-    const got = computePiSettlement({ paidCenti: 20_000, totalCenti: 10_000, status: 'PAID', deltaCenti: 500 });
-    expect(got.newPaidCenti).toBe(20_000); // unchanged, not silently corrected to 10_000
-    expect(got.appliedCenti).toBe(0);
-    expect(got.clampedCenti).toBe(500);
+    const got = computePiSettlement({ paidSen: 20_000, totalSen: 10_000, status: 'PAID', deltaSen: 500 });
+    expect(got.newPaidSen).toBe(20_000); // unchanged, not silently corrected to 10_000
+    expect(got.appliedSen).toBe(0);
+    expect(got.clampedSen).toBe(500);
   });
 });
 
 describe('computePiSettlement — a DRAFT or CANCELLED invoice is not a live liability', () => {
   for (const status of ['DRAFT', 'CANCELLED', 'draft', 'cancelled']) {
     test(`${status} is skipped`, () => {
-      const got = computePiSettlement({ paidCenti: 0, totalCenti: 10_000, status, deltaCenti: 5_000 });
+      const got = computePiSettlement({ paidSen: 0, totalSen: 10_000, status, deltaSen: 5_000 });
       expect(got.skipped).toBe(true);
-      expect(got.appliedCenti).toBe(0);
-      expect(got.newPaidCenti).toBe(0);
+      expect(got.appliedSen).toBe(0);
+      expect(got.newPaidSen).toBe(0);
     });
   }
 });
@@ -395,7 +395,7 @@ describe('computePiSettlement — a DRAFT or CANCELLED invoice is not a live lia
  *  purchase_invoices select/update chain. */
 function fakePiSb(opts: {
   rpc: { data: unknown; error: { code?: string; message?: string } | null };
-  row?: { paid_centi: number; total_centi: number; status: string } | null;
+  row?: { paid_sen: number; total_sen: number; status: string } | null;
   updateRows?: unknown[];
   updateError?: { message: string } | null;
 }) {
@@ -403,7 +403,7 @@ function fakePiSb(opts: {
     rpc: [] as Array<{ fn: string; params: Record<string, unknown> }>,
     updates: [] as Record<string, unknown>[],
   };
-  const row = opts.row === undefined ? { paid_centi: 0, total_centi: 10_000, status: 'POSTED' } : opts.row;
+  const row = opts.row === undefined ? { paid_sen: 0, total_sen: 10_000, status: 'POSTED' } : opts.row;
   class Q {
     op: 'select' | 'update' = 'select';
     payload: Record<string, unknown> | null = null;
@@ -434,54 +434,54 @@ function fakePiSb(opts: {
   };
 }
 
-describe('settlePiPaidCenti — routes through the atomic function, falls back only when it is absent', () => {
+describe('settlePiPaidSen — routes through the atomic function, falls back only when it is absent', () => {
   test('primary path calls the RPC and does no table write of its own', async () => {
-    const f = fakePiSb({ rpc: { data: [{ applied_centi: 2_000, new_paid_centi: 10_000, new_status: 'PAID', reason: null }], error: null } });
-    const res = await settlePiPaidCenti(f.sb, 'pi-1', 5_000);
-    expect(f.calls.rpc).toEqual([{ fn: 'settle_pi_paid_centi', params: { p_pi_id: 'pi-1', p_delta: 5_000 } }]);
+    const f = fakePiSb({ rpc: { data: [{ applied_sen: 2_000, new_paid_sen: 10_000, new_status: 'PAID', reason: null }], error: null } });
+    const res = await settlePiPaidSen(f.sb, 'pi-1', 5_000);
+    expect(f.calls.rpc).toEqual([{ fn: 'settle_pi_paid_sen', params: { p_pi_id: 'pi-1', p_delta: 5_000 } }]);
     expect(f.calls.updates).toHaveLength(0);
     expect(res.ok).toBe(true);
-    expect(res.appliedCenti).toBe(2_000);
+    expect(res.appliedSen).toBe(2_000);
     // 5_000 asked, 2_000 applied — the caller must be able to see the 3_000 gap.
-    expect(res.clampedCenti).toBe(3_000);
+    expect(res.clampedSen).toBe(3_000);
   });
 
   test('an ABSENT function falls back to the legacy path and still clamps', async () => {
     const f = fakePiSb({
       rpc: { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } },
-      row: { paid_centi: 8_000, total_centi: 10_000, status: 'POSTED' },
+      row: { paid_sen: 8_000, total_sen: 10_000, status: 'POSTED' },
     });
-    const res = await settlePiPaidCenti(f.sb, 'pi-1', 5_000);
+    const res = await settlePiPaidSen(f.sb, 'pi-1', 5_000);
     expect(res.ok).toBe(true);
     expect(res.legacy).toBe(true);
-    expect(res.appliedCenti).toBe(2_000);
-    expect(res.clampedCenti).toBe(3_000);
-    expect(f.calls.updates[0]).toMatchObject({ paid_centi: 10_000, status: 'PAID' });
+    expect(res.appliedSen).toBe(2_000);
+    expect(res.clampedSen).toBe(3_000);
+    expect(f.calls.updates[0]).toMatchObject({ paid_sen: 10_000, status: 'PAID' });
   });
 
   test('a LIVE rpc error never degrades to the non-atomic path', async () => {
     const f = fakePiSb({ rpc: { data: null, error: { code: '23514', message: 'check constraint violated' } } });
-    const res = await settlePiPaidCenti(f.sb, 'pi-1', 5_000);
+    const res = await settlePiPaidSen(f.sb, 'pi-1', 5_000);
     expect(res.ok).toBe(false);
-    expect(res.appliedCenti).toBe(0);
+    expect(res.appliedSen).toBe(0);
     expect(f.calls.updates).toHaveLength(0); // did NOT retry against the database that just refused
   });
 
   test('a zero delta settles nothing and never reaches the database', async () => {
     const f = fakePiSb({ rpc: { data: null, error: null } });
-    const res = await settlePiPaidCenti(f.sb, 'pi-1', 0);
-    expect(res.appliedCenti).toBe(0);
+    const res = await settlePiPaidSen(f.sb, 'pi-1', 0);
+    expect(res.appliedSen).toBe(0);
     expect(f.calls.rpc).toHaveLength(0);
   });
 
   test('a failed legacy update reports applied 0, so no settlement is recorded', async () => {
     const f = fakePiSb({
       rpc: { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } },
-      row: { paid_centi: 0, total_centi: 10_000, status: 'POSTED' },
+      row: { paid_sen: 0, total_sen: 10_000, status: 'POSTED' },
       updateError: { message: 'connection reset' },
     });
-    const res = await settlePiPaidCenti(f.sb, 'pi-1', 5_000);
+    const res = await settlePiPaidSen(f.sb, 'pi-1', 5_000);
     expect(res.ok).toBe(false);
-    expect(res.appliedCenti).toBe(0);
+    expect(res.appliedSen).toBe(0);
   });
 });

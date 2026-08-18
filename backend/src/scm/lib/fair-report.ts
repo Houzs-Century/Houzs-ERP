@@ -11,7 +11,7 @@
 // Supabase. Every decision that could be wrong lives here as a plain function
 // the route calls and the tests exercise; the route only fetches + assembles.
 //
-// UNITS: every *_centi value is an integer number of cents (1/100 of MYR).
+// UNITS: every *_sen value is an integer number of cents (1/100 of MYR).
 // Percentages are plain numbers (e.g. 12.5 == 12.5%).
 // ----------------------------------------------------------------------------
 
@@ -111,7 +111,7 @@ export function tenderLabel(method: string | null | undefined): TenderLabel | nu
   }
 }
 
-export type PaymentRow = { method: string | null; amount_centi: number | null };
+export type PaymentRow = { method: string | null; amount_sen: number | null };
 
 /** Per-tender totals (in centi) across a doc's payment ledger, keyed by the
  *  four Fair Report labels. Unknown methods are excluded. */
@@ -126,7 +126,7 @@ export function depositByTender(payments: readonly PaymentRow[]): TenderSplit {
   for (const p of payments) {
     const label = tenderLabel(p.method);
     if (!label) continue;
-    out[label] += Number(p.amount_centi ?? 0);
+    out[label] += Number(p.amount_sen ?? 0);
   }
   return out;
 }
@@ -147,121 +147,121 @@ const n = (v: number | null | undefined): number => Number(v ?? 0);
 
 /** margin% = (revenue − cost) / revenue × 100. null when revenue is 0 (a
  *  percentage off a zero base is a lie, not a 0%). */
-export function marginPct(revenueCenti: number | null | undefined, costCenti: number | null | undefined): number | null {
-  const rev = n(revenueCenti);
+export function marginPct(revenueSen: number | null | undefined, costSen: number | null | undefined): number | null {
+  const rev = n(revenueSen);
   if (rev === 0) return null;
-  return ((rev - n(costCenti)) / rev) * 100;
+  return ((rev - n(costSen)) / rev) * 100;
 }
 
 /**
  * below_deposit — the SO has taken (at most) its deposit and still has money
  * outstanding. No pre-existing "below deposit" helper exists in the codebase
  * (verified), so this is the definition of record: balance still owing AND the
- * ledger has collected no more than the agreed deposit. `paidCenti` is the LIVE
- * ledger total (sum of mfg_sales_order_payments.amount_centi), not the possibly
- * stale mfg_sales_orders.paid_centi column.
+ * ledger has collected no more than the agreed deposit. `paidSen` is the LIVE
+ * ledger total (sum of mfg_sales_order_payments.amount_sen), not the possibly
+ * stale mfg_sales_orders.paid_sen column.
  */
 export function belowDeposit(o: {
-  balanceCenti: number | null | undefined;
-  depositCenti: number | null | undefined;
-  paidCenti: number | null | undefined;
+  balanceSen: number | null | undefined;
+  depositSen: number | null | undefined;
+  paidSen: number | null | undefined;
 }): boolean {
-  return n(o.balanceCenti) > 0 && n(o.paidCenti) <= n(o.depositCenti);
+  return n(o.balanceSen) > 0 && n(o.paidSen) <= n(o.depositSen);
 }
 
 // ── stage=so row ─────────────────────────────────────────────────────────────
 export interface FairSoInputs {
   // header money
-  local_total_centi: number | null;               // amount = product + service
-  mattress_sofa_centi: number | null;
-  bedframe_centi: number | null;
-  accessories_centi: number | null;
-  others_centi: number | null;
-  service_centi: number | null;                    // service revenue
-  mattress_sofa_cost_centi: number | null;
-  bedframe_cost_centi: number | null;
-  accessories_cost_centi: number | null;
-  others_cost_centi: number | null;
-  service_cost_centi: number | null;
-  total_cost_centi: number | null;
-  balance_centi: number | null;
-  deposit_centi: number | null;
+  local_total_sen: number | null;               // amount = product + service
+  mattress_sofa_sen: number | null;
+  bedframe_sen: number | null;
+  accessories_sen: number | null;
+  others_sen: number | null;
+  service_sen: number | null;                    // service revenue
+  mattress_sofa_cost_sen: number | null;
+  bedframe_cost_sen: number | null;
+  accessories_cost_sen: number | null;
+  others_cost_sen: number | null;
+  service_cost_sen: number | null;
+  total_cost_sen: number | null;
+  balance_sen: number | null;
+  deposit_sen: number | null;
 }
 
 export interface FairSoMoney {
-  amount_centi: number;          // total = product + service
-  selling_centi: number;         // PRODUCT only (mattress_sofa+bedframe+accessories+others), EXCLUDING service
-  service_rev_centi: number;     // service revenue
+  amount_sen: number;          // total = product + service
+  selling_sen: number;         // PRODUCT only (mattress_sofa+bedframe+accessories+others), EXCLUDING service
+  service_rev_sen: number;     // service revenue
   cost_by_category: {
-    mattress_sofa_cost_centi: number;
-    bedframe_cost_centi: number;
-    accessories_cost_centi: number;
-    others_cost_centi: number;
-    service_cost_centi: number;
+    mattress_sofa_cost_sen: number;
+    bedframe_cost_sen: number;
+    accessories_cost_sen: number;
+    others_cost_sen: number;
+    service_cost_sen: number;
   };
-  total_so_cost_centi: number;   // total_cost_centi
+  total_so_cost_sen: number;   // total_cost_sen
   margin_pct: number | null;
-  balance_centi: number;
+  balance_sen: number;
 }
 
 /** Assemble the money half of a stage=so row from the SO header columns. */
 export function fairSoMoney(h: FairSoInputs): FairSoMoney {
   const selling =
-    n(h.mattress_sofa_centi) + n(h.bedframe_centi) + n(h.accessories_centi) + n(h.others_centi);
-  const serviceRev = n(h.service_centi);
+    n(h.mattress_sofa_sen) + n(h.bedframe_sen) + n(h.accessories_sen) + n(h.others_sen);
+  const serviceRev = n(h.service_sen);
   // amount = product + service. Prefer the persisted order total; fall back to
-  // the reconstructed sum when local_total_centi is 0/absent.
-  const amount = n(h.local_total_centi) || selling + serviceRev;
-  const totalCost = n(h.total_cost_centi);
+  // the reconstructed sum when local_total_sen is 0/absent.
+  const amount = n(h.local_total_sen) || selling + serviceRev;
+  const totalCost = n(h.total_cost_sen);
   return {
-    amount_centi: amount,
-    selling_centi: selling,
-    service_rev_centi: serviceRev,
+    amount_sen: amount,
+    selling_sen: selling,
+    service_rev_sen: serviceRev,
     cost_by_category: {
-      mattress_sofa_cost_centi: n(h.mattress_sofa_cost_centi),
-      bedframe_cost_centi: n(h.bedframe_cost_centi),
-      accessories_cost_centi: n(h.accessories_cost_centi),
-      others_cost_centi: n(h.others_cost_centi),
-      service_cost_centi: n(h.service_cost_centi),
+      mattress_sofa_cost_sen: n(h.mattress_sofa_cost_sen),
+      bedframe_cost_sen: n(h.bedframe_cost_sen),
+      accessories_cost_sen: n(h.accessories_cost_sen),
+      others_cost_sen: n(h.others_cost_sen),
+      service_cost_sen: n(h.service_cost_sen),
     },
-    total_so_cost_centi: totalCost,
+    total_so_cost_sen: totalCost,
     margin_pct: marginPct(amount, totalCost),
-    balance_centi: n(h.balance_centi),
+    balance_sen: n(h.balance_sen),
   };
 }
 
 // ── stage=do cost comparison ─────────────────────────────────────────────────
 export type DoCostLine = {
   qty: number | null;
-  unit_cost_centi: number | null;
-  ship_cost_centi: number | null;   // frozen ship-time FIFO (mig 0143); NULL on legacy DOs
+  unit_cost_sen: number | null;
+  ship_cost_sen: number | null;   // frozen ship-time FIFO (mig 0143); NULL on legacy DOs
 };
 
-/** total_do_cost = Σ COALESCE(ship_cost_centi, unit_cost_centi) × qty over the
+/** total_do_cost = Σ COALESCE(ship_cost_sen, unit_cost_sen) × qty over the
  *  DO's lines (reuse of the Fulfillment Costing ② rule, #800). Also reports the
  *  delivered qty and whether any line fell back to the live unit cost. */
-export function doCostTotal(lines: readonly DoCostLine[]): { total_do_cost_centi: number; qty: number; is_legacy: boolean } {
+export function doCostTotal(lines: readonly DoCostLine[]): { total_do_cost_sen: number; qty: number; is_legacy: boolean } {
   let total = 0;
   let qty = 0;
   let legacy = false;
   for (const l of lines) {
     const q = n(l.qty);
     qty += q;
-    const unit = l.ship_cost_centi != null ? n(l.ship_cost_centi) : n(l.unit_cost_centi);
-    if (l.ship_cost_centi == null) legacy = true;
+    const unit = l.ship_cost_sen != null ? n(l.ship_cost_sen) : n(l.unit_cost_sen);
+    if (l.ship_cost_sen == null) legacy = true;
     total += unit * q;
   }
-  return { total_do_cost_centi: total, qty, is_legacy: legacy };
+  return { total_do_cost_sen: total, qty, is_legacy: legacy };
 }
 
 // ── stage=invoice cost progression ───────────────────────────────────────────
-export type SiCostLine = { qty: number | null; unit_cost_centi: number | null; line_cost_centi: number | null };
+export type SiCostLine = { qty: number | null; unit_cost_sen: number | null; line_cost_sen: number | null };
 
-/** landed (SI) cost = Σ line_cost_centi (fall back unit×qty) over the SI lines. */
+/** landed (SI) cost = Σ line_cost_sen (fall back unit×qty) over the SI lines. */
 export function siCostTotal(lines: readonly SiCostLine[]): number {
   let total = 0;
   for (const l of lines) {
-    total += l.line_cost_centi != null ? n(l.line_cost_centi) : n(l.unit_cost_centi) * n(l.qty);
+    total += l.line_cost_sen != null ? n(l.line_cost_sen) : n(l.unit_cost_sen) * n(l.qty);
   }
   return total;
 }
@@ -269,95 +269,95 @@ export function siCostTotal(lines: readonly SiCostLine[]): number {
 // ── Summaries (per-stage KPI header cards) ───────────────────────────────────
 export interface FairSoSummary {
   orders: number;
-  total_amount_centi: number;
-  total_selling_centi: number;
-  total_service_rev_centi: number;
-  total_so_cost_centi: number;
-  total_margin_centi: number;
+  total_amount_sen: number;
+  total_selling_sen: number;
+  total_service_rev_sen: number;
+  total_so_cost_sen: number;
+  total_margin_sen: number;
   margin_pct: number | null;
-  total_balance_centi: number;
+  total_balance_sen: number;
   below_deposit_count: number;
   tender_totals: TenderSplit;
 }
 
 export function summarizeSo(
   rows: ReadonlyArray<{
-    amount_centi: number;
-    selling_centi: number;
-    service_rev_centi: number;
-    total_so_cost_centi: number;
-    balance_centi: number;
+    amount_sen: number;
+    selling_sen: number;
+    service_rev_sen: number;
+    total_so_cost_sen: number;
+    balance_sen: number;
     below_deposit: boolean;
     deposit_by_tender: TenderSplit;
   }>,
 ): FairSoSummary {
   const s: FairSoSummary = {
     orders: rows.length,
-    total_amount_centi: 0,
-    total_selling_centi: 0,
-    total_service_rev_centi: 0,
-    total_so_cost_centi: 0,
-    total_margin_centi: 0,
+    total_amount_sen: 0,
+    total_selling_sen: 0,
+    total_service_rev_sen: 0,
+    total_so_cost_sen: 0,
+    total_margin_sen: 0,
     margin_pct: null,
-    total_balance_centi: 0,
+    total_balance_sen: 0,
     below_deposit_count: 0,
     tender_totals: emptyTenderSplit(),
   };
   for (const r of rows) {
-    s.total_amount_centi += r.amount_centi;
-    s.total_selling_centi += r.selling_centi;
-    s.total_service_rev_centi += r.service_rev_centi;
-    s.total_so_cost_centi += r.total_so_cost_centi;
-    s.total_balance_centi += r.balance_centi;
+    s.total_amount_sen += r.amount_sen;
+    s.total_selling_sen += r.selling_sen;
+    s.total_service_rev_sen += r.service_rev_sen;
+    s.total_so_cost_sen += r.total_so_cost_sen;
+    s.total_balance_sen += r.balance_sen;
     if (r.below_deposit) s.below_deposit_count += 1;
     for (const t of TENDER_LABELS) s.tender_totals[t] += r.deposit_by_tender[t];
   }
-  s.total_margin_centi = s.total_amount_centi - s.total_so_cost_centi;
-  s.margin_pct = marginPct(s.total_amount_centi, s.total_so_cost_centi);
+  s.total_margin_sen = s.total_amount_sen - s.total_so_cost_sen;
+  s.margin_pct = marginPct(s.total_amount_sen, s.total_so_cost_sen);
   return s;
 }
 
 export interface FairDoSummary {
   deliveries: number;
-  total_so_cost_centi: number;
-  total_do_cost_centi: number;
-  cost_delta_centi: number;   // do − so (positive = cost grew at delivery)
+  total_so_cost_sen: number;
+  total_do_cost_sen: number;
+  cost_delta_sen: number;   // do − so (positive = cost grew at delivery)
   legacy_count: number;
 }
 
 export function summarizeDo(
-  rows: ReadonlyArray<{ total_so_cost_centi: number; total_do_cost_centi: number; do_cost_is_legacy: boolean }>,
+  rows: ReadonlyArray<{ total_so_cost_sen: number; total_do_cost_sen: number; do_cost_is_legacy: boolean }>,
 ): FairDoSummary {
-  const s: FairDoSummary = { deliveries: rows.length, total_so_cost_centi: 0, total_do_cost_centi: 0, cost_delta_centi: 0, legacy_count: 0 };
+  const s: FairDoSummary = { deliveries: rows.length, total_so_cost_sen: 0, total_do_cost_sen: 0, cost_delta_sen: 0, legacy_count: 0 };
   for (const r of rows) {
-    s.total_so_cost_centi += r.total_so_cost_centi;
-    s.total_do_cost_centi += r.total_do_cost_centi;
+    s.total_so_cost_sen += r.total_so_cost_sen;
+    s.total_do_cost_sen += r.total_do_cost_sen;
     if (r.do_cost_is_legacy) s.legacy_count += 1;
   }
-  s.cost_delta_centi = s.total_do_cost_centi - s.total_so_cost_centi;
+  s.cost_delta_sen = s.total_do_cost_sen - s.total_so_cost_sen;
   return s;
 }
 
 export interface FairInvoiceSummary {
   invoices: number;
-  total_invoiced_centi: number;
-  total_so_cost_centi: number;
-  total_do_cost_centi: number;
-  total_si_cost_centi: number;   // landed
+  total_invoiced_sen: number;
+  total_so_cost_sen: number;
+  total_do_cost_sen: number;
+  total_si_cost_sen: number;   // landed
   margin_pct: number | null;     // invoiced vs landed
 }
 
 export function summarizeInvoice(
-  rows: ReadonlyArray<{ invoiced_centi: number; so_cost_centi: number; do_cost_centi: number; si_cost_centi: number }>,
+  rows: ReadonlyArray<{ invoiced_sen: number; so_cost_sen: number; do_cost_sen: number; si_cost_sen: number }>,
 ): FairInvoiceSummary {
-  const s: FairInvoiceSummary = { invoices: rows.length, total_invoiced_centi: 0, total_so_cost_centi: 0, total_do_cost_centi: 0, total_si_cost_centi: 0, margin_pct: null };
+  const s: FairInvoiceSummary = { invoices: rows.length, total_invoiced_sen: 0, total_so_cost_sen: 0, total_do_cost_sen: 0, total_si_cost_sen: 0, margin_pct: null };
   for (const r of rows) {
-    s.total_invoiced_centi += r.invoiced_centi;
-    s.total_so_cost_centi += r.so_cost_centi;
-    s.total_do_cost_centi += r.do_cost_centi;
-    s.total_si_cost_centi += r.si_cost_centi;
+    s.total_invoiced_sen += r.invoiced_sen;
+    s.total_so_cost_sen += r.so_cost_sen;
+    s.total_do_cost_sen += r.do_cost_sen;
+    s.total_si_cost_sen += r.si_cost_sen;
   }
-  s.margin_pct = marginPct(s.total_invoiced_centi, s.total_si_cost_centi);
+  s.margin_pct = marginPct(s.total_invoiced_sen, s.total_si_cost_sen);
   return s;
 }
 
@@ -383,35 +383,35 @@ export interface FairCostRate {
 }
 
 export interface FairOverheads {
-  transport_centi: number;
-  merchandise_centi: number;
-  commission_centi: number;
+  transport_sen: number;
+  merchandise_sen: number;
+  commission_sen: number;
   commission_pct: number;       // the % actually applied (normal or boost)
   commission_is_boost: boolean;
-  total_overhead_centi: number;
+  total_overhead_sen: number;
 }
 
 export function emptyOverheads(): FairOverheads {
-  return { transport_centi: 0, merchandise_centi: 0, commission_centi: 0, commission_pct: 0, commission_is_boost: false, total_overhead_centi: 0 };
+  return { transport_sen: 0, merchandise_sen: 0, commission_sen: 0, commission_pct: 0, commission_is_boost: false, total_overhead_sen: 0 };
 }
 
 /**
  * Apply the per-brand rate card to a fair's revenue. MIRRORS the formula in
  * services/projectCostRates.ts (transport / merchandise / commission = % of
  * sales, and commission jumps to the boost rate only when the GP% gate AND the
- * sales gate both pass) — but operates in CENTI on the fair's own confirmed-SO
+ * sales gate both pass) — but operates in SEN on the fair's own confirmed-SO
  * revenue rather than on the project_finance_lines ledger. The single source of
  * the RULE is the rate row; the two callers apply it in different units.
  *
- * `cogsCenti` is the fair's fulfillment cost, used only for the GP gate. A null
+ * `cogsSen` is the fair's fulfillment cost, used only for the GP gate. A null
  * rate (no card for the brand) or non-positive revenue yields all-zero overhead.
  */
-export function computeFairOverheads(input: { revenueCenti: number; cogsCenti: number; rate: FairCostRate | null }): FairOverheads {
-  const rev = n(input.revenueCenti);
+export function computeFairOverheads(input: { revenueSen: number; cogsSen: number; rate: FairCostRate | null }): FairOverheads {
+  const rev = n(input.revenueSen);
   const rate = input.rate;
   if (!rate || rev <= 0) return emptyOverheads();
 
-  const cogs = n(input.cogsCenti);
+  const cogs = n(input.cogsSen);
   const gpPct = ((rev - cogs) / rev) * 100;
   // boost_min_sales is a whole-ringgit threshold; compare it to revenue in RM.
   const revenueRm = rev / 100;
@@ -424,28 +424,28 @@ export function computeFairOverheads(input: { revenueCenti: number; cogsCenti: n
   const merchandise = Math.round((rev * Number(rate.merchandise_pct)) / 100);
   const commission = Math.round((rev * commissionPct) / 100);
   return {
-    transport_centi: transport,
-    merchandise_centi: merchandise,
-    commission_centi: commission,
+    transport_sen: transport,
+    merchandise_sen: merchandise,
+    commission_sen: commission,
     commission_pct: commissionPct,
     commission_is_boost: useBoost,
-    total_overhead_centi: transport + merchandise + commission,
+    total_overhead_sen: transport + merchandise + commission,
   };
 }
 
 export type PnlCostStage = 'so' | 'do' | 'invoice';
 
 export interface FairPnlLineInput {
-  amount_centi: number | null;       // revenue = product + service
-  so_cost_centi: number | null;      // SO category cost (header total_cost)
-  do_cost_centi: number | null;      // Σ linked DO cost, or null when no DO exists
-  si_cost_centi: number | null;      // Σ linked SI cost, or null when no SI exists
+  amount_sen: number | null;       // revenue = product + service
+  so_cost_sen: number | null;      // SO category cost (header total_cost)
+  do_cost_sen: number | null;      // Σ linked DO cost, or null when no DO exists
+  si_cost_sen: number | null;      // Σ linked SI cost, or null when no SI exists
 }
 
 export interface FairPnlLineCost {
-  effective_cost_centi: number;
+  effective_cost_sen: number;
   effective_cost_stage: PnlCostStage;   // which arm the COGS came from
-  gross_profit_centi: number;           // revenue − effective cost
+  gross_profit_sen: number;           // revenue − effective cost
   margin_pct: number | null;
 }
 
@@ -458,43 +458,43 @@ export interface FairPnlLineCost {
  */
 export function fairPnlLineCost(i: FairPnlLineInput): FairPnlLineCost {
   const chosen =
-    i.si_cost_centi != null ? { c: n(i.si_cost_centi), s: 'invoice' as const } :
-    i.do_cost_centi != null ? { c: n(i.do_cost_centi), s: 'do' as const } :
-                              { c: n(i.so_cost_centi), s: 'so' as const };
-  const revenue = n(i.amount_centi);
+    i.si_cost_sen != null ? { c: n(i.si_cost_sen), s: 'invoice' as const } :
+    i.do_cost_sen != null ? { c: n(i.do_cost_sen), s: 'do' as const } :
+                              { c: n(i.so_cost_sen), s: 'so' as const };
+  const revenue = n(i.amount_sen);
   return {
-    effective_cost_centi: chosen.c,
+    effective_cost_sen: chosen.c,
     effective_cost_stage: chosen.s,
-    gross_profit_centi: revenue - chosen.c,
+    gross_profit_sen: revenue - chosen.c,
     margin_pct: marginPct(revenue, chosen.c),
   };
 }
 
 export interface FairPnlSummaryRow {
-  amount_centi: number;
-  selling_centi: number;
-  service_rev_centi: number;
-  so_cost_centi: number;
-  do_cost_centi: number | null;
-  si_cost_centi: number | null;
-  effective_cost_centi: number;
+  amount_sen: number;
+  selling_sen: number;
+  service_rev_sen: number;
+  so_cost_sen: number;
+  do_cost_sen: number | null;
+  si_cost_sen: number | null;
+  effective_cost_sen: number;
 }
 
 export interface FairPnlSummary {
   orders: number;
   delivered_orders: number;    // orders that have at least one DO
   invoiced_orders: number;     // orders that have at least one SI
-  total_revenue_centi: number;
-  total_product_rev_centi: number;
-  total_service_rev_centi: number;
-  total_so_cost_centi: number;
-  total_do_cost_centi: number;         // Σ over orders that have a DO
-  total_si_cost_centi: number;         // Σ over orders that have an SI
-  total_cogs_centi: number;            // Σ effective (most-progressed) cost
-  gross_profit_centi: number;          // revenue − COGS
+  total_revenue_sen: number;
+  total_product_rev_sen: number;
+  total_service_rev_sen: number;
+  total_so_cost_sen: number;
+  total_do_cost_sen: number;         // Σ over orders that have a DO
+  total_si_cost_sen: number;         // Σ over orders that have an SI
+  total_cogs_sen: number;            // Σ effective (most-progressed) cost
+  gross_profit_sen: number;          // revenue − COGS
   gross_margin_pct: number | null;
   overheads: FairOverheads;
-  net_profit_centi: number;            // gross − overhead
+  net_profit_sen: number;            // gross − overhead
   net_margin_pct: number | null;
 }
 
@@ -505,33 +505,33 @@ export function summarizeFairPnl(rows: readonly FairPnlSummaryRow[], rate: FairC
     orders: rows.length,
     delivered_orders: 0,
     invoiced_orders: 0,
-    total_revenue_centi: 0,
-    total_product_rev_centi: 0,
-    total_service_rev_centi: 0,
-    total_so_cost_centi: 0,
-    total_do_cost_centi: 0,
-    total_si_cost_centi: 0,
-    total_cogs_centi: 0,
-    gross_profit_centi: 0,
+    total_revenue_sen: 0,
+    total_product_rev_sen: 0,
+    total_service_rev_sen: 0,
+    total_so_cost_sen: 0,
+    total_do_cost_sen: 0,
+    total_si_cost_sen: 0,
+    total_cogs_sen: 0,
+    gross_profit_sen: 0,
     gross_margin_pct: null,
     overheads: emptyOverheads(),
-    net_profit_centi: 0,
+    net_profit_sen: 0,
     net_margin_pct: null,
   };
   for (const r of rows) {
-    s.total_revenue_centi += n(r.amount_centi);
-    s.total_product_rev_centi += n(r.selling_centi);
-    s.total_service_rev_centi += n(r.service_rev_centi);
-    s.total_so_cost_centi += n(r.so_cost_centi);
-    if (r.do_cost_centi != null) { s.total_do_cost_centi += n(r.do_cost_centi); s.delivered_orders += 1; }
-    if (r.si_cost_centi != null) { s.total_si_cost_centi += n(r.si_cost_centi); s.invoiced_orders += 1; }
-    s.total_cogs_centi += n(r.effective_cost_centi);
+    s.total_revenue_sen += n(r.amount_sen);
+    s.total_product_rev_sen += n(r.selling_sen);
+    s.total_service_rev_sen += n(r.service_rev_sen);
+    s.total_so_cost_sen += n(r.so_cost_sen);
+    if (r.do_cost_sen != null) { s.total_do_cost_sen += n(r.do_cost_sen); s.delivered_orders += 1; }
+    if (r.si_cost_sen != null) { s.total_si_cost_sen += n(r.si_cost_sen); s.invoiced_orders += 1; }
+    s.total_cogs_sen += n(r.effective_cost_sen);
   }
-  s.gross_profit_centi = s.total_revenue_centi - s.total_cogs_centi;
-  s.gross_margin_pct = marginPct(s.total_revenue_centi, s.total_cogs_centi);
-  s.overheads = computeFairOverheads({ revenueCenti: s.total_revenue_centi, cogsCenti: s.total_cogs_centi, rate });
-  s.net_profit_centi = s.gross_profit_centi - s.overheads.total_overhead_centi;
-  s.net_margin_pct = s.total_revenue_centi === 0 ? null : (s.net_profit_centi / s.total_revenue_centi) * 100;
+  s.gross_profit_sen = s.total_revenue_sen - s.total_cogs_sen;
+  s.gross_margin_pct = marginPct(s.total_revenue_sen, s.total_cogs_sen);
+  s.overheads = computeFairOverheads({ revenueSen: s.total_revenue_sen, cogsSen: s.total_cogs_sen, rate });
+  s.net_profit_sen = s.gross_profit_sen - s.overheads.total_overhead_sen;
+  s.net_margin_pct = s.total_revenue_sen === 0 ? null : (s.net_profit_sen / s.total_revenue_sen) * 100;
   return s;
 }
 

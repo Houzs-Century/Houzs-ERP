@@ -53,7 +53,7 @@ export interface AvailableLorry {
   statusLabel: string;
   dispatchable: boolean;
   maxSets: number | null;
-  maxRevenueCenti: number | null;
+  maxRevenueSen: number | null;
   layer: CapacityLayer;
   /** The lorry's regular driver, matched by plate (drivers.vehicle). */
   driverId: string | null;
@@ -82,7 +82,7 @@ export async function loadAvailableLorries(
   const { today } = opts;
 
   let lq = sb.from('lorries')
-    .select('id, plate, warehouse_id, active, is_internal, road_tax_expiry, insurance_expiry, puspakom_expiry, max_sets, max_revenue_centi, capacity_layer')
+    .select('id, plate, warehouse_id, active, is_internal, road_tax_expiry, insurance_expiry, puspakom_expiry, max_sets, max_revenue_sen, capacity_layer')
     .eq('active', true)
     .eq('is_internal', true)
     .order('plate');
@@ -201,7 +201,7 @@ export async function loadAvailableLorries(
     const layerRaw = String(dual(l, 'capacityLayer', 'capacity_layer') ?? 'SETS').toUpperCase();
     const layer: CapacityLayer = (CAP_LAYERS.has(layerRaw) ? layerRaw : 'SETS') as CapacityLayer;
     const ms = dual<number>(l, 'maxSets', 'max_sets');
-    const mr = dual<number>(l, 'maxRevenueCenti', 'max_revenue_centi');
+    const mr = dual<number>(l, 'maxRevenueSen', 'max_revenue_sen');
     const paired = driverByPlate.get(normPlate(plate)) ?? null;
 
     return {
@@ -212,7 +212,7 @@ export async function loadAvailableLorries(
       statusLabel: VEHICLE_STATUS_LABELS[status],
       dispatchable: canDispatch(status),
       maxSets: ms == null ? null : Number(ms),
-      maxRevenueCenti: mr == null ? null : Number(mr),
+      maxRevenueSen: mr == null ? null : Number(mr),
       layer,
       driverId: paired?.id ?? null,
       driverName: paired?.name ?? null,

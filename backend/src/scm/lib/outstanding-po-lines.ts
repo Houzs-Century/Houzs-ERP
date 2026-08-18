@@ -187,7 +187,7 @@ export type OutstandingPoRow = {
      bearing instead of "unnecessary conditions" the linter offers to delete;
      CLAUDE.md's lint section describes exactly that trap. It also matches
      `remainingOf` and `CountableRow`, which already type it this way. */
-  qty: number; received_qty: number | null; unit_price_centi: number;
+  qty: number; received_qty: number | null; unit_price_sen: number;
   warehouse_id: string | null; variants: unknown; delivery_date: string | null;
   // Migration 0180 — per-line supplier-revised delivery dates.
   supplier_delivery_date_2: string | null;
@@ -214,7 +214,7 @@ export type OutstandingPoRow = {
    `warehouses` through the items -> po hop cleanly. */
 const OUTSTANDING_SELECT = `
       id, purchase_order_id, material_kind, material_code, material_name, supplier_sku, item_group,
-      description, qty, received_qty, unit_price_centi, warehouse_id, variants, delivery_date,
+      description, qty, received_qty, unit_price_sen, warehouse_id, variants, delivery_date,
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
       po:purchase_orders!inner ( id, po_number, supplier_id, status, po_date, expected_at,
         supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
@@ -413,7 +413,7 @@ export async function toOutstandingPoItems(
       qty:             r.qty,
       receivedQty:     r.received_qty ?? 0,
       remainingQty:    r.qty - (r.received_qty ?? 0),
-      unitPriceCenti:  r.unit_price_centi,
+      unitPriceSen:  r.unit_price_sen,
       warehouseId:     r.warehouse_id,
       variants:        r.variants,
       /* Delivery-carry — surface the PO line's EFFECTIVE (latest revised)
