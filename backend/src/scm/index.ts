@@ -7,20 +7,15 @@ import type { Env } from "./env";
 // can call them with just an /api/scm prefix.
 import { products } from "./routes/products";
 import { categoriesApi, publicCategoriesApi } from "./routes/categories";
-import { deliveryFees } from "./routes/delivery-fees";
-import { fabricTierAddonConfig } from "./routes/fabric-tier-addon";
 import { pwpRules } from "./routes/pwp-rules";
 import { pwpCodes } from "./routes/pwp-codes";
 import { specialAddons } from "./routes/special-addons";
 import { fabricLibrary } from "./routes/fabric-library";
 import { mfgProducts } from "./routes/mfg-products";
 import { productModels } from "./routes/product-models";
-import { posPools } from "./routes/pos-pools";
 import { sofaCompartmentPhotos } from "./routes/sofa-compartment-photos";
 import { maintenanceConfig } from "./routes/maintenance-config";
-import { maintenancePush } from "./routes/maintenance-push";
 import { sofaCombos } from "./routes/sofa-combos";
-import { sofaQuickPicks } from "./routes/sofa-quick-picks";
 import { fabricTracking } from "./routes/fabric-tracking";
 import { suppliers } from "./routes/suppliers";
 import { mfgPurchaseOrders } from "./routes/mfg-purchase-orders";
@@ -29,7 +24,6 @@ import { purchaseInvoices } from "./routes/purchase-invoices";
 import { paymentVouchers } from "./routes/payment-vouchers";
 import { entityAuditLog } from "./routes/entity-audit-log";
 import { autocountOutbox } from "./routes/autocount-outbox";
-import { paymentAuditLog } from "./routes/payment-audit-log";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
 import { soAmendments } from "./routes/so-amendments";
@@ -87,12 +81,8 @@ import { lorries } from "./routes/lorries";
 import { lorryServiceRecords } from "./routes/lorry-service-records";
 import { soSettings } from "./routes/so-settings";
 import { freeItemCampaigns } from "./routes/free-item-campaigns";
-import { modelFreeGifts } from "./routes/model-free-gifts";
 // POS endpoints ported from 2990 apps/api (cutover P2), company_2 scoped.
-import { posCart } from "./routes/pos-cart";
 import { quotes } from "./routes/quotes";
-import { personalQuickPicks } from "./routes/personal-quick-picks";
-import { salesAnalysis } from "./routes/sales-analysis";
 import { hr } from "./routes/hr";
 
 import { scmAreaGuard } from "./middleware/area-guard";
@@ -170,9 +160,7 @@ scm.route("/categories", publicCategoriesApi);
 // staff role can read" in-file. Writes stay double-gated (area `edit` here +
 // scm.config.write inside each route).
 scm.use("/delivery-fees/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
-scm.route("/delivery-fees", deliveryFees);
 scm.use("/fabric-tier-addon/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
-scm.route("/fabric-tier-addon", fabricTierAddonConfig);
 // openRead (2026-07-20, POS cutover) — PWP (换购) is an in-cart SALE-flow read:
 // the POS reads eligibility rules + the seller's reserved codes for every
 // salesperson, same class as the SO-FLOW REFERENCE READS above. No cost/margin
@@ -210,14 +198,12 @@ scm.route("/product-models", productModels);
 // pools here. openRead so any authenticated salesperson past the coarse umbrella
 // can GET; the handlers select SELLING-only columns (#625). company-scoped.
 scm.use("/pos-pools/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
-scm.route("/pos-pools", posPools);
 // Houzs → 2990 option-list push. NO openRead — DELIBERATE: the dry-run report
 // echoes 2990's master config, which carries sellingPriceSen / costSen, i.e.
 // 2990's retail AND cost sides. Opening it would hand that to any scoped
 // salesperson — the same leak class as #625 (see the /sofa-combos note below).
 // Mounted BEFORE /maintenance-config so the static prefix wins the match.
 scm.use("/maintenance-push/*", scmAreaGuard("scm.procurement.products"));
-scm.route("/maintenance-push", maintenancePush);
 // Static prefix must precede the parent /maintenance-config.
 scm.use("/maintenance-config/sofa-compartments/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
 scm.route("/maintenance-config/sofa-compartments", sofaCompartmentPhotos);
@@ -239,7 +225,6 @@ scm.route("/sofa-combos", sofaCombos);
 // (see sofa-quick-picks.ts header); the engine prices the card. Curation writes
 // stay double-gated (area `edit` + scm.config.write in-route).
 scm.use("/sofa-quick-picks/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
-scm.route("/sofa-quick-picks", sofaQuickPicks);
 scm.use("/fabric-tracking/*", scmAreaGuard("scm.procurement.products"));
 scm.route("/fabric-tracking", fabricTracking);
 // Ported 2026-07-11 — three SO/pricing admin-config CRUD surfaces (backing
@@ -253,11 +238,7 @@ scm.route("/so-settings", soSettings);
 scm.use("/free-item-campaigns/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
 scm.route("/free-item-campaigns", freeItemCampaigns);
 scm.use("/model-free-gifts/*", scmAreaGuard("scm.procurement.products", { openRead: true }));
-scm.route("/model-free-gifts", modelFreeGifts);
 // ── POS endpoints ported from 2990 (cutover P2), company_2 scoped ────────────
-scm.route("/pos-cart", posCart);
-scm.route("/personal-quick-picks", personalQuickPicks);
-scm.route("/sales-analysis", salesAnalysis);
 scm.use("/quotes/*", scmAreaGuard("scm.sales.orders", { writeLevel: "view" }));
 scm.route("/quotes", quotes);
 // ── Suppliers (scm.procurement.suppliers) ───────────────────────────────────
@@ -387,7 +368,6 @@ scm.route("/payment-vouchers", paymentVouchers);
 // Read the route header before changing either — "read-only" is not "safe", and
 // that assumption is exactly what shipped the /reports leak.
 scm.use("/payment-audit-log/*", scmAreaGuard("scm.finance.accounting"));
-scm.route("/payment-audit-log", paymentAuditLog);
 // Entity Audit Log — the field-change history (WHO / WHEN / from -> to) for the
 // SCM documents that are not Sales Orders: payment vouchers, GRNs, stock takes,
 // stock transfers, manual adjustments. Read-only; the writes happen inside each
