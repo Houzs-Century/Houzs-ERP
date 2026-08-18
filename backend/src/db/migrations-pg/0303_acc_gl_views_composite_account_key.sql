@@ -34,6 +34,14 @@
 -- order and types are unchanged, which is what REPLACE requires and also what
 -- keeps every consumer working untouched.
 
+-- REVERSAL: re-apply the two previous definitions verbatim —
+--   scm.v_gl_entries       from 0290_scm_gl_keep_reversed_originals.sql:88-113
+--   scm.v_account_balances from 0106_report_views_company_id.sql:62-77
+-- Both are still in the tree. This migration is two CREATE OR REPLACE VIEW
+-- statements and nothing else: no table DDL, no data written, no column added
+-- or dropped. A revert restores the double-count but cannot lose data, because
+-- a view holds none.
+
 CREATE OR REPLACE VIEW scm.v_gl_entries AS
  SELECT l.id AS line_id,
     j.je_no,
