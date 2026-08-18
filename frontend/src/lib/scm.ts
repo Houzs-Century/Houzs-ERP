@@ -67,6 +67,9 @@ export function scmStatusClasses(status: string | null | undefined): string {
       return "bg-synced/15 text-synced border-synced/30";
     case "BLOCKED":
     case "CANCELLED":
+    // Legacy SO rows carry the bare verb "cancel" (see isCancelledDocStatus);
+    // keep it on the err branch so the pill matches the muted cancelled row.
+    case "CANCEL":
       return "bg-err/10 text-err border-err/30";
     case "SUBMITTED":
     case "PARTIALLY_RECEIVED":
