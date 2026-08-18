@@ -4262,8 +4262,16 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
   // The DO must exist (FK target + so the header sync below has a row to update).
-  const { data: doRow, error: doErr } = await sb.from('delivery_orders')
-    .select('id, company_id, do_number, status').eq('id', id).maybeSingle();
+  /* SCOPE THE LOAD. Knowing a delivery order's uuid was the entire gate here: the
+     load carried no company predicate, nor did the crew upsert or the header
+     sync below. Nothing was re-homed — the crew row inherits the DO's own
+     company — but another organisation's delivery could have its crew rewritten
+     by anyone holding the id. Reads as 404 rather than 403 on purpose: saying
+     "that document exists, but not for you" is itself a leak. */
+  const crewCo = requireActiveCompanyId(c);
+  if (!crewCo.ok) return c.json(crewCo.refusal, 409);
+  const { data: doRow, error: doErr } = await scopeToCompanyId(sb.from('delivery_orders')
+    .select('id, company_id, do_number, status').eq('id', id), crewCo.companyId).maybeSingle();
   if (doErr) return c.json({ error: 'load_failed', reason: doErr.message }, 500);
   if (!doRow) return c.json({ error: 'not_found' }, 404);
 

@@ -3587,6 +3587,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      PWP voucher binding below — all of which previously saw a permanently-null
      customer_id (the POS never sent one). */
   let orderCustomerId: string | null = null;
+  /* An unresolved company must not become Houzs by default — see the note
+     at p_company_id below. */
+  const casCo = requireActiveCompanyId(c);
+  if (!casCo.ok) return c.json(casCo.refusal, 409);
+  const casCompanyId = casCo.companyId;
   /* Scan blank-draft shell (owner 2026-07-04) — a scan that could not read the
      customer's name/phone still lands a draft the rep completes by hand, but it
      carries PLACEHOLDER name/phone. Resolving a customer identity off those
@@ -3598,7 +3603,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       p_name:  customerName,
       p_phone: normPhone,
       p_email: typeof body.email === 'string' && body.email.trim() ? body.email.trim() : null,
-      p_company_id: activeCompanyId(c) ?? null,  // mig 0164 — scope resolve to the active company
+      /* NOT `?? null`. mig 0164 resolves this with
+         COALESCE(p_company_id, (SELECT id FROM public.companies WHERE code='HOUZS')),
+         so a NULL here does not mean "unscoped" — it means "book it to Houzs".
+         A 2990 session whose company failed to resolve would file its customer
+         under the other organisation, silently. Refused above instead. */
+      p_company_id: casCompanyId,  // mig 0164 — scope resolve to the active company
     });
     if (customerErr) {
       console.error('[mfg-so] customer resolve failed:', customerErr.message ?? customerErr);
@@ -7225,6 +7235,11 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   updates.edit_lease_token = operationLeaseToken;
   updates.edit_lease_expires_at = leaseExpiryIso;
 
+  /* An unresolved company must not become Houzs by default — see the note
+     at p_company_id below. */
+  const casCo = requireActiveCompanyId(c);
+  if (!casCo.ok) return c.json(casCo.refusal, 409);
+  const casCompanyId = casCo.companyId;
   /* The header CAS and every version-bound follower commit in ONE PostgreSQL
      transaction. A follower exception rolls the header back as well; there is
      no longer a committed-header / failed-cascade split brain. */
@@ -7245,7 +7260,12 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     p_delivery_date: cascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']),
     // mig 0164 — the customer upsert inside the RPC is company-scoped. Omitting
     // this resolves every re-customer against HOUZS.
-    p_company_id: activeCompanyId(c) ?? null,
+      /* NOT `?? null`. mig 0164 resolves this with
+         COALESCE(p_company_id, (SELECT id FROM public.companies WHERE code='HOUZS')),
+         so a NULL here does not mean "unscoped" — it means "book it to Houzs".
+         A 2990 session whose company failed to resolve would file its customer
+         under the other organisation, silently. Refused above instead. */
+    p_company_id: casCompanyId,
   });
   if (casError) return c.json({ error: 'update_failed', reason: casError.message }, 500);
   const cas = (Array.isArray(casRows) ? casRows[0] : casRows) as
@@ -11199,10 +11219,16 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     }, 409);
   }
 
-  const { data: deleted, error } = await scopeToCompany(sb.from('mfg_sales_order_payments').delete()
+  /* STRICT, like the payment PATCH and the slip POST twenty lines either side.
+     This was the degrading `scopeToCompany`, which drops its predicate entirely
+     when the active company cannot be resolved — on a DELETE. The siblings were
+     made strict on 2026-08-18 for exactly that reason and this one was missed. */
+  const delCo = requireActiveCompanyId(c);
+  if (!delCo.ok) return c.json(delCo.refusal, 409);
+  const { data: deleted, error } = await scopeToCompanyId(sb.from('mfg_sales_order_payments').delete()
     .eq('id', id)
     .eq('so_doc_no', docNo)
-    .eq('version', expectedVersion), c)
+    .eq('version', expectedVersion), delCo.companyId)
     .select('id')
     .maybeSingle();
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);

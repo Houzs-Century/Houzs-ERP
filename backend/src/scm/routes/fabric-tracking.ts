@@ -136,11 +136,37 @@ async function syncFabricToSellingLibrary(
     { onConflict: 'id', ignoreDuplicates: true },
   );
   if (serErr) return `fabric_library: ${serErr.message}`;
+  /* `ignoreDuplicates` is right — re-running an import must not stamp over a
+     series someone already curated. But 0089 records that fabric_library's PK is
+     the SERIES TEXT and is GLOBAL: it "can't gain company_id without a PK
+     redesign, so a 2990 import must use ids distinct from Houzs's". When the id
+     IS taken by another organisation, DO NOTHING means the caller's row never
+     lands, reads are company-scoped so it never appears, and NOTHING SAYS SO.
+     Naming it is the whole fix: the row genuinely cannot be written until the PK
+     is redesigned, so the honest outcome is to report, not to invent one. */
+  if (companyId != null) {
+    const { data: owner } = await sb.from('fabric_library')
+      .select('company_id').eq('id', series).maybeSingle();
+    const ownerCo = (owner as { company_id?: number | null } | null)?.company_id;
+    if (ownerCo != null && ownerCo !== companyId) {
+      return `fabric_library: series "${series}" already belongs to another organisation. Fabric series ids are global (the id IS the series), so this import needs a distinct series code.`;
+    }
+  }
   const { error: colErr } = await sb.from('fabric_colours').upsert(
     { ...companyCol, fabric_id: series, colour_id: code, label: colourLabelOf(code, description), swatch_hex: null, active: true, sort_order: 0 },
     { onConflict: 'fabric_id,colour_id', ignoreDuplicates: true },
   );
   if (colErr) return `fabric_colours: ${colErr.message}`;
+  /* Same shape as the series below: composite PK (fabric_id, colour_id), also
+     named in 0089 as un-convertible, also DO NOTHING, also silent. */
+  if (companyId != null) {
+    const { data: cOwner } = await sb.from('fabric_colours')
+      .select('company_id').eq('fabric_id', series).eq('colour_id', code).maybeSingle();
+    const cCo = (cOwner as { company_id?: number | null } | null)?.company_id;
+    if (cCo != null && cCo !== companyId) {
+      return `fabric_colours: colour "${code}" under series "${series}" already belongs to another organisation. This pair is a global key, so the import needs a distinct code.`;
+    }
+  }
   return null;
 }
 
