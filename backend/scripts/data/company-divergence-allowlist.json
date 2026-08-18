@@ -501,6 +501,18 @@
       "text": "return isHouzs ? noun : '2990 Mattress';",
       "why": "Byte-identical vendored twin of backend/src/scm/shared/so-branding-label.ts; check-shared-mirrors.mjs --strict pins the pair. Same reason as the backend copy.",
       "whoSetIt": "Owner, 2026-08-17 — same rule, vendored copy."
+    },
+    {
+      "file": "frontend/src/vendor/shared/so-branding-label.ts",
+      "text": "return isHouzs ? SOFA_BRAND_HOUZS : SOFA_BRAND_2990;",
+      "why": "A sofa's house brand IS the company — the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. Encoded in the label rule by #2402; the data half was repaired by fix-hc-sofa-branding.mjs (#1723) and the 2026-08-08 rule is in the module guide.",
+      "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 — see #2402)"
+    },
+    {
+      "file": "backend/src/scm/shared/so-branding-label.ts",
+      "text": "return isHouzs ? SOFA_BRAND_HOUZS : SOFA_BRAND_2990;",
+      "why": "A sofa's house brand IS the company — the owner's own rule, given 2026-08-08 and restated 2026-08-18 as an equation: \"houzs sofa=zanotti / 2990 sofa=2990s sofa\". Per-company DATA the owner stated, not a capability that diverged by accident. Encoded in the label rule by #2402; the data half was repaired by fix-hc-sofa-branding.mjs (#1723) and the 2026-08-08 rule is in the module guide.",
+      "whoSetIt": "the owner (2026-08-08, restated 2026-08-18 — see #2402)"
     }
   ]
 }
