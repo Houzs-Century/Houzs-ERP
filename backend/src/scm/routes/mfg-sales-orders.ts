@@ -1330,14 +1330,12 @@ mfgSalesOrders.get('/', async (c) => {
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
     /* A page whose offset is at/beyond the row count is an EMPTY PAGE, not a
-       failure. PostgREST reports it as PGRST103 / 416 "Requested range not
-       satisfiable" instead of an empty 200, and this handler used to turn that
-       into a 500 — which the grid then masked as "No sales orders yet" (the
-       2026-08-18 incident: a `?status=all` request matched zero rows, so page 1
-       exceeded the count and 500'd). Any empty result set reached past offset 0
-       lands here — an empty status tab, a no-match search, the last page + 1 —
-       so treat it as the empty page it is. `res.count` still carries the true
-       total via the `Content-Range: * / N` header PostgREST sends on a 416. */
+       failure. PostgREST answers it PGRST103 / 416 "Requested range not
+       satisfiable" instead of an empty 200, and this handler turned that into a
+       500 — which the grid masked as "No sales orders yet" (the 2026-08-18
+       incident: `?status=all` matched zero rows, so page 1 exceeded the count).
+       Empty status tab, no-match search, last page + 1 all land here; `res.count`
+       still carries the true total via PostgREST's `Content-Range` header. */
     if (error && isRangeNotSatisfiable(error)) {
       data = [];
       total = res.count ?? 0;
