@@ -40,6 +40,9 @@ const CHART: Row[] = [
   ['930-0000', 'Merchant/Gateway Charges', 'EXPENSE'],
 ].map(([account_code, account_name, account_type]) => ({
   account_code, account_name, account_type, parent_code: null, is_active: true, company_id: CO,
+  /* acc_money (migration 0299) is what Daily Bank counts and what the merchant
+     setup screen offers as "which bank does this merchant pay us into". */
+  acc_money: account_code.startsWith('33'),
 }));
 
 /* The layouts are the OWNER'S REAL FILES, read off the exports he uploaded on

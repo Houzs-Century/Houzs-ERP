@@ -24,11 +24,19 @@ export type AcquirerSetup = {
   fee_account_code: string;
   bank_account_code: string | null;
   is_active: boolean;
-  /** Enough config to read a statement at all. */
+  /** Enough config to READ a statement (global — shared by every company). */
   ready: boolean;
+  /** A receiving bank account is set FOR THIS COMPANY, so a payout can be
+      booked. Separate from  because the same merchant pays different
+      companies into different banks (owner: 例如pbb，在houzs 可能是maybank 收钱，
+      但是在2990 是hong leong bank 收钱). */
+  bankReady?: boolean;
   /** Carries a unique reference — the only thing that may auto-match. */
   autoMatchable: boolean;
 };
+
+/** A money account of the ACTIVE company — where a payout can land. */
+export type BankAccount = { account_code: string; account_name: string };
 
 export type SettlementCandidate = {
   source: 'SOPAY' | 'SIPAY';
@@ -108,6 +116,9 @@ export type SettlementBatch = {
   received_on: string | null;
   /** Only on the batch DETAIL: every credit recorded against this statement. */
   receipts?: SettlementReceipt[];
+  /** Only on the batch DETAIL: which bank account this payout will be booked
+      to for THIS company, and whether that was configured or fallen back to. */
+  receiving_bank?: { code: string; name: string | null; configured: boolean };
   status: string;
   uploaded_by: string | null;
   created_at: string;
@@ -115,7 +126,7 @@ export type SettlementBatch = {
 
 export const useAcquirerSetup = () => useQuery({
   queryKey: ['settlement-setup'],
-  queryFn: () => authedFetch<{ acquirers: AcquirerSetup[] }>(`/accounting/settlement/setup`),
+  queryFn: () => authedFetch<{ acquirers: AcquirerSetup[]; bankAccounts: BankAccount[] }>(`/accounting/settlement/setup`),
   staleTime: 60_000,
   retry: retryUnlessClientError,
   retryDelay: 800,

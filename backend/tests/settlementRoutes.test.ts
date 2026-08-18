@@ -104,6 +104,42 @@ describe('the permission gate answers at this end too', () => {
   });
 });
 
+/* The owner's case, 2026-08-18: "例如pbb，在houzs 可能是maybank 收钱，但是在2990
+   是hong leong bank 收钱". The statement shape is taught once and shared; the
+   receiving bank is the company's own. */
+describe('one merchant, two companies, two banks', () => {
+  test('the receiving bank is per company, and the screen is offered this company accounts', async () => {
+    const OTHER = 2;
+    const { app, sb } = harness({
+      accounts: [
+        ...CHART,
+        { account_code: '331-0000', account_name: 'Bank — Hong Leong', account_type: 'ASSET', parent_code: null, is_active: true, company_id: CO, acc_money: true },
+        { account_code: '330-0000', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, company_id: CO, acc_money: true },
+      ],
+      acc_acquirers: [
+        { ...MBB, code: 'PBB', display_name: 'PBB', bank_account_code: '330-0000' },
+        { ...MBB, code: 'PBB', display_name: 'PBB', company_id: OTHER, bank_account_code: '331-0000' },
+      ],
+    });
+    const body = await (await app.request('/settlement/setup')).json() as {
+      acquirers: Array<Record<string, unknown>>;
+      bankAccounts: Array<{ account_code: string; account_name: string }>;
+    };
+    /* This company sees ITS row, and only its own money accounts to choose from. */
+    expect(body.acquirers).toHaveLength(1);
+    expect(body.acquirers[0]).toMatchObject({ code: 'PBB', bank_account_code: '330-0000', bankReady: true });
+    expect(body.bankAccounts.map((b) => b.account_code)).toEqual(['330-0000', '331-0000']);
+    /* And the other company's link is untouched by any of it. */
+    expect(sb.tables.acc_acquirers.find((r) => r.company_id === OTHER)).toMatchObject({ bank_account_code: '331-0000' });
+  });
+
+  test('a merchant with no receiving bank is READY to read but not ready to bank', async () => {
+    const { app } = harness({ acc_acquirers: [{ ...MBB, bank_account_code: null }] });
+    const body = await (await app.request('/settlement/setup')).json() as { acquirers: Array<Record<string, unknown>> };
+    expect(body.acquirers[0]).toMatchObject({ ready: true, bankReady: false });
+  });
+});
+
 describe('GET /settlement/setup', () => {
   test('says which acquirers are ready to reconcile and which can auto-match', async () => {
     const { app } = harness({ acc_acquirers: [MBB, GHL, { ...MBB, code: 'PBB', display_name: 'PBB', statement_format: null, column_map: null, fee_method: null, has_unique_ref: null }] });
@@ -386,6 +422,25 @@ describe('setting a line aside', () => {
 });
 
 describe('the batch detail and the watchlists', () => {
+  test('the detail names the bank this merchant pays THIS company into', async () => {
+    const { app } = harness({
+      accounts: CHART.map((r) => (r.account_code === '330-0000' ? { ...r, account_name: 'Bank — Maybank' } : r)),
+      mfg_sales_order_payments: [soPayment()],
+    });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { batch: { receiving_bank: Record<string, unknown> } };
+    expect(body.batch.receiving_bank).toMatchObject({ code: '330-0000', name: 'Bank — Maybank', configured: true });
+  });
+
+  /* Unset does not stop the books — it falls back to the company default — but
+     it is REPORTED, so a wrong bank cannot hide until the statement disagrees. */
+  test('an unset receiving bank is reported as a fallback, not hidden', async () => {
+    const { app } = harness({ acc_acquirers: [{ ...MBB, bank_account_code: null }], mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as { batch: { receiving_bank: Record<string, unknown> } };
+    expect(body.batch.receiving_bank).toMatchObject({ code: '330-0000', configured: false });
+  });
+
   test('the detail view shows the piles and recomputes candidates for the open lines', async () => {
     const { app } = harness({ mfg_sales_order_payments: [soPayment(), soPayment({ id: 'p2', so_doc_no: 'SO-2608-002', amount_centi: 77700, approval_code: null })] });
     const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: string };

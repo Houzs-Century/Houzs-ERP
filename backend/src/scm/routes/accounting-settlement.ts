@@ -36,6 +36,7 @@ import {
   loadAcquirer, loadPaymentCandidates, loadSettledKeys, confirmSettlementRow, postStatementCharge,
   postBatchReceipt, loadBatchReceipts, undoBatchReceipt,
 } from '../../acc/settlement';
+import { resolveRoles } from '../../acc/rules';
 
 type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
 
@@ -68,8 +69,15 @@ type StoredRow = {
    Acquirer setup — 决定4, entered once, shared by every company
    ════════════════════════════════════════════════════════════════════════ */
 
-/* GET /setup — the global config of every acquirer plus THIS company's links.
-   `ready` is the honest answer to "can this acquirer be reconciled yet". */
+/* GET /setup — the global config of every acquirer plus THIS company's links,
+   and the bank accounts THIS company could receive into.
+
+   The two `ready` flags are different questions and the screen must not merge
+   them: `ready` = a statement can be READ (statement shape, taught once, shared
+   by every company); `bankReady` = a payout can be BOOKED (which bank account
+   the money lands in — per company, because the same merchant pays different
+   companies into different banks. Owner, 2026-08-18: "例如pbb，在houzs 可能是
+   maybank 收钱，但是在2990 是hong leong bank 收钱"). */
 export const settlementSetup = guard(async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -81,9 +89,19 @@ export const settlementSetup = guard(async (c) => {
   const acquirers = ((data ?? []) as Array<Record<string, any>>).map((a) => ({
     ...a,
     ready: Boolean(a.statement_format && a.fee_method && a.column_map?.date && a.column_map?.gross),
+    bankReady: Boolean(a.bank_account_code),
     autoMatchable: a.has_unique_ref === true,
   }));
-  return c.json({ acquirers });
+
+  /* The money accounts of THIS company, so the screen offers a choice instead
+     of asking an operator to type an account code from memory. */
+  const { data: bankRaw, error: bErr } = await sb.from('accounts')
+    .select('account_code, account_name')
+    .eq('company_id', co.companyId).eq('acc_money', true).eq('is_active', true)
+    .order('account_code');
+  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+
+  return c.json({ acquirers, bankAccounts: bankRaw ?? [] });
 });
 
 /* PATCH /setup/:code — teach the system one acquirer. The statement shape is
@@ -431,6 +449,16 @@ export const settlementBatchDetail = guard(async (c) => {
   const tally = { MATCHED: 0, NEEDS_CONFIRM: 0, UNMATCHED: 0, IGNORED: 0 } as Record<string, number>;
   for (const r of stored) tally[r.bucket] = (tally[r.bucket] ?? 0) + 1;
 
+  /* WHICH BANK this merchant pays THIS company — named on screen at the moment
+     the money is recorded, because the same merchant pays different companies
+     into different banks and a wrong one is invisible until the bank statement
+     disagrees. Unset falls back to the company default (the books never stop),
+     but the fallback is reported, never silent. */
+  const roles = await resolveRoles(sb, co.companyId);
+  const bankCode = acq.acquirer.bank_account_code || roles.BANK_DEFAULT;
+  const { data: bankRow } = await sb.from('accounts')
+    .select('account_code, account_name').eq('company_id', co.companyId).eq('account_code', bankCode).maybeSingle();
+
   const payable = payableOf(batch as Record<string, number | null>);
   return c.json({
     batch: {
@@ -438,6 +466,11 @@ export const settlementBatchDetail = guard(async (c) => {
       received_sen: paid.receivedSen,
       outstanding_sen: payable - paid.receivedSen,
       receipts: paid.receipts,
+      receiving_bank: {
+        code: bankCode,
+        name: (bankRow as { account_name?: string } | null)?.account_name ?? null,
+        configured: Boolean(acq.acquirer.bank_account_code),
+      },
     },
     acquirer: { code: acq.acquirer.code, hasUniqueRef: acq.acquirer.has_unique_ref, dateToleranceDays: acq.acquirer.date_tolerance_days },
     buckets: tally,

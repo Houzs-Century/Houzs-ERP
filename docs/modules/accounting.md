@@ -102,7 +102,20 @@ GLOBAL (statement format, unique-ref flag, fee method, date tolerance, column
 map — 决定4, taught once) and `scm.acc_company_acquirers` is the per-company
 link (which bank/transit/fee accounts); migration 0301 splits them and leaves
 `scm.acc_acquirers` behind as a VIEW of the same shape, so every phase-2A
-reader is untouched. Migration 0302 adds `acc_settlement_batches` (one upload,
+reader is untouched.
+
+**Which bank receives the money is PER COMPANY** (owner, 2026-08-18: 例如pbb，在
+houzs 可能是maybank 收钱，但是在2990 是hong leong bank 收钱). That is exactly what
+`acc_company_acquirers.bank_account_code` is for, and the screens now say so:
+`GET /setup` returns `bankReady` per merchant plus the ACTIVE company's own money
+accounts (`accounts.acc_money`), so the setup field is a CHOICE from this
+company's bank accounts rather than a typed account code; `GET /batches/:id`
+returns `receiving_bank` { code, name, configured } so the bank screen names the
+account BEFORE the money is recorded. Unset still falls back to the company's
+BANK_DEFAULT role — the books never stop — but the fallback is now stated on
+screen in red instead of only in a server log.
+
+Migration 0302 adds `acc_settlement_batches` (one upload,
 UNIQUE on the file's content hash), `acc_settlement_rows` (the four screen
 buckets MATCHED / NEEDS_CONFIRM / UNMATCHED / IGNORED) and
 `acc_settlement_matches` (which payments a line covers — UNIQUE

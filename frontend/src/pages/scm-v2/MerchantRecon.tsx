@@ -32,7 +32,7 @@ import {
   useAcquirerSetup, useSaveAcquirerSetup, useSettlementBatches, useSettlementBatch,
   useUploadStatement, useConfirmSettlementRow, useConfirmMatched, useIgnoreSettlementRow,
   useSettlementWatchlist,
-  type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch,
+  type AcquirerSetup, type SettlementRow, type SettlementBucket, type SettlementBatch, type BankAccount,
 } from './settlement-queries';
 import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel,
@@ -600,10 +600,14 @@ const SetupTab = () => {
   return (
     <div className="space-y-3">
       <div style={softText}>
-        The statement shape below is taught ONCE and every company uses it. Only the bank account the money lands
-        in is per company. An acquirer that is not fully set up cannot have a statement uploaded against it.
+        Everything below is taught ONCE and shared by every company — except <b>Money lands in</b>, which is this
+        company&rsquo;s own: the same merchant pays different companies into different banks. A merchant that is not
+        set up cannot have a report uploaded against it; one with no receiving bank can be reconciled, but its
+        payout will book to the company default until you choose.
       </div>
-      {(q.data?.acquirers ?? []).map((a) => <AcquirerCard key={a.code} acquirer={a} />)}
+      {(q.data?.acquirers ?? []).map((a) => (
+        <AcquirerCard key={a.code} acquirer={a} bankAccounts={q.data?.bankAccounts ?? []} />
+      ))}
     </div>
   );
 };
@@ -619,7 +623,7 @@ const HEADING_FIELDS = [
   { key: 'net', label: 'Net heading', hint: 'e.g. Net Credited' },
 ] as const;
 
-const AcquirerCard = ({ acquirer }: { acquirer: AcquirerSetup }) => {
+const AcquirerCard = ({ acquirer, bankAccounts }: { acquirer: AcquirerSetup; bankAccounts: BankAccount[] }) => {
   const save = useSaveAcquirerSetup();
   const [form, setForm] = useState({
     statementFormat: acquirer.statement_format ?? '',
@@ -681,6 +685,9 @@ const AcquirerCard = ({ acquirer }: { acquirer: AcquirerSetup }) => {
         <span style={{ fontSize: 'var(--fs-12)', color: acquirer.ready ? good : danger }}>
           {acquirer.ready ? 'ready' : 'not set up'}
         </span>
+        {acquirer.ready && acquirer.bankReady === false && (
+          <span style={{ fontSize: 'var(--fs-12)', color: danger }}>no receiving bank for this company</span>
+        )}
         <span style={softText}>transit {acquirer.transit_account_code} · fee {acquirer.fee_account_code}</span>
       </div>
       <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
@@ -710,9 +717,20 @@ const AcquirerCard = ({ acquirer }: { acquirer: AcquirerSetup }) => {
           <input style={{ ...input, minWidth: 80 }} value={form.dateToleranceDays} aria-label={`${acquirer.code} date tolerance`}
             onChange={(e) => setForm({ ...form, dateToleranceDays: e.target.value })} />
         ))}
-        {field('Money lands in account', (
-          <input style={input} value={form.bankAccountCode} placeholder="e.g. 331-0000" aria-label={`${acquirer.code} bank account`}
-            onChange={(e) => setForm({ ...form, bankAccountCode: e.target.value })} />
+        {/* THE ONE FIELD THAT IS NOT SHARED. The same merchant pays different
+            companies into different banks — the owner's case: PBB pays Houzs
+            into Maybank and 2990 into Hong Leong. So this is a choice from THIS
+            company's own bank accounts, and the label says whose it is. */}
+        {field('Money lands in — this company only', (
+          <select style={input} value={form.bankAccountCode} aria-label={`${acquirer.code} bank account`}
+            onChange={(e) => setForm({ ...form, bankAccountCode: e.target.value })}>
+            <option value="">not set</option>
+            {bankAccounts.map((b) => (
+              <option key={b.account_code} value={b.account_code}>
+                {b.account_name} ({b.account_code})
+              </option>
+            ))}
+          </select>
         ))}
       </div>
       <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)', marginTop: 4 }}>

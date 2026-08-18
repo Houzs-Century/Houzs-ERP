@@ -166,6 +166,7 @@ const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => voi
   const outstanding = batch.outstanding_sen ?? payable - received;
   const done = outstanding === 0 && payable !== 0;
   const openLines = (q.data?.rows ?? []).filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED').length;
+  const bank = batch.receiving_bank ?? null;
 
   const send = () => {
     /* Blank = the rest of it. The ordinary payout is one credit for the whole
@@ -214,6 +215,23 @@ const BatchReceipts = ({ batchId, onBack }: { batchId: number; onBack: () => voi
             ))}
           </tbody>
         </table>
+      )}
+
+      {/* WHICH BANK, named. The same merchant pays different companies into
+          different banks (owner: 例如pbb，在houzs 可能是maybank 收钱，但是在2990
+          是hong leong bank 收钱), and a wrong one is invisible until the bank
+          statement disagrees — so it is stated here, before the money is
+          recorded, not buried in a setup screen. */}
+      {!done && bank && (
+        <div style={{ fontSize: 'var(--fs-13)', color: bank.configured ? undefined : danger }}>
+          {bank.configured
+            ? <>Books into <b>{bank.name ?? bank.code}</b> ({bank.code}).</>
+            : <>
+                No receiving bank is set for {batch.acquirer_code} in this company — it will book into{' '}
+                <b>{bank.name ?? bank.code}</b> ({bank.code}), the company default.{' '}
+                <Link to="/scm/merchant-recon">Set it in Merchant setup</Link>.
+              </>}
+        </div>
       )}
 
       {!done && openLines === 0 && (
