@@ -1114,6 +1114,31 @@
       "check": "D1",
       "key": "HELPER,STOREKEEPER,STOREKEEPER SUPERVISOR|backend/src/services/projectGates.ts frontend/src/auth/crewScope.ts",
       "why": "THE CREW-SCOPED POSITIONS, and this twin is DELIBERATE: the projects filter bar has to render before any round-trip, so the client cannot wait to be told. It is also the twin that had already drifted — the desktop copy substring-matched the position name and carried no permission escape, so an owner-created \"Warehouse Helper\" caged the UI while the server returned everything, and an admin holding the Storekeeper position lost controls the server would have allowed. PINNED by backend/tests/duplicatedDecisionPins.test.ts, which imports BOTH implementations and runs one corpus of (position, permissions) pairs through them. Added by the same change that created the second home — this gate flagged its own author, which is the behaviour it is for."
+    },
+    {
+      "check": "D1",
+      "key": "COMPLETED,PENDING_DELIVERY_SERVICE,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,UNDER_VERIFICATION,VOIDED|backend/src/scm/shared/assr-stage-labels.ts backend/src/services/assr.ts frontend/src/pages/MyCases.tsx frontend/src/portal/pages/PortalSupplierCase.tsx frontend/src/vendor/scm/lib/assr-stage-labels.ts",
+      "why": "The ASSR stage vocabulary, and it is ALREADY pinned rather than merely duplicated: backend/tests/assrStageLabelOneHome.test.ts is titled \"the ASSR stage vocabulary has exactly one home\" and scans the source for exactly these sites. That is the second remedy this gate offers. The five files consume the vocabulary; they do not each decide it."
+    },
+    {
+      "check": "D1",
+      "key": "ACTION,CLOSED,COMPLETED,LOGISTICS,PENDING_DELIVERY_SERVICE,PENDING_INSPECTION,PENDING_ITEM_PICKUP,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,REGISTRATION,RESOLUTION,TRIAGE,UNDER_VERIFICATION,VOIDED|backend/src/scm/shared/assr-stage-labels.ts frontend/src/vendor/scm/lib/assr-stage-labels.ts",
+      "why": "A shared MIRROR pair, which is this repo's established way of giving one rule to both runtimes: backend/src/scm/shared/* and frontend/src/vendor/scm/lib/* are held byte-identical by check-shared-mirrors --strict, a gate that already runs in backend-typecheck. Two copies that CANNOT diverge are not two answers."
+    },
+    {
+      "check": "D1",
+      "key": "DELIVERY_ORDER_ITEMS,GRN_ITEMS,MFG_SALES_ORDER_ITEMS,PURCHASE_INVOICE_ITEMS,PURCHASE_ORDER_ITEMS,SALES_INVOICE_ITEMS|backend/src/scm/lib/autocount-convert-lines.ts backend/src/scm/lib/autocount-outbox.ts",
+      "why": "One home, plus its TYPE. autocount-convert-lines.ts holds the value; autocount-outbox.ts imports from it (line 115) and only restates the key set as a TypeScript union in annotations. A union that drifted from the imported record would fail to compile where the two meet, so the compiler is the referee here."
+    },
+    {
+      "check": "D1",
+      "key": "DO,GR,IV,PI|backend/src/scm/lib/autocount-convert-lines.ts backend/src/scm/lib/autocount-outbox.ts",
+      "why": "Same pair, same reason: DOWNSTREAM and CONVERT_TARGET are declared once in autocount-convert-lines.ts and imported by autocount-outbox.ts, which restates 'DO' | 'GR' | 'IV' | 'PI' only as a type annotation on its own signatures."
+    },
+    {
+      "check": "D2",
+      "key": "ACTION,CLOSED,COMPLETED,LOGISTICS,PENDING_DELIVERY_SERVICE,PENDING_INSPECTION,PENDING_ITEM_PICKUP,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,REGISTRATION,RESOLUTION,TRIAGE,UNDER_VERIFICATION ~ ACTION,CLOSED,COMPLETED,LOGISTICS,PENDING_DELIVERY_SERVICE,PENDING_INSPECTION,PENDING_ITEM_PICKUP,PENDING_ITEM_READY,PENDING_REVIEW,PENDING_SOLUTION,PENDING_SUPPLIER_PICKUP,REGISTRATION,RESOLUTION,TRIAGE,UNDER_VERIFICATION,VOIDED",
+      "why": "The one member that differs is VOIDED, and its absence from the shorter set is the POINT, not an oversight. The shorter set is the salesperson STEPPER; a terminal void state is not a step. assr-stage-labels.ts records the failure that came from getting this backwards: portal.ts built the stepper by mapping ALL_STAGES, which DOES carry voided, so the word appeared on every case rather than only voided ones."
     }
   ]
 }
