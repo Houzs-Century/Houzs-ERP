@@ -1,6 +1,6 @@
 ## Opening the Sales Orders list wasted a request every time — it fetched, aborted itself, then fetched again [medium]
 
-<!-- area: Sales orders V2 list -->
+<!-- area: Frontend + mobile -->
 
 **Symptom.** Every open of the Sales Orders list (`MfgSalesOrdersListV2`) fired
 `GET /api/scm/mfg-sales-orders` TWICE: the first request was immediately aborted
