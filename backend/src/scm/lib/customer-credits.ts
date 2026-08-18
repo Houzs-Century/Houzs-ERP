@@ -34,7 +34,7 @@ export type AddCreditInput = {
   notes?: string | null;
   createdBy?: string | null;
   // Multi-company (mig 0061): the ledger row's company (from the source SI/SO).
-  companyId?: number | null;
+  companyId: number | null;
 };
 
 /** Insert one ledger row. Idempotency note: callers that need it (cancel /
