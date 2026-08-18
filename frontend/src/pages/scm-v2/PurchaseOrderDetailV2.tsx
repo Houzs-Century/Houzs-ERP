@@ -6,7 +6,7 @@
 //
 // Route: /scm/purchase-orders/:id (App.tsx flips ScmPurchaseOrderDetailV2 here).
 // Data: usePurchaseOrderDetail / useCancelPurchaseOrder /
-//       useSubmitPurchaseOrder / useConfirmPurchaseOrder / useReopenPurchaseOrder
+//       useConfirmPurchaseOrder / useReopenPurchaseOrder
 //       (vendored suppliers-queries slice).
 
 import { lazy, useMemo, useState, type ReactNode } from "react";
@@ -26,7 +26,6 @@ import {
   Phone as PhoneIcon,
   MoreHorizontal,
   CheckCircle2,
-  Send,
   RotateCcw,
   Package,
   FilePenLine,
@@ -35,6 +34,11 @@ import {
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
+import { NextStepNote } from "../../components/NextStepNote";
+import {
+  grnTransferBlockReason,
+  poConfirmBlockReason,
+} from "../../vendor/scm/lib/po-next-step";
 import { DataTable, type Column } from "../../components/DataTable";
 import { DATA_TABLE_LAYOUT_FAMILIES } from "../../components/dataTableLayoutFamilies";
 import {
@@ -47,7 +51,6 @@ import {
   usePurchaseOrderDetail,
   useCancelPurchaseOrder,
   useReopenPurchaseOrder,
-  useSubmitPurchaseOrder,
   useConfirmPurchaseOrder,
   useSupplierDetail,
   type PoHeaderRow,
@@ -391,7 +394,6 @@ function PurchaseOrderDetailV2ReadOnly() {
   const navigate = useNavigate();
 
   const detail = usePurchaseOrderDetail(id ?? null);
-  const submitPo = useSubmitPurchaseOrder();
   const confirmPo = useConfirmPurchaseOrder();
   const cancelPo = useCancelPurchaseOrder();
   const reopenPo = useReopenPurchaseOrder();
@@ -591,15 +593,16 @@ function PurchaseOrderDetailV2ReadOnly() {
     }
   };
 
-  const doSubmit = () => {
-    if (!id) return;
-    if (window.confirm("Submit this PO to the supplier?")) {
-      submitPo.mutate(id);
-    }
-  };
+  /* ONE control commits a draft PO, and it calls the endpoint that writes.
+     `doSubmit` (PATCH /submit) is gone — see po-next-step.ts for the handler
+     that never had an update in it. The confirm dialog is kept because
+     confirming is what makes the PO live supply and drops its SO lines out of
+     the From-SO picker; the wording now matches what the button does. */
   const doConfirm = () => {
     if (!id) return;
-    confirmPo.mutate(id);
+    if (window.confirm("Confirm this PO? It becomes live supply and its sales-order lines leave the From-SO picker.")) {
+      confirmPo.mutate(id);
+    }
   };
   const doCancel = () => {
     if (!purchaseOrder) return;
@@ -935,15 +938,22 @@ function PurchaseOrderDetailV2ReadOnly() {
   };
 
   const rawStatus = (purchaseOrder.status || "").toUpperCase();
-  const canSubmit = rawStatus === "DRAFT";
-  const canConfirm = rawStatus === "SUBMITTED";
-  const canConvertToGrn = rawStatus === "SUBMITTED" || rawStatus === "PARTIALLY_RECEIVED";
+  /* Both status questions now come from vendor/scm/lib/po-next-step.ts, which
+     also records why the old pair was wrong: `canSubmit` gated a DRAFT onto
+     PATCH /submit, a handler with no write path that 409s every draft, while
+     `canConfirm` gated /confirm — the endpoint that actually performs the
+     DRAFT → SUBMITTED write — onto SUBMITTED, where it is an explicit no-op.
+     The predicates were inverted relative to their endpoints. */
+  const confirmReason = poConfirmBlockReason(purchaseOrder.status);
+  const canConfirm = confirmReason === null;
+  const grnReason = grnTransferBlockReason(purchaseOrder.status);
+  const canConvertToGrn = grnReason === null;
   const canCancel = rawStatus !== "CANCELLED" && rawStatus !== "RECEIVED";
   const canReopen = rawStatus === "CANCELLED";
   const isCancelled = rawStatus === "CANCELLED";
 
   return (
-    <div className="pb-24 md:pb-0">
+    <div className="pb-56 md:pb-0">
       {/* Mobile-only dark sticky header */}
       <div className="sticky top-0 z-20 -mx-4 -mt-4 bg-sidebar text-sidebar-ink shadow-slab md:hidden">
         <div className="flex items-center justify-between gap-3 px-4 pt-3">
@@ -1022,7 +1032,8 @@ function PurchaseOrderDetailV2ReadOnly() {
               </div>
             </div>
           </div>
-          <div className="flex flex-wrap items-center gap-2">
+          <div className="flex flex-col items-end gap-1.5">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button variant="ghost" icon={<History size={14} />} onClick={goHistory}>
               History
             </Button>
@@ -1052,21 +1063,30 @@ function PurchaseOrderDetailV2ReadOnly() {
                 Reopen
               </Button>
             )}
-            {canSubmit && (
-              <Button variant="secondary" icon={<Send size={14} />} onClick={doSubmit}>
-                Submit
-              </Button>
-            )}
-            {canConfirm && (
-              <Button variant="secondary" icon={<CheckCircle2 size={14} />} onClick={doConfirm}>
-                Confirm
-              </Button>
-            )}
-            {canConvertToGrn && (
-              <Button variant="secondary" icon={<Package size={14} />} onClick={goGrnFromPo}>
-                {transferToLabel('grn')}
-              </Button>
-            )}
+            {/* ── ALWAYS RENDERED, disabled with the reason. Two fixed slots:
+                "commit this document" and "produce the next document", each
+                keeping one meaning at every status, so the operator never has to
+                read the status badge to learn what a button will do. ── */}
+            <Button
+              variant="secondary"
+              icon={<CheckCircle2 size={14} />}
+              onClick={doConfirm}
+              disabled={!canConfirm}
+              title={confirmReason ?? undefined}
+              aria-describedby={confirmReason ? "po-confirm-reason" : undefined}
+            >
+              Confirm PO
+            </Button>
+            <Button
+              variant="secondary"
+              icon={<Package size={14} />}
+              onClick={goGrnFromPo}
+              disabled={!canConvertToGrn}
+              title={grnReason ?? undefined}
+              aria-describedby={grnReason ? "po-grn-reason" : undefined}
+            >
+              {transferToLabel('grn')}
+            </Button>
             {/* Raise amendment — a live (confirmed, non-cancelled) PO can be
                 revised through the single-approver amendment flow. The backend
                 one-open guard 409s a second request; the modal surfaces that. */}
@@ -1078,6 +1098,13 @@ function PurchaseOrderDetailV2ReadOnly() {
             <Button variant="primary" icon={<Edit3 size={14} />} onClick={goEdit}>
               Edit
             </Button>
+          </div>
+          {/* The reasons as TEXT, not only as a `title` — a tooltip needs a
+              hover and says nothing on a touch screen. */}
+          <div className="flex max-w-[440px] flex-col items-end gap-0.5 text-right">
+            <NextStepNote id="po-confirm-reason" reason={confirmReason} />
+            <NextStepNote id="po-grn-reason" reason={grnReason} />
+          </div>
           </div>
         </div>
       </div>
@@ -1330,34 +1357,51 @@ function PurchaseOrderDetailV2ReadOnly() {
         </DetailGrid>
       </div>
 
-      {/* Fixed bottom action bar (phone) */}
+      {/* Fixed bottom action bar (phone).
+
+          ONE SLOT USED TO HOLD THREE DIFFERENT ACTIONS — Submit, then Transfer
+          to GRN, then Edit — chosen by status, in the same green full-width
+          button, same pixels. Whichever one a purchaser pressed yesterday, the
+          same tap does something else today, and nothing on the bar says which.
+          That is the owner's complaint in its phone-shaped form.
+
+          Now: the commit slot and the transfer slot each keep one meaning and
+          are disabled with their reason when the state forbids them, and Edit
+          stops impersonating them. The reasons render as TEXT because a `title`
+          tooltip cannot be summoned on a touch screen. */}
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">
+        <div className="mb-1.5 flex flex-col gap-0.5">
+          <NextStepNote id="po-confirm-reason-phone" reason={confirmReason} />
+          <NextStepNote id="po-grn-reason-phone" reason={grnReason} />
+        </div>
+        <div className="mb-2 flex items-center gap-2">
+          <button
+            type="button"
+            onClick={doConfirm}
+            disabled={!canConfirm}
+            aria-describedby={confirmReason ? "po-confirm-reason-phone" : undefined}
+            className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface text-[13.5px] font-bold text-ink hover:bg-surface-dim disabled:opacity-40"
+          >
+            <CheckCircle2 size={16} /> Confirm PO
+          </button>
+          <button
+            type="button"
+            onClick={goGrnFromPo}
+            disabled={!canConvertToGrn}
+            aria-describedby={grnReason ? "po-grn-reason-phone" : undefined}
+            className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink disabled:bg-primary/40"
+          >
+            <Package size={16} /> {transferToLabel('grn')}
+          </button>
+        </div>
         <div className="flex items-center gap-2">
-          {canSubmit ? (
-            <button
-              type="button"
-              onClick={doSubmit}
-              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink"
-            >
-              <Send size={16} /> Submit
-            </button>
-          ) : canConvertToGrn ? (
-            <button
-              type="button"
-              onClick={goGrnFromPo}
-              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink"
-            >
-              <Package size={16} /> {transferToLabel('grn')}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={goEdit}
-              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink"
-            >
-              <Edit3 size={16} /> Edit
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={goEdit}
+            className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface text-[13.5px] font-bold text-ink hover:bg-surface-dim"
+          >
+            <Edit3 size={16} /> Edit
+          </button>
           <button
             type="button"
             onClick={print.openPreview}

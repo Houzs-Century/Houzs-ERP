@@ -220,6 +220,11 @@
       "file": "backend/src/scm/lib/unlinked-line-edit-guard.test.ts",
       "text": "it('ALLOWS an SI line shadowing a DO item that is ALREADY FULLY INVOICED', async () => {",
       "why": "A test NAME describing the owner's narrow SI rule over a stubbed DO line, not product copy; it asserts what the guard PERMITS, not that any real work is finished."
+    },
+    {
+      "file": "frontend/src/vendor/scm/lib/do-next-step.ts",
+      "text": "return 'A cancelled delivery order cannot be reactivated — its stock was already returned. Raise a new delivery order to deliver again.';",
+      "why": "Not an empty-read conclusion: it is read off the ONE document in hand, from its own status column being CANCELLED, and it repeats the server's own refusal wording (delivery-orders-mfg.ts:5403 do_cancelled_final). The stock claim is the cancel path's documented effect - cancelling a DO writes the add-back - not an inference from a list that came back empty."
     }
   ]
 }
