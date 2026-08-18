@@ -233,7 +233,7 @@ import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveLineStockStatus, readinessLinesByDoc, type LiveStockState } from '../lib/so-line-effective-stock';
 import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
-import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
+import { deriveDisplayBrandingRowByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
 import { soLineReadySourcePos, unionSoLineChips } from '../lib/source-po-trace';
@@ -2645,9 +2645,17 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      covers mains-first + mattress-brand fallback + bedframe-only in one place,
      so both surfaces resolve the identical value. */
   {
-    const derived = await deriveDisplayBrandingByDoc(sb, c, [docNo]);
-    const b = derived.get(docNo);
-    if (b) (salesOrder as Record<string, unknown>).first_item_branding = b;
+    /* 2026-08-18: emit the CATEGORY too. The detail page used to render
+       `branding || first_item_branding || "—"` — its own rule, not the list's —
+       so it printed a dash for any order whose rep line carries no brand text,
+       which is every sofa. It now calls the shared brandingLabel, and that needs
+       both inputs. */
+    const derived = await deriveDisplayBrandingRowByDoc(sb, c, [docNo]);
+    const row = derived.get(docNo);
+    if (row) {
+      (salesOrder as Record<string, unknown>).first_item_category = row.category;
+      if (row.branding) (salesOrder as Record<string, unknown>).first_item_branding = row.branding;
+    }
   }
   /* Brand letterhead resolution (owner 2026-07) — stamp the R2 key of the
      brand logo the SO PDF should print IN PLACE OF the company logo (the

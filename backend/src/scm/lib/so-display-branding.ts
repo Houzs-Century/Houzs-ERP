@@ -93,7 +93,26 @@ export async function deriveDisplayBrandingByDoc(
   c: CompanyScopeCtx,
   docNos: string[],
 ): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+  const rows = await deriveDisplayBrandingRowByDoc(sb, c, docNos);
+  const flat = new Map<string, string>();
+  for (const [docNo, row] of rows) if (row.branding) flat.set(docNo, row.branding);
+  return flat;
+}
+
+/** The representative line's resolved CATEGORY alongside its branding text —
+ *  the two inputs `brandingLabel` needs. Added 2026-08-18 so the SO DETAIL page
+ *  can render the same label as the list instead of its own
+ *  `branding || first_item_branding || "—"`, which printed a dash for any order
+ *  whose rep line carries no brand text (i.e. every sofa). `branding` is null
+ *  when nothing resolved; `category` is null only when the doc has no readable
+ *  line, which is what makes "No Items" distinguishable from a blank brand. */
+export async function deriveDisplayBrandingRowByDoc(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  c: CompanyScopeCtx,
+  docNos: string[],
+): Promise<Map<string, { category: string | null; branding: string | null }>> {
+  const out = new Map<string, { category: string | null; branding: string | null }>();
   const uniq = Array.from(new Set(docNos.filter(Boolean)));
   if (uniq.length === 0) return out;
 
@@ -165,7 +184,10 @@ export async function deriveDisplayBrandingByDoc(
       const s = catsByDoc.get(docNo);
       if (s && s.has('BEDFRAME') && !s.has('MATTRESS') && !s.has('SOFA')) brand = 'BEDFRAME';
     }
-    if (!isBlank(brand)) out.set(docNo, String(brand).trim());
+    out.set(docNo, {
+      category: resolveLineCat(rep),
+      branding: isBlank(brand) ? null : String(brand).trim(),
+    });
   }
   return out;
 }
