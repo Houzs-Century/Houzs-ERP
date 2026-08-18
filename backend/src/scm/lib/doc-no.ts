@@ -187,11 +187,16 @@ export const jePrefixForCompany = async (
   companyId: number | null | undefined,
 ): Promise<string> => {
   if (companyId == null) return '';
-  const { data } = await sb
+  const { data, error } = await sb
     .from('companies')
     .select('code')
     .eq('id', companyId)
     .maybeSingle();
+  // Fail closed: the whole point of this function is a per-company JE prefix, so
+  // a discarded read that fell through to '' would reintroduce the cross-company
+  // number collision it exists to prevent. Refuse rather than mint under the
+  // wrong prefix.
+  if (error) throw new Error(`jePrefixForCompany: could not read company ${companyId}: ${error.message ?? String(error)}`);
   return jePrefixForCode(data?.code);
 };
 
