@@ -37,9 +37,11 @@
 //
 // DELIVERY-DATE INTEGRITY (owner rule): the customer's ORIGINAL
 // customer_delivery_date is NEVER overwritten. The schedule action writes the
-// firm/new date to amended_delivery_date instead. The EFFECTIVE delivery date —
-// amended_delivery_date ?? customer_delivery_date — drives Days Left AND the
-// OVERDUE 3-day window; the Original column still shows customer_delivery_date.
+// firm/new date to amended_delivery_date instead. The EFFECTIVE delivery date
+// drives Days Left AND the OVERDUE window; Original still shows the customer's.
+// scm/shared/effective-delivery.ts OWNS that rule — MRP and the stock allocator
+// have read the same function since 2026-08-18; before that they ranked on the
+// original alone, so a rescheduled order moved here and not in the stock queue.
 //
 // Region = CONFIG-DRIVEN, owner-maintained (migration 0053). The region buckets
 //   are a master list (delivery_planning_regions) and the per-STATE → region(s)
@@ -72,6 +74,7 @@ import { deriveBranding } from '../lib/so-display-branding';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
+import { effectiveSoDelivery } from '../shared';
 import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
 import { boardDeliverableByDoc } from '../lib/board-deliverable';
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
@@ -260,8 +263,7 @@ function daysBetween(fromISO: string, toISO: string | null | undefined): number 
 
    `readiness` carries ONLY the ship gate — narrowed so no caller can reach for
    isMainReady, vacuously true on a line-less SO (BUG-HISTORY 2026-08-14, #2186).
-   `effectiveDD` is amended_delivery_date ?? customer_delivery_date; `today` is
-   MYT (todayMyt()). Pure — no I/O. */
+   `effectiveDD` comes from effectiveSoDelivery; `today` is MYT. Pure — no I/O. */
 export function derivePlanningState(input: {
   storedOverride: string | null | undefined;
   status: string | null | undefined;
@@ -850,13 +852,13 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     const status = String(r.status ?? '').toUpperCase();
     const customerDD = r.customer_delivery_date ?? null;
     const procDate = r.processing_date ?? null;
-    /* Amendment dates. The ORIGINAL customer_delivery_date is never overwritten;
-       the amended date (when set) is what we now commit to. EFFECTIVE date =
-       amended_delivery_date ?? customer_delivery_date — it drives days_left AND
-       the OVERDUE 3-day window. dual-read camelCase. */
+    /* Amendment dates. The ORIGINAL is never overwritten; the amended date (when
+       set) is what we now commit to. effectiveSoDelivery is the ONE reader of that
+       rule (shared/effective-delivery.ts) — this board's chain was right all along;
+       MRP and the allocator stopped disagreeing with it on 2026-08-18. */
     const amendDateFromCustomer = r.amendDateFromCustomer ?? r.amend_date_from_customer ?? null;
     const amendedDD = r.amendedDeliveryDate ?? r.amended_delivery_date ?? null;
-    const effectiveDD = amendedDD ?? customerDD;
+    const effectiveDD = effectiveSoDelivery(r);
 
     /* "Ready to ship" gate — see summariseReadiness.isShipReady. */
     const readyToShip = readiness.isShipReady;
@@ -2156,8 +2158,7 @@ deliveryPlanning.patch('/:type/:id/fields', async (c) => {
 const scheduleSchema = z.object({
   // The firm trip date the coordinator commits to. Written to the header's
   // amended_delivery_date — NEVER customer_delivery_date, which stays the
-  // customer's ORIGINAL pick. The effective date for Days Left / OVERDUE is
-  // amended_delivery_date ?? customer_delivery_date.
+  // customer's ORIGINAL pick. effectiveSoDelivery reads the pair.
   scheduleDate: z.string().nullable().optional(),  // YYYY-MM-DD
   // Optional MANUAL override of the derived delivery_state (cache column).
   deliveryState: z.enum(['PENDING_DELIVERY', 'PENDING_SCHEDULE', 'OVERDUE', 'DELIVERED']).nullable().optional(),

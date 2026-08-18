@@ -71,10 +71,10 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/currencies.ts` | 3 | 148 |
 | `backend/src/scm/routes/customer-mirror.ts` | 1 | 103 |
 | `backend/src/scm/routes/delivery-fees.ts` | 5 | 223 |
-| `backend/src/scm/routes/delivery-messages.ts` | 2 | 189 |
+| `backend/src/scm/routes/delivery-messages.ts` | 2 | 190 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5631 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
-| `backend/src/scm/routes/delivery-planning.ts` | 5 | 2905 |
+| `backend/src/scm/routes/delivery-planning.ts` | 5 | 2906 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1821 |
@@ -106,13 +106,13 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11887 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
-| `backend/src/scm/routes/mrp.ts` | 1 | 1593 |
+| `backend/src/scm/routes/mrp.ts` | 1 | 1615 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 244 |
 | `backend/src/scm/routes/payment-audit-log.ts` | 1 | 427 |
 | `backend/src/scm/routes/payment-vouchers.ts` | 6 | 1057 |
 | `backend/src/scm/routes/personal-quick-picks.ts` | 3 | 199 |
 | `backend/src/scm/routes/po-amendments.ts` | 6 | 652 |
-| `backend/src/scm/routes/po-so-coverage.ts` | 1 | 1139 |
+| `backend/src/scm/routes/po-so-coverage.ts` | 1 | 1140 |
 | `backend/src/scm/routes/pos-cart.ts` | 2 | 144 |
 | `backend/src/scm/routes/pos-pools.ts` | 10 | 365 |
 | `backend/src/scm/routes/product-models.ts` | 16 | 1464 |
@@ -171,7 +171,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1459 files, 581198 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1461 files, 581795 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |

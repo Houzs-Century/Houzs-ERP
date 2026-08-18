@@ -19,7 +19,7 @@
 import { Hono } from 'hono';
 import {
   buildVariantSummary, pickComboMatch, spreadComboTotal,
-  splitSofaCode, sofaHeightKey,
+  splitSofaCode, sofaHeightKey, effectiveSoDelivery,
   type SofaComboRow, type SofaPriceTier,
 } from '../shared';
 import {
@@ -796,7 +796,7 @@ mfgPurchaseOrders.get('/so-line-candidates', async (c) => {
       debtorName: r.so?.debtor_name ?? null,
       soStatus: r.so?.status ?? null,
       qty: r.qty,
-      deliveryDate: r.so?.amended_delivery_date ?? r.so?.customer_delivery_date ?? null,
+      deliveryDate: r.so ? effectiveSoDelivery(r.so) : null,
     }));
   return c.json({ items });
 });
