@@ -42,6 +42,17 @@ extended to the three sibling fields the same engine fed. A production stopwatch
 (the exact ms removed from the list's time-to-first-byte) needs a probe the owner
 sets up and is deferred.
 
+**C16 guard (Hookka rule — pin the projection's whole key set in the same
+commit as the split).** The four MRP-derived fields are pinned as ONE named set,
+`MRP_DERIVED_LIST_FIELD_MAP` (`frontend/src/lib/soListEnrichment.ts`) with its
+backend twin `SO_LIST_MRP_ENRICHMENT_KEYS`
+(`backend/src/scm/lib/so-list-mrp-enrichment.ts`). Parity tests assert the client
+overlay heals EXACTLY that set and the endpoint returns EXACTLY that shape, so a
+future field added to the list projection but not routed through the enrichment
+overlay (or the reverse) fails CI with the drifting key named — the C16 failure
+mode (a field that heals on one surface but stays stored-only on another) cannot
+ship silently. Proven red by making the overlay write an unpinned field.
+
 **Ref.** 2026-08-18, branch `perf/mrp-off-list-load`. Tests:
 `backend/tests/soListMrpEnrichment.test.ts`,
 `frontend/src/lib/soListEnrichment.test.ts`.

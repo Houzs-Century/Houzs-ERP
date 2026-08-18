@@ -12,6 +12,7 @@ import { summariseReadiness } from "../src/scm/lib/so-readiness";
 import { derivePlanningState } from "../src/scm/routes/delivery-planning";
 import {
   assembleSoListMrpEnrichment,
+  SO_LIST_MRP_ENRICHMENT_KEYS,
   type EnrichmentItem,
   type EnrichmentHeader,
 } from "../src/scm/lib/so-list-mrp-enrichment";
@@ -144,5 +145,29 @@ describe("assembleSoListMrpEnrichment", () => {
     // The chip arm is independent of the readiness coverage: whatever
     // soLineReadySourcePos resolved is emitted regardless of the verdict.
     expect(out.sourcePoReady).toEqual(["PO-9"]);
+  });
+});
+
+/* C16 guard (Hookka rule): the endpoint's returned shape is pinned to the same
+   named key set the frontend overlay heals, so an MRP-derived field cannot be
+   added to the payload here without the frontend routing it through the overlay
+   (and vice-versa) — the drift fails CI instead of shipping a field that heals
+   on one surface but stays stored-only on another. */
+describe("assembleSoListMrpEnrichment — C16 payload key-set parity", () => {
+  test("returns EXACTLY the pinned SO_LIST_MRP_ENRICHMENT_KEYS", () => {
+    const out = assembleSoListMrpEnrichment({
+      docNos: ["SO-1"],
+      items: [{ id: "l1", doc_no: "SO-1", item_group: "MATTRESS", item_code: "M1", stock_status: "READY", cancelled: false }],
+      coverage: null,
+      categoryByCode: new Map<string, string>(),
+      readyByItem: new Map<string, ReadySourceChip[]>(),
+      fullyShippedItemIds: new Set<string>(),
+      headers: new Map<string, EnrichmentHeader>([["SO-1", { status: "CONFIRMED", storedOverride: null, effectiveDD: null }]]),
+      delivered: new Map<string, number>(),
+      remaining: new Map<string, number>(),
+      today: "2026-08-18",
+    }).get("SO-1")!;
+
+    expect(new Set(Object.keys(out))).toEqual(new Set<string>(SO_LIST_MRP_ENRICHMENT_KEYS));
   });
 });

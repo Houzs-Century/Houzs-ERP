@@ -35,6 +35,29 @@ export type EnrichableSoRow = {
   planning_state?: string | null;
 };
 
+/* C16 GUARD (Hookka frontend bug class: "a field that heals on one surface via
+   enrichment but stays stored-only elsewhere"). This map is the SINGLE source of
+   truth for WHICH SO-list row fields the deferred MRP enrichment heals, and
+   which payload key supplies each. `applySoListMrpEnrichment` below writes
+   EXACTLY these row keys and `soListEnrichment.test.ts` pins that — so a future
+   dev who adds a new MRP-derived field to the list projection
+   (`backend/src/scm/routes/mfg-sales-orders.ts`) without routing it through this
+   overlay, or vice-versa, fails CI with the drifting key named. Its backend twin
+   is `SO_LIST_MRP_ENRICHMENT_KEYS` (`backend/src/scm/lib/so-list-mrp-enrichment.ts`),
+   which pins the endpoint's returned shape to the same set. */
+export const MRP_DERIVED_LIST_FIELD_MAP = {
+  source_po_union: 'sourcePoReady',
+  source_po_adj: 'sourcePoAdj',
+  stock_remark: 'stockRemark',
+  is_main_ready: 'isMainReady',
+  planning_state: 'planningState',
+} as const satisfies Partial<Record<keyof EnrichableSoRow, keyof SoListMrpEnrichment>>;
+
+export type MrpDerivedListField = keyof typeof MRP_DERIVED_LIST_FIELD_MAP;
+
+/** The row-key set the overlay heals. Enforced exact by soListEnrichment.test.ts. */
+export const MRP_DERIVED_LIST_FIELDS = Object.keys(MRP_DERIVED_LIST_FIELD_MAP) as MrpDerivedListField[];
+
 /* The backend sorts a chip union with a numeric-aware locale compare
    (source-po-trace.ts). Re-sort the merged union the same way so the desktop
    cell's cap ("show 3, +N") picks the SAME first chips it did when the whole

@@ -54,6 +54,28 @@ export type SoListMrpEnrichment = {
   planningState: string;
 };
 
+/* C16 GUARD twin — see MRP_DERIVED_LIST_FIELD_MAP in
+   `frontend/src/lib/soListEnrichment.ts`. This is the payload-key set the
+   endpoint returns; `assembleSoListMrpEnrichment` populates EXACTLY these, and
+   `backend/tests/soListMrpEnrichment.test.ts` pins that. So the endpoint's shape
+   cannot gain or lose an MRP-derived field without the guard failing — which is
+   how a field that heals on desktop but stays stored-only on mobile (or the
+   reverse) is caught in CI instead of in production. Order matches the frontend
+   map's values. */
+export const SO_LIST_MRP_ENRICHMENT_KEYS = [
+  'sourcePoReady',
+  'sourcePoAdj',
+  'stockRemark',
+  'isMainReady',
+  'planningState',
+] as const satisfies readonly (keyof SoListMrpEnrichment)[];
+
+/* Exhaustive both ways at COMPILE time: a key added to SoListMrpEnrichment
+   without being listed above (or vice-versa) is a type error here. */
+type _KeysCoverPayload = keyof SoListMrpEnrichment extends (typeof SO_LIST_MRP_ENRICHMENT_KEYS)[number] ? true : never;
+const _keysCoverPayload: _KeysCoverPayload = true;
+void _keysCoverPayload;
+
 /** One SO line, exactly the columns readiness + the chip union read. */
 export type EnrichmentItem = {
   id: string;

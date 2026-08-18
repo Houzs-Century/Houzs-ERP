@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applySoListMrpEnrichment, type SoListMrpEnrichment } from "./soListEnrichment";
+import { applySoListMrpEnrichment, MRP_DERIVED_LIST_FIELDS, MRP_DERIVED_LIST_FIELD_MAP, type SoListMrpEnrichment } from "./soListEnrichment";
 import { poCellChips } from "./soPoChips";
 
 /* The SO list paints with the SHIPPED chips + stored-status placeholders the
@@ -64,5 +64,56 @@ describe("applySoListMrpEnrichment", () => {
       stockRemark: "", isMainReady: false, planningState: "PENDING_DELIVERY",
     });
     expect(out.source_po_adj).toBe(true);
+  });
+});
+
+/* C16 guard (Hookka rule: pin the projection's whole key set in a test, in the
+   same commit as the split). Ties the enrichment overlay to the single named
+   field set so a new MRP-derived list field that heals on one surface but is
+   never routed through the overlay (or the reverse) fails CI. */
+describe("applySoListMrpEnrichment — C16 field-set parity", () => {
+  it("heals EXACTLY MRP_DERIVED_LIST_FIELDS — no more, no less", () => {
+    const before = {
+      doc_no: "SO-1",
+      source_po_union: ["X"],
+      source_po_adj: false,
+      stock_remark: "",
+      is_main_ready: false,
+      planning_state: "PENDING_DELIVERY",
+      // Non-MRP fields on a real row that the overlay must NOT touch:
+      debtor_name: "keep me",
+      local_total_centi: 4200,
+    };
+    const e: SoListMrpEnrichment = {
+      sourcePoReady: ["Y"],
+      sourcePoAdj: true,
+      stockRemark: "READY",
+      isMainReady: true,
+      planningState: "PENDING_SCHEDULE",
+    };
+    const after = applySoListMrpEnrichment(before, e) as Record<string, unknown>;
+    const src = before as Record<string, unknown>;
+    const changed = Object.keys(after).filter((k) => after[k] !== src[k]);
+
+    // The drift guard: this set must equal the single source of truth. Adding a
+    // field to the list projection's MRP-derived set without teaching the
+    // overlay (or vice-versa) makes these two sets disagree and fails here.
+    expect(new Set(changed)).toEqual(new Set<string>(MRP_DERIVED_LIST_FIELDS));
+    // Non-MRP fields survive verbatim.
+    expect(after.debtor_name).toBe("keep me");
+    expect(after.local_total_centi).toBe(4200);
+  });
+
+  it("the enrichment payload shape maps 1:1 onto the field set", () => {
+    const sample: SoListMrpEnrichment = {
+      sourcePoReady: [],
+      sourcePoAdj: false,
+      stockRemark: "",
+      isMainReady: false,
+      planningState: "",
+    };
+    // Every payload key supplies exactly one row field, and vice-versa.
+    expect(new Set(Object.keys(sample))).toEqual(new Set(Object.values(MRP_DERIVED_LIST_FIELD_MAP)));
+    expect(new Set(Object.keys(MRP_DERIVED_LIST_FIELD_MAP))).toEqual(new Set<string>(MRP_DERIVED_LIST_FIELDS));
   });
 });

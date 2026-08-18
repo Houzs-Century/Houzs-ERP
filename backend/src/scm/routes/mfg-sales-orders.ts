@@ -1708,7 +1708,14 @@ mfgSalesOrders.get('/', async (c) => {
          union of per-line source chips the drill shows). */
       (r as Record<string, unknown>).converted_po_nos = convertedPoByDoc.get(docNo) ?? [];
       /* Union of per-line source-PO chips (shipped ∪ READY projection) — the
-         drill's exact visible set, rolled up per SO. */
+         drill's exact visible set, rolled up per SO.
+         C16 CONTRACT: source_po_union / source_po_adj / stock_remark /
+         is_main_ready / planning_state are the MRP-DERIVED fields emitted here
+         as stored-status placeholders and HEALED by GET /list-mrp-enrichment. If
+         you add another field whose value depends on the MRP allocation, add it
+         to the enrichment path too — MRP_DERIVED_LIST_FIELD_MAP
+         (frontend/src/lib/soListEnrichment.ts) + SO_LIST_MRP_ENRICHMENT_KEYS
+         (scm/lib/so-list-mrp-enrichment.ts); the parity tests fail otherwise. */
       (r as Record<string, unknown>).source_po_union = sourceUnionByDoc.get(docNo)?.pos ?? [];
       (r as Record<string, unknown>).source_po_adj = sourceUnionByDoc.get(docNo)?.adj ?? false;
       (r as Record<string, unknown>).has_children = downstreamDocNos.has(docNo);
