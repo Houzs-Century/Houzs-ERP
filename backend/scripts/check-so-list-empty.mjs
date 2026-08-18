@@ -198,7 +198,6 @@ try {
   //    every REST call is a GET.
   const REST = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
   const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  notice("DIAG env: SUPABASE_URL len=" + (process.env.SUPABASE_URL||"").length + " SERVICE_KEY len=" + (process.env.SUPABASE_SERVICE_ROLE_KEY||"").length + " DATABASE_URL len=" + (process.env.DATABASE_URL||"").length + "; matchKeys=" + (Object.keys(process.env).filter((k)=>/SUPA|POSTGREST|REST_/i.test(k)).join(",")||"(none)"));
   if (!REST || !KEY) {
     notice("PostgREST layer: NOT TESTED (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY absent from this run).");
   } else {
@@ -245,6 +244,43 @@ try {
   notice("---- PostgREST DDL-watch event triggers (auto-reload on DDL) ----");
   if (evt.length === 0) notice("NONE — no pgrst DDL-watch event trigger exists, so a DROP/CREATE VIEW does NOT auto-reload PostgREST's cache. This is why the outage did not self-heal.");
   else for (const e of evt) notice(`${e.evtname} on ${e.evtevent} -> ${e.fn} [${e.state}]`);
+
+
+  // 11) THE CONTRADICTION-RESOLVER. The DDL-watch triggers above are ENABLED, so
+  //     0305's DROP/CREATE VIEW should have fired NOTIFY pgrst 'reload schema'
+  //     and PostgREST should have re-read the schema. Yet the app still 500s. A
+  //     schema reload updates PostgREST's MODEL but does NOT recycle its pooled
+  //     DB connections — and those connections cache prepared-statement PLANS
+  //     compiled against the pre-0305 view. So the question that separates the
+  //     two mechanisms: are PostgREST's connections OLDER than the 0305 apply?
+  const applied = await pg`
+    SELECT filename, applied_at FROM _pg_migrations
+     WHERE filename LIKE '0305%' OR filename LIKE '0306%' ORDER BY filename`;
+  notice("---- when the money-rename batch applied (prod tracker) ----");
+  for (const a of applied) notice(`${a.filename}: applied_at=${a.applied_at?.toISOString?.() ?? a.applied_at}`);
+  const [{ now: dbnow }] = await pg`SELECT now() AS now`;
+  notice(`DB now: ${dbnow?.toISOString?.() ?? dbnow}`);
+
+  // PostgREST connects as 'authenticator' and SET ROLE per request. Its pooled
+  // connections' backend_start tells us if they predate the view recreate.
+  const act = await pg`
+    SELECT COALESCE(application_name, '(none)') AS app,
+           usename, state,
+           count(*)::int AS conns,
+           min(backend_start) AS oldest_backend_start,
+           max(state_change) AS latest_state_change
+      FROM pg_stat_activity
+     WHERE usename IN ('authenticator', 'postgres', 'supabase_admin', 'service_role')
+        OR application_name ILIKE '%postgrest%'
+     GROUP BY application_name, usename, state
+     ORDER BY conns DESC
+     LIMIT 20`;
+  notice("---- live DB connections (PostgREST connects as 'authenticator') ----");
+  for (const r of act) {
+    const ob = r.oldest_backend_start?.toISOString?.() ?? r.oldest_backend_start;
+    notice(`app=${r.app} user=${r.usename} state=${r.state} conns=${r.conns} oldest_backend_start=${ob}`);
+  }
+  notice("If authenticator connections started BEFORE the 0305 applied_at, they hold prepared plans compiled against the pre-rename view — a schema reload does NOT clear those; recycling the connections (or PostgREST restart) does.");
 
 } finally {
   await pg.end({ timeout: 5 });
