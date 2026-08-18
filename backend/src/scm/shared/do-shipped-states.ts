@@ -101,6 +101,39 @@ export const DO_STATUSES = [
 /** Pre-ship: no stock has left our hands yet. */
 export const DO_PRESHIP_STATES = ['DRAFT', 'LOADED'] as const;
 
+/* ----------------------------------------------------------------------------
+ * WHICH DELIVERIES MAY BE INVOICED — the owner's ruling, 2026-08-18:
+ *   "DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED — 这些 status 都可以转 SI"
+ *
+ * A SEPARATE declaration from DO_SHIPPED_STATES on purpose, because the two
+ * answer different questions and only one of them is about money-in:
+ *   DO_SHIPPED_STATES     — has the stock left our hands? (drives DO_STOCK_OUT_STATES,
+ *                           which reconcile-ledger.ts and the money audits read)
+ *   SI_TRANSFERABLE_DO_STATES — may a Sales Invoice be raised from it?
+ *
+ * The difference is INVOICED, and folding it in would have been the expensive
+ * kind of tidy: DO_STOCK_OUT_STATES is `[...DO_SHIPPED_STATES]`, so dropping
+ * INVOICED from the shipped set would tell the ledger that an INVOICED delivery's
+ * stock never left. INVOICED is a legal scm.do_status enum label, so a row can
+ * carry it even though routes/unbilled-deliveries.ts:13 measured that NOTHING in
+ * this codebase writes it.
+ *
+ * This is the system's ONLY definition of invoice-transferable. It replaced a
+ * hand-typed ['signed','delivered'] that was the narrowest of three live
+ * spellings, and — the part worth remembering — that narrowness was a
+ * MULTI-ORGANISATION defect, not a status one. The predicate carries no company
+ * term and never did; it fired on one organisation because of DATA. 2990's source
+ * system has no "delivered" step, so its imported deliveries sit at DISPATCHED,
+ * while the HOUZS AutoCount carry-overs came in as literal 'DELIVERED'. One
+ * build, one permission set, and 2990 was told the transfer did not exist.
+ * See docs/modules/document-conversion.md.
+ * -------------------------------------------------------------------------- */
+export const SI_TRANSFERABLE_DO_STATES = [
+  'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED',
+] as const;
+
+export type SiTransferableDoState = (typeof SI_TRANSFERABLE_DO_STATES)[number];
+
 export type DoShippedState = (typeof DO_SHIPPED_STATES)[number];
 export type DoStockOutState = (typeof DO_STOCK_OUT_STATES)[number];
 export type DoStatus = (typeof DO_STATUSES)[number];

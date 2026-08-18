@@ -52,10 +52,30 @@ const stripComments = (s: string) =>
   s.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/[^\n]*$/gm, "");
 
 describe("the DO→Sales-Invoice transfer is offered from ONE declaration", () => {
-  test.each(DO_TRANSFER_SURFACES)("%s imports DO_SHIPPED_STATES", (rel) => {
+  /* WHAT CHANGED, AND WHY THE PIN MOVED WITH IT. This asserted a DIRECT
+     `import { DO_SHIPPED_STATES }` in each page. The pages now ask
+     vendor/scm/lib/do-next-step.ts instead — siTransferBlockReason(status)
+     returns null or the sentence to show — and that module imports
+     SI_TRANSFERABLE_DO_STATES from the same shared file. One more hop, the same
+     single declaration, and the page no longer holds the rule at all.
+
+     Pinning the direct import would now FAIL on the better architecture, which is
+     the failure this suite exists to prevent in the other direction: a guard that
+     pins the SHAPE of one correct answer rejects every other correct answer. What
+     must stay true is that the decision REACHES the page from the shared
+     declaration and is not re-typed there. */
+  test.each(DO_TRANSFER_SURFACES)("%s takes the decision from do-next-step", (rel) => {
     const src = read(rel);
-    expect(src, `${rel} no longer imports the shared declaration`)
-      .toMatch(/import\s*\{[^}]*DO_SHIPPED_STATES[^}]*\}\s*from\s*['"][^'"]*do-shipped-states['"]/);
+    expect(src, `${rel} no longer routes the SI transfer through do-next-step`)
+      .toMatch(/import\s*\{[^}]*siTransferBlockReason[^}]*\}\s*from\s*['"][^'"]*do-next-step['"]/);
+  });
+
+  test("do-next-step takes it from the shared declaration, so the chain ends there", () => {
+    const src = read("frontend/src/vendor/scm/lib/do-next-step.ts");
+    expect(src, "do-next-step.ts no longer imports the shared declaration")
+      .toMatch(/import\s*\{[^}]*SI_TRANSFERABLE_DO_STATES[^}]*\}\s*from\s*['"][^'"]*do-shipped-states['"]/);
+    expect(stripComments(src), "do-next-step.ts re-typed the status list")
+      .not.toMatch(/["']signed["']\s*,\s*["']delivered["']/i);
   });
 
   test.each(DO_TRANSFER_SURFACES)("%s does not re-type the status list", (rel) => {
@@ -85,14 +105,21 @@ describe("the DO→Sales-Invoice transfer is offered from ONE declaration", () =
   /* The list drawer's two buttons must not be mutually exclusive again. The bug
      was an if/else-IF chain: a DISPATCHED delivery matched "Mark signed" and
      RETURNED, so the transfer was never rendered — not disabled, absent. */
-  test("the list drawer renders Mark signed and the transfer independently", () => {
-    const code = stripComments(read("frontend/src/pages/scm-v2/MfgDeliveryOrdersListV2.tsx"));
-    expect(code, "the drawer computes `shipped` from the shared declaration")
-      .toMatch(/const\s+shipped\s*=\s*\(?\s*DO_SHIPPED_STATES/);
-    // Both buttons live under one `shipped || preSigned` arm, each with its own
-    // guard, so neither can swallow the other's slot.
-    expect(code).toMatch(/\{preSigned\s*&&/);
-    expect(code).toMatch(/\{shipped\s*&&/);
+  /* The list drawer used to compute `shipped` itself from the shared constant.
+     It no longer computes anything: main's two-fixed-slots rewrite moved BOTH
+     questions into do-next-step.ts (doAdvanceStep for the status advance,
+     siTransferBlockReason for the transfer) and the drawer renders what they
+     return. The property this test protects is unchanged and is what the owner
+     actually saw go wrong — the two buttons must be INDEPENDENT, never an
+     if/else-if where a DISPATCHED row matches "Mark signed" and returns so the
+     transfer is never rendered at all. */
+  test("the list drawer asks do-next-step for both answers, independently", () => {
+    const src = read("frontend/src/pages/scm-v2/MfgDeliveryOrdersListV2.tsx");
+    expect(src, "the drawer no longer imports both decisions")
+      .toMatch(/import\s*\{[^}]*doAdvanceStep[^}]*siTransferBlockReason[^}]*\}|import\s*\{[^}]*siTransferBlockReason[^}]*doAdvanceStep[^}]*\}/s);
+    const code = stripComments(src);
+    expect(code, "the two buttons are back in an if/else-if chain")
+      .not.toMatch(/if\s*\([^)]*signed[^)]*\)[\s\S]{0,400}?else\s+if\s*\([^)]*(invoice|transfer)/i);
   });
 });
 

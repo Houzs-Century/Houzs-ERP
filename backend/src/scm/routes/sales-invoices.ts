@@ -38,6 +38,7 @@ import type { Context } from 'hono';
 import { z } from 'zod';
 import { normalizePhone, buildVariantSummary, isServiceLine, fmtRM, computeVariantKey } from '../shared';
 import { PAYMENT_METHOD_CODES } from '../shared/payment-methods';
+import { SI_TRANSFERABLE_DO_STATES } from '../shared/do-shipped-states';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
@@ -65,6 +66,44 @@ import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-
 import { enqueueConvert, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { recordSiAutoCountSource } from '../lib/si-autocount-source';
 import { refuseMigratedSources } from '../lib/migrated-chain';
+
+/* THE SERVER'S ANSWER TO "MAY THIS DELIVERY BE INVOICED", AND UNTIL 2026-08-18
+   THERE WAS NONE. The rule lived only in clients, so it had been re-derived four
+   times and the four disagreed:
+     · here — refused only CANCELLED, so the API and the mobile shell would
+       invoice anything else;
+     · resolveCandidateDoIds (do-line-remaining.ts) — everything except CANCELLED
+       and DRAFT;
+     · the desktop footer — a hand-typed ['signed','delivered'];
+     · the same page's line edit-lock — the five shipped states.
+   A restriction only one client enforces is not a restriction: the desktop
+   greyed the button out while the same transfer went through from a phone.
+
+   That narrowest spelling was also a MULTI-ORGANISATION defect rather than a
+   status one. It carries no company term and never did; it bit one organisation
+   because of DATA — 2990's source system has no "delivered" step, so its
+   deliveries sit at DISPATCHED, while HOUZS's AutoCount carry-overs arrived as
+   literal 'DELIVERED'. One build, one permission set, and 2990 was told the
+   transfer did not exist.
+
+   The owner's ruling (2026-08-18): DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED.
+   SI_TRANSFERABLE_DO_STATES is that rule's one home; this function is where it
+   is ENFORCED, and clients render the reason rather than deciding it. */
+function siTransferRefusal(status: string | null | undefined): { error: string; reason: string } | null {
+  const s = String(status ?? '').trim().toUpperCase();
+  if ((SI_TRANSFERABLE_DO_STATES as readonly string[]).includes(s)) return null;
+  if (s === 'CANCELLED') {
+    return { error: 'do_cancelled', reason: 'This delivery order was cancelled, so it cannot be invoiced. Raise a new delivery order to deliver these goods again.' };
+  }
+  if (s === 'DRAFT' || s === 'LOADED') {
+    return { error: 'do_not_shipped', reason: 'This delivery order has not left yet — dispatch it before raising a Sales Invoice.' };
+  }
+  /* INVOICED lands here deliberately. routes/unbilled-deliveries.ts:13 measured
+     that nothing in this codebase ever writes it, so the label means "somebody
+     set it", not "this was billed" — the generic sentence states the gate, which
+     is true, rather than asserting a billing fact the flag cannot support. */
+  return { error: 'do_not_transferable', reason: `A Sales Invoice can only be raised from a delivery order that has shipped (${SI_TRANSFERABLE_DO_STATES.join(', ')}).` };
+}
 
 /* ERP -> AutoCount Sales Invoice edit. AutoCount calls it IV
    (AcSyncService.cs:443). See queueAcDoEdit for the shape. */
@@ -1254,6 +1293,8 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
   const firstDoId = sortedPicks[0]!.deliveryOrderId;
   const distinctDoNumbers = [...new Set(sortedPicks.map((l) => l.doNumber))].sort();
 
+
+
   const DO_HEADER =
     'id, do_number, company_id, so_doc_no, debtor_code, debtor_name, customer_delivery_date, ' +
     'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
@@ -1268,6 +1309,10 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
     .maybeSingle();
   if (hLoadErr) return c.json({ error: 'load_failed', reason: hLoadErr.message }, 500);
   if (!doHeaderRow) return c.json({ error: 'delivery_order_not_found' }, 404);
+  /* Same gate as the single-DO path below. Both entries exist, so a rule
+     enforced on one of them is a rule with a hole. */
+  const batchRefusal = siTransferRefusal((doHeaderRow as { status?: string }).status);
+  if (batchRefusal) return c.json(batchRefusal, 409);
   const head = doHeaderRow as unknown as Record<string, unknown>;
 
   const nowIso = new Date().toISOString();
@@ -1473,6 +1518,8 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
     return c.json({ error: 'invoice_issued', message: SI_ISSUED_LINE_MESSAGE }, 409);
   }
 
+
+
   /* SOURCE LOAD, SCOPED — the PARTIAL form of the same DO -> SI conversion as
      POST /from-dos: a second delivery folded into an existing invoice. doId is a
      URL param, so this read is where it enters; another company's DO resolves to
@@ -1482,7 +1529,8 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
   const { data: doHeader } = await scopeToCompany(sb.from('delivery_orders')
     .select('id, status, do_number, company_id').eq('id', doId), c).maybeSingle();
   if (!doHeader) return c.json({ error: 'delivery_order_not_found' }, 404);
-  if ((doHeader as { status: string }).status === 'CANCELLED') return c.json({ error: 'do_cancelled' }, 409);
+  const doRefusal = siTransferRefusal((doHeader as { status: string }).status);
+  if (doRefusal) return c.json(doRefusal, 409);
 
   /* Same refusal as /from-dos: a delivery carried over from AutoCount is
      invoiced by the migrated-invoice converter, never appended by hand. This

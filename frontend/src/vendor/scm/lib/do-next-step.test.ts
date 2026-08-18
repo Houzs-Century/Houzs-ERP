@@ -34,11 +34,16 @@ const PRE_SIGNATURE: string[] = ['LOADED', ...(DO_SHIPPED_STATES as string[]).fi
       future edit that returns null from both is a regression, not a tidy-up. */
 
 describe('siTransferBlockReason', () => {
-  it('allows exactly the signed and delivered statuses', () => {
+  it('allows exactly the four shipped statuses the owner ruled on', () => {
+    /* OWNER RULING 2026-08-18: "DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED —
+       这些 status 都可以转 SI". This test asserted ['signed','delivered'] until
+       then, which was the narrowest of three live spellings and — because 2990's
+       source system has no "delivered" step — silently told one whole
+       organisation the transfer did not exist. */
     for (const s of SI_TRANSFERABLE_DO_STATUSES) {
       expect(siTransferBlockReason(s)).toBeNull();
     }
-    expect(SI_TRANSFERABLE_DO_STATUSES).toEqual(['signed', 'delivered']);
+    expect(SI_TRANSFERABLE_DO_STATUSES).toEqual(['dispatched', 'in_transit', 'signed', 'delivered']);
   });
 
   it('is case- and whitespace-insensitive, because rows carry raw DB values', () => {
@@ -47,7 +52,7 @@ describe('siTransferBlockReason', () => {
   });
 
   it('gives every blocking status an actionable sentence', () => {
-    for (const s of DO_STATUSES.filter((x) => !['SIGNED', 'DELIVERED'].includes(x))) {
+    for (const s of DO_STATUSES.filter((x) => !['DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED'].includes(x))) {
       const r = siTransferBlockReason(s);
       expect(r, s).toBeTruthy();
       expect(r!.length, s).toBeGreaterThan(20);
@@ -55,9 +60,13 @@ describe('siTransferBlockReason', () => {
     }
   });
 
-  it('names the SIGN step from the pre-signature shipped states', () => {
-    for (const s of PRE_SIGNATURE) {
-      expect(siTransferBlockReason(s)).toMatch(/signed/i);
+  it('names the DISPATCH step from the states that have not shipped', () => {
+    /* Was "names the SIGN step from the pre-signature shipped states". Under the
+       owner's ruling the pre-signature SHIPPED states (DISPATCHED, IN_TRANSIT)
+       are transferable, so the only blockers left are the pre-SHIP ones, and the
+       action to name is dispatch, not signing. */
+    for (const s of ['DRAFT', 'LOADED']) {
+      expect(siTransferBlockReason(s), s).toMatch(/dispatch/i);
     }
   });
 

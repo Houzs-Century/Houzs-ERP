@@ -1,3 +1,4 @@
+import { SI_TRANSFERABLE_DO_STATES } from '../../shared/do-shipped-states';
 // ----------------------------------------------------------------------------
 // do-next-step — what a Delivery Order may do next, and why it may not yet, in
 // ONE place, as words an operator can act on.
@@ -78,7 +79,23 @@
 // ----------------------------------------------------------------------------
 
 /** Statuses a Sales Invoice can be raised from. */
-export const SI_TRANSFERABLE_DO_STATUSES = ['signed', 'delivered'] as const;
+/* THE FIVE SHIPPED STATES, NOT A HAND-TYPED PAIR. `['signed','delivered']` stood
+   here until 2026-08-18 and was the narrowest of three live spellings of "this
+   delivery has shipped"; the owner ruled on 2026-08-18 that DISPATCHED, IN_TRANSIT, SIGNED and
+   DELIVERED may all be invoiced, and SI_TRANSFERABLE_DO_STATES is that rule's
+   one home. The first transition into any of them writes the inventory OUT — by
+   then the goods have left. It is a SEPARATE constant from DO_SHIPPED_STATES on
+   purpose: that one drives DO_STOCK_OUT_STATES and the money audits, and folding
+   the two would tell the ledger an INVOICED delivery's stock never left.
+
+   It read as a status bug and is a MULTI-ORGANISATION one. The predicate carries
+   no company term and never did; it fired on one organisation because of DATA.
+   2990's source system has no "delivered" step, so its imported deliveries sit
+   at DISPATCHED, while the HOUZS AutoCount carry-overs were inserted as literal
+   'DELIVERED'. One build, one permission set — and 2990 was told the transfer
+   did not exist. */
+export const SI_TRANSFERABLE_DO_STATUSES =
+  SI_TRANSFERABLE_DO_STATES.map((s) => s.toLowerCase()) as readonly string[];
 
 /** Normalise a raw status off a row into the lower-case token used here. */
 function norm(status: string | null | undefined): string {
@@ -114,10 +131,10 @@ export function siTransferBlockReason(status: string | null | undefined): string
     return 'This delivery order was cancelled, so it cannot be invoiced. Raise a new delivery order to deliver these goods again.';
   }
   if (s === 'draft') {
-    return 'This delivery order is still a draft — confirm it, then mark it signed, before raising a Sales Invoice.';
+    return 'This delivery order is still a draft — confirm and dispatch it before raising a Sales Invoice.';
   }
-  if (s === 'loaded' || s === 'dispatched' || s === 'in_transit') {
-    return 'Mark this delivery order signed first — a Sales Invoice can only be raised once it is signed or delivered.';
+  if (s === 'loaded') {
+    return 'This delivery order has not left yet — dispatch it before raising a Sales Invoice.';
   }
   /* INVOICED deliberately falls through to the generic sentence rather than
      getting an "already invoiced" one. routes/unbilled-deliveries.ts:13 records

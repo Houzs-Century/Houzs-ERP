@@ -84,6 +84,7 @@ import { buildVariantSummary, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders } from "../../auth/salesAccess";
+import { DO_SHIPPED_STATES } from '../../vendor/shared/do-shipped-states';
 
 // ─── Header + item shapes (subset — full 40-field row lives in the list V2) ─
 
@@ -1372,7 +1373,7 @@ export function DeliveryOrderDetailV2() {
               <SourceRackCard
                 items={items}
                 doId={deliveryOrder.id}
-                locked={["dispatched", "in_transit", "signed", "delivered", "invoiced"].includes(rawStatus)}
+                locked={(DO_SHIPPED_STATES as readonly string[]).some((s) => s.toLowerCase() === rawStatus)}
                 notify={notify}
               />
 

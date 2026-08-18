@@ -116,7 +116,7 @@ function harness(tables: Record<string, Row[]>) {
 }
 
 const doHeader = (id: string, number: string): Row => ({
-  id, do_number: number, company_id: CO_A, status: 'SHIPPED',
+  id, do_number: number, company_id: CO_A, status: 'DISPATCHED',
   debtor_code: 'C1', debtor_name: 'Cust', currency: 'MYR', so_doc_no: null,
 });
 

@@ -196,8 +196,8 @@ describe('SI append-from-DO cannot see a cross-company source', () => {
     { id: 'si-b', invoice_number: '2990-SI-2608-001', company_id: CO_B, status: 'DRAFT' },
   ];
   const dos = (): Row[] => [
-    { id: 'do-a', do_number: 'HC-DO-2608-001', company_id: CO_A, status: 'SHIPPED' },
-    { id: 'do-b', do_number: '2990-DO-2608-001', company_id: CO_B, status: 'SHIPPED' },
+    { id: 'do-a', do_number: 'HC-DO-2608-001', company_id: CO_A, status: 'DISPATCHED' },
+    { id: 'do-b', do_number: '2990-DO-2608-001', company_id: CO_B, status: 'DISPATCHED' },
   ];
 
   test("B's delivery order is not visible to A's invoice", async () => {
@@ -258,8 +258,8 @@ describe('SI append-from-DO cannot see a cross-company source', () => {
    The money hop: this mints the invoice, posts the revenue and the AR. */
 describe('SI convert-from-DO-lines cannot see a cross-company source', () => {
   const dos = (): Row[] => [
-    { id: 'do-a', do_number: 'HC-DO-2608-001', company_id: CO_A, status: 'SHIPPED', debtor_code: 'C1', debtor_name: 'Cust', currency: 'MYR' },
-    { id: 'do-b', do_number: '2990-DO-2608-001', company_id: CO_B, status: 'SHIPPED', debtor_code: 'C9', debtor_name: 'Other', currency: 'MYR' },
+    { id: 'do-a', do_number: 'HC-DO-2608-001', company_id: CO_A, status: 'DISPATCHED', debtor_code: 'C1', debtor_name: 'Cust', currency: 'MYR' },
+    { id: 'do-b', do_number: '2990-DO-2608-001', company_id: CO_B, status: 'DISPATCHED', debtor_code: 'C9', debtor_name: 'Other', currency: 'MYR' },
   ];
   const doItems = (): Row[] => [
     { id: 'doi-a', delivery_order_id: 'do-a', company_id: CO_A, item_code: 'M1', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_centi: 100, unit_cost_centi: 50, discount_centi: 0, variants: null, line_no: 0 },
@@ -421,8 +421,8 @@ describe('DO convert-from-SO-lines INHERITS the source company (shared Delivery 
    source moves the other company's inventory under this company's document. */
 describe('DR convert-from-DO-lines cannot see a cross-company source', () => {
   const dos = (): Row[] => [
-    { id: 'do-a', do_number: 'HC-DO-2608-001', company_id: CO_A, status: 'SHIPPED', debtor_code: 'C1', debtor_name: 'Cust', currency: 'MYR' },
-    { id: 'do-b', do_number: '2990-DO-2608-001', company_id: CO_B, status: 'SHIPPED', debtor_code: 'C9', debtor_name: 'Other', currency: 'MYR' },
+    { id: 'do-a', do_number: 'HC-DO-2608-001', company_id: CO_A, status: 'DISPATCHED', debtor_code: 'C1', debtor_name: 'Cust', currency: 'MYR' },
+    { id: 'do-b', do_number: '2990-DO-2608-001', company_id: CO_B, status: 'DISPATCHED', debtor_code: 'C9', debtor_name: 'Other', currency: 'MYR' },
   ];
   const doItems = (): Row[] => [
     { id: 'doi-a', delivery_order_id: 'do-a', company_id: CO_A, item_code: 'M1', item_group: null, description: null, description2: null, uom: 'UNIT', qty: 2, unit_price_centi: 100, unit_cost_centi: 50, discount_centi: 0, variants: null, line_no: 0 },
