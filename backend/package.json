@@ -51,6 +51,8 @@
     "audit:doc-refs": "node scripts/check-doc-refs.mjs --strict",
     "check:empty-state-claims": "node scripts/check-empty-state-claims.mjs",
     "audit:empty-state-claims": "node scripts/check-empty-state-claims.mjs --strict",
+    "check:company-divergence": "node scripts/check-company-divergence.mjs",
+    "audit:company-divergence": "node scripts/check-company-divergence.mjs --strict",
     "audit:date-format": "node scripts/check-date-formatting.mjs --strict",
     "check:company-scope": "node scripts/check-company-scope.mjs",
     "audit:company-scope": "node scripts/check-company-scope.mjs --strict",

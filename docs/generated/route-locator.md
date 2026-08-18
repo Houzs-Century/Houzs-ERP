@@ -1181,8 +1181,8 @@ Total: 1034 route registrations across 137 files.
 - L87  POST   /:token
 
 ## backend/src/scm/routes/autocount-outbox.ts  (2)
-- L515  GET    /
-- L596  POST   /:id/requeue
+- L549  GET    /
+- L630  POST   /:id/requeue
 
 ## backend/src/scm/routes/delivery-messages.ts  (2)
 - L53  POST   /send
@@ -1311,7 +1311,7 @@ Total: 1034 route registrations across 137 files.
 - L169  GET    /
 
 ## backend/src/scm/routes/warehouse-mirror.ts  (1)
-- L97  POST   /
+- L118  POST   /
 
 ## backend/src/scm/routes/write-freeze-status.ts  (1)
 - L61  GET    /

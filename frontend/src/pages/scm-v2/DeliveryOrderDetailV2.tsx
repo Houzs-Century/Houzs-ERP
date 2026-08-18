@@ -74,6 +74,7 @@ import {
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel } from "../../lib/convertScope";
+import { DO_SHIPPED_STATES } from "../../vendor/shared/do-shipped-states";
 import { buildVariantSummary, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
@@ -952,8 +953,35 @@ export function DeliveryOrderDetailV2() {
     rawStatus === "loaded" ||
     rawStatus === "dispatched" ||
     rawStatus === "in_transit";
-  const canConvertToSi =
-    rawStatus === "signed" || rawStatus === "delivered";
+  /* WHICH DELIVERIES MAY BE INVOICED — DO_SHIPPED_STATES, not a hand-typed pair.
+     Until 2026-08-18 this read `rawStatus === "signed" || rawStatus === "delivered"`,
+     which is a THIRD spelling of "this delivery has shipped" and the narrowest of
+     the three. The system has exactly one declaration of it, five states wide, and
+     everything else on this chain already used it or something wider:
+       · the server picker — do-line-remaining.ts resolveCandidateDoIds, which
+         admits every status except CANCELLED and DRAFT;
+       · the mobile convert wizard — MobileConvertWizard.tsx, same predicate;
+       · THIS FILE, sixteen lines below at the SoLinesTable `locked=` prop, which
+         spells the five states out to lock a shipped DO's lines from editing.
+     So one file simultaneously knew a DISPATCHED delivery had shipped (it locked
+     it) and refused to offer its transfer.
+
+     WHY IT LOOKED LIKE A PER-COMPANY BUG. The predicate is company-neutral and
+     stays company-neutral. It fired on one organisation only because of DATA:
+     2990's source system had no "delivered" step on delivery orders, so its
+     imported DOs sit at DISPATCHED, while the AutoCount carry-overs on the HOUZS
+     side were inserted with the literal 'DELIVERED'
+     (backend/scripts/create-migrated-documents.mjs). Same build, same permissions,
+     different status histogram — and the operator on the DISPATCHED side was told
+     the transfer did not exist. Widening the predicate to the declared set is the
+     fix; flipping the statuses in the database would only have hidden it, and
+     backfill-2990-delivered-dos.mjs already did that for some of them.
+
+     DISPATCHED is where the inventory OUT is written (see the module header), so
+     by the time a DO reaches any of these five the goods have left. */
+  const canConvertToSi = (DO_SHIPPED_STATES as readonly string[]).includes(
+    rawStatus.toUpperCase(),
+  );
   const isCancelled = rawStatus === "cancelled";
 
   const soNo = deliveryOrder.so_doc_no;
@@ -1317,7 +1345,11 @@ export function DeliveryOrderDetailV2() {
               <SourceRackCard
                 items={items}
                 doId={deliveryOrder.id}
-                locked={["dispatched", "in_transit", "signed", "delivered", "invoiced"].includes(rawStatus)}
+                /* Same set as canConvertToSi above, and now literally the same
+                   constant — this line was the fourth hand-typed copy of it and
+                   the one that proved the transfer gate was wrong, by locking a
+                   DISPATCHED delivery the transfer gate said had not shipped. */
+                locked={canConvertToSi}
                 notify={notify}
               />
 

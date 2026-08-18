@@ -49,12 +49,51 @@ export type LoanerLine = {
   qty: number;
 };
 
-/** The hidden Consignment (Out) warehouse id (migration 0152), or null when the
- *  warehouse hasn't been seeded. Callers skip the transfer when null. */
-export async function consignmentWarehouseId(sb: any): Promise<string | null> {
+/**
+ * The hidden Consignment (Out) warehouse id (migration 0152) FOR ONE COMPANY,
+ * or null when that company hasn't seeded one. Callers skip the transfer when
+ * null.
+ *
+ * `companyId` IS REQUIRED, for the same reason `defaultWarehouseId` took the
+ * same medicine on 2026-08-03 (lib/inventory-movements.ts, which spells the
+ * incident out): a warehouse lookup with no company predicate is a
+ * cross-company draw decided silently by whatever the database returns first.
+ *
+ * This one was worse than a draw, because it also had `.maybeSingle()` and no
+ * `error` binding. Three failure modes sat behind one `null`:
+ *   · GLOBAL SINGLETON — `scm.warehouses` is per-company (migration 0086), so
+ *     `is_consignment = true` can legitimately be true once PER COMPANY. The
+ *     unscoped read treated the whole table as if only one such warehouse could
+ *     exist anywhere;
+ *   · WRONG COMPANY'S WAREHOUSE — with exactly one seeded, every company
+ *     resolved to it, so one organisation's consignment stock would have moved
+ *     into another organisation's warehouse row;
+ *   · TWO ROWS = SILENT NULL — the moment a second company seeded its own,
+ *     PostgREST's `.maybeSingle()` errors on multiple rows, the discarded
+ *     `error` made that identical to "not seeded", and the documented caller
+ *     behaviour is to SKIP the stock transfer. So seeding a warehouse correctly
+ *     would have quietly disabled the loaner movement for BOTH companies.
+ *
+ * Ordered and limited rather than `.maybeSingle()`, so a company that somehow
+ * holds two consignment warehouses gets a deterministic answer instead of an
+ * error rendered as an absence.
+ *
+ * NOTE FOR WHOEVER WIRES THIS UP: this module currently has no importers —
+ * `transferLoaner` and `reverseLoaner` are exported and uncalled — so nothing in
+ * production reaches this today. That is exactly why the signature is being
+ * fixed now: the trap is cheaper to disarm before it has callers than after.
+ */
+export async function consignmentWarehouseId(
+  sb: any,
+  companyId: number | undefined,
+): Promise<string | null> {
+  if (companyId === undefined) return null;
   const { data } = await sb.from('warehouses')
     .select('id')
     .eq('is_consignment', true)
+    .eq('company_id', companyId)
+    .order('code', { ascending: true })
+    .limit(1)
     .maybeSingle();
   return (data as { id: string } | null)?.id ?? null;
 }

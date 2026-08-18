@@ -67,15 +67,36 @@ export const warehouseMirror = new Hono<{ Bindings: Env }>();
    staff there is no dangling-master column to force NULL.
 
    is_default IS forced false, and it is the one non-obvious rule here.
-   is_default is not descriptive data — it is a HOUZS OPERATIONAL FLAG read by
+
+   ⚠ ITS ORIGINAL JUSTIFICATION HAS EXPIRED — READ THIS BEFORE RELYING ON IT.
+   This block used to say: is_default "is a HOUZS OPERATIONAL FLAG read by
    defaultWarehouseId() (lib/inventory-movements.ts), which is COMPANY-BLIND:
-   `.eq('is_default', true).order('code').limit(1)`. It is the fallback warehouse
-   for GRN / DO / return / consignment posts that carry no warehouse of their own.
-   Mirroring 2990's is_default=true verbatim therefore enters 2990's warehouse
-   into the draw for HOUZS's inventory fallback, and `.order('code')` decides —
-   silently, on alphabetical order, with no error. 2990's "default" is a statement
-   about 2990's till, and it means nothing in Houzs's inventory. Forcing false is
-   what makes a mirrored row unable to say it.
+   `.eq('is_default', true).order('code').limit(1)`", so mirroring 2990's
+   is_default=true would enter 2990's warehouse into the draw for HOUZS's
+   inventory fallback, decided silently on alphabetical order.
+
+   That reader was FIXED on 2026-08-03. `defaultWarehouseId` now reads
+   `.eq('is_default', true).eq('company_id', companyId)` with companyId a
+   REQUIRED positional argument — its own header dates the change and explains
+   the incident. A company-2 default can no longer reach a company-1 fallback,
+   so the leak this force was written to stop is closed at the reader.
+
+   WHAT THE FORCE DOES NOW, which is a different thing: it makes it impossible
+   for company 2 to HAVE a default warehouse at all through this path. A 2990
+   admin can press the same promote button as a HOUZS admin
+   (routes/inventory.ts patchWarehouseHandler, correctly per-company), and the
+   next mirror delivery of that row clears it again — while HOUZS warehouses,
+   which never travel by mirror, keep theirs. `defaultWarehouseId` then returns
+   null for company 2 and every fallback that depends on it (GRN, DO, delivery
+   return, consignment) resolves nothing.
+
+   NOT CHANGED HERE, deliberately, and the reason is worth stating rather than
+   leaving as a silence: removing the force changes what a mirror WRITES into
+   production, and nothing in this repo currently measures `is_default` per
+   company (no read-only script selects that column), so the blast radius is
+   unmeasured. It also depends on whether 2990's own repo has its warehouse
+   outbox switched on, which is not readable from here. Measure first — the
+   query is one GROUP BY — then remove the force in its own change.
 
    NOTE: the batch importer did NOT force this (NULL_COLS has no warehouses
    entry), so any already-imported 2990 warehouse may be carrying is_default=true
