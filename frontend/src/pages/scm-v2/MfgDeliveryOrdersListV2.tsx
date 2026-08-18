@@ -26,7 +26,6 @@ import {
   Printer,
   CheckCircle2,
   Receipt,
-  RotateCcw,
   ArrowRightLeft,
 } from "lucide-react";
 import { PrintPreviewBatchModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
@@ -47,6 +46,12 @@ import { useLocalStorage } from "../../hooks/useLocalStorage";
 import { useVisibleRows } from "../../hooks/useVisibleRows";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
+import { NextStepNote } from "../../components/NextStepNote";
+import {
+  doAdvanceBlockReason,
+  doAdvanceStep,
+  siTransferBlockReason,
+} from "../../vendor/scm/lib/do-next-step";
 import { PullToRefresh } from "../../components/PullToRefresh";
 import { ListErrorPanel, SearchPendingPanel, SearchProgress } from "../../components/SearchProgress";
 import { SearchScopeHint } from "../../components/SearchScopeHint";
@@ -62,11 +67,9 @@ import {
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
-import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel, transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
-import { DO_SHIPPED_STATES } from "../../vendor/shared/do-shipped-states";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
@@ -382,9 +385,8 @@ function DetailDrawer({
   onOpenFull,
   onEdit,
   onPrint,
-  onMarkSigned,
+  onAdvance,
   onConvertToSi,
-  onReopen,
   salespersonName,
   canWrite,
 }: {
@@ -393,9 +395,9 @@ function DetailDrawer({
   onOpenFull: () => void;
   onEdit: () => void;
   onPrint: () => void;
-  onMarkSigned: () => void;
+  /** Advance THIS document one status step — see do-next-step.ts for the verb. */
+  onAdvance: () => void;
   onConvertToSi: () => void;
-  onReopen: () => void;
   canWrite: boolean;
   salespersonName: string;
 }) {
@@ -429,6 +431,14 @@ function DetailDrawer({
 
   const open = !!row;
   const st = row ? statusFor(row.status) : null;
+
+  /* Both status questions come from the SAME module the detail page and the
+     mobile shell import, so this drawer and the page it opens can no longer
+     answer them differently. See vendor/scm/lib/do-next-step.ts. */
+  const advanceStep = doAdvanceStep(row?.status);
+  const advanceReason = doAdvanceBlockReason(row?.status);
+  const siReason = siTransferBlockReason(row?.status);
+  const canConvertToSi = siReason === null;
 
   const totalCenti = row?.local_total_centi ?? 0;
 
@@ -588,7 +598,14 @@ function DetailDrawer({
               </div>
             </div>
 
-            <div className="flex shrink-0 items-center gap-2 border-t border-border bg-surface px-5 py-3">
+            <div className="shrink-0 border-t border-border bg-surface px-5 py-3">
+            {canWrite && (
+              <div className="mb-2 flex flex-col gap-0.5">
+                <NextStepNote id="do-drawer-advance-reason" reason={advanceReason} />
+                <NextStepNote id="do-drawer-si-reason" reason={siReason} />
+              </div>
+            )}
+            <div className="flex items-center gap-2">
               {canWrite && (
                 <Button variant="ghost" icon={<Edit3 size={14} />} onClick={onEdit}>
                   Edit
@@ -598,44 +615,40 @@ function DetailDrawer({
                 Print
               </Button>
               <div className="flex-1" />
-              {canWrite && (() => {
-                const s = (row.status || "").toLowerCase();
-                /* MARK SIGNED AND THE TRANSFER ARE NOT ALTERNATIVES. This was an
-                   if / else-if chain until 2026-08-18, so a DISPATCHED delivery
-                   matched the "Mark signed" arm and RETURNED — the transfer was
-                   not disabled here, it was never rendered, and its slot showed
-                   "Mark signed". The two answer different questions: one changes
-                   THIS document's status, the other produces the NEXT one.
-                   docs/modules/document-conversion.md has the rule and the
-                   reason a company-neutral predicate hit one organisation. */
-                const shipped = (DO_SHIPPED_STATES as readonly string[]).includes(s.toUpperCase());
-                const preSigned = ["loaded", "dispatched", "in_transit"].includes(s);
-                // Reopen a cancelled DO back to LOADED (2990 list parity).
-                if (s === "cancelled" || s === "cancel") {
-                  return (
-                    <Button variant="primary" icon={<RotateCcw size={14} />} onClick={onReopen}>
-                      Reopen
-                    </Button>
-                  );
-                }
-                if (shipped || preSigned) {
-                  return (
-                    <>
-                      {preSigned && (
-                        <Button variant="secondary" icon={<CheckCircle2 size={14} />} onClick={onMarkSigned}>
-                          Mark signed
-                        </Button>
-                      )}
-                      {shipped && (
-                        <Button variant="primary" icon={<Receipt size={14} />} onClick={onConvertToSi}>
-                          {transferToLabel('si')}
-                        </Button>
-                      )}
-                    </>
-                  );
-                }
-                return null;
-              })()}
+              {/* TWO FIXED SLOTS, NEVER ONE SLOT WITH THREE VERBS. This footer
+                  is the screen the owner was looking at on 2026-08-18: one green
+                  button said "Mark signed" on a dispatched row and "Transfer to
+                  Sales Invoice" on a signed one — same pixels, different action,
+                  status badge the only clue. Advance and transfer now each keep
+                  one meaning, disabled with a reason rather than swapped out.
+                  The third verb, "Reopen", is gone entirely: the server refuses
+                  every transition out of CANCELLED (`do_cancelled_final`), so it
+                  could not once have worked. Full account: do-next-step.ts. */}
+              {canWrite && (
+                <Button
+                  variant="secondary"
+                  icon={<CheckCircle2 size={14} />}
+                  onClick={onAdvance}
+                  disabled={!advanceStep}
+                  title={advanceReason ?? undefined}
+                  aria-describedby={advanceReason ? "do-drawer-advance-reason" : undefined}
+                >
+                  {advanceStep?.label ?? "Mark signed"}
+                </Button>
+              )}
+              {canWrite && (
+                <Button
+                  variant="primary"
+                  icon={<Receipt size={14} />}
+                  onClick={onConvertToSi}
+                  disabled={!canConvertToSi}
+                  title={siReason ?? undefined}
+                  aria-describedby={siReason ? "do-drawer-si-reason" : undefined}
+                >
+                  {transferToLabel('si')}
+                </Button>
+              )}
+            </div>
             </div>
           </>
         )}
@@ -798,7 +811,6 @@ export function MfgDeliveryOrdersListV2() {
   const { nameOf: salespersonNameOf } = useStaffLookup();
   const notify = useNotify();
   const askChoice = useChoice();
-  const askConfirm = useConfirm();
   // Active company (top-bar switcher) — the header subtitle reflects it so a
   // per-company list is never mislabelled as another company's (e.g. Houzs).
   const branding = useBranding();
@@ -963,35 +975,26 @@ export function MfgDeliveryOrdersListV2() {
   const goEdit = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}?edit=1`);
   const goPrint = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}?print=1`);
   const goFullPage = (r: DoRow) => navigate(`/scm/delivery-orders/${r.id}`);
-  const doMarkSigned = (r: DoRow) =>
+  /* One advance handler, target status supplied by do-next-step.ts — so this
+     drawer walks the same ladder as the detail page and the mobile shell. */
+  const doAdvance = (r: DoRow) => {
+    const step = doAdvanceStep(r.status);
+    if (!step) return;
     updateStatus.mutate(
-      { id: r.id, status: "DELIVERED" },
+      { id: r.id, status: step.status },
       { onSuccess: () => setSelected(null) }
     );
-  const doConvertToSi = (r: DoRow) => navigate(convertToLink('doToSi', r.id));
-  // Reopen a cancelled DO → LOADED (2990 MfgDeliveryOrdersList "Reopen DO"
-  // parity; reuses the status PATCH endpoint).
-  const doReopen = async (r: DoRow) => {
-    if (
-      !(await askConfirm({
-        title: `Reopen ${r.do_number} back to LOADED?`,
-        confirmLabel: "Reopen",
-      }))
-    )
-      return;
-    updateStatus.mutate(
-      { id: r.id, status: "LOADED" },
-      {
-        onSuccess: () => setSelected(null),
-        onError: (e) =>
-          notify({
-            title: "Reopen failed",
-            body: e instanceof Error ? e.message : "Something went wrong.",
-            tone: "error",
-          }),
-      }
-    );
   };
+  const doConvertToSi = (r: DoRow) => navigate(convertToLink('doToSi', r.id));
+  /* `doReopen` (cancelled DO → LOADED) was REMOVED, not disabled. It could
+     never succeed: PATCH /:id/status refuses every transition out of CANCELLED
+     with `do_cancelled_final` (delivery-orders-mfg.ts:5401), because
+     un-cancelling leaves the cancel's stock add-back standing while the
+     re-deduct no-ops — the DO's whole quantity is then permanently added to
+     stock. The drawer showed it as the green PRIMARY action on every cancelled
+     row. A control whose only possible outcome is a 409 is not a capability to
+     explain, so do-next-step.ts states the real next step instead: raise a new
+     delivery order. */
 
   // ─── Batch PDF export (ported from MfgDeliveryOrdersList) ─────────────────
   // One DO's full detail for the PDF generator. Reads via the vendored
@@ -1983,9 +1986,8 @@ export function MfgDeliveryOrdersListV2() {
         onOpenFull={() => selected && goFullPage(selected)}
         onEdit={() => selected && goEdit(selected)}
         onPrint={() => selected && goPrint(selected)}
-        onMarkSigned={() => selected && doMarkSigned(selected)}
+        onAdvance={() => selected && doAdvance(selected)}
         onConvertToSi={() => selected && doConvertToSi(selected)}
-        onReopen={() => selected && void doReopen(selected)}
         canWrite={canWriteDo}
         salespersonName={
           selected ? salespersonNameOf(null, selected.salesperson_id) : "—"

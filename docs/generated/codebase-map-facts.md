@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-126 route modules (40 in `backend/src/routes`, 86 in `backend/src/scm/routes`), 1012 endpoint registrations.
+126 route modules (40 in `backend/src/routes`, 86 in `backend/src/scm/routes`), 1011 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -63,7 +63,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
-| `backend/src/scm/routes/autocount-outbox.ts` | 2 | 632 |
+| `backend/src/scm/routes/autocount-outbox.ts` | 2 | 598 |
 | `backend/src/scm/routes/categories.ts` | 10 | 509 |
 | `backend/src/scm/routes/consignment-notes.ts` | 12 | 1162 |
 | `backend/src/scm/routes/consignment-orders.ts` | 19 | 2321 |
@@ -99,7 +99,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/lorry-service-records.ts` | 6 | 320 |
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1226 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4591 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4587 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11843 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1615 |
@@ -142,7 +142,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/trips.ts` | 14 | 1211 |
 | `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 412 |
 | `backend/src/scm/routes/venues.ts` | 4 | 283 |
-| `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 185 |
+| `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 164 |
 | `backend/src/scm/routes/warehouse.ts` | 8 | 571 |
 | `backend/src/scm/routes/write-freeze-status.ts` | 1 | 122 |
 
@@ -161,7 +161,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1458 files, 581092 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1462 files, 581453 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -175,7 +175,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/scm-v2/Products.tsx` | 5425 |
 | `backend/src/routes/projects.ts` | 5131 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4591 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4587 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4489 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
 | `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4199 |
@@ -373,7 +373,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileLogin.tsx` | 171 |
 | `frontend/src/mobile/MobileMailCenter.tsx` | 1246 |
 | `frontend/src/mobile/MobileMileageCapture.tsx` | 395 |
-| `frontend/src/mobile/MobileModuleDetail.tsx` | 1934 |
+| `frontend/src/mobile/MobileModuleDetail.tsx` | 1973 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3727 |
