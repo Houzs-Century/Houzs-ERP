@@ -63,6 +63,7 @@
 // ----------------------------------------------------------------------------
 
 import { paginateAll, chunkIn } from './paginate-all';
+import { SI_TRANSFERABLE_DO_STATES } from '../shared/do-shipped-states';
 
 export type DoRemainingLine = {
   doItemId: string;
@@ -388,7 +389,13 @@ export async function resolveCandidateDoIds(
     let q = sb
       .from('delivery_orders')
       .select('id, status')
-      .not('status', 'in', '("CANCELLED","DRAFT")');
+        /* OFFER EXACTLY WHAT THE SERVER WILL ACCEPT. This filtered on
+           NOT IN (CANCELLED, DRAFT), which let LOADED deliveries into the picker
+           — and since sales-invoices.ts started refusing those with
+           `do_not_shipped`, picking one produced a 409 instead of an invoice.
+           One declaration for "may be invoiced", used by the gate AND by the
+           thing that offers the choice. */
+        .in('status', SI_TRANSFERABLE_DO_STATES as unknown as string[]);
     if (companyId != null) q = q.eq('company_id', companyId);
     return q.order('do_date', { ascending: false }).range(from, to);
   });

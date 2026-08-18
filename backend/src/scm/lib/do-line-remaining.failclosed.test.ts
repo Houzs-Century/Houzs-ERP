@@ -76,7 +76,7 @@ function fakeSb(tables: Record<string, Row[]>, failing: string[] = []) {
    something, so a fixture with an empty return side would EXERCISE only four of
    the six reads while appearing to cover all six. */
 const FULLY_CONSUMED = (): Record<string, Row[]> => ({
-  delivery_orders: [{ id: 'do-1', company_id: 1, do_number: 'DO-1', status: 'SHIPPED', debtor_code: 'C1', debtor_name: 'Cust' }],
+  delivery_orders: [{ id: 'do-1', company_id: 1, do_number: 'DO-1', status: 'DISPATCHED', debtor_code: 'C1', debtor_name: 'Cust' }],
   delivery_order_items: [{ id: 'dl-1', delivery_order_id: 'do-1', item_code: 'ITEM-1', qty: 10 }],
   sales_invoices: [{ id: 'si-1', status: 'SENT' }],
   sales_invoice_items: [{ do_item_id: 'dl-1', sales_invoice_id: 'si-1', qty: 7 }],
@@ -181,7 +181,7 @@ describe('resolveCandidateDoIds fails CLOSED — an empty picker is a completion
    fixing it here fixes all of them. */
 describe('doPendingItemCodesOf — the shadow guard cannot be switched off by a blip', () => {
   const PARTLY_INVOICED = (): Record<string, Row[]> => ({
-    delivery_orders: [{ id: 'do-1', company_id: 1, do_number: 'DO-1', status: 'SHIPPED', debtor_code: 'C1', debtor_name: 'Cust' }],
+    delivery_orders: [{ id: 'do-1', company_id: 1, do_number: 'DO-1', status: 'DISPATCHED', debtor_code: 'C1', debtor_name: 'Cust' }],
     delivery_order_items: [{ id: 'dl-1', delivery_order_id: 'do-1', item_code: 'ITEM-1', qty: 10 }],
     sales_invoices: [{ id: 'si-1', status: 'SENT' }],
     sales_invoice_items: [{ do_item_id: 'dl-1', sales_invoice_id: 'si-1', qty: 4 }],

@@ -10,6 +10,7 @@ import { SearchScopeHint } from "../components/SearchScopeHint";
 import { transferToLabel, transferFromLabel } from "../lib/convertScope";
 import { outstandingEmptyReason, type OutstandingScope } from "../lib/outstandingEmptyReason";
 import "./mobile.css";
+import { SI_TRANSFERABLE_DO_STATES } from '../vendor/shared/do-shipped-states';
 
 /* ---------------------------------------------------------------------------
  * MobileConvertWizard — mobile CREATE-by-CONVERT flow for the four downstream
@@ -258,10 +259,13 @@ export function MobileConvertWizard({
   // received / cancelled POs (only open / partially_received can be received).
   const sources = useMemo(() => {
     const data = sourceQuery.data as any;
-    const isProcessible = (status: string | null) => {
-      const s = str(status).toUpperCase();
-      return s !== "DRAFT" && s !== "CANCELLED";
-    };
+    /* ONE DECLARATION, NOT A THIRD OPINION. This was `!== DRAFT && !== CANCELLED`,
+       which is wider than what the server accepts: sales-invoices.ts refuses a
+       LOADED delivery with `do_not_shipped`, so the phone offered a document the
+       server would reject. The desktop, the server gate and the server's own
+       picker all read SI_TRANSFERABLE_DO_STATES; this now does too. */
+    const isProcessible = (status: string | null) =>
+      (SI_TRANSFERABLE_DO_STATES as readonly string[]).includes(str(status).toUpperCase());
     const isReceivablePo = (status: string | null) => {
       const s = str(status).toUpperCase();
       return s !== "DRAFT" && s !== "CANCELLED" && s !== "RECEIVED" && s !== "CLOSED";
