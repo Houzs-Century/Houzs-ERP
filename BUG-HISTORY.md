@@ -1,3 +1,91 @@
+## PUT /:id/crew overwrote another company's delivery-order driver and crew [high]
+
+**Symptom.** None at the keyboard. `PUT /delivery-orders-mfg/:id/crew` accepted a DO uuid from either company and wrote the crew assignment — and the DO header's driver/vehicle quick-fields — against whichever company that DO belonged to.
+
+**Root cause traced.** The handler loaded the DO with `.eq('id', id).maybeSingle()` and no company predicate; it read `doRow.company_id` into `doCompanyId` but only used it to stamp the crew row and the audit, never to compare against the active company. Both writes then carried no predicate: the header `update({driver_id, driver_name, vehicle}).eq('id', id)` and the `delivery_order_crew` upsert keyed on the cross-company `do_id`. The SCM client is the service-role client (mig 0061 enabled RLS with no policies, so RLS is bypassed), making the path id the entire tenant boundary. So a company-A staffer with a known company-B DO uuid overwrote B's driver/crew. The sibling `PATCH /:id` in the same file was already correct — this write path is the same door, left unlocked.
+
+**Fix.** `requireActiveCompanyId` (refuse 409 on unresolved) + `scopeToCompanyId` on the DO read, returning the shared `NOT_THIS_COMPANY` 404 on a miss, plus `scopeToCompanyId` on the header write itself (predicate on the write, not only the read). The crew upsert needs no extra predicate — a gated read proves `do_id` is in-company.
+
+**Ref.** 2026-08-18, branch `vocab-custref-mig`. Same class and same fix as the payment-voucher post leak above.
+
+## mintNextDpNo minted a colliding DP number on a registry READ FAILURE [high]
+
+Symptom: Under a Postgres/PostgREST read failure, the DP-number minter could hand out DP-YYMMDD-XX01 — a number already live — reissuing a delivery number to a second job (surfaces as two drivers holding the same job sheet). Latent: only triggers when a select fails, so it never showed in normal operation and the existing test was green.
+
+Root cause (traced, not guessed): backend/src/scm/lib/dp-no-mint.ts mintNextDpNo awaited `Promise.all([...])` into `[stops, orders]` inside a `try/catch` but never inspected `stops.error`/`orders.error`. supabase-js RESOLVES a failed select as `{data:null,error}` — it does not throw — so the catch was dead code for real failures. On error, stops.data/orders.data are null, collectDpNos(null) returns [], nextDpSeq([]) yields seq 01, and formatDpNo reissues the day's first number over whatever the unread table already held. The unit test at tests/dpNoMint.test.ts asserted the correct null behaviour but with a stub that THREW (throwOn), exercising the catch instead of the resolved-error path — a check that answered a different question, so the bug shipped green.
+
+Fix: Bind the error and refuse before computing — `if (stops.error || orders.error) return null;` — so an unread registry yields NO number rather than a low one. Both callers already handle null (dp-orders /schedule -> 503 dp_no_unavailable; delivery-planning -> stop inserted with dp_no NULL), so the change is behaviour-preserving except for the bug. Added tests/dpNoMint.test.ts case "THE REAL FAILURE SHAPE" using a stub that resolves `{data:null,error}` (new errorOn option), which is red before the fix and green after. plateForLorry has the same non-throwing gap but its failure direction is already safe (null plate -> 404, never a collision) and was left untouched. Ref: 2026-08-18.
+
+## getCustomerCreditBalance folded a failed money read to a 0 balance [low]
+
+Symptom: On a transient DB error (e.g. Hyperdrive cold-start), the SO Detail and New-SO "Customer has RM X credit available" figures silently showed 0, and the legacy credit-apply path treated the customer as having no balance — a money read reading as 0 with no error surfaced anywhere.
+
+Root cause (traced, not guessed): getCustomerCreditBalance in backend/src/scm/lib/customer-credits.ts destructured only `const { data } = await q` — the single read in the file that dropped `error`. supabase-js resolves a failed select to { data: null, error } without throwing, so `data ?? []` became [] and the function returned 0. Every other read in the same file binds `error` and refuses precisely because "a failed money read must not read as 0"; this one was missed. Confirmed by reading the current file (the drop at the sum, against ~15 sibling reads that all bind+refuse) and by tracing all three callers.
+
+Fix: Bind `error` and throw `getCustomerCreditBalance read failed: <msg>` on a real error. The function returns a bare number with no reason channel, so throwing is the equivalent of the siblings' `return { ..., reason }` refusal; the read sits before any write on every path, so throwing strands no partial state. Empty ledger (no history) is unaffected — it resolves error === null with data === [] and still sums to 0. Ref: fix/customer-credit-balance-silent-read, 2026-08-18.
+
+## checkStockAvailability advertised the OTHER company's warehouse as a stock "alternative" [med]
+
+- Symptom: On the DO ship / line-add / qty-up short-stock dialog (and the Purchase Return OUT short check), the cross-warehouse "ship from here instead" hint and its warehouse-name labels could name a 2990 warehouse to a HOUZS operator (and vice versa) in the merged Houzs/2990 database — a cross-company disclosure of another company's warehouse existence and on-hand qty.
+- Root cause (traced): `scm/lib/check-stock-availability.ts::checkStockAvailability` took no company id. Its warehouse-name lookup (`sb.from('warehouses').select('id, code, name')`) selected every warehouse across all companies, and its alternatives scan (`sb.from('inventory_balances')...neq('warehouse_id', warehouseId).in('product_code', shortCodes).gt('qty', 0)`) filtered only on product_code + qty>0 with no `company_id` predicate. The SCM client is service-role (RLS bypassed), so the predicate is the only tenant boundary. Both `warehouses` and the `inventory_balances` view carry `company_id` (proven: mrp.ts and mfg-purchase-orders.ts scope both by company). The two wrapper callers already had `companyId` in hand and the two direct DO call sites already computed `activeCompanyId(c)`; none forwarded it.
+- Fix: added a required `companyId: number | null | undefined` param to `checkStockAvailability` and applied `.eq('company_id', companyId)` to the warehouse-name lookup and the alternatives scan when the company resolves (degrades to no predicate when unresolved, preserving single-company Houzs). Forwarded the id from all four call sites (delivery-orders-mfg.ts x3, purchase-returns.ts x1). Target on-hand read left unscoped — it is already warehouse-bound, hence company-bound. Test added asserting the predicate reaches both queries and that an unresolved company degrades open.
+
+## Typographic inch marks split inventory variant_key buckets [sev: high — silent stock fragmentation]
+
+Symptom: A bedframe/sofa line whose gap/seat/leg/fabric value was typed or pasted with a curly inch mark (e.g. gap `12“` U+201C, common from phone keyboards and Word paste) was tracked in a SEPARATE on-hand bucket from the identical straight-quoted `12"` stock, so the same physical item never pooled — MRP/allocation saw two variants where there is one. Meanwhile the same line priced correctly, masking the split.
+
+Root cause (traced, not guessed): computeVariantKey's `norm` (backend/src/scm/shared/variant-key.ts:82) did only `String(v).trim().toLowerCase()` — no quote folding — so `12“` and `12"` produced different key parts. Pricing's findOption (scm/shared/mfg-pricing.ts:197-205) DOES fall back to normaliseTypographicQuotes, so the two subsystems disagreed. mfg-pricing.ts:183-186 had explicitly kept its normaliser quote-only "because this same string family also composes variant_key" — the anticipated key-side fold was never applied.
+
+Fix: import normaliseTypographicQuotes from ./mfg-pricing and apply it inside `norm` (fold after trim/lowercase — quote-only, so a no-op for every quote-free value). Applied identically to the vendored frontend copy frontend/src/vendor/shared/variant-key.ts so both surfaces key stock the same. Historical curly-keyed movements are not migrated (same stance as the existing POS seat/leg alias note). Added variantKeyQuoteFold.test.ts.
+
+## order.schema.ts paymentMethod enum used a credit/debit vocabulary that exists nowhere else [low]
+
+Symptom: `orderPostSchema` in backend/src/scm/shared/schemas/order.schema.ts validated `paymentMethod` against `['credit','debit','installment','transfer']` — a payment vocabulary contradicting the canonical set and containing two codes ('credit','debit') that appear in no other file. Self-contradicting; would reject every valid order method if the schema were ever wired to a route.
+
+Root cause (traced, not guessed): the canonical L1 method codes are `PAYMENT_METHOD_CODES = ['merchant','transfer','installment','cash']` (backend/src/scm/shared/payment-methods.ts:41/43), and that module's header states the route schemas must READ PAYMENT_METHOD_CODES, not re-type it. Four live route schemas already do `z.enum(PAYMENT_METHOD_CODES)` (consignment-notes.ts:999, consignment-orders.ts:2198, delivery-orders-mfg.ts:5268, mfg-sales-orders.ts). order.schema.ts was a leftover hand-written enum that was never converted and drifted to a credit/debit vocabulary. Confirmed dead: grep found no `POST /orders` route and zero imports of any order.schema export across backend/src and frontend/src, so the enum validated nothing at runtime — the defect was a latent self-contradiction, not an active bug.
+
+Fix: import `PAYMENT_METHOD_CODES` from '../payment-methods' and change the enum to `z.enum(PAYMENT_METHOD_CODES)`, matching the four route schemas. Behaviour-preserving (dead schema). Added a unit test pinning that the paymentMethod sub-schema accepts exactly PAYMENT_METHOD_CODES and rejects 'credit'/'debit'. Ref: 2026-08-18.
+
+## doMirror mirrored boolean-cancelled AutoCount DOs as live [medium]
+
+Symptom: A Houzs Delivery Order that AutoCount reported as Cancelled via a boolean `true` (rather than the string "T") was mirrored into `autocount_delivery_orders` with `cancelled = 0`, so the ASSR list's DO No column showed a cancelled DO as a live one.
+
+Root cause (traced, not guessed): `backend/src/services/doMirror.ts` line 99 hardcoded `o.Cancelled === "T" ? 1 : 0` inside `takeDoc`. AutoCount returns `Cancelled` as a real boolean on some endpoints and as the string "T"/"F" on others (documented at `acSnapshot.ts:44-45`). The canonical helper `isCancelled()` (`acSnapshot.ts:47`) normalizes every shape, and siblings `acSnapshot.ts:272` and `po.ts:311` already use it — doMirror was the lone endpoint doing a raw string compare, so any non-"T" truthy shape fell through to 0.
+
+Fix: import `isCancelled` from `./acSnapshot` and replace the string compare with `isCancelled(o.Cancelled) ? 1 : 0`, matching the two siblings. Behaviour is identical for "T"/"F"/absent; only the previously-mishandled boolean/`1`/"true"/"1" shapes change (now correctly cancelled). Ref: (this PR / 2026-08-18).
+
+## runPOPull/runPODocsPull reported inserted count as batch length despite ON CONFLICT DO NOTHING [low]
+
+Symptom: The AutoCount PO mirror sync reported (and logged) more rows inserted than were actually written — `Pulled X PO lines, inserted Y` showed Y == X even when the wipe-and-reload dropped duplicate lines, hiding that lines were silently discarded.
+
+Root cause traced: In backend/src/services/po.ts, both flush() closures INSERT a multi-row batch with `ON CONFLICT(doc_no, item_code) DO NOTHING` (runPOPull) / `ON CONFLICT(doc_no) DO NOTHING` (runPODocsPull), then did `inserted += rows.length`. After the preceding DELETE, the composite unique keeps only the first of duplicate rows and DO NOTHING drops the rest, so rows.length overcounts by the number dropped. The true count was already available: d1-compat run() appends RETURNING * and exposes it as meta.changes (RETURNING returns only inserted rows under DO NOTHING; real D1 returns native changes() with the same meaning).
+
+Fix: Capture the write result and use `inserted += res.meta.changes` in both flush() functions, so drops are no longer counted as inserts and the fetched-vs-inserted gap surfaces the drop. meta.changes is a non-optional number, so no nullish guard is added (keeps po.ts within its no-unnecessary-condition lint ceiling). Behaviour-preserving otherwise; the log/return count now reflects reality. (date 2026-08-18)
+
+## replaceItems / replacePayments took companyId as OPTIONAL — company-blind row writes possible [sev: high]
+
+Symptom: The sales_entries item/payment replace helpers accepted `companyId?: number`. Any caller that forgot the argument would DELETE-then-INSERT sales_entry_items / sales_entry_payments with company_id omitted — company-blind rows on tables whose only tenant boundary is the predicate (service-role client bypasses RLS). No compile error, no test, no runtime signal: the optional-param-noop class.
+
+Root cause traced: backend/src/services/salesEntries.ts declared `companyId?: number` on both replaceItems (line 51) and replacePayments (line 107). Per CLAUDE.md a scope-deciding argument must be `T | null` so the compiler enumerates call sites. Confirmed against current code and all 4 call sites (routes/sales.ts:900,901,1048,1052), each passing activeCompanyId(c) = number | undefined; backend tsconfig strict:true.
+
+Fix: Changed both signatures to `companyId: number | null` (required). Updated the 4 call sites to pass `companyId ?? null`. Behaviour-preserving — both functions already branch on `companyId != null`, so null and the prior undefined take the identical (omit-column) path. Added a source-scan test to keep the hole closed. Ref: (this PR / 2026-08-18).
+
+## reverseJournal numbered the contra in the original's month, not the void's [sev: medium — wrong voucher number, books still balance]
+
+Symptom: A sales invoice dated in an earlier month, voided in a later month, produced a reversal (contra) journal whose je_no carried the ORIGINAL month's YYMM (e.g. a Jan SI voided in Aug got `JE-2601-NNNN`) while the contra row's entry_date was the void date (2026-08). The voucher number and its own date disagreed, and the contra consumed/extended the wrong month's JE running sequence.
+
+Root cause (traced, not guessed): In `backend/src/acc/engine.ts`, `reverseJournal` minted `revJeNo = nextJeNo(sb, new Date(orig.entry_date), prefix)` — deriving the series month from the ORIGINAL entry — but inserted the contra with `entry_date: dateOrNull(input.entryDate) ?? todayMyt()` (today). `nextJeNo` (scm/lib/doc-no.ts) builds its entire series prefix from `padMmDd(date)`, so the passed date decides the YYMM. `postJournal` does it correctly: it computes the entry date once and passes the SAME value to both `nextJeNo` and `entry_date`. The reversal path simply failed to reuse its own contra date for numbering.
+
+Fix: Hoist the contra date to `const contraEntryDate = dateOrNull(input.entryDate) ?? todayMyt()` before the mint loop and use it for both `nextJeNo(sb, new Date(contraEntryDate), prefix)` and `entry_date: contraEntryDate` — mirroring postJournal. Numbering now lands in the same month the contra is dated. (Ref: this PR, 2026-08-18.)
+
+## backfillSoPayments paged the already-posted journal scan with no ORDER BY [low]
+
+Symptom: backfillSoPayments' first loop pages journal_entries (SOPAY) 1000 rows at a time with `.range()` and no `.order()`, breaking on a short page. Without a stable order, PostgREST/Postgres may return the same physical row on two pages or skip one between page requests, so `postedIds` could miss an already-booked payment id.
+
+Root cause traced: the already-posted scan (`.from('journal_entries').select('source_doc_no, reversed').eq('source_type','SOPAY').range(from, from+page-1)`) had no ORDER BY, while the candidate scan immediately below already ordered by `.order('paid_at').order('id')`. A skipped already-posted id is re-classified as a candidate and re-posted; the DB `acc_je_one_active_source` unique index plus the engine's fail-closed guard prevent an actual double-book, so no money is lost, but `scanned`/`remaining` are inflated and work is wasted — the paged scan itself is non-deterministic and non-resumable, contrary to its own comment.
+
+Fix: add `.order('id')` (the journal_entries PK, a unique stable key) before `.range()` on the already-posted scan, matching the candidate scan's stable-order pattern. Behaviour-preserving; only page boundaries are stabilised. Ref: PR TBD, 2026-08-18.
+
 ## Journal-entry number prefix was keyed on a hardcoded company id, so it could land under the wrong company in some environments [medium]
 
 <!-- area: Accounting + GL -->

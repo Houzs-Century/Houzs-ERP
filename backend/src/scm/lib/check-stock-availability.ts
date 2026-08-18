@@ -83,6 +83,7 @@ export async function checkStockAvailability(
   sb: any,
   warehouseId: string,
   lines: StockLineRequest[],
+  companyId: number | null | undefined,
 ): Promise<StockShortage[]> {
   // Aggregate requested per bucket. Drop zero-qty lines (not shipped).
   type Bucket = { product_code: string; variant_key: string; product_name: string | null; needed: number };
@@ -122,8 +123,16 @@ export async function checkStockAvailability(
   }
   if (shortBuckets.length === 0) return [];
 
-  // Pull warehouse names (target + alternatives) in one shot.
-  const { data: whRows } = await sb.from('warehouses').select('id, code, name');
+  // Pull warehouse names (target + alternatives) in one shot — SCOPED to the
+  // active company. In the merged Houzs/2990 DB an unscoped select advertises
+  // the OTHER company's warehouse to this operator; scoping the name lookup and
+  // the alternatives scan below to company_id closes that. Degrades to no
+  // predicate when the company is unresolved (single-company Houzs / cold-start),
+  // matching scopeToCompany's fail-open on a READ.
+  const scoped = Number.isInteger(companyId) && Number(companyId) > 0;
+  let whQuery = sb.from('warehouses').select('id, code, name');
+  if (scoped) whQuery = whQuery.eq('company_id', companyId);
+  const { data: whRows } = await whQuery;
   const whById = new Map(((whRows ?? []) as Array<{ id: string; code: string; name: string }>).map((w) => [w.id, w]));
   const targetWh = whById.get(warehouseId);
 
@@ -133,12 +142,14 @@ export async function checkStockAvailability(
   const shortCodes = [...new Set(shortBuckets.map((s) => s.b.product_code))];
   const altByBucket = new Map<string, WarehouseAlt[]>();
   if (shortCodes.length > 0) {
-    const { data: altRows } = await sb
+    let altQuery = sb
       .from('inventory_balances')
       .select('warehouse_id, product_code, variant_key, qty')
       .neq('warehouse_id', warehouseId)
       .in('product_code', shortCodes)
       .gt('qty', 0);
+    if (scoped) altQuery = altQuery.eq('company_id', companyId);
+    const { data: altRows } = await altQuery;
     for (const r of (altRows ?? []) as Array<{ warehouse_id: string; product_code: string; variant_key: string | null; qty: number }>) {
       const wh = whById.get(r.warehouse_id);
       const k = `${r.product_code}::${r.variant_key ?? ''}`;

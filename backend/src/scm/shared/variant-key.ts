@@ -23,6 +23,8 @@
 // from the unclassified bucket.
 // ----------------------------------------------------------------------------
 
+import { normaliseTypographicQuotes } from './mfg-pricing';
+
 export type InventoryItemGroup =
   | 'sofa'
   | 'bedframe'
@@ -79,7 +81,8 @@ const ATTRS_BY_GROUP: Record<string, Array<keyof VariantAttrs>> = {
   service: [],
 };
 
-const norm = (v: unknown): string => (v == null ? '' : String(v).trim().toLowerCase());
+const norm = (v: unknown): string =>
+  v == null ? '' : normaliseTypographicQuotes(String(v).trim().toLowerCase());
 
 /** Specials → a normalized, order-independent, comma-joined string. */
 const normSpecials = (specials: VariantAttrs['specials']): string => {
