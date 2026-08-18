@@ -601,11 +601,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     }
   }
 
-  /* 4. Delivery progress per SO (live remaining) — drives DELIVERED detection.
-        THE ONE STEP HERE THAT THROWS instead of returning an error: the
-        delivered-sum read fails loudly by design (lib/do-unlinked-coverage.ts).
-        Loud is right; ANONYMOUS is not — uncaught it reached the client as
-        index.ts's generic "Something went wrong", naming no stage at all. */
+  /* Loud is right; anonymous is not — uncaught, this reached the client as a bare
+   500 and cost a wrangler tail to identify. readFailure names the stage. */
   let deliveredByDoc: Map<string, number>;
   let remainingByDoc: Map<string, number>;
   try {
