@@ -137,6 +137,56 @@ try {
   notice("---- view rows under the app's predicates (company 1) ----");
   notice(`WHERE company_id=1                    -> ${co1}   (what a view-all caller should page)`);
   notice(`WHERE company_id=1 AND status='all'   -> ${co1StatusAll}   (the frontend's literal ?status=all)`);
+
+  // 8) THE PostgREST-LAYER TEST. The app reads the view via getSupabaseService
+  //    (@supabase/supabase-js -> hosted PostgREST, service_role). The counts
+  //    above are what the DATABASE_URL role (superuser-ish, bypasses RLS) sees
+  //    directly. What the app sees is what the PostgREST ROLE sees THROUGH the
+  //    view — which respects the view's own privileges/security_invoker and any
+  //    RLS on the base table. Reproduce that exactly with SET ROLE, so a raw-vs-
+  //    PostgREST discrepancy is OBSERVED, not inferred.
+  //
+  //    Also dump the view's owner + security_invoker + the base table's RLS
+  //    posture + the per-role SELECT grant, because those are the levers that
+  //    decide the answer and a DROP/CREATE VIEW (migration 0305) can change them.
+  const meta = await pg`
+    SELECT c.relname,
+           pg_get_userbyid(c.relowner) AS owner,
+           (SELECT option_value FROM pg_options_to_table(c.reloptions)
+             WHERE option_name = 'security_invoker') AS security_invoker,
+           has_table_privilege('service_role',  'scm.mfg_sales_orders_with_payment_totals', 'SELECT') AS svc_can_select,
+           has_table_privilege('authenticated', 'scm.mfg_sales_orders_with_payment_totals', 'SELECT') AS auth_can_select,
+           has_table_privilege('anon',          'scm.mfg_sales_orders_with_payment_totals', 'SELECT') AS anon_can_select
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'scm' AND c.relname = 'mfg_sales_orders_with_payment_totals'`;
+  const m = meta[0] ?? {};
+  notice("---- recreated view: ownership / security_invoker / SELECT grants ----");
+  notice(`owner=${m.owner} security_invoker=${m.security_invoker ?? '(unset -> definer)'} `
+    + `SELECT: service_role=${m.svc_can_select} authenticated=${m.auth_can_select} anon=${m.anon_can_select}`);
+
+  const base = await pg`
+    SELECT c.relrowsecurity AS rls_enabled, c.relforcerowsecurity AS rls_forced,
+           pg_get_userbyid(c.relowner) AS owner,
+           (SELECT count(*)::int FROM pg_policies p
+             WHERE p.schemaname = 'scm' AND p.tablename = 'mfg_sales_orders') AS policy_count
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE n.nspname = 'scm' AND c.relname = 'mfg_sales_orders'`;
+  const b = base[0] ?? {};
+  notice(`base mfg_sales_orders: owner=${b.owner} rls_enabled=${b.rls_enabled} rls_forced=${b.rls_forced} policies=${b.policy_count}`);
+
+  notice("---- count(*) FROM view WHERE company_id=1, AS EACH PostgREST role (this is what the app actually sees) ----");
+  for (const role of ["service_role", "authenticated", "anon"]) {
+    try {
+      // SET LOCAL-style: SET ROLE then RESET, no writes, no transaction needed.
+      await pg.unsafe(`SET ROLE ${role}`);
+      const rows = await pg`SELECT count(*)::int AS n FROM scm.mfg_sales_orders_with_payment_totals WHERE company_id = 1`;
+      notice(`AS ${role}: company_id=1 -> ${rows[0].n}`);
+    } catch (e) {
+      notice(`AS ${role}: ERROR -> ${e.code ?? ""} ${e.message}`);
+    } finally {
+      await pg.unsafe("RESET ROLE");
+    }
+  }
 } finally {
   await pg.end({ timeout: 5 });
 }
