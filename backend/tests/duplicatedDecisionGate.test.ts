@@ -20,6 +20,9 @@
         instead of the duplicate.
      5. THE ALLOWLIST CARRIES REASONS. An allowlist of bare keys is a mute
         button.
+     6. THE STEP IS STILL WIRED, in the REQUIRED job and with --strict. Two
+        sessions found `pretest`-orphaned checks here on one afternoon; a check
+        that cannot run reports nothing and reads as a pass.
 
    D3 is deliberately NOT proved from a temp directory: its config names real
    route files by path, so the honest proof is the one in the PR body — the
@@ -176,5 +179,19 @@ describe("the reviewed allowlist", () => {
     for (const f of ["duplicatedDecisionPins.test.ts", "passwordStrengthDrift.test.ts"]) {
       expect(fs.existsSync(path.join(ROOT, "backend", "tests", f)), `${f} is cited but missing`).toBe(true);
     }
+  });
+});
+
+describe("the gate is still wired", () => {
+  test("package.json runs the script with --strict", () => {
+    const pkg = JSON.parse(fs.readFileSync(path.join(ROOT, "backend", "package.json"), "utf8"));
+    expect(pkg.scripts["audit:duplicated-decisions"]).toContain("check-duplicated-decisions.mjs");
+    expect(pkg.scripts["audit:duplicated-decisions"]).toContain("--strict");
+  });
+
+  test("ci.yml runs it inside the REQUIRED backend-typecheck job", () => {
+    const ci = fs.readFileSync(path.join(ROOT, ".github", "workflows", "ci.yml"), "utf8");
+    const backendJob = ci.slice(ci.indexOf("backend-typecheck:"), ci.indexOf("backend-tests:"));
+    expect(backendJob).toContain("npm run audit:duplicated-decisions");
   });
 });

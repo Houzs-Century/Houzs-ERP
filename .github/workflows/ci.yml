@@ -189,6 +189,35 @@ jobs:
       # and a NEW one fails until somebody decides about it. Stale entries print
       # and never fail — a gate that punishes the fix is a gate that stops fixes.
       - run: npm run audit:empty-state-claims
+      # The EIGHTH, and the one the owner asked for by name (2026-08-18): "同一条
+      # 规则两个家 … 然后系统也是要查看这些类型的问题". A business rule with more
+      # than one home. Not duplicated CODE — duplicated DECISIONS: two places
+      # independently answering the same business question, which then drift,
+      # and the failure is always a rule enforced at N-1 of N places where the
+      # missing one is invisible because nothing errors.
+      #
+      # Three detectors. D1 fingerprints every string-literal array and every
+      # named enum-keyed map and reports a fingerprint carried by two or more
+      # FILES — the class check-shared-mirrors declares itself blind to at its
+      # own lines 32-35 (a rule re-implemented under a different filename). D2
+      # compares those fingerprints pairwise and reports near misses (Jaccard
+      # >= 0.75, not identical), which is what sees N-1 of N: it fires today on
+      # the three live spellings of "which SO statuses are done" — FOUR, FIVE
+      # and SIX, two of them same-named constants with different contents inside
+      # routes/inventory.ts. D3 asserts a configured guard symbol appears inside
+      # the BALANCED-BRACE slice of each sibling route handler, which is the
+      # INSERT-guarded / EDIT-unguarded shape behind PR #2374 and the only one
+      # of the three that catches an ABSENCE.
+      #
+      # A REVIEWED ALLOWLIST, exactly like empty-state-claims above: 223 entries
+      # today, each with a reason a person wrote; a NEW hit fails until somebody
+      # decides about it, and a stale entry prints without failing. The script's
+      # own header is explicit about the four things it CANNOT see — chief among
+      # them the total-height family (sixteen copies that share every literal
+      # and differ only in control flow) and the two-member PO receivable
+      # threshold, both of which are covered by tests instead. Read it before
+      # treating a green run as proof of anything wider.
+      - run: npm run audit:duplicated-decisions
 
 
       # ---- the bug-class gates (docs/bug-classes.md) ------------------------

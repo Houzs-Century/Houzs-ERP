@@ -52,6 +52,7 @@
     "check:empty-state-claims": "node scripts/check-empty-state-claims.mjs",
     "audit:empty-state-claims": "node scripts/check-empty-state-claims.mjs --strict",
     "check:duplicated-decisions": "node scripts/check-duplicated-decisions.mjs",
+    "audit:duplicated-decisions": "node scripts/check-duplicated-decisions.mjs --strict",
     "check:company-scope": "node scripts/check-company-scope.mjs",
     "audit:company-scope": "node scripts/check-company-scope.mjs --strict",
     "test:coverage": "npm run test:coverage:light && npm run test:coverage:workers",
