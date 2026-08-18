@@ -1404,19 +1404,9 @@ function ProjectsListView() {
     !!user?.permissions?.includes("*") ||
     /\b(super admin|sales director|finance manager)\b/i.test(_pos);
   const _isDriver = /\bdriver\b/i.test(_pos);
-  // Helpers/storekeepers are FORCE-scoped to their assigned events server-side
-  // (isCrewScopedUser in backend); drivers are not (they opt in).
-  //
-  // This used to be `/\bhelper\b/i.test(_pos) || /storekeeper/i.test(_pos)` — a
-  // SUBSTRING test with no permission escape, while the server matches the exact
-  // position name and exempts anyone holding `*` or `projects.write`. Two homes,
-  // one rule, and they had already drifted: an owner-created "Warehouse Helper"
-  // caged this UI while the server returned everything, and an admin holding the
-  // Storekeeper position lost controls the server would have allowed. The shared
-  // predicate now lives in auth/crewScope.ts and backend/tests/
-  // duplicatedDecisionPins.test.ts runs one corpus through both copies.
-  const _isForceScopedCrew = isCrewScopedUser(user);
-  const _isCrew = _isDriver || _isForceScopedCrew;
+  // Helpers/storekeepers are FORCE-scoped server-side, drivers are not (they opt
+  // in). The predicate — and why it moved here — is in auth/crewScope.ts.
+  const _isCrew = _isDriver || isCrewScopedUser(user);
   const _isSalesExec = (/sales/i.test(_dept) || /^sales/i.test(_pos)) && !_isDirector;
   const restrictedCohort = _isCrew || _isSalesExec;
   const cohortTickOnly = can("projects.checklist.tick") && !can("projects.write");

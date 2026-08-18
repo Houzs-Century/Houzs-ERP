@@ -73,11 +73,9 @@ describe("isCrewScopedUser — the permission escape", () => {
 });
 
 describe("isCrewScopedUser — nothing to go on", () => {
-  test.each([
-    [null, "a null user"],
-    [undefined, "an absent user"],
-  ])("%s is not crew-scoped", (user) => {
-    expect(isCrewScopedUser(user as null)).toBe(false);
+  test("a null or absent user is not crew-scoped", () => {
+    expect(isCrewScopedUser(null)).toBe(false);
+    expect(isCrewScopedUser(undefined)).toBe(false);
   });
 
   test("an empty, null or absent position is not crew-scoped", () => {
