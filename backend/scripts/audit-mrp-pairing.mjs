@@ -28,7 +28,7 @@
 // first.
 import postgres from "postgres";
 import { SO_TERMINAL_STATES } from "./lib/so-terminal-states.mjs";
-import { provenanceNoteSqlPattern } from "./lib/transfer-vocabulary.mjs";
+import { parseProvenanceNote, provenanceNoteSqlPattern } from "./lib/transfer-vocabulary.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL missing"); process.exit(1); }
@@ -536,12 +536,11 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice("");
   notice("======== (C) REVERSE PAIRING: does every OPEN PO line name the SO(s) it covers? ========");
   notice("  Layers, in po-so-coverage.ts precedence order:");
-  notice("    (a) delivered DO-lock  (b) stored so_item_id / 'From SOs:' note  (c) MRP floating  (d) dash");
+  notice("    (a) delivered DO-lock  (b) stored so_item_id / provenance note  (c) MRP floating  (d) dash");
   const noteDocsByPo = new Map();
   for (const r of poRaw) {
     if (noteDocsByPo.has(r.po_id)) continue;
-    const m = /^\s*From SOs?:\s*(.+)$/im.exec(String(r.notes ?? "").trim());
-    noteDocsByPo.set(r.po_id, m ? [...new Set(m[1].split(",").map((s) => s.trim()).filter(Boolean))] : []);
+    noteDocsByPo.set(r.po_id, parseProvenanceNote(r.notes));
   }
   /* delivered DO-lock: any lot/movement stamped batch_no = this PO number that a DO consumed. */
   const deliveredPos = new Set((await sql`
@@ -969,7 +968,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
        WHERE po.company_id = ${companyId} AND po.po_number IN ${sql([...leftoverBatchNos])}
        GROUP BY po.po_number, po.status, po.notes`;
     for (const r of provRows) {
-      const hasNote = /^\s*From SOs?:/im.test(String(r.notes ?? ""));
+      const hasNote = parseProvenanceNote(r.notes).length > 0;
       poProvByBatch.set(r.po_number, { ...r, hasNote });
     }
   }
