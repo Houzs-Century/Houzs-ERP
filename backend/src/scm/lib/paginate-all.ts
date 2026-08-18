@@ -1,3 +1,5 @@
+import { mapBounded } from './concurrency';
+
 // ----------------------------------------------------------------------------
 // paginateAll — page through a PostgREST query so the default 1000-row cap can
 // never silently truncate a result set.
@@ -88,7 +90,6 @@ export async function paginateAll<T = Record<string, unknown>>(
  * ~350 subrequests one MRP load already spends here. 4KB is the point where
  * both failure modes have room.
  */
-import { mapBounded } from './concurrency';
 export const URL_QUERY_BUDGET = 4000;
 
 /** What PostgREST can carry in an `in.(…)` list. Numbers are here because the
