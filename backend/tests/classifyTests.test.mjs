@@ -240,6 +240,14 @@ const MUST_GATE_MERGE = [
      deploy is perfectly healthy while every filter pill reads zero beside a
      full page of rows. */
   "tests/statusCountsFailLoud.test.mjs",
+  /* Both hold the line against a DUPLICATE document. The runtime one pins that
+     a retry after a committed write still replays and that a claim is released
+     only on the route's own proof; the source one pins that no pre-write
+     refusal in grns.ts was missed. A regression in either is a second GRN, a
+     second stock IN and a second AutoCount enqueue — that must stop the merge,
+     not the deploy. */
+  "tests/idempotencyRefusalRelease.test.ts",
+  "tests/grnPreWriteRefusalsReleaseKey.test.ts",
 ];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {
