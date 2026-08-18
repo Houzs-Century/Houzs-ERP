@@ -661,8 +661,9 @@ Three layers, tuned so the list never shows a full-load spinner on a revisit:
    SHIPPED-only "PO No." chips and stored-status readiness; the client then calls
    `GET /mfg-sales-orders/list-mrp-enrichment?docNos=…` once for the visible page
    and overlays the four MRP-derived fields (READY chips, `stock_remark`,
-   `is_main_ready`, `planning_state`). Shared by desktop + mobile via
-   `useSoListMrpEnrichmentMap` + `applySoListMrpEnrichment`
+   `is_main_ready`, `planning_state`). The endpoint's pure assembly lives in
+   `backend/src/scm/lib/so-list-mrp-enrichment.ts`; the client side is shared by
+   desktop + mobile via `useSoListMrpEnrichmentMap` + `applySoListMrpEnrichment`
    (`frontend/src/lib/soListEnrichment.ts`); the doc set is chunked at 100 so
    mobile's infinite scroll stays bounded and each chunk caches independently.
 
@@ -681,7 +682,12 @@ Invalidation always wins over all three (mutation → invalidate → forced refe
 | GET | `/api/scm/mfg-sales-orders/mine` | POS board | Salesperson's own orders |
 | PATCH/POST | `…/:docNo/*` | mutations | proceed / cancel / amend / payments / etc. |
 
-All under `backend/src/scm/routes/mfg-sales-orders.ts`. Auth: inside `/api/scm/*`,
+All under `backend/src/scm/routes/mfg-sales-orders.ts`, except the deferred
+`list-mrp-enrichment` endpoint, which lives in its own thin router
+`backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` and is mounted at
+the same `/mfg-sales-orders` prefix in `backend/src/scm/index.ts` — BEFORE the
+main router, so its static path resolves ahead of `/:docNo`. It shares the
+`scm.sales.orders` area guard via that prefix. Auth: inside `/api/scm/*`,
 `user.id` is the caller's **scm.staff UUID** (bridge-pinned); use `houzsUser.id` for
 the public bigint or you get a 500 (uuid-in-int column).
 
