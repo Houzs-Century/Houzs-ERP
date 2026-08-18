@@ -26,6 +26,552 @@ invisible to one of that table's two readers.
 
 **Ref.** 2026-08-18.
 
+## Opening the Sales Orders list wasted a request every time — it fetched, aborted itself, then fetched again [medium]
+
+<!-- area: Frontend + mobile -->
+
+**Symptom.** Every open of the Sales Orders list (`MfgSalesOrdersListV2`) fired
+`GET /api/scm/mfg-sales-orders` TWICE: the first request was immediately aborted
+(`AbortError: signal is aborted without reason`), then a second one carrying a
+`sort` param succeeded. One wasted round trip per open, for every operator who
+has ever clicked a column header (their sort is persisted).
+
+**Root cause traced — the sort-sync handshake raced the first fetch.** The page
+mounts with `sort=undefined` and the list query (`useMfgSalesOrdersPaged`) fires
+straight away = fetch #1, no sort param. Meanwhile `DataTable` restores its sort
+from `localStorage` (`dt:sort:sales-orders-v2`) and in a one-shot mount effect
+(`reportServerSort`) pushes it up via `onSortChange` → the page's
+`setSortAndReset` → `setSort(...)`. That changes the React Query key, so fetch #2
+starts and aborts the still-in-flight fetch #1. The handshake was correct; it
+just landed one render too late.
+
+**Fix.** Defer the first fetch by one render until the mount report lands.
+`useMfgSalesOrdersPaged` gains an `enabled` param (default `true`, so its other
+caller is unchanged). The page promotes the existing `sortSyncedRef` handshake to
+state — `const [sortReady, setSortReady] = useState(false)`, set `true` inside the
+first `setSortAndReset` call — and passes `enabled: sortReady`. The DataTable's
+mount effect ALWAYS reports exactly once (even `null` when nothing is persisted,
+because `serverSort` + `onSortChange` are both present), so the no-persisted-sort
+case still enables and never hangs. Now the first and ONLY fetch already carries
+the restored sort.
+
+**Ref.** 2026-08-18, branch `fix/so-list-double-fetch`. Test:
+`frontend/src/vendor/scm/lib/sales-order-queries.paged-enabled.test.tsx`.
+## Journal-entry number prefix was keyed on a hardcoded company id, so it could land under the wrong company in some environments [medium]
+
+<!-- area: Accounting + GL -->
+
+**Symptom.** `jePrefixForCompany` (backend/src/scm/lib/doc-no.ts) — the one
+minter for every JE number's company prefix — decided the prefix with
+`companyId == null || Number(companyId) === 1 ? '' : '2990-'`. This was the only
+place in the codebase that keyed company behaviour on a hardcoded numeric id and
+a literal `'2990-'`. Everywhere else resolves the company from `companies.code`
+ON PURPOSE, because (companyScope.ts) the `companies.id` bigint differs across
+staging and prod.
+
+**Root cause.** Keying on the id, not the code. Two failure modes, both latent:
+(a) in any environment where 2990 is not id 2, a HOUZS document's JE would be
+minted with `2990-` or a 2990 document's with `''`, landing accounting vouchers
+under the wrong company's running number; (b) a future THIRD company would fall
+into the `'2990-'` else-branch and mint into 2990's sequence. Not yet observed
+in prod (today HOUZS is id 1 / 2990 is id 2), so this was a latent trap, not a
+live corruption — labelled [medium] accordingly.
+
+**Fix.** Resolve the prefix from the company CODE, via the same
+`docPrefixForCode` resolver the SO/PO minters use. New pure helper
+`jePrefixForCode(code)`: HOUZS → `''` (its JEs are historically BARE —
+`JE-2607-0001` — deliberately unlike its `HC-` SO/PO doc numbers, so this is
+preserved BYTE-IDENTICAL and not renamed), 2990 → `'2990-'`, a third company →
+`'<CODE>-'`. `jePrefixForCompany(sb, companyId)` is now async: it reads the code
+from the companies master by id and calls `jePrefixForCode`; an unresolved
+company degrades to base bare `''`, matching companyDocPrefix's base fallback.
+The two callers (acc/engine.ts postJournal + reverseJournal) now `await` it.
+What stays identical: every HOUZS JE (`JE-YYMM-NNNN`) and every 2990 JE
+(`2990-JE-YYMM-NNNN`) in the CURRENT prod id layout. Unit test
+`scm/lib/doc-no.test.ts` pins both — resolves from code, and asserts HOUZS/2990
+output under a deliberately non-prod id layout (HOUZS=7, 2990=3).
+
+**Ref.** PR fix/je-prefix-company-code, 2026-08-18.
+## Four relationship-map builders resolved the customer reference with three different fallback orders [low]
+
+**Symptom.** The screening found it; the DATA audit confirmed why it matters.
+On the document relationship maps, the "Customer PO" cell could show a different
+value on the DO map than on the SI map for the same order.
+
+**Root cause (traced).** Four builders each inlined their own fallback:
+`buildDoChainNodes` read `po_doc_no || customer_so_no`, `buildSiChainNodes` read
+`customer_so_no || po_doc_no`, `buildDrChainNodes` read `customer_so_no` only,
+and `useSoRelationshipMap` read `po_doc_no || customer_so_no || ref`. An order
+carrying both `customer_so_no` and `po_doc_no` therefore resolved differently per
+surface. Audited against production 2026-08-18: `customer_so_no` is the filled
+value (96%), `po_doc_no`/`customer_po` are 0%-filled dead columns, and `ref`
+duplicates `customer_so_no` — so in practice `po_doc_no` never wins today, but
+the code disagreed with itself.
+
+**Fix.** One shared `customerRefOf(header)` in `frontend/src/lib/customer-ref.ts`,
+reading `customer_so_no || po_doc_no || ref` (the data-correct order), routed
+through all four builders. A unit test pins the order and the regression (a
+header with both fields resolves to ONE value everywhere).
+
+**Scope.** DISPLAY only. The dead columns are dropped in a separate migration
+(they are projected by a view — the 0189 grant-loss hazard), and the vocabulary
+guard for `po_doc_no`/`customer_po` waits for that drop because the backend
+router still selects them until then. First concrete step of the batch-2
+vocabulary unification (customer-reference concept).
+
+**Ref.** 2026-08-18, branch `fix/unify-customer-ref-builders`.
+
+## The whole system's vocabulary drift, screened and catalogued; the SO guide still claimed a retired column was written [medium]
+
+**Symptom.** Owner, 2026-08-18: read the whole system once, find every place the
+same thing has more than one spelling and every place the docs disagree with the
+code, and put something in place so it never has to be done by hand again.
+
+**Root cause / findings (a 12-agent full-codebase read, 1,360 source files,
+2.8M tokens).** 33 concepts carry more than one genuine spelling — money
+(`_centi`/`_sen`/`_cents`), salesperson (`salesperson_id`/`agent`/`sales_reps`),
+customer vs debtor, supplier vs creditor, item vs material vs product code,
+warehouse vs sales_location, the delivery date under five names, and more. 21
+defects surfaced in passing (0 high; a tenant-predicate gap on PUT
+delivery-orders crew, a DP-number mint that swallows a read error, a DO
+cancelled-detection that only matches "T", and others). One doc-drift:
+`docs/modules/sales-order.md` line 101 and line 1207 still said the
+`IN_PRODUCTION` transition and POS "Proceed" stamp `proceeded_at`, a column
+neither written nor read since #2396 / mig 0286 — the guide even contradicted
+itself, correcting the claim at line 1316.
+
+**Fix (batch 1 — stop the bleeding, this PR).**
+- The full report is saved as `docs/system-screening-2026-08-18.md`, the batch-2 worklist.
+- `drift-catalogue.mjs` holds the 33 concepts as REFERENCE data; the generated
+  `docs/generated/GLOSSARY.md` now prints a "say this / also seen as" row per
+  concept, so anyone can look up the agreed word. Nothing is retired here —
+  retiring a live column is a migration, one concept per PR (batch 2) — so the
+  guard's contract is unchanged and stays honest.
+- The two stale `sales-order.md` claims are corrected.
+- `docs/VOCABULARY-UNIFICATION-PROGRESS.md` tracks the programme's stages and worktrees.
+
+**Money is a display rule, not a storage change.** Exports read `35.00` by
+formatting the stored integer as RM at the edge; storage stays an integer minor
+unit because decimals reintroduce the float-rounding bugs `money.ts` exists to
+prevent. Batch 2 unifies the NAME, not the type.
+
+**Ref.** 2026-08-18, branch `feat/one-vocabulary`.
+
+## Same thing, several spellings — and adding a fourth concept meant remembering to write a fourth guard [medium]
+
+**Symptom.** Owner, 2026-08-18: 「我跟你讲 Processing Date, 你却去找成 Process
+Date ... 这种问题其实也是名词的统一」. Branding, the Processing Date and
+Transfer to/from each carry more than one spelling, so every conversation starts
+by re-agreeing which word is meant, and an audit script that guesses wrong
+queries a column that does not exist — 42703 fails the WHOLE statement, so it
+answers nothing rather than answering less.
+
+**Root cause (the pattern, not the words).** The repo had already solved this
+THREE times, by hand each time: `so-processing-date.mjs` plus an 80-line
+directory-walking test, `transfer-vocabulary.ts` plus another, the catalogue
+series plus a third. Every one works. But a FOURTH concept costs somebody
+remembering to write a fourth test, and the concept nobody remembers is exactly
+the one that drifts. The cost of guarding a word was the defect.
+
+Separately, nothing existed for a HUMAN to read. The canonical spelling was in
+the tree in plain text — and only programs ever opened the file.
+
+**Fix.** One registry (`scripts/lib/vocabulary.mjs`), three consumers:
+
+| | |
+| --- | --- |
+| `audit:vocabulary` | ONE guard for every concept. Comments, migrations and tests may name a retired spelling — a rename is a story worth telling; CODE may not |
+| `audit:glossary` | `docs/generated/GLOSSARY.md`, GENERATED. A hand-written glossary is one more document to keep in sync, which is the problem, not the fix |
+| working-agreement rule 2 | now fires on a LOGIC change in a documented file, not only the five surface shapes |
+
+**THE REGISTRY'S FIRST DRAFT WAS WRONG TWICE, both caught by running it rather
+than by reasoning, and both are now regression tests.** `proceeded_at` was
+listed as retired: the column still exists on `scm.mfg_sales_orders` and the
+diagnostic probes read it on purpose, so the guard produced **175 findings,
+essentially all false** — the exact failure the file's own header warns about,
+committed by its author. Then `internalExpectedDd` was listed: that is the
+PAYLOAD key the status route still accepts from old clients deliberately, a
+different thing from the dropped COLUMN it resembles. Only
+`internal_expected_dd`, which `information_schema` no longer has, survived.
+
+**Proven red before being trusted green.** A planted `internal_expected_dd` in
+code exits 1; the same word in a comment exits 0; the guard self-tests its
+matcher at startup and exits 2 rather than reporting a verdict it could not have
+computed.
+
+**Blast radius of the working-agreement half, measured:** of the last 30 merges,
+19 touched a file some guide quotes and **8 never opened the guide** — one of
+them the commit that created the shared Branding rule. Those 8 would now be
+asked for the guide, or for the `no-guide-change` label, which prints the waiver
+into the log.
+
+**Ref.** 2026-08-18, branch `feat/one-vocabulary`.
+## A salesperson could not set an SO line to RM 0 — the save succeeded and silently reverted [medium]
+
+**Symptom.** In Houzs ERP, a salesperson edited a line from RM 2,990 to 0 and
+pressed Save. No error. On reload the line read RM 2,990 again. Reducing to a
+NON-zero figure (2,990 → 2,000) worked and persisted; only exactly 0 came back.
+
+A silent revert is worse than a refusal: nothing told the operator the order
+still carried the old price, and the customer-facing figure was wrong until
+someone happened to reload.
+
+**Root cause (traced, not guessed).** `0` carries two meanings on this wire, and
+the engine could only read one of them. `mfg-pricing-recompute`:
+
+```
+if (trustOperatorSelling && (manualUnitSelling > 0 || trustOperatorSelling === 'including-zero')) {
+  unitToPersistSen = manualUnitSelling;
+}
+```
+
+An ERP session is origin-less, so `trustOperatorSelling` was already `true` —
+which is why 2,000 persisted. The `manualUnitSelling > 0` arm is what dropped the
+zero, and it is deliberate everywhere else: a client `unitPriceCenti` of 0 means
+"I could not resolve a price, you decide", and the drift gate carves it out on
+exactly that reading (`clientCenti === 0 && serverSen > 0` → no drift). So the
+line fell through to the catalogue fill, which is the correct answer for every
+caller that cannot state its intent.
+
+Three separate notes defended that reading — the `TrustSelling` docblock ("Do
+NOT reach for it on a line the operator is authoring now"), the amendment path
+("plain `true`, never 'including-zero', on a native order"), and the add-line
+note. None of them is wrong. The gap they leave is that no caller had a way to
+say "this zero is deliberate", so the ambiguous reading was the only safe one.
+
+**Fix.** Give the one caller that knows a way to say so. The ERP line editor now
+sends `zeroPriceIntended: true` alongside a 0, and only then does the route
+select a NEW trust mode, `'operator-zero'`, which believes it.
+
+Deliberately a distinct mode rather than reuse of `'including-zero'`:
+`isMigratedTrust` also suppresses selling surcharges, because a MIGRATED
+document must never be re-priced (10,856 of 13,909 migrated lines are priced 0).
+An operator-authored zero is not migrated history and must keep pricing its
+director-authored surcharges, so it must not read as migrated. Owner
+requirement, relayed 2026-08-18.
+
+**Residual risk, and what holds it.** A salesperson can now zero a line in the
+ERP, and nothing refuses it — that is the requested behaviour, not an oversight.
+What remains is visibility: the edit lands in `mfg_so_audit_log` with from → to,
+so a line taken to RM 0 is answerable after the fact.
+
+The narrow part is deliberate and is what the tests pin: the mode needs an
+explicit `=== true` claim, at a zero price, off a POS session. A 0 arriving
+without the claim — every other caller in the system, including the POS — still
+means "not provided" and still takes the catalogue fill. If that ever stops
+being true the wiring test fails, because the risk here is not a wrong verdict
+but the mode becoming reachable without the claim, which no test over the engine
+alone would notice.
+
+## A control that vanishes cannot be argued with — the delivery order's next step, the purchase order's dead Submit [high]
+
+<!-- area: Delivery, DO, returns -->
+
+The owner opened one delivery order per company, side by side. Same screen, same
+green slot in the same corner — one said "Transfer to Sales Invoice", the other
+"Mark signed". His reading: *"我又不是两套系统."*
+
+The code was right. `DeliveryOrderDetailV2.tsx` gated the transfer on
+`signed || delivered` and the sign-off on `loaded || dispatched || in_transit`,
+with no company in either predicate; the two documents differed only in STATUS.
+He was still right, because the transfer was not rendered as UNAVAILABLE — it
+was not rendered at all. From the second seat the product did not have the
+feature. **A capability that disappears without a word is indistinguishable from
+one that does not exist**, and that is how one system comes to look like two.
+
+**The rule applied here.** A control the STATE forbids stays on screen, disabled,
+carrying the reason and the next step, and the reason lives in ONE module so a
+second surface cannot invent a different one. PERMISSION still hides — that is a
+separate, deliberate rule (`auth/salesAccess.ts:200`, "off, not hide"), and
+nothing here starts advertising actions to people who may never take them.
+
+**Two modules now own the sentences.** `vendor/scm/lib/do-next-step.ts` (DO) and
+`vendor/scm/lib/po-next-step.ts` (PO). Four surfaces read the DO one — desktop
+detail header, that same page's phone bar, the list quick-view drawer, the native
+mobile shell — where before each re-derived the answer. Precisely: the
+SALES-INVOICE question is shared by all four; the ADVANCE question is shared by
+the three desktop-side surfaces, and the mobile shell keeps its finer driver
+ladder on purpose (see below), so on DISPATCHED the desktop still says "Mark
+signed" and the phone still says "Mark In Transit" — now a recorded decision
+with a reason rather than two hand-written copies that had drifted.
+An unrecognised status gets a generic sentence, never a guess; the COMPLETED
+story in `shared/do-shipped-states.ts` is what that rule is for.
+
+**Three dead controls found by reading the server, not the screen.**
+
+1. **PO "Submit" could never work.** `PATCH /mfg-purchase-orders/:id/submit` read
+   the row, echoed an already-SUBMITTED PO, 409'd on a missing warehouse, then
+   returned `cannot_submit` unconditionally — no `.update(...)` anywhere in it.
+   So the DRAFT it existed to advance was the one case it could not serve, and
+   the operator was told *"That change was not saved — PO is DRAFT"* in answer to
+   "submit this draft". `/confirm` (the handler that does write) was reachable
+   from the Edit view and the phone but not from the page the route mounts
+   (`App.tsx:616`). Four controls advanced a draft PO; three used `/confirm`, and
+   the fourth — the one the operator actually meets — used the dead one. The
+   endpoint is deleted; the page calls `/confirm`. The file's own comment had
+   called `/submit` "an idempotent no-op for legacy callers": it was neither
+   idempotent nor harmless, and its last caller was live.
+2. **PO "Confirm" was rendered only when it would do nothing.** `canConfirm`
+   gated on SUBMITTED, where `/confirm` is an explicit echo. Both predicates were
+   inverted relative to their endpoints. One control now, gated on DRAFT.
+3. **The DO list drawer's "Reopen" 409s every time.** `PATCH /:id/status` refuses
+   ANY transition out of CANCELLED with `do_cancelled_final`
+   (`delivery-orders-mfg.ts:5401`) — un-cancelling leaves the cancel's stock
+   add-back standing while the re-deduct no-ops, inflating stock by the whole DO.
+   It sat in the green PRIMARY slot on every cancelled row. Removed, not
+   disabled: a control whose only outcome is a 409 is not a capability to
+   explain, so the module states the real next step (raise a new DO) instead.
+
+**The same slot no longer changes verb.** That was the other half of the
+complaint — the operator had to read a status badge to learn what the green
+button would do. The DO drawer held three verbs in one primary slot (Mark signed
+/ Transfer / Reopen) and the PO phone bar held three (Submit / Transfer / Edit).
+Each surface now has fixed slots: one "advance this document", one "produce the
+next document", each keeping its meaning at every status.
+
+**A desktop-only capability gap closed on the way.** A DRAFT delivery order could
+not be advanced from the desktop AT ALL — `canMarkSigned` excluded DRAFT and
+neither the detail page nor its editor writes a status, so a draft raised on the
+desktop could only be moved by picking up a phone. The desktop now offers the
+same "Confirm" (→ DISPATCHED) the mobile shell always had: same endpoint, same
+body, same permission gate.
+
+**The reason is TEXT, not a `title=`.** A tooltip needs a hover and says nothing
+on a touch screen, so on the phone a disabled button would have explained itself
+to nobody — reproducing the defect the rule exists to end. `NextStepNote` renders
+the sentence and the control points at it with `aria-describedby`.
+
+**What was deliberately NOT changed.** The mobile shell's finer driver ladder
+keeps its extra rung: `IN_TRANSIT` is the departure marker
+`MobileDeliveryPlanning.tsx:1280` writes for "On the way", so collapsing it into
+the desktop's single jump would have deleted a step drivers use. Verified before
+touching it. And the "Mark signed" control writes `DELIVERED`, not `SIGNED`
+(`DeliveryOrderDetailV2.tsx:777`, `MfgDeliveryOrdersListV2.tsx:968`) — both
+satisfy the invoice gate so the outcome is right; the label/target mismatch is
+recorded in the module and left for its own change rather than folded in here.
+
+**Why this kept happening.** Fixes in this tree get applied where the bug was
+SEEN, not where the rule LIVES. `DateField` was built to force one date format
+and reached 14 of 189 inputs; nothing errored, so nobody knew. The gate that
+finished the date rule was a CI check, not diligence. These two modules are the
+same shape of fix, and the tests pin the property that matters: every legal
+status gets a real sentence out of them, and a status that cannot act must say
+why. That is what stops the next surface from re-deriving a fifth answer.
+## A sofa could be added to a bedframe Consignment Order, because the rule saying it cannot lived inside another router's create handler [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** `POST /consignment-orders/:docNo/items` accepted a SOFA line on a
+Consignment Order whose existing lines were BEDFRAME, and
+`PATCH /:docNo/items/:itemId` accepted a swap into the same shape. Nothing
+errored. The document was simply built, and the downstream consumers that assume
+one main category per document (the consignment note, the sofa batch guard, the
+AutoCount per-document item derivation) then worked on a shape they were never
+designed for.
+
+**The rule exists and is enforced elsewhere.** `so_sofa_no_other_main` — a sofa
+may not share an order with a bedframe or a mattress (PR #519) — was written by
+hand FIVE times and reached five of the eight places that can put a caller's item
+code on a line:
+
+| path | before |
+| --- | --- |
+| `mfg-sales-orders.ts` SO create | inline `normCat` + MAIN set |
+| `mfg-sales-orders.ts` SO add-line / edit-line / tbc-swap | `soMainMixIntroduced` |
+| `mfg-sales-orders.ts` SO **amendment submit** | **nothing** |
+| `consignment-orders.ts` CO create | inline `normCat` + MAIN set |
+| `consignment-orders.ts` CO **add-line** | **nothing** |
+| `consignment-orders.ts` CO **edit-line** | **nothing** |
+
+**Why nobody was careless.** The reusable form of the rule was a closure inside
+`mfg-sales-orders.ts`'s create handler and a private `async function` further up
+the same file. Neither was exported, so a person writing the CO line routes had
+nothing to call and no way to see the rule existed. This is the same shape
+PR #2374 closed on the unlinked-line money guard: INSERT paths guarded, EDIT path
+not.
+
+**The third hole was found by the check, not by hand.** `POST
+/:docNo/amendments` is the only path that can ADD a line without going through
+`POST /:docNo/items`. It validates every requested `newItemCode` against the
+catalogue and says nothing about composition, and `applySoAmendment` does not
+check it either — so an amendment could put a sofa on a bedframe order. Found by
+the population test below, which listed it by name and line before anyone had
+looked at that route.
+
+**Reachability, verified rather than assumed.** `coHasDownstream` is not a
+substitute for the missing gate: it only blocks once a DO or SI exists, and a
+fresh CO has neither. A CO created bedframe-only is legitimately permitted by the
+create path (no sofa is present), so the create gate has nothing to say about it.
+
+**The fix.** `backend/src/scm/lib/main-mix.ts` is the one home. Three functions,
+because there are genuinely three questions and collapsing them is the dangerous
+move:
+
+- `createMixRefusal` — FLAT ("does this document mix?"), for the create paths.
+- `lineMixRefusal(sb, table, docNo, excludeItemId, newCode, companyId)` —
+  DIFFERENTIAL ("does this change INTRODUCE a mix?"), parameterised on the line
+  table so `mfg_sales_order_items` and `consignment_sales_order_items` share one
+  body. Both tables carry `id`, `item_code`, `item_group`, `doc_no`, `cancelled`.
+- `amendmentMixRefusal` — the differential form over a whole requested change set,
+  using `applySoAmendment`'s own `SPEC | QTY | ADD | REMOVE` dispatch, applied at
+  SUBMIT so the requester fixes it rather than the approver.
+
+Grandfathering is preserved and is the point of the differential form:
+`mixesSofaWithOtherMain(after) && !mixesSofaWithOtherMain(before)`. Porting the
+create path's flat test onto the edit paths would have made every order written
+before the rule existed permanently uneditable — worse than the bug.
+
+**Three drifts resolved, each deliberately.**
+
+1. *The classifier.* Both create paths carried a private `normCat` that is
+   byte-for-byte `so-readiness.normCategory`, while `soMainMixIntroduced` used
+   exact `=== 'SOFA'` on the catalogue enum. Unified on `normCategory`. No
+   catalogued outcome changes: `scm.mfg_product_category`'s members are single
+   uppercase tokens, none a substring of another
+   (`backend/scripts/scale-pg-real-schema.mjs:36` plus migrations 0262-0265).
+2. *The un-catalogued line.* `soMainMixIntroduced` read the catalogue ONLY, so a
+   line whose code is not in this company's `mfg_products` classified as nothing
+   at all and a real mix could be built on top of it. It now falls back to the
+   stored `item_group` — the idiom every other category reader in the tree
+   already uses for this exact situation (`delivery-planning.ts:573`,
+   `delivery-zones.ts:342`, `so-display-branding.ts:133`). The fallback fires only
+   when the catalogue row is missing, so it can never contradict the catalogue,
+   and it cannot break the grandfathering: a more complete `before` set makes
+   `mix(before)` MORE likely, i.e. an already-mixed document MORE editable.
+3. *The sentence.* Three server sentences for one rule became one. No operator
+   ever saw the difference — `authed-fetch.ts`'s curated `ERROR_CODE_MESSAGES`
+   entry for `so_sofa_no_other_main` wins over `reason` on every surface that goes
+   through `humanApiError` — but three sentences is how the fourth gets written
+   slightly wrong.
+
+**A read that failed is not an answer.** `soMainMixIntroduced` did
+`const { data: lines } = await sb...` with no `error` bound. A failed read made
+the order look EMPTY, an empty order can never mix, and the gate passed silently
+— a checker that cannot match reporting a clean run. Every function now returns
+`MixRefusal | null` instead of a boolean, so "it mixes" (400) and "we could not
+tell" (409 `sofa_mix_check_unavailable`) stay distinct. The catalogue read is
+verified by CONSEQUENCE: `validateItemCodes` has already proved, in the same
+request and under the same company predicate, that every non-blank code is in
+`mfg_products`, so a code that does not come back means the read failed.
+`swallowed-read-baseline.json` falls by 3.
+
+**The frontend pair, and the bug it was already causing.** The client check has
+to stay a second implementation — it must refuse BEFORE a request, and it reads
+free-text `itemGroup` where the server reads the catalogue enum. But it has two
+forms for the same reason the server does, and `SalesOrderDetail.tsx` was using
+the wrong one: a flat `hasSofaMixConflict` over the edited lines, sitting in front
+of a differential server gate. An operator on a pre-rule mixed SO could not save
+ANY change to it — not even a phone number — and the sentence blamed a rule the
+server itself grandfathers. New `sofaMixIntroduced(before, after)` in
+`so-variant-rule.ts`; the Detail pages use it, the New-order forms keep the flat
+form because the server's create path asks the flat question.
+
+**What pins it.** `backend/tests/mainMixOneHome.test.ts`. The population is not a
+list of known call sites — that list is exactly what was wrong. It is every unit
+in the two routers that runs `validateItemCodes`, which by construction is every
+path where a caller-supplied item code lands on a line. A unit with the catalogue
+guard and no composition rule fails and must be argued: the only recorded
+exemption is `tbcSwapSofaCommandHandler`, which is SOFA -> SOFA by construction
+(it refuses `prev.item_group !== 'sofa'` and refuses a replacement whose catalogue
+category is not SOFA). Plus tree-wide checks that the error code is spelled in one
+file, that the rule is defined once, that every caller is one of the two routers,
+that each guard runs before its handler's write, and that neither differential
+form has lost its `&& !`.
+
+**Proven not vacuous.** Deleting the CO add-line guard turned the population test
+red naming `POST /:docNo/items (line 1469)` — a handler it derived, not one it was
+told about — and the call-site test named it as "the hole this change closed — it
+has reopened". Deleting the `&& !` from `lineMixRefusal` turned five assertions
+red across both suites, including "an ALREADY-MIXED CO still accepts an unrelated
+line edit". Both were restored and the files verified byte-identical by SHA-256.
+
+**Deliberately not done.** `MAIN_CATS` is still hand-copied three times
+(`mfg-sales-orders.ts:1531`, `delivery-planning.ts:576`,
+`so-display-branding.ts:44`) for the SO list's REPRESENTATIVE-category display,
+which is a different question with a different answer, and
+`so-readiness.MAIN_CATEGORIES` already exists to hold it. Same class, separate
+change. `loadProductsByCodes` still discards its own read error
+(`mfg-pricing-recompute.ts`); this file compensates by requiring every validated
+code to come back, but the helper itself is used by many callers and is not in
+scope here.
+## A salesperson could not lower or cancel a line they had just overcharged for [medium]
+
+**Symptom.** On the POS tablet, any edit that reduced a line was refused:
+
+    422 so_total_below_original
+    "Changes cannot reduce the bill below the original sales order total."
+
+It covered five verbs — PATCH a line, DELETE a line, the free-item DELETE
+branch, a TBC edit, and a sofa swap — so a salesperson who keyed a wrong qty or
+a dearer product could add, but never take away. The correction had to go to the
+office, on an order the salesperson was standing in front of the customer with.
+
+**Root cause.** Not a defect: a deliberate floor (Loo 2026-06-11), guarding
+against a salesperson quietly cheapening a confirmed order after the customer
+signed. It bound only sessions carrying `origin='pos'` — office and desktop
+callers were always free to discount downward.
+
+Two things made it read as a bug rather than a policy:
+
+- **it was one-sided.** The same person doing the same correction was refused at
+  the tablet and allowed in the ERP web app — a distinction of DOOR, not of
+  intent, and invisible to whoever was holding the tablet.
+- **the ERP half was fixed and this half was not.** On 2026-08-14 the SSO
+  handoff started carrying `origin='pos'` onto ERP sessions, so the floor
+  followed a salesperson into the ERP too. The owner hit that himself and ruled
+  (see the exchange-web-session entry): 「进了这个 ERP 就跟这个 ERP 的规矩。在
+  我们 ERP 里编辑,金额就必须能改。」 That reversal fixed the ERP path only. The
+  tablet kept the floor for four more days.
+
+**Fix.** The five floors are removed. Owner ruling, relayed 2026-08-18: a POS
+caller may lower or cancel a line.
+
+**What is deliberately NOT removed.** The four `pricing_drift` 400s hang off the
+SAME expression (`isPosTabletCaller`) and stay. They are a different rule: they
+refuse a client price that disagrees with the server's own recompute, which is
+what stops a tampered POS bundle submitting a doctored total. Removing the
+floors must not take those with it, and `tests/soTotalFloorRemoved.test.ts`
+asserts both halves — floors absent, drift rejects present, and the hinge itself
+still read so a later "unused" cleanup cannot make them unreachable.
+
+**Residual risk, and what holds it.** Nothing now stops a salesperson reducing a
+confirmed order from the tablet, which is exactly what the floor was written to
+prevent. What remains is visibility, not prevention: every line edit is recorded
+in `mfg_so_audit_log` with from → to, and the sofa-swap path still computes both
+totals for that record even though nothing compares them any more. If this is
+ever regretted, the audit log is where the evidence is — and the floor should
+come back as a REPORT (orders reduced after confirmation), not as a refusal the
+office has to unblock one order at a time.
+
+## The HC sofa fix could only run all-or-nothing, so filling 11 SKUs meant re-stamping 1,012 SO lines nobody had approved [low]
+
+**Symptom.** The owner asked for the 11 unbranded `5526-*` sofa SKUs to be filled
+with ZANOTTI, so the stored catalogue would agree with the display rule that
+hardcodes it (PR #2402). `fix-hc-sofa-branding.mjs` exists for exactly that job.
+
+**What the dry-run showed, which is why this entry exists.** The script's phase
+(b) re-stamps every Houzs SOFA line row that is blank or 'Houzs' — **1,012 rows
+across 463 documents**. Those are not the 11 SKUs' own lines: only 8 lines carry
+a `5526-*` code. Phase (b) walks the WHOLE sofa catalogue. So "fill 11 SKUs"
+would have written 1,024 rows, 1,012 of them being the Houzs line backfill the
+owner had already declined ("Houzs 的不需要").
+
+The script had no way to say no to that half: catalogue and lines were one unit.
+
+**Fix.** `SCOPE=catalog` restricts the write set to `mfg_products` +
+`product_models`. `all` stays the DEFAULT, so every earlier dispatch keeps its
+meaning and the narrow set has to be asked for. Three things move together or
+the flag would be a lie:
+
+- phase (b) is skipped, and **prints the count it did not write**, so choosing
+  the narrow set can never hide how much was left behind;
+- the post-verify residual query drops its two line-table terms under
+  `catalog` — otherwise the run would fail its own check for leaving alone
+  exactly what it was told to leave alone;
+- an unrecognised `SCOPE` exits 2 rather than falling back to a default, because
+  guessing which set was meant is the whole failure this flag exists to prevent.
+
+**Ref.** 2026-08-18, branch `fix/hc-sofa-catalog-only`.
 ## The photographs came OUT of AutoCount at the cutover and nothing sent them back [medium]
 
 **Symptom.** A sales-order line that carries reference photographs in the ERP

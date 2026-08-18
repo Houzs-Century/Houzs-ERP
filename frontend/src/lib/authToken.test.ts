@@ -1,11 +1,14 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AUTH_TOKEN_KEY,
+  AUTH_PASS_KEY,
   authSessionFingerprint,
   clearAuthToken,
   readAuthToken,
+  readAuthPass,
   subscribeAuthTokenChange,
   writeAuthToken,
+  writeAuthPass,
 } from "./authToken";
 
 afterEach(() => {
@@ -87,5 +90,36 @@ describe("auth token tab isolation", () => {
     expect(first).not.toBe("");
     expect(first).not.toContain("same-session");
     expect(authSessionFingerprint()).toBe(first);
+  });
+});
+
+
+describe("signed staff pass storage (stage 2)", () => {
+  it("stores the pass in localStorage on a remembered login and reads it back", () => {
+    writeAuthToken("tok", true);
+    writeAuthPass("hst1.aaa.bbb", true);
+    expect(readAuthPass()).toBe("hst1.aaa.bbb");
+    expect(localStorage.getItem(AUTH_PASS_KEY)).toBe("hst1.aaa.bbb");
+  });
+
+  it("stores the pass in sessionStorage on a tab-only login", () => {
+    writeAuthToken("tok", false);
+    writeAuthPass("hst1.ccc.ddd", false);
+    expect(readAuthPass()).toBe("hst1.ccc.ddd");
+    expect(sessionStorage.getItem(AUTH_PASS_KEY)).toBe("hst1.ccc.ddd");
+    expect(localStorage.getItem(AUTH_PASS_KEY)).toBeNull();
+  });
+
+  it("clearAuthToken clears the pass from BOTH stores", () => {
+    localStorage.setItem(AUTH_PASS_KEY, "remembered-pass");
+    writeAuthPass("tab-pass", false);
+    clearAuthToken();
+    expect(readAuthPass()).toBe("");
+    expect(localStorage.getItem(AUTH_PASS_KEY)).toBeNull();
+    expect(sessionStorage.getItem(AUTH_PASS_KEY)).toBeNull();
+  });
+
+  it("no pass reads as empty string, never throws", () => {
+    expect(readAuthPass()).toBe("");
   });
 });

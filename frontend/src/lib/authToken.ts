@@ -15,6 +15,11 @@
 // `localStorage.getItem('auth:token')` anywhere — call this instead.
 
 export const AUTH_TOKEN_KEY = "auth:token";
+/** The signed staff pass (stage 2), stored beside the token in the SAME store
+ *  and cleared with it. Not yet sent or verified — stage 3 does that. It never
+ *  replaces the token; it rides alongside it so verification can fall back to
+ *  the token's DB path. */
+export const AUTH_PASS_KEY = "auth:pass";
 const LOCAL_TOKEN_SUPPRESSED_KEY = "auth:local-token-suppressed";
 
 export type AuthTokenChangeSource = "same-tab" | "storage";
@@ -75,6 +80,33 @@ export function writeAuthToken(token: string, persistent = true): void {
   emitAuthTokenChange("same-tab");
 }
 
+/** The signed staff pass, from whichever store login put it in. "" = none.
+ *  Read precedence mirrors the token: this tab's session store wins, else the
+ *  remembered one — so a tab-only login and a remembered login never cross. */
+export function readAuthPass(): string {
+  try {
+    const tab = sessionStorage.getItem(AUTH_PASS_KEY);
+    if (tab) return tab;
+    if (sessionStorage.getItem(LOCAL_TOKEN_SUPPRESSED_KEY) === "1") return "";
+    return localStorage.getItem(AUTH_PASS_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+/** Store the pass in the SAME store the token went to (persistent = Remember me).
+ *  Called right after writeAuthToken on login. */
+export function writeAuthPass(pass: string, persistent = true): void {
+  try {
+    if (persistent) {
+      localStorage.setItem(AUTH_PASS_KEY, pass);
+      sessionStorage.removeItem(AUTH_PASS_KEY);
+    } else {
+      sessionStorage.setItem(AUTH_PASS_KEY, pass);
+    }
+  } catch {}
+}
+
 /** Clear this tab's effective session, then notify session-scoped caches. */
 export function clearAuthToken(): void {
   try {
@@ -87,6 +119,10 @@ export function clearAuthToken(): void {
       localStorage.removeItem(AUTH_TOKEN_KEY);
       sessionStorage.removeItem(LOCAL_TOKEN_SUPPRESSED_KEY);
     }
+    // The pass shares the token's lifecycle: clear it from BOTH stores so a
+    // logout can never leave a stale pass behind either token.
+    sessionStorage.removeItem(AUTH_PASS_KEY);
+    localStorage.removeItem(AUTH_PASS_KEY);
   } catch {}
   emitAuthTokenChange("same-tab");
 }

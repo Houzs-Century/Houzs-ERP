@@ -17,6 +17,10 @@ import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { MODULE_CONFIGS } from "./MobileModuleList";
 import { invalidateModuleShared } from "./sharedInvalidate";
 import { todayMyt } from "../vendor/scm/lib/dates";
+import {
+  SI_TRANSFER_MOBILE_ROUTE_HINT,
+  siTransferBlockReason,
+} from "../vendor/scm/lib/do-next-step";
 import { fmtCenti } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from "../vendor/scm/lib/payment-methods";
@@ -1328,8 +1332,38 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
     mutation.mutate(action);
   };
 
+  /* ── THE DELIVERY ORDER'S NEXT STEP, SAID OUT LOUD ───────────────────────
+     A SIGNED or DELIVERED delivery order used to reach this footer with NOTHING
+     to show — `statusActionsFor` has no entry for SIGNED and returns early on
+     DELIVERED — so on the phone the document simply looked finished and its
+     Sales Invoice was never raised. The desktop offered the transfer in the same
+     state, which is the "我又不是两套系统" reading moved from company-vs-company
+     to phone-vs-desktop.
+
+     This screen is a screen machine, not a router, so it does not host the
+     convert wizard itself; the sentence therefore names the route that DOES
+     work here (Sales Invoices → "+"), which MobileApp's MODULE_TO_CONVERT and
+     MobileConvertWizard's META.si both confirm exists. Wording comes from
+     vendor/scm/lib/do-next-step.ts — the same module the desktop detail page and
+     the list drawer read, so the three cannot drift apart again.
+
+     The driver ladder above is deliberately UNCHANGED. Its extra rung
+     (DISPATCHED → IN_TRANSIT, "Mark In Transit") is not drift: IN_TRANSIT is the
+     departure marker MobileDeliveryPlanning writes for "On the way"
+     (MobileDeliveryPlanning.tsx:1280), so deleting it to match the desktop's
+     single jump would have removed a step drivers actually use. ── */
+  /* The status guard is not defensive noise: `header` falls back to `{}` when
+     this screen is reached with a synthetic { id } row (the Relationship Map's
+     flowNav does exactly that), and an absent status would otherwise render the
+     GENERIC sentence for a second and then swap it for the real one. Saying the
+     wrong thing briefly is its own version of the bug this note exists to fix. */
+  const doNextStepNote =
+    moduleKey === "delivery-orders-mfg" && mayOperate && s(header?.status)
+      ? (siTransferBlockReason(header?.status) ?? SI_TRANSFER_MOBILE_ROUTE_HINT)
+      : null;
+
   const hasRow = statusActions.length > 0 || !!payKind;
-  if (!hasRow && !podEnabled) return null;
+  if (!hasRow && !podEnabled && !doNextStepNote) return null;
   const busy = mutation.isPending;
 
   return (
@@ -1338,6 +1372,11 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
         <div style={{ position: "absolute", left: 0, right: 0, bottom: hasRow && podEnabled ? 130 : 76, padding: "0 16px", textAlign: "center", fontSize: 11.5, color: "#b23a3a", zIndex: 1, maxWidth: "calc(100% - 32px)" }}>{error}</div>
       )}
       <footer className="actbar" style={{ position: "absolute", left: 0, right: 0, bottom: 0 }}>
+        {doNextStepNote && (
+          <p style={{ margin: "0 0 8px", fontSize: 11.5, lineHeight: 1.35, color: "#6b7280" }}>
+            {doNextStepNote}
+          </p>
+        )}
         {podEnabled && (
           <button className="btn" onClick={onPOD} style={{ marginBottom: hasRow ? 9 : 0 }}>Proof of Delivery</button>
         )}

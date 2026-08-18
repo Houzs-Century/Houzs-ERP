@@ -32,6 +32,17 @@ on:
         required: false
         default: ''
         type: string
+      # catalog = mfg_products + product_models only, stored SO lines untouched.
+      # Owner 2026-08-18 chose this after the dry-run showed `all` also re-stamps
+      # 1,012 SO line rows across 463 documents — the Houzs line backfill he had
+      # already declined. `all` stays the default so no earlier dispatch changes
+      # meaning; the narrow set has to be asked for.
+      scope:
+        description: 'catalog = SKUs and models only. all = also re-stamp SO lines (1,012 rows).'
+        required: false
+        default: catalog
+        type: choice
+        options: [catalog, all]
 
 concurrency:
   group: hc-sofa-branding-fix
@@ -69,6 +80,7 @@ jobs:
         env:
           APPLY: ${{ steps.mode.outputs.apply }}
           CONFIRM: ${{ github.event.inputs.confirm }}
+          SCOPE: ${{ inputs.scope }}
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
           NODE_OPTIONS: --dns-result-order=ipv4first
