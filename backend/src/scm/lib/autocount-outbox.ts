@@ -1579,7 +1579,7 @@ async function acDocNoOf(sb: Sb, ref: AcDocRef): Promise<string | null> {
 /**
  * WHICH BUILD of AcSyncService is answering, read once per drain sweep.
  *
- * Stamped onto every row the sweep dispatches (migration 0303). The point is
+ * Stamped onto every row the sweep dispatches (migration 0304). The point is
  * not curiosity: a feature the host does not have is indistinguishable from a
  * feature that ran and found nothing — `mismatches` is empty both when the host
  * compared the creditor names and agreed, and when the host predates the
@@ -1683,7 +1683,7 @@ export async function dispatchOne(
   row: AcOutboxRow,
   fetchImpl: typeof fetch = fetch,
   /**
-   * The host build this sweep is talking to (migration 0303), read once by the
+   * The host build this sweep is talking to (migration 0304), read once by the
    * drain and stamped on every row it touches.
    *
    * OPTIONAL, deliberately, and this is the exception CLAUDE.md's

@@ -53,7 +53,7 @@ byte-for-byte indistinguishable from a feature that ran and found nothing.
 creditor mismatch report — `mismatches` is empty when the host is too old to
 compare, and empty is exactly what agreement looks like.
 
-**Fix.** Migration 0303 adds `host_built_at` / `host_mvid` to
+**Fix.** Migration 0304 adds `host_built_at` / `host_mvid` to
 `scm.autocount_outbox`. The drain reads `/health` once per sweep — and only when
 there is a row to send, so an empty five-minute tick does not knock on the office
 host — and stamps it on every row it dispatches.
