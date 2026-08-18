@@ -521,7 +521,12 @@ async function main() {
     //     movement carrying that DO, not just the OUTs.
     if (has("delivery_orders", "id", "status") && has("delivery_order_items", "delivery_order_id", "qty")) {
       const doNoCol = ["do_number", "do_no", "doc_no"].find((c) => C.delivery_orders.has(c));
-      const shipped = "('DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED','COMPLETED')";
+      /* A fourth hand-typed copy of the stock-out set — this file predates
+         scripts/lib/do-shipped-states.mjs and never imported it. 'COMPLETED'
+         dropped from all three occurrences on 2026-08-18: it is not a member of
+         scm.do_status, so it matched nothing. It never THREW here only because
+         every one of these predicates casts `d.status::text` first. */
+      const shipped = "('DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED')";
       const doRows = await pg.unsafe(`
         WITH lines AS (
           SELECT di.delivery_order_id AS doc_id, SUM(COALESCE(di.qty,0))::int AS line_qty
@@ -1322,7 +1327,7 @@ async function main() {
           FROM lines l
           JOIN ${q("delivery_orders")} d ON d.id = l.doc_id
           LEFT JOIN fifo f ON f.doc_id = l.doc_id::text AND f.product_code = l.item_code
-         WHERE UPPER(d.status::text) IN ('DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED','COMPLETED')
+         WHERE UPPER(d.status::text) IN ('DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED')
          ORDER BY 1`);
       const doBad = doCost.filter((r) => Number(r.line_cost) !== Number(r.fifo_cost));
       const doGap = doBad.reduce((a, r) => a + Math.abs(Number(r.line_cost) - Number(r.fifo_cost)), 0);
@@ -1465,7 +1470,7 @@ async function main() {
                  d.status::text AS status
             FROM ${q("delivery_order_items")} di
             JOIN ${q("delivery_orders")} d ON d.id = di.delivery_order_id
-           WHERE UPPER(d.status::text) IN ('DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED','COMPLETED')
+           WHERE UPPER(d.status::text) IN ('DISPATCHED','IN_TRANSIT','SIGNED','DELIVERED','INVOICED')
              AND di.committed_po_batch_no IS NOT NULL AND di.committed_po_batch_no <> ''
         ), taken AS (
           SELECT m.source_doc_id::text AS doc_id, m.product_code,

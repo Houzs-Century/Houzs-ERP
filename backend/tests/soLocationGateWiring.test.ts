@@ -152,7 +152,9 @@ describe('create path (createSalesOrderCore)', () => {
 
 describe('status route (DRAFT -> live)', () => {
   const block = () =>
-    between(routeSource, "mfgSalesOrders.patch('/:docNo/status',", 'const commitStatusChange');
+    // Anchor changed 2026-08-18 — the handler is now a named export, mounted at the
+    // bottom of the file; the old route-mount anchor slices nothing.
+    between(routeSource, 'export const patchMfgSalesOrderStatusHandler', 'const commitStatusChange');
 
   test('a draft going live is gated before the status write commits', () => {
     expect(block()).toContain("fromNorm === 'DRAFT' && toStatus !== 'CANCELLED'");

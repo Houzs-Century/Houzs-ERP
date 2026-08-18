@@ -27,6 +27,7 @@ import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { qtyCapRefusal } from '../lib/qty-cap';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { buildVariantSummary, computeVariantKey, type VariantAttrs } from '../shared';
 import {
   orderSofaModuleRowsWithinBuilds,
@@ -65,11 +66,16 @@ async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok:
   // Receives are created POSTED directly; this is idempotent on already-POSTED
   // rows (matches any non-CLOSED status). The inventory IN is booked by the
   // resync below.
+  /* maybeSingle, NOT single: the two .neq gates make a zero-row result the
+     ORDINARY outcome for a CLOSED/CANCELLED receive, and PostgREST reports zero
+     rows to .single() as PGRST116 — so `error` was set, the 500 fired, and the
+     `409 cannot_post` below was unreachable. Same fix as stock-transfers.ts's
+     cancel and purchase-returns.ts's /:id/complete. */
   const { data, error } = await sb.from('purchase_consignment_receives').update({
     status: 'POSTED',
     posted_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }).eq('id', receiveId).neq('status', 'CLOSED').neq('status', 'CANCELLED').select('id, status, posted_at').single();
+  }).eq('id', receiveId).neq('status', 'CLOSED').neq('status', 'CANCELLED').select('id, status, posted_at').maybeSingle();
   if (error) return { ok: false, reason: error.message, status: 500 };
   if (!data) return { ok: false, reason: 'cannot_post', status: 409 };
 
@@ -787,7 +793,7 @@ purchaseConsignmentReceives.post('/', async (c) => {
     purchase_consignment_order_id: pcOrderId,
     pc_order_no: pcOrderNo,
     supplier_id: body.supplierId,
-    received_at: (body.receivedAt as string) ?? todayMyt(),
+    received_at: dateOrNull(body.receivedAt) ?? todayMyt(),
     delivery_note_ref: (body.deliveryNoteRef as string) ?? null,
     notes: (body.notes as string) ?? null,
     warehouse_id: (body.warehouseId as string | undefined) ?? null,
@@ -816,7 +822,7 @@ purchaseConsignmentReceives.post('/', async (c) => {
       unit_price_centi: unitPriceCenti,
       discount_centi: discountCenti,
       line_total_centi: (qtyReceived * unitPriceCenti) - discountCenti,
-      delivery_date: (it.deliveryDate as string | undefined) ?? null,
+      delivery_date: dateOrNull(it.deliveryDate),
       unit_cost_centi: Number(it.unitCostCenti ?? 0),
       notes: (it.notes as string | undefined) ?? null,
       item_group: (it.itemGroup as string | undefined) ?? null,
@@ -1003,7 +1009,10 @@ purchaseConsignmentReceives.patch('/:id/post', async (c) => {
   }
   const res = await postPcReceiveAndRollup(sb, id);
   if (!res.ok) return c.json({ error: 'post_failed', reason: res.reason }, 500);
-  const { data } = await scopeToCompanyId(sb.from('purchase_consignment_receives').select('id, status, posted_at').eq('id', id), co.companyId).single();
+  /* maybeSingle: a company-scoped by-id read can legitimately match zero rows (a
+     cancel that raced in behind the post), and .single() turns that into a
+     PGRST116 error — a post that COMMITTED answering 500. */
+  const { data } = await scopeToCompanyId(sb.from('purchase_consignment_receives').select('id, status, posted_at').eq('id', id), co.companyId).maybeSingle();
   /* recountError surfaced, matching the GRN post which returns the same field.
      The receive IS posted — a stale received_qty on the parent PC Order must not
      un-post it — but the operator and /inventory/reconcile now learn that the
@@ -1099,6 +1108,9 @@ purchaseConsignmentReceives.patch('/:id', async (c) => {
   ] as const) {
     if (body[from] !== undefined) updates[to] = body[from];
   }
+  /* A cleared received-date posts "" and this loop wrote it through to the
+     date column, which Postgres rejects and 500s the save. */
+  coerceEmptyDates(updates);
   const { data, error } = await scopeToCompanyId(sb.from('purchase_consignment_receives').update(updates).eq('id', id), co.companyId).select(HEADER).maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
@@ -1169,7 +1181,7 @@ purchaseConsignmentReceives.post('/:id/items', async (c) => {
     description: (it.description as string) ?? null,
     description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
     uom: (it.uom as string) ?? 'UNIT',
-    delivery_date: (it.deliveryDate as string) ?? null,
+    delivery_date: dateOrNull(it.deliveryDate),
   };
   const { data, error } = await sb.from('purchase_consignment_receive_items').insert({ company_id: activeCompanyId(c), ...row }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
@@ -1273,6 +1285,7 @@ purchaseConsignmentReceives.patch('/:id/items/:itemId', async (c) => {
   ] as const) {
     if (it[from] !== undefined) updates[to] = it[from];
   }
+  coerceEmptyDates(updates);
   /* description2 is server-owned: recompute from effective itemGroup + variants. */
   {
     const effGroup = (it.itemGroup ?? (prev as { item_group?: string }).item_group) as string | null | undefined;

@@ -92,7 +92,30 @@ export function idempotentInit(key: string | undefined, init: RequestInit): Requ
  *  this module exists for), and a rotated key would then book the payment a
  *  SECOND time. Keeping the key means that retry REPLAYS, which is the honest
  *  answer: the operator only ever intended one payment. The key is retired by
- *  the intent ending, never by the write succeeding. */
+ *  the intent ending, never by the write succeeding.
+ *
+ *  AND NOT ON A REFUSAL EITHER — the tempting one, tried and REJECTED on
+ *  2026-08-18, so nobody has to re-derive why. The dead end being chased is
+ *  real: a GRN refused with 409 zero_cost_receipt claimed this key against the
+ *  refused payload, so the corrected resubmit came back 409
+ *  idempotency_key_reused and only a page reload (which throws away everything
+ *  typed) got out of it. Rotating here on that code looks like the fix and is
+ *  not, because `idempotency_key_reused` DOES NOT MEAN "nothing was written".
+ *  backend/src/middleware/idempotency.ts answers it whenever the stored claim's
+ *  request hash differs from this request's — including when that claim holds a
+ *  COMMITTED 201. A client that rotates on it, and tells the operator to press
+ *  Save again, turns a retype into a SECOND document, a second stock IN and a
+ *  second AutoCount enqueue. Costing the operator their typing is the cheaper
+ *  of those two by a wide margin.
+ *
+ *  The dead end is fixed where the answer is actually known: the ROUTE calls
+ *  markIdempotencyNoWrite(c) when it can prove it rolled everything back, and
+ *  the middleware then DELETES the claim, so the corrected resubmit is a fresh
+ *  claim and simply succeeds — no 409 to react to, and nothing for this module
+ *  to guess at. A `key_reused` that still reaches the client is therefore, by
+ *  construction, one no route was able to prove; it carries `completed_status`
+ *  (the earlier request's own HTTP status) and the only safe response to it is
+ *  to go and look. */
 export function useIdempotencyKey(): string {
   const [key] = useState(newIdempotencyKey);
   return key;

@@ -462,8 +462,17 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
   // re-read this if a surface ever needs a subject-specific line.
   idempotency_in_flight:
     "This is already going through — give it a moment, then refresh to check. Please don't send it again.",
+  /* NEVER reword this into "nothing was saved, press Save again". The
+     middleware returns this code purely because the payload's hash differs
+     from the claim's, and the claim may hold a COMMITTED 201 (the body's
+     `completed_status` says which) — so this sentence cannot promise a clean
+     slate, and an instruction to resubmit books a second GRN, a second stock
+     IN and a second AutoCount enqueue. Refreshing is what SURFACES the
+     document that may already exist. A refusal that genuinely wrote nothing
+     never reaches here: the route releases the claim (markIdempotencyNoWrite)
+     and the corrected resubmit just works. */
   idempotency_key_reused:
-    'This request key was already used with different details. Refresh before trying again.',
+    'An earlier submission with different details already finished under this request key. Refresh and check what was recorded before sending it again.',
   idempotency_key_conflict:
     'This request key is already owned by another operation. Refresh and try again.',
   idempotency_unavailable:

@@ -66,6 +66,218 @@ rollback cases carry a CONTROL proving the same request succeeds when every read
 works, so the 503 is the post-insert recheck and not the pre-check.
 `audit:swallowed-reads` records the direction: `do-line-remaining.ts` 8 -> 0
 (dropped from the baseline entirely), `delivery-returns.ts` 20 -> 19.
+## Every filter tab that named a status the enum never had returned 500, and its count silently read 0 [high]
+
+<!-- area: Delivery, DO, returns -->
+
+**Symptom.** In BOTH companies: Sales Invoice `Sent`, `Partial` and `Paid` each
+answered 500, and all four of its pill counts read 0 beside a list whose `all`
+count read 1. Delivery Order `Delivered` answered 500, and its pills did not sum
+to All — 25 of 27 delivered orders were unreachable in Houzs Century, 12 of 36
+in 2990's Home. Nothing on screen looked broken; the numbers looked settled.
+
+**Root cause (traced).** `SI_STATUS_BUCKETS` carried `ISSUED`, `PARTIAL` and
+`COMPLETED`; `DO_STATUS_BUCKETS` carried `COMPLETED`. A comment described them as
+a "backward-compatible fallback" for raw DB statuses. They are not: `status` is a
+Postgres enum on both tables, so the column could never have held any of them,
+and `.in('status', …)` handed the label straight to Postgres — `invalid input
+value for enum sales_invoice_status: "ISSUED"`. The second half is what hid it:
+each count query destructured `count` and dropped `error`, so `count ?? 0`
+rendered a *failed read* as a real zero. `OVERDUE` and `CLOSED` were the mirror
+fault — genuine enum members in no bucket at all, counted in `all` and shown in
+no tab.
+
+**Fix.** Non-members removed; `OVERDUE` joined the SI `sent` bucket and `CLOSED`
+the GRN `posted` bucket, matching the fallback both frontends already applied.
+`lib/status-counts.ts` `readStatusCounts()` now answers 500 `status_counts_failed`
+naming the failing bucket instead of serving 0, wired into all five list
+endpoints. `tests/statusBucketsEnumMembership.test.mjs` derives the enum from
+`scripts/scm-schema/*.sql` plus every `ALTER TYPE … ADD VALUE` migration rather
+than a hand-copied list, asserts both directions for every bucket map, and fails
+if a `*_STATUS_BUCKETS` map appears under `backend/src` whose enum it does not
+know. `tests/statusCountsFailLoud.test.mjs` pins that every list's count read
+reports rather than degrades. Both are in `MUST_GATE_MERGE`.
+
+Ref: PR #2382, 2026-08-18. Verified against production before and after.
+
+## A blank optional date was sent as "" and written straight into a DATE column [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** "Save failed — The system hit a problem." on any Purchase Order
+that left Supplier Date 2/3/4 empty, which is most of them.
+
+**Root cause (traced).** `PATCH /api/scm/mfg-purchase-orders/:id` with
+`supplierDeliveryDate2: ""` → 500 `invalid input syntax for type date: ""`.
+The same request with `null` → 200; with the key omitted → 200. The frontend
+maps a null column to `''` for the input element and sends it back verbatim;
+every backend write guarded `undefined` with `?? null`, which does not catch
+`''`. One file in the whole backend had a guard — `delivery-orders-mfg.ts` had a
+local `emptyDate()`. Sales Orders escaped only because one frontend line
+happened to use `|| null`. Not an AutoCount fault: `queueAcPoEdit` runs after the
+update and is never reached.
+
+**Fix.** `lib/date-coerce.ts` `dateOrNull` / `coerceEmptyDates`, applied to every
+request-body date write across 17 route files including `routes/projects.ts` and
+`dp-orders.ts`, and to the generic `updates[to] = body[from]` field-map loops
+that the column-name sweeps miss. `tests/dateWriteCoercion.test.ts` parses every
+`.ts` under `backend/src` with the TypeScript compiler API and fails on any
+request-supplied value reaching a DATE/TIMESTAMPTZ column uncoerced — no
+allowlist. It reports 0 here and **89 on an unpatched origin/main**, including
+the exact PATCH above. `tests/fixtures/date-write-probe.ts` is the detector's own
+self-test, so a scanner that stops matching fails there rather than reporting a
+clean backend.
+
+Ref: PR #2382, 2026-08-18.
+
+## A hook after an early return crashed six document editors on refresh [high]
+
+<!-- area: Frontend + mobile -->
+
+**Symptom.** Opening a Purchase Order, Purchase Invoice or Goods Receipt edit
+page by direct URL or browser refresh showed "Something went wrong loading this
+page." every time. Arriving by clicking from the list did not.
+
+**Root cause (traced).** `usePrintPreview` sat *after* `if (detail.isPending)
+return …`. On a cold load the loading branch renders first with fewer hooks, then
+the loaded branch renders more — React error #310. Clicking from the list works
+because react-query already has the detail cached, so `isPending` is false on the
+first render. Ten components carried it, all via the same pasted call:
+PurchaseOrderDetail, PurchaseInvoiceDetail, GoodsReceivedDetail, the three
+Consignment detail pages, the three Purchase-Consignment detail pages, and
+ProjectGantt (whose two early returns precede two `useMemo`s).
+
+**Fix.** Hooks hoisted above every conditional return in all ten. The reason it
+reached ten: `frontend/eslint.config.mjs` registered `eslint-plugin-react-hooks`
+with **every rule off** — including `rules-of-hooks`, which flags exactly this —
+so the plugin existed only to stop 97 pre-existing disable comments erroring as
+"rule not found". `rules-of-hooks` is now on at error level, and it reproduces 12
+errors across 11 files against origin/main.
+
+Ref: PR #2382, 2026-08-18.
+
+## A save the server refused could not be corrected and resubmitted [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** Creating a GRN from a PO was refused by a correct business guard
+(`zero_cost_receipt`). Entering the unit price it asked for and submitting again
+answered 409 `idempotency_key_reused` — "This request key was already used for
+different data." Only a full page reload recovered, losing everything typed.
+
+**Root cause (traced).** `useIdempotencyKey()` mints one key per form mount and
+deliberately never rotates — correct, because a retry after a COMMITTED write
+must replay rather than book twice. What it did not distinguish is a refusal that
+wrote nothing. The obvious client-side fix is wrong and was rejected in review:
+`middleware/idempotency.ts` compares the request hash BEFORE it looks at
+`status_code`, so `key_reused` is also what a committed 201 answers when the
+payload changes — rotating on it would have told the operator to resubmit and
+booked a duplicate document.
+
+**Fix.** Decided on the server, where the outcome is known. A pre-write refusal
+answers through `lib/no-write-refusal.ts` `refuseWithoutWriting`, which releases
+the claim; `keyReuse` now returns `completed_status` so the client can tell the
+two apart. 27 create forms — including five mobile screens — are covered without
+touching their call sites. `tests/grnPreWriteRefusalsReleaseKey.test.ts` pins
+that no refusal preceding a write answers with a bare `c.json`; it caught one
+this very merge missed, at `grns.ts:3275`.
+
+Ref: PR #2382, 2026-08-18.
+
+## An unbounded .in() list broke MRP in the larger tenant and Delivery Planning in both [high]
+
+<!-- area: Fleet, trips, TMS -->
+
+**Symptom.** `GET /api/scm/mrp?category=SOFA` 500'd in Houzs Century (2,726
+sales orders) and answered 200 in 2990's Home (100). `GET /api/scm/
+delivery-planning` 500'd in BOTH with a bare "Something went wrong", taking
+`/scm/dp-orders` and `/scm/trips` down with it. The unpaginated SO list — the
+mobile convert wizard's only source — 500'd in Houzs Century.
+
+**Root cause (traced).** `wrangler tail` on the production Worker recovered what
+the generic handler had swallowed: `[onError] Error: delivered-sum read failed:`
+— with an EMPTY message, the signature of a request refused before PostgREST
+could produce a JSON body. `lib/do-unlinked-coverage.ts` built
+`.in('so_item_id', …)` from every SO line with no chunking; the ids ride in the
+request URL. `paginateAll` bounds the RESPONSE, not the request. Delivery
+Planning failed in the small tenant too for a second reason: its SO read carried
+no company predicate at all, so both tenants assembled the whole platform's
+documents.
+
+**Fix.** `chunkIn` sizes batches by URL BYTES rather than row count
+(`chunkSizeForUrl`: 76 values for uuids, 200 for short codes), applied at 18
+files; `[...new Set(...)]` on the epicentre because PostgREST de-dupes within one
+`in.()` list but two batches would double-count a repeated id. The board's SO
+read is company-scoped. `lib/read-failure.ts` makes this class of failure
+diagnosable — it carries `code`/`details`/`hint`, the in-list size and the doc
+count, and cannot resolve to an empty string, so the next occurrence answers
+itself without a tail.
+
+Ref: PR #2382, 2026-08-18.
+
+## COMPLETED was never a Delivery Order status, and four files believed it was [medium]
+
+<!-- area: Delivery, DO, returns -->
+
+**Symptom.** `GET /api/scm/delivery-orders-mfg?status=delivered` 500'd in both
+tenants; the Delivery Agent's DO pipeline silently reported no COMPLETED bucket.
+
+**Root cause (traced).** `scm.do_status` has eight labels — the schema's seven
+plus `DRAFT` from migration 0040 — and no migration ever added `COMPLETED`. No
+code has ever written it; it lived only in read predicates and whitelists,
+asserted once in a comment as settled fact and mirrored into three more files. In
+`DO_STATUSES` it was worse than absent: `PATCH /delivery-orders-mfg/:id/status`
+accepted it and the UPDATE then 500'd. `delivery-agent.ts` queried
+`.eq('status','COMPLETED')` inside `try {} catch {}`, so from 2026-08-13 it threw
+22P02 on every run and nothing said so.
+
+**Fix.** Removed from `DO_STOCK_OUT_STATES`, `DO_STATUSES`, the `.mjs` mirror and
+three raw-SQL copies; the four assertion comments now carry the evidence; the
+mirror test no longer pins the false belief and `doStatusCaseNormalisation`
+imports the vocabulary instead of re-typing it. The agent now counts from the
+column rather than enumerating a list, so there is no second vocabulary to drift.
+
+Ref: PR #2382, 2026-08-18.
+
+## Three cross-tenant leaks: grant escalation, foreign-warehouse stock, pooled customer credit [high]
+
+<!-- area: Auth, permissions, sessions -->
+
+**Symptom.** None observed; found by audit. Two companies share one database and
+one service-role connection, so Postgres RLS never runs — tenancy holds only
+where application code remembers a predicate.
+
+**Root cause (traced).** (1) `PUT /api/users/:id/companies` validated requested
+grants against the whole `companies` master rather than the caller's allow-list
+and carried no self-guard, so a holder of the flat global `users.manage` scoped
+to one company could grant themselves the other on their own id and
+`companyContext` would honour it on the next request. (2) `POST
+/scm/stock-transfers` took both warehouse ids from the body checked only for
+presence and inequality, and `fn_stock_transfer_apply`'s FIFO consumer keys on
+`(warehouse_id, product_code, variant_key)` with no company argument — it
+consumed the other tenant's lots at their cost; `GET /scm/inventory/` returned
+the foreign uuids that made it practical. (3) Customer credit summed by
+`debtor_code` alone while `customer_credits.company_id` is NOT NULL and
+`customers.customer_code` is unique per `(code, company_id)` — the same code
+names a different customer in each company, and the debit was stamped with the
+SI's company, which kept it silent.
+
+**Fix.** Grants validated against `allowedCompanyIds(c)`; both warehouse ids
+proven in-company and the inventory read scoped; credit balance takes a required
+`companyId`. Measured against production while assessing severity: of 96 users,
+**0** have an empty grant list — nobody stands on the middleware's documented
+fail-open path — 79 hold one company, 17 hold both.
+
+**NOT COMPLETE.** The atomic credit RPC carries the same unscoped SUM in its own
+body. The SQL is fixed here but that function is applied by hand:
+`scripts/scm-schema/apply-customer-credit-atomic.mjs` must be re-run or the
+preferred path still pools. Separately, `rename_sofa_compartment`
+(`port-missing-functions-triggers.sql:170`) is SECURITY DEFINER with 25 UPDATE
+statements and no `company_id` anywhere — one call rewrites both tenants' item
+codes including `grn_items.supplier_sku`, the AutoCount write-back key. Neither
+is fixed here.
+
+Ref: PR #2382, 2026-08-18.
 ## `/ensure-masters` fetched the creditor, read a boolean off it and threw the company name away [high]
 
 <!-- area: AutoCount sync + write-back -->
