@@ -714,6 +714,11 @@ app.get("/:id/companies", requirePermission("users.read"), async (c) => {
  * Shared by PUT /:id/companies, POST /invite and PATCH /:id so the three write
  * paths never drift (see MEMORY: single logic layer / converge drifted copies).
  */
+/** Thrown rather than returned so all three write paths (PUT /:id/companies,
+ *  POST /invite, PATCH /:id) refuse identically — the reason this helper exists
+ *  is that those three drifted apart before. */
+export class UserCompaniesRefusal extends Error {}
+
 export async function setUserCompanies(
   c: Context<{ Bindings: Env }>,
   userId: number,
@@ -743,6 +748,31 @@ export async function setUserCompanies(
        behaviour so a single-company install still works; `[]` means the caller
        holds nothing and may therefore grant nothing. See the three-state
        sentinel in scm/lib/companyScope.ts. */
+    /* AN EMPTY GRANT SET IS A REFUSAL, NOT AN ERASURE — and it used to be the
+       opposite. The DELETE below runs unconditionally and the INSERTs come from
+       `valid`, so an empty `valid` left the user with ZERO rows in
+       user_companies. companyContext then read that empty list as "no
+       restriction" and widened the caller to EVERY active company, which meant
+       "give this person no company" produced "give this person every company",
+       rendered on the Members screen as "All".
+
+       Two ways in, and the second is the dangerous one:
+         · PUT /:id/companies with `{"companies": []}` — the stated intent;
+         · a RESTRICTED grantor: a caller holding only [2] who submits [1] (a
+           stale form, an older client, or the Sales-Director invite path that
+           forces [1]) had `requested` filtered down to nothing — so an admin
+           limited to one company silently handed the target BOTH.
+
+       The middleware no longer widens on an empty list, so this is no longer an
+       escalation. It is still a silent erasure of someone's access, performed by
+       a caller who asked for the opposite, so it refuses here rather than
+       writing. `requested` empty and `valid` empty are reported separately
+       because they are different mistakes. */
+    if (requested.length === 0) {
+      throw new UserCompaniesRefusal(
+        'A user must belong to at least one company. To remove their access, deactivate the user instead.',
+      );
+    }
     let valid = requested;
     if (requested.length > 0) {
       const mine = allowedCompanyIds(c);
@@ -758,6 +788,11 @@ export async function setUserCompanies(
       }
     }
 
+    if (valid.length === 0) {
+      throw new UserCompaniesRefusal(
+        'None of the requested companies are ones you hold, so nothing was changed. You can only grant companies you belong to yourself.',
+      );
+    }
     await c.env.DB.batch([
       c.env.DB
         .prepare(`DELETE FROM user_companies WHERE user_id = ?`)
@@ -799,7 +834,13 @@ app.put("/:id/companies", requirePermission("users.manage"), async (c) => {
     .limit(1);
   if (target.length === 0) return c.json({ error: "User not found" }, 404);
 
-  const valid = await setUserCompanies(c, id, incoming as number[]);
+  let valid: number[];
+  try {
+    valid = await setUserCompanies(c, id, incoming as number[]);
+  } catch (e) {
+    if (e instanceof UserCompaniesRefusal) return c.json({ error: 'company_grant_refused', message: e.message }, 400);
+    throw e;
+  }
   return c.json({ ok: true, companies: valid });
 });
 
@@ -1175,7 +1216,12 @@ app.post("/invite", requirePermissionOrSalesDirector("users.manage"), async (c) 
     : Array.isArray(body.company_ids) && body.company_ids.length > 0
       ? body.company_ids
       : [1];
-  if (userId) await setUserCompanies(c, userId, inviteCompanyIds);
+  try {
+    if (userId) await setUserCompanies(c, userId, inviteCompanyIds);
+  } catch (e) {
+    if (e instanceof UserCompaniesRefusal) return c.json({ error: 'company_grant_refused', message: e.message }, 400);
+    throw e;
+  }
 
   // Keep the Sales Team roster in lockstep at CREATE time too — not just on the
   // later department-change PATCH. A member invited straight into a Sales
@@ -1778,7 +1824,12 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
   // Apply the company grants (Phase 0e) — replace-set via the shared helper.
   let finalCompanyIds: number[] | null = null;
   if (hasCompanyChange) {
-    finalCompanyIds = await setUserCompanies(c, id, body.company_ids as number[]);
+    try {
+      finalCompanyIds = await setUserCompanies(c, id, body.company_ids as number[]);
+    } catch (e) {
+      if (e instanceof UserCompaniesRefusal) return c.json({ error: 'company_grant_refused', message: e.message }, 400);
+      throw e;
+    }
   }
 
   // If we disabled a user, revoke their sessions. Bust the cached-user entries
