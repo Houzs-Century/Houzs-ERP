@@ -1352,8 +1352,13 @@ function DocActionFooter({ moduleKey, id, header, invalidate, onPOD, onDeleted }
      departure marker MobileDeliveryPlanning writes for "On the way"
      (MobileDeliveryPlanning.tsx:1280), so deleting it to match the desktop's
      single jump would have removed a step drivers actually use. ── */
+  /* The status guard is not defensive noise: `header` falls back to `{}` when
+     this screen is reached with a synthetic { id } row (the Relationship Map's
+     flowNav does exactly that), and an absent status would otherwise render the
+     GENERIC sentence for a second and then swap it for the real one. Saying the
+     wrong thing briefly is its own version of the bug this note exists to fix. */
   const doNextStepNote =
-    moduleKey === "delivery-orders-mfg" && mayOperate
+    moduleKey === "delivery-orders-mfg" && mayOperate && s(header?.status)
       ? (siTransferBlockReason(header?.status) ?? SI_TRANSFER_MOBILE_ROUTE_HINT)
       : null;
 
