@@ -769,9 +769,22 @@ async function main() {
 
     /* F1. target_date — the ERP source stopped naming it on 2026-08-18. The
        COLUMN is still there, and the question the drop needs answered is
-       whether anything OUTSIDE this repository (the POS) still writes it. A
-       recent write is the only evidence that would exist: no ERP path has
-       written the column since PR #140 dropped the field from the form. */
+       whether anything OUTSIDE this repository (the POS) still writes it.
+
+       MEASURE THE ROW'S BIRTH, NOT ITS LAST EDIT. The obvious query — "carries a
+       target_date AND updated_at is recent" — answers a DIFFERENT question:
+       `updated_at` moves on ANY edit to the header, so an order created in 2025
+       with a target_date and re-saved yesterday for an unrelated remark scores as
+       a fresh write. The first draft of this section did exactly that and
+       concluded "something still writes it" from 46 rows that may all be old.
+       That is adjacent evidence, not evidence.
+
+       `created_at` IS the discriminator, and only because of a fact about this
+       column specifically: no ERP path has written it since PR #140, and the
+       write it used to do was at CREATE. So a row BORN in the window and
+       carrying one was given it by a producer that is not this repository.
+       Both numbers are printed — the weak one labelled as weak — because a
+       reader who only sees the strong one cannot tell it was chosen. */
     for (const t of BASE_TABLES) {
       if (!tableExists(t)) { info(`scm.${t}: table absent — nothing to say about target_date`); continue; }
       const [td] = await q`
@@ -786,16 +799,23 @@ async function main() {
         SELECT count(*)::int AS rows_total,
                count(target_date)::int AS set_ever,
                count(*) FILTER (WHERE target_date IS NOT NULL
-                                  AND coalesce(updated_at, created_at) > now() - interval '90 days')::int AS set_90d,
-               coalesce(extract(epoch FROM (now() - max(coalesce(updated_at, created_at))
-                       FILTER (WHERE target_date IS NOT NULL))) / 86400.0, -1)::numeric(10,2) AS newest_age_days
+                                  AND created_at > now() - interval '90 days')::int AS born_90d,
+               count(*) FILTER (WHERE target_date IS NOT NULL
+                                  AND coalesce(updated_at, created_at) > now() - interval '90 days')::int AS touched_90d,
+               coalesce(extract(epoch FROM (now() - max(created_at)
+                       FILTER (WHERE target_date IS NOT NULL))) / 86400.0, -1)::numeric(10,2) AS newest_birth_days,
+               coalesce(extract(epoch FROM (now() - min(created_at)
+                       FILTER (WHERE target_date IS NOT NULL))) / 86400.0, -1)::numeric(10,2) AS oldest_birth_days
         FROM scm.${t}`);
-      info(`scm.${t}.target_date: ${r.set_ever} of ${r.rows_total} rows set ever; ${r.set_90d} touched in the last 90 days`);
-      info(`  newest touched row carrying one: ${Number(r.newest_age_days) < 0 ? "n/a (none)" : r.newest_age_days + " days old"}`);
+      const born = Number(r.born_90d);
+      info(`scm.${t}.target_date: ${r.set_ever} of ${r.rows_total} rows carry one`);
+      info(`  THE ANSWER — rows CREATED in the last 90 days carrying one: ${born}`);
+      info(`  newest such row was created ${Number(r.newest_birth_days) < 0 ? "n/a (none)" : r.newest_birth_days + " days ago"}; oldest ${Number(r.oldest_birth_days) < 0 ? "n/a" : r.oldest_birth_days + " days ago"}`);
+      info(`  (weak, do not read as a writer: ${r.touched_90d} carry one AND were UPDATED in 90 days — updated_at moves on any edit)`);
       info(
-        Number(r.set_90d) > 0
-          ? `  >> SOMETHING OUTSIDE THIS REPO STILL WRITES IT. The column DROP must WAIT; the NAME retirement in the ERP source is unaffected (the ERP never read the value).`
-          : `  >> no writer in 90 days. The column drop has no live producer to break — still a separate migration, on its own evidence.`,
+        born > 0
+          ? `  >> A PRODUCER OUTSIDE THIS REPO IS STILL WRITING IT. The column DROP must WAIT. The NAME retirement in the ERP source is unaffected — the ERP only offered a door to write it and never read the value.`
+          : `  >> no row born with one in 90 days: the population is a frozen backlog, not a live producer. The column drop still needs its own migration, and should re-run this first.`,
       );
     }
 
