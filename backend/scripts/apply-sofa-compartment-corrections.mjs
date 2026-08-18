@@ -215,13 +215,23 @@ async function main() {
                 SELECT i.purchase_order_id, 'mfg_product', ${p.to}, ${name}, 'sofa', ${src.description2 ?? null},
                        i.qty, 0, ${p.price}, ${p.tot}, ${tx.json(p.v)}, i.warehouse_id, false, ${CO}
                   FROM scm.purchase_order_items i WHERE i.id = ${src.id}`;
+            /* warehouse_id IS NOT OPTIONAL HERE, and its absence is silent.
+               Stock allocation buckets by (warehouse, item, variant), so a line
+               that lands NULL can never match stock: it stays PENDING forever,
+               shows no incoming PO, and reads as "the system did not capture
+               it" even when the goods were received into the right bucket. The
+               PO branch above already copies `i.warehouse_id`; this branch
+               omitted the column entirely, and the 2026-08-11 run produced
+               seven such lines across six orders (repaired 2026-08-18). */
             else await tx`INSERT INTO scm.mfg_sales_order_items
                 (doc_no, line_no, item_group, item_code, description, description2, uom, location, qty,
-                 unit_price_centi, total_centi, balance_centi, company_id, variants, remark, photo_urls)
+                 unit_price_centi, total_centi, balance_centi, company_id, variants, remark, photo_urls,
+                 warehouse_id)
                 SELECT i.doc_no, (SELECT COALESCE(MAX(line_no),0)+1 FROM scm.mfg_sales_order_items WHERE doc_no = i.doc_no),
                        'sofa', ${p.to}, ${name}, i.description2, i.uom, i.location, i.qty,
                        ${p.price}, ${p.tot}, ${p.tot}, ${CO}, ${tx.json(p.v)},
-                       'compartment corrected 2026-08-10', i.photo_urls
+                       'compartment corrected 2026-08-10', i.photo_urls,
+                       i.warehouse_id
                   FROM scm.mfg_sales_order_items i WHERE i.id = ${src.id}`;
           }
         }
