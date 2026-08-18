@@ -2610,6 +2610,14 @@ class AcSyncService {
     var created = new List<string>();
     var existed = new List<string>();
     var failed = new List<Dictionary<string, object>>();
+    /* A master the book ALREADY HOLDS UNDER A DIFFERENT NAME. It is neither
+       created nor failed - the document goes out - so it needs a third list, or
+       the finding has nowhere to live.
+       `nameUnverified` is the can't-happen branch kept honest: an account that
+       exists but whose CompanyName could not be read was NOT compared, and an
+       unmeasured comparison must never be counted as agreement. */
+    var mismatched = new List<Dictionary<string, object>>();
+    var nameUnverified = new List<string>();
 
     foreach (var o in List(p, "Items")) {
       var it = o as Dictionary<string, object>;
@@ -2719,7 +2727,24 @@ class AcSyncService {
        have fails the same foreign key a missing item does, and takes the whole
        PO with it. Same shape as the Location that FK'd on the live book; the
        only reason it was not found the same way is that no PO has been pushed
-       yet. */
+       yet.
+
+       AND THE CODE RESOLVING IS NOT THE SAME QUESTION AS THE CODE BEING RIGHT.
+       This loop used to ask CreditorExists(acc), which is `GetCreditor(acc) !=
+       null`: it fetched the creditor, read a boolean off it and threw away the
+       CompanyName it had in its hand. So a code that resolves to the WRONG
+       company was byte-for-byte indistinguishable from one that resolves to the
+       right company, at every layer, and HC-PO-2608-001 / HC-GR-2608-001 /
+       HC-PI-2608-001 were booked against 400-H004 - HAO HUA FURNITURE in the
+       book - for a purchase order the ERP names HOOKKA INDUSTRIES SDN. BHD.
+       Nothing refused it because nothing ever looked.
+
+       IT REPORTS AND IT MUST NEVER REFUSE. The ERP routinely holds a shorter
+       trading name than the book's registered one, so a refusal here would
+       block legitimate documents in bulk - and this comparison exists for the
+       accounting error underneath, which a human resolves against the AutoCount
+       masters, not for the spelling. The comparison is made where both names
+       exist at once, which is here and nowhere else. */
     foreach (var o in List(p, "Creditors")) {
       var it = o as Dictionary<string, object>;
       if (it == null) continue;
@@ -2727,7 +2752,27 @@ class AcSyncService {
       if (acc.Length == 0) continue;
       try {
         var da = AutoCount.ARAP.Creditor.CreditorDataAccess.Create(s, s.DBSetting);
-        if (CreditorExists(da, acc)) { existed.Add("creditor:" + acc); continue; }
+        string bookName;
+        if (CreditorFound(da, acc, out bookName)) {
+          existed.Add("creditor:" + acc);
+          var erpName = Str(it, "CompanyName");
+          if (bookName == null) {
+            nameUnverified.Add("creditor:" + acc);
+            Log("  ensure-masters could not read CompanyName for creditor " + acc + " - NOT compared");
+          } else if (erpName.Length > 0
+                     && !string.Equals(erpName, acc, StringComparison.OrdinalIgnoreCase)
+                     /* mastersOf falls back to the CODE when the payload carries
+                        no CreditorName, so comparing that against a company name
+                        is meaningless and would report on documents that said
+                        nothing. Skipped, never counted as agreement. */
+                     && NormParty(erpName) != NormParty(bookName)) {
+            mismatched.Add(new Dictionary<string, object> {
+              { "master", "creditor:" + acc }, { "erp", erpName }, { "book", bookName },
+            });
+            Log("  ensure-masters MISMATCH creditor " + acc + " erp=" + erpName + " book=" + bookName);
+          }
+          continue;
+        }
         var e = da.NewCreditor();
         e.AccNo = acc;
         Set(() => e.CompanyName = Or(Str(it, "CompanyName"), acc));
@@ -2825,6 +2870,12 @@ class AcSyncService {
       { "created", created },
       { "existed", existed },
       { "failed", failed },
+      /* NOT part of `ok`, deliberately. A name disagreement is a thing for a
+         human to settle against the AutoCount masters; refusing the document
+         over it would block legitimate purchases every day, because the ERP's
+         name is a trading name far more often than it is an error. */
+      { "mismatched", mismatched },
+      { "nameUnverified", nameUnverified },
     };
     /* A partial answer is still an answer: the caller needs to know WHICH master
        it may not name, and a bare 500 would lose that. */
@@ -2848,8 +2899,49 @@ class AcSyncService {
   static bool DebtorExists(AutoCount.ARAP.Debtor.DebtorDataAccess da, string acc) {
     try { return da.GetDebtor(acc) != null; } catch { return false; }
   }
-  static bool CreditorExists(AutoCount.ARAP.Creditor.CreditorDataAccess da, string acc) {
-    try { return da.GetCreditor(acc) != null; } catch { return false; }
+  /* THE NAME AS WELL AS THE BOOLEAN. This used to be CreditorExists(), which
+     fetched the creditor, read `!= null` off it and discarded everything else -
+     including the CompanyName it had in its hand, which is the only fact that
+     can tell a right code from a wrong one.
+
+     Returns TRUE when the book holds the account. `bookName` is its CompanyName,
+     or NULL when the account exists and the name could not be read - the caller
+     must not compare against null, and must not read it as agreement either.
+     FALSE is the only answer that opens a new creditor, so the create path
+     behaves exactly as it did before.
+
+     THE PROPERTY IS READ BY REFLECTION on purpose. `sdk-api-reference.txt` was
+     dumped with DeclaredOnly and does not cover CreditorDataAccess at all, so
+     the return type of GetCreditor is not established here and this file cannot
+     be compiled anywhere but the host. Reflection compiles whatever the SDK
+     turns out to expose, and a property that is somehow absent degrades to "not
+     compared" rather than to a false MISMATCH on every document. */
+  static bool CreditorFound(AutoCount.ARAP.Creditor.CreditorDataAccess da, string acc, out string bookName) {
+    bookName = null;
+    try {
+      var e = da.GetCreditor(acc);
+      if (e == null) return false;
+      try {
+        var prop = e.GetType().GetProperty("CompanyName");
+        if (prop != null) {
+          var raw = prop.GetValue(e, null);
+          bookName = raw == null ? "" : raw.ToString();
+        }
+      } catch { bookName = null; }
+      return true;
+    } catch { return false; }
+  }
+
+  /* Case, punctuation and whitespace removed, so `HOOKKA MANUFACTURING SDN.
+     BHD.` and `HOOKKA MANUFACTURING SDN BHD` are the same party and never
+     report. A guard that fires on spelling is a guard nobody reads, and the
+     one thing worse than no report is one that is always on. Same rule the
+     census applies on the ERP side (census-autocount-party-codes.mjs). */
+  static string NormParty(string v) {
+    if (string.IsNullOrEmpty(v)) return "";
+    var sb = new System.Text.StringBuilder(v.Length);
+    foreach (var ch in v.ToUpperInvariant()) if (char.IsLetterOrDigit(ch)) sb.Append(ch);
+    return sb.ToString();
   }
   static bool LocationExists(AutoCount.Stock.Location.LocationMaintenance lm, string code) {
     try { return lm.GetLocation(code) != null; } catch { return false; }

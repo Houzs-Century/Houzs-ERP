@@ -1815,7 +1815,9 @@ opening an agent in the wrong table reports success and refuses the document
 anyway — the 2026-08-12 finding, in one line.
 
 **If the masters cannot be opened, the document is NOT sent.** A row that
-half-populated a live account book is worse than a row that waited.
+half-populated a live account book is worse than a row that waited. **A creditor
+whose NAME disagrees is the opposite case: it is reported and the document goes**
+— §7e1.
 
 The service side is idempotent by construction — each master is looked up and
 created only when the lookup comes back empty — and it is deliberately narrow:
@@ -1826,6 +1828,7 @@ created only when the lookup comes back empty — and it is deliberately narrow:
 | It DOES create a LOCATION | Owner 2026-08-11: open everything. Created EMPTY — a code and a description. Everything a warehouse really needs (addresses, payment accounts, defaults) stays for a human. **`EnsureMasters`'s own header comment used to deny this**; the code was right and the text was corrected on 2026-08-14. What the decision costs, re-measured that day: **19 of 25 `scm.warehouses` codes are in neither `LOCATION_MAP` nor the book's location list**, so the first document naming one opens a new stock location in a licensed book. That is the LINE path and it has behaved this way since go-live; the header's `SalesLocation` falls back to the code its own line already carries, so it opens nothing extra |
 | The ERP never ASKS for a DEBTOR | `EnsureMasters` HAS a Debtors branch (`AcSyncService.cs:574-592`) and would open one if sent; the narrowing is the ERP's — `mastersOf` emits no `Debtors` array (`autocount-outbox.ts:1496-1499`, `:1576-1583`). Houzs writes every order against ONE fixed AutoCount debtor and overwrites the name field. Opening an AR account per customer would invent accounting nobody asked for |
 | It DOES create a CREDITOR | Opposite reason: a purchase order names a real supplier, `CreatePo` applies `CreditorCode` unconditionally, and a supplier the book does not have fails the same foreign key a missing item does |
+| It REPORTS a creditor the book holds under ANOTHER NAME | Added 2026-08-18, §7e1 below. `mismatched[]` on the response; never part of `ok` |
 | It DOES add a BRANDING / VENUE option | Owner 2026-08-11. **Read, append, write back the whole set** — see below |
 
 ### The dropdown lists are edited by READ-APPEND-WRITE, never by Add()
@@ -1843,6 +1846,74 @@ hide it — it comes back as a `failed` entry naming the list.
 
 Only `BRANDING` and `VENUE` are treated as dropdowns. `ToPONo` is free text and
 has no option list to open.
+
+
+## 7e1. A creditor code that RESOLVES is not a creditor code that is RIGHT
+
+*Added 2026-08-18.*
+
+`EnsureMasters` used to ask `CreditorExists(acc)`, which was
+`da.GetCreditor(acc) != null`. It fetched the creditor, read a boolean off it and
+**discarded the `CompanyName` it had in its hand** — the one fact that can tell a
+right code from a wrong one. So a code resolving to the WRONG company was
+byte-for-byte indistinguishable from a code resolving to the right one, at every
+layer, and nothing refused it because nothing ever looked.
+
+That is not hypothetical. `HC-PO-2608-001` / `HC-GR-2608-001` / `HC-PI-2608-001`
+are in `AED_HOUZS` against creditor `400-H004`, which the book holds as **HAO HUA
+FURNITURE**, for an ERP purchase order that names **HOOKKA INDUSTRIES SDN. BHD.**
+The owner has confirmed those are different companies, and no creditor named
+HOOKKA INDUSTRIES exists in the book at all.
+
+**What changed.** `CreditorExists` is now
+`CreditorFound(da, acc, out string bookName)`:
+
+| it answers | meaning | what happens |
+|---|---|---|
+| `false` | the book does not hold the account | a creditor is opened, exactly as before |
+| `true`, `bookName` a string | the book holds it under this name | `existed`, and the name is COMPARED |
+| `true`, `bookName` null | it exists and the name could not be read | `existed` + `nameUnverified[]`. NOT compared, and an unmeasured comparison is never counted as agreement |
+
+The property is read by **reflection**, not by `e.CompanyName`:
+`sdk-api-reference.txt` was dumped with `DeclaredOnly` and does not cover
+`CreditorDataAccess` at all, so `GetCreditor`'s return type is not established in
+this repo and the file compiles nowhere but the host. Reflection compiles against
+whatever the SDK turns out to expose, and a property that is somehow absent
+degrades to *not compared* rather than to a false MISMATCH on every document.
+
+**IT REPORTS AND IT MUST NEVER REFUSE.** The ERP routinely holds a shorter
+trading name than the book's registered one, so a refusal would block legitimate
+documents in bulk — and the thing underneath is an accounting decision a human
+makes against the AutoCount masters, not something a sync may decide. `ok` stays
+`failed.Count == 0`; a mismatch does not touch it.
+
+**Spelling is not a disagreement.** `AcSyncService.NormParty` folds case and every
+non-alphanumeric character away before comparing, so `HOOKKA MANUFACTURING SDN.
+BHD.` and `HOOKKA MANUFACTURING SDN BHD` are the same party and say nothing. A
+guard that fires on punctuation is a guard nobody reads. It is the same fold
+`census-autocount-party-codes.mjs` applies on the ERP side, so the two agree by
+construction. The comparison is also SKIPPED when the payload's `CompanyName` is
+just the code — `mastersOf` falls back to the code when a PO carries no
+`CreditorName`, and comparing a code against a company name is meaningless.
+
+**Where it surfaces.** `AcCallResult.mismatches` (`parseAcMismatches` drops any
+entry missing one of the three strings — a blank `book` would assert something
+about the account book nobody measured), and the drain prints one line per entry
+before it checks `ok`, because a payload can name several masters and fail on an
+unrelated one:
+
+```
+MISMATCH creditor:400-H004 erp=HOOKKA INDUSTRIES SDN. BHD. book=HAO HUA FURNITURE — PO HC-PO-2608-002 sent anyway
+```
+
+**An empty `mismatches` is NOT "clean".** A host running a build older than this
+field does not send it at all, and the ERP cannot tell the difference. `GET
+/health`'s `builtAt` / `mvid` is the only thing that says which build answered.
+
+**This repo cannot compile C#.** `deploy-on-host.ps1` compiles with `csc` on the
+host and REFUSES to swap an exe that did not compile, then health-checks and rolls
+back to a hash-verified backup if the new one does not answer — that is the gate
+this change is proven by, and it has already caught a typo this way.
 
 ## 7f. A cancel that reached AutoCount is final
 
