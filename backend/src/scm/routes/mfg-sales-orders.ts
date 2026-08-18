@@ -238,7 +238,7 @@ import { creditFromCancelledSo, getCustomerCreditBalance } from '../lib/customer
 import { summariseReadiness, type ReadinessLine } from '../lib/so-readiness';
 import { effectiveLineStockStatus, readinessLinesByDoc, type LiveStockState } from '../lib/so-line-effective-stock';
 import { attachLineCategories, resolveLineCategories } from '../lib/so-readiness-category';
-import { deriveDisplayBrandingByDoc } from '../lib/so-display-branding';
+import { deriveDisplayBrandingRowByDoc } from '../lib/so-display-branding';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { soDeliverableRemaining, soLineDeliveries, computeSoLifecycle, soCurrentDocNo, soLineShippedSources } from './delivery-orders-mfg';
 import { soLineReadySourcePos, unionSoLineChips } from '../lib/source-po-trace';
@@ -1398,8 +1398,12 @@ mfgSalesOrders.get('/', async (c) => {
        The header revenue columns merge mattress + sofa into one bucket, so the
        grid can't tell SOFA from MATTRESS at the header level — hence this
        per-line first-item read (from the same fetch already running for stock
-       status). The UI maps SOFA → "2990 Sofa", BEDFRAME → "Bedframe", MATTRESS
-       → first_item_branding (its own brand) ?? "2990 Mattress", else → "2990". */
+       status). The UI maps these through shared/so-branding-label (owner
+       2026-08-18): SOFA → the COMPANY's house sofa brand ("ZANOTTI" for Houzs,
+       "2990s Sofa" for 2990 — the line's own text is not consulted), BEDFRAME →
+       "Bedframe", MATTRESS → first_item_branding, which is the SKU's brand
+       (resolved SKU-first below), falling back to "Mattress" when the SKU
+       carries none; everything else names its category. */
     const cats = new Map<string, Set<string>>();
     const firstCat = new Map<string, string>();
     const firstBranding = new Map<string, string | null>();
@@ -1704,9 +1708,17 @@ mfgSalesOrders.get('/', async (c) => {
       const fCat = (hasRep ? repCat.get(docNo) : firstCat.get(docNo)) ?? null;
       (r as Record<string, unknown>).first_item_category = fCat ?? null;
       let fBranding = (hasRep ? repBranding.get(docNo) : firstBranding.get(docNo)) ?? null;
-      if (fCat === 'MATTRESS' && (!fBranding || !fBranding.trim())) {
+      /* MATTRESS reads the SKU FIRST, not just as a fallback (owner 2026-08-18:
+         «mattress follow SKU branding»). The line's own text only survives when
+         the catalog has none. Six live 2990 lines carry the loose spellings
+         "2990" / "2990s" while their SKU says "2990s Mattress"; under the old
+         blank-only borrow they kept the loose text and the label rule needed a
+         normalisation regex to recover from it. Reading the catalog first makes
+         that regex unnecessary — and it is deleted, not left dormant. */
+      if (fCat === 'MATTRESS') {
         const code = hasRep ? repCode.get(docNo) : firstItemCode.get(docNo);
-        fBranding = (code && productBranding.get(code)) || fBranding;
+        const skuBrand = code ? productBranding.get(code) : undefined;
+        if (skuBrand && skuBrand.trim()) fBranding = skuBrand;
       }
       /* Bedframe-only SO → "BEDFRAME" pill (only when no explicit brand text
          is present, so an AKEMI/2990 line always wins). */
@@ -2637,9 +2649,17 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      covers mains-first + mattress-brand fallback + bedframe-only in one place,
      so both surfaces resolve the identical value. */
   {
-    const derived = await deriveDisplayBrandingByDoc(sb, c, [docNo]);
-    const b = derived.get(docNo);
-    if (b) (salesOrder as Record<string, unknown>).first_item_branding = b;
+    /* 2026-08-18: emit the CATEGORY too. The detail page used to render
+       `branding || first_item_branding || "—"` — its own rule, not the list's —
+       so it printed a dash for any order whose rep line carries no brand text,
+       which is every sofa. It now calls the shared brandingLabel, and that needs
+       both inputs. */
+    const derived = await deriveDisplayBrandingRowByDoc(sb, c, [docNo]);
+    const row = derived.get(docNo);
+    if (row) {
+      (salesOrder as Record<string, unknown>).first_item_category = row.category;
+      if (row.branding) (salesOrder as Record<string, unknown>).first_item_branding = row.branding;
+    }
   }
   /* Brand letterhead resolution (owner 2026-07) — stamp the R2 key of the
      brand logo the SO PDF should print IN PLACE OF the company logo (the
