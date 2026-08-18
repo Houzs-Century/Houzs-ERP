@@ -1266,15 +1266,12 @@ it, so they cannot come to different verdicts about the same deposit.
 代表他 Proceed 了。Proceed 的日期是他填入 Processing Date 的日期。没有 processing
 date 就代表没有 proceed。"* Proceeding therefore WRITES `processing_date`; it
 does not stamp a click time. Until 2026-08-13 every proceed path wrote only
-`proceeded_at`, so an order could sit IN_PRODUCTION with no start date — and
-production queues by that date.
+`proceeded_at`, so an order could sit IN_PRODUCTION with no release date at all
+— and nothing ever told purchasing the order was theirs to order.
 
 | Path | Where the date comes from |
 |------|---------------------------|
-| `PATCH /:docNo/status` → IN_PRODUCTION | the order's own `processing_date`, else the `internalExpectedDd` REQUEST KEY (the payload name is unchanged — only the column was renamed, and a payload rename would break every deployed client); a date written here clears the FULL gate table above **and the pair rule**, read live off the row |
-| `PATCH /:docNo` `proceededAt` | this patch's `internalExpectedDd`, else the stored one |
-| CREATE auto-proceed | `internalExpectedDd` on the create — no date means the order is created UN-proceeded, never refused |
-| `PATCH /:docNo/status` → IN_PRODUCTION | the order's own `processing_date`, else `internalExpectedDd` on the request body (which the route now accepts); a date written here clears the FULL gate table above, read live off the row |
+| `PATCH /:docNo/status` → IN_PRODUCTION | the order's own `processing_date`, else `processingDate` on the request body (`readSoProcessingDateFromBody`, which reads the canonical key FIRST and still accepts the legacy `internalExpectedDd`); a date written here clears the FULL gate table above **and the pair rule**, read live off the row |
 | `PATCH /:docNo` `proceededAt` | this patch's `processingDate`, else the stored one |
 | CREATE auto-proceed | `processingDate` on the create — no date means the order is created UN-proceeded, never refused |
 
@@ -1308,12 +1305,15 @@ production queues by that date.
 
 No path guesses a date: a proceed with none returns 422
 `proceed_needs_processing_date` (`PROCEED_NEEDS_DATE` in `order-rules`), because
-a guessed start date is a real order sitting in the factory queue on the wrong
-day with nothing to show it was guessed. A date already on the order is never
+a guessed date releases a real order to purchasing on the wrong day with nothing
+to show that the date was guessed. A date already on the order is never
 MOVED by a proceed — rescheduling belongs to the header PATCH, which owns the
-lock and the gate table. `proceeded_at` is still written and still read by ONE
-consumer (the stock allocator's gate), but it is no longer what makes an order
-proceeded, and no lock or payload consults it any more.
+lock and the gate table. `proceeded_at` is now neither written nor read: #2396
+moved its last reachable decision (the stock allocator's gate) onto
+`processing_date`, and this change removed the three remaining writes — the
+create INSERT's stamp, the /status IN_PRODUCTION stamp, and the header PATCH's
+`proceededAt` key. It is no longer what makes an order proceeded, no lock or
+payload consults it, and the column now awaits only its DROP.
 Net effect: the proceed paths LOOSENED by one condition (email), the
 processing-date path TIGHTENED by four (name / address / postcode / delivery
 date), and the threshold became per-company.
@@ -1496,6 +1496,45 @@ names, so the next reader picked the wrong one. Mig **`0286`** then settled the
 name itself: `internal_expected_dd` → `processing_date` on both tables. This
 table is the whole answer.
 
+> **WHAT THE DATE MEANS — owner, 2026-08-18, correcting this repo.** *"因为我们
+> 有时候开单，未必是要直接 Processing 这张单的。所以 Processing Date 就代表这张单
+> 可以安排订货了，然后过了一天我们才会落下来，然后采购才会去订货"*. **The
+> Processing Date is the date this order is RELEASED FOR PURCHASING TO ORDER
+> GOODS.** Raising an order is not the same as acting on it; setting the date is
+> the release signal, and roughly a day later the order drops through and
+> purchasing places the order.
+>
+> **There is no production scheduling in this business.** *"我们都没有排产的，我们
+> 都不是 Production，我们应该只是送货的日期而已"*. Every comment and doc line that
+> called this a "go-to-production" date or reasoned about a "factory queue" was
+> describing a business that does not exist. Those were rewritten on 2026-08-18
+> and `so-processing-date-names.test.ts` fails if one comes back.
+>
+> **NOT IMPLEMENTED, and not to be claimed.** The ~1 day lag is a fact about the
+> business, not about this code. Nothing defers anything by a day, and MRP does
+> not read this date to decide when to order at all: it derives `orderByDate =
+> delivery date − category lead days` and only DISPLAYS the Processing Date. The
+> comment at `routes/mrp.ts:193` said the field "drives when to order" for months
+> while the code ignored it — adjacent evidence, not evidence.
+
+> **UPDATED 2026-08-18 — the names, and how many of them could actually go.**
+> Owner: *"全部你都是要统一掉的，不要那么多个"*. Seven names existed for this one
+> fact. `processing_date` (column) and `processingDate` (payload key) are THE
+> names. `proceeded_at` stopped being read by any decision in #2396.
+>
+> **Four of the remaining five could NOT be retired, and that is the finding, not
+> the shortfall.** `PDate` is **AutoCount's own UDF name** — it belongs to the
+> other system, and renaming it here would only stop the value arriving there.
+> `internal_expected_dd` / `internalExpectedDd` are each a name a **queue outside
+> this deploy** still carries. `target_date` looked deadest of all and is
+> **actively written by the POS** — 46 orders in 90 days.
+>
+> Every one of those four is blocked by something OUTSIDE this repository, and
+> not one of them could be seen from the source. The exact preconditions live on
+> their constants in `backend/src/scm/shared/so-processing-date.ts` and are
+> *measured*, not described, by section F of
+> `backend/scripts/probe-rename-preconditions.mjs`.
+
 > **CORRECTED 2026-08-14.** Until today the two rows below named
 > `internal_expected_dd` as "the only storage this concept has. Use this one",
 > and the closing rule said *"it is `internal_expected_dd`, full stop"* — the
@@ -1514,16 +1553,27 @@ table is the whole answer.
 | `scm.consignment_sales_orders.proceeded_at` | Never anything. Existed only because the consignment module was cloned from `mfg_sales_orders` wholesale; on this table it had zero readers and zero writers, ever. | **DROPPED — mig 0284** (`0284_retire_consignment_proceeded_at.sql`). |
 | `scm.consignment_sales_orders.processing_date` **(the OLD one, mig 0153)** | Same clone artifact. Zero writers ever (the create INSERT omits it; the header PATCH builds its update from a closed allowlist that never contained it), so it was NULL on every row. | **DROPPED — mig 0286, step 1.** No longer a follow-up: 0286 had to clear this dead name before it could rename the live column onto it, and its guard drops it only while BOTH names are present, so a re-run cannot take the users' dates. |
 | `public.sales_orders.ac_udf_pdate` | AutoCount's own UDF field `SO.UDF_PDate`, mirrored verbatim by `services/pull.ts` for AutoCount's document. Never the ERP's date; nothing joins the two. Read by nothing. | **RENAMED → `ac_udf_pdate`, mig 0285.** Kept (not dropped) because the mirror's job is to be a faithful local copy for AutoCount reconciliation — the harm was the name, not the data. |
-| `public.sales_entries.processing_date` | The LEGACY NATIVE Sales module's own date (`/sales`, `Sales.tsx`, mig 070). A `sales_entry` is a **different document**: no SO row, no doc flow, and none of the SO machinery — no deposit gate, no KIV/variant gate, no elapsed-date lock, no `scm.so.remove_processing_date`, no stock allocation. | **KEPT under this name, deliberately.** A rename is UNSAFE: `applyEntryPatch` builds `SET ${k} = ?` from allowlisted keys, and the change-request approval path replays a JSON payload stored days earlier — after a rename those stored keys match nothing and the field is **silently dropped on approve**, with no error. Documented at both ends instead (`routes/sales.ts`, `Sales.tsx`). **Do not coalesce or merge it with the SO's date.** |
+| **`PDate`** — AutoCount's UDF key, not a column of ours | The name the ERP WRITES the Processing Date out under, at `services/autocount-writeback.ts` (create + the clearable-UDF map) and `scm/lib/so-edit-header.ts` (edit). | **EXTERNAL. NEVER "UNIFY" IT** — pinned as `SO_PROCESSING_DATE_AC_UDF`. AutoCount matches UDFs by NAME: rename it and the connector drops an unknown key, the document posts **200 without it**, and every Processing Date silently stops reaching the account book. Both write sites carry the warning; the guard test fails if either loses it. |
+| `scm.mfg_sales_orders.target_date`, `scm.consignment_sales_orders.target_date` | The POS-era **"Target Date"** stamp. PR #140 dropped the field from the SO form — *"targetDate → replaced by Processing + Delivery Date"* — and `grep -rn targetDate frontend/src native e2e` returns **zero**: no client in *this* repo sends the key. It is nevertheless accepted on four write paths, selected into three read shapes and typed on two frontend rows. Every signal inside the repo says dead field. | **LIVE — NOT RETIRED. Do not sweep it.** Prod, 2026-08-18 (`probe-rename-preconditions.mjs` section F): **46 of 2826 SO rows carry one and ALL 46 were CREATED inside the last 90 days**, newest 6.75 days old. A row born with the value was given it at create and the ERP has not written it at create since #140 — so **the POS handover is still sending it**, and `routes/reports.ts` still reads it into the sales-report export. The 2026-08-18 sweep removed the name from all eight sites and **put every one back the same day** once the probe answered. `SO_TARGET_DATE_RETIREMENT_BLOCKED` records it and the guard test fails if a door is closed again. |
+| `public.sales_entries.processing_date` | The LEGACY NATIVE Sales module's date (`/sales`, `Sales.tsx`, mig 070). **The SAME CONCEPT** — owner 2026-08-18, overruling an earlier census that recommended treating it as separate: *"全部我们只有一个 Processing Date"*. What differs is the ROW: a `sales_entry` has no SO row, no doc flow, and none of the SO **machinery** — no deposit gate, no KIV/variant gate, no elapsed-date lock, no `scm.so.remove_processing_date`, no stock allocation, no pair rule. | **KEPT under this name — it already spells the canonical word.** Unified in stages. **Stage 1 shipped 2026-08-18:** the module now ACCEPTS the canonical `processingDate` too, folded onto the stored key on all four roads in (create, direct PATCH, change-request queue, approve replay) by `canonicaliseSalesEntryBody`. **Stage 2 (retiring the old inbound key) is NOT shipped** and must not be done blind: `applyEntryPatch` builds `SET ${k} = ?` from allowlisted keys and the approval path replays a payload stored days earlier, so a dropped key is **silently ignored on approve**, with no error. Precondition and the exact `SELECT` are on `SO_FORM_TEXT_FIELDS` in `routes/sales.ts`. Same name, same meaning — still **never coalesce or join the two tables' rows.** |
 
-Two rules follow from the table. **Never add a ninth name** — if you need the
-SO's Processing Date, it is `scm.mfg_sales_orders.processing_date`, read through
-`SO_PROCESSING_DATE_COLUMN`, full stop. A column name inside a string is
-invisible to the compiler: the `/status` proceed block kept selecting, comparing
-and WRITING `internal_expected_dd` after the rename, and nothing failed to
-build. **Never unify
-across documents** — `sales_entries` and AutoCount's mirror share a *word*, not a
-concept, and merging them would destroy real distinctions.
+Three rules follow from the table.
+
+**Never add a new name.** If you need the SO's Processing Date it is
+`scm.mfg_sales_orders.processing_date`, read through `SO_PROCESSING_DATE_COLUMN`,
+full stop. A column name inside a string is invisible to the compiler: the
+`/status` proceed block kept selecting, comparing and WRITING
+`internal_expected_dd` after the rename, and nothing failed to build.
+
+**Never rename a name this repo does not own.** `PDate` is AutoCount's, and the
+`ac_udf_pdate` mirror exists to be a faithful copy of AutoCount's field. A sweep
+that "unifies" either one changes nothing in AutoCount and silently stops the
+value arriving there.
+
+**Unify the NAME, never the ROWS.** The owner's *"全部我们只有一个 Processing
+Date"* is about vocabulary: one word, one meaning, everywhere. It is not licence
+to coalesce `sales_entries` with `mfg_sales_orders`, or either with AutoCount's
+mirror — those are different documents that now correctly share a word.
 
 ### Every line is a catalog SKU — free text never saves (owner rule 2026-08-08)
 

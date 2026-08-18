@@ -69,8 +69,8 @@ export function isLocked(
    Owner 2026-07-16 — the lock now fires on the processing date passing for any
    non-DRAFT / non-CANCELLED SO. A Processing Date can only be SET on an order that
    meets its company's deposit rule (Houzs 30%, 2990 50% — owner 2026-07-31) plus
-   customer name + full delivery address + delivery date, and IS production's
-   "ready to build" signal, so once it elapses the order
+   customer name + full delivery address + delivery date, and IS the signal that
+   RELEASES the order to purchasing (owner 2026-08-18), so once it elapses the order
    is committed whether or not the explicit Proceed (IN_PRODUCTION) toggle was ever
    pressed. The prior rule ALSO required `proceeded_at` (only stamped at
    IN_PRODUCTION), which let a CONFIRMED SO past its processing date stay directly
