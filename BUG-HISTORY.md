@@ -37,6 +37,152 @@ the before and after.
 
 Ref: 2026-08-18.
 
+## A Sales Order with a Processing Date was refused stock forever — the mfg-sales allocation gate read a field no client writes [high]
+
+**Symptom.** A Sales Order given a Processing Date locked, appeared on the
+delivery board and pushed to AutoCount as `PDate` — and never became READY. Every
+line was forced `PENDING` with the goods physically in the warehouse. No error, no
+log, nothing on screen. Owner, this morning: *"明明这个东西没有 ready,可是我的 MRP
+却 show 不出来"* and *"明明那个东西是没有货的,可是状态却去 show STATUS: READY"*.
+
+**Root cause (read, not inferred).** `so-stock-allocation.ts` built its
+`allocGated` set from `orders.filter((o) => !o.proceeded_at)`, while every path
+that sets a Processing Date writes `processing_date`:
+
+| path | writes `processing_date` | stamps `proceeded_at` |
+| --- | --- | --- |
+| CREATE (`mfg-sales-orders.ts`, `processing_date: dateOrNull(body.processingDate)`) | always | only when `autoProceed` — the date PLUS the paid + full-address gate |
+| header PATCH (the detail screen's save) | yes | never |
+| `PATCH /:docNo/status` → `IN_PRODUCTION` | ensures one, 422 if it cannot | yes |
+
+`grep -rn "proceededAt" frontend/src` returns **0 hits**: no shipped client sends
+it. So the ordinary act of setting a Processing Date produced `processing_date`
+set / `proceeded_at` NULL — gated, silently, forever. The gate's own comment
+claimed to implement *"有 processing date 才来分配"*, and the rule was right; the
+column was not.
+
+**Both directions were wrong, and the test caught the second one.** On the
+pre-fix code the new test fails TWICE: an order with a Processing Date stayed
+`PENDING` (refused stock it should get), and an order with a bare `proceeded_at`
+and NO Processing Date came back `READY` (took stock it should not) — the second
+being the shape the owner saw as a false READY.
+
+**Fix.** The gate reads `processing_date`, via `SO_PROCESSING_DATE_COLUMN` so the
+next rename has one home. It reads that column **alone**: consulting both "to be
+safe" would give the rule a second home, which is exactly how it acquired a wrong
+one. This is the stop-reading step for `proceeded_at` and its last reachable
+decision.
+
+**Blast radius on production: UNKNOWN, and deliberately not invented.** The
+measurement needs `probe-proceed-split.yml` (branch
+`feat/processing-date-has-one-storage`, not yet on the default branch, so
+`workflow_dispatch` 404s). `unify-processing-date.yml` IS dispatchable and would
+answer it, but it prints document numbers into logs that are public on this repo,
+so it was not run. What IS established from source: the flip can only *regress* an
+order whose date sits in `proceeded_at` with `processing_date` NULL, and **no live
+path can create that row** — `autoProceed` requires a date, and the
+`IN_PRODUCTION` transition refuses without one. The historical population was
+migrated on 2026-08-13 (mig 0286 header: 519 company-1 orders moved, both
+companies verified at zero split). Run the probe once its branch lands.
+
+**Deferred, with reason — not fixed here.** `delivery-planning.ts` and
+`frontend/src/vendor/scm/lib/so-detail-gates.ts` still pass/read `proceeded_at`,
+but both go through the `soProcessingLocked` shape, which returns false as soon as
+`processing_date` is NULL and only falls back to `proceeded_at` when `status` is
+absent. Neither refuses anything today, so neither is bleeding. The dashboard
+summary endpoint also still ships `proceeded_at` to the client for bucketing
+(`mfg-sales-orders.ts`, `?summary=1`) — a display inconsistency, not a stock
+refusal. All three belong with the `proceeded_at` retirement.
+
+**The doc blessed the bug, which is why it survived.** `docs/modules/sales-order.md`
+described this exact behaviour and called it *"intended … the single most common
+'why is my order not READY'"*. The frequency it observed was real; the explanation
+was not, and anyone who read it went hunting for a missing proceed instead of a
+gate on the wrong column. That bullet now carries a dated correction quoting what
+it used to say.
+
+## One date format, written by hand at thirty sites and left to the operating system at a hundred and seventy-five more [high]
+
+<!-- area: Frontend + mobile -->
+
+**Symptom.** The owner sent a screenshot of New Sales Order and asked why the
+date format is not standardised across the system. The header read
+`Aug 16, 2026` and `Sep 12, 2026`; the line rows under it read `12/09/2026`. One
+screen, two spellings of the same kind of fact.
+
+**`Aug 16, 2026` is not a format this codebase authors.** Grepping for it returns
+nothing, because nothing writes it. `SalesOrderNew.tsx` Processing Date and
+Delivery Date were native `<input type="date">`, and a native date input renders
+its ISO value **in the operating system's locale**. On the owner's machine that
+is `Aug 16, 2026`; on a colleague's it is `16/08/2026` or `08/16/2026`. That is
+the same 「有时候 MMDDYYYY」 bug he reported on **2026-06-18**, for which
+`DateField` was built the same day — and which had reached **14** of 189 date
+inputs. 175 native ones remained, including both fields in the screenshot.
+
+**Underneath it, the rule had been written down twice and re-derived thirty
+times.** `frontend/src/lib/utils.ts` said *"House style is numeric DD/MM/YYYY
+(owner requirement — no 'Jun'/'Jul' month names anywhere on the desktop app)"*.
+`frontend/src/vendor/shared/format.ts` said *"System-wide canonical display
+format (Commander 2026-06-18)"* under a header claiming to be the *"SOLE source
+of truth — no inline duplicates anywhere in client OR server"*. Between and
+around them:
+
+- all **11** V2 LIST pages emitted `2026/08/16` from their own
+  `iso.replace(/-/g,'/')`, while all **8** V2 DETAIL pages emitted `16/08/2026`
+  from a copied regex reorder — so a list row and the page it opens spelled one
+  date two ways;
+- month-NAME arrays in the PO print template, the project run sheets and the POS
+  period labels produced `16 Aug 2026`, contradicting the owner's own recorded
+  instruction about month names;
+- Fleet rendered the storage shape (`2026-08-16`) straight at the user;
+- three screens called bare `.toLocaleString()` and got whatever the machine said;
+- timestamps existed in three spellings, one of whose docstrings claimed an
+  output (`"4 May 2026, 11:20 AM"`) the code has never produced.
+
+The same files that hand-wrote `fmtDate` were **already importing `fmtCenti`
+from the shared module on the line above**. Money had gone the other way; dates
+had not.
+
+**Two live defects in the shared formatter, invisible from Malaysia.** `fmtDate`
+was `new Date(d).toLocaleDateString('en-GB', …)`. `new Date('2026-08-16')` is
+parsed as UTC midnight, so under `TZ=America/Los_Angeles` it rendered
+**`15/08/2026`** — the wrong day — while under `TZ=Asia/Kuala_Lumpur` it was
+correct, which is why nobody in the office could ever reproduce it.
+`fmtDate(null)` returned **`01/01/1970`** and `fmtDate('16/08/2026')` returned
+**`Invalid Date`**. `SalesOrderDetail.tsx` documents dodging the first of these
+by hand rather than fixing it.
+
+**Fix.** One rule with one home. `fmtDate` / `fmtDateTime` / `fmtTimestamp` /
+`fmtTime` in `frontend/src/vendor/shared/format.ts`, mirrored byte-identically
+into `backend/src/scm/shared/format.ts` (`check-shared-mirrors.mjs` is the
+referee), branching on the input's SHAPE: a value carrying no timezone is shown
+verbatim, a real instant is converted once into GMT+8 by fixed offset
+arithmetic rather than an ICU lookup. Null-safe, invalid-safe and idempotent.
+~30 local helpers deleted and pointed at it; every one of the 175 native date
+inputs now renders through `DateField`, five of them via the wrapper components
+they sit behind. CSV export emits ISO independently of display, because
+converging the list pages onto DD/MM/YYYY would otherwise have broken sorting in
+every exported sheet.
+
+**The class, for next time.** This is `docs/bug-classes.md` **class E**, and the
+third instance in one week — the transfer-label vocabulary and the
+both-dates-or-neither rule were each found written five times, each enforced
+slightly differently, each missing from at least one path. The rule here was not
+forgotten: it was written down, in the right words, in the file most likely to
+be read, and reproduced anyway, because **there was no import that would have
+given it to you**. Writing it down a third time was the move that had already
+failed twice, so it is enforced instead:
+`backend/scripts/check-date-formatting.mjs`, wired into the required
+`backend-typecheck` job, fails on a new hand-spelled date unless somebody adds
+it to a reviewed allowlist with a reason.
+
+The gate is proved rather than assumed. `backend/tests/dateFormatGate.test.ts`
+plants a date format outside the source tree on every CI run, asserts exit 1,
+removes it and asserts exit 0 — and separately asserts it does NOT fire on money
+or row counts, because a gate that cries wolf is a gate somebody deletes. Run by
+hand during this work, the planted line
+(`toLocaleDateString('en-US', { month: 'short', … })`) produced the string
+`Aug 16, 2026` — the owner's screenshot, reproduced from source and then caught.
 ## The word a customer saw for a rejected service case was `voided` — and it was a step label on every sales-portal page [high]
 
 <!-- area: Service cases (ASSR) -->

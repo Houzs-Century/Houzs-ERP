@@ -29,6 +29,7 @@ import { ASSR_STAGE_LABEL } from "../../vendor/scm/lib/assr-stage-labels";
 import { useDialog } from "../../hooks/useDialog";
 import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PortalStatusColor } from "../types";
+import { fmtDate } from "../../vendor/shared/format";
 
 const ALLOWED_EXT = ["jpg", "jpeg", "png", "webp"];
 const MAX_SIZE = 10 * 1024 * 1024;
@@ -149,14 +150,6 @@ function supplierStepFor(cs: { stage: string; items_ready_at: string | null }): 
   }
 }
 
-function fmtDate(s: string | null | undefined): string {
-  if (!s) return "—";
-  const d = new Date(s.endsWith("Z") ? s : s + "Z");
-  if (isNaN(d.getTime())) return s.slice(0, 10);
-  const dd = String(d.getDate()).padStart(2, "0");
-  const mm = String(d.getMonth() + 1).padStart(2, "0");
-  return `${dd}/${mm}/${d.getFullYear()}`;
-}
 
 // ── Page ───────────────────────────────────────────────────────────
 
