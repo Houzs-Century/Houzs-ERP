@@ -615,27 +615,15 @@ function DetailDrawer({
                 Print
               </Button>
               <div className="flex-1" />
-              {/* ── TWO FIXED SLOTS, NEVER ONE SLOT WITH THREE VERBS. ────────
-                  This footer is the screen the owner was actually looking at on
-                  2026-08-18. One green primary button sat here and said "Mark
-                  signed" on a dispatched row and "Transfer to Sales Invoice" on
-                  a signed one — same pixels, same colour, different action, with
-                  the status badge elsewhere as the only clue. His words: "我又不
-                  是两套系统." So the advance slot now always means "move this
-                  document along" and the transfer slot always means "produce the
-                  next document"; each is disabled with its reason rather than
-                  swapped out or dropped.
-
-                  THE THIRD VERB IS GONE ENTIRELY, and that is a bug fix rather
-                  than a tidy-up: on a cancelled DO this same slot offered a
-                  green "Reopen" that could never work. PATCH /:id/status refuses
-                  every transition out of CANCELLED with `do_cancelled_final`
-                  (delivery-orders-mfg.ts:5401) — un-cancelling would leave the
-                  cancel's stock add-back standing while the re-deduct no-ops,
-                  inflating stock by the whole DO. The control was offering an
-                  operation the server is built to refuse; the sentence now says
-                  to raise a new delivery order, which is what the refusal itself
-                  says to do. ── */}
+              {/* TWO FIXED SLOTS, NEVER ONE SLOT WITH THREE VERBS. This footer
+                  is the screen the owner was looking at on 2026-08-18: one green
+                  button said "Mark signed" on a dispatched row and "Transfer to
+                  Sales Invoice" on a signed one — same pixels, different action,
+                  status badge the only clue. Advance and transfer now each keep
+                  one meaning, disabled with a reason rather than swapped out.
+                  The third verb, "Reopen", is gone entirely: the server refuses
+                  every transition out of CANCELLED (`do_cancelled_final`), so it
+                  could not once have worked. Full account: do-next-step.ts. */}
               {canWrite && (
                 <Button
                   variant="secondary"
