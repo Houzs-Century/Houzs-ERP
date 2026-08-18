@@ -155,12 +155,20 @@ describe("delivery-planning.ts — the board stamps the stage, one rule, no fork
     /* Same do_id key scheduleOntoTrip writes and staleStopSweepFor sweeps —
        forward write and derived read stay symmetric. (#1720 widened the select
        with stop_no + eta_offset_s — the run-time sort keys; the do_id key is
-       the invariant this pin protects.) */
-    expect(stripped).toContain(".select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', doIds)");
+       the invariant this pin protects.)
+
+       Both reads are CHUNKED now, so the filter names the batch rather than the
+       whole list and this pin had to be re-aimed. It is re-aimed in TWO parts,
+       not loosened: the filter still has to key on do_id / id, AND the list fed
+       to chunkIn still has to be doIds / tripIds. Matching only `batch` would
+       have let the read be pointed at some other set without a word. */
+    expect(stripped).toContain(".select('dp_no, do_id, trip_id, stop_no, eta_offset_s').in('do_id', batch)");
+    expect(stripped).toContain("chunkIn<StopRow>(doIds,");
     /* A CANCELLED trip is no arrangement: the reverse reconcile already returns
        such orders to the queue, and the stage must agree with it. */
-    const tripJoinIdx = stripped.indexOf(".select('id, trip_no, trip_date, status').in('id', tripIds)");
+    const tripJoinIdx = stripped.indexOf(".select('id, trip_no, trip_date, status').in('id', batch)");
     expect(tripJoinIdx).toBeGreaterThan(-1);
+    expect(stripped).toContain("chunkIn<Record<string, unknown>>(tripIds,");
     const after = stripped.slice(tripJoinIdx, tripJoinIdx + 600);
     expect(after).toContain("'CANCELLED'");
   });

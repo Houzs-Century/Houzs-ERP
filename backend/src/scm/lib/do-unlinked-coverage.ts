@@ -149,25 +149,29 @@ export async function netDeliveredBySoItem(
      is the exact false reading (goods shipped, order still owing, MRP re-orders)
      this module exists to end. Failing loudly is the honest option: the callers
      are already wrapped, and a planning page that errors is recoverable in a way
-     that a planning page confidently reporting phantom demand is not.
+     that a planning page confidently reporting phantom demand is not. */
+  /* CHUNKED, because paginateAll bounds the wrong end of this read. It bounds
+     the RESPONSE — the 1000-row page cap — while the SO-line ids go into the
+     REQUEST, one uuid each, straight into `.in('so_item_id', …)`. Those are two
+     different limits and only the first one was guarded: MRP hands this function
+     ~1000 lines per batch, so the un-chunked filter built a ~39KB request line
+     and PostgREST answered 400. Live on 2026-08-17, Houzs Century (2,726 sales
+     orders): GET /api/scm/mrp?category=SOFA returned
+     `delivered-sum read failed: Bad Request` while the same code answered 200 in
+     the 100-order tenant next door. Invisible small, permanent large, and worse
+     with every import.
 
-     WHAT IT THROWS changed on 2026-08-18, and the reason is worth the paragraph.
-     It was `new Error('delivered-sum read failed: ' + (linkedErr.message ??
-     String(linkedErr)))`, and production printed exactly
-         [onError] Error: delivered-sum read failed:
-     — NOTHING after the colon, because the driver handed back an error whose
-     `message` was the EMPTY STRING and `??` does not fire on ''. The one field
-     interpolated was the one field that was blank. Being a plain Error it also
-     matched none of humanizeError's patterns, so the board answered the generic
-     "Something went wrong" and finding this took a `wrangler tail` against the
-     live Worker. readFailureError logs everything KNOWN (code/details/hint, the
-     raw object, and the LIST SIZE below — the actual suspect) and carries an
-     operator-safe {error:'load_failed', stage, reason} body, so even an uncaught
-     one — the Sales Order list awaits this with no catch — names the step. */
-  const { data: doLines, error: linkedErr } = await paginateAll<LinkedRow>((from, to) => sb
+     chunkIn is the repo's existing helper for exactly this and it PAGES each
+     batch, so the response cap stays guarded too. Nothing about the answer
+     changes: the rows of two batches are disjoint (the id list is de-duplicated
+     first, so no row can match twice), and both things built below — a Σ per
+     so_item_id and a DO-line → SO-line map — are order-independent, so a merged
+     read and a single read produce byte-identical maps. */
+  const soItemIds = [...new Set(soLines.map((l) => l.id))];
+  const { data: doLines, error: linkedErr } = await chunkIn<LinkedRow>(soItemIds, (batch, from, to) => sb
     .from('delivery_order_items')
     .select('id, so_item_id, qty, parent:delivery_orders(status)')
-    .in('so_item_id', soLines.map((l) => l.id))
+    .in('so_item_id', batch)
     .order('id')
     .range(from, to));
   if (linkedErr) {
@@ -182,7 +186,7 @@ export async function netDeliveredBySoItem(
   // DO line id → SO item id (only for active DOs), used to trace returns.
   const doLineToSoItem = new Map<string, string>();
   const deliveredBySoItem = new Map<string, number>();
-  for (const l of (doLines ?? []) as LinkedRow[]) {
+  for (const l of doLines) {
     if (!l.so_item_id || !l.parent) continue;
     /* LEAK GUARD (DRAFT): a DRAFT DO hasn't shipped — it must NOT consume the
        SO line's deliverable remaining (else the real DO can't be raised and
@@ -267,7 +271,7 @@ export async function loadUnlinkedDoCoverage(
     if (lErr) throw lErr;
 
     const unlinked: UnlinkedDoLine[] = [];
-    for (const r of rows ?? []) {
+    for (const r of rows) {
       const docNo = docByDoId.get(r.delivery_order_id);
       if (!docNo) continue;
       unlinked.push({ id: r.id, docNo, itemCode: r.item_code, qty: Number(r.qty ?? 0) });

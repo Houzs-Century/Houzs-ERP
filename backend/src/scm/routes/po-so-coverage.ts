@@ -76,6 +76,7 @@ import { parseFromSosNote } from './document-flow';
 import { computeMrp, mrpReverseCoverage } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { tracePoDeliveredLedger } from '../lib/source-po-trace';
+import { chunkIn, UUID_CHUNK } from '../lib/paginate-all';
 import type { Env, Variables } from '../env';
 
 export const poSoCoverage = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -270,8 +271,8 @@ async function loadAllocationLinksForItems(
   const ids = [...new Set(itemIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return out;
   try {
-    for (let i = 0; i < ids.length; i += 300) {
-      const chunk = ids.slice(i, i + 300);
+    for (let i = 0; i < ids.length; i += UUID_CHUNK) {
+      const chunk = ids.slice(i, i + UUID_CHUNK);
       if (chunk.length === 0) continue;
       const { data, error } = await sb.from('purchase_order_item_allocations')
         .select('purchase_order_item_id, so_item_id')
@@ -427,8 +428,8 @@ async function resolveDeliveredSoLock(
     // so_item_id → SO doc_no (preferred) — company-scoped.
     const soItemIds = [...new Set(doLines.map((l) => l.so_item_id).filter((x): x is string => !!x))];
     const soDocBySoItem = new Map<string, string>();
-    for (let i = 0; i < soItemIds.length; i += 300) {
-      const chunk = soItemIds.slice(i, i + 300);
+    for (let i = 0; i < soItemIds.length; i += UUID_CHUNK) {
+      const chunk = soItemIds.slice(i, i + UUID_CHUNK);
       if (chunk.length === 0) continue;
       const { data: soItems } = await scopeToCompany(
         sb.from('mfg_sales_order_items').select('id, doc_no'), c,
@@ -670,13 +671,21 @@ export async function resolvePoSoCoveragePerSkuForPos(
   const ids = [...new Set(poIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return out;
 
-  // PO headers (number + "From SOs:" notes) — company-scoped.
-  const { data: poHdrs } = await scopeToCompany(
-    sb.from('purchase_orders').select('id, po_number, notes'), c,
-  ).in('id', ids);
+  /* PO headers (number + "From SOs:" notes) — company-scoped, and CHUNKED
+     because `ids` is a whole LIST PAGE: the GRN and PO lists hand this their
+     `poIdsForPage`, which is up to 500 uuids off a `.limit(500)` read. 500 uuids
+     is a ~19KB request line, so the read that decides a header's coverage cell
+     would 400 in a tenant large enough to fill a page and work everywhere else.
+     Order-independent — both maps below are keyed by PO id. */
+  const { data: poHdrs } = await chunkIn<{ id: string; po_number: string | null; notes: string | null }>(
+    ids,
+    (batch, from, to) => scopeToCompany(
+      sb.from('purchase_orders').select('id, po_number, notes'), c,
+    ).in('id', batch).order('id').range(from, to),
+  );
   const poNumberById = new Map<string, string>();
   const notesById = new Map<string, string | null>();
-  for (const h of (poHdrs ?? []) as Array<{ id: string; po_number: string | null; notes: string | null }>) {
+  for (const h of poHdrs) {
     poNumberById.set(h.id, h.po_number ?? '');
     notesById.set(h.id, h.notes ?? null);
   }
@@ -684,14 +693,21 @@ export async function resolvePoSoCoveragePerSkuForPos(
   if (validIds.length === 0) return out;
   const poNumbers = [...new Set([...poNumberById.values()].filter(Boolean))];
 
-  // PO lines — SKUs + so_item_id links, grouped by PO — company-scoped.
-  const { data: poLines } = await scopeToCompany(
-    sb.from('purchase_order_items').select('id, purchase_order_id, material_code, so_item_id'), c,
-  ).in('purchase_order_id', validIds);
+  /* PO lines — SKUs + so_item_id links, grouped by PO — company-scoped. Chunked
+     for the same reason as the header read, and PAGED as a consequence: 500 POs
+     carry well over the 1000-row response cap, so the un-paged form was ALSO
+     dropping lines silently once a page filled — a PO whose lines fell off the
+     end rendered with no coverage rather than with an error. */
   type PoLineLinkRow = { id: string; purchase_order_id: string; material_code: string | null; so_item_id: string | null };
+  const { data: poLines } = await chunkIn<PoLineLinkRow>(
+    validIds,
+    (batch, from, to) => scopeToCompany(
+      sb.from('purchase_order_items').select('id, purchase_order_id, material_code, so_item_id'), c,
+    ).in('purchase_order_id', batch).order('id').range(from, to),
+  );
   const lineRowsByPo = new Map<string, PoLineLinkRow[]>();
   const skusByPo = new Map<string, Array<string | null>>();
-  for (const l of (poLines ?? []) as PoLineLinkRow[]) {
+  for (const l of poLines) {
     const arr = skusByPo.get(l.purchase_order_id) ?? [];
     arr.push(l.material_code);
     skusByPo.set(l.purchase_order_id, arr);
@@ -704,7 +720,7 @@ export async function resolvePoSoCoveragePerSkuForPos(
      present, replace that line's single so_item_id (allocations win — no
      double count); a line without any keeps the 1:1 fast path. */
   const allocationsByItem = await loadAllocationLinksForItems(
-    sb, ((poLines ?? []) as PoLineLinkRow[]).map((l) => l.id),
+    sb, poLines.map((l) => l.id),
   );
   const linkedSkusByPo = new Map<string, Set<string>>();
   const soItemToPos = new Map<string, Set<string>>();
@@ -724,8 +740,8 @@ export async function resolvePoSoCoveragePerSkuForPos(
   // b1: exact raise-link (so_item_id → doc_no).
   const soItemDoc = new Map<string, string>();
   const soItemArr = [...allSoItemIds];
-  for (let k = 0; k < soItemArr.length; k += 300) {
-    const chunk = soItemArr.slice(k, k + 300);
+  for (let k = 0; k < soItemArr.length; k += UUID_CHUNK) {
+    const chunk = soItemArr.slice(k, k + UUID_CHUNK);
     if (chunk.length === 0) continue;
     const { data: rows } = await scopeToCompany(
       sb.from('mfg_sales_order_items').select('id, doc_no'), c,
@@ -754,8 +770,8 @@ export async function resolvePoSoCoveragePerSkuForPos(
   const soHeaderByDoc = new Map<string, SoHeaderRow>();
   const soLinesByDoc = new Map<string, SoLineRow[]>();
   const candArr = [...allCandidateDocs];
-  for (let k = 0; k < candArr.length; k += 300) {
-    const chunk = candArr.slice(k, k + 300);
+  for (let k = 0; k < candArr.length; k += UUID_CHUNK) {
+    const chunk = candArr.slice(k, k + UUID_CHUNK);
     if (chunk.length === 0) continue;
     const { data: soHeaders } = await scopeToCompany(
       sb.from('mfg_sales_orders').select('doc_no, customer_delivery_date, amended_delivery_date'), c,
@@ -768,8 +784,8 @@ export async function resolvePoSoCoveragePerSkuForPos(
     }
   }
   const validDocArr = [...validDocs];
-  for (let k = 0; k < validDocArr.length; k += 300) {
-    const chunk = validDocArr.slice(k, k + 300);
+  for (let k = 0; k < validDocArr.length; k += UUID_CHUNK) {
+    const chunk = validDocArr.slice(k, k + UUID_CHUNK);
     if (chunk.length === 0) continue;
     const { data: soLines } = await sb.from('mfg_sales_order_items')
       .select('doc_no, item_code').in('doc_no', chunk);
@@ -836,8 +852,8 @@ export async function resolvePoSoCoveragePerSkuForPos(
     const doIdList = [...doIds];
     const doLines: DoLineRow[] = [];
     const soDocByDo = new Map<string, string>();
-    for (let k = 0; k < doIdList.length; k += 300) {
-      const chunk = doIdList.slice(k, k + 300);
+    for (let k = 0; k < doIdList.length; k += UUID_CHUNK) {
+      const chunk = doIdList.slice(k, k + UUID_CHUNK);
       if (chunk.length === 0) continue;
       const [{ data: doItems }, { data: doHdrs }] = await Promise.all([
         scopeToCompany(
@@ -856,8 +872,8 @@ export async function resolvePoSoCoveragePerSkuForPos(
     // so_item_id → SO doc_no (preferred over the DO header fallback).
     const soDocBySoItem = new Map<string, string>();
     const dlSoItemIds = [...new Set(doLines.map((l) => l.so_item_id).filter((x): x is string => !!x))];
-    for (let k = 0; k < dlSoItemIds.length; k += 300) {
-      const chunk = dlSoItemIds.slice(k, k + 300);
+    for (let k = 0; k < dlSoItemIds.length; k += UUID_CHUNK) {
+      const chunk = dlSoItemIds.slice(k, k + UUID_CHUNK);
       if (chunk.length === 0) continue;
       const { data: soItems } = await scopeToCompany(
         sb.from('mfg_sales_order_items').select('id, doc_no'), c,
@@ -870,8 +886,8 @@ export async function resolvePoSoCoveragePerSkuForPos(
     const wantedDocs = [...new Set([...soDocBySoItem.values(), ...soDocByDo.values()].filter(Boolean))];
     const doLockDd = new Map<string, string | null>();
     const validLockDocs = new Set<string>();
-    for (let k = 0; k < wantedDocs.length; k += 300) {
-      const chunk = wantedDocs.slice(k, k + 300);
+    for (let k = 0; k < wantedDocs.length; k += UUID_CHUNK) {
+      const chunk = wantedDocs.slice(k, k + UUID_CHUNK);
       if (chunk.length === 0) continue;
       const { data: soHeaders } = await scopeToCompany(
         sb.from('mfg_sales_orders').select('doc_no, customer_delivery_date, amended_delivery_date'), c,
@@ -955,8 +971,8 @@ async function nonCancelledDoNumbers(
   doIds: string[],
 ): Promise<Map<string, { doNo: string; soDocNo: string | null }>> {
   const doNoById = new Map<string, { doNo: string; soDocNo: string | null }>();
-  for (let k = 0; k < doIds.length; k += 300) {
-    const chunk = doIds.slice(k, k + 300);
+  for (let k = 0; k < doIds.length; k += UUID_CHUNK) {
+    const chunk = doIds.slice(k, k + UUID_CHUNK);
     if (chunk.length === 0) continue;
     const { data: doHdrs } = await scopeToCompany(
       sb.from('delivery_orders').select('id, do_number, status, so_doc_no'), c,
@@ -981,11 +997,17 @@ export async function resolveDeliveredDosForPos(
   const out = new Map<string, PoDeliveredSummary>();
   const ids = [...new Set(poIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return out;
-  const { data: poHdrs } = await scopeToCompany(
-    sb.from('purchase_orders').select('id, po_number'), c,
-  ).in('id', ids);
+  /* Chunked: `ids` is a whole PO list page (up to 500 uuids off the legacy
+     `.limit(500)`), which is a ~19KB request line un-batched. Keyed by id, so
+     merging batches cannot change the map. */
+  const { data: poHdrs } = await chunkIn<{ id: string; po_number: string | null }>(
+    ids,
+    (batch, from, to) => scopeToCompany(
+      sb.from('purchase_orders').select('id, po_number'), c,
+    ).in('id', batch).order('id').range(from, to),
+  );
   const poNumberById = new Map<string, string>();
-  for (const h of (poHdrs ?? []) as Array<{ id: string; po_number: string | null }>) {
+  for (const h of poHdrs) {
     poNumberById.set(h.id, h.po_number ?? '');
   }
   const poNumbers = [...new Set([...poNumberById.values()].filter(Boolean))];
@@ -1020,11 +1042,16 @@ export async function resolveDeliveredByCodeForPos(
   const out = new Map<string, Map<string, DeliveredDo[]>>();
   const ids = [...new Set(poIds.filter((x): x is string => !!x))];
   if (ids.length === 0) return out;
-  const { data: poHdrs } = await scopeToCompany(
-    sb.from('purchase_orders').select('id, po_number'), c,
-  ).in('id', ids);
+  /* Chunked — same page-sized `ids` and the same reasoning as
+     resolveDeliveredDosForPos above. */
+  const { data: poHdrs } = await chunkIn<{ id: string; po_number: string | null }>(
+    ids,
+    (batch, from, to) => scopeToCompany(
+      sb.from('purchase_orders').select('id, po_number'), c,
+    ).in('id', batch).order('id').range(from, to),
+  );
   const poNumberById = new Map<string, string>();
-  for (const h of (poHdrs ?? []) as Array<{ id: string; po_number: string | null }>) {
+  for (const h of poHdrs) {
     poNumberById.set(h.id, h.po_number ?? '');
   }
   const poNumbers = [...new Set([...poNumberById.values()].filter(Boolean))];
