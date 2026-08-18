@@ -141,6 +141,24 @@ export interface AcOutboxPayload {
   body: Record<string, unknown>;
   /** Set body.FromDocNo from this ERP document's linked_ac_docno. */
   fromDoc?: AcDocRef;
+  /**
+   * SEVERAL sources into ONE target — set body.FromDocNos from their
+   * linked_ac_docno, in the order the ERP named them.
+   *
+   * A MERGED conversion (two sales orders shipped on one delivery order, four
+   * purchase orders received on one GRN) used to be recorded `skipped` with
+   * "AutoCount transfers from ONE source document". That sentence stopped being
+   * true on 2026-08-16: `PlanTransfer` (AcSyncService.cs) reads `FromDocNos`,
+   * the documented `FullTransfer` takes an ARRAY of document numbers, and the
+   * by-line shape groups the keys by the document they belong to and invokes
+   * the primitive once per group. The service was ready and the ERP kept
+   * refusing — four routes, one `docNos.length === 1`.
+   *
+   * SEPARATE FROM `fromDoc`, not a replacement for it. The drain REPLAYS a
+   * stored payload and never recomposes, so every row queued before this field
+   * existed still carries `fromDoc` and must keep working exactly as it did.
+   */
+  fromDocs?: AcDocRef[];
   /** Set body.DocNo from this ERP document's linked_ac_docno (cancel / edit). */
   selfDoc?: AcDocRef;
   /** Write the AutoCount document number the call returns back onto this row. */
@@ -889,7 +907,18 @@ export async function enqueueConvert(
   opts: {
     companyId: number | null | undefined;
     op: Extract<AcOp, 'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi'>;
-    from: AcDocRef;
+    /**
+     * The source document, or ALL of them when the target merges several.
+     *
+     * An array is not a special case to be talked out of: merging is the daily
+     * shape on the delivery board and the GRN picker, and it used to be written
+     * down as `skipped` on the strength of a service limitation that no longer
+     * exists (see `AcOutboxPayload.fromDocs`). Pass every source the target
+     * actually drew from — the order is kept, and one parent without an
+     * AutoCount counterpart makes the whole conversion wait rather than sending
+     * a partial merge.
+     */
+    from: AcDocRef | AcDocRef[];
     to: AcDocRef;
     docType: 'DO' | 'IV' | 'GR' | 'PI';
     docNo: string;
@@ -917,8 +946,14 @@ export async function enqueueConvert(
   /* THE SUPPLIER, for the two conversions whose target is a purchase document.
      Resolved here rather than inline below so a null is one branch and not a
      silent empty spread buried in an object literal. */
+  const froms = Array.isArray(opts.from) ? opts.from : [opts.from];
+  /* A caller that names no source at all is a caller that has lost its parent;
+     it belongs in recordParentlessCreate, not here, and enqueueing a transfer
+     with nothing to transfer FROM would fail on the host with a message about
+     the payload rather than about the document. */
+  if (!froms.length) return false;
   const creditor = PURCHASE_CONVERSION.has(opts.op)
-    ? await readConvertCreditor(sb, opts.from)
+    ? await readConvertCreditor(sb, froms[0])
     : null;
   return enqueueAcOp(sb, {
     companyId: opts.companyId,
@@ -997,7 +1032,10 @@ export async function enqueueConvert(
         ...(creditor ?? {}),
         ...(source.keys ? { DtlKeys: source.keys } : {}),
       },
-      fromDoc: opts.from,
+      /* ONE source keeps the field it has always used, so a payload composed
+         today is byte-identical to one composed last week and the contract test
+         over AcSyncService.cs still reads FromDocNo where it expects it. */
+      ...(froms.length === 1 ? { fromDoc: froms[0] } : { fromDocs: froms }),
       writeback: opts.to,
       /* The conversion routes report the lines they created exactly as the
          create routes do (AcSyncService.cs:163-166 pick the detail table, :171
@@ -1120,20 +1158,42 @@ async function conversionIsPartial(
   const fk = parentFk[spec.sourceItemTable];
   if (!fk) return true;
   try {
-    const { data: one, error: oErr } = await sb.from(spec.sourceItemTable)
-      .select(`id, ${fk}`).eq('id', takenSourceIds[0]).maybeSingle();
-    if (oErr || !one) return true;
-    const parentKey = (one as unknown as Record<string, unknown>)[fk];
-    if (parentKey == null) return true;
-    let q = sb.from(spec.sourceItemTable)
-      .select('id', { count: 'exact', head: true }).eq(fk, parentKey as string);
-    /* A retired parent line is not one this conversion "left behind" — it is
-       one nobody will ever transfer. Only mfg_sales_order_items has the column
-       (42703 on the others), so the filter is applied only there. */
-    if (spec.sourceItemTable === 'mfg_sales_order_items') q = q.eq('cancelled', false);
-    const { count, error: cErr } = await q;
-    if (cErr || count == null) return true;
-    return count > takenSourceIds.length;
+    /* EVERY taken line's parent, not just the first one's.
+       A MERGED conversion draws lines from several source documents, and this
+       used to read the parent of `takenSourceIds[0]` and compare that ONE
+       document's line count against the total taken from ALL of them. Two
+       sales orders of three lines each, five of the six shipped: the parent
+       holds 3, the caller took 5, `3 > 5` is false — "whole document", no
+       DtlKeys sent, and AutoCount transfers every outstanding line on both
+       orders including the one the ERP left behind. That is D14 again, one
+       level up, and it becomes reachable the moment a merge is allowed to
+       enqueue at all. Counted per parent, any leftover anywhere is partial. */
+    const { data: taken, error: tErr } = await sb.from(spec.sourceItemTable)
+      .select(`id, ${fk}`).in('id', takenSourceIds);
+    if (tErr || !taken) return true;
+    const takenRows = taken as unknown as Record<string, unknown>[];
+    if (takenRows.length !== takenSourceIds.length) return true;
+
+    const takenByParent = new Map<string, number>();
+    for (const r of takenRows) {
+      const parentKey = r[fk];
+      if (parentKey == null) return true;
+      const k = String(parentKey);
+      takenByParent.set(k, (takenByParent.get(k) ?? 0) + 1);
+    }
+
+    for (const [parentKey, takenHere] of takenByParent) {
+      let q = sb.from(spec.sourceItemTable)
+        .select('id', { count: 'exact', head: true }).eq(fk, parentKey);
+      /* A retired parent line is not one this conversion "left behind" — it is
+         one nobody will ever transfer. Only mfg_sales_order_items has the column
+         (42703 on the others), so the filter is applied only there. */
+      if (spec.sourceItemTable === 'mfg_sales_order_items') q = q.eq('cancelled', false);
+      const { count, error: cErr } = await q;
+      if (cErr || count == null) return true;
+      if (count > takenHere) return true;
+    }
+    return false;
   } catch {
     return true;
   }
@@ -1221,13 +1281,22 @@ export async function retiredLineOf(
 /**
  * Record a conversion the ERP will NOT send, and why.
  *
- * The case that forces this: the SDK's only transfer primitive is
- * AddPartialTransferDetail(fromDocType, fromDocKeys) — ONE source document
- * (AcSyncService.cs:12-20). The ERP can merge several Sales Orders into one
- * Delivery Order; AutoCount has no shape for that. Splitting it into N AutoCount
- * DOs would invent documents the ERP does not have, and dropping it silently
- * would leave a shipment that exists in one system and not the other with
- * nothing to find it by. So it is written down as 'skipped' with the reason.
+ * THE MERGED CONVERSION IS NO LONGER ONE OF THESE. This comment used to say
+ * that AutoCount has no shape for several Sales Orders on one Delivery Order,
+ * and that was true of the primitive: `AddPartialTransferDetail` refuses a key
+ * array drawn from more than one source document — measured on the live book
+ * 2026-08-16, `InvalidTransferItemException`. It was never true of the TARGET.
+ * `PlanTransfer` now takes `FromDocNos`, the documented `FullTransfer` takes an
+ * array of document numbers, and the by-line shape groups the keys per source
+ * and invokes the primitive once per group. So a merge is enqueued like any
+ * other conversion (`enqueueConvert` with an array) and no longer skipped.
+ *
+ * What still reaches this function: a conversion whose source lines cannot be
+ * NAMED — `readConvertSourceKeys` refusing a partial transfer whose source
+ * lines carry no DtlKey — and, through `recordParentlessCreate`, a document
+ * with no source document at all. Both are still real, and both are still
+ * written down rather than dropped: a shipment that exists in one system and
+ * not the other must have something to find it by.
  */
 export async function recordConvertSkipped(
   sb: Sb,
@@ -1820,6 +1889,25 @@ export async function dispatchOne(
     }
     body.FromDocNo = from;
   }
+  /* ALL OF THEM, OR NONE. A merged transfer names every source it drew from, so
+     one parent still waiting for its own create means the whole conversion
+     waits — sending the subset would transfer part of the document and leave
+     AutoCount holding a delivery the ERP does not have. `waiting` deliberately
+     does not burn an attempt, which is what lets the parents land first. */
+  if (payload.fromDocs?.length) {
+    const froms: string[] = [];
+    for (const ref of payload.fromDocs) {
+      const no = await acDocNoOf(sb, ref);
+      if (!no) {
+        await mark(sb, row.id, {
+          last_error: `waiting: ${froms.length} of ${payload.fromDocs.length} source document(s) have an AutoCount counterpart, the rest do not yet`,
+        });
+        return 'waiting';
+      }
+      froms.push(no);
+    }
+    body.FromDocNos = froms;
+  }
   if (payload.selfDoc) {
     const self = await acDocNoOf(sb, payload.selfDoc);
     if (!self) {
@@ -1869,8 +1957,13 @@ export async function dispatchOne(
      about which row the service happened to read. Best-effort, like its twin —
      on any doubt `readConvertCreditor` returns null, the body goes unchanged and
      the service's own fallback is what answers. Guide §7c3. */
-  if (PURCHASE_CONVERSION.has(row.op) && !body.CreditorCode && payload.fromDoc) {
-    const creditor = await readConvertCreditor(sb, payload.fromDoc);
+  const creditorSource = payload.fromDoc ?? payload.fromDocs?.[0];
+  if (PURCHASE_CONVERSION.has(row.op) && !body.CreditorCode && creditorSource) {
+    /* THE FIRST SOURCE ANSWERS FOR A MERGE, and it is not an arbitrary pick:
+       both merged purchase conversions are already grouped by supplier before
+       they get here (grns.ts buckets by PO supplier, purchase-invoices.ts by
+       GRN supplier), so every source in the list carries the same creditor. */
+    const creditor = await readConvertCreditor(sb, creditorSource);
     if (creditor) Object.assign(body, creditor);
   }
 

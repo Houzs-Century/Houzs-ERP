@@ -642,6 +642,79 @@ describe('the drain', () => {
     expect(sent[0]).toMatchObject({ FromDocNo: 'SO-000123' });
     expect(sb.tables.delivery_orders[0].linked_ac_docno).toBe('DO-000045');
   });
+
+  /* ── A MERGE NAMES EVERY SOURCE, OR IT WAITS ──────────────────────────────
+     The service takes `FromDocNos` (PlanTransfer, AcSyncService.cs) and either
+     FullTransfers the array or groups the named keys per source document. What
+     the drain must not do is send a merge with only the sources that happen to
+     be ready: AutoCount would hold a delivery order carrying one sales order's
+     lines while the ERP's own document carries two, and the row would be `sent`
+     so nothing would ever look at it again. */
+  test('a merged conversion carries FromDocNos, one entry per source', async () => {
+    const sb = withFlag('1', {
+      autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }],
+      mfg_sales_orders: [
+        { doc_no: 'HC-SO-9', linked_ac_docno: 'SO-000123' },
+        { doc_no: 'HC-SO-10', linked_ac_docno: 'SO-000124' },
+      ],
+      delivery_orders: [{ id: 'do-1', linked_ac_docno: null }],
+    });
+    const sent: unknown[] = [];
+    const fetchImpl = vi.fn(async (_url: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)));
+      return jsonRes(200, { ok: true, docNo: 'DO-000046' });
+    }) as never;
+
+    expect(await dispatchOne(env, sb as never, row({
+      op: 'so_to_do',
+      doc_type: 'DO',
+      payload: {
+        body: {},
+        fromDocs: [
+          { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+          { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-10' },
+        ],
+        writeback: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+      },
+    }), fetchImpl)).toBe('sent');
+
+    expect(sent[0]).toMatchObject({ FromDocNos: ['SO-000123', 'SO-000124'] });
+    /* The single-source field stays absent: the service reads FromDocNo as the
+       fallback for FromDocNos, so sending both would be two answers to one
+       question. */
+    expect((sent[0] as { FromDocNo?: unknown }).FromDocNo).toBeUndefined();
+  });
+
+  test('a merge whose SECOND source has no AutoCount number waits, and sends nothing', async () => {
+    const sb = withFlag('1', {
+      autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }],
+      mfg_sales_orders: [
+        { doc_no: 'HC-SO-9', linked_ac_docno: 'SO-000123' },
+        { doc_no: 'HC-SO-10', linked_ac_docno: null },
+      ],
+      delivery_orders: [{ id: 'do-1', linked_ac_docno: null }],
+    });
+    const fetchImpl = vi.fn(async () => jsonRes(200, { ok: true, docNo: 'DO-1' })) as never;
+
+    expect(await dispatchOne(env, sb as never, row({
+      op: 'so_to_do',
+      doc_type: 'DO',
+      payload: {
+        body: {},
+        fromDocs: [
+          { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+          { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-10' },
+        ],
+        writeback: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+      },
+    }), fetchImpl)).toBe('waiting');
+
+    expect(fetchImpl).not.toHaveBeenCalled();
+    const after = outbox(sb)[0];
+    expect(after.status).toBe('pending');
+    expect(after.attempts ?? 0).toBe(0);
+    expect(after.last_error).toContain('1 of 2 source document(s)');
+  });
 });
 
 /* ── A CONVERSION MUST NAME THE LINES IT TOOK ────────────────────────────────
@@ -734,6 +807,84 @@ describe('a partial conversion transfers only the lines it actually took', () =>
     expect(await convertDo(sb)).toBe(true);
     const [row] = outbox(sb);
     expect(row.payload.body.DtlKeys).toEqual([9001, 9002]);
+  });
+
+  /* ── PARTIALITY IS PER PARENT, and a merge is what makes that reachable ──
+     `conversionIsPartial` decides whether an un-nameable subset is safe to
+     degrade into "transfer everything outstanding". It used to read the parent
+     of the FIRST taken line and compare THAT document's line count against the
+     total taken from ALL of them, which only ever saw one parent because only
+     single-source conversions could enqueue.
+
+     Two sales orders of two lines each, three shipped, and one of the three
+     carrying no DtlKey: the first parent holds 2 and the caller took 3, so
+     `2 > 3` is false, the transfer reads as whole-document, no DtlKeys are sent
+     — and AutoCount moves every outstanding line on BOTH orders, including the
+     fourth, which is still in the warehouse. Counted per parent it is partial,
+     and a partial transfer the ERP cannot name is refused. */
+  test('a MERGE that leaves one parent line behind is partial, and an unnameable subset is REFUSED', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: [
+        { id: 'a-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 9001, cancelled: false },
+        { id: 'a-2', doc_no: 'HC-SO-9', item_code: 'SKU-2', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 9002, cancelled: false },
+        /* Never keyed — this is what forces the question to be asked at all. */
+        { id: 'b-1', doc_no: 'HC-SO-10', item_code: 'SKU-3', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: null, cancelled: false },
+        { id: 'b-2', doc_no: 'HC-SO-10', item_code: 'SKU-4', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 9004, cancelled: false },
+      ],
+      /* Both of SO-9, one of SO-10. b-2 stays behind. */
+      delivery_order_items: [
+        { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'a-1', item_code: 'SKU-1' },
+        { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'a-2', item_code: 'SKU-2' },
+        { id: 'do-item-3', delivery_order_id: 'do-1', so_item_id: 'b-1', item_code: 'SKU-3' },
+      ],
+    });
+    expect(await enqueueConvert(sb as never, {
+      companyId: 1,
+      op: 'so_to_do',
+      from: [
+        { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+        { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-10' },
+      ],
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+      docType: 'DO',
+      docNo: 'HC-DO-1',
+      docId: 'do-1',
+    })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('skipped');
+    expect(row.last_error).toContain('cannot name the subset');
+    /* And nothing was queued alongside the refusal — the failure this pins is a
+       PENDING row with no DtlKeys, which is the blind whole-document transfer. */
+    expect(outbox(sb).filter((r) => r.status === 'pending')).toHaveLength(0);
+  });
+
+  test('a merge that takes EVERY line of every parent still sends the keys it named', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: [
+        { id: 'a-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 9001, cancelled: false },
+        { id: 'b-1', doc_no: 'HC-SO-10', item_code: 'SKU-3', qty: 1, unit_price_centi: 100, linked_ac_dtlkey: 9003, cancelled: false },
+      ],
+      delivery_order_items: [
+        { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'a-1', item_code: 'SKU-1' },
+        { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'b-1', item_code: 'SKU-3' },
+      ],
+    });
+    expect(await enqueueConvert(sb as never, {
+      companyId: 1,
+      op: 'so_to_do',
+      from: [
+        { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+        { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-10' },
+      ],
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+      docType: 'DO',
+      docNo: 'HC-DO-1',
+      docId: 'do-1',
+    })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('pending');
+    expect(row.payload.body.DtlKeys).toEqual([9001, 9003]);
+    expect(row.payload.fromDocs?.map((r: { key: string }) => r.key)).toEqual(['HC-SO-9', 'HC-SO-10']);
   });
 
   test('a DO built entirely of ad-hoc lines queues the conversion unchanged', async () => {

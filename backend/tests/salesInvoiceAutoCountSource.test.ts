@@ -208,7 +208,7 @@ describe('an invoice raised FROM a delivery order is enqueued, not recorded pare
   });
 });
 
-describe('the claim is CHECKED — the three shapes that genuinely cannot transfer', () => {
+describe('the claim is CHECKED — the two shapes that genuinely cannot transfer', () => {
   test('no source at all is still recorded parentless, with the same words', async () => {
     const t = baseTables();
     await create(harness(t).app, { items: [line('ADHOC', null)] });
@@ -218,16 +218,27 @@ describe('the claim is CHECKED — the three shapes that genuinely cannot transf
     expect(classifyAcSkip(row.last_error).kind).toBe('no-source-document');
   });
 
-  test('lines from SEVERAL delivery orders are recorded as a merged conversion', async () => {
+  test('lines from SEVERAL delivery orders are SENT, naming every source', async () => {
+    /* This used to assert `skipped` with "AutoCount transfers from ONE source
+       document". That sentence was true of AddPartialTransferDetail's key array
+       and never of the target: the service takes `FromDocNos`, FullTransfers the
+       array, and groups named keys per source document. An invoice covering two
+       delivery orders is a daily shape here, so refusing it left real revenue
+       out of the account book with only an outbox row to find it by.
+
+       WHAT WOULD MAKE THIS SILENTLY WRONG is taking `[...doIds][0]` — an invoice
+       in the book billing one delivery out of two — so the assertion is on the
+       COUNT and on both refs, not merely on the status. */
     const t = baseTables();
     await create(harness(t).app, { items: [line('M1', 'doi-a'), line('M2', 'doi-b')] });
     const row = outboxFor(t)[0]!;
-    expect(row.status).toBe('skipped');
-    expect(row.last_error).toContain('HC-DO-2608-001, HC-DO-2608-002');
-    /* Verbatim the phrase /from-dos writes — it is the needle that classifies a
-       merged conversion, and a reworded twin lands on the owner's page as
-       `unrecognised` with no remedy. */
-    expect(classifyAcSkip(row.last_error).kind).toBe('no-autocount-shape');
+    expect(row.op).toBe('do_to_iv');
+    expect(row.status).toBe('pending');
+    const refs = (row.payload as { fromDocs?: Array<{ key: string }> }).fromDocs ?? [];
+    expect(refs.map((r) => r.key).sort()).toEqual(['do-a', 'do-b']);
+    /* And NOT the single-source field, which the drain would read instead and
+       which would carry exactly one of the two. */
+    expect((row.payload as { fromDoc?: unknown }).fromDoc).toBeUndefined();
   });
 
   test('a linked line beside a standalone line is refused, and says which line', async () => {

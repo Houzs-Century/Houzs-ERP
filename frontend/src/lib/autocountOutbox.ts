@@ -711,11 +711,17 @@ export const AC_REASON_COPY: Record<string, AcReasonCopy> = {
     toFix:
       "Raise it from the document it should follow. This one stays in the ERP only — sending it again will not help.",
   },
+  /* THIS ROW IS HISTORY, and the words say so rather than repeating a limit
+     that no longer holds. A merged conversion is sent now — the AutoCount side
+     learned to take several sources on 2026-08-16 and the ERP followed — so
+     nothing new lands in this class. What is still true of a row that CARRIES
+     it: it was recorded before the change, the ERP composed nothing for it, and
+     Send again therefore has nothing to send. */
   "no-autocount-shape": {
-    headline: "Several documents were merged into one, and AutoCount cannot hold that",
+    headline: "Merged from several documents, and recorded before we could send that",
     explain:
-      "This document was built from more than one earlier document at once, and AutoCount has no way to record that as a single document.",
-    toFix: "Enter it in AutoCount by hand. Sending it again will not help.",
+      "This document was built from more than one earlier document at once. AutoCount would not take that when this row was written, so nothing was ever composed for it. It can take it now — but only documents raised since then are sent automatically.",
+    toFix: "Raise the matching document in AutoCount by hand. Sending it again will not help, because nothing was composed to send.",
   },
   "mixed-source-lines": {
     headline: "Part of this invoice was never delivered on the document it follows",

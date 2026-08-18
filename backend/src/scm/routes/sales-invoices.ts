@@ -62,7 +62,7 @@ import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
-import { enqueueConvert, recordConvertSkipped, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { recordSiAutoCountSource } from '../lib/si-autocount-source';
 import { refuseMigratedSources } from '../lib/migrated-chain';
 
@@ -1393,27 +1393,19 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
     `Converted from ${distinctDoNumbers.length > 1 ? 'Delivery Orders' : 'Delivery Order'} ${distinctDoNumbers.join(', ')}`,
   );
 
-  /* ERP -> AutoCount DO->Invoice. One source DO only; an invoice merging
-     several DOs has no AutoCount shape and is recorded as skipped instead. */
-  if (doIds.length === 1) {
+  /* ERP -> AutoCount DO->Invoice, MERGED OR NOT. An invoice covering several
+     delivery orders names them all; AcSyncService takes FromDocNos. What this
+     used to skip on was the primitive's single-source key array, which the
+     service now works around by grouping per source document. */
+  if (doIds.length) {
     await enqueueConvert(sb, {
       companyId: activeCompanyId(c),
       op: 'do_to_iv',
-      from: { table: 'delivery_orders', keyCol: 'id', key: doIds[0] },
+      from: doIds.map((id) => ({ table: 'delivery_orders' as const, keyCol: 'id', key: id })),
       to: { table: 'sales_invoices', keyCol: 'id', key: h.id },
       docType: 'IV',
       docNo: h.invoice_number,
       docId: h.id,
-      createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  } else {
-    await recordConvertSkipped(sb, {
-      companyId: activeCompanyId(c),
-      op: 'do_to_iv',
-      docType: 'IV',
-      docNo: h.invoice_number,
-      docId: h.id,
-      reason: `merged from ${doIds.length} Delivery Orders (${distinctDoNumbers.join(', ')}) — AutoCount transfers from ONE source document, so this invoice has no AutoCount counterpart`,
       createdBy: c.get('houzsUser')?.id ?? null,
     });
   }
