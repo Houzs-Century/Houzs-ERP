@@ -16,8 +16,26 @@ tracks WORKTREES and STAGES, not individual edits.
 | --- | --- | --- |
 | 0a | **Code screening** — read all 1,360 source files (BE/FE/DB) by name | **DONE** 2026-08-18 |
 | 0b | **Data screening** — audit every concept against the LIVE database | **DONE** 2026-08-18 |
-| 1 | **Batch 1 — stop the bleeding** — register every concept, generate the glossary, fix the doc-drift, fix the low-risk defects | **IN PROGRESS** |
-| 2 | **Batch 2 — pay the debt** — retire each drifted spelling, one concept per PR, with its migration | NOT STARTED |
+| 1 | **Batch 1 — stop the bleeding** — registry, glossary, the doc-drift, and the screening defects | **DONE** 2026-08-18 |
+| 2 | **Batch 2 — pay the debt** — retire each drifted spelling, one concept per PR, with its migration | **IN PROGRESS** |
+
+## Defects — 21 found, dispositioned
+
+The screening found 21 defects. Fixed by parallel agents, applied centrally with each root cause reconfirmed:
+- **16 fixed** — #2429 (customer-ref builders), #2430 (11 backend: the delivery-crew tenant leak, swallowed reads, doMirror cancelled-flag, reverse-journal numbering, variant-key inch marks, …), #2431 (5 frontend: silent mutations, money-parse, cancel pill).
+- **2 refuted on reading** — `so-dropdown-options` already degrades; `si-payment-row`'s caller cannot pass null. The agents declined to invent a fix.
+- **2 not fixed on purpose** — the `0177` migration comment mislabels: editing an APPLIED migration changes its checksum and blocks the deploy, so the comment stays wrong rather than take prod down.
+- **1 was already fixed** in #2429 (the relationship-map fallback).
+
+## Batch 2 reality (measured, not estimated)
+
+Every remaining unification is a physical column rename/drop on core money/stock tables:
+- **item-code** (`item_code`/`material_code`/`product_code`): ~1,500 references across ~148 files, 24 columns.
+- **money** (`_centi`→`_sen`): 200+ columns.
+- **customer-ref drop** (`po_doc_no`/`customer_po*`): dead columns, but behind a VIEW (the 0189 grant-loss hazard) and named in ~10 select constants — DEFERRED, dead + zero functional value + high blast radius.
+- **warehouse** (text `sales_location` → uuid `warehouse_id`): needs a backfill.
+
+These cannot be tested against a writable DB from here, several share the 12k-line `mfg-sales-orders.ts` (serial merges), and each needs the owner's button to apply the migration. They are a careful one-at-a-time program, not a sprint. The CODE-layer confusion is already gone — several concepts (branding, processing-date, transfer, salesperson) are already governed by shared modules; customer-ref is unified in #2429.
 
 Two screening layers, because **names lie**:
 - [`system-screening-2026-08-18.md`](./system-screening-2026-08-18.md) — the CODE read: 33 concepts, 21 defects (0 high), 1 doc-drift.
