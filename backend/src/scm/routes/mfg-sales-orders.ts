@@ -49,7 +49,7 @@ export type { SoPaymentRowInput };
    build's compartment codes from its persisted module lines for the TBC path. */
 import { buildCompartmentsFromModuleLines } from '../lib/compartments-from-module-lines';
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-import { meetsProceedGate, resolveProceedProcessingDate, PROCEED_NEEDS_DATE } from '../shared/order-rules';
+import { resolveProceedProcessingDate, PROCEED_NEEDS_DATE } from '../shared/order-rules';
 /* The SO edit-policy table (Owner 2026-07-17): FREE fields Save writes straight
    through; CONTROLLED fields Save routes into the amendment. Both the lock Set
    and the amendment allow-list below are DERIVED from it so the three lists
@@ -533,12 +533,6 @@ async function soEditLocked(
 }
 
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-const SO_PROCEED_GATE_RESPONSE = {
-  error: 'proceed_gate_unmet',
-  reason: 'A Processing Date can only be set once the order has a customer name, a full delivery address (line 1 and postcode), a delivery date, and the deposit its company requires (Houzs 30%, 2990 50%).',
-} as const;
-
-/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 async function soDepositFacts(
   sb: any,
   docNo: string,
@@ -554,15 +548,28 @@ async function soDepositFacts(
   };
 }
 
-/* `soProceedGateBlocked` lived here and has NO CALLERS LEFT (2026-08-18). Its
-   two sites were the /status stamp block and the header PATCH's `proceededAt`
-   branch, and both went with the second storage. The RULE it enforced did not
-   go anywhere: `meetsProceedGate` is still the gate, reached through
-   soProcessingDateProblemsForDoc / collectProcessingGateProblems on every path
-   that sets a Processing Date — which, after unification, is every path that
-   proceeds an order. Its refusal body SO_PROCEED_GATE_RESPONSE is likewise
-   superseded by the aggregated `validation_failed` list, which names WHICH
-   condition failed instead of reciting all five. */
+/* `soProceedGateBlocked` lived here and is GONE (2026-08-18). Its two call sites
+   were the /status stamp block and the header PATCH's `proceededAt` branch, and
+   both went with the second storage. Its refusal body SO_PROCEED_GATE_RESPONSE
+   went with it, superseded by the aggregated `validation_failed` list, which
+   names WHICH condition failed instead of reciting all five in one sentence.
+
+   THE RULE DID NOT GO ANYWHERE — but say precisely WHERE it lives now, because
+   this is the shape that drifts. Every path that sets a Processing Date, which
+   after unification is every path that proceeds an order, runs
+   collectProcessingGateProblems (shared/so-save-problems.ts): the same four
+   completeness facts checked INLINE, and the money through meetsDepositGate.
+
+   AND NOTE WHAT THAT LEAVES. `meetsProceedGate` now has NO production caller at
+   all — grepping its call shape over routes, lib and the frontend returns
+   nothing, and only its own unit test still invokes it. (Written without the
+   literal call shape ON PURPOSE: the PR gate that enumerates that population
+   re-runs the grep, and a comment quoting it would put itself in the result.)
+   docs/modules/sales-order.md has warned since 2026-08-13 that this rule had TWO
+   enforcement sites kept in step "by agreement, not by construction"; there is
+   one live site now and one orphan. Deliberately NOT deleted here: the branch
+   fix/proceed-gate-names-what-failed is rewriting that function, so its fate
+   belongs to whichever of the two lands second. */
 
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 async function soProcessingDateProblemsForDoc(
