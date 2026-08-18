@@ -48,6 +48,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -599,8 +600,13 @@ const SupplierCard = ({
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Return Date</span>
-            <input type="date" className={styles.fieldInput} value={draft.returnDate} disabled={locked}
-              onChange={(e) => onField('returnDate', e.target.value)} />
+            <DateField
+              fullWidth
+              className={styles.fieldInput}
+              value={draft.returnDate}
+              disabled={locked}
+              onChange={(iso) => onField('returnDate', iso)}
+            />
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Credit Note Ref</span>

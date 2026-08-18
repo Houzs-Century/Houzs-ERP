@@ -137,6 +137,312 @@ the flush; the exit STATUS is unchanged, and
 purpose so it cannot come back.
 
 Ref: fix/cross-tenant-leaks-round2, 2026-08-18.
+## A Sales Order with a Processing Date was refused stock forever — the mfg-sales allocation gate read a field no client writes [high]
+
+**Symptom.** A Sales Order given a Processing Date locked, appeared on the
+delivery board and pushed to AutoCount as `PDate` — and never became READY. Every
+line was forced `PENDING` with the goods physically in the warehouse. No error, no
+log, nothing on screen. Owner, this morning: *"明明这个东西没有 ready,可是我的 MRP
+却 show 不出来"* and *"明明那个东西是没有货的,可是状态却去 show STATUS: READY"*.
+
+**Root cause (read, not inferred).** `so-stock-allocation.ts` built its
+`allocGated` set from `orders.filter((o) => !o.proceeded_at)`, while every path
+that sets a Processing Date writes `processing_date`:
+
+| path | writes `processing_date` | stamps `proceeded_at` |
+| --- | --- | --- |
+| CREATE (`mfg-sales-orders.ts`, `processing_date: dateOrNull(body.processingDate)`) | always | only when `autoProceed` — the date PLUS the paid + full-address gate |
+| header PATCH (the detail screen's save) | yes | never |
+| `PATCH /:docNo/status` → `IN_PRODUCTION` | ensures one, 422 if it cannot | yes |
+
+`grep -rn "proceededAt" frontend/src` returns **0 hits**: no shipped client sends
+it. So the ordinary act of setting a Processing Date produced `processing_date`
+set / `proceeded_at` NULL — gated, silently, forever. The gate's own comment
+claimed to implement *"有 processing date 才来分配"*, and the rule was right; the
+column was not.
+
+**Both directions were wrong, and the test caught the second one.** On the
+pre-fix code the new test fails TWICE: an order with a Processing Date stayed
+`PENDING` (refused stock it should get), and an order with a bare `proceeded_at`
+and NO Processing Date came back `READY` (took stock it should not) — the second
+being the shape the owner saw as a false READY.
+
+**Fix.** The gate reads `processing_date`, via `SO_PROCESSING_DATE_COLUMN` so the
+next rename has one home. It reads that column **alone**: consulting both "to be
+safe" would give the rule a second home, which is exactly how it acquired a wrong
+one. This is the stop-reading step for `proceeded_at` and its last reachable
+decision.
+
+**Blast radius on production: UNKNOWN, and deliberately not invented.** The
+measurement needs `probe-proceed-split.yml` (branch
+`feat/processing-date-has-one-storage`, not yet on the default branch, so
+`workflow_dispatch` 404s). `unify-processing-date.yml` IS dispatchable and would
+answer it, but it prints document numbers into logs that are public on this repo,
+so it was not run. What IS established from source: the flip can only *regress* an
+order whose date sits in `proceeded_at` with `processing_date` NULL, and **no live
+path can create that row** — `autoProceed` requires a date, and the
+`IN_PRODUCTION` transition refuses without one. The historical population was
+migrated on 2026-08-13 (mig 0286 header: 519 company-1 orders moved, both
+companies verified at zero split). Run the probe once its branch lands.
+
+**Deferred, with reason — not fixed here.** `delivery-planning.ts` and
+`frontend/src/vendor/scm/lib/so-detail-gates.ts` still pass/read `proceeded_at`,
+but both go through the `soProcessingLocked` shape, which returns false as soon as
+`processing_date` is NULL and only falls back to `proceeded_at` when `status` is
+absent. Neither refuses anything today, so neither is bleeding. The dashboard
+summary endpoint also still ships `proceeded_at` to the client for bucketing
+(`mfg-sales-orders.ts`, `?summary=1`) — a display inconsistency, not a stock
+refusal. All three belong with the `proceeded_at` retirement.
+
+**The doc blessed the bug, which is why it survived.** `docs/modules/sales-order.md`
+described this exact behaviour and called it *"intended … the single most common
+'why is my order not READY'"*. The frequency it observed was real; the explanation
+was not, and anyone who read it went hunting for a missing proceed instead of a
+gate on the wrong column. That bullet now carries a dated correction quoting what
+it used to say.
+
+## One date format, written by hand at thirty sites and left to the operating system at a hundred and seventy-five more [high]
+
+<!-- area: Frontend + mobile -->
+
+**Symptom.** The owner sent a screenshot of New Sales Order and asked why the
+date format is not standardised across the system. The header read
+`Aug 16, 2026` and `Sep 12, 2026`; the line rows under it read `12/09/2026`. One
+screen, two spellings of the same kind of fact.
+
+**`Aug 16, 2026` is not a format this codebase authors.** Grepping for it returns
+nothing, because nothing writes it. `SalesOrderNew.tsx` Processing Date and
+Delivery Date were native `<input type="date">`, and a native date input renders
+its ISO value **in the operating system's locale**. On the owner's machine that
+is `Aug 16, 2026`; on a colleague's it is `16/08/2026` or `08/16/2026`. That is
+the same 「有时候 MMDDYYYY」 bug he reported on **2026-06-18**, for which
+`DateField` was built the same day — and which had reached **14** of 189 date
+inputs. 175 native ones remained, including both fields in the screenshot.
+
+**Underneath it, the rule had been written down twice and re-derived thirty
+times.** `frontend/src/lib/utils.ts` said *"House style is numeric DD/MM/YYYY
+(owner requirement — no 'Jun'/'Jul' month names anywhere on the desktop app)"*.
+`frontend/src/vendor/shared/format.ts` said *"System-wide canonical display
+format (Commander 2026-06-18)"* under a header claiming to be the *"SOLE source
+of truth — no inline duplicates anywhere in client OR server"*. Between and
+around them:
+
+- all **11** V2 LIST pages emitted `2026/08/16` from their own
+  `iso.replace(/-/g,'/')`, while all **8** V2 DETAIL pages emitted `16/08/2026`
+  from a copied regex reorder — so a list row and the page it opens spelled one
+  date two ways;
+- month-NAME arrays in the PO print template, the project run sheets and the POS
+  period labels produced `16 Aug 2026`, contradicting the owner's own recorded
+  instruction about month names;
+- Fleet rendered the storage shape (`2026-08-16`) straight at the user;
+- three screens called bare `.toLocaleString()` and got whatever the machine said;
+- timestamps existed in three spellings, one of whose docstrings claimed an
+  output (`"4 May 2026, 11:20 AM"`) the code has never produced.
+
+The same files that hand-wrote `fmtDate` were **already importing `fmtCenti`
+from the shared module on the line above**. Money had gone the other way; dates
+had not.
+
+**Two live defects in the shared formatter, invisible from Malaysia.** `fmtDate`
+was `new Date(d).toLocaleDateString('en-GB', …)`. `new Date('2026-08-16')` is
+parsed as UTC midnight, so under `TZ=America/Los_Angeles` it rendered
+**`15/08/2026`** — the wrong day — while under `TZ=Asia/Kuala_Lumpur` it was
+correct, which is why nobody in the office could ever reproduce it.
+`fmtDate(null)` returned **`01/01/1970`** and `fmtDate('16/08/2026')` returned
+**`Invalid Date`**. `SalesOrderDetail.tsx` documents dodging the first of these
+by hand rather than fixing it.
+
+**Fix.** One rule with one home. `fmtDate` / `fmtDateTime` / `fmtTimestamp` /
+`fmtTime` in `frontend/src/vendor/shared/format.ts`, mirrored byte-identically
+into `backend/src/scm/shared/format.ts` (`check-shared-mirrors.mjs` is the
+referee), branching on the input's SHAPE: a value carrying no timezone is shown
+verbatim, a real instant is converted once into GMT+8 by fixed offset
+arithmetic rather than an ICU lookup. Null-safe, invalid-safe and idempotent.
+~30 local helpers deleted and pointed at it; every one of the 175 native date
+inputs now renders through `DateField`, five of them via the wrapper components
+they sit behind. CSV export emits ISO independently of display, because
+converging the list pages onto DD/MM/YYYY would otherwise have broken sorting in
+every exported sheet.
+
+**The class, for next time.** This is `docs/bug-classes.md` **class E**, and the
+third instance in one week — the transfer-label vocabulary and the
+both-dates-or-neither rule were each found written five times, each enforced
+slightly differently, each missing from at least one path. The rule here was not
+forgotten: it was written down, in the right words, in the file most likely to
+be read, and reproduced anyway, because **there was no import that would have
+given it to you**. Writing it down a third time was the move that had already
+failed twice, so it is enforced instead:
+`backend/scripts/check-date-formatting.mjs`, wired into the required
+`backend-typecheck` job, fails on a new hand-spelled date unless somebody adds
+it to a reviewed allowlist with a reason.
+
+The gate is proved rather than assumed. `backend/tests/dateFormatGate.test.ts`
+plants a date format outside the source tree on every CI run, asserts exit 1,
+removes it and asserts exit 0 — and separately asserts it does NOT fire on money
+or row counts, because a gate that cries wolf is a gate somebody deletes. Run by
+hand during this work, the planted line
+(`toLocaleDateString('en-US', { month: 'short', … })`) produced the string
+`Aug 16, 2026` — the owner's screenshot, reproduced from source and then caught.
+## The word a customer saw for a rejected service case was `voided` — and it was a step label on every sales-portal page [high]
+
+<!-- area: Service cases (ASSR) -->
+
+**Symptom.** The customer tracking portal rendered the raw database slug
+`voided` where a stage name belongs. The printed service report, for the same
+case, said "Voided — Not Valid".
+
+**Not one page. Every sales-portal page.** `portal.ts:120-135` builds the
+salesperson stepper by mapping `ALL_STAGES` through `customerStatusFor`, and
+`voided` is in `ALL_STAGES` (`backend/src/services/assr.ts:100-109`). So the
+slug appeared as a STEP LABEL on every sales view of every case, whatever stage
+that case was on — not only on the voided ones. The obvious refutation, that a
+voided case never reaches the portal, does not hold either: `resolveTrackToken`
+(`caseTracking.ts:204-234`) gates on token existence, `revoked_at` and
+`expires_at`, and `caseTrack.ts:19-29` adds nothing. No code path consults the
+case's stage.
+
+**Root cause — one rule, five hand-written homes, and the customer-facing one
+was the copy that never learned.** `customerStatusFor`
+(`caseTracking.ts:277-304`) was a switch over nine stages plus six legacy
+aliases ending `default: return { label: stage || "Unknown" }`. It had no
+`voided` arm — `grep -n voided backend/src/services/caseTracking.ts` returned
+rc=1, zero hits. The other four copies:
+
+| Copy | `voided` |
+|---|---|
+| `caseTracking.ts` `customerStatusFor` — THE CUSTOMER'S | absent → raw slug |
+| `assr_print.ts:95-110` `STAGE_LABEL` | "Voided — Not Valid" |
+| `assrFormIntake.ts:360-369` `SHEET_STATUS` | "Voided" |
+| `vendor/scm/lib/assr/stages.ts` `ASSR_STAGES.long` | absent (correctly) |
+| `MobileServiceCase.tsx` `prettyStage` | a literal bolted on top of the above |
+
+Three different answers for one stage, and the one the customer read was not
+English. Nobody was careless. `customerStatusFor` predates `voided`; the ordered
+stepper legitimately has no row for a terminal alt-outcome yet also owned the
+WORDS, so every surface that needed a word for a non-step had to invent one.
+`assr_print.ts:111-115` states the lesson in the file itself — "the document and
+the app showing the same case different words is what sent us looking in the
+first place" — and it was written over `RESOLUTION_LABEL` and never applied to
+`STAGE_LABEL`, the map immediately above it in the same file.
+
+**Fix.** `backend/src/scm/shared/assr-stage-labels.ts`, mirrored byte-identically
+to `frontend/src/vendor/scm/lib/assr-stage-labels.ts`. That pair of paths is the
+point: `check-shared-mirrors.mjs` enumerates `backend/src/scm/shared` with
+`readdirSync` (non-recursive) and looks the basename up in
+`frontend/src/vendor/shared` and `frontend/src/vendor/scm/lib`, so landing the
+table there puts the EXISTING `--strict` CI gate in front of any future drift
+with no new script — and is why the file sits at the top level of `scm/lib` and
+not in the `assr/` subdirectory. Seven surfaces now read it: `caseTracking.ts`,
+`assr_print.ts`, `assrFormIntake.ts`, `assr/stages.ts` (`long` is read, never
+retyped), `MobileServiceCase.tsx`, `ServiceCases.tsx`, `MyCases.tsx`,
+`PortalSupplierCase.tsx`.
+
+**A sixth instance, found while wiring.** `MobileServiceCase.tsx`'s stage-change
+confirm read `STAGES[STAGE_INDEX[target]]?.long ?? target` — the same
+missing-row hole, in the same file that had already patched around it once, so
+moving a case to voided on mobile asked "Move to voided?". It calls
+`prettyStage` now.
+
+**Which answer was chosen, and why.** The copies had drifted, so this is a
+choice and not a no-op. `voided` → "Voided — Not Valid": five of the six
+app-side literals already said exactly that, and a raw slug is nobody's intended
+copy. The pill colour stays grey — what `voided` already resolved to through the
+missing-arm default — so only the word changes. Every other stage's label and
+colour is asserted byte-for-byte against the pre-change switch.
+
+**Two things deliberately NOT swept up.**
+1. `SHEET_STATUS` overlaps but is not the same map. `assrFormIntake.ts:355-359`
+   records that the ops sheet's stats block counts these EXACT strings and that
+   "Pending Delivery/Service" has no spaces around the slash. It moved into the
+   shared file as its own named export, explicitly the SHEET's vocabulary, with
+   its strings pinned byte-identical to what shipped. Folding it into the app's
+   words would silently break a spreadsheet's counters.
+2. `pending_supplier_pickup` has two owner-visible wordings — "Supplier Pickup /
+   Return" in the app and on paper, "Pending Supplier Pickup" in the portal — and
+   both look deliberate. That is a wording decision, not a bug, so both are
+   preserved exactly and the difference is reduced to a two-line
+   `ASSR_CUSTOMER_STAGE_LABEL` override map that is a question for the owner. If
+   he unifies them, the map is deleted.
+
+**What stops the sixth copy.** `backend/tests/assrStageLabelOneHome.test.ts`
+scans the three backend files that own the question and fails on any re-typed
+stage label, on any of them dropping the import, and on `portal.ts` answering
+any of its three questions another way;
+`frontend/src/vendor/scm/lib/assr-stage-labels.canonical.test.ts` does the same
+for the four frontend surfaces and asserts the two copies are byte-identical.
+Both were proven by un-wiring: deleting the `voided` row failed 5 assertions with
+`voided has no customer wording: expected 'voided' not to be 'voided'` — the
+original bug, reproduced; re-growing a local map in `assr_print.ts` failed with
+`src/routes/assr_print.ts:323`, naming the file and line.
+## The deploy uploaded secrets before deploying, and Cloudflare refused both — 8 merges stuck out of production [high]
+
+**Symptom.** Eight consecutive `Deploy` runs failed from 2026-08-18T01:08 MYT.
+Every test in every one of them passed; only the `backend` job failed. Nobody
+reported it — it was found on a morning state check. `notify-failed-release` ran
+and concluded `success` on each failure, so the alerts fired overnight and the
+pipeline stayed broken anyway.
+
+**Measured against production, not inferred:**
+
+```
+$ curl -fsS https://autocount-sync-api.houzs-erp.workers.dev/health
+{"ok":true,"sha":"3697d41e50166ba8c2b36feceb954497dd1ef63f"}   # #2373, 00:11 MYT
+```
+
+8 commits and 75 files under `backend/src` on `main` and not live. **0 new
+migrations in the stuck set** — luck, not design: `pg-migrate` runs BEFORE the
+Worker deploy and kept succeeding, so a migration in that set would have left old
+code on a new schema for nine hours.
+
+**Root cause (traced).** `cloudflare/wrangler-action` uploads `secrets:` BEFORE
+it runs `command:`, and the two were one step. The upload failed:
+
+```
+🚨 Secrets failed to upload
+✘ [ERROR] Secret edit failed. You attempted to modify a secret, but the latest
+  version of your Worker isn't currently deployed. ... [code: 10215]
+```
+
+Cloudflare refuses `secret bulk` when the Worker's newest VERSION is not the
+DEPLOYED one. The action aborted, so `deploy` never ran.
+
+**The deadlock is the finding, not the error.** The action that clears the
+condition is `deploy` — and `deploy` was what the failing check was blocking. It
+could not drain, which is why it survived eight merges instead of one.
+
+**Fix.** `deploy` and the secret upload are now two steps, deploy first. That
+publishes the newest version — exactly the state 10215 demands — so the upload
+runs against a Worker that accepts it and the pipeline heals itself. Remedy (2)
+in Cloudflare's own error text. Secrets are piped on stdin via `jq -n --arg`, so
+no value reaches a logged argv.
+
+**NOT PROVEN.** A workflow is not shipped until it has run once and reported
+success, and this cannot be exercised without a real production deploy. The first
+`Deploy` after this merges is the test.
+
+**Ruled out, each refuted rather than argued away:** a newly added secret
+(`FORM_INTAKE_KEY` dates to 2026-07-05, #280); a failed migration (`298
+migration(s), 316 applied, 0 pending` on every failed run); our own CI creating
+the stray version (`grep -rn "versions upload"` is empty); an earlier failed
+deploy half-publishing (both show `backend: skipped` — a test shard failed, so
+wrangler never ran); the staging deploy clobbering prod (`[env.staging]` names a
+different Worker).
+
+**Second defect, found while auditing the first.** `deploy-watchdog.yml` knew
+production was stale for nine hours, said so in a `::warning::` annotation, and
+concluded `success` every 15 minutes — its "deploys are failing, do not retry
+into them" branch is `exit 0`. The reasoning is right and the exit code is not: a
+watchdog whose green means "I looked and chose not to act" is indistinguishable
+from "all is well". Third instance of that class here, after `audit:map` and the
+nightly staging E2E. Left as an owner decision — see the COE.
+
+**Still UNKNOWN:** what created a Worker version that was uploaded but never
+deployed. Nothing in the repo does it. Candidates are all outside CI (Workers
+Builds git integration, a dashboard edit, a hand-run `wrangler versions upload`,
+a gradual rollout below 100%) and one look at the Worker's Deployments tab
+settles it.
+
+**Ref.** `docs/deploy-secret-version-deadlock-coe.md`, 2026-08-18.
 
 ## Every filter tab that named a status the enum never had returned 500, and its count silently read 0 [high]
 
@@ -427,6 +733,73 @@ suffix, and the codes whose letter is not the name's initial. No repair is in it
 and none may be added to it.
 
 **Ref.** PR #2380, 2026-08-18.
+## The alarm for a cause we never found, and a guard that only ran on Linux [medium]
+
+Two unrelated things, both about a check that is not measuring what it looks
+like it measures.
+
+### 1. No alarm existed for the DO->SO link corruption
+
+**Symptom.** None — that is the point. On 2026-08-17, 26 live delivery lines
+were found with `so_item_id` NULL under a DO whose header still named the order
+(#2355 has the trace). #2225 closed the write-side hole and #2355 gave both
+coverage engines a second reading off `delivery_orders.so_doc_no`, so the
+SYMPTOM — MRP re-ordering goods already delivered — is covered twice.
+
+**Root cause of the remaining exposure (stated, not guessed).** The MECHANISM
+was never identified, and both closed theories are refuted by the data:
+
+- the FK is `ON DELETE SET NULL`, so deleting an SO line blanks the pointer —
+  but every affected SO line is still present, carrying its ORIGINAL
+  `created_at` (2990-SO-2607-012's seven lines still read
+  `2026-07-12 11:03:50.664`, the second the order was created). Nothing was
+  deleted and re-inserted;
+- #2225's diagnosis was a client omitting the field on write — but
+  2990-DO-2608-008 came through `POST /from-sos`, which sets `so_item_id`
+  explicitly, and its SO flipped to DELIVERED six seconds later, a transition
+  unreachable without the links.
+
+A third mechanism blanked them and it is still live. **The fix makes it
+silent**: before, the corruption announced itself as a wrong MRP row somebody
+complained about; now the fallback absorbs it and nothing looks wrong.
+
+**Fix.** Instrumentation, not a repair:
+
+- `backend/scripts/do-link-orphan-sentinel.mjs` + a scheduled workflow. Read-only,
+  exits non-zero on alarm so the owner gets the failed-workflow email (the same
+  and only notifier `mirror-sentinel.yml` uses). Baseline is a committed 1 —
+  the one deliberately refused pillow on 2990-DO-2607-013 — and raising that
+  number to get green is called out in both files as the thing not to do.
+  It also alarms on a stricter shape the fallback cannot reach: a line with no
+  per-line link AND no `so_doc_no`, against which stock moved. Zero today.
+- Migration 0302 logs every SO-line DELETE with the PostgREST JWT claims, the
+  db role, `application_name`, pid and txid. It is a FALSIFICATION TEST as much
+  as a log: if the sentinel fires and this table has no matching row, the FK
+  path is disproved and that theory can finally be retired.
+
+Deliberately learned from `mirror-drift-sentinel.mjs`, whose header records
+months of `SKIP` + exit 0 against secrets nobody set, with a real stall sitting
+under the green tick. This one exits **1** when `DATABASE_URL` is absent: a
+missing secret is a misconfiguration, not a reason to report health.
+
+### 2. `unlinked-line-edit-guard.test.ts` could not run on Windows
+
+**Symptom.** `npm run test:light` failed 5 assertions locally with
+`handler end not found in grns.ts` — on a clean checkout of main, with no local
+changes. CI was green throughout.
+
+**Root cause.** `handlerSlice` finds a route handler's end with
+`rest.search(/\n\}\)?;\n/)`. This repo is developed on Windows, where the
+checkout is CRLF, so the LF-only pattern matched nothing and every slice came
+back `-1`. Linux CI, with LF, never saw it.
+
+**Fix.** `/\r?\n\}\)?;\r?\n/`. Same family as the shebang trap in #2062, and the
+inverse of the usual danger: this one failed LOUDLY rather than passing empty,
+so nothing was silently unmeasured — but the whole local suite was unusable on
+the platform the repo is developed on, which is how a red local run stops being
+information.
+
+**Ref.** PR (branch `chore/do-link-orphan-sentinel`), 2026-08-17.
 
 ## The refusal that already knew the answer printed a sentence with none of it in — and half the bedframes it refused were a curly quote [high]
 

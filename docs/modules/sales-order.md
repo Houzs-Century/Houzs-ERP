@@ -136,12 +136,37 @@ never bare `isMainReady`** — see §0.5 for why that distinction exists.
 
 Two things gate it that are easy to miss:
 
-- **No Processing Date, no allocation.** An SO with `proceeded_at` NULL is in
+- **No Processing Date, no allocation.** An SO with `processing_date` NULL is in
   `allocGated`: its lines still walk, but they are FORCED to `PENDING`, never
   consume a stock bucket and never claim a sofa batch. Owner's rule, 2026-08-10:
-  *"有 processing date 才来分配"*. So an order with stock physically available
-  will sit at PENDING / CONFIRMED until it is proceeded. This is intended, and it
-  is the single most common "why is my order not READY".
+  *"有 processing date 才来分配"*. So an order that genuinely has no Processing
+  Date will sit at PENDING / CONFIRMED however much stock is on the shelf. That
+  much is intended.
+
+  > **CORRECTION (2026-08-18) — the previous version of this bullet described a
+  > BUG and called it intended, which is why the bug survived.**
+  >
+  > It read: *"An SO with `proceeded_at` NULL is in `allocGated` … This is
+  > intended, and it is the single most common 'why is my order not READY'."*
+  >
+  > The gate really did read `proceeded_at`, and that was the defect, not the
+  > design. No shipped client writes `proceeded_at` when an operator sets a
+  > Processing Date: CREATE persists the date to `processing_date` and stamps
+  > `proceeded_at` only when the order *also* clears the proceed gate
+  > (`autoProceed`); the header PATCH writes the date and never stamps a proceed;
+  > and no frontend sends `proceededAt` at all. So an order given a Processing
+  > Date on the detail screen locked, showed on the delivery board and pushed to
+  > AutoCount as PDate while **every line was forced PENDING** — never consuming
+  > a bucket, never claiming a sofa batch, never reaching READY_TO_SHIP — with
+  > the goods physically in the warehouse, and with no error, no log and nothing
+  > on screen. The frequency the old text observed was real; the explanation was
+  > not. Anyone who read this page went looking for a missing proceed instead of
+  > a gate on the wrong column.
+  >
+  > The gate now reads `processing_date`, the one column every write path
+  > actually sets. It reads that column ALONE and deliberately does not also
+  > consult `proceeded_at`: a second home for the rule is how it acquired a wrong
+  > one. See BUG-HISTORY 2026-08-18.
 - **A human editing the order defers the header, not the lines.** If the SO's
   edit lease is held, the line-level flip commits and the header transition is
   recorded in `deferredDocNos` for a later sweep. A deferral is not an error.

@@ -3,7 +3,7 @@
   "totals": {
     "@typescript-eslint/no-explicit-any": 538,
     "@typescript-eslint/no-floating-promises": 786,
-    "@typescript-eslint/no-unnecessary-condition": 1793,
+    "@typescript-eslint/no-unnecessary-condition": 1792,
     "no-restricted-syntax": 140
   },
   "files": {
@@ -311,7 +311,7 @@
     "src/mobile/MobileServiceCase.tsx": {
       "@typescript-eslint/no-explicit-any": 21,
       "@typescript-eslint/no-floating-promises": 10,
-      "@typescript-eslint/no-unnecessary-condition": 12
+      "@typescript-eslint/no-unnecessary-condition": 11
     },
     "src/mobile/MobileSkuPicker.tsx": {
       "@typescript-eslint/no-unnecessary-condition": 1

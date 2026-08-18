@@ -28,6 +28,7 @@ import type { Env } from "../types";
 import { createAssrCase, assrAttachmentKey, saveAttachment } from "../services/assr";
 import { timingSafeEqualStr } from "../services/auth";
 import { checkRateLimit, clientIp } from "../middleware/rateLimit";
+import { ASSR_SHEET_STATUS } from "../scm/shared/assr-stage-labels";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -417,16 +418,13 @@ app.post("/attachments-by-so", async (c) => {
 // spaces around the slash). Retired stages can't appear (migs 0105 /
 // 0110 moved every row), but legacy values fall through prettified so
 // a surprise never writes "undefined" into the sheet.
-const SHEET_STATUS: Record<string, string> = {
-  pending_review: "Pending Review",
-  under_verification: "Under Verification",
-  pending_solution: "Pending Solution",
-  pending_supplier_pickup: "Pending Supplier Pickup",
-  pending_item_ready: "Pending Item Ready",
-  pending_delivery_service: "Pending Delivery/Service",
-  completed: "Completed",
-  voided: "Voided",
-};
+//
+// The table itself is ASSR_SHEET_STATUS in scm/shared/assr-stage-labels.ts,
+// imported above. It sits next to the app's stage wording and is explicitly NOT
+// merged into it: this is the SHEET's vocabulary, and two of its strings
+// ("Pending Delivery/Service", "Voided") deliberately differ from the words the
+// ERP prints. It travels with them so the next person to unify a stage label
+// sees, in the same file, which strings a spreadsheet's counters are keyed on.
 
 // Sub-status detail (Nico 2026-08-07: Delivery triggers were messy on
 // the coarse stage words). Stages with sub-states export the SUB label -
@@ -542,7 +540,7 @@ app.get("/status-export", async (c) => {
     complained_date: r.complained_date,
     status:
       sheetDetailStatus(r.stage, r.sub_status, r.inspection_by, r.pickup_by) ??
-      SHEET_STATUS[r.stage] ??
+      ASSR_SHEET_STATUS[r.stage] ??
       r.stage.replace(/_/g, " ").replace(/\b\w/g, (ch) => ch.toUpperCase()),
     completed_date: r.completion_date ?? r.closed_at ?? null,
     customer_name: r.customer_name,

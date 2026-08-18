@@ -15,17 +15,14 @@ import { ArrowLeft, Bot, History, Paperclip, Plus, Send, Trash2, User, X } from 
 import { Badge } from "./Badge";
 import { cn } from "../lib/utils";
 import { useAssistantChat, ASSISTANT_SUGGESTIONS, ASSISTANT_ACCEPT } from "./useAssistantChat";
+import { fmtDateTime } from "../vendor/shared/format";
 
 export type { AgentRef, Msg } from "./useAssistantChat";
 
-function shortWhen(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${d.toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
-}
+/* Was `toLocaleDateString(undefined, …)` — the viewer's OS locale, a month
+   NAME, and no year at all. Three ways to disagree with every other date in
+   the app. */
+const shortWhen = fmtDateTime;
 
 export function AssistantChat({ className }: { className?: string }) {
   const fileRef = useRef<HTMLInputElement | null>(null);

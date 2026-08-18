@@ -40,6 +40,7 @@ import {
   type VideoLayout,
   type AnnMediaLayout,
 } from "../components/AnnouncementMedia";
+import { fmtDateTime } from "../vendor/shared/format";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Domain types — mirrors backend/src/routes/announcements.ts public shape.
@@ -148,12 +149,7 @@ function attachmentKind(mime: string): "image" | "video" | "pdf" | "file" {
   return "file";
 }
 
-function fmtTimestamp(iso: string | null): string {
-  if (!iso) return "—";
-  const t = Date.parse(iso);
-  if (Number.isNaN(t)) return iso;
-  return new Date(t).toLocaleString();
-}
+const fmtTimestamp = fmtDateTime;
 
 function CategoryBadge({ category }: { category: AnnouncementCategory }) {
   const meta = CATEGORY_META[category];

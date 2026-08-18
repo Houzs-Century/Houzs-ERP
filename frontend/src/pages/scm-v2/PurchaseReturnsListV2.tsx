@@ -5,7 +5,7 @@
 // side where every other doc is money-out.
 
 import { useMemo, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -87,11 +87,6 @@ type PrItem = {
 type StatusTab = "all" | "draft" | "posted" | "completed" | "cancelled";
 
 const fmtRm = (centi: number): string => fmtCenti(centi);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  return iso.replace(/T.*$/, "").replace(/-/g, "/");
-};
 
 const supplierNameOf = (r: PrRow): string => r.supplier?.name || "—";
 const supplierCodeOf = (r: PrRow): string => r.supplier?.code || "—";
