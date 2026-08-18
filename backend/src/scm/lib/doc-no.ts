@@ -1,4 +1,5 @@
 import { paginateAll } from './paginate-all';
+import { BASE_COMPANY_CODE, docPrefixForCode } from './companyScope';
 
 /* ─────────────────────────── Monthly doc numbers ───────────────────────────
    Next `<PREFIX>-YYMM-NNN` from the rows that already exist in the month.
@@ -150,14 +151,49 @@ const padMmDd = (d: Date): string => {
 };
 
 /**
+ * JE-number prefix keyed on a company CODE — the ONE JE-prefix rule.
+ *
+ * HOUZS (the base company) mints its JE numbers BARE — `JE-2607-0001`, no
+ * prefix — and always has; that is DELIBERATELY unlike its SO/PO doc numbers,
+ * which carry `HC-` (docPrefixForCode('HOUZS') === 'HC-'). Every OTHER company
+ * keys off the SAME resolver the SO/PO minters use: 2990 → '2990-', and a
+ * future third company → '<CODE>-'. Renaming a live series would orphan every
+ * reference to an existing JE number, so HOUZS stays bare here on purpose.
+ */
+export const jePrefixForCode = (code: string | null | undefined): string => {
+  if (typeof code !== 'string' || !code) return '';
+  const upper = code.trim().toUpperCase();
+  // HOUZS JEs are historically bare — see above. NOT docPrefixForCode('HOUZS').
+  if (upper === BASE_COMPANY_CODE) return '';
+  return docPrefixForCode(upper);
+};
+
+/**
  * JE-number company prefix keyed on the DOCUMENT's company (not the operator's
  * active company — an auto-posted SI/PI/PV or a reversal belongs to the source
- * document's company, whoever is logged in). "" for HOUZS (company 1), "2990-"
- * for company 2 — the same HOUZS-bare / else-prefixed rule as companyDocPrefix
- * + the mirror's hardcoded "2990-" (so-mirror prefixDoc).
+ * document's company, whoever is logged in).
+ *
+ * Resolves the prefix from the company's CODE, never a hardcoded numeric id.
+ * The `companies.id` bigint differs across staging/prod (see companyScope.ts),
+ * so the old `Number(companyId) === 1 ? '' : '2990-'` mis-fired in any
+ * environment where 2990 was not id 2, and would have dropped a future third
+ * company into the '2990-' branch. Reads the code from the companies master by
+ * id; an unresolved company degrades to the base company's bare '' — the same
+ * base-fallback companyDocPrefix uses for an unresolved code.
  */
-export const jePrefixForCompany = (companyId: number | null | undefined): string =>
-  companyId == null || Number(companyId) === 1 ? '' : '2990-';
+export const jePrefixForCompany = async (
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- PostgREST client; `sb` is `any` throughout this file and acc/engine.ts, no exported client type
+  sb: any,
+  companyId: number | null | undefined,
+): Promise<string> => {
+  if (companyId == null) return '';
+  const { data } = await sb
+    .from('companies')
+    .select('code')
+    .eq('id', companyId)
+    .maybeSingle();
+  return jePrefixForCode(data?.code);
+};
 
 export const nextJeNo = async (sb: any, date: Date, coPrefix = ''): Promise<string> => {
   // Per-company sequence: the prefix in the LIKE pattern isolates each company's
