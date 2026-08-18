@@ -213,8 +213,9 @@ gets the human slice too.
 Response is `{ success, data: Announcement[], ackedIds: string[] }`. `ackedIds`
 spans only the returned slice, so the bell's acks appear under `scope=system`.
 The human slice is one payload however it is asked for, so the default AND
-`scope=human` are both served from the per-user KV snapshot; only
-`scope=system` bypasses it — see §6.
+`scope=human` are both served from ONE per-user KV snapshot; `scope=system` has
+its OWN per-user snapshot, keyed on scope so the two slices never collide —
+see §6.
 
 ---
 
@@ -389,11 +390,14 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 ## 6. Performance summary
 
 In place:
-- **Per-user KV snapshot** of `/banner` in `SESSION_CACHE`, key
-  `banner:v{version}:u{userId}`, TTL 60s
-  (`backend/src/services/configCache.ts:186-188`, `:55`), applied at
-  `announcements.ts:608-625` / `:677-687`. Response carries
-  `x-config-cache: hit|miss|bypass`.
+- **Per-user, per-scope KV snapshot** of `/banner` in `SESSION_CACHE`, key
+  `banner:v{version}:u{userId}:s{scope}` where `scope` is `human | system`
+  (`BannerScope`), TTL 60s
+  (`backend/src/services/configCache.ts`, `CONFIG_CACHE_TTL_SECONDS.banner`),
+  applied in the `/banner` handler. Both slices take the cached path; the key
+  carries the scope so the human and system payloads never answer each other.
+  Response carries `x-config-cache: hit|miss|bypass` (`bypass` only when the KV
+  version is unusable — unbound / erroring).
 - **Family-version invalidation** on every broadcast-shaped write — create
   `:908`, patch `:1089`, remind `:1155`, delete `:1185`; per-user busts on ack
   (`:1222`) and on a private notice (`personalNotice.ts:114-116`).
@@ -411,12 +415,13 @@ In place:
 - Upload caps: 25 MB per attachment (`:1253`), 1 MB per thumbnail (`:1287-1289`).
 
 Watch as data grows:
-- **Only `scope=system` bypasses the KV snapshot** now (2026-08-08): the human
-  slice is one payload however it is asked for (default or `scope=human`), so
-  both are served from the per-user snapshot — the phone's human reads stopped
-  paying the bypass. The system slice is still a live read every 30s per
-  device (mobile badge/bell + the desktop bell); dimensioning the key by scope
-  remains the fix if that ever shows up in the tail.
+- **Both slices are cached now** (2026-08-18, branch `perf/banner-scope-cache`):
+  the system bell slice used to bypass the KV snapshot and rebuild the whole
+  feed on every ~60s desktop poll (~874-1393ms live, 2026-08-18). The cache key
+  is now dimensioned by scope (`…:s{scope}`), so the bell rides the same
+  per-user snapshot the human slice does; the per-user bust clears both scopes.
+  The 30s mobile bell may therefore serve up to TTL-stale (60s) — the same trade
+  the human slice already makes.
 - **No `LIMIT` on any read.** `GET /` and `/banner` both select the whole table
   and filter in JS. `Announcements.tsx:222-224` already acknowledges this
   ("Capping it server-side is a separate follow-up"). `GET /:id/acks` and
