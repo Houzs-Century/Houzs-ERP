@@ -797,13 +797,34 @@ promotion would be the service deciding — the same principle that puts the
 SO -> PO transfer/create decision in `scm/shared/po-transfer-shape.ts` rather
 than in the C#.
 
-**Still open, and NOT fixed by this: the ERP cannot SAY a partial quantity.**
-`enqueueConvert` composes `{ DocNo, DocDate?, Ref?, DtlKeys? }`, and
-`readConvertSourceKeys` resolves line IDENTITY only — its own comment says so.
-Every documented `PartialTransfer` overload takes a `Decimal`, so none of them can
-be filled from what the service is told, and a DO shipping 2 of a 5-unit line
-still produces an AutoCount DO of 5 on that line. Naming the right lines does not
-fix the wrong number on them.
+**CLOSED 2026-08-18: the ERP can SAY a partial quantity now.** This paragraph
+used to read *"Still open, and NOT fixed by this: the ERP cannot SAY a partial
+quantity"* — true when it was written, and the ERP half is the part that was
+missing.
+
+`readConvertSourceKeys` now reads the quantity this document took of each source
+line (summed, because several target lines can point at one source row — a sofa
+build's compartments) against the source line's own quantity, and returns
+`details: [{ DtlKey, Qty }]` when any of them is being taken in PART.
+`enqueueConvert` puts it on the payload as `Details`.
+
+**Only when it really is partial**, and that restraint is the design, not
+timidity: a quantity commits the whole document to the documented
+`PartialTransfer` overloads, which `RunTransfer` refuses to fall back from, while
+the plain `DtlKeys` shape is the one PROVEN against this book on every conversion
+type. Measured on the live book 2026-08-11: **10 of 60,939** sales-order lines
+were ever partly transferred, and 6 of 10,351 moved sales orders carried one. So
+this branch is rare by construction and must stay that way — a regression that
+sent quantities on every conversion would put all six document types onto an
+unproven call path at once.
+
+**All-or-nothing per document**, because `PlanTransfer` throws on a key named
+with no `Qty` while another on the same document carries one: a line with no
+number would silently move its whole outstanding quantity. Every named key gets
+a quantity or none do, and `perKey.length === keys.length` is the guard.
+
+Where any of the numbers cannot be read, the ERP sends no quantity at all and the
+old shape applies — a readable wrong answer beats an unreadable one.
 
 The C# half is done: `PlanTransfer` reads `Details:[{ DtlKey, Qty }]` the moment
 it appears, and `RunTransfer` **refuses** a quantity plan it cannot express rather

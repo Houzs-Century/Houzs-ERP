@@ -26,6 +26,10 @@ import type { AcLineTable, AcLinkTable, AcOutboxPayload } from './autocount-outb
 
 type Sb = SupabaseClient<any, any, any>;
 
+/** One line of a PARTIAL QUANTITY transfer: how much of the source line this
+ *  document is taking. The service reads it as `Details[]`. */
+export interface AcTransferQty { DtlKey: number; Qty: number }
+
 /* Declared HERE rather than beside the other enqueue helpers: DOWNSTREAM below
    is a module-level const that references it during module evaluation, so a
    later `const soLine` would be in its temporal dead zone and every import of
@@ -68,6 +72,16 @@ export interface AcDownstreamSpec {
   /** The column on the item table naming the SOURCE line it came from. NULL
    *  there means an ad-hoc line with no counterpart to transfer. */
   sourceFk: string;
+  /**
+   * The quantity column on THIS document's lines, and on its SOURCE's.
+   *
+   * Named per spec because they disagree: a GRN line's quantity is
+   * `qty_accepted` — what entered stock — while everything else is `qty`. The
+   * pair exists so a PARTIAL QUANTITY can be detected at all: "3 of 5" is
+   * `itemQtyCol` summed per source line against `sourceQtyCol` on that line.
+   */
+  itemQtyCol: string;
+  sourceQtyCol: string;
   headerCols: string;
   itemCols: string;
   /** The human document number, for the outbox row's doc_no. */
@@ -108,6 +122,8 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     itemFk: 'delivery_order_id',
     sourceItemTable: 'mfg_sales_order_items',
     sourceFk: 'so_item_id',
+    itemQtyCol: 'qty',
+    sourceQtyCol: 'qty',
     headerCols: 'id, do_number, debtor_name, ref, phone, note, linked_ac_docno',
     itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.do_number ?? h.id ?? ''),
@@ -126,6 +142,8 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     itemFk: 'grn_id',
     sourceItemTable: 'purchase_order_items',
     sourceFk: 'purchase_order_item_id',
+    itemQtyCol: 'qty_accepted',
+    sourceQtyCol: 'qty',
     headerCols: 'id, grn_number, delivery_note_ref, notes, linked_ac_docno',
     itemCols: 'id, material_code, item_group, description, description2, qty_accepted, unit_price_centi, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.grn_number ?? h.id ?? ''),
@@ -146,6 +164,8 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     itemFk: 'sales_invoice_id',
     sourceItemTable: 'delivery_order_items',
     sourceFk: 'do_item_id',
+    itemQtyCol: 'qty',
+    sourceQtyCol: 'qty',
     headerCols: 'id, invoice_number, debtor_name, ref, phone, note, linked_ac_docno',
     itemCols: 'id, item_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
@@ -164,6 +184,8 @@ export const DOWNSTREAM: Record<'DO' | 'GR' | 'IV' | 'PI', AcDownstreamSpec> = {
     itemFk: 'purchase_invoice_id',
     sourceItemTable: 'grn_items',
     sourceFk: 'grn_item_id',
+    itemQtyCol: 'qty',
+    sourceQtyCol: 'qty_accepted',
     headerCols: 'id, invoice_number, supplier_invoice_ref, notes, linked_ac_docno',
     itemCols: 'id, material_code, item_group, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, created_at',
     docNoOf: (h) => String(h.invoice_number ?? h.id ?? ''),
@@ -201,22 +223,30 @@ export const CONVERT_TARGET: Record<'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_t
  *                links at all: falling back is exactly the old behaviour, and a
  *                conversion must never be lost to a diagnostic read.
  *
- * NOT COVERED, and deliberately so: partial QUANTITY on a line. The SDK's only
- * primitive is AddPartialTransferDetail(fromType, dtlKeys, bool) — it takes line
- * keys, not quantities, so a DO shipping 2 of a 5-unit line still produces an
- * AutoCount DO of 5 on that line. Naming the right lines does not fix the wrong
- * number on them. See docs/modules/autocount-writeback.md.
+ * PARTIAL QUANTITY IS COVERED NOW — 2026-08-18. This comment used to end "NOT
+ * COVERED, and deliberately so", on the grounds that AddPartialTransferDetail
+ * takes line keys and not quantities. True of that primitive, and the service
+ * stopped depending on it alone: `PlanTransfer` reads `Details[].Qty` and
+ * `RunTransfer` uses the documented `PartialTransfer` overloads for it,
+ * REFUSING rather than falling back — because the fallback moves each line's
+ * whole outstanding quantity, so a DO of 2 out of 5 booked 5 and answered ok.
+ *
+ * `details` is returned ONLY when some line is genuinely being taken in part.
+ * A quantity on the payload commits the whole document to those overloads, and
+ * the plain shape is the one proven against this book on every conversion type;
+ * 46,308 of the 46,318 source lines that ever moved went whole (measured
+ * 2026-08-11). Rare by construction, and it must stay that way.
  */
 export async function readConvertSourceKeys(
   sb: Sb,
   op: Extract<AcOp, 'so_to_do' | 'po_to_gr' | 'do_to_iv' | 'gr_to_pi'>,
   docId: string | null,
-): Promise<{ keys?: number[]; refuse?: string }> {
+): Promise<{ keys?: number[]; details?: AcTransferQty[]; refuse?: string }> {
   if (!docId) return {};
   try {
     const spec = DOWNSTREAM[CONVERT_TARGET[op]];
     const { data, error } = await sb.from(spec.itemTable)
-      .select(`id, ${spec.sourceFk}`).eq(spec.itemFk, docId);
+      .select(`id, ${spec.sourceFk}, ${spec.itemQtyCol}`).eq(spec.itemFk, docId);
     if (error || !data) return {};
     const rows = data as unknown as Record<string, unknown>[];
     if (!rows.length) return {};
@@ -228,19 +258,68 @@ export async function readConvertSourceKeys(
        parentless / ad-hoc shape is already recorded by its own route. */
     if (!sourceIds.length) return {};
 
+    /* HOW MUCH this document took of each source line. Summed, because several
+       target lines can point at one source row — a sofa build's compartments
+       are the standing example. */
+    const taken = new Map<string, number>();
+    for (const r of rows) {
+      const id = r[spec.sourceFk];
+      if (typeof id !== 'string' || !id) continue;
+      const q = Number(r[spec.itemQtyCol]);
+      taken.set(id, (taken.get(id) ?? 0) + (Number.isFinite(q) ? q : NaN));
+    }
+
     const { data: src, error: sErr } = await sb.from(spec.sourceItemTable)
-      .select('id, linked_ac_dtlkey').in('id', sourceIds);
+      .select(`id, linked_ac_dtlkey, ${spec.sourceQtyCol}`).in('id', sourceIds);
     if (sErr || !src) return {};
-    const srcRows = src as unknown as Array<{ id: string; linked_ac_dtlkey: number | null }>;
+    const srcRows = src as unknown as Array<Record<string, unknown>>;
 
     const keys: number[] = [];
     const missing: string[] = [];
+    const perKey: AcTransferQty[] = [];
+    let partialQty = false;
+    let qtyReadable = true;
     for (const id of sourceIds) {
-      const k = srcRows.find((r) => r.id === id)?.linked_ac_dtlkey;
+      const row = srcRows.find((r) => String(r.id) === id);
+      const k = row?.linked_ac_dtlkey;
       const n = k == null ? NaN : Number(k);
-      if (Number.isFinite(n) && n > 0) keys.push(n); else missing.push(id);
+      if (Number.isFinite(n) && n > 0) {
+        keys.push(n as number);
+        const took = taken.get(id);
+        const had = Number(row?.[spec.sourceQtyCol]);
+        if (took == null || !Number.isFinite(took) || !Number.isFinite(had) || took <= 0) {
+          qtyReadable = false;
+        } else {
+          perKey.push({ DtlKey: n as number, Qty: took });
+          /* EPSILON, because these are decimals out of PostgREST. A hair under
+             is not a partial shipment. */
+          if (took < had - 1e-9) partialQty = true;
+        }
+      } else missing.push(id);
     }
-    if (!missing.length) return { keys };
+    if (!missing.length) {
+      /* PARTIAL BY QUANTITY — "3 of 5 on this line" — is the ONE shape DtlKeys
+         alone cannot express, and getting it wrong is silent: the service's
+         AddPartialTransferDetail moves each named line's WHOLE outstanding
+         quantity, so a delivery of 2 out of 5 booked 5 in a licensed account
+         book and answered ok.
+         `Details[].Qty` is how the service was taught to hear it (PlanTransfer,
+         AcSyncService.cs), and it is ALL-OR-NOTHING PER DOCUMENT — a named key
+         with no number would silently move its whole outstanding quantity — so
+         every key gets one or none do.
+         SENT ONLY WHEN THE TRANSFER REALLY IS PARTIAL. A quantity on the
+         payload routes the service onto the documented PartialTransfer
+         overloads, which it REFUSES to fall back from; the plain shape below is
+         the one proven against this book on every conversion type. A refusal on
+         a genuine 3-of-5 is recoverable and loud; the wrong quantity in the
+         ledger is neither. Measured 2026-08-11 on the book: 10 of 60,939 sales
+         order lines were ever partly transferred, so this branch is rare by
+         construction and must not become the common path. */
+      if (partialQty && qtyReadable && perKey.length === keys.length) {
+        return { keys, details: perKey };
+      }
+      return { keys };
+    }
 
     /* Some source line has no key. Whether that is fatal depends on ONE thing:
        is this a partial transfer? A whole-document transfer degrades safely to

@@ -206,6 +206,90 @@ describe('a partial conversion transfers only the lines it actually took', () =>
     expect(row.payload.fromDocs?.map((r: { key: string }) => r.key)).toEqual(['HC-SO-9', 'HC-SO-10']);
   });
 
+  /* ── PARTIAL BY QUANTITY: "3 of 5 on this line" ───────────────────────────
+     The one shape DtlKeys alone cannot express. AddPartialTransferDetail moves
+     each NAMED line's whole outstanding quantity, so a delivery of 2 out of 5
+     booked 5 in a licensed account book and answered ok — silently, because
+     nothing on either side disagreed. `Details[].Qty` is how the service was
+     taught to hear it, and it is all-or-nothing per document. */
+  test('a DO shipping 2 of a 5-unit line names the QUANTITY, not just the line', async () => {
+    const sb = withFlag('1', {
+      mfg_sales_order_items: [
+        { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 5, unit_price_centi: 100, linked_ac_dtlkey: 9001, cancelled: false },
+      ],
+      delivery_order_items: [
+        { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'SKU-1', qty: 2 },
+      ],
+    });
+    expect(await enqueueConvert(sb as never, {
+      companyId: 1,
+      op: 'so_to_do',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+      docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
+    })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.status).toBe('pending');
+    expect(row.payload.body.DtlKeys).toEqual([9001]);
+    expect(row.payload.body.Details).toEqual([{ DtlKey: 9001, Qty: 2 }]);
+  });
+
+  test('a DO shipping the WHOLE line sends no quantity at all', async () => {
+    /* Deliberate, and the reason is the failure mode on the other side: a
+       quantity routes the service onto the documented PartialTransfer
+       overloads and it REFUSES to fall back from them. The plain shape is the
+       one proven against this book on every conversion type, and 46,308 of the
+       46,318 lines that ever moved were whole. */
+    const sb = withFlag('1', {
+      mfg_sales_order_items: [
+        { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 5, unit_price_centi: 100, linked_ac_dtlkey: 9001, cancelled: false },
+      ],
+      delivery_order_items: [
+        { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'SKU-1', qty: 5 },
+      ],
+    });
+    expect(await enqueueConvert(sb as never, {
+      companyId: 1,
+      op: 'so_to_do',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+      docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
+    })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.payload.body.DtlKeys).toEqual([9001]);
+    expect(row.payload.body.Details).toBeUndefined();
+  });
+
+  test('one partial line makes EVERY named line carry a quantity', async () => {
+    /* PlanTransfer throws on a key named with no Qty while another on the same
+       document carries one — "a line with no number would silently move its
+       whole outstanding quantity". So the ERP must not send a half-quantified
+       document, and this pins that it does not. */
+    const sb = withFlag('1', {
+      mfg_sales_order_items: [
+        { id: 'so-1', doc_no: 'HC-SO-9', item_code: 'SKU-1', qty: 5, unit_price_centi: 100, linked_ac_dtlkey: 9001, cancelled: false },
+        { id: 'so-2', doc_no: 'HC-SO-9', item_code: 'SKU-2', qty: 3, unit_price_centi: 100, linked_ac_dtlkey: 9002, cancelled: false },
+      ],
+      delivery_order_items: [
+        { id: 'do-item-1', delivery_order_id: 'do-1', so_item_id: 'so-1', item_code: 'SKU-1', qty: 2 },
+        { id: 'do-item-2', delivery_order_id: 'do-1', so_item_id: 'so-2', item_code: 'SKU-2', qty: 3 },
+      ],
+    });
+    expect(await enqueueConvert(sb as never, {
+      companyId: 1,
+      op: 'so_to_do',
+      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+      to: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+      docType: 'DO', docNo: 'HC-DO-1', docId: 'do-1',
+    })).toBe(true);
+    const [row] = outbox(sb);
+    expect(row.payload.body.Details).toEqual([
+      { DtlKey: 9001, Qty: 2 },
+      { DtlKey: 9002, Qty: 3 },
+    ]);
+    expect(row.payload.body.Details.length).toBe(row.payload.body.DtlKeys.length);
+  });
+
   test('a DO built entirely of ad-hoc lines queues the conversion unchanged', async () => {
     const sb = withFlag('1', {
       mfg_sales_order_items: soLines([9001]),

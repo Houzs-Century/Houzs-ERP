@@ -176,7 +176,7 @@ exists to prevent and must never read as routine.
 | Case | Why |
 |---|---|
 | ~~**Several ERP sales orders merged into one delivery order**~~ | **NO LONGER TRUE — closed 2026-08-18.** It reads as a shape mismatch and was a limit of one SDK method: `AddPartialTransferDetail` refuses a key array spanning two documents, but `FullTransfer` takes an array of document numbers and the service groups named keys per source. The ERP names every source (`enqueueConvert` takes an array) and the merge syncs. Rows recorded before that date stay `skipped` — nothing was composed for them |
-| **A partial transfer by QUANTITY** (a DO shipping 2 of a 5-unit line) | `AddPartialTransferDetail` takes line keys, **not quantities**. Naming the right lines does not fix the wrong number on them |
+| ~~**A partial transfer by QUANTITY**~~ (a DO shipping 2 of a 5-unit line) | **CLOSED 2026-08-18.** True of `AddPartialTransferDetail`, never of the service: `PlanTransfer` reads `Details[].Qty` and `RunTransfer` uses the documented `PartialTransfer` overloads, refusing rather than falling back. The ERP now sends the quantity it actually took — but ONLY when the transfer is genuinely partial, because a quantity commits the document to those overloads and the plain shape is the proven one. Measured on the book: 10 of 60,939 sales-order lines were ever partly transferred |
 | **Un-cancelling** | The SDK has no un-cancel. A grep of the whole reflected surface for `uncancel`, `Cancelled:Boolean` and `set_Cancelled` returns nothing |
 | **A document with no parent** | See §3 |
 

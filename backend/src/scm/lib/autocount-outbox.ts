@@ -888,6 +888,14 @@ export async function enqueueConvert(
         ...(SALES_CONVERSION.has(opts.op) ? { DebtorCode: AC_DEBTOR_CODE } : {}),
         ...(creditor ?? {}),
         ...(source.keys ? { DtlKeys: source.keys } : {}),
+        /* PARTIAL BY QUANTITY, and only then. readConvertSourceKeys returns
+           this exclusively when some source line is being taken in PART —
+           "3 of 5" — because a quantity on the payload routes AcSyncService
+           onto the documented PartialTransfer overloads, which it refuses to
+           fall back from. Without it the service moves each named line's WHOLE
+           outstanding quantity: a delivery of 2 out of 5 booked 5 in a licensed
+           account book and answered ok. */
+        ...(source.details ? { Details: source.details } : {}),
       },
       /* ONE source keeps the field it has always used, so a payload composed
          today is byte-identical to one composed last week and the contract test
