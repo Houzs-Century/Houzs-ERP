@@ -56,18 +56,7 @@ export const purchaseInvoices = new Hono<{ Bindings: Env; Variables: Variables }
 purchaseInvoices.use('*', supabaseAuth);
 
 
-/* CREATE was added after the post/payment/cancel/header pass, and it is recorded
-   LATE for a reason. All three create paths write the header first and DELETE it
-   again — on a failed line insert, and again when the post-insert over-invoice
-   re-verification finds this PI would over-bill a GRN line. A CREATE row emitted
-   at insert time would describe an invoice that never existed, against a GRN
-   whose invoiced_qty never moved. recordPiCreate re-reads the persisted row
-   rather than echoing the payload, which makes that ordering self-enforcing: a
-   rolled-back header reads back as nothing and no row is written.
-
-   The line vocabulary lives in lib/entity-audit-fields (imported above) — the
-   camelCase half is what AUDIT_FINANCE_FIELDS gates on and needs a test that can
-   import it without dragging Hono along. */
+/* CREATE joined the post/payment/cancel/header pass late; recorded the same way. */
 
 const HEADER =
   'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_centi, tax_centi, total_centi, paid_centi, status, notes, posted_at, created_at, created_by, updated_at';

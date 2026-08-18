@@ -1646,16 +1646,11 @@ grns.post('/', async (c) => {
   }
 
   /* AUDIT PRE-FLIGHT — the ordering rationale for all nine in this file.
-     recordEntityAudit runs AFTER the business write has committed, so it cannot
-     honestly fail there; refusing up front is the only point at which "nothing
-     has changed, please try again" is true. Each one therefore sits after every
-     auth / validation / read guard (a refusal costs the operator nothing) and
-     strictly before the handler's FIRST mutating call.
-
-     That boundary is load-bearing twice over: every refusal at or above one of
-     these nine answers through refuseWithoutWriting (lib/no-write-refusal.ts),
-     RELEASING the idempotency claim so the operator can correct and press Save
-     again rather than reload and lose it. Pinned by tests/grnPreWriteRefusalsReleaseKey.test.ts. */
+     recordEntityAudit runs AFTER the business write commits, so it cannot honestly
+     fail there; refusing up front is the only point at which "nothing has changed"
+     is true. Each sits after every auth/validation/read guard and strictly before
+     the handler's FIRST mutating call — which is also what lets every refusal at or
+     above it answer through refuseWithoutWriting and release the idempotency key. */
   const pf = await assertAuditWritable(sb, { entityType: 'GRN', action: 'CREATE', companyId: activeCompanyId(c) });
   if (!pf.ok) return refuseWithoutWriting(c, auditUnavailableBody(), 409);
 

@@ -68,12 +68,9 @@ import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
 import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
-/* chunkIn on EVERY read here that filters by a doc-no / DO-id / trip-id set:
-   this board's anchor read has no date bound and no limit (`docNos` is "every SO
-   needing delivery"), and paginateAll bounds the rows coming BACK while re-sending
-   the same unbounded filter in each page's URL. wrangler tail, 2026-08-18: the
-   board 500'd in BOTH tenants, the 100-order one included. The reads still on
-   paginateAll are the ones carrying no such filter. */
+/* chunkIn on EVERY read filtering by a doc-no / DO-id / trip-id set: the list goes
+   into the request URL, so an unbounded one is refused by the gateway before
+   PostgREST can answer — the empty-message 500 this board died of. */
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
@@ -449,9 +446,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     possessionDate?: string | null; houseType?: string | null;
     replacementDisposal?: string | null;
   };
-  /* CROSS-COMPANY means the caller's GRANTED companies, never "no predicate"
-     (lib/companyScope.ts; the sibling /geo read on this table already does it).
-     Unscoped, a one-company caller saw the other company's orders. */
+  /* CROSS-COMPANY means the caller's GRANTED companies, never "no predicate":
+     unscoped, this board assembled every tenant's documents. */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
     scopeToAllowedCompanies(
       sb.from('mfg_sales_orders')
@@ -2332,8 +2328,8 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
      the SO (which exists only on mfg_sales_orders). For a :type=do schedule the SO
      header is not the target; the DO carries no amend column, so a date is a no-op
      there (the schedule date flows to the trip / leg below, not onto the DO date). */
-  /* scheduleDate is `z.string().nullable().optional()`, so "" passes zod and
-     reaches amended_delivery_date (DATE, mig 0053). Blank clears the amend. */
+  /* scheduleDate is `z.string().nullable().optional()`, so "" passes zod and reaches
+     a DATE column. dateOrNull makes a cleared field NULL, not a 500. */
   if (p.scheduleDate !== undefined && type === 'so') updates.amended_delivery_date = dateOrNull(p.scheduleDate);
   if (p.deliveryState !== undefined) updates.delivery_state = p.deliveryState;
   // A trip-only schedule (no date/state) is still a valid change — only 400 when
