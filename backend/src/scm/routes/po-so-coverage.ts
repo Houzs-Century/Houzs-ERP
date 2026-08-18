@@ -19,7 +19,7 @@
 //       .so_doc_no). Fixed — no longer recomputed.
 //   (b) STORED ORIGIN (STATIC).  The PO was explicitly RAISED from an SO —
 //       purchase_order_items.so_item_id (2026-07-09+ MRP raise-link) ∪ the PO's
-//       "From SOs: …" note (bulk / shared buys, via the shared parseFromSosNote).
+//       "From SOs: …" note (bulk / shared buys, via the shared parseProvenanceNote).
 //       A real, immutable document link.
 //   (c) MRP FLOATING coverage.  The single MRP engine (computeMrp) is called
 //       ONCE and inverted via mrpReverseCoverage — the exact reverse of the
@@ -72,7 +72,7 @@ import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { computeVariantKey } from '../shared';
-import { parseFromSosNote } from './document-flow';
+import { parseProvenanceNote } from './document-flow';
 import { computeMrp, mrpReverseCoverage } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { tracePoDeliveredLedger } from '../lib/source-po-trace';
@@ -513,7 +513,7 @@ poSoCoverage.get('/:type/:id', async (c) => {
     const { data: poHdr } = await scopeToCompany(
       sb.from('purchase_orders').select('notes'), c,
     ).eq('id', po.poId).maybeSingle();
-    const noteTokens = parseFromSosNote((poHdr as { notes?: string | null } | null)?.notes);
+    const noteTokens = parseProvenanceNote((poHdr as { notes?: string | null } | null)?.notes);
     const candidateDocs = [...new Set([...exactDocs, ...noteTokens])];
 
     // ── (a) DELIVERED DO-lock (linkage C), (c) MRP floating (linkage A) ──────
@@ -785,7 +785,7 @@ export async function resolvePoSoCoveragePerSkuForPos(
   }
   // b2: the PO's "From SOs: …" note (bulk / shared buys), via the shared parser.
   for (const id of validIds) {
-    for (const tok of parseFromSosNote(notesById.get(id) ?? null)) {
+    for (const tok of parseProvenanceNote(notesById.get(id) ?? null)) {
       candidateDocsByPo.get(id)!.add(tok); allCandidateDocs.add(tok);
     }
   }
