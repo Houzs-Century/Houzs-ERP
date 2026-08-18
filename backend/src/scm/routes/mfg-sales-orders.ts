@@ -149,6 +149,7 @@ import { signSoItemPhotoUrl, soItemPhotoBindings, type SlipMime } from '../lib/r
 import { baseKeyOf, deleteThumbFor, putOptionalThumb, thumbKeyFor } from '../../services/photoThumbs';
 import { photoProxyPath, proxyFallbackPayload, warnSigningFailedOnce, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { slipBindings } from '../lib/slip';
+import { amendmentMixRefusal, createMixRefusal, lineMixRefusal } from '../lib/main-mix';
 import {
   loadMaintenanceConfig,
   loadSpecialAddons,
@@ -806,31 +807,6 @@ function unexplainedExtraAddonResponse(
   };
 }
 
-/* MAIN-mix composition (the PR #519 create rule, extended to line add / swap,
-   Loo 2026-06-11): SOFA is exclusive among the MAIN categories. Returns true
-   when replacing `excludeItemId`'s line (null = a pure add) with `newCode`
-   INTRODUCES a sofa × (bedframe | mattress) mix that did not exist before —
-   a pre-rule SO that already mixes stays editable (grandfathered). */
-async function soMainMixIntroduced(sb: any, docNo: string, excludeItemId: string | null, newCode: string, companyId?: number | null): Promise<boolean> {
-  const { data: lines } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code')
-    .eq('doc_no', docNo).eq('cancelled', false);
-  const rows = ((lines ?? []) as Array<{ id: string; item_code: string }>);
-  const cats = await loadProductsByCodes(sb, rows.map((r) => r.item_code).concat(newCode), companyId);
-  const mix = (codeList: string[]): boolean => {
-    let sofa = false, bedOrMatt = false;
-    for (const code of codeList) {
-      const cat = String(cats.get(code)?.category ?? '').toUpperCase();
-      if (cat === 'SOFA') sofa = true;
-      else if (cat === 'BEDFRAME' || cat === 'MATTRESS') bedOrMatt = true;
-    }
-    return sofa && bedOrMatt;
-  };
-  const beforeCodes = rows.map((r) => r.item_code);
-  const afterCodes = rows.filter((r) => r.id !== excludeItemId).map((r) => r.item_code).concat(newCode);
-  return mix(afterCodes) && !mix(beforeCodes);
-}
-
 /* PR — Commander 2026-05-28 — Server-side combo recompute.
    Fetches all active sofa_combo_pricing rows once (small table; ~64 rows
    in steady state) and returns them as SofaComboRow[] for the pure
@@ -1074,6 +1050,76 @@ const nextDocNo = async (sb: any, c: any): Promise<string> => {
    mode — it is what the function does deliberately when it cannot vouch for its
    inputs. */
 
+type SoListMoneyKpis = { revenueCenti: number; outstandingCenti: number; paidCenti: number };
+
+/* Full-set money KPIs (Revenue / Outstanding / Paid) for the SO list's
+   paginated path. ONE grouped PostgREST aggregate — three server-side SUMs over
+   the SAME filtered set the page query pages, WITHOUT `.range()` — replaces
+   paging the WHOLE filtered set in 1000-row chunks and summing in JS. So an
+   unfiltered "All" tab at N orders goes from ceil(N/1000) sequential round trips
+   plus N rows over the wire down to ONE round trip returning three numbers.
+
+   `applyMoneyFilters` is the single filter closure the aggregate fast path AND
+   the paginateAll fallback share, so the two totals apply byte-identical
+   predicates and cannot drift.
+
+   Byte-identical to the old paginateAll JS reduce: `local_total_centi` is
+   `integer DEFAULT 0 NOT NULL` (backend/scripts/scm-schema/2990s-full-schema.sql),
+   and the view's `paid_total_centi` (= COALESCE(Σ payments, 0)) and
+   `balance_centi_live` (= local_total − paid) are never null when the view
+   exposes them — so SQL SUM (which skips nulls) equals the `?? 0` reduce over
+   the same rows, and SUM over zero rows is NULL, coalesced to 0 exactly like the
+   empty reduce. Both summed columns are view-COMPUTED, so this stays VIEW-TRAP
+   safe (see backend/docs/scm-view-trap-coe.md). If the view LACKS them
+   (old/absent view) the aggregate errors on the missing column and we fall
+   through to the paginateAll path, which reads `balance_centi` as its own
+   absent-`balance_centi_live` fallback — identical to the prior behaviour. */
+export async function soListMoneyKpis(
+  sb: { from(table: string): { select(columns: string): unknown } },
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the dynamic aggregate `.select('...sum()')` defeats supabase-js's column-type inference (same reason as outstanding.ts /summary)
+  applyMoneyFilters: (q: any) => any,
+): Promise<{ data: SoListMoneyKpis | null; error: { message: string } | null }> {
+  /* FAST PATH — all aggregates, no plain column → one implicit group → one row.
+     Idiom: outstanding.ts /summary. */
+  const agg = await applyMoneyFilters(
+    sb
+      .from('mfg_sales_orders_with_payment_totals')
+      .select('rev:local_total_centi.sum(),outLive:balance_centi_live.sum(),paid:paid_total_centi.sum()'),
+  );
+  if (!agg.error) {
+    const row = ((agg.data ?? []) as Array<Record<string, unknown>>)[0] ?? {};
+    return {
+      data: {
+        revenueCenti: Number(row.rev ?? 0),
+        outstandingCenti: Number(row.outLive ?? 0),
+        paidCenti: Number(row.paid ?? 0),
+      },
+      error: null,
+    };
+  }
+  /* FALLBACK — aggregates disabled, or the computed columns absent from the
+     view: page the int cols and reduce in JS. Slower, never wrong. */
+  const fb = await paginateAll<{
+    local_total_centi: number | null;
+    balance_centi: number | null;
+    balance_centi_live: number | null;
+    paid_total_centi: number | null;
+  }>((mfrom, mto) =>
+    applyMoneyFilters(
+      sb
+        .from('mfg_sales_orders_with_payment_totals')
+        .select('local_total_centi, balance_centi, balance_centi_live, paid_total_centi'),
+    ).range(mfrom, mto),
+  );
+  if (fb.error) return { data: null, error: fb.error };
+  let revenueCenti = 0, outstandingCenti = 0, paidCenti = 0;
+  for (const m of fb.data ?? []) {
+    revenueCenti += m.local_total_centi ?? 0;
+    outstandingCenti += m.balance_centi_live ?? m.balance_centi ?? 0;
+    paidCenti += m.paid_total_centi ?? 0;
+  }
+  return { data: { revenueCenti, outstandingCenti, paidCenti }, error: null };
+}
 
 mfgSalesOrders.get('/', async (c) => {
   const sb = c.get('supabase');
@@ -1236,28 +1282,30 @@ mfgSalesOrders.get('/', async (c) => {
       return tallyStatusRows(fb, () => 1);
     })();
 
-    /* Full-set money KPIs — sum local_total_centi / balance_centi_live /
-       paid_total_centi over the SAME scope + company + status + search (+
-       optional so_date window) filters as the page query, but WITHOUT
-       `.range()`/pagination. paginateAll pages the int cols so the 1000-row
-       PostgREST cap can't truncate the total.
+    /* Full-set money KPIs — Revenue / Outstanding / Paid over the SAME scope +
+       company + status + search (+ optional so_date window) filters as the page
+       query, but WITHOUT `.range()`/pagination.
+
+       `applyMoneyFilters` is that predicate set, built ONCE, so the aggregate
+       fast path and its paginateAll fallback (both inside soListMoneyKpis) apply
+       byte-identical filters and cannot drift. These are the identical money
+       predicates this path applied before; the only change is that the SUM now
+       happens in ONE server-side grouped aggregate instead of paging the whole
+       filtered set and summing in JS.
 
        Paid + Outstanding read the view's LEDGER-DERIVED columns, not the stored
-       `paid_centi` / `balance_centi` this used to sum. Those two are not the
-       truth: `paid_centi` has no writer that maintains it (it is deprecated and
-       scheduled for drop), and `balance_centi` is set to the GROSS grandTotal
-       by recomputeTotals on every edit, so it never reflects a payment — the
-       old Outstanding tile was just Revenue restated. paid_total_centi
-       (= Σ payments) and balance_centi_live (= local_total − Σ payments) are
-       the same source-of-truth the row grid, the mobile SO list and
-       delivery-planning.ts already read. Both are view-COMPUTED columns, so
-       this select stays VIEW-TRAP safe (see backend/docs/scm-view-trap-coe.md);
-       `balance_centi` is kept in the select only as the absent-view fallback,
-       mirroring delivery-planning's. */
-    const moneyProm = paginateAll<{ local_total_centi: number | null; balance_centi: number | null; balance_centi_live: number | null; paid_total_centi: number | null }>((mfrom, mto) => {
-      let moneyQ = sb
-        .from('mfg_sales_orders_with_payment_totals')
-        .select('local_total_centi, balance_centi, balance_centi_live, paid_total_centi');
+       `paid_centi` / `balance_centi`. Those two are not the truth: `paid_centi`
+       has no writer that maintains it (deprecated, scheduled for drop), and
+       `balance_centi` is set to the GROSS grandTotal by recomputeTotals on every
+       edit, so it never reflects a payment — the old Outstanding tile was just
+       Revenue restated. paid_total_centi (= Σ payments) and balance_centi_live
+       (= local_total − Σ payments) are the same source-of-truth the row grid,
+       the mobile SO list and delivery-planning.ts already read, and both are
+       view-COMPUTED columns, so this stays VIEW-TRAP safe (see
+       backend/docs/scm-view-trap-coe.md). */
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the shared closure is applied to both the aggregate `.select('...sum()')` builder and the paged builder; the aggregate select defeats supabase-js's column-type inference (same reason as outstanding.ts /summary)
+    const applyMoneyFilters = (moneyQ0: any): any => {
+      let moneyQ = moneyQ0;
       if (scopeIds) moneyQ = moneyQ.in('salesperson_id', scopeIds);
       moneyQ = scopeToCompany(moneyQ, c);
       if (status) moneyQ = status === 'OTHER' ? moneyQ.or(otherStatusOr) : moneyQ.eq('status', status);
@@ -1267,8 +1315,9 @@ mfgSalesOrders.get('/', async (c) => {
       }
       if (from) moneyQ = moneyQ.gte('so_date', from);
       if (to) moneyQ = moneyQ.lte('so_date', to);
-      return moneyQ.range(mfrom, mto);
-    });
+      return moneyQ;
+    };
+    const moneyProm = soListMoneyKpis(sb, applyMoneyFilters);
 
     /* One concurrent wave. The page rows, the grouped status counts and the
        full-set money KPIs are mutually independent — each keys off scopeIds +
@@ -1292,14 +1341,8 @@ mfgSalesOrders.get('/', async (c) => {
       statusCounts.other = allCount - known;
     }
 
-    if (moneyRes.error) return c.json({ error: 'load_failed', reason: moneyRes.error.message }, 500);
-    let revenueCenti = 0, outstandingCenti = 0, paidCenti = 0;
-    for (const m of (moneyRes.data ?? [])) {
-      revenueCenti += m.local_total_centi ?? 0;
-      outstandingCenti += m.balance_centi_live ?? m.balance_centi ?? 0;
-      paidCenti += m.paid_total_centi ?? 0;
-    }
-    aggregates = { revenueCenti, outstandingCenti, paidCenti };
+    if (moneyRes.error || !moneyRes.data) return c.json({ error: 'load_failed', reason: moneyRes.error?.message ?? 'money_kpis_failed' }, 500);
+    aggregates = moneyRes.data;
   }
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (countError) return c.json({ error: 'status_counts_failed', reason: countError }, 500);
@@ -3231,49 +3274,17 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       kivOffenders: procDate ? findColourKivLines(linesForVariantCheck) : [],
     });
     if (createProblems.length > 0) return c.json(validationFailedBody(createProblems), 422);
-    if (items.length > 0) {
-      const lineCodes = items.map((it) => String(it.itemCode ?? '')).filter(Boolean);
-      const metaByCode = new Map<string, { category: string }>();
-      if (lineCodes.length > 0) {
-        // SoCreateContext is not a Hono Context, so scopeToCompany can't type-
-        // check here; add the company predicate directly from the local companyId
-        // (mfg_products is per-company; shared `code` collides across companies).
-        let metaQ = sb.from('mfg_products').select('code, category').in('code', lineCodes);
-        if (companyId != null) metaQ = metaQ.eq('company_id', companyId);
-        const { data: meta } = await metaQ;
-        for (const m of (meta ?? []) as Array<{ code: string; category: string }>) {
-          metaByCode.set(m.code, { category: m.category });
-        }
-      }
-      const normCat = (raw: string): string => {
-        const g = (raw ?? '').trim().toUpperCase();
-        if (g.includes('BEDFRAME')) return 'BEDFRAME';
-        if (g.includes('SOFA'))     return 'SOFA';
-        if (g.includes('MATTRESS')) return 'MATTRESS';
-        if (g.includes('ACCESSOR')) return 'ACCESSORY';
-        if (g.includes('SERVICE'))  return 'SERVICE';
-        return 'OTHERS';
-      };
-      // MAIN products carry the mixing constraints; SERVICE / ACCESSORY /
-      // OTHERS are universal add-ons that ride on any SO.
-      const MAIN = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
-      const cats = items.map((it) =>
-        normCat(metaByCode.get(String(it.itemCode ?? ''))?.category ?? (it.itemGroup as string) ?? ''),
-      );
-      // Rule 2 — sofa is exclusive among MAIN products: no bedframe / mattress
-      // alongside a sofa. Service / accessory add-ons are always fine.
-      if (cats.includes('SOFA') && cats.some((cat) => cat !== 'SOFA' && MAIN.has(cat))) {
-        return c.json({
-          error: 'so_sofa_no_other_main',
-          reason: 'A sofa Sales Order cannot also contain a bedframe or mattress. Service and accessory items are fine.',
-        }, 400);
-      }
-      /* Loo 2026-06-07 — mattress lines MAY mix brands on one SO. The old
-         Rule 3 (`so_mattress_one_brand`, #280) blocked e.g. a Happi.S +
-         2990 mattress in one order at the POS counter; the owner never set
-         that rule. Sofa exclusivity above is the only MAIN-mix gate.
-         Don't re-add a brand gate here. */
-    }
+    /* Rule 2 — sofa is exclusive among MAIN products: no bedframe / mattress
+       alongside a sofa. SERVICE / ACCESSORY / OTHERS ride on any SO. The rule
+       and its classifier live in lib/main-mix.ts and are shared with the three
+       SO line paths and the three CO paths — it used to be a closure here, which
+       is exactly why the CO line routes were written without it.
+       Loo 2026-06-07 — mattress lines MAY mix BRANDS on one SO. The old Rule 3
+       (`so_mattress_one_brand`, #280) blocked e.g. a Happi.S + 2990 mattress in
+       one order at the POS counter; the owner never set that rule. Sofa
+       exclusivity is the only MAIN-mix gate. Don't re-add a brand gate here. */
+    const mainMix = await createMixRefusal(sb, items, companyId);
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   let docNo = await nextDocNo(sb, c);
@@ -7629,13 +7640,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      violation is rejected — a pre-rule SO that already mixes is left
      editable (grandfathered). */
   {
-    const introduced = await soMainMixIntroduced(sb, docNo, null, it.itemCode as string, activeCompanyId(c));
-    if (introduced) {
-      return c.json({
-        error: 'so_sofa_no_other_main',
-        reason: 'A sofa cannot share a Sales Order with a bedframe or mattress.',
-      }, 400);
-    }
+    const mainMix = await lineMixRefusal(sb, 'mfg_sales_order_items', docNo, null, it.itemCode as string, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   /* PR-E — pull customer_delivery_date alongside debtor/agent/venue so a
@@ -8230,13 +8236,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   /* Composition guard (Loo 2026-06-11) — a product swap must not INTRODUCE a
      sofa × (bedframe | mattress) mix (PR #519 create rule, now on swap too). */
   if (it.itemCode !== undefined) {
-    const introduced = await soMainMixIntroduced(sb, docNo, itemId, it.itemCode as string, activeCompanyId(c));
-    if (introduced) {
-      return c.json({
-        error: 'so_sofa_no_other_main',
-        reason: 'A sofa cannot share a Sales Order with a bedframe or mattress.',
-      }, 400);
-    }
+    const mainMix = await lineMixRefusal(sb, 'mfg_sales_order_items', docNo, itemId, it.itemCode as string, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). */
@@ -8419,7 +8420,14 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       sofaModuleCostRowsPatch,
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
-      !posTablet, // owner ruling — non-POS author prices freely
+      /* owner ruling — non-POS author prices freely. 'operator-zero' when the
+         ERP editor states this 0 was TYPED, not unresolved (owner 2026-08-18;
+         see TrustSelling). Strict `=== true`, and only at 0, so every other
+         caller's 0 still means "not provided" and takes the catalogue fill. A
+         POS session never reaches it: posTablet short-circuits both arms. */
+      !posTablet && clientUnit === 0 && it.zeroPriceIntended === true
+        ? 'operator-zero'
+        : !posTablet,
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even
@@ -8467,25 +8475,9 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       max:      qty * unit,
     }, 422);
   }
-  /* Total floor (Loo 2026-06-11) — a POS sales caller may never save a line
-     change that lowers the bill below the original sales order total. The
-     header total is Σ line totals, so per line: the new total (0 when
-     cancelling) must be ≥ the stored one. Backend / office roles stay free
-     to discount or correct downward. */
-  if (posTablet) {
-    const prevLineTotal = prev.cancelled ? 0 : ((prev.qty * prev.unit_price_centi) - prev.discount_centi);
-    const cancelledAfter = it.cancelled !== undefined ? Boolean(it.cancelled) : Boolean(prev.cancelled);
-    const newLineTotal = cancelledAfter ? 0 : ((qty * unit) - discount);
-    if (newLineTotal < prevLineTotal) {
-      return c.json({
-        error:    'so_total_below_original',
-        reason:   'Changes cannot reduce the bill below the original sales order total.',
-        itemCode: itemCodeAfter,
-        previous: prevLineTotal,
-        next:     newLineTotal,
-      }, 422);
-    }
-  }
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18: a POS caller may lower a line. `posTablet` still gates
+     the pricing_drift check below, which is a different rule and stays. */
   /* Commander 2026-05-28 — cost snapshot on PATCH. Order of precedence:
        1. Client sent unitCostCenti > 0 → use it (explicit override).
        2. A recompute ran (variants/itemCode/price touched) AND produced a
@@ -8680,18 +8672,8 @@ mfgSalesOrders.delete('/:docNo/items/:itemId', async (c) => {
     | { item_code: string; qty: number; unit_price_centi: number; total_centi: number; photo_urls: string[] | null; cancelled?: boolean }
     | null;
 
-  /* Total floor (Loo 2026-06-11) — removing a priced line lowers the bill
-     below the original sales order total, so POS sales callers may not
-     delete one (a cancelled / zero line is fine). Backend roles stay free. */
-  if (prevTyped && !prevTyped.cancelled && prevTyped.total_centi > 0
-      && await isPosTabletCaller(c)) {
-    return c.json({
-      error:    'so_total_below_original',
-      reason:   'Removing a line would reduce the bill below the original sales order total.',
-      itemCode: prevTyped.item_code,
-    }, 422);
-  }
-
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18. A POS caller may delete a priced line. */
   /* The AutoCount key of the line this save REMOVES. Read BEFORE the delete:
      afterwards the row is gone and its DtlKey with it, and an edit that does not
      NAME the removal leaves the line live and outstanding in the account book. */
@@ -8930,20 +8912,10 @@ export async function tbcUpdateCommandHandler(c: any, sb: any): Promise<Response
 
   /* Task 6 — grandfathering: a line carrying variants.freeItem was made free
      at create time and must STAY at RM 0 regardless of any fabric/option delta.
-     Treat it as a no-price-change TBC edit (the variant picks still land).
-     Also skip the POS floor check — a zero-priced line can never lower the
-     bill further; the check is meaningless and would compare 0 vs 0. */
+     Treat it as a no-price-change TBC edit (the variant picks still land). */
   const isFreeItemGrandfathered = isFreeItemLine(prevVariants);
-  const posTablet = await isPosTabletCaller(c);
-  if (!isFreeItemGrandfathered && posTablet && sellingDeltaCenti < 0) {
-    return c.json({
-      error:    'so_total_below_original',
-      reason:   'Changes cannot reduce the bill below the original sales order total.',
-      itemCode: prev.item_code,
-      deltaCenti: sellingDeltaCenti * Number(prev.qty),
-    }, 422);
-  }
-
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18. A TBC edit may lower the line. */
   const qty = Number(prev.qty);
   const newUnit = isFreeItemGrandfathered ? 0 : Math.max(0, Number(prev.unit_price_centi) + sellingDeltaCenti);
   /* The unit price just MOVED and the stored discount did not. newUnit is
@@ -9279,11 +9251,9 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   }
 
   /* Composition — a swap must not INTRODUCE a sofa × (bedframe|mattress) mix. */
-  if (await soMainMixIntroduced(sb, docNo, itemId, newCode, activeCompanyId(c))) {
-    return c.json({
-      error: 'so_sofa_no_other_main',
-      reason: 'A sofa cannot share a Sales Order with a bedframe or mattress.',
-    }, 400);
+  {
+    const mainMix = await lineMixRefusal(sb, 'mfg_sales_order_items', docNo, itemId, newCode, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   const qty = Number(prev.qty);
@@ -9302,17 +9272,8 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     }, 422);
   }
   const newTotal = (qty * unitSen) - discount;
-  const prevTotal = Number(prev.total_centi ?? ((qty * Number(prev.unit_price_centi)) - discount));
-  if (newTotal < prevTotal && await isPosTabletCaller(c)) {
-    return c.json({
-      error:    'so_total_below_original',
-      reason:   'Changes cannot reduce the bill below the original sales order total.',
-      itemCode: newCode,
-      previous: prevTotal,
-      next:     newTotal,
-    }, 422);
-  }
-
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18. A swap may land on a cheaper product. */
   const newCost = Math.max(0, Math.round(Number(prod.cost_price_sen ?? 0)));
   const { error: upErr } = await sb.from('mfg_sales_order_items').update({
     item_code: newCode,
@@ -9836,15 +9797,10 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
   }
   const newBuildTotal = (qty * unit) - discount;
   const oldBuildTotal = oldLines.reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
-  if (posTablet && newBuildTotal < oldBuildTotal) {
-    return c.json({
-      error: 'so_total_below_original',
-      reason: 'Changes cannot reduce the bill below the original sales order total.',
-      previous: oldBuildTotal,
-      next: newBuildTotal,
-    }, 422);
-  }
-
+  /* The total floor that stood here (Loo 2026-06-11) is GONE — owner ruling,
+     relayed 2026-08-18. A sofa may be exchanged for a cheaper build.
+     `posTablet` above still gates the pricing_drift check, which stays.
+     Both totals are still computed: the audit log reports the change. */
   /* A still-matched reward keeps its voucher markers — they ride every
      split line like at SO create. An unmatched one stays stripped (normal
      sale; the voucher releases below). */
@@ -11743,6 +11699,23 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       const codeCheck = await validateItemCodes(sb, requestedCodes, activeCompanyId(c), { requireActive: true });
       if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
     }
+  }
+
+  /* Composition, same rule and same home as every other line write (see
+     lib/main-mix.ts). This route is the one path that can ADD a line without
+     going through POST /:docNo/items, and it had no copy of the rule — nor does
+     applySoAmendment — so an amendment could put a sofa on a bedframe order.
+     Refused at SUBMIT for the same reason the code check above is: the requester
+     can fix it, the approver cannot. Grandfathered like every other edit path —
+     an order that already mixes is not made unamendable. */
+  {
+    const mixLines = submittedLines.map((l) => ({
+      salesOrderItemId: typeof l.salesOrderItemId === 'string' ? l.salesOrderItemId : null,
+      changeType:       typeof l.changeType === 'string' ? l.changeType : null,
+      newItemCode:      typeof l.newItemCode === 'string' ? l.newItemCode : null,
+    }));
+    const mainMix = await amendmentMixRefusal(sb, docNo, mixLines, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   /* Date sanity on a requested schedule change (mirrors the create/edit form's
