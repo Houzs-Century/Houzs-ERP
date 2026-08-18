@@ -248,6 +248,10 @@ const MUST_GATE_MERGE = [
      not the deploy. */
   "tests/idempotencyRefusalRelease.test.ts",
   "tests/grnPreWriteRefusalsReleaseKey.test.ts",
+  /* The blank-date gate. Its whole reason to exist is that the previous
+     version of it passed on an unfixed tree, so a merge that reintroduces an
+     uncoerced date write has to be STOPPED, not reported after the fact. */
+  "tests/dateWriteCoercion.test.ts",
 ];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {

@@ -30,6 +30,7 @@ import {
 export { deriveCountryFromState, deriveSalesLocationFromState };
 import { specialDeliveryFeesForLines, reconstructDeliveryRuleLines } from '../lib/special-delivery';
 import { soHasDownstream } from '../lib/downstream-lock';
+import { dateOrNull, isDateColumn } from '../lib/date-coerce';
 import { soDocNosWithDownstream } from '../lib/downstream-lock'; // own line: autocountWritebackWiring asserts the import above verbatim
 import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-order-nos';
 /* Status-transition table + the discard guards — lifted out of this file, which
@@ -3555,7 +3556,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      customer_delivery_date on create unless the client explicitly
      supplies a per-line lineDeliveryDate. Override flag mirrors the
      client's choice (defaults false → cascade-tracked). */
-  const headerDeliveryDate = (body.customerDeliveryDate as string | null | undefined) ?? null;
+  const headerDeliveryDate = dateOrNull(body.customerDeliveryDate);
   /* MFG-PRICING-ENGINE — Server-side recompute (Commander 2026-05-27
      non-negotiable; the honest-pricing red line). Load the master
      maintenance config once, then for each line item recompute the
@@ -4249,9 +4250,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     /* Task 5 — the per-line declared extra add-on (whole RM), only honoured when
        the auto-SKU flag is ON. Drives whether this line mints a one-shot SKU. */
     const extraRM = autoSkuEnabled ? extraRMof(it) : 0;
-    /* PR-E — Per-line cascade defaults. If the client sent a
-       lineDeliveryDate it wins (and overridden=true unless explicitly
-       false). Otherwise inherit the header date with overridden=false. */
+    /* PR-E — a sent lineDeliveryDate wins (overridden=true unless explicitly
+       false), else inherit the header date. "" is stored as NULL, not "". */
     const hasExplicitLineDate = it.lineDeliveryDate !== undefined && it.lineDeliveryDate !== null;
     const lineDeliveryDate = hasExplicitLineDate
       ? (it.lineDeliveryDate as string | null)
@@ -4260,7 +4260,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       ? (it.lineDeliveryDateOverridden === undefined ? true : Boolean(it.lineDeliveryDateOverridden))
       : Boolean(it.lineDeliveryDateOverridden ?? false);
     const baseRow = {
-      line_date: (it.lineDate as string) ?? todayMyt(),
+      line_date: dateOrNull(it.lineDate) ?? todayMyt(),
       debtor_code: (body.debtorCode as string) ?? null,
       debtor_name: body.debtorName,
       agent: agentToStamp,
@@ -4302,7 +4302,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       leg_price_sen:           recomputed?.leg_price_sen ?? 0,
       special_order_price_sen: recomputed?.special_order_sen ?? 0,
       custom_specials:         recomputed?.custom_specials ?? null,
-      line_delivery_date: lineDeliveryDate,
+      line_delivery_date: dateOrNull(lineDeliveryDate),
       line_delivery_date_overridden: lineDeliveryDateOverridden,
       // Commander 2026-05-31 — per-line ship-from warehouse (migration 0118).
       // Explicit per-line override wins; else the SO state's default.
@@ -4977,7 +4977,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     doc_no: dn,
     proceeded_at: autoProceed ? new Date().toISOString() : null,
     transfer_to: (body.transferTo as string) ?? null,
-    so_date: (body.soDate as string) ?? todayMyt(),
+    so_date: dateOrNull(body.soDate) ?? todayMyt(),
     branding: (body.branding as string) ?? null,
     debtor_code: (body.debtorCode ?? body.customerCode as string) ?? null,
     debtor_name: customerName,
@@ -5058,7 +5058,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       ? (normalizePhone(body.emergencyContactPhone) ?? body.emergencyContactPhone)
       : null,
     emergency_contact_relationship: (body.emergencyContactRelationship as string) ?? null,
-    target_date: (body.targetDate as string) ?? null,
+    target_date: dateOrNull(body.targetDate),
     customer_id: orderCustomerId,
     /* Mig 0175 — canonicalize MY state at write so 'PENANG' / 'Kl' / 'W.P.
        Kuala Lumpur' land as the exact my_localities spelling. Foreign state
@@ -5070,15 +5070,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        hidden (never surfaced on SO/PDF/UI). 2990 kept these on the customers
        table; owner ruled they slot onto the SO here. Capture-only at create. */
     customer_race: (body.customerRace as string) ?? null,
-    customer_birthday: (body.customerBirthday as string) ?? null,
+    customer_birthday: dateOrNull(body.customerBirthday),
     customer_gender: (body.customerGender as string) ?? null,
-    customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
+    customer_delivery_date: dateOrNull(body.customerDeliveryDate),
     /* PR #144 — Commander: "当我已经 create 好了这个 sales order 的时候，
        为什么我点进去 edit processing 的 delivery date 时，怎么没看到呢".
        processing_date was wired on PATCH (update header) but missed
        on the POST (create) — so the New SO form's Processing Date field
        never persisted; reopening the SO showed an empty field. */
-    processing_date: (body.processingDate as string) ?? null,
+    processing_date: dateOrNull(body.processingDate),
     /* Mig 0053 (port of 2990 0199 + 0201) — amendment carriers. The customer's
        ORIGINAL `customer_delivery_date` above is NEVER overwritten by an
        amend; the customer's REQUESTED-changed date lands here, the date WE
@@ -5087,8 +5087,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        amended_delivery_date ?? customer_delivery_date. Persisted on CREATE so
        an amend captured at SO entry (e.g. customer asked for a date change
        between quote + sign-off) doesn't get lost waiting for a follow-up PATCH. */
-    amend_date_from_customer: (body.amendDateFromCustomer as string) ?? null,
-    amended_delivery_date: (body.amendedDeliveryDate as string) ?? null,
+    amend_date_from_customer: dateOrNull(body.amendDateFromCustomer),
+    amended_delivery_date: dateOrNull(body.amendedDeliveryDate),
     amend_reason: (body.amendReason as string) ?? null,
     // PR #121 — POS-aligned Order Details fields
     customer_so_no: (body.customerSoNo as string) ?? null,
@@ -5124,7 +5124,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     installment_months: typeof body.installmentMonths === 'number' ? body.installmentMonths : null,
     merchant_provider:  (body.merchantProvider as string) ?? null,
     approval_code:      (body.approvalCode as string) ?? null,
-    payment_date:       (body.paymentDate as string) ?? null,
+    payment_date:       dateOrNull(body.paymentDate),
     // Clamped ≥ 0 — a negative deposit would deflate the live paid rollup.
     // Split payment (Loo 2026-06-06): with payments[] the deposit IS the sum
     // of the validated rows (each positive by schema), not the legacy field.
@@ -5170,7 +5170,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     /* Split payment — book EVERY validated row. Best-effort like the single
        path (the header already carries the Σ, so a ledger hiccup never blocks
        the order); rows are schema-validated so nothing is silently dropped. */
-    const paidAt = (body.paymentDate as string) ?? todayMyt();
+    const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // header coerces the same key; uncoerced here the swallowed insert lost the deposit row
     for (let i = 0; i < posPayments.length; i++) {
       const p = posPayments[i]!;
       const merchantLike = p.method === 'merchant' || p.method === 'installment';
@@ -5273,7 +5273,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       const installmentMonths = merchantLike
         && typeof body.installmentMonths === 'number' && body.installmentMonths > 0
         ? body.installmentMonths : null;
-      const paidAt = (body.paymentDate as string) ?? todayMyt();
+      const paidAt = dateOrNull(body.paymentDate) ?? todayMyt(); // same as the split-payment row above
       const { error: depErr } = await sb.from('mfg_sales_order_payments').insert({
         company_id:         companyId, // multi-company: match the SO's company
         so_doc_no:          docNo,
@@ -6666,7 +6666,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
          is_deposit row, so a negative value would deflate that paid rollup. */
       updates[to] = Math.max(0, typeof body[from] === 'number' ? (body[from] as number) : 0);
     } else {
-      updates[to] = body[from];
+      updates[to] = isDateColumn(to) ? dateOrNull(body[from]) : body[from]; // "" -> NULL
     }
   }
   /* Mig 0175 (owner 2026-07-22) — canonicalize customer_state at write so a
@@ -7247,9 +7247,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     p_apply_warehouse: Boolean(reboundWarehouseId),
     p_warehouse_id: reboundWarehouseId,
     p_apply_delivery_date: body['customerDeliveryDate'] !== undefined || cascadedDeliveryClear,
-    p_delivery_date: cascadedDeliveryClear
-      ? null
-      : (body['customerDeliveryDate'] as string | null | undefined) ?? null,
+    p_delivery_date: cascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']),
     // mig 0164 — the customer upsert inside the RPC is company-scoped. Omitting
     // this resolves every re-customer against HOUZS.
     p_company_id: activeCompanyId(c) ?? null,
@@ -7994,7 +7992,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      template for each sofa module row (create-path convention: baseRow). */
   const baseRow = {
     doc_no: docNo,
-    line_date: (it.lineDate as string) ?? todayMyt(),
+    line_date: dateOrNull(it.lineDate) ?? todayMyt(),
     debtor_code: header.debtor_code,
     debtor_name: header.debtor_name,
     agent: header.agent,
@@ -8036,7 +8034,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     leg_price_sen:           recomputed.leg_price_sen,
     special_order_price_sen: recomputed.special_order_sen,
     custom_specials:         recomputed.custom_specials ?? null,
-    line_delivery_date: lineDeliveryDate,
+    line_delivery_date: dateOrNull(lineDeliveryDate),
     line_delivery_date_overridden: lineDeliveryDateOverridden,
     warehouse_id: addLineWarehouseId,
     /* SO-SKU spec P2 — a hand-added SERVICE line (Backend SoLineCard picks a
@@ -8613,7 +8611,7 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
      forget. A separate lineDeliveryDateOverridden=false reset path lets
      the UI deliberately rejoin the header cascade. */
   if (it.lineDeliveryDate !== undefined) {
-    updates['line_delivery_date'] = it.lineDeliveryDate as string | null;
+    updates['line_delivery_date'] = dateOrNull(it.lineDeliveryDate);
     updates['line_delivery_date_overridden'] = true;
   }
   if (it.lineDeliveryDateOverridden !== undefined) {

@@ -44,6 +44,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
 import { insertSiPaymentRow } from '../lib/si-payment-row';
 import { postSiRevenue, reverseSiRevenue, resyncSiRevenue } from '../lib/post-si-revenue';
@@ -1028,9 +1029,9 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
     delivery_order_id: (body.deliveryOrderId as string) ?? null,
     debtor_code: (body.debtorCode as string) ?? null,
     debtor_name: debtorName,
-    invoice_date: (body.invoiceDate as string) ?? todayMyt(),
-    due_date: (body.dueDate as string) ?? null,
-    customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
+    invoice_date: dateOrNull(body.invoiceDate) ?? todayMyt(),
+    due_date: dateOrNull(body.dueDate),
+    customer_delivery_date: dateOrNull(body.customerDeliveryDate),
     address1: (body.address1 as string) ?? null,
     address2: (body.address2 as string) ?? null,
     city: (body.city as string) ?? null,
@@ -1661,13 +1662,11 @@ salesInvoices.patch('/:id', async (c) => {
     ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
     ['salesLocation', 'sales_location'], ['ref', 'ref'], ['poDocNo', 'po_doc_no'],
     ['venue', 'venue'], ['venueId', 'venue_id'], ['branding', 'branding'],
-    ['address1', 'address1'], ['address2', 'address2'],
+    ['address1', 'address1'], ['address2', 'address2'], ['note', 'note'], ['notes', 'notes'],
     ['city', 'city'], ['state', 'state'], ['postcode', 'postcode'], ['phone', 'phone'],
-    ['note', 'note'], ['notes', 'notes'],
     ['invoiceDate', 'invoice_date'], ['dueDate', 'due_date'], ['currency', 'currency'],
     ['customerState', 'customer_state'], ['customerCountry', 'customer_country'],
-    ['customerSoNo', 'customer_so_no'],
-    ['customerDeliveryDate', 'customer_delivery_date'],
+    ['customerSoNo', 'customer_so_no'], ['customerDeliveryDate', 'customer_delivery_date'],
     ['email', 'email'], ['customerType', 'customer_type'],
     ['salespersonId', 'salesperson_id'], ['buildingType', 'building_type'],
     ['emergencyContactName', 'emergency_contact_name'],
@@ -1687,7 +1686,8 @@ salesInvoices.patch('/:id', async (c) => {
   }
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
-  const { data, error } = await sb.from('sales_invoices').update(updates).eq('id', id).select('id').maybeSingle();
+  /* "" -> NULL: an unfilled date input would otherwise fail this whole UPDATE. */
+  const { data, error } = await sb.from('sales_invoices').update(coerceEmptyDates(updates)).eq('id', id).select('id').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
 

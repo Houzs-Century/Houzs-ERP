@@ -17,6 +17,7 @@ import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { qtyCapRefusal } from '../lib/qty-cap';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { writeMovements, reverseMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -803,7 +804,7 @@ purchaseReturns.post('/', async (c) => {
     purchase_order_id: (body.purchaseOrderId as string | undefined) ?? null,
     grn_id: grnId,
     supplier_id: body.supplierId,
-    return_date: (body.returnDate as string) ?? todayMyt(),
+    return_date: dateOrNull(body.returnDate) ?? todayMyt(),
     reason: (body.reason as string | undefined) ?? null,
     refund_centi: totalRefund,
     notes: (body.notes as string | undefined) ?? null,
@@ -1298,6 +1299,9 @@ purchaseReturns.patch('/:id', async (c) => {
   ] as const) {
     if (body[from] !== undefined) updates[to] = body[from];
   }
+  /* A cleared return date posts "" and this loop wrote it through to the date
+     column, which Postgres rejects and 500s the save. */
+  coerceEmptyDates(updates);
   const sb = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);

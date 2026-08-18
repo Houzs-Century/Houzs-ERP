@@ -97,6 +97,7 @@ import { MAP_COLS as ZONE_MAP_COLS, toPrefixMap, type MapRow as ZoneMapRow } fro
 import { zoneForAddress } from '../lib/zone-classify';
 import { deriveSetCount, type SetLine } from '../lib/set-count';
 import { composeAddress, geocodeAddressCached, normalizeAddress } from '../lib/geocode';
+import { dateOrNull } from '../lib/date-coerce';
 
 export const deliveryPlanning = new Hono<{ Bindings: Env; Variables: Variables }>();
 deliveryPlanning.use('*', supabaseAuth);
@@ -2331,7 +2332,9 @@ deliveryPlanning.patch('/:type/:id/schedule', async (c) => {
      the SO (which exists only on mfg_sales_orders). For a :type=do schedule the SO
      header is not the target; the DO carries no amend column, so a date is a no-op
      there (the schedule date flows to the trip / leg below, not onto the DO date). */
-  if (p.scheduleDate !== undefined && type === 'so') updates.amended_delivery_date = p.scheduleDate;
+  /* scheduleDate is `z.string().nullable().optional()`, so "" passes zod and
+     reaches amended_delivery_date (DATE, mig 0053). Blank clears the amend. */
+  if (p.scheduleDate !== undefined && type === 'so') updates.amended_delivery_date = dateOrNull(p.scheduleDate);
   if (p.deliveryState !== undefined) updates.delivery_state = p.deliveryState;
   // A trip-only schedule (no date/state) is still a valid change — only 400 when
   // there's NOTHING to do at all.
@@ -2561,7 +2564,9 @@ async function scheduleOntoTrip(
 
     /* Find-or-create the trip. tripId given → use it; else find an existing
        PLANNED trip for (lorry, date) or create one. */
-    const tripDate = p.tripDate ?? p.scheduleDate ?? todayMyt();
+    /* `??` is nullish: a blank tripDate/scheduleDate walked into trips.trip_date
+       (`DATE NOT NULL`, mig 0053). Blank now falls to today like an absent key. */
+    const tripDate = dateOrNull(p.tripDate) ?? dateOrNull(p.scheduleDate) ?? todayMyt();
     let tripId = p.tripId ?? null;
     if (!tripId && p.lorryId) {
       const { data: found } = await sb.from('trips').select('id, trip_no')
@@ -2814,7 +2819,7 @@ async function scheduleAssrOntoTrip(
     const address = [a?.addr1, a?.addr2, a?.addr3, a?.addr4].filter(Boolean).join(', ') || null;
 
     /* Find-or-create the trip — same rule as scheduleOntoTrip. */
-    const tripDate = p.tripDate ?? p.scheduleDate ?? a?.leg_date ?? todayMyt();
+    const tripDate = dateOrNull(p.tripDate) ?? dateOrNull(p.scheduleDate) ?? dateOrNull(a?.leg_date) ?? todayMyt();
     let tripId = p.tripId ?? null;
     if (!tripId && p.lorryId) {
       const { data: found } = await sb.from('trips').select('id, trip_no')

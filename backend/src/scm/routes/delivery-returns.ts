@@ -21,6 +21,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   crossCompanySourceRefusal,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { writeMovements, defaultWarehouseId } from '../lib/inventory-movements';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeVariantKey, type VariantAttrs } from '../shared';
@@ -913,7 +914,7 @@ async function insertHeader(sb: any, userId: string, body: Record<string, unknow
     sales_invoice_id: (body.salesInvoiceId as string) ?? null,
     debtor_code: (body.debtorCode as string) ?? null,
     debtor_name: (body.debtorName ?? body.customerName) as string,
-    return_date: (body.returnDate as string) ?? todayMyt(),
+    return_date: dateOrNull(body.returnDate) ?? todayMyt(),
     reason: (body.reason as string) ?? null,
     address1: (body.address1 as string) ?? null,
     address2: (body.address2 as string) ?? null,
@@ -1439,6 +1440,9 @@ deliveryReturns.patch('/:id', async (c) => {
       updates[to] = body[from];
     }
   }
+  /* A cleared date input posts "" and this loop wrote it through to a date
+     column, which Postgres rejects and 500s the save. */
+  coerceEmptyDates(updates);
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
   const { data, error } = await scopeToCompanyId(sb.from('delivery_returns').update(updates).eq('id', id), co.companyId).select('id').maybeSingle();

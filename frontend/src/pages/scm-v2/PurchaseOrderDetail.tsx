@@ -139,6 +139,18 @@ const SUPPLIER_DATE_LABEL: Record<SupplierDateKey, string> = {
   supplierDeliveryDate4: 'Supplier Date 4',
 };
 
+/* An unfilled <input type="date"> holds '', and the header draft is spread
+   straight into the PATCH — so a blank Supplier Date 2/3/4 posted "" and the
+   whole save came back 500 "invalid input syntax for type date" (production,
+   2026-08-17). The BACKEND is the fix (scm/lib/date-coerce coerces this on every
+   date write, and the mobile app and any direct API caller never pass through
+   this form at all); this is the second layer, so the payload says what it
+   means: a cleared date is NULL. */
+const blankDateToNull = (v: string | null | undefined): string | null => {
+  const s = (v ?? '').trim();
+  return s === '' ? null : s;
+};
+
 const headerSnapshot = (p: any): HeaderDraft => ({
   supplierId:            p.supplier_id ?? '',
   poDate:                p.po_date ?? '',
@@ -634,7 +646,17 @@ export const PurchaseOrderDetail = () => {
     setSavingDraft(true);
     try {
       if (headerDraft) {
-        await updateHeader.mutateAsync({ id: po.id, ...(headerDraft as Record<string, unknown>) });
+        await updateHeader.mutateAsync({
+          id: po.id,
+          ...(headerDraft as Record<string, unknown>),
+          /* Only the three OPTIONAL slots are nulled here. `po_date` is
+             `date DEFAULT now() NOT NULL` (scm-schema/2990s-full-schema.sql)
+             and both poDate and expectedAt are required inputs on this form, so
+             nulling them would trade one refusal for another. */
+          supplierDeliveryDate2: blankDateToNull(headerDraft.supplierDeliveryDate2),
+          supplierDeliveryDate3: blankDateToNull(headerDraft.supplierDeliveryDate3),
+          supplierDeliveryDate4: blankDateToNull(headerDraft.supplierDeliveryDate4),
+        });
       }
       const byId = new Map(items.map((it) => [it.id, it]));
       for (const d of editLines) {
@@ -688,11 +710,11 @@ export const PurchaseOrderDetail = () => {
           qty:            d.qty,
           unitPriceCenti: d.unitPriceCenti,
           discountCenti:  d.discountCenti ?? 0,
-          deliveryDate:   d.deliveryDate ?? null,
+          deliveryDate:   blankDateToNull(d.deliveryDate),
           /* Mig 0026 — per-line supplier-revised delivery dates. */
-          supplierDeliveryDate2: d.supplierDeliveryDate2 ?? null,
-          supplierDeliveryDate3: d.supplierDeliveryDate3 ?? null,
-          supplierDeliveryDate4: d.supplierDeliveryDate4 ?? null,
+          supplierDeliveryDate2: blankDateToNull(d.supplierDeliveryDate2),
+          supplierDeliveryDate3: blankDateToNull(d.supplierDeliveryDate3),
+          supplierDeliveryDate4: blankDateToNull(d.supplierDeliveryDate4),
           warehouseId:    d.warehouseId ?? null,
           itemGroup:      d.category,
           variants:       d.variants ?? {},
