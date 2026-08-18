@@ -30,14 +30,9 @@ import {
   useSaveAcquirerSetup,
   type MaintenanceMerchant, type MaintenanceBank, type MaintenanceCompany,
 } from './settlement-queries';
-import {
-  ICON, btn, cell, num, table, headRow, rowLine, softText, danger, good, refusalText,
-} from './settlement-ui';
+import { ICON, btn, softText, danger, refusalText } from './settlement-ui';
+import css from './SettlementSetup.module.css';
 import { PageHeader } from '../../components/Layout';
-
-const tick: React.CSSProperties = { width: 18, height: 18, cursor: 'pointer' };
-const colHead: React.CSSProperties = { ...cell, textAlign: 'center', minWidth: 170 };
-const colCell: React.CSSProperties = { ...cell, textAlign: 'center', verticalAlign: 'middle' };
 
 export const SettlementSetup = () => {
   const [editing, setEditing] = useState<string | null>(null);
@@ -86,62 +81,79 @@ const MerchantMatrix = ({ companies, merchants, banks, onEdit }: {
   const save = useSaveMaintenanceMerchant();
 
   return (
-    <section className="space-y-2">
-      <b>Merchants</b>
-      <table style={table}>
-        <thead>
-          <tr style={headRow}>
-            <th style={cell}>Merchant</th>
-            <th style={cell}>Report layout — shared by every company</th>
-            {companies.map((co) => <th key={co.id} style={colHead}>{co.name}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {merchants.map((m) => (
-            <tr key={m.code} style={rowLine}>
-              <td style={cell}><b>{m.display_name}</b></td>
-              {/* OUTSIDE the company columns, because it belongs to no company. */}
-              <td style={cell}>
-                <span style={{ color: m.ready ? undefined : danger }}>
-                  {m.ready
-                    ? `${m.statement_format} · ${m.autoMatchable ? 'matches by reference' : 'by hand, always'}`
-                    : 'not taught yet'}
-                </span>{' '}
-                <button type="button" style={{ ...btn(), padding: '2px 8px' }} onClick={() => onEdit(m.code)}>
-                  Change
-                </button>
-              </td>
-              {companies.map((co) => {
-                const at = m.byCompany[String(co.id)] ?? { enabled: false, linked: false, bankAccountCode: null };
-                /* Only banks THIS company has can receive THIS company's money. */
-                const usable = banks.filter((b) => b.byCompany[String(co.id)]?.enabled);
-                return (
-                  <td key={co.id} style={colCell}>
-                    <input type="checkbox" style={tick} checked={at.enabled}
-                      aria-label={`${m.code} for ${co.name}`}
-                      onChange={(e) => save.mutate({ companyId: co.id, code: m.code, enabled: e.target.checked })} />
-                    {at.enabled && (
-                      <div style={{ marginTop: 4 }}>
-                        <select style={{ padding: '3px 6px', fontSize: 'var(--fs-12)', maxWidth: 160 }}
-                          aria-label={`${m.code} bank for ${co.name}`} value={at.bankAccountCode ?? ''}
-                          onChange={(e) => save.mutate({ companyId: co.id, code: m.code, bankAccountCode: e.target.value || null })}>
-                          <option value="">money lands in…</option>
-                          {usable.map((b) => (
-                            <option key={b.account_code} value={b.account_code}>{b.account_name}</option>
-                          ))}
-                        </select>
-                        {!at.bankAccountCode && (
-                          <div style={{ fontSize: 'var(--fs-12)', color: danger }}>company default</div>
-                        )}
-                      </div>
-                    )}
-                  </td>
-                );
-              })}
+    <section className={css.card}>
+      <div className={css.cardHead}>
+        <span className={css.cardTitle}>Merchants</span>
+        <span className={css.hint}>Tick the companies that use each one, and where its money lands.</span>
+      </div>
+      <div className={css.scroll}>
+        <table className={css.grid}>
+          <thead>
+            <tr>
+              <th className={css.groupHead} colSpan={2} />
+              <th className={css.groupHead} colSpan={companies.length}>Companies</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+            <tr>
+              <th className={css.head}>Merchant</th>
+              <th className={css.head}>Report layout</th>
+              {companies.map((co) => (
+                <th key={co.id} className={css.headCompany}>
+                  <div className={css.companyName}>{co.name}</div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {merchants.map((m) => (
+              <tr key={m.code} className={css.row}>
+                <td className={css.label}>
+                  <div className={css.name}>{m.display_name}</div>
+                  {m.code !== m.display_name && <div className={css.sub}>{m.code}</div>}
+                </td>
+                {/* OUTSIDE the company columns, because it belongs to no company. */}
+                <td className={css.shared}>
+                  <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                    <span className={css.pill}>shared by every company</span>
+                    <button type="button" style={{ ...btn(), padding: '2px 10px' }} onClick={() => onEdit(m.code)}>
+                      Change
+                    </button>
+                  </div>
+                  <div className={m.ready ? css.sub : undefined} style={m.ready ? undefined : { fontSize: 'var(--fs-12)', color: danger }}>
+                    {m.ready
+                      ? `${m.statement_format} · ${m.autoMatchable ? 'matches by reference' : 'by hand, always'}`
+                      : 'not taught yet'}
+                  </div>
+                </td>
+                {companies.map((co) => {
+                  const at = m.byCompany[String(co.id)] ?? { enabled: false, linked: false, bankAccountCode: null };
+                  /* Only banks THIS company has can receive THIS company's money. */
+                  const usable = banks.filter((b) => b.byCompany[String(co.id)]?.enabled);
+                  return (
+                    <td key={co.id} className={css.cellCompany}>
+                      <input type="checkbox" className={css.tick} checked={at.enabled}
+                        aria-label={`${m.code} for ${co.name}`}
+                        onChange={(e) => save.mutate({ companyId: co.id, code: m.code, enabled: e.target.checked })} />
+                      {at.enabled && (
+                        <>
+                          <select className={css.bankPick}
+                            aria-label={`${m.code} bank for ${co.name}`} value={at.bankAccountCode ?? ''}
+                            onChange={(e) => save.mutate({ companyId: co.id, code: m.code, bankAccountCode: e.target.value || null })}>
+                            <option value="">money lands in…</option>
+                            {usable.map((b) => (
+                              <option key={b.account_code} value={b.account_code}>{b.account_name}</option>
+                            ))}
+                          </select>
+                          {!at.bankAccountCode && <div className={css.warn}>company default</div>}
+                        </>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </section>
   );
 };
@@ -152,47 +164,66 @@ const BankMatrix = ({ companies, banks }: { companies: MaintenanceCompany[]; ban
   const save = useSaveMaintenanceBank();
 
   return (
-    <section className="space-y-2">
-      <b>Banks</b>
-      <table style={table}>
-        <thead>
-          <tr style={headRow}>
-            <th style={cell}>Account</th><th style={num}>Code</th>
-            {companies.map((co) => <th key={co.id} style={colHead}>{co.name}</th>)}
-          </tr>
-        </thead>
-        <tbody>
-          {banks.map((b) => (
-            <tr key={b.account_code} style={rowLine}>
-              <td style={cell}>{b.account_name}</td>
-              <td style={num}>{b.account_code}</td>
-              {companies.map((co) => {
-                const at = b.byCompany[String(co.id)] ?? { inChart: false, enabled: false, usedBy: [] };
-                /* A code this company simply does not carry is not a box it
-                   could tick — say so rather than offer a lie. */
-                if (!at.inChart) return <td key={co.id} style={{ ...colCell, ...softText }}>not in its chart</td>;
-                return (
-                  <td key={co.id} style={colCell}>
-                    <input type="checkbox" style={tick} checked={at.enabled}
-                      aria-label={`${b.account_code} for ${co.name}`}
-                      onChange={(e) => save.mutate({ companyId: co.id, accountCode: b.account_code, enabled: e.target.checked })} />
-                    {at.usedBy.length > 0 && (
-                      <div style={{ fontSize: 'var(--fs-12)', color: good }}>{at.usedBy.join(', ')}</div>
-                    )}
-                  </td>
-                );
-              })}
+    <section className={css.card}>
+      <div className={css.cardHead}>
+        <span className={css.cardTitle}>Banks</span>
+        <span className={css.hint}>Tick the companies that bank with each account.</span>
+      </div>
+      <div className={css.scroll}>
+        <table className={css.grid}>
+          <thead>
+            <tr>
+              <th className={css.groupHead} colSpan={1} />
+              <th className={css.groupHead} colSpan={companies.length}>Companies</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
+            <tr>
+              <th className={css.head}>Account</th>
+              {companies.map((co) => (
+                <th key={co.id} className={css.headCompany}>
+                  <div className={css.companyName}>{co.name}</div>
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {banks.map((b) => (
+              <tr key={b.account_code} className={css.row}>
+                <td className={css.label}>
+                  <div className={css.name}>{b.account_name}</div>
+                  <div className={css.sub}>{b.account_code}</div>
+                </td>
+                {companies.map((co) => {
+                  const at = b.byCompany[String(co.id)] ?? { inChart: false, enabled: false, usedBy: [] };
+                  /* A code this company simply does not carry is not a box it
+                     could tick — say so rather than offer a lie. */
+                  if (!at.inChart) {
+                    return <td key={co.id} className={css.cellCompany}><span className={css.absent}>not in its chart</span></td>;
+                  }
+                  return (
+                    <td key={co.id} className={css.cellCompany}>
+                      <input type="checkbox" className={css.tick} checked={at.enabled}
+                        aria-label={`${b.account_code} for ${co.name}`}
+                        onChange={(e) => save.mutate({ companyId: co.id, accountCode: b.account_code, enabled: e.target.checked })} />
+                      {at.usedBy.length > 0 && (
+                        <div className={css.users}>
+                          {at.usedBy.map((code) => <span key={code} className={css.userChip}>{code}</span>)}
+                        </div>
+                      )}
+                    </td>
+                  );
+                })}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
       {save.isError && (
-        <div style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
+        <div className={css.error}>
           <AlertTriangle {...ICON} />
           <span>{refusalText(save.error, 'That bank was not changed.')}</span>
         </div>
       )}
-      <div style={softText}>
+      <div className={css.footNote}>
         The accounts come from the chart of accounts, which is maintained centrally. Unticking one a merchant still
         pays into is refused — point the merchant somewhere else first.
       </div>

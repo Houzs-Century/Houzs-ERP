@@ -152,7 +152,9 @@ describe('the bank matrix', () => {
 describe('the report layout — the shared half', () => {
   test('it sits outside every company column, and says it is shared', () => {
     draw();
-    expect(screen.getByText(/Report layout — shared by every company/)).toBeTruthy();
+    /* The shared half is labelled as shared, on the row, outside every company
+       column — the pill is that claim in the furniture. */
+    expect(screen.getAllByText('shared by every company').length).toBe(2);   // one per merchant row
     fireEvent.click(within(merchantRow('PBB')).getByText('Change'));
     expect(screen.getByText(/Every company reads PBB/)).toBeTruthy();
     expect((screen.getByLabelText('PBB Date heading') as HTMLInputElement).value).toBe('Date');
