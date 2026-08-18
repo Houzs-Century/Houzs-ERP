@@ -86,7 +86,7 @@ async function syncAnchorBindingFromProduct(
     price1_sen: number | null;
     seat_height_prices?: ProductSeatCost[] | null;
   },
-  companyId?: number,
+  companyId: number | null,
 ): Promise<void> {
   try {
     // The anchor binding for this code (at most one — enforced app-side).
@@ -889,7 +889,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
       seat_height_prices: 'seat_height_prices' in updates
         ? (updates.seat_height_prices as ProductSeatCost[])
         : ((current.seat_height_prices as ProductSeatCost[] | null) ?? null),
-    }, activeCompanyId(c));
+    }, activeCompanyId(c) ?? null);
   }
 
   // Audit trail. Best-effort — if these fail the price update has already

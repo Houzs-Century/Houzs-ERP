@@ -297,7 +297,7 @@ async function computeAndStoreGrnAllocation(
   items: AllocItemRow[],
   grnRate: unknown,
   method: ReturnType<typeof normalizeAllocationMethod>,
-  companyId?: number | null,
+  companyId: number | null,
 ) {
   // CBM basis needs each goods line's product volume (unit_m3_milli). Resolve
   // per item_code in one round trip; default 0 (the allocator falls back to
@@ -344,7 +344,7 @@ async function computeAndStoreGrnAllocation(
 /* Recompute + persist a GRN's landed allocation from its CURRENT lines + header
    (used after the allocation_method / rate is changed on PATCH, before recost).
    Reads everything off the DB so it's self-contained. Best-effort. */
-async function reallocateGrnCharges(sb: any, grnId: string, companyId?: number | null): Promise<void> {
+async function reallocateGrnCharges(sb: any, grnId: string, companyId: number | null): Promise<void> {
   const { data: head } = await sb.from('grns')
     .select('exchange_rate, allocation_method').eq('id', grnId).maybeSingle();
   const grnRate = (head as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
@@ -2910,7 +2910,7 @@ grns.patch('/:id', async (c) => {
      method. Best-effort; a no-op for an MYR GRN with no service lines. */
   if (rateChanged || methodChanged) {
     try {
-      await reallocateGrnCharges(sb, id, activeCompanyId(c));
+      await reallocateGrnCharges(sb, id, activeCompanyId(c) ?? null);
       await recostFromGrn(sb, id);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-patch] re-alloc/recost failed:', id, e); }
   }
