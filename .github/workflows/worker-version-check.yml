@@ -1,0 +1,44 @@
+name: Worker version check (read-only)
+
+# Answers ONE question the repository cannot answer by reading itself: is there a
+# Cloudflare Worker VERSION sitting above the active deployment, and what created
+# it? That state is what makes `wrangler secret bulk` fail with code 10215, which
+# on 2026-08-18 blocked every backend deploy for nine hours.
+# See docs/deploy-secret-version-deadlock-coe.md.
+#
+# Built as a workflow rather than "go and look at the dashboard" because
+# CLAUDE.md rules the latter out: if a fact lives only in a provider console, the
+# answer is a script plus a manual workflow, not an interruption.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT the deploy's group: this touches nothing and must never queue
+# behind, or displace, a release.
+concurrency:
+  group: worker-version-check
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      # No `npm ci`. The script is dependency-free on purpose — it uses fetch and
+      # nothing else — so this answers in seconds and keeps working in a fresh
+      # worktree with no node_modules.
+      - name: List Worker versions and the active deployment
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        # Exits 0 for every legitimate answer, INCLUDING "there is a stray
+        # version" — that is a finding, not a broken check. Non-zero means
+        # Cloudflare could not be reached or refused the read.
+        run: node scripts/check-worker-versions.mjs --script autocount-sync-api
