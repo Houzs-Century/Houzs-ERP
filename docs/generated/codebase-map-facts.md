@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-136 route modules (40 in `backend/src/routes`, 96 in `backend/src/scm/routes`), 1050 endpoint registrations.
+136 route modules (40 in `backend/src/routes`, 96 in `backend/src/scm/routes`), 1051 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -47,7 +47,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/projects_print.ts` | 1 | 1335 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 371 |
-| `backend/src/routes/sales.ts` | 13 | 1302 |
+| `backend/src/routes/sales.ts` | 13 | 1217 |
 | `backend/src/routes/search.ts` | 1 | 578 |
 | `backend/src/routes/settings.ts` | 4 | 102 |
 | `backend/src/routes/stockItems.ts` | 1 | 28 |
@@ -79,7 +79,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1821 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 789 |
-| `backend/src/scm/routes/document-flow.ts` | 2 | 1036 |
+| `backend/src/scm/routes/document-flow.ts` | 2 | 1029 |
 | `backend/src/scm/routes/dp-orders.ts` | 5 | 605 |
 | `backend/src/scm/routes/driver-leave.ts` | 3 | 156 |
 | `backend/src/scm/routes/drivers.ts` | 3 | 198 |
@@ -102,11 +102,11 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1226 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4587 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11929 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4591 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11908 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
-| `backend/src/scm/routes/mrp.ts` | 1 | 1593 |
+| `backend/src/scm/routes/mrp.ts` | 1 | 1558 |
 | `backend/src/scm/routes/outstanding.ts` | 2 | 244 |
 | `backend/src/scm/routes/payment-audit-log.ts` | 1 | 427 |
 | `backend/src/scm/routes/payment-vouchers.ts` | 6 | 1057 |
@@ -171,13 +171,13 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1463 files, 581665 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1454 files, 579380 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15120 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11929 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11908 |
 | `frontend/src/pages/ServiceCases.tsx` | 8844 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5790 |
@@ -185,10 +185,10 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `frontend/src/pages/scm-v2/Products.tsx` | 5425 |
 | `backend/src/routes/projects.ts` | 5131 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
-| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4587 |
+| `backend/src/scm/routes/mfg-purchase-orders.ts` | 4591 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4489 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4192 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4183 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3727 |
 | `backend/src/scm/routes/grns.ts` | 3648 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
@@ -383,7 +383,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileLogin.tsx` | 171 |
 | `frontend/src/mobile/MobileMailCenter.tsx` | 1246 |
 | `frontend/src/mobile/MobileMileageCapture.tsx` | 395 |
-| `frontend/src/mobile/MobileModuleDetail.tsx` | 1968 |
+| `frontend/src/mobile/MobileModuleDetail.tsx` | 1934 |
 | `frontend/src/mobile/MobileModuleForm.tsx` | 389 |
 | `frontend/src/mobile/MobileModuleList.tsx` | 2105 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3727 |
