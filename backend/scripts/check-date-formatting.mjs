@@ -194,8 +194,29 @@ const SHAPES = [
 
        THE HONEST LIMIT, and the self-test pins it: this sees a date-ish literal
        INSIDE the braces. `type={inputType}`, where the string is decided
-       elsewhere, is invisible to any regex and is not claimed to be covered. */
+       further away, is invisible here — the rule below narrows that gap for the
+       one shape it actually took in this repo, and no regex closes it fully. */
     re: /\btype\s*=\s*\{[^}]*["'](?:date|datetime-local)["']/,
+  },
+  {
+    id: "date-input-type-in-a-variable",
+    /* `const type = field.type === "date" ? "date" : "text"` — the input type
+       decided one line ABOVE the input and passed in as `type={type}`, which
+       computed-date-input-type cannot see.
+
+       This is the shape UdfCell.tsx took, and it is why this rule exists rather
+       than being waved off as unreachable: "date" is a first-class UdfFieldType,
+       so every operator who added a date column to a table got a native
+       OS-locale input in the grid. It survived the 2026-06-18 build, the #2390
+       sweep of all 175, and the first two rules above.
+
+       Deliberately narrow: it fires only on a variable whose NAME contains
+       "type" being assigned a date-ish literal, which is what makes it an input
+       type rather than data. Measured before adding — ZERO hits across
+       frontend/src and backend/src once UdfCell was fixed, so it costs no
+       false positives today. A date literal assigned to a variable named
+       something else is still invisible, and that is stated, not claimed. */
+    re: /\b(?:const|let|var)\s+\w*[Tt]ype\w*\s*(?::[^=]+)?=\s*[^;]*["'](?:date|datetime-local)["']/,
   },
   {
     id: "iso-to-slashes",
@@ -324,6 +345,9 @@ const norm = (s) => s.trim().replace(/\s+/g, " ");
     // The DYNAMIC spelling — the one that survived both previous passes.
     ['<input type={f.type === "date" ? "date" : "text"} value={v} />', "computed-date-input-type"],
     ["<input type={isWhen ? 'datetime-local' : 'text'} value={v} />", "computed-date-input-type"],
+    // The type decided a line ABOVE the input — UdfCell's shape.
+    ['const type = field.type === "number" ? "number" : field.type === "date" ? "date" : "text";', "date-input-type-in-a-variable"],
+    ["let inputType = isWhen ? 'datetime-local' : 'text';", "date-input-type-in-a-variable"],
     "const s = iso.replace(/T.*$/, '').replace(/-/g, '/');",
     "return `${m[3]}/${m[2]}/${m[1]}`;",
     "return `${dd}/${mm}/${yyyy}`;",

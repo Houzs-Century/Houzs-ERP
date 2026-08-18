@@ -1,4 +1,4 @@
-## The date fix reached every literal `type="date"`, and two other spellings of the same bug went straight through [medium]
+## The date fix reached every literal `type="date"`, and three other spellings of the same bug went straight through [medium]
 
 <!-- area: Frontend + mobile -->
 
@@ -40,7 +40,17 @@ order with the same split.
 - `pages/Announcements.tsx` — "Hide automatically after"
 - `pages/Projects.tsx` — the OUT/RETURN transfer timestamp
 
-**Two — a native date input written as an EXPRESSION.**
+**Two — the input type decided in a VARIABLE.** `components/UdfCell.tsx` had
+`const type = field.type === "number" ? "number" : field.type === "date" ? "date"
+: "text";` and then `<input type={type} …>`. `"date"` is a first-class
+`UdfFieldType`, so this one was USER REACHABLE with no code change at all: every
+operator who added a date column to a table got a native OS-locale input in the
+grid. It survived the June build, the sweep of all 175, and the gate — the type
+never appears next to the input. Found only because the repo's own
+completeness-claim gate refused the phrase "all five wrappers" without a
+reproducible enumeration, and the enumeration listed two files I had not read.
+
+**Three — a native date input written as an EXPRESSION.**
 `mobile/MobileServiceCase.tsx`'s `EditableAcc` rendered
 `<input type={f.type === "date" ? "date" : "text"} …>`. Every rule keyed on a
 quote straight after `type=`; here the next character is `{`. So this one input
@@ -78,12 +88,15 @@ instead; adopting that here would mean a field that used to save nothing starts
 saving `00:00`, and a silently invented time is not a change to make inside a
 display fix.
 
-**The gate, so there is no third rediscovery.** Two new shapes —
-`raw-datetime-input` and `computed-date-input-type` — in the script that already
-runs in the required `backend-typecheck` job. Both proven by planting in the
+**The gate, so there is no third rediscovery.** Three new shapes —
+`raw-datetime-input`, `computed-date-input-type` and
+`date-input-type-in-a-variable` — in the script that already runs in the
+required `backend-typecheck` job. The third was measured before it was added:
+ZERO hits across `frontend/src` and `backend/src` once UdfCell was fixed, so it
+buys its coverage at no false-positive cost. Both proven by planting in the
 REAL source tree: exit 1 naming the file and the shape, exit 0 once removed
 (1454 files, 53 hits, 0 unreviewed). The existing `raw-date-input` was
-re-planted and still bites. Five new cases in `dateFormatGate.test.ts` make it
+re-planted and still bites. Six new cases in `dateFormatGate.test.ts` make it
 permanent, including the wrapper-prop spelling — the bug can arrive on a line
 with no `<input` token on it, which is exactly how the 26 reviewed date entries
 are written — and two NEGATIVE cases, because `computed-date-input-type` keys on
@@ -97,8 +110,8 @@ are also OS-locale rendered and are NOT gated. None puts a day number beside a
 month number, which is the only way a date gets MISREAD — 14:30 and 2:30 PM are
 the same minute. A gate that fires on cosmetic variation is a gate somebody
 switches off, which is how the previous generation of checks here died. And one
-hole is named rather than papered over: `type={inputType}`, where the string is
-decided elsewhere, is invisible to any regex and is not claimed.
+hole is named rather than papered over: a date literal assigned to a variable
+NOT named like a type is still invisible to any regex, and is not claimed.
 
 ## The Cloudflare version check shipped without credentials — the secrets are environment-scoped, not repo-scoped [low]
 

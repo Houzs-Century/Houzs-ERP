@@ -367,14 +367,17 @@ immediately after `date`). Six survived, and the sharpest pair was on one
 screen: in the delivery-planning drawer **Arrival** and **Departure** were
 native `datetime-local` while **Shipout Date**, directly beneath them in the
 same column, was already a `DateField` — the owner's own complaint, reproduced
-one field apart inside the component built to end it. The second spelling was
-`type={f.type === "date" ? "date" : "text"}`: a native date input written as an
-*expression*, invisible to every rule keyed on a quote after `type=`, which is
-how it survived the June build, the August sweep, **and** the gate that sweep
-shipped. Fixed 2026-08-18 with `DateTimeField` (the date half goes through
+one field apart inside the component built to end it. Two more spellings hid the type from
+every rule keyed on a quote after `type=`: `type={f.type === "date" ? "date" :
+"text"}` (an *expression*), and `const type = … ? "date" : "text"` with
+`type={type}` (a *variable*, one line up). Both survived the June build, the
+August sweep, **and** the gate that sweep shipped. The second was **user
+reachable with no code change** — `"date"` is a first-class `UdfFieldType`, so
+every operator who added a date column to a table got a native OS-locale input
+in the grid. Fixed 2026-08-18 with `DateTimeField` (the date half goes through
 `DateField`; the time half stays a native `type="time"`, which carries no
-day/month ambiguity), plus `raw-datetime-input` and `computed-date-input-type`
-in the gate. The lesson is narrower than "write it down once": **a gate is only
+day/month ambiguity), plus `raw-datetime-input`, `computed-date-input-type`
+and `date-input-type-in-a-variable` in the gate. The lesson is narrower than "write it down once": **a gate is only
 as wide as the spellings it imagines**, so each rule now names what it cannot
 see.
 

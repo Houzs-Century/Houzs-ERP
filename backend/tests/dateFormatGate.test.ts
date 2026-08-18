@@ -184,6 +184,32 @@ describe("the one-date-format gate", () => {
     }
   });
 
+  /* THE TYPE DECIDED A LINE ABOVE THE INPUT. `const type = … ? "date" : "text"`
+     then `type={type}` — invisible to the computed rule, which needs the literal
+     inside the braces. This is the shape UdfCell.tsx took, and it was USER
+     REACHABLE: "date" is a first-class UdfFieldType, so anyone who added a date
+     column to a table got a native OS-locale input in the grid. It survived the
+     June build, the sweep of all 175, and both rules above it. */
+  test("FAILS on an input type decided in a variable — the UdfCell shape", { timeout: SPAWN_TIMEOUT_MS }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "date-format-gate-var-"));
+    try {
+      const planted = path.join(dir, "PlantedVariable.tsx");
+      fs.writeFileSync(
+        planted,
+        'export const F = () => { const type = f.type === "date" ? "date" : "text"; return <input type={type} value={v} />; };\n',
+      );
+      const bad = run(dir);
+      expect(bad.code, `expected a FAILURE, got:\n${bad.out.slice(-3000)}`).toBe(1);
+      expect(bad.out).toContain("date-input-type-in-a-variable");
+
+      fs.rmSync(planted);
+      const good = run(dir);
+      expect(good.code, good.out.slice(-3000)).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   /* The computed rule keys on `type=` + a BRACE. A colon (object literal, TS
      annotation) and a comparison (`===`) must stay silent, or the file that
      motivated the rule would fail on five other lines and the rule would be
