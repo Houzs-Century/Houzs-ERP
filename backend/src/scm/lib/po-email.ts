@@ -11,6 +11,7 @@
 // recalled, so each guard below states what it is protecting against.
 
 import { documentEmailHtml } from '../../services/email';
+import { fmtDate } from '../shared/format';
 
 /* Attachment cap. Resend's own documented limit is 40 MB across the whole
    message, but the number that matters is smaller and comes from HOOKKA:
@@ -143,7 +144,7 @@ export function buildPurchaseOrderEmail(
       recipientName: row.supplier?.name ?? 'Supplier',
       rows: [
         { label: 'PO No.', value: docNo },
-        { label: 'Date', value: String(row.po_date ?? '').slice(0, 10) || '-' },
+        { label: 'Date', value: fmtDate(row.po_date) },
         { label: 'Total', value: `${currency} ${total}` },
       ],
       companyName,

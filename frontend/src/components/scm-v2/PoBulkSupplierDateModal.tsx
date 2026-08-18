@@ -23,6 +23,7 @@ import { CalendarClock } from "lucide-react";
 import { ModalOverlay } from "./DocumentRelationshipMapModal";
 import { Button } from "../Button";
 import { authedFetch, humanApiError } from "../../vendor/scm/lib/authed-fetch";
+import { DateField } from "../../vendor/scm/components/DateField";
 
 /* Same unwrap PoAmendmentCreateModal uses: authedFetch's rejection carries the
    raw status + body, which humanApiError turns into a sentence. */
@@ -151,10 +152,10 @@ export function PoBulkSupplierDateModal({
           <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
             New date
           </span>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={date}
-            onChange={(e) => setDate(e.target.value)}
+            onChange={(iso) => setDate(iso)}
             className="rounded-lg border border-border bg-surface px-3 py-2 text-[13px] text-ink outline-none focus:border-primary"
           />
         </label>

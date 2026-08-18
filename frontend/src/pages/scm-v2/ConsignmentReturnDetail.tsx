@@ -56,6 +56,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -768,8 +769,13 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
           <div className={styles.formGrid4}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Return Date</span>
-              <input type="date" className={styles.fieldInput} value={form.returnDate}
-                disabled={inputsDisabled} onChange={(e) => set('returnDate', e.target.value)} />
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.returnDate}
+                disabled={inputsDisabled}
+                onChange={(iso) => set('returnDate', iso)}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Building Type</span>

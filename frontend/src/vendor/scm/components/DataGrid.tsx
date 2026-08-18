@@ -37,6 +37,7 @@ import {
 } from 'react';
 import { Search, Columns3, RotateCcw, Filter, Download, GripVertical, X, ChevronsUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
+import { isoForExport } from '../../shared/format'; // a date cell exports as ISO, never as displayed
 import { useDebouncedValue } from '../lib/hooks';
 import { SkeletonRows } from './Skeleton';
 import { DateField } from './DateField';
@@ -1374,19 +1375,18 @@ function DataGridInner<T>({
     const cols = visibleColumns.filter((c) => !c.key.startsWith('__'));
     if (cols.length === 0) return;
     const cellText = (c: DataGridColumn<T>, row: T): string | number => {
-      // Export the CLEAN display value — NOT the global-search blob. searchValue
-      // is built for the search box and often concatenates several
-      // representations of one cell (doc-no + status, raw + formatted phone,
-      // label + value); dumping it made every cell look duplicated/merged
-      // ("SO-2606-031 CONFIRMED", "Installment installment", doubled phone —
-      // Wei Siang 2026-06-20). Prefer an explicit exportValue, then the single
-      // filterValue, then the text the cell actually renders. searchValue is
-      // NEVER exported.
-      if (c.exportValue) return c.exportValue(row);
-      if (c.filterValue) return c.filterValue(row);
+      // Export the CLEAN cell value — NOT the global-search blob. searchValue is
+      // built for the search box and often concatenates several representations of
+      // one cell (doc-no + status, phone, label + value); dumping it made every
+      // cell look duplicated/merged ("SO-2606-031 CONFIRMED", "Installment
+      // installment", doubled phone — Wei Siang 2026-06-20). Prefer exportValue,
+      // then filterValue, then what the cell renders; searchValue is NEVER
+      // exported. A DATE leaves as ISO — sheets sort text. See isoForExport.
+      if (c.exportValue) return isoForExport(c.exportValue(row));
+      if (c.filterValue) return isoForExport(c.filterValue(row));
       const rendered = coerceSearchString(c.accessor(row)).trim();
-      if (rendered) return rendered;
-      if (c.groupValue) return c.groupValue(row);
+      if (rendered) return isoForExport(rendered);
+      if (c.groupValue) return isoForExport(c.groupValue(row));
       return '';
     };
     // Header for a column in the sheet: an explicit exportLabel (used by pure
