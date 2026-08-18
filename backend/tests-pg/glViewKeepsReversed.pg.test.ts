@@ -129,7 +129,7 @@ const CONTRA = '22222222-2222-2222-2222-222222222222';
 /** An issued invoice, then cancelled: the original flagged, a contra posted. */
 async function seedReversalPair(sql: Sql): Promise<void> {
   await sql.unsafe(`
-    INSERT INTO scm.accounts VALUES ('4000', 'Revenue', 'INCOME');
+    INSERT INTO scm.accounts VALUES ('4000', 'Revenue', 'INCOME', 1);
     INSERT INTO scm.journal_entries (id, je_no, entry_date, posted, reversed, reversed_by_je, company_id)
       VALUES ('${ORIGINAL}', 'JE-1', DATE '2026-08-01', true, true, '${CONTRA}', 1),
              ('${CONTRA}',   'JE-2', DATE '2026-08-02', true, false, NULL, 1);
@@ -185,10 +185,49 @@ describePg('scm.v_gl_entries — mig *_scm_gl_keep_reversed_originals', () => {
     expect(rows.find((r: Record<string, unknown>) => r.je_no === 'JE-1')!.reversed).toBe(true);
   });
 
+  /* THE FAN-OUT, on its own terms. Deliberately does NOT reuse seedReversalPair:
+     the pre-state view carries `AND j.reversed = false`, so one of that pair's
+     two lines is hidden and the counts would be reasoning about the reversal
+     filter rather than about the join. One plain posted line, and both companies
+     holding the same account code — the shape production took when mig 0297 gave
+     company 1 company 2's 31-account chart. Measured there 2026-08-18:
+     /accounting/gl returned 12 rows holding 6 distinct line_id. */
+  async function seedOnePostedLineBothCompaniesOwnTheCode(): Promise<void> {
+    await admin.unsafe(`
+      INSERT INTO scm.accounts VALUES ('4000', 'Revenue', 'INCOME', 1),
+                                      ('4000', 'Revenue', 'INCOME', 2);
+      INSERT INTO scm.journal_entries (id, je_no, entry_date, posted, reversed, company_id)
+        VALUES ('${ORIGINAL}', 'JE-1', DATE '2026-08-01', true, false, 1);
+      INSERT INTO scm.journal_entry_lines (id, journal_entry_id, line_no, account_code, credit_sen, debit_sen)
+        VALUES ('${ORIGINAL}', '${ORIGINAL}', 1, '4000', 1000000, 0);
+    `);
+    /* Prove the fixture is what this test thinks it is BEFORE it blames the
+       view. Two earlier attempts read a wrong row count as a view that did not
+       fan out, when it was a seed that had not landed. */
+    const accts = await admin.unsafe(`SELECT company_id FROM scm.accounts WHERE account_code = '4000'`);
+    expect(accts).toHaveLength(2);
+  }
+
+  test('the LIVE view emits one line twice once both companies hold the same code', async () => {
+    await seedOnePostedLineBothCompaniesOwnTheCode();
+    const rows = await admin.unsafe(`SELECT line_id FROM scm.v_gl_entries`);
+    expect(rows).toHaveLength(2);
+    expect(new Set(rows.map((r: Record<string, unknown>) => String(r.line_id))).size).toBe(1);
+  });
+
+  test('mig 0303: one row per line, and it belongs to the owning company', async () => {
+    await admin.unsafe(await migrationSql('_scm_gl_keep_reversed_originals.sql'));
+    await admin.unsafe(await migrationSql('_acc_gl_views_composite_account_key.sql'));
+    await seedOnePostedLineBothCompaniesOwnTheCode();
+    const rows = await admin.unsafe(`SELECT line_id, company_id FROM scm.v_gl_entries`);
+    expect(rows).toHaveLength(1);
+    expect(Number(rows[0]!.company_id)).toBe(1);
+  });
+
   test('an UNPOSTED draft is still excluded — j.posted = true was kept', async () => {
     await admin.unsafe(await migrationSql('_scm_gl_keep_reversed_originals.sql'));
     await admin.unsafe(`
-      INSERT INTO scm.accounts VALUES ('4000', 'Revenue', 'INCOME');
+      INSERT INTO scm.accounts VALUES ('4000', 'Revenue', 'INCOME', 1);
       INSERT INTO scm.journal_entries (id, je_no, entry_date, posted, company_id)
         VALUES ('${ORIGINAL}', 'JE-DRAFT', DATE '2026-08-01', false, 1);
       INSERT INTO scm.journal_entry_lines (id, journal_entry_id, line_no, account_code, credit_sen)
