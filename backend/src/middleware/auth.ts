@@ -1,6 +1,7 @@
 import type { MiddlewareHandler } from "hono";
 import type { Env } from "../types";
 import { getUserBySession, type AuthUser } from "../services/auth";
+import { tryPassAuth } from "../services/session-pass";
 import { hasPermission } from "../services/permissions";
 import { isSalesDirectorUser, isSalesUser, isDirectorUser } from "../services/pmsAccess";
 import {
@@ -139,6 +140,22 @@ export const auth: MiddlewareHandler<{ Bindings: Env }> = async (c, next) => {
   ) {
     c.set("user", SERVICE_USER);
     c.set("userId", (SERVICE_USER as any).id ?? null);
+    await next();
+    return;
+  }
+
+  // STAGE 3 — a valid, current signed pass authorizes with NO database read.
+  // tryPassAuth returns null on ANY doubt (feature off / no pass / bad or
+  // expired signature / revoked), and every one of those falls straight through
+  // to the authoritative getUserBySession path below. So a pass NEVER grants
+  // access on its own — it only ever SKIPS the DB when it is genuinely valid and
+  // has not been revoked. When SESSION_SIGNING_KEY is unset this is a no-op and
+  // every request takes the DB path exactly as before.
+  const passUser = await tryPassAuth(c.env, c.req.header("X-Session-Pass") || "", token, Date.now());
+  if (passUser) {
+    c.set("user", passUser);
+    c.set("userId", passUser.id);
+    c.set("sessionOrigin", passUser.session_origin ?? undefined);
     await next();
     return;
   }

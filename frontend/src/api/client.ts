@@ -66,6 +66,16 @@ export const passStore = {
   },
 };
 
+/** The signed pass header for a request (stage 3). Empty when there is no pass,
+ *  so a legacy client or a deployment without the signing secret sends nothing
+ *  and the server takes the DB path. Sent BESIDE the Bearer token, never instead
+ *  of it: the server binds the pass to the token and falls back to the token's
+ *  DB validation on any mismatch. */
+function passHeader(): Record<string, string> {
+  const p = readAuthPass();
+  return p ? { "X-Session-Pass": p } : {};
+}
+
 /**
  * Listeners for unauthenticated responses. The AuthContext subscribes
  * to these to log the user out and bounce them back to the login page
@@ -448,7 +458,7 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
     const startedAt = performance.now();
     try {
       const headers = new Headers({
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(),
         "Content-Type": "application/json",
         ...companyHeader(),
       });
@@ -607,7 +617,7 @@ export const api = {
     const res = await binaryFetch(`${baseUrl}${path}`, {
       method: "PUT",
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(),
         "Content-Type": contentType,
         ...companyHeader(),
       },
@@ -632,7 +642,7 @@ export const api = {
     const res = await binaryFetch(`${baseUrl}${path}`, {
       method: "POST",
       headers: {
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(),
         "Content-Type": contentType,
         ...companyHeader(),
       },
@@ -662,7 +672,7 @@ export const api = {
     for (const f of files) form.append(fieldName, f);
     const res = await binaryFetch(`${baseUrl}${path}`, {
       method: "POST",
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
       body: form,
     }, UPLOAD_TIMEOUT_MS);
     if (!res.ok) {
@@ -689,7 +699,7 @@ export const api = {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
       method: "POST",
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
       body: form,
     }, UPLOAD_TIMEOUT_MS);
     if (!res.ok) {
@@ -710,7 +720,7 @@ export const api = {
   async fetchBlobUrl(path: string, typeHint?: string | null): Promise<string> {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
     }, BINARY_GET_TIMEOUT_MS);
     if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
     return consumeCorrelated(res, async () => {
@@ -739,7 +749,7 @@ export const api = {
   async downloadFile(path: string, fallbackName = "download"): Promise<void> {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
     }, BINARY_GET_TIMEOUT_MS);
     if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
     await consumeCorrelated(res, async () => {
@@ -767,7 +777,7 @@ export const api = {
   async getHtml(path: string): Promise<string> {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
     }, BINARY_GET_TIMEOUT_MS);
     if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
     let html = "";
@@ -780,7 +790,7 @@ export const api = {
   async openHtml(path: string): Promise<void> {
     const token = tokenStore.get();
     const res = await binaryFetch(`${baseUrl}${path}`, {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...companyHeader() },
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...passHeader(), ...companyHeader() },
     }, BINARY_GET_TIMEOUT_MS);
     if (!res.ok) throw new HttpError(res.status, res.statusText, requestIdFromResponse(res));
     await consumeCorrelated(res, async () => {

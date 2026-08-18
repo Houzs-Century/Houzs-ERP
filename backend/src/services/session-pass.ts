@@ -25,7 +25,9 @@
 // signed pass would only make the pass go stale for no security gain.
 // ----------------------------------------------------------------------------
 import type { AuthUser } from './auth';
-import { signSessionToken, type SessionClaims } from './session-token';
+import type { Env } from '../types';
+import { signSessionToken, verifySessionToken, type SessionClaims } from './session-token';
+import { passIsRevoked, sidFor } from './session-revocation';
 
 /** 8 hours — one working day. A pass self-expires at the end of the day; the
  *  revocation list (stage 4) handles anything faster than that. Long enough
@@ -71,6 +73,11 @@ export interface SessionPassClaims extends SessionClaims {
   /** authz_fingerprint at issue time. Stage 4 revocation compares against it so
    *  a role/permission change can invalidate outstanding passes. */
   fp: string | null;
+  /** Session id — a hash of the opaque token (session-revocation.sidFor). The
+   *  revocation board's SID level keys on this, so a logout voids just THIS
+   *  device's pass and not the user's other devices. Null on a pass minted
+   *  without a session (not a current path). */
+  sid: string | null;
 }
 
 /** Sign an AuthUser into a staff pass. Pure: no DB, no env — the caller has
@@ -79,9 +86,15 @@ export async function issueSessionPass(
   user: AuthUser,
   secret: string,
   nowMs: number,
+  /** The session id from `sidFor(token)`, or null. REQUIRED (never optional):
+   *  it DECIDES whether a logout can void this pass, and an absent sid silently
+   *  makes the pass un-revocable-by-device. Pass explicit null only where there
+   *  is genuinely no session. */
+  sid: string | null,
 ): Promise<string> {
   const claims: SessionPassClaims = {
     exp: nowMs + SESSION_PASS_TTL_MS,
+    sid,
     uid: user.id,
     email: user.email,
     name: user.name,
@@ -135,4 +148,46 @@ export function authUserFromPass(claims: SessionPassClaims): AuthUser {
     authz_fingerprint: claims.fp ?? undefined,
     session_origin: claims.origin,
   };
+}
+
+/**
+ * The request-path entry point (stage 3): turn a signed pass into an AuthUser
+ * with NO database read, or return null so the caller falls back to the DB
+ * session path.
+ *
+ * Returns null on ANY doubt, and every one of these is a SAFE fall-through to
+ * the authoritative DB path — which is exactly why the whole feature turns off
+ * by simply not setting the secret:
+ *   • no secret set  → the feature is off;
+ *   • no pass sent   → a legacy client, or a request before stage-3 rollout;
+ *   • bad / expired signature;
+ *   • the pass is on the revocation board (logged out, or the user's authz
+ *     changed after it was issued).
+ * The caller (middleware/auth.ts) then runs the existing getUserBySession path,
+ * so a revoked or unverifiable pass never grants access — it only ever SKIPS
+ * the DB when it is genuinely valid and current.
+ */
+export async function tryPassAuth(
+  env: unknown,
+  pass: string,
+  /** The opaque session token from the request's Authorization header. The pass
+   *  must belong to THIS token, so a lifted pass presented with another token is
+   *  rejected. REQUIRED (never optional): it DECIDES whether the pass is bound
+   *  to the caller. */
+  token: string,
+  nowMs: number,
+): Promise<AuthUser | null> {
+  const secret = sessionSigningSecret(env);
+  if (!secret || !pass || !token) return null;
+  const r = await verifySessionToken(pass, secret, nowMs);
+  if (!r.ok) return null;
+  const claims = r.claims as SessionPassClaims;
+  // BINDING: sid is the hash of the token the pass was minted for. A pass whose
+  // sid does not match this request's token — a stolen or mismatched pass — is
+  // refused and falls back to the DB path, where the token itself is validated.
+  // A pass with no sid is not trusted on the fast path either.
+  if (!claims.sid || claims.sid !== (await sidFor(token))) return null;
+  const iat = typeof claims.iat === 'number' ? claims.iat : 0;
+  if (await passIsRevoked(env as Env, claims.uid, claims.sid, iat)) return null;
+  return authUserFromPass(claims);
 }

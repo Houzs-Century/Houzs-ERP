@@ -4,9 +4,11 @@ import {
   issueSessionPass,
   authUserFromPass,
   sessionSigningSecret,
+  tryPassAuth,
   SESSION_PASS_TTL_MS,
   type SessionPassClaims,
 } from './session-pass';
+import { sidFor, revokeUser } from './session-revocation';
 import type { AuthUser } from './auth';
 
 const SECRET = 'a-sufficiently-long-signing-secret';
@@ -29,7 +31,7 @@ const USER: AuthUser = {
   department_id: 5,
   department_name: 'Sales Department',
   brand_scope: ['AKEMI', 'ZANOTTI'],
-  page_access: { 'scm.sales': 'write', 'projects': 'read' } as AuthUser['page_access'],
+  page_access: { 'scm.sales': 'write', 'projects': 'read' } as unknown as AuthUser['page_access'],
   scm_l2_configured: true,
   authz_fingerprint: 'fp-abc-123',
   session_origin: null,
@@ -37,7 +39,7 @@ const USER: AuthUser = {
 
 describe('session-pass — issue and rebuild the authorization envelope', () => {
   test('a pass carries the whole authz envelope and verifies', async () => {
-    const pass = await issueSessionPass(USER, SECRET, NOW);
+    const pass = await issueSessionPass(USER, SECRET, NOW, 'sid-test-abc');
     const r = await verifySessionToken(pass, SECRET, NOW);
     expect(r.ok).toBe(true);
     if (r.ok) {
@@ -53,7 +55,7 @@ describe('session-pass — issue and rebuild the authorization envelope', () => 
   });
 
   test('authUserFromPass rebuilds an equivalent AuthUser, permissions_set included', async () => {
-    const pass = await issueSessionPass(USER, SECRET, NOW);
+    const pass = await issueSessionPass(USER, SECRET, NOW, 'sid-test-abc');
     const r = await verifySessionToken(pass, SECRET, NOW);
     expect(r.ok).toBe(true);
     if (!r.ok) return;
@@ -81,9 +83,53 @@ describe('session-pass — issue and rebuild the authorization envelope', () => 
   });
 
   test('a pass signed for one book of claims cannot be reused past expiry', async () => {
-    const pass = await issueSessionPass(USER, SECRET, NOW);
+    const pass = await issueSessionPass(USER, SECRET, NOW, 'sid-test-abc');
     const past = await verifySessionToken(pass, SECRET, NOW + SESSION_PASS_TTL_MS + 1);
     expect(past.ok).toBe(false);
     if (!past.ok) expect(past.reason).toBe('expired');
+  });
+});
+
+
+function fakeKV() {
+  const m = new Map<string, string>();
+  return { get: async (k: string) => m.get(k) ?? null, put: async (k: string, v: string) => { m.set(k, v); } };
+}
+
+describe('tryPassAuth — verify + bind-to-token + revocation on the request path', () => {
+  test('a valid pass bound to its token yields the AuthUser, no DB read', async () => {
+    const token = 'the-opaque-token';
+    const pass = await issueSessionPass(USER, SECRET, NOW, await sidFor(token));
+    const env = { SESSION_SIGNING_KEY: SECRET, SESSION_CACHE: fakeKV() };
+    const u = await tryPassAuth(env, pass, token, NOW);
+    expect(u?.id).toBe(42);
+    expect(u?.permissions_set.has('sales.write')).toBe(true);
+  });
+
+  test('a pass presented with a DIFFERENT token is refused (binding)', async () => {
+    const pass = await issueSessionPass(USER, SECRET, NOW, await sidFor('token-A'));
+    const env = { SESSION_SIGNING_KEY: SECRET, SESSION_CACHE: fakeKV() };
+    expect(await tryPassAuth(env, pass, 'token-B', NOW)).toBeNull();
+  });
+
+  test('a revoked pass is refused so the caller falls back to the DB', async () => {
+    const token = 'tok';
+    const pass = await issueSessionPass(USER, SECRET, NOW, await sidFor(token));
+    const env = { SESSION_SIGNING_KEY: SECRET, SESSION_CACHE: fakeKV() };
+    await revokeUser(env as never, USER.id, NOW + 100); // revoke AFTER issue
+    expect(await tryPassAuth(env, pass, token, NOW + 200)).toBeNull();
+  });
+
+  test('no signing secret set -> null (feature off)', async () => {
+    const token = 't';
+    const pass = await issueSessionPass(USER, SECRET, NOW, await sidFor(token));
+    expect(await tryPassAuth({ SESSION_CACHE: fakeKV() }, pass, token, NOW)).toBeNull();
+  });
+
+  test('an expired pass -> null', async () => {
+    const token = 't';
+    const pass = await issueSessionPass(USER, SECRET, NOW, await sidFor(token));
+    const env = { SESSION_SIGNING_KEY: SECRET, SESSION_CACHE: fakeKV() };
+    expect(await tryPassAuth(env, pass, token, NOW + SESSION_PASS_TTL_MS + 1)).toBeNull();
   });
 });
