@@ -128,14 +128,14 @@ const takeFixture = (over?: Partial<Row>): Record<string, Row[]> => ({
     assignee_staff_id: CALLER_STAFF, blind: false, ...over,
   }],
   stock_take_lines: [{
-    id: 'ln-1', stock_take_id: 'st-1', product_code: 'CODY', product_name: 'Cody sofa',
+    id: 'ln-1', stock_take_id: 'st-1', item_code: 'CODY', product_name: 'Cody sofa',
     variant_key: '', system_qty: 10, counted_qty: 12, variance: 2, notes: null,
   }],
   inventory_balances: [{
-    company_id: CO, warehouse_id: 'w1', product_code: 'CODY', variant_key: '', qty: 10,
+    company_id: CO, warehouse_id: 'w1', item_code: 'CODY', variant_key: '', qty: 10,
   }],
   inventory_lots: [{
-    company_id: CO, warehouse_id: 'w1', product_code: 'CODY', variant_key: '',
+    company_id: CO, warehouse_id: 'w1', item_code: 'CODY', variant_key: '',
     unit_cost_sen: 1000, qty_remaining: 10, source_doc_type: 'GRN', received_at: '2026-08-01T00:00:00Z',
   }],
   inventory_movements: [],
@@ -196,7 +196,7 @@ describe('post gate — variance threshold', () => {
     expect(res.status).toBe(403);
     const body = await res.json() as Row;
     expect(body.error).toBe('variance_supervisor_required');
-    expect(body.productCodes).toEqual(['CODY']);
+    expect(body.itemCodes).toEqual(['CODY']);
     expect(body.postReverted).toBe(true);
     // The refusal SAYS a supervisor is needed, and survives the client filter.
     expect(String(body.message)).toContain('supervisor');
@@ -279,14 +279,14 @@ describe('blind counts — server-side stripping', () => {
 describe('create — assignee required, NONZERO scope', () => {
   const createTables = (): Record<string, Row[]> => ({
     v_inventory_all_skus: [
-      { warehouse_id: 'w1', product_code: 'CODY', product_name: 'Cody sofa', category: 'SOFA' },
-      { warehouse_id: 'w1', product_code: 'EMPTY', product_name: 'Ghost SKU', category: 'SOFA' },
-      { warehouse_id: 'w1', product_code: 'ZEROED', product_name: 'Consumed SKU', category: 'SOFA' },
+      { warehouse_id: 'w1', item_code: 'CODY', product_name: 'Cody sofa', category: 'SOFA' },
+      { warehouse_id: 'w1', item_code: 'EMPTY', product_name: 'Ghost SKU', category: 'SOFA' },
+      { warehouse_id: 'w1', item_code: 'ZEROED', product_name: 'Consumed SKU', category: 'SOFA' },
     ],
     inventory_balances: [
-      { company_id: CO, warehouse_id: 'w1', product_code: 'CODY', variant_key: 'fabriccode=bf-16', product_name: 'Cody sofa', qty: 3 },
-      { company_id: CO, warehouse_id: 'w1', product_code: 'CODY', variant_key: 'fabriccode=bf-17', product_name: 'Cody sofa', qty: 0 },
-      { company_id: CO, warehouse_id: 'w1', product_code: 'ZEROED', variant_key: '', product_name: 'Consumed SKU', qty: 0 },
+      { company_id: CO, warehouse_id: 'w1', item_code: 'CODY', variant_key: 'fabriccode=bf-16', product_name: 'Cody sofa', qty: 3 },
+      { company_id: CO, warehouse_id: 'w1', item_code: 'CODY', variant_key: 'fabriccode=bf-17', product_name: 'Cody sofa', qty: 0 },
+      { company_id: CO, warehouse_id: 'w1', item_code: 'ZEROED', variant_key: '', product_name: 'Consumed SKU', qty: 0 },
     ],
     stock_takes: [],
     stock_take_lines: [],
@@ -332,7 +332,7 @@ describe('create — assignee required, NONZERO scope', () => {
     expect(res.status).toBe(201);
     expect(((await res.json()) as Row).lineCount).toBe(1);
     expect(t.stock_take_lines).toHaveLength(1);
-    expect(t.stock_take_lines[0].product_code).toBe('CODY');
+    expect(t.stock_take_lines[0].item_code).toBe('CODY');
     expect(t.stock_take_lines[0].system_qty).toBe(3);
     expect(t.stock_takes[0].blind).toBe(true);
     expect(t.stock_takes[0].scope_type).toBe('NONZERO');

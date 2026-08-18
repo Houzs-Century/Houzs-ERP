@@ -60,7 +60,7 @@ const summarizeItems = (items: PoHeaderRow['items']): string | null => {
   if (!items || items.length === 0) return null;
   const HEAD = 3;
   const shown = items.slice(0, HEAD)
-    .map((it) => `${it.material_code}×${it.qty}`)
+    .map((it) => `${it.item_code}×${it.qty}`)
     .join(' · ');
   const extra = items.length - HEAD;
   return extra > 0 ? `${shown} · +${extra} more` : shown;
@@ -105,7 +105,7 @@ const buildColumns = (): DataGridColumn<PoHeaderRow>[] => [
       const summary = summarizeItems(po.items);
       return (
         <span
-          title={(po.items ?? []).map((it) => `${it.material_code} × ${it.qty}`).join('\n')}
+          title={(po.items ?? []).map((it) => `${it.item_code} × ${it.qty}`).join('\n')}
           style={{
             display: 'block',
             fontFamily: 'var(--font-mono)',
@@ -120,7 +120,7 @@ const buildColumns = (): DataGridColumn<PoHeaderRow>[] => [
         </span>
       );
     },
-    searchValue: (po) => (po.items ?? []).map((it) => `${it.material_code} ${it.qty}`).join(' '),
+    searchValue: (po) => (po.items ?? []).map((it) => `${it.item_code} ${it.qty}`).join(' '),
     /* Accessor is JSX → export the readable "code×qty · …" summary string. */
     exportValue: (po) => summarizeItems(po.items) ?? '',
   },
@@ -282,9 +282,9 @@ const buildDrilldownColumns = (
   },
   {
     key: 'item_code', label: 'Item Code', width: 130,
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.material_code}</span>,
-    searchValue: (it) => it.material_code,
-    sortFn: (a, b) => (a.material_code ?? '').localeCompare(b.material_code ?? ''),
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.item_code}</span>,
+    searchValue: (it) => it.item_code,
+    sortFn: (a, b) => (a.item_code ?? '').localeCompare(b.item_code ?? ''),
   },
   {
     key: 'description', label: 'Description', width: 240, minWidth: 180,

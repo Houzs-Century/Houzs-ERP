@@ -453,8 +453,8 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Total", money(h.total_sen), "var(--ink)"],
     ],
     line: (it) => ({
-      name: firstOf(it.material_name, it.description, it.material_code),
-      sub: join(it.material_code, s(it.qty_accepted).trim() ? `Accepted ${s(it.qty_accepted)}` : ""),
+      name: firstOf(it.material_name, it.description, it.item_code),
+      sub: join(it.item_code, s(it.qty_accepted).trim() ? `Accepted ${s(it.qty_accepted)}` : ""),
       qty: it.qty_received ?? it.qty_accepted,
       unitSen: it.unit_price_sen,
       amountSen: it.line_total_sen,
@@ -482,14 +482,14 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Total", money(h.total_sen), "var(--ink)"],
     ],
     line: (it) => ({
-      name: firstOf(it.material_name, it.description, it.material_code),
+      name: firstOf(it.material_name, it.description, it.item_code),
       /* variant summary FIRST (item #1 of the mobile UI audit — every doc line
-         surfaces the sofa/bedframe colour+composition), then material_code +
+         surfaces the sofa/bedframe colour+composition), then item_code +
          cumulative received_qty. buildVariantSummary returns "" when the row
          has no variants, so a bare material line still reads correctly. */
       sub: join(
         buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
-        it.material_code,
+        it.item_code,
         s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : "",
       ),
       qty: it.qty,
@@ -541,13 +541,13 @@ const DOC_MODULES: Record<string, DocMap> = {
         ["Balance", money(bal), bal > 0 ? "#a16a2e" : "var(--ink)"],
       ];
     },
-    /* line: PI items key on material_code (PC/PO family) rather than item_code —
+    /* line: PI items key on item_code (PC/PO family) rather than item_code —
        hand it to lineIdentity as the code, description = material_name, and put
        the variant summary in secondary so the sofa/bedframe spec shows on every
        row. Falls back to the server-stamped description2 for pre-variant rows. */
     line: (it) => {
       const { primary } = lineIdentity({
-        code: it.material_code,
+        code: it.item_code,
         description: it.material_name ?? it.description,
       });
       return {
@@ -589,7 +589,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     ],
     line: (it) => {
       const { primary } = lineIdentity({
-        code: it.material_code,
+        code: it.item_code,
         description: it.material_name,
       });
       return {
@@ -806,14 +806,14 @@ const DOC_MODULES: Record<string, DocMap> = {
     ],
     line: (it) => {
       const { primary } = lineIdentity({
-        code: it.material_code,
+        code: it.item_code,
         description: it.material_name ?? it.description,
       });
       return {
         name: primary,
         sub: join(
           buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
-          it.material_code,
+          it.item_code,
           s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : "",
         ),
         qty: it.qty,
@@ -852,14 +852,14 @@ const DOC_MODULES: Record<string, DocMap> = {
     ],
     line: (it) => {
       const { primary } = lineIdentity({
-        code: it.material_code,
+        code: it.item_code,
         description: it.material_name ?? it.description,
       });
       return {
         name: primary,
         sub: join(
           buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
-          it.material_code,
+          it.item_code,
           s(it.qty_accepted).trim() ? `Accepted ${s(it.qty_accepted)}` : "",
         ),
         qty: it.qty_received ?? it.qty_accepted,
@@ -898,7 +898,7 @@ const DOC_MODULES: Record<string, DocMap> = {
     ],
     line: (it) => {
       const { primary } = lineIdentity({
-        code: it.material_code,
+        code: it.item_code,
         description: it.material_name,
       });
       return {
@@ -1579,7 +1579,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
               {!!error && !isLoading && <div style={{ fontSize: 11.5, color: "#b23a3a", padding: "9px 0" }}>Couldn't load line items. Please try again.</div>}
               {!isLoading && !error && (items.length ? items.map((it, i) => {
                 const l = map.line(it);
-                const code = String(((it?.material_code ?? it?.item_code) ?? "")).trim();
+                const code = String(((it?.item_code ?? it?.item_code) ?? "")).trim();
                 const assigned = coverageType ? (originByCode.get(code) ?? []) : undefined;
                 /* mig 0235 — PO lines carry their sub-numbered allocations off
                    the same detail read (display-only twin of the desktop
@@ -1693,8 +1693,8 @@ const SIMPLE_META: Record<string, { eyebrow: (r: any) => string; title: (r: any)
     status: () => "",
   },
   inventory: {
-    eyebrow: (r) => firstOf(r.product_code),
-    title: (r) => firstOf(r.product_name, r.product_code),
+    eyebrow: (r) => firstOf(r.item_code),
+    title: (r) => firstOf(r.product_name, r.item_code),
     status: () => "",
   },
   drivers: {

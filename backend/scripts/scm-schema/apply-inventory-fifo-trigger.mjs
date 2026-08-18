@@ -57,12 +57,12 @@ try {
     try {
       await sql.begin(async (tx) => {
         const ins = await tx`insert into scm.inventory_movements ${tx({
-          movement_type:'IN', warehouse_id:wh, product_code:'ZZSELFTEST', variant_key:'',
+          movement_type:'IN', warehouse_id:wh, item_code:'ZZSELFTEST', variant_key:'',
           product_name:'selftest', qty:5, unit_cost_sen:1000,
           source_doc_type:'GRN', source_doc_no:'GRN-SELFTEST', performed_by:null,
         })} returning id`;
         const lots = await tx`select qty_received, unit_cost_sen from scm.inventory_lots where movement_id=${ins[0].id}`;
-        const bal  = await tx`select qty from scm.inventory_balances where warehouse_id=${wh} and product_code='ZZSELFTEST'`;
+        const bal  = await tx`select qty from scm.inventory_balances where warehouse_id=${wh} and item_code='ZZSELFTEST'`;
         console.log(`SELFTEST: lot rows=${lots.length} qty=${lots[0]?.qty_received} cost=${lots[0]?.unit_cost_sen}; balance qty=${bal[0]?.qty}`);
         throw new Error("__ROLLBACK__");
       });

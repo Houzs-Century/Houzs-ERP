@@ -31,7 +31,7 @@ type PiHeader = {
   grn?: { grn_number: string } | null;
 };
 type PiItem = {
-  material_code: string; material_name: string;
+  item_code: string; material_name: string;
   qty: number; unit_price_sen: number; line_total_sen: number;
   /* Dual-code extras — optional so older call sites keep compiling. */
   supplier_sku?: string | null;
@@ -122,11 +122,11 @@ export async function renderPurchaseInvoiceInto(
 
   /* Canonical SKU/build order (sofa modules LHF→NA→RHF, mains→accessories→
      services) — mirror the sales side. The shared helper keys on `item_code`;
-     PI lines expose `material_code`, so sort a shimmed view that carries the
+     PI lines expose `item_code`, so sort a shimmed view that carries the
      original row back unchanged (render-time only, no persistence touched). */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      items.map((it) => ({ ...it, item_code: it.material_code, __row: it })),
+      items.map((it) => ({ ...it, item_code: it.item_code, __row: it })),
       (r) => r.item_group as string | null | undefined,
     ),
   ).map((r) => r.__row);
@@ -137,7 +137,7 @@ export async function renderPurchaseInvoiceInto(
     return [
       String(idx + 1),
       supplierCodeFor(it, skuMap),
-      it.material_code,
+      it.item_code,
       specs ? `${desc}\n${specs}` : desc,
       String(it.qty),
       fmtRm(it.unit_price_sen, header.currency),

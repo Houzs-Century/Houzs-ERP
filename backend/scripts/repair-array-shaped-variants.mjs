@@ -157,7 +157,7 @@ async function main() {
   const rows = [];
   for (const arm of ARMS) {
     const have = has.get(arm.t) ?? new Set();
-    const idCol = ['item_code', 'sku_code', 'product_code'].find((cName) => have.has(cName));
+    const idCol = ['item_code', 'sku_code', 'item_code'].find((cName) => have.has(cName));
     const r = await sql.unsafe(
       `SELECT i.id::text AS id, ${idCol ? `i.${idCol}` : 'NULL'} AS item_code, i.variants::text AS raw
          FROM ${arm.t} i

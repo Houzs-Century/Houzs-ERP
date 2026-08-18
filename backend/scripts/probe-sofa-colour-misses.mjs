@@ -39,10 +39,10 @@ async function main() {
     ORDER BY h.doc_no, i.item_code`;
   // scm.purchase_orders numbers its documents `po_number`, not `doc_no` -
   // only scm.mfg_sales_orders carries doc_no (and joins on it).
-  const poLines = await sql`SELECT h.po_number AS doc_no, i.material_code AS code, i.description2 AS d2, i.variants
+  const poLines = await sql`SELECT h.po_number AS doc_no, i.item_code AS code, i.description2 AS d2, i.variants
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL
-    ORDER BY h.po_number, i.material_code`;
+    ORDER BY h.po_number, i.item_code`;
   log(`migrated sofa lines: SO ${soLines.length}, PO ${poLines.length}`);
 
   const miss = [], pend = [];

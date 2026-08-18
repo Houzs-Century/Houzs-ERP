@@ -37,7 +37,7 @@ type RackStatus = 'OCCUPIED' | 'EMPTY' | 'RESERVED';
 type RackItemRow = {
   id: string;
   rack_id: string;
-  product_code: string;
+  item_code: string;
   variant_key?: string;
   product_name: string | null;
   size_label: string | null;
@@ -51,9 +51,9 @@ type RackItemRow = {
 const RACK_COLS =
   'id, warehouse_id, rack, position, status, reserved, notes, created_at, updated_at';
 const ITEM_COLS =
-  'id, rack_id, product_code, variant_key, product_name, size_label, customer_name, source_doc_no, qty, stocked_in_date, notes';
+  'id, rack_id, item_code, variant_key, product_name, size_label, customer_name, source_doc_no, qty, stocked_in_date, notes';
 const MOVE_COLS =
-  'id, movement_type, rack_id, rack_label, to_rack_id, to_rack_label, warehouse_id, product_code, variant_key, product_name, source_doc_no, quantity, reason, performed_by, created_at';
+  'id, movement_type, rack_id, rack_label, to_rack_id, to_rack_label, warehouse_id, item_code, variant_key, product_name, source_doc_no, quantity, reason, performed_by, created_at';
 
 // Derive rack status from its items + reserved flag. Items always win:
 // a reserved rack that has items is still OCCUPIED (matches the source system).
@@ -323,9 +323,9 @@ warehouse.post('/stock-in', async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
   const rackId = String(body.rackId ?? '').trim();
-  const productCode = String(body.productCode ?? '').trim();
+  const itemCode = String(body.itemCode ?? '').trim();
   if (!rackId) return c.json({ error: 'rack_required' }, 400);
-  if (!productCode) return c.json({ error: 'product_code_required' }, 400);
+  if (!itemCode) return c.json({ error: 'item_code_required' }, 400);
   const qty = Math.max(1, Number(body.qty ?? 1) || 1);
 
   // Multi-company: resolve strictly, then scope the rack load so stock can only
@@ -352,7 +352,7 @@ warehouse.post('/stock-in', async (c) => {
   const { data: item, error: itemErr } = await sb.from('warehouse_rack_items').insert({
     company_id: activeCompanyId(c), // multi-company: stamp the active company
     rack_id: rackId,
-    product_code: productCode,
+    item_code: itemCode,
     product_name: productName,
     size_label: sizeLabel,
     customer_name: customerName,
@@ -371,7 +371,7 @@ warehouse.post('/stock-in', async (c) => {
     rack_id: rackId,
     rack_label: rack.rack,
     warehouse_id: rack.warehouse_id,
-    product_code: productCode,
+    item_code: itemCode,
     product_name: productName,
     source_doc_no: sourceDocNo,
     quantity: qty,
@@ -430,7 +430,7 @@ warehouse.post('/stock-out', async (c) => {
     rack_id: rack?.id ?? null,
     rack_label: rack?.rack ?? null,
     warehouse_id: rack?.warehouse_id ?? null,
-    product_code: itemRow.product_code,
+    item_code: itemRow.item_code,
     product_name: itemRow.product_name,
     source_doc_no: itemRow.source_doc_no,
     quantity: itemRow.qty,
@@ -499,7 +499,7 @@ warehouse.post('/transfer', async (c) => {
   const { data: dstExisting } = await scopeToCompanyId(sb.from('warehouse_rack_items')
     .select('id, qty')
     .eq('rack_id', toRackId)
-    .eq('product_code', itemRow.product_code)
+    .eq('item_code', itemRow.item_code)
     .eq('variant_key', vk), co.companyId)
     .limit(1)
     .maybeSingle();
@@ -511,7 +511,7 @@ warehouse.post('/transfer', async (c) => {
     await sb.from('warehouse_rack_items').insert({
       company_id: activeCompanyId(c), // multi-company: stamp the active company
       rack_id: toRackId,
-      product_code: itemRow.product_code,
+      item_code: itemRow.item_code,
       variant_key: vk,
       product_name: itemRow.product_name,
       size_label: itemRow.size_label ?? null,
@@ -533,7 +533,7 @@ warehouse.post('/transfer', async (c) => {
     to_rack_id: toRack.id,
     to_rack_label: toRack.rack,
     warehouse_id: fromRack.warehouse_id,
-    product_code: itemRow.product_code,
+    item_code: itemRow.item_code,
     variant_key: vk,
     product_name: itemRow.product_name,
     source_doc_no: itemRow.source_doc_no ?? null,

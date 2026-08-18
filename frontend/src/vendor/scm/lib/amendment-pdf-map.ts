@@ -62,7 +62,7 @@ export type SoAmendmentDetail = {
    Detail shape from GET /api/scm/po-amendments/:id:
      amendment { amendment_no, status, reason, created_at, requested_by,
                  approved_by, approved_at }
-     lines[]   { change_type, new_material_code, new_material_name, new_qty,
+     lines[]   { change_type, new_item_code, new_material_name, new_qty,
                  new_unit_price_sen, new_delivery_date, old_snapshot }
      purchaseOrder { po_number, status, revision } */
 export type PoAmendmentDetail = {
@@ -77,7 +77,7 @@ export type PoAmendmentDetail = {
   };
   lines: Array<{
     change_type?: string | null;
-    new_material_code?: string | null;
+    new_item_code?: string | null;
     new_material_name?: string | null;
     new_qty?: number | null;
     new_unit_price_sen?: number | null;
@@ -162,18 +162,18 @@ function buildPoRows(lines: PoAmendmentDetail['lines']): AmendmentChangeRow[] {
   for (const l of lines) {
     const change = String(l.change_type ?? '').toUpperCase();
     const snap = (l.old_snapshot ?? {}) as Record<string, unknown>;
-    const item = str(l.new_material_code ?? snap.material_code) + (l.new_material_name ? ` — ${l.new_material_name}` : '');
+    const item = str(l.new_item_code ?? snap.item_code) + (l.new_material_name ? ` — ${l.new_material_name}` : '');
 
     if (change === 'REMOVE') {
-      rows.push({ item: str(snap.material_name ?? snap.material_code), field: 'Line', before: `Qty ${str(snap.qty)}`, after: 'Removed', kind: 'REMOVE' });
+      rows.push({ item: str(snap.material_name ?? snap.item_code), field: 'Line', before: `Qty ${str(snap.qty)}`, after: 'Removed', kind: 'REMOVE' });
       continue;
     }
     if (change === 'ADD') {
       rows.push({ item, field: 'Line', before: '—', after: `Qty ${str(l.new_qty)} @ ${money(l.new_unit_price_sen)}`, kind: 'ADD' });
       continue;
     }
-    if (change === 'SPEC' && l.new_material_code && String(l.new_material_code) !== String(snap.material_code ?? '')) {
-      rows.push({ item, field: 'Spec', before: str(snap.material_code), after: str(l.new_material_code), kind: 'CHANGE' });
+    if (change === 'SPEC' && l.new_item_code && String(l.new_item_code) !== String(snap.item_code ?? '')) {
+      rows.push({ item, field: 'Spec', before: str(snap.item_code), after: str(l.new_item_code), kind: 'CHANGE' });
     }
     if (l.new_qty != null && String(l.new_qty) !== String(snap.qty ?? '')) {
       rows.push({ item, field: 'Quantity', before: str(snap.qty), after: str(l.new_qty), kind: 'CHANGE' });

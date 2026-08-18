@@ -176,7 +176,7 @@ export type CountableRow = {
 
 /** One PO line as the picker needs it, with its parent embedded. */
 export type OutstandingPoRow = {
-  id: string; purchase_order_id: string; material_kind: string; material_code: string;
+  id: string; purchase_order_id: string; material_kind: string; item_code: string;
   material_name: string; supplier_sku: string | null; item_group: string | null;
   description: string | null;
   /* `received_qty` is `number | null`, not `number`. The column is NOT NULL in
@@ -213,7 +213,7 @@ export type OutstandingPoRow = {
    second round trip in the caller, because a Supabase nested select cannot reach
    `warehouses` through the items -> po hop cleanly. */
 const OUTSTANDING_SELECT = `
-      id, purchase_order_id, material_kind, material_code, material_name, supplier_sku, item_group,
+      id, purchase_order_id, material_kind, item_code, material_name, supplier_sku, item_group,
       description, qty, received_qty, unit_price_sen, warehouse_id, variants, delivery_date,
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
       po:purchase_orders!inner ( id, po_number, supplier_id, status, po_date, expected_at,
@@ -403,7 +403,7 @@ export async function toOutstandingPoItems(
       poItemId:        r.id,
       poId:            r.po.id,
       poDocNo:         r.po.po_number,
-      itemCode:        r.material_code,
+      itemCode:        r.item_code,
       /* Owner 2026-07-27 — the SUPPLIER's own code, snapshotted on the PO line
          at raise time (#1189). Carried so the New-GRN line (and the grn_items
          snapshot it saves) shows the code the supplier's delivery note uses. */

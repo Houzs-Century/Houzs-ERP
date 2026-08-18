@@ -14,10 +14,10 @@
 type MovementInput = {
   movement_type: 'IN' | 'OUT' | 'ADJUSTMENT';
   warehouse_id: string;
-  product_code: string;
+  item_code: string;
   /** Migration 0095 — canonical attribute-composition bucket key
    *  (packages/shared computeVariantKey). Stock is bucketed by
-   *  (warehouse_id, product_code, variant_key). Omit / '' = unclassified. */
+   *  (warehouse_id, item_code, variant_key). Omit / '' = unclassified. */
   variant_key?: string;
   product_name?: string | null;
   /** For IN / OUT: positive count. For ADJUSTMENT: signed delta
@@ -282,7 +282,7 @@ export async function defaultWarehouseId(
 }
 
 /**
- * Resolve the dye-lot batch each (product_code, variant_key) bucket should carry
+ * Resolve the dye-lot batch each (item_code, variant_key) bucket should carry
  * when shipping OUT of a warehouse, derived from the OPEN lots physically in that
  * warehouse. For each bucket: carry the batch ONLY when the warehouse holds the
  * stock under a SINGLE non-null batch (unambiguous — e.g. a showroom warehouse
@@ -301,15 +301,15 @@ export async function resolveWarehouseLotBatches(
   try {
     const { data: lots, error } = await sb
       .from('v_inventory_lots_open')
-      .select('product_code, variant_key, batch_no, qty_remaining')
+      .select('item_code, variant_key, batch_no, qty_remaining')
       .eq('warehouse_id', warehouseId)
       .not('batch_no', 'is', null)
       .gt('qty_remaining', 0);
     if (!error) {
       const batches = new Map<string, Set<string>>();
-      for (const r of (lots ?? []) as Array<{ product_code: string; variant_key: string | null; batch_no: string | null }>) {
+      for (const r of (lots ?? []) as Array<{ item_code: string; variant_key: string | null; batch_no: string | null }>) {
         if (!r.batch_no) continue;
-        const k = `${r.product_code}::${r.variant_key ?? ''}`;
+        const k = `${r.item_code}::${r.variant_key ?? ''}`;
         const set = batches.get(k) ?? new Set<string>();
         set.add(r.batch_no);
         batches.set(k, set);
@@ -323,7 +323,7 @@ export async function resolveWarehouseLotBatches(
 }
 
 /**
- * Resolve the CURRENT weighted-average unit cost (sen) per (product_code,
+ * Resolve the CURRENT weighted-average unit cost (sen) per (item_code,
  * variant_key) bucket from the OPEN lots in a warehouse. Used as a cost fallback
  * for a stock-IN whose document carries no cost (e.g. a free-entry consignment
  * return at 0): re-entering at the SKU's real on-hand cost — instead of opening a
@@ -339,13 +339,13 @@ export async function resolveWarehouseLotCosts(
   try {
     const { data: lots, error } = await sb
       .from('v_inventory_lots_open')
-      .select('product_code, variant_key, qty_remaining, unit_cost_sen')
+      .select('item_code, variant_key, qty_remaining, unit_cost_sen')
       .eq('warehouse_id', warehouseId)
       .gt('qty_remaining', 0);
     if (!error) {
       const acc = new Map<string, { qty: number; cost: number }>();
-      for (const r of (lots ?? []) as Array<{ product_code: string; variant_key: string | null; qty_remaining: number; unit_cost_sen: number | null }>) {
-        const k = `${r.product_code}::${r.variant_key ?? ''}`;
+      for (const r of (lots ?? []) as Array<{ item_code: string; variant_key: string | null; qty_remaining: number; unit_cost_sen: number | null }>) {
+        const k = `${r.item_code}::${r.variant_key ?? ''}`;
         const q = Number(r.qty_remaining ?? 0);
         if (q <= 0) continue;
         const a = acc.get(k) ?? { qty: 0, cost: 0 };
@@ -364,7 +364,7 @@ export async function resolveWarehouseLotCosts(
 /**
  * Receipt-time drop-ship reconcile (migration 0057). After a GRN writes its IN
  * movements (which the FIFO trigger turned into fresh batched lots), call this
- * with the (warehouse, product_code, variant_key, batch_no) buckets that were
+ * with the (warehouse, item_code, variant_key, batch_no) buckets that were
  * just received. For each batched bucket it invokes fn_reconcile_dropship_batch,
  * which consumes the outstanding drop-ship SHORTFALL (= Σ OUT(batch) − Σ
  * already-consumed(batch)) from the new lots so coverage + valuation reflect
@@ -376,14 +376,14 @@ export async function resolveWarehouseLotCosts(
 export async function reconcileDropshipBatches(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   sb: any,
-  buckets: Array<{ warehouse_id: string; product_code: string; variant_key: string; batch_no: string | null }>,
+  buckets: Array<{ warehouse_id: string; item_code: string; variant_key: string; batch_no: string | null }>,
   performedBy: string | null,
 ): Promise<{ ok: boolean; reconciled: number; affectedDoIds: string[]; reason?: string }> {
   // Dedupe to one call per distinct batched bucket.
   const seen = new Set<string>();
   const distinct = buckets.filter((b) => {
     if (!b.batch_no) return false;
-    const k = `${b.warehouse_id}::${b.product_code}::${b.variant_key ?? ''}::${b.batch_no}`;
+    const k = `${b.warehouse_id}::${b.item_code}::${b.variant_key ?? ''}::${b.batch_no}`;
     if (seen.has(k)) return false;
     seen.add(k);
     return true;
@@ -394,7 +394,7 @@ export async function reconcileDropshipBatches(
     try {
       const { error } = await sb.rpc('fn_reconcile_dropship_batch', {
         p_warehouse_id: b.warehouse_id,
-        p_product_code: b.product_code,
+        p_item_code: b.item_code,
         p_variant_key: b.variant_key ?? '',
         p_batch_no: b.batch_no,
         p_created_by: performedBy,
@@ -420,13 +420,13 @@ export async function reconcileDropshipBatches(
   if (reconciled > 0) {
     try {
       const batches = [...new Set(distinct.map((b) => b.batch_no).filter((x): x is string => !!x))];
-      const codes = [...new Set(distinct.map((b) => b.product_code))];
+      const codes = [...new Set(distinct.map((b) => b.item_code))];
       const { data: outs } = await sb
         .from('inventory_movements')
-        .select('source_doc_type, source_doc_id, batch_no, product_code')
+        .select('source_doc_type, source_doc_id, batch_no, item_code')
         .eq('movement_type', 'OUT')
         .in('batch_no', batches)
-        .in('product_code', codes);
+        .in('item_code', codes);
       for (const m of (outs ?? []) as Array<{ source_doc_type: string | null; source_doc_id: string | null }>) {
         if ((m.source_doc_type ?? '').toUpperCase() !== 'DO' || !m.source_doc_id) continue;
         affectedDoIds.add(m.source_doc_id);
@@ -463,7 +463,7 @@ export async function reconcileDropshipBatches(
  * likewise keeps its own bespoke reversal.
  *
  * ── Idempotency guard (no dedicated "reversed" column exists) ──────────────
- * We sum the SIGNED qty (IN = +qty, OUT = −qty) per (product_code, variant_key,
+ * We sum the SIGNED qty (IN = +qty, OUT = −qty) per (item_code, variant_key,
  * warehouse_id) across ALL rows for this (source_doc_type, source_doc_id),
  * INCLUDING any reversal rows we wrote on a prior call (they carry the same
  * source_doc_id). A bucket whose signed net is already 0 is fully reversed →
@@ -472,7 +472,7 @@ export async function reconcileDropshipBatches(
  *
  * Best-effort, mirroring writeMovements: we never throw. Each reversal row is
  * inserted INDIVIDUALLY (not one batch) so a single failure — e.g. a partial
- * UNIQUE index that keys on (source_doc_type, source_doc_id, product_code,
+ * UNIQUE index that keys on (source_doc_type, source_doc_id, item_code,
  * variant_key) and therefore rejects a same-key opposite row, as DO/DR have
  * (uq_inv_mov_do_source / uq_inv_mov_dr_source, both confirmed live) — does not
  * sink the rest. We report counts so the caller can log without rolling back.
@@ -493,13 +493,13 @@ export async function reverseMovements(
        without it and every reversing row stays un-batched (old behaviour). */
     let movsRes = await sb
       .from('inventory_movements')
-      .select('movement_type, warehouse_id, product_code, variant_key, batch_no, product_name, qty, unit_cost_sen, source_doc_no, company_id')
+      .select('movement_type, warehouse_id, item_code, variant_key, batch_no, product_name, qty, unit_cost_sen, source_doc_no, company_id')
       .eq('source_doc_type', sourceDocType)
       .eq('source_doc_id', sourceDocId);
     if (movsRes.error && (movsRes.error.message ?? '').includes('batch_no')) {
       movsRes = await sb
         .from('inventory_movements')
-        .select('movement_type, warehouse_id, product_code, variant_key, product_name, qty, unit_cost_sen, source_doc_no, company_id')
+        .select('movement_type, warehouse_id, item_code, variant_key, product_name, qty, unit_cost_sen, source_doc_no, company_id')
         .eq('source_doc_type', sourceDocType)
         .eq('source_doc_id', sourceDocId);
     }
@@ -509,7 +509,7 @@ export async function reverseMovements(
     type Row = {
       movement_type: 'IN' | 'OUT' | 'ADJUSTMENT' | string;
       warehouse_id: string;
-      product_code: string;
+      item_code: string;
       variant_key: string | null;
       batch_no?: string | null;
       product_name: string | null;
@@ -526,7 +526,7 @@ export async function reverseMovements(
     const netByBucket = new Map<string, number>();
     // batch_no joins the bucket key so a batched (sofa) lot reverses against its
     // own dye-lot, not a co-mingled plain-FIFO net. Non-batched rows segment '' .
-    const bucketKey = (r: Row) => `${r.warehouse_id}::${r.product_code}::${r.variant_key ?? ''}::${r.batch_no ?? ''}`;
+    const bucketKey = (r: Row) => `${r.warehouse_id}::${r.item_code}::${r.variant_key ?? ''}::${r.batch_no ?? ''}`;
     for (const r of rows) {
       if (r.movement_type !== 'IN' && r.movement_type !== 'OUT') continue;
       const signed = r.movement_type === 'IN' ? r.qty : -r.qty;
@@ -550,7 +550,7 @@ export async function reverseMovements(
       const row: MovementInput = {
         movement_type: opposite,
         warehouse_id: r.warehouse_id,
-        product_code: r.product_code,
+        item_code: r.item_code,
         variant_key: r.variant_key ?? '',
         product_name: r.product_name,
         qty: r.qty,

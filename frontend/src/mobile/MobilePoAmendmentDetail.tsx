@@ -50,7 +50,7 @@ const TONE_BADGE_CLASS: Record<StatusTone, string> = {
 const fmtSen = (centi: number | null | undefined): string => fmtMoneySen(centi);
 
 type PoOldSnapshot = {
-  material_code?: string | null;
+  item_code?: string | null;
   material_name?: string | null;
   qty?: number | null;
   unit_price_sen?: number | null;
@@ -116,7 +116,7 @@ function DiffRow({ line }: { line: PoAmendmentLine }) {
   const old = oldOf(line);
   const isAdd = line.change_type === "ADD";
   const isRemove = line.change_type === "REMOVE";
-  const newCode = line.new_material_code ?? old.material_code ?? null;
+  const newCode = line.new_item_code ?? old.item_code ?? null;
   return (
     <div style={{ padding: "9px 0", borderTop: "1px solid var(--line2)" }}>
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
@@ -128,7 +128,7 @@ function DiffRow({ line }: { line: PoAmendmentLine }) {
       {isRemove ? (
         <div style={{ marginTop: 3, fontSize: 12.5 }}>
           <span style={{ textDecoration: "line-through", color: "var(--mut)" }}>
-            {old.material_code ?? "—"} · Qty {old.qty ?? "—"}
+            {old.item_code ?? "—"} · Qty {old.qty ?? "—"}
           </span>
           <span style={{ color: "var(--red)", fontWeight: 700 }}> → Removed</span>
         </div>
@@ -266,7 +266,7 @@ export function MobilePoAmendmentDetail({
       notify({
         title: "Amendment rejected",
         ...(released.length > 0
-          ? { body: `Released to STOCK: ${released.map((x) => `${x.materialCode} ×${x.qty}`).join(", ")} — MRP will re-show the corrected spec as shortage.` }
+          ? { body: `Released to STOCK: ${released.map((x) => `${x.itemCode} ×${x.qty}`).join(", ")} — MRP will re-show the corrected spec as shortage.` }
           : {}),
       });
     } catch (e) {

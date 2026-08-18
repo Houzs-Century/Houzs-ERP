@@ -15,7 +15,7 @@ import { parseBedframe } from '../scripts/lib/parse-bedframe.mjs';
    `a line stamped from another line's text is caught`.
 
    The collision, restated: pre-#1958 refresh-po-variants.mjs looked its parse up
-   by `${linked_ac_docno}|${material_code}`, which is not a line identity. Two
+   by `${linked_ac_docno}|${item_code}`, which is not a line identity. Two
    export rows sharing that pair collapsed onto the LAST one, whose parse was
    then stamped onto every ERP line sharing the key. */
 
@@ -60,7 +60,7 @@ const OWN = `frontdrawer/Col:PC151-01/Div:8"+1"/M'GP:14"`;      // dtl 884635, t
 const SURVIVOR = `frontdrawer/Col:PC151-01/Div:8"+1"/M'GP:10"`; // dtl 884637
 
 const line = (over: Record<string, unknown> = {}) => ({
-  id: 'row-1', po_number: 'HC-PO-000001', ac: 'PO-009722', material_code: 'CODY-(Q)',
+  id: 'row-1', po_number: 'HC-PO-000001', ac: 'PO-009722', item_code: 'CODY-(Q)',
   dtl: 884635, status: 'RECEIVED', d2: OWN, variants: blockOf(OWN), ...over,
 });
 

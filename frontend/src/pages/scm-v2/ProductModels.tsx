@@ -955,7 +955,7 @@ export function NewModelDialog({
         // supplier LIST (an SKU can have 2-3 suppliers, each with their own
         // code). `results` and `rows` share the same order/length, so
         // results[i] pairs with rows[i] (the source row holding the supplier
-        // configs). materialCode is the AUTHORITATIVE server-returned code; the
+        // configs). itemCode is the AUTHORITATIVE server-returned code; the
         // per-SKU supplier code reuses the proven composeSupplierSku (size-aware)
         // so we never write the bare model code to every SKU (the
         // duplicate-supplier-code bug from PR #206/#209). Best-effort: the SKUs
@@ -983,7 +983,7 @@ export function NewModelDialog({
               const skuObj: Pick<MfgProductRow, 'code' | 'category' | 'size_code'> = { code, category, size_code: sizeCode };
               return {
                 materialKind:   'mfg_product' as MaterialKind,
-                materialCode:   code,
+                itemCode:   code,
                 materialName:   code,
                 supplierSku:    composeSupplierSku(baseCode, skuObj),
                 unitPriceSen: priceSen,
@@ -1912,7 +1912,7 @@ export function ModularAssignSupplierDialog({
         const supplierSku = composeSupplierSku(code, sku);
         bucket.push({
           materialKind:   'mfg_product' as MaterialKind,
-          materialCode:   sku.code,
+          itemCode:   sku.code,
           materialName:   sku.name ?? sku.code,
           supplierSku,
           unitPriceSen: d.unitPriceSen,

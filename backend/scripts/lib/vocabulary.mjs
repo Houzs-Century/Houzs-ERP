@@ -101,6 +101,20 @@ export const VOCABULARY = [
       "(`project_brands`, per company) and checked by `audit:branding-vocabulary`.",
   },
   {
+    concept: "Item code (SKU reference)",
+    canonical: "item_code",
+    alsoCanonical: [],
+    retired: ["material_code", "product_code"],
+    declaredIn: "backend/src/scm/routes/mfg-products.ts",
+    allow: ["scripts/lib/vocabulary.mjs", "scripts/lib/drift-catalogue.mjs"],
+    note:
+      "The SKU reference on a line item. AutoCount (the system of record) calls it " +
+      "ItemCode, so item_code is canonical; material_code (purchasing) and product_code " +
+      "(inventory) were the drift, renamed on 18 columns by migration 0307 (2026-08-19). " +
+      "The master table mfg_products keys the SKU as `code`; item_code is the reference. " +
+      "The dead `public`-schema copies still carry the old names and are out of scope.",
+  },
+  {
     concept: "Money (minor unit)",
     canonical: "_sen",
     alsoCanonical: [],

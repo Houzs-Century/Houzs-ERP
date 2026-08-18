@@ -94,10 +94,10 @@ const supplierNameOf = (r: PoHeaderRow): string =>
 const supplierCodeOf = (r: PoHeaderRow): string => r.supplier?.code || "—";
 
 /* Items summary for the list column + Excel export (owner 2026-08-05) — the
-   list embed already carries (material_code, qty) per line; render the same
+   list embed already carries (item_code, qty) per line; render the same
    compact "CODE×qty · CODE×qty" the expansion details. */
 const itemsSummaryOf = (r: PoHeaderRow): string =>
-  (r.items ?? []).map((it) => `${it.material_code}×${it.qty}`).join(" · ");
+  (r.items ?? []).map((it) => `${it.item_code}×${it.qty}`).join(" · ");
 
 /* Purchase Location display (owner 2026-08-05) — warehouse NAME, code fallback. */
 const locationOf = (r: PoHeaderRow): string =>
@@ -500,7 +500,7 @@ function DetailDrawer({
                   // fulfillment cols) merged: a PO drawer needs both the fabric/
                   // colour line AND the received-vs-ordered progress.
                   const { primary, secondary } = orderLineIdentity({
-                    code: l.material_code,
+                    code: l.item_code,
                     description: l.description || l.material_name,
                     variant:
                       buildVariantSummary(l.item_group ?? "others", l.variants ?? null) ||
@@ -677,16 +677,16 @@ function PoLinesExpansion({ id }: { id: string }) {
     ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => ({
     itemGroup: l.item_group ?? null,
-    code: l.material_code ?? null,
+    code: l.item_code ?? null,
     description: l.description || l.material_name || null,
     description2: l.description2 ?? null,
     variants: l.variants ?? null,
     qty: Number(l.qty ?? 0),
     amountSen: l.line_total_sen ?? 0,
-    assignedSos: byCode.get((l.material_code ?? "").trim()) ?? [],
-    sourceLinked: linkedSkus.has((l.material_code ?? "").trim()),
-    provenance: provByCode.get((l.material_code ?? "").trim()) ?? [],
-    deliveredDos: deliveredMap.get((l.material_code ?? "").trim()) ?? [],
+    assignedSos: byCode.get((l.item_code ?? "").trim()) ?? [],
+    sourceLinked: linkedSkus.has((l.item_code ?? "").trim()),
+    provenance: provByCode.get((l.item_code ?? "").trim()) ?? [],
+    deliveredDos: deliveredMap.get((l.item_code ?? "").trim()) ?? [],
   }));
   return (
     <div className="flex flex-col gap-2">
@@ -1053,7 +1053,7 @@ export function PurchaseOrdersListV2() {
       getValue: (r) => itemsSummaryOf(r),
       render: (r) => (
         <span
-          title={(r.items ?? []).map((it) => `${it.material_code} × ${it.qty}`).join("\n")}
+          title={(r.items ?? []).map((it) => `${it.item_code} × ${it.qty}`).join("\n")}
           className="block min-w-0 truncate font-mono text-[11.5px] text-ink-secondary"
         >
           {itemsSummaryOf(r) || "—"}
@@ -1070,7 +1070,7 @@ export function PurchaseOrdersListV2() {
       getValue: (r) => supplierSkusOf(r),
       render: (r) => (
         <span
-          title={(r.items ?? []).map((it) => `${it.material_code} → ${it.supplier_sku?.trim() || "—"}`).join("\n")}
+          title={(r.items ?? []).map((it) => `${it.item_code} → ${it.supplier_sku?.trim() || "—"}`).join("\n")}
           className="block min-w-0 truncate font-mono text-[11.5px] text-ink-secondary"
         >
           {supplierSkusOf(r) || "—"}

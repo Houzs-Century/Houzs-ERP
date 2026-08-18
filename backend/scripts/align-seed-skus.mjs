@@ -6,7 +6,7 @@
 // and reports what WOULD happen; MODE=apply performs the inserts.
 //
 // Binding preserves the AutoCount cross-reference: supplier_sku = the AutoCount
-// item code, material_code = our ERP code. Env: DATABASE_URL, MODE, DATA_FILE.
+// item code, item_code = our ERP code. Env: DATABASE_URL, MODE, DATA_FILE.
 import postgres from "postgres";
 import { readFileSync } from "node:fs";
 import { randomBytes } from "node:crypto";
@@ -67,20 +67,20 @@ async function main() {
   console.log(`products: create ${prodCreated}, skip-existing ${seed.products.length - toInsert.length}, by-cat ${JSON.stringify(catCount)}`);
 
   // ---- bindings ----
-  const bindRows = await sql`SELECT material_code, supplier_id FROM scm.supplier_material_bindings WHERE company_id = ${cid}`;
-  const existingBind = new Set(bindRows.map((b) => `${nkey(b.material_code)}||${b.supplier_id}`));
+  const bindRows = await sql`SELECT item_code, supplier_id FROM scm.supplier_material_bindings WHERE company_id = ${cid}`;
+  const existingBind = new Set(bindRows.map((b) => `${nkey(b.item_code)}||${b.supplier_id}`));
   let bindCreated = 0, bindSkip = 0, bindNoSup = 0;
   const missingSup = new Set();
   const bindBatch = [];
   for (const b of seed.bindings) {
     const sid = supByCode.get(norm(b.supplier_code));
     if (!sid) { bindNoSup++; missingSup.add(b.supplier_code); continue; }
-    if (existingBind.has(`${nkey(b.material_code)}||${sid}`)) { bindSkip++; continue; }
-    existingBind.add(`${nkey(b.material_code)}||${sid}`);
+    if (existingBind.has(`${nkey(b.item_code)}||${sid}`)) { bindSkip++; continue; }
+    existingBind.add(`${nkey(b.item_code)}||${sid}`);
     bindBatch.push({
       supplier_id: sid, material_kind: "mfg_product",
-      material_code: b.material_code,
-      material_name: nameByCode.get(nkey(b.material_code)) || b.material_code,
+      item_code: b.item_code,
+      material_name: nameByCode.get(nkey(b.item_code)) || b.item_code,
       supplier_sku: b.supplier_sku, is_main_supplier: false,
       company_id: cid, created_at: now, updated_at: now,
     });
@@ -90,7 +90,7 @@ async function main() {
     const BATCH = 200;
     for (let i = 0; i < bindBatch.length; i += BATCH) {
       const chunk = bindBatch.slice(i, i + BATCH);
-      await sql`INSERT INTO scm.supplier_material_bindings ${sql(chunk, "supplier_id", "material_kind", "material_code", "material_name", "supplier_sku", "is_main_supplier", "company_id", "created_at", "updated_at")}`;
+      await sql`INSERT INTO scm.supplier_material_bindings ${sql(chunk, "supplier_id", "material_kind", "item_code", "material_name", "supplier_sku", "is_main_supplier", "company_id", "created_at", "updated_at")}`;
     }
   }
   console.log(`bindings: create ${bindCreated}, skip-existing ${bindSkip}, no-supplier ${bindNoSup}${bindNoSup ? " (" + [...missingSup].join(",") + ")" : ""}`);

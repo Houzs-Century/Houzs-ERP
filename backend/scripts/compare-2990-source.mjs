@@ -59,7 +59,7 @@ const TYPES = [
       supplier: ctx.supplierName(h.supplier_id),
       subtotal_sen: h.subtotal_sen, total_sen: h.total_sen,
     }),
-    lineFp: (l) => `${l.material_code}|qty=${l.qty}|unit=${l.unit_price_sen}|disc=${l.discount_sen ?? 0}|total=${l.line_total_sen}`,
+    lineFp: (l) => `${l.item_code}|qty=${l.qty}|unit=${l.unit_price_sen}|disc=${l.discount_sen ?? 0}|total=${l.line_total_sen}`,
   },
   {
     name: "SO", header: "mfg_sales_orders", headerKey: "doc_no",
@@ -79,7 +79,7 @@ const TYPES = [
       po: ctx.poNumberById(h.purchase_order_id),
       total_sen: h.total_sen,
     }),
-    lineFp: (l) => `${l.material_code}|recv=${l.qty_received}|acc=${l.qty_accepted}|rej=${l.qty_rejected ?? 0}|unit=${l.unit_price_sen}|total=${l.line_total_sen ?? 0}`,
+    lineFp: (l) => `${l.item_code}|recv=${l.qty_received}|acc=${l.qty_accepted}|rej=${l.qty_rejected ?? 0}|unit=${l.unit_price_sen}|total=${l.line_total_sen ?? 0}`,
   },
   {
     name: "DO", header: "delivery_orders", headerKey: "do_number",
@@ -107,7 +107,7 @@ const TYPES = [
       supplier: ctx.supplierName(h.supplier_id),
       total_sen: h.total_sen,
     }),
-    lineFp: (l) => `${l.material_code}|qty=${l.qty}|unit=${l.unit_price_sen}|total=${l.line_total_sen}`,
+    lineFp: (l) => `${l.item_code}|qty=${l.qty}|unit=${l.unit_price_sen}|total=${l.line_total_sen}`,
   },
 ];
 

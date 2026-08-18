@@ -66,7 +66,7 @@ async function main() {
   const so = await sql`SELECT i.id, i.item_code AS code, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, i.custom_specials, h.linked_ac_docno AS ac
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = 1 AND i.item_group = 'bedframe' AND h.linked_ac_docno IS NOT NULL`;
-  const po = await sql`SELECT i.id, i.material_code AS code, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, i.custom_specials, i.so_item_id, h.linked_ac_docno AS acpo
+  const po = await sql`SELECT i.id, i.item_code AS code, i.variants, i.gap_inches, i.divan_height_inches, i.leg_height_inches, i.custom_specials, i.so_item_id, h.linked_ac_docno AS acpo
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = 1 AND i.item_group = 'bedframe' AND h.linked_ac_docno IS NOT NULL`;
   // the AutoCount PO -> SO link lives in the ERP's own AutoCount mirror

@@ -111,7 +111,7 @@ export function PoAmendmentCreateModal({
     for (const l of items) {
       const d = draftOf(l);
       const oldSnapshot = {
-        material_code: l.material_code,
+        item_code: l.item_code,
         material_name: l.material_name,
         qty: l.qty,
         unit_price_sen: l.unit_price_sen,
@@ -122,7 +122,7 @@ export function PoAmendmentCreateModal({
         continue;
       }
       const newQty = Number(d.qty);
-      const parsedPrice = parseMoneyToSen(d.unitPriceMyr, `Unit cost on ${l.material_code}`);
+      const parsedPrice = parseMoneyToSen(d.unitPriceMyr, `Unit cost on ${l.item_code}`);
       if (!parsedPrice.ok) return { lines: [], headerChanges: {}, error: parsedPrice.message };
       const newSen = parsedPrice.sen;
       const newDelivery = d.deliveryDate || null;
@@ -239,7 +239,7 @@ export function PoAmendmentCreateModal({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="font-mono text-[12.5px] font-semibold text-ink">{l.material_code}</div>
+                      <div className="font-mono text-[12.5px] font-semibold text-ink">{l.item_code}</div>
                       <div className="text-[11px] text-ink-secondary">{l.material_name}</div>
                       {Number(l.received_qty ?? 0) > 0 && (
                         <div className="mt-0.5 text-[10.5px] text-warn">

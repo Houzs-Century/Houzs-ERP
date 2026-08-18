@@ -683,7 +683,7 @@ const SupplierSkuPricingPanel = ({
     };
     const buckets = new Map<string, BindingRow[]>();
     for (const b of bindings) {
-      const key = classify(productByCode.get(b.material_code));
+      const key = classify(productByCode.get(b.item_code));
       const arr = buckets.get(key) ?? [];
       arr.push(b);
       buckets.set(key, arr);
@@ -1012,10 +1012,10 @@ function bindingHeadColumns(
       key: 'code',
       label: 'Internal Code',
       width: 150,
-      accessor: (b) => <span className={styles.codeCell}>{b.material_code}</span>,
-      searchValue: (b) => b.material_code,
-      filterValue: (b) => b.material_code,
-      sortFn: (a, b) => (a.material_code ?? '').localeCompare(b.material_code ?? ''),
+      accessor: (b) => <span className={styles.codeCell}>{b.item_code}</span>,
+      searchValue: (b) => b.item_code,
+      filterValue: (b) => b.item_code,
+      sortFn: (a, b) => (a.item_code ?? '').localeCompare(b.item_code ?? ''),
     },
     {
       key: 'name',
@@ -1417,7 +1417,7 @@ const MainStarCell = ({
 /* ────────────────────────────────────────────────────────────────────────
    AnchorCell — the ⚓ "Cost anchor" toggle (migration 0177).
 
-   Marks THIS binding as the cost anchor for its material_code: while anchored,
+   Marks THIS binding as the cost anchor for its item_code: while anchored,
    editing either side's cost (this binding's unit_price_sen / price_matrix,
    or the linked mfg_products base_price_sen / price1_sen) mirrors onto the
    other, so Product-Maintenance cost == this supplier's cost. Setting the
@@ -1472,7 +1472,7 @@ const AnchorCell = ({
           if (!anchored) {
             // Turning ON pushes this binding's cost onto the product — confirm.
             const ok = await askConfirm({
-              title: `Anchor ${binding.material_code} to this supplier’s cost?`,
+              title: `Anchor ${binding.item_code} to this supplier’s cost?`,
               body:
                 `Product-Maintenance cost will be kept equal to this supplier’s cost ` +
                 `(editing either side updates the other).` +
@@ -1528,7 +1528,7 @@ const RowActionsCell = ({
       onClick={async (e) => {
         e.stopPropagation();
         if (await askConfirm({
-          title: `Remove mapping ${binding.material_code} → ${binding.supplier_sku}?`,
+          title: `Remove mapping ${binding.item_code} → ${binding.supplier_sku}?`,
           confirmLabel: 'Remove',
           danger: true,
         })) {
@@ -1808,7 +1808,7 @@ const AutoSuffixButton = ({
     setRunning(true);
     try {
       for (const b of candidates) {
-        const p = productsByCode.get(b.material_code);
+        const p = productsByCode.get(b.item_code);
         if (!p) continue;
         const next = composeSupplierSku(b.supplier_sku, p);
         if (next === b.supplier_sku) continue;
@@ -1904,7 +1904,7 @@ function bindingKindForCsv(
   binding: BindingRow,
   productByCode: Map<string, MfgProductRow>,
 ): 'sofa' | 'bedframe' | 'other' {
-  const p = productByCode.get(binding.material_code);
+  const p = productByCode.get(binding.item_code);
   if (!p) return 'other';
   if (p.category === 'SOFA') return 'sofa';
   if (p.category === 'BEDFRAME') return 'bedframe';
@@ -1939,7 +1939,7 @@ function exportBindingsCsv(
   // adds rows, never columns, so the file shape is stable across pool edits.
   const lines: string[] = [BINDINGS_LONG_HEADER.map(csvCell).join(',')];
   const scalar = (b: BindingRow) => ({
-    internal_code: b.material_code,
+    internal_code: b.item_code,
     supplier_sku: b.supplier_sku,
     lead_time_days: b.lead_time_days || '',
     moq: b.moq || '',
@@ -2319,7 +2319,7 @@ const ImportBindingsDialog = ({
   );
 
   const bindingByCode = useMemo(
-    () => new Map<string, BindingRow>(bindings.map((b) => [b.material_code, b])),
+    () => new Map<string, BindingRow>(bindings.map((b) => [b.item_code, b])),
     [bindings],
   );
 
@@ -2525,7 +2525,7 @@ const LastTenPOsTable = ({ rows }: { rows: LastPo[] }) => {
 
 type SkuDraft = {
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku: string;
   unitPriceSen: number;
@@ -2559,7 +2559,7 @@ const SkuFormDialog = ({
     editing
       ? {
           materialKind: editing.material_kind,
-          materialCode: editing.material_code,
+          itemCode: editing.item_code,
           materialName: editing.material_name,
           supplierSku: editing.supplier_sku,
           unitPriceSen: editing.unit_price_sen,
@@ -2570,7 +2570,7 @@ const SkuFormDialog = ({
         }
       : {
           materialKind: 'mfg_product',
-          materialCode: '',
+          itemCode: '',
           materialName: '',
           supplierSku: '',
           unitPriceSen: 0,
@@ -2602,9 +2602,9 @@ const SkuFormDialog = ({
     if (editing) return;
     if (draft.materialKind !== 'mfg_product') return;
     if (supplierSkuRef.current.trim()) return;
-    const p = findProductByCode(draft.materialCode);
+    const p = findProductByCode(draft.itemCode);
     if (!p) return;
-    const next = composeSupplierSku(draft.materialCode, p);
+    const next = composeSupplierSku(draft.itemCode, p);
     if (!next || next === supplierSkuRef.current) return;
     setDraft((s) => ({
       ...s,
@@ -2614,7 +2614,7 @@ const SkuFormDialog = ({
       supplierSku: next,
     }));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [draft.materialCode, draft.materialKind, products.data, editing]);
+  }, [draft.itemCode, draft.materialKind, products.data, editing]);
 
   /* #5 — live "becomes →" preview (mirrors the New Models bulk form's
      previewCodes banner). As the operator types the internal code, resolve it
@@ -2624,7 +2624,7 @@ const SkuFormDialog = ({
      manufacturing SKUs that resolve to a known product. */
   const skuPreview = useMemo(() => {
     if (draft.materialKind !== 'mfg_product') return null;
-    const code = draft.materialCode.trim();
+    const code = draft.itemCode.trim();
     if (!code) return null;
     const p = findProductByCode(code);
     if (!p) return null;
@@ -2635,10 +2635,10 @@ const SkuFormDialog = ({
     const overridden = current.length > 0 && current !== composed;
     return { composed, overridden, current };
     // eslint-disable-next-line react-hooks/exhaustive-deps -- findProductByCode reads products.data
-  }, [draft.materialKind, draft.materialCode, draft.supplierSku, products.data]);
+  }, [draft.materialKind, draft.itemCode, draft.supplierSku, products.data]);
 
   const submit = () => {
-    if (!draft.materialCode.trim() || !draft.materialName.trim() || !draft.supplierSku.trim()) {
+    if (!draft.itemCode.trim() || !draft.materialName.trim() || !draft.supplierSku.trim()) {
       notify({ title: 'Internal code, description and supplier SKU are required.', tone: 'error' });
       return;
     }
@@ -2717,8 +2717,8 @@ const SkuFormDialog = ({
               <input
                 className={styles.fieldInput}
                 placeholder="e.g. 1003-(K), AVANI 01"
-                value={draft.materialCode}
-                onChange={(e) => set('materialCode', e.target.value)}
+                value={draft.itemCode}
+                onChange={(e) => set('itemCode', e.target.value)}
               />
             </label>
 
@@ -3219,7 +3219,7 @@ const ModelSkuPickerDialog = ({
   }, [productsQ.data]);
 
   const boundCodes = useMemo(
-    () => new Set(existingBindings.map((b) => `${b.material_kind}|${b.material_code}`)),
+    () => new Set(existingBindings.map((b) => `${b.material_kind}|${b.item_code}`)),
     [existingBindings],
   );
 
@@ -3328,7 +3328,7 @@ const ModelSkuPickerDialog = ({
         const supplierSku = composeSupplierSku(code, sku);
         list.push({
           materialKind: 'mfg_product' as MaterialKind,
-          materialCode: sku.code,
+          itemCode: sku.code,
           materialName: sku.name ?? sku.code,
           supplierSku,
           unitPriceSen: d.unitPriceSen,
@@ -3732,7 +3732,7 @@ const ModelSkuPickerDialog = ({
    ════════════════════════════════════════════════════════════════════════ */
 
 type MultiDraft = {
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku: string;
   unitPriceSen: number;
@@ -3788,7 +3788,7 @@ const MultiSkuPickerDialog = ({
   });
 
   const alreadyBound = useMemo(
-    () => new Set(existingBindings.map((b) => `${b.material_kind}|${b.material_code}`)),
+    () => new Set(existingBindings.map((b) => `${b.material_kind}|${b.item_code}`)),
     [existingBindings],
   );
 
@@ -3810,7 +3810,7 @@ const MultiSkuPickerDialog = ({
     const seeded: Record<string, MultiDraft> = {};
     for (const p of Object.values(picked)) {
       seeded[p.code] = drafts[p.code] ?? {
-        materialCode: p.code,
+        itemCode: p.code,
         materialName: p.name,
         supplierSku: '',
         unitPriceSen: p.base_price_sen ?? 0,
@@ -3830,9 +3830,9 @@ const MultiSkuPickerDialog = ({
   const submit = () => {
     const list: NewBinding[] = Object.values(drafts).map((d) => ({
       materialKind: 'mfg_product' as MaterialKind,
-      materialCode: d.materialCode,
+      itemCode: d.itemCode,
       materialName: d.materialName,
-      supplierSku: d.supplierSku.trim() || d.materialCode,
+      supplierSku: d.supplierSku.trim() || d.itemCode,
       unitPriceSen: d.unitPriceSen,
       currency: 'MYR' as Currency,
       leadTimeDays: d.leadTimeDays,
@@ -3996,15 +3996,15 @@ const MultiSkuPickerDialog = ({
                   </thead>
                   <tbody>
                     {Object.values(drafts).map((d) => (
-                      <tr key={d.materialCode}>
+                      <tr key={d.itemCode}>
                         <td>
-                          <div className={styles.codeCell}>{d.materialCode}</div>
+                          <div className={styles.codeCell}>{d.itemCode}</div>
                           <div className={styles.muted}>{d.materialName}</div>
                         </td>
                         <td>
                           <input
                             value={d.supplierSku}
-                            onChange={(e) => setDraft(d.materialCode, { supplierSku: e.target.value })}
+                            onChange={(e) => setDraft(d.itemCode, { supplierSku: e.target.value })}
                             placeholder="(blank = same as our code)"
                             style={smallInputStyle}
                           />
@@ -4013,7 +4013,7 @@ const MultiSkuPickerDialog = ({
                           <MoneyInput
                             bare
                             valueSen={d.unitPriceSen}
-                            onCommit={(sen) => setDraft(d.materialCode, { unitPriceSen: sen ?? 0 })}
+                            onCommit={(sen) => setDraft(d.itemCode, { unitPriceSen: sen ?? 0 })}
                             style={{ ...smallInputStyle, width: 100, textAlign: 'right' }}
                           />
                         </td>
@@ -4021,7 +4021,7 @@ const MultiSkuPickerDialog = ({
                           <input
                             type="number"
                             value={d.leadTimeDays}
-                            onChange={(e) => setDraft(d.materialCode, { leadTimeDays: Number(e.target.value) || 0 })}
+                            onChange={(e) => setDraft(d.itemCode, { leadTimeDays: Number(e.target.value) || 0 })}
                             style={{ ...smallInputStyle, width: 60, textAlign: 'right' }}
                           />
                         </td>
@@ -4029,7 +4029,7 @@ const MultiSkuPickerDialog = ({
                           <input
                             type="number"
                             value={d.moq}
-                            onChange={(e) => setDraft(d.materialCode, { moq: Number(e.target.value) || 0 })}
+                            onChange={(e) => setDraft(d.itemCode, { moq: Number(e.target.value) || 0 })}
                             style={{ ...smallInputStyle, width: 60, textAlign: 'right' }}
                           />
                         </td>
@@ -4037,7 +4037,7 @@ const MultiSkuPickerDialog = ({
                           <input
                             type="checkbox"
                             checked={d.isMainSupplier}
-                            onChange={(e) => setDraft(d.materialCode, { isMainSupplier: e.target.checked })}
+                            onChange={(e) => setDraft(d.itemCode, { isMainSupplier: e.target.checked })}
                           />
                         </td>
                       </tr>

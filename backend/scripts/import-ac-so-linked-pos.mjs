@@ -335,7 +335,7 @@ async function main() {
         RETURNING id`;
       for (const it of p.items) {
         await tx`INSERT INTO scm.purchase_order_items
-            (purchase_order_id, material_kind, material_code, material_name, supplier_sku,
+            (purchase_order_id, material_kind, item_code, material_name, supplier_sku,
              description, description2, notes,
              qty, received_qty, unit_price_sen, line_total_sen, item_group, uom,
              custom_specials, variants,

@@ -53,7 +53,7 @@ export type PoAmendmentLine = {
   amendment_id: string;
   purchase_order_item_id: string | null;
   change_type: string;
-  new_material_code: string | null;
+  new_item_code: string | null;
   new_material_name: string | null;
   new_variants: unknown;
   new_qty: number | null;
@@ -68,9 +68,9 @@ export type PoAmendmentLine = {
    change (LINE); otherwise one atom per new_* field that differs from the snapshot. */
 export const poLineFieldKinds = (l: PoAmendmentLine): AmendmentFieldKind[] => {
   if (l.change_type === 'ADD' || l.change_type === 'REMOVE') return ['LINE'];
-  const old = (l.old_snapshot as { material_code?: string | null; qty?: number | null; unit_price_sen?: number | null; delivery_date?: string | null } | null) ?? {};
+  const old = (l.old_snapshot as { item_code?: string | null; qty?: number | null; unit_price_sen?: number | null; delivery_date?: string | null } | null) ?? {};
   const kinds: AmendmentFieldKind[] = [];
-  if (l.new_material_code != null && l.new_material_code !== (old.material_code ?? null)) kinds.push('SPEC');
+  if (l.new_item_code != null && l.new_item_code !== (old.item_code ?? null)) kinds.push('SPEC');
   if (l.new_qty != null && l.new_qty !== (old.qty ?? null)) kinds.push('QTY');
   if (l.new_unit_price_sen != null && l.new_unit_price_sen !== (old.unit_price_sen ?? null)) kinds.push('PRICE');
   if (l.new_delivery_date != null && l.new_delivery_date !== (old.delivery_date ?? null)) kinds.push('DELIVERY');
@@ -216,7 +216,7 @@ export const useRejectPoAmendment = () => {
            will not follow the revision, so the server auto-releases the affected
            lines' un-allocated qty to STOCK and reports it here (owner rule,
            2026-08-06: the spec mismatch is a fact, not a decision). */
-        releasedToStock?: Array<{ poItemId: string; materialCode: string; qty: number }>;
+        releasedToStock?: Array<{ poItemId: string; itemCode: string; qty: number }>;
         releaseWarnings?: string[];
       }>(`/po-amendments/${id}/reject`, {
         method: 'PATCH', body: JSON.stringify({ reason }),

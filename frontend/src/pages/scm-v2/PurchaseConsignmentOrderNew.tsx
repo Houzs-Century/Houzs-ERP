@@ -62,7 +62,7 @@ type DraftLine = {
   rid: string;
   bindingId?: string;
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku?: string;
   qty: number;
@@ -78,7 +78,7 @@ type DraftLine = {
 const newLine = (): DraftLine => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   materialKind: 'mfg_product',
-  materialCode: '',
+  itemCode: '',
   materialName: '',
   qty: 1,
   unitPriceSen: 0,
@@ -149,24 +149,24 @@ export const PurchaseConsignmentOrderNew = () => {
         ...l,
         bindingId:      b.id,
         materialKind:   b.material_kind,
-        materialCode:   b.material_code,
+        itemCode:   b.item_code,
         materialName:   b.material_name,
         supplierSku:    b.supplier_sku,
         unitPriceSen: b.unit_price_sen,
-        category:       categoryForCode(b.material_code) ?? l.category,
+        category:       categoryForCode(b.item_code) ?? l.category,
       } : l)));
       setPendingItemPick(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps -- categoryForCode is a stable code→category lookup, not a reactive trigger
   }, [pendingItemPick, supplierId, itemSuppliersQuery.isLoading, itemSuppliersQuery.data]);
 
-  // Once a supplier resolves, backfill any line whose materialCode matches a
+  // Once a supplier resolves, backfill any line whose itemCode matches a
   // binding but lacks a bindingId.
   useEffect(() => {
     if (!supplierId || bindings.length === 0) return;
     setLines((prev) => prev.map((l) => {
-      if (l.bindingId || !l.materialCode) return l;
-      const b = bindings.find((x) => x.material_code === l.materialCode);
+      if (l.bindingId || !l.itemCode) return l;
+      const b = bindings.find((x) => x.item_code === l.itemCode);
       if (!b) return l;
       return {
         ...l,
@@ -175,7 +175,7 @@ export const PurchaseConsignmentOrderNew = () => {
         materialName:   b.material_name,
         supplierSku:    b.supplier_sku,
         unitPriceSen: l.unitPriceSen || b.unit_price_sen,
-        category:       l.category ?? categoryForCode(b.material_code),
+        category:       l.category ?? categoryForCode(b.item_code),
       };
     }));
     setPendingItemPick(null);
@@ -206,7 +206,7 @@ export const PurchaseConsignmentOrderNew = () => {
   const recomputeLineCost = (line: DraftLine): number => {
     const binding = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
-      : bindings.find((b) => b.material_code === line.materialCode);
+      : bindings.find((b) => b.item_code === line.itemCode);
     if (!binding) return line.unitPriceSen;
     const category = (line.category?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
@@ -243,11 +243,11 @@ export const PurchaseConsignmentOrderNew = () => {
     setLine(rid, {
       bindingId:      b.id,
       materialKind:   b.material_kind,
-      materialCode:   b.material_code,
+      itemCode:   b.item_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku,
       unitPriceSen: b.unit_price_sen,
-      category:       categoryForCode(b.material_code),
+      category:       categoryForCode(b.item_code),
       priceTouched:   false,
     });
   };
@@ -306,11 +306,11 @@ export const PurchaseConsignmentOrderNew = () => {
       setDialog({ title: 'Purchase Location required', body: 'Purchase Location is required.' });
       return;
     }
-    const validLines = lines.filter((l) => l.materialCode.trim() && l.qty > 0);
+    const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
     const items: NewPoItem[] = validLines.map((l) => ({
       materialKind:   l.materialKind,
-      materialCode:   l.materialCode,
-      materialName:   l.materialName || l.materialCode,
+      itemCode:   l.itemCode,
+      materialName:   l.materialName || l.itemCode,
       supplierSku:    l.supplierSku,
       qty:            l.qty,
       unitPriceSen: l.unitPriceSen,
@@ -623,16 +623,16 @@ export const PurchaseConsignmentOrderNew = () => {
                     <input
                       type="text"
                       list={`bindings-${l.rid}`}
-                      value={l.materialCode}
+                      value={l.itemCode}
                       onChange={(e) => {
                         const code = e.target.value;
                         const match = supplierId
-                          ? bindings.find((b) => b.material_code === code)
+                          ? bindings.find((b) => b.item_code === code)
                           : undefined;
                         if (match) { pickBinding(l.rid, match); return; }
                         const sku = (allSkus.data ?? []).find((p) => p.code === code);
                         setLine(l.rid, {
-                          materialCode: code,
+                          itemCode: code,
                           materialName: sku?.name ?? l.materialName,
                           bindingId: undefined,
                           category: sku?.category.toLowerCase() ?? categoryForCode(code),
@@ -646,7 +646,7 @@ export const PurchaseConsignmentOrderNew = () => {
                     <datalist id={`bindings-${l.rid}`}>
                       {supplierId && bindings.length > 0
                         ? sortByText(bindings).map((b) => (
-                            <option key={b.id} value={b.material_code}>
+                            <option key={b.id} value={b.item_code}>
                               {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                             </option>
                           ))
@@ -686,7 +686,7 @@ export const PurchaseConsignmentOrderNew = () => {
                     <datalist id={`supplier-skus-${l.rid}`}>
                       {supplierId && sortByText(bindings).map((b) => (
                         <option key={b.id} value={b.supplier_sku || ''}>
-                          {b.material_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
+                          {b.item_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
                         </option>
                       ))}
                     </datalist>
@@ -727,7 +727,7 @@ export const PurchaseConsignmentOrderNew = () => {
 
                     <PcVariantEditor
                       category={l.category ?? ''}
-                      itemCode={l.materialCode}
+                      itemCode={l.itemCode}
                       variants={l.variants as Record<string, unknown>}
                       onChange={(k, v) => setVariant(l.rid, k, v)}
                       fabrics={fabrics}

@@ -522,7 +522,7 @@ export function MobileConvertWizard({
             return {
               purchaseOrderItemId: l.poItemId,
               materialKind: "mfg_product",
-              materialCode: l.itemCode,
+              itemCode: l.itemCode,
               materialName: l.description || l.itemCode,
               qtyReceived: q,
               qtyAccepted: q,

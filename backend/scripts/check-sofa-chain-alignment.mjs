@@ -173,7 +173,7 @@ async function main() {
 
   const poRows = (await sql`
     SELECT i.id::text AS id, p.po_number AS doc, p.id::text AS po_hdr_id,
-           i.material_code AS code, i.item_group AS grp,
+           i.item_code AS code, i.item_group AS grp,
            i.variants, i.description2 AS d2, i.so_item_id::text AS so_item_id, i.qty,
            p.linked_ac_docno AS ac, UPPER(COALESCE(p.status::text, '')) AS status
       FROM scm.purchase_order_items i
@@ -185,7 +185,7 @@ async function main() {
   /* GRN lines are taken by PARENT REACH as well as by item_group, so a GRN line
      that lost its group tag still enters the audit instead of vanishing from it. */
   const grRows = (poIds.length ? await sql`
-    SELECT gi.id::text AS id, g.grn_number AS doc, gi.material_code AS code, gi.item_group AS grp,
+    SELECT gi.id::text AS id, g.grn_number AS doc, gi.item_code AS code, gi.item_group AS grp,
            gi.variants, gi.purchase_order_item_id::text AS po_item_id, gi.qty_accepted AS qty,
            g.purchase_order_id::text AS po_id, g.migrated_no_stock AS migrated,
            UPPER(COALESCE(g.status::text, '')) AS status

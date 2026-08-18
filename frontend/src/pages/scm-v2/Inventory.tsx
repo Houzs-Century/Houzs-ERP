@@ -404,9 +404,9 @@ const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
         rows={data.deadStock}
         loading={false}
         emptyLabel={`No dead stock — every SKU in stock sold within ${days} days.`}
-        getRowKey={(d) => d.product_code}
+        getRowKey={(d) => d.item_code}
         columns={[
-          { key: 'product', label: 'Product', getValue: (d) => `${d.product_code} ${d.product_name}`, render: (d) => <><span className={styles.codeChip}>{d.product_code}</span> {d.product_name}</> },
+          { key: 'product', label: 'Product', getValue: (d) => `${d.item_code} ${d.product_name}`, render: (d) => <><span className={styles.codeChip}>{d.item_code}</span> {d.product_name}</> },
           { key: 'qty', label: 'Qty', align: 'right', width: '110px', getValue: (d) => d.qty, render: (d) => <span className={`${styles.numCell} ${styles.numCellPos}`}>{fmtQty(d.qty)}</span> },
           { key: 'value', label: 'Value', align: 'right', width: '140px', getValue: (d) => d.valueSen / 100, render: (d) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(d.valueSen)}</span> },
           { key: 'lastSold', label: 'Last Sold', width: '130px', getValue: (d) => d.lastSoldAt ?? '', render: (d) => <span className={styles.numCellZero}>{fmtDay(d.lastSoldAt)}</span> },
@@ -533,19 +533,19 @@ const BalancesTab = ({
         rows={isLoading || searching ? null : visibleRows}
         loading={isLoading || searching}
         emptyLabel="No SKUs match the filters."
-        getRowKey={(r) => r.product_code}
+        getRowKey={(r) => r.item_code}
         columns={BALANCE_COLUMNS}
-        onRowClick={(r) => onDrilldown(r.product_code, r.product_name)}
+        onRowClick={(r) => onDrilldown(r.item_code, r.product_name)}
         /* Variant drill (Commander 2026-05-29): chevron expands the SKU into
            its attribute-composition buckets. Lazy: only fetches when expanded. */
         expandable={{
           render: (r) => (
             <>
               <IncomingPoPanel pos={r.incoming_pos} />
-              <SkuVariantPanel code={r.product_code} />
+              <SkuVariantPanel code={r.item_code} />
             </>
           ),
-          rowKey: (r) => r.product_code,
+          rowKey: (r) => r.item_code,
         }}
       />
     </>
@@ -560,16 +560,16 @@ const BALANCE_COLUMNS: Column<InventoryProductTotal>[] = [
     key: 'code',
     label: 'Product Code',
     width: '160px',
-    getValue: (r) => r.product_code,
+    getValue: (r) => r.item_code,
     render: (r) => (
       <Link
-        to={`/scm/inventory/stock-card/${encodeURIComponent(r.product_code)}`}
+        to={`/scm/inventory/stock-card/${encodeURIComponent(r.item_code)}`}
         className={styles.codeChip}
         onClick={(e) => e.stopPropagation()}
         title="Open Stock Card"
         style={{ textDecoration: 'none' }}
       >
-        {r.product_code}
+        {r.item_code}
       </Link>
     ),
   },
@@ -857,7 +857,7 @@ const IncomingPoPanel = ({ pos }: { pos: InventoryIncomingPo[] | null | undefine
    only mounts (and fetches) when expanded. */
 const SkuVariantPanel = ({ code }: { code: string }) => {
   const bd = useInventoryProductBreakdown(code);
-  const balances = (bd.data?.balances ?? []).filter((b) => b.product_code === code);
+  const balances = (bd.data?.balances ?? []).filter((b) => b.item_code === code);
   const variants = useMemo(() => {
     const m = new Map<string, { vk: string; sup: string | null; qty: number; value: number }>();
     for (const b of balances) {
@@ -939,7 +939,7 @@ const BatchesTab = ({
       (b.batchNo ?? '').toLowerCase().includes(q) ||
       (b.supplierName ?? '').toLowerCase().includes(q) ||
       (b.components ?? []).some((c) =>
-        c.productCode.toLowerCase().includes(q) ||
+        c.itemCode.toLowerCase().includes(q) ||
         (c.productName ?? '').toLowerCase().includes(q)),
     );
   }, [allBatches, q]);
@@ -947,7 +947,7 @@ const BatchesTab = ({
   const stats = useMemo(() => ({
     batchCount: batches.length,
     totalQty: batches.reduce((s, b) => s + b.totalRemaining, 0),
-    skuCount: new Set(batches.flatMap((b) => (b.components ?? []).map((c) => c.productCode))).size,
+    skuCount: new Set(batches.flatMap((b) => (b.components ?? []).map((c) => c.itemCode))).size,
   }), [batches]);
 
   return (
@@ -1083,18 +1083,18 @@ const BatchComponentsPanel = ({ batch }: { batch: InventoryBatch }) => (
   <table className={`${styles.table} bg-surface-2`}>
     <tbody>
       {(batch.components ?? []).map((c) => (
-        <tr key={`${c.productCode}|${c.variantKey ?? ''}`}>
+        <tr key={`${c.itemCode}|${c.variantKey ?? ''}`}>
           <td style={{ paddingLeft: 28, width: 190 }}>
             <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
               <span className={styles.numCellZero}>↳</span>
               <Link
-                to={`/scm/inventory/stock-card/${encodeURIComponent(c.productCode)}`}
+                to={`/scm/inventory/stock-card/${encodeURIComponent(c.itemCode)}`}
                 className={styles.codeChip}
                 onClick={(e) => e.stopPropagation()}
                 title="Open Stock Card"
                 style={{ textDecoration: 'none' }}
               >
-                {c.productCode}
+                {c.itemCode}
               </Link>
             </span>
           </td>
@@ -1202,7 +1202,7 @@ const ReservationsTab = ({
     if (statusFilter === 'FREE' && lotFreeQty(r) <= 0) return false;
     if (statusFilter === 'DEAD' && !(r.is_dead_stock ?? (!r.is_consignment && lotFreeQty(r) > 0))) return false;
     if (!q) return true;
-    return r.product_code.toLowerCase().includes(q) ||
+    return r.item_code.toLowerCase().includes(q) ||
       (r.product_name ?? '').toLowerCase().includes(q) ||
       (r.batch_no ?? '').toLowerCase().includes(q) ||
       (r.mrp_assigned_to ?? []).some((x) => x.doc_no.toLowerCase().includes(q)) ||
@@ -1286,21 +1286,21 @@ const ReservationsTab = ({
         rows={isLoading ? null : rows}
         loading={isLoading}
         emptyLabel="No open lots match the filters."
-        getRowKey={(r) => `${r.warehouse_id}|${r.product_code}|${r.variant_key}|${r.batch_no ?? ''}|${rows.indexOf(r)}`}
+        getRowKey={(r) => `${r.warehouse_id}|${r.item_code}|${r.variant_key}|${r.batch_no ?? ''}|${rows.indexOf(r)}`}
         columns={[
           { key: 'status', label: 'Assigned / Free', width: '150px', getValue: (r) => (lotAssignedQty(r) > 0 ? 'assigned' : 'free'), render: (r) => renderAssignedFreeStatus(r) },
           {
             key: 'product', label: 'Product', width: '240px',
-            getValue: (r) => `${r.product_code} ${r.product_name ?? ''}`,
+            getValue: (r) => `${r.item_code} ${r.product_name ?? ''}`,
             render: (r) => (
               <>
                 <div>
                   <Link
-                    to={`/scm/inventory/stock-card/${encodeURIComponent(r.product_code)}`}
+                    to={`/scm/inventory/stock-card/${encodeURIComponent(r.item_code)}`}
                     className={styles.codeChip}
                     style={{ textDecoration: 'none' }}
                   >
-                    {r.product_code}
+                    {r.item_code}
                   </Link>
                 </div>
                 <div className={styles.numCellZero} style={{ fontSize: 'var(--fs-11)' }}>
@@ -1348,15 +1348,15 @@ const ReservationsTab = ({
 const ProductBreakdownDrawer = ({
   code, name, onClose,
 }: { code: string; name: string; onClose: () => void }) => {
-  const movements = useInventoryMovements({ productCode: code });
-  const cogs = useCogsEntries({ productCode: code });
+  const movements = useInventoryMovements({ itemCode: code });
+  const cogs = useCogsEntries({ itemCode: code });
   const warehouses = useWarehouses();
   /* ONE per-lot feed (GET /inventory/reservations) powers the whole merged
      breakdown: each open lot with its warehouse, attributes, qty, unit cost,
      SOURCE doc (GRN / PCR), received date, reservation status + reserving SO(s)
      and that SO's delivery date. Owned vs consignment is split by the lot's
      SOURCE server-side (never the warehouse flag). Narrowed to this SKU. */
-  const reservations = useInventoryReservations({ productCode: code });
+  const reservations = useInventoryReservations({ itemCode: code });
 
   /* Movements + COGS sections are collapsed by default (Commander 2026-05-30).
      Operator opens what they want to see — keeps the drawer scannable. */
@@ -1686,7 +1686,7 @@ const MovementsTab = ({
   const [docType, setDocType] = useState<string | null>(null);
   const { data, isLoading, error } = useInventoryMovements({
     warehouseId: warehouseId ?? undefined,
-    productCode: search.trim() || undefined,
+    itemCode: search.trim() || undefined,
     docType: docType ?? undefined,
   });
   const movements = data ?? [];
@@ -1755,10 +1755,10 @@ const MovementsTab = ({
           { key: 'warehouse', label: 'Warehouse', width: '110px', getValue: (m) => wmap.get(m.warehouse_id)?.code ?? '—', render: (m) => wmap.get(m.warehouse_id)?.code ?? '—' },
           {
             key: 'product', label: 'Product', width: '200px',
-            getValue: (m) => `${m.product_code} ${m.product_name ?? ''}`,
+            getValue: (m) => `${m.item_code} ${m.product_name ?? ''}`,
             render: (m) => (
               <>
-                <div><span className={styles.codeChip}>{m.product_code}</span></div>
+                <div><span className={styles.codeChip}>{m.item_code}</span></div>
                 <div className={styles.numCellZero} style={{ fontSize: 'var(--fs-11)' }}>{m.product_name ?? '—'}</div>
               </>
             ),
@@ -1805,7 +1805,7 @@ const CogsTab = ({
 }) => {
   const { data, isLoading } = useCogsEntries({
     warehouseId: warehouseId ?? undefined,
-    productCode: search.trim() || undefined,
+    itemCode: search.trim() || undefined,
   });
   const cogs: CogsEntry[] = useMemo(() => data ?? [], [data]);
   const totalCogs = useMemo(() => cogs.reduce((s, r) => s + r.total_cost_sen, 0), [cogs]);
@@ -1838,7 +1838,7 @@ const CogsTab = ({
         columns={[
           { key: 'when', label: 'When', width: '150px', getValue: (c) => c.consumed_at, render: (c) => <span className={styles.numCellZero}>{fmtDateTime(c.consumed_at)}</span> },
           { key: 'warehouse', label: 'Warehouse', width: '110px', getValue: (c) => c.warehouse_code, render: (c) => c.warehouse_code },
-          { key: 'product', label: 'Product', width: '160px', getValue: (c) => c.product_code, render: (c) => <span className={styles.codeChip}>{c.product_code}</span> },
+          { key: 'product', label: 'Product', width: '160px', getValue: (c) => c.item_code, render: (c) => <span className={styles.codeChip}>{c.item_code}</span> },
           { key: 'qty', label: 'Qty', align: 'right', width: '90px', getValue: (c) => -c.qty_consumed, render: (c) => <span className={`${styles.numCell} ${styles.numCellNeg}`}>−{fmtQty(c.qty_consumed)}</span> },
           { key: 'unitCost', label: 'Unit Cost', align: 'right', width: '100px', getValue: (c) => c.unit_cost_sen / 100, render: (c) => <span className={`${styles.numCell} ${styles.numCellZero}`}>{fmtRm(c.unit_cost_sen)}</span> },
           { key: 'cogs', label: 'COGS', align: 'right', width: '110px', getValue: (c) => c.total_cost_sen / 100, render: (c) => <span className={styles.numCell} style={{ fontWeight: 700 }}>{fmtRm(c.total_cost_sen)}</span> },

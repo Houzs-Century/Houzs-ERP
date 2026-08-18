@@ -150,7 +150,7 @@ export const poByDocNo = (sql, docNo) => sql`
          p.company_id::int AS company_id,
          UPPER(COALESCE(p.status::text, '(null)')) AS status,
          i.id::text        AS po_item_id,
-         i.material_code,
+         i.item_code,
          i.qty::numeric                            AS qty,
          COALESCE(i.received_qty, 0)::numeric      AS received_qty,
          (i.qty - COALESCE(i.received_qty, 0))::numeric AS remaining,
@@ -158,7 +158,7 @@ export const poByDocNo = (sql, docNo) => sql`
     FROM scm.purchase_orders p
     LEFT JOIN scm.purchase_order_items i ON i.purchase_order_id = p.id
    WHERE UPPER(p.po_number) = UPPER(${docNo})
-   ORDER BY i.material_code
+   ORDER BY i.item_code
 `;
 
 // ── 2. The double-transfer census, per pair ─────────────────────────────────
