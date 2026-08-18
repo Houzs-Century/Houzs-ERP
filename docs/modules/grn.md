@@ -355,8 +355,27 @@ authoritative in-code lists are `HEADER` (`grns.ts:529-534`) and `ITEM` (`:535-5
 | `scm.purchase_invoice_items` / `scm.purchase_return_items` | Downstream: they draw on `grn_item_id`, which is what moves `invoiced_qty` / `returned_qty`. |
 
 Status vocabulary: `DRAFT | POSTED | CANCELLED | CLOSED`. Filter buckets
-(`:827-831`) cover only `draft` / `posted` / `cancelled` — **CLOSED has no bucket**,
-so a CLOSED GRN appears under "All" and nowhere else.
+(`GRN_STATUS_BUCKETS`): `draft` = DRAFT, `posted` = POSTED+CLOSED, `cancelled` =
+CANCELLED.
+
+> **CHANGED 2026-08-17 — and this one MOVES A NUMBER, so read it before you are
+> surprised by it.** CLOSED was in NO bucket, so a CLOSED GRN appeared under
+> "All" and nowhere else. It now files under `posted` because of what the STOCK
+> did: a CLOSED GRN was posted first, so its inventory IN stands — a CANCELLED
+> one had its receipt reversed. `GoodsReceivedListV2`'s `statusFor()` already
+> bucketed it as `posted` by fallback and now says so explicitly, so the tab and
+> the row chip stop disagreeing. Membership both ways is pinned by
+> `backend/tests/statusBucketsEnumMembership.test.mjs`.
+>
+> **It is a COVERAGE JUDGMENT, not a defect repair, and it was NOT asked for.**
+> Unlike `SI_STATUS_BUCKETS` and `DO_STATUS_BUCKETS`, no value in this map was
+> ever a non-member: DRAFT / POSTED / CANCELLED are all real `grn_status`
+> members, so no GRN tab 500d and no GRN count was ever wrong. What changes is
+> that the **Posted pill rises by the number of CLOSED GRNs** and
+> `?status=posted` returns rows it never returned before. The alternative — a
+> fourth `closed` pill, which needs a `closed` entry here plus a `StatusTab`
+> arm in `frontend/src/pages/scm-v2/GoodsReceivedListV2.tsx` — was not taken and
+> is a one-line reversal if the owner prefers it.
 
 **Who sets each, and what it blocks (2026-08-16).** DB type is the
 `scm.grn_status` ENUM (base body in `backend/scripts/scm-schema/2990s-full-schema.sql`,
@@ -370,7 +389,7 @@ of the PO's `PARTIALLY_RECEIVED` / `RECEIVED`, via `recomputePoReceived`.)
 | `DRAFT` | create with `asDraft: true`. Passing `status:'DRAFT'` in the body is refused: `Use asDraft:true to save a GRN as a draft.` | no stock yet |
 | `POSTED` | create-as-posted, or `PATCH /:id/post` — all through the one chokepoint `postGrnAndRollup`, which CASes the flip | this is where the inventory IN lands |
 | `CANCELLED` | `PATCH /:id/cancel` (DRAFT short-circuits; the active branch is atomic) | terminal |
-| `CLOSED` | **nothing in `backend/src` writes it.** Read-only legacy terminal that still blocks a re-post | terminal |
+| `CLOSED` | **nothing in `backend/src` writes it.** Read-only legacy terminal that still blocks a re-post. Filed under the `posted` filter bucket since 2026-08-17 — its stock IN stands | terminal |
 
 Refusals the operator sees:
 
@@ -539,6 +558,41 @@ The refusal renders in one place for every caller — desktop Confirm, the mobil
 convert wizard and the from-PO batch receive — in `vendor/scm/lib/authed-fetch.ts`
 alongside the sofa hard stops, which is what keeps desktop and mobile saying the
 same thing.
+
+**Every refusal that precedes a write RELEASES the idempotency key.** `GrnNew`
+sends one `Idempotency-Key` per mount, so a refused submit CLAIMS that key
+against the payload it was refused for — and the corrected payload then no
+longer matches it. Until 2026-08-18 that meant the two remedies above were
+unreachable: acting on "enter the unit price" produced 409
+`idempotency_key_reused`, and the only way out was a page reload that threw the
+whole receipt away. Every deterministic refusal in `grns.ts` had the same dead
+end, not just the zero-cost one — `warehouse_required`, `qty_exceeds_remaining`,
+`po_not_receivable`, `grn_locked`, the child and consumed locks.
+
+Every refusal at or above one of this file's nine audit pre-flights now answers
+through `refuseWithoutWriting(c, body, status)`
+(`backend/src/scm/lib/no-write-refusal.ts`), which calls
+`markIdempotencyNoWrite(c)` (`backend/src/middleware/idempotency.ts`) and makes
+the middleware DELETE the claim. The pre-flights are the boundary because they
+already sit "strictly before the handler's FIRST mutating call"; the zero-cost
+exits, which sit past a write, keep the narrower
+`refuseZeroCostReceipt(c, body, { nothingWritten })` wrapper, where
+`nothingWritten` is a required argument: the three single-document routes pass
+`true` (each deletes its `grn_items` and `grns` rows first), and
+`POST /from-po-items` passes `created.length === 0`, because it raises one GRN
+per supplier bucket and an earlier bucket can have committed its document, its
+stock IN and its AutoCount conversion before a later one was refused.
+
+**The release is never inferred from the status**, because several routes here
+return a 4xx after a partial write. And the client must never infer it either:
+the middleware answers `idempotency_key_reused` on a payload-hash mismatch
+alone, so that code is also what a caller gets after a COMMITTED 201 — the body
+carries `completed_status` saying which. A changed payload sent while the first
+request is still running answers `idempotency_in_flight`. The operator copy for
+`key_reused` therefore says refresh and check, never "press Save again".
+Pinned by `backend/tests/grnPreWriteRefusalsReleaseKey.test.ts` (no pre-write
+refusal missed) and `backend/tests/idempotencyRefusalRelease.test.ts` (the
+release, the replay-after-success and the collision answers, at runtime).
 
 **The header PATCH is the exception**: it is NOT gated by `grnHasDownstream`. A
 GRN with a downstream PI can still have its header edited, including a warehouse

@@ -224,7 +224,35 @@ test("the real backend tree classifies, and the split is not degenerate", async 
 
    So the protection is stated here rather than left to a side effect. Adding a
    suite to this list is a claim that its assertion must stop a MERGE. */
-const MUST_GATE_MERGE = ["tests/migrationNumbers.test.ts"];
+const MUST_GATE_MERGE = [
+  "tests/migrationNumbers.test.ts",
+  /* A bucket holding a label that is not in the enum makes the tab 500 AND its
+     count fall silently to 0 — 37 delivery orders were unreachable in
+     production on 2026-08-17 with every number on screen looking settled. It is
+     a merge gate for the same reason the duplicate-number test is: nothing
+     downstream catches it, and the deploy is perfectly healthy while the list
+     lies. */
+  "tests/statusBucketsEnumMembership.test.mjs",
+  /* The other half of the same fault, and the half that survived the first
+     sweep: a count read that FAILED served as 0. The bucket gate cannot see it
+     — it keys off the *_STATUS_BUCKETS naming convention, and the sixth list
+     (mfg-sales-orders) does not use one. Same reason for gating the merge: the
+     deploy is perfectly healthy while every filter pill reads zero beside a
+     full page of rows. */
+  "tests/statusCountsFailLoud.test.mjs",
+  /* Both hold the line against a DUPLICATE document. The runtime one pins that
+     a retry after a committed write still replays and that a claim is released
+     only on the route's own proof; the source one pins that no pre-write
+     refusal in grns.ts was missed. A regression in either is a second GRN, a
+     second stock IN and a second AutoCount enqueue — that must stop the merge,
+     not the deploy. */
+  "tests/idempotencyRefusalRelease.test.ts",
+  "tests/grnPreWriteRefusalsReleaseKey.test.ts",
+  /* The blank-date gate. Its whole reason to exist is that the previous
+     version of it passed on an unfixed tree, so a merge that reintroduces an
+     uncoerced date write has to be STOPPED, not reported after the fact. */
+  "tests/dateWriteCoercion.test.ts",
+];
 
 test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {
   const { light, workers } = await classifyTests(backendRoot);

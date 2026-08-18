@@ -9,8 +9,9 @@
 //       useSubmitPurchaseOrder / useConfirmPurchaseOrder / useReopenPurchaseOrder
 //       (vendored suppliers-queries slice).
 
-import { Suspense, lazy, useMemo, useState, type ReactNode } from "react";
-import { useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { lazy, useMemo, useState, type ReactNode } from "react";
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
@@ -368,18 +369,25 @@ const PurchaseOrderDetailInlineEditor = lazy(() =>
 
 // ─── Main page ─────────────────────────────────────────────────────────────
 
-/* Thin router — only calls useSearchParams so Rules of Hooks are respected when
+/* Thin router — only calls useSearchParams and useLocation (both unconditional,
+   at the top) so Rules of Hooks are respected when
    the ?edit=1 flip swaps between the read-only body and the lazy inline editor
    (the two children have different hook counts). */
 export function PurchaseOrderDetailV2() {
   const [params] = useSearchParams();
+  const location = useLocation();
   if (params.get("edit") === "1") {
+    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
+       so a failed editor chunk shows the panel in place of the editor and
+       clears when the operator moves to another document, instead of leaning
+       on a boundary in a file this one cannot see. */
     return (
-      <Suspense
+      <LazySlot
+        resetKey={`po-editor:${location.pathname}`}
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
       >
         <PurchaseOrderDetailInlineEditor />
-      </Suspense>
+      </LazySlot>
     );
   }
   return <PurchaseOrderDetailV2ReadOnly />;

@@ -49,6 +49,7 @@ import {
   stampCompany,
 } from '../lib/companyScope';
 import { runScmPgCommand } from '../lib/pg-supabase-transaction';
+import { dateOrNull } from '../lib/date-coerce';
 
 export const poAmendments = new Hono<{ Bindings: Env; Variables: Variables }>();
 poAmendments.use('*', supabaseAuth);
@@ -258,7 +259,10 @@ poAmendments.post('/', async (c) => {
       new_variants:           (l.newVariants ?? null) as Record<string, unknown> | null,
       new_qty:                l.newQty ?? null,
       new_unit_price_centi:   l.newUnitPriceCenti ?? null,
-      new_delivery_date:      l.newDeliveryDate ?? null,
+      // `??` is nullish — a blank <input type="date"> posts "" and would reach
+      // po_amendment_lines.new_delivery_date (DATE, mig 0194:87), 500ing the
+      // insert and rolling the header amendment back at :268.
+      new_delivery_date:      dateOrNull(l.newDeliveryDate),
       old_snapshot:           (l.oldSnapshot ?? null) as Record<string, unknown> | null,
     }));
     const { error: lineErr } = await sb.from('po_amendment_lines').insert(stampCompany(lineRows, c));

@@ -473,6 +473,28 @@ export const ConsignmentOrderDetail = () => {
     }
   };
 
+  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
+     until 2026-08-17, so the loading render called fewer hooks than the loaded
+     one and React threw #310 ("rendered more hooks than during the previous
+     render") the moment the query resolved — a blank "Something went wrong
+     loading this page." on a direct URL / refresh. Arriving from the list hid
+     it: react-query already had the detail cached, so the isPending branch
+     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
+     header; it can only ever be CALLED from the preview dialog, which does not
+     exist until the record has loaded. */
+  const deliverPrintPdf = (action: PdfAction) => {
+    if (!header) return;
+    // The raw detail response carries the category-total fields the SO PDF
+    // needs (the typed subset above omits them). Consignment has no payments.
+    return import('../../vendor/scm/lib/sales-order-pdf')
+      .then(({ generateSalesOrderPdf }) =>
+        generateSalesOrderPdf(header as never, items as never, [], action, [], {
+          docTitle: 'CONSIGNMENT ORDER', docNoLabel: 'CO No', docNoun: 'consignment order',
+        }))
+      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+
   if (detail.isPending) {
     return <SkeletonDetailPage />;
   }
@@ -490,18 +512,6 @@ export const ConsignmentOrderDetail = () => {
       </div>
     );
   }
-
-  const deliverPrintPdf = (action: PdfAction) => {
-    // The raw detail response carries the category-total fields the SO PDF
-    // needs (the typed subset above omits them). Consignment has no payments.
-    return import('../../vendor/scm/lib/sales-order-pdf')
-      .then(({ generateSalesOrderPdf }) =>
-        generateSalesOrderPdf(header as never, items as never, [], action, [], {
-          docTitle: 'CONSIGNMENT ORDER', docNoLabel: 'CO No', docNoun: 'consignment order',
-        }))
-      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
-  };
-  const print = usePrintPreview(deliverPrintPdf);
 
   return (
     <div className="space-y-4">

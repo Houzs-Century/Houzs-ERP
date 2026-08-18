@@ -32,6 +32,7 @@ import { backfillSoPayments } from '../../acc/payments';
 import { computeDailyBank } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
+import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
    `hasHouzsPerm` calls, including four that WRITE to the ledger: a hand-written
@@ -149,7 +150,10 @@ accounting.post('/journal-entries', async (c) => {
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  const entryDate = body.entryDate ?? todayMyt();
+  /* `??` is NULLISH — a cleared <input type="date"> posts "", which sails past
+     it into journal_entries.entry_date (`date NOT NULL`) and 500s the post.
+     Blank takes the same path an absent key already takes: today. */
+  const entryDate = dateOrNull(body.entryDate) ?? todayMyt();
   /* Hand-written journals are ALWAYS 'MANUAL'. The old route trusted
      body.sourceType, which let an operator mint an entry that impersonates a
      document type ('SI', 'PV', …) — colliding with the real document's

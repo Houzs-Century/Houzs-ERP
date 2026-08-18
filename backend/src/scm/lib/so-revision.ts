@@ -53,6 +53,7 @@ import {
 } from '../routes/mfg-sales-orders';
 import { activeCompanyId, isMirroredDocNo, houzsOwns2990 } from './companyScope';
 import { todayMyt } from './my-time';
+import { dateOrNull } from './date-coerce';
 import { soWarehouseIdForDoc } from './so-warehouse';
 import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routing';
 import { soAmendableHeaderFields } from '../shared/so-field-policy';
@@ -737,7 +738,13 @@ export async function applySoAmendment(
     if ('customerDeliveryDate' in headerChanges) {
       const { error: cascErr } = await sb.from('mfg_sales_order_items')
         .update({
-          line_delivery_date: headerChanges['customerDeliveryDate'] ?? null,
+          /* Coerced, not `?? null`: the header loop twenty lines up already
+             assumes a stored change can be blank (`value === '' ? null : value`),
+             and the follower must not be stricter than the master it copies —
+             the same asymmetry fixed at consignment-orders.ts:1299. This cascade
+             is non-fatal outside atomic mode, so a 500 here would commit the
+             header amendment and silently leave every line on its OLD date. */
+          line_delivery_date: dateOrNull(headerChanges['customerDeliveryDate']),
           line_delivery_date_overridden: false,
         })
         .eq('doc_no', docNo);
