@@ -42,7 +42,7 @@ Until then, prefer the **Target** spelling in new code.
 
 | Sev | Concept | Target | Also seen as |
 | --- | --- | --- | --- |
-| high | Money minor unit (1/100 MYR) | `*_centi` | `*_sen` `*_cents` `amountSen` |
+| high | Money minor unit (1/100 MYR) | `*_sen` | `*_centi` `*_cents` `amountSen` |
 | high | Salesperson / sales rep | `salesperson_id` | `agent` `sales_reps` `sales_agent` `salesRep` |
 | high | Delivery date (customer promise / per-line / effective) | `customer_delivery_date (header) / line_delivery_date (line)` | `customer_delivery_date` `line_delivery_date` `amended_delivery_date` `expected_at` `supplier_delivery_date_2/3/4` |
 | high | Processing date (release-to-purchasing signal) | `processing_date` | `internal_expected_dd` `proceeded_at` `PDate` `target_date` `so_processing_date` |
@@ -63,7 +63,7 @@ Until then, prefer the **Target** spelling in new code.
 | med | Batch / dye-lot (overloaded onto PO number) | `batch_no` | `allocated_batch_no` `committed_po_batch_no` `expectedBatchNo` `poNumber` |
 | med | Address (structured vs single) | `address1..4` | `address1` `addr1..4` `address` `ship_to_address` `venue_address` |
 | med | Customer / address state | `customer_state` | `state` `location` |
-| med | Transport cost slug | `transport_fee` | `transport_pct` `auto:transport` `transport_setup_dismantle` |
+| med | Transport cost slug | `SVC-TRANS SKU (there is NO transport column; it is a service SKU)` | `transport_pct` `transport_fee` `auto:transport` `transport_setup_dismantle` |
 | med | 2990 company / brand name (master data) | `2990` | `2990s` `2990's` `2990s` |
 | med | Sofa seat-height axis | `seatHeight` | `depth` |
 | med | Sofa compartment / module code | `compartment` | `moduleId` `compartmentId` `buildKey` `cells[].moduleId` |

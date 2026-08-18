@@ -14,12 +14,26 @@ tracks WORKTREES and STAGES, not individual edits.
 
 | # | Stage | State |
 | --- | --- | --- |
-| 0 | **Screening** — read all 1,360 source files (BE/FE/DB) | **DONE** 2026-08-18 |
+| 0a | **Code screening** — read all 1,360 source files (BE/FE/DB) by name | **DONE** 2026-08-18 |
+| 0b | **Data screening** — audit every concept against the LIVE database | **DONE** 2026-08-18 |
 | 1 | **Batch 1 — stop the bleeding** — register every concept, generate the glossary, fix the doc-drift, fix the low-risk defects | **IN PROGRESS** |
 | 2 | **Batch 2 — pay the debt** — retire each drifted spelling, one concept per PR, with its migration | NOT STARTED |
 
-Screening output lives in [`system-screening-2026-08-18.md`](./system-screening-2026-08-18.md):
-**33 true-drift concepts, 21 defects (0 high), 1 doc-drift.**
+Two screening layers, because **names lie**:
+- [`system-screening-2026-08-18.md`](./system-screening-2026-08-18.md) — the CODE read: 33 concepts, 21 defects (0 high), 1 doc-drift.
+- [`system-screening-DATA-2026-08-18.md`](./system-screening-DATA-2026-08-18.md) — the DATA audit: turned the guesses into facts, and CORRECTED four (transport is a SKU not a column; stock/state/exchange are not DB drift). Surfaced a structural finding: the customer master (`customer_id`) is 3% used; everything leans on free-text `debtor_name`.
+
+## Decisions locked (owner, 2026-08-18)
+
+- **Money**: store as an INTEGER minor unit named **`_sen`** (the Malaysian subunit, what AutoCount speaks; `_centi` is the drift despite being the majority). Display/export as **RM** (`35.00`). Confirmed against the Malaysian ringgit and AutoCount conventions.
+- **Delivery date** is THREE concepts: SO header, SO line, PO/supplier (`supplier_delivery_date_2/3/4` are the supplier's re-promise dates after a delay — PO-side, never SO).
+- **Transport** is a service SKU (`SVC-TRANS…`), not a fee column.
+- **`customer_so_no`** duplicates `ref`; `po_doc_no`/`customer_po` are dead (0% filled).
+
+## Open for owner (structural, not renames)
+
+- **Customer normalisation** — `customer_id` is 3% populated; the business runs on one walk-in `debtor_code` + free-text names. Real master or leave as-is?
+- **Salesperson** — unify to `salesperson_id` (uuid), keep the text `agent` for display only?
 
 ---
 
