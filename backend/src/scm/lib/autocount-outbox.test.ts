@@ -650,6 +650,56 @@ describe('the drain', () => {
      be ready: AutoCount would hold a delivery order carrying one sales order's
      lines while the ERP's own document carries two, and the row would be `sent`
      so nothing would ever look at it again. */
+  /* ── WHICH BUILD ANSWERED (migration 0303) ────────────────────────────────
+     A feature the host does not have is indistinguishable from a feature that
+     ran and found nothing. /health has always known; nothing stored it. */
+  test('the host build is stamped on the row the sweep sent', async () => {
+    const sb = withFlag('1', {
+      autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }],
+      delivery_orders: [{ id: 'do-1', linked_ac_docno: null }],
+    });
+    const fetchImpl = vi.fn(async () => jsonRes(200, { ok: true, docNo: 'SO-1' })) as never;
+    await dispatchOne(env, sb as never, row(), fetchImpl, {
+      host_built_at: '2026-08-18T04:00:00Z', host_mvid: 'abc-123',
+    });
+    const after = outbox(sb)[0];
+    expect(after.status).toBe('sent');
+    expect(after.host_built_at).toBe('2026-08-18T04:00:00Z');
+    expect(after.host_mvid).toBe('abc-123');
+  });
+
+  test('a row left WAITING is not stamped — nothing was sent for it', async () => {
+    /* Stamping a build onto a row no call was made for would record a
+       conversation that never happened, and that row is exactly the one someone
+       will later read to ask "which service refused this". */
+    const sb = withFlag('1', {
+      autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }],
+      mfg_sales_orders: [{ doc_no: 'HC-SO-9', linked_ac_docno: null }],
+    });
+    const fetchImpl = vi.fn(async () => jsonRes(200, { ok: true, docNo: 'DO-1' })) as never;
+    const outcome = await dispatchOne(env, sb as never, row({
+      op: 'so_to_do',
+      doc_type: 'DO',
+      payload: {
+        body: {},
+        fromDoc: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: 'HC-SO-9' },
+        writeback: { table: 'delivery_orders', keyCol: 'id', key: 'do-1' },
+      },
+    }), fetchImpl, { host_built_at: '2026-08-18T04:00:00Z', host_mvid: 'abc-123' });
+    expect(outcome).toBe('waiting');
+    expect(outbox(sb)[0].host_built_at).toBeUndefined();
+  });
+
+  test('no build known still sends the document — a diagnostic must not cost a sale', async () => {
+    const sb = withFlag('1', {
+      autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }],
+      delivery_orders: [{ id: 'do-1', linked_ac_docno: null }],
+    });
+    const fetchImpl = vi.fn(async () => jsonRes(200, { ok: true, docNo: 'SO-1' })) as never;
+    expect(await dispatchOne(env, sb as never, row(), fetchImpl, null)).toBe('sent');
+    expect(outbox(sb)[0].host_built_at).toBeUndefined();
+  });
+
   test('a merged conversion carries FromDocNos, one entry per source', async () => {
     const sb = withFlag('1', {
       autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }],

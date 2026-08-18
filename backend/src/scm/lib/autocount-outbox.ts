@@ -1538,6 +1538,43 @@ async function acDocNoOf(sb: Sb, ref: AcDocRef): Promise<string | null> {
   return (data as { linked_ac_docno?: string | null } | null)?.linked_ac_docno ?? null;
 }
 
+/**
+ * WHICH BUILD of AcSyncService is answering, read once per drain sweep.
+ *
+ * Stamped onto every row the sweep dispatches (migration 0303). The point is
+ * not curiosity: a feature the host does not have is indistinguishable from a
+ * feature that ran and found nothing — `mismatches` is empty both when the host
+ * compared the creditor names and agreed, and when the host predates the
+ * comparison entirely. With the build on the row, "was this refused by a
+ * service that no longer exists" is a SELECT.
+ *
+ * BEST-EFFORT AND NEVER FATAL. /health is a diagnostic; a document must not
+ * fail to reach the account book because a diagnostic did not answer. An
+ * unreadable health leaves both columns null, and null already means "not
+ * known for this row" rather than "the host is fine".
+ */
+export interface AcHostBuild { host_built_at: string | null; host_mvid: string | null }
+
+export async function readHostBuild(
+  env: Env,
+  fetchImpl: typeof fetch = fetch,
+): Promise<AcHostBuild | null> {
+  try {
+    const res = await callAcService(env, 'health', {}, fetchImpl);
+    if (!res.ok) return null;
+    const b = res.body as { builtAt?: unknown; mvid?: unknown } | null;
+    if (!b) return null;
+    const at = typeof b.builtAt === 'string' && b.builtAt ? b.builtAt : null;
+    const id = typeof b.mvid === 'string' && b.mvid ? b.mvid : null;
+    /* Both absent means an OLD host — one that predates /health reporting either
+       — and that is worth recording as "asked and got nothing", which is what
+       nulls say. Returning null here would be the same value, so say it once. */
+    return { host_built_at: at, host_mvid: id };
+  } catch {
+    return null;
+  }
+}
+
 async function mark(sb: Sb, id: string, patch: Record<string, unknown>): Promise<void> {
   await sb.from('autocount_outbox')
     .update({ ...patch, updated_at: new Date().toISOString() })
@@ -1562,9 +1599,25 @@ export async function dispatchOne(
   sb: Sb,
   row: AcOutboxRow,
   fetchImpl: typeof fetch = fetch,
+  /**
+   * The host build this sweep is talking to (migration 0303), read once by the
+   * drain and stamped on every row it touches.
+   *
+   * OPTIONAL, deliberately, and this is the exception CLAUDE.md's
+   * required-parameter rule names rather than a hole in it: it DECIDES nothing.
+   * Absent leaves both columns untouched, and NULL there already means "not
+   * known for this row" — the same thing a caller who says nothing means. A
+   * required parameter here would break every existing test call site to record
+   * a value that has no bearing on what the dispatch does.
+   */
+  hostBuild: AcHostBuild | null = null,
 ): Promise<DispatchOutcome> {
   const payload = (row.payload ?? { body: {} }) as AcOutboxPayload;
   const body: Record<string, unknown> = { ...(payload.body ?? {}) };
+  /* Spread into every terminal mark below. Not into the `waiting` ones: those
+     leave the row untouched for the next sweep, and stamping a build onto a row
+     nothing was sent for would say a call happened that did not. */
+  const stamp = hostBuild ?? {};
 
   if (payload.fromDoc) {
     const from = await acDocNoOf(sb, payload.fromDoc);
@@ -1678,6 +1731,7 @@ export async function dispatchOne(
       }
       if (!ensured.ok) {
         await mark(sb, row.id, {
+          ...stamp,
           attempts,
           last_error: `masters not opened, document not sent: ${ensured.error ?? 'unknown'}`,
           ...(ensured.retryable && attempts < MAX_ATTEMPTS ? {} : { status: 'failed' }),
@@ -1691,6 +1745,7 @@ export async function dispatchOne(
 
   if (result.ok) {
     await mark(sb, row.id, {
+      ...stamp,
       status: 'sent',
       attempts,
       last_error: null,
@@ -1715,6 +1770,7 @@ export async function dispatchOne(
 
   const giveUp = !result.retryable || attempts >= MAX_ATTEMPTS;
   await mark(sb, row.id, {
+    ...stamp,
     status: giveUp ? 'failed' : 'pending',
     attempts,
     last_error: giveUp && result.retryable
@@ -1754,6 +1810,12 @@ export async function drainAutoCountOutbox(
     .limit(limit);
   if (error || !data) return { skipped: error ? 'query_failed' : undefined, ...zero };
 
+  /* ONCE PER SWEEP, and only when there is something to send. /health opens no
+     database and answers from the assembly, so it is cheap — but a heartbeat
+     against the office host on every empty five-minute tick is noise, and the
+     value is only meaningful beside a row it stamped. */
+  const hostBuild = data.length ? await readHostBuild(env, fetchImpl) : null;
+
   const summary = { ...zero };
   for (const raw of data as AcOutboxRow[]) {
     /* Re-checked per row, not once per sweep: the flag is per COMPANY, and it
@@ -1761,7 +1823,7 @@ export async function drainAutoCountOutbox(
        failure, and the work must survive to be drained when it is on again. */
     if (!(await isWritebackEnabled(sb, raw.company_id))) continue;
     summary.processed += 1;
-    const outcome = await dispatchOne(env, sb, raw, fetchImpl);
+    const outcome = await dispatchOne(env, sb, raw, fetchImpl, hostBuild);
     if (outcome === 'sent') summary.sent += 1;
     else if (outcome === 'failed') summary.failed += 1;
     else if (outcome === 'waiting') summary.waiting += 1;
