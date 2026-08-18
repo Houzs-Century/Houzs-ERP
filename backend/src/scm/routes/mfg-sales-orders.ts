@@ -183,7 +183,15 @@ import {
 import { findColourKivLines, findIncompleteVariantLines, type ColourKivOffender, type VariantOffender } from '../lib/so-variant-check';
 /* Aggregate ALL Processing-Date/save gate failures into one response instead of
    returning on the first (owner 2026-07-18). Pure — no I/O. */
-import { collectProcessingGateProblems, validationFailedBody, type SaveProblem } from '../shared/so-save-problems';
+import { collectProcessingGateProblems, validationFailedBody } from '../shared/so-save-problems';
+/* The gate's DB reads and its refusals. Lifted out of this file (2026-08-18)
+   when the proceed refusal grew the per-condition detail it now carries — this
+   router is at its file-size ceiling, and the three helpers were already a
+   coherent unit: docNo in, gate FACTS out, judged by the shared pure rules. */
+import {
+  soProceedGateBlocked,
+  soProcessingDateProblemsForDoc,
+} from '../lib/so-proceed-gate';
 import {
   SO_PROCESSING_DATE_COLUMN,
   readSoProcessingDateFromBody,
@@ -530,94 +538,6 @@ async function soEditLocked(
   return soProcessingLocked(header) || await soPoLocked(sb, docNo);
 }
 
-/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-const SO_PROCEED_GATE_RESPONSE = {
-  error: 'proceed_gate_unmet',
-  reason: 'A Processing Date can only be set once the order has a customer name, a full delivery address (line 1 and postcode), a delivery date, and the deposit its company requires (Houzs 30%, 2990 50%).',
-} as const;
-
-/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-async function soDepositFacts(
-  sb: any,
-  docNo: string,
-): Promise<{ paidCenti: number; totalCenti: number }> {
-  const [{ data: totRow }, { data: pays }] = await Promise.all([
-    sb.from('mfg_sales_orders').select('local_total_centi').eq('doc_no', docNo).maybeSingle(),
-    sb.from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo),
-  ]);
-  return {
-    totalCenti: Number((totRow as { local_total_centi?: number } | null)?.local_total_centi ?? 0),
-    paidCenti: ((pays ?? []) as Array<{ amount_centi?: number | null }>)
-      .reduce((s, p) => s + Number(p.amount_centi ?? 0), 0),
-  };
-}
-
-async function soProceedGateBlocked(
-  sb: any,
-  docNo: string,
-  /* No `email` — the unified gate dropped it (owner 2026-07-31). Left OUT of
-     this shape rather than accepted-and-ignored, so a caller cannot believe it
-     still matters. */
-  eff: {
-    customerName?: string | null;
-    address1?: string | null; postcode?: string | null; deliveryDate?: string | null;
-  },
-  /* Picks the deposit fraction (Houzs 30% / 2990 50%). Absent falls back to the
-     looser 30% — see processingDateThresholdFor for why never the stricter. */
-  companyCode?: string | null,
-): Promise<typeof SO_PROCEED_GATE_RESPONSE | null> {
-  const { paidCenti, totalCenti } = await soDepositFacts(sb, docNo);
-  const ok = meetsProceedGate({
-    hasCustomerName: !!eff.customerName?.trim(),
-    hasAddress: !!eff.address1?.trim(),
-    hasPostcode: !!eff.postcode?.trim(),
-    hasDeliveryDate: !!eff.deliveryDate?.trim(),
-    paid: paidCenti,
-    total: totalCenti,
-    companyCode,
-  });
-  return ok ? null : SO_PROCEED_GATE_RESPONSE;
-}
-
-/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-async function soProcessingDateProblemsForDoc(
-  sb: any,
-  docNo: string,
-  procDate: string,
-  header: {
-    customerName?: string | null;
-    address1?: string | null; postcode?: string | null; deliveryDate?: string | null;
-  },
-  companyCode?: string | null,
-): Promise<SaveProblem[]> {
-  const [{ data: liveItems }, deposit] = await Promise.all([
-    sb.from('mfg_sales_order_items')
-      .select('id, item_code, item_group, variants, cancelled').eq('doc_no', docNo),
-    soDepositFacts(sb, docNo),
-  ]);
-  const lines = ((liveItems ?? []) as Array<{
-    id: string; item_code: string; item_group: string;
-    variants: Record<string, unknown> | null; cancelled: boolean;
-  }>)
-    .filter((it) => !it.cancelled)
-    .map((it) => ({ id: it.id, itemCode: it.item_code, group: it.item_group, variants: it.variants }));
-  return collectProcessingGateProblems({
-    companyCode,
-    procDate,
-    delivDate: String(header.deliveryDate ?? '').slice(0, 10) || null,
-    todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
-    /* No orig* dates: this helper only runs when the order has NO stored
-       Processing Date, so the date is new and nothing can be grandfathered. */
-    variantOffenders: findIncompleteVariantLines(lines),
-    kivOffenders: findColourKivLines(lines),
-    completeness: {
-      hasCustomerName: !!header.customerName?.trim(),
-      hasAddress: !!header.address1?.trim(),
-      hasPostcode: !!header.postcode?.trim(),
-    },
-    deposit,
-  });
-}
 
 /* The identity lock (which columns freeze once a DO / SI exists, and why
    `salesperson_id` no longer does) lives in shared/so-identity-lock.ts. */
@@ -4887,6 +4807,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
   const depositTotalCenti = posPaymentsTotalCenti
     ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0);
+  /* THE ONE meetsProceedGate CALLER THAT CARRIES NO PROBLEM LIST, and that is
+     the honest answer rather than an oversight. This site REFUSES NOTHING: a
+     handover that misses the gate is simply created un-proceeded, in Order
+     Placed, for the salesperson to complete and proceed manually — there is no
+     refusal here to name a condition in. (The create path's Processing-Date
+     refusal is a different gate, further down, and it already ships the
+     aggregated `problems` list.) The two paths that DO refuse a proceed both go
+     through soProceedGateBlocked → collectProceedGateProblems. */
   const autoProceed = !!procDateOnCreate && meetsProceedGate({
     hasCustomerName: !!customerName?.trim(),
     hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),
