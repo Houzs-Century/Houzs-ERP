@@ -2022,7 +2022,7 @@ function GoodsToDeliverCard({ order }: { order: BoardRow }) {
 // A TIMESTAMPTZ ISO → the value <input type="datetime-local"> wants.
 const toDtLocal = (iso: string | null | undefined): string =>
   iso ? String(iso).slice(0, 16) : "";
-// A YYYY-MM-DD date-ish string → the value <input type="date"> wants.
+// A YYYY-MM-DD date-ish string → the ISO value DateField takes.
 const toDateInput = (d: string | null | undefined): string =>
   d ? String(d).slice(0, 10) : "";
 
@@ -2150,21 +2150,11 @@ function DeliveryFieldsCard({
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">Shipout date (EM/SG)</span>
-            <input
-              type="date"
-              value={form.shipoutDate}
-              onChange={(e) => set("shipoutDate", e.target.value)}
-              style={inputStyle}
-            />
+            <DateField value={form.shipoutDate} onChange={(iso) => set("shipoutDate", iso)} style={inputStyle}/>
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">Customer delivered date</span>
-            <input
-              type="date"
-              value={form.customerDeliveredDate}
-              onChange={(e) => set("customerDeliveredDate", e.target.value)}
-              style={inputStyle}
-            />
+            <DateField value={form.customerDeliveredDate} onChange={(iso) => set("customerDeliveredDate", iso)} style={inputStyle}/>
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">ETA / arriving port (EM/SG)</span>
@@ -2425,3 +2415,5 @@ function TrackButton({
     </button>
   );
 }
+
+import { DateField } from "../vendor/scm/components/DateField";

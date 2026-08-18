@@ -13,7 +13,7 @@ import { lazy, useMemo, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   ArrowLeft,
@@ -81,14 +81,6 @@ import { convertToLink, transferToLabel } from "../../lib/convertScope";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneyCenti(centi, currency);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
 
 const supplierNameOf = (h: PoHeaderRow): string =>
   h.supplier?.name || h.supplier_id || "—";

@@ -23,6 +23,7 @@ import {
 } from '../../vendor/scm/lib/delivery-zones-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -131,10 +132,10 @@ export const DriverLeave = () => {
           </Ctl>
         )}
         <Ctl label="From">
-          <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={selStyle} />
+          <DateField value={startDate} onChange={(iso) => setStartDate(iso)} style={selStyle}/>
         </Ctl>
         <Ctl label="To">
-          <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={selStyle} />
+          <DateField value={endDate} onChange={(iso) => setEndDate(iso)} style={selStyle}/>
         </Ctl>
         <Ctl label="Reason (optional)">
           <input type="text" value={reason} onChange={(e) => setReason(e.target.value)} placeholder="MC, annual leave…" style={{ ...selStyle, width: 200 }} />

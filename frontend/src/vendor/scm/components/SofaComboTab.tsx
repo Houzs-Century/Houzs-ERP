@@ -26,14 +26,7 @@ import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import { Plus, Pencil, Trash2, History, X, CheckSquare, Square } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { DateField } from './DateField';
-import {
-  fmtCenti,
-  maintValues,
-  SOFA_MODULES,
-  type SofaPriceTier,
-  buildComboLabel,
-  normalizeCompartmentCode,
-} from '@2990s/shared';
+import { buildComboLabel, fmtCenti, fmtDate, maintValues, normalizeCompartmentCode, SOFA_MODULES, type SofaPriceTier } from '@2990s/shared';
 import {
   useSofaCombos,
   useCreateSofaCombo,
@@ -63,11 +56,6 @@ const ICON_PROPS = { size: 14, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined): string => fmtCenti(centi);
 
-const fmtDate = (iso: string): string => {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(iso)) return iso;
-  const [y, m, d] = iso.split('-');
-  return `${d}/${m}/${y}`;
-};
 
 // Malaysia calendar date — the UTC version returned YESTERDAY before 08:00 MYT.
 const todayIso = (): string => todayMyt();
@@ -958,12 +946,7 @@ function ComposerModal({
 
         <div style={{ display: 'grid', gridTemplateColumns: '1fr 2fr', gap: 12 }}>
           <Field label="Effective from">
-            <input
-              type="date"
-              value={effectiveFrom}
-              onChange={(e) => setEffectiveFrom(e.target.value)}
-              style={inputStyle}
-            />
+            <DateField value={effectiveFrom} onChange={(iso) => setEffectiveFrom(iso)} style={inputStyle}/>
           </Field>
           <Field label="Label (optional)">
             <input
