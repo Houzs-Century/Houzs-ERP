@@ -63,8 +63,8 @@ export const useMfgSalesOrders = (status?: string) =>
 // useMfgSalesOrders above (no page) still returns all 500 for the dead V1 page.
 // Status tab values in the UI are lowercase (draft/confirmed/cancelled) but the
 // mfg_sales_orders.status column stores UPPERCASE — uppercase here to match.
-export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string }) {
-  const { page, pageSize, status, q, sort } = params;
+export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean }) {
+  const { page, pageSize, status, q, sort, enabled } = params;
   const usp = new URLSearchParams();
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
@@ -72,6 +72,11 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
   if (q && q.trim()) usp.set('q', q.trim());
   if (sort) usp.set('sort', sort);
   return useQuery({
+    // `enabled` (default true) lets the list page defer the FIRST fetch by one
+    // render until the DataTable's one-shot mount sort-report lands, so the
+    // initial query already carries any localStorage-restored `sort` instead of
+    // firing sort-less, getting aborted, and immediately re-firing with sort.
+    enabled: enabled ?? true,
     queryKey: ['mfg-sales-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
     // statusCounts carries ONE bucket per backend SO_STATUSES entry (lowercase:
     // draft/confirmed/in_production/ready_to_ship/shipped/delivered/invoiced/
@@ -88,14 +93,13 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
 }
 
 // Dashboard summary mode (`?summary=1`) — the backend returns only the 6 cols
-// the lifecycle-bucket KPIs need (doc_no, status, proceeded_at, local_total_centi,
+// the lifecycle-bucket KPIs need (doc_no, status, local_total_centi,
 // created_at, so_date), non-DRAFT, company + sales-scope scoped, so the dashboard
 // isn't paying for 500 fully-hydrated rows. Bucketing stays in the FE (single
 // source of truth). Ported from 2990's useMfgSalesOrdersSummary.
 export type SoSummaryRow = {
   doc_no: string;
   status: string;
-  proceeded_at: string | null;
   local_total_centi: number;
   created_at: string | null;
   so_date: string | null;

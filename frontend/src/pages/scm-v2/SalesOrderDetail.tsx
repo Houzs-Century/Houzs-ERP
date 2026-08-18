@@ -31,7 +31,7 @@ import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/Prin
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { SoSourceChips } from '../../components/SoSourceChips';
 import { useSetBreadcrumbs } from '../../hooks/useBreadcrumbs';
-import { buildVariantSummary, canonicalizeVariants, fmtCenti, fmtDateOrDash, fmtMoneyCenti, lineIdentity, missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared'; // Commander 2026-05-28
+import { buildVariantSummary, canonicalizeVariants, fmtCenti, fmtDateOrDash, fmtMoneyCenti, lineIdentity, missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from '@2990s/shared'; // Commander 2026-05-28
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import {
@@ -323,11 +323,6 @@ type SoHeader = {
   hub_name: string | null;
   customer_delivery_date: string | null;
   processing_date: string | null;
-  /* POS "Proceed" timestamp (migration 0110). Auto-stamped server-side when the
-     SO first enters IN_PRODUCTION (the POS "Proceed" action). Read-only here —
-     surfaced as "Proceed Date" in the Order Info card so the coordinator can
-     see WHEN the salesperson proceeded the order. */
-  proceeded_at: string | null;
   linked_do_doc_no: string | null;
   ship_to_address: string | null;
   bill_to_address: string | null;
@@ -344,6 +339,9 @@ type SoHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
+  /* POS handover "Target Date" — still WRITTEN by the POS (46 SOs in the last
+     90 days, measured on prod 2026-08-18) and still read by the sales-report
+     export. Not rendered here; do not delete it as dead. */
   target_date: string | null;
   /* P1 (migration 0142) — POS handover customer signature (data URL). Read-only
      here; rendered as an image so the coordinator can see the signed proof. */
@@ -858,16 +856,26 @@ export const SalesOrderDetail = () => {
       setSaveError('Every line must have a product selected before saving.');
       return;
     }
-    // Sofa is exclusive among main products — the server 400s
-    // `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
-    // Block + warn here so the operator gets one plain sentence, not a raw 400.
-    // In edit mode every existing line is seeded into editingDrafts, so this
-    // (+ EVERY staged add) covers the whole order.
+    /* Sofa is exclusive among main products — the server 400s
+       `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
+       Block + warn here so the operator gets one plain sentence, not a raw 400.
+       In edit mode every existing line is seeded into editingDrafts, so this
+       (+ EVERY staged add) covers the whole order.
+
+       INTRODUCED, not flat (2026-08-18). This asked `hasSofaMixConflict` on the
+       edited set alone, which is the CREATE path's question. The three server
+       line paths ask a different one — `mainMixIntroduced` refuses only a change
+       that INTRODUCES the mix, so an order written before the rule existed stays
+       editable — and the flat client check sat in front of them refusing saves
+       the server would have accepted. An operator on a pre-rule mixed order could
+       not save ANY change to it, not even a phone number, and the sentence blamed
+       a rule the server itself grandfathers. */
+    const storedGroups = items.map((it) => it.item_group);
     const editedGroups = [
       ...Object.values(editingDrafts),
       ...stagedAddDrafts(addingDrafts),
     ].filter((d) => d.itemCode.trim()).map((d) => d.itemGroup);
-    if (hasSofaMixConflict(editedGroups)) {
+    if (sofaMixIntroduced(storedGroups, editedGroups)) {
       setSaveError(SOFA_MIX_MESSAGE);
       return;
     }
@@ -1500,6 +1508,11 @@ export const SalesOrderDetail = () => {
       uom:            d.uom,
       qty:            d.qty,
       unitPriceCenti: d.unitPriceCenti,
+      /* A 0 typed HERE is a real price, not "the client could not resolve one".
+         The backend cannot tell those apart on the wire, so say which it is —
+         only this statement lets a 0 survive the recompute (TrustSelling
+         'operator-zero'). Sent only at 0; a priced line needs no claim. */
+      ...(d.unitPriceCenti === 0 ? { zeroPriceIntended: true } : {}),
       discountCenti:  d.discountCenti,
       unitCostCenti:  d.unitCostCenti,
       variants:       d.variants,
@@ -1602,9 +1615,9 @@ export const SalesOrderDetail = () => {
      it re-enables can never open an order the server would refuse to save. */
   const canAttributeOther = can('scm.so.attribute_other');
 
-  /* Owner 2026-07-05 — SO PROCESS lock: once the SO has been PROCEEDED
-     (proceeded_at stamped) AND its processing day has passed, we PO to the
-     supplier, so the LINE ITEMS freeze (State + Postcode freeze in the customer
+  /* Owner 2026-07-05 — SO PROCESS lock: once the SO has a Processing Date
+     (which IS what being proceeded means — owner, pinned 2026-08-13) AND that
+     day has passed, we PO to the supplier, so the LINE ITEMS freeze (State + Postcode freeze in the customer
      card below). Payment + the rest of the customer data stay editable. This is
      independent of `isLocked` (status/downstream) — it applies while the SO is
      still in an otherwise-editable status. Shared gate uses todayMyt() (Malaysia
@@ -2854,7 +2867,9 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      branding + ref + venue dropped per commander 2026-05-26. */
   // PR #140 — Commander 2026-05-26 drop list:
   //   - poDocNo (Customer PO #)   → "customer PO 不需要"
-  //   - targetDate                → replaced by Processing + Delivery Date
+  //   - the POS-era "Target Date" → replaced by Processing + Delivery Date.
+  //     The NAME went with it on 2026-08-18: the server no longer selects,
+  //     accepts or maps it anywhere (owner: "全部你都是要统一掉的，不要那么多个").
   // PR #140 — add list:
   //   - processingDate
   //   - customerDeliveryDate
@@ -2943,7 +2958,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     /* Processing Date persists to the processing_date column — the same word
        on the form, in this payload and in Postgres since mig 0284 (commander
        2026-05-26: "internal expected date 是 Hookka 用的"; #140 changed the
-       label, 0284 changed the name underneath it). targetDate field dropped. */
+       label, 0284 changed the name underneath it).
+
+       WHAT IT MEANS (owner 2026-08-18): the date this order is RELEASED for
+       purchasing to order goods — "Processing Date 就代表这张单可以安排订货了".
+       Not a production date; this business does not schedule a factory. */
     processingDate: f.processingDate || null,
     customerDeliveryDate: f.customerDeliveryDate || null,
     note: f.note,
@@ -3131,9 +3150,9 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     originalProcessing !== '' && originalProcessing < today && !amendmentMode &&
     !canRemoveProcessingDate;
 
-  /* Owner 2026-07-05 — the SO PROCESS lock fires only once the SO has been
-     PROCEEDED (proceeded_at stamped) AND its processing day has passed. That is
-     the moment we PO to the supplier, so from then on the LINE ITEMS and the
+  /* Owner 2026-07-05 — the SO PROCESS lock fires only once the SO has a
+     Processing Date (which IS what being proceeded means) AND that day has
+     passed. That is the moment we PO to the supplier, so from then on the LINE ITEMS and the
      customer STATE + POSTCODE (which drive the line warehouse + the PO delivery
      location) freeze. PAYMENT and every other customer field stay editable.
      This is stricter than `processingLocked` (which grandfather-locks the past
@@ -3467,8 +3486,10 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 style={datesXor && !form.customerDeliveryDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
             </label>
-            {/* Proceed Date field removed per request 2026-06-05 — the POS still
-                stamps proceeded_at server-side; it's just no longer surfaced here. */}
+            {/* Proceed Date field removed per request 2026-06-05. It showed a
+                separate server-stamped Proceed timestamp; the owner has since
+                ruled (three times, last 2026-08-18) that the Processing Date IS
+                the Proceed, so there is no second date to surface. */}
             <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
               <span className={styles.fieldLabel}>Note</span>
               <input className={styles.fieldInput} value={form.note}

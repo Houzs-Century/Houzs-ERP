@@ -24,7 +24,7 @@ export * from './maintenance-pools'; // 2026-06-12 — maintenance option ACTIVE
 export * from './free-gift'; // 2026-06-14 — default free gift pure module (parse/desired/validate)
 export * from './free-item-campaign'; // 2026-06-17 — free item campaign matcher (campaignsCoveringLine)
 export * from './hr-commission'; // 2026-06-14 — HR commission math + KPI line matcher
-export * from './effective-delivery'; // 2026-06-19 — PO supplier-revised delivery date (migration 0180): effective = MAX over non-null
+export * from './effective-delivery'; // PO supply: MAX over supplier revisions (mig 0180). SO demand: effectiveSoDelivery — the ONE "when is this due" every consumer reads (2026-08-18)
 export * from './rule-target'; // 2026-06-21 — unified rule targeting (model/variant/compartment/combo matcher)
 export * from './special-delivery-match'; // 2026-06-21 — model-agnostic delivery trigger matcher (reuses rule-target)
 export * from './fabric-tier-override-resolve'; // 2026-06-21 — effective fabric-tier delta = MAX(model, matching compartments)

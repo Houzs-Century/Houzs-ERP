@@ -38,7 +38,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { convertToLink, transferToLabel } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { EntityHistoryPanel } from "./EntityHistoryPanel";
 import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
 import { resolveFxRate } from "./fx-rate";
@@ -570,7 +570,7 @@ function GoodsReceivedDetailV2ReadOnly() {
                 {poOf(grn) !== "—" && (
                   <>
                     <Divider />
-                    <span>From PO <span className="font-mono font-semibold text-ink-secondary">{poOf(grn)}</span></span>
+                    <span>{transferFromColumnLabel('po')} <span className="font-mono font-semibold text-ink-secondary">{poOf(grn)}</span></span>
                   </>
                 )}
                 {grn.delivery_note_ref && (
@@ -621,7 +621,7 @@ function GoodsReceivedDetailV2ReadOnly() {
             <Section title="Receipt info">
               <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-4">
                 <Field label="Received at" value={fmtDate(grn.received_at)} />
-                <Field label="From PO" value={poOf(grn)} mono={poOf(grn) !== "—"} muted={poOf(grn) === "—"} />
+                <Field label={transferFromColumnLabel('po')} value={poOf(grn)} mono={poOf(grn) !== "—"} muted={poOf(grn) === "—"} />
                 <Field label="Delivery note" value={grn.delivery_note_ref || "—"} muted={!grn.delivery_note_ref} mono={!!grn.delivery_note_ref} />
                 <Field label="Warehouse" value={grn.warehouse_code || "—"} muted={!grn.warehouse_code} mono={!!grn.warehouse_code} />
                 <Field label="Currency" value={grn.currency} />

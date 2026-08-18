@@ -3,8 +3,9 @@
 // the write paths that must call it.
 //
 // THE RULE (owner, restated 2026-08-13): "processing date 和 delivery date 必须
-// 同时有或者同时没有". A Processing Date is production's go-ahead and the
-// Delivery Date is what it is promised against.
+// 同时有或者同时没有". A Processing Date RELEASES the order to purchasing to go
+// and order the goods (owner 2026-08-18 — not a production date; this business
+// schedules no factory) and the Delivery Date is what it is promised against.
 //
 // This file is the PREDICATE. Which write paths reach it is a different
 // question and a different file — tests/soDatePairWiring.test.ts — because the

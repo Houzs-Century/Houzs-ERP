@@ -89,6 +89,129 @@ source of wrong answers here — completeness is not a quality bar, and "these t
 facts disagree and I have not resolved it" is a better answer than a seamless
 one.
 
+## ⚠️ 用白话文跟老板讲 — MANDATORY (owner rule, 2026-08-18)
+
+His words: *"你跟我说的那些问题和做完的东西，都没有用白话文让人简单明白。因为我
+不是 IT 出身的。"*
+
+**He is the decision maker and he is not an engineer.** An answer he cannot read
+is not an answer — it is a bill for his time, and he pays it every single reply.
+This rule is about the OUTPUT, not the work: the rigour below stays exactly as
+it is, and only the way it reaches him changes.
+
+**Lead with what it means for the business. The mechanism comes after, if at
+all.**
+
+| do not open with | open with |
+| --- | --- |
+| "`readConvertSourceKeys` resolved line IDENTITY only, so `AddPartialTransferDetail` moved the whole outstanding quantity" | "出 5 件里的 2 件，AutoCount 那边开了 5 件 —— 库存对不上，而且完全没有声音" |
+| "`conversionIsPartial` compared one parent's line count against the total taken" | "两张单合并出货的时候，系统会把没出的货也算成出了" |
+| "the `no-autocount-shape` needle stays because the table is append-only" | "以前记下的那些单不会自己好，要人手补 —— 新的单不会再有这个问题" |
+
+Four rules that make that concrete:
+
+1. **The first sentence names the business effect.** A document did not reach
+   AutoCount; stock is wrong by N; a customer's invoice is short. Never a
+   function name, never a file path, never an identifier.
+2. **Identifiers are EVIDENCE and they go last.** File paths, function names,
+   PR numbers, column names belong at the end of a section or under a heading
+   that says what it is — so he can hand it to someone, not so he can decode it.
+3. **A number needs its denominator in his terms.** "10 of 60,939 lines" is
+   readable; "0.02% of the corpus" is not. "1 张 / 11,134 张交货单" beats
+   "0.0%".
+4. **If a technical word is unavoidable, define it once, in his vocabulary, the
+   first time.** He should never have to ask what a word means twice.
+
+**This does NOT license vagueness.** Labelling stays (PROVEN / LIKELY /
+UNKNOWN), numbers stay, the command that reproduces them stays. Plain language
+is a translation of the evidence, never a substitute for having it.
+
+## ⚠️ A root cause is a request for OPTIONS, not for agreement — MANDATORY (owner rule, 2026-08-18)
+
+His words: *"基本上我会跟你说一个 root cause，你应该给我方案怎么去解决，并且查看
+我们的代码，然后给我们解决方案"* and *"你需要稍微看一下市面上正常的 ERP 都是怎么做
+的，然后给我 proposal，给我 suggest，让我去选择"*.
+
+**When the owner hands you a cause, he has already done the diagnosis. Repeating
+it back to him is not work.** What he is asking for is the next step, and it has
+a required shape:
+
+1. **Read OUR code first.** The proposal must say what changes in THIS system —
+   which module, which table, what it breaks, what it costs. Generic advice is
+   worth nothing to him and he can get it anywhere.
+2. **Say what a normal ERP does.** He is choosing between our way and the
+   industry's, and he cannot make that choice without knowing there is one.
+   Name the convention (how AutoCount / SAP / Odoo / NetSuite handle it) and say
+   plainly whether ours differs and why.
+3. **Give 2 to 3 NAMED options**, each with its consequence: what it costs to
+   build, what it breaks, what it means for the documents already in the account
+   book, and what it is like to live with afterwards.
+4. **RECOMMEND one, and say why.** "It is your call" without a recommendation
+   pushes the work back onto him. Recommending is not deciding — he still picks.
+5. **Never end a diagnosis without options.** A finished investigation whose last
+   line is "this is broken" is half a deliverable.
+
+The judgement rule still holds and is not in tension with this one
+(`owner-rule-ask-when-unsure`): a PROVABLE defect gets fixed without asking; a
+JUDGEMENT — should this be required, labelled, charged, allowed — gets options
+and a recommendation, and he chooses.
+
+## ⚠️ 挖到真正的 ROOT CAUSE，从根本解决，不拿补丁当终局 — MANDATORY (owner rule, 2026-08-18)
+
+His words, three times in one session: *"所有的问题都要找出来真的 root cause 然后
+根本解决"*, *"做任何东西都要查找它真正的 root cause，尽量从根本上解决"*, *"一定要
+看一下最适合的方案，给我去做选择"*. And the sharp one that named the failure:
+*"为什么你不找根本 给我们更好的方案做呢"*.
+
+This SHARPENS the two rules "Do not guess, prove it" and "a root cause is a
+request for OPTIONS". Those say: prove the cause, answer with options. This adds
+the bar he keeps raising — **a fix that only stops the symptom is not the
+deliverable.**
+
+1. **Trace the REAL mechanism, with code evidence.** Read the code until you can
+   point at the line where it actually goes wrong — not the symptom, not the
+   first plausible story.
+2. **A workaround is a STOPGAP, and you must SAY it is one.** A switch, a retry,
+   a cache-bust, a flag may ship as immediate relief — but never presented as the
+   fix. Name it a stopgap, name the real root fix beside it, and say what the real
+   fix takes. Shipping the stopgap and calling it done is the exact failure he
+   caught here: flipping a session-fallback switch stopped the random logouts but
+   did NOT touch the latency, and calling that "solved" would have hidden the root
+   (every request re-reads the whole RBAC envelope from the DB on one serialized
+   connection).
+3. **Say how mainstream / large ERPs solve this CLASS of problem, plainly.** He is
+   choosing between our way and the industry's and cannot choose without knowing
+   there is one. The durable answer is usually the industry's; a per-request patch
+   usually is not.
+4. **Give 2-3 named options ranked stopgap → proper, each with effort/risk/benefit,
+   and RECOMMEND one.** He picks. Ending with only the stopgap, or with no
+   recommendation, is half a deliverable.
+
+## ⚠️ 任务清楚就一路做完，不要每步停下来问 — MANDATORY (owner rule, 2026-08-18)
+
+His words: *"不要一直问我 我不喜欢明明还有 tasks 却停下来问 好像故意不工作那样 你要
+记得这个"* and *"跟着你的 worktree 把所有 tasks complete 掉"*.
+
+Once the direction is CHOSEN (he chose it) and the remaining steps are
+unambiguous execution, drive them to completion — commit, PR, next step —
+**without pausing for approval between each one.** A pause-to-confirm on clear,
+already-decided work reads to him as finding an excuse not to work.
+
+This does NOT conflict with the two options rules above: give options WHEN
+CHOOSING a direction; once chosen, execute to the end without re-asking "shall I
+do the next one?".
+
+Reserve an interruption for exactly three things:
+1. a genuine business / judgement decision that is his to make (the
+   ask-when-unsure case);
+2. a destructive or irreversible action;
+3. a hard blocker only he can clear — setting a secret, flipping a repo setting.
+
+**Design around #3 so it does not halt the rest.** Write code that reads a
+not-yet-set secret as a NO-OP when absent, ship it zero-risk, and let him
+activate it with one action later — the work keeps moving instead of stopping to
+wait for him.
+
 ## ⚠️ Log every bug in `BUG-HISTORY.md` — MANDATORY (owner rule, everyone)
 
 Every bug you find and fix **must** get an entry in [`BUG-HISTORY.md`](./BUG-HISTORY.md) at the repo root — no exceptions. One short entry: **Symptom → Root cause (traced, not guessed) → Fix → Ref (PR/date)**, newest first, with a severity tag. This is how we stop re-introducing the same class of bug: **read it before touching a subsystem, and add to it in the same PR that fixes the bug.** This applies to every contributor and every agent/session.
@@ -658,7 +781,7 @@ never nullish.
   | --- | --- |
   | `route-capability-matrix.csv` | YES — `audit:routes`, in `ci.yml` and both deploy workflows |
   | `codebase-map-facts.md` | YES — `audit:map`, in `ci.yml`'s `backend-typecheck` |
-  | `bug-index.md` | in CI, but it REPORTS drift and does not fail on it (see the job's own comment: with serial merges, gating it deadlocks every open PR on the previous author's entry) |
+  | `bug-index.md` | **NOT TRACKED since 2026-08-18** — it is gitignored. `audit:bug-index` regenerates it in memory and gates on the GENERATOR (parse failure, unresolvable area tag, zero entries), which never needed a copy in git. Run `npm --prefix backend run gen:bug-index` to read it locally. |
   | `route-locator.md` | NO. Re-run `npm --prefix backend run gen:route-locator` before trusting a LINE NUMBER from it. |
 
   > **CORRECTED 2026-08-15.** This bullet previously said, twice and in two

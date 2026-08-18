@@ -113,6 +113,24 @@ if (!url) {
 }
 
 const CONFIRM_PHRASE = "I HAVE REVIEWED THE DRY-RUN";
+/* SCOPE=catalog restricts the write set to the CATALOGUE — mfg_products and
+   product_models — and leaves every stored line row alone.
+
+   Owner 2026-08-18, asked to fill the 11 unbranded 5526 sofa SKUs so the stored
+   data would agree with the display rule that hardcodes ZANOTTI. The dry-run
+   showed this script also re-stamps 1,012 SO line rows across 463 documents:
+   not those 11 SKUs' lines (there are 8 of those) but every Houzs SOFA line
+   that is blank. That is the Houzs line backfill he had already declined, so it
+   is his call and not this script's default. He chose catalogue only.
+
+   `all` stays the DEFAULT so the behaviour every earlier dispatch had is
+   unchanged; a caller has to ask for the narrower set. */
+const SCOPE = String(process.env.SCOPE ?? "all").trim().toLowerCase();
+if (SCOPE !== "all" && SCOPE !== "catalog") {
+  console.error(`SCOPE must be "all" or "catalog" — got "${SCOPE}". Refusing to run rather than guessing which set was meant.`);
+  process.exit(2);
+}
+const CATALOG_ONLY = SCOPE === "catalog";
 const APPLY = process.env.APPLY === "true" && process.env.CONFIRM === CONFIRM_PHRASE;
 if (process.env.APPLY === "true" && !APPLY) {
   console.log(`APPLY requested but CONFIRM did not match "${CONFIRM_PHRASE}" — running DRY-RUN instead.\n`);
@@ -220,8 +238,18 @@ try {
     const codes = codeRows.length ? codeRows.map((r) => r.code) : [""];
     console.log(`HOUZS SOFA SKU codes in catalog: ${codeRows.length}\n`);
 
-    /* (b) Stamped line rows for those codes. */
-    for (const lt of LINE_TABLES) {
+    /* (b) Stamped line rows for those codes. SKIPPED under SCOPE=catalog — the
+       count it would have written is still printed, so choosing the narrow set
+       never hides how much was left behind. */
+    if (CATALOG_ONLY) {
+      const [left] = await sql`
+        SELECT count(*)::int AS n FROM scm.mfg_sales_order_items
+         WHERE company_id = ${hcId} AND item_code = ANY(${codes})
+           AND (branding IS NULL OR btrim(branding) = '' OR lower(btrim(branding)) = 'houzs')`;
+      console.log(`=== (b) SKIPPED — SCOPE=catalog. ${left.n} line row(s) are left as they are (owner's decision, 2026-08-18) ===
+`);
+    }
+    for (const lt of CATALOG_ONLY ? [] : LINE_TABLES) {
       const [col] = await sql`
         SELECT 1 AS present FROM information_schema.columns
          WHERE table_schema = 'scm' AND table_name = ${lt.table} AND column_name = 'branding'`;
@@ -436,12 +464,14 @@ try {
            + (SELECT count(*) FROM scm.product_models
                WHERE company_id = ${hcId} AND category = 'SERVICE'
                  AND (branding IS NULL OR btrim(branding) = ''))
-           + (SELECT count(*) FROM scm.mfg_sales_order_items
-               WHERE company_id = ${hcId} AND item_code = ANY(${codes})
-                 AND (branding IS NULL OR btrim(branding) = '' OR lower(btrim(branding)) = 'houzs'))
-           + (SELECT count(*) FROM scm.consignment_sales_order_items
-               WHERE company_id = ${hcId} AND item_code = ANY(${codes})
-                 AND (branding IS NULL OR btrim(branding) = '' OR lower(btrim(branding)) = 'houzs'))
+           + (SELECT CASE WHEN ${CATALOG_ONLY} THEN 0 ELSE (
+               SELECT count(*) FROM scm.mfg_sales_order_items
+                WHERE company_id = ${hcId} AND item_code = ANY(${codes})
+                  AND (branding IS NULL OR btrim(branding) = '' OR lower(btrim(branding)) = 'houzs')) END)
+           + (SELECT CASE WHEN ${CATALOG_ONLY} THEN 0 ELSE (
+               SELECT count(*) FROM scm.consignment_sales_order_items
+                WHERE company_id = ${hcId} AND item_code = ANY(${codes})
+                  AND (branding IS NULL OR btrim(branding) = '' OR lower(btrim(branding)) = 'houzs')) END)
              AS n`;
     if (Number(dirty.n) !== 0) fail(`post-verify found ${dirty.n} remaining dirty row(s) in the SOFA/SERVICE/line target sets`);
     const [bfLeft] = await sql`
