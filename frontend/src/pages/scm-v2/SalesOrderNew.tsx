@@ -1594,10 +1594,10 @@ export const SalesOrderNew = () => {
         idempotencyKey: idemKey,
         ...receiptDepositBody,
         pendingDepositCenti: pendingDepositCenti > 0 ? pendingDepositCenti : undefined,
-        /* DRAFT flow — backend reads `asDraft: true` to create the SO with
-           status 'DRAFT' instead of 'CONFIRMED'. Omitted (undefined) for a
-           normal Create so the body stays unchanged in that path. */
+        /* DRAFT flow — backend reads `asDraft: true` to create the SO as 'DRAFT'
+           not 'CONFIRMED'. Omitted on a normal Create, so that body is unchanged. */
         asDraft: asDraft || undefined,
+        manualEntry: true, // hand-keyed: backend drops the deposit condition only
         debtorName,
         debtorCode: debtorCode || undefined,
         phone: phone || undefined,
