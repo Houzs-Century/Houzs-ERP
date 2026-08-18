@@ -71,6 +71,9 @@ export type SettlementRow = {
   linked: SettlementLink[];
   candidates: SettlementCandidate[];
   comboHints: Array<[string, string]>;
+  /** What the system itself would pick — pre-ticked, still yours to confirm.
+      Empty unless there is exactly ONE way to make this line amount. */
+  suggested?: SettlementCandidate[];
   clue: string | null;
 };
 

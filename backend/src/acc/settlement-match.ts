@@ -49,6 +49,20 @@ export type MatchDecision = {
   candidates: PaymentCandidate[];
   /** Pairs of candidates whose amounts sum exactly to the gross. */
   comboHints: Array<[string, string]>;
+  /**
+   * The system's OWN best answer, when there is exactly one way to make this
+   * line's amount out of the payments in range — pre-ticked on screen so the
+   * operator confirms rather than re-does the search.
+   *
+   * Owner, 2026-08-18: 每个 merchant 都要 set 成如果 approval code 对不上，他会尽
+   * 量根据日期金额去尝试自动匹配后让我知道，我再 final confirm — 因为我没办法确定
+   * authorised code salesperson 一定填对.
+   *
+   * It is a SUGGESTION, never a decision: it stays in NEEDS_CONFIRM and nothing
+   * posts until a human presses confirm. A mistyped approval code is exactly
+   * why amount+date may not auto-confirm — it is the same uncertainty, moved.
+   */
+  suggested: PaymentCandidate[];
   /** The one-line reason shown on screen next to the row. */
   clue: string;
 };
@@ -124,6 +138,7 @@ export function matchStatement(
           matched: hits,
           candidates: [],
           comboHints: [],
+          suggested: [],
           clue: `Reference ${row.ref} matches ${hits[0].docNo}`,
         });
         continue;
@@ -136,6 +151,7 @@ export function matchStatement(
           matched: [],
           candidates: hits,
           comboHints: exactPairs(hits, row.grossSen),
+          suggested: [],
           clue: `${hits.length} payments carry reference ${row.ref} — pick the right one`,
         });
         continue;
@@ -149,6 +165,13 @@ export function matchStatement(
     const pool = available();
     const sameAmount = pool.filter((p) => p.amountSen === row.grossSen && dayGap(p.paidOn, row.txnDate) <= tolerance);
     if (sameAmount.length > 0) {
+      /* ONE payment of this amount in range is the system's answer — ticked for
+         the operator, still his to confirm. Several is a question, not an
+         answer, so nothing is ticked and he chooses. */
+      const only = sameAmount.length === 1 ? sameAmount : [];
+      const why = trustsRef && row.ref
+        ? `Reference ${row.ref} matched nothing`
+        : `${cfg.code} sends no unique reference`;
       decisions.push({
         row,
         bucket: 'NEEDS_CONFIRM',
@@ -156,9 +179,10 @@ export function matchStatement(
         matched: [],
         candidates: sameAmount,
         comboHints: [],
-        clue: trustsRef && row.ref
-          ? `No payment carries reference ${row.ref}; ${sameAmount.length} payment(s) match on amount and date`
-          : `${cfg.code} sends no unique reference — ${sameAmount.length} payment(s) match on amount and date`,
+        suggested: only,
+        clue: only.length === 1
+          ? `${why} — ${only[0].docNo} is the only payment of this amount within ${tolerance} day(s). Check it and confirm.`
+          : `${why}; ${sameAmount.length} payments match on amount and date — pick the right one`,
       });
       continue;
     }
@@ -171,6 +195,11 @@ export function matchStatement(
       .sort((a, b) => b.amountSen - a.amountSen);
     if (inWindow.length > 0) {
       const hints = exactPairs(inWindow, row.grossSen);
+      /* One swipe, two orders (一笔刷卡对应两张订单). Exactly one pair that adds
+         up is the same kind of single answer as one payment on the amount. */
+      const onlyPair = hints.length === 1
+        ? inWindow.filter((p) => hints[0].includes(p.id))
+        : [];
       decisions.push({
         row,
         bucket: 'NEEDS_CONFIRM',
@@ -178,9 +207,12 @@ export function matchStatement(
         matched: [],
         candidates: inWindow,
         comboHints: hints,
-        clue: hints.length
-          ? `No single payment matches; ${hints.length} pair(s) of payments add up to this amount`
-          : `No payment matches this amount — ${inWindow.length} smaller payment(s) are within ${tolerance} day(s)`,
+        suggested: onlyPair.length === 2 ? onlyPair : [],
+        clue: onlyPair.length === 2
+          ? `No single payment matches — ${onlyPair.map((p) => p.docNo).join(' + ')} add up to it exactly. Check them and confirm.`
+          : hints.length
+            ? `No single payment matches; ${hints.length} pair(s) of payments add up to this amount`
+            : `No payment matches this amount — ${inWindow.length} smaller payment(s) are within ${tolerance} day(s)`,
       });
       continue;
     }
@@ -194,6 +226,7 @@ export function matchStatement(
       matched: [],
       candidates: [],
       comboHints: [],
+      suggested: [],
       clue: `No payment recorded near ${row.txnDate} for this amount`,
     });
   }

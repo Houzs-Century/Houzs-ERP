@@ -8,7 +8,7 @@
 //   • the money side is NOT here — it is BankRecon.test.tsx, and the setup is
 //     SettlementSetup.test.tsx: three jobs, three screens, as the owner asked.
 
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { AcquirerSetup, SettlementRow } from './settlement-queries';
@@ -50,6 +50,16 @@ const MATCHED_ROW: SettlementRow = {
   candidates: [], comboHints: [], clue: 'Reference 969745 matches SO-2608-043',
 };
 
+/* A line whose approval code matched nothing, with exactly one payment of its
+   amount in range — the system offers that one, pre-ticked. */
+const SUGGESTED_ROW: SettlementRow = {
+  ...ROW, id: 10, line_no: 4, ref: 'TYPO9', bucket: 'NEEDS_CONFIRM', match_reason: 'amount+date',
+  gross_sen: 60000, fee_sen: 900, net_sen: 59100, linked: [], comboHints: [],
+  candidates: [{ source: 'SOPAY', id: 'b3', docNo: 'SO-2608-050', paidOn: '2026-08-03', amountSen: 60000, approvalCode: '114220' }],
+  suggested: [{ source: 'SOPAY', id: 'b3', docNo: 'SO-2608-050', paidOn: '2026-08-03', amountSen: 60000, approvalCode: '114220' }],
+  clue: 'Reference TYPO9 matched nothing — SO-2608-050 is the only payment of this amount within 3 day(s). Check it and confirm.',
+};
+
 const confirmMutate = vi.fn();
 const uploadMutateAsync = vi.fn();
 const saveMutate = vi.fn();
@@ -68,7 +78,7 @@ vi.mock('./settlement-queries', () => ({
       },
       acquirer: { code: 'MBB', hasUniqueRef: true, dateToleranceDays: 3 },
       buckets: { MATCHED: 1, NEEDS_CONFIRM: 1, UNMATCHED: 0, IGNORED: 0 },
-      rows: [ROW, MATCHED_ROW, DONE_ROW],
+      rows: [ROW, MATCHED_ROW, SUGGESTED_ROW, DONE_ROW],
     },
     isLoading: false,
   }),
@@ -207,7 +217,7 @@ describe('the reconcile tab', () => {
     fireEvent.click(screen.getByText('Reconcile'));
     /* Two kinds of not-done on this report, and the screen names both: one
        matched by reference (a button) and one that needs a person. */
-    expect(screen.getByText('1 matched, waiting for you to confirm · 1 still to decide')).toBeTruthy();
+    expect(screen.getByText('1 matched, waiting for you to confirm · 2 still to decide')).toBeTruthy();
     expect(screen.getByText(/pair\(s\) of payments add up/)).toBeTruthy();
     expect(screen.getByText('SO-2608-001')).toBeTruthy();
     // the list it came from is off the screen
@@ -220,19 +230,34 @@ describe('the reconcile tab', () => {
     expect(screen.getByText('JE-2608-0011')).toBeTruthy();
   });
 
+  /* The approval code may be mistyped, so the system falls back to amount+date
+     and offers its answer PRE-TICKED — he confirms rather than re-does the
+     search (2026-08-18: 尽量根据日期金额去尝试自动匹配后让我知道，我 final
+     confirm). Still a suggestion: nothing posts until the button is pressed. */
+  test('the system best guess arrives already ticked, ready to confirm', () => {
+    draw();
+    fireEvent.click(screen.getByText('Reconcile'));
+    /* SUGGESTED_ROW carries one payment that makes its amount exactly. */
+    expect((screen.getByLabelText('Select SO-2608-050') as HTMLInputElement).checked).toBe(true);
+    const confirms = screen.getAllByText('Confirm and post') as HTMLButtonElement[];
+    expect(confirms.some((b) => !b.disabled)).toBe(true);
+  });
+
   test('a part-selection cannot be confirmed; the pair that adds up can', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
-    const confirm = screen.getByText('Confirm and post') as HTMLButtonElement;
-    expect(confirm.disabled).toBe(true);
+    /* Scoped to THIS line: other lines on the report have their own button. */
+    const line = screen.getByLabelText('Select SO-2608-001').closest('section') as HTMLElement;
+    const button = () => within(line).getByText('Confirm and post') as HTMLButtonElement;
+    expect(button().disabled).toBe(true);
 
     fireEvent.click(screen.getByLabelText('Select SO-2608-001'));
-    expect(screen.getByText(/Selected RM 600\.00 of RM 1,000\.00/)).toBeTruthy();
-    expect((screen.getByText('Confirm and post') as HTMLButtonElement).disabled).toBe(true);
+    expect(within(line).getByText(/Selected RM 600\.00 of RM 1,000\.00/)).toBeTruthy();
+    expect(button().disabled).toBe(true);
 
     fireEvent.click(screen.getByLabelText('Select SO-2608-002'));
-    expect((screen.getByText('Confirm and post') as HTMLButtonElement).disabled).toBe(false);
-    fireEvent.click(screen.getByText('Confirm and post'));
+    expect(button().disabled).toBe(false);
+    fireEvent.click(button());
     expect(confirmMutate).toHaveBeenCalledWith(expect.objectContaining({
       rowId: 7,
       payments: [

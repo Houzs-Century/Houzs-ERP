@@ -124,7 +124,13 @@ same money twice). `acc/settlement-parse.ts` reads a statement entirely from
 config and REFUSES by name rather than parsing 0 rows (§2.14);
 `acc/settlement-match.ts` auto-matches ONLY on a unique reference — an acquirer
 without one (or one whose 决定4 is still blank) sends every line to a human, and
-the date tolerance comes from the config row, not a literal;
+the date tolerance comes from the config row, not a literal. A reference that
+matches NOTHING falls through to amount+date, because the owner cannot guarantee
+the code was typed correctly (2026-08-18: 我没办法确定 authorised code salesperson
+一定填对); when exactly ONE payment makes that amount in range — one payment, or
+one exact-summing pair — it comes back as `suggested`, pre-ticked on screen with
+the reason, for a human to confirm. Offered, never taken: two possible answers is
+a question, so nothing is ticked and he chooses;
 `acc/settlement.ts` confirms, which POSTS that moment.
 
 **Two events, two entries** (owner, 2026-08-17: 全部卡机都是隔几天收到的。应该是

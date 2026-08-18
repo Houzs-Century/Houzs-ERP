@@ -51,17 +51,37 @@ describe('the unique reference is the only automatic path', () => {
     expect(d.bucket).toBe('NEEDS_CONFIRM');
   });
 
+  /* Two payments of the same amount on the same day is a QUESTION. Ticking one
+     of them for him would be the system guessing with his money. */
+  it('two payments on the same amount and date are offered but never pre-ticked', () => {
+    const [d] = matchStatement(cfg(), [row({ ref: 'ZZZ' })], [
+      pay({ approvalCode: 'A9' }),
+      pay({ id: 'p2', docNo: 'SO-2608-002', approvalCode: 'B8' }),
+    ]);
+    expect(d.candidates).toHaveLength(2);
+    expect(d.suggested).toHaveLength(0);
+    expect(d.clue).toMatch(/pick the right one/);
+  });
+
   it('two payments sharing a reference is a question, not a guess', () => {
     const [d] = matchStatement(cfg(), [row()], [pay(), pay({ id: 'p2', docNo: 'SO-2608-002' })]);
     expect(d.bucket).toBe('NEEDS_CONFIRM');
     expect(d.candidates).toHaveLength(2);
   });
 
-  it('a reference that matches nothing falls through to amount+date, still unconfirmed', () => {
+  /* The owner cannot guarantee the approval code was typed correctly (2026-08-18:
+     我没办法确定 authorised code salesperson 一定填对), so a reference that hits
+     nothing must not become 'no payment recorded' — it falls through to amount
+     and date, and when there is exactly ONE the system offers it, pre-ticked,
+     for a human to confirm. Offered, never taken. */
+  it('a reference that matches nothing falls through to amount+date, and the single answer is offered', () => {
     const [d] = matchStatement(cfg(), [row({ ref: 'ZZZ' })], [pay({ approvalCode: 'A9' })]);
     expect(d.bucket).toBe('NEEDS_CONFIRM');
     expect(d.matchReason).toBe('amount+date');
-    expect(d.clue).toMatch(/No payment carries reference ZZZ/);
+    expect(d.suggested.map((p) => p.docNo)).toEqual(['SO-2608-001']);
+    expect(d.matched).toHaveLength(0);            // suggested is not taken
+    expect(d.clue).toMatch(/Reference ZZZ matched nothing/);
+    expect(d.clue).toMatch(/Check it and confirm/);
   });
 });
 

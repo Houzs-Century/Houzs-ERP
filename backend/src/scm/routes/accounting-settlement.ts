@@ -670,6 +670,9 @@ export const settlementBatchDetail = guard(async (c) => {
       linked: linksByRow.get(r.id) ?? [],
       candidates: s?.candidates ?? [],
       comboHints: s?.comboHints ?? [],
+      /* The system's own best answer, pre-ticked on screen. A suggestion, never
+         a decision — nothing posts until he confirms. */
+      suggested: s?.suggested ?? [],
       clue: s?.clue ?? r.notes,
     };
   });

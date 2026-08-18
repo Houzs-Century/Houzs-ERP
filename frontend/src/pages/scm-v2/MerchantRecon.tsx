@@ -621,8 +621,11 @@ const HandOff = ({ batch, toConfirm, toDecide }: { batch: SettlementBatch; toCon
 const SettlementLine = ({ row }: { row: SettlementRow }) => {
   const confirm = useConfirmSettlementRow();
   const ignore = useIgnoreSettlementRow();
-  const [picked, setPicked] = useState<Set<string>>(new Set());
   const key = (p: { source: string; id: string }) => `${p.source}:${p.id}`;
+  /* Start on the system's own answer when it has one — the operator confirms
+     instead of repeating the search (owner: 尽量根据日期金额去尝试自动匹配后让我
+     知道，我 final confirm). Seeded once, so a refetch never undoes his ticks. */
+  const [picked, setPicked] = useState<Set<string>>(() => new Set((row.suggested ?? []).map(key)));
 
   const chosen = row.candidates.filter((p) => picked.has(key(p)));
   const chosenSen = chosen.reduce((s, p) => s + p.amountSen, 0);
@@ -639,7 +642,10 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
   };
 
   return (
-    <div style={{
+    /* A section, not a div: each line is its own piece of the report, and the
+       element says so — to a screen reader and to a test scoping one line's
+       buttons away from the next line's. */
+    <section style={{
       padding: 'var(--space-3)', border: '1px solid var(--c-line, rgba(34,31,32,0.15))',
       borderRadius: 'var(--radius-md)', marginBottom: 'var(--space-2)',
     }} className="space-y-2">
@@ -743,7 +749,7 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
           {(confirm.error as { message?: string } | null)?.message ?? 'The line was not confirmed.'}
         </div>
       )}
-    </div>
+    </section>
   );
 };
 
