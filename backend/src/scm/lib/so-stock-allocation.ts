@@ -37,7 +37,7 @@
 // rolling back a GRN/SO post (audit-DLQ pattern matching writeMovements).
 // ----------------------------------------------------------------------------
 
-import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
+import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { summariseReadiness } from './so-readiness';
 import { loadSofaBatchStock, findCoveringBatch, claimSofaBatch } from './sofa-set-coverage';
 import { paginateAll, chunkIn } from './paginate-all';
@@ -182,13 +182,29 @@ async function runSoStockAllocation(
   }
   try {
     /* 1. All non-cancelled, non-completed SOs. Allocation priority:
-            a) customer_delivery_date ASC NULLS LAST  — earlier delivery wins
-            b) created_at ASC  — tiebreaker so order is deterministic */
+            a) EFFECTIVE delivery date ASC NULLS LAST — earlier delivery wins
+            b) created_at ASC  — tiebreaker so order is deterministic
+
+       EFFECTIVE, not original. This ranked on `customer_delivery_date` alone
+       until 2026-08-18, so a customer who rescheduled moved on the delivery
+       board (which has always read `amended_delivery_date ?? customer_delivery_
+       date`) and did NOT move here, in the queue that decides who gets the
+       scarce stock. Owner: there is no production in this business, only the
+       delivery date, and everything plans on the amended one. ONE reader now —
+       shared/effective-delivery.ts — shared with mrp.ts so the two engines
+       cannot drift apart again.
+
+       The SQL ORDER BY below is deliberately UNCHANGED and is not the priority.
+       It exists so paginateAll's `.range()` windows are coherent (they are only
+       coherent under a stable order); the priority order is the JS sort in
+       section 5, over the fully-materialised set. PostgREST cannot ORDER BY a
+       COALESCE of two columns, and inventing a sort expression here would buy
+       nothing the JS sort does not already decide. */
     // Page through — PostgREST's default 1000-row cap would truncate the active
     // SO set, silently DROPPING orders from allocation (their lines never flip).
-    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; company_id: number | null; processing_date: string | null }>((from, to) => sb
+    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; amended_delivery_date: string | null; company_id: number | null; processing_date: string | null }>((from, to) => sb
       .from('mfg_sales_orders')
-      .select(`doc_no, status, created_at, customer_delivery_date, company_id, ${SO_PROCESSING_DATE_COLUMN}`)
+      .select(`doc_no, status, created_at, customer_delivery_date, amended_delivery_date, company_id, ${SO_PROCESSING_DATE_COLUMN}`)
       /* The live-SO lens. ONE declaration, in shared/so-terminal-states.ts —
          eight audit scripts and mrp.ts used to re-type this same six-status
          set under four different names, each promising in a comment to track
@@ -201,7 +217,8 @@ async function runSoStockAllocation(
     if (orderError) throw new Error(`allocation order load failed: ${orderError.message}`);
     const orders = (orderRows ?? []) as Array<{
       doc_no: string; status: string; created_at: string;
-      customer_delivery_date: string | null; company_id: number | null;
+      customer_delivery_date: string | null; amended_delivery_date: string | null;
+      company_id: number | null;
       processing_date: string | null;
     }>;
     if (orders.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
@@ -236,8 +253,37 @@ async function runSoStockAllocation(
        which only runs after `processing_date` has already decided. The data was
        consolidated into this column on 2026-08-13 (mig 0286 header: 519
        company-1 orders moved out of `proceeded_at`, both companies verified at
-       zero split), and no live path can reopen the split: `autoProceed` requires
-       a date, and the IN_PRODUCTION transition refuses without one. */
+       zero split).
+
+       THE BLAST RADIUS, WHICH #2396 SHIPPED WITHOUT — measured the same day on
+       prod, read-only (backend/scripts/probe-proceed-split.mjs, run
+       32093080121). #2396's own message says it: *"Blast radius on production is
+       UNKNOWN and not invented — the probe that measures it is on a branch that
+       is not yet dispatchable."* It is now measured, and it is not nil:
+
+         company 1 — 2724 live orders: 519 both columns set, 2205 neither, ZERO
+           in either disagreement class. This flip is a genuine no-op here.
+         company 2 — 77 live orders: 5 (all CONFIRMED) gain allocation, which is
+           the bug #2396 describes. But 16 LOSE it — 12 CONFIRMED and 4
+           READY_TO_SHIP, each carrying a Proceed stamp and NO Processing Date.
+           Their lines are forced PENDING on the next 5-minute recompute and the
+           4 READY_TO_SHIP orders visibly drop back to CONFIRMED.
+
+       Those 16 are not a regression to undo: by the owner's rule (*"没有
+       processing date 就代表没有 proceed"*) an order with no date is not
+       proceeded, so gating it is the rule applied correctly, and the repair is a
+       human supplying the date — never a script inventing one (PROCEED_NEEDS_DATE
+       in shared/order-rules.ts). They are named here so the 4 that move are read
+       as this change working rather than as a new fault.
+
+       AND A LIVE PATH COULD STILL REOPEN THE SPLIT — this said it could not.
+       `autoProceed` requiring a date and IN_PRODUCTION refusing without one
+       cover the two paths that STAMP. They are not the only ways a row becomes
+       stamp-without-date: Remove-Processing-Date cleared the date and left the
+       stamp (closed 2026-08-18 in the header PATCH), and routes/so-mirror.ts
+       replicates whatever 2990 sends, including a stamp, through applyMap. Both
+       end for good with the column; see "RETIRING THE SECOND STORAGE" in
+       shared/so-processing-date.ts. */
     const allocGated = new Set(
       orders.filter((o) => !o[SO_PROCESSING_DATE_COLUMN]).map((o) => o.doc_no),
     );
@@ -480,22 +526,33 @@ async function runSoStockAllocation(
           before SO-2605-002) so same-day allocation is deterministic, matching
           the MRP engine. created_at + line id break any remaining ties. */
     const FAR_FUTURE = '9999-12-31';
-    /* The row types say these are strings, and under PostgREST they are. A
+    /* The ONE reader, shared with mrp.ts (shared/effective-delivery.ts):
+       amended_delivery_date wins over the customer's original, and it
+       normalises to 'YYYY-MM-DD'.
+
+       Normalising is not cosmetic and the reason is written down there too. The
+       row types say these are strings, and under PostgREST they are — but a
        repair script driving this same function through the postgres shim gets
        Date OBJECTS for date/timestamp columns, and `.localeCompare` on a Date
-       throws — which killed a production allocation recompute on 2026-08-10
-       with "ad.localeCompare is not a function", after the allocator had
-       already done all its work. Compare on a normalised string so the priority
-       order is identical whichever transport delivered the row. */
-    const dateKey = (v: unknown): string =>
-      v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '');
+       throws, which killed a production allocation recompute on 2026-08-10 with
+       "ad.localeCompare is not a function" AFTER the allocator had done all its
+       work. effectiveSoDelivery carries that Date branch verbatim; this call
+       site is the reason it exists.
+
+       These orders carry no LINE fields — the allocator ranks whole orders, as
+       it always has, so it hands the reader header dates only. A per-line
+       override date still outranks the header inside mrp.ts, which does read
+       lines; that pre-existing difference between the two engines is untouched
+       here and unmeasured. */
+    const effDate = (o?: { customer_delivery_date: string | null; amended_delivery_date: string | null }): string =>
+      (o ? effectiveSoDelivery(o) : null) ?? '';
     const stampKey = (v: unknown): string =>
       v instanceof Date ? v.toISOString() : String(v ?? '');
     needs.sort((a, b) => {
       const A = orderByDoc.get(a.doc_no); const B = orderByDoc.get(b.doc_no);
-      const ad = dateKey(A?.customer_delivery_date) || FAR_FUTURE;
-      const bd = dateKey(B?.customer_delivery_date) || FAR_FUTURE;
-      if (ad !== bd) return ad.localeCompare(bd);                         // a) delivery date
+      const ad = effDate(A) || FAR_FUTURE;
+      const bd = effDate(B) || FAR_FUTURE;
+      if (ad !== bd) return ad.localeCompare(bd);                         // a) EFFECTIVE delivery date
       if (a.doc_no !== b.doc_no) return a.doc_no.localeCompare(b.doc_no); // b) SO doc number
       const ac = stampKey(A?.created_at);
       const bc = stampKey(B?.created_at);
@@ -657,8 +714,8 @@ async function runSoStockAllocation(
       const orderedSets = [...setLines.values()].sort((ga, gb) => {
         const a = ga[0]!; const b = gb[0]!;
         const A = orderByDoc.get(a.doc_no); const B = orderByDoc.get(b.doc_no);
-        const ad = dateKey(A?.customer_delivery_date) || FAR_FUTURE;
-        const bd = dateKey(B?.customer_delivery_date) || FAR_FUTURE;
+        const ad = effDate(A) || FAR_FUTURE;
+        const bd = effDate(B) || FAR_FUTURE;
         if (ad !== bd) return ad.localeCompare(bd);
         return a.doc_no.localeCompare(b.doc_no);
       });

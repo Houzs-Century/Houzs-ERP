@@ -206,6 +206,1149 @@ refusal and now pin the new contract.
 **Ref.** 2026-08-18, `fix/ac-sync-close-gaps`. Owner's instruction: *"不能 sync
 的所有，你就解决掉、统一掉"*. Service half: #2259.
 
+## A generated file in git made every pair of concurrent PRs conflict, by construction [medium]
+
+**Symptom.** Merge conflicts on nearly every PR, always in
+`docs/generated/bug-index.md` and usually in nothing else. On 2026-08-18 one
+small PR (#2405) hit it **four times in one afternoon**, and #2352, #2394 and
+#2397 each hit it too. It reads as other people merging carelessly. It is not.
+
+**Root cause (measured, not inferred).**
+
+```
+$ git log origin/main --oneline -50 --name-only -- docs/generated/ \
+    | grep -c "bug-index"
+50
+```
+
+(The command filters on the DIRECTORY, not the file, because
+`docs/generated/bug-index.md` [gone] no longer resolves in the tree — which is
+exactly what this entry records. The marker has to sit on the SAME line as the
+path: check-docs-drift reads them as a pair, so a line-wrap between them reads as
+an unmarked missing file.)
+
+**All 50 of the last 50 commits touch that file.** It is GENERATED from
+`BUG-HISTORY.md`, the working agreement requires every code PR to append an
+entry to `BUG-HISTORY.md`, and the generated output was committed. So both sides
+of every concurrent pair rewrote the same file, and git conflicted — every time,
+by construction. Four careful authors would produce this as reliably as four
+careless ones.
+
+**Nothing read the committed copy.** The only references to it anywhere in the
+tree were its own generator and its own CI gate:
+
+```
+.github/workflows/ci.yml:100   npm run audit:bug-index
+backend/package.json:48-49     gen:bug-index / audit:bug-index
+backend/scripts/gen-bug-index.mjs
+```
+
+No document links to it. No script consumes it. It existed to be checked against
+itself, at the price of a guaranteed conflict per PR.
+
+**The repo had already half-conceded this.** `--check` warned on content drift
+rather than failing, because — in the job's own words — *"with serial merges,
+gating it deadlocks every open PR on the previous author's entry"* (five PRs
+tripped it simultaneously on 2026-08-14). Softening it removed the deadlock and
+kept the conflicts.
+
+**Fix.** The index is gitignored and removed from tracking. `--check` no longer
+compares against a committed copy, because there is not one; content drift stops
+existing as a concept. `gen:bug-index` still writes the file for anyone who wants
+to read it locally.
+
+**What is KEPT — the failure this gate was actually built for.** The generator
+dying, the shape `docs/staging-bench-rot-coe.md` records going unnoticed for
+three weeks. Proven still armed rather than assumed: with the ledger replaced by
+a stub carrying no entries, `audit:bug-index` prints
+`parsed ZERO entries from BUG-HISTORY.md — that is a broken generator, not an
+empty history` and **exits 2**. A parse failure or missing `BUG-HISTORY.md`
+throws earlier, and `chargeBadAreaTags()` still exits 1 on an unresolvable area
+tag introduced by the change under test. None of those ever needed a copy in git.
+
+**What is GIVEN UP, stated rather than hidden.** The index is no longer browsable
+on GitHub. That is a real loss and a small one: drift was tolerated by design, so
+the committed copy was routinely wrong anyway — a stale file nobody links to is
+worth less than no file.
+
+**Ref.** 2026-08-18.
+## 2990's stored branding drifted from its own SKU catalogue — 147 lines, 100 blank SO headers, 27 blank models [low]
+
+**Symptom.** The owner, reviewing the Brands maintenance screen on 2026-08-18,
+asked whether his SKUs carry the branding he maintains there. They do — all 353
+2990 SKUs, zero blank, every value one of the seven brands on that screen. What
+had drifted is everything DOWNSTREAM of the catalogue.
+
+**Root cause (measured, not inferred — read-only prod queries).** Three
+populations, each for its own reason:
+
+| where | rows | why |
+| --- | --- | --- |
+| `mfg_sales_order_items.branding` blank | 136 | `derive-line-branding.ts` fills branding from the SKU at WRITE time, and these orders predate it |
+| same, non-blank but disagreeing with the SKU | 11 | free text typed before the catalogue was the source: `2990` / `2990s` on rows whose SKU says `2990s Mattress`, and `Happi.S` on rows whose SKU says `Accessories` |
+| `mfg_sales_orders.branding` blank | 100 | the SO create form has never had a branding field, so 2990's header column was never written at all |
+| `product_models.branding` blank | 27 | 17 sofa + 10 bedframe models seeded before the field existed |
+
+Two earlier scripts covered parts of this and neither closed it:
+`backfill-2990-so-branding-from-sku.mjs` is blank-only, so it cannot touch the
+11 disagreements; `backfill-branding-to-canonical.mjs` requires a category word
+in the free text, so `2990` and `2990s` fall through its matcher. Neither writes
+the header.
+
+**Fix.** One script under the owner's 2026-08-18 rule — 「如果那个 SKU 有
+branding 就根据 branding」 — which subsumes both: a line takes its own SKU's
+branding, a header takes the representative line's SKU branding, a model takes
+the single distinct branding of the SKUs minted from it. Every value is COPIED
+from a row that already holds one; nothing is derived. Notably NOT the display
+label: `brandingLabel` prints `Accessory` while the brand list holds
+`Accessories`, so writing the label would have put a value outside his own
+vocabulary into 16 rows — the script now refuses to apply if any planned value
+is absent from `project_brands`.
+
+**Houzs is untouched**, on the owner's instruction (「Houzs 的不需要」). Its
+13,916 blank lines have no per-line source in AutoCount, so filling them would
+invent values rather than copy them.
+
+**And the write path, so it does not re-open.** The backfill alone repairs today
+and decays tomorrow: `createSalesOrderCore` inserted `branding: body.branding ??
+null` and no shipped client sends that field, so the next order created would
+land with a blank header exactly like the 100 being filled. It now stamps the
+header from the representative line's SKU when the caller supplied none —
+copied, so the value is inside `project_brands` by construction rather than by
+anyone remembering.
+
+**Guarded by a check, not by care.** `check-branding-vocabulary.mjs` +
+`audit:branding-vocabulary` scan all four branded tables against each company's
+active `project_brands`, with a CASE verdict separate from NOT-IN-LIST because a
+case-only drift is what stops a PMS rename cascading. It refuses rather than
+passes on an empty corpus, and was proven red (`--strict` exits 1 on the live
+drift, an unreachable DB exits non-zero) before being trusted green.
+
+**Dry-run against prod, 2026-08-18:** 147 lines, 100 headers, 27 models = 274
+rows, 0 outside the brand vocabulary, 0 headers left blank, 0 models refused.
+The checker scans 5,722 branded rows and reports exactly the 11 this fixes.
+
+**Ref.** 2026-08-18, branch `fix/branding-backfill-2990`.
+
+## Chunking the .in() lists fixed the 500s and made every list twice as slow [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**Symptom.** Measured on production 2026-08-18, after the chunking fix deployed
+and before this one: Sales Orders 2450ms -> 5674-6276ms, Purchase Orders 2767 ->
+5759-6230, GRN 2566 -> 4693-5554, Purchase Invoices fast -> 4425-4956. Three
+runs each, so not noise. `pageSize=5` and `pageSize=50` stayed equally slow, so
+it was still a fixed cost — the fixed cost had simply doubled.
+
+**Root cause (traced, and it was mine).** `chunkIn`'s default batch went from a
+literal `size = 200` to `chunkSizeForUrl()`, which computes 76 for a uuid. The
+sizing is right — the failure it prevents is a gateway refusing an over-long
+URI, which no row count predicts. But `chunkIn` walks its batches in a `for`
+loop, one `await` at a time, and roughly 27 call sites already used the default.
+So the same work became 2.6x as many SERIAL round trips, everywhere, at once.
+
+**What the mistake actually was.** The production evidence was "the URL was
+refused", and the fix was written against that sentence: make the URL shorter.
+The question not asked was why the code materialises tens of thousands of ids in
+the application layer at all — the standard answer to "filter by a large id set"
+is to push the join into the database (a view, an RPC, a WHERE EXISTS), which
+removes the URI limit AND the round trips. Chunking treats the symptom. It was
+also shipped without measuring: the four 500s were re-tested and confirmed
+fixed, latency was not re-tested at all, and the regression surfaced only
+because the owner asked for a QA pass.
+
+**Fix.** The batches are independent, so they now run through `mapBounded` at 6
+in flight. Subrequest count is unchanged — only the wall clock is. `mapBounded`
+returns results in INPUT order, so the merged output is byte-identical to the
+sequential form, and the first failing batch in input order still wins with the
+earlier batches kept. `backend/tests/chunkInOverlaps.test.ts` pins the answer,
+the ordering, the error semantics and the overlap itself; setting the limit back
+to 1 fails it with "expected 1 to be greater than 1".
+
+**Still open.** The deeper fix is not to build the id list. And three list
+endpoints run the whole-tenant MRP engine (~105 round trips) on every page load
+to render one column, which is now the dominant remaining cost.
+
+Ref: 2026-08-18.
+## Houzs sofas displayed "Sofa", and blank mattresses were claimed for a 2990 house brand — the Branding label rule read the line instead of the company and the SKU [medium]
+
+**Symptom.** Owner, 2026-08-18, restating a rule he had already given on
+2026-08-08: *"houzs sofa=zanotti / 2990 sofa=2990s sofa"* and *"mattress follow
+SKU branding if SKU no brand mean matress"*, then *"both company also"*.
+
+**Root cause (read, then measured against prod).** `shared/so-branding-label.ts`
+made the sofa label depend on the LINE's branding text for Houzs, and
+manufactured a `2990 Mattress` label for any blank mattress under 2990:
+
+| bucket | old rule | what it produced |
+| --- | --- | --- |
+| SOFA / Houzs | `brand \|\| noun` | `Sofa` whenever the SKU carried no branding |
+| SOFA / 2990 | literal `2990 Sofa` | disagreed with the brand master, which spells it `2990s Sofa` |
+| MATTRESS / either | `HOUSE_BRAND` regex folding `2990`/`2990's`/`2990s` into `2990 Mattress`; blank -> `2990 Mattress` under 2990 | a blank mattress was claimed for a house brand |
+
+The sofa half was already ruled on: `docs/modules/sales-order.md` records the
+2026-08-08 rule and `fix-hc-sofa-branding.mjs` (#1723) repaired the DATA for it.
+The repair did not reach everything and the RULE never encoded it, so the display
+stayed dependent on rows that are still blank today. Measured against prod
+(`claude_ro`, `scm.mfg_products`, company 1):
+
+- SOFA: 713 SKUs `ZANOTTI`, **11 blank** — the entire `5526-*` family, all
+  ACTIVE, 8 of them already on order lines. Every one of those rendered `Sofa`.
+- MATTRESS: 78 of 707 blank, 5 of them live on orders.
+- 2990 SOFA: 193 SKUs, every one `2990s Sofa`; the Brands screen agrees. The rule
+  said `2990 Sofa`.
+
+**Fix.** SOFA returns the COMPANY's house brand and does not read the line at
+all — symmetric with the way 2990's side has behaved since 2026-05-28. MATTRESS
+returns the SKU's branding for both companies, falling back to the category noun;
+the `HOUSE_BRAND` regex and the `2990 Mattress` literal are deleted rather than
+left dormant. Both callers that compute `first_item_branding` now resolve a
+mattress line SKU-FIRST instead of borrowing the catalog only when the line is
+blank — without that, the six live 2990 lines storing the loose spellings `2990`
+/ `2990s` would have started rendering those strings the moment the normalisation
+regex went away.
+
+**Blast radius, computed by replaying the new rule over prod rows.** 2990: 67
+orders `2990 Sofa` -> `2990s Sofa`, and 4 orders `2990 Mattress` -> `2990s
+Mattress` (their SKU says so). Houzs: **zero** orders change today — all 2,726
+carry an AutoCount header `branding`, which still wins; the new rule governs
+ERP-native Houzs orders, of which there are none yet.
+
+**Not fixed here.** `SalesOrderDetailV2.tsx` never joined the shared rule — it
+reads `branding || first_item_branding || "—"` — so the detail page can still
+print a different string than the list for the same order.
+
+**Ref.** 2026-08-18, branch `fix/branding-sofa-mattress`.
+## The tidy-up for the quote bug would have split the inventory buckets [medium]
+
+**Symptom.** None — caught before it ran, which is the only reason it is a
+paragraph and not an incident.
+
+**Root cause.** #2358 shipped `normalise-maintenance-quotes.mjs` with a working
+APPLY path, on my reasoning that straightening `17“` to `17"` in the maintenance
+pools was cosmetic: the PRICING consequence was already closed in code (the
+lookup matches exactly first, then quote-insensitively, so either spelling finds
+the right tier).
+
+That missed what those values ALSO are. `gaps` and `totalHeights` are
+components of `variant_key` — the inventory bucket identity:
+
+    fabriccode=bf-18|gap=12“|divanheight=8"|legheight=2"|totalheight=22"
+
+Rewriting the POOL touches no stored document, which is exactly why it looks
+safe. It changes what the PICKER offers from then on: new documents would get
+`gap=12"` while existing stock sits in `gap=12“`. Measured on prod 2026-08-18
+before anything was written: **12 inventory lots (11 units), 12 balances, 15
+movements and 21 document lines** carry a typographic mark in their key. One
+physical spec would have split into two buckets, and MRP would report a
+shortage against stock on the shelf — the same defect class the 2026-08-17
+investigation was about, recreated by its own tidy-up.
+
+**Fix.** The script is REPORT-ONLY: the INSERT path is gone (0 write statements
+remain), and `APPLY=true` exits 2 naming the reason. The header carries the
+measurement and the ordering a real unification would need — migrate
+`variant_key` across the five tables WITH a bucket-merge reconciliation first,
+pools second, never the reverse.
+
+**Owner decision 2026-08-18:** leave the pools mixed. The spelling costs nothing
+now that the lookup handles both, and a tidier Maintenance screen does not buy a
+rewrite of inventory identity.
+
+**What the script is still for.** Conflicting duplicates — one tier spelled two
+ways at two prices, where the answer depends on array order. That detection
+found the two zero-priced curly duplicates under HOOKKA MANUFACTURING (`19"`
+and `25"`, both shadowing a straight entry at RM40 and both sitting EARLIER in
+the array, so a curly-typed document priced at 0). Owner ruled both are RM40;
+the spurious entries were removed by hand as new config versions
+(`mch-9a8c9a8e42b3`, `mch-7d096cc126d8`) with zero documents affected. The
+report exits non-zero while any conflict remains.
+
+**The lesson worth keeping.** "It only changes a label" is a claim about the
+whole system, not about the column. The check is not "does this rewrite a
+document" but "is this string an IDENTITY anywhere" — and here it was, two
+joins away.
+
+**Ref.** PR (branch `chore/quote-normalise-report-only`), 2026-08-18.
+
+## One order, two due dates — the delivery board moved on a reschedule and MRP kept allocating stock against the date the customer had already changed [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** A customer reschedules, Logistics amends the date, and the delivery
+board and PO coverage move to the new date. MRP and the stock allocator do not:
+they keep ranking shortages, ordering supply and handing out scarce stock against
+the ORIGINAL `customer_delivery_date`. Two screens, two answers for one order, and
+nothing on either screen says they disagree.
+
+**Root cause (read, not inferred).** One fact had two chains.
+
+| reader | chain before | file:line |
+| --- | --- | --- |
+| delivery board | `amended_delivery_date ?? customer_delivery_date` | `delivery-planning.ts:858-859` |
+| PO coverage | same | `po-so-coverage.ts:167` |
+| `/inventory` reservations | same | `inventory.ts:1548` |
+| DO list, PO list, CS + delivery agents, delivery messages | same, four more hand-typed copies | — |
+| **MRP** | **`line_delivery_date ?? so.customer_delivery_date`** | `mrp.ts:611, :999-1000, :1092, :1196-1197, :1227` |
+| **stock allocator** | **`customer_delivery_date` alone** | `so-stock-allocation.ts:198, :496-497, :660-661` |
+
+Both engines allocate greedily earliest-delivery-first, so the column they rank
+on decides who gets the goods. MRP never read `amended_delivery_date` at all —
+`grep -n amended backend/src/scm/routes/mrp.ts` returned **0 hits**.
+
+**The line mirror is the half that would have defeated a header-only fix.**
+`mfg_sales_order_items.line_delivery_date` is a COPY of the header date whenever
+`line_delivery_date_overridden = false` — migration 0172's
+`apply_so_header_followers` writes exactly that pair
+(`SET line_delivery_date = p_delivery_date, line_delivery_date_overridden = false`),
+and the SO screens re-derive it the same way
+(`SalesOrderDetail.tsx:2392`). A reschedule writes the HEADER only, so on a
+rescheduled order the mirror still holds the pre-amendment date. Reading the line
+date first therefore keeps serving the old answer no matter what you do to the
+header fallback.
+
+**Measured on production, both companies, 2026-08-18** (read-only,
+`probe-effective-delivery-drift.mjs`, run against prod before anything was
+changed):
+
+| | company 1 | company 2 |
+| --- | --- | --- |
+| live SO headers | 2,724 | 77 |
+| carrying an `amended_delivery_date` | **0** | 3 |
+| amended date DISAGREES with the original | **0** | **3** |
+| amended set with NO original (pure gain for MRP) | 0 | 0 |
+
+The three that move shift by −58, and up to +7, days: 2 pulled EARLIER (they gain
+priority), 1 pushed later (it loses it); median |Δ| 23 days. They carry **5 live
+demand lines, all 5 non-overridden mirrors still holding the stale original
+date** — so a fix that only touched the header would have moved **zero of them**.
+Overdue counts by effective vs original date: company 1 unchanged at 191/191,
+company 2 moves 16 → 18.
+
+**So: a SMALL population, LARGE per-order shifts.** Three orders and five lines
+re-rank today, not three hundred — but one of them by nearly two months, and the
+whole point of the change is that a two-month move in when goods are needed
+should move who gets them. Company 1 is unaffected today only because nothing has
+ever been rescheduled there; the moment it is, it would have hit the same split.
+
+**Fix — ONE reader, `scm/shared/effective-delivery.ts`, `effectiveSoDelivery`.**
+Precedence: an OVERRIDDEN line date → `amended_delivery_date` →
+`customer_delivery_date` → a non-overridden line date as a last resort. Ten call
+sites now read it: MRP (5), the stock allocator (2 sorts), the board, PO coverage,
+`/inventory`, the DO and PO lists, both agents and delivery messages. The
+allocator's local `dateKey` helper — added on 2026-08-10 after
+`ad.localeCompare is not a function` killed a production recompute mid-run, because
+the postgres shim hands back `Date` objects — is absorbed into it verbatim, so the
+Date branch survives with the call site that needs it.
+
+Step 4 of the chain (the mirror as last resort) exists so the function can never
+return FEWER dates than the chain it replaced: MRP hides a dateless line as
+"undated", so silently dropping a mirror would delete a visible line from the
+plan.
+
+**Two stored facts stay two.** `customer_delivery_date` is still never
+overwritten — the board's "Original" column and the audit of what was sold both
+read it. Unifying the READ does not collapse the WRITE.
+
+**The SQL `ORDER BY` in the allocator is deliberately unchanged.** PostgREST
+cannot `ORDER BY` a COALESCE of two columns; that clause exists so
+`paginateAll`'s `.range()` windows stay coherent, and the priority order is the
+JS sort over the fully-materialised set. Changing it would buy nothing and risk
+paging.
+
+**Non-vacuity.** Six new tests fail on the pre-fix code and pass after, in BOTH
+directions — an order rescheduled EARLIER must overtake one whose original was
+earlier, and one rescheduled LATER must fall behind one whose original was later.
+Each pair ships with a CONTROL (no amendment → the earlier original still wins)
+that a wrong-column or inverted-comparator "fix" would fail. Verified by reverting
+each engine to its old chain and watching exactly the intended tests go red:
+allocator 2 failed / 1 passed, MRP 3 failed / 34 passed. The MRP fixtures carry
+the stale mirror on purpose — with `line_delivery_date` left null they would pass
+against a header-only fix.
+
+**Deferred, with reason — not fixed here.**
+- Whether the board's one-click reschedule should require the same approval as
+  editing the order's Delivery Date. The owner is deciding that separately.
+- The allocator ranks whole ORDERS and so passes header dates only; a per-line
+  override date outranks the header inside MRP, which does read lines. That
+  difference between the two engines predates this change and is unmeasured.
+- `docs/modules/mrp.md` §4 still describes the legacy `''` PO-pool fallback as
+  live. `mrp.ts` says it was removed on the owner's 2026-08-16 ruling and
+  `mrp.test.ts` asserts its absence. Same section, different subject — left for
+  someone measuring the variant-matching question properly.
+## The Processing Date had two storages, and one gate read the other one [high]
+
+<!-- area: Sales orders + pricing -->
+
+**The ruling, three times.** 2026-07-31: *"不要又 Processing Date,又 Proceed,全
+系统直接统一一个叫 Processing Date... Processing Date 就是当天 Proceed 的意思。"*
+2026-08-13: *"把 internal expected date、processing date 和 process date 都直接
+整合变成一个... 因为每一次讨论到 processing date 的时候,你就有各种各样的 bug,
+原因就是因为你有太多个了。"* 2026-08-18, naming the scope himself: frontend,
+backend AND database.
+
+**What had actually survived.** The 2026-08-13 work unified the DATA (519
+company-1 orders) and the NAME (mig 0286). It deliberately kept
+`scm.mfg_sales_orders.proceeded_at` as a second COLUMN, on a stated and coherent
+argument recorded at `order-rules.ts:51-53`: *"it is a timestamp the system
+writes, not a date the user picks; what is unified is the RULE, not the
+storage."* The owner has overruled that for the purpose of DECISIONS.
+
+**Measured before touching anything** (`backend/scripts/probe-proceed-split.mjs`,
+prod, run `32093080121`, read-only, counts and statuses only):
+
+| | company 1 (2724 live) | company 2 (77 live) |
+|---|---|---|
+| date + stamp | 519 | 21 |
+| date only | 0 | 5 (all CONFIRMED) |
+| **stamp only** | **0** | **16 (12 CONFIRMED, 4 READY_TO_SHIP)** |
+| neither | 2205 | 35 |
+
+**Three claims the measurement REFUTED, each of which had been repeated as fact.**
+
+1. *"`so-detail-gates.ts:95` is the lock decision, on `proceeded_at` ALONE."* It
+   is not. Both that function and its backend twin read `processing_date` first
+   and decisively (`if (!proc) return false`), and reach `proceeded_at` only when
+   `status` is falsy — which never happens, because every caller's SELECT names
+   `status` and the census found no NULL-status row in either company across
+   2826 orders. Dead code, not a second opinion.
+2. *"The split regenerates daily through Remove-Processing-Date."* Not shown. No
+   `proceeded_at` value younger than 36 days exists on any dateless order in
+   either company, which rules out both STAMPING paths as recent producers. It
+   does not rule out the paths that make a row stamp-only WITHOUT writing a
+   stamp, and those are real — so the leak was closed anyway.
+3. *"Every write site is accounted for."* The **2990 mirror** was missed.
+   `routes/so-mirror.ts` upserts `applyMap(body.header, …)`, which keeps every
+   inbound key present on the Houzs table, so `proceeded_at` arriving from 2990
+   is written straight through. It needs no code change — `applyMap` filters
+   against `information_schema`, so the eventual DROP silently ends it — but an
+   audit that says "zero writers" and has not looked at the mirror is wrong.
+
+Also corrected while in there: the 2026-08-13 post-check that reported "every
+migrated date equals `proceeded_at`'s day" used
+`(proceeded_at AT TIME ZONE 'UTC')::date`, off by one for any evening-MYT stamp.
+Re-run in Malaysia time: company 1 agrees 519/519; company 2 agrees 32/35, and
+the 3 that differ do so under UTC too, so they are real, not a timezone artifact.
+No gate compares the two columns, so nothing depends on it either way.
+
+**Shipped — every item provably moves nothing in production.** Locks
+(`soProcessingLocked`, `procLockActive`, the amendment door, Delivery Planning's
+board guard) decide on `processing_date` + `status` alone. Payloads that merely
+CARRIED the column stopped: SO list, detail, POS board, dashboard summary,
+`/status` response — nothing consumed any of them (the desktop "Proceed Date"
+field was deleted 2026-06-05, and `useMfgSalesOrdersSummary` has zero callers in
+`frontend/src`, `native/` or `e2e/`). The frontend now contains no
+`proceeded_at` at all.
+
+**The replacement for the deleted fallback is a type, not a column.** The old
+`return Boolean(header.proceeded_at)` existed "so we never over-lock a
+status-blind header". `status` is now REQUIRED on both predicates' parameters, so
+a caller that has not fetched one fails to COMPILE instead of quietly deciding
+out of a different fact; an empty status at runtime answers *not locked*, the
+same side the marker protected.
+
+**The leak, closed by removal rather than by a second clear.** Remove-Processing-
+Date cleared the date and left the stamp; the stamp-once filter then made that
+stamp permanent — the one live path that manufactures a row saying "proceeded"
+out of one column and "not proceeded" out of the other, and the source of the 25
+company-2 rows that carry that shape. An interim fix cleared both together; the
+final state is stronger and simpler — there is no stamp to orphan, because
+nothing writes one.
+
+**The allocator, and why the ORDER mattered.** `so-stock-allocation.ts`'s
+`allocGated` was the one reachable decision left — the one whose own comment had
+described the *Processing Date* rule since 2026-08-10 while the code read the
+other column. #2396 moved it while this work was in flight, and shipped saying
+so: *"Blast radius on production is UNKNOWN and not invented — the probe that
+measures it is on a branch that is not yet dispatchable."* **That probe is this
+one, and the radius is above:** company 1 no-op; company 2 gains 5 and loses 16,
+of which 4 are READY_TO_SHIP and drop visibly to CONFIRMED. Those 4 are the rule
+working — *"没有 processing date 就代表没有 proceed"* — not a new fault, and the
+repair is a human supplying the date, never a script inventing one
+(`PROCEED_NEEDS_DATE`: a guessed start date is a real order in the factory queue
+on the wrong day, with nothing to show it was guessed).
+
+That flip is also what UNBLOCKED the writes, and the order was not optional: the
+create stamp, the `/status` stamp, the `['proceededAt','proceeded_at']` map entry
+and its stamp-once filter could only go once nothing read the column. Removing
+them first would have landed every NEW order with a NULL stamp and gated it out
+of allocation forever. They are gone now, along with `autoProceed` (which existed
+only to decide the create stamp — and could only ever be true when a Processing
+Date was ALSO being written, which the create already refuses to do unless the
+same gate passes) and `soProceedGateBlocked` (both call sites gone). The RULE it
+enforced did not move: every path that sets a Processing Date runs
+`collectProcessingGateProblems`, which checks the same four completeness facts
+inline and the money through `meetsDepositGate` — and after unification that is
+every path that proceeds an order. The `/status` branch it guarded fired only
+when the order ALREADY had a date, so it re-gated a state that had passed — and
+inconsistently, since an order carrying a stamp as well was not re-gated at all.
+
+**Two loose ends this creates, named rather than tidied away.** #2383 landed
+hours earlier and lifted the proceed gate into `lib/so-proceed-gate.ts` with a
+per-condition refusal. Removing the last two call sites leaves BOTH that module's
+`soProceedGateBlocked` and `order-rules`'s `meetsProceedGate` with no caller in
+routes, lib or the frontend. **Neither is deleted.** Deleting a freshly-shipped
+export to tidy a merge is how work gets silently undone, and if a future proceed
+path needs to refuse, that is what it should call. `docs/modules/sales-order.md`
+has warned since 2026-08-13 that this rule had TWO enforcement sites held in step
+*"by agreement, not by construction"*; that agreement now has one party,
+`collectProcessingGateProblems` — which checks the same four completeness facts
+inline and the money through `meetsDepositGate`, across 7 call sites.
+
+**No code anywhere reads or writes `proceeded_at`.** That is the precondition the
+DROP needed.
+
+**The DROP is the one step left, and it is one deploy behind the code on
+purpose.** `deploy.yml` runs
+`pg-migrate` BEFORE `wrangler deploy`, so a column dropped in the same release
+that stops selecting it leaves the still-live old Worker doing a PostgREST select
+on a missing column — 42703 on every SO read for the length of the deploy. That
+is exactly #1191/0189. `scm.mfg_sales_orders_with_payment_totals` also projects
+it (`SELECT so.*`), and 0189 → 0190 → 0191 is the record of what happens when
+that view is dropped and recreated: prod died twice with *permission denied for
+view* because a recreated view is a NEW object whose ACL and owner do not
+survive. The drop SQL and that constraint are written out at
+`shared/so-processing-date.ts` under "RETIRING THE SECOND STORAGE".
+
+**Two tests that were green while describing the wrong world.**
+`tests/soDatePairWiring.test.ts` anchored its "the pair rule runs before the
+`/status` proceed writes the date" assertion on `patch.proceeded_at` — a
+neighbouring statement, not the write. When that statement stopped existing the
+test failed loudly, which is the good outcome; it is now anchored on
+`patch[SO_PROCESSING_DATE_COLUMN] = resolved.date`, the write it was always
+about. And:
+`tests/scaleRouteDrift.test.mjs` reconstructs the SO list projection from
+`HEADER` plus a HAND-COPIED suffix and compares it to the scale benchmark's
+column list. Removing `proceeded_at` from the route's real `LIST_COLS` left both
+sides of that comparison unchanged, so the drift test stayed green while the
+contract it guards no longer matched production. Both sides updated, and the
+negative control run to confirm it does go red.
+
+**Regression pins.** `backend/tests/soProcessingDateOneStorage.test.ts` (21) and
+`frontend/src/vendor/scm/lib/so-detail-gates.one-storage.test.ts` (12). Source-
+level, because re-adding `|| header.proceeded_at` to a lock passes every
+behavioural test, reads as defensive in review, and only surfaces as an order
+somebody cannot edit. Watched RED against pre-change source (5 backend / 1
+frontend), green after. The behavioural half pins the lock against the four
+presence classes at the statuses actually measured, so a future edit cannot
+silently change who may edit an order. The count assertion enumerates the
+surviving `proceeded_at` sites, so the follow-up cannot drift away from the plan
+without going red.
+## The Worker version check printed a column it could not read, and drew a conclusion from it [low]
+
+**Symptom.** The first successful run of `check-worker-versions.mjs` (run
+`32097597670`) printed `GIT_SHA=(none)` against all ten versions — including
+deploys that demonstrably set it, since `GET /health` serves that exact var. It
+then printed, as guidance:
+
+> A source of `wrangler` with no GIT_SHA is a bare hand-run deploy.
+
+Read together, the check accused every deploy we make of being rogue.
+
+**Root cause (traced).** `GIT_SHA` is a version BINDING, and the versions LIST
+endpoint (`/workers/scripts/:script/versions`) does not return `resources`. The
+script read `v.resources.bindings` off the list response, so the lookup found
+nothing on every row and fell through to the `(none)` branch — which the
+guidance then interpreted.
+
+**Two defects, and the second is the one that matters.** An empty column is
+cosmetic. An empty column plus a sentence that reads meaning into emptiness is a
+checker reporting a finding it did not observe — the same class as a matcher that
+cannot match reporting a clean run. **A column that cannot be populated must not
+be reported as a finding.**
+
+**Fix.**
+
+- `GIT_SHA` is fetched per version from the detail endpoint, in parallel for the
+  rows actually printed.
+- Three states are now distinct: a **sha** (stamped by CI), **`(none)`** (bindings
+  read, GIT_SHA genuinely absent — a hand-run deploy), and **`(unreadable)`** (the
+  detail fetch failed; unclassified, and the guidance says so explicitly rather
+  than letting it read as rogue).
+- The per-version fetches are `soft` — one unreadable version cannot take down the
+  answer to the question actually being asked. The two reads that ARE the answer
+  stay hard: if either fails we know nothing, and reporting nothing is correct.
+
+**Also fixed: timestamps were truncated to the minute.** The same run printed
+`03:55` against two different versions, which made the ORDER of the pair
+unknowable — and the order is the whole question when asking which of `deploy`
+and `secret bulk` produced which version. Versions now print `created_on` to the
+SECOND, and the script counts adjacent same-second pairs so the
+two-versions-per-deploy pattern reads as expected behaviour instead of an alarm.
+
+**Ref.** `docs/deploy-secret-version-deadlock-coe.md`, 2026-08-18.
+## The undated-demand count existed only while the rows were invisible — the banner spoke in one direction [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**What changed.** The MRP page's undated-demand banner now renders whenever there
+IS undated demand, in BOTH states, and only its wording depends on the flag. The
+DEFAULT IS UNCHANGED — `GET /api/scm/mrp` still defaults `includeUndated` to
+**false** and the **Show no-date** checkbox still starts unticked. When the rows
+are shown they are tagged **No date** on the row and sorted last, and `useMrp`
+now sends the flag in both directions instead of expressing "hide" by silence.
+
+**The defect.** 2026-08-16 established that the default view carried 82 of 163
+live 2990 SO-item ids and 8 of 68 short sofa sets, and said nothing about the
+missing half. The response grew `undated{}` and the page grew a banner — but that
+banner rendered **only while rows were withheld**, so it was a count that existed
+exactly as long as the thing it counted was invisible. Flip the default and the
+page went silent again in the other direction. A fact that is only stated in one
+of two states is not a fact the screen reports; it is a side effect of the state.
+
+**The default was flipped, and the owner reverted it.** This branch first read
+the 2026-08-16 measurement as "the rows should be shown" and shipped
+`includeUndated=true` as the default. Owner, 2026-08-18, ruling on that build:
+*"这个应该是要把没有日期的藏起来的,不过我点 show no date 它才会出来."* The
+measurement stands; the inference did not. What the operator could not see was
+never the ROWS — it was that rows were being withheld at all, because the page
+said nothing about them. This is the ordering worklist and an undated line is not
+orderable, so hiding is the right default. **Hiding is legitimate. Hiding
+SILENTLY is not.** The banner needed no change when the default went back: it had
+been built to speak in both directions precisely so a flip could not restore the
+silence, and its tests passed unmoved.
+
+**The obvious fix was rejected, deliberately.** Making the delivery date REQUIRED
+was considered first. 43% of 2990's sales orders carry no delivery date, and the
+share is flat across June/July/August — a habit, not an import artefact. (HOUZS's
+81.9% IS an import artefact: its AutoCount importer's INSERT carries neither
+delivery nor processing date. The two numbers have different causes and must not
+be quoted as one.) Forcing the field does not produce dates, it produces FAKE
+dates — and a fake date is strictly worse than a null one here, because MRP
+allocates supply BY DELIVERY DATE. A null sorts last and can only take what is
+left over; a fake promise sorts wherever it was typed and can take supply from a
+real one. So the null stays and the SILENCE goes.
+
+**Why the default is a display decision at all.** `includeUndated` has been
+DISPLAY-ONLY since audit D6 (2026-08-01): the allocation always ran over the full
+active set with undated lines sorted LAST, because `byDateAsc`
+(`backend/src/scm/routes/mrp.ts:342-347`) returns `1` for a null. Every dated
+line's coverage is identical under both flag values, so this flag changes which
+rows are RENDERED and cannot move a unit of supply — which is what made flipping
+it, and unflipping it, safe to do on the owner's word. That is the load-bearing
+claim, so it is pinned rather than asserted: `mrp.test.ts` — *"a dated line wins
+the scarce bucket over an undated one — under either flag, whatever the row
+order"* — feeds the undated row in FIRST against a PO that cannot cover both, and
+requires the dated line to come out whole under both flag values. Inverting the
+two null branches of `byDateAsc` fails it (the dated line drops to `shortage`),
+which is the check that the test is measuring the sort and not the insertion
+order.
+
+**The count is now unconditional.** The banner renders whenever there IS undated
+demand and only its wording depends on the flag: *"…are listed below, sorted last
+and marked No date"* against *"…are hidden from this view"*, with **Hide them** /
+**Show them** pointing whichever way the operator is not. `hidden` is read from
+the RESPONSE rather than from the checkbox, so a flag the server did not honour is
+described as it actually came back.
+
+**One adjacent trap closed.** `useMrp` built its query string as
+`if (includeUndated) q.set('includeUndated', 'true')` — it expressed "hide" by
+SILENCE, which only works while the server default happens to agree with it. That
+is the omitted-parameter no-op this repo keeps re-learning, and it is exactly what
+would have bitten the flip: with the default true, unticking the box would have
+sent nothing and changed nothing on screen. The default came back, but the latent
+trap did not have to stay: the flag is now sent in both directions, so the client
+states what it wants and the response states what it got.
+
+**Files.** `backend/src/scm/routes/mrp.ts` (comments — the parser's default is
+unchanged), `frontend/src/vendor/scm/lib/mrp-queries.ts` (always send the flag),
+`frontend/src/pages/scm-v2/Mrp.tsx` (two-state banner, `DeliveryCell` No-date
+tag), `backend/src/scm/routes/mrp.test.ts`,
+`frontend/src/pages/scm-v2/mrpUndatedBanner.test.tsx`, `docs/modules/mrp.md`,
+and four probe/audit scripts whose printed notices still described the old
+default.
+
+## Seven names for one date, and four of them could not be retired — the Processing Date is a purchasing release, not a production date [med]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner, 2026-08-18: *"全部你都是要统一掉的，不要那么多个"*. One fact —
+the SO's Processing Date — answered to **seven** names, and every discussion about
+it had produced a new bug for months. In the same message he corrected what the
+date MEANS, and the correction contradicts most of the comments in this repo.
+
+**What the date actually is.** *"因为我们有时候开单，未必是要直接 Processing 这张
+单的。所以 Processing Date 就代表这张单可以安排订货了，然后过了一天我们才会落下来，
+然后采购才会去订货"* — **the date this order is RELEASED FOR PURCHASING TO ORDER
+GOODS**. Raising an order is not acting on it. And: *"我们都没有排产的，我们都不是
+Production"* — **there is no production scheduling in this business**. Every
+comment calling this a "go-to-production" date or reasoning about a "factory
+queue" described a company that does not exist. Twenty-three of them, across
+thirteen files and two doc sections, now say what he said. **Two were user-facing refusal
+strings** — an operator was being told to *"set the date the factory starts"* and
+warned about *"a wrong factory queue"*.
+
+**The ~1 day lag is NOT implemented, and is now recorded as not implemented.**
+MRP does not read this date to decide when to order at all: it derives
+`orderByDate = delivery date − category lead days` and only DISPLAYS the
+Processing Date. `routes/mrp.ts:193` has commented the field as *"(drives when to
+order)"* the whole time — a comment agreeing with the owner while the code below
+it ignored the field.
+
+**THE FINDING: four of the five retirable names are blocked by something OUTSIDE
+this repository, and not one of those blocks is visible from the source.**
+
+| name | verdict |
+|---|---|
+| `processing_date` | **KEEP** — the column |
+| `processingDate` | **KEEP** — the payload key |
+| `proceeded_at` | dying; #2396 took its last reachable reader (that work is on its own branch) |
+| `target_date` | **LIVE. Retirement attempted and REVERTED the same day** |
+| `internal_expected_dd` | **BLOCKED** — 2990's mirror outbox |
+| `internalExpectedDd` | **BLOCKED** — amendment jsonb parked before the rename |
+| `PDate` | **NOT OURS** — AutoCount's own UDF |
+
+**`target_date`: the census was right about the source and wrong about the
+world.** Every signal inside the repo said dead field. PR #140 dropped it from
+the SO form (*"targetDate → replaced by Processing + Delivery Date"*);
+`grep -rn targetDate frontend/src native e2e` returns **zero** — no client here
+sends the key. It was nevertheless accepted on four write paths, selected into
+three read shapes and typed on two frontend rows. So the sweep removed the name
+from all eight sites.
+
+Then the probe read production. `probe-rename-preconditions.mjs` section F:
+**46 of 2826 SO rows carry a `target_date`, and ALL 46 were CREATED inside the
+last 90 days** — newest **6.75 days** old, oldest 67.88. A row *born* with the
+value was given it at create; the ERP has not written it at create since #140;
+therefore **the POS handover is still sending it, now**. And `routes/reports.ts`
+selects it into the sales-report export, so it has a live reader too.
+
+**All eight removals were reverted the same day** — the eight files are now
+byte-identical to `main`. Shipping them would have been the exact defect the
+Processing-Date work exists to end: the POS keeps POSTing `targetDate`, the
+create returns **201**, and the value vanishes with no error anywhere. *"No
+writer in this repo" is not "no writer."* The source was complete and honest and
+simply did not contain the producer.
+
+**The first version of the probe would have said the same thing for the wrong
+reason, and that was caught too.** It scored "still written" off
+`coalesce(updated_at, created_at)` — but `updated_at` moves on ANY header edit,
+so an order created in 2025 and re-saved yesterday for an unrelated remark counts
+as a fresh write. `created_at` is the discriminator, and only because of a fact
+about this column specifically: the write it used to do was at CREATE. Both
+numbers now print, the weak one labelled weak.
+
+**`PDate` is the name that must SURVIVE, and the owner asked which one it was.**
+AutoCount's own UDF (`SO.UDF_PDate`) on AutoCount's document. AutoCount matches
+UDFs by NAME: rename it and the connector drops an unknown key, the document
+posts **200 without it**, and every Processing Date silently stops reaching the
+account book. Both write sites read it from `SO_PROCESSING_DATE_AC_UDF` and carry
+the warning.
+
+**The two aliases that STAY.** Each is a name a **queue outside this deploy**
+still carries, so removing it does not stop anything saying it — it only makes
+the value vanish, quietly. `internal_expected_dd`: `applyMap` filters an inbound
+mirror row against the destination table's columns and DROPS what it does not
+recognise — no error, upsert returns **200**, company 2's date stops arriving.
+`internalExpectedDd`: frozen inside `so_amendments.header_changes` written days
+before it is replayed; `applySoAmendment` `continue`s past an unknown key, so the
+amendment approves, audits, marks SO_APPROVED and never writes the date. Each
+constant now carries the EXACT precondition, and section F *runs* the two
+statements rather than describing them.
+
+**The legacy native Sales module: same concept, staged.** The owner ruled
+*"全部我们只有一个 Processing Date"*, overruling an earlier census. What differs
+is the ROW, not the concept. The replay trap is respected: `applyEntryPatch`
+builds `SET ${k} = ?` from an allowlist and one caller replays a payload parked
+days earlier, so a dropped key is silently ignored on approve. **Stage 1 ships**
+— `canonicaliseSalesEntryBody` folds the canonical `processingDate` onto the
+stored key on all four roads in (create, direct PATCH, change-request QUEUE so
+newly parked payloads are already canonical, and the approve replay), reusing the
+SCM seam so the two modules cannot drift on "the body carries both spellings".
+Nothing was removed. **Stage 2 is not shipped**; its precondition is a D1 count
+this Postgres probe cannot reach, and section F **says so** rather than skipping
+it.
+
+**The guard, and the proof it is not vacuous.**
+`backend/src/scm/shared/so-processing-date-names.test.ts` reads the real source
+via `?raw` and now protects the DOORS rather than their absence — it fails if a
+`target_date` write path is closed again, if a sweep deletes `PDate` or either
+alias, or if the factory framing returns. Four regressions planted:
+
+| planted | `tsc` | the guard |
+|---|---|---|
+| the `target_date` create accept removed (the near-miss, replayed) | **exit 0** | FAILS |
+| `udf.processingDate = pdate` replacing the AutoCount UDF | **exit 0** | FAILS |
+| `SO_PROCESSING_DATE_LEGACY_COLUMNS` emptied | **exit 0** | FAILS |
+| *"may this order start production on the factory"* | **exit 0** | FAILS |
+
+The compiler is blind to all four: every failure in this family is a name inside
+a string. **It also caught a real one.** PR #2383 landed between the sweep and
+the merge and brought three fresh *"the day the factory starts"* comments into a
+file the guard already watched — and did not fire, because the patterns matched
+the three phrasings that happened to exist rather than the idea. Widened to match
+the idea; `IN_PRODUCTION` deliberately excluded, since it is a real status value
+and a guard that fails on a live status name is a guard someone deletes.
+
+**Deferred, named.** The `target_date` column drop (blocked on the POS). Both
+alias retirements (each blocked on a queue outside this deploy). Stage 2 of the
+native Sales module (blocked on a D1 count). And the rescheduling split the owner
+raised in the same message — the board and PO coverage plan on the AMENDED
+delivery date while MRP ranks against the ORIGINAL, two screens with two answers
+and nobody told — which is a different fact from the naming and is not touched
+here.
+
+## The Cloudflare version check shipped without credentials — the secrets are environment-scoped, not repo-scoped [low]
+
+**Symptom.** `Worker version check (read-only)` failed on its very first
+dispatch (run `32095704847`):
+
+```
+env:
+  CLOUDFLARE_API_TOKEN:
+  CLOUDFLARE_ACCOUNT_ID:
+##[error]check-worker-versions: CLOUDFLARE_API_TOKEN and CLOUDFLARE_ACCOUNT_ID are required. Nothing was checked.
+```
+
+**Root cause (traced).** There are **no `CLOUDFLARE_*` secrets at repo level** —
+`gh api repos/hello-houzs/Houzs-ERP/actions/secrets` lists none. They live in the
+`Production` GitHub ENVIRONMENT. `deploy.yml`'s backend job can read them only
+because it declares `environment: Production` (`deploy.yml:134`); the new
+workflow did not, so `${{ secrets.CLOUDFLARE_API_TOKEN }}` resolved to the empty
+string.
+
+**A missing environment scope is silent.** GitHub does not error on a secret the
+job cannot see — it substitutes empty. Had the script treated "no credentials" as
+"nothing to report", this would have been a permanently green check that never
+called Cloudflare once, which is the `staging-bench-rot-coe.md` shape. It refuses
+instead (`Nothing was checked`, exit 1), so the gap surfaced on the first run
+rather than in three weeks.
+
+**Fix.** `environment: Production` on the job. That environment carries no
+protection rules today (no reviewers, no wait timer, no branch policy — `gh api
+repos/.../environments/Production`), so it adds no approval step. Accepted
+cosmetic cost: jobs naming an environment appear in that environment's deployment
+list, so a read-only diagnostic now sits beside real releases. It deploys nothing
+and keeps its own concurrency group, so it still cannot queue behind or displace
+a release.
+
+**This is the rule working, not failing.** CLAUDE.md: *a `workflow_dispatch`
+workflow is not shipped until it has been dispatched once and reported success.*
+#2120 was the entry that bought that rule, by shipping a workflow wired to
+`SUPABASE_URL` / `SUPABASE_SERVICE_ROLE_KEY` — secrets that exist nowhere here.
+Same class, caught in minutes this time because the check was dispatched
+immediately instead of being assumed good.
+
+**Ref.** `docs/deploy-secret-version-deadlock-coe.md`, 2026-08-18.
+
+## One column had five titles, and the note under it was a data contract nobody had counted the readers of [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**What the owner asked for.** Unify the provenance vocabulary, including the
+stored note. He was given the recommendation NOT to touch the stored note — it is
+a data contract, not a label, and a backfill risks provenance on existing POs —
+and chose to unify anyway (2026-08-18). So it is unified, in the one order that
+makes it safe.
+
+**The stored note, and why the order matters.** A PO raised by the MRP
+shortage->PO convert carries NO per-line `so_item_id`. Its
+`purchase_orders.notes` — `From SOs: <doc>, <doc>` — is therefore the ONLY
+record of which Sales Orders it was bought for. `document-conversion.md` §9 said
+**three** regexes parse it back. Counted from source, there are **eight**
+readers, and the three the write-up missed are the dangerous ones: they are SQL
+predicates (`notes ~* 'From SOs?:'` in `backfill-po-so-item-links.mjs`,
+`audit-mrp-pairing.mjs`, `repair-2990-doc-refs.mjs`) that narrow to candidate
+rows BEFORE any JS parser runs. A SQL predicate that knows fewer labels than the
+parser does not throw — it makes a prod-touching script report a clean pass over
+rows it never fetched.
+
+So every reader learned the new wording AND both old spellings before one byte
+of new text was written anywhere. The proof is a corpus file both test suites
+read (`backend/tests/fixtures/provenance-note-corpus.json`): 20 notes spanning
+both eras, fed to every parser, asserting identical extraction. Run against the
+unchanged readers it failed 19 times — exactly the 9 new-form cases x 2 stale
+parsers, plus the writer round-trip — and every legacy case passed, which is what
+proves the corpus was not simply rewritten to match the new code.
+
+**One home instead of four.** The #2370 rule lived in
+`frontend/src/lib/convertScope.tsx`, so it could only ever reach BUTTONS: the
+backend writer could not import a frontend `.tsx`, and the `.mjs` scripts cannot
+import TypeScript at all. The words moved to
+`backend/src/scm/shared/transfer-vocabulary.ts`, mirrored byte-identically into
+`frontend/src/vendor/shared/` (refereed by `check-shared-mirrors.mjs` and a
+byte-identity test) with a script twin for the `.mjs` side that CI compares on
+the same corpus. `convertScope.tsx` re-exports; a test asserts it re-exports
+rather than re-declares, by object identity.
+
+**The rule gained the short form it was missing.** A lineage column is 110-160px
+and holds a document number, so `Transfer from Sales Order` does not fit — which
+is precisely why fifteen headers were hand-written rather than generated. Before
+this, the SAME column was titled five ways: `From SO`/`From DO`/`From PO`/`From
+GRN`, `Source PO`/`Source GRN`, `Transfer From (SO)`, `Transfer From
+(Order)`/`(Receive)`, `Transfer To (DO)`. Now one generated title,
+`Transfer From (<DOC>)`, across 24 sites.
+
+**Two defects found while unifying, both fixed.**
+
+1. `purchase-order-pdf.ts`'s private copy of the regex omitted the `m` flag, so a
+   note whose label sat on line 2 printed NO source SO on the PRINTED PO while
+   the relationship map beside it showed one. It also decided single-vs-multi
+   source with `.includes(',')`, so a trailing comma read as multi-source.
+2. `PurchaseConsignmentReceives`'s `source_po` column showed a PURCHASE ORDER
+   number under `Transfer From (Order)` — the identical header the `pc_number`
+   column two columns away uses for a CONSIGNMENT ORDER number.
+
+**Deliberately not renamed.** Three columns still read `Source PO`
+(`SalesInvoicesListV2`, `MfgDeliveryOrdersListV2`, `mobile/source-chips.tsx`).
+They name the PO the GOODS came from, resolved from `batch_no` on the stock
+ledger, and can read "STOCK ADJ". A Sales Invoice is never transferred FROM a
+Purchase Order; titling them `Transfer From (PO)` would assert a lineage that
+does not exist. Different relationship, different words.
+
+**The backfill is shipped and has NOT been run.**
+`relabel-provenance-notes.mjs` + its workflow: dry-run by default, census by
+exact form per company first, refuses any row whose doc numbers would change,
+writes a complete `{id, po_number, company_id, before, after}` manifest as a
+90-day artifact on EVERY run (a dry run's manifest is the review copy), updates
+`WHERE notes = <exact prior value>`, then RE-READS every touched row and
+re-parses it — the invariant is proven against the bytes the database holds, not
+against the string the plan computed. Idempotent by identity. `MODE=revert`
+restores from the manifest, and only where the row still holds exactly what the
+migration wrote. Exercised end to end against an in-memory driver: 7 of 12 rows
+migrated, second apply wrote zero, revert returned every note byte-exact. The
+post-condition was then verified non-vacuous by corrupting one write and
+confirming the job fails and prints the revert command.
+
+**What review found in the rollback, and what it now does.** The rollback could
+not restore the rows its own failure message pointed at, and said it had.
+`MODE=revert` updates `WHERE id = <id> AND notes = <after>` — only rows still
+holding exactly what the migration wrote. But every row that can trip the
+post-condition is, by construction, a row whose `notes` is NOT `after`: the
+violation is literally "stored bytes are not what was written". So the apply run
+would fail, print `Revert with the manifest artifact`, and the revert it named
+would match zero of those rows — reporting each through `warn()` (a
+`::warning::` does not fail an Actions job) and ending on an unconditional
+`process.exit(0)`. A green job, an operator who believes the rollback completed,
+and the corrupted provenance still there. Three changes: an unrestorable row is
+now a `fail()` with its PO number and exits NON-ZERO; a revert that restores
+zero of a non-empty manifest is itself a failure; and the apply run's
+instruction now says plainly that rows flagged "stored bytes are not what was
+written" will NOT be restored by that command and must be recovered by hand from
+the manifest's `before`.
+
+A DRY-RUN revert was weaker still — `if (!APPLY) continue` skipped the loop
+entirely and then printed `would attempt N restore(s)`, N being the manifest's
+own length, which is true even when not one row could come back. It now READS
+each row and answers the question actually being asked: how many would restore.
+
+**The rollback route itself was inoperable.** The workflow's header documented
+"download the manifest artifact from the run, then dispatch with mode=revert",
+but the job had no `download-artifact` step and no input carrying the manifest's
+CONTENTS — only a path defaulting to `out/relabel-provenance-notes.json`, which
+does not exist in a fresh checkout. `readFileSync` would throw ENOENT during the
+one event the path exists for. There is now a `manifest_run_id` input and a
+`download-artifact` step (with `actions: read`) that pulls the apply run's
+artifact into `backend/out/`, and the script answers a missing manifest with a
+sentence naming the fix instead of a stack trace.
+
+**The leftover count was miscounting successes as failures.** The closing check
+excluded rows matching `^\s*Transfer from Sales Order:`. Postgres ARE is not
+newline-sensitive by default, so `^` anchors to the start of the whole string
+and `\s*` cannot consume `Rush job.\n` — a correctly migrated multi-line note
+(a first-class case the corpus carries) was counted as NOT migrated. The
+predicate now asks whether the note contains the current label at all, which
+needs no anchor and no newline flag.
+
+**The rename had left three screens speaking two languages.** `GoodsReceivedDetailV2`
+showed `From PO HC-PO-…` in its header and `Transfer From (PO)  HC-PO-…` in the
+Receipt-info grid below it; `SalesInvoiceDetailV2` and `DeliveryReturnDetailV2`
+the same, and four list pages kept the old wording in the card view while the
+table and drawer used the new one. Before this PR each of those screens said one
+thing. Eight hand-written labels now call `transferFromColumnLabel` like the
+other twenty-four sites, so the count of live wordings for that relationship is
+one everywhere it is a document lineage.
+## The refusal named all five conditions and checked one — a free order was told it owed a deposit [high]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Proceeding a Sales Order was refused with:
+
+```
+A Processing Date can only be set once the order has a customer name, a full
+delivery address (line 1 and postcode), a delivery date, and the deposit its
+company requires (Houzs 30%, 2990 50%).
+```
+
+The order was worth zero and nothing had been paid. The owner read "deposit",
+concluded the system was demanding 50% of nothing, and spent a day on a money
+bug that did not exist.
+
+**It was never the deposit.** `meetsDepositGate` short-circuits at `total <= 0`
+and its own docblock says why — *"Free order (total ≤ 0 …): nothing to collect,
+so the gate is vacuously met"*. The deposit term PASSED. The order was missing
+its **postcode**. `meetsProceedGate` weighs FIVE conditions
+(`backend/src/scm/shared/order-rules.ts`) and `SO_PROCEED_GATE_RESPONSE`
+(`backend/src/scm/routes/mfg-sales-orders.ts`) was ONE stored sentence naming all
+five, returned whenever ANY ONE failed. The refusal could not distinguish the
+condition it checked from the four it recited.
+
+**Not a corner case.** Live population 2026-08-17: of 561 processing-dated SOs,
+21 lack a postcode and 8 lack a delivery date. Every one of those refusals would
+have said "deposit" too.
+
+**Root cause, stated as a shape.** The verdict and the explanation were two
+separate expressions over the same five facts — a boolean chain in one file and
+a hand-written sentence in another. Two expressions for one rule is this repo's
+repeat offender in its other costume: not "expressed at N sites, present at
+N-1", but "checked in one place, described in another, and nothing keeps the
+description true".
+
+**Fix.**
+
+- `meetsProceedGate` is now **defined as** `proceedGateFailures(i).length === 0`.
+  One expression, read two ways: a caller wanting a boolean asks whether the list
+  is empty, a caller wanting to explain itself reads the list. No input can make
+  them disagree. `proceedGateFailures` returns stable condition KEYS, no prose —
+  `order-rules.ts` owns the rule, `so-save-problems.ts` owns the words.
+- The refusal is now the aggregated `problems` contract the save gate already
+  used (owner 2026-07-18, "every reason at once"), under an **unchanged**
+  `error: 'proceed_gate_unmet'` so clients matching on the code notice nothing.
+  `reason` stays a plain sentence for surfaces that read only that key — it now
+  names what failed instead of reciting all five. No frontend change was needed:
+  `humanApiError` and `parseSaveProblems` key off the presence of `problems`,
+  not off the `validation_failed` code.
+- The completeness and deposit sentences are ONE table
+  (`completenessProblem` / `depositProblem`), shared with
+  `collectProcessingGateProblems`. Only a trailing clause differs — "before a
+  Processing Date can be set" for the save path, "before this order can be
+  proceeded" for the proceed paths, because the second operator has already
+  pressed a button and his order already carries its date.
+- `depositProblem` asks `meetsDepositGate` for its verdict instead of testing
+  `totalCenti > 0` itself. A free order therefore CANNOT raise a deposit line —
+  structurally, not by a guard that reads the same today and drifts tomorrow.
+
+- `soDepositFacts`, `soProceedGateBlocked` and `soProcessingDateProblemsForDoc`
+  moved out of `mfg-sales-orders.ts` into
+  `backend/src/scm/lib/so-proceed-gate.ts`. Not tidying: that router sits under
+  a file-size ceiling that may only FALL, and the detail the refusal now carries
+  pushed it over. They were already one unit — docNo in, gate FACTS out, judged
+  by the shared pure rules — so the ceiling picked the split, it did not invent
+  it. The router lost 96 lines and is back under its ceiling.
+
+**Outcomes did not move, and that is tested, not asserted.**
+`so-save-problems.test.ts` runs a 576-input matrix (4 completeness booleans x 4
+company codes x 9 paid/total pairs) and requires
+`collectProceedGateProblems(f).length === 0` to equal the pre-change predicate
+written out literally, and `meetsProceedGate` to equal it too. Only the words
+changed.
+
+**Watchers.**
+
+- `backend/tests/soProceedRefusalNamesCondition.test.ts` — the owner's exact
+  order through the real handler: total 0, paid 0, no postcode. Asserts the body
+  names `Postcode` and that the string "deposit" appears NOWHERE in it. Fails on
+  the pre-fix code (`problems` is undefined).
+- `backend/tests/soProceedRefusalWiring.test.ts` — source-anchored, in the style
+  of `soDatePairWiring.test.ts`: the gate is the empty-list expression, the five
+  conditions are enumerated once, both refusing call sites go through the one
+  builder, the routes mint no `proceed_gate_unmet` of their own, and no
+  `message:` / `reason:` literal in the three modules names more than one gate
+  condition. Eight of its nine tests fail on the pre-fix code.
+- `frontend/src/vendor/scm/lib/authed-fetch.proceed-refusal.test.ts` — what the
+  operator actually reads, composed by the real client code.
+
+**The one `meetsProceedGate` caller with no problem list, and why that is
+correct.** CREATE auto-proceed refuses nothing: a handover that misses the gate
+is simply created un-proceeded, in Order Placed, for the salesperson to complete
+manually. There is no refusal there to name a condition in. The wiring test
+asserts that site returns no body, so if it ever starts refusing, it fails and
+has to be classified rather than quietly shipping an anonymous sentence.
+## A money ceiling rested on a column no migration created — and a blip on the read that derives it raised the ceiling to infinity [high]
+
+<!-- area: Delivery, DO, returns -->
+
+Two defects, one mechanism: `remaining = delivered − invoiced − returned`, the
+cap every DO → Sales Invoice and DO → Delivery Return write is checked against.
+One defect made the `invoiced` term undeclarable; the other made it silently
+zero.
+
+**A — the column.** `grep -rn --include='*.sql' do_item_id
+backend/src/db/migrations-pg/` returns rc=1 and ZERO hits, and
+`backend/scripts/scm-schema/2990s-full-schema.sql` gives `sales_invoice_items` a
+`so_item_id` and no `do_item_id`. Yet `lib/do-line-remaining.ts` sums
+`sales_invoice_items.qty` linked by `do_item_id` to derive `invoiced`. A
+`pg_dump --schema-only --schema=scm` of production (Actions -> "Dump scm schema
+snapshot (read-only)", target=prod, run 32089111719) settles what is really
+there: `do_item_id uuid`, nullable, no default, with
+`sales_invoice_items_do_item_id_fkey` referencing `scm.delivery_order_items(id)`
+`ON DELETE SET NULL`, and no index. Migration `0303_scm_si_items_do_item_id.sql`
+declares exactly that and nothing else — `ADD COLUMN IF NOT EXISTS` plus a
+`pg_constraint`-guarded `ADD CONSTRAINT`, so it is a no-op where the column
+already exists. Note the sibling gap it does NOT close: `unit_cost_centi`,
+`line_cost_centi` and `line_margin_centi` on the same table are undeclared too.
+Same class, different change.
+
+**B — the read.** Every read in `do-line-remaining.ts` destructured `{ data }`
+and dropped `error`. supabase-js does not throw, so a failed select resolves
+`{ data: null, error }` and arrived as ZERO invoiced rows — indistinguishable
+from a delivery nobody has invoiced. `remaining` then came out at the FULL
+delivered quantity on a line already billed in full. Six reads, each
+individually sufficient: the two that ARE `invoiced`/`returned`, the two
+cancelled-filter reads (lose them and every parent document looks cancelled,
+which zeroes the term just as completely), and the two that build the ledger at
+all. `resolveCandidateDoIds` had the same shape, and its empty list is what both
+pickers render as "nothing left to invoice".
+
+This was deferred out of #2374 with a stated reason — "a refactor with many
+callers and its own blast radius" — which was right then. Every entry point now
+returns `{ ok: true, … } | { ok: false, reason }`, and each of the ten callers
+decides for itself:
+
+- **write guards** (`checkSiOverRemaining`, `checkDrOverRemaining`, both
+  convert pre-checks, the from-DO append) refuse with **503
+  `remaining_check_failed`** — never 409 `over_remaining`, because the operator
+  did not ask for too much;
+- **display surfaces** (both pickers, the unbilled-deliveries report) answer
+  **500 `load_failed`** rather than an empty list, because "nothing left to
+  invoice" and "nothing came back" look identical on screen;
+- **post-insert race rechecks** roll back and say **`remaining_check_failed`**,
+  never `race_conflict` — nothing has escaped at that point (no revenue posted,
+  no stock moved), so undoing costs a keystroke, and blaming a colleague who did
+  not race would send the operator hunting for a duplicate that does not exist;
+- **`doPendingItemCodesOf`** (the shadow guard) returns `ok: false`, which
+  `unlinkedScanRefusal` already turns into a refusal at every call site. Its own
+  header used to say this half was fail-open and filed separately. It is closed.
+
+`checkDrOverRemaining` also carried an explicit `if (error) return null; // load
+failure -> don't block; the insert will surface real errors`. It does not: the
+insert has no cap of its own, so that read WAS the guard.
+
+**Proof it is not vacuous.** `backend/tests/doRemainingFailsClosed.test.ts`
+drives the real exported handlers with one table's SELECT failing. Against the
+pre-fix tree six of its ten cases fail with `expected 201 to be 503` — the
+invoice and the return were actually created for goods already billed. The two
+rollback cases carry a CONTROL proving the same request succeeds when every read
+works, so the 503 is the post-insert recheck and not the pre-check.
+`audit:swallowed-reads` records the direction: `do-line-remaining.ts` 8 -> 0
+(dropped from the baseline entirely), `delivery-returns.ts` 20 -> 19,
+`sales-invoices.ts` 29 -> 27.
+
+**C — the two doors the first pass left half-shut.** Review found the guard was
+consulted at ten call sites but that two of them never reached it, because the
+list they hand it was itself built from a swallowed read.
+
+`PATCH /sales-invoices/:id/status` (REOPEN, CANCELLED -> SENT) read its own
+`sales_invoice_items` with `const { data: reopenLines }` and no `error`, then
+passed the result to `checkSiOverRemaining`, whose first act is `if
+(wanted.size === 0) return null`. So a failed read produced an EMPTY line list
+and the ceiling was never consulted — the 503 branch two lines below it was
+unreachable by construction. The invoice went back to SENT and `postSiRevenue`
+re-posted AR and GL revenue for goods a second invoice had already billed. This
+is the worst of the set: it fails open on the money path, and it does so
+silently, with a 200.
+
+`POST /sales-invoices/:id/items/from-do/:doId` (APPEND) has the same shape one
+table earlier. Its `delivery_order_items` read dropped `error`, so a failure
+yielded zero candidate lines and the handler answered 409 `do_fully_invoiced` —
+"this delivery has already been invoiced in full" — from a read that returned
+nothing at all. A caller that believes it records delivered-but-unbilled goods
+as billed.
+
+Both now bind the error and refuse with the same 503 `remaining_check_failed`
+the other eight callers use. Four cases in `doRemainingFailsClosed.test.ts`
+pin it, two of them CONTROLs; against the pre-fix tree the two new assertions
+fail `expected 200 to be 503` and `expected 409 to be 503`, which is the
+reopen waving the double-bill through and the append claiming completion.
 ## A Sales Order with a Processing Date was refused stock forever — the mfg-sales allocation gate read a field no client writes [high]
 
 **Symptom.** A Sales Order given a Processing Date locked, appeared on the
@@ -7303,7 +8446,7 @@ exist.
 
 <!-- area: Repo tooling: tests, ratchets, generators -->
 
-**Symptom.** None, which is the point. `docs/generated/bug-index.md` is the only
+**Symptom.** None, which is the point. `docs/generated/bug-index.md` [gone] is the only
 way into a 9,000-line ledger — "have we hit this before?" is answered by reading
 one area's rows. `audit:bug-index` was green throughout: it checks that the FILE
 matches the GENERATOR, never that the generator is right. A reader looking under

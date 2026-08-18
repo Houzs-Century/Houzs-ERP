@@ -192,8 +192,8 @@ async function main() {
          GROUP BY so.doc_no, so.company_id, so.status ORDER BY so.doc_no`);
       const totalLines = soRows.reduce((a, r) => a + Number(r.undated_lines), 0);
       notice(`  live SO lines with NO line date AND NO header date : ${totalLines} across ${soRows.length} SO(s)`);
-      notice("  (mrp.ts:555-560 — these are DROPPED from the MRP page by default (includeUndated=false),");
-      notice("   while every other caller passes true, so the screens disagree about demand.)");
+      notice("  (these stay in the MRP allocation and, since 2026-08-18, are SHOWN on the page by");
+      notice("   default too — marked \"No date\" and sorted last. ?includeUndated=false still hides them.)");
       for (const r of soRows.slice(0, SAMPLE)) notice(`    ${pad(r.doc_no, 20)} co=${r.company_id} ${pad(r.status, 14)} ${r.undated_lines} undated line(s)`);
       if (soRows.length > SAMPLE) notice(`    ... and ${soRows.length - SAMPLE} more SOs.`);
       if (has("purchase_order_items", "delivery_date") && has("purchase_orders", "po_number", "expected_at")) {

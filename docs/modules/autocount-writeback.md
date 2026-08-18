@@ -1356,6 +1356,20 @@ column, the composer reads another, and nothing opens it on the AutoCount side.*
 |---|---|---|
 | `ToPONo` | `po_doc_no` ?? `customer_po` ?? `customer_so_no` (`soCustomerRef`) | PR #140 dropped the Customer PO card, so nothing writes the first two and the operator's reference lands in the third |
 | `BRANDING` | header `branding`, else the first live LINE's `branding` (`soBranding`), **through the map only** | the header column is NULL on every ERP-created order; the form has never had the field, and the detail page derives `first_item_branding` from the lines for that reason |
+
+> **`soBranding` is NOT the Branding column's rule, and did not move with it on
+> 2026-08-18.** That day the DISPLAY rule (`scm/shared/so-branding-label.ts`)
+> changed: SOFA became the company's house brand (`ZANOTTI` / `2990s Sofa`)
+> without consulting the line, and MATTRESS became the SKU's branding with the
+> manufactured `2990 Mattress` fallback deleted. `soBranding` still reads the
+> header then the first live line's stored text, and still passes it through
+> `BRANDING_MAP` as the allow-list this section argues for. So there are now
+> THREE branding rules in this system and they are meant to differ: the display
+> label, `deriveDisplayBrandingByDoc`'s raw text, and this write-back path.
+> Do not "align" them without re-reading why the allow-list exists — the whole
+> point above is that `mfg_products.branding` is not a brand list, so the value
+> the SO list happily shows a human is exactly the value that must not be opened
+> as a master in the licensed book.
 | `InvAddr3` / `InvAddr4` | `address3` / `address4`, else `postcode` + `city`, then `customer_state` (`soInvoiceAddress`) | only the cutover import ever wrote `address3` / `address4`. FIVE ERP fields into FOUR numbered lines is the one decision here, and it lives in that function's doc comment |
 | `SalesLocation` | `sales_location`, else the stock location the LINES resolve to (`soSalesLocation`) | `deriveSalesLocationFromState` returns null for an order with no customer state, and a blank is `FK_SO_SalesLocation` |
 | `VENUE` | `venue`, kept as-is when the map does not know it | venue is deliberately free text — "every roadshow hall is a one-off" (mig 0229) — against a 7-entry map |

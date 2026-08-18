@@ -257,7 +257,15 @@ unbilledDeliveries.get('/', async (c) => {
      remaining = delivered − invoiced − returned formula here: a second copy of
      that formula is how the report and the SI picker would start disagreeing
      about what is billable, which is worse than a slow report. */
-  const remainingByItem = await doLineRemaining(sb, headers.map((h) => h.id));
+  const ledger = await doLineRemaining(sb, headers.map((h) => h.id));
+  /* REFUSE TO RENDER rather than report a clean book. Every row of this report
+     is gated on `a.unbilled > 0` below, so an unreadable ledger drops EVERY row
+     and the answer becomes "nothing is outstanding" — on the one screen whose
+     entire job is to find money that was delivered and never billed. The
+     headers read above already answers a failure this way; the ledger is the
+     more expensive half of the same question and gets the same answer. */
+  if (!ledger.ok) return c.json({ error: 'load_failed', reason: ledger.reason }, 500);
+  const remainingByItem = ledger.lines;
 
   // Fold the line ledger up to one row per DO.
   type Agg = { delivered: number; invoiced: number; returned: number; unbilled: number; lines: number; pending: number };

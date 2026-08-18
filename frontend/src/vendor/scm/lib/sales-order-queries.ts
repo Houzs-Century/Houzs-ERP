@@ -88,14 +88,13 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
 }
 
 // Dashboard summary mode (`?summary=1`) — the backend returns only the 6 cols
-// the lifecycle-bucket KPIs need (doc_no, status, proceeded_at, local_total_centi,
+// the lifecycle-bucket KPIs need (doc_no, status, local_total_centi,
 // created_at, so_date), non-DRAFT, company + sales-scope scoped, so the dashboard
 // isn't paying for 500 fully-hydrated rows. Bucketing stays in the FE (single
 // source of truth). Ported from 2990's useMfgSalesOrdersSummary.
 export type SoSummaryRow = {
   doc_no: string;
   status: string;
-  proceeded_at: string | null;
   local_total_centi: number;
   created_at: string | null;
   so_date: string | null;

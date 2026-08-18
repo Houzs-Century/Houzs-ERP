@@ -107,10 +107,28 @@ clock.
 **"`pretest` runs `test:scale-contract` on all four shards — three of those are
 waste."** True, and irrelevant: measured at **0.36s**. Left alone.
 
-**"`scale-postgres-contract` should not run on every PR."** Left alone —
-`docs/SCALE-PERFORMANCE-HARNESS.md` documents the every-PR execution as a
+**"`scale-postgres-contract` should not run on every PR."** Left alone at the
+time — `docs/SCALE-PERFORMANCE-HARNESS.md` documents the every-PR execution as a
 deliberate design ("the skip is therefore never the only report"), and the job
 costs ~80s.
+
+> **REVERSED 2026-08-18.** The job moved to `.github/workflows/postsubmit.yml`,
+> together with `frontend-perf`. Two things changed since the paragraph above was
+> written. First, evidence: over the last 40 `ci.yml` runs `scale-postgres-contract`
+> was **37 success, 0 failure** and `frontend-perf` **37 success, 0 failure** —
+> together ~180 runner-seconds spent on every PR to restate an unchanged result,
+> against the 20-slot ceiling that is the whole subject of this document. Second,
+> the harness doc's actual requirement is *one* execution per change, not a
+> *pre-merge* one ("running it twice buys nothing"); a postsubmit run on `main`
+> still gives exactly one, on the genuinely merged tree rather than a speculative
+> merge ref. What is given up is that the evidence now arrives after merge instead
+> of before — accepted for a job with no failures on the record, and reversible:
+> if it fails on `main`, move it back.
+>
+> Not everything moved. `backend-postgres` (34 success, **4 failure**, spanning
+> several pg test files at once — a broken tree, not a flake) and `file-size`
+> (2 real findings) stayed in presubmit. A job earns presubmit by having caught
+> something; those two have.
 
 ---
 
@@ -118,6 +136,7 @@ costs ~80s.
 
 | Change | Effect | Ref |
 | --- | --- | --- |
+| Path filtering in `ci.yml` (`changes` job) + `scale-postgres-contract` and `frontend-perf` moved to `postsubmit.yml` | Frees ~180 runner-seconds on **every** PR unconditionally. On top of that, replaying the classifier over the last 60 merged PRs: 21 skip the frontend half, 3 skip the backend half, 2 skip both — **26 of 60 (43%)** save at least one half, against the 20-slot ceiling. (A naive path-prefix count claims 58%; it miscounts PRs that also touch a root file or `scripts/`, which correctly run both. 43% is what the rule delivers.) | #2412 |
 | `tests/setup.ts` applies a pre-collapsed schema snapshot instead of replaying 147 migrations per file | Suite total ~10% faster; the `tests` phase itself 7.6s → 1.1s per 20 files | #2131 |
 | `PRAGMA foreign_keys = ON` when building that snapshot | **Correctness, not speed** — see below | #2131 |
 | `npm run audit:test-schema` wired into `backend-typecheck` | A migration merged without regenerating the snapshot now fails CI instead of silently giving the suite a schema production does not have | #2131 |
@@ -269,7 +288,10 @@ it.** A CI run finishes when its slowest job finishes; that used to be
 > **Superseded 2026-08-13 by #2142, which is why this section no longer ends the
 > story.** `frontend` was then split three ways and the Playwright browser
 > cached; on `origin/main` today `frontend` is a ROLL-UP job over
-> `frontend-checks`, `frontend-build` and `frontend-perf` (`ci.yml`), not the one
+> `frontend-checks`, `frontend-build` and (until 2026-08-18) `frontend-perf`
+> (`ci.yml`) — `frontend-perf` has since moved to `postsubmit.yml`, so the
+> roll-up now covers `frontend-checks`, `frontend-typecheck` and
+> `frontend-build` — not the one
 > serial block described below. The paragraph is kept because the ANALYSIS below
 > is what identified the two candidates that #2142 acted on — read it as the
 > diagnosis, not as the current shape of the job.
@@ -411,6 +433,24 @@ running.** It surfaced only because an unrelated `package.json` conflict on
 Fixed in #2146: the suite is invoked by name in `backend-typecheck`, the two
 assertions now match the invariant rather than the formatting, and a **new**
 assertion fails if the workflow ever stops calling this suite by name.
+
+> **The `scale-postgres-contract` assertion broke a THIRD time, on 2026-08-18
+> (#2412), and that is the useful part of this entry.** #2146 rewrote it to
+> "match the invariant rather than the formatting" — but the invariant it then
+> pinned was still *runs on `pull_request` in `ci.yml`*, which is a LOCATION.
+> When the job moved to `postsubmit.yml` the assertion failed again, on a change
+> that took nothing away from the evidence.
+>
+> The property it actually exists to protect is: the 100k run **executes once
+> per change, in a workflow that really triggers, and its report is retained**.
+> It now finds whichever workflow defines the job, asserts exactly one does, and
+> accepts `pull_request` or `push`. Moving the job again will not break it;
+> deleting it, duplicating it, or hiding it behind `workflow_dispatch` will.
+>
+> Twice is a coincidence, three times is a pattern: each rewrite pinned one
+> layer further out — YAML layout, then the event name, then the file. The guard
+> was verified RED against all three violations before being trusted, not merely
+> observed green.
 
 ## Lessons
 

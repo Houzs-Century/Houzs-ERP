@@ -55,49 +55,37 @@ export const CONVERT_LINKS = {
 export type ConvertPair = keyof typeof CONVERT_LINKS;
 
 /* ── The LABEL rule (owner-approved 2026-08-17) ────────────────────────────
-   Two sentences generate every transfer label, and nothing else does:
+   The rule and its words MOVED on 2026-08-18 to
+   `frontend/src/vendor/shared/transfer-vocabulary.ts` — the mirrored tree, whose
+   backend twin is `backend/src/scm/shared/transfer-vocabulary.ts`. Read that
+   file for the rule itself; it is unchanged, and this is not a second home.
 
-       Transfer from <Source document, full name>      secondary, header
-       Transfer to   <Destination document, full name>  primary, footer
+   WHY IT MOVED. The rule lived here, in a frontend .tsx, so it could only ever
+   reach BUTTONS. Two surfaces speak the same vocabulary and could not call it:
 
-   Three properties are deliberate, and each was a defect before:
+     · the PROVENANCE NOTE the backend stamps into `purchase_orders.notes` when
+       MRP raises a PO — backend code, cannot import a frontend .tsx;
+     · the ~15 lineage COLUMN HEADERS, which are 110-160px wide and needed a
+       SHORT form the rule did not have.
 
-   - **Full document names, never abbreviations.** `SI` / `PI` / `PR` / `GRN` /
-     `DO` / `SO` do not appear on a button. They stay in document NUMBERS,
-     which is where an abbreviation identifies something.
-   - **Always SINGULAR.** The button names the source TYPE, not how many were
-     picked. A picker that accepts ten sales orders still reads "Transfer from
-     Sales Order" — the old plural ("one or more Purchase Orders") described
-     the widget, not the document.
-   - **Generated, never written out.** Twenty hand-written literals is how
-     desktop and mobile came to word the SAME operation differently — one used
-     the abbreviation, one the full name. Call the helpers; a new pair cannot be
-     added with an inconsistent label. */
-export const TRANSFER_DOC = {
-  so:  'Sales Order',
-  po:  'Purchase Order',
-  do:  'Delivery Order',
-  si:  'Sales Invoice',
-  dr:  'Delivery Return',
-  grn: 'Goods Received',
-  pi:  'Purchase Invoice',
-  pr:  'Purchase Return',
-  co:  'Consignment Order',
-  cn:  'Consignment Note',
-  cr:  'Consignment Return',
-  pco: 'Purchase Consignment Order',
-  pcr: 'Consignment Receive',
-} as const;
+   Both were therefore hand-written, and both drifted — which is the exact
+   defect #2370 was raised to end. The rule now covers all three surfaces, and
+   the words are one object, not three tables that agree today.
 
-export type TransferDoc = keyof typeof TRANSFER_DOC;
+   Re-exported here so every existing `from '../../lib/convertScope'` import
+   keeps working: this module remains the door, it just no longer owns the room.
+   `transfer-vocabulary.canonical.test.ts` fails if this becomes a copy. */
+export {
+  TRANSFER_DOC,
+  transferToLabel,
+  transferFromLabel,
+  TRANSFER_DOC_SHORT,
+  transferToColumnLabel,
+  transferFromColumnLabel,
+  type TransferDoc,
+} from '../vendor/shared/transfer-vocabulary';
 
-/** The label for the SOURCE-side action: "Transfer to <destination>". */
-export const transferToLabel = (destination: TransferDoc): string =>
-  `Transfer to ${TRANSFER_DOC[destination]}`;
-
-/** The label for the DESTINATION-side action: "Transfer from <source>". */
-export const transferFromLabel = (source: TransferDoc): string =>
-  `Transfer from ${TRANSFER_DOC[source]}`;
+import type { TransferDoc } from '../vendor/shared/transfer-vocabulary';
 
 /* Every transfer flow this ERP recognises, as source → destination. This is the
    VOCABULARY table, not a capability table: a row here says what the pair is

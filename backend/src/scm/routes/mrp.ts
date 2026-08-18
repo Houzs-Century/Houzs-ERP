@@ -62,7 +62,7 @@
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
-import { computeVariantKey, buildVariantSummary, isServiceLine, splitSofaCode, effectiveDelivery, type VariantAttrs } from '../shared';
+import { computeVariantKey, buildVariantSummary, isServiceLine, splitSofaCode, effectiveDelivery, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import { soDeliverableRemaining } from './delivery-orders-mfg';
 import { activeCompanyId } from '../lib/companyScope';
@@ -182,6 +182,11 @@ type DemandRow = {
      "warehouse follows the SO" block below. */
   warehouse_id: string | null;
   line_delivery_date: string | null;
+  /* TRUE only when a human typed a date on THIS line. FALSE means
+     `line_delivery_date` is a MIRROR of the header date (mig 0172's
+     apply_so_header_followers writes the pair), and a mirror goes stale the
+     moment the order is rescheduled — see effectiveSoDelivery. */
+  line_delivery_date_overridden: boolean | null;
   line_no: number | null;
   created_at: string | null;
   cancelled: boolean;
@@ -189,8 +194,12 @@ type DemandRow = {
     debtor_name: string | null;
     status: string;
     so_date: string | null;
-    customer_delivery_date: string | null;
-    processing_date: string | null; // processing date (drives when to order)
+    customer_delivery_date: string | null;   // the customer's ORIGINAL promise — never overwritten
+    amended_delivery_date: string | null;    // the reschedule Logistics confirmed; wins over the original
+    processing_date: string | null; /* Release-for-purchasing signal (owner 2026-08-18: "Processing Date
+       就代表这张单可以安排订货了"). Carried for DISPLAY only — this page's
+       "when to order" is orderByDate below, derived from the delivery date and
+       the category lead time. NOT a production date: there is no production. */
     customer_state: string | null;       // staff #8 — show the customer's state (info-only)
     sales_location: string | null;       // the SO's OWN warehouse of record (lib/so-warehouse.ts)
   } | null;
@@ -337,6 +346,22 @@ type SofaSet = {
   poSupplierName: string | null;
   suppliers: Array<{ supplierId: string; code: string; name: string; isMain: boolean }>;
 };
+
+/* THE date for one demand line — the shared reader, and the ONLY place this
+   page decides "when is this due". Owner 2026-08-18: there is no production
+   here, only the delivery date, and every screen must plan on the same one.
+   This page used to read `line_delivery_date ?? so.customer_delivery_date`,
+   which is the customer's ORIGINAL promise plus a line MIRROR of it — so a
+   rescheduled order moved on the delivery board and did not move here, in the
+   queue that decides who gets scarce stock and what is ordered first. See
+   shared/effective-delivery.ts for the precedence and why the override flag
+   is load-bearing. */
+const deliveryOf = (r: DemandRow): string | null => effectiveSoDelivery({
+  line_delivery_date: r.line_delivery_date,
+  line_delivery_date_overridden: r.line_delivery_date_overridden,
+  amended_delivery_date: r.so?.amended_delivery_date,
+  customer_delivery_date: r.so?.customer_delivery_date,
+});
 
 /* Earliest-first comparator that pushes NULL dates to the end. */
 function byDateAsc(a: string | null, b: string | null): number {
@@ -583,8 +608,8 @@ export async function computeMrp(
   const { data: demandRaw, error: demandErr } = await paginateAll<DemandRow>((from, to) => scoped(sb
     .from('mfg_sales_order_items')
     .select(`
-      id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_no, created_at, cancelled,
-      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, processing_date, customer_state, sales_location )
+      id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_delivery_date_overridden, line_no, created_at, cancelled,
+      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, amended_delivery_date, processing_date, customer_state, sales_location )
     `)
     .eq('cancelled', false)
     .not('so.status', 'in', SO_DONE_SQL))
@@ -592,9 +617,11 @@ export async function computeMrp(
     .range(from, to));
   if (demandErr) throw new Error(`mrp_load_failed: ${demandErr.message}`);
 
-  /* Undated lines (no line delivery date AND no SO delivery date) are not
-     ready to order, so the MRP page hides them by default — but they are STILL
-     DEMAND, and audit D6 (2026-08-01) proved the old shape of this switch let
+  /* Undated lines (no line delivery date AND no SO delivery date) are not ready
+     to order — the MRP page HIDES them by default (owner 2026-08-18;
+     ?includeUndated=true shows them, marked "No date" and sorted last) and
+     COUNTS them either way. They are STILL DEMAND either way, and audit D6
+     (2026-08-01) proved the old shape of this switch let
      two screens disagree: excluding them from the ALLOCATION itself meant the
      page (includeUndated=false) and the SO drill-down / PO Assigned-SO
      (includeUndated=true) computed over two different demand sets, breaking
@@ -607,8 +634,7 @@ export async function computeMrp(
   const demandActive = ((demandRaw ?? []) as unknown as DemandRow[]).filter(
     (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && r.qty > 0,
   );
-  const isDatedLine = (r: DemandRow): boolean =>
-    Boolean(r.line_delivery_date ?? r.so?.customer_delivery_date);
+  const isDatedLine = (r: DemandRow): boolean => deliveryOf(r) !== null;
 
   // A partially-delivered SO keeps its header status active (the header only
   // flips to DELIVERED once EVERY line is fully covered), so already-delivered
@@ -996,8 +1022,7 @@ export async function computeMrp(
     // lines share a delivery date, allocate by SO doc number ascending so the
     // greedy walk never flips nondeterministically (SO-2605-001 before -002).
     rows.sort((a, b) => {
-      const byDate = byDateAsc(a.line_delivery_date ?? a.so?.customer_delivery_date ?? null,
-                               b.line_delivery_date ?? b.so?.customer_delivery_date ?? null);
+      const byDate = byDateAsc(deliveryOf(a), deliveryOf(b));
       if (byDate !== 0) return byDate;
       return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
     });
@@ -1089,7 +1114,7 @@ export async function computeMrp(
         need > 0 ? 'shortage'
         : poNumber != null ? 'po'
         : 'stock';
-      const lineDelivery = r.line_delivery_date ?? r.so?.customer_delivery_date ?? null;
+      const lineDelivery = deliveryOf(r);
       lines.push({
         soItemId: r.id,
         soDocNo: r.doc_no,
@@ -1193,8 +1218,7 @@ export async function computeMrp(
     // Same deterministic tie-break as section 7: equal delivery date → SO doc
     // number ascending, so same-day sofa allocation is stable.
     rows.sort((a, b) => {
-      const byDate = byDateAsc(a.line_delivery_date ?? a.so?.customer_delivery_date ?? null,
-                               b.line_delivery_date ?? b.so?.customer_delivery_date ?? null);
+      const byDate = byDateAsc(deliveryOf(a), deliveryOf(b));
       if (byDate !== 0) return byDate;
       return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
     });
@@ -1224,7 +1248,7 @@ export async function computeMrp(
       const colour = [sstr(v.fabricCode), sstr(v.colorCode) || sstr(v.colourCode)].filter(Boolean).join(' ');
       const eff = effQtyOf(d);                        // set qty still to fulfil (ordered − delivered + returned)
       const prod = prodByCode.get(d.item_code);
-      const setDelivery = d.line_delivery_date ?? d.so?.customer_delivery_date ?? null;
+      const setDelivery = deliveryOf(d);
 
       let need = eff;
       const fromStock = Math.min(stockLeft, need);
@@ -1494,7 +1518,8 @@ export function mrpReverseCoverage(result: MrpResult): Map<string, PoCoverageAss
 }
 
 /* The accepted spellings of `?includeUndated`. Absent = the documented default
-   (false). Present-and-unrecognised THROWS — it is never quietly false.
+   (TRUE since 2026-08-18 — see parseIncludeUndated). Present-and-unrecognised
+   THROWS — it is never quietly false.
 
    `=== 'true'` was the whole parser until 2026-08-16, and `?includeUndated=1`
    — verified against production that day — returned the default plan with no
@@ -1517,9 +1542,38 @@ export class InvalidQueryFlag extends Error {
   }
 }
 
+/* THE DEFAULT IS FALSE — undated demand is HIDDEN until the operator asks for
+   it. Owner, 2026-08-18, ruling directly on a build that had flipped it to
+   shown: "这个应该是要把没有日期的藏起来的,不过我点 show no date 它才会出来."
+
+   THE EARLIER READING WAS WRONG, and the record should say so rather than
+   quietly changing. Measured on production 2026-08-16, the hidden-by-default
+   view returned 82 of 163 live 2990 SO-item ids and 8 of 68 short sofa sets, so
+   roughly half the demand was off-screen — and the owner's complaint that
+   started this work was "明明这个东西没有 ready,可是我的 MRP 却 show 不出来".
+   The inference drawn from that was that the rows should be shown by default.
+   It was the wrong inference. What he could not see was not the ROWS but the
+   FACT THAT ROWS EXISTED: nothing on the page said anything was being withheld.
+   The banner fixes that; the default does not need to move to fix it, and this
+   page is the ordering worklist, where undated demand is not yet orderable.
+
+   SO THE CONTRACT IS: hidden by default, ALWAYS counted and always announced,
+   one click away. Hiding is legitimate. Hiding SILENTLY is not.
+
+   43% of 2990's sales orders carry no delivery date, flat across June/July/
+   August — a habit, not an import artefact. Requiring a date was considered and
+   REJECTED: a forced date gets a fake one typed into it, and a fake date is
+   worse than a null one because allocation is BY DELIVERY DATE — a fake promise
+   would jump the queue ahead of a real one. So undated demand keeps its null
+   and stops being invisible instead.
+
+   SAFE ONLY BECAUSE THE FLAG IS DISPLAY-ONLY (audit D6, 2026-08-01). The
+   allocation always ran over the full active set with undated sorted LAST
+   (byDateAsc returns 1 for null), so flipping this changes which rows are
+   RENDERED and cannot change who gets supply. mrp.test.ts pins both halves. */
 /** Exported for `mrp.test.ts` — the spellings are the contract, so they get a test. */
 export function parseIncludeUndated(raw: string | undefined): boolean {
-  if (raw === undefined) return false;              // omitted = documented default
+  if (raw === undefined) return false;              // omitted = documented default (hidden)
   const v = raw.trim().toLowerCase();
   if (UNDATED_TRUE.has(v)) return true;
   if (UNDATED_FALSE.has(v)) return false;
@@ -1532,15 +1586,18 @@ mrp.get('/', async (c) => {
   const warehouseId = c.req.query('warehouseId');
   const catFilter = category && category !== 'all' ? category.toUpperCase() : null;
   const whFilter = warehouseId && warehouseId !== 'all' ? warehouseId : null;
-  // Commander 2026-05-29 — an SO line with NO delivery date means the customer
-  // isn't ready for goods yet, so it shouldn't drive ordering. HIDE undated
-  // demand by default; ?includeUndated=true shows it. Since audit D6
-  // (2026-08-01) the flag is display-only: the allocation itself always runs
-  // over the full demand set (undated last), so this page, the SO drill-down
-  // and the PO Assigned-SO column read ONE identical allocation.
+  // An SO line with NO delivery date means the customer isn't ready for goods
+  // yet, so it must not drive ordering — but it is still demand, so it is
+  // HIDDEN by default (?includeUndated=true shows it) and COUNTED either way.
+  // See parseIncludeUndated for why hiding is fine and hiding silently is not,
+  // the right observation. Since audit D6 (2026-08-01) the flag is display-only:
+  // the allocation itself always runs over the full demand set (undated last),
+  // so this page, the SO drill-down and the PO Assigned-SO column read ONE
+  // identical allocation, and this default cannot move a single unit of supply.
   //
-  // What is hidden is REPORTED either way — `result.undated` — so the page can
-  // never again render half the demand with nothing saying so.
+  // The undated tally is REPORTED under either flag — `result.undated`, counted
+  // before the visibility `continue` — so the page can state what it is showing
+  // or withholding rather than rendering a fraction of the demand in silence.
   let includeUndated: boolean;
   try {
     includeUndated = parseIncludeUndated(c.req.query('includeUndated'));

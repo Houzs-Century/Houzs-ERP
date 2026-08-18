@@ -50,7 +50,7 @@ async function queueAcDoEdit(c: any, id: string, retire: AcRetiredLine[] = []): 
   });
 }
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
-import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
+import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { loadIncomingLines, subtractOutstanding, allocateExpectedBatches } from '../lib/do-live-allocator';
 import { loadCommittedShipments } from '../lib/committed-shipments';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
@@ -3166,7 +3166,7 @@ deliveryOrdersMfg.get('/:id', async (c) => {
       const { data: soHdrs } = await sb.from('mfg_sales_orders')
         .select('doc_no, customer_delivery_date, amended_delivery_date').in('doc_no', docNos);
       for (const h of (soHdrs ?? []) as Array<{ doc_no: string | null; customer_delivery_date: string | null; amended_delivery_date: string | null }>) {
-        if (h.doc_no) soDeliveryByDoc.set(h.doc_no, h.amended_delivery_date ?? h.customer_delivery_date ?? null);
+        if (h.doc_no) soDeliveryByDoc.set(h.doc_no, effectiveSoDelivery(h));
       }
     }
   }

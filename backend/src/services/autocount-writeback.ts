@@ -34,7 +34,10 @@ import {
   type CollapsedLine,
   type SofaRefusal,
 } from './autocount-sofa-collapse';
-import { SO_PROCESSING_DATE_COLUMN } from '../scm/shared/so-processing-date';
+import {
+  SO_PROCESSING_DATE_AC_UDF,
+  SO_PROCESSING_DATE_COLUMN,
+} from '../scm/shared/so-processing-date';
 import { buildVariantSummary } from '../scm/shared/variant-summary';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
@@ -1180,7 +1183,16 @@ export function composeCreateSo(
       BRANDING: bookSpellingOrOwn(soBranding(header.branding, lines), BRANDING_MAP),
       VENUE: bookSpellingOrOwn(header.venue, VENUE_MAP),
       ToPONo: soCustomerRef(header),
-      PDate: acUdfDate(header.processing_date),
+      /* `PDate` IS AUTOCOUNT'S OWN NAME, NOT OURS — DO NOT "UNIFY" IT.
+         The ERP calls this date `processing_date` everywhere it owns; this key
+         is the UDF spelling on AutoCount's sales-order document
+         (`SO.UDF_PDate`), and it is the one name in the set that a naming
+         sweep must leave alone (owner asked 2026-08-18 which of the names was
+         the AutoCount write — this one). Renaming it renames nothing in
+         AutoCount: the connector drops an unknown UDF, the document posts 200
+         without it, and every Processing Date silently stops reaching the
+         account book. See SO_PROCESSING_DATE_AC_UDF. */
+      [SO_PROCESSING_DATE_AC_UDF]: acUdfDate(header.processing_date),
       BALANCE: acUdfMoney(outstandingCenti),
       /* The misspelling is AutoCount's own — the field is UDF_PAYEMENT in the
          book, and the cutover read it (import-ac-outstanding-so.mjs). */
@@ -1703,9 +1715,15 @@ export const SO_ADDRESS_FIELDS: readonly string[] = [
   'address1', 'address2', 'address3', 'address4', 'city', 'postcode', 'customer_state',
 ];
 
-/** `processing_date` is the owner's 账目日期; it leaves as the `PDate` UDF. */
+/** `processing_date` is the owner's 账目日期; it leaves as the `PDate` UDF.
+ *
+ *  EXTERNAL NAME ON THE RIGHT-HAND SIDE. The key is OUR column and follows our
+ *  unification; the value is AUTOCOUNT'S UDF and must never be renamed to match
+ *  it. This map is exactly where the two vocabularies meet, which is why both
+ *  sides are pinned to constants — `SO_PROCESSING_DATE_COLUMN` moves with a
+ *  rename, `SO_PROCESSING_DATE_AC_UDF` deliberately does not. */
 export const CLEARABLE_SO_UDF_FIELDS: Readonly<Record<string, string>> = {
-  processing_date: 'PDate',
+  [SO_PROCESSING_DATE_COLUMN]: SO_PROCESSING_DATE_AC_UDF,
 };
 
 /** Header dates with no foreign key behind them, so a cleared one may travel. */

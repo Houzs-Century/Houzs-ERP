@@ -50,6 +50,7 @@ import { getSupabaseService } from '../../db/supabase';
 import { chunkIn, paginateAll } from '../../scm/lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../../scm/lib/status-counts';
 import { todayMyt, mytDateOf } from '../../scm/lib/my-time';
+import { effectiveSoDelivery } from '../../scm/shared';
 import { summariseReadiness, type ReadinessLine } from '../../scm/lib/so-readiness';
 import { resolveLineCategories } from '../../scm/lib/so-readiness-category';
 import { derivePlanningState, type DeliveryState } from '../../scm/routes/delivery-planning';
@@ -270,7 +271,7 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
   const pool: PoolSo[] = soRows.map((r) => {
     const docNo = s(r.doc_no);
     const readiness = summariseReadiness(linesByDoc.get(docNo) ?? []);
-    const effectiveDD = r.amended_delivery_date ?? r.customer_delivery_date;
+    const effectiveDD = effectiveSoDelivery(r);
     const planningState = derivePlanningState({
       storedOverride: r.delivery_state,
       status: r.status,
