@@ -1,4 +1,4 @@
--- 0302_acc_gl_views_composite_account_key.sql
+-- 0303_acc_gl_views_composite_account_key.sql
 --
 -- THE GENERAL LEDGER WAS COUNTING EVERY POSTED LINE TWICE, AND EACH COMPANY'S
 -- BALANCES CARRIED THE OTHER COMPANY'S LINES.
@@ -65,7 +65,7 @@ CREATE OR REPLACE VIEW scm.v_gl_entries AS
   ORDER BY j.entry_date DESC, j.je_no DESC, l.line_no;
 
 COMMENT ON VIEW scm.v_gl_entries IS
-  'Flat posted-GL stream. Includes REVERSED originals alongside their contra entries (mig 0290) - they net to zero and an auditor needs both; the `reversed` / `reversed_by_je` columns identify the pair. Excludes unposted drafts only. Joins accounts on (account_code, company_id) - the bare-code join double-counted every line once both companies held the same chart (mig 0302).';
+  'Flat posted-GL stream. Includes REVERSED originals alongside their contra entries (mig 0290) - they net to zero and an auditor needs both; the `reversed` / `reversed_by_je` columns identify the pair. Excludes unposted drafts only. Joins accounts on (account_code, company_id) - the bare-code join double-counted every line once both companies held the same chart (mig 0303).';
 
 CREATE OR REPLACE VIEW scm.v_account_balances AS
  SELECT a.account_code,
@@ -91,4 +91,4 @@ CREATE OR REPLACE VIEW scm.v_account_balances AS
   ORDER BY a.account_code;
 
 COMMENT ON VIEW scm.v_account_balances IS
-  'Per-account balances, one row per (company, account). Sums only journal lines whose ENTRY belongs to the same company as the account (mig 0302) - before that the bare-code join summed both companies into each bucket. LEFT joins so a chart account with no activity still reports zero.';
+  'Per-account balances, one row per (company, account). Sums only journal lines whose ENTRY belongs to the same company as the account (mig 0303) - before that the bare-code join summed both companies into each bucket. LEFT joins so a chart account with no activity still reports zero.';

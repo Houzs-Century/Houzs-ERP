@@ -26,7 +26,7 @@ built its fixture as `accounts (account_code text PRIMARY KEY)` — no
 **structurally unreachable** in the only suite covering these views. A fixture
 that cannot express the bug is not covering the view.
 
-**Fix.** Mig 0302 joins on both halves of the key, via `CREATE OR REPLACE` and
+**Fix.** Mig 0303 joins on both halves of the key, via `CREATE OR REPLACE` and
 never `DROP` (0189 -> 0190 -> 0191 is the recorded precedent where dropping a
 view lost its grants and the API 403'd). In `v_account_balances` the company
 predicate rides on the JOURNAL — `journal_entry_lines` has no `company_id` of

@@ -67,7 +67,7 @@ Reads: `GET /accounts`, `/journal-entries`, `/journal-entries/:id`, `/gl`
 all company-scoped, all paginated past PostgREST's 1000-row cap.
 
 > **The account join is COMPOSITE, and the route's own company filter cannot
-> substitute for it (mig 0302).** `scm.accounts` is keyed `(company_id,
+> substitute for it (mig 0303).** `scm.accounts` is keyed `(company_id,
 > account_code)` since mig 0188. Both GL views used to join on the bare code, so
 > once mig 0297 gave company 1 the same 31-account chart company 2 already had,
 > every code existed twice and **every posted line was emitted twice**. Measured
