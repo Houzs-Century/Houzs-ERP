@@ -1126,8 +1126,7 @@ grns.get('/', async (c) => {
       if (supplierId) cq = cq.eq('supplier_id', supplierId);
       return cq;
     };
-    /* PERF: these counts read nothing the page query produces, so they are issued
-       here and awaited below. Semantics and error order unchanged. */
+    /* PERF: issued here, awaited below; semantics and error order unchanged. */
     const countsProm = eager(Promise.all([
       countBase(),
       countBase().in('status', GRN_STATUS_BUCKETS.draft),
@@ -1158,8 +1157,7 @@ grns.get('/', async (c) => {
   // fully_returned).
   const rows = (data ?? []) as Array<{ id: string } & Record<string, unknown>>;
   const ids = rows.map((g) => g.id);
-  /* PERF: this wave takes ONE input — `rows`, known two waves earlier — so it is
-     issued here. If the grn_items read fails, its result is discarded. */
+  /* PERF: takes only `rows`, known two waves earlier; discarded if grn_items fails. */
   const poIdsForPage = rows.map((g) => (g as { purchase_order_id?: string | null }).purchase_order_id);
   const coverageProm = eager(Promise.all([
     resolvePoSoCoveragePerSkuForPos(sb, c, poIdsForPage),

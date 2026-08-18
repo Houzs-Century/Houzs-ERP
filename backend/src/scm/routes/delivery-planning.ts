@@ -68,9 +68,8 @@ import type { Env, Variables } from '../env';
 import { todayMyt } from '../lib/my-time';
 import { attachLineCategories } from '../lib/so-readiness-category';
 import { deriveBranding } from '../lib/so-display-branding';
-/* chunkIn on EVERY read filtering by a doc-no / DO-id / trip-id set: the list goes
-   into the request URL, so an unbounded one is refused by the gateway before
-   PostgREST can answer — the empty-message 500 this board died of. */
+/* chunkIn on EVERY read filtering by an id/doc-no set: the list rides in the URL,
+   and an unbounded one is refused before PostgREST answers. */
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
@@ -452,10 +451,8 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     scopeToAllowedCompanies(
       sb.from('mfg_sales_orders')
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
-           has no `id` column at all. Selecting `id` makes PostgREST reject the whole
-           query ("column mfg_sales_orders.id does not exist") → soErr → the board 500s
-           with load_failed. The SO's identity on this board is its doc_no; every join
-           below keys on doc_no / so_doc_no, never an id. */
+           has no `id` column: selecting it makes PostgREST reject the whole query and
+           the board 500s. Identity here is doc_no; every join below keys on it. */
         .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_centi, balance_centi, possession_date, house_type, replacement_disposal, referral')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
