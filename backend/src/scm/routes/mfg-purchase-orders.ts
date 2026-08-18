@@ -11,7 +11,7 @@
 //   GET   /mfg-purchase-orders/:id            — detail (header + items)
 //   POST  /mfg-purchase-orders                — create draft PO from items
 //   PATCH /mfg-purchase-orders/:id            — update header (status/notes/etc)
-//   PATCH /mfg-purchase-orders/:id/submit     — flip DRAFT → SUBMITTED
+//   PATCH /mfg-purchase-orders/:id/confirm    — flip DRAFT → SUBMITTED (commits)
 //   PATCH /mfg-purchase-orders/:id/cancel     — flip → CANCELLED
 //   PATCH /mfg-purchase-orders/:id/reopen     — flip CANCELLED → SUBMITTED
 // ----------------------------------------------------------------------------
@@ -19,7 +19,7 @@
 import { Hono } from 'hono';
 import {
   buildVariantSummary, pickComboMatch, spreadComboTotal,
-  splitSofaCode, sofaHeightKey,
+  splitSofaCode, sofaHeightKey, effectiveSoDelivery,
   type SofaComboRow, type SofaPriceTier,
 } from '../shared';
 import {
@@ -83,6 +83,7 @@ import { PO_LINE_AUDIT_FIELDS, PO_LINE_AUDIT_SELECT } from '../lib/entity-audit-
 import { computeMrp } from './mrp';
 import { eager } from '../lib/concurrency';
 import { resolvePoSoCoverageForPos, resolveDeliveredDosForPos } from './po-so-coverage';
+import { provenanceNote } from '../shared/transfer-vocabulary';
 import type { Env, Variables } from '../env';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
@@ -795,7 +796,7 @@ mfgPurchaseOrders.get('/so-line-candidates', async (c) => {
       debtorName: r.so?.debtor_name ?? null,
       soStatus: r.so?.status ?? null,
       qty: r.qty,
-      deliveryDate: r.so?.amended_delivery_date ?? r.so?.customer_delivery_date ?? null,
+      deliveryDate: r.so ? effectiveSoDelivery(r.so) : null,
     }));
   return c.json({ items });
 });
@@ -1304,7 +1305,9 @@ mfgPurchaseOrders.post('/', async (c) => {
      supply (PO_DEAD includes DRAFT). Confirm (PATCH /:id/confirm) flips it to
      SUBMITTED and runs the SO-picked recount there. A manual PO with no
      asDraft flag still defaults to SUBMITTED so existing flows are unaffected.
-     PATCH /submit stays an idempotent no-op for legacy callers. */
+     PATCH /submit — described here until 2026-08-18 as "an idempotent no-op for
+     legacy callers" — has been deleted; it was neither idempotent nor harmless,
+     it 409'd every draft, and the read-only PO page was still calling it. */
   const asDraft = body.asDraft === true;
   const headerInsert: Record<string, unknown> = {
     company_id: activeCompanyId(c), // multi-company: stamp the active company
@@ -2376,10 +2379,9 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       subtotal_centi: subtotal,
       tax_centi: 0,
       total_centi: subtotal,
-      notes: `From SOs: ${[...bucket.soDocNos].join(', ')}`,
+      notes: provenanceNote('so', [...bucket.soDocNos]), // a STORED CONTRACT, 8 readers: transfer-vocabulary.ts
       created_by: user.id,
-      /* Commander 2026-05-28 — derived from the source SO lines, not asked. */
-      expected_at: headerExpectedAt,
+      expected_at: headerExpectedAt, // Commander 2026-05-28 — derived from the source SO lines, not asked.
       purchase_location_id: headerPurchaseLocationId,
     };
     /* Audit (ported from 2990) — the PO suffix is an in-memory counter off a
@@ -4043,23 +4045,17 @@ const PO_WAREHOUSE_REQUIRED = (codes: string[]) => ({
   lines: codes.slice(0, 20),
 });
 
-mfgPurchaseOrders.patch('/:id/submit', async (c) => {
-  const id = c.req.param('id');
-  const supabase = c.get('supabase');
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return c.json(co.refusal, 409);
-  const { data } = await scopeToCompanyId(supabase
-    .from('purchase_orders')
-    .select('id, status, submitted_at')
-    .eq('id', id), co.companyId)
-    .maybeSingle();
-  if (!data) return c.json(NOT_THIS_COMPANY, 404);
-  const row = data as { id: string; status: string; submitted_at: string | null };
-  if (row.status === 'SUBMITTED') return c.json({ purchaseOrder: row });
-  const gap = await poWarehouseGap(supabase, id);
-  if (gap.missing) return c.json(PO_WAREHOUSE_REQUIRED(gap.codes), 409);
-  return c.json({ error: 'cannot_submit', message: `PO is ${row.status}` }, 409);
-});
+/* PATCH /:id/submit was DELETED on 2026-08-18. It had no write path: it read
+   the row, echoed an already-SUBMITTED PO, 409'd on a missing warehouse and then
+   returned `cannot_submit` unconditionally — so the DRAFT it existed to advance
+   was the one case it could never serve. Its last caller was the read-only PO
+   detail page, whose "Submit" button therefore failed on every draft while the
+   editor and the phone used /confirm and worked; the operator met one system
+   behaving two ways. /confirm below is the single verb that commits a draft.
+
+   Kept as a note rather than a redirect because there is no legacy caller left
+   to redirect: a whole-tree grep for the path at deletion time found only this
+   handler, the frontend hook removed with it, and generated docs. */
 
 /* ── Confirm (Draft/Confirmed two-state) ──────────────────────────────────
    DRAFT -> SUBMITTED. This is where a draft PO COMMITS: it stamps submitted_at

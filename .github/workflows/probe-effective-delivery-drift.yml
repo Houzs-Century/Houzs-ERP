@@ -1,0 +1,54 @@
+name: probe-effective-delivery-drift
+
+# Read-only. WHOSE PRIORITY MOVES when MRP and the stock allocator stop planning
+# on the customer's ORIGINAL delivery date and start planning on the EFFECTIVE
+# (amended) one — the same date the delivery board, PO coverage and the
+# reservations screen have always used.
+#
+# Both engines allocate greedily earliest-delivery-first, so this re-ranks who
+# gets scarce stock and what is ordered first. That is a business consequence,
+# not a refactor: the owner decides whether the size of the move is acceptable,
+# and he cannot decide it without the size. This prints it.
+#
+# Counts, day-deltas and statuses only — no customer names, no doc numbers, no
+# money. The repo and these logs are public.
+#
+# Every statement is a SELECT: no DDL, no writes, no transaction.
+# See backend/scripts/probe-effective-delivery-drift.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database to read"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+
+# Its own group — a diagnostic must never queue behind, or displace, a release.
+concurrency:
+  group: probe-effective-delivery-drift
+  cancel-in-progress: false
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - name: Measure the original-vs-amended split, both companies
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+        # pipefail, or `tee` swallows a crash and a truncated answer reads as success
+        run: |
+          set -o pipefail
+          node scripts/probe-effective-delivery-drift.mjs | tee effective-delivery-drift.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: probe-effective-delivery-drift
+          path: backend/effective-delivery-drift.txt
+          retention-days: 14

@@ -424,7 +424,7 @@ export function withCompanyCode<T extends Record<string, unknown>>(
  *  carry no prefix at all, which read as anonymous next to `2990-DO-2608-001`.
  *  `HC-` is the house code the owner chose. Every other company keeps `<CODE>-`.
  */
-const BASE_COMPANY_CODE = "HOUZS";
+export const BASE_COMPANY_CODE = "HOUZS";
 const DOC_PREFIX_BY_COMPANY: Record<string, string> = {
   [BASE_COMPANY_CODE]: "HC-",
 };

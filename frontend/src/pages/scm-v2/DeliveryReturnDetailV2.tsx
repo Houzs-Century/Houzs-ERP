@@ -77,6 +77,7 @@ import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
+import { transferFromColumnLabel } from "../../lib/convertScope";
 
 // ─── Row shapes (subset — see DeliveryReturnDetail.tsx for full 40-field
 // header) ────────────────────────────────────────────────────────────────
@@ -831,7 +832,7 @@ export function DeliveryReturnDetailV2() {
                   <>
                     <Divider />
                     <span>
-                      From DO{" "}
+                      {transferFromColumnLabel('do')}{" "}
                       <span className="font-mono font-semibold text-ink-secondary">
                         {doOf(deliveryReturn)}
                       </span>
@@ -967,7 +968,7 @@ export function DeliveryReturnDetailV2() {
                   muted={!deliveryReturn.email}
                 />
                 <Field
-                  label="From DO"
+                  label={transferFromColumnLabel('do')}
                   value={doOf(deliveryReturn)}
                   mono={doOf(deliveryReturn) !== "—"}
                   muted={doOf(deliveryReturn) === "—"}

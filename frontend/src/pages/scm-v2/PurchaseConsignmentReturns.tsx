@@ -31,6 +31,7 @@ import { fmtDateOrDash, buildVariantSummary } from '@2990s/shared';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
+import { transferFromColumnLabel } from "../../lib/convertScope";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -91,7 +92,7 @@ const buildColumns = (): DataGridColumn<PrRow>[] => [
     sortFn: (a, b) => (a.supplier?.code ?? '').localeCompare(b.supplier?.code ?? ''),
   },
   {
-    key: 'receive_number', label: 'Transfer From (Receive)', width: 170, sortable: true, groupable: true,
+    key: 'receive_number', label: transferFromColumnLabel('pcr'), width: 170, sortable: true, groupable: true,
     accessor: (r) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{r.pc_receive?.receive_number ?? '—'}</span>,
     searchValue: (r) => r.pc_receive?.receive_number ?? '',
     /* Accessor is JSX → export the source receive doc-no string. */

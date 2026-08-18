@@ -1176,18 +1176,12 @@ export function useDeletePoLineAllocation() {
   });
 }
 
-export function useSubmitPurchaseOrder() {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (id: string) =>
-      authedFetch<{ purchaseOrder: { id: string; status: PoStatus; submitted_at: string } }>(
-        `/mfg-purchase-orders/${id}/submit`,
-        { method: 'PATCH' },
-      ),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] }),
-    onError: writeFailed,
-  });
-}
+/* useSubmitPurchaseOrder (PATCH /mfg-purchase-orders/:id/submit) was REMOVED
+   2026-08-18. Its endpoint had no write path — it read the row, echoed an
+   already-SUBMITTED PO and then returned 409 cannot_submit unconditionally — so
+   the only caller left, the read-only PO detail page, failed on every DRAFT it
+   was offered on. /confirm is the one verb that commits a draft; see
+   vendor/scm/lib/po-next-step.ts for the full account. */
 
 /** Confirm a DRAFT PO → SUBMITTED (Draft/Confirmed two-state). This is where a
     draft commits: it stamps submitted_at server-side and advances the source
@@ -1206,6 +1200,13 @@ export function useConfirmPurchaseOrder() {
       qc.invalidateQueries({ queryKey: ['mfg-purchase-orders'] });
       qc.invalidateQueries({ queryKey: ['mfg-purchase-order-detail', id] });
     },
+    /* Added 2026-08-18 with the retirement of useSubmitPurchaseOrder. This is
+       now the ONLY way to commit a draft PO, and /confirm has a refusal an
+       operator can act on: PO_WAREHOUSE_REQUIRED 409s a PO with no ship-to
+       warehouse and names the offending lines. Without an onError that refusal
+       reached nobody — the button would simply appear to do nothing, which is
+       the failure mode the retired endpoint already had. */
+    onError: writeFailed,
   });
 }
 

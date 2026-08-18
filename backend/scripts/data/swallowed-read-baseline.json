@@ -81,10 +81,6 @@
       "reads": 1,
       "catches": 0
     },
-    "backend/src/scm/lib/do-line-remaining.ts": {
-      "reads": 8,
-      "catches": 0
-    },
     "backend/src/scm/lib/doc-no.ts": {
       "reads": 2,
       "catches": 0
@@ -242,7 +238,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/consignment-orders.ts": {
-      "reads": 25,
+      "reads": 24,
       "catches": 2
     },
     "backend/src/scm/routes/consignment-returns.ts": {
@@ -262,7 +258,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-returns.ts": {
-      "reads": 20,
+      "reads": 19,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-zones.ts": {
@@ -322,11 +318,11 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-purchase-orders.ts": {
-      "reads": 49,
+      "reads": 48,
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 84,
+      "reads": 82,
       "catches": 2
     },
     "backend/src/scm/routes/mrp.ts": {
@@ -381,12 +377,8 @@
       "reads": 5,
       "catches": 0
     },
-    "backend/src/scm/routes/sales-analysis.ts": {
-      "reads": 2,
-      "catches": 0
-    },
     "backend/src/scm/routes/sales-invoices.ts": {
-      "reads": 29,
+      "reads": 27,
       "catches": 0
     },
     "backend/src/scm/routes/scan-payment.ts": {
