@@ -97,12 +97,22 @@ them first would have landed every NEW order with a NULL stamp and gated it out
 of allocation forever. They are gone now, along with `autoProceed` (which existed
 only to decide the create stamp — and could only ever be true when a Processing
 Date was ALSO being written, which the create already refuses to do unless the
-same gate passes) and `soProceedGateBlocked` (both call sites gone; the RULE it
-enforced did not move — every path that sets a Processing Date still reaches
-`meetsProceedGate`, and after unification that is every path that proceeds). The
-`/status` branch it guarded fired only when the order ALREADY had a date, so it
-re-gated a state that had passed — and inconsistently, since an order carrying a
-stamp as well was not re-gated at all.
+same gate passes) and `soProceedGateBlocked` (both call sites gone). The RULE it
+enforced did not move: every path that sets a Processing Date runs
+`collectProcessingGateProblems`, which checks the same four completeness facts
+inline and the money through `meetsDepositGate` — and after unification that is
+every path that proceeds an order. The `/status` branch it guarded fired only
+when the order ALREADY had a date, so it re-gated a state that had passed — and
+inconsistently, since an order carrying a stamp as well was not re-gated at all.
+
+**A loose end this creates, named rather than tidied away.** `meetsProceedGate`
+now has NO production caller — `git grep -n "meetsProceedGate("` returns only its
+own unit test. `docs/modules/sales-order.md` has warned since 2026-08-13 that
+this rule had TWO enforcement sites held in step *"by agreement, not by
+construction"*; there is one live site now and one orphan. Not deleted here:
+`fix/proceed-gate-names-what-failed` is actively rewriting that function to name
+which condition failed, so its fate belongs to whichever branch lands second.
+Deleting a symbol another in-flight branch is building on is not a tidy-up.
 
 **No code anywhere reads or writes `proceeded_at`.** That is the precondition the
 DROP needed.

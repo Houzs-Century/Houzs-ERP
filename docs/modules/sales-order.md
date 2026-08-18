@@ -1379,10 +1379,18 @@ thing that can still put a value in the column, and nothing reads it.
 
 Also gone with the writes: **`soProceedGateBlocked`**, whose two call sites were
 the `/status` stamp block and the header PATCH's `proceededAt` branch. The RULE
-did not move — every path that sets a Processing Date still goes through
-`meetsProceedGate`, via `soProcessingDateProblemsForDoc` /
-`collectProcessingGateProblems`, and after unification that is every path that
-proceeds an order. The `/status` branch it guarded fired only when the order
+did not move — every path that sets a Processing Date runs
+`collectProcessingGateProblems`, which checks the same four completeness facts
+inline and the money through `meetsDepositGate`; after unification that is every
+path that proceeds an order.
+
+> **The "TWO enforcement sites" table below is now ONE site and an orphan.**
+> `meetsProceedGate` has no production caller left — `git grep -n
+> "meetsProceedGate("` returns only its own unit test. The table warned that the
+> two were held in step "by agreement, not by construction"; that agreement now
+> has one party. Deliberately not resolved here:
+> `fix/proceed-gate-names-what-failed` is rewriting that function, so its fate
+> belongs to whichever branch lands second. The `/status` branch it guarded fired only when the order
 ALREADY carried a date, i.e. it re-gated a state that had already passed the same
 gate — and inconsistently, since an order that also carried a stamp was not
 re-gated at all.

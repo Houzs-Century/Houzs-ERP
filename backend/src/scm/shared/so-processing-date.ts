@@ -70,13 +70,21 @@ export const SO_PROCESSING_DATE_COLUMN = 'processing_date' as const;
  *     list, no component field.
  *
  * WHAT THAT DELETED BESIDES THE COLUMN'S USES. `soProceedGateBlocked` lost both
- * call sites and went with them; the RULE it enforced did not move — every path
- * that sets a Processing Date still goes through meetsProceedGate via
- * soProcessingDateProblemsForDoc / collectProcessingGateProblems, and after
- * unification that is every path that proceeds an order. The /status branch it
- * guarded fired only when the order ALREADY had a date, i.e. re-gated a state
- * that had passed — and inconsistently, since an order that also carried a stamp
- * was not re-gated.
+ * call sites and went with them. The RULE it enforced did not move: every path
+ * that sets a Processing Date — after unification, every path that proceeds an
+ * order — runs collectProcessingGateProblems (shared/so-save-problems.ts), which
+ * checks the same four completeness facts INLINE and the money through
+ * meetsDepositGate. The /status branch it guarded fired only when the order
+ * ALREADY had a date, i.e. re-gated a state that had passed — and
+ * inconsistently, since an order that also carried a stamp was not re-gated.
+ *
+ * A LOOSE END THIS CREATES, named rather than tidied away: `meetsProceedGate`
+ * now has NO production caller (`git grep -n "meetsProceedGate("` returns only
+ * its own unit test). docs/modules/sales-order.md has warned since 2026-08-13
+ * that this rule had TWO enforcement sites held in step "by agreement, not by
+ * construction" — there is one live site now and one orphan. Not deleted here
+ * because fix/proceed-gate-names-what-failed is actively rewriting that
+ * function; its fate belongs to whichever of the two lands second.
  *
  * THE ONE STEP LEFT: DROP THE COLUMN, and NOT in this release.
  * deploy.yml runs `node scripts/pg-migrate.mjs` BEFORE `wrangler deploy`, so for
