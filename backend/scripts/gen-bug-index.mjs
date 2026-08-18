@@ -340,47 +340,53 @@ function chargeBadAreaTags() {
 
 chargeBadAreaTags();
 
-const existing = fs.existsSync(OUT) ? fs.readFileSync(OUT, "utf8") : "";
 if (checkOnly) {
-  /* TWO FAILURES LIVE HERE, and only one of them is the author's.
+  /* THE INDEX IS NO LONGER TRACKED, so there is nothing to compare against and
+     CONTENT DRIFT no longer exists as a concept here. That is the point.
 
-     The one worth gating is the GENERATOR DYING — docs/staging-bench-rot-coe.md
-     records audit:map crashing unnoticed for three weeks, which is why this
-     runs on every PR at all. That is caught above: a parse failure or a missing
-     BUG-HISTORY.md throws before this point, and an empty entry list is refused
-     below.
+     What used to live here was a drift comparison against the committed copy.
+     It never gated anything — it warned, because the working agreement REQUIRES
+     every code PR to append to BUG-HISTORY.md and main-protection makes merges
+     strictly serial, so the committed index went stale on every open PR the
+     moment any other PR merged, through no act of theirs. Measured 2026-08-14:
+     five PRs tripped it at once, were regenerated, and were stale again one
+     merge later.
 
-     The other is CONTENT DRIFT, and in this repo it carries no signal. The
-     working agreement REQUIRES every code PR to append an entry to
-     BUG-HISTORY.md, main-protection makes merges strictly serial, so the
-     moment any PR merges, this file is stale on every other open PR — through
-     no act of theirs. Measured 2026-08-14: five PRs failed here at once on
-     "175 entries", were regenerated, and were stale again one merge later. A
-     gate that every author trips for something the previous author did is a
-     deadlock, not a check.
+     Softening it to a warning removed the deadlock but kept the real cost: a
+     GENERATED file in git that every single PR rewrites. All 50 of the last 50
+     commits on main touched it, so any two concurrent PRs conflicted on it —
+     by construction, not by carelessness. Four conflicts on one small PR on
+     2026-08-18 is what finally bought this change.
 
-     So drift is REPORTED, in full, with both counts and the fix — and does not
-     fail the run. It is still visible on every PR, and `--strict` restores the
-     hard failure for anyone who wants it locally or in a job of their own. */
-  if (existing.replace(/\r\n/g, "\n") !== out) {
-    const had = (existing.match(/^\| /gm) ?? []).length;
-    const msg =
-      `docs/generated/bug-index.md is out of date: the index holds ${had} row(s), ` +
-      `BUG-HISTORY.md holds ${entries.length} entr(y/ies).\n` +
-      `Run: npm --prefix backend run gen:bug-index\n` +
-      `NOT failing the run: every PR must append an entry and merges are serial, ` +
-      `so this drifts on its own. Pass --strict to fail on it.`;
-    if (process.argv.includes("--strict")) { console.error(msg); process.exit(1); }
-    console.warn(msg);
-  } else {
-    console.log(`Bug index is current (${entries.length} entries).`);
-  }
+     Nothing read the committed copy: the only references to it in the tree were
+     this generator and this gate. So it was a file that existed to be checked
+     against itself, at the price of a guaranteed conflict per PR.
+
+     WHAT IS GIVEN UP, stated rather than hidden: the index is no longer
+     browsable on GitHub. That is a real loss and a small one — it was routinely
+     wrong anyway, since drift was tolerated by design. Anyone who wants it runs
+     `npm --prefix backend run gen:bug-index` and reads it locally.
+
+     WHAT IS KEPT is the failure this gate was built for: the GENERATOR DYING.
+     docs/staging-bench-rot-coe.md records audit:map crashing unnoticed for
+     three weeks. A parse failure or a missing BUG-HISTORY.md throws before this
+     point, an unresolvable area tag exits 1 in chargeBadAreaTags() above, and an
+     empty entry list is refused below. None of those ever needed a copy in git. */
+  console.log(`Bug index generates cleanly (${entries.length} entries parsed from BUG-HISTORY.md).`);
+
   /* The generator producing NOTHING is the failure this gate exists for.
      A scan that finds no entries is broken, not clean — the same rule the
      file-size gate encodes for an empty file list. */
   if (entries.length === 0) {
     console.error("BUG INDEX: parsed ZERO entries from BUG-HISTORY.md — that is a broken generator, not an empty history.");
     process.exit(2);
+  }
+  /* A verdict computed over a suspiciously small corpus is worth naming too:
+     the ledger only grows, so a sudden collapse is a parser regression rather
+     than a tidy-up. Reported, not gated — the floor would need maintaining, and
+     an unmaintained floor is the next stale number. */
+  if (entries.length < 100) {
+    console.warn(`BUG INDEX: only ${entries.length} entries parsed. This ledger has held 300+ since 2026-08; check the parser before trusting that.`);
   }
 } else {
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
