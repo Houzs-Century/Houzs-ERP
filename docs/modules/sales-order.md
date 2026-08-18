@@ -953,8 +953,13 @@ Two knock-on effects for anyone working on the SO:
   module's PO line at its Source Sales Order line before shipping.
 
 Allocation order is unchanged by any of this and is worth restating, because it
-is easy to assume otherwise: MRP allocates greedily by
-`line_delivery_date ?? customer_delivery_date`, then `doc_no`. An urgent order
+is easy to assume otherwise: MRP allocates greedily by the **effective delivery
+date** (`scm/shared/effective-delivery.ts` — an overridden line date, else
+`amended_delivery_date`, else `customer_delivery_date`), then `doc_no`. It read
+`line_delivery_date ?? customer_delivery_date` until 2026-08-18, which meant a
+rescheduled order kept its ORIGINAL rank here while the delivery board showed the
+new date. The stock allocator (`lib/so-stock-allocation.ts`) reads the same
+function, so the two engines cannot drift apart again. An urgent order
 inserted with an earlier delivery date DOES re-shuffle the allocation and DOES
 take stock and PO supply ahead of a later one — the delivery date is the
 mechanism. (The `priority_rank` / `priority_reason` columns exist but have zero

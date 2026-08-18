@@ -970,11 +970,11 @@ Total: 1034 route registrations across 137 files.
 - L211  DELETE /special/:id
 
 ## backend/src/scm/routes/delivery-planning.ts  (5)
-- L1507  GET    /
-- L1536  GET    /geo
-- L1837  GET    /:docNo/lines
-- L1941  PATCH  /:type/:id/fields
-- L2246  PATCH  /:type/:id/schedule
+- L1509  GET    /
+- L1538  GET    /geo
+- L1839  GET    /:docNo/lines
+- L1943  PATCH  /:type/:id/fields
+- L2247  PATCH  /:type/:id/schedule
 
 ## backend/src/scm/routes/dp-orders.ts  (5)
 - L257  POST   /
@@ -1185,8 +1185,8 @@ Total: 1034 route registrations across 137 files.
 - L596  POST   /:id/requeue
 
 ## backend/src/scm/routes/delivery-messages.ts  (2)
-- L53  POST   /send
-- L164  POST   /statuses
+- L54  POST   /send
+- L165  POST   /statuses
 
 ## backend/src/scm/routes/document-flow.ts  (2)
 - L446  GET    /candidate-pos/:soDocNo
@@ -1287,13 +1287,13 @@ Total: 1034 route registrations across 137 files.
 - L49  POST   /
 
 ## backend/src/scm/routes/mrp.ts  (1)
-- L1561  GET    /
+- L1583  GET    /
 
 ## backend/src/scm/routes/payment-audit-log.ts  (1)
 - L195  GET    /
 
 ## backend/src/scm/routes/po-so-coverage.ts  (1)
-- L468  GET    /:type/:id
+- L469  GET    /:type/:id
 
 ## backend/src/scm/routes/scan-lorry-invoice.ts  (1)
 - L259  POST   /extract
