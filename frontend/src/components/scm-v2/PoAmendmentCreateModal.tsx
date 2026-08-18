@@ -160,7 +160,7 @@ export function PoAmendmentCreateModal({
   const submit = async () => {
     const { lines, headerChanges, error } = buildPayload();
     if (error) {
-      notify({
+      void notify({
         title: "Check the amounts",
         body: error,
         tone: "error",
