@@ -18,6 +18,8 @@ import {
 } from "./sessionCache";
 import { isScopedProjectUser } from "./projectAcl";
 import { applySalesJdOverride } from "./salesJdAccess";
+import { issueSessionPass, sessionSigningSecret } from "./session-pass";
+import { sidFor, revokeSession } from "./session-revocation";
 import { resolvePositionPolicy, positionGrantsWildcard } from "./positionPolicy";
 
 // ── Crypto helpers ────────────────────────────────────────
@@ -265,8 +267,40 @@ export async function createSession(
   return token;
 }
 
+/**
+ * Mint a signed staff pass for a session that was just created, or null.
+ *
+ * STAGE 2 of the signed-session rollout. Called from the login routes right
+ * after createSession. It returns null — issuing nothing — when the signing
+ * secret is unset (the feature is OFF; the deployment pays literally nothing,
+ * not even a DB read) or the user cannot be loaded. When the secret IS set it
+ * loads the full AuthUser ONCE and signs its authorization snapshot; a login is
+ * rare, so this one read is not the per-request cost the pass exists to remove.
+ *
+ * The pass is returned ALONGSIDE the existing opaque token, never instead of
+ * it. Nothing verifies the pass yet — stage 3 does. So this is inert on the
+ * request path: a client that stores and sends the pass changes no server
+ * behaviour until the middleware is taught to read it.
+ */
+export async function mintSessionPass(
+  env: Env,
+  token: string,
+  nowMs: number,
+): Promise<string | null> {
+  const secret = sessionSigningSecret(env);
+  if (!secret) return null;
+  const user = await getUserBySession(env, token);
+  if (!user) return null;
+  const sid = await sidFor(token);
+  return issueSessionPass(user, secret, nowMs, sid);
+}
+
 export async function deleteSession(env: Env, token: string): Promise<void> {
   await env.DB.prepare(`DELETE FROM sessions WHERE token = ?`).bind(token).run();
+  // Void this session's SIGNED PASS. A pass verifies with no DB read, so
+  // deleting the session row does not log it out — the revocation board is what
+  // does. Best-effort; the pass also self-expires in 8h.
+  await revokeSession(env, await sidFor(token), Date.now());
   // Bust the cached user immediately so logout / forced-expiry takes effect now
   // rather than waiting out the 60s TTL. Also forget the in-memory liveness
   // fallback so a same-isolate logout cannot be re-served during a DB blip

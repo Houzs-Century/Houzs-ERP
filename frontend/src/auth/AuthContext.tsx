@@ -7,7 +7,7 @@ import {
   useState,
   type ReactNode,
 } from "react";
-import { api, tokenStore, onUnauthorized } from "../api/client";
+import { api, tokenStore, passStore, onUnauthorized } from "../api/client";
 import { clearAll as clearApiCache } from "../api/cache";
 import { queryClient } from "../lib/queryClient";
 import { clearQuerySnapshots } from "../lib/query-persist";
@@ -20,6 +20,16 @@ import { clearAllScmHandoffs } from "../lib/scmHandoffStorage";
 import { writeRememberedEmail } from "../lib/rememberedEmail";
 import { hydrateTableLayouts } from "../lib/tableLayouts";
 import { forgetNativeSession, rememberNativeSession } from "../lib/nativeSession";
+
+/** Stage 2: store the signed staff pass beside the token when a login response
+ *  carries one. Absent (`session_pass` undefined = the signing secret is unset
+ *  on the server) → nothing stored, everything runs on the token as before. The
+ *  pass is not sent or verified yet; stage 3 does that. Persistent tracks the
+ *  same Remember-me choice the token used, so the two live in the same store. */
+function storeSessionPass(res: unknown, persistent?: boolean): void {
+  const sp = (res as { session_pass?: string } | null)?.session_pass;
+  if (sp) passStore.set(sp, persistent);
+}
 import { registerNativePush, unregisterNativePush } from "../lib/nativePush";
 import type { AccessLevel, AuthUser } from "../types";
 
@@ -230,6 +240,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // remember → persist in localStorage (survives close); else session-only.
       resetSessionCaches();
       tokenStore.set(res.token!, remember);
+      storeSessionPass(res, remember);
       /* Mirror into the Keychain so the next launch can unlock with Face ID
          instead of a password. Flag-gated and fire-and-forget inside — a vault
          write that fails costs one password entry, never the login. */
@@ -253,6 +264,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       });
       resetSessionCaches();
       tokenStore.set(res.token, remember);
+      storeSessionPass(res, remember);
       rememberNativeSession(res.token);
       void registerNativePush();
       await fetchMe();
@@ -269,6 +281,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         password,
       });
       tokenStore.set(res.token);
+      storeSessionPass(res);
       await fetchMe();
       await fetchStatus();
     },
@@ -285,6 +298,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       // A colleague may well be accepting the invite on a shared browser.
       resetSessionCaches();
       tokenStore.set(res.token);
+      storeSessionPass(res);
       await fetchMe();
       await fetchStatus();
     },
