@@ -199,12 +199,15 @@ try {
   log(`=== census — POs carrying a provenance note: ${all.length} ===`);
   const census = new Map();
   for (const r of all) {
-    const key = `${r.company_id} ${labelOf(r.notes)}`;
+    // JSON key, not a delimiter-joined string: a label legitimately contains
+    // spaces ("Transfer from Sales Order"), so any separator you can type is
+    // one a label could also contain.
+    const key = JSON.stringify([Number(r.company_id), labelOf(r.notes)]);
     census.set(key, (census.get(key) ?? 0) + 1);
   }
   if (census.size === 0) log("  (none)");
   for (const [key, n] of [...census.entries()].sort()) {
-    const [company, label] = key.split(" ");
+    const [company, label] = JSON.parse(key);
     log(`  company ${company}  "${label}:"  ${n}`);
   }
 
