@@ -10331,22 +10331,8 @@ function AddChecklistItem({
 }
 
 // ── Datetime field (inline commit on blur) ───────────────────
-// The existing InlineEdit only supports text/date/number. This is a
-// thin analog for datetime-local values so the logistics schedule
-// section can edit start/end times without extra round-trips.
-//
-// Named LogisticsDateTimeField, not DateTimeField, because it is NOT the
-// shared control (vendor/scm/components/DateTimeField) this file also imports.
-// The two differ in contract, not in date rendering — both put the date half
-// through DateField, so neither carries the OS-locale bug:
-//   · this one   — commit-on-blur via onSave(), takes a `label`, shows a
-//                  formatted caption, and normalises a date-only entry to
-//                  midnight so a half-filled row still persists;
-//   · the shared — a plain controlled value/onChange that mirrors a native
-//                  datetime-local exactly, including emitting '' when only
-//                  one half is filled.
-// Keep them apart deliberately: collapsing this one onto the shared control
-// would silently drop the midnight normalisation these six fields rely on.
+// InlineEdit supports only text/date/number; this is the logistics analog, and
+// NOT the shared DateTimeField also imported here — they differ in CONTRACT.
 
 function LogisticsDateTimeField({
   label,
