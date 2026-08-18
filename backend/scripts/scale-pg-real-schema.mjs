@@ -21,7 +21,7 @@ export const SO_LIST_COLUMNS = [
   "processing_date", "linked_do_doc_no", "ship_to_address", "bill_to_address",
   "install_to_address", "subtotal_sen", "overdue", "email", "customer_type",
   "salesperson_id", "city", "postcode", "building_type", "emergency_contact_name",
-  "emergency_contact_phone", "emergency_contact_relationship",
+  "emergency_contact_phone", "emergency_contact_relationship", "target_date",
   "payment_method", "installment_months", "merchant_provider", "approval_code",
   "payment_date", "deposit_centi", "paid_centi", "delivery_fee_centi",
   "created_at", "created_by", "updated_at", "proceeded_at", "paid_total_centi",
@@ -221,11 +221,6 @@ export const PG_REAL_SCHEMA_DDL = `
     emergency_contact_name text,
     emergency_contact_phone text,
     emergency_contact_relationship text,
-    /* Still in the replica because it is still in PROD. The ERP source stopped
-       naming it on 2026-08-18 (SO_PROCESSING_DATE_RETIRED_NAMES) — that is a
-       source sweep, not a column drop, and this DDL's job is to be true about
-       the database, not about the code. It is deliberately absent from
-       SO_LIST_COLUMNS above, which mirrors the route's SELECT. */
     target_date date,
     payment_method text,
     installment_months integer,

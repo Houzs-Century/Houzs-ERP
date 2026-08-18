@@ -51,10 +51,12 @@
 //   internalExpectedDd    STORED-jsonb alias only, for amendments queued before
 //                         the rename. Precondition on
 //                         SO_HEADER_LEGACY_PAYLOAD_KEYS below.
-//   target_date           DEAD. Never a Processing Date at all — a POS-era
-//                         "Target Date" stamp that #140 replaced with
-//                         Processing + Delivery Date. Retired; see
-//                         SO_PROCESSING_DATE_RETIRED_NAMES.
+//   target_date           LIVE, and the surprise of this sweep. A POS-era
+//                         "Target Date" stamp that #140 replaced — dead by every
+//                         signal INSIDE this repo, and still written by the POS
+//                         today (46 SOs, all born in 90 days, measured on prod).
+//                         The sweep removed it and put it back. See
+//                         SO_TARGET_DATE_RETIREMENT_BLOCKED.
 //   PDate                 EXTERNAL — AutoCount's OWN UDF name, not ours. It can
 //                         never be "unified"; see SO_PROCESSING_DATE_AC_UDF.
 //
@@ -199,28 +201,60 @@ export const SO_HEADER_LEGACY_PAYLOAD_KEYS: Readonly<Record<string, string>> = {
 export const SO_PROCESSING_DATE_AC_UDF = 'PDate' as const;
 
 /**
- * Names for this date that have been RETIRED from the source tree, and must not
- * come back. Guarded by `so-processing-date-names.test.ts`, which reads the real
- * files and fails if one reappears in the places it was removed from.
+ * `target_date` — THE NAME THAT WAS NOT RETIRED, and the measurement that
+ * stopped it. **It is live. Do not sweep it.**
  *
- * `target_date` / `targetDate` — the POS-era "Target Date" stamp. PR #140
- * dropped the field from the SO form ("targetDate → replaced by Processing +
- * Delivery Date", SalesOrderDetail.tsx) and nothing has sent the key since: it
- * was accepted at SO create + SO PATCH + CO create + CO PATCH, selected into
- * three read shapes and typed on two frontend rows, and written by NOTHING.
- * That is worse than an unused column — it is a SECOND date field an operator
- * or an integration could start filling, with no gate, no pair rule, no lock
- * and no allocation behind it, sitting one keystroke away from the real one.
+ * WHAT THE SOURCE LOOKS LIKE, and why it reads as dead. PR #140 dropped the
+ * field from the SO form ("targetDate → replaced by Processing + Delivery Date",
+ * SalesOrderDetail.tsx). `grep -rn targetDate frontend/src native e2e` returns
+ * ZERO — no client in THIS repository sends the key. It is nevertheless accepted
+ * at SO create, SO header PATCH, CO create and CO header PATCH, selected into
+ * three read shapes and typed on two frontend rows. Every signal inside the repo
+ * says dead field, delete it.
  *
- * NOT DELETED FROM POSTGRES HERE. This retires the NAME from the ERP's source;
- * the column drop is a separate migration and belongs behind the same evidence
- * every drop in this repo needs (see the PR that retired the name for the
- * production count that was taken first).
+ * WHAT PRODUCTION SAYS (probe-rename-preconditions.mjs section F, prod,
+ * 2026-08-18): **46 of 2826 SO rows carry a `target_date`, and ALL 46 were
+ * CREATED inside the last 90 days** — newest 6.75 days old, oldest 67.88. A row
+ * BORN with the value was given it at create; the ERP has not written it at
+ * create since #140; therefore **the POS handover is still sending it, today**.
+ * And it is still READ: `routes/reports.ts` selects it into the sales-report
+ * export.
+ *
+ * WHAT HAPPENED. The 2026-08-18 unification sweep removed the name from all
+ * eight sites and put every one of them back the same day, once the probe
+ * answered. Shipping the removal would have been the exact defect this whole
+ * file exists to prevent: the POS keeps POSTing `targetDate`, the create returns
+ * **201**, and the value is dropped in silence.
+ *
+ * THE LESSON, which is why this comment is long. "No writer in this repo" is not
+ * "no writer" — the census that called this field dead read the source, and the
+ * source was complete and honest and did not contain the producer. A name that
+ * crosses a system boundary can only be retired against a measurement.
+ *
+ * TO RETIRE IT LATER, in this order: (1) re-run section F and see ZERO rows
+ * BORN with one; (2) confirm with the POS that it has stopped sending
+ * `targetDate`; (3) then the accept paths, then the reads, then the column.
  */
-export const SO_PROCESSING_DATE_RETIRED_NAMES: readonly string[] = [
-  'target_date',
-  'targetDate',
-];
+export const SO_TARGET_DATE_RETIREMENT_BLOCKED = true as const;
+
+/**
+ * Framings of this date that have been RETIRED from the source tree and must not
+ * come back — the "go-to-production" / "factory queue" vocabulary.
+ *
+ * NOT COSMETIC, which is why it is a guarded list and not a style note. The
+ * owner does not schedule a factory ("我们都没有排产的"), so a comment reasoning
+ * about a factory queue is not merely old wording: it is a false model, and it
+ * is what a reader reaches for when deciding what this date should gate. The
+ * MRP comment claiming this field "drives when to order" survived for months
+ * beside code that ignored the field, and it survived because it agreed with
+ * the story everything around it told.
+ *
+ * The patterns live in `so-processing-date-names.test.ts` beside the file list
+ * they are checked against. This constant is the statement of intent the test
+ * refers back to.
+ */
+export const SO_PROCESSING_DATE_MEANING =
+  'the date this order is RELEASED FOR PURCHASING TO ORDER GOODS' as const;
 
 /**
  * Rewrite a STORED header_changes object's legacy payload keys onto the keys the

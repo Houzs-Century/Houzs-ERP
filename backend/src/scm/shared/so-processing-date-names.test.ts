@@ -23,8 +23,9 @@ import {
   SO_PROCESSING_DATE_AC_UDF,
   SO_PROCESSING_DATE_COLUMN,
   SO_PROCESSING_DATE_LEGACY_COLUMNS,
+  SO_PROCESSING_DATE_MEANING,
   SO_PROCESSING_DATE_PAYLOAD_KEY,
-  SO_PROCESSING_DATE_RETIRED_NAMES,
+  SO_TARGET_DATE_RETIREMENT_BLOCKED,
 } from './so-processing-date';
 
 /* `?raw` — the file's SOURCE TEXT, the idiom return-unlinked-lines.test.ts uses.
@@ -52,44 +53,57 @@ import feSoDetailSrc from '../../../../frontend/src/pages/scm-v2/SalesOrderDetai
 import feSoDetailGatesSrc from '../../../../frontend/src/vendor/scm/lib/so-detail-gates.ts?raw';
 
 /**
- * The files `target_date` / `targetDate` was removed FROM, each with the anchor
- * that proves the file is still the file. Both trees: the name lived on the
- * server's accept-maps and select lists AND on two frontend row types, and a
- * guard that only watched one side would let it grow back on the other.
+ * `target_date` IS LIVE, and every one of these files must keep saying so.
+ *
+ * THIS BLOCK IS THE INVERSE OF WHAT IT STARTED AS. The sweep that wrote this
+ * file removed `target_date` from all eight sites as a dead POS-era field —
+ * every signal inside the repo agreed it was dead, including a zero-hit grep for
+ * any client that sends the key. Then `probe-rename-preconditions.mjs` section F
+ * read production: **46 of 2826 SO rows carry one and ALL 46 were CREATED inside
+ * the last 90 days**, newest 6.75 days old. A row born with the value was given
+ * it at create, and the ERP has not written it at create since PR #140 — so the
+ * POS handover is still sending it. `routes/reports.ts` still reads it into the
+ * sales-report export. The removal was reverted the same day.
+ *
+ * So the guard now protects the DOOR rather than its absence. Shipping that
+ * removal would have been the exact defect this whole area exists to end: the
+ * POS keeps POSTing `targetDate`, the create returns **201**, and the value
+ * disappears with no error anywhere.
  */
-const SWEPT: readonly (readonly [name: string, src: string, anchor: string])[] = [
-  // The SO header: create accept-map, PATCH key map, and the select list.
-  ['scm/routes/mfg-sales-orders.ts', mfgSoSrc, "['processingDate', 'processing_date']"],
-  // The consignment twin, which carried an identical copy of all three.
-  ['scm/routes/consignment-orders.ts', consignmentRoutesSrc, "['processingDate', 'processing_date']"],
-  ['scm/lib/consignment-order-shape.ts', consignmentShapeSrc, 'customer_delivery_date, processing_date'],
-  // The reports export's embedded header select.
-  ['scm/routes/reports.ts', reportsSrc, 'customer_delivery_date, processing_date'],
-  // The two frontend row types that declared it, and the audit vocabulary.
-  ['frontend SalesOrderDetail.tsx', feSoDetailSrc, 'processingDate: f.processingDate || null'],
-  ['frontend ConsignmentOrders.tsx', feConsignmentOrdersSrc, 'processing_date: string | null'],
-  ['frontend so-audit-labels.ts', feSoAuditLabelsSrc, "processingDate: 'Processing date'"],
+const TARGET_DATE_DOORS: readonly (readonly [name: string, src: string, must: string])[] = [
+  // The two ACCEPT paths — remove one of these and a live producer's value is
+  // silently dropped on a 201.
+  ['SO create accepts targetDate', mfgSoSrc, 'target_date: dateOrNull(body.targetDate)'],
+  ['SO header PATCH maps it', mfgSoSrc, "['targetDate', 'target_date']"],
+  ['CO create accepts targetDate', consignmentRoutesSrc, 'target_date: dateOrNull(body.targetDate)'],
+  ['CO header PATCH maps it', consignmentRoutesSrc, "['targetDate', 'target_date']"],
+  // The READ path — the sales-report export surfaces the column.
+  ['the reports export selects it', reportsSrc, 'target_date'],
+  ['the CO read shape selects it', consignmentShapeSrc, 'target_date'],
 ];
 
-describe('the retired name does not come back', () => {
-  it.each(SWEPT)('%s', (_name, src, anchor) => {
-    /* NON-VACUOUS FIRST. If this fails, the file moved or was gutted and the
-       absence assertion below would have passed for the wrong reason. */
-    expect(src).toContain(anchor);
-    for (const retired of SO_PROCESSING_DATE_RETIRED_NAMES) {
-      expect(src).not.toContain(retired);
-    }
+describe('target_date is LIVE — the retirement the measurement stopped', () => {
+  it('the finding is recorded, not just remembered', () => {
+    expect(SO_TARGET_DATE_RETIREMENT_BLOCKED).toBe(true);
+    /* The reason travels with the flag, or the next sweep deletes the flag and
+       the field together. */
+    expect(registrySrc).toContain('46 of 2826 SO rows carry a `target_date`');
+    expect(registrySrc).toContain('TO RETIRE IT LATER');
   });
 
-  it('the retired list is not empty, and never names the live spellings', () => {
-    /* An empty list would make every case above vacuously true. */
-    expect(SO_PROCESSING_DATE_RETIRED_NAMES.length).toBeGreaterThan(0);
-    expect(SO_PROCESSING_DATE_RETIRED_NAMES).toContain('target_date');
-    expect(SO_PROCESSING_DATE_RETIRED_NAMES).not.toContain(SO_PROCESSING_DATE_COLUMN);
-    expect(SO_PROCESSING_DATE_RETIRED_NAMES).not.toContain(SO_PROCESSING_DATE_PAYLOAD_KEY);
-    /* And it never names the EXTERNAL one — see the block below for why that
-       would be the most expensive mistake in this file. */
-    expect(SO_PROCESSING_DATE_RETIRED_NAMES).not.toContain(SO_PROCESSING_DATE_AC_UDF);
+  it.each(TARGET_DATE_DOORS)('%s', (_name, src, must) => {
+    /* Non-vacuous first: the file must still be the file. */
+    expect(src.length).toBeGreaterThan(500);
+    expect(src).toContain(must);
+  });
+
+  it('no client in THIS repo sends the key — which is why the source reads dead', () => {
+    /* Pinned so the reasoning above stays checkable. If a frontend ever starts
+       sending `targetDate`, this fails and the comment needs rewriting rather
+       than trusting. */
+    for (const src of [feSoDetailSrc, feConsignmentOrdersSrc]) {
+      expect(src).not.toContain('targetDate:');
+    }
   });
 });
 
@@ -176,7 +190,26 @@ describe('the native Sales module accepts BOTH keys (stage 1)', () => {
    what kept the wrong mental model alive long enough to produce the bugs above.
    ────────────────────────────────────────────────────────────────────────── */
 describe('no surface still calls this a production date', () => {
-  const FRAMING = [/go-to-production/i, /factory queue/i, /ready to build/i];
+  /* WIDENED 2026-08-18, the same day it was written, because the first version
+     was already too narrow: PR #2383 landed between the sweep and the merge and
+     brought THREE fresh "the day the factory starts" comments into a file this
+     list already watched. The guard did not fire, because it was matching the
+     three phrasings that happened to exist rather than the IDEA. These patterns
+     match the idea — a factory, a production start, a build queue.
+
+     `IN_PRODUCTION` is deliberately NOT matched: it is a real status value in
+     the enum, not a claim about the business, and a guard that fails on the name
+     of a live status is a guard someone deletes. */
+  const FRAMING = [
+    /go-to-production/i,
+    /factory queue/i,
+    /ready to build/i,
+    /the factory\b/i,
+    /factory start/i,
+    /production planning/i,
+    /start production/i,
+    /production'?s (?:go-ahead|"ready)/i,
+  ];
   /* so-processing-date.ts is deliberately NOT in this list: it is the one file
      entitled to SAY the retired framing, because forbidding it is its job. It
      gets the positive assertion below instead. */
@@ -196,6 +229,7 @@ describe('no surface still calls this a production date', () => {
   });
 
   it('the registry states the meaning the owner gave, so a copy has a source', () => {
+    expect(SO_PROCESSING_DATE_MEANING).toContain('RELEASED FOR PURCHASING TO ORDER GOODS');
     const registry = registrySrc;
     expect(registry).toContain('RELEASED FOR PURCHASING TO');
     expect(registry).toContain('THERE IS NO PRODUCTION SCHEDULING IN THIS BUSINESS');

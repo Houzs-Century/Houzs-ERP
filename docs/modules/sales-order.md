@@ -1456,17 +1456,22 @@ table is the whole answer.
 > comment at `routes/mrp.ts:193` said the field "drives when to order" for months
 > while the code ignored it — adjacent evidence, not evidence.
 
-> **UPDATED 2026-08-18 — the names collapsed to one, plus one that is not ours.**
+> **UPDATED 2026-08-18 — the names, and how many of them could actually go.**
 > Owner: *"全部你都是要统一掉的，不要那么多个"*. Seven names existed for this one
 > fact. `processing_date` (column) and `processingDate` (payload key) are THE
-> names. `target_date` was retired from the source entirely. `PDate` is
-> **AutoCount's own UDF name and survives on purpose** — it belongs to the other
-> system and renaming it here would only stop the value arriving there.
-> `proceeded_at` stopped being read by any decision in #2396. The two
-> `internal_expected_dd` / `internalExpectedDd` aliases STAY, because each is a
-> name a **queue outside this deploy** still carries; the exact preconditions for
-> retiring them are on their constants in
-> `backend/src/scm/shared/so-processing-date.ts` and measured by section F of
+> names. `proceeded_at` stopped being read by any decision in #2396.
+>
+> **Four of the remaining five could NOT be retired, and that is the finding, not
+> the shortfall.** `PDate` is **AutoCount's own UDF name** — it belongs to the
+> other system, and renaming it here would only stop the value arriving there.
+> `internal_expected_dd` / `internalExpectedDd` are each a name a **queue outside
+> this deploy** still carries. `target_date` looked deadest of all and is
+> **actively written by the POS** — 46 orders in 90 days.
+>
+> Every one of those four is blocked by something OUTSIDE this repository, and
+> not one of them could be seen from the source. The exact preconditions live on
+> their constants in `backend/src/scm/shared/so-processing-date.ts` and are
+> *measured*, not described, by section F of
 > `backend/scripts/probe-rename-preconditions.mjs`.
 
 > **CORRECTED 2026-08-14.** Until today the two rows below named
@@ -1488,7 +1493,7 @@ table is the whole answer.
 | `scm.consignment_sales_orders.processing_date` **(the OLD one, mig 0153)** | Same clone artifact. Zero writers ever (the create INSERT omits it; the header PATCH builds its update from a closed allowlist that never contained it), so it was NULL on every row. | **DROPPED — mig 0286, step 1.** No longer a follow-up: 0286 had to clear this dead name before it could rename the live column onto it, and its guard drops it only while BOTH names are present, so a re-run cannot take the users' dates. |
 | `public.sales_orders.ac_udf_pdate` | AutoCount's own UDF field `SO.UDF_PDate`, mirrored verbatim by `services/pull.ts` for AutoCount's document. Never the ERP's date; nothing joins the two. Read by nothing. | **RENAMED → `ac_udf_pdate`, mig 0285.** Kept (not dropped) because the mirror's job is to be a faithful local copy for AutoCount reconciliation — the harm was the name, not the data. |
 | **`PDate`** — AutoCount's UDF key, not a column of ours | The name the ERP WRITES the Processing Date out under, at `services/autocount-writeback.ts` (create + the clearable-UDF map) and `scm/lib/so-edit-header.ts` (edit). | **EXTERNAL. NEVER "UNIFY" IT** — pinned as `SO_PROCESSING_DATE_AC_UDF`. AutoCount matches UDFs by NAME: rename it and the connector drops an unknown key, the document posts **200 without it**, and every Processing Date silently stops reaching the account book. Both write sites carry the warning; the guard test fails if either loses it. |
-| `scm.mfg_sales_orders.target_date`, `scm.consignment_sales_orders.target_date` | The POS-era **"Target Date"** stamp. PR #140 dropped the field from the SO form — *"targetDate → replaced by Processing + Delivery Date"* — and nothing has sent the key since. It was still accepted on four write paths, selected into three read shapes and typed on two frontend rows, and **written by nothing**: a second date field one keystroke from the real one, with no gate, no pair rule, no lock and no allocation behind it. | **NAME RETIRED FROM THE SOURCE — 2026-08-18.** Listed in `SO_PROCESSING_DATE_RETIRED_NAMES`; `so-processing-date-names.test.ts` fails if it reappears in any of the eight files it was removed from. **The COLUMN is still in Postgres** — that drop is a separate migration on its own evidence, and section F of `probe-rename-preconditions.mjs` counts live writers first. |
+| `scm.mfg_sales_orders.target_date`, `scm.consignment_sales_orders.target_date` | The POS-era **"Target Date"** stamp. PR #140 dropped the field from the SO form — *"targetDate → replaced by Processing + Delivery Date"* — and `grep -rn targetDate frontend/src native e2e` returns **zero**: no client in *this* repo sends the key. It is nevertheless accepted on four write paths, selected into three read shapes and typed on two frontend rows. Every signal inside the repo says dead field. | **LIVE — NOT RETIRED. Do not sweep it.** Prod, 2026-08-18 (`probe-rename-preconditions.mjs` section F): **46 of 2826 SO rows carry one and ALL 46 were CREATED inside the last 90 days**, newest 6.75 days old. A row born with the value was given it at create and the ERP has not written it at create since #140 — so **the POS handover is still sending it**, and `routes/reports.ts` still reads it into the sales-report export. The 2026-08-18 sweep removed the name from all eight sites and **put every one back the same day** once the probe answered. `SO_TARGET_DATE_RETIREMENT_BLOCKED` records it and the guard test fails if a door is closed again. |
 | `public.sales_entries.processing_date` | The LEGACY NATIVE Sales module's date (`/sales`, `Sales.tsx`, mig 070). **The SAME CONCEPT** — owner 2026-08-18, overruling an earlier census that recommended treating it as separate: *"全部我们只有一个 Processing Date"*. What differs is the ROW: a `sales_entry` has no SO row, no doc flow, and none of the SO **machinery** — no deposit gate, no KIV/variant gate, no elapsed-date lock, no `scm.so.remove_processing_date`, no stock allocation, no pair rule. | **KEPT under this name — it already spells the canonical word.** Unified in stages. **Stage 1 shipped 2026-08-18:** the module now ACCEPTS the canonical `processingDate` too, folded onto the stored key on all four roads in (create, direct PATCH, change-request queue, approve replay) by `canonicaliseSalesEntryBody`. **Stage 2 (retiring the old inbound key) is NOT shipped** and must not be done blind: `applyEntryPatch` builds `SET ${k} = ?` from allowlisted keys and the approval path replays a payload stored days earlier, so a dropped key is **silently ignored on approve**, with no error. Precondition and the exact `SELECT` are on `SO_FORM_TEXT_FIELDS` in `routes/sales.ts`. Same name, same meaning — still **never coalesce or join the two tables' rows.** |
 
 Three rules follow from the table.

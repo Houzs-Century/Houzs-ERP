@@ -918,7 +918,7 @@ const HEADER =
   'ship_to_address, bill_to_address, install_to_address, subtotal_sen, overdue, ' +
   /* PR #46 — POS handover */
   'email, customer_type, salesperson_id, city, postcode, building_type, ' +
-  'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, ' +
+  'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, target_date, ' +
   /* PR #143 + #150 + #157 — Payment (migrations 0068 + 0069 + 0070) */
   'payment_method, installment_months, merchant_provider, approval_code, payment_date, deposit_centi, paid_centi, ' +
   /* Delivery fee snapshot (migration 0133) — folded into local_total/revenue/margin. */
@@ -4794,7 +4794,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      A HANDOVER WITH NO PROCESSING DATE IS NOT PROCEEDED, however complete it is
      (owner, pinned 2026-08-13: *"没有 processing date 就代表没有 proceed"*). This
      used to stamp proceeded_at anyway, minting exactly the order the rule says
-     cannot exist: proceeded, in production, with no day the factory starts. The
+     cannot exist: proceeded, released, with no day it was released ON. The
      create refuses nothing extra for it — the order is simply created un-
      proceeded, and gets its date (and its Proceed) when someone picks one. */
   /* Read through the shared helper, not a literal. This line said
@@ -4987,6 +4987,20 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       ? (normalizePhone(body.emergencyContactPhone) ?? body.emergencyContactPhone)
       : null,
     emergency_contact_relationship: (body.emergencyContactRelationship as string) ?? null,
+    /* NOT DEAD — measured on prod 2026-08-18, and the census that called it dead
+       was wrong. `probe-rename-preconditions.mjs` section F: 46 of 2826 SO rows
+       carry a target_date and ALL 46 were CREATED inside the last 90 days, the
+       newest 6.75 days ago. No client in THIS repo sends the key (`grep -rn
+       targetDate frontend/src native e2e` = 0 hits), so the producer is the POS
+       handover, outside this deploy — and `routes/reports.ts` selects the column
+       into the sales-report export, so it has a live reader too.
+
+       A sweep removed this line on 2026-08-18 and put it back the same day: with
+       the door shut the POS keeps POSTing `targetDate`, the create returns 201,
+       and the value is silently dropped — the exact failure class the
+       Processing-Date work exists to end. Do not remove it again without a fresh
+       section-F run showing zero rows BORN with one. */
+    target_date: dateOrNull(body.targetDate),
     customer_id: orderCustomerId,
     /* Mig 0175 — canonicalize MY state at write so 'PENANG' / 'Kl' / 'W.P.
        Kuala Lumpur' land as the exact my_localities spelling. Foreign state
@@ -5753,9 +5767,14 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
         }, c.get('companyCode') ?? null);
         if (gate) return c.json(gate, 422);
       }
-      /* Kept, not replaced by the date (task scope + the stock allocator reads
-         it): the date says WHEN the factory starts, this says when a human said
-         go. Stamp-once, so re-entering IN_PRODUCTION never rewrites it. */
+      /* Kept, not replaced by the date: the date says WHEN the order is released
+         for ordering, this says when a human pressed go. Stamp-once, so
+         re-entering IN_PRODUCTION never rewrites it.
+
+         NO LONGER READ BY ANY DECISION — #2396 moved the stock allocator's gate
+         onto processing_date, which was its last reachable reader. The column's
+         retirement is on `feat/processing-date-has-one-storage`; do not add a
+         new reader here. */
       patch.proceeded_at = new Date().toISOString();
     }
   }
@@ -6527,6 +6546,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['emergencyContactName', 'emergency_contact_name'],
     ['emergencyContactPhone', 'emergency_contact_phone'],
     ['emergencyContactRelationship', 'emergency_contact_relationship'],
+    /* POS handover, still live — see the create path's note. */
+    ['targetDate', 'target_date'],
     /* PR #143 + #150 — Payment fields */
     ['paymentMethod', 'payment_method'],
     ['installmentMonths', 'installment_months'],
@@ -6984,7 +7005,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
        (owner, pinned 2026-08-13). This PATCH is the one proceed path that can
        set both in the same request, so the date may come from this patch or
        already be on the row; what it may not do is mark an order proceeded with
-       no day the factory starts. A date arriving in THIS patch is gated by the
+       no day it was released on. A date arriving in THIS patch is gated by the
        aggregated Processing-Date block below, which runs before any write. */
     /* Bound to the constant — this read named `internal_expected_dd`, which
        migration 0286 renamed away, so `effOf` resolved undefined for EVERY
@@ -7006,8 +7027,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     const deliv = body['customerDeliveryDate'];
     const origProc = (beforeRow?.['processing_date'] as string | null) ?? null;
     const origDeliv = (beforeRow?.['customer_delivery_date'] as string | null) ?? null;
-    /* Owner 2026-06-03 — Process Date ≤ Delivery Date (factory start can't be
-       after the promised delivery). Use the EFFECTIVE values: the patch value
+    /* Owner 2026-06-03 — Process Date ≤ Delivery Date (purchasing cannot be
+       released to buy AFTER the goods were promised). Use the EFFECTIVE values: the patch value
        when this request sets the key, else the stored value — so editing only
        one date still validates against the other already on the row. */
     const effProc  = typeof proc  === 'string' ? (proc  || null) : origProc;

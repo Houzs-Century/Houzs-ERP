@@ -28,7 +28,7 @@ export const HEADER =
   'customer_state, customer_country, customer_delivery_date, processing_date, linked_do_doc_no, ' +
   'ship_to_address, bill_to_address, install_to_address, subtotal_sen, overdue, ' +
   'email, customer_type, salesperson_id, city, postcode, building_type, ' +
-  'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, ' +
+  'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, target_date, ' +
   'payment_method, installment_months, merchant_provider, approval_code, payment_date, deposit_centi, paid_centi, ' +
   'created_at, created_by, updated_at';
 export const ITEM =

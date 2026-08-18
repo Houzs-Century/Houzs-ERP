@@ -222,8 +222,9 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
   //     confirmed later (variants carry fabricId/fabricLabel, no fabricCode).
   //     Owner rule 2026-07-24 (verbatim intent: "如果它一有 processing date,
   //     就一定要有我们维护里面的选项,不能这样子随便选,要不然我们过不到单"),
-  //     after SO-2607-016 reached production planning with two KIV sofa lines
-  //     and the factory could not proceed. Only fires when a Processing Date is
+  //     after an SO was released for ordering with two KIV sofa lines and
+  //     purchasing had nothing to order against — a fabric series with no colour
+  //     is not a thing anyone can buy. Only fires when a Processing Date is
   //     actually being set on this save — the routes additionally pass
   //     kivOffenders only when the date genuinely changes, so an unrelated edit
   //     to an old KIV order (or clearing the date) is never blocked.
@@ -310,7 +311,8 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
       field: procDate ? 'Delivery Date' : 'Processing Date',
     });
   }
-  // Factory start can't fall after the promised delivery. Both plain ISO
+  // The release date can't fall after the date it is promised for: purchasing
+  // cannot be released to buy AFTER the goods were due. Both plain ISO
   // YYYY-MM-DD, so a string compare is correct.
   if (procDate && delivDate && procDate > delivDate) {
     out.push({

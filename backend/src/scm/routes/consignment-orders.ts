@@ -903,6 +903,7 @@ consignmentOrders.post('/', async (c) => {
       ? (normalizePhone(body.emergencyContactPhone) ?? body.emergencyContactPhone)
       : null,
     emergency_contact_relationship: (body.emergencyContactRelationship as string) ?? null,
+    target_date: dateOrNull(body.targetDate),
     customer_id: orderCustomerId,
     customer_state: (body.customerState as string) ?? null,
     customer_country: customerCountrySnapshot,
@@ -1148,6 +1149,7 @@ consignmentOrders.patch('/:docNo', async (c) => {
     ['emergencyContactName', 'emergency_contact_name'],
     ['emergencyContactPhone', 'emergency_contact_phone'],
     ['emergencyContactRelationship', 'emergency_contact_relationship'],
+    ['targetDate', 'target_date'],
     ['paymentMethod', 'payment_method'],
     ['installmentMonths', 'installment_months'],
     ['merchantProvider', 'merchant_provider'],

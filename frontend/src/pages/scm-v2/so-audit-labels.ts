@@ -35,7 +35,7 @@ const FIELDS: Record<string, string> = {
   remark: 'Remark', salespersonId: 'Salesperson', customerType: 'Customer type',
   emergencyContactName: 'Emergency name', emergencyContactPhone: 'Emergency phone',
   emergencyContactRelationship: 'Emergency relationship',
-  branding: 'Branding', venue: 'Venue', venueId: 'Venue (master)',
+  targetDate: 'Target date', branding: 'Branding', venue: 'Venue', venueId: 'Venue (master)',
   salesLocation: 'Sales location', ref: 'Ref', poDocNo: 'PO doc no',
   /* Coverage-audit additions (2026-07) — keys emitted by the DO amend mirror,
      Delivery Planning /fields + /schedule and payment/automation entries. */

@@ -344,6 +344,10 @@ type SoHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
+  /* POS handover "Target Date" — still WRITTEN by the POS (46 SOs in the last
+     90 days, measured on prod 2026-08-18) and still read by the sales-report
+     export. Not rendered here; do not delete it as dead. */
+  target_date: string | null;
   /* P1 (migration 0142) — POS handover customer signature (data URL). Read-only
      here; rendered as an image so the coordinator can see the signed proof. */
   signature_b64: string | null;

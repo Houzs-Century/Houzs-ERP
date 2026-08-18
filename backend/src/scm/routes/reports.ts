@@ -124,7 +124,7 @@ reports.get('/sales-order-detail-listing', async (c) => {
           mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, service_centi,
           mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, service_cost_centi,
           total_cost_centi, total_margin_centi, margin_pct_basis,
-          customer_delivery_date, processing_date,
+          customer_delivery_date, processing_date, target_date,
           customer_state, customer_country, customer_po, customer_po_id, customer_po_date, customer_so_no,
           hub_name
         )
