@@ -105,7 +105,7 @@ export const VOCABULARY = [
     canonical: "_sen",
     alsoCanonical: [],
     retired: ["_centi"],
-    declaredIn: "backend/src/scm/lib/money.ts",
+    declaredIn: "frontend/src/lib/money.ts",
     allow: ["scripts/lib/vocabulary.mjs", "scripts/lib/drift-catalogue.mjs"],
     note:
       "Money is stored as an INTEGER count of sen (the Malaysian subunit AutoCount " +

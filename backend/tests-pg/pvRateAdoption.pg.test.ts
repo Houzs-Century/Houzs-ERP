@@ -37,10 +37,10 @@ const migrationsDir = fileURLToPath(new URL('../src/db/migrations-pg/', import.m
 /* By SUFFIX, never by number — migration files get renumbered whenever a parallel
    PR takes a slot, and a number-pinned read would silently resolve to nothing. */
 async function settleMigrationSql(): Promise<string> {
-  const files = (await readdir(migrationsDir)).filter((f) => f.endsWith('_scm_settle_pi_paid_sen.sql'));
+  const files = (await readdir(migrationsDir)).filter((f) => f.endsWith('_scm_settle_pi_paid_centi.sql'));
   if (files.length !== 1) {
     throw new Error(
-      `expected exactly one *_scm_settle_pi_paid_sen.sql migration, found ${files.length}: ${files.join(', ')}`,
+      `expected exactly one *_scm_settle_pi_paid_centi.sql migration, found ${files.length}: ${files.join(', ')}`,
     );
   }
   return readFile(join(migrationsDir, files[0]), 'utf8');

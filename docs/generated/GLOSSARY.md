@@ -17,7 +17,7 @@ fails when one appears in CODE.
 | **Processing Date** | `processing_date` / `processingDate` | ~~`internal_expected_dd`~~ | `backend/scripts/lib/so-processing-date.mjs` |
 | **Transfer (document conversion)** | `Transfer to / Transfer from` | — | `backend/src/scm/shared/transfer-vocabulary.ts` |
 | **Branding** | `branding` | — | `backend/src/scm/shared/so-branding-label.ts` |
-| **Money (minor unit)** | `_sen` | ~~`_centi`~~ | `backend/src/scm/lib/money.ts` |
+| **Money (minor unit)** | `_sen` | ~~`_centi`~~ | `frontend/src/lib/money.ts` |
 
 ## What each one means
 
