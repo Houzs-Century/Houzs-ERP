@@ -662,12 +662,29 @@ export const settlementBatchDetail = guard(async (c) => {
   );
   const byLine = new Map(suggestions.map((d) => [d.row.lineNo, d]));
 
+  /* Every payment in the window, by key — the linked ones are in here too:
+     `settled.keys` gates the MATCHER, it does not shrink this list. */
+  const paymentOf = new Map(candidates.payments.map((p) => [`${p.source}:${p.id}`, p]));
+
   const rows = stored.map((r) => {
     const s = byLine.get(r.line_no);
     return {
       ...r,
       txn_date: String(r.txn_date).slice(0, 10),
-      linked: linksByRow.get(r.id) ?? [],
+      /* The linked rows carry a document number and an amount. The operator is
+         reading a RECONCILIATION, so the sale itself belongs here too — who it
+         was, when it was paid, what code the till recorded (owner: 我希望他是显示
+         transaction detail 和 sales order detail, 而不是 document 罢了). */
+      linked: (linksByRow.get(r.id) ?? []).map((l) => {
+        const p = paymentOf.get(`${String(l.payment_source)}:${String(l.payment_id)}`);
+        return {
+          ...l,
+          doc_no: l.doc_no ?? p?.docNo ?? null,
+          paid_on: p?.paidOn ?? null,
+          customer_name: p?.customerName ?? null,
+          approval_code: p?.approvalCode ?? null,
+        };
+      }),
       candidates: s?.candidates ?? [],
       comboHints: s?.comboHints ?? [],
       /* The system's own best answer, pre-ticked on screen. A suggestion, never

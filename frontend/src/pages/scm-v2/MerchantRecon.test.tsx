@@ -151,9 +151,15 @@ describe('the reconcile tab', () => {
 
     await waitFor(() => expect(screen.getByText(/report read/)).toBeTruthy());
     /* The three counts come from the batch list, which the fixture answers. */
-    expect(screen.getByText('matched by reference')).toBeTruthy();
+    /* The three tallies… */
+    expect(screen.getAllByText('matched by reference').length).toBeGreaterThan(0);
     expect(screen.getByText('to check by hand')).toBeTruthy();
-    expect(screen.getByText('no sale in the ERP')).toBeTruthy();
+    expect(screen.getAllByText('no sale in the ERP').length).toBeGreaterThan(0);
+    /* …and every LINE the upload read, with the sale it matched — not a count
+       per file (owner: 显示 transaction detail 和 sales order detail). */
+    expect(screen.getByText(/The merchant.s line/)).toBeTruthy();
+    expect(screen.getByText('The sale it matched')).toBeTruthy();
+    expect(screen.getByText('SO-2608-043')).toBeTruthy();       // the matched sale, by name
     /* And one button finishes the easy half of the whole upload. */
     expect(screen.getByText(/Confirm all 1 matched/)).toBeTruthy();
   });

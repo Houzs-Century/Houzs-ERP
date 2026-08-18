@@ -53,6 +53,11 @@ export type SettlementLink = {
   payment_id: string;
   doc_no: string | null;
   amount_sen: number;
+  /* The sale itself, so a reconciliation can show WHO and WHEN and not only a
+     document number (owner: 显示 transaction detail 和 sales order detail). */
+  paid_on?: string | null;
+  customer_name?: string | null;
+  approval_code?: string | null;
 };
 
 export type SettlementRow = {

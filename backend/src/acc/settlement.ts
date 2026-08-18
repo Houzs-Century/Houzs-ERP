@@ -114,6 +114,32 @@ export async function loadPaymentCandidates(
     .lte('paid_at', hi);
   if (siErr) return { ok: false, reason: `SI payments: ${siErr.message}` };
 
+  /* WHOSE sale it was. The operator is reconciling money against documents,
+     and a document number alone does not tell him which customer he is looking
+     at (owner, 2026-08-18: 我希望他是显示 transaction detail 和 sales order
+     detail, 而不是 document 罢了). Two reads for the whole window, not one per
+     line, and a name that cannot be resolved stays null rather than guessed. */
+  const soDocs = [...new Set(((soRaw ?? []) as Array<Record<string, any>>)
+    .map((r) => String(r.so_doc_no ?? '')).filter(Boolean))];
+  const siIds = [...new Set(((siRaw ?? []) as Array<Record<string, any>>)
+    .map((r) => String(r.sales_invoice_id ?? '')).filter(Boolean))];
+  const customerOf = new Map<string, string>();
+  if (soDocs.length > 0) {
+    const { data } = await sb.from('mfg_sales_orders')
+      .select('doc_no, customer_name').eq('company_id', companyId).in('doc_no', soDocs);
+    for (const r of (data ?? []) as Array<{ doc_no: string; customer_name: string | null }>) {
+      if (r.customer_name) customerOf.set(`SO:${r.doc_no}`, r.customer_name);
+    }
+  }
+  if (siIds.length > 0) {
+    const { data } = await sb.from('sales_invoices')
+      .select('id, invoice_number, debtor_name').eq('company_id', companyId).in('id', siIds);
+    for (const r of (data ?? []) as Array<{ id: string; invoice_number: string | null; debtor_name: string | null }>) {
+      if (r.debtor_name) customerOf.set(`SI:${r.id}`, r.debtor_name);
+      if (r.invoice_number) customerOf.set(`SI#:${r.id}`, r.invoice_number);
+    }
+  }
+
   const isCard = (m: string) => m === 'merchant' || m === 'installment';
   const payments: PaymentCandidate[] = [];
   for (const r of (soRaw ?? []) as Array<Record<string, any>>) {
@@ -125,7 +151,7 @@ export async function loadPaymentCandidates(
       paidOn: isoDay(r.paid_at),
       amountSen: Number(r.amount_centi ?? 0),
       approvalCode: r.approval_code ?? null,
-      customerName: null,
+      customerName: customerOf.get(`SO:${String(r.so_doc_no ?? '')}`) ?? null,
       recordedById: (r.collected_by ?? r.created_by ?? null) as string | null,
     });
   }
@@ -134,11 +160,13 @@ export async function loadPaymentCandidates(
     payments.push({
       source: 'SIPAY',
       id: String(r.id),
-      docNo: String(r.sales_invoice_id ?? ''),
+      /* The invoice NUMBER when it can be resolved — the id is a uuid, and a
+         uuid on screen is not a document reference to anybody. */
+      docNo: customerOf.get(`SI#:${String(r.sales_invoice_id ?? '')}`) ?? String(r.sales_invoice_id ?? ''),
       paidOn: isoDay(r.paid_at),
       amountSen: Number(r.amount_centi ?? 0),
       approvalCode: r.approval_code ?? null,
-      customerName: null,
+      customerName: customerOf.get(`SI:${String(r.sales_invoice_id ?? '')}`) ?? null,
       recordedById: (r.collected_by ?? r.created_by ?? null) as string | null,
     });
   }

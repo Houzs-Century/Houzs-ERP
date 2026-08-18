@@ -438,34 +438,101 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
         </div>
       ))}
 
-      <table style={table}>
-        <thead>
-          <tr style={headRow}>
-            <th style={cell}>Merchant</th><th style={cell}>Report</th><th style={cell}>Period</th>
-            <th style={num}>Lines</th><th style={num}>Matched</th><th style={num}>To check</th>
-            <th style={num}>No sale</th><th style={cell} />
-          </tr>
-        </thead>
-        <tbody>
-          {mine.map((b) => (
-            <tr key={b.id} style={rowLine}>
-              <td style={cell}><span className={styles.codeChip}>{b.acquirer_code}</span></td>
-              <td style={cell}>{b.file_name}</td>
-              <td style={cell}>{b.period_from} → {b.period_to}</td>
-              <td style={num}>{b.row_count}</td>
-              <td style={{ ...num, color: good }}>{(b.to_confirm_count ?? 0) + (b.confirmed_count ?? 0) || '—'}</td>
-              <td style={num}>{b.to_choose_count || '—'}</td>
-              <td style={{ ...num, color: b.no_record_count ? danger : undefined, fontWeight: b.no_record_count ? 700 : undefined }}>
-                {b.no_record_count || '—'}
-              </td>
-              <td style={cell}>
-                <button type="button" style={btn()} onClick={() => onOpen(b.id)}>Open</button>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      {/* EVERY LINE the upload read, not a count per file — the operator is
+          reconciling transactions, and a file name is not one (owner: 我希望他是
+          显示 transaction detail 和 sales order detail, 而不是 document 罢了).
+          Each row is the merchant's line beside the sale it matched. */}
+      {mine.map((b) => <BatchLines key={b.id} batch={b} onOpen={onOpen} />)}
     </div>
+  );
+};
+
+const BatchLines = ({ batch, onOpen }: { batch: SettlementBatch; onOpen: (id: number) => void }) => {
+  const q = useSettlementBatch(batch.id);
+  const rows = q.data?.rows ?? [];
+
+  return (
+    <section className="space-y-2">
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <span className={styles.codeChip}>{batch.acquirer_code}</span>
+        <b>{batch.file_name}</b>
+        <span style={softText}>
+          {batch.period_from} → {batch.period_to} · {batch.row_count} line(s) · net {fmt(batch.net_sen)}
+        </span>
+        <span style={{ flex: 1 }} />
+        <button type="button" style={btn()} onClick={() => onOpen(batch.id)}>Open</button>
+      </div>
+
+      {q.isLoading && <div style={softText}>Reading its lines…</div>}
+
+      {rows.length > 0 && (
+        <table style={table}>
+          <thead>
+            <tr style={headRow}>
+              <th style={cell}>The merchant&rsquo;s line</th>
+              <th style={num}>Gross</th><th style={num}>Fee</th><th style={num}>Net</th>
+              <th style={cell}>The sale it matched</th>
+              <th style={cell}>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              /* Linked = it claimed a payment. Suggested = the system's answer,
+                 pre-ticked but not taken. Neither = a human's job. */
+              const sale = r.linked.length > 0 ? r.linked : null;
+              const guess = (r.suggested ?? []);
+              return (
+                <tr key={r.id} style={rowLine}>
+                  <td style={cell}>
+                    <div>{r.txn_date}{r.ref ? <> · ref <b>{r.ref}</b></> : null}</div>
+                    <div style={softText}>line {r.line_no}</div>
+                  </td>
+                  <td style={num}>{fmt(r.gross_sen)}</td>
+                  <td style={num}>{fmt(r.fee_sen)}</td>
+                  <td style={num}>{fmt(r.net_sen)}</td>
+                  <td style={cell}>
+                    {sale && sale.map((l) => (
+                      <div key={l.payment_id}>
+                        <b>{l.doc_no ?? l.payment_id}</b>
+                        {l.customer_name ? ` · ${l.customer_name}` : ''}
+                        <div style={softText}>
+                          {[l.paid_on ? `paid ${l.paid_on}` : null,
+                            l.approval_code ? `code ${l.approval_code}` : null,
+                            fmt(l.amount_sen)].filter(Boolean).join(' · ')}
+                        </div>
+                      </div>
+                    ))}
+                    {!sale && guess.length > 0 && guess.map((p) => (
+                      <div key={p.id}>
+                        <b>{p.docNo}</b>{p.customerName ? ` · ${p.customerName}` : ''}
+                        <div style={softText}>
+                          {[`paid ${p.paidOn}`, p.approvalCode ? `code ${p.approvalCode}` : null, fmt(p.amountSen)]
+                            .filter(Boolean).join(' · ')}
+                        </div>
+                      </div>
+                    ))}
+                    {!sale && guess.length === 0 && (
+                      <span style={softText}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
+                    )}
+                  </td>
+                  <td style={cell}>
+                    {r.confirmed_at
+                      ? <span style={{ color: good }}>done{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>
+                      : sale
+                        ? <span style={{ color: good }}>matched by reference</span>
+                        : guess.length > 0
+                          ? <span>the system&rsquo;s guess — check it</span>
+                          : r.bucket === 'UNMATCHED'
+                            ? <span style={{ color: danger }}>no sale in the ERP</span>
+                            : <span>you choose</span>}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      )}
+    </section>
   );
 };
 
