@@ -31,12 +31,32 @@ const EMPTY_TOTALS = {
    Both are populated here on purpose so a test that reads the WRONG one — the
    bug this split exists to prevent — shows up as the wrong number on screen
    rather than as a passing assertion. */
-const response = (undated: MrpResponse['undated']): MrpResponse => ({
+const response = (undated: MrpResponse['undated'], skus: MrpResponse['skus'] = []): MrpResponse => ({
   asOf: '2026-08-16T00:00:00Z',
-  categories: [], warehouses: [], skus: [], sofaSets: [],
+  categories: [], warehouses: [], skus, sofaSets: [],
   undated,
   totals: EMPTY_TOTALS,
 });
+
+/* One BEDFRAME sku carrying two order lines competing for the same bucket: one
+   promised for December, one with no date at all. Used to read the ROW, not the
+   banner — the two are different claims and only one of them was pinned. */
+const line = (soItemId: string, docNo: string, deliveryDate: string | null): MrpResponse['skus'][number]['lines'][number] => ({
+  soItemId, soDocNo: docNo,
+  debtorName: 'Beta', customerState: null,
+  soDate: '2026-07-01', deliveryDate, processingDate: null, orderByDate: null,
+  qty: 5, source: 'shortage', poNumber: null, poEta: null, shortageQty: 5,
+  poSupplierId: null, poSupplierName: null,
+});
+
+const bedframeSku = (): MrpResponse['skus'] => [{
+  warehouseId: null, warehouseCode: null, warehouseName: null,
+  itemCode: 'BF-TEST', variantKey: 'BF-TEST', variantLabel: 'Oak',
+  description: 'Test bedframe', category: 'BEDFRAME',
+  qtyNeeded: 10, stock: 0, poOutstanding: 0, shortage: 10,
+  mainSupplierCode: null, mainSupplierName: null, suppliers: [],
+  lines: [line('si-dated', 'SO-DATED', '2026-12-01'), line('si-undated', 'SO-UNDATED', null)],
+}];
 
 let mrpData: MrpResponse = response({ lines: 0, shortageUnits: 0, sofaSets: 0, sofaShortageUnits: 0, hidden: true });
 
@@ -115,6 +135,28 @@ describe('MRP — hidden undated demand is stated on the page', () => {
     // reports the run.
     expect(screen.getByText(/hidden from this view/)).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Show them' })).toBeTruthy();
+  });
+
+  /* The banner is a page-level statement; this is the ROW-level one. Both the
+     PR and BUG-HISTORY claim undated rows are "marked No date", and an undated
+     row used to render `fmtDate(null)` — the same em-dash as a missing debtor
+     name or warehouse, which is not a marking, it is the absence of one. */
+  test('an undated ORDER LINE is tagged "No date"; a dated one still shows its date', () => {
+    mrpData = response(
+      { lines: 1, shortageUnits: 5, sofaSets: 0, sofaShortageUnits: 0, hidden: false },
+      bedframeSku(),
+    );
+    renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: 'Bedframe' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Expand' }));
+
+    // Both lines are on screen…
+    expect(screen.getByText('SO-DATED')).toBeTruthy();
+    expect(screen.getByText('SO-UNDATED')).toBeTruthy();
+    // …and only the undated one carries the tag.
+    expect(screen.getAllByText('No date')).toHaveLength(1);
+    // The dated line keeps a real date rather than being swept into the tag.
+    expect(screen.getByText('01/12/2026')).toBeTruthy();
   });
 
   test('the sofa tab reads the SOFA tally, not the general one', () => {
