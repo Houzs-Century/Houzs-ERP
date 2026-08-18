@@ -31,6 +31,7 @@ import { activeCompanyId, scopeToCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { readStatusCounts } from '../lib/status-counts';
 import type { Env, Variables } from '../env';
+import { chunkIn } from '../lib/paginate-all';
 
 export const fabricTracking = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -287,6 +288,41 @@ fabricTracking.post('/bulk-upsert', async (c) => {
   // Multi-company (mig 0061): stamp the active company on each upserted row.
   const cid = activeCompanyId(c);
   const stampedRows = cid != null ? dbRows.map((r) => ({ ...r, company_id: cid })) : dbRows;
+  /* REFUSE A ROW THAT IS ANOTHER COMPANY'S, RATHER THAN TAKING IT.
+     fabric_trackings.id is a GLOBAL text primary key and is derived from the
+     fabric CODE (see `const id =` above), so two companies importing the same
+     code address the same row. This upsert passes no `ignoreDuplicates`, which
+     makes it ON CONFLICT DO UPDATE — and `stampedRows` carries company_id, so the
+     merge did not merely overwrite the other company's row, it RE-HOMED it: the
+     original owner could no longer see it (GET / is company-scoped) or delete it
+     (DELETE /:id returns NOT_THIS_COMPANY). Silent, and only from a bulk import.
+
+     The two upserts below already knew this — both pass ignoreDuplicates: true.
+     This one did not. Blanket-adding it here would trade the overwrite for a
+     silent DROP, which is the other half of the same problem, so the conflicting
+     ids are named and refused instead.
+
+     0089 records why the id cannot simply gain a company column: these TEXT
+     primary keys ARE the code, and a PK redesign is the price of changing that.
+     Until then a company's import must use ids distinct from the other's, and
+     this is the check that says so out loud. */
+  const ids = stampedRows.map((r) => (r as { id: string }).id);
+  if (cid != null && ids.length > 0) {
+    const { data: foreign } = await chunkIn<{ id: string; company_id: number | null }>(
+      ids,
+      (batch, from, to) => sb.from('fabric_trackings')
+        .select('id, company_id').in('id', batch).neq('company_id', cid).order('id').range(from, to),
+    );
+    if (foreign && foreign.length > 0) {
+      const taken = foreign.map((r) => r.id).sort();
+      return c.json({
+        error: 'fabric_id_belongs_to_another_company',
+        reason: `${taken.length} fabric id(s) already exist under a different organisation and would have been overwritten: ${taken.slice(0, 20).join(', ')}${taken.length > 20 ? ` … and ${taken.length - 20} more` : ''}. Fabric ids are global (the id IS the code), so give these a distinct code.`,
+        ids: taken,
+        errors,
+      }, 409);
+    }
+  }
   const { error } = await sb.from('fabric_trackings').upsert(stampedRows, { onConflict: 'id' });
   if (error) {
     if (error.code === '42501') return c.json({ error: 'forbidden', reason: error.message, errors }, 403);
