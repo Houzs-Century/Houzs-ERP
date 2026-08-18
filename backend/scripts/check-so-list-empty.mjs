@@ -106,7 +106,7 @@ try {
   //    stored status? The route does q.eq('status', status) with the raw query
   //    param, so a literal ?status=all would filter to nothing).
   const statuses = await pg`
-    SELECT COALESCE(status, '(null)') AS status, count(*)::int AS n
+    SELECT COALESCE(status::text, '(null)') AS status, count(*)::int AS n
       FROM scm.mfg_sales_orders
      GROUP BY status ORDER BY n DESC`;
   notice("---- distinct status values (base table) ----");
@@ -114,13 +114,29 @@ try {
   const hasAllLiteral = statuses.some((s) => String(s.status).toLowerCase() === "all");
   notice(`status literal 'all' present as a real value? ${hasAllLiteral ? "YES (unexpected)" : "NO — so ?status=all matches zero rows"}`);
 
-  // 6) salesperson_id null-rate on base — a null salesperson would be invisible
-  //    to any non-view-all caller (scoped by .in('salesperson_id', ...)).
-  const [{ total, nulls }] = await pg`
-    SELECT count(*)::int AS total,
+  // 6) salesperson_id null-rate on base, PER company — a null salesperson would
+  //    be invisible to any non-view-all caller (scoped by .in('salesperson_id', ...)).
+  const spByCo = await pg`
+    SELECT company_id,
+           count(*)::int AS total,
            count(*) FILTER (WHERE salesperson_id IS NULL)::int AS nulls
-      FROM scm.mfg_sales_orders`;
-  notice(`salesperson_id null on base: ${nulls} of ${total}`);
+      FROM scm.mfg_sales_orders
+     GROUP BY company_id ORDER BY company_id`;
+  notice("---- salesperson_id null-rate, per company_id ----");
+  for (const r of spByCo) notice(`company_id=${r.company_id}: salesperson_id null ${r.nulls} of ${r.total}`);
+
+  // 7) THE APP'S EXACT FILTERS, reproduced in raw SQL on the VIEW. The list page
+  //    reads the view with .eq('company_id', <active>) and, from the frontend,
+  //    .eq('status', 'all'). Show what each predicate returns so the "empty
+  //    list" is pinned to the exact predicate that zeroes it, not inferred.
+  const [{ n: co1 }] = await pg`
+    SELECT count(*)::int AS n FROM scm.mfg_sales_orders_with_payment_totals WHERE company_id = 1`;
+  const [{ n: co1StatusAll }] = await pg`
+    SELECT count(*)::int AS n FROM scm.mfg_sales_orders_with_payment_totals
+     WHERE company_id = 1 AND status::text = 'all'`;
+  notice("---- view rows under the app's predicates (company 1) ----");
+  notice(`WHERE company_id=1                    -> ${co1}   (what a view-all caller should page)`);
+  notice(`WHERE company_id=1 AND status='all'   -> ${co1StatusAll}   (the frontend's literal ?status=all)`);
 } finally {
   await pg.end({ timeout: 5 });
 }
