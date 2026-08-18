@@ -40,13 +40,18 @@ that mutated would pass a status-only assertion).
 |---|---|---|
 | `routes/sales.ts` | POST /entries/:id/submit / unsubmit / void, DELETE /entries/:id | scoped by companyId at both SELECT + UPDATE |
 | `scm/routes/stock-takes.ts` | DELETE /:id + PATCH /:id/lines | requireActiveCompanyId + scopeToCompanyId |
-| `scm/routes/delivery-fees.ts` | PUT + DELETE /special/:id | same |
 | `scm/routes/dp-orders.ts` | PATCH /:id + POST /:id/cancel + POST /:id/schedule | same |
 | `scm/routes/dp-orders.ts` | GET / cold-start | `scopeToAllowedCompanies` fail-CLOSED |
 | `routes/projects.ts` | POST /finance/brand-rates | cascade only touches active-company projects |
 | `routes/projects.ts` | PATCH /:id/finance | PIC pre-check scoped by activeCompanySql |
 | `scm/routes/categories.ts` | POST 409 duplicate preflight | scoped so other-company id existence doesn't leak |
 | `scm/routes/accounting.ts` | POST /post/si/:invoiceNumber + /post/pi/:invoiceNumber | leak-guard SELECT scoped by active company |
+
+> `scm/routes/delivery-fees.ts` was in this table and is gone: the route was
+> removed with the other POS-only modules ported from 2990's, which Houzs
+> never wired a screen to. A delivery fee here is a line the operator picks a
+> SKU for and types an amount into — there is no fee engine to scope-test.
+
 
 ### PR #1020 — Service Case rules
 
