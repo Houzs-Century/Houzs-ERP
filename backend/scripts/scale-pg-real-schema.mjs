@@ -24,7 +24,12 @@ export const SO_LIST_COLUMNS = [
   "emergency_contact_phone", "emergency_contact_relationship", "target_date",
   "payment_method", "installment_months", "merchant_provider", "approval_code",
   "payment_date", "deposit_centi", "paid_centi", "delivery_fee_centi",
-  "created_at", "created_by", "updated_at", "proceeded_at", "paid_total_centi",
+  /* `proceeded_at` left this list on 2026-08-18 with the route's LIST_COLS —
+     the SO list projection no longer carries the second Processing-Date
+     storage. The COLUMN is still declared on the synthetic table below, because
+     the real table still has it until the follow-up drop; what moved is the
+     list CONTRACT this benchmark is asserting against. */
+  "created_at", "created_by", "updated_at", "paid_total_centi",
   "balance_centi_live", "company_id",
 ].join(", ");
 
@@ -443,7 +448,7 @@ export function pgSeedSql(config) {
 
 export const PG_QUERY_SHAPES = {
   so_summary: `
-    SELECT doc_no, status, proceeded_at, local_total_centi, created_at, so_date, company_id
+    SELECT doc_no, status, local_total_centi, created_at, so_date, company_id
       FROM scm.mfg_sales_orders
      WHERE company_id = $1 AND status <> 'DRAFT'
      ORDER BY so_date DESC
