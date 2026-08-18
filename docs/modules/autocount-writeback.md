@@ -2243,6 +2243,40 @@ assemblies. Even that is not exclusive — `build-local.ps1` compiles the source
 on any workstation with AutoCount 2.2 installed, which is how a CS0234 was
 caught before it shipped.
 
+## 7p. The line photographs reach the account book
+
+**Shipped 2026-08-18 (ERP half). The AutoCount half was proven 2026-08-15** on
+scratch order `ERP-FDPROBE-1`: the ERP sends JPEG bytes, the host renders a
+metafile into `FurtherDescription`, and the picture appears on the entry screen
+AND in the printed preview — the `XRRichText` path, which was the real risk.
+Read back: `truncated=False`, `pict=1`, `wmetafile8=1`, our own bytes kept
+unchanged. What was missing after that was only this side: nothing composed a
+`Photos` key.
+
+| | |
+|---|---|
+| Contract | `Photos: [{ Jpeg, Caption? }]` per LINE, base64 |
+| Route | **`/edit` only.** `AcSyncService.Edit()` reads it; `CreateSo` does not. A newly created order carries its pictures on its first edit |
+| ERP source | `scm.mfg_sales_order_items.photo_urls` — R2 keys in the `SO_ITEM_PHOTOS` bucket, written by `import-so-line-photos.mjs` at the cutover |
+
+**The payload carries KEYS, not bytes.** `scm.autocount_outbox` is append-only:
+storing base64 would write tens of KB per save of every photographed order,
+forever. The snapshot records what the save MEANT — these pictures, on this
+line — and `dispatchOne` materialises the bytes from R2 in the moment it sends,
+the same division `fromDoc` already runs under.
+
+**A picture the bucket cannot answer sends NO `Photos` key at all.** Not a short
+list: the service REPLACES `FurtherDescription` with what it is given, so three
+of five pictures would delete two from the book. And it never fails the edit —
+a photograph must not cost a price change its trip to the ledger.
+
+Keyed, live lines only. A cancelled line is being zeroed and must not be written
+to; a keyless line is refused by `composeEdit` long before this matters.
+
+**PO line photographs exist and are NOT sent yet** (`import-po-line-photos.mjs`
+wrote them). The sales order is the shape with live-book evidence behind it; the
+purchase order is a second rollout that needs its own.
+
 ## 8. Configuration
 
 | Name | Kind | Notes |

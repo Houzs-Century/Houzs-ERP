@@ -168,6 +168,26 @@ export interface AcOutboxPayload {
    * existed still carries `fromDoc` and must keep working exactly as it did.
    */
   fromDocs?: AcDocRef[];
+  /**
+   * The line PHOTOGRAPHS this edit should carry, named by the AutoCount line
+   * they belong to.
+   *
+   * KEYS, NOT BYTES, AND THAT IS THE WHOLE DESIGN DECISION. A cutover photo is
+   * a few KB and a document can hold five, so the base64 of one edit is tens of
+   * KB — in an APPEND-ONLY audit table, written again on every save of every
+   * photographed order. The payload records what the user's save MEANT (these
+   * pictures, on this line); `dispatchOne` materialises the bytes out of R2 in
+   * the moment it sends, exactly as `fromDoc` names a document and the drain
+   * resolves it to a number. The snapshot stays a snapshot and stays small.
+   *
+   * EDIT ONLY, because that is the only route the service takes them on
+   * (`AcSyncService.Edit()` reads `Photos` per line; `CreateSo` does not), and
+   * the only shape proven against the live book — scratch order `ERP-FDPROBE-1`,
+   * 2026-08-15: rendered on the entry screen AND in the printed preview, read
+   * back `truncated=False`, our own bytes kept unchanged. A newly created order
+   * carries its photographs on its first edit, not on the create.
+   */
+  photos?: Array<{ dtlKey: number; keys: string[] }>;
   /** Set body.DocNo from this ERP document's linked_ac_docno (cancel / edit). */
   selfDoc?: AcDocRef;
   /** Write the AutoCount document number the call returns back onto this row. */
@@ -311,7 +331,7 @@ const SO_HEADER_COLS =
    (owner 2026-08-15). It also holds the BLANK the book itself carries on 11,886
    of its 60,939 lines. */
 const SO_ITEM_COLS =
-  'id, item_code, item_group, branding, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled, warehouse_id, line_delivery_date';
+  'id, item_code, item_group, branding, description, description2, qty, unit_price_centi, variants, linked_ac_dtlkey, cancelled, warehouse_id, line_delivery_date, photo_urls';
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
@@ -1311,6 +1331,11 @@ export async function enqueueEdit(
       payload: {
         body: composed.edit() as unknown as Record<string, unknown>,
         selfDoc: composed.self,
+        /* The line photographs, as KEYS. Only the sales order composes them
+           today — it is the document the cutover pulled the pictures out of,
+           and `Photos` is an /edit field, which is the one route the service
+           takes them on. The drain fetches the bytes. */
+        ...(composed.photos ? { photos: composed.photos } : {}),
       },
       /* NULL: two successive saves are two different intents and must both be
          applied, in created_at order. */
@@ -1385,6 +1410,11 @@ async function composeDownstreamState(
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
+    /* The four downstream documents carry no photographs: the cutover pulled
+       FurtherDescription out of SO and PO lines, and nothing writes photo_urls
+       on a delivery, receipt or invoice line. Declared so every state builder
+       has ONE shape and the caller needs no narrowing. */
+    photos: undefined as AcOutboxPayload['photos'],
     self: { table: spec.table, keyCol: 'id', key: id } as AcDocRef,
     create: null as (() => Record<string, unknown>) | null,
     edit: () => composeEdit(
@@ -1409,6 +1439,9 @@ async function composeSoState(sb: Sb, docNo: string, retired: AcRetiredLine[] = 
   return {
     docNo,
     linkedAcDocNo: (h.linked_ac_docno as string | null) ?? null,
+    /* The line photographs, named by the AutoCount line. Built here because
+       this is where the rows are read; materialised at drain. */
+    photos: photosOf(soRows),
     self: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: docNo } as AcDocRef,
     /* LAZY. An edit builds this same state, and composing a create it will
        never send would refuse the edit for the create's reasons — a line with
@@ -1442,6 +1475,11 @@ async function composePoState(sb: Sb, poId: string, retired: AcRetiredLine[] = [
   return {
     docNo: header.po_number || poId,
     linkedAcDocNo: header.linked_ac_docno,
+    /* PO line photographs exist (import-po-line-photos.mjs wrote them) and are
+       NOT sent yet: the sales order is the one shape proven against the live
+       book, and a purchase order's pictures are a second rollout with its own
+       evidence, not a free ride on this one. */
+    photos: undefined as AcOutboxPayload['photos'],
     self: { table: 'purchase_orders', keyCol: 'id', key: poId } as AcDocRef,
     create: () => composeCreatePo(header, lines, { bindings: poBindings }) as unknown as Record<string, unknown>,
     /* No Ref: the ERP has no such field on a purchase order, and /edit applies
@@ -1575,6 +1613,51 @@ export async function readHostBuild(
   }
 }
 
+/**
+ * The photographs each KEYED line carries, for the edit payload.
+ *
+ * Keyed only: `Photos` is applied to a line the account book already holds, and
+ * a line with no `DtlKey` is refused by composeEdit long before this matters.
+ * Cancelled lines are skipped — a retired line is being zeroed, and attaching
+ * pictures to it would be writing to a line the ERP is in the middle of
+ * withdrawing.
+ *
+ * Returns undefined rather than an empty array when nothing is photographed, so
+ * the key is absent from the payload entirely and no reader has to tell an empty
+ * list from a missing one.
+ */
+function photosOf(rows: Record<string, unknown>[]): AcOutboxPayload['photos'] {
+  const out: NonNullable<AcOutboxPayload['photos']> = [];
+  for (const r of rows) {
+    if (r.cancelled === true) continue;
+    const n = r.linked_ac_dtlkey == null ? NaN : Number(r.linked_ac_dtlkey);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    const raw = r.photo_urls;
+    const keys = Array.isArray(raw)
+      ? raw.filter((k): k is string => typeof k === 'string' && !!k.trim())
+      : [];
+    if (keys.length) out.push({ dtlKey: n, keys });
+  }
+  return out.length ? out : undefined;
+}
+
+/**
+ * Bytes to base64, the way a Worker has to do it.
+ *
+ * `Buffer` does not exist here and `btoa` takes a STRING, so the bytes go
+ * through String.fromCharCode in chunks — whole-array spread blows the call
+ * stack on anything of photograph size, which is the entire input class.
+ */
+function b64(buf: ArrayBuffer): string {
+  const bytes = new Uint8Array(buf);
+  let out = '';
+  const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    out += String.fromCharCode(...bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(out);
+}
+
 async function mark(sb: Sb, id: string, patch: Record<string, unknown>): Promise<void> {
   await sb.from('autocount_outbox')
     .update({ ...patch, updated_at: new Date().toISOString() })
@@ -1703,6 +1786,39 @@ export async function dispatchOne(
        GRN supplier), so every source in the list carries the same creditor. */
     const creditor = await readConvertCreditor(sb, creditorSource);
     if (creditor) Object.assign(body, creditor);
+  }
+
+  /* THE PHOTOGRAPHS, fetched in the moment they are sent.
+     `payload.photos` names R2 keys; the bytes live in the SO_ITEM_PHOTOS
+     bucket and are turned into base64 here rather than stored in the outbox —
+     see the field's own note for why an append-only table must not carry them.
+
+     BEST-EFFORT PER PICTURE, FATAL FOR NONE. A photograph is not the document:
+     an unreadable object must not stop a price change reaching the account
+     book. What it must not do either is lie — a line whose pictures could not
+     be read sends NO `Photos` key at all, and the service leaves whatever
+     `FurtherDescription` the book already holds. Sending a SHORT list would
+     overwrite five pictures with three. */
+  if (row.op === 'edit' && payload.photos?.length) {
+    const lines = Array.isArray(body.Lines) ? (body.Lines as Array<Record<string, unknown>>) : [];
+    for (const want of payload.photos) {
+      const line = lines.find((l) => Number(l.DtlKey) === want.dtlKey);
+      if (!line || !want.keys.length) continue;
+      try {
+        const jpegs: Array<{ Jpeg: string }> = [];
+        for (const key of want.keys) {
+          const obj = await (env as unknown as { SO_ITEM_PHOTOS?: R2Bucket }).SO_ITEM_PHOTOS?.get(key);
+          if (!obj) throw new Error(`photo not in the bucket: ${key}`);
+          jpegs.push({ Jpeg: b64(await obj.arrayBuffer()) });
+        }
+        if (jpegs.length === want.keys.length) line.Photos = jpegs;
+      } catch (e) {
+        console.warn(
+          `photos not attached to ${row.doc_type} ${row.doc_no} line ${want.dtlKey}: `
+          + (e instanceof Error ? e.message : String(e)),
+        );
+      }
+    }
   }
 
   const attempts = (row.attempts ?? 0) + 1;

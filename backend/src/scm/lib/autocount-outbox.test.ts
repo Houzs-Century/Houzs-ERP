@@ -650,6 +650,71 @@ describe('the drain', () => {
      be ready: AutoCount would hold a delivery order carrying one sales order's
      lines while the ERP's own document carries two, and the row would be `sent`
      so nothing would ever look at it again. */
+  /* ── THE PHOTOGRAPHS ──────────────────────────────────────────────────────
+     Proven against the live book on scratch order ERP-FDPROBE-1 (2026-08-15):
+     the ERP sends JPEG bytes, the host renders a metafile, AutoCount stores
+     them verbatim and the picture appears on the entry screen AND the printed
+     document. What was missing was only this half — the ERP never sent any. */
+  const photoEnv = (bytes: Record<string, string>) => ({
+    ...env,
+    SO_ITEM_PHOTOS: {
+      get: async (k: string) => (bytes[k] === undefined ? null : {
+        arrayBuffer: async () => new TextEncoder().encode(bytes[k]).buffer,
+      }),
+    },
+  }) as never;
+
+  test('an edit carries the line photographs as base64, fetched at send time', async () => {
+    const sb = withFlag('1', { autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }] });
+    const sent: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_u: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)));
+      return jsonRes(200, { ok: true });
+    }) as never;
+
+    await dispatchOne(photoEnv({ 'so-items/a/1/ac-9001-1.jpg': 'PIC-ONE' }), sb as never, row({
+      op: 'edit',
+      doc_type: 'SO',
+      payload: {
+        body: { DocType: 'SO', DocNo: 'SO-1', Header: {}, Lines: [{ DtlKey: 9001, ItemCode: 'X' }] },
+        photos: [{ dtlKey: 9001, keys: ['so-items/a/1/ac-9001-1.jpg'] }],
+      },
+    }), fetchImpl);
+
+    /* The LAST call, not the first: an edit pre-flights /ensure-masters, so
+       sent[0] is the master list and the document follows it. */
+    const edit = sent[sent.length - 1];
+    const line = (edit.Lines as Array<Record<string, unknown>>)[0];
+    expect(line.Photos).toEqual([{ Jpeg: btoa('PIC-ONE') }]);
+  });
+
+  test('a picture the bucket cannot answer sends NO Photos key, and the edit still goes', async () => {
+    /* Sending a SHORT list would overwrite five pictures in the book with
+       three, and the service applies Photos by REPLACING FurtherDescription.
+       Omitting the key leaves whatever the account book holds — and a
+       photograph must never cost a price change its trip to the ledger. */
+    const sb = withFlag('1', { autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }] });
+    const sent: Array<Record<string, unknown>> = [];
+    const fetchImpl = vi.fn(async (_u: string, init: RequestInit) => {
+      sent.push(JSON.parse(String(init.body)));
+      return jsonRes(200, { ok: true });
+    }) as never;
+
+    const outcome = await dispatchOne(photoEnv({ 'have.jpg': 'ONE' }), sb as never, row({
+      op: 'edit',
+      doc_type: 'SO',
+      payload: {
+        body: { DocType: 'SO', DocNo: 'SO-1', Header: {}, Lines: [{ DtlKey: 9001, ItemCode: 'X' }] },
+        photos: [{ dtlKey: 9001, keys: ['have.jpg', 'gone.jpg'] }],
+      },
+    }), fetchImpl);
+
+    expect(outcome).toBe('sent');
+    const edit = sent[sent.length - 1];
+    const line = (edit.Lines as Array<Record<string, unknown>>)[0];
+    expect(line.Photos).toBeUndefined();
+  });
+
   /* ── WHICH BUILD ANSWERED (migration 0303) ────────────────────────────────
      A feature the host does not have is indistinguishable from a feature that
      ran and found nothing. /health has always known; nothing stored it. */
