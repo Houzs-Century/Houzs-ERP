@@ -18,10 +18,11 @@
 // allowed_options to bulk-INSERT mfg_products rows.
 // ----------------------------------------------------------------------------
 
-import { lazy, Suspense, useEffect, useMemo, useRef, useState } from 'react';
+import { lazy, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router';
 import { Link } from 'react-router-dom';
 import { ArrowLeft, ImagePlus, Save, Store, Trash2, Wand2, X, Power, PowerOff } from 'lucide-react';
+import { LazySlot } from '../../components/LazySlot';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { maintActiveValues } from '@2990s/shared';
@@ -395,14 +396,18 @@ export const ProductModelDetail = ({
         }
       />
 
+      {/* Scoped, not bare. This dialog opens OVER a live edit form, so a failed
+          chunk here used to bubble past every boundary in between to main.tsx's
+          unkeyed top-level one and take the form down with it. Keyed on the
+          model so closing/reopening or moving model clears it. */}
       {assigning && id && (
-        <Suspense fallback={null}>
+        <LazySlot resetKey={`assign-supplier:${id}`} fallback={null}>
           <AssignSupplierDialog
             modelIds={[id]}
             onClose={() => setAssigning(false)}
             onSaved={() => setAssigning(false)}
           />
-        </Suspense>
+        </LazySlot>
       )}
 
       {updateMut.isError && (
