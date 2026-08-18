@@ -130,13 +130,24 @@ export type MrpResponse = {
 /** Stock Status Report / MRP — recomputed server-side on every call. */
 export function useMrp(params: { category: string; warehouseId: string; includeUndated?: boolean }) {
   const { category, warehouseId, includeUndated } = params;
+  /* Undated demand is SHOWN unless the caller says otherwise (server default
+     flipped to true 2026-08-18). Kept in one place so the cache key and the
+     query string can never disagree about what was asked for. */
+  const wantUndated = includeUndated ?? true;
   return useQuery({
-    queryKey: ['mrp', category, warehouseId, includeUndated ?? false],
+    queryKey: ['mrp', category, warehouseId, wantUndated],
     queryFn: () => {
       const q = new URLSearchParams();
       if (category && category !== 'all') q.set('category', category);
       if (warehouseId && warehouseId !== 'all') q.set('warehouseId', warehouseId);
-      if (includeUndated) q.set('includeUndated', 'true');
+      /* ALWAYS sent, in BOTH directions. The old `if (includeUndated) set(...)`
+         expressed "hide" by SILENCE, which only worked while the server default
+         happened to agree. Now that the default is true, silence would mean
+         "show" and unticking the box would have changed nothing on screen —
+         the omitted-parameter no-op this repo keeps re-learning. The client
+         states what it wants and the response's `undated.hidden` states what it
+         got, so a flag the server did not honour is visible from the answer. */
+      q.set('includeUndated', wantUndated ? 'true' : 'false');
       const qs = q.toString();
       return authedFetch<MrpResponse>(`/mrp${qs ? `?${qs}` : ''}`);
     },

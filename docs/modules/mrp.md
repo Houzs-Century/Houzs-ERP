@@ -86,7 +86,7 @@ invariant (po-so-coverage.ts: "SO->PO and PO->SO can never disagree").
 
 | Consumer | File | includeUndated | Reads |
 |----------|------|----------------|-------|
-| MRP page `GET /mrp` | `mrp.ts` route | query param, default **false** | `skus[]` + `sofaSets[]` (the plan) |
+| MRP page `GET /mrp` | `mrp.ts` route | query param, default **true** (2026-08-18) | `skus[]` + `sofaSets[]` (the plan) |
 | SO drill-down Stock column | `mfg-sales-orders.ts` (`:2916`, `:3075`) | true | `mrpLineCoverage` (SO->PO) |
 | SO LIST ready-chip enrichment | `mfg-sales-orders.ts` (`:1561`) | true | the raw `MrpResult`; fail-soft — a thrown MRP just drops READY chips |
 | PO / GRN / PI "Assigned SO" | `po-so-coverage.ts` (single + list) | true | `mrpReverseCoverage` (PO->SO) |
@@ -142,14 +142,32 @@ flag removes, before the `continue` that removes them:
 | `hidden` | `!includeUndated` — the response states what it DID |
 
 The two paths are counted separately on purpose: blending them would overstate
-every non-sofa tab by the whole sofa book. `Mrp.tsx` picks by tab and renders a
-count with a one-click **Show them** wired to the existing toggle; it reads
-`hidden` from the SERVER, not from its own checkbox, so a request the server did
-not honour still reads as hidden.
+every non-sofa tab by the whole sofa book. `Mrp.tsx` picks by tab and renders the
+count in BOTH states, with a one-click **Show them** / **Hide them** wired to the
+existing toggle; it reads `hidden` from the SERVER, not from its own checkbox, so
+a request the server did not honour is described as it came back.
 
-**The DEFAULT is unchanged** — an undated line is not orderable yet and this page
-is the ordering worklist (Commander 2026-05-29). Flipping it is the owner's call
-and is one line in the route.
+### The default FLIPPED to shown (owner, 2026-08-18)
+
+It was `false` from 2026-05-29 on the reasoning that an undated line is not
+orderable yet and this page is the ordering worklist. That was right about
+ordering and wrong about SEEING: a planning screen that withholds half its
+demand cannot answer the question it exists to answer.
+
+**Requiring a delivery date was considered and REJECTED.** 43% of 2990's sales
+orders carry no delivery date, flat across June/July/August — a habit, not an
+import artefact (HOUZS's 81.9% above IS one: its AutoCount importer's INSERT
+carries neither delivery nor processing date). Forcing the field makes people
+type a FAKE date, and a fake date is worse than a null one, because allocation is
+BY DELIVERY DATE — a fake promise would jump the queue ahead of a real one. So
+undated demand keeps its null and stops being invisible instead: shown by
+default, tagged **No date** on the row, sorted last.
+
+**This is safe only because the flag is display-only.** The allocation order is
+unchanged and pinned by `mrp.test.ts` ("a dated line wins the scarce bucket over
+an undated one — under either flag, whatever the row order"), which fails if
+`byDateAsc` ever stops putting nulls last. Flipping visibility cannot move a unit
+of supply; changing that sort would.
 
 **A count is not a filter.** Nothing in `undated` feeds the allocation, and
 `mrp.test.ts` pins that: the tally must equal the set of rows the flag removed,
@@ -162,7 +180,7 @@ rows never reach the allocator, so the tally stops matching.
 `=== 'true'` was the entire parser until 2026-08-16, so **`?includeUndated=1`
 returned the default plan with no error and no warning** (verified against
 production). Accepted now, either case, trimmed: `true / 1 / yes / on` and
-`false / 0 / no / off`; absent = `false`; **anything else throws
+`false / 0 / no / off`; absent = `true` (2026-08-18); **anything else throws
 `InvalidQueryFlag` and the route answers 400.** It is never quietly false — that
 is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
 `req.query(x) === 'true'` sites in `scm/routes` still carry it.

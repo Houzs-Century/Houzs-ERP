@@ -1,10 +1,17 @@
 // The MRP page's contract about what it is NOT showing.
 //
 // Owner, 2026-08-16: "明明这个东西没有 ready,可是我的 MRP 却 show 不出来." The page
-// hides demand with no delivery date by default — deliberate, and unchanged —
-// but it hid it in SILENCE, so a real shortage rendered as no shortage at all.
-// On production that day the default view returned 82 of 163 live 2990 SO-item
-// ids and 8 of 68 short sofa sets.
+// used to hide demand with no delivery date by default, and hid it in SILENCE,
+// so a real shortage rendered as no shortage at all. On production that day the
+// default view returned 82 of 163 live 2990 SO-item ids and 8 of 68 short sofa
+// sets.
+//
+// Since 2026-08-18 undated demand is SHOWN by default (owner's call: a forced
+// delivery date would be a FAKE one, and a fake date outranks a real one in an
+// allocation sorted by date — so the demand keeps its null and stops being
+// invisible instead). The banner therefore has to speak in BOTH directions:
+// what is on screen, or what is being withheld. Whichever state the page is in,
+// the number is never absent.
 //
 // What is pinned here is the visibility, not the arithmetic: the count itself is
 // computed and tested in backend/src/scm/routes/mrp.test.ts. The hook is mocked
@@ -76,13 +83,38 @@ describe('MRP — hidden undated demand is stated on the page', () => {
     expect(screen.queryByText(/hidden from this view/)).toBeNull();
   });
 
-  test('the SERVER decides "hidden", not the checkbox: hidden=false shows no banner', () => {
-    // The response is what the run DID. A page that trusted its own toggle would
-    // keep claiming rows were hidden after asking for them — and, worse, would
-    // stay silent for a caller whose flag the server never honoured.
+  /* THE DEFAULT FLIPPED (owner, 2026-08-18) and this is where the old shape of
+     the banner would have gone quiet. It used to render only while rows were
+     WITHHELD, so the moment "shown" became the default the count vanished from
+     the screen — the same silence the banner was built to end, moved one state
+     to the left. The count is now unconditional on there BEING undated demand,
+     and only its wording depends on which way the flag went. */
+  test('shown by default: the count is still on screen, now saying they are listed', () => {
     mrpData = response({ lines: 81, shortageUnits: 60, sofaSets: 0, sofaShortageUnits: 0, hidden: false });
     renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: 'Bedframe' }));
+
+    expect(screen.getByText('81')).toBeTruthy();
+    expect(screen.getByText(/order lines/)).toBeTruthy();
+    expect(screen.getByText(/listed below, sorted last and marked No date/)).toBeTruthy();
+    expect(screen.getByText('60')).toBeTruthy();
+    // It must NOT claim they are hidden while it is showing them.
     expect(screen.queryByText(/hidden from this view/)).toBeNull();
+    // And the escape hatch points the other way now.
+    expect(screen.getByRole('button', { name: 'Hide them' })).toBeTruthy();
+  });
+
+  test('the SERVER decides the wording, not the checkbox', () => {
+    // The response is what the run DID. A page that trusted its own toggle would
+    // keep claiming rows were hidden after asking for them — and, worse, would
+    // describe a flag the server never honoured as though it had been.
+    mrpData = response({ lines: 81, shortageUnits: 60, sofaSets: 0, sofaShortageUnits: 0, hidden: true });
+    renderPage();
+    fireEvent.click(screen.getByRole('tab', { name: 'Bedframe' }));
+    // showUndated defaults to true, yet the run came back hidden — the page
+    // reports the run.
+    expect(screen.getByText(/hidden from this view/)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Show them' })).toBeTruthy();
   });
 
   test('the sofa tab reads the SOFA tally, not the general one', () => {

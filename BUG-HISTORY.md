@@ -1,3 +1,69 @@
+## Undated demand stopped being hidden, because the fix for the silence had moved the silence rather than ended it [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**What changed.** `GET /api/scm/mrp` now defaults `includeUndated` to **true**.
+SO lines with no delivery date appear on the MRP page by default, tagged
+**No date** on the row and sorted last. `?includeUndated=false` still hides them
+and the **Show no-date** checkbox still works — it now starts ticked.
+
+**Why the previous fix was not enough.** 2026-08-16 established that the default
+view carried 82 of 163 live 2990 SO-item ids and 8 of 68 short sofa sets, and
+said nothing about the missing half. The response grew `undated{}` and the page
+grew a banner. But that banner rendered **only while rows were withheld**, so it
+was a count that existed exactly as long as the thing it counted was invisible.
+It ended the silence for one of the two states, which is why the owner's original
+complaint survived it: *"明明这个东西没有 ready,可是我的 MRP 却 show 不出来."* A
+planning screen that withholds half its demand cannot answer the question it
+exists to answer, however honestly it describes the withholding.
+
+**The obvious fix was rejected, deliberately.** Making the delivery date REQUIRED
+was considered first. 43% of 2990's sales orders carry no delivery date, and the
+share is flat across June/July/August — a habit, not an import artefact. (HOUZS's
+81.9% IS an import artefact: its AutoCount importer's INSERT carries neither
+delivery nor processing date. The two numbers have different causes and must not
+be quoted as one.) Forcing the field does not produce dates, it produces FAKE
+dates — and a fake date is strictly worse than a null one here, because MRP
+allocates supply BY DELIVERY DATE. A null sorts last and can only take what is
+left over; a fake promise sorts wherever it was typed and can take supply from a
+real one. So the null stays and the invisibility goes.
+
+**Why this is safe.** `includeUndated` has been DISPLAY-ONLY since audit D6
+(2026-08-01): the allocation always ran over the full active set with undated
+lines sorted LAST, because `byDateAsc` (`backend/src/scm/routes/mrp.ts:342-347`)
+returns `1` for a null. Every dated line's coverage is identical under both flag
+values, so this flip changes which rows are RENDERED and cannot move a unit of
+supply. That is the load-bearing claim, so it is pinned rather than asserted:
+`mrp.test.ts` — *"a dated line wins the scarce bucket over an undated one — under
+either flag, whatever the row order"* — feeds the undated row in FIRST against a
+PO that cannot cover both, and requires the dated line to come out whole under
+both flag values. Inverting the two null branches of `byDateAsc` fails it (the
+dated line drops to `shortage`), which is the check that the test is measuring
+the sort and not the insertion order.
+
+**The count is now unconditional.** The banner renders whenever there IS undated
+demand and only its wording depends on the flag: *"…are listed below, sorted last
+and marked No date"* against *"…are hidden from this view"*, with **Hide them** /
+**Show them** pointing whichever way the operator is not. `hidden` is still read
+from the RESPONSE rather than from the checkbox, so a flag the server did not
+honour is described as it actually came back.
+
+**One adjacent trap closed.** `useMrp` built its query string as
+`if (includeUndated) q.set('includeUndated', 'true')` — it expressed "hide" by
+SILENCE, which only worked while the server default happened to agree with it.
+With the default flipped, omitting the parameter means "show", so unticking the
+box would have sent nothing and changed nothing on screen: the omitted-parameter
+no-op, arriving through the front door this time. The flag is now sent in both
+directions.
+
+**Files.** `backend/src/scm/routes/mrp.ts` (default + comments),
+`frontend/src/vendor/scm/lib/mrp-queries.ts` (always send the flag),
+`frontend/src/pages/scm-v2/Mrp.tsx` (default ticked, two-state banner,
+`DeliveryCell` No-date tag), `backend/src/scm/routes/mrp.test.ts`,
+`frontend/src/pages/scm-v2/mrpUndatedBanner.test.tsx`, `docs/modules/mrp.md`,
+and four probe/audit scripts whose printed notices still described the old
+default.
+
 ## The refusal that already knew the answer printed a sentence with none of it in — and half the bedframes it refused were a curly quote [high]
 
 <!-- area: Sales orders + pricing -->

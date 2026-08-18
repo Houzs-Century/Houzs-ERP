@@ -519,6 +519,41 @@ describe('computeMrp — includeUndated is visibility, not a demand filter (audi
     expect(res.skus).toHaveLength(0);
     expect(res.totals.skuCount).toBe(0);
   });
+
+  /* THE INVARIANT THE 2026-08-18 DEFAULT FLIP RESTS ON.
+     Showing undated demand by default is only safe because an undated line can
+     never take supply from a dated one: byDateAsc (mrp.ts) returns 1 for null,
+     so nulls sort after every real date and reach the PO queue last. If that
+     order ever inverted, the flip would stop being a display change and start
+     re-routing goods — an undated line would jump a promised one. So it is
+     pinned here, from the OUTPUT, under both flag values and with the scarce
+     row fed in FIRST so insertion order cannot be what produces the answer. */
+  test('a dated line wins the scarce bucket over an undated one — under either flag, whatever the row order', async () => {
+    // PO-RED supplies 6. Both lines want 5 of the same variant bucket.
+    const scarce = () => ({
+      ...BASE_TABLES,
+      mfg_sales_order_items: [undated, dated],      // undated deliberately FIRST
+      purchase_order_items: [poLine('PO-RED', 6, { fabricCode: 'RED' }, '2026-11-01')],
+    });
+
+    for (const includeUndated of [true, false]) {
+      const res = await computeMrp(fakeSb(scarce()) as any, { ...opts, includeUndated });
+      const datedLine = res.skus[0]!.lines.find((l) => l.soItemId === 'si-red')!;
+
+      // The dated line is whole in both runs: it reached the queue first.
+      expect([includeUndated, datedLine.source]).toEqual([includeUndated, 'po']);
+      expect([includeUndated, datedLine.poNumber]).toEqual([includeUndated, 'PO-RED']);
+      expect([includeUndated, datedLine.shortageQty]).toEqual([includeUndated, 0]);
+      expect([includeUndated, datedLine.qty]).toEqual([includeUndated, 5]);
+
+      /* The undated line eats the 1 leftover unit and carries the shortage —
+         counted whether or not it was RENDERED, which is the whole point of
+         tallying before the visibility `continue`. */
+      expect([includeUndated, res.undated.lines]).toEqual([includeUndated, 1]);
+      expect([includeUndated, res.undated.shortageUnits]).toEqual([includeUndated, 4]);
+      expect([includeUndated, res.undated.hidden]).toEqual([includeUndated, !includeUndated]);
+    }
+  });
 });
 
 /* ── The hidden half is REPORTED, and hiding still changes nothing (2026-08-16)
@@ -664,8 +699,23 @@ describe('parseIncludeUndated — a truthy-looking value must never be silently 
     }
   });
 
-  test('omitted is the documented default (false)', () => {
-    expect(parseIncludeUndated(undefined)).toBe(false);
+  test('omitted is the documented default — TRUE since 2026-08-18', () => {
+    /* Flipped by the owner after the measurement that started this: the default
+       view held 82 of 163 live 2990 SO-item ids and 8 of 68 short sofa sets, so
+       a screen whose job is "what is short" was answering from half the book.
+       Requiring a delivery date was rejected — a forced date gets a fake one,
+       and a fake date outranks a real one in an allocation sorted BY date.
+
+       This flips VISIBILITY only; the allocation-order pin below is what makes
+       that claim checkable rather than asserted. */
+    expect(parseIncludeUndated(undefined)).toBe(true);
+  });
+
+  test('an explicit "false" still hides — the toggle did not become decorative', () => {
+    // The page sends the flag in BOTH directions now (mrp-queries.ts). If this
+    // ever collapsed to true, unticking "Show no-date" would silently no-op.
+    expect(parseIncludeUndated('false')).toBe(false);
+    expect(parseIncludeUndated('0')).toBe(false);
   });
 
   test('anything else THROWS rather than collapsing onto false', () => {

@@ -50,6 +50,28 @@ const TOOLBAR_BTN =
 // Canonical date format (Commander 2026-05-29) — shared @2990s/shared helper.
 const fmtDate = (iso: string | null): string => fmtDateOrDash(iso);
 
+/* The Delivery cell for an SO line. A missing delivery date is NOT the same
+   fact as a missing debtor name or warehouse, and since 2026-08-18 these rows
+   sit in the default view alongside dated ones — so it gets a word instead of
+   the same em-dash every other empty cell renders. Undated rows sort LAST in
+   the allocation (byDateAsc, mrp.ts) and cannot take supply from a dated line;
+   the tag is what makes that visible on the row rather than only in the banner.
+
+   Not orderable yet is the POINT: the operator should see the demand exists and
+   see, in the same glance, that it has no promised date behind it. */
+function DeliveryCell({ iso }: { iso: string | null }) {
+  if (iso) return <td>{fmtDate(iso)}</td>;
+  return (
+    <td>
+      <span
+        className="inline-flex items-center rounded border border-warning-text/30 bg-warning-bg px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-warning-text"
+        title="No delivery date on this line or its Sales Order — planned last, not ready to order">
+        No date
+      </span>
+    </td>
+  );
+}
+
 type View = 'sofa' | 'bedframe' | 'mattress' | 'accessory';
 
 // Lead-time maintenance shows the four orderable categories (Service excluded,
@@ -413,7 +435,11 @@ export const Mrp = () => {
   const [dateBasis, setDateBasis] = useState<'delivery' | 'processing' | 'soDate' | 'orderBy'>('delivery');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
-  const [showUndated, setShowUndated] = useState<boolean>(false);
+  /* SHOWN by default (owner, 2026-08-18). A planning screen that hides half its
+     demand cannot answer the question it exists to answer; undated rows are
+     marked "No date" and sort last, so they are visibly not-ready without being
+     invisible. Unticking still hides them. See parseIncludeUndated in mrp.ts. */
+  const [showUndated, setShowUndated] = useState<boolean>(true);
   /* Commander 2026-05-29 — focus view: hide everything that's fully covered and
      show ONLY the rows that still need ordering (shortage > 0), so the operator
      can go straight to Proceed PO without wading past the Ready ones. */
@@ -444,12 +470,18 @@ export const Mrp = () => {
   const apiCategory = VIEW_CATEGORY[view];
   const q = useMrp({ category: apiCategory, warehouseId, includeUndated: showUndated });
   const data = q.data;
-  /* How much undated demand this tab is not rendering. The sofa view reads the
-     sofa tally (section 8 is SOFA-only and ignores the category filter); every
-     other view reads the general one, which IS category-filtered. Reading the
-     wrong one would report the whole sofa book on the Mattress tab. */
-  const undatedHidden = view === 'sofa' ? (data?.undated?.sofaSets ?? 0) : (data?.undated?.lines ?? 0);
-  const undatedHiddenShort = view === 'sofa' ? (data?.undated?.sofaShortageUnits ?? 0) : (data?.undated?.shortageUnits ?? 0);
+  /* How much undated demand this tab is carrying — whether it is on screen or
+     withheld. The sofa view reads the sofa tally (section 8 is SOFA-only and
+     ignores the category filter); every other view reads the general one, which
+     IS category-filtered. Reading the wrong one would report the whole sofa
+     book on the Mattress tab. */
+  const undatedCount = view === 'sofa' ? (data?.undated?.sofaSets ?? 0) : (data?.undated?.lines ?? 0);
+  const undatedShortUnits = view === 'sofa' ? (data?.undated?.sofaShortageUnits ?? 0) : (data?.undated?.shortageUnits ?? 0);
+  /* What the RUN did, from the response — not from `showUndated`. A request the
+     server did not honour must not be reported as the state the operator asked
+     for. `undated` is optional on the type, so an older/partial payload leaves
+     this undefined and the banner below stays off rather than guessing. */
+  const undatedHidden = data?.undated?.hidden;
   const createPos = useCreatePosFromSoItems();
 
   /* One key per convert RUN — the intent this page DOES have, and the reason
@@ -913,32 +945,37 @@ export const Mrp = () => {
         ))}
       </div>
 
-      {/* Undated demand that this view is NOT showing. Owner, 2026-08-16:
+      {/* Undated demand — STATED IN BOTH DIRECTIONS. Owner, 2026-08-16:
           "明明这个东西没有 ready,可是我的 MRP 却 show 不出来" — half of 2990's live
           demand was absent by default and the page said nothing, so a real
           shortage read as no shortage at all.
 
-          The DEFAULT is deliberately unchanged (undated demand is not orderable
-          yet, Commander 2026-05-29 — this page is the ordering worklist). What
-          was wrong was the SILENCE, so the hidden set is now a stated fact with
-          the toggle one click away. `hidden` comes from the server, not from
-          showUndated, so a request the server did not honour still reads true.
+          Since 2026-08-18 these rows are SHOWN by default; the banner did not
+          become unnecessary, it changed sides. A count that only appears while
+          rows are withheld goes quiet the moment the default flips, which is the
+          same silence in a new place — so this renders whenever there IS undated
+          demand and says which of the two things is true of it. The one-click
+          toggle works in whichever direction the operator is not currently in.
+
+          `hidden` comes from the RESPONSE, not from showUndated, so a request
+          the server did not honour is described as it actually came back.
 
           Sofa counts sets and is not category-filtered; every other tab counts
           general lines — see MrpResponse['undated']. */}
-      {undatedHidden > 0 && data?.undated?.hidden && (
+      {undatedCount > 0 && undatedHidden !== undefined && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warning-text/25 bg-warning-bg px-4 py-2.5 text-[12.5px] leading-relaxed text-warning-text">
           <Clock {...ICON} className="shrink-0" />
           <span>
-            <strong className="font-semibold">{undatedHidden}</strong>{' '}
-            {view === 'sofa' ? (undatedHidden === 1 ? 'sofa set' : 'sofa sets') : (undatedHidden === 1 ? 'order line' : 'order lines')}
-            {' '}with no delivery date {undatedHidden === 1 ? 'is' : 'are'} hidden from this view
-            {undatedHiddenShort > 0 && (
-              <> — <strong className="font-semibold">{undatedHiddenShort}</strong> {undatedHiddenShort === 1 ? 'unit is' : 'units are'} short</>
+            <strong className="font-semibold">{undatedCount}</strong>{' '}
+            {view === 'sofa' ? (undatedCount === 1 ? 'sofa set' : 'sofa sets') : (undatedCount === 1 ? 'order line' : 'order lines')}
+            {' '}with no delivery date {undatedCount === 1 ? 'is' : 'are'}{' '}
+            {undatedHidden ? 'hidden from this view' : 'listed below, sorted last and marked No date'}
+            {undatedShortUnits > 0 && (
+              <> — <strong className="font-semibold">{undatedShortUnits}</strong> {undatedShortUnits === 1 ? 'unit is' : 'units are'} short</>
             )}.
           </span>
-          <button type="button" className={TOOLBAR_BTN} onClick={() => setShowUndated(true)}>
-            Show them
+          <button type="button" className={TOOLBAR_BTN} onClick={() => setShowUndated(undatedHidden)}>
+            {undatedHidden ? 'Show them' : 'Hide them'}
           </button>
         </div>
       )}
@@ -1450,7 +1487,7 @@ const ChildLine = ({ ln, suppliers, whCode, whName, selected, onToggleLine, chos
       <td>{ln.debtorName ?? '—'}</td>
       <td>{ln.customerState ?? '—'}</td>
       <td>{fmtDate(ln.processingDate)}</td>
-      <td>{fmtDate(ln.deliveryDate)}</td>
+      <DeliveryCell iso={ln.deliveryDate} />
       <td className={styles.num}>{ln.qty}</td>
       <td>
         {ln.source === 'stock' && <span className={`${styles.tag} ${styles.tagStock}`}>stock</span>}
@@ -1536,7 +1573,7 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
             <td>{ln.debtorName ?? '—'}</td>
             <td>{ln.customerState ?? '—'}</td>
             <td>{fmtDate(ln.processingDate)}</td>
-            <td>{fmtDate(ln.deliveryDate)}</td>
+            <DeliveryCell iso={ln.deliveryDate} />
             <td className={styles.num}>{ln.qty}</td>
             <td>
               {ln.source === 'stock' && <span className={`${styles.tag} ${styles.tagStock}`}>stock</span>}
