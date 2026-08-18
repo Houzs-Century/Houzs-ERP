@@ -3600,11 +3600,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      PWP voucher binding below — all of which previously saw a permanently-null
      customer_id (the POS never sent one). */
   let orderCustomerId: string | null = null;
-  /* An unresolved company must not become Houzs by default — see the note
-     at p_company_id below. */
-  const casCo = requireActiveCompanyId(c);
-  if (!casCo.ok) return c.json(casCo.refusal, 409);
-  const casCompanyId = casCo.companyId;
+  const casCo = requireActiveCompanyId(c); if (!casCo.ok) return c.json(casCo.refusal, 409);  // HAZARD 1
   /* Scan blank-draft shell (owner 2026-07-04) — a scan that could not read the
      customer's name/phone still lands a draft the rep completes by hand, but it
      carries PLACEHOLDER name/phone. Resolving a customer identity off those
@@ -3616,12 +3612,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       p_name:  customerName,
       p_phone: normPhone,
       p_email: typeof body.email === 'string' && body.email.trim() ? body.email.trim() : null,
-      /* NOT `?? null`. mig 0164 resolves this with
-         COALESCE(p_company_id, (SELECT id FROM public.companies WHERE code='HOUZS')),
-         so a NULL here does not mean "unscoped" — it means "book it to Houzs".
-         A 2990 session whose company failed to resolve would file its customer
-         under the other organisation, silently. Refused above instead. */
-      p_company_id: casCompanyId,  // mig 0164 — scope resolve to the active company
+      p_company_id: casCo.companyId,  // NOT `?? null` — HAZARD 1 in docs/modules/sales-order.md
     });
     if (customerErr) {
       console.error('[mfg-so] customer resolve failed:', customerErr.message ?? customerErr);
@@ -3642,9 +3633,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const freeGiftBaseByIdx = new Map<number, number>();       // gift line idx → granted base (always 0)
   // Free Item Campaign (migration 0176) — idx → resolved {campaignId, campaignName}.
   const freeItemByIdx = new Map<number, { campaignId: string; campaignName: string }>();
-  /* companyId travels WITH each claim: the rollback below runs outside the loop
-     that resolved it, and a restore keyed on code alone can un-burn another
-     company's row (mig 0188 re-keyed pwp_codes on (company_id, code)). */
   const claimedPwpCodes: Array<{ code: string; prevStatus: string; companyId: number }> = [];
   /* Loo 2026-06-05 (VALOR / PW-Test-voucher incident) — a line that CARRIES a
      pwpCode but fails the grant used to be silently repriced at full price,
@@ -3689,13 +3677,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     if (!code) continue;
     const reject = (reason: string) =>
       pwpRejections.push({ idx, itemCode: String(it?.itemCode ?? ''), code, reason });
-    /* mig 0188 re-keyed pwp_codes on (company_id, code): a WRITE keyed on `code`
-       alone reaches whichever company's row sorts first, and this is the path
-       that BURNS the voucher. The add-line claim further down this file already
-       refuses when the company cannot be resolved (409 company_unresolved); this
-       bulk/create path did not, so it is made to refuse the same way rather than
-       write unscoped. Claiming nothing is the safe outcome; claiming another
-       company's identically named code is not. */
+    // HAZARD 2 (see the guide): claiming nothing is safe; claiming theirs is not.
     if (companyId == null) { reject('cannot tell which company this order belongs to — reload and try again'); continue; }
     const pwpCompanyId: number = companyId;
     if (seenPwpCodes.has(code)) { reject('code is already applied to another line on this order'); continue; }
@@ -3813,10 +3795,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         redeemed_item_code: product.code,
         updated_at:         new Date().toISOString(),
       })
-      /* mig 0188 re-keyed pwp_codes on (company_id, code): without the company
-         filter the claim reaches whichever company's row sorts first, on the
-         path that BURNS the voucher. Refused above when it cannot be resolved. */
-      .eq('code', code)
+      .eq('code', code)  // HAZARD 2 (see the guide) — both halves of the key
       .eq('company_id', pwpCompanyId);
     // Orphaned-USED re-claim must match the orphan row exactly (USED + the same
     // dead doc_no) so a parallel legitimate redemption can't be hijacked.
@@ -3847,11 +3826,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         updated_at: new Date().toISOString(),
       };
       if (prevStatus === 'RESERVED') patch.source_doc_no = null;  // we stamped it on claim
-      /* Company-filtered for the reason given at the claim: a rollback keyed on
-         code alone can un-burn ANOTHER company's row. Reachable only for codes
-         this request actually claimed, and a claim is refused unless the company
-         resolved, so pwpCompanyId is non-null here by construction. */
-      await sb.from('pwp_codes').update(patch)
+      await sb.from('pwp_codes').update(patch)  // HAZARD 2: code alone un-burns theirs
         .eq('code', code).eq('status', 'USED').eq('company_id', claimedCompanyId);
     }
   };
@@ -7252,11 +7227,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
   updates.edit_lease_token = operationLeaseToken;
   updates.edit_lease_expires_at = leaseExpiryIso;
 
-  /* An unresolved company must not become Houzs by default — see the note
-     at p_company_id below. */
-  const casCo = requireActiveCompanyId(c);
-  if (!casCo.ok) return c.json(casCo.refusal, 409);
-  const casCompanyId = casCo.companyId;
+  const casCo = requireActiveCompanyId(c); if (!casCo.ok) return c.json(casCo.refusal, 409);  // HAZARD 1
   /* The header CAS and every version-bound follower commit in ONE PostgreSQL
      transaction. A follower exception rolls the header back as well; there is
      no longer a committed-header / failed-cascade split brain. */
@@ -7277,12 +7248,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     p_delivery_date: cascadedDeliveryClear ? null : dateOrNull(body['customerDeliveryDate']),
     // mig 0164 — the customer upsert inside the RPC is company-scoped. Omitting
     // this resolves every re-customer against HOUZS.
-      /* NOT `?? null`. mig 0164 resolves this with
-         COALESCE(p_company_id, (SELECT id FROM public.companies WHERE code='HOUZS')),
-         so a NULL here does not mean "unscoped" — it means "book it to Houzs".
-         A 2990 session whose company failed to resolve would file its customer
-         under the other organisation, silently. Refused above instead. */
-    p_company_id: casCompanyId,
+    p_company_id: casCo.companyId,  // NOT `?? null` — HAZARD 1 in docs/modules/sales-order.md
   });
   if (casError) return c.json({ error: 'update_failed', reason: casError.message }, 500);
   const cas = (Array.isArray(casRows) ? casRows[0] : casRows) as
@@ -10173,14 +10139,8 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     if (error) console.error('[tbc-swap-sofa] sofa reward revert failed for', uid, error.message); // eslint-disable-line no-console
   }
   if (rewardCtx) {
-    /* Same (company_id, code) hazard as the claim path: keying a WRITE on `code`
-       alone reaches whichever company's row sorts first. Both branches below
-       re-point or RELEASE a voucher, so an unfiltered one hands another
-       company's code back to stock. */
+    // HAZARD 2 again: these RELEASE a voucher — unfiltered hands theirs back to stock.
     const rewardCompanyId = activeCompanyId(c);
-    /* Refuse rather than write unscoped. An unresolved company on a voucher write
-       is not a reason to widen the filter to every company — the add-line claim
-       answers the same situation with 409 company_unresolved. */
     if (rewardCompanyId == null) throw new Error('TBC sofa reward code write refused: company unresolved');
     if (rewardComboMatch) {
       const { error } = await sb.from('pwp_codes')
@@ -11236,12 +11196,8 @@ mfgSalesOrders.delete('/:docNo/payments/:id', async (c) => {
     }, 409);
   }
 
-  /* STRICT, like the payment PATCH and the slip POST twenty lines either side.
-     This was the degrading `scopeToCompany`, which drops its predicate entirely
-     when the active company cannot be resolved — on a DELETE. The siblings were
-     made strict on 2026-08-18 for exactly that reason and this one was missed. */
-  const delCo = requireActiveCompanyId(c);
-  if (!delCo.ok) return c.json(delCo.refusal, 409);
+  // STRICT like the PATCH/POST either side: scopeToCompany degrades, and this DELETEs.
+  const delCo = requireActiveCompanyId(c); if (!delCo.ok) return c.json(delCo.refusal, 409);
   const { data: deleted, error } = await scopeToCompanyId(sb.from('mfg_sales_order_payments').delete()
     .eq('id', id)
     .eq('so_doc_no', docNo)

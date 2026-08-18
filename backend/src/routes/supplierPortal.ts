@@ -1,4 +1,23 @@
 /**
+ * company-scope-file: every route here is a CAPABILITY token, not a session, and
+ * the token is a STRONGER scope than a company predicate — it resolves to exactly
+ * ONE case. Verified 2026-08-19 rather than taken from the paragraph below, which
+ * is the shape CLAUDE.md warns about:
+ *
+ *   · services/supplierPortal.ts resolveSupplierToken() reads
+ *     assr_supplier_tokens by token and returns a single { assr_id, creditor_code },
+ *     refusing a revoked or expired row;
+ *   · middleware/supplierTrack.ts 401s when that resolve fails, so no handler runs
+ *     without a scope;
+ *   · every write below binds `assr_id` FROM THAT SCOPE and never a route param.
+ *     Checked on all nine routes: the five the gate flags carry no
+ *     `c.req.param(...)` at all, and the two `/attachments/:attId` routes bind
+ *     attId AND assr_id together, so the attachment id cannot escape the case.
+ *
+ * A company predicate would add nothing: the caller is a supplier, has no company
+ * session, and cannot name a second case. If a route here ever binds an id that
+ * came from the REQUEST, this exemption stops being true — delete it.
+ *
  * Supplier Portal API — proposal §6.3.
  *
  * All routes are gated by the supplierTrack middleware (see
@@ -153,6 +172,7 @@ app.post("/stage", (c) =>
 // the original acceptance timestamp instead of overwriting it.
 
 app.post("/accept", async (c) => {
+  // company-scope: capability token, not a session — the bearer resolves to exactly ONE assr_id and every write binds THAT id, never a route param. Evidence in this file's header, verified 2026-08-19.
   const { assr_id } = c.get("supplierScope");
   const existing = await c.env.DB.prepare(
     `SELECT supplier_accepted_at FROM assr_cases WHERE id = ?`
@@ -189,6 +209,7 @@ app.post("/accept", async (c) => {
 // activity stream so ops keeps the full history.
 
 app.post("/quote", async (c) => {
+  // company-scope: capability token, not a session — the bearer resolves to exactly ONE assr_id and every write binds THAT id, never a route param. Evidence in this file's header, verified 2026-08-19.
   const { assr_id } = c.get("supplierScope");
   const body = await c.req
     .json<{ labour?: number; materials?: number }>()
@@ -229,6 +250,7 @@ app.post("/quote", async (c) => {
 // from staff notes.
 
 app.post("/remarks", async (c) => {
+  // company-scope: capability token, not a session — the bearer resolves to exactly ONE assr_id and every write binds THAT id, never a route param. Evidence in this file's header, verified 2026-08-19.
   const { assr_id } = c.get("supplierScope");
   // Spam brake — same treatment as the customer portal's comments.
   const limited = await checkRateLimit(c, "supplier_remark", String(assr_id), 20, 3600);
@@ -265,6 +287,7 @@ app.post("/remarks", async (c) => {
 // on the main case page's QC Inspection card.
 
 app.put("/service-note", async (c) => {
+  // company-scope: capability token, not a session — the bearer resolves to exactly ONE assr_id and every write binds THAT id, never a route param. Evidence in this file's header, verified 2026-08-19.
   const { assr_id } = c.get("supplierScope");
   const body = await c.req.json<{ note?: string | null }>();
   const raw = typeof body.note === "string" ? body.note.trim() : "";

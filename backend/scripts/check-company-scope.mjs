@@ -360,7 +360,7 @@ const RPC_COMPANY_ARG = /\b(p_)?company(_id|Id)\b/;
 /* EXTENDED 2026-08-18 when the route pass started using it. Exclusion (2) in
    the paragraph above is "CONCURRENCY GUARDS — a compare-and-swap predicate,
    not identity", and the list only ever named the two examples that had bitten:
-   `.eq('paid_centi', prev)` and `.eq('updated_at', prev)`. The route handlers
+   `.eq('paid_sen', prev)` and `.eq('updated_at', prev)`. The route handlers
    run the same class under different names — `version`, `edit_lease_token`,
    `apply_lease_token` — and they produced 20 of the route pass's first 40
    findings, all of them compare-and-swap on a row the caller had already
@@ -368,7 +368,7 @@ const RPC_COMPANY_ARG = /\b(p_)?company(_id|Id)\b/;
    because the list spelt it `type` exactly rather than `*_type`. Each addition
    below is one of those two documented exclusions, not a new one. */
 const NOT_IDENTITY =
-  /^(id|.*_id|status|state|.*_at|.*_centi|.*_sen|qty|.*_qty|type|.*_type|kind|active|deleted|version|.*_version|.*_token|reason)$/;
+  /^(id|.*_id|status|state|.*_at|.*_sen|qty|.*_qty|type|.*_type|kind|active|deleted|version|.*_version|.*_token|reason)$/;
 const NATURAL_KEY_EQ_G = /\.eq\(\s*['"`]([a-z][a-z0-9_]*)['"`]/g;
 
 /* A registration whose body is a NAMED function declared elsewhere:
