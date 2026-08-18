@@ -11,12 +11,15 @@
    So for one order carrying both, the DO map's "Customer PO" node and the SI
    map's could disagree.
 
-   THE ORDER IS FROM THE DATA, not taste. Audited against production 2026-08-18
-   on scm.mfg_sales_orders: `customer_so_no` is the filled value (96%),
-   `po_doc_no` / `customer_po` are 0%-filled dead columns, and `ref` is a filled
-   duplicate of `customer_so_no`. So `customer_so_no` leads; the rest are
-   fallbacks that never fire on live data but stay so legacy/native rows that
-   only carried the old columns still render.
+   THE ORDER IS FROM THE DATA + THE OWNER'S RULING (2026-08-18). Audited on
+   scm.mfg_sales_orders: `ref` is the customer's reference and is the filled
+   value on 2717 orders. `customer_so_no` is a near-duplicate carrying the SAME
+   value plus 6 junk rows (test strings, and 2 rows where a source SO number was
+   hand-typed into it) — the owner ruled `ref` is the correct field and
+   `customer_so_no` is not needed. `po_doc_no` / `customer_po*` are 0%-filled
+   dead columns. So `ref` LEADS; `customer_so_no` is a transitional fallback
+   until it is retired, and `po_doc_no` a dead one that never fires on live data
+   but stays so any legacy row that only carried it still renders.
 
    This is the DISPLAY rule only. The dead columns themselves are dropped in a
    separate, higher-risk migration (they are projected by a view — see the
@@ -35,5 +38,5 @@ export type CustomerRefHeader = {
 /** The customer's own reference to show for a sales document. Empty string when
  *  none is recorded — callers decide how to render that (e.g. "Not linked"). */
 export function customerRefOf(header: CustomerRefHeader | null | undefined): string {
-  return (header?.customer_so_no || header?.po_doc_no || header?.ref || '').trim();
+  return (header?.ref || header?.customer_so_no || header?.po_doc_no || '').trim();
 }
