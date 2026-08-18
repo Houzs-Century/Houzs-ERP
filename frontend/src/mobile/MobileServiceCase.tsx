@@ -2733,9 +2733,29 @@ function EditableAcc({
                     value={draft[f.key] ?? ""}
                     onChange={(v) => setDraft((d) => ({ ...d, [f.key]: v }))}
                   />
+                ) : f.type === "date" ? (
+                  /* DateField, not a native date input: the native one renders
+                     in the OPERATING SYSTEM's locale, so the same field read
+                     DD/MM/YYYY on one machine and MM/DD/YYYY on another. Same
+                     ISO contract in and out.
+
+                     This branch was previously `type={f.type === "date" ? "date"
+                     : "text"}` on the input below — a DYNAMIC type, which is why
+                     it survived the 2026-08-18 sweep of all 175 native date
+                     inputs AND the gate that now guards them: both match a
+                     LITERAL `type="date"`. No caller passes a date field today,
+                     so nothing was misreading on screen; the EditField union
+                     offers "date" though, so the first one added would have got
+                     the OS locale back with nothing failing. */
+                  <DateField
+                    fullWidth
+                    value={draft[f.key] ?? ""}
+                    onChange={(iso) => setDraft((d) => ({ ...d, [f.key]: iso }))}
+                    className="fld-i"
+                  />
                 ) : (
                   <input
-                    type={f.type === "date" ? "date" : "text"}
+                    type="text"
                     value={draft[f.key] ?? ""}
                     onChange={(e) => setDraft((d) => ({ ...d, [f.key]: e.target.value }))}
                     className="fld-i"

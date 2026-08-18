@@ -110,6 +110,127 @@ describe("the one-date-format gate", () => {
     }
   });
 
+  /* THE SECOND OS-LOCALE INPUT TYPE. `<input type="datetime-local">` renders
+     its date half in the OS locale by the same mechanism as type="date", and
+     the raw-date-input rule does NOT catch it — `["']date["']` needs the quote
+     straight after "date". So the 2026-06-18 fix and the #2390 sweep that
+     finished it both passed over this type completely, and the delivery-
+     planning drawer kept native Arrival and Departure fields directly above a
+     DateField Shipout Date: one drawer, two spellings. Planting it here is
+     what stops that being rediscovered a third time. */
+  test("FAILS on a planted native datetime-local input — the same bug, the type the date rule cannot see", { timeout: SPAWN_TIMEOUT_MS }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "date-format-gate-dtl-"));
+    try {
+      const planted = path.join(dir, "PlantedArrival.tsx");
+      fs.writeFileSync(
+        planted,
+        'export const F = () => <input type="datetime-local" value={form.arrivalAt} onChange={(e) => set(e.target.value)} />;\n',
+      );
+      const bad = run(dir);
+      expect(bad.code, `expected a FAILURE, got:\n${bad.out.slice(-3000)}`).toBe(1);
+      expect(bad.out).toContain("NOT REVIEWED");
+      expect(bad.out).toContain("raw-datetime-input");
+
+      fs.rmSync(planted);
+      const good = run(dir);
+      expect(good.code, good.out.slice(-3000)).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /* The wrapper-prop spelling. Five components in this tree take a `type` prop
+     and route it onward, so the same bug can arrive on a line with no `<input`
+     token on it at all — which is exactly how the 26 reviewed date entries are
+     written. */
+  test("FAILS on a datetime-local passed as a wrapper prop, not just on a literal <input>", { timeout: SPAWN_TIMEOUT_MS }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "date-format-gate-dtl-prop-"));
+    try {
+      fs.writeFileSync(
+        path.join(dir, "PlantedWrapper.tsx"),
+        'export const F = () => <Field label="Arrival" type="datetime-local" value={v} onChange={set} />;\n',
+      );
+      const { code, out } = run(dir);
+      expect(code, `expected a FAILURE, got:\n${out.slice(-3000)}`).toBe(1);
+      expect(out).toContain("raw-datetime-input");
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /* THE DYNAMIC SPELLING, and the reason this case exists at all. A native date
+     input survived BOTH the 2026-06-18 DateField build and the #2390 sweep that
+     converted all 175 of them and shipped this gate — because it was written
+     `type={f.type === "date" ? "date" : "text"}`, an EXPRESSION, and every rule
+     here keyed on a quote straight after `type=`. Three passes over the same
+     tree, and the one input none of them could see. */
+  test("FAILS on a computed input type — the spelling that survived both previous sweeps", { timeout: SPAWN_TIMEOUT_MS }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "date-format-gate-dyn-"));
+    try {
+      const planted = path.join(dir, "PlantedDynamic.tsx");
+      fs.writeFileSync(
+        planted,
+        'export const F = () => <input type={f.type === "date" ? "date" : "text"} value={v} onChange={onC} />;\n',
+      );
+      const bad = run(dir);
+      expect(bad.code, `expected a FAILURE, got:\n${bad.out.slice(-3000)}`).toBe(1);
+      expect(bad.out).toContain("computed-date-input-type");
+
+      fs.rmSync(planted);
+      const good = run(dir);
+      expect(good.code, good.out.slice(-3000)).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /* The computed rule keys on `type=` + a BRACE. A colon (object literal, TS
+     annotation) and a comparison (`===`) must stay silent, or the file that
+     motivated the rule would fail on five other lines and the rule would be
+     unusable. */
+  test("does NOT fire on a `type:` annotation, an object literal, or a `f.type === \"date\"` comparison", { timeout: SPAWN_TIMEOUT_MS }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "date-format-gate-dyn-ok-"));
+    try {
+      fs.writeFileSync(
+        path.join(dir, "HonestTypes.tsx"),
+        [
+          'type EditField = { key: string; value: any; type: "text" | "textarea" | "date" | "select" };',
+          'const v = f.type === "date" ? isoDateOnly(f.value) : f.value;',
+          'export const shown = (f: EditField) => (f.type === "date" ? dm(f.value) : f.value);',
+          "const fields = [{ key: 'k', label: 'L', value: v, type: 'date' }];",
+          'export const T = () => <input type={type ?? "text"} value={v} onChange={onC} />;',
+        ].join("\n") + "\n",
+      );
+      const { code, out } = run(dir);
+      expect(code, out.slice(-3000)).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  /* WHERE THE RULE DELIBERATELY STOPS, pinned so it reads as a decision rather
+     than an oversight — and so that changing it has to be deliberate too.
+     type="time" / "month" / "week" are OS-locale rendered as well, but none of
+     them puts a day number next to a month number, which is the only way a
+     date gets MISREAD. 14:30 and 2:30 PM are the same minute. */
+  test("does NOT fire on time, month or week inputs — the types with no day/month ambiguity", { timeout: SPAWN_TIMEOUT_MS }, () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "date-format-gate-scope-"));
+    try {
+      fs.writeFileSync(
+        path.join(dir, "OtherTypes.tsx"),
+        [
+          'export const T = () => <input type="time" value={timePart} onChange={onT} />;',
+          'export const M = () => <input type="month" value={filters.month} onChange={onM} />;',
+          'export const W = () => <input type="week" value={w} onChange={onW} />;',
+        ].join("\n") + "\n",
+      );
+      const { code, out } = run(dir);
+      expect(code, out.slice(-3000)).toBe(0);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   /* The other half of honest. Money is `toLocaleString('en-MY', …)` and row
      counts are `n.toLocaleString()`; there are ~40 of the second kind. If the
      gate fired on those, the next person would delete the gate rather than the

@@ -2019,7 +2019,9 @@ function GoodsToDeliverCard({ order }: { order: BoardRow }) {
    field; the FE HcFieldsPatch omits it), so adding it would create a new
    divergence rather than close one.
    ─────────────────────────────────────────────────────────────────────────── */
-// A TIMESTAMPTZ ISO → the value <input type="datetime-local"> wants.
+// A TIMESTAMPTZ ISO → the wall-clock YYYY-MM-DDTHH:mm DateTimeField reads and
+// writes (the same shape the native datetime-local used, unchanged when
+// Departure/Arrival moved onto DateTimeField on 2026-08-18).
 const toDtLocal = (iso: string | null | undefined): string =>
   iso ? String(iso).slice(0, 16) : "";
 // A YYYY-MM-DD date-ish string → the ISO value DateField takes.
@@ -2132,19 +2134,21 @@ function DeliveryFieldsCard({
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">Departure</span>
-            <input
-              type="datetime-local"
+            <DateTimeField
+              fullWidth
+              aria-label="Departure"
               value={form.departureAt}
-              onChange={(e) => set("departureAt", e.target.value)}
+              onChange={(v) => set("departureAt", v)}
               style={inputStyle}
             />
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">Arrival</span>
-            <input
-              type="datetime-local"
+            <DateTimeField
+              fullWidth
+              aria-label="Arrival"
               value={form.arrivalAt}
-              onChange={(e) => set("arrivalAt", e.target.value)}
+              onChange={(v) => set("arrivalAt", v)}
               style={inputStyle}
             />
           </label>
@@ -2417,3 +2421,4 @@ function TrackButton({
 }
 
 import { DateField } from "../vendor/scm/components/DateField";
+import { DateTimeField } from "../vendor/scm/components/DateTimeField";

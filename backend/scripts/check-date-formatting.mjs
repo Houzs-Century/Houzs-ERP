@@ -21,6 +21,19 @@
 // present at N-1 of them. Writing it down a third time would have been the same
 // move that failed twice.
 //
+// AND THE SAME SHAPE ONE LAYER DOWN, INSIDE THE FIX (2026-08-18, same day).
+// The sweep and the first version of this gate both keyed on a LITERAL
+// `type="date"`, so two spellings of the identical OS-locale bug went straight
+// through: `<input type="datetime-local">`, whose DATE half is rendered by the
+// OS exactly the same way (six of them, including Arrival and Departure sitting
+// directly above a DateField Shipout Date in the same delivery-planning drawer
+// — one screen, two spellings, which is the complaint that started all of
+// this); and `type={f.type === "date" ? "date" : "text"}`, a native date input
+// written as an EXPRESSION, which is how it survived the June build, the
+// August sweep, AND the gate shipped with that sweep. Hence raw-datetime-input
+// and computed-date-input-type below. A gate is only as wide as the spellings
+// it imagines, so each one names what it cannot see.
+//
 // WHAT THIS IS, STATED SO A GREEN RUN IS NOT OVER-READ. A regex over source
 // cannot understand meaning. It cannot tell a date from a fraction, it cannot
 // see a format assembled at runtime, and it cannot tell whether a string it
@@ -144,6 +157,47 @@ const SHAPES = [
     re: /<input\b[^>]*\btype\s*=\s*["']date["']|\btype\s*=\s*["']date["']/,
   },
   {
+    id: "raw-datetime-input",
+    /* `<input type="datetime-local">` renders its DATE half in the OS locale by
+       the very same mechanism as type="date" — and the rule above does NOT
+       catch it, because `["']date["']` requires the quote immediately after
+       "date". So the 2026-06-18 fix and the #2390 sweep both passed straight
+       over this type, and on 2026-08-18 the delivery-planning drawer still had
+       native Arrival and Departure fields sitting directly above a DateField
+       Shipout Date: one drawer, one column, two spellings of a date on any
+       machine whose OS is not day-first. DateTimeField
+       (vendor/scm/components/DateTimeField.tsx) is the fix and the only
+       legitimate holder of one.
+
+       WHERE THIS RULE DELIBERATELY STOPS, so the line is a decision and not an
+       oversight: type="time", type="month" and type="week" are also rendered
+       by the OS locale, and are NOT gated. The bug being prevented is reading
+       the wrong DAY — it needs a day number and a month number side by side to
+       be ambiguous. 14:30 and 2:30 PM name the same minute; "August 2026" and
+       "08/2026" name the same month. Those are cosmetic variations, and a gate
+       that fires on them buys inconsistency complaints at the price of the
+       signal on the one shape that corrupts a reading. */
+    re: /<input\b[^>]*\btype\s*=\s*["']datetime-local["']|\btype\s*=\s*["']datetime-local["']/,
+  },
+  {
+    id: "computed-date-input-type",
+    /* `type={f.type === "date" ? "date" : "text"}` — the input type arrives as
+       an EXPRESSION, so both rules above miss it: each needs a quote straight
+       after `type=`, and here the next character is `{`.
+
+       This is not hypothetical. MobileServiceCase's EditableAcc carried exactly
+       that line, which is how a native date input survived BOTH the 2026-06-18
+       DateField build and the #2390 sweep that converted all 175 of them and
+       shipped the gate. Nothing was misreading on screen — no caller passes a
+       date field — but the EditField union offers "date", so the first one
+       added would have silently got the OS locale back.
+
+       THE HONEST LIMIT, and the self-test pins it: this sees a date-ish literal
+       INSIDE the braces. `type={inputType}`, where the string is decided
+       elsewhere, is invisible to any regex and is not claimed to be covered. */
+    re: /\btype\s*=\s*\{[^}]*["'](?:date|datetime-local)["']/,
+  },
+  {
     id: "iso-to-slashes",
     // `iso.replace(/-/g, '/')` — the YYYY/MM/DD spelling that all eleven V2
     // list pages carried while their detail pages carried DD/MM/YYYY.
@@ -262,6 +316,14 @@ const norm = (s) => s.trim().replace(/\s+/g, " ");
     ["return new Date(t).toLocaleString();", "toLocaleString-bare"],
     ['const M = ["Jan","Feb","Mar"];', "month-name-array"],
     ['<input type="date" value={x} />', "raw-date-input"],
+    ['<input type="datetime-local" value={x} />', "raw-datetime-input"],
+    ["<input type='datetime-local' value={form.arrivalAt} />", "raw-datetime-input"],
+    // The wrapper-prop spelling: five components take a `type` prop and route
+    // it onward, so the bug hides on a line with no `<input` on it at all.
+    ['<Field label="Arrival" type="datetime-local" value={v} />', "raw-datetime-input"],
+    // The DYNAMIC spelling — the one that survived both previous passes.
+    ['<input type={f.type === "date" ? "date" : "text"} value={v} />', "computed-date-input-type"],
+    ["<input type={isWhen ? 'datetime-local' : 'text'} value={v} />", "computed-date-input-type"],
     "const s = iso.replace(/T.*$/, '').replace(/-/g, '/');",
     "return `${m[3]}/${m[2]}/${m[1]}`;",
     "return `${dd}/${mm}/${yyyy}`;",
@@ -289,6 +351,29 @@ const norm = (s) => s.trim().replace(/\s+/g, " ");
     // The one formatter's own callers.
     "<td>{fmtDate(row.po_date)}</td>",
     "const label = fmtDateTime(r.created_at);",
+    /* THE OTHER OS-LOCALE INPUT TYPES, deliberately NOT gated — see the
+       raw-datetime-input comment. If someone later decides a 12h/24h split or a
+       month spelling is worth failing a build over, these three lines are the
+       ones that have to change, and that is the point of asserting them. */
+    '<input type="time" value={timePart} />',
+    '<input type="month" value={filters.month} />',
+    '<input type="week" value={w} />',
+    /* The ways `type` and "date" legitimately share a line. computed-date-input-
+       type keys on `type=` followed by a BRACE, so a colon (an object literal or
+       a TS annotation) and a comparison (`===`) must both stay silent — this is
+       the file that motivated the rule, and firing on its other five lines would
+       have made the rule unusable. */
+    'type EditField = { key: string; label: string; value: any; type: "text" | "textarea" | "date" | "select" | "so"; };',
+    'const v = f.type === "date" ? isoDateOnly(f.value) : f.value;',
+    'if (f.type === "date") return dm(raw);',
+    'setDraft(type === "date" ? isoDateOnly(value) : String(value));',
+    '<input type={type ?? "text"} value={v} />',
+    "const fields = [{ key: 'k', label: 'L', value: v, type: 'date' }];",
+    /* And the components that FIX the two gated types must not trip the rules
+       they implement — DateField/DateTimeField are matched by name here so a
+       rename cannot quietly re-arm the gate against its own solution. */
+    "<DateTimeField value={form.arrivalAt} onChange={(v) => set('arrivalAt', v)} />",
+    "<DateField value={form.shipoutDate} onChange={(iso) => set('shipoutDate', iso)} />",
   ];
   for (const probe of mustMiss) {
     const line = stripComments(probe);
@@ -434,9 +519,12 @@ There is ONE date format and ONE place that writes it:
     fmtDateTime(iso)  -> "16/08/2026 14:30"
 
 Both are null-safe ("—"), invalid-safe, idempotent, and do NOT shift a date-only
-value across a timezone. For a date INPUT use <DateField> — a native
-<input type="date"> renders in the viewer's OS locale, which is the bug this
-whole rule exists for. For a CSV cell the grids already emit ISO via
+value across a timezone. For an INPUT use <DateField> (a date) or
+<DateTimeField> (a date + time) — a native <input type="date"> or
+<input type="datetime-local"> renders in the viewer's OS locale, which is the
+bug this whole rule exists for. Do not reach for a native one via a computed
+type either: type={cond ? "date" : "text"} is the spelling that survived two
+previous sweeps of this tree. For a CSV cell the grids already emit ISO via
 isoForExport; do not hand-format there.
 
 Storage, API payloads and AutoCount stay ISO YYYY-MM-DD and are none of this

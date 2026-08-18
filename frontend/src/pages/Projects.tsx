@@ -123,6 +123,7 @@ import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPr
 import { formatDate, formatDateTime, formatTimestamp, formatCurrency, cn, relativeTime, todayInAppTz } from "../lib/utils";
 import { fmtDate } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
+import { DateTimeField } from "../vendor/scm/components/DateTimeField";
 
 // ── Types (module-local) ─────────────────────────────────────
 // Kept in this file until something else imports them. Promoting to
@@ -10333,8 +10334,21 @@ function AddChecklistItem({
 // The existing InlineEdit only supports text/date/number. This is a
 // thin analog for datetime-local values so the logistics schedule
 // section can edit start/end times without extra round-trips.
+//
+// Named LogisticsDateTimeField, not DateTimeField, because it is NOT the
+// shared control (vendor/scm/components/DateTimeField) this file also imports.
+// The two differ in contract, not in date rendering — both put the date half
+// through DateField, so neither carries the OS-locale bug:
+//   · this one   — commit-on-blur via onSave(), takes a `label`, shows a
+//                  formatted caption, and normalises a date-only entry to
+//                  midnight so a half-filled row still persists;
+//   · the shared — a plain controlled value/onChange that mirrors a native
+//                  datetime-local exactly, including emitting '' when only
+//                  one half is filled.
+// Keep them apart deliberately: collapsing this one onto the shared control
+// would silently drop the midnight normalisation these six fields rely on.
 
-function DateTimeField({
+function LogisticsDateTimeField({
   label,
   value,
   onSave,
@@ -10693,10 +10707,10 @@ function AddStockTransferForm({
         New {direction === "out" ? "OUT" : "RETURN"} transfer
       </div>
       <div className="grid grid-cols-2 gap-2">
-        <input
-          type="datetime-local"
+        <DateTimeField
+          aria-label="Transferred at"
           value={transferredAt}
-          onChange={(e) => setTransferredAt(e.target.value)}
+          onChange={setTransferredAt}
           className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
         />
         <input
@@ -11456,7 +11470,7 @@ function LogisticsCrewSection({
         />
       )}
       <div>
-        <DateTimeField label="Setup Time" value={project.setup_start_at} onSave={(v) => patch({ setup_start_at: v })} readOnly={readOnly} />
+        <LogisticsDateTimeField label="Setup Time" value={project.setup_start_at} onSave={(v) => patch({ setup_start_at: v })} readOnly={readOnly} />
       </div>
       <PhaseCrewEditor title="Setup" field="setup_crew" value={project.setup_crew} drivers={drivers} helpers={helpers} lorryOptions={lorryOptions} patch={patch} readOnly={readOnly} />
       <div className="my-3 border-t border-dashed border-border" />
@@ -11472,7 +11486,7 @@ function LogisticsCrewSection({
         readOnly={readOnly}
         emptyHint="Leave empty if same as setup"
         headerExtra={
-          <DateTimeField label="Dismantle Time" value={project.dismantle_start_at} onSave={(v) => patch({ dismantle_start_at: v })} readOnly={readOnly} />
+          <LogisticsDateTimeField label="Dismantle Time" value={project.dismantle_start_at} onSave={(v) => patch({ dismantle_start_at: v })} readOnly={readOnly} />
         }
       />
       {/* Service / Exchange (owner 2026-07-22; collapsible 2026-08-10): an
@@ -11581,12 +11595,12 @@ function LogisticsScheduleSection({
         driverName={setupDriverName}
       />
       <div className="grid grid-cols-2 gap-3">
-        <DateTimeField
+        <LogisticsDateTimeField
           label="Setup Start"
           value={project.setup_start_at}
           onSave={(v) => patch({ setup_start_at: v })}
         />
-        <DateTimeField
+        <LogisticsDateTimeField
           label="Setup End"
           value={project.setup_end_at}
           onSave={(v) => patch({ setup_end_at: v })}
@@ -11667,12 +11681,12 @@ function LogisticsScheduleSection({
           driverName={dismantleDriverName}
         />
         <div className="grid grid-cols-2 gap-3">
-        <DateTimeField
+        <LogisticsDateTimeField
           label="Dismantle Start"
           value={project.dismantle_start_at}
           onSave={(v) => patch({ dismantle_start_at: v })}
         />
-        <DateTimeField
+        <LogisticsDateTimeField
           label="Dismantle End"
           value={project.dismantle_end_at}
           onSave={(v) => patch({ dismantle_end_at: v })}
