@@ -19,7 +19,8 @@ Per-module technical doc for the MRP engine — `computeMrp` in
 `backend/src/scm/routes/mrp.ts` and everything that reads its allocation.
 This is a TRADING-company MRP (no BOM explosion): demand = outstanding
 Sales-Order lines, supply = on-hand stock + open PO lines, allocation =
-greedy by delivery date. Pure calculator, recomputed on every read, NO
+greedy by the EFFECTIVE delivery date (§4 — the amended date, not the
+customer's original). Pure calculator, recomputed on every read, NO
 persistence and NO stored SO<->PO lock.
 
 > Written 2026-08-01 with `fix/mrp-consistency-tails` (the pairing-audit tail
@@ -96,8 +97,8 @@ invariant (po-so-coverage.ts: "SO->PO and PO->SO can never disagree").
 | CS agent | `services/agents/cs-agent.ts` | false | plan |
 
 **`includeUndated` is DISPLAY-ONLY (since 2026-08-01, audit D6).** The
-allocation always runs over the FULL active demand set; undated lines (no line
-delivery date AND no SO delivery date) sort LAST, so they can only consume
+allocation always runs over the FULL active demand set; undated lines (no
+EFFECTIVE delivery date at all — see §4) sort LAST, so they can only consume
 supply the dated lines left behind — a dated line's coverage is identical
 under both flag values. `false` merely omits undated rows/sets from the
 output. Do NOT reintroduce the flag into the demand filter: that is exactly
@@ -227,8 +228,29 @@ is the `optional-param-noop` trap CLAUDE.md names, and the other ~15
 - Bucket key = `(warehouse | item_code | variant_key)` (`composite()`;
   `WH_NONE` for unresolved warehouse). Variant key via `computeVariantKey` —
   byte-identical to `inventory_balances.variant_key`.
-- Order: delivery date ascending (nulls last), tie-break SO doc no. Stock
-  first, then POs by earliest ETA, remainder = shortage.
+- Order: **EFFECTIVE delivery date** ascending (nulls last), tie-break SO doc
+  no. Stock first, then POs by earliest ETA, remainder = shortage.
+- **"Effective" has ONE definition and it lives in one file** —
+  `scm/shared/effective-delivery.ts`, `effectiveSoDelivery`. Precedence:
+  an OVERRIDDEN line date → `amended_delivery_date` → `customer_delivery_date` →
+  a non-overridden line date as a last resort. The delivery board, PO coverage,
+  `/inventory` reservations, the delivery agents and the stock allocator
+  (`lib/so-stock-allocation.ts`) all read that same function.
+
+  Until 2026-08-18 this engine read `line_delivery_date ?? customer_delivery_date`
+  — the customer's ORIGINAL promise plus a per-line MIRROR of it — while the
+  board read `amended_delivery_date ?? customer_delivery_date`. A rescheduled
+  order moved on the board and did NOT move here, in the queue that decides who
+  gets scarce stock and what is ordered first. Two screens, two answers, nobody
+  told. Owner: 「我们都没有排产的，我们都不是 Production，我们应该只是送货的日期
+  而已」 — there is no production to plan against, only the delivery date.
+
+  **The line mirror is the half that is easy to miss.** `line_delivery_date` is a
+  COPY of the header date while `line_delivery_date_overridden = false` (mig 0172
+  `apply_so_header_followers` writes the pair), and a reschedule writes the
+  HEADER only — so the mirror goes stale and a fix that consults the amended date
+  only *after* the line date changes nothing. Measured on prod 2026-08-18: all 5
+  live lines on the 3 rescheduled orders were exactly that shape.
 - **Legacy `''` pool rule (R4 + audit D2)**: a real-variant bucket with NO PO
   supply of its own falls back to the same-warehouse empty-variant PO pool —
   a FALLBACK, never additive. Applies to the general path (section 7) AND the

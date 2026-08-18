@@ -62,7 +62,7 @@
 // ----------------------------------------------------------------------------
 
 import { Hono } from 'hono';
-import { computeVariantKey, buildVariantSummary, isServiceLine, splitSofaCode, effectiveDelivery, type VariantAttrs } from '../shared';
+import { computeVariantKey, buildVariantSummary, isServiceLine, splitSofaCode, effectiveDelivery, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { supabaseAuth } from '../middleware/auth';
 import { soDeliverableRemaining } from './delivery-orders-mfg';
 import { activeCompanyId } from '../lib/companyScope';
@@ -182,6 +182,11 @@ type DemandRow = {
      "warehouse follows the SO" block below. */
   warehouse_id: string | null;
   line_delivery_date: string | null;
+  /* TRUE only when a human typed a date on THIS line. FALSE means
+     `line_delivery_date` is a MIRROR of the header date (mig 0172's
+     apply_so_header_followers writes the pair), and a mirror goes stale the
+     moment the order is rescheduled — see effectiveSoDelivery. */
+  line_delivery_date_overridden: boolean | null;
   line_no: number | null;
   created_at: string | null;
   cancelled: boolean;
@@ -189,8 +194,12 @@ type DemandRow = {
     debtor_name: string | null;
     status: string;
     so_date: string | null;
-    customer_delivery_date: string | null;
-    processing_date: string | null; // processing date (drives when to order)
+    customer_delivery_date: string | null;   // the customer's ORIGINAL promise — never overwritten
+    amended_delivery_date: string | null;    // the reschedule Logistics confirmed; wins over the original
+    processing_date: string | null; /* Release-for-purchasing signal (owner 2026-08-18: "Processing Date
+       就代表这张单可以安排订货了"). Carried for DISPLAY only — this page's
+       "when to order" is orderByDate below, derived from the delivery date and
+       the category lead time. NOT a production date: there is no production. */
     customer_state: string | null;       // staff #8 — show the customer's state (info-only)
     sales_location: string | null;       // the SO's OWN warehouse of record (lib/so-warehouse.ts)
   } | null;
@@ -337,6 +346,22 @@ type SofaSet = {
   poSupplierName: string | null;
   suppliers: Array<{ supplierId: string; code: string; name: string; isMain: boolean }>;
 };
+
+/* THE date for one demand line — the shared reader, and the ONLY place this
+   page decides "when is this due". Owner 2026-08-18: there is no production
+   here, only the delivery date, and every screen must plan on the same one.
+   This page used to read `line_delivery_date ?? so.customer_delivery_date`,
+   which is the customer's ORIGINAL promise plus a line MIRROR of it — so a
+   rescheduled order moved on the delivery board and did not move here, in the
+   queue that decides who gets scarce stock and what is ordered first. See
+   shared/effective-delivery.ts for the precedence and why the override flag
+   is load-bearing. */
+const deliveryOf = (r: DemandRow): string | null => effectiveSoDelivery({
+  line_delivery_date: r.line_delivery_date,
+  line_delivery_date_overridden: r.line_delivery_date_overridden,
+  amended_delivery_date: r.so?.amended_delivery_date,
+  customer_delivery_date: r.so?.customer_delivery_date,
+});
 
 /* Earliest-first comparator that pushes NULL dates to the end. */
 function byDateAsc(a: string | null, b: string | null): number {
@@ -583,8 +608,8 @@ export async function computeMrp(
   const { data: demandRaw, error: demandErr } = await paginateAll<DemandRow>((from, to) => scoped(sb
     .from('mfg_sales_order_items')
     .select(`
-      id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_no, created_at, cancelled,
-      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, processing_date, customer_state, sales_location )
+      id, doc_no, item_code, description, item_group, variants, qty, warehouse_id, line_delivery_date, line_delivery_date_overridden, line_no, created_at, cancelled,
+      so:mfg_sales_orders!inner ( debtor_name, status, so_date, customer_delivery_date, amended_delivery_date, processing_date, customer_state, sales_location )
     `)
     .eq('cancelled', false)
     .not('so.status', 'in', SO_DONE_SQL))
@@ -607,8 +632,7 @@ export async function computeMrp(
   const demandActive = ((demandRaw ?? []) as unknown as DemandRow[]).filter(
     (r) => r.item_code && r.so && !SO_DONE.has(r.so.status) && r.qty > 0,
   );
-  const isDatedLine = (r: DemandRow): boolean =>
-    Boolean(r.line_delivery_date ?? r.so?.customer_delivery_date);
+  const isDatedLine = (r: DemandRow): boolean => deliveryOf(r) !== null;
 
   // A partially-delivered SO keeps its header status active (the header only
   // flips to DELIVERED once EVERY line is fully covered), so already-delivered
@@ -996,8 +1020,7 @@ export async function computeMrp(
     // lines share a delivery date, allocate by SO doc number ascending so the
     // greedy walk never flips nondeterministically (SO-2605-001 before -002).
     rows.sort((a, b) => {
-      const byDate = byDateAsc(a.line_delivery_date ?? a.so?.customer_delivery_date ?? null,
-                               b.line_delivery_date ?? b.so?.customer_delivery_date ?? null);
+      const byDate = byDateAsc(deliveryOf(a), deliveryOf(b));
       if (byDate !== 0) return byDate;
       return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
     });
@@ -1089,7 +1112,7 @@ export async function computeMrp(
         need > 0 ? 'shortage'
         : poNumber != null ? 'po'
         : 'stock';
-      const lineDelivery = r.line_delivery_date ?? r.so?.customer_delivery_date ?? null;
+      const lineDelivery = deliveryOf(r);
       lines.push({
         soItemId: r.id,
         soDocNo: r.doc_no,
@@ -1193,8 +1216,7 @@ export async function computeMrp(
     // Same deterministic tie-break as section 7: equal delivery date → SO doc
     // number ascending, so same-day sofa allocation is stable.
     rows.sort((a, b) => {
-      const byDate = byDateAsc(a.line_delivery_date ?? a.so?.customer_delivery_date ?? null,
-                               b.line_delivery_date ?? b.so?.customer_delivery_date ?? null);
+      const byDate = byDateAsc(deliveryOf(a), deliveryOf(b));
       if (byDate !== 0) return byDate;
       return (a.doc_no ?? '').localeCompare(b.doc_no ?? '');
     });
@@ -1224,7 +1246,7 @@ export async function computeMrp(
       const colour = [sstr(v.fabricCode), sstr(v.colorCode) || sstr(v.colourCode)].filter(Boolean).join(' ');
       const eff = effQtyOf(d);                        // set qty still to fulfil (ordered − delivered + returned)
       const prod = prodByCode.get(d.item_code);
-      const setDelivery = d.line_delivery_date ?? d.so?.customer_delivery_date ?? null;
+      const setDelivery = deliveryOf(d);
 
       let need = eff;
       const fromStock = Math.min(stockLeft, need);

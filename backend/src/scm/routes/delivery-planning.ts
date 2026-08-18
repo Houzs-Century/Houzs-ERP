@@ -40,6 +40,12 @@
 // firm/new date to amended_delivery_date instead. The EFFECTIVE delivery date —
 // amended_delivery_date ?? customer_delivery_date — drives Days Left AND the
 // OVERDUE 3-day window; the Original column still shows customer_delivery_date.
+// That rule is no longer this file's private property: it lives in
+// scm/shared/effective-delivery.ts (effectiveSoDelivery) and MRP and the stock
+// allocator read the SAME function since 2026-08-18. Before that they ranked on
+// customer_delivery_date alone, so a rescheduled order moved on this board and
+// did not move in the queue that decides who gets stock. Owner: "我们都没有排产
+// 的…我们应该只是送货的日期而已" — one date, one answer, every screen.
 //
 // Region = CONFIG-DRIVEN, owner-maintained (migration 0053). The region buckets
 //   are a master list (delivery_planning_regions) and the per-STATE → region(s)
@@ -72,6 +78,7 @@ import { deriveBranding } from '../lib/so-display-branding';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { summariseReadiness, normCategory, type ReadinessLine } from '../lib/so-readiness';
+import { effectiveSoDelivery } from '../shared';
 import { readinessRowFields, NO_STOCK_ROW } from '../lib/so-readiness-row';
 import { boardDeliverableByDoc } from '../lib/board-deliverable';
 import { readFailure, noteDegradedRead } from '../lib/read-failure';
@@ -856,7 +863,11 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
        the OVERDUE 3-day window. dual-read camelCase. */
     const amendDateFromCustomer = r.amendDateFromCustomer ?? r.amend_date_from_customer ?? null;
     const amendedDD = r.amendedDeliveryDate ?? r.amended_delivery_date ?? null;
-    const effectiveDD = amendedDD ?? customerDD;
+    /* ONE reader — shared/effective-delivery.ts. This board's chain WAS the
+       correct one all along; what changed on 2026-08-18 is that MRP and the
+       stock allocator stopped disagreeing with it. The rule now lives in one
+       file so the next consumer inherits it instead of re-typing it. */
+    const effectiveDD = effectiveSoDelivery(r);
 
     /* "Ready to ship" gate — see summariseReadiness.isShipReady. */
     const readyToShip = readiness.isShipReady;

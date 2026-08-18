@@ -72,6 +72,7 @@ import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
 import { computeVariantKey } from '../shared';
+import { effectiveSoDelivery } from '../shared';
 import { parseFromSosNote } from './document-flow';
 import { computeMrp, mrpReverseCoverage } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
@@ -162,9 +163,9 @@ type SoHeaderRow = {
 type SoLineRow = { doc_no: string | null; item_code: string | null };
 
 /* Effective SO delivery date — the amended date wins over the customer's
-   original, mirroring what the SO detail surfaces (mfg-sales-orders.ts). */
-const effectiveDeliveryDate = (h: SoHeaderRow): string | null =>
-  h.amended_delivery_date ?? h.customer_delivery_date ?? null;
+   original. ONE reader, shared/effective-delivery.ts, the same one MRP and the
+   stock allocator now use; this file's own copy of the rule is gone. */
+const effectiveDeliveryDate = (h: SoHeaderRow): string | null => effectiveSoDelivery(h);
 
 /* Build doc_no → effective delivery date from a set of SO headers. */
 function ddByDocOf(soHeaders: SoHeaderRow[]): Map<string, string | null> {

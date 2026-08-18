@@ -37,7 +37,7 @@
 // rolling back a GRN/SO post (audit-DLQ pattern matching writeMovements).
 // ----------------------------------------------------------------------------
 
-import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
+import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { summariseReadiness } from './so-readiness';
 import { loadSofaBatchStock, findCoveringBatch, claimSofaBatch } from './sofa-set-coverage';
 import { paginateAll, chunkIn } from './paginate-all';
@@ -182,13 +182,29 @@ async function runSoStockAllocation(
   }
   try {
     /* 1. All non-cancelled, non-completed SOs. Allocation priority:
-            a) customer_delivery_date ASC NULLS LAST  — earlier delivery wins
-            b) created_at ASC  — tiebreaker so order is deterministic */
+            a) EFFECTIVE delivery date ASC NULLS LAST — earlier delivery wins
+            b) created_at ASC  — tiebreaker so order is deterministic
+
+       EFFECTIVE, not original. This ranked on `customer_delivery_date` alone
+       until 2026-08-18, so a customer who rescheduled moved on the delivery
+       board (which has always read `amended_delivery_date ?? customer_delivery_
+       date`) and did NOT move here, in the queue that decides who gets the
+       scarce stock. Owner: there is no production in this business, only the
+       delivery date, and everything plans on the amended one. ONE reader now —
+       shared/effective-delivery.ts — shared with mrp.ts so the two engines
+       cannot drift apart again.
+
+       The SQL ORDER BY below is deliberately UNCHANGED and is not the priority.
+       It exists so paginateAll's `.range()` windows are coherent (they are only
+       coherent under a stable order); the priority order is the JS sort in
+       section 5, over the fully-materialised set. PostgREST cannot ORDER BY a
+       COALESCE of two columns, and inventing a sort expression here would buy
+       nothing the JS sort does not already decide. */
     // Page through — PostgREST's default 1000-row cap would truncate the active
     // SO set, silently DROPPING orders from allocation (their lines never flip).
-    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; company_id: number | null; processing_date: string | null }>((from, to) => sb
+    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; amended_delivery_date: string | null; company_id: number | null; processing_date: string | null }>((from, to) => sb
       .from('mfg_sales_orders')
-      .select(`doc_no, status, created_at, customer_delivery_date, company_id, ${SO_PROCESSING_DATE_COLUMN}`)
+      .select(`doc_no, status, created_at, customer_delivery_date, amended_delivery_date, company_id, ${SO_PROCESSING_DATE_COLUMN}`)
       /* The live-SO lens. ONE declaration, in shared/so-terminal-states.ts —
          eight audit scripts and mrp.ts used to re-type this same six-status
          set under four different names, each promising in a comment to track
@@ -201,7 +217,8 @@ async function runSoStockAllocation(
     if (orderError) throw new Error(`allocation order load failed: ${orderError.message}`);
     const orders = (orderRows ?? []) as Array<{
       doc_no: string; status: string; created_at: string;
-      customer_delivery_date: string | null; company_id: number | null;
+      customer_delivery_date: string | null; amended_delivery_date: string | null;
+      company_id: number | null;
       processing_date: string | null;
     }>;
     if (orders.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
@@ -480,22 +497,33 @@ async function runSoStockAllocation(
           before SO-2605-002) so same-day allocation is deterministic, matching
           the MRP engine. created_at + line id break any remaining ties. */
     const FAR_FUTURE = '9999-12-31';
-    /* The row types say these are strings, and under PostgREST they are. A
+    /* The ONE reader, shared with mrp.ts (shared/effective-delivery.ts):
+       amended_delivery_date wins over the customer's original, and it
+       normalises to 'YYYY-MM-DD'.
+
+       Normalising is not cosmetic and the reason is written down there too. The
+       row types say these are strings, and under PostgREST they are — but a
        repair script driving this same function through the postgres shim gets
        Date OBJECTS for date/timestamp columns, and `.localeCompare` on a Date
-       throws — which killed a production allocation recompute on 2026-08-10
-       with "ad.localeCompare is not a function", after the allocator had
-       already done all its work. Compare on a normalised string so the priority
-       order is identical whichever transport delivered the row. */
-    const dateKey = (v: unknown): string =>
-      v instanceof Date ? v.toISOString().slice(0, 10) : String(v ?? '');
+       throws, which killed a production allocation recompute on 2026-08-10 with
+       "ad.localeCompare is not a function" AFTER the allocator had done all its
+       work. effectiveSoDelivery carries that Date branch verbatim; this call
+       site is the reason it exists.
+
+       These orders carry no LINE fields — the allocator ranks whole orders, as
+       it always has, so it hands the reader header dates only. A per-line
+       override date still outranks the header inside mrp.ts, which does read
+       lines; that pre-existing difference between the two engines is untouched
+       here and unmeasured. */
+    const effDate = (o?: { customer_delivery_date: string | null; amended_delivery_date: string | null }): string =>
+      (o ? effectiveSoDelivery(o) : null) ?? '';
     const stampKey = (v: unknown): string =>
       v instanceof Date ? v.toISOString() : String(v ?? '');
     needs.sort((a, b) => {
       const A = orderByDoc.get(a.doc_no); const B = orderByDoc.get(b.doc_no);
-      const ad = dateKey(A?.customer_delivery_date) || FAR_FUTURE;
-      const bd = dateKey(B?.customer_delivery_date) || FAR_FUTURE;
-      if (ad !== bd) return ad.localeCompare(bd);                         // a) delivery date
+      const ad = effDate(A) || FAR_FUTURE;
+      const bd = effDate(B) || FAR_FUTURE;
+      if (ad !== bd) return ad.localeCompare(bd);                         // a) EFFECTIVE delivery date
       if (a.doc_no !== b.doc_no) return a.doc_no.localeCompare(b.doc_no); // b) SO doc number
       const ac = stampKey(A?.created_at);
       const bc = stampKey(B?.created_at);
@@ -657,8 +685,8 @@ async function runSoStockAllocation(
       const orderedSets = [...setLines.values()].sort((ga, gb) => {
         const a = ga[0]!; const b = gb[0]!;
         const A = orderByDoc.get(a.doc_no); const B = orderByDoc.get(b.doc_no);
-        const ad = dateKey(A?.customer_delivery_date) || FAR_FUTURE;
-        const bd = dateKey(B?.customer_delivery_date) || FAR_FUTURE;
+        const ad = effDate(A) || FAR_FUTURE;
+        const bd = effDate(B) || FAR_FUTURE;
         if (ad !== bd) return ad.localeCompare(bd);
         return a.doc_no.localeCompare(b.doc_no);
       });
