@@ -28,7 +28,7 @@
 import type { Context } from 'hono';
 import type { Env, Variables } from '../env';
 import { hasHouzsPerm } from '../lib/houzs-perms';
-import { requireActiveCompanyId } from '../lib/companyScope';
+import { requireActiveCompanyId, allowedCompanyIds } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
 import { parseStatement, type StatementColumnMap } from '../../acc/settlement-parse';
 import { matchStatement, recordedNotArrived, type PaymentCandidate } from '../../acc/settlement-match';
@@ -151,6 +151,190 @@ export const settlementSetupSave = guard(async (c) => {
       .eq('company_id', co.companyId).eq('acquirer_code', code);
     if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   }
+  return c.json({ ok: true });
+});
+
+/* ════════════════════════════════════════════════════════════════════════
+   Maintenance — one screen, every company (owner, 2026-08-18)
+   ════════════════════════════════════════════════════════════════════════
+
+   "我记得我说我这个自动对账要做成每个公司都能用，无论是merchant recon还是bank
+   recon。具体怎样应该是我会overall 维护，然后在维护那边选这个公司是使用哪里几个
+   merchant，然后他有什么bank。可能是以勾选的方式选择？"
+
+   So these three endpoints take the company as a PARAMETER instead of reading
+   the active one: he maintains both companies from one screen without switching
+   the top bar. Every one of them re-checks that the target company is in the
+   caller's own grants (`allowedCompanyIds`) — a company id in a request body is
+   an instruction, not an authorisation.
+
+   Nothing new is stored. Which merchants a company uses and where their money
+   lands is `scm.acc_company_acquirers` (migration 0301, one row per company per
+   merchant); which banks a company has is `scm.accounts.is_active` on its money
+   accounts — the chart is already maintained centrally (migration 0297: one
+   AutoCount-style chart for every company), which is his own answer to where
+   banks are defined: "chart of account 我也是会做成总维护不是？". */
+
+/** The target company for a maintenance call: the one asked for, but only if
+    the caller is granted it. Falls back to the active company when none is
+    named, and REFUSES rather than silently retargeting when one is named and
+    not granted. */
+function maintenanceCompany(c: Ctx, asked: unknown): { ok: true; companyId: number } | { ok: false; refusal: Record<string, string> } {
+  const allowed = allowedCompanyIds(c);
+  const wanted = Number(asked);
+  if (!Number.isInteger(wanted) || wanted <= 0) {
+    const co = requireActiveCompanyId(c);
+    return co.ok ? { ok: true, companyId: co.companyId } : { ok: false, refusal: co.refusal as Record<string, string> };
+  }
+  if (allowed !== undefined && !allowed.includes(wanted)) {
+    return { ok: false, refusal: { error: 'company_not_granted', message: 'You do not have access to that company.' } };
+  }
+  return { ok: true, companyId: wanted };
+}
+
+/* GET /maintenance?companyId= — everything one company's setup needs: the
+   companies the caller may maintain, every merchant with whether THIS company
+   uses it and where its money lands, and this company's money accounts with
+   whether it banks with them. */
+export const settlementMaintenance = guard(async (c) => {
+  const target = maintenanceCompany(c, c.req.query('companyId'));
+  if (!target.ok) return c.json(target.refusal, 409);
+  const sb = c.get('supabase');
+  const companyId = target.companyId;
+
+  const allowed = allowedCompanyIds(c);
+  const companies = ((c.get('companies') as Array<{ id: number; code: string; name: string }> | undefined) ?? [])
+    .filter((co) => allowed === undefined || allowed.includes(Number(co.id)));
+
+  /* Every merchant that EXISTS (global), left-joined to this company's link —
+     a company that has never been set up shows them all, unticked, instead of
+     an empty screen nobody can act on. */
+  const { data: cfgRaw, error: cErr } = await sb.from('acc_acquirer_config')
+    .select('code, display_name, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, is_active')
+    .order('code');
+  if (cErr) return c.json({ error: 'load_failed', reason: cErr.message }, 500);
+  const { data: linkRaw, error: lErr } = await sb.from('acc_company_acquirers')
+    .select('acquirer_code, transit_account_code, fee_account_code, bank_account_code, is_active')
+    .eq('company_id', companyId);
+  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+  const linkOf = new Map(((linkRaw ?? []) as Array<Record<string, any>>).map((l) => [String(l.acquirer_code), l]));
+
+  const merchants: Array<Record<string, any>> = ((cfgRaw ?? []) as Array<Record<string, any>>).map((g) => {
+    const link = linkOf.get(String(g.code));
+    return {
+      ...g,
+      /* Used by this company = a link row that is switched on. No row at all is
+         the honest "not set up here", not an error. */
+      enabled: link ? link.is_active !== false : false,
+      linked: Boolean(link),
+      bank_account_code: link?.bank_account_code ?? null,
+      transit_account_code: link?.transit_account_code ?? '320-0000',
+      fee_account_code: link?.fee_account_code ?? '930-0000',
+      ready: Boolean(g.statement_format && g.fee_method && g.column_map?.date && g.column_map?.gross),
+      autoMatchable: g.has_unique_ref === true,
+    };
+  });
+
+  /* This company's money accounts. Inactive ones are still listed — unticked —
+     because "this company does not bank here" is a state to be able to undo. */
+  const { data: bankRaw, error: bErr } = await sb.from('accounts')
+    .select('account_code, account_name, is_active')
+    .eq('company_id', companyId).eq('acc_money', true).order('account_code');
+  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+
+  const usedBy = new Map<string, string[]>();
+  for (const m of merchants) {
+    if (!m.bank_account_code || !m.enabled) continue;
+    const list = usedBy.get(String(m.bank_account_code));
+    if (list) list.push(String(m.code));
+    else usedBy.set(String(m.bank_account_code), [String(m.code)]);
+  }
+  const bankAccounts = ((bankRaw ?? []) as Array<Record<string, any>>).map((b) => ({
+    account_code: b.account_code,
+    account_name: b.account_name,
+    enabled: b.is_active !== false,
+    /* Which merchants pay into it — so unticking a bank can say what would
+       break instead of breaking it. */
+    usedBy: usedBy.get(String(b.account_code)) ?? [],
+  }));
+
+  return c.json({ companyId, companies, merchants, bankAccounts });
+});
+
+/* PATCH /maintenance/merchant — tick a merchant on or off for one company, and
+   say which of that company's banks it pays into. Creates the link row the
+   first time, so a company nobody has set up needs no migration. */
+export const settlementMaintenanceMerchant = guard(async (c) => {
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const target = maintenanceCompany(c, body.companyId);
+  if (!target.ok) return c.json(target.refusal, 409);
+  const code = String(body.code ?? '').trim();
+  if (!code) return c.json({ error: 'no_merchant', message: 'Which merchant?' }, 400);
+  const sb = c.get('supabase');
+  const companyId = target.companyId;
+
+  const { data: existing, error: exErr } = await sb.from('acc_company_acquirers')
+    .select('acquirer_code').eq('company_id', companyId).eq('acquirer_code', code).maybeSingle();
+  if (exErr) return c.json({ error: 'load_failed', reason: exErr.message }, 500);
+
+  const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  if (body.enabled !== undefined) patch.is_active = Boolean(body.enabled);
+  if (body.bankAccountCode !== undefined) patch.bank_account_code = body.bankAccountCode || null;
+
+  if (!existing) {
+    const { error } = await sb.from('acc_company_acquirers').insert({
+      company_id: companyId,
+      acquirer_code: code,
+      transit_account_code: '320-0000',
+      fee_account_code: '930-0000',
+      bank_account_code: body.bankAccountCode || null,
+      is_active: body.enabled === undefined ? true : Boolean(body.enabled),
+    });
+    if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+    return c.json({ ok: true, created: true });
+  }
+
+  const { error } = await sb.from('acc_company_acquirers').update(patch)
+    .eq('company_id', companyId).eq('acquirer_code', code);
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
+  return c.json({ ok: true, created: false });
+});
+
+/* PATCH /maintenance/bank — tick which banks a company actually banks with.
+   Switching one OFF while a merchant still pays into it is refused BY NAME:
+   the ledger would then have a merchant pointed at an account the posting gate
+   will not accept, and that failure would surface days later at the worst
+   moment — when the money arrives. */
+export const settlementMaintenanceBank = guard(async (c) => {
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const target = maintenanceCompany(c, body.companyId);
+  if (!target.ok) return c.json(target.refusal, 409);
+  const accountCode = String(body.accountCode ?? '').trim();
+  if (!accountCode) return c.json({ error: 'no_account', message: 'Which bank account?' }, 400);
+  const enabled = Boolean(body.enabled);
+  const sb = c.get('supabase');
+  const companyId = target.companyId;
+
+  if (!enabled) {
+    const { data: usersRaw, error: uErr } = await sb.from('acc_company_acquirers')
+      .select('acquirer_code, is_active').eq('company_id', companyId).eq('bank_account_code', accountCode);
+    if (uErr) return c.json({ error: 'load_failed', reason: uErr.message }, 500);
+    const users = ((usersRaw ?? []) as Array<{ acquirer_code: string; is_active: boolean | null }>)
+      .filter((u) => u.is_active !== false).map((u) => u.acquirer_code);
+    if (users.length > 0) {
+      return c.json({
+        error: 'bank_in_use',
+        message: `${users.join(', ')} still pay${users.length === 1 ? 's' : ''} into this account for this company. Point ${users.length === 1 ? 'it' : 'them'} somewhere else first.`,
+      }, 409);
+    }
+  }
+
+  const { error } = await sb.from('accounts')
+    .update({ is_active: enabled })
+    .eq('company_id', companyId).eq('account_code', accountCode);
+  if (error) return c.json({ error: 'save_failed', reason: error.message }, 500);
   return c.json({ ok: true });
 });
 

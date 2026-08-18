@@ -24,6 +24,7 @@ import { ToastProvider } from '../src/hooks/useToast';
 import { DialogProvider } from '../src/hooks/useDialog';
 import { MerchantRecon } from '../src/pages/scm-v2/MerchantRecon';
 import { BankRecon } from '../src/pages/scm-v2/BankRecon';
+import { SettlementSetup } from '../src/pages/scm-v2/SettlementSetup';
 import { fmtCenti } from '../src/vendor/shared/format';
 
 // authedFetch refuses to run without a token; the demo server ignores it.
@@ -132,6 +133,7 @@ const Harness = () => {
             them is exercised too: reconcile here, then "Money into the bank". */}
         <Routes key={resetAt}>
           <Route path="/scm/bank-recon" element={<BankRecon />} />
+          <Route path="/scm/settlement-setup" element={<SettlementSetup />} />
           <Route path="*" element={<MerchantRecon />} />
         </Routes>
       </main>

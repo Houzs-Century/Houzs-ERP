@@ -37,6 +37,7 @@ import {
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched,
   settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
   settlementBatchReceived, settlementReceiptUndo,
+  settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from './accounting-settlement';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
@@ -75,6 +76,11 @@ accounting.use('*', supabaseAuth);
    permission check (the file's `guard`). */
 accounting.get('/settlement/setup', settlementSetup);
 accounting.patch('/settlement/setup/:code', settlementSetupSave);
+// Maintenance takes the company as a parameter (owner: 我会 overall 维护) — the
+// handlers re-check it against the caller's own grants.
+accounting.get('/settlement/maintenance', settlementMaintenance);
+accounting.patch('/settlement/maintenance/merchant', settlementMaintenanceMerchant);
+accounting.patch('/settlement/maintenance/bank', settlementMaintenanceBank);
 accounting.post('/settlement/batches', settlementUpload);
 accounting.get('/settlement/batches', settlementBatches);
 accounting.get('/settlement/batches/:id', settlementBatchDetail);

@@ -77,6 +77,14 @@ What is on the branch:
   `/scm/bank-recon` is GATED on the first being clean: an unreconciled report is
   not listed there at all, only counted and named. Opening anything replaces the
   list. Shared presentation only (`settlement-ui.ts`).
+- **`/scm/settlement-setup` — one maintenance screen for EVERY company** (他:
+  我会 overall 维护，然后在维护那边选这个公司是使用哪里几个 merchant，然后他有什
+  么 bank). Pick the company at the top, tick merchants and banks. The three
+  endpoints take the company as a parameter and re-check it against the caller
+  grants. A company nobody set up shows everything unticked and creates its row
+  on the first tick — no migration for a new company. Unticking a bank a
+  merchant still uses is refused by name. Banks come from the chart, which is
+  already central (0297) — no second bank master.
 - **"Paid, not yet in the bank"** — the detail list he asked for (我需要看到说顾
   客还钱了，但是还没收款或还没对账。我要明细的), with WHO keyed each payment in
   (我还要看到谁记录这笔的) and three states: the acquirer has not reported it /

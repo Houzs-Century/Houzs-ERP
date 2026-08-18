@@ -23,6 +23,7 @@ import {
   settlementBatchDetail, settlementConfirmRow, settlementConfirmMatched,
   settlementIgnoreRow, settlementWatchlist, settlementExport, settlementInTransit,
   settlementBatchReceived, settlementReceiptUndo,
+  settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from '../src/scm/routes/accounting-settlement';
 
 const PORT = Number(process.env.DEMO_PORT ?? 8788);
@@ -145,7 +146,14 @@ const soPay = (id: string, docNo: string, paidAt: string, sen: number, approval:
 });
 
 const seed = () => ({
-  accounts: CHART.map((r) => ({ ...r })),
+  /* The chart is unified (migration 0297: one AutoCount-style chart for every
+     company), so company 2 carries the same accounts. Its acquirer links are
+     deliberately ABSENT — that is what a company nobody has set up looks like,
+     and the maintenance screen has to be usable on it. */
+  accounts: [
+    ...CHART.map((r) => ({ ...r })),
+    ...CHART.map((r) => ({ ...r, company_id: 2 })),
+  ],
   acc_account_roles: [] as Row[],
   acc_acquirer_config: ACQUIRER_CONFIG.map((r) => ({ ...r })),
   acc_company_acquirers: COMPANY_LINKS.map((r) => ({ ...r })),
@@ -270,6 +278,13 @@ app.use('*', async (c, next) => {
   c.set('supabase' as never, client() as never);
   c.set('companyId' as never, CO as never);
   c.set('houzsUser' as never, { name: 'Owner (demo)', permissions_set: ['scm.payment_voucher.post'] } as never);
+  /* Two companies, so the maintenance screen's company picker is real here —
+     the owner maintains both from one screen (2026-08-18). */
+  c.set('allowedCompanyIds' as never, [1, 2] as never);
+  c.set('companies' as never, [
+    { id: 1, code: 'HOUZS', name: 'Houzs Century' },
+    { id: 2, code: '2990', name: "2990's Home" },
+  ] as never);
   await next();
   refreshView();
 });
@@ -277,6 +292,9 @@ app.use('*', async (c, next) => {
 const R = '/api/scm/accounting/settlement';
 app.get(`${R}/setup`, settlementSetup as never);
 app.patch(`${R}/setup/:code`, settlementSetupSave as never);
+app.get(`${R}/maintenance`, settlementMaintenance as never);
+app.patch(`${R}/maintenance/merchant`, settlementMaintenanceMerchant as never);
+app.patch(`${R}/maintenance/bank`, settlementMaintenanceBank as never);
 app.post(`${R}/batches`, settlementUpload as never);
 app.get(`${R}/batches`, settlementBatches as never);
 app.get(`${R}/batches/:id`, settlementBatchDetail as never);

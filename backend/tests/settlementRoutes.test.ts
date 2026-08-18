@@ -19,6 +19,7 @@ import {
   settlementSetup, settlementUpload, settlementBatches, settlementBatchDetail,
   settlementConfirmRow, settlementConfirmMatched, settlementIgnoreRow, settlementWatchlist,
   settlementBatchReceived, settlementInTransit,
+  settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from '../src/scm/routes/accounting-settlement';
 
 const CO = 1;
@@ -72,6 +73,11 @@ function harness(tables: Record<string, Row[]>, perms: readonly string[] = [GL_P
     c.set('supabase' as never, sb as never);
     c.set('companyId' as never, CO as never);
     c.set('houzsUser' as never, { name: 'Tester', permissions_set: perms } as never);
+    c.set('allowedCompanyIds' as never, [1, 2] as never);
+    c.set('companies' as never, [
+      { id: 1, code: 'HOUZS', name: 'Houzs Century' },
+      { id: 2, code: '2990', name: "2990's Home" },
+    ] as never);
     await next();
   });
   app.get('/settlement/setup', settlementSetup as never);
@@ -84,6 +90,9 @@ function harness(tables: Record<string, Row[]>, perms: readonly string[] = [GL_P
   app.post('/settlement/batches/:id/received', settlementBatchReceived as never);
   app.get('/settlement/watchlist', settlementWatchlist as never);
   app.get('/settlement/in-transit', settlementInTransit as never);
+  app.get('/settlement/maintenance', settlementMaintenance as never);
+  app.patch('/settlement/maintenance/merchant', settlementMaintenanceMerchant as never);
+  app.patch('/settlement/maintenance/bank', settlementMaintenanceBank as never);
   return { app, sb };
 }
 
@@ -91,6 +100,9 @@ const upload = (app: Hono, body: Record<string, unknown>) =>
   app.request('/settlement/batches', {
     method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
   });
+
+const patch = (app: Hono, path: string, body: Record<string, unknown>) =>
+  app.request(path, { method: 'PATCH', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
 
 const post = (app: Hono, path: string, body: Record<string, unknown> = {}) =>
   app.request(path, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
@@ -137,6 +149,99 @@ describe('one merchant, two companies, two banks', () => {
     const { app } = harness({ acc_acquirers: [{ ...MBB, bank_account_code: null }] });
     const body = await (await app.request('/settlement/setup')).json() as { acquirers: Array<Record<string, unknown>> };
     expect(body.acquirers[0]).toMatchObject({ ready: true, bankReady: false });
+  });
+});
+
+/* Maintenance, the owner's own shape (2026-08-18): 我会 overall 维护，然后在维护
+   那边选这个公司是使用哪里几个 merchant，然后他有什么 bank。可能是以勾选的方式选
+   择？ — so the company is a parameter, checked against his grants. */
+describe('maintenance — one screen, every company', () => {
+  const CHART_MONEY: Row[] = [
+    { account_code: '330-0000', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
+    { account_code: '331-0000', account_name: 'Bank — Hong Leong', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: CO },
+    { account_code: '330-0000', account_name: 'Bank — Maybank', account_type: 'ASSET', parent_code: null, is_active: true, acc_money: true, company_id: 2 },
+  ];
+  const CONFIG: Row[] = [
+    { code: 'MBB', display_name: 'MBB', statement_format: 'CSV', has_unique_ref: true, fee_method: 'stated', date_tolerance_days: 3, column_map: { date: 'Txn Date', gross: 'Gross', fee: 'MDR' }, is_active: true },
+    { code: 'CIMB', display_name: 'CIMB', statement_format: null, has_unique_ref: null, fee_method: null, date_tolerance_days: 3, column_map: null, is_active: true },
+  ];
+
+  test('shows every merchant, ticked or not, and this company own banks', async () => {
+    const { app } = harness({
+      accounts: CHART_MONEY, acc_acquirer_config: CONFIG,
+      acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '331-0000', is_active: true }],
+    });
+    const body = await (await app.request('/settlement/maintenance?companyId=1')).json() as {
+      companyId: number;
+      companies: Array<{ id: number }>;
+      merchants: Array<Record<string, unknown>>;
+      bankAccounts: Array<Record<string, unknown>>;
+    };
+    expect(body.companyId).toBe(1);
+    expect(body.companies.map((co) => co.id)).toEqual([1, 2]);
+    /* CIMB has no link row at all — shown, unticked, rather than absent. */
+    expect(body.merchants.find((m) => m.code === 'MBB')).toMatchObject({ enabled: true, linked: true, bank_account_code: '331-0000' });
+    expect(body.merchants.find((m) => m.code === 'CIMB')).toMatchObject({ enabled: false, linked: false, bank_account_code: null });
+    /* Company 2's account is not this company's business. */
+    expect(body.bankAccounts.map((b) => b.account_code)).toEqual(['330-0000', '331-0000']);
+    expect(body.bankAccounts.find((b) => b.account_code === '331-0000')).toMatchObject({ usedBy: ['MBB'] });
+  });
+
+  test('another company is maintained without switching, and gets its own answer', async () => {
+    const { app } = harness({
+      accounts: CHART_MONEY, acc_acquirer_config: CONFIG,
+      acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '331-0000', is_active: true }],
+    });
+    const body = await (await app.request('/settlement/maintenance?companyId=2')).json() as {
+      companyId: number; merchants: Array<Record<string, unknown>>; bankAccounts: Array<Record<string, unknown>>;
+    };
+    expect(body.companyId).toBe(2);
+    /* Company 2 has never been set up: everything unticked, nothing invented. */
+    expect(body.merchants.every((m) => m.enabled === false)).toBe(true);
+    expect(body.bankAccounts.map((b) => b.account_code)).toEqual(['330-0000']);
+  });
+
+  /* A company id in a request is an instruction, not an authorisation. */
+  test('a company the caller is not granted is refused', async () => {
+    const { app } = harness({ accounts: CHART_MONEY, acc_acquirer_config: CONFIG, acc_company_acquirers: [] });
+    const res = await app.request('/settlement/maintenance?companyId=99');
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'company_not_granted' });
+
+    const write = await patch(app, '/settlement/maintenance/merchant', { companyId: 99, code: 'MBB', enabled: true });
+    expect(write.status).toBe(409);
+  });
+
+  test('ticking a merchant on creates the link row for that company', async () => {
+    const { app, sb } = harness({ accounts: CHART_MONEY, acc_acquirer_config: CONFIG, acc_company_acquirers: [] });
+    const res = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'MBB', enabled: true });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toMatchObject({ created: true });
+    expect(sb.tables.acc_company_acquirers).toHaveLength(1);
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ company_id: 2, acquirer_code: 'MBB', is_active: true });
+
+    /* And pointing it at a bank updates the same row rather than making another. */
+    const again = await patch(app, '/settlement/maintenance/merchant', { companyId: 2, code: 'MBB', bankAccountCode: '330-0000' });
+    expect(await again.json()).toMatchObject({ created: false });
+    expect(sb.tables.acc_company_acquirers).toHaveLength(1);
+    expect(sb.tables.acc_company_acquirers[0]).toMatchObject({ bank_account_code: '330-0000' });
+  });
+
+  test('a bank a merchant still pays into cannot be unticked, and the refusal names it', async () => {
+    const { app, sb } = harness({
+      accounts: CHART_MONEY, acc_acquirer_config: CONFIG,
+      acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '331-0000', is_active: true }],
+    });
+    const res = await patch(app, '/settlement/maintenance/bank', { companyId: 1, accountCode: '331-0000', enabled: false });
+    expect(res.status).toBe(409);
+    expect(await res.json()).toMatchObject({ error: 'bank_in_use', message: expect.stringContaining('MBB') });
+    expect(sb.tables.accounts.find((a) => a.account_code === '331-0000' && a.company_id === 1)).toMatchObject({ is_active: true });
+
+    /* Free it first, then it goes. */
+    await patch(app, '/settlement/maintenance/merchant', { companyId: 1, code: 'MBB', bankAccountCode: null });
+    const ok = await patch(app, '/settlement/maintenance/bank', { companyId: 1, accountCode: '331-0000', enabled: false });
+    expect(ok.status).toBe(200);
+    expect(sb.tables.accounts.find((a) => a.account_code === '331-0000' && a.company_id === 1)).toMatchObject({ is_active: false });
   });
 });
 

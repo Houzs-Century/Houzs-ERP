@@ -154,6 +154,89 @@ export const useSaveAcquirerSetup = () => {
   });
 };
 
+/* ── Maintenance: one screen, every company ─────────────────────────────────
+   The owner maintains this himself across companies (2026-08-18: 我会 overall
+   维护，然后在维护那边选这个公司是使用哪里几个 merchant，然后他有什么 bank), so
+   these carry the company as a parameter instead of relying on the top-bar
+   switcher. The server re-checks it against his own grants. */
+
+export type MaintenanceMerchant = {
+  code: string;
+  display_name: string;
+  statement_format: string | null;
+  has_unique_ref: boolean | null;
+  fee_method: string | null;
+  date_tolerance_days: number;
+  column_map: Record<string, string> | null;
+  /** This company uses it (a link row, switched on). */
+  enabled: boolean;
+  /** A link row exists at all — false means this company was never set up. */
+  linked: boolean;
+  bank_account_code: string | null;
+  transit_account_code: string;
+  fee_account_code: string;
+  ready: boolean;
+  autoMatchable: boolean;
+};
+
+export type MaintenanceBank = {
+  account_code: string;
+  account_name: string;
+  /** This company banks here. */
+  enabled: boolean;
+  /** Merchants that pay into it — unticking is refused while this is not empty. */
+  usedBy: string[];
+};
+
+export type MaintenanceData = {
+  companyId: number;
+  companies: Array<{ id: number; code: string; name: string }>;
+  merchants: MaintenanceMerchant[];
+  bankAccounts: MaintenanceBank[];
+};
+
+export const useSettlementMaintenance = (companyId: number | null) => useQuery({
+  queryKey: ['settlement-maintenance', companyId],
+  queryFn: () => authedFetch<MaintenanceData>(
+    `/accounting/settlement/maintenance${companyId == null ? '' : `?companyId=${companyId}`}`,
+  ),
+  staleTime: 30_000,
+  retry: retryUnlessClientError,
+  retryDelay: 800,
+});
+
+const invalidateMaintenance = (qc: ReturnType<typeof useQueryClient>) => {
+  void qc.invalidateQueries({ queryKey: ['settlement-maintenance'] });
+  void qc.invalidateQueries({ queryKey: ['settlement-setup'] });
+};
+
+/** Tick a merchant on or off for one company, or point it at a bank. */
+export const useSaveMaintenanceMerchant = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { companyId: number; code: string; enabled?: boolean; bankAccountCode?: string | null }) =>
+      authedFetch<{ ok: boolean; created: boolean }>('/accounting/settlement/maintenance/merchant', {
+        method: 'PATCH', body: JSON.stringify(body),
+      }),
+    onSuccess: () => invalidateMaintenance(qc),
+    onError: writeFailedAs('Merchant not saved'),
+  });
+};
+
+/** Tick which banks a company actually banks with. */
+export const useSaveMaintenanceBank = () => {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { companyId: number; accountCode: string; enabled: boolean }) =>
+      authedFetch<{ ok: boolean }>('/accounting/settlement/maintenance/bank', {
+        method: 'PATCH', body: JSON.stringify(body),
+      }),
+    onSuccess: () => invalidateMaintenance(qc),
+    /* No writeFailedAs: refusing to unhook a bank a merchant still uses is the
+       MESSAGE, and the page shows the server's sentence verbatim. */
+  });
+};
+
 export const useSettlementBatches = () => useQuery({
   queryKey: ['settlement-batches'],
   queryFn: () => authedFetch<{ batches: SettlementBatch[] }>(`/accounting/settlement/batches`),

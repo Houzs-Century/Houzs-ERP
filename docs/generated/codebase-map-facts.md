@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-136 route modules (40 in `backend/src/routes`, 96 in `backend/src/scm/routes`), 1061 endpoint registrations.
+136 route modules (40 in `backend/src/routes`, 96 in `backend/src/scm/routes`), 1064 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -59,8 +59,8 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/track.ts` | 1 | 44 |
 | `backend/src/routes/udf.ts` | 4 | 251 |
 | `backend/src/routes/users.ts` | 22 | 2282 |
-| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 943 |
-| `backend/src/scm/routes/accounting.ts` | 34 | 1115 |
+| `backend/src/scm/routes/accounting-settlement.ts` | 0 | 1127 |
+| `backend/src/scm/routes/accounting.ts` | 37 | 1121 |
 | `backend/src/scm/routes/addons.ts` | 4 | 215 |
 | `backend/src/scm/routes/amendment-mirror.ts` | 1 | 126 |
 | `backend/src/scm/routes/ar-reconciliation.ts` | 1 | 163 |
@@ -171,7 +171,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1382 files, 560372 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1384 files, 560927 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -199,7 +199,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 
 ## 4. Frontend desktop routes
 
-146 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
+147 `<Route>` declarations in `frontend/src/App.tsx` (aliases from
 `frontend/src/lib/routeAliases.ts` are expanded at runtime and not counted here).
 
 | path | page module |
@@ -329,6 +329,7 @@ Read these by line range, never whole — see the CODEBASE-MAP section of the sa
 | `/scm/sales-orders/new` | `frontend/src/pages/scm-v2/SalesOrderNew` |
 | `/scm/sales-orders/new/from-products` | `frontend/src/pages/scm-v2/SalesOrderNewFromProducts` |
 | `/scm/sales-orders/new/guided` | `frontend/src/pages/scm-v2/SalesOrderNewGuided` |
+| `/scm/settlement-setup` | `frontend/src/pages/scm-v2/SettlementSetup` |
 | `/scm/stock-adjustments` | `frontend/src/pages/scm-v2/StockAdjustments` |
 | `/scm/stock-adjustments/new` | `frontend/src/pages/scm-v2/StockAdjustmentNew` |
 | `/scm/stock-takes` | `frontend/src/pages/scm-v2/StockTakesListV2` |
@@ -357,7 +358,7 @@ Page files by directory:
 |---|---|
 | `frontend/src/pages` | 33 |
 | `frontend/src/pages/MailCenter` | 3 |
-| `frontend/src/pages/scm-v2` | 122 |
+| `frontend/src/pages/scm-v2` | 123 |
 | `frontend/src/pages/scm-v2/products` | 1 |
 | `frontend/src/pages/team` | 1 |
 

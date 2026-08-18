@@ -5,10 +5,10 @@
 //   • a statement the server refused shows the server's sentence, verbatim;
 //   • the four piles carry their counts and a line shows its clue;
 //   • a selection that does not add up cannot be confirmed;
-//   • the money side is NOT here — it is BankRecon.test.tsx, because the owner
-//     asked for the two jobs to be two screens.
+//   • the money side is NOT here — it is BankRecon.test.tsx, and the setup is
+//     SettlementSetup.test.tsx: three jobs, three screens, as the owner asked.
 
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { AcquirerSetup, SettlementRow } from './settlement-queries';
@@ -43,7 +43,7 @@ const DONE_ROW: SettlementRow = {
 
 const confirmMutate = vi.fn();
 const uploadMutateAsync = vi.fn();
-let saveMutate = vi.fn();
+const saveMutate = vi.fn();
 
 vi.mock('./settlement-queries', () => ({
   useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL], bankAccounts: [{ account_code: '330-0000', account_name: 'Bank — Maybank Current' }] }, isLoading: false }),
@@ -76,9 +76,6 @@ import { MerchantRecon } from './MerchantRecon';
 import { refusalText } from './settlement-ui';
 
 const draw = () => render(<MemoryRouter><MerchantRecon /></MemoryRouter>);
-
-/* The merchant code appears twice in a row (chip and name) — take the row. */
-const rowFor = (code: string) => screen.getAllByText(code)[0].closest('tr') as HTMLElement;
 
 /* The bug the owner hit on the local rig: the page showed "Some of the details
    weren't accepted" instead of the statement's actual problem, because the
@@ -184,54 +181,5 @@ describe('the reconcile tab', () => {
         expect.objectContaining({ id: 'p2', amountSen: 40000 }),
       ],
     }));
-  });
-});
-
-describe('the setup tab', () => {
-  /* Config is read far more often than changed, so it reads as a table and only
-     the merchant being changed opens a form. */
-  test('every merchant is one row, and the receiving bank is named', () => {
-    draw();
-    fireEvent.click(screen.getByText('Merchant setup'));
-    expect(within(rowFor('MBB')).getByText('Bank — Maybank Current')).toBeTruthy();
-    expect(within(rowFor('GHL')).getByText(/not set — will use the company default/)).toBeTruthy();
-    expect(within(rowFor('GHL')).getByText('by hand, always')).toBeTruthy();
-    // nothing is a form until you ask
-    expect(screen.queryByLabelText('MBB Date heading')).toBeNull();
-  });
-
-  test('opening one merchant warns where nothing can auto-confirm', () => {
-    draw();
-    fireEvent.click(screen.getByText('Merchant setup'));
-    fireEvent.click(within(rowFor('GHL')).getByText('Change'));
-    expect(screen.getByText(/nothing from GHL can be confirmed automatically/)).toBeTruthy();
-  });
-
-  /* The headings used to be one raw JSON box. An owner cannot be asked to type
-     {"date":"Txn Date",…} — and a typo in it was only discovered at upload. */
-  test('each heading is its own labelled field, seeded from the saved layout', () => {
-    draw();
-    fireEvent.click(screen.getByText('Merchant setup'));
-    fireEvent.click(within(rowFor('MBB')).getByText('Change'));
-    expect((screen.getByLabelText('MBB Date heading') as HTMLInputElement).value).toBe('Txn Date');
-    expect((screen.getByLabelText('MBB Amount heading') as HTMLInputElement).value).toBe('Gross');
-    expect(screen.getByLabelText('MBB Reference heading')).toBeTruthy();
-    expect(screen.getByLabelText('MBB Net heading')).toBeTruthy();
-  });
-
-  test('a required heading left blank is refused HERE, not at upload time', () => {
-    saveMutate = vi.fn();
-    draw();
-    fireEvent.click(screen.getByText('Merchant setup'));
-    fireEvent.click(within(rowFor('MBB')).getByText('Change'));
-    const dateField = screen.getByLabelText('MBB Date heading');
-    fireEvent.change(dateField, { target: { value: '' } });
-    const card = within(dateField.closest('section') as HTMLElement);
-    fireEvent.click(card.getByText('Save'));
-    /* MBB carries a unique reference AND states its fee per line, so those
-       headings are required too — the message names every one still missing,
-       not just the field that was cleared. */
-    expect(card.getByText(/Fill in the Date, Fee, Reference headings/)).toBeTruthy();
-    expect(saveMutate).not.toHaveBeenCalled();
   });
 });
