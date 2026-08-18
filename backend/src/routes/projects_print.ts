@@ -735,8 +735,9 @@ app.get("/:id", async (c) => {
       white-space: nowrap;
     }
 
-    /* Headline money strip under the hero */
-    .kpi { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: #f7f8f6; }
+    /* Headline money strip — leads the Finance Snapshot section (owner
+       2026-08-18; previously sat under the hero band in the page header) */
+    .kpi { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); background: #f7f8f6; margin: 1mm 0 1.5mm; }
     .kpi .kc { padding: 2.2mm 3mm; border-left: 0.5pt solid var(--line); min-width: 0; }
     .kpi .kc:first-child { border-left: 0; }
     .kpi .kc .k {
@@ -963,16 +964,10 @@ app.get("/:id", async (c) => {
             </div>
             ${p.pic_name ? `<div class="h-pic">PIC · ${esc(p.pic_name)}</div>` : ""}
           </div>
-          ${
-            hideMoney
-              ? ""
-              : `<div class="kpi">
-            <div class="kc"><div class="k">Total Sales</div><div class="v">${fmtMoney0(salesTotal)}</div></div>
-            <div class="kc"><div class="k">Gross Profit</div><div class="v${grossProfit < 0 ? " neg" : ""}">${fmtMoney0(grossProfit)}</div></div>
-            <div class="kc"><div class="k">Net Profit</div><div class="v${netProfit < 0 ? " neg" : ""}">${fmtMoney0(netProfit)}</div></div>
-            <div class="kc"><div class="k">Margin</div><div class="v${margin != null && margin < 0 ? " neg" : ""}">${margin != null ? margin.toFixed(1) + "%" : "—"}</div></div>
-          </div>`
-          }
+          <!-- KPI strip moved INTO the Finance Snapshot section (owner
+               2026-08-18: "finance should not be below the title. event over
+               view after title.") — the header now ends at the hero band and
+               Event Overview is the first thing after it. -->
         </td>
       </tr>
     </thead>
@@ -985,17 +980,14 @@ app.get("/:id", async (c) => {
             ? `<section data-sec="overview" data-label="Event Overview">
           <h2><span class="sn">${secNo()}.</span> Event Overview</h2>
           <div class="rule"></div>
-          <!-- Dates, booth, brand and PIC ride in the hero band above, so the
-               grid carries what is left. -->
+          <!-- Brand / event type / state / organizer / venue removed (owner
+               2026-08-18: "becoz already ahve in balck card" — the hero title
+               is "STATE [BRAND] ORGANIZER @ VENUE"), so the grid carries only
+               what the title cannot: booth, duration, size. -->
           <div class="cells">
-            <div class="cell"><div class="k">Brand</div><div class="v">${esc(p.brand || "—")}</div></div>
-            <div class="cell"><div class="k">Event Type</div><div class="v">${esc(p.event_type_name || "—")}</div></div>
-            <div class="cell"><div class="k">State</div><div class="v">${esc(p.state || "—")}</div></div>
             <div class="cell"><div class="k">Booth No.</div><div class="v mono">${esc(p.booth_no || "—")}</div></div>
-            <div class="cell"><div class="k">Organizer</div><div class="v">${esc(p.organizer || "—")}</div></div>
-            <div class="cell"><div class="k">Venue</div><div class="v">${esc(p.venue || "—")}</div></div>
             <div class="cell"><div class="k">Duration</div><div class="v">${p.duration_days ?? "—"} day(s)</div></div>
-            <div class="cell"><div class="k">Size (m²)</div><div class="v mono">${p.size_sqm ?? "—"}</div></div>
+            <div class="cell"><div class="k">Size (sqm)</div><div class="v mono">${p.size_sqm ?? "—"}</div></div>
             <!-- Status / Stage / Payment removed from the sheet (owner
                  2026-08-14) — workflow state belongs on screen, not on the
                  printed debrief. -->
@@ -1005,14 +997,19 @@ app.get("/:id", async (c) => {
         }
 
         <!-- ── Finance snapshot ──────────────────────────── -->
-        <!-- Cost ladder: every cogs bucket, a COGS sub-total, then the rest of
-             the ledger and Total Cost. The headline numbers (sales, GP, NP,
-             margin) print in the strip under the hero, so they are not repeated
-             here (owner's reference sheet, 2026-08-12). -->
+        <!-- Headline KPI strip first (moved down from the header band, owner
+             2026-08-18), then the cost ladder: every cogs bucket, a COGS
+             sub-total, the rest of the ledger and Total Cost. -->
         ${hideMoney || !want("finance") ? "" : `
         <section data-sec="finance" data-label="Finance Snapshot">
           <h2><span class="sn">${secNo()}.</span> Finance Snapshot</h2>
           <div class="rule"></div>
+          <div class="kpi">
+            <div class="kc"><div class="k">Total Sales</div><div class="v">${fmtMoney0(salesTotal)}</div></div>
+            <div class="kc"><div class="k">Gross Profit</div><div class="v${grossProfit < 0 ? " neg" : ""}">${fmtMoney0(grossProfit)}</div></div>
+            <div class="kc"><div class="k">Net Profit</div><div class="v${netProfit < 0 ? " neg" : ""}">${fmtMoney0(netProfit)}</div></div>
+            <div class="kc"><div class="k">Margin</div><div class="v${margin != null && margin < 0 ? " neg" : ""}">${margin != null ? margin.toFixed(1) + "%" : "—"}</div></div>
+          </div>
           <table class="fin">
             <tbody>
               ${cogsRows
