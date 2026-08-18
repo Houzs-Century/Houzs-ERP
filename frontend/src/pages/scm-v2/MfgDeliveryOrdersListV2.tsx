@@ -600,40 +600,20 @@ function DetailDrawer({
               <div className="flex-1" />
               {canWrite && (() => {
                 const s = (row.status || "").toLowerCase();
-                /* MARK SIGNED AND THE TRANSFER ARE NOT ALTERNATIVES. Until
-                   2026-08-18 this was an if / else-if chain: a DISPATCHED
-                   delivery matched the first arm and RETURNED, so the transfer
-                   button was not disabled here — it was never rendered at all,
-                   and the slot it would have taken showed "Mark signed"
-                   instead. Any delivery that had shipped but was not yet marked
-                   signed had no route to an invoice from this drawer.
-
-                   The two buttons answer different questions. "Mark signed"
-                   changes THIS document's own status; the transfer produces the
-                   NEXT document. docs/modules/document-conversion.md states the
-                   rule, and DeliveryOrderDetailV2 already followed it — the
-                   transfer takes the primary slot and Mark signed stays
-                   secondary beside Edit and Print. This drawer was the copy
-                   that did not.
-
-                   WHY IT READ AS A PER-COMPANY BUG: the predicate is
-                   company-neutral, but 2990's imported deliveries sit at
-                   DISPATCHED (its source system had no "delivered" step) while
-                   the HOUZS carry-overs were inserted as 'DELIVERED'. Same
-                   screen, same build, different status histogram. */
-                const shipped = (DO_SHIPPED_STATES as readonly string[]).includes(
-                  s.toUpperCase(),
-                );
+                /* MARK SIGNED AND THE TRANSFER ARE NOT ALTERNATIVES. This was an
+                   if / else-if chain until 2026-08-18, so a DISPATCHED delivery
+                   matched the "Mark signed" arm and RETURNED — the transfer was
+                   not disabled here, it was never rendered, and its slot showed
+                   "Mark signed". The two answer different questions: one changes
+                   THIS document's status, the other produces the NEXT one.
+                   docs/modules/document-conversion.md has the rule and the
+                   reason a company-neutral predicate hit one organisation. */
+                const shipped = (DO_SHIPPED_STATES as readonly string[]).includes(s.toUpperCase());
                 const preSigned = ["loaded", "dispatched", "in_transit"].includes(s);
-                // Reopen a cancelled DO back to LOADED (2990
-                // MfgDeliveryOrdersList "Reopen DO" parity).
+                // Reopen a cancelled DO back to LOADED (2990 list parity).
                 if (s === "cancelled" || s === "cancel") {
                   return (
-                    <Button
-                      variant="primary"
-                      icon={<RotateCcw size={14} />}
-                      onClick={onReopen}
-                    >
+                    <Button variant="primary" icon={<RotateCcw size={14} />} onClick={onReopen}>
                       Reopen
                     </Button>
                   );
@@ -642,20 +622,12 @@ function DetailDrawer({
                   return (
                     <>
                       {preSigned && (
-                        <Button
-                          variant="secondary"
-                          icon={<CheckCircle2 size={14} />}
-                          onClick={onMarkSigned}
-                        >
+                        <Button variant="secondary" icon={<CheckCircle2 size={14} />} onClick={onMarkSigned}>
                           Mark signed
                         </Button>
                       )}
                       {shipped && (
-                        <Button
-                          variant="primary"
-                          icon={<Receipt size={14} />}
-                          onClick={onConvertToSi}
-                        >
+                        <Button variant="primary" icon={<Receipt size={14} />} onClick={onConvertToSi}>
                           {transferToLabel('si')}
                         </Button>
                       )}
