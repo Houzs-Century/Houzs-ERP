@@ -254,10 +254,12 @@ const ReconcileTab = () => {
                   <td style={cell}>{b.file_name}</td>
                   <td style={cell}>{b.period_from} → {b.period_to}</td>
                   <td style={num}>{b.row_count}</td>
-                  {/* The two kinds of "not matched yet", named: one is a choice
-                      he can make, the other is a payment nobody recorded. */}
-                  <td style={{ ...cell, color: danger }}>
-                    {[(b.to_choose_count ?? 0) > 0 ? `${b.to_choose_count} to choose` : null,
+                  {/* THREE kinds of not-done, named, because each is a different
+                      amount of work: press a button, make a choice, or find a
+                      sale nobody recorded. */}
+                  <td style={cell}>
+                    {[(b.to_confirm_count ?? 0) > 0 ? `${b.to_confirm_count} to confirm` : null,
+                      (b.to_choose_count ?? 0) > 0 ? `${b.to_choose_count} to choose` : null,
                       (b.no_record_count ?? 0) > 0 ? `${b.no_record_count} with no sale in the ERP` : null]
                       .filter(Boolean).join(' · ') || `${b.open_count} to decide`}
                   </td>
@@ -355,6 +357,10 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
   const openRows = rows.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED');
   const doneRows = rows.filter((r) => r.confirmed_at || r.bucket === 'IGNORED');
   const unconfirmedMatched = rows.filter((r) => r.bucket === 'MATCHED' && !r.confirmed_at).length;
+  /* A line that already claimed its payment needs a button; one that has not
+     needs a person. The screen must not call them the same thing. */
+  const toConfirm = openRows.filter((r) => r.linked.length > 0).length;
+  const toDecide = openRows.length - toConfirm;
   const shown = showDone ? [...openRows, ...doneRows] : openRows;
 
   const exportCsv = () => {
@@ -381,7 +387,13 @@ const BatchView = ({ batchId, onBack }: { batchId: number; onBack: () => void })
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
         <b style={{ fontSize: 'var(--fs-13)' }}>
-          {openRows.length === 0 ? 'Every line is decided.' : `${openRows.length} line(s) still to decide`}
+          {openRows.length === 0 ? 'Every line is decided.' : [
+            /* Matched by reference is NOT a decision — it is one button. Saying
+               "still to decide" about it is what made an auto-matched line read
+               as a problem (owner: 出现的这个是什么？). */
+            toConfirm > 0 ? `${toConfirm} matched, waiting for you to confirm` : null,
+            toDecide > 0 ? `${toDecide} still to decide` : null,
+          ].filter(Boolean).join(' · ')}
         </b>
         <span style={softText}>
           {`${rows.filter((r) => r.confirmed_at).length} done · ${rows.filter((r) => r.bucket === 'IGNORED').length} set aside`}

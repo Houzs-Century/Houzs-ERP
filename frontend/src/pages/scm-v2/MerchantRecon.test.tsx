@@ -148,7 +148,10 @@ describe('the reconcile tab', () => {
   test('a report opens on the lines still to decide, with its clue and candidates', () => {
     draw();
     fireEvent.click(screen.getByText('Reconcile'));
-    expect(screen.getByText('1 line(s) still to decide')).toBeTruthy();
+    /* The open ROW here has no links, so it is a decision. A matched-and-
+       unconfirmed line would say "waiting for you to confirm" instead — the
+       two are different amounts of work and the screen says which. */
+    expect(screen.getByText('1 still to decide')).toBeTruthy();
     expect(screen.getByText(/pair\(s\) of payments add up/)).toBeTruthy();
     expect(screen.getByText('SO-2608-001')).toBeTruthy();
     // the list it came from is off the screen

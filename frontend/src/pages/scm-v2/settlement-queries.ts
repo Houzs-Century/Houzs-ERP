@@ -104,6 +104,9 @@ export type SettlementBatch = {
       the two kinds of open — one you can decide, one nobody recorded. */
   confirmed_count?: number;
   open_count?: number;
+  /* MATCHED and unconfirmed: already matched by reference, one button away.
+     Not a decision — calling it one made an auto-matched line look wrong. */
+  to_confirm_count?: number;
   to_choose_count?: number;
   no_record_count?: number;
   /** How much of the payout has landed, across however many credits it came

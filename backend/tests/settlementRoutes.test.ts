@@ -541,6 +541,26 @@ describe('the batch detail and the watchlists', () => {
     expect(body.batch.receiving_bank).toMatchObject({ code: '330-0000', configured: false });
   });
 
+  /* The owner, looking at an auto-matched line: 出现的这个是什么？ The screen
+     said "Matched to SO-2608-043" and "No payment recorded near 2026-08-15" at
+     the same time. The clue was recomputed for a line whose OWN payment had
+     already been taken out of the candidate pool by its own link. */
+  test('a line that already claimed its payment keeps the reason it matched', async () => {
+    const { app } = harness({ mfg_sales_order_payments: [soPayment()] });
+    const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: number };
+    const body = await (await app.request(`/settlement/batches/${up.batchId}`)).json() as {
+      rows: Array<{ bucket: string; clue: string | null; linked: unknown[] }>;
+    };
+    const matched = body.rows.find((r) => r.bucket === 'MATCHED')!;
+    expect(matched.linked).toHaveLength(1);
+    expect(matched.clue).toMatch(/Reference A1 matches SO-2608-001/);
+    expect(matched.clue).not.toMatch(/No payment recorded/);
+
+    /* And the line that genuinely has nobody still says so. */
+    const orphan = body.rows.find((r) => r.bucket === 'UNMATCHED')!;
+    expect(orphan.clue).toMatch(/No payment recorded/);
+  });
+
   test('the detail view shows the piles and recomputes candidates for the open lines', async () => {
     const { app } = harness({ mfg_sales_order_payments: [soPayment(), soPayment({ id: 'p2', so_doc_no: 'SO-2608-002', amount_centi: 77700, approval_code: null })] });
     const up = await (await upload(app, { acquirerCode: 'MBB', fileName: 'aug.csv', content: STATEMENT })).json() as { batchId: string };

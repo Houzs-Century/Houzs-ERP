@@ -542,17 +542,22 @@ export const settlementBatches = guard(async (c) => {
   const { data: rowTally, error: rtErr } = await sb.from('acc_settlement_rows')
     .select('batch_id, bucket, confirmed_at').eq('company_id', co.companyId);
   if (rtErr) return c.json({ error: 'load_failed', reason: rtErr.message }, 500);
-  const reconciled = new Map<number, { confirmed: number; open: number; toChoose: number; noRecord: number }>();
+  const reconciled = new Map<number, { confirmed: number; open: number; toConfirm: number; toChoose: number; noRecord: number }>();
   for (const r of (rowTally ?? []) as Array<{ batch_id: number; bucket: string; confirmed_at: string | null }>) {
-    const at = reconciled.get(Number(r.batch_id)) ?? { confirmed: 0, open: 0, toChoose: 0, noRecord: 0 };
+    const at = reconciled.get(Number(r.batch_id)) ?? { confirmed: 0, open: 0, toConfirm: 0, toChoose: 0, noRecord: 0 };
     if (r.confirmed_at) at.confirmed += 1;
     else if (r.bucket !== 'IGNORED') {
       at.open += 1;
-      /* The two kinds of "not matched yet", which the operator chases in two
-         different ways: one is a decision he can make, the other is a payment
-         nobody recorded (his second list — merchant report 有但是找不到相对应的
-         transaction 的是那几笔). */
+      /* THREE kinds of not-done, because each is a different amount of work:
+           MATCHED       — already matched by reference; one button;
+           NEEDS_CONFIRM — candidates found, a human must choose;
+           UNMATCHED     — the report has it and no sale in the ERP does
+                           (his second list: merchant report 有但是找不到相对应
+                           的 transaction 的是那几笔).
+         Calling the first one "to decide" is what made an auto-matched line
+         look like a problem. */
       if (r.bucket === 'UNMATCHED') at.noRecord += 1;
+      else if (r.bucket === 'MATCHED') at.toConfirm += 1;
       else at.toChoose += 1;
     }
     reconciled.set(Number(r.batch_id), at);
@@ -570,12 +575,13 @@ export const settlementBatches = guard(async (c) => {
 
   const batches = ((data ?? []) as Array<Record<string, any>>).map((b) => {
     const at = got.get(Number(b.id)) ?? { sen: 0, count: 0, lastOn: null };
-    const done = reconciled.get(Number(b.id)) ?? { confirmed: 0, open: 0, toChoose: 0, noRecord: 0 };
+    const done = reconciled.get(Number(b.id)) ?? { confirmed: 0, open: 0, toConfirm: 0, toChoose: 0, noRecord: 0 };
     const payable = payableOf(b);
     return {
       ...b,
       confirmed_count: done.confirmed,
       open_count: done.open,
+      to_confirm_count: done.toConfirm,
       to_choose_count: done.toChoose,
       no_record_count: done.noRecord,
       received_sen: at.sen,
@@ -625,19 +631,9 @@ export const settlementBatchDetail = guard(async (c) => {
   if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
   if (!settled.ok) return c.json({ error: 'load_failed', reason: settled.reason }, 500);
 
-  /* Only lines still awaiting a decision get candidates computed. The stored
-     bucket stays the truth — a human's decision is never recomputed away. */
-  const open = stored.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED');
-  const suggestions = matchStatement(
-    { code: acq.acquirer.code, has_unique_ref: acq.acquirer.has_unique_ref, date_tolerance_days: acq.acquirer.date_tolerance_days },
-    open.map((r) => ({ lineNo: r.line_no, txnDate: String(r.txn_date).slice(0, 10), ref: r.ref, grossSen: Number(r.gross_sen), feeSen: Number(r.fee_sen), netSen: Number(r.net_sen) })),
-    candidates.payments,
-    settled.keys,
-  );
-  const byLine = new Map(suggestions.map((d) => [d.row.lineNo, d]));
-
-  /* The payments already linked to each line — what the confirmed piles show,
-     and what a re-opened line starts from. */
+  /* The payments already linked to each line — what the matched pile shows,
+     and what a re-opened line starts from. Read BEFORE the recompute, because
+     it decides which lines the recompute is even for. */
   const { data: linkRaw, error: lErr } = await sb.from('acc_settlement_matches')
     .select('settlement_row_id, payment_source, payment_id, doc_no, amount_sen')
     .eq('company_id', co.companyId);
@@ -648,6 +644,23 @@ export const settlementBatchDetail = guard(async (c) => {
     if (list) list.push(l);
     else linksByRow.set(Number(l.settlement_row_id), [l]);
   }
+
+  /* Only lines that still need a HUMAN get candidates computed. The stored
+     bucket stays the truth — a human's decision is never recomputed away.
+     A line that already claimed its payment is excluded, and that exclusion is
+     the point: `settled.keys` holds every claimed payment INCLUDING its own, so
+     recomputing for it searched a pool its own payment had been taken out of
+     and reported "No payment recorded near …" about a line that was matched.
+     The screen then said both things at once, which is what the owner saw. */
+  const open = stored.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED');
+  const needsAHuman = open.filter((r) => (linksByRow.get(r.id) ?? []).length === 0);
+  const suggestions = matchStatement(
+    { code: acq.acquirer.code, has_unique_ref: acq.acquirer.has_unique_ref, date_tolerance_days: acq.acquirer.date_tolerance_days },
+    needsAHuman.map((r) => ({ lineNo: r.line_no, txnDate: String(r.txn_date).slice(0, 10), ref: r.ref, grossSen: Number(r.gross_sen), feeSen: Number(r.fee_sen), netSen: Number(r.net_sen) })),
+    candidates.payments,
+    settled.keys,
+  );
+  const byLine = new Map(suggestions.map((d) => [d.row.lineNo, d]));
 
   const rows = stored.map((r) => {
     const s = byLine.get(r.line_no);
