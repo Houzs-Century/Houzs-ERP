@@ -1286,7 +1286,7 @@ Total: 1033 route registrations across 137 files.
 - L49  POST   /
 
 ## backend/src/scm/routes/mrp.ts  (1)
-- L1529  GET    /
+- L1561  GET    /
 
 ## backend/src/scm/routes/payment-audit-log.ts  (1)
 - L195  GET    /
