@@ -34,6 +34,7 @@ import {
   RATE_RULE_CATEGORIES, rulesByCategory, type RateRuleCategory, type RateRuleTypeT,
 } from '../../vendor/scm/lib/rate-rule-taxonomy';
 import { ThreePLCompanies } from './ThreePLCompanies';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -756,7 +757,11 @@ const SelectField = ({ label, value, onChange, options }: { label: string; value
 const RMLikeInput = ({ label, value, onChange, width, type }: { label: string; value: string; onChange: (v: string) => void; width?: number; type?: string }) => (
   <label className={styles.field} style={width ? { maxWidth: width } : undefined}>
     <span className={styles.fieldLabel}>{label}</span>
-    <input className={styles.fieldInput} type={type ?? 'text'} inputMode={type ? undefined : 'decimal'} value={value} onChange={(e) => onChange(e.target.value)} />
+    {type === 'date' ? (
+      <DateField className={styles.fieldInput} value={value} onChange={onChange} fullWidth />
+    ) : (
+      <input className={styles.fieldInput} type={type ?? 'text'} inputMode={type ? undefined : 'decimal'} value={value} onChange={(e) => onChange(e.target.value)} />
+    )}
   </label>
 );
 

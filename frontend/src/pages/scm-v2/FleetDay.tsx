@@ -94,6 +94,7 @@ import { useDriverLeave } from '../../vendor/scm/lib/delivery-zones-queries';
 import { findCrewLeave, crewLeaveLabel } from '../../vendor/shared/crew-leave';
 import { AssignSelect, OverflowSection } from './delivery-propose-ui';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 function driverLine(t: FleetDayTrip): string {
   const parts = [t.driver?.name, ...(t.helpers.map((h) => h.name))].filter(Boolean);
@@ -547,10 +548,10 @@ export function FleetDay() {
       <div className="flex flex-wrap items-center gap-3 rounded-md border border-border bg-surface px-4 py-3">
         <label className="flex items-center gap-2 text-[12.5px] text-ink-secondary">
           <span className="font-semibold text-ink">Date</span>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={date}
-            onChange={(e) => { setParam('date', e.target.value || null); setSel(new Set()); }}
+            onChange={(iso) => { setParam('date', iso || null); setSel(new Set()); }}
             className="rounded-md border border-border bg-surface px-2 py-1 text-[12.5px] text-ink"
           />
         </label>
@@ -670,11 +671,11 @@ export function FleetDay() {
           headerControls={
             <>
               {/* The picked day (the page URL param) — required. */}
-              <input
-                type="date"
+              <DateField
+                fullWidth
                 required
                 value={date}
-                onChange={(e) => { if (e.target.value) { setParam('date', e.target.value); setSel(new Set()); } }}
+                onChange={(iso) => { if (iso) { setParam('date', iso); setSel(new Set()); } }}
                 title="The day the map shows"
                 className="rounded-md border border-border bg-surface px-2 py-1 text-[12px] text-ink"
               />

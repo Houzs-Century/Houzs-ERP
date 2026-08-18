@@ -98,6 +98,7 @@ import { soDateGuardError, soStockLocationError } from '../../vendor/scm/lib/so-
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
 import { fmtMoneyCenti } from '@2990s/shared';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -1983,23 +1984,23 @@ export const SalesOrderNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Processing Date</span>
-              <input
-                type="date"
+              <DateField
+                fullWidth
                 className={`${styles.fieldInput} ${editedClass('processingDate', processingDate)}`}
                 value={processingDate}
                 min={today}
-                onChange={(e) => setProcessingDate(e.target.value)}
+                onChange={(iso) => setProcessingDate(iso)}
                 style={datesXor && !processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Delivery Date</span>
-              <input
-                type="date"
+              <DateField
+                fullWidth
                 className={`${styles.fieldInput} ${editedClass('deliveryDate', deliveryDate)}`}
                 value={deliveryDate}
                 min={today}
-                onChange={(e) => setDeliveryDate(e.target.value)}
+                onChange={(iso) => setDeliveryDate(iso)}
                 style={datesXor && !deliveryDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
             </label>

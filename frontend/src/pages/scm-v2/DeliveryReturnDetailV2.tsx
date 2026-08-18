@@ -75,7 +75,7 @@ import {
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 
 // ─── Row shapes (subset — see DeliveryReturnDetail.tsx for full 40-field
@@ -167,14 +167,6 @@ type DrItem = {
    this replaces had no finite guard, so an absent / non-numeric cost rendered
    the literal "MYR NaN"; the shared helper renders "—" instead. */
 const fmtMoney = fmtMoneyCenti;
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
 
 // Ref chain matches the DR list V2 — customer SO no > free-text ref.
 const refOf = (h: DrHeader): string =>

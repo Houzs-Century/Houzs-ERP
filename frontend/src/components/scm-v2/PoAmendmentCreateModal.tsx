@@ -34,6 +34,7 @@ import {
   type CreatePoAmendmentLine,
   type PoAmendmentHeaderChanges,
 } from "../../vendor/scm/lib/po-amendment-queries";
+import { DateField } from "../../vendor/scm/components/DateField";
 
 /* Prices are in centi (1/100 MYR); the editor works in whole MYR for the buyer
    then converts back to centi on submit. */
@@ -277,12 +278,7 @@ export function PoAmendmentCreateModal({
                       </label>
                       <label className="block">
                         <span className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">Delivery date</span>
-                        <input
-                          type="date"
-                          className={inputCls}
-                          value={d.deliveryDate}
-                          onChange={(e) => setDraft(l, { deliveryDate: e.target.value })}
-                        />
+                        <DateField fullWidth className={inputCls} value={d.deliveryDate} onChange={(iso) => setDraft(l, { deliveryDate: iso })}/>
                       </label>
                     </div>
                   )}
@@ -298,12 +294,7 @@ export function PoAmendmentCreateModal({
           <div className="grid grid-cols-2 gap-2 border-t border-border-subtle pt-3">
             <label className="block">
               <span className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">PO delivery date</span>
-              <input
-                type="date"
-                className={inputCls}
-                value={effectiveExpectedAt}
-                onChange={(e) => setExpectedAt(e.target.value)}
-              />
+              <DateField fullWidth className={inputCls} value={effectiveExpectedAt} onChange={(iso) => setExpectedAt(iso)}/>
             </label>
             <label className="block">
               <span className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">Notes</span>
