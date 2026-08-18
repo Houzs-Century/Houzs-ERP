@@ -198,6 +198,7 @@ try {
   //    every REST call is a GET.
   const REST = (process.env.SUPABASE_URL || "").replace(/\/$/, "");
   const KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+  notice("DIAG env: SUPABASE_URL len=" + (process.env.SUPABASE_URL||"").length + " SERVICE_KEY len=" + (process.env.SUPABASE_SERVICE_ROLE_KEY||"").length + " DATABASE_URL len=" + (process.env.DATABASE_URL||"").length + "; matchKeys=" + (Object.keys(process.env).filter((k)=>/SUPA|POSTGREST|REST_/i.test(k)).join(",")||"(none)"));
   if (!REST || !KEY) {
     notice("PostgREST layer: NOT TESTED (SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY absent from this run).");
   } else {
