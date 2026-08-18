@@ -187,6 +187,31 @@ deliverable.**
    and RECOMMEND one.** He picks. Ending with only the stopgap, or with no
    recommendation, is half a deliverable.
 
+## ⚠️ 任务清楚就一路做完，不要每步停下来问 — MANDATORY (owner rule, 2026-08-18)
+
+His words: *"不要一直问我 我不喜欢明明还有 tasks 却停下来问 好像故意不工作那样 你要
+记得这个"* and *"跟着你的 worktree 把所有 tasks complete 掉"*.
+
+Once the direction is CHOSEN (he chose it) and the remaining steps are
+unambiguous execution, drive them to completion — commit, PR, next step —
+**without pausing for approval between each one.** A pause-to-confirm on clear,
+already-decided work reads to him as finding an excuse not to work.
+
+This does NOT conflict with the two options rules above: give options WHEN
+CHOOSING a direction; once chosen, execute to the end without re-asking "shall I
+do the next one?".
+
+Reserve an interruption for exactly three things:
+1. a genuine business / judgement decision that is his to make (the
+   ask-when-unsure case);
+2. a destructive or irreversible action;
+3. a hard blocker only he can clear — setting a secret, flipping a repo setting.
+
+**Design around #3 so it does not halt the rest.** Write code that reads a
+not-yet-set secret as a NO-OP when absent, ship it zero-risk, and let him
+activate it with one action later — the work keeps moving instead of stopping to
+wait for him.
+
 ## ⚠️ Log every bug in `BUG-HISTORY.md` — MANDATORY (owner rule, everyone)
 
 Every bug you find and fix **must** get an entry in [`BUG-HISTORY.md`](./BUG-HISTORY.md) at the repo root — no exceptions. One short entry: **Symptom → Root cause (traced, not guessed) → Fix → Ref (PR/date)**, newest first, with a severity tag. This is how we stop re-introducing the same class of bug: **read it before touching a subsystem, and add to it in the same PR that fixes the bug.** This applies to every contributor and every agent/session.
