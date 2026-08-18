@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { missingVariantAxes, missingConfirmVariantAxes } from './so-variant-rule';
+import {
+  missingVariantAxes, missingConfirmVariantAxes, hasSofaMixConflict, sofaMixIntroduced,
+} from './so-variant-rule';
 
 /* The colour-KIV carve-out: a line that committed to a fabric SERIES with the
    colour confirmed later SATISFIES the fabric axis.
@@ -45,5 +47,66 @@ describe('missingConfirmVariantAxes', () => {
     for (const g of ['mattress', 'accessory', 'service', 'others', '', null]) {
       expect(missingConfirmVariantAxes(g, null, null)).toEqual([]);
     }
+  });
+});
+
+/* ─────────────────────────────────────────────────────────────────────────────
+   THE SOFA-MIX PAIR. Two client checks for ONE server rule, and which one a
+   surface uses is decided by which server path it is standing in front of:
+
+     a NEW-order form  -> the server create path asks a FLAT question
+                          -> hasSofaMixConflict
+     a DETAIL page     -> the server line paths ask a DIFFERENTIAL one
+                          (backend/src/scm/lib/main-mix.ts, mainMixIntroduced)
+                          -> sofaMixIntroduced
+
+   Getting that backwards is not a cosmetic mismatch. A flat check in front of a
+   differential gate refuses saves the server would have accepted, and the order
+   it refuses is precisely the one written before the rule existed — which the
+   server deliberately grandfathers and the operator has no way to un-mix.
+   ───────────────────────────────────────────────────────────────────────────── */
+describe('hasSofaMixConflict — the FLAT form, for the New-order surfaces', () => {
+  it('refuses a sofa beside a bedframe or a mattress', () => {
+    expect(hasSofaMixConflict(['sofa', 'bedframe'])).toBe(true);
+    expect(hasSofaMixConflict(['mattress', 'Sofa Set'])).toBe(true);
+  });
+
+  it('allows sofa-only, bedframe + mattress, and any service / accessory rider', () => {
+    expect(hasSofaMixConflict(['sofa', 'sofa'])).toBe(false);
+    expect(hasSofaMixConflict(['bedframe', 'mattress'])).toBe(false);
+    expect(hasSofaMixConflict(['sofa', 'service', 'accessory', 'others', '', null])).toBe(false);
+  });
+});
+
+describe('sofaMixIntroduced — the DIFFERENTIAL form, for the Detail surfaces', () => {
+  it('refuses adding a sofa to a bedframe order', () => {
+    expect(sofaMixIntroduced(['bedframe'], ['bedframe', 'sofa'])).toBe(true);
+  });
+
+  it('refuses swapping an accessory line to a sofa while a bedframe stays', () => {
+    expect(sofaMixIntroduced(['bedframe', 'accessory'], ['bedframe', 'sofa'])).toBe(true);
+  });
+
+  it('allows replacing the last bedframe with a sofa — the result does not mix', () => {
+    expect(sofaMixIntroduced(['bedframe'], ['sofa'])).toBe(false);
+  });
+
+  /* THE GRANDFATHERING. An order that already mixes must stay editable, or the
+     client locks the operator out of a document the server would let them
+     save. */
+  it('an ALREADY-MIXED order stays saveable — including edits that touch nothing relevant', () => {
+    expect(sofaMixIntroduced(['sofa', 'bedframe'], ['sofa', 'bedframe'])).toBe(false);
+    expect(sofaMixIntroduced(['sofa', 'bedframe'], ['sofa', 'bedframe', 'service'])).toBe(false);
+    expect(sofaMixIntroduced(['sofa', 'bedframe'], ['sofa', 'bedframe', 'mattress'])).toBe(false);
+  });
+
+  it('and the flat form is exactly what would have refused those saves', () => {
+    // The regression this pair exists to stop, stated as an assertion.
+    expect(hasSofaMixConflict(['sofa', 'bedframe'])).toBe(true);
+    expect(sofaMixIntroduced(['sofa', 'bedframe'], ['sofa', 'bedframe'])).toBe(false);
+  });
+
+  it('an empty order accepts a first sofa line', () => {
+    expect(sofaMixIntroduced([], ['sofa'])).toBe(false);
   });
 });
