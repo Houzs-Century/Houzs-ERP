@@ -20,31 +20,34 @@ import { normCategory } from './so-readiness';
 
 describe('deriveBranding', () => {
   test('a sofa and a bedframe are fixed strings, whatever the line says its brand is', () => {
-    expect(deriveBranding('SOFA', null)).toBe('2990 Sofa');
-    expect(deriveBranding('SOFA', 'HAPPISLEEP')).toBe('2990 Sofa');
+    /* No company argument here — the default reading is 2990's, which is what
+       every caller of this alias had before companyCode existed. */
+    expect(deriveBranding('SOFA', null)).toBe('2990s Sofa');
+    expect(deriveBranding('SOFA', 'HAPPISLEEP')).toBe('2990s Sofa');
     expect(deriveBranding('BEDFRAME', 'ANYTHING')).toBe('Bedframe');
   });
 
-  test('a mattress shows its OWN brand', () => {
-    expect(deriveBranding('MATTRESS', 'HAPPISLEEP')).toBe('HAPPISLEEP');
-    expect(deriveBranding('MATTRESS', 'CARRES')).toBe('CARRES');
+  test('a mattress shows the brand it was handed — its SKU\'s', () => {
+    expect(deriveBranding('MATTRESS', 'Happi.S Mattress')).toBe('Happi.S Mattress');
+    expect(deriveBranding('MATTRESS', 'Carres Mattress')).toBe('Carres Mattress');
+    expect(deriveBranding('MATTRESS', '2990s Mattress')).toBe('2990s Mattress');
   });
 
-  test('the house brand displays as "2990 Mattress", in every spelling it is stored in', () => {
-    for (const stored of ['2990', "2990's", '2990s', '  2990  ', "2990'S"]) {
+  test('a mattress whose SKU carries no brand names the category (owner 2026-08-18)', () => {
+    /* «mattress follow SKU branding if SKU no brand mean matress», both
+       companies. The old rule claimed a blank mattress for the house brand
+       ("2990 Mattress") and folded the loose spellings into it; nothing is
+       manufactured here any more. */
+    expect(deriveBranding('MATTRESS', null)).toBe('Mattress');
+    expect(deriveBranding('MATTRESS', '   ')).toBe('Mattress');
+    expect(deriveBranding('MATTRESS', null)).not.toBe('2990 Mattress');
+  });
+
+  test('a stored brand passes through verbatim — there is no normalisation table', () => {
+    for (const stored of ['2990 PLUS', 'NOT2990', '2990', '2990s']) {
       expect(deriveBranding('MATTRESS', stored), `stored as ${JSON.stringify(stored)}`)
-        .toBe('2990 Mattress');
+        .toBe(stored);
     }
-  });
-
-  test('a mattress with no recorded brand is ours, not blank', () => {
-    expect(deriveBranding('MATTRESS', null)).toBe('2990 Mattress');
-    expect(deriveBranding('MATTRESS', '   ')).toBe('2990 Mattress');
-  });
-
-  test('a brand that merely CONTAINS 2990 is not the house brand', () => {
-    expect(deriveBranding('MATTRESS', '2990 PLUS')).toBe('2990 PLUS');
-    expect(deriveBranding('MATTRESS', 'NOT2990')).toBe('NOT2990');
   });
 
   /* WAS: "everything else renders empty — the column shows a dash", asserting
