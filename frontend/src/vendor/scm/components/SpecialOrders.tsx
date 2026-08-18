@@ -29,12 +29,12 @@
 
 import { useState } from 'react';
 import { ChevronDown, ChevronRight } from 'lucide-react';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
 import type { SpecialAddonRow } from '../lib/mfg-products-queries';
 import styles from './SpecialOrders.module.css';
 
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 /** variants.specials (string[] | legacy singular string) -> trimmed code list. */
 const specialsList = (v: unknown): string[] => {

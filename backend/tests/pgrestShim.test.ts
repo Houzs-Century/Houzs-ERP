@@ -76,9 +76,9 @@ describe("pgrest-shim — SQL translation for the exact chains the canonical fun
     const { sql, calls } = fakeSql([]);
     const sb = pgrestShim(sql as never);
     const res = await sb.from("delivery_order_items")
-      .update({ unit_cost_centi: 830, line_cost_centi: 830, line_margin_centi: -830 })
+      .update({ unit_cost_sen: 830, line_cost_sen: 830, line_margin_sen: -830 })
       .eq("id", "line-1");
-    expect(calls[0].text).toBe('UPDATE "scm"."delivery_order_items" SET "unit_cost_centi" = $1, "line_cost_centi" = $2, "line_margin_centi" = $3 WHERE "id" = $4');
+    expect(calls[0].text).toBe('UPDATE "scm"."delivery_order_items" SET "unit_cost_sen" = $1, "line_cost_sen" = $2, "line_margin_sen" = $3 WHERE "id" = $4');
     expect(calls[0].params).toEqual([830, 830, -830, "line-1"]);
     expect(res.error).toBeNull();
   });

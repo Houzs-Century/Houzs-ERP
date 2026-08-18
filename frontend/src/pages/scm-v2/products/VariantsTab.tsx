@@ -49,7 +49,7 @@ import { authedFetch } from "../../../vendor/scm/lib/authed-fetch";
 import { SearchableSelect, type SearchableSelectOption } from "../../../vendor/scm/components/SearchableSelect";
 import { classifyLoadError, errMsg } from "../../../components/scm-v2/PhotoGallery";
 import { cn } from "../../../lib/utils";
-import { fmtCenti } from "@2990s/shared";
+import { fmtSen } from "@2990s/shared";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -77,7 +77,7 @@ type StagedEdit = {
   status?: "ACTIVE" | "INACTIVE";
 };
 
-const fmtRm = (sen: number | null | undefined): string => fmtCenti(sen);
+const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 // ── Hook: models by category ────────────────────────────────────────────────
 // The model registry carries five categories (backend CATEGORIES enum,

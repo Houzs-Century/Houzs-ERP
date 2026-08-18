@@ -60,7 +60,7 @@ describe("column grouping", () => {
   it("puts the obvious columns where a person would put them", () => {
     const cases: Array<[string, string, string]> = [
       // Cost & margin wins over money — "Total Cost" is a cost first.
-      ["total_cost_centi", "Total Cost", COLUMN_GROUPS.costs],
+      ["total_cost_sen", "Total Cost", COLUMN_GROUPS.costs],
       ["margin_pct_basis", "Margin %", COLUMN_GROUPS.costs],
       ["cogs", "COGS (RM)", COLUMN_GROUPS.costs],
       ["unit_cost", "Unit Cost", COLUMN_GROUPS.costs],
@@ -68,7 +68,7 @@ describe("column grouping", () => {
       ["amount", "Amount", COLUMN_GROUPS.amounts],
       ["balance", "Balance", COLUMN_GROUPS.amounts],
       ["paid", "Paid", COLUMN_GROUPS.amounts],
-      ["deposit_centi", "Deposit", COLUMN_GROUPS.amounts],
+      ["deposit_sen", "Deposit", COLUMN_GROUPS.amounts],
       ["payment_method", "Payment Method", COLUMN_GROUPS.amounts],
 
       ["customer_delivery_date", "Customer Delivery Date", COLUMN_GROUPS.logistics],

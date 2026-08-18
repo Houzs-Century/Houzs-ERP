@@ -41,7 +41,7 @@ import { classifyLoadError, errMsg } from "../../components/scm-v2/PhotoGallery"
 import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import { cn } from "../../lib/utils";
 import { ACCESS_RANK, type TeamMember } from "../../types";
-import { fmtCenti } from "@2990s/shared";
+import { fmtSen } from "@2990s/shared";
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -81,7 +81,7 @@ const fmtRm = (sen: number | null | undefined, { compact = false } = {}): string
       })}k`;
     }
   }
-  return fmtCenti(sen);
+  return fmtSen(sen);
 };
 
 const fmtPct = (n: number): string => `${Math.round(n * 100)}%`;

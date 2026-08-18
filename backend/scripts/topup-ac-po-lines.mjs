@@ -60,7 +60,7 @@
 //     resolves AND is not already claimed; NULL otherwise, never wrong. The
 //     claim is re-checked inside the transaction so a concurrent sibling repair
 //     cannot make us steal one.
-//   - the header's subtotal_centi / total_centi, INCREMENTED by exactly the
+//   - the header's subtotal_sen / total_sen, INCREMENTED by exactly the
 //     value of the rows this run inserted (an increment, not a recompute, so a
 //     hand-adjusted header is not clobbered).
 //
@@ -396,14 +396,14 @@ async function main() {
   }
 
   const rowsToInsert = plan.reduce((a, p) => a + p.rows.length, 0);
-  const valueCenti = plan.reduce((a, p) => a + p.rows.reduce((b, r) => b + r.up * r.qty, 0), 0);
+  const valueSen = plan.reduce((a, p) => a + p.rows.reduce((b, r) => b + r.up * r.qty, 0), 0);
   const sofaRows = plan.reduce((a, p) => a + p.rows.filter((r) => r.grp === "sofa").length, 0);
   const recvRows = plan.reduce((a, p) => a + p.rows.filter((r) => r.recv > 0).length, 0);
 
   log("");
   log(`AutoCount lines considered: ${acConsidered}; ERP rows they should produce: ${expectedTotal}`);
   log(`MISSING ERP rows (their AutoCount ItemCode has ZERO rows on the document): ${rowsToInsert} across ${plan.length} purchase orders`);
-  log(`   of those: sofa ${sofaRows}; other ${rowsToInsert - sofaRows}; carrying received qty ${recvRows}; value RM ${(valueCenti / 100).toFixed(2)}`);
+  log(`   of those: sofa ${sofaRows}; other ${rowsToInsert - sofaRows}; carrying received qty ${recvRows}; value RM ${(valueSen / 100).toFixed(2)}`);
   log(`   dedicated to an SO line ${dedicated}; no SO line resolved ${noSoLine}; no warehouse match ${noWarehouse}`);
   const withheldRows = recvWithheld.reduce((a, w) => a + w.rows, 0);
   log("");
@@ -459,7 +459,7 @@ async function main() {
 
   log("");
   log("APPLYING...");
-  let wrote = 0, docsWritten = 0, deltaCenti = 0, dedicationsWritten = 0, keysWritten = 0, skippedRaced = 0;
+  let wrote = 0, docsWritten = 0, deltaSen = 0, dedicationsWritten = 0, keysWritten = 0, skippedRaced = 0;
   /* Ids of the rows this run actually inserted, so the verification below reads
      back exactly what was written rather than re-deriving the plan. */
   const writtenIds = [];
@@ -494,7 +494,7 @@ async function main() {
         const [ins] = await tx`INSERT INTO scm.purchase_order_items
             (purchase_order_id, material_kind, material_code, material_name, supplier_sku,
              description, description2, notes,
-             qty, received_qty, unit_price_centi, line_total_centi, item_group, uom,
+             qty, received_qty, unit_price_sen, line_total_sen, item_group, uom,
              gap_inches, divan_height_inches, leg_height_inches,
              custom_specials, variants,
              warehouse_id, so_item_id, company_id, delivery_date, from_mrp)
@@ -526,15 +526,15 @@ async function main() {
       }
       if (added) {
         await tx`UPDATE scm.purchase_orders
-          SET subtotal_centi = COALESCE(subtotal_centi, 0) + ${added},
-              total_centi = COALESCE(total_centi, 0) + ${added}
+          SET subtotal_sen = COALESCE(subtotal_sen, 0) + ${added},
+              total_sen = COALESCE(total_sen, 0) + ${added}
           WHERE id = ${p.po.id}`;
-        deltaCenti += added;
+        deltaSen += added;
       }
       docsWritten++;
     });
   }
-  log(`DONE. rows inserted ${wrote} across ${docsWritten} purchase orders; SO dedications written ${dedicationsWritten}; AutoCount line keys written ${keysWritten}; header value added RM ${(deltaCenti / 100).toFixed(2)}; rows already present at write time ${skippedRaced}`);
+  log(`DONE. rows inserted ${wrote} across ${docsWritten} purchase orders; SO dedications written ${dedicationsWritten}; AutoCount line keys written ${keysWritten}; header value added RM ${(deltaSen / 100).toFixed(2)}; rows already present at write time ${skippedRaced}`);
   log("no inventory movement written, no document created, no status changed - by design.");
   await sql.end();
 

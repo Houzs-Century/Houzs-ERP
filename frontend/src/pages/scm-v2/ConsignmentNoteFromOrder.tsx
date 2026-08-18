@@ -227,9 +227,9 @@ export const ConsignmentNoteFromOrder = () => {
           description: r.description,
           uom: r.uom,
           qty: v.qty,
-          unitPriceCenti: r.unitPriceCenti,
-          discountCenti: r.discountCenti,
-          unitCostCenti: r.unitCostCenti,
+          unitPriceSen: r.unitPriceSen,
+          discountSen: r.discountSen,
+          unitCostSen: r.unitCostSen,
           variants: r.variants,
         };
       })

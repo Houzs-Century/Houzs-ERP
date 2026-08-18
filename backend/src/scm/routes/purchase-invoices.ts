@@ -58,13 +58,13 @@ purchaseInvoices.use('*', supabaseAuth);
 /* CREATE joined the post/payment/cancel/header pass late; recorded the same way. */
 
 const HEADER =
-  'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_centi, tax_centi, total_centi, paid_centi, status, notes, posted_at, created_at, created_by, updated_at';
+  'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_sen, tax_sen, total_sen, paid_sen, status, notes, posted_at, created_at, created_by, updated_at';
 const ITEM =
-  'id, purchase_invoice_id, grn_item_id, material_kind, material_code, material_name, qty, unit_price_centi, line_total_centi, notes, ' +
+  'id, purchase_invoice_id, grn_item_id, material_kind, material_code, material_name, qty, unit_price_sen, line_total_sen, notes, ' +
   /* PR #42 — variant fields (migration 0057) */
-  'item_group, description, description2, uom, discount_centi, variants, ' +
+  'item_group, description, description2, uom, discount_sen, variants, ' +
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
-  'custom_specials, line_suffix, special_order_price_sen, unit_cost_centi, created_at';
+  'custom_specials, line_suffix, special_order_price_sen, unit_cost_sen, created_at';
 
 /* Compact non-null string dedupe (document-flow idiom) — the customer-DO
    resolve below walks id lists hop by hop. */
@@ -295,12 +295,12 @@ async function verifyGrnLinesNotOverInvoiced(
   return { over, error: null };
 }
 
-/* PI edit-lock guard: a PI with ANY payment recorded (paid_centi > 0) or that's
+/* PI edit-lock guard: a PI with ANY payment recorded (paid_sen > 0) or that's
    CANCELLED is read-only. Returns the blocking JSON response, or null if the PI
    is editable. */
 async function piLocked(sb: any, piId: string): Promise<{ error: string; message: string } | null> {
   const { data, error } = await sb.from('purchase_invoices')
-    .select('paid_centi, status').eq('id', piId).maybeSingle();
+    .select('paid_sen, status').eq('id', piId).maybeSingle();
   /* The error is READ, not dropped. A dropped error made `data` null, `!data`
      read as "no such invoice", and the guard answered "not locked" — so a PAID
      or CANCELLED invoice became editable on a transient read failure. A failed
@@ -310,9 +310,9 @@ async function piLocked(sb: any, piId: string): Promise<{ error: string; message
     return { error: 'pi_lock_check_failed', message: `Could not check whether this invoice is locked, so it is treated as locked — try again (${error.message}).` };
   }
   if (!data) return null; // not found — let the handler's own load surface 404
-  const row = data as { paid_centi: number | null; status: string };
+  const row = data as { paid_sen: number | null; status: string };
   if (row.status === 'CANCELLED') return { error: 'pi_cancelled', message: 'Invoice is cancelled' };
-  if ((row.paid_centi ?? 0) > 0) return { error: 'pi_locked', message: 'Invoice has a payment recorded — locked' };
+  if ((row.paid_sen ?? 0) > 0) return { error: 'pi_locked', message: 'Invoice has a payment recorded — locked' };
   return null;
 }
 
@@ -399,7 +399,7 @@ purchaseInvoices.get('/', async (c) => {
   const psRaw = Number(c.req.query('pageSize'));
   const pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-  const SORT_COLS = new Set(['invoice_date', 'invoice_number', 'status', 'total_centi']);
+  const SORT_COLS = new Set(['invoice_date', 'invoice_number', 'status', 'total_sen']);
   const [rawCol, rawDir] = (c.req.query('sort') ?? 'invoice_date:desc').split(':');
   const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'invoice_date';
   const sortAsc = rawDir === 'asc';
@@ -498,7 +498,7 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
     .from('grn_items')
     .select(`
       id, grn_id, material_kind, material_code, material_name, item_group,
-      description, qty_accepted, qty_rejected, invoiced_qty, returned_qty, unit_price_centi, variants
+      description, qty_accepted, qty_rejected, invoiced_qty, returned_qty, unit_price_sen, variants
     `)
     .in('grn_id', grnIds);
   if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
@@ -508,7 +508,7 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
     id: string; grn_id: string; material_kind: string; material_code: string;
     material_name: string; item_group: string | null; description: string | null;
     qty_accepted: number; qty_rejected: number; invoiced_qty: number; returned_qty: number;
-    unit_price_centi: number; variants: unknown;
+    unit_price_sen: number; variants: unknown;
   }>)
     .map((r) => {
       const invoiced = r.invoiced_qty ?? 0;
@@ -535,7 +535,7 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
         qtyAccepted:    r.qty_accepted,
         invoicedQty:    r.invoiced_qty ?? 0,
         remaining:      r._remaining,
-        unitPriceCenti: r.unit_price_centi,
+        unitPriceSen: r.unit_price_sen,
         variants:       r.variants,
         /* Multi-note invoices (owner 2026-08-06) — the picker may combine
            several of a supplier's notes into ONE invoice, but a PI header
@@ -844,13 +844,13 @@ purchaseInvoices.post('/', async (c) => {
   let subtotal = 0;
   /* Reject non-finite line numbers BEFORE the map — the Math.max(0, ...) clamp
      below stops a negative total but NOT a NaN (Math.max(0, NaN) is NaN), so a
-     junk qty/price persisted NaN into line_total_centi and the PI subtotal,
+     junk qty/price persisted NaN into line_total_sen and the PI subtotal,
      which is what the supplier's AP balance is read from. */
   for (const [i, it] of items.entries()) {
     const parsed = parseLineNumbers({
       qty: { value: it.qty },
-      unitPriceCenti: { value: it.unitPriceCenti },
-      discountCenti: { value: it.discountCenti },
+      unitPriceSen: { value: it.unitPriceSen },
+      discountSen: { value: it.discountSen },
     });
     if (!parsed.ok) {
       const b = invalidLineNumberBody(parsed.invalid);
@@ -859,18 +859,18 @@ purchaseInvoices.post('/', async (c) => {
   }
   const itemRows = items.map((it) => {
     /* PI discount unification (audit 2026-06-11 M3) — ONE rule on every PI
-       line write path: line_total_centi = qty × unit − discount, discount
+       line write path: line_total_sen = qty × unit − discount, discount
        stored. This path used to drop the client discount entirely (totals
        overstated whenever the form sent one). */
-    const qty = Number(it.qty ?? 0); const unit = Number(it.unitPriceCenti ?? 0);
-    const discount = Number(it.discountCenti ?? 0) || 0;
+    const qty = Number(it.qty ?? 0); const unit = Number(it.unitPriceSen ?? 0);
+    const discount = Number(it.discountSen ?? 0) || 0;
     // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
     const total = Math.max(0, qty * unit - discount); subtotal += total;
     return {
       material_kind: it.materialKind,
       material_code: it.materialCode,
       material_name: it.materialName,
-      qty, unit_price_centi: unit, discount_centi: discount, line_total_centi: total,
+      qty, unit_price_sen: unit, discount_sen: discount, line_total_sen: total,
       grn_item_id: (it.grnItemId as string | undefined) ?? null,
       notes: (it.notes as string | undefined) ?? null,
       // Commander 2026-05-29 — manual PI lines carry their category + variant
@@ -916,8 +916,8 @@ purchaseInvoices.post('/', async (c) => {
     due_date: dateOrNull(body.dueDate),
     currency: piCurrency,
     exchange_rate: piExchangeRate,
-    subtotal_centi: subtotal,
-    total_centi: subtotal,
+    subtotal_sen: subtotal,
+    total_sen: subtotal,
     notes: (body.notes as string) ?? null,
     status: asDraft ? 'DRAFT' : 'POSTED',
     posted_at: asDraft ? null : new Date().toISOString(),
@@ -1018,11 +1018,11 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur } = await scopeToCompanyId(sb.from('purchase_invoices')
-    .select('id, status, invoice_number, company_id, supplier_id, total_centi, currency').eq('id', id), co.companyId).maybeSingle();
+    .select('id, status, invoice_number, company_id, supplier_id, total_sen, currency').eq('id', id), co.companyId).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const curRow = cur as {
     id: string; status: string; invoice_number: string;
-    company_id?: number | null; supplier_id?: string | null; total_centi?: number | null; currency?: string | null;
+    company_id?: number | null; supplier_id?: string | null; total_sen?: number | null; currency?: string | null;
   };
   /* Already POSTED (or beyond — PARTIALLY_PAID / PAID) → nothing to CONFIRM, but
      the AP/GL entry may still be missing: a PI created straight to POSTED (the
@@ -1113,7 +1113,7 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
      below. Each of those is a separate awaited step that can throw, and a PI
      that is POSTED in the database with no record of who posted it is exactly
      the hole this log exists to close. The GL outcome is recorded separately
-     when it fails. totalCenti is the INTEGER SEN booked to Payables. */
+     when it fails. totalSen is the INTEGER SEN booked to Payables. */
   await recordEntityAudit(sb, {
     entityType: 'PURCHASE_INVOICE',
     entityId: id,
@@ -1125,7 +1125,7 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
     fieldChanges: compactChanges([
       ...statusChange('DRAFT', 'POSTED'),
       fieldChange('supplierId', null, curRow.supplier_id ?? null),
-      fieldChange('totalCenti', null, Number(curRow.total_centi ?? 0)),
+      fieldChange('totalSen', null, Number(curRow.total_sen ?? 0)),
       fieldChange('currency', null, curRow.currency ?? null),
     ]),
   });
@@ -1189,8 +1189,8 @@ export const postPurchaseInvoiceHandler = async (c: any) => {
 };
 purchaseInvoices.patch('/:id/post', postPurchaseInvoiceHandler);
 
-// Record a payment against the PI. Adds to paid_centi and auto-transitions
-// status: paid_centi == total → PAID, paid_centi > 0 && < total → PARTIALLY_PAID.
+// Record a payment against the PI. Adds to paid_sen and auto-transitions
+// status: paid_sen == total → PAID, paid_sen > 0 && < total → PARTIALLY_PAID.
 purchaseInvoices.patch('/:id/payment', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   /* company-scope: this records MONEY PAID. The concurrency loop below guards
@@ -1198,24 +1198,24 @@ purchaseInvoices.patch('/:id/payment', async (c) => {
   const { data: own, error: ownErr } = await scopeToCompany(sb.from('purchase_invoices').select('id').eq('id', id), c).maybeSingle();
   if (ownErr) return c.json({ error: 'lookup_failed', reason: ownErr.message }, 500);
   if (!own) return c.json({ error: 'not_found' }, 404);
-  let body: { amountCenti?: number; notes?: string };
+  let body: { amountSen?: number; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const amount = Number(body.amountCenti ?? 0);
+  const amount = Number(body.amountSen ?? 0);
   if (!Number.isFinite(amount) || amount <= 0) return c.json({ error: 'invalid_amount' }, 400);
 
   // Optimistic-concurrency loop (Bug#5, ported from 2990 1355332c). The old code
   // did read-modify-write — two payments hitting the SAME PI at once both read X
   // and both wrote X+amount, silently LOSING one. PI has no payment ledger to
   // re-sum (unlike SI's recomputePaid), and PostgREST can't do `col = col + x`,
-  // so we gate the UPDATE on `paid_centi = <the value we just read>`: if a
+  // so we gate the UPDATE on `paid_sen = <the value we just read>`: if a
   // concurrent payment moved it, the update matches 0 rows and we retry with a
   // fresh read.
   for (let attempt = 0; attempt < 6; attempt += 1) {
     const { data: cur } = await sb.from('purchase_invoices')
-      .select('paid_centi, total_centi, status, invoice_number, company_id').eq('id', id).maybeSingle();
+      .select('paid_sen, total_sen, status, invoice_number, company_id').eq('id', id).maybeSingle();
     if (!cur) return c.json({ error: 'not_found' }, 404);
     const c0 = cur as {
-      paid_centi: number; total_centi: number; status: string;
+      paid_sen: number; total_sen: number; status: string;
       invoice_number?: string | null; company_id?: number | null;
     };
     // LEAK GUARD (DRAFT) — a DRAFT PI is not yet a real liability; reject payment
@@ -1223,20 +1223,20 @@ purchaseInvoices.patch('/:id/payment', async (c) => {
     if (c0.status === 'DRAFT') return c.json({ error: 'not_payable', message: 'PI is a draft — confirm it before recording payment' }, 409);
     if (c0.status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'PI is cancelled' }, 409);
 
-    const newPaid = c0.paid_centi + amount;
-    const newStatus = newPaid >= c0.total_centi ? 'PAID' : 'PARTIALLY_PAID';
+    const newPaid = c0.paid_sen + amount;
+    const newStatus = newPaid >= c0.total_sen ? 'PAID' : 'PARTIALLY_PAID';
 
     const { data, error } = await sb.from('purchase_invoices').update({
-      paid_centi: newPaid, status: newStatus, updated_at: new Date().toISOString(),
+      paid_sen: newPaid, status: newStatus, updated_at: new Date().toISOString(),
     })
       .eq('id', id)
-      .eq('paid_centi', c0.paid_centi) // only if nobody else moved it since the read
-      .select('id, paid_centi, status');
+      .eq('paid_sen', c0.paid_sen) // only if nobody else moved it since the read
+      .select('id, paid_sen, status');
     if (error) return c.json({ error: 'payment_failed', reason: error.message }, 500);
     if (data && data.length > 0) {
       /* Written only by the attempt whose compare-and-set actually landed, so a
          retry loop cannot produce two rows for one payment. The from-value is
-         the paid_centi that guard matched, which makes the pair exact rather
+         the paid_sen that guard matched, which makes the pair exact rather
          than approximate. All three figures are INTEGER SEN. */
       await recordEntityAudit(sb, {
         entityType: 'PURCHASE_INVOICE',
@@ -1248,14 +1248,14 @@ purchaseInvoices.patch('/:id/payment', async (c) => {
         statusSnapshot: newStatus,
         note: 'Payment recorded',
         fieldChanges: compactChanges([
-          fieldChange('paidCenti', c0.paid_centi, newPaid),
-          fieldChange('paymentAmountCenti', null, amount),
+          fieldChange('paidSen', c0.paid_sen, newPaid),
+          fieldChange('paymentAmountSen', null, amount),
           ...statusChange(c0.status, newStatus),
         ]),
       });
       return c.json({ purchaseInvoice: data[0] });
     }
-    // 0 rows updated → a concurrent payment changed paid_centi; loop re-reads + retries.
+    // 0 rows updated → a concurrent payment changed paid_sen; loop re-reads + retries.
   }
   return c.json({ error: 'payment_conflict', message: 'Another payment was recorded at the same moment — please check the balance and retry.' }, 409);
 });
@@ -1276,15 +1276,15 @@ export const cancelPurchaseInvoiceHandler = async (c: any) => {
   // Read → guard → release → cancel. Keep the existing PAID guard; a PI with
   // any payment can't be cancelled.
   const { data: cur, error: curErr } = await scopeToCompanyId(sb.from('purchase_invoices')
-    .select('id, status, paid_centi, invoice_number, company_id, total_centi').eq('id', id), co.companyId).maybeSingle();
+    .select('id, status, paid_sen, invoice_number, company_id, total_sen').eq('id', id), co.companyId).maybeSingle();
   if (curErr) return c.json({ error: 'lookup_failed', reason: curErr.message }, 500);
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const head = cur as {
-    id: string; status: string; paid_centi: number | null;
-    invoice_number?: string | null; company_id?: number | null; total_centi?: number | null;
+    id: string; status: string; paid_sen: number | null;
+    invoice_number?: string | null; company_id?: number | null; total_sen?: number | null;
   };
   const auditCompanyId = head.company_id ?? activeCompanyId(c);
-  if (head.status === 'PAID' || (head.paid_centi ?? 0) > 0) {
+  if (head.status === 'PAID' || (head.paid_sen ?? 0) > 0) {
     return c.json({ error: 'cannot_cancel', message: 'PI already paid' }, 409);
   }
   // Idempotent — already cancelled, echo back without re-releasing.
@@ -1357,7 +1357,7 @@ export const cancelPurchaseInvoiceHandler = async (c: any) => {
     statusSnapshot: 'CANCELLED',
     fieldChanges: compactChanges([
       ...statusChange(head.status, 'CANCELLED'),
-      fieldChange('totalCenti', null, Number(head.total_centi ?? 0)),
+      fieldChange('totalSen', null, Number(head.total_sen ?? 0)),
     ]),
   });
 
@@ -1462,10 +1462,10 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     .from('grn_items')
     .select(`
       id, grn_id, material_kind, material_code, material_name, item_group,
-      description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_centi,
+      description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_sen,
       variants, gap_inches, divan_height_inches, divan_price_sen,
       leg_height_inches, leg_price_sen, custom_specials, line_suffix,
-      special_order_price_sen, discount_centi,
+      special_order_price_sen, discount_sen,
       grn:grns!inner ( id, grn_number, supplier_id, purchase_order_id, status, currency, exchange_rate, migrated_no_stock, company_id )
     `)
     .in('id', ids), c);
@@ -1475,11 +1475,11 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
     id: string; grn_id: string; material_kind: string; material_code: string;
     material_name: string; item_group: string | null; description: string | null;
     description2: string | null; uom: string | null;
-    qty_accepted: number; invoiced_qty: number; returned_qty: number; unit_price_centi: number;
+    qty_accepted: number; invoiced_qty: number; returned_qty: number; unit_price_sen: number;
     variants: unknown; gap_inches: number | null; divan_height_inches: number | null;
     divan_price_sen: number; leg_height_inches: number | null; leg_price_sen: number;
     custom_specials: unknown; line_suffix: string | null; special_order_price_sen: number;
-    discount_centi: number;
+    discount_sen: number;
     grn: { id: string; grn_number: string; supplier_id: string; purchase_order_id: string | null; status: string; currency?: string | null; exchange_rate?: string | number | null; migrated_no_stock?: boolean | null; company_id?: number | null };
   };
 
@@ -1576,19 +1576,19 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
   const created: Array<{ id: string; invoiceNumber: string; supplierId: string; grnCount: number; lineCount: number }> = [];
 
   /* PI discount unification (audit 2026-06-11 M3) — ONE rule on every PI line
-     write path: line_total_centi = qty × unit − discount, discount stored.
+     write path: line_total_sen = qty × unit − discount, discount stored.
      The GRN line discount is pro-rated by billed qty over qty_accepted so a
      line billed across multiple PIs never subtracts more than the full GRN
      discount in total. (This path used to store the discount but exclude it
      from line_total + subtotal.) */
   const discFor = (row: ItemRow, qty: number) =>
-    Math.round(Number(row.discount_centi ?? 0) * qty / (Number(row.qty_accepted) || 1));
+    Math.round(Number(row.discount_sen ?? 0) * qty / (Number(row.qty_accepted) || 1));
 
   for (const bucket of buckets.values()) {
     counter += 1;
     // Audit (ported from 2990 b30f0bb1) — clamp each line before summing so a
     // discount > qty×price can't drive the PI subtotal negative.
-    const subtotal = bucket.lines.reduce((s, { row, qty }) => s + Math.max(0, qty * row.unit_price_centi - discFor(row, qty)), 0);
+    const subtotal = bucket.lines.reduce((s, { row, qty }) => s + Math.max(0, qty * row.unit_price_sen - discFor(row, qty)), 0);
     const piPayload = {
       company_id: activeCompanyId(c), // multi-company: stamp the active company
       supplier_invoice_ref: body.supplierInvoiceNumber ?? null,
@@ -1601,9 +1601,9 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       due_date: dateOrNull(body.dueDate),
       currency: bucket.currency,
       exchange_rate: bucket.exchangeRate,
-      subtotal_centi: subtotal,
-      tax_centi: 0,
-      total_centi: subtotal,
+      subtotal_sen: subtotal,
+      tax_sen: 0,
+      total_sen: subtotal,
       // Auto-post per Commander preference (matches GRN/PO behaviour).
       status: 'POSTED',
       posted_at: new Date().toISOString(),
@@ -1638,9 +1638,9 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       material_code: row.material_code,
       material_name: row.material_name,
       qty,
-      unit_price_centi: row.unit_price_centi,
+      unit_price_sen: row.unit_price_sen,
       // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
-      line_total_centi: Math.max(0, qty * row.unit_price_centi - discFor(row, qty)),
+      line_total_sen: Math.max(0, qty * row.unit_price_sen - discFor(row, qty)),
       item_group: row.item_group,
       description: row.description,
       description2: row.description2,
@@ -1654,7 +1654,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       custom_specials: row.custom_specials,
       line_suffix: row.line_suffix,
       special_order_price_sen: row.special_order_price_sen ?? 0,
-      discount_centi: discFor(row, qty),
+      discount_sen: discFor(row, qty),
     }));
     const { error: iErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rows, c));
     if (iErr) {
@@ -1760,17 +1760,17 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
 
   // LINE-level half of the same source document, under the same predicate.
   const { data: items, error: iErr } = await scopeToCompany(sb.from('grn_items')
-    .select('id, material_kind, material_code, material_name, item_group, description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_centi, variants, gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_centi')
+    .select('id, material_kind, material_code, material_name, item_group, description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_sen, variants, gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_sen')
     .eq('grn_id', grnId)
     .gt('qty_accepted', 0), c);
   if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
   type GrnLine = {
     id: string; material_kind: string; material_code: string; material_name: string;
     item_group: string | null; description: string | null; description2: string | null;
-    uom: string | null; qty_accepted: number; invoiced_qty: number; returned_qty: number; unit_price_centi: number; variants: unknown;
+    uom: string | null; qty_accepted: number; invoiced_qty: number; returned_qty: number; unit_price_sen: number; variants: unknown;
     gap_inches: number | null; divan_height_inches: number | null; divan_price_sen: number;
     leg_height_inches: number | null; leg_price_sen: number; custom_specials: unknown;
-    line_suffix: string | null; special_order_price_sen: number; discount_centi: number;
+    line_suffix: string | null; special_order_price_sen: number; discount_sen: number;
   };
   // Only copy lines that still have remaining = qty_accepted - invoiced_qty -
   // returned_qty > 0, and bill the REMAINING qty (a GRN can be invoiced across
@@ -1782,19 +1782,19 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
   if (lines.length === 0) return c.json({ error: 'nothing_to_invoice', message: 'No billable lines came back for this GRN. Open it and check its invoiced balance before treating it as billed in full.' }, 400); // The expensive one: an operator told a note is fully billed stops looking, and an unlinked line makes a receipt read outstanding while a PI already billed it. Opposite errors, same supplier paid wrong. Report the read; let the note's own balance say what is true.
 
   /* PI discount unification (audit 2026-06-11 M3) — ONE rule on every PI line
-     write path: line_total_centi = qty × unit − discount, discount stored.
+     write path: line_total_sen = qty × unit − discount, discount stored.
      The GRN line discount is pro-rated by the billed (remaining) qty over
      qty_accepted so a second /from-grn pass over a partially-billed line
      can't subtract the full discount twice. */
   const discFor = (it: GrnLine & { _remaining: number }) =>
-    Math.round(Number(it.discount_centi ?? 0) * it._remaining / (Number(it.qty_accepted) || 1));
+    Math.round(Number(it.discount_sen ?? 0) * it._remaining / (Number(it.qty_accepted) || 1));
   /* CLAMP EACH LINE BEFORE SUMMING, like the sibling /from-grn-items path. The
      lines written below are clamped at 0, so an unclamped sum leaves the header
-     total_centi SHORT of Σ line_total_centi — and total_centi is what AP pays
+     total_sen SHORT of Σ line_total_sen — and total_sen is what AP pays
      from and what computePiSettlement clamps against. A GRN line really can
-     carry discount_centi > qty × unit: grns.ts stores discountCenti unbounded
-     and clamps only line_total_centi. */
-  const subtotal = lines.reduce((s, it) => s + Math.max(0, it._remaining * it.unit_price_centi - discFor(it)), 0);
+     carry discount_sen > qty × unit: grns.ts stores discountSen unbounded
+     and clamps only line_total_sen. */
+  const subtotal = lines.reduce((s, it) => s + Math.max(0, it._remaining * it.unit_price_sen - discFor(it)), 0);
 
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; invoice_number: string }>(
     () => nextNum(sb, 'PI', c),
@@ -1808,9 +1808,9 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
     // Migration 0082 — inherit the source GRN's currency + rate (MYR ⇒ 1, no-op).
     currency: normalizeCurrency(g.currency),
     exchange_rate: normalizeExchangeRate(g.exchange_rate, normalizeCurrency(g.currency)),
-    subtotal_centi: subtotal,
-    tax_centi: 0,
-    total_centi: subtotal,
+    subtotal_sen: subtotal,
+    tax_sen: 0,
+    total_sen: subtotal,
     status: 'POSTED',
     posted_at: new Date().toISOString(),
     notes: `From ${g.grn_number}`,
@@ -1827,9 +1827,9 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
     material_code: it.material_code,
     material_name: it.material_name,
     qty: it._remaining,
-    unit_price_centi: it.unit_price_centi,
+    unit_price_sen: it.unit_price_sen,
     // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
-    line_total_centi: Math.max(0, it._remaining * it.unit_price_centi - discFor(it)),
+    line_total_sen: Math.max(0, it._remaining * it.unit_price_sen - discFor(it)),
     item_group: it.item_group,
     description: it.description,
     description2: it.description2,
@@ -1843,7 +1843,7 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
     custom_specials: it.custom_specials,
     line_suffix: it.line_suffix,
     special_order_price_sen: it.special_order_price_sen ?? 0,
-    discount_centi: discFor(it),
+    discount_sen: discFor(it),
   }));
   const { error: insErr } = await sb.from('purchase_invoice_items').insert(stampCompany(rows, c));
   if (insErr) { await sb.from('purchase_invoices').delete().eq('id', h.id); return c.json({ error: 'items_insert_failed', reason: insErr.message }, 500); }
@@ -1868,7 +1868,7 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
 
   /* Past both compensating branches (items-insert rollback, over-invoice
      rollback) — the invoice is permanent from here. Written after
-     recomputePiTotals so totalCenti is the rolled-up figure. */
+     recomputePiTotals so totalSen is the rolled-up figure. */
   await recordPiCreate(
     sb, c.get('houzsUser'), activeCompanyId(c), h.id, rows.length,
     `Converted from Goods Receipt ${g.grn_number ?? g.id}`,
@@ -1906,8 +1906,8 @@ purchaseInvoices.post('/from-grn', createPurchaseInvoiceFromGrnHandler);
 /* ════════════════════════════════════════════════════════════════════════
    PI PO-clone CRUD (PATCH header + line add / edit / delete) — mirrors the
    GRN detail page's confirmed/immediate-save editing (apps/api/src/routes/grns.ts).
-   The editable line quantity is qty; line_total_centi =
-   qty * unit_price_centi - discount_centi; recomputePiTotals rolls the header
+   The editable line quantity is qty; line_total_sen =
+   qty * unit_price_sen - discount_sen; recomputePiTotals rolls the header
    subtotal/total (PI keeps the stored tax in total, unlike GRN). PI is AP-only
    → line delete needs no inventory release (that landed at GRN time).
    ════════════════════════════════════════════════════════════════════════ */
@@ -2060,10 +2060,10 @@ purchaseInvoices.post('/:id/items', async (c) => {
   }
 
   const qty = Number(it.qty ?? 1);
-  const unitPriceCenti = Number(it.unitPriceCenti ?? 0);
-  const discountCenti = Number(it.discountCenti ?? 0);
+  const unitPriceSen = Number(it.unitPriceSen ?? 0);
+  const discountSen = Number(it.discountSen ?? 0);
   // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
-  const lineTotal = Math.max(0, (qty * unitPriceCenti) - discountCenti);
+  const lineTotal = Math.max(0, (qty * unitPriceSen) - discountSen);
 
   // GRN-linked line: cap qty at that GRN line's remaining
   // (accepted - invoiced - returned).
@@ -2092,10 +2092,10 @@ purchaseInvoices.post('/:id/items', async (c) => {
     material_code: it.materialCode,
     material_name: it.materialName,
     qty,
-    unit_price_centi: unitPriceCenti,
-    discount_centi: discountCenti,
-    line_total_centi: lineTotal,
-    unit_cost_centi: Number(it.unitCostCenti ?? 0),
+    unit_price_sen: unitPriceSen,
+    discount_sen: discountSen,
+    line_total_sen: lineTotal,
+    unit_cost_sen: Number(it.unitCostSen ?? 0),
     notes: (it.notes as string) ?? null,
     /* variant fields (mirror GRN/PO line) */
     gap_inches: (it.gapInches as number) ?? null,
@@ -2233,10 +2233,10 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   const prevQty = Number(prev.qty);
   const grnItemId = (prev.grn_item_id as string | null) ?? null;
   const qty = it.qty !== undefined ? Number(it.qty) : prevQty;
-  const unit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : Number(prev.unit_price_centi);
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : Number(prev.discount_centi ?? 0);
+  const unit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : Number(prev.unit_price_sen);
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : Number(prev.discount_sen ?? 0);
   /* PI discount unification (audit 2026-06-11 M3) — this IS the canonical rule
-     (line_total_centi = qty × unit − discount, discount stored); all four
+     (line_total_sen = qty × unit − discount, discount stored); all four
      create paths now write the same way, so an edit no longer shifts a line's
      total by a stored-but-previously-unapplied discount. */
   // Audit (ported from 2990 20190257) — clamp like the PO create path (negative-money guard).
@@ -2244,14 +2244,14 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
 
   const updates: Record<string, unknown> = {
     qty,
-    unit_price_centi: unit,
-    discount_centi: discount,
-    line_total_centi: lineTotal,
+    unit_price_sen: unit,
+    discount_sen: discount,
+    line_total_sen: lineTotal,
   };
   for (const [from, to] of [
     ['materialCode', 'material_code'], ['materialName', 'material_name'],
     ['itemGroup', 'item_group'], ['description', 'description'], ['uom', 'uom'],
-    ['unitCostCenti', 'unit_cost_centi'], ['notes', 'notes'],
+    ['unitCostSen', 'unit_cost_sen'], ['notes', 'notes'],
     ['gapInches', 'gap_inches'], ['divanHeightInches', 'divan_height_inches'],
     ['divanPriceSen', 'divan_price_sen'], ['legHeightInches', 'leg_height_inches'],
     ['legPriceSen', 'leg_price_sen'], ['customSpecials', 'custom_specials'],

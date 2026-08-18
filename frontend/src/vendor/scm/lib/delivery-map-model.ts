@@ -31,7 +31,7 @@ export type MapPin = {
     soDocNo: string;
     customer: string | null;
     sets: number;
-    revenueCenti: number;
+    revenueSen: number;
     address: string | null;
     zone: string | null;
   };
@@ -100,7 +100,7 @@ export function pinsFromGeoPoints(points: readonly DeliveryGeoPoint[]): MapPin[]
       soDocNo: p.so_doc_no,
       customer: p.customer,
       sets: p.sets,
-      revenueCenti: p.revenueCenti,
+      revenueSen: p.revenueSen,
       address: p.address ?? null,
       zone: p.zone,
     },
@@ -108,11 +108,11 @@ export function pinsFromGeoPoints(points: readonly DeliveryGeoPoint[]): MapPin[]
 }
 
 /** The small totals line beside the map — orders / sets / revenue. PURE. */
-export function geoTotals(points: readonly DeliveryGeoPoint[]): { orders: number; sets: number; revenueCenti: number } {
+export function geoTotals(points: readonly DeliveryGeoPoint[]): { orders: number; sets: number; revenueSen: number } {
   let sets = 0;
-  let revenueCenti = 0;
-  for (const p of points) { sets += p.sets; revenueCenti += p.revenueCenti; }
-  return { orders: points.length, sets, revenueCenti };
+  let revenueSen = 0;
+  for (const p of points) { sets += p.sets; revenueSen += p.revenueSen; }
+  return { orders: points.length, sets, revenueSen };
 }
 
 /** Proposal runs → routes for ONE date (the Time page's "Propose time" view).

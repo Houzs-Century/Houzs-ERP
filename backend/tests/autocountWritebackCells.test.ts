@@ -137,7 +137,7 @@ describe('the four downstream document types queue an edit on every line and hea
 });
 
 describe('the SO and PO mutation paths the named-anchor test did not cover', () => {
-  test('SO price override — the admin side-door that writes unit_price_centi', () => {
+  test('SO price override — the admin side-door that writes unit_price_sen', () => {
     /* UnitPrice IS an AutoCount field. This route was the one price path that
        does not go through PATCH /:docNo/items/:itemId, so the ERP and the
        account book quoted different money for the same line. */

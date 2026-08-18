@@ -109,7 +109,7 @@ async function main() {
     notice(`  po_date       = ${po.po_date ?? '(NULL)'}`);
     notice(`  expected_at   = ${po.expected_at ?? '(NULL)'}`);
     notice(`  purchase_location_id = ${po.purchase_location_id ?? '(NULL)'}`);
-    notice(`  subtotal_centi=${po.subtotal_centi ?? '(NULL)'} total_centi=${po.total_centi ?? '(NULL)'}`);
+    notice(`  subtotal_sen=${po.subtotal_sen ?? '(NULL)'} total_sen=${po.total_sen ?? '(NULL)'}`);
     notice(`  created_at    = ${iso(po.created_at)}`);
     notice(`  linked_ac_docno = ${po.linked_ac_docno ?? '(none)'}`);
 
@@ -129,11 +129,11 @@ async function main() {
     console.log('');
     notice(`B — ${lines.length} line(s) on this purchase order`);
     console.log(`${pad('ITEM', 18)} ${pad('CO', 5)} ${pad('QTY', 6)} ${pad('RECV', 6)} `
-      + `${pad('BAL', 6)} ${pad('UNIT_CENTI', 11)} ${pad('WAREHOUSE_ID', 38)} ${pad('ID', 38)}`);
+      + `${pad('BAL', 6)} ${pad('UNIT_SEN', 11)} ${pad('WAREHOUSE_ID', 38)} ${pad('ID', 38)}`);
     for (const l of lines) {
       const bal = Number(l.qty ?? 0) - Number(l.received_qty ?? 0);
       console.log(`${pad(l.material_code, 18)} ${pad(l.company_id ?? 'NULL', 5)} ${pad(l.qty, 6)} `
-        + `${pad(l.received_qty ?? 0, 6)} ${pad(bal, 6)} ${pad(l.unit_price_centi, 11)} `
+        + `${pad(l.received_qty ?? 0, 6)} ${pad(bal, 6)} ${pad(l.unit_price_sen, 11)} `
         + `${pad(l.warehouse_id ?? '(NULL)', 38)} ${pad(l.id, 38)}`);
     }
 

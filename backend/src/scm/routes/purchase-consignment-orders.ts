@@ -94,7 +94,7 @@ const VALID_STATUSES = new Set(['SUBMITTED', 'PARTIALLY_RECEIVED', 'RECEIVED', '
 
 const HEADER_COLS =
   'id, pc_number, supplier_id, status, po_date, expected_at, currency, ' +
-  'subtotal_centi, tax_centi, total_centi, notes, submitted_at, received_at, ' +
+  'subtotal_sen, tax_sen, total_sen, notes, submitted_at, received_at, ' +
   'cancelled_at, created_at, created_by, updated_at, ' +
   'purchase_location_id, ' +
   /* supplier-revised header delivery dates (migration 0181) */
@@ -102,9 +102,9 @@ const HEADER_COLS =
 
 const ITEM_COLS =
   'id, purchase_consignment_order_id, binding_id, material_kind, material_code, material_name, ' +
-  'supplier_sku, qty, unit_price_centi, line_total_centi, received_qty, notes, created_at, ' +
+  'supplier_sku, qty, unit_price_sen, line_total_sen, received_qty, notes, created_at, ' +
   /* variant fields (migration 0056) */
-  'item_group, description, description2, uom, discount_centi, unit_cost_centi, ' +
+  'item_group, description, description2, uom, discount_sen, unit_cost_sen, ' +
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
   'custom_specials, line_suffix, special_order_price_sen, variants, ' +
   /* per-line delivery date + ship-to warehouse */
@@ -286,7 +286,7 @@ purchaseConsignmentOrders.get('/:id/linked', async (c) => {
 // ── Create ────────────────────────────────────────────────────────────
 // body: {
 //   supplierId, currency?, expectedAt?, purchaseLocationId?, notes?,
-//   items: [{ materialKind, materialCode, materialName, supplierSku?, qty, unitPriceCenti, bindingId? }]
+//   items: [{ materialKind, materialCode, materialName, supplierSku?, qty, unitPriceSen, bindingId? }]
 // }
 purchaseConsignmentOrders.post('/', async (c) => {
   /* company-scope: the only by-id write here is the ROLLBACK — the header this
@@ -337,9 +337,9 @@ purchaseConsignmentOrders.post('/', async (c) => {
     if (!VALID_KINDS.has(kind)) throw new Error(`invalid material_kind: ${kind}`);
     if (!it.materialCode || !it.materialName) throw new Error('material_code + material_name required per item');
     const qty = Math.max(0, Number(it.qty ?? 0));
-    const unit = Math.max(0, Number(it.unitPriceCenti ?? 0));
-    const discountCenti = Math.max(0, Number(it.discountCenti ?? 0));
-    const lineTotal = Math.max(0, qty * unit - discountCenti);
+    const unit = Math.max(0, Number(it.unitPriceSen ?? 0));
+    const discountSen = Math.max(0, Number(it.discountSen ?? 0));
+    const lineTotal = Math.max(0, qty * unit - discountSen);
     subtotal += lineTotal;
     return {
       binding_id: (it.bindingId as string | undefined) ?? null,
@@ -348,10 +348,10 @@ purchaseConsignmentOrders.post('/', async (c) => {
       material_name: it.materialName,
       supplier_sku: (it.supplierSku as string | undefined) ?? null,
       qty,
-      unit_price_centi: unit,
-      line_total_centi: lineTotal,
+      unit_price_sen: unit,
+      line_total_sen: lineTotal,
       notes: (it.notes as string | undefined) ?? null,
-      discount_centi: discountCenti,
+      discount_sen: discountSen,
       delivery_date: dateOrNull(it.deliveryDate),
       supplier_delivery_date_2: dateOrNull(it.supplierDeliveryDate2),
       supplier_delivery_date_3: dateOrNull(it.supplierDeliveryDate3),
@@ -376,9 +376,9 @@ purchaseConsignmentOrders.post('/', async (c) => {
     supplier_delivery_date_3: dateOrNull(body.supplierDeliveryDate3),
     supplier_delivery_date_4: dateOrNull(body.supplierDeliveryDate4),
     notes: (body.notes as string | undefined) ?? null,
-    subtotal_centi: subtotal,
-    tax_centi: 0,
-    total_centi: subtotal,
+    subtotal_sen: subtotal,
+    tax_sen: 0,
+    total_sen: subtotal,
     created_by: user.id,
     purchase_location_id: purchaseLocationId,
   };
@@ -465,10 +465,10 @@ purchaseConsignmentOrders.patch('/:id', async (c) => {
    See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputePcoTotals(sb: any, pcoId: string) {
   const { data: items, error: itemsErr } = await sb.from('purchase_consignment_order_items')
-    .select('line_total_centi')
+    .select('line_total_sen')
     .eq('purchase_consignment_order_id', pcoId);
   /* A failed READ is not an empty order, and `?? []` cannot tell them apart — it
-     folded a transient blip into subtotal_centi / total_centi ZERO on an order
+     folded a transient blip into subtotal_sen / total_sen ZERO on an order
      whose lines were intact. The ERROR is the signal, never the emptiness: a
      genuinely empty order resolves error === null with data === [] and MUST still
      fall through to zero the header. */
@@ -477,10 +477,10 @@ async function recomputePcoTotals(sb: any, pcoId: string) {
     console.error('[pco-recompute] item read failed — header left unchanged:', pcoId, itemsErr.message);
     return;
   }
-  const subtotal = (items ?? []).reduce((s: number, r: any) => s + (r.line_total_centi ?? 0), 0);
+  const subtotal = (items ?? []).reduce((s: number, r: any) => s + (r.line_total_sen ?? 0), 0);
   const { error: updErr } = await sb.from('purchase_consignment_orders').update({
-    subtotal_centi: subtotal,
-    total_centi: subtotal,
+    subtotal_sen: subtotal,
+    total_sen: subtotal,
     updated_at: new Date().toISOString(),
   }).eq('id', pcoId);
   if (updErr) {
@@ -508,9 +508,9 @@ purchaseConsignmentOrders.post('/:id/items', async (c) => {
   if (childLock) return c.json(childLock, 409);
 
   const qty = Number(it.qty ?? 1);
-  const unitPriceCenti = Number(it.unitPriceCenti ?? 0);
-  const discountCenti = Number(it.discountCenti ?? 0);
-  const lineTotal = (qty * unitPriceCenti) - discountCenti;
+  const unitPriceSen = Number(it.unitPriceSen ?? 0);
+  const discountSen = Number(it.discountSen ?? 0);
+  const lineTotal = (qty * unitPriceSen) - discountSen;
 
   const row: Record<string, unknown> = {
     purchase_consignment_order_id: pcoId,
@@ -520,8 +520,8 @@ purchaseConsignmentOrders.post('/:id/items', async (c) => {
     material_name: it.materialName,
     supplier_sku: (it.supplierSku as string) ?? null,
     qty,
-    unit_price_centi: unitPriceCenti,
-    line_total_centi: lineTotal,
+    unit_price_sen: unitPriceSen,
+    line_total_sen: lineTotal,
     notes: (it.notes as string) ?? null,
     gap_inches: (it.gapInches as number) ?? null,
     divan_height_inches: (it.divanHeightInches as number) ?? null,
@@ -536,8 +536,8 @@ purchaseConsignmentOrders.post('/:id/items', async (c) => {
     description: (it.description as string) ?? null,
     description2: buildVariantSummary(String(it.itemGroup ?? ''), (it.variants as Record<string, unknown> | null) ?? null) || null,
     uom: (it.uom as string) ?? 'UNIT',
-    discount_centi: discountCenti,
-    unit_cost_centi: Number(it.unitCostCenti ?? 0),
+    discount_sen: discountSen,
+    unit_cost_sen: Number(it.unitCostSen ?? 0),
     delivery_date: dateOrNull(it.deliveryDate),
     supplier_delivery_date_2: dateOrNull(it.supplierDeliveryDate2),
     supplier_delivery_date_3: dateOrNull(it.supplierDeliveryDate3),
@@ -563,23 +563,23 @@ purchaseConsignmentOrders.patch('/:id/items/:itemId', async (c) => {
   if (childLock) return c.json(childLock, 409);
 
   const { data: prev } = await scopeToCompanyId(sb.from('purchase_consignment_order_items')
-    .select('qty, unit_price_centi, discount_centi, unit_cost_centi, item_group, variants')
+    .select('qty, unit_price_sen, discount_sen, unit_cost_sen, item_group, variants')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
   const qty = it.qty !== undefined ? Number(it.qty) : prev.qty;
-  const unit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : prev.unit_price_centi;
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : prev.discount_centi;
+  const unit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : prev.unit_price_sen;
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : prev.discount_sen;
   const lineTotal = (qty * unit) - discount;
 
   const updates: Record<string, unknown> = {
-    qty, unit_price_centi: unit, discount_centi: discount, line_total_centi: lineTotal,
+    qty, unit_price_sen: unit, discount_sen: discount, line_total_sen: lineTotal,
   };
   for (const [from, to] of [
     ['materialCode', 'material_code'], ['materialName', 'material_name'],
     ['supplierSku', 'supplier_sku'], ['itemGroup', 'item_group'],
     ['description', 'description'], ['description2', 'description2'],
-    ['uom', 'uom'], ['unitCostCenti', 'unit_cost_centi'], ['notes', 'notes'],
+    ['uom', 'uom'], ['unitCostSen', 'unit_cost_sen'], ['notes', 'notes'],
     ['gapInches', 'gap_inches'], ['divanHeightInches', 'divan_height_inches'],
     ['divanPriceSen', 'divan_price_sen'], ['legHeightInches', 'leg_height_inches'],
     ['legPriceSen', 'leg_price_sen'], ['customSpecials', 'custom_specials'],

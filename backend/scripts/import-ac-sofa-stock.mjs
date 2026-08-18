@@ -130,7 +130,7 @@ async function main() {
   /* ── 2. The ERP's imported sofa PO lines that carry received goods ──────── */
   const poLines = await sql`
     SELECT i.id, i.purchase_order_id, i.material_code, i.material_name, i.supplier_sku,
-           i.description2, i.notes, i.received_qty, i.qty, i.unit_price_centi,
+           i.description2, i.notes, i.received_qty, i.qty, i.unit_price_sen,
            i.item_group, i.variants, i.warehouse_id, i.so_item_id,
            p.po_number, p.linked_ac_docno, p.po_date
       FROM scm.purchase_order_items i

@@ -34,8 +34,8 @@ export type OutstandingModule = (typeof OUTSTANDING_MODULES)[number];
 
 export interface OutstandingSummaryEntry {
   count: number;
-  total_centi: number;
-  total_outstanding_centi: number;
+  total_sen: number;
+  total_outstanding_sen: number;
 }
 
 export type OutstandingSummary = Record<string, OutstandingSummaryEntry>;
@@ -46,7 +46,7 @@ export type OutstandingSummary = Record<string, OutstandingSummaryEntry>;
 export function emptyOutstandingSummary(): OutstandingSummary {
   const summary: OutstandingSummary = {};
   for (const m of OUTSTANDING_MODULES) {
-    summary[m] = { count: 0, total_centi: 0, total_outstanding_centi: 0 };
+    summary[m] = { count: 0, total_sen: 0, total_outstanding_sen: 0 };
   }
   return summary;
 }
@@ -58,8 +58,8 @@ export function emptyOutstandingSummary(): OutstandingSummary {
 export interface AgingMvRow {
   module: string;
   cnt: number | string;
-  total_centi: number | string;
-  total_outstanding_centi: number | string;
+  total_sen: number | string;
+  total_outstanding_sen: number | string;
 }
 
 /**
@@ -82,8 +82,8 @@ export function reduceAgingSnapshot(rows: AgingMvRow[]): OutstandingSummary {
     const entry = summary[r.module];
     if (!entry) continue;
     entry.count += Number(r.cnt);
-    entry.total_centi += Number(r.total_centi);
-    entry.total_outstanding_centi += Number(r.total_outstanding_centi);
+    entry.total_sen += Number(r.total_sen);
+    entry.total_outstanding_sen += Number(r.total_outstanding_sen);
   }
   return summary;
 }

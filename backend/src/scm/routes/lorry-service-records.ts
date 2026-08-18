@@ -41,7 +41,7 @@ export const lorryServiceRecords = new Hono<{ Bindings: Env; Variables: Variable
 lorryServiceRecords.use('*', supabaseAuth);
 
 const COLS = [
-  'id', 'lorry_id', 'service_date', 'description', 'workshop', 'cost_centi',
+  'id', 'lorry_id', 'service_date', 'description', 'workshop', 'cost_sen',
   'odometer_km', 'invoice_key', 'invoice_name', 'invoice_mime', 'invoice_size',
   'next_service_date', 'next_service_km', 'notes', 'created_at', 'created_by',
 ].join(', ');
@@ -62,7 +62,7 @@ function dateField(v: unknown): { ok: true; value: string | null } | { ok: false
   return ISO_DATE.test(s) ? { ok: true, value: s } : { ok: false };
 }
 
-/* Non-negative integer or null. The table CHECKs cost_centi >= 0 and
+/* Non-negative integer or null. The table CHECKs cost_sen >= 0 and
    odometer_km >= 0 — validate here so a typo returns a named 400 rather than a
    raw constraint-violation 500. */
 function intField(v: unknown): { ok: true; value: number | null } | { ok: false } {
@@ -108,8 +108,8 @@ lorryServiceRecords.post('/', async (c) => {
   const nextDate = dateField(body.nextServiceDate);
   if (!nextDate.ok) return c.json({ error: 'invalid_date', reason: 'nextServiceDate must be YYYY-MM-DD' }, 400);
 
-  const cost = intField(body.costCenti);
-  if (!cost.ok) return c.json({ error: 'invalid_amount', reason: 'costCenti must be a non-negative integer (cents)' }, 400);
+  const cost = intField(body.costSen);
+  if (!cost.ok) return c.json({ error: 'invalid_amount', reason: 'costSen must be a non-negative integer (cents)' }, 400);
   const odo = intField(body.odometerKm);
   if (!odo.ok) return c.json({ error: 'invalid_odometer', reason: 'odometerKm must be a non-negative whole number' }, 400);
   const nextKm = intField(body.nextServiceKm);
@@ -122,7 +122,7 @@ lorryServiceRecords.post('/', async (c) => {
     service_date: serviceDate.value,
     description,
     workshop: (body.workshop as string)?.trim() || null,
-    cost_centi: cost.value ?? 0,
+    cost_sen: cost.value ?? 0,
     odometer_km: odo.value,
     next_service_date: nextDate.value,
     next_service_km: nextKm.value,
@@ -171,10 +171,10 @@ lorryServiceRecords.patch('/:id', async (c) => {
     if (!d.ok) return c.json({ error: 'invalid_date', reason: 'nextServiceDate must be YYYY-MM-DD' }, 400);
     updates.next_service_date = d.value;
   }
-  if (body.costCenti !== undefined) {
-    const v = intField(body.costCenti);
-    if (!v.ok) return c.json({ error: 'invalid_amount', reason: 'costCenti must be a non-negative integer (cents)' }, 400);
-    updates.cost_centi = v.value ?? 0;
+  if (body.costSen !== undefined) {
+    const v = intField(body.costSen);
+    if (!v.ok) return c.json({ error: 'invalid_amount', reason: 'costSen must be a non-negative integer (cents)' }, 400);
+    updates.cost_sen = v.value ?? 0;
   }
   if (body.odometerKm !== undefined) {
     const v = intField(body.odometerKm);

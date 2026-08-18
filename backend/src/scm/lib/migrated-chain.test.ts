@@ -15,7 +15,7 @@ import {
    PI.NetTotal / IV.NetTotal in sen. */
 
 const line = (over: Partial<MigratedSourceDoc['lines'][number]> = {}) => ({
-  lineId: 'l1', itemCode: 'AKEMI IMMORTAL MATT (Q)', qty: 1, unitPriceCenti: 369400,
+  lineId: 'l1', itemCode: 'AKEMI IMMORTAL MATT (Q)', qty: 1, unitPriceSen: 369400,
   sourceLineKey: 'so-1', ...over,
 });
 
@@ -109,8 +109,8 @@ describe('rule 3 — a duplicated source line is refused, never silently billed'
   const doubled = src({
     docNo: 'HC-DO-005452', acDocNo: 'DO-005452', acInvoiceNos: ['I-2507-0184'],
     lines: [
-      line({ lineId: 'a', itemCode: 'AKEMI ARISTOI MATT (SK)', qty: 1, unitPriceCenti: 730000, sourceLineKey: 'so-4391533d' }),
-      line({ lineId: 'b', itemCode: 'AKEMI ARISTOI MATT (SK)', qty: 1, unitPriceCenti: 730000, sourceLineKey: 'so-4391533d' }),
+      line({ lineId: 'a', itemCode: 'AKEMI ARISTOI MATT (SK)', qty: 1, unitPriceSen: 730000, sourceLineKey: 'so-4391533d' }),
+      line({ lineId: 'b', itemCode: 'AKEMI ARISTOI MATT (SK)', qty: 1, unitPriceSen: 730000, sourceLineKey: 'so-4391533d' }),
     ],
   });
 
@@ -127,16 +127,16 @@ describe('rule 3 — a duplicated source line is refused, never silently billed'
     const naive = planMigratedInvoices(
       [{ ...doubled, lines: doubled.lines.map((l, i) => ({ ...l, sourceLineKey: `distinct-${i}` })) }],
       { 'I-2507-0184': 730000 });
-    expect(naive.plans[0]!.valueCenti).toBe(1460000);
-    expect(naive.plans[0]!.acValueCenti).toBe(730000);
+    expect(naive.plans[0]!.valueSen).toBe(1460000);
+    expect(naive.plans[0]!.acValueSen).toBe(730000);
     expect(naive.plans[0]!.eligible).toBe(false);
   });
 
   it('a document whose lines legitimately repeat a PRODUCT but not an order line is fine', () => {
     const { plans } = planMigratedInvoices([src({
       lines: [
-        line({ lineId: 'a', qty: 1, unitPriceCenti: 100, sourceLineKey: 'so-1' }),
-        line({ lineId: 'b', qty: 1, unitPriceCenti: 100, sourceLineKey: 'so-2' }),
+        line({ lineId: 'a', qty: 1, unitPriceSen: 100, sourceLineKey: 'so-1' }),
+        line({ lineId: 'b', qty: 1, unitPriceSen: 100, sourceLineKey: 'so-2' }),
       ],
     })], { 'PI-000658': 200 });
     expect(plans[0]!.eligible).toBe(true);
@@ -148,12 +148,12 @@ describe('rule 4 — the total must equal AutoCount\'s, to the sen', () => {
     // real: HC-DO-008331 -> I-2601-0154, RM 4,849.50 on both sides
     const { plans } = planMigratedInvoices([src({
       docNo: 'HC-DO-008331', acDocNo: 'DO-008331', acInvoiceNos: ['I-2601-0154'],
-      lines: [line({ itemCode: 'AKEMI ARMOUR MATT (K)', qty: 1, unitPriceCenti: 484950 })],
+      lines: [line({ itemCode: 'AKEMI ARMOUR MATT (K)', qty: 1, unitPriceSen: 484950 })],
     })], { 'I-2601-0154': 484950 });
     expect(plans[0]!.eligible).toBe(true);
     expect(plans[0]!.reason).toBe('ok');
-    expect(plans[0]!.valueCenti).toBe(484950);
-    expect(plans[0]!.acValueCenti).toBe(484950);
+    expect(plans[0]!.valueSen).toBe(484950);
+    expect(plans[0]!.acValueSen).toBe(484950);
   });
 
   it('a free line does NOT fail the gate when AutoCount billed it free too', () => {
@@ -161,9 +161,9 @@ describe('rule 4 — the total must equal AutoCount\'s, to the sen', () => {
     const { plans } = planMigratedInvoices([src({
       docNo: 'HC-DO-007726', acDocNo: 'DO-007726', acInvoiceNos: ['I-2512-0062'],
       lines: [
-        line({ lineId: 'a', qty: 1, unitPriceCenti: 369400, sourceLineKey: 's1' }),
-        line({ lineId: 'b', qty: 1, unitPriceCenti: 0, sourceLineKey: 's2' }),
-        line({ lineId: 'c', qty: 2, unitPriceCenti: 0, sourceLineKey: 's3' }),
+        line({ lineId: 'a', qty: 1, unitPriceSen: 369400, sourceLineKey: 's1' }),
+        line({ lineId: 'b', qty: 1, unitPriceSen: 0, sourceLineKey: 's2' }),
+        line({ lineId: 'c', qty: 2, unitPriceSen: 0, sourceLineKey: 's3' }),
       ],
     })], { 'I-2512-0062': 369400 });
     expect(plans[0]!.unpricedLines).toBe(2);
@@ -174,20 +174,20 @@ describe('rule 4 — the total must equal AutoCount\'s, to the sen', () => {
     // real: HC-DO-010222 would bill RM 0.00 against AutoCount's RM 7,650.00
     const { plans, blocked } = planMigratedInvoices([src({
       docNo: 'HC-DO-010222', acDocNo: 'DO-010222', acInvoiceNos: ['I-2606-0009'],
-      lines: [line({ qty: 8, unitPriceCenti: 0 })],
+      lines: [line({ qty: 8, unitPriceSen: 0 })],
     })], { 'I-2606-0009': 765000 });
     expect(plans[0]!.eligible).toBe(false);
     expect(plans[0]!.reason).toBe('total_disagrees_with_autocount');
     expect(blocked[0]).toMatchObject({
       docNo: 'HC-DO-010222', reason: 'total_disagrees_with_autocount',
-      valueCenti: 0, acValueCenti: 765000,
+      valueSen: 0, acValueSen: 765000,
     });
   });
 
   it('refuses when AutoCount has no total to check against — a missing cross-check is not a passing one', () => {
     const { plans } = planMigratedInvoices([src()], {});
     expect(plans[0]!.eligible).toBe(false);
-    expect(plans[0]!.acValueCenti).toBe(-1);
+    expect(plans[0]!.acValueSen).toBe(-1);
   });
 
   it('the override exists and is opt-in only', () => {
@@ -235,7 +235,7 @@ describe('rule 5 — one invoice, one party', () => {
         lines: [line({ lineId: 'l2', sourceLineKey: 'so-2' })],
       }),
     ], { 'PI-000832': 738800 });
-    expect(plans[0]!.valueCenti).toBe(plans[0]!.acValueCenti);   // the money agrees
+    expect(plans[0]!.valueSen).toBe(plans[0]!.acValueSen);   // the money agrees
     expect(plans[0]!.eligible).toBe(false);                       // and it is STILL refused
     expect(plans[0]!.reason).toBe('party_disagrees_across_sources');
   });
@@ -262,10 +262,10 @@ describe('partial AutoCount coverage is refused by the total gate, with no rule 
     // real shape: PI-001895 covers GR-000954, GR-000986, GR-001032, GR-001074
     const { plans, blocked } = planMigratedInvoices([src({
       docNo: 'HC-GR-000954', acDocNo: 'GR-000954', acInvoiceNos: ['PI-001895'],
-      lines: [line({ qty: 1, unitPriceCenti: 100000 })],
+      lines: [line({ qty: 1, unitPriceSen: 100000 })],
     })], { 'PI-001895': 400000 });
     expect(plans[0]!.eligible).toBe(false);
-    expect(blocked[0]).toMatchObject({ reason: 'total_disagrees_with_autocount', valueCenti: 100000, acValueCenti: 400000 });
+    expect(blocked[0]).toMatchObject({ reason: 'total_disagrees_with_autocount', valueSen: 100000, acValueSen: 400000 });
   });
 });
 

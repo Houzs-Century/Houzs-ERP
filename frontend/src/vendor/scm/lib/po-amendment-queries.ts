@@ -57,7 +57,7 @@ export type PoAmendmentLine = {
   new_material_name: string | null;
   new_variants: unknown;
   new_qty: number | null;
-  new_unit_price_centi: number | null;
+  new_unit_price_sen: number | null;
   new_delivery_date: string | null;
   old_snapshot: unknown;
 };
@@ -68,11 +68,11 @@ export type PoAmendmentLine = {
    change (LINE); otherwise one atom per new_* field that differs from the snapshot. */
 export const poLineFieldKinds = (l: PoAmendmentLine): AmendmentFieldKind[] => {
   if (l.change_type === 'ADD' || l.change_type === 'REMOVE') return ['LINE'];
-  const old = (l.old_snapshot as { material_code?: string | null; qty?: number | null; unit_price_centi?: number | null; delivery_date?: string | null } | null) ?? {};
+  const old = (l.old_snapshot as { material_code?: string | null; qty?: number | null; unit_price_sen?: number | null; delivery_date?: string | null } | null) ?? {};
   const kinds: AmendmentFieldKind[] = [];
   if (l.new_material_code != null && l.new_material_code !== (old.material_code ?? null)) kinds.push('SPEC');
   if (l.new_qty != null && l.new_qty !== (old.qty ?? null)) kinds.push('QTY');
-  if (l.new_unit_price_centi != null && l.new_unit_price_centi !== (old.unit_price_centi ?? null)) kinds.push('PRICE');
+  if (l.new_unit_price_sen != null && l.new_unit_price_sen !== (old.unit_price_sen ?? null)) kinds.push('PRICE');
   if (l.new_delivery_date != null && l.new_delivery_date !== (old.delivery_date ?? null)) kinds.push('DELIVERY');
   return kinds;
 };
@@ -112,7 +112,7 @@ export type CreatePoAmendmentLine = {
   newMaterialName?: string | null;
   newVariants?: unknown;
   newQty?: number | null;
-  newUnitPriceCenti?: number | null;
+  newUnitPriceSen?: number | null;
   newDeliveryDate?: string | null;
   oldSnapshot?: unknown;
 };

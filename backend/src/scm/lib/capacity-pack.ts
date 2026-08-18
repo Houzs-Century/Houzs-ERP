@@ -29,7 +29,7 @@ export interface PackOrder {
   ref: string;
   zone: string;
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
   /** False => the order has no counted furniture; it packs by revenue only. */
   hasFurniture: boolean;
 }
@@ -39,8 +39,8 @@ export interface PackLorry {
   plate: string;
   /** Per-lorry max sets; null => use config.defaultMaxSets. */
   maxSets: number | null;
-  /** Per-lorry max revenue (centi); null => use config.defaultMaxRevenueCenti. */
-  maxRevenueCenti: number | null;
+  /** Per-lorry max revenue (centi); null => use config.defaultMaxRevenueSen. */
+  maxRevenueSen: number | null;
   layer: CapacityLayer;
 }
 
@@ -50,7 +50,7 @@ export interface PackConfig {
   /** Zones that MIX on one trip (Klang Valley). Everything else is dedicated. */
   klangValleyZones: readonly string[];
   defaultMaxSets: number;
-  defaultMaxRevenueCenti: number;
+  defaultMaxRevenueSen: number;
   /** Cap on how many days forward the packer will span (safety bound). */
   maxDays?: number;
 }
@@ -59,9 +59,9 @@ export interface PackedLorry {
   lorryId: string;
   plate: string;
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
   ceilingSets: number | null;
-  ceilingRevenueCenti: number | null;
+  ceilingRevenueSen: number | null;
   layer: CapacityLayer;
   /** A far-zone lorry below its ceiling — a not-yet-full dedicated trip. */
   partial: boolean;
@@ -85,7 +85,7 @@ export interface PackProposal {
   lorryId: string;
   plate: string;
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
 }
 
 export interface PackResult {
@@ -106,20 +106,20 @@ export function addDays(iso: string, n: number): string {
 
 interface Ceilings {
   sets: number | null;
-  revenueCenti: number | null;
+  revenueSen: number | null;
 }
 
 function ceilingsFor(lorry: PackLorry, cfg: PackConfig): Ceilings {
   const sets = lorry.maxSets ?? cfg.defaultMaxSets;
-  const rev = lorry.maxRevenueCenti ?? cfg.defaultMaxRevenueCenti;
+  const rev = lorry.maxRevenueSen ?? cfg.defaultMaxRevenueSen;
   switch (lorry.layer) {
     case 'SETS':
-      return { sets, revenueCenti: null };
+      return { sets, revenueSen: null };
     case 'REVENUE':
-      return { sets: null, revenueCenti: rev };
+      return { sets: null, revenueSen: rev };
     case 'BOTH':
     default:
-      return { sets, revenueCenti: rev };
+      return { sets, revenueSen: rev };
   }
 }
 
@@ -131,7 +131,7 @@ function fits(
   ceil: Ceilings,
 ): boolean {
   if (ceil.sets != null && runningSets + order.sets > ceil.sets) return false;
-  if (ceil.revenueCenti != null && runningRev + order.revenueCenti > ceil.revenueCenti) return false;
+  if (ceil.revenueSen != null && runningRev + order.revenueSen > ceil.revenueSen) return false;
   return true;
 }
 
@@ -164,9 +164,9 @@ function packGroup(
         lorryId: lorry.id,
         plate: lorry.plate,
         sets: 0,
-        revenueCenti: 0,
+        revenueSen: 0,
         ceilingSets: ceil.sets,
-        ceilingRevenueCenti: ceil.revenueCenti,
+        ceilingRevenueSen: ceil.revenueSen,
         layer: lorry.layer,
         partial: false,
         overCeiling: false,
@@ -182,15 +182,15 @@ function packGroup(
           packed.overCeiling = true;
           packed.orders.push(next.ref);
           packed.sets += next.sets;
-          packed.revenueCenti += next.revenueCenti;
+          packed.revenueSen += next.revenueSen;
           proposals.push(proposalFor(next, group, date, lorry));
           queue.shift();
           break;
         }
-        if (!fits(packed.sets, packed.revenueCenti, next, ceil)) break;
+        if (!fits(packed.sets, packed.revenueSen, next, ceil)) break;
         packed.orders.push(next.ref);
         packed.sets += next.sets;
-        packed.revenueCenti += next.revenueCenti;
+        packed.revenueSen += next.revenueSen;
         proposals.push(proposalFor(next, group, date, lorry));
         queue.shift();
       }
@@ -200,7 +200,7 @@ function packGroup(
       // A far-zone lorry below its ceiling is a not-yet-full dedicated trip.
       if (isFar && !packed.overCeiling) {
         const setFull = ceil.sets != null && packed.sets >= ceil.sets;
-        const revFull = ceil.revenueCenti != null && packed.revenueCenti >= ceil.revenueCenti;
+        const revFull = ceil.revenueSen != null && packed.revenueSen >= ceil.revenueSen;
         packed.partial = !(setFull || revFull);
       }
       dayLorries.push(packed);
@@ -225,7 +225,7 @@ function proposalFor(order: PackOrder, group: string, date: string, lorry: PackL
     lorryId: lorry.id,
     plate: lorry.plate,
     sets: order.sets,
-    revenueCenti: order.revenueCenti,
+    revenueSen: order.revenueSen,
   };
 }
 

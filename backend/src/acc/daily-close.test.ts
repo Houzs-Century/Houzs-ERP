@@ -15,14 +15,14 @@ const CHART: Row[] = ['335-0000', '946-0000'].map((code) => ({
 describe('bucketPayments — the drawer view', () => {
   it('cash and transfer are their own buckets; card money groups by acquirer; imported never counts', () => {
     const buckets = bucketPayments([
-      { method: 'cash', merchant_provider: null, amount_centi: 100 },
-      { method: 'cash', merchant_provider: null, amount_centi: 50 },
-      { method: 'transfer', merchant_provider: null, amount_centi: 200 },
-      { method: 'merchant', merchant_provider: 'MBB', amount_centi: 300 },
-      { method: 'installment', merchant_provider: 'MBB', amount_centi: 40 },
-      { method: 'merchant', merchant_provider: 'GHL', amount_centi: 7 },
-      { method: 'merchant', merchant_provider: null, amount_centi: 9 },
-      { method: 'imported', merchant_provider: null, amount_centi: 99999 },
+      { method: 'cash', merchant_provider: null, amount_sen: 100 },
+      { method: 'cash', merchant_provider: null, amount_sen: 50 },
+      { method: 'transfer', merchant_provider: null, amount_sen: 200 },
+      { method: 'merchant', merchant_provider: 'MBB', amount_sen: 300 },
+      { method: 'installment', merchant_provider: 'MBB', amount_sen: 40 },
+      { method: 'merchant', merchant_provider: 'GHL', amount_sen: 7 },
+      { method: 'merchant', merchant_provider: null, amount_sen: 9 },
+      { method: 'imported', merchant_provider: null, amount_sen: 99999 },
     ]);
     expect(buckets.get('cash')).toBe(150);
     expect(buckets.get('transfer')).toBe(200);
@@ -37,10 +37,10 @@ describe('systemTakings — both sales panels, one day, one company', () => {
   it('sums SO and SI payments of the date and fails closed on a read that does not answer', async () => {
     const sb = fakeSb({
       mfg_sales_order_payments: [
-        { company_id: 1, paid_at: '2026-08-16T10:00:00', method: 'cash', merchant_provider: null, amount_centi: 100 },
+        { company_id: 1, paid_at: '2026-08-16T10:00:00', method: 'cash', merchant_provider: null, amount_sen: 100 },
       ],
       sales_invoice_payments: [
-        { company_id: 1, paid_at: '2026-08-16T12:00:00', method: 'cash', merchant_provider: null, amount_centi: 30 },
+        { company_id: 1, paid_at: '2026-08-16T12:00:00', method: 'cash', merchant_provider: null, amount_sen: 30 },
       ],
     });
     const r = await systemTakings(sb, 1, '2026-08-16');

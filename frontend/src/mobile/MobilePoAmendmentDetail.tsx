@@ -1,5 +1,5 @@
 import { useMemo } from "react";
-import { fmtMoneyCenti } from "@2990s/shared";
+import { fmtMoneySen } from "@2990s/shared";
 import { formatDate } from "../lib/utils";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
@@ -47,13 +47,13 @@ const TONE_BADGE_CLASS: Record<StatusTone, string> = {
   success: "b-green", danger: "b-red", pending: "b-amber",
 };
 
-const fmtCenti = (centi: number | null | undefined): string => fmtMoneyCenti(centi);
+const fmtSen = (centi: number | null | undefined): string => fmtMoneySen(centi);
 
 type PoOldSnapshot = {
   material_code?: string | null;
   material_name?: string | null;
   qty?: number | null;
-  unit_price_centi?: number | null;
+  unit_price_sen?: number | null;
   delivery_date?: string | null;
 };
 const oldOf = (l: PoAmendmentLine): PoOldSnapshot => (l.old_snapshot as PoOldSnapshot | null) ?? {};
@@ -134,7 +134,7 @@ function DiffRow({ line }: { line: PoAmendmentLine }) {
         </div>
       ) : isAdd ? (
         <div style={{ marginTop: 3, fontSize: 12.5, fontWeight: 600 }}>
-          {newCode ?? "—"} · Qty {line.new_qty ?? "—"} @ {fmtCenti(line.new_unit_price_centi)}
+          {newCode ?? "—"} · Qty {line.new_qty ?? "—"} @ {fmtSen(line.new_unit_price_sen)}
         </div>
       ) : (
         <div style={{ marginTop: 3, fontSize: 12.5 }}>
@@ -142,12 +142,12 @@ function DiffRow({ line }: { line: PoAmendmentLine }) {
           <div style={{ color: "var(--mut)", marginTop: 2 }}>
             <span style={{ textDecoration: "line-through" }}>
               Qty {old.qty ?? "—"}
-              {typeof old.unit_price_centi === "number" ? ` · ${fmtCenti(old.unit_price_centi)}` : ""}
+              {typeof old.unit_price_sen === "number" ? ` · ${fmtSen(old.unit_price_sen)}` : ""}
               {old.delivery_date ? ` · ${formatDate(old.delivery_date)}` : ""}
             </span>
             <span style={{ color: "var(--ink)", fontWeight: 600 }}>
               {"  →  Qty "}{line.new_qty ?? old.qty ?? "—"}
-              {typeof line.new_unit_price_centi === "number" ? ` · ${fmtCenti(line.new_unit_price_centi)}` : ""}
+              {typeof line.new_unit_price_sen === "number" ? ` · ${fmtSen(line.new_unit_price_sen)}` : ""}
               {line.new_delivery_date ? ` · ${formatDate(line.new_delivery_date)}` : ""}
             </span>
           </div>

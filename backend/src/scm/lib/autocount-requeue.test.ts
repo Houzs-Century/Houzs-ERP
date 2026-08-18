@@ -48,7 +48,7 @@ const soWithoutLocation = () => ({
 
 const soItem = () => ({
   doc_no: SO_DOC, item_code: ERP_A, description: 'Mattress', qty: 2,
-  unit_price_centi: 12345, cancelled: false, warehouse_id: null,
+  unit_price_sen: 12345, cancelled: false, warehouse_id: null,
 });
 
 /** The skip the composer's MissingLocationError left behind. */
@@ -261,7 +261,7 @@ describe('the PO create, which is the other half of what is re-queueable', () =>
       suppliers: [{ id: 'sup-1', code: '400-H004', name: 'Supplier' }],
       purchase_order_items: [{
         purchase_order_id: 'po-1', material_code: ERP_A, description: 'D', qty: 3,
-        unit_price_centi: 5000, warehouse_id: 'wh-1',
+        unit_price_sen: 5000, warehouse_id: 'wh-1',
       }],
       warehouses: [{ id: 'wh-1', code: 'KL', name: 'KL WAREHOUSE' }],
       supplier_material_bindings: [],

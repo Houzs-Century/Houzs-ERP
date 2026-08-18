@@ -70,7 +70,7 @@ export interface CollapsibleLine {
   description?: string | null;
   description2?: string | null;
   qty: number;
-  unit_price_centi: number;
+  unit_price_sen: number;
   location?: string | null;
   delivery_date?: string | null;
   variants?: Record<string, unknown> | null;
@@ -361,7 +361,7 @@ function collapseRun(
       /* The importer put the AutoCount line price on the FIRST compartment and
          zero on the rest, so the sum is the original unit price. Summing rather
          than reading the first also stays right if an operator later spread it. */
-      unit_price_centi: slice.reduce((s, r) => s + (Number(r.line.unit_price_centi) || 0), 0),
+      unit_price_sen: slice.reduce((s, r) => s + (Number(r.line.unit_price_sen) || 0), 0),
       location: slice[0].line.location ?? null,
       delivery_date: slice[0].line.delivery_date ?? null,
       variants: slice[0].line.variants ?? null,

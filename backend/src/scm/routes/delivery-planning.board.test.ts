@@ -38,8 +38,8 @@ const so = (docNo: string, companyId: number): Row => ({
   customer_country: 'Malaysia',
   customer_delivery_date: '2026-09-01',
   processing_date: '2026-08-20',
-  local_total_centi: 100_000,
-  balance_centi: 0,
+  local_total_sen: 100_000,
+  balance_sen: 0,
 });
 
 /** One non-cancelled line per SO, so the delivered-sum engine gets past its

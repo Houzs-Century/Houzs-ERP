@@ -18,7 +18,7 @@
 // DEFECT 2 — the amendment path reprices a MIGRATED order to catalogue.
 //   recomputeOneLine is called with 14 positional arguments; the 15th,
 //   trustOperatorSelling, defaults to false, so approving even a qty-only
-//   amendment rewrites unit_price_centi to mfg_products.sell_price_sen. Section
+//   amendment rewrites unit_price_sen to mfg_products.sell_price_sen. Section
 //   6 counts how many migrated orders are exposed and how many of their lines
 //   are priced 0 by design (the sofa sibling shape that a catalogue rewrite
 //   would destroy).
@@ -355,12 +355,12 @@ try {
     notice(`6a. ${m.migrated} migrated SO(s) (linked_ac_docno set). ${m.with_dd} of them already carry processing_date — those are the ones that can reach the amendment path TODAY.`);
 
     const lineTable = (await hasTable("mfg_sales_order_items")) ? "mfg_sales_order_items" : null;
-    if (lineTable && (await hasCol(lineTable, "unit_price_centi"))) {
+    if (lineTable && (await hasCol(lineTable, "unit_price_sen"))) {
       /* Lines join their header by (doc_no, company_id) — mfg_sales_order_items
          carries no header id FK; every script in this tree joins it that way. */
       const [z] = await pg`
         SELECT COUNT(*)::int AS lines,
-               COUNT(*) FILTER (WHERE COALESCE(i.unit_price_centi,0) = 0)::int AS zero_priced
+               COUNT(*) FILTER (WHERE COALESCE(i.unit_price_sen,0) = 0)::int AS zero_priced
           FROM scm.mfg_sales_order_items i
           JOIN scm.mfg_sales_orders h
             ON h.doc_no = i.doc_no AND h.company_id = i.company_id
@@ -379,7 +379,7 @@ try {
       const byGroup = await pg`
         SELECT COALESCE(NULLIF(lower(trim(i.item_group)), ''), '(none)') AS grp,
                COUNT(*)::int AS lines,
-               COUNT(*) FILTER (WHERE COALESCE(i.unit_price_centi,0) = 0)::int AS zero_priced
+               COUNT(*) FILTER (WHERE COALESCE(i.unit_price_sen,0) = 0)::int AS zero_priced
           FROM scm.mfg_sales_order_items i
           JOIN scm.mfg_sales_orders h
             ON h.doc_no = i.doc_no AND h.company_id = i.company_id
@@ -391,7 +391,7 @@ try {
       console.log("");
       notice(`6c. Of the 0-priced migrated lines, ${sofaZero} are SOFA — the lead-module/sibling shape where a catalogue rewrite bills the same set several times over. The rest are lines the import carried without a price; preserving them is still correct, but it is a different fact.`);
     } else {
-      notice("6b. Could not measure 0-priced migrated lines: line table / unit_price_centi column not found under the expected names.");
+      notice("6b. Could not measure 0-priced migrated lines: line table / unit_price_sen column not found under the expected names.");
     }
   }
 

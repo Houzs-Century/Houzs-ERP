@@ -199,7 +199,7 @@ describe('pickComboMatch / pickComboPrice', () => {
       [row()],
     );
     expect(m).not.toBeNull();
-    expect(m!.comboPriceCenti).toBe(275000);
+    expect(m!.comboPriceSen).toBe(275000);
     expect(m!.matchedIndices).toEqual([0, 1]);
   });
 
@@ -210,7 +210,7 @@ describe('pickComboMatch / pickComboPrice', () => {
       [row()],
     );
     expect(m).not.toBeNull();
-    expect(m!.comboPriceCenti).toBe(275000);
+    expect(m!.comboPriceSen).toBe(275000);
     expect(m!.matchedIndices).toEqual([0, 1]); // the 1NA at index 2 is an extra
   });
 

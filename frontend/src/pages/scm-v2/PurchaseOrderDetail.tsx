@@ -173,8 +173,8 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   materialName:   it.material_name,
   supplierSku:    it.supplier_sku ?? undefined,
   qty:            it.qty,
-  unitPriceCenti: it.unit_price_centi,
-  discountCenti:  it.discount_centi ?? 0,
+  unitPriceSen: it.unit_price_sen,
+  discountSen:  it.discount_sen ?? 0,
   deliveryDate:   it.delivery_date ?? undefined,
   supplierDeliveryDate2: it.supplier_delivery_date_2 ?? undefined,
   supplierDeliveryDate3: it.supplier_delivery_date_3 ?? undefined,
@@ -341,17 +341,17 @@ export const PurchaseOrderDetail = () => {
     const binding = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
       : bindings.find((b) => b.material_code === line.materialCode);
-    if (!binding) return line.unitPriceCenti;
+    if (!binding) return line.unitPriceSen;
     const category = (line.category?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
-    if (!category) return binding.unit_price_centi;
+    if (!category) return binding.unit_price_sen;
     const v = line.variants;
     const specials = Array.isArray(v.specials) ? (v.specials as string[]) : [];
     const breakdown = computeMfgPoUnitCost(
       {
         category,
         priceMatrix:    (binding.price_matrix ?? null) as PoPriceMatrix,
-        unitPriceCenti: binding.unit_price_centi,
+        unitPriceSen: binding.unit_price_sen,
         fabricTier:     fabricTierForLine(line),
         seatSize:       category === 'SOFA' ? (v.seatHeight as string | undefined) ?? null : null,
         divanHeight:    (v.divanHeight as string | undefined) ?? null,
@@ -376,9 +376,9 @@ export const PurchaseOrderDetail = () => {
       const next = prev.map((l) => {
         if (l.priceTouched) return l;
         const cost = recomputeLineCost(l);
-        if (cost === l.unitPriceCenti) return l;
+        if (cost === l.unitPriceSen) return l;
         changed = true;
-        return { ...l, unitPriceCenti: cost };
+        return { ...l, unitPriceSen: cost };
       });
       return changed ? next : prev;
     });
@@ -484,9 +484,9 @@ export const PurchaseOrderDetail = () => {
   /* Totals — in Edit, sum the live editLines (incl. unsaved variant/qty/price
      edits) so the rail can't drift; in View, the stored line totals. */
   const itemsSubtotal = isEditing
-    ? editLines.reduce((s, d) => s + Math.max(0, d.qty * d.unitPriceCenti - (d.discountCenti ?? 0)), 0)
-    : visibleItems.reduce((s, it) => s + (it.line_total_centi ?? 0), 0);
-  const grandTotal = itemsSubtotal + (po.tax_centi ?? 0);
+    ? editLines.reduce((s, d) => s + Math.max(0, d.qty * d.unitPriceSen - (d.discountSen ?? 0)), 0)
+    : visibleItems.reduce((s, it) => s + (it.line_total_sen ?? 0), 0);
+  const grandTotal = itemsSubtotal + (po.tax_sen ?? 0);
 
   /* Per-line "Received" cell (View only) — which Goods Receipt took how much off
      this line, plus the live balance still outstanding. Mirrors the SO
@@ -565,7 +565,7 @@ export const PurchaseOrderDetail = () => {
       materialCode:   b.material_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku,
-      unitPriceCenti: b.unit_price_centi,
+      unitPriceSen: b.unit_price_sen,
       category:       categoryForCode(b.material_code),
       priceTouched:   false,
     });
@@ -666,9 +666,9 @@ export const PurchaseOrderDetail = () => {
             materialName:   d.materialName || d.materialCode,
             supplierSku:    d.supplierSku,
             qty:            d.qty,
-            unitPriceCenti: d.unitPriceCenti,
+            unitPriceSen: d.unitPriceSen,
             bindingId:      d.bindingId,
-            discountCenti:  d.discountCenti,
+            discountSen:  d.discountSen,
             deliveryDate:   d.deliveryDate || undefined,
             /* Mig 0026 — per-line supplier-revised delivery dates. */
             supplierDeliveryDate2: d.supplierDeliveryDate2 || undefined,
@@ -689,8 +689,8 @@ export const PurchaseOrderDetail = () => {
           (d.supplierSku ?? '') !== (it.supplier_sku ?? '') ||
           (d.category ?? '') !== (it.item_group ?? '') ||
           d.qty !== it.qty ||
-          d.unitPriceCenti !== it.unit_price_centi ||
-          (d.discountCenti ?? 0) !== (it.discount_centi ?? 0) ||
+          d.unitPriceSen !== it.unit_price_sen ||
+          (d.discountSen ?? 0) !== (it.discount_sen ?? 0) ||
           (d.deliveryDate ?? null) !== (it.delivery_date ?? null) ||
           (d.supplierDeliveryDate2 ?? null) !== (it.supplier_delivery_date_2 ?? null) ||
           (d.supplierDeliveryDate3 ?? null) !== (it.supplier_delivery_date_3 ?? null) ||
@@ -705,8 +705,8 @@ export const PurchaseOrderDetail = () => {
           materialName:   d.materialName || d.materialCode,
           supplierSku:    d.supplierSku,
           qty:            d.qty,
-          unitPriceCenti: d.unitPriceCenti,
-          discountCenti:  d.discountCenti ?? 0,
+          unitPriceSen: d.unitPriceSen,
+          discountSen:  d.discountSen ?? 0,
           deliveryDate:   blankDateToNull(d.deliveryDate),
           /* Mig 0026 — per-line supplier-revised delivery dates. */
           supplierDeliveryDate2: blankDateToNull(d.supplierDeliveryDate2),
@@ -1347,9 +1347,9 @@ export const PurchaseOrderDetail = () => {
                   <td className={styles.muted}>{it.item_group ?? it.material_kind}</td>
                   <td className={styles.tableRight}>{it.qty}</td>
                   <td>{renderReceived(it)}</td>
-                  <td className={styles.tableRight}>{fmtRm(it.unit_price_centi, po.currency)}</td>
-                  <td className={styles.tableRight}>{(it.discount_centi ?? 0) > 0 ? fmtRm(it.discount_centi, po.currency) : '—'}</td>
-                  <td className={styles.priceCell}>{fmtRm(it.line_total_centi, po.currency)}</td>
+                  <td className={styles.tableRight}>{fmtRm(it.unit_price_sen, po.currency)}</td>
+                  <td className={styles.tableRight}>{(it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen, po.currency) : '—'}</td>
+                  <td className={styles.priceCell}>{fmtRm(it.line_total_sen, po.currency)}</td>
                   <td className={styles.tableRight}>{it.delivery_date ?? '—'}</td>
                 </tr>
               ))}
@@ -1374,7 +1374,7 @@ export const PurchaseOrderDetail = () => {
             </div>
             <div className={styles.totalRow}>
               <span className={styles.totalLabel}>Tax</span>
-              <span className={styles.totalValue}>{fmtRm(po.tax_centi, po.currency)}</span>
+              <span className={styles.totalValue}>{fmtRm(po.tax_sen, po.currency)}</span>
             </div>
             <div className={`${styles.totalRow} ${styles.grandTotalRow}`}>
               <span className={styles.totalLabel}>Total</span>
@@ -1737,7 +1737,7 @@ const PoRevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currenc
     }}>
       <div style={{ marginBottom: 'var(--space-2)' }}>
         <strong>Supplier:</strong> {str((header.supplier as { name?: string } | null)?.name ?? header.supplier_name ?? header.supplierName)}
-        {' · '}<strong>Total:</strong> {centi(header.total_centi ?? header.totalCenti)}
+        {' · '}<strong>Total:</strong> {centi(header.total_sen ?? header.totalSen)}
       </div>
       {lines.length > 0 ? (
         <table className={styles.table}>
@@ -1770,7 +1770,7 @@ const PoRevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currenc
                     )}
                   </td>
                   <td className={styles.tableRight}>{str(l.qty)}</td>
-                  <td className={styles.tableRight}>{centi(l.unit_price_centi ?? l.unitPriceCenti)}</td>
+                  <td className={styles.tableRight}>{centi(l.unit_price_sen ?? l.unitPriceSen)}</td>
                 </tr>
               );
             })}

@@ -198,7 +198,7 @@ const poRow = (over: Partial<PoEmailRow> = {}): PoEmailRow => ({
   id: "22222222-2222-2222-2222-222222222222",
   po_number: "PO-2607-014",
   status: "SUBMITTED",
-  total_centi: 1234500,
+  total_sen: 1234500,
   currency: "MYR",
   po_date: "2026-07-19T00:00:00.000Z",
   supplier: { name: "Kilang Kayu Sdn Bhd", email: "sales@kilangkayu.com" },

@@ -118,7 +118,7 @@ export const AssignTripCard = ({ trip, eff, lorries, drivers, helpers, leaveRows
           {trip.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : trip.group}
         </span>
         <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-          {trip.stops.length} stop(s) · {trip.sets} sets · {fmtRm(trip.revenueCenti)}
+          {trip.stops.length} stop(s) · {trip.sets} sets · {fmtRm(trip.revenueSen)}
         </span>
         {trip.overCeiling && <MiniBadge tone="danger">Over ceiling</MiniBadge>}
         {seq && seq.windowViolations > 0 && <MiniBadge tone="warn">{seq.windowViolations} window issue(s)</MiniBadge>}
@@ -221,7 +221,7 @@ export const OverflowSection = ({ overflow, carriers, pick, onPick, onAssign, as
                 {o.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : o.group}
               </span>
               <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-                {o.orders.length} order(s) · {o.sets} sets · {fmtRm(o.revenueCenti)}
+                {o.orders.length} order(s) · {o.sets} sets · {fmtRm(o.revenueSen)}
               </span>
             </div>
             <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)', margin: '4px 0' }}>{o.orders.join(', ')}</div>

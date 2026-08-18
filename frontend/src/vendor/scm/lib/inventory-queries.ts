@@ -113,7 +113,7 @@ export type InventoryProductTotal = {
   last_movement_at: string | null;
   main_supplier_code: string | null;
   main_supplier_name: string | null;
-  main_supplier_price_centi: number | null;
+  main_supplier_price_sen: number | null;
   /* Owner 2026-07-24 six-column planning model (computed server-side, GET
      /inventory/products). committed_scheduled + unscheduled_qty == the whole
      open net-of-delivered SO demand (reserved_total):

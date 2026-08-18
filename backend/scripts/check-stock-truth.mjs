@@ -79,7 +79,7 @@
 // WHAT "RM IMPACT" MEANS HERE, EXACTLY. For a zero-COGS delivered line the true
 // cost is UNKNOWN — that is the whole problem. So the figure reported as impact
 // is the REVENUE those lines booked with nothing behind it (exact, from
-// line_total_centi): the amount currently shown as 100% margin. Any figure for
+// line_total_sen): the amount currently shown as 100% margin. Any figure for
 // "what it should have cost" would be an invention, and a plausible wrong number
 // is worse than a blank. Where an estimate IS offered it is labelled ESTIMATE
 // and derived from the bucket's own open layers.
@@ -810,11 +810,11 @@ async function sectionC(state) {
   const doSchema = ident(await tableSchema("delivery_orders") ?? "scm");
   const doiCols = await cols(doSchema, "delivery_order_items");
   const doCols = await cols(doSchema, "delivery_orders");
-  const costCol = ["unit_cost_centi"].find((c) => doiCols.has(c));
-  const lineCostCol = ["line_cost_centi"].find((c) => doiCols.has(c));
-  const revCol = ["line_total_centi"].find((c) => doiCols.has(c));
+  const costCol = ["unit_cost_sen"].find((c) => doiCols.has(c));
+  const lineCostCol = ["line_cost_sen"].find((c) => doiCols.has(c));
+  const revCol = ["line_total_sen"].find((c) => doiCols.has(c));
   const migCol = doCols.has("migrated_no_stock") ? "migrated_no_stock" : null;
-  notice(`  columns: delivery_order_items.${costCol ?? "unit_cost_centi MISSING"} / ${lineCostCol ?? "line_cost_centi MISSING"} / ${revCol ?? "line_total_centi MISSING"}; delivery_orders.${migCol ?? "migrated_no_stock ABSENT"}`);
+  notice(`  columns: delivery_order_items.${costCol ?? "unit_cost_sen MISSING"} / ${lineCostCol ?? "line_cost_sen MISSING"} / ${revCol ?? "line_total_sen MISSING"}; delivery_orders.${migCol ?? "migrated_no_stock ABSENT"}`);
   if (!costCol || !revCol) {
     notice("  CANNOT MEASURE: the delivered-cost columns are not present on this database. Reporting nothing rather than a guess.");
     state.C = { unavailable: true };
@@ -837,8 +837,8 @@ async function sectionC(state) {
            COALESCE(SUM(i.qty),0)::bigint AS units,
            COUNT(*) FILTER (WHERE COALESCE(i.${costCol},0) <= 0)::bigint AS zero_lines,
            COALESCE(SUM(i.qty) FILTER (WHERE COALESCE(i.${costCol},0) <= 0),0)::bigint AS zero_units,
-           COALESCE(SUM(i.${revCol}) FILTER (WHERE COALESCE(i.${costCol},0) <= 0),0)::bigint AS zero_revenue_centi,
-           COALESCE(SUM(i.qty * i.${costCol}),0)::bigint AS booked_cost_centi
+           COALESCE(SUM(i.${revCol}) FILTER (WHERE COALESCE(i.${costCol},0) <= 0),0)::bigint AS zero_revenue_sen,
+           COALESCE(SUM(i.qty * i.${costCol}),0)::bigint AS booked_cost_sen
       FROM ${doSchema}.delivery_order_items i
       JOIN ${doSchema}.delivery_orders d ON d.id = i.delivery_order_id
      WHERE d.status IN (${states}) AND i.qty > 0 ${svc} ${coFilter}
@@ -858,13 +858,13 @@ async function sectionC(state) {
     const label = key === "true" ? "MIGRATED (no movements posted)" : "NORMAL   (movements posted)   ";
     if (!r) { notice(`    ${label} : ${pad(0, 6)} lines / ${pad(0, 7)} units | none exist`); continue; }
     tLines += n(r.lines); tUnits += n(r.units); zLines += n(r.zero_lines);
-    zUnits += n(r.zero_units); zRev += n(r.zero_revenue_centi); booked += n(r.booked_cost_centi);
-    notice(`    ${label} : ${pad(n(r.lines), 6)} lines / ${pad(n(r.units), 7)} units | zero-cost ${n(r.zero_lines)} lines / ${n(r.zero_units)} units | revenue behind them ${rm(n(r.zero_revenue_centi))}`);
+    zUnits += n(r.zero_units); zRev += n(r.zero_revenue_sen); booked += n(r.booked_cost_sen);
+    notice(`    ${label} : ${pad(n(r.lines), 6)} lines / ${pad(n(r.units), 7)} units | zero-cost ${n(r.zero_lines)} lines / ${n(r.zero_units)} units | revenue behind them ${rm(n(r.zero_revenue_sen))}`);
   }
   const migOnly = !byOrigin.has("false") && byOrigin.has("true");
   notice("");
   notice(`  DELIVERED UNITS WITH ZERO COGS     : ${zUnits} units on ${zLines} lines (of ${tUnits} units on ${tLines} lines delivered)`);
-  notice(`  RM IMPACT (revenue booked at 100% margin, EXACT from line_total_centi): ${rm(zRev)}`);
+  notice(`  RM IMPACT (revenue booked at 100% margin, EXACT from line_total_sen): ${rm(zRev)}`);
   notice(`  cost actually booked on delivered lines: ${rm(booked)}`);
   if (migOnly)
     notice(`  READ THIS BEFORE THE RATIO: every delivered line here is MIGRATED. Company ${COMPANY} has shipped NO normal`);
@@ -918,7 +918,7 @@ async function sectionC(state) {
   state.C = {
     migOnly,
     lines: tLines, units: tUnits, zeroLines: zLines, zeroUnits: zUnits,
-    zeroRevenueCenti: zRev, bookedCostCenti: booked,
+    zeroRevenueSen: zRev, bookedCostSen: booked,
     zeroOuts: n(C2.zero_outs), outs: n(C2.outs), zeroOutUnits: n(C2.zero_units),
     zeroLayerUnits: n(c3[0].units),
   };
@@ -950,7 +950,7 @@ async function main() {
   if (C.unavailable) notice(`VERDICT COGS    : UNMEASURABLE — the delivered-cost columns are absent on this database.`);
   else {
     const cogsOk = C.zeroUnits === 0;
-    notice(`VERDICT COGS    : ${cogsOk ? "FULLY COSTED" : "PARTLY UNCOSTED"} — ${C.zeroUnits} of ${C.units} delivered units carry zero COGS on ${C.zeroLines} of ${C.lines} lines; RM impact (revenue with no cost behind it) ${rm(C.zeroRevenueCenti)}; stock-side ${C.zeroOutUnits} units on ${C.zeroOuts} zero-cost DO OUT movements; ${C.zeroLayerUnits} units shipped from a zero-cost layer`);
+    notice(`VERDICT COGS    : ${cogsOk ? "FULLY COSTED" : "PARTLY UNCOSTED"} — ${C.zeroUnits} of ${C.units} delivered units carry zero COGS on ${C.zeroLines} of ${C.lines} lines; RM impact (revenue with no cost behind it) ${rm(C.zeroRevenueSen)}; stock-side ${C.zeroOutUnits} units on ${C.zeroOuts} zero-cost DO OUT movements; ${C.zeroLayerUnits} units shipped from a zero-cost layer`);
     if (C.migOnly) notice(`                  ALL of them are MIGRATED lines — this company has shipped no normal delivery order yet, so the ratio is 100% by construction.`);
   }
   notice("");

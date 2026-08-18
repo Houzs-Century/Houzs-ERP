@@ -112,7 +112,7 @@ type DraftLine = {
   itemGroup:      string | null;
   variants:       Record<string, unknown> | null;
   qty:            number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   notes:          string;
 };
 
@@ -237,7 +237,7 @@ export const PurchaseInvoiceNew = () => {
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
         qty:            pickQtyById ? (pickQtyById.get(it.id) ?? it._remaining) : it._remaining,
-        unitPriceCenti: it.unit_price_centi ?? 0,
+        unitPriceSen: it.unit_price_sen ?? 0,
         notes:          '',
       }));
     setLines(next);
@@ -256,7 +256,7 @@ export const PurchaseInvoiceNew = () => {
       itemGroup:      null,
       variants:       null,
       qty:            1,
-      unitPriceCenti: 0,
+      unitPriceSen: 0,
       notes:          '',
     }]);
   }, [isManual]);
@@ -265,8 +265,8 @@ export const PurchaseInvoiceNew = () => {
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
-  const subtotalCenti = useMemo(
-    () => lines.reduce((s, l) => s + l.qty * l.unitPriceCenti, 0),
+  const subtotalSen = useMemo(
+    () => lines.reduce((s, l) => s + l.qty * l.unitPriceSen, 0),
     [lines],
   );
 
@@ -280,9 +280,9 @@ export const PurchaseInvoiceNew = () => {
     const goods = lines.filter((l) => l.materialCode.trim() && !isSvc(l));
     const chargePool = lines
       .filter((l) => l.materialCode.trim() && isSvc(l))
-      .reduce((s, l) => s + l.qty * l.unitPriceCenti, 0);
+      .reduce((s, l) => s + l.qty * l.unitPriceSen, 0);
     const basisOf = (l: DraftLine): number => {
-      if (allocationMethod === 'VALUE') return l.qty * l.unitPriceCenti;
+      if (allocationMethod === 'VALUE') return l.qty * l.unitPriceSen;
       if (allocationMethod === 'CBM') return l.qty; // volume unknown client-side → qty proxy
       return l.qty;
     };
@@ -422,7 +422,7 @@ export const PurchaseInvoiceNew = () => {
       materialKind:   'mfg_product',
       materialCode:   b.material_code,
       materialName:   b.material_name,
-      unitPriceCenti: b.unit_price_centi,
+      unitPriceSen: b.unit_price_sen,
       itemGroup:      categoryForCode(b.material_code),
     });
   };
@@ -437,7 +437,7 @@ export const PurchaseInvoiceNew = () => {
       itemGroup:      null,
       variants:       null,
       qty:            1,
-      unitPriceCenti: 0,
+      unitPriceSen: 0,
       notes:          '',
     }]);
 
@@ -489,7 +489,7 @@ export const PurchaseInvoiceNew = () => {
           materialCode:   l.materialCode,
           materialName:   l.materialName,
           qty:            l.qty,
-          unitPriceCenti: l.unitPriceCenti,
+          unitPriceSen: l.unitPriceSen,
           notes:          l.notes || undefined,
           // Commander 2026-05-29 — persist the line's category + variant
           // selections (columns exist on purchase_invoice_items, migration 0057)
@@ -670,7 +670,7 @@ export const PurchaseInvoiceNew = () => {
               onCurrencyChange={setCurrencyOverride}
               exchangeRate={exchangeRate}
               onRateChange={(v) => { setRateTouched(true); setExchangeRate(v); }}
-              rateHint={<>≈ {fmtRm(Math.round(subtotalCenti * resolveFxRate(exchangeRate)), 'MYR')} posted to GL</>}
+              rateHint={<>≈ {fmtRm(Math.round(subtotalSen * resolveFxRate(exchangeRate)), 'MYR')} posted to GL</>}
               styles={styles}
             />
           </div>
@@ -707,7 +707,7 @@ export const PurchaseInvoiceNew = () => {
               ? 'Loading GRN items…'
               : lines.length === 0
                 ? (isManual ? 'Manual invoice — pick a supplier above, then add items below' : 'No accepted items on this GRN')
-                : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalCenti, currency)}`}
+                : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalSen, currency)}`}
             {/* Commander 2026-05-29 — same supplier-binding hint New PO / New GRN
                 show: once a supplier is chosen the manual picker filters to that
                 supplier's bound SKUs (or the full catalogue when it has none). */}
@@ -731,7 +731,7 @@ export const PurchaseInvoiceNew = () => {
             </p>
           )}
           {lines.map((l, idx) => {
-            const lineTotal = l.qty * l.unitPriceCenti;
+            const lineTotal = l.qty * l.unitPriceSen;
             // Commander 2026-05-29 — same muted variant sub-line GrnNew shows,
             // so the PI mirrors what the GRN (and PO upstream) describe.
             const variantSummary = buildVariantSummary(l.itemGroup, l.variants);
@@ -739,8 +739,8 @@ export const PurchaseInvoiceNew = () => {
                the freight pool + landed unit cost, shown only when there's a
                charge to spread. Service (freight) lines get 0. */
             const lineIsSvc = isServiceLine({ itemGroup: l.itemGroup, itemCode: l.materialCode });
-            const lineAllocCenti = allocPreview.allocByRid.get(l.rid) ?? 0;
-            const landedUnitCenti = l.unitPriceCenti + (l.qty > 0 ? Math.round(lineAllocCenti / l.qty) : 0);
+            const lineAllocSen = allocPreview.allocByRid.get(l.rid) ?? 0;
+            const landedUnitSen = l.unitPriceSen + (l.qty > 0 ? Math.round(lineAllocSen / l.qty) : 0);
             // Editable variant section only for MANUAL lines (grnItemId === null)
             // that are bedframe/sofa, once the maintenance pools are loaded.
             // GRN-sourced lines keep their read-only summary.
@@ -780,7 +780,7 @@ export const PurchaseInvoiceNew = () => {
                           on goods lines only when there's a charge pool. */}
                       {allocPreview.chargePool > 0 && !lineIsSvc && (
                         <span style={{ fontSize: 'var(--fs-11)', color: 'var(--c-accent, #8a6d3b)', marginTop: 2 }}>
-                          +{fmtRm(lineAllocCenti, currency)} freight · landed {fmtRm(landedUnitCenti, currency)}/unit
+                          +{fmtRm(lineAllocSen, currency)} freight · landed {fmtRm(landedUnitSen, currency)}/unit
                         </span>
                       )}
                     </span>
@@ -824,7 +824,7 @@ export const PurchaseInvoiceNew = () => {
                           {supplierId && bindings.length > 0
                             ? sortByText(bindings).map((b) => (
                                 <option key={b.id} value={b.material_code}>
-                                  {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_centi, b.currency)}
+                                  {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                                 </option>
                               ))
                             : sortByText(productsQ.data ?? []).map((p) => (<option key={p.id} value={p.code}>{p.name} · {p.category}</option>))}
@@ -902,8 +902,8 @@ export const PurchaseInvoiceNew = () => {
                   </label>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Unit Price ({currency})</span>
-                    <MoneyInput bare valueSen={l.unitPriceCenti}
-                      onCommit={(sen) => setLine(l.rid, { unitPriceCenti: sen ?? 0 })}
+                    <MoneyInput bare valueSen={l.unitPriceSen}
+                      onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
                       inputClassName={styles.fieldInput} selectOnFocus />
                   </label>
                   <label className={styles.field}>
@@ -935,11 +935,11 @@ export const PurchaseInvoiceNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
               <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700, borderTop: '1px solid var(--line)', paddingTop: 'var(--space-2)' }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
           </div>
         </section>

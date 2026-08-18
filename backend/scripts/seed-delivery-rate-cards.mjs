@@ -37,7 +37,7 @@ const sql = postgres(DSN, { ssl: /localhost|127\.0\.0\.1/.test(DSN) ? false : "r
 const RM = (n) => Math.round(n * 100);
 const CARD_NAME = "Sample 3PL Rate Card";
 
-// [rule_type, tier_position, bracket_min, bracket_max, zone, amount_centi]
+// [rule_type, tier_position, bracket_min, bracket_max, zone, amount_sen]
 const RULES = [
   ["POSITIONAL_TIER", 1, null, null, null, RM(120)],
   ["POSITIONAL_TIER", 2, null, null, null, RM(80)],
@@ -90,7 +90,7 @@ async function main() {
       const [rt, tier, bmin, bmax, zone, amount] = RULES[i];
       await sql`
         INSERT INTO scm.delivery_rate_rules
-          (company_id, card_id, rule_type, tier_position, bracket_min, bracket_max, zone, amount_centi, sort_order)
+          (company_id, card_id, rule_type, tier_position, bracket_min, bracket_max, zone, amount_sen, sort_order)
         VALUES (${co.id}, ${card.id}, ${rt}, ${tier}, ${bmin}, ${bmax}, ${zone}, ${amount}, ${i})`;
       rulesInserted += 1;
     }

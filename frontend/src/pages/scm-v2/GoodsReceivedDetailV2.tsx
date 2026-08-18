@@ -3,7 +3,7 @@
 // Received value + qty landed, tinted green once posted.
 
 import { lazy, useCallback, useMemo, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
@@ -53,7 +53,7 @@ type GrnHeader = {
   delivery_note_ref: string | null;
   warehouse_code?: string | null;
   warehouse_id?: string | null;
-  total_centi: number;
+  total_sen: number;
   currency: string;
   /* Multi-currency / landed cost (Phase 1-A). exchange_rate = MYR per 1 unit of
      `currency` (1 for an MYR receipt); allocation_method = the freight "平摊"
@@ -97,20 +97,20 @@ type GrnItem = {
   qty_received?: number | null;
   qty_accepted?: number | null;
   ordered_qty?: number | null;
-  unit_price_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen?: number;
+  line_total_sen?: number;
   warehouse_code?: string | null;
   /* Per-line delivery date (mig 0101) — the ETA the supplier's shipment landed
      under. Nullable; falls back to the header receive date when unset. */
   delivery_date?: string | null;
   /* Landed-cost allocation (Phase 1-A) — freight (MYR sen) allocated to this line. */
-  allocated_charge_centi?: number | null;
+  allocated_charge_sen?: number | null;
 };
 
 /* Landed-cost allocation (Phase 1-A) — human labels for the freight basis. */
 const ALLOC_LABEL: Record<string, string> = { QTY: 'By quantity', VALUE: 'By value', CBM: 'By volume (CBM)' };
 
-const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneyCenti(centi, currency);
+const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
 
 const supplierNameOf = (h: GrnHeader): string => h.supplier?.name || "—";
 const supplierCodeOf = (h: GrnHeader): string => h.supplier?.code || "—";
@@ -196,7 +196,7 @@ function PersonRow({ initials, name, role, tone = "accent" }: { initials: string
 function ReceivedHeroCard({ header, items }: { header: GrnHeader; items: GrnItem[] }) {
   const eff = effectiveOf(header);
   const t = EFFECTIVE_TONE[eff];
-  const total = header.total_centi ?? 0;
+  const total = header.total_sen ?? 0;
   const { orderedQty, receivedQty } = receivedOf(items);
   const isPosted = eff === "posted";
   // Multi-currency (Phase 1-A) — MYR-equivalent for a foreign receipt (no-op for MYR).
@@ -472,9 +472,9 @@ function GoodsReceivedDetailV2ReadOnly() {
       label: "Unit cost",
       width: "108px",
       align: "right",
-      getValue: (l) => l.unit_price_centi ?? 0,
+      getValue: (l) => l.unit_price_sen ?? 0,
       render: (l) => (
-        <span className="font-money text-[13px] text-ink-secondary">{fmtMoney(l.unit_price_centi ?? 0, grn?.currency)}</span>
+        <span className="font-money text-[13px] text-ink-secondary">{fmtMoney(l.unit_price_sen ?? 0, grn?.currency)}</span>
       ),
     },
     {
@@ -482,12 +482,12 @@ function GoodsReceivedDetailV2ReadOnly() {
       label: "Amount",
       width: "132px",
       align: "right",
-      getValue: (l) => l.line_total_centi ?? 0,
+      getValue: (l) => l.line_total_sen ?? 0,
       render: (l) => {
-        const freight = Number(l.allocated_charge_centi ?? 0);
+        const freight = Number(l.allocated_charge_sen ?? 0);
         return (
           <span className="inline-flex flex-col items-end">
-            <span className="font-money text-[13px] font-semibold text-ink">{fmtMoney(l.line_total_centi ?? 0, grn?.currency)}</span>
+            <span className="font-money text-[13px] font-semibold text-ink">{fmtMoney(l.line_total_sen ?? 0, grn?.currency)}</span>
             {/* Landed-cost allocation (Phase 1-A) — per-line freight (MYR sen). */}
             {freight > 0 && (
               <span className="font-money text-[10.5px] text-accent-ink">+freight {fmtMoney(freight, "MYR")}</span>
@@ -598,7 +598,7 @@ function GoodsReceivedDetailV2ReadOnly() {
         <div className="mb-3 rounded-lg border border-border bg-surface p-4 shadow-stone md:hidden">
           <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">Received value</div>
           <div className={cn("mt-1 font-money text-[26px] font-bold leading-none tracking-tight", effectiveOf(grn) === "posted" ? "text-synced" : "text-ink")}>
-            {fmtMoney(grn.total_centi, grn.currency)}
+            {fmtMoney(grn.total_sen, grn.currency)}
           </div>
           <div className="mt-1.5 text-[12px] text-ink-muted">
             {items.length} line{items.length === 1 ? "" : "s"} · {EFFECTIVE_TONE[effectiveOf(grn)].blurb}
@@ -721,7 +721,7 @@ function GoodsReceivedDetailV2ReadOnly() {
           { label: "Against PO", value: poOf(grn) },
           { label: "Received", value: fmtDate(grn.received_at) },
           { label: "Items", value: `${items.length} line${items.length === 1 ? "" : "s"}` },
-          { label: "Receipt value", value: fmtMoney(grn.total_centi, grn.currency) },
+          { label: "Receipt value", value: fmtMoney(grn.total_sen, grn.currency) },
         ]}
         {...print.handlers}
       />

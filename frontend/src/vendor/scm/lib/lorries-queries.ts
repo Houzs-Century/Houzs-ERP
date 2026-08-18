@@ -66,7 +66,7 @@ export type LorryRow = {
   // dropped by mig 0055. These are new columns on scm.lorries.
   model?: string | null;
   purchase_date?: string | null;
-  purchase_price_centi?: number | null;
+  purchase_price_sen?: number | null;
   purchase_invoice_key?: string | null;
   purchase_invoice_name?: string | null;
   purchase_invoice_mime?: string | null;
@@ -81,7 +81,7 @@ export type LorryRow = {
   // NULL max_* => the auto-propose packer uses its config default (10 sets /
   // RM30k). capacity_layer picks which ceiling(s) bind on a lorry-day.
   max_sets?: number | null;
-  max_revenue_centi?: number | null;
+  max_revenue_sen?: number | null;
   capacity_layer?: CapacityLayer | null;
   // ── WS3 (mig 0209): cargo-box dimensions (ft). capacity_m3 is derived from
   // these when all three are set. NUMERIC comes back from PostgREST as a string.
@@ -120,12 +120,12 @@ export type NewLorry = {
   manufactureDate?: string | null;
   registrationDate?: string | null;
   inServiceDate?: string | null;
-  purchasePriceCenti?: number | null;
+  purchasePriceSen?: number | null;
   roadTaxExpiry?: string | null;
   insuranceExpiry?: string | null;
   puspakomExpiry?: string | null;
   maxSets?: number | null;
-  maxRevenueCenti?: number | null;
+  maxRevenueSen?: number | null;
   capacityLayer?: CapacityLayer;
   // WS3: box dimensions (ft). Sending all three re-derives capacity_m3 server-side.
   lengthFt?: number | null;
@@ -188,7 +188,7 @@ export type LorryServiceRecord = {
   service_date: string;
   description: string;
   workshop: string | null;
-  cost_centi: number;
+  cost_sen: number;
   /** Odometer AT THE TIME OF SERVICE. The only mileage source in the system —
    *  see vendor/shared/lorry-compliance.ts before deriving anything from it. */
   odometer_km: number | null;
@@ -208,7 +208,7 @@ export type NewLorryServiceRecord = {
   serviceDate: string;
   description: string;
   workshop?: string | null;
-  costCenti?: number | null;
+  costSen?: number | null;
   odometerKm?: number | null;
   nextServiceDate?: string | null;
   nextServiceKm?: number | null;

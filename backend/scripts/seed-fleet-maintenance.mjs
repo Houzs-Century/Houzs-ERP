@@ -41,7 +41,7 @@ const sql = postgres(DSN, { ssl: /localhost|127\.0\.0\.1/.test(DSN) ? false : "r
 const d = (off) => new Date(Date.now() + off * 86_400_000).toISOString().slice(0, 10);
 
 // The real Driver List. region = warehouse CODE (matched to scm.warehouses.code
-// when CREATE_MISSING mints a lorry). docs = [type, issueOff, expiryOff, costCenti, extra?].
+// when CREATE_MISSING mints a lorry). docs = [type, issueOff, expiryOff, costSen, extra?].
 const FLEET = [
   { plate: "VPC 9058", driver: "Faslie",        region: "KL", docs: [["ROAD_TAX", -300, 65, 145000], ["INSURANCE", -290, 88, 382000], ["PUSPAKOM", -150, 41, 6000, { result: "PASS" }], ["APAD", -320, 120, 30000]] },
   { plate: "VNB 9058", driver: "Khalid",        region: "KL", docs: [["ROAD_TAX", -358, 9, 145000], ["INSURANCE", -340, 22, 382000], ["PUSPAKOM", -120, 63, 6000, { result: "PASS" }], ["APAD", -300, 150, 30000]] },
@@ -113,7 +113,7 @@ async function main() {
       const expiry = d(expiryOff);
       await sql`
         INSERT INTO scm.lorry_compliance_documents
-          (company_id, lorry_id, doc_type, issue_date, expiry_date, cost_centi, owner, result, reinspection_deadline)
+          (company_id, lorry_id, doc_type, issue_date, expiry_date, cost_sen, owner, result, reinspection_deadline)
         VALUES
           (${companyId}, ${lorryId}, ${type}, ${d(issueOff)}, ${expiry}, ${cost}, ${"Fleet admin"},
            ${extra?.result ?? null}, ${extra?.reinspect != null ? d(extra.reinspect) : null})`;

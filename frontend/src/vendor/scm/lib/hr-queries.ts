@@ -8,7 +8,7 @@
 // the rest of SCM it does not degrade to "no predicate" — a commission figure
 // computed against an unknown company is a guess, and this is payroll).
 //
-// MONEY IS INTEGER SEN (`*Centi`) and RATES ARE INTEGER BASIS POINTS (`*Bps`).
+// MONEY IS INTEGER SEN (`*Sen`) and RATES ARE INTEGER BASIS POINTS (`*Bps`).
 // Neither is ever arithmetic'd here — the pages divide only to render, and
 // multiply back by exactly 100 with Math.round on the way in.
 // ----------------------------------------------------------------------------
@@ -27,9 +27,9 @@ export type HrOverrideMode = 'showroom' | 'chain';
 
 export type HrConfig = {
   baseBps: number;
-  personalKpiThresholdCenti: number;
+  personalKpiThresholdSen: number;
   personalKpiBonusBps: number;
-  showroomKpiThresholdCenti: number;
+  showroomKpiThresholdSen: number;
   showroomKpiBonusBps: number;
   overrideBaseBps: number;
   overrideKpiBonusBps: number;
@@ -52,7 +52,7 @@ export type HrItemKpi = {
   flagType: HrFlagType;
   ref: string;
   label: string;
-  bonusCenti: number;
+  bonusSen: number;
   active: boolean;
 };
 
@@ -73,32 +73,32 @@ export type HrPickers = {
 export type HrOverrideLevelDetail = {
   level: number;
   rateBps: number;
-  goodsCenti: number;
-  commissionCenti: number;
+  goodsSen: number;
+  commissionSen: number;
 };
 
 export type HrCommissionRow = {
   staffId: string;
   staffName: string;
   tier: HrTier;
-  personalGoodsCenti: number;
+  personalGoodsSen: number;
   personalRateBps: number;
-  personalCommissionCenti: number;
+  personalCommissionSen: number;
   /* null in chain mode: the override there is a sum over levels of DIFFERENT
      rates on DIFFERENT bases, so there is no single rate to print. Render
      overrideDetail instead — see hr-commission.ts. */
   overrideRateBps: number | null;
-  overrideCommissionCenti: number;
+  overrideCommissionSen: number;
   overrideDetail?: HrOverrideLevelDetail[];
-  itemKpiCenti: number;
-  kpiDetail: Array<{ label: string; qty: number; bonusCenti: number; lineCenti: number }>;
-  totalCenti: number;
+  itemKpiSen: number;
+  kpiDetail: Array<{ label: string; qty: number; bonusSen: number; lineSen: number }>;
+  totalSen: number;
 };
 
 export type HrCommissionShowroom = {
   showroomId: string;
   showroomName: string;
-  showroomGoodsCenti: number;
+  showroomGoodsSen: number;
   showroomKpiHit: boolean;
   rows: HrCommissionRow[];
 };
@@ -125,7 +125,7 @@ export type HrPayoutPeriod = {
   revision: number;
   status: string;
   engineVersion: string;
-  totalCenti: number;
+  totalSen: number;
   rowCount: number;
   closedByName: string | null;
   closedAt: string | null;
@@ -223,7 +223,7 @@ export function useHrItemKpi() {
 export function useCreateHrItemKpi() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (body: { flagType: HrFlagType; ref: string; label?: string; bonusCenti: number; active?: boolean }) =>
+    mutationFn: (body: { flagType: HrFlagType; ref: string; label?: string; bonusSen: number; active?: boolean }) =>
       authedFetch<{ item: HrItemKpi }>('/hr/item-kpi', { method: 'POST', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hr'] }),
   });
@@ -232,7 +232,7 @@ export function useCreateHrItemKpi() {
 export function useUpdateHrItemKpi() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, ...body }: { id: string; label?: string; bonusCenti?: number; active?: boolean }) =>
+    mutationFn: ({ id, ...body }: { id: string; label?: string; bonusSen?: number; active?: boolean }) =>
       authedFetch<{ item: HrItemKpi }>(`/hr/item-kpi/${id}`, { method: 'PATCH', body: JSON.stringify(body) }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ['hr'] }),
   });

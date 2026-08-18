@@ -14,7 +14,7 @@ const SALES_LINES = [
     description2: null,
     variants: { Fabric: "Linen Sand", Legs: "Walnut" },
     qty: 2,
-    amountCenti: 918000,
+    amountSen: 918000,
   },
   {
     itemGroup: "BEDFRAME",
@@ -23,7 +23,7 @@ const SALES_LINES = [
     description2: "Queen · Oak · floor-clearance legs",
     variants: { Size: "Queen", Finish: "Oak" },
     qty: 1,
-    amountCenti: 629000,
+    amountSen: 629000,
   },
   {
     itemGroup: "MATTRESS",
@@ -32,7 +32,7 @@ const SALES_LINES = [
     description2: null,
     variants: null,
     qty: 3,
-    amountCenti: 387000,
+    amountSen: 387000,
   },
 ];
 
@@ -44,7 +44,7 @@ const PURCHASE_LINES = [
     description2: null,
     variants: { Fabric: "Linen Sand", Legs: "Walnut" },
     qty: 4,
-    amountCenti: 1436000,
+    amountSen: 1436000,
     assignedSos: [
       { soDocNo: "SO-2990-0417", deliveryDate: "2026-08-02" },
       { soDocNo: "SO-2990-0433", deliveryDate: null },
@@ -57,7 +57,7 @@ const PURCHASE_LINES = [
     description2: null,
     variants: { Size: "King" },
     qty: 2,
-    amountCenti: 1258000,
+    amountSen: 1258000,
     assignedSos: [],
   },
 ];

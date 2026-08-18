@@ -357,7 +357,7 @@ export const pgTransactionSupabase = (sql: Sql) => ({
           [
             args.p_doc_no,
             args.p_source_doc_no,
-            args.p_delivery_fee_centi,
+            args.p_delivery_fee_sen,
             // sql.json(), NOT JSON.stringify(): binding a pre-stringified string
             // to a $n::jsonb parameter double-serializes it. postgres.js's
             // describe phase discovers the jsonb OID and runs its OWN serializer

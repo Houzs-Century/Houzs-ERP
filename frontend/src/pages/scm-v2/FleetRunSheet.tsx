@@ -15,7 +15,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Printer, ArrowLeft } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
-import { fmtCenti, fmtDate, todayMY } from '../../vendor/shared/format';
+import { fmtSen, fmtDate, todayMY } from '../../vendor/shared/format';
 import { useFleetDay, type FleetDayTrip } from '../../vendor/scm/lib/fleet-day-queries';
 import { assignRouteColors, routeColorFor } from '../../vendor/scm/lib/fleet-colors';
 import { buildMapRoutes, etaLabel, windowLabel, kmLabel } from '../../vendor/scm/lib/fleet-day-model';
@@ -113,7 +113,7 @@ export function FleetRunSheet() {
               <div><span className="block text-[10.5px] uppercase tracking-wider text-ink-muted">Helper(s)</span><span className="text-ink">{crewLine(t)}</span></div>
               <div><span className="block text-[10.5px] uppercase tracking-wider text-ink-muted">Depot</span><span className="text-ink">{t.warehouse?.name ?? '—'}</span></div>
               <div><span className="block text-[10.5px] uppercase tracking-wider text-ink-muted">Total drops</span><span className="text-ink">{t.total_drops}</span></div>
-              <div><span className="block text-[10.5px] uppercase tracking-wider text-ink-muted">Total revenue</span><span className="text-ink">{fmtCenti(t.total_revenue_centi)}</span></div>
+              <div><span className="block text-[10.5px] uppercase tracking-wider text-ink-muted">Total revenue</span><span className="text-ink">{fmtSen(t.total_revenue_sen)}</span></div>
               <div><span className="block text-[10.5px] uppercase tracking-wider text-ink-muted">Route distance</span><span className="text-ink">{t.total_distance_km != null ? `${t.total_distance_km} km` : '—'}</span></div>
               <div><span className="block text-[10.5px] uppercase tracking-wider text-ink-muted">Status</span><span className="text-ink">{String(t.status).replace('_', ' ').toLowerCase()}</span></div>
             </div>
