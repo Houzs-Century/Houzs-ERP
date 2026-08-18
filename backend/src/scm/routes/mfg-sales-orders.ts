@@ -8353,7 +8353,14 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       sofaModuleCostRowsPatch,
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
-      !posTablet, // owner ruling — non-POS author prices freely
+      /* owner ruling — non-POS author prices freely. 'operator-zero' when the
+         ERP editor states this 0 was TYPED, not unresolved (owner 2026-08-18;
+         see TrustSelling). Strict `=== true`, and only at 0, so every other
+         caller's 0 still means "not provided" and takes the catalogue fill. A
+         POS session never reaches it: posTablet short-circuits both arms. */
+      !posTablet && clientUnit === 0 && it.zeroPriceIntended === true
+        ? 'operator-zero'
+        : !posTablet,
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even
