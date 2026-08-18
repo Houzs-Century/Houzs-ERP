@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { buildVariantSummary, fmtDateOrDash, fmtMoneyCenti, orderLineIdentity } from '@2990s/shared';
+import { sofaMixIntroduced, SOFA_MIX_MESSAGE } from '@2990s/shared/so-variant-rule';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import {
@@ -247,6 +248,25 @@ export const ConsignmentOrderDetail = () => {
       setSaveError('Every line must have a product selected before saving.');
       return;
     }
+    /* Sofa is exclusive among MAIN products — the server 400s
+       `so_sofa_no_other_main`. Refuse here so the operator gets one plain
+       sentence instead of a raw 400 round-trip. INTRODUCED, not flat: the
+       server's CO line paths grandfather an order that already mixes
+       (backend/src/scm/lib/main-mix.ts), so a flat check here would lock an
+       operator out of a historic mixed order that the server would happily let
+       them edit. `before` is the order as stored; in edit mode every existing
+       line is seeded into editingDrafts, so the drafts plus the staged add are
+       the whole `after`. */
+    const beforeGroups = items.map((it) => it.item_group);
+    const afterGroups = [
+      ...Object.values(editingDrafts),
+      ...(addingDraft ? [addingDraft] : []),
+    ].filter((d) => d.itemCode.trim()).map((d) => d.itemGroup);
+    if (sofaMixIntroduced(beforeGroups, afterGroups)) {
+      setSaveError(SOFA_MIX_MESSAGE);
+      return;
+    }
+
     if (header?.processing_date) {
       const variantGaps = [
         ...Object.values(editingDrafts),

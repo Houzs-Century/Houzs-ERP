@@ -123,9 +123,6 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
    test that pins SCM_AREA_MOUNTS pins this list. */
 export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/categories",
-  "/pos-cart",
-  "/personal-quick-picks",
-  "/sales-analysis",
   "/state-warehouse-mappings",
   "/entity-audit-log",
   "/autocount-outbox",
