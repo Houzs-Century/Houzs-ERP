@@ -67,6 +67,8 @@ import { cn } from "../../lib/utils";
 import { useStaffLookup, UUID_RE } from "../../hooks/useStaffLookup";
 import { useStateWarehouseMappings } from "../../vendor/scm/lib/state-warehouse-queries";
 import { splitE164, combineE164 } from "../../vendor/shared/phone";
+import { DateField } from "../../vendor/scm/components/DateField";
+import { fmtDate } from "@2990s/shared";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -85,12 +87,7 @@ const todayIso = (): string => {
   return `${yy}-${mm}-${dd}`;
 };
 
-const isoToDmy = (iso: string): string => {
-  if (!iso) return "";
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})/.exec(iso);
-  if (!m) return iso;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
+const isoToDmy = fmtDate;
 
 /* Fresh empty DO line — the shared empty SO line + a stable rid so the local
    list can add / edit / diff inline (mirrors SalesOrderNew.newLine). */
@@ -162,6 +159,22 @@ function TextInput({
   className?: string;
   disabled?: boolean;
 }) {
+/* type="date" routes to DateField, not to a native date input: the native
+   one renders in the OPERATING SYSTEM's locale, so the same field read
+   DD/MM/YYYY on one machine and MM/DD/YYYY on another. Same ISO contract
+   in and out. */
+  if (type === "date") {
+    return (
+      <DateField
+        value={value}
+        onChange={onChange}
+        placeholder={placeholder}
+        disabled={disabled}
+        className={className}
+        fullWidth
+      />
+    );
+  }
   return (
     <input
       type={type}

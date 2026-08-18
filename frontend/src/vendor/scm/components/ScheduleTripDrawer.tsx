@@ -43,6 +43,7 @@ import {
 } from "../lib/propose-schedule-queries";
 import { ScheduleRouteMap, type RoutePoint } from "./ScheduleRouteMap";
 import { useNotify } from "./NotifyDialog";
+import { DateField } from "./DateField";
 
 /* One order's effective delivery date — amended wins over the customer's
    original (the same rule derivePlanningState uses), null-safe. Sliced to the
@@ -395,10 +396,10 @@ export function ScheduleTripDrawer({
           <div className="grid grid-cols-3 gap-3">
             <label className="block">
               <span className="mb-1 block text-[11.5px] font-semibold text-ink-secondary">Trip date</span>
-              <input
-                type="date"
+              <DateField
+                fullWidth
                 value={tripDate}
-                onChange={(e) => setAllDates(e.target.value)}
+                onChange={(iso) => setAllDates(iso)}
                 className="h-9 w-full rounded-md border border-border bg-surface px-2.5 text-[13px] text-ink focus:border-primary focus:outline-none"
               />
             </label>
@@ -597,10 +598,10 @@ export function ScheduleTripDrawer({
                         </div>
                         <div className="mt-2 flex items-center gap-2">
                           <span className="text-[11px] font-semibold text-ink-secondary">Delivery date</span>
-                          <input
-                            type="date"
+                          <DateField
+                            fullWidth
                             value={dateFor(o.so_doc_no)}
-                            onChange={(e) => setDates((p) => ({ ...p, [o.so_doc_no]: e.target.value }))}
+                            onChange={(iso) => setDates((p) => ({ ...p, [o.so_doc_no]: iso }))}
                             className="h-8 rounded-md border border-border bg-surface px-2 text-[12px] text-ink focus:border-primary focus:outline-none"
                           />
                           <span className="text-[11px] text-ink-muted">

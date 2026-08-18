@@ -43,6 +43,7 @@ import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneyCenti } from '@2990s/shared';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -534,18 +535,16 @@ export const GrnFromPo = () => {
       >
         {DATE_FIELD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
-      <input
-        type="date"
+      <DateField
         value={dateFrom}
-        onChange={(e) => setDateFrom(e.target.value)}
+        onChange={(iso) => setDateFrom(iso)}
         style={FILTER_INPUT}
         aria-label="Date from"
       />
       <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-11)' }}>→</span>
-      <input
-        type="date"
+      <DateField
         value={dateTo}
-        onChange={(e) => setDateTo(e.target.value)}
+        onChange={(iso) => setDateTo(iso)}
         style={FILTER_INPUT}
         aria-label="Date to"
       />

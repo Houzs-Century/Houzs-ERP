@@ -17,6 +17,7 @@ import {
   type AnnouncementCategory,
   type BannerAnnouncement as Announcement,
 } from "./useAnnouncementBanner";
+import { fmtDate } from "@2990s/shared";
 
 // Lazy so the media gallery (+ MediaLightbox + its icons) stays OUT of the
 // initial bundle — the banner mounts at the app root, but most notices are
@@ -125,7 +126,7 @@ function relativeTime(iso: string): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   if (d < 7) return `${d}d ago`;
-  return new Date(t).toLocaleDateString("en-MY");
+  return fmtDate(t);
 }
 
 export function AnnouncementBanner() {

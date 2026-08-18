@@ -41,6 +41,7 @@ import { PositionsTab } from "./Positions";
 import { MailboxesTab } from "./MailboxesTab";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
+import { fmtDate } from "@2990s/shared";
 
 type TeamTabValue =
   | "hub"
@@ -77,10 +78,7 @@ const QUICK_SEGMENTS = [
 
 // yyyy/mm/dd for the date columns — same normalisation as the SO list's
 // fmtDate, plus space-separated Postgres timestamps ("2026-07-22 09:14:33").
-const fmtDay = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  return iso.replace(/[T ].*$/, "").replace(/-/g, "/");
-};
+const fmtDay = fmtDate;
 
 // Full department set for a member (mig 0020) — primary first, falling back to
 // the single primary on older backends that don't send department_ids.

@@ -18,6 +18,7 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../vendor/scm/components/ChoiceDialog";
 import { todayMyt } from "../vendor/scm/lib/dates";
+import { DateField } from "../vendor/scm/components/DateField";
 import {
   ASSR_STAGES,
   ASSR_STAGE_INDEX,
@@ -2862,8 +2863,13 @@ function EditRow({
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
+      ) : type === "date" ? (
+        /* DateField, not <input type="date">: the native one renders in the
+           PHONE's locale, so the same field read DD/MM/YYYY on one handset and
+           MM/DD/YYYY on another. Same ISO contract in and out. */
+        <DateField value={draft} onChange={setDraft} className={`fld-i${mono ? " money" : ""}`} fullWidth />
       ) : (
-        <input type={type === "date" ? "date" : "text"} value={draft} onChange={(e) => setDraft(e.target.value)} className={`fld-i${mono ? " money" : ""}`} style={{ width: "100%", boxSizing: "border-box" }} />
+        <input type="text" value={draft} onChange={(e) => setDraft(e.target.value)} className={`fld-i${mono ? " money" : ""}`} style={{ width: "100%", boxSizing: "border-box" }} />
       )}
       <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
         <button onClick={() => setEditing(false)} disabled={busy} className="tinybtn" style={{ flex: 1 }}>Cancel</button>

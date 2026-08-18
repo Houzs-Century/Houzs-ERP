@@ -27,7 +27,7 @@ import { StatCard } from '../../components/StatCard';
 import { SearchProgress } from '../../components/SearchProgress';
 import { SearchScopeHint } from '../../components/SearchScopeHint';
 import { useDebouncedSearchTerm, useSearchResultTransition } from '../../hooks/useServerSearch';
-import { adjustmentReasonLabel, formatVariantKey, fmtCenti, fmtDate, fmtQty } from '@2990s/shared';
+import { adjustmentReasonLabel, fmtCenti, fmtDate, fmtDateTime, fmtQty, formatVariantKey } from '@2990s/shared';
 import { DataTable, type Column } from '../../components/DataTable';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import {
@@ -317,12 +317,9 @@ const WarehouseFilter = ({
    analytics). Wei Siang 2026-06-04.
    ════════════════════════════════════════════════════════════════════════ */
 const WINDOWS = [30, 90, 180, 365];
-const fmtDay = (iso: string | null): string => {
-  if (!iso) return 'never';
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return '—';
-  return d.toLocaleDateString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric' });
-};
+/* 'never' rather than '—' is this screen's wording for "no count has ever
+   happened", not a second date format — the date itself is the one rule. */
+const fmtDay = (iso: string | null): string => (iso ? fmtDate(iso) : 'never');
 
 const AnalyticsTab = ({ warehouseId }: { warehouseId: string | null }) => {
   const [days, setDays] = useState(90);
@@ -2024,10 +2021,3 @@ const WarehouseDrawer = ({
   );
 };
 
-const fmtDateTime = (iso: string): string => {
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  const date = fmtDate(d);
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} ${time}`;
-};

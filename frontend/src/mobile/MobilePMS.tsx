@@ -19,6 +19,8 @@ import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { formatCurrency, formatDate, todayInAppTz } from "../lib/utils";
 import { pmsStageLabel, pmsStageVariant, type PmsStageVariant } from "../vendor/scm/lib/pms-status";
 import "./mobile.css";
+import { fmtTime } from "@2990s/shared";
+import { DateField } from "../vendor/scm/components/DateField";
 
 /* ------------------------------------------------------------------ *
  * Mobile Project (PMS) — list + detail.
@@ -298,7 +300,7 @@ const tOnly = (d: string | null | undefined) => {
   if (m) return m[1];
   const dt = new Date(d);
   if (isNaN(+dt)) return "—";
-  return dt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  return fmtTime(dt);
 };
 // Uploader credit line: "Uploaded by {name} · {date time}" or a placeholder.
 const uploaderCredit = (photo: PhasePhoto | undefined) => {
@@ -3044,7 +3046,13 @@ function PhaseBlock({
           <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
             <label className="fld" style={{ flex: 1.4 }}>
               <span className="fld-l">{kind} date</span>
-              <input className="fld-i" type="date" value={date} disabled={busy} onChange={(e) => { setDate(e.target.value); void saveStart(e.target.value, time); }} />
+              <DateField
+                fullWidth
+                className="fld-i"
+                value={date}
+                disabled={busy}
+                onChange={(iso) => { setDate(iso); void saveStart(iso, time); }}
+              />
             </label>
             <label className="fld" style={{ flex: 1 }}>
               <span className="fld-l">Start time</span>

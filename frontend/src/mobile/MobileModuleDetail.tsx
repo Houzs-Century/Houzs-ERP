@@ -1234,7 +1234,11 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
         {kind === "si" && (
           <div style={{ marginBottom: 12 }}>
             <label style={labelStyle}>Date</label>
-            <input type="date" value={date} onChange={(e) => setDate(e.target.value)} style={inputStyle} />
+            <DateField
+              value={date}
+              onChange={(iso) => setDate(iso)}
+              style={inputStyle}
+            />
           </div>
         )}
 
@@ -1930,3 +1934,5 @@ export function MobileModuleDetail({ moduleKey, row, title, onBack, onPOD, onEdi
   }
   return <SimpleDetail moduleKey={moduleKey} row={row} title={title} onBack={onBack} onEdit={editHandler} />;
 }
+
+import { DateField } from "../vendor/scm/components/DateField";

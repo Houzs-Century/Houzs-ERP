@@ -8,6 +8,7 @@ import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import "./mobile.css";
+import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "@2990s/shared";
 
 // Mobile Mail Center — the email client, wired to /api/mail-center. Kept at
 // desktop feature parity (MailCenter/Inbox.tsx + Thread.tsx) minus the desktop-
@@ -157,11 +158,11 @@ const fmtTime = (iso: string | null | undefined): string => {
   if (isNaN(+d)) return "";
   const now = new Date();
   const sameDay = d.toDateString() === now.toDateString();
-  if (sameDay) return d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
+  if (sameDay) return fmtClock(d);
   const yest = new Date(now);
   yest.setDate(now.getDate() - 1);
   if (d.toDateString() === yest.toDateString()) return "Yesterday";
-  return formatDate(d.toISOString());
+  return fmtDate(d);
 };
 
 // Message-bubble time: numeric DD/MM/YYYY + HH:mm.
@@ -170,7 +171,7 @@ const fmtMsgTime = (m: Message): string => {
   if (!iso) return "";
   const d = new Date(iso);
   if (isNaN(+d)) return "";
-  return `${formatDate(d.toISOString())} ${d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" })}`;
+  return fmtDateTime(d);
 };
 
 const fmtBytes = (n: number): string => {

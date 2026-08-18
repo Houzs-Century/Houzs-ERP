@@ -39,6 +39,7 @@ import { cn } from "../../lib/utils";
 import { fmtCenti } from "../../vendor/shared/format";
 import { formatPhone } from "../../vendor/shared/phone";
 import { retryUnlessClientError } from '../../lib/retryPolicy';
+import { fmtDate } from "@2990s/shared";
 
 // ─── Types — mirrors the endpoint's Row / buckets / totals ──────────────────
 
@@ -78,11 +79,6 @@ type UnbilledResponse = {
 
 // Guarded centi→"RM …" — "—" for an absent/non-finite amount, never "RM NaN".
 const fmtRm = (centi: number | null | undefined): string => fmtCenti(centi);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  return iso.replace(/T.*$/, "").replace(/-/g, "/");
-};
 
 /* Age → tone. Nothing under 3 months is coloured: it is not yet a finding, and
    colouring it would spend the reader's alarm on normal billing lag. */

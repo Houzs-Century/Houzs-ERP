@@ -53,6 +53,7 @@ import {
 } from '../../vendor/shared/lorry-compliance';
 import { formatDate } from '../../lib/utils';
 import styles from './Suppliers.module.css';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -617,7 +618,16 @@ const Field = ({
 }) => (
   <label className={styles.field}>
     <span className={styles.fieldLabel}>{label}</span>
-    <input className={styles.fieldInput} value={value} placeholder={placeholder} type={type ?? 'text'}
-      onChange={(e) => onChange(e.target.value)} />
+    {/* type="date" routes to DateField, not to a native date input: the native
+           one renders in the OPERATING SYSTEM's locale, so the same field read
+           DD/MM/YYYY on one machine and MM/DD/YYYY on another. Same ISO contract
+           in and out. */}
+    {type === 'date' ? (
+      <DateField className={styles.fieldInput} value={value} placeholder={placeholder}
+        onChange={onChange} fullWidth />
+    ) : (
+      <input className={styles.fieldInput} value={value} placeholder={placeholder} type={type ?? 'text'}
+        onChange={(e) => onChange(e.target.value)} />
+    )}
   </label>
 );

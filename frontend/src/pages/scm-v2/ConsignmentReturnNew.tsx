@@ -48,6 +48,7 @@ import { SoLineCard, emptySoLine, type SoLineDraft } from '../../vendor/scm/comp
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtMoneyCenti } from '@2990s/shared';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -390,7 +391,12 @@ export const ConsignmentReturnNew = () => {
           <div className={styles.formGrid4}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Return Date</span>
-              <input type="date" className={styles.fieldInput} value={returnDate} onChange={(e) => setReturnDate(e.target.value)} />
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={returnDate}
+                onChange={(iso) => setReturnDate(iso)}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Building Type</span>

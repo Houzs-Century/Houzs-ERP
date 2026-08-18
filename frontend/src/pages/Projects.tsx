@@ -121,6 +121,8 @@ import { MediaLightbox } from "../components/MediaLightbox";
 import { ResetFiltersButton } from "../components/ResetFiltersButton";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { formatDate, formatDateTime, formatTimestamp, formatCurrency, cn, relativeTime, todayInAppTz } from "../lib/utils";
+import { fmtDate } from "@2990s/shared";
+import { DateField } from "../vendor/scm/components/DateField";
 
 // ── Types (module-local) ─────────────────────────────────────
 // Kept in this file until something else imports them. Promoting to
@@ -1070,12 +1072,9 @@ function DateRangeFilter({
       document.removeEventListener("keydown", onKey);
     };
   }, [open]);
-  const fmt = (d: string) => {
-    if (!d) return "…";
-    const [y, m, day] = d.split("-");
-    const mon = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"][parseInt(m, 10) - 1] ?? m;
-    return `${parseInt(day, 10)} ${mon} ${y}`;
-  };
+  /* Was a month-NAME array — the exact thing utils.ts says the owner ruled
+     out ("no 'Jun'/'Jul' month names anywhere on the desktop app"). */
+  const fmt = (d: string) => (d ? fmtDate(d) : "…");
   const active = !!(from || to);
   return (
     <div className="relative" ref={boxRef}>
@@ -1103,21 +1102,21 @@ function DateRangeFilter({
           </div>
           <label className="mb-2 block text-[11px] font-semibold text-ink-secondary">
             From
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={from}
               max={to || undefined}
-              onChange={(e) => onChange(e.target.value, to)}
+              onChange={(iso) => onChange(iso, to)}
               className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
             />
           </label>
           <label className="block text-[11px] font-semibold text-ink-secondary">
             To
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={to}
               min={from || undefined}
-              onChange={(e) => onChange(from, e.target.value)}
+              onChange={(iso) => onChange(from, iso)}
               className="mt-0.5 w-full rounded-md border border-border bg-surface px-2 py-1 text-[12px]"
             />
           </label>
@@ -3252,18 +3251,18 @@ function FinanceListView() {
       {/* Filters */}
       <div className="mb-4 grid grid-cols-2 gap-2 sm:grid-cols-6">
         <FilterField label="From">
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
+            onChange={(iso) => setDateFrom(iso)}
             className="h-8 w-full rounded-md border border-border bg-surface px-2 text-[11px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
           />
         </FilterField>
         <FilterField label="To">
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
+            onChange={(iso) => setDateTo(iso)}
             className="h-8 w-full rounded-md border border-border bg-surface px-2 text-[11px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/15"
           />
         </FilterField>
@@ -3550,10 +3549,10 @@ function ProjectsAnalyticsView() {
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
             From
           </div>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
+            onChange={(iso) => setDateFrom(iso)}
             className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
           />
         </div>
@@ -3561,10 +3560,10 @@ function ProjectsAnalyticsView() {
           <div className="mb-1 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
             To
           </div>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
+            onChange={(iso) => setDateTo(iso)}
             className="h-8 rounded-md border border-border bg-surface px-2 text-[12px]"
           />
         </div>
@@ -5488,14 +5487,7 @@ function CalendarBarPopover({
 }) {
   const p = info.project;
   const opt = STATUS_BY_VALUE[p.status] ?? STATUS_BY_VALUE.pending;
-  const fmt = (iso: string | null) => {
-    if (!iso) return null;
-    const [y, m, d] = iso.slice(0, 10).split("-");
-    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString(
-      "en-GB",
-      { day: "2-digit", month: "2-digit", year: "numeric" }
-    );
-  };
+  const fmt = (iso: string | null) => (iso ? fmtDate(iso) : null);
   const span =
     p.end_date && p.end_date.slice(0, 10) !== p.start_date.slice(0, 10)
       ? `${fmt(p.start_date)} – ${fmt(p.end_date)}`
@@ -5570,12 +5562,7 @@ function CalendarTaskPopover({
   const opt = STATUS_BY_VALUE[t.project_status ?? "pending"] ?? STATUS_BY_VALUE.pending;
   const overdue = t.is_overdue === 1;
   const due = (() => {
-    if (!t.due_date) return "—";
-    const [y, m, d] = t.due_date.slice(0, 10).split("-");
-    return new Date(Number(y), Number(m) - 1, Number(d)).toLocaleDateString(
-      "en-GB",
-      { day: "2-digit", month: "2-digit", year: "numeric" }
-    );
+    return fmtDate(t.due_date);
   })();
 
   const W = 268;
@@ -5670,13 +5657,9 @@ function CalendarDayModal({
 
   const heading = (() => {
     const [y, m, d] = iso.split("-");
-    const date = new Date(Number(y), Number(m) - 1, Number(d));
-    return date.toLocaleDateString("en-GB", {
-      weekday: "long",
-      day: "2-digit",
-      month: "2-digit",
-      year: "numeric",
-    });
+    const weekday = new Date(Number(y), Number(m) - 1, Number(d))
+      .toLocaleDateString("en-GB", { weekday: "long" });
+    return `${weekday} ${fmtDate(iso)}`;
   })();
 
   // Portal into document.body so the fixed-position overlay escapes any
@@ -6107,10 +6090,10 @@ function CreateProjectPanel({
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
               Start
             </div>
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={(iso) => setStartDate(iso)}
               className="w-full rounded-md border border-border bg-surface px-3 py-2 text-[13px]"
             />
           </div>
@@ -6118,11 +6101,11 @@ function CreateProjectPanel({
             <div className="mb-1.5 text-[10px] font-semibold uppercase tracking-wider text-ink-muted">
               End
             </div>
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={endDate}
               min={startDate || undefined}
-              onChange={(e) => setEndDate(e.target.value)}
+              onChange={(iso) => setEndDate(iso)}
               className={cn(
                 "w-full rounded-md border bg-surface px-3 py-2 text-[13px]",
                 dateInvalid ? "border-err" : "border-border"
@@ -7265,11 +7248,11 @@ function ProjectSpecStrip({
         </>)}
         <SpecCell label="Start">
           {editing ? (
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={p.start_date ?? ""}
-              onChange={async (e) => {
-                const v = e.target.value || null;
+              onChange={async (iso) => {
+                const v = iso || null;
                 if (v && p.end_date && p.end_date < v) {
                   // New start is past the current end — don't block; shift the
                   // whole event forward, keeping its length (owner reschedule).
@@ -7290,11 +7273,10 @@ function ProjectSpecStrip({
         </SpecCell>
         <SpecCell label="End">
           {editing ? (
-            <input
-              type="date"
+            <DateField
               value={p.end_date ?? ""}
-              onChange={async (e) => {
-                const v = e.target.value || null;
+              onChange={async (iso) => {
+                const v = iso || null;
                 if (v && p.start_date && v < p.start_date) {
                   // New end is before the current start — don't block; shift the
                   // whole event earlier, keeping its length (owner reschedule).
@@ -10308,10 +10290,10 @@ function AddChecklistItem({
         className="mb-2 w-full resize-y rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
       />
       <div className="mb-2 flex items-center gap-2">
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={dueDate}
-          onChange={(e) => setDueDate(e.target.value)}
+          onChange={(iso) => setDueDate(iso)}
           placeholder="Due date"
           className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px]"
         />
@@ -10400,11 +10382,11 @@ function DateTimeField({
         {label}
       </div>
       <div className="flex gap-1.5">
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={datePart}
           disabled={readOnly}
-          onChange={(e) => setDatePart(e.target.value)}
+          onChange={(iso) => setDatePart(iso)}
           onBlur={readOnly ? undefined : commit}
           className="flex-1 min-w-0 rounded-md border border-border bg-surface px-2 py-1.5 text-[12px] outline-none focus:border-primary focus:ring-2 focus:ring-primary/20 disabled:bg-bg/40 disabled:opacity-70"
         />
@@ -13074,10 +13056,10 @@ function ProjectSalesEntriesSection({
                 if (ev.key === "Enter") saveQuickLog();
               }}
             />
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={qlDate}
-              onChange={(ev) => setQlDate(ev.target.value)}
+              onChange={(ev) => setQlDate(ev)}
               className="rounded-md border border-amber-500/40 bg-surface px-2.5 py-1.5 text-[11.5px] outline-none focus:border-amber-500"
             />
             <button
@@ -14396,10 +14378,10 @@ function AddFinanceLineForm({
           placeholder="Description"
           className="col-span-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
         />
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={occurredAt}
-          onChange={(e) => setOccurredAt(e.target.value)}
+          onChange={(iso) => setOccurredAt(iso)}
           className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
           title="Payment date"
         />
@@ -14530,10 +14512,10 @@ function EditFinanceLineRow({
           placeholder="Description"
           className="col-span-2 rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
         />
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={occurredAt}
-          onChange={(e) => setOccurredAt(e.target.value)}
+          onChange={(iso) => setOccurredAt(iso)}
           className="rounded-md border border-border bg-surface px-2.5 py-1.5 text-[11px] outline-none focus:border-primary"
           title="Payment date"
         />

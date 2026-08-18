@@ -63,6 +63,7 @@ import { useUdf, type UseUdfResult } from "../hooks/useUdf";
 import { downloadCSV, toCSV, type CSVColumn } from "../lib/csv";
 import { SearchScopeHint } from "./SearchScopeHint";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
+import { isoForExport } from "@2990s/shared";
 
 export interface Column<T> {
   key: string;
@@ -1733,7 +1734,9 @@ function DataTableInner<T>({
       .map((c) => ({
         key: c.key,
         label: c.label || c.key,
-        getValue: c.getValue!,
+        // Storage shape, not display shape — a sheet sorts text and
+        // "16/08/2026" sorts next to "1/1/2027". See isoForExport.
+        getValue: (row: T) => isoForExport(c.getValue!(row) as string | number | null | undefined),
       }));
     if (csvCols.length === 0) return;
     const date = new Date().toISOString().slice(0, 10);

@@ -47,6 +47,7 @@ import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDial
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -406,10 +407,10 @@ export const PurchaseConsignmentOrderNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Date *</span>
-              <input
-                type="date"
+              <DateField
+                fullWidth
                 value={poDate}
-                onChange={(e) => setPoDate(e.target.value)}
+                onChange={(iso) => setPoDate(iso)}
                 className={styles.fieldInput}
               />
             </label>
@@ -428,10 +429,10 @@ export const PurchaseConsignmentOrderNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Expected Delivery *</span>
-              <input
-                type="date"
+              <DateField
+                fullWidth
                 value={expectedAt}
-                onChange={(e) => setExpectedAt(e.target.value)}
+                onChange={(iso) => setExpectedAt(iso)}
                 className={styles.fieldInput}
                 required
               />
@@ -780,10 +781,10 @@ export const PurchaseConsignmentOrderNew = () => {
                   </label>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Delivery Date</span>
-                    <input
-                      type="date"
+                    <DateField
+                      fullWidth
                       value={l.deliveryDate ?? ''}
-                      onChange={(e) => setLine(l.rid, { deliveryDate: e.target.value })}
+                      onChange={(iso) => setLine(l.rid, { deliveryDate: iso })}
                       className={styles.fieldInput}
                     />
                   </label>

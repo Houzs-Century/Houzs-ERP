@@ -51,6 +51,7 @@ import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
 import { fmtCenti } from "../lib/scm";
 import { useIdempotencyKey } from "../lib/idempotency";
 import { PaymentInfoBlock, type RecordedPaymentLike } from "./PaymentInfoBlock";
+import { DateField } from "../vendor/scm/components/DateField";
 
 /* A persisted payment as either mobile surface holds it. Superset of
    RecordedPaymentLike; the casing pairs cover the postgres.js / PostgREST drift
@@ -419,7 +420,12 @@ export function AddPaymentSheet({
             <div style={{ display: "flex", gap: 9 }}>
               <label className="fld" style={{ flex: 1.1 }}>
                 <span className="fld-l">Date</span>
-                <input className="fld-i" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                <DateField
+                  fullWidth
+                  className="fld-i"
+                  value={date}
+                  onChange={(iso) => setDate(iso)}
+                />
               </label>
               <label className="fld" style={{ flex: 1.1 }}>
                 <span className="fld-l">Amount</span>

@@ -2150,19 +2150,17 @@ function DeliveryFieldsCard({
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">Shipout date (EM/SG)</span>
-            <input
-              type="date"
+            <DateField
               value={form.shipoutDate}
-              onChange={(e) => set("shipoutDate", e.target.value)}
+              onChange={(iso) => set("shipoutDate", iso)}
               style={inputStyle}
             />
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">Customer delivered date</span>
-            <input
-              type="date"
+            <DateField
               value={form.customerDeliveredDate}
-              onChange={(e) => set("customerDeliveredDate", e.target.value)}
+              onChange={(iso) => set("customerDeliveredDate", iso)}
               style={inputStyle}
             />
           </label>
@@ -2425,3 +2423,5 @@ function TrackButton({
     </button>
   );
 }
+
+import { DateField } from "../vendor/scm/components/DateField";

@@ -74,6 +74,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -1037,20 +1038,28 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Processing Date</span>
-              <input type="date" className={styles.fieldInput} value={form.processingDate}
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.processingDate}
                 disabled={inputsDisabled || processingLocked}
                 title={processingLocked ? 'Processing date has passed — locked.' : undefined}
                 min={processingLocked ? undefined : today}
-                onChange={(e) => set('processingDate', e.target.value)}
-                style={datesXor && !form.processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined} />
+                onChange={(iso) => set('processingDate', iso)}
+                style={datesXor && !form.processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Delivery Date</span>
-              <input type="date" className={styles.fieldInput} value={form.customerDeliveryDate}
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.customerDeliveryDate}
                 disabled={inputsDisabled}
                 min={today}
-                onChange={(e) => { set('customerDeliveryDate', e.target.value); onDeliveryDateChange?.(e.target.value); }}
-                style={datesXor && !form.customerDeliveryDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined} />
+                onChange={(iso) => { set('customerDeliveryDate', iso); onDeliveryDateChange?.(iso); }}
+                style={datesXor && !form.customerDeliveryDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
+              />
             </label>
             <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
               <span className={styles.fieldLabel}>Note</span>

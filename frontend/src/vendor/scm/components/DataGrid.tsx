@@ -40,6 +40,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { useDebouncedValue } from '../lib/hooks';
 import { SkeletonRows } from './Skeleton';
 import { DateField } from './DateField';
+import { isoForExport } from '@2990s/shared';
 import {
   DEFAULT_DATA_GRID_LAYOUT,
   type DataGridLayout,
@@ -1382,11 +1383,14 @@ function DataGridInner<T>({
       // Wei Siang 2026-06-20). Prefer an explicit exportValue, then the single
       // filterValue, then the text the cell actually renders. searchValue is
       // NEVER exported.
-      if (c.exportValue) return c.exportValue(row);
-      if (c.filterValue) return c.filterValue(row);
+      // A date cell leaves as the STORAGE shape, not the display shape: a
+      // sheet sorts text, and "16/08/2026" sorts next to "1/1/2027". See
+      // isoForExport in @2990s/shared.
+      if (c.exportValue) return isoForExport(c.exportValue(row));
+      if (c.filterValue) return isoForExport(c.filterValue(row));
       const rendered = coerceSearchString(c.accessor(row)).trim();
-      if (rendered) return rendered;
-      if (c.groupValue) return c.groupValue(row);
+      if (rendered) return isoForExport(rendered);
+      if (c.groupValue) return isoForExport(c.groupValue(row));
       return '';
     };
     // Header for a column in the sheet: an explicit exportLabel (used by pure

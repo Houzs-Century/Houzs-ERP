@@ -59,6 +59,7 @@ import { useDrivers } from '../../vendor/scm/lib/drivers-queries';
 import { useLorries } from '../../vendor/scm/lib/lorries-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -314,10 +315,9 @@ export const AutoSchedule = () => {
         bulkExtras={
           <>
             {/* The packer walks days forward from here — default today. */}
-            <input
-              type="date"
+            <DateField
               value={startDate}
-              onChange={(e) => setStartDate(e.target.value)}
+              onChange={(iso) => setStartDate(iso)}
               title="Propose dates from this day forward (default today)"
               style={{ ...selStyle, width: 140 }}
             />
@@ -397,11 +397,10 @@ export const AutoSchedule = () => {
           headerControls={
             <>
               {/* REQUIRED picked date — the map always shows exactly one day. */}
-              <input
-                type="date"
+              <DateField
                 required
                 value={mapDate}
-                onChange={(e) => { if (e.target.value) setMapDate(e.target.value); }}
+                onChange={(iso) => { if (iso) setMapDate(iso); }}
                 title="The day the map shows"
                 style={{ ...selStyle, width: 140 }}
               />

@@ -121,6 +121,8 @@ import type {
   AssrStage,
   PurchaseOrder,
 } from "../types";
+import { fmtDate } from "@2990s/shared";
+import { DateField } from "../vendor/scm/components/DateField";
 
 type StageFilter = "ALL" | AssrStage;
 
@@ -633,7 +635,7 @@ function CasesView({
                   title={
                     r.is_breached === 1
                       ? `SLA breached by ${Math.abs(r.hours_to_deadline ?? 0)}h${r.escalated_at ? " · escalated" : ""}`
-                      : `Auto-escalated ${r.escalated_at?.slice(0, 10)} — SLA overdue >24h`
+                      : `Auto-escalated ${fmtDate(r.escalated_at)} — SLA overdue >24h`
                   }
                 >
                   SLA
@@ -2019,12 +2021,7 @@ function CaseDayModal({
   onClose: () => void;
   onOpen: (id: number) => void;
 }) {
-  const label = new Date(iso + "T00:00:00").toLocaleDateString("en-GB", {
-    weekday: "long",
-    day: "2-digit",
-    month: "2-digit",
-    year: "numeric",
-  });
+  const label = `${new Date(iso + "T00:00:00").toLocaleDateString("en-GB", { weekday: "long" })} ${fmtDate(iso)}`;
   return createPortal(
     <div
       className="fixed inset-0 z-[80] flex items-start justify-center overflow-y-auto bg-ink/30 p-4 backdrop-blur-sm sm:p-10"
@@ -6661,10 +6658,10 @@ function LogisticsRow({
         <div className="grid grid-cols-2 gap-2">
           <label className="block">
             <span className="mb-1 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Date</span>
-            <input
-              type="date"
+            <DateField
+              fullWidth
               value={draft.scheduled_date}
-              onChange={(e) => setDraft((d) => ({ ...d, scheduled_date: e.target.value }))}
+              onChange={(iso) => setDraft((d) => ({ ...d, scheduled_date: iso }))}
               className="h-8 w-full rounded border border-border bg-surface px-2 text-[12px] outline-none focus:border-primary"
             />
           </label>
@@ -8005,10 +8002,10 @@ function LogisticsForm({
           <option value="pickup">Pickup</option>
           <option value="delivery">Delivery</option>
         </select>
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={date}
-          onChange={(e) => setDate(e.target.value)}
+          onChange={(iso) => setDate(iso)}
           className="flex-1 rounded-md border border-border bg-surface px-3 py-1.5 text-sm outline-none focus:border-primary"
         />
       </div>

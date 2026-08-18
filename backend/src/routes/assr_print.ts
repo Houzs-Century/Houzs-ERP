@@ -14,6 +14,7 @@ import {
   letterheadLogoKey,
 } from "../services/branding";
 import { formatPhone } from "../scm/shared/phone";
+import { fmtDate, fmtDateTime } from "../scm/shared/format";
 
 // Formal service-case document modeled on a standard Malaysian business
 // invoice/service report:
@@ -50,33 +51,12 @@ function esc(s: unknown): string {
 // parse as UTC midnight, so the +8h shift never moves their calendar day.
 const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
 
-function fmtDate(s: string | null | undefined): string {
-  if (!s) return "—";
-  const d = new Date(s);
-  if (isNaN(d.getTime())) {
-    const parts = s.slice(0, 10).split("-");
-    if (parts.length === 3 && parts[0].length === 4) return `${parts[2]}/${parts[1]}/${parts[0]}`;
-    return s.slice(0, 10);
-  }
-  const shifted = new Date(d.getTime() + MYT_OFFSET_MS);
-  const dd = String(shifted.getUTCDate()).padStart(2, "0");
-  const mm = String(shifted.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = shifted.getUTCFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-}
-
-function fmtDateTime(s: string | null | undefined): string {
-  if (!s) return "—";
-  const parsed = new Date(s);
-  if (isNaN(parsed.getTime())) return s.slice(0, 16).replace("T", " ");
-  const d = new Date(parsed.getTime() + MYT_OFFSET_MS);
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = d.getUTCFullYear();
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const min = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
+// fmtDate / fmtDateTime come from scm/shared/format — the one date rule. The
+// hand-rolled +8h copies that used to live here produced the same DD/MM/YYYY,
+// which is exactly why they survived: agreeing today is not the same as being
+// one rule, and the ASSR copy of fmtDateTime had ALREADY drifted (it lacked the
+// naive-wall-clock branch the Projects copy grew on 2026-08-12, so a crew time
+// typed as 11:00 printed as 19:00).
 
 // "Printed 2026/07/30 11:05 PM" — the sign-off footer's print stamp
 // (Nico 2026-07-30: yyyy/mm/dd [hh:mm @AM/PM]). MYT like fmtDateTime.

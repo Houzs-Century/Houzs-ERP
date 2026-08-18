@@ -1,3 +1,5 @@
+import { fmtDate, fmtDateTime, fmtTimestamp } from "@2990s/shared";
+
 export function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");
 }
@@ -69,76 +71,24 @@ export function parseDate(d: string | null | undefined): Date | null {
   return isNaN(date.getTime()) ? null : date;
 }
 
-// Memoised Intl formatters — these are expensive to construct and we
-// call them on every row in long lists. House style is numeric
-// DD/MM/YYYY (owner requirement — no "Jun"/"Jul" month names anywhere on
-// the desktop app).
-const dateFmt = new Intl.DateTimeFormat("en-GB", {
-  timeZone: APP_TZ,
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-});
-const dateTimeFmt = new Intl.DateTimeFormat("en-GB", {
-  timeZone: APP_TZ,
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  hour12: false,
-});
-const timestampFmt = new Intl.DateTimeFormat("en-GB", {
-  timeZone: APP_TZ,
-  day: "2-digit",
-  month: "2-digit",
-  year: "numeric",
-  hour: "2-digit",
-  minute: "2-digit",
-  second: "2-digit",
-  hour12: false,
-});
+/* THE DATE RULE LIVES IN ONE PLACE — `@2990s/shared`'s `fmtDate`.
+   These three names stay because 154 call sites use them, but they no longer
+   carry a copy of the rule: they forward to it. The rule they used to hold
+   (numeric DD/MM/YYYY, no month names, date-only shown verbatim, instants
+   converted once into GMT+8) is now the shared module's, comment and all, and
+   it is the same rule the SPA lists, the detail pages and the PDFs use.
 
-function formatViaIntl(d: string, fmt: Intl.DateTimeFormat): string {
-  const date = parseDate(d);
-  if (!date) return "—";
-  // `en-GB` gives "28/05/2026, 17:30" — strip the comma to match the
-  // app's house style of "DD/MM/YYYY HH:mm".
-  return fmt.format(date).replace(",", "");
-}
-
+   The old bodies here were the BEST of the five spellings in the tree — they
+   were the only ones that branched on the input's shape instead of trusting
+   `new Date()`. That branching is what moved into the shared module; nothing
+   about what a user sees changes on this path. */
 export function formatDate(d: string | null | undefined): string {
-  if (!d) return "—";
-  // Date-only fields don't carry a timezone — display verbatim as DD/MM/YYYY.
-  if (isDateOnly(d)) {
-    const [y, m, day] = d.split("-");
-    return `${day}/${m}/${y}`;
-  }
-  // Wall-clock scheduling fields — slice the date portion, no conversion.
-  if (isWallClockDateTime(d)) {
-    return formatDate(d.slice(0, 10));
-  }
-  // Everything else is an audit / system timestamp stored as UTC. Show
-  // the date in GMT+8 (so a late-night UTC creation rolls over to
-  // tomorrow correctly).
-  return formatViaIntl(d, dateFmt);
+  return fmtDate(d);
 }
 
-/**
- * DD/MM/YYYY HH:mm. Picks the right branch based on the input shape:
- *  - Wall-clock `YYYY-MM-DDTHH:MM` → display as-is (no conversion).
- *  - Date-only → date + 00:00.
- *  - Everything else → parse as UTC, render in GMT+8.
- */
+/** DD/MM/YYYY HH:mm (24h, GMT+8). See {@link formatDate}. */
 export function formatDateTime(d: string | null | undefined): string {
-  if (!d) return "—";
-  if (isWallClockDateTime(d)) {
-    return `${formatDate(d.slice(0, 10))} ${d.slice(11, 16)}`;
-  }
-  if (isDateOnly(d)) {
-    return `${formatDate(d)} 00:00`;
-  }
-  return formatViaIntl(d, dateTimeFmt);
+  return fmtDateTime(d);
 }
 
 /**
@@ -147,14 +97,7 @@ export function formatDateTime(d: string | null | undefined): string {
  * etc.). For scheduling fields prefer formatDateTime.
  */
 export function formatTimestamp(d: string | null | undefined): string {
-  if (!d) return "—";
-  if (isWallClockDateTime(d)) {
-    return `${formatDate(d.slice(0, 10))} ${d.slice(11, 16)}:00`;
-  }
-  if (isDateOnly(d)) {
-    return `${formatDate(d)} 00:00:00`;
-  }
-  return formatViaIntl(d, timestampFmt);
+  return fmtTimestamp(d);
 }
 
 export function relativeTime(d: string | null | undefined): string {
@@ -175,7 +118,7 @@ export function relativeTime(d: string | null | undefined): string {
   if (day < 7) return `${day}d ago`;
   // Past one week — fall back to the absolute date in DD/MM/YYYY (GMT+8),
   // matching the rest of the SPA's date format.
-  return formatViaIntl(date.toISOString(), dateFmt);
+  return fmtDate(date);
 }
 
 /**
@@ -204,7 +147,7 @@ export function isExpired(d: string | null | undefined): boolean {
   // Audit timestamp — compare its GMT+8 calendar date.
   const date = parseDate(d);
   if (!date) return false;
-  const inTz = formatViaIntl(d, dateFmt); // DD/MM/YYYY
+  const inTz = fmtDate(d); // DD/MM/YYYY
   if (inTz === "—") return false;
   // Convert DD/MM/YYYY → YYYY-MM-DD for lexicographic compare.
   const [dd, mm, yyyy] = inTz.split("/");
@@ -217,7 +160,7 @@ export function isExpiringSoon(d: string | null | undefined, days = 3): boolean 
   // Compute cutoff in GMT+8 by anchoring midnight at this calendar date.
   const cutoff = new Date(`${today}T00:00:00+08:00`);
   cutoff.setDate(cutoff.getDate() + days);
-  const cutoffStr = formatViaIntl(cutoff.toISOString(), dateFmt);
+  const cutoffStr = fmtDate(cutoff);
   const [cd, cm, cy] = cutoffStr.split("/");
   const cutoffIso = `${cy}-${cm}-${cd}`;
 
@@ -225,7 +168,7 @@ export function isExpiringSoon(d: string | null | undefined, days = 3): boolean 
     isDateOnly(d) || isWallClockDateTime(d) ? d.slice(0, 10) : null;
   if (datePart) return datePart >= today && datePart <= cutoffIso;
 
-  const inTz = formatViaIntl(d, dateFmt);
+  const inTz = fmtDate(d);
   if (inTz === "—") return false;
   const [dd, mm, yyyy] = inTz.split("/");
   const iso = `${yyyy}-${mm}-${dd}`;

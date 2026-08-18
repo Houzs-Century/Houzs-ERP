@@ -16,17 +16,14 @@ import { createPortal } from "react-dom";
 import { useAuth } from "../auth/AuthContext";
 import { canUseAssistant } from "../auth/assistantAccess";
 import { useAssistantChat, ASSISTANT_SUGGESTIONS, ASSISTANT_ACCEPT } from "../components/useAssistantChat";
+import { fmtDateTime } from "@2990s/shared";
 
 const PETROL = "#1e8071";
 
-function shortWhen(iso: string): string {
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} ${d.toLocaleTimeString(undefined, {
-    hour: "2-digit",
-    minute: "2-digit",
-  })}`;
-}
+/* Was `toLocaleDateString(undefined, …)` — the viewer's OS locale, a month
+   NAME, and no year at all. Three ways to disagree with every other date in
+   the app. */
+const shortWhen = fmtDateTime;
 
 export function MobileAssistant() {
   const { user } = useAuth();

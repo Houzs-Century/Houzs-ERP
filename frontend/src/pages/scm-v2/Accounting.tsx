@@ -44,6 +44,7 @@ import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { fmtDateOrDash } from '@2990s/shared';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -427,7 +428,11 @@ const NewJournalForm = ({ onDone }: { onDone: () => void }) => {
     <div style={cardStyle} className="space-y-3">
       <div style={{ fontWeight: 700 }}>New manual journal (draft — posting is a separate step)</div>
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <input type="date" style={fieldStyle} value={entryDate} onChange={(e) => setEntryDate(e.target.value)} />
+        <DateField
+          style={fieldStyle}
+          value={entryDate}
+          onChange={(iso) => setEntryDate(iso)}
+        />
         <input style={{ ...fieldStyle, flex: 1, minWidth: 240 }} placeholder="Narration (what is this entry?)"
           value={narration} onChange={(e) => setNarration(e.target.value)} />
       </div>

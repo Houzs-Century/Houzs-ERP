@@ -28,13 +28,9 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
+import { fmtDate } from "@2990s/shared";
 
 type StatusTab = "all" | "open" | "posted" | "cancelled";
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  return iso.replace(/T.*$/, "").replace(/-/g, "/");
-};
 
 const warehouseOf = (r: StockTakeRow): string =>
   r.warehouse?.name || r.warehouse?.code || r.warehouse_id || "—";

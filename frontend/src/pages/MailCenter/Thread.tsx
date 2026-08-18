@@ -69,6 +69,7 @@ import {
   Plus,
   Paperclip,
 } from "lucide-react";
+import { fmtDateTime } from "@2990s/shared";
 
 type UserOption = {
   id: number;
@@ -129,12 +130,7 @@ type MailAddress = {
   assignedUserId?: string | number | null;
 };
 
-function fmtFull(iso: string): string {
-  if (!iso) return "";
-  const d = new Date(iso);
-  if (Number.isNaN(d.getTime())) return "";
-  return d.toLocaleString();
-}
+const fmtFull = fmtDateTime;
 
 function formatBytes(bytes: number): string {
   if (!bytes || bytes < 0) return "";

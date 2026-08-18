@@ -34,6 +34,7 @@ import { useCreateAmendment } from '../lib/so-amendment-queries';
 import { procLockActive } from '../lib/so-detail-gates';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
+import { DateField } from "./DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const HOUSE_TYPES = ['New House', 'Replacement'] as const;
@@ -179,9 +180,13 @@ export const DeliveryFieldsDrawer = ({
 
           <label style={fieldRow}>
             <div className={styles.eyebrow}>Possession Date</div>
-            <input type="date" className={styles.searchInput} style={inputStyle}
+            <DateField
+              fullWidth
+              className={styles.searchInput}
+              style={inputStyle}
               value={form.possessionDate}
-              onChange={(e) => set('possessionDate', e.target.value)} />
+              onChange={(iso) => set('possessionDate', iso)}
+            />
           </label>
 
           <label style={fieldRow}>
@@ -261,16 +266,24 @@ export const DeliveryFieldsDrawer = ({
 
             <label style={fieldRow}>
               <div className={styles.eyebrow}>Shipout Date (EM/SG)</div>
-              <input type="date" className={styles.searchInput} style={inputStyle}
+              <DateField
+                fullWidth
+                className={styles.searchInput}
+                style={inputStyle}
                 value={form.shipoutDate}
-                onChange={(e) => set('shipoutDate', e.target.value)} />
+                onChange={(iso) => set('shipoutDate', iso)}
+              />
             </label>
 
             <label style={fieldRow}>
               <div className={styles.eyebrow}>Customer Delivered Date</div>
-              <input type="date" className={styles.searchInput} style={inputStyle}
+              <DateField
+                fullWidth
+                className={styles.searchInput}
+                style={inputStyle}
                 value={form.customerDeliveredDate}
-                onChange={(e) => set('customerDeliveredDate', e.target.value)} />
+                onChange={(iso) => set('customerDeliveredDate', iso)}
+              />
             </label>
 
             <label style={fieldRow}>

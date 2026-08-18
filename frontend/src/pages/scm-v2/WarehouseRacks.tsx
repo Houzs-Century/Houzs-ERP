@@ -54,6 +54,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import styles from './WarehouseRacks.module.css';
 import formStyles from './Suppliers.module.css';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -791,8 +792,20 @@ function HistoryTab({ warehouseId }: { warehouseId: string }) {
             </select>
             <ChevronDown className={styles.selectChevron} size={14} strokeWidth={1.75} />
           </span>
-          <input className={styles.fieldInput} style={{ width: 150 }} type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
-          <input className={styles.fieldInput} style={{ width: 150 }} type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          <DateField
+            fullWidth
+            className={styles.fieldInput}
+            style={{ width: 150 }}
+            value={from}
+            onChange={(iso) => setFrom(iso)}
+          />
+          <DateField
+            fullWidth
+            className={styles.fieldInput}
+            style={{ width: 150 }}
+            value={to}
+            onChange={(iso) => setTo(iso)}
+          />
           {(type || from || to) && (
             <Button variant="ghost" onClick={() => { setType(''); setFrom(''); setTo(''); }}>Clear</Button>
           )}
