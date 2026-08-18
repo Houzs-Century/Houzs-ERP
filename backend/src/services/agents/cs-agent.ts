@@ -40,6 +40,7 @@ import { getSupabaseService } from '../../db/supabase';
 import { resolveStateCode } from './delivery-agent-geo';
 import { readAgentSetting } from '../agent-console';
 import { todayMyt } from '../../scm/lib/my-time';
+import { effectiveSoDelivery } from '../../scm/shared';
 import { paginateAll } from '../../scm/lib/paginate-all';
 
 // ── Config keys ──────────────────────────────────────────────────────────────
@@ -236,7 +237,7 @@ async function loadSoHeaders(sb: any, companyId: number | undefined): Promise<Ma
       customerState: r.customer_state ?? null,
       stateCode:
         resolveStateCode(r.customer_state) ?? resolveStateCode(r.customer_country) ?? 'UNKNOWN',
-      currentPromised: r.amended_delivery_date ?? r.customer_delivery_date ?? null,
+      currentPromised: effectiveSoDelivery(r),
     });
   }
   return map;
