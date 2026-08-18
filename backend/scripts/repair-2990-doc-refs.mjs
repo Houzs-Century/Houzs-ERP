@@ -235,6 +235,7 @@ import {
 import { docLineMultisetKey, dateGapDays } from "./lib/duplicate-docs-core.mjs";
 import { variantKeyMirror } from "./lib/ledger-repair-core.mjs";
 import { execIdRestamp, printIdRestampExec, execDedupe } from "./lib/id-restamp-exec.mjs";
+import { provenanceNoteSqlPattern } from "./lib/transfer-vocabulary.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const PART = (process.env.PART || "all").trim().toLowerCase();
@@ -315,7 +316,7 @@ async function planNotes(codeById) {
     SELECT id, po_number, company_id, notes
       FROM scm.purchase_orders
      WHERE notes IS NOT NULL
-       AND notes ~* 'From SOs?:'
+       AND notes ~* ${provenanceNoteSqlPattern()}
      ORDER BY po_number`;
   log("");
   log(`=== A1  purchase_orders.notes — POs carrying a "From SOs:" note: ${pos.length} ===`);

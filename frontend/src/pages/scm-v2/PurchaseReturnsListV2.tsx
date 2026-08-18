@@ -49,6 +49,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
+import { transferFromColumnLabel } from "../../lib/convertScope";
 
 type PrRow = {
   id: string;
@@ -280,7 +281,7 @@ function DetailDrawer({
               )}
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From GRN" v={sourceOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('grn')} v={sourceOf(row)} mono />
                 <MetaItem k="Return date" v={fmtDate(row.return_date)} />
                 <MetaItem k="Supplier code" v={supplierCodeOf(row)} mono />
                 <MetaItem k="Line count" v={row.line_count ?? items.length ?? "—"} />
@@ -671,7 +672,7 @@ export function PurchaseReturnsListV2() {
     },
     {
       key: "source",
-      label: "From GRN",
+      label: transferFromColumnLabel('grn'),
       width: "132px",
       getValue: (r) => sourceOf(r),
       render: (r) => <span className="font-mono text-[12px] text-ink-secondary">{sourceOf(r)}</span>,

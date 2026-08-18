@@ -1,3 +1,5 @@
+import { parseProvenanceNote, provenanceNoteRe } from "./transfer-vocabulary.mjs";
+
 // PURE core of the 2990 doc-reference repair. No database, no I/O — so the rule
 // that decides whether a reference may be rewritten is unit-testable, and the
 // script that talks to production carries no judgement of its own.
@@ -203,36 +205,39 @@ export function classifyIdRestamp({
   return { ...base, verdict: "restamp", resolvedDocId, idWrites };
 }
 
-/* The note FORMAT lives in document-flow.ts: the writer is
-   `From SOs: ${docNos.join(', ')}` (mfg-purchase-orders.ts:2115) and the only
-   structural reader is parseFromSosNote, which trims the note, takes the FIRST
-   line matching this regex (multiline, case-insensitive, optional plural) and
-   splits the captured list on commas, trimming each token. This regex is copied
-   verbatim from parseFromSosNote so the repair can never rewrite a token the
-   parser would not have read, nor miss one it would. */
-const FROM_SOS_RE = /^\s*From SOs?:\s*(.+)$/im;
+/* The note FORMAT lives in backend/src/scm/shared/transfer-vocabulary.ts, and
+   this file reaches it through transfer-vocabulary.mjs — the script twin that
+   exists only because tsconfig compiles the TS sources with no `allowJs` and
+   these scripts run under bare node with no build step, so neither side can
+   import the other. The twin is refereed by tests/transferVocabulary.corpus.ts:
+   it fails if the two disagree on ANY note in the shared corpus.
 
-/** The tokens parseFromSosNote would extract — same regex, same split, same
- *  de-duplication. Kept here so the script does not import TypeScript. */
-export function parseFromSosTokens(note) {
-  if (!note) return [];
-  const m = FROM_SOS_RE.exec(String(note).trim());
-  if (!m) return [];
-  return [...new Set(m[1].split(",").map((s) => s.trim()).filter(Boolean))];
-}
+   This used to be a hand-copied regex with a comment asking the next person to
+   keep it in step by hand. It stayed in step; the point is that nothing would
+   have said so if it had not. The rewrite below can never touch a token the
+   parser would not have read, nor miss one it would, because it now calls the
+   parser's own regex rather than a copy of it. */
+/** The tokens the shared parser would extract — same regex, same split, same
+ *  de-duplication, by construction rather than by care. */
+export const parseFromSosTokens = parseProvenanceNote;
 
 /** Rewrite ONLY the tokens named in `replacements` (Map old -> new) inside the
- *  "From SOs:" list, leaving every other character of the note — other lines,
- *  the label's own casing, the spacing around each comma, leading and trailing
- *  whitespace — byte-identical. Returns the original string when there is
- *  nothing to change, so a caller can compare by identity.
+ *  provenance note's list, leaving every other character of the note — other
+ *  lines, THE LABEL ITSELF AND ITS CASING, the spacing around each comma,
+ *  leading and trailing whitespace — byte-identical. Returns the original
+ *  string when there is nothing to change, so a caller can compare by identity.
+ *
+ *  It rewrites doc NUMBERS and never the label, which is what keeps it
+ *  orthogonal to the 2026-08-18 vocabulary rename: this repair runs happily
+ *  over a note in either wording and leaves that wording exactly as it found
+ *  it. The two are separate migrations and neither has to know about the other.
  *
  *  A note is annotation, not structure; the smallest possible edit is the point. */
 export function rewriteFromSosNote(note, replacements) {
   if (!note || !replacements || replacements.size === 0) return note;
   const original = String(note);
   const trimmed = original.trim();
-  const m = FROM_SOS_RE.exec(trimmed);
+  const m = provenanceNoteRe().exec(trimmed);
   if (!m) return original;
 
   // Where the captured list sits inside the ORIGINAL string. trim() only strips

@@ -38,6 +38,7 @@
 
 import { buildDefaultSofaCells, effectiveDelivery, findModule, fmtMoneyCenti, SOFA_MODULES, type Cell, type Depth } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
+import { parseProvenanceNote } from '../../shared/transfer-vocabulary';
 import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
@@ -274,21 +275,27 @@ async function renderPurchaseOrderInto(
   /* "Your Ref No." = the source S/O No.; falls back to the per-line so_doc_no roll-up. */
   const lineSoDocs = [...new Set(items.map((it) => (it.so_doc_no ?? '').trim()).filter(Boolean))];
   // MRP / bulk-convert POs record their source SO(s) only in the free-text
-  // "From SOs: ..." note (they carry no per-line so_item_id), so the structured
-  // refs above and the per-line roll-up are both empty — fall back to that note
-  // so the source SO still prints. Owner 2026-07-20.
-  const noteSoDocs = (() => {
-    const m = /^\s*From SOs?:\s*(.+)$/i.exec((header.notes ?? '').trim());
-    return m ? m[1].trim() : '';
-  })();
+  // provenance note (they carry no per-line so_item_id), so the structured refs
+  // above and the per-line roll-up are both empty — fall back to that note so
+  // the source SO still prints. Owner 2026-07-20.
+  //
+  // Through the SHARED parser since 2026-08-18, not a fourth private regex.
+  // Two things that were wrong here are fixed by that alone:
+  //   - this copy omitted the `m` flag, so a note whose label sat on line 2
+  //     printed NO source SO while the relationship map beside it showed one;
+  //   - `noteSoDocs.includes(',')` decided single-vs-multi source by looking
+  //     for a comma character, so a trailing comma ("SO-1,") read as multi.
+  // Both disappear by counting parsed TOKENS instead of scanning a string.
+  const noteSoDocTokens = parseProvenanceNote(header.notes);
+  const noteSoDocs = noteSoDocTokens.join(', ');
   const yourRef = header.your_ref_no
     ?? header.source_so_doc_no
     ?? (lineSoDocs.length > 0 ? lineSoDocs.join(', ') : noteSoDocs);
-  // When the whole PO traces to exactly ONE source SO (the note lists a single
-  // doc, no comma) a line with no per-line link falls back to it, so the
-  // "For SO" column reads that SO instead of a dash. Multi-SO POs keep the
-  // dash per line (all SOs are already listed in Your Ref No above).
-  const singleSourceSo = (!lineSoDocs.length && noteSoDocs && !noteSoDocs.includes(',')) ? noteSoDocs : '';
+  // When the whole PO traces to exactly ONE source SO a line with no per-line
+  // link falls back to it, so the "For SO" column reads that SO instead of a
+  // dash. Multi-SO POs keep the dash per line (all SOs are already listed in
+  // Your Ref No above).
+  const singleSourceSo = (!lineSoDocs.length && noteSoDocTokens.length === 1) ? noteSoDocTokens[0]! : '';
 
   y = drawInfoColumns(doc, y,
     /* Canonical supplier block — Company, Code, Address, Tel, Fax, Email,

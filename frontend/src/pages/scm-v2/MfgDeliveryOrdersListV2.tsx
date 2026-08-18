@@ -65,7 +65,7 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
@@ -484,7 +484,7 @@ function DetailDrawer({
               </div>
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From SO" v={soOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('so')} v={soOf(row)} mono />
                 <MetaItem k="Customer ref" v={refOf(row)} mono />
                 {/* Owner 2026-07-24 — Processing date (linked SO's
                     processing_date) must be visible in every quick view. */}
@@ -1111,7 +1111,7 @@ export function MfgDeliveryOrdersListV2() {
       // the parent SO). The useful cross-doc fact for a shipped DO is its Source
       // PO, in the next column.
       key: "so_doc_no",
-      label: "From SO",
+      label: transferFromColumnLabel('so'),
       width: "150px",
       disableSort: true,
       /* 2026-08-04: show the SOs this DO's LINES actually draw on, not the

@@ -12,7 +12,7 @@
 //         chrome only.)
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { transferFromLabel } from '../../lib/convertScope';
+import { transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { canViewScmCosting, canOperateSalesInvoices } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -490,8 +490,8 @@ function DetailDrawer({
               </div>
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From SO" v={soOf(row)} mono />
-                <MetaItem k="From DO" v={doOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('so')} v={soOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('do')} v={doOf(row)} mono />
                 <MetaItem k="Customer ref" v={refOf(row)} mono />
                 <MetaItem k="Due date" v={fmtDate(row.due_date)} />
                 {/* Owner 2026-07-24 — Processing (linked SO's
@@ -1108,7 +1108,7 @@ export function SalesInvoicesListV2() {
     },
     {
       key: "so_doc_no",
-      label: "From SO",
+      label: transferFromColumnLabel('so'),
       width: "128px",
       disableSort: true,
       getValue: (r) => r.so_doc_no ?? "",
@@ -1121,7 +1121,7 @@ export function SalesInvoicesListV2() {
          from. Previously only the raw delivery_order_id UUID was on the row, so
          the list could not show a readable source DO. */
       key: "do_number",
-      label: "From DO",
+      label: transferFromColumnLabel('do'),
       width: "128px",
       disableSort: true,
       getValue: (r) => r.do_number ?? "",

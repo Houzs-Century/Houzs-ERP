@@ -57,7 +57,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
@@ -285,7 +285,7 @@ function DetailDrawer({
               </div>
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From PO" v={poOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('po')} v={poOf(row)} mono />
                 <MetaItem k="Received at" v={fmtDate(row.received_at)} />
                 <MetaItem k="Delivery note" v={row.delivery_note_ref || "—"} mono={!!row.delivery_note_ref} />
                 <MetaItem k="Currency" v={row.currency || "MYR"} />
@@ -728,7 +728,7 @@ export function GoodsReceivedListV2() {
     },
     {
       key: "po",
-      label: "From PO",
+      label: transferFromColumnLabel('po'),
       width: "128px",
       disableSort: true,
       getValue: (r) => poOf(r),

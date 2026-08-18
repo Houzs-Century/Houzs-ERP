@@ -73,6 +73,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './SalesOrderDetail.module.css';
+import { transferFromColumnLabel } from "../../lib/convertScope";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -801,7 +802,7 @@ const SupplierCard = ({
             {/* Owner 2026-07-23: "PI need show Do number" — the source GRN and
                 the supplier's delivery-note (DO) ref recorded on it. Manual
                 PIs have no GRN, so both cells fall back to the dash. */}
-            <InfoCell label="Source GRN" value={pi.grn?.grn_number || null} />
+            <InfoCell label={transferFromColumnLabel('grn')} value={pi.grn?.grn_number || null} />
             <InfoCell label="Supplier DO #" value={pi.grn?.delivery_note_ref || null} />
             {/* Owner 2026-07-23 ("要的") — OUR delivery to the customer this
                 purchase covers. Dash for stock POs (no so_item linkage). */}

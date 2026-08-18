@@ -28,6 +28,7 @@
 // first.
 import postgres from "postgres";
 import { SO_TERMINAL_STATES } from "./lib/so-terminal-states.mjs";
+import { provenanceNoteSqlPattern } from "./lib/transfer-vocabulary.mjs";
 
 const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error("DATABASE_URL missing"); process.exit(1); }
@@ -587,7 +588,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   const [{ total_po_lines, linked_po_lines, note_pos }] = await sql`
     SELECT (SELECT COUNT(*)::int FROM scm.purchase_order_items WHERE company_id = ${companyId}) AS total_po_lines,
            (SELECT COUNT(*)::int FROM scm.purchase_order_items WHERE company_id = ${companyId} AND so_item_id IS NOT NULL) AS linked_po_lines,
-           (SELECT COUNT(*)::int FROM scm.purchase_orders WHERE company_id = ${companyId} AND notes ~* 'From SOs?:') AS note_pos`;
+           (SELECT COUNT(*)::int FROM scm.purchase_orders WHERE company_id = ${companyId} AND notes ~* ${provenanceNoteSqlPattern()}) AS note_pos`;
   notice(`  ALL purchase_order_items rows              : ${total_po_lines}`);
   notice(`   - with a STORED so_item_id                : ${linked_po_lines}`);
   notice(`   - POs carrying a 'From SOs:' note         : ${note_pos}`);
