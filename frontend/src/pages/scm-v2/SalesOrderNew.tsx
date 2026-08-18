@@ -1594,18 +1594,10 @@ export const SalesOrderNew = () => {
         idempotencyKey: idemKey,
         ...receiptDepositBody,
         pendingDepositCenti: pendingDepositCenti > 0 ? pendingDepositCenti : undefined,
-        /* DRAFT flow — backend reads `asDraft: true` to create the SO with
-           status 'DRAFT' instead of 'CONFIRMED'. Omitted (undefined) for a
-           normal Create so the body stays unchanged in that path. */
+        /* DRAFT flow — backend reads `asDraft: true` to create the SO as 'DRAFT'
+           not 'CONFIRMED'. Omitted on a normal Create, so that body is unchanged. */
         asDraft: asDraft || undefined,
-        /* This screen is the hand-keyed order. The backend reads
-           `manualEntry: true` and drops the DEPOSIT condition of the
-           Processing-Date gate — a salesperson writes the order up for a
-           customer who has not paid yet, and it still has to be released for
-           purchasing. Name / address / postcode / delivery date still apply.
-           Constant, not a toggle: every order created on this screen is
-           hand-keyed, so there is no state for an operator to get wrong. */
-        manualEntry: true,
+        manualEntry: true, // hand-keyed: backend drops the deposit condition only
         debtorName,
         debtorCode: debtorCode || undefined,
         phone: phone || undefined,
