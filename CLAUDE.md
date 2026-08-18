@@ -156,6 +156,37 @@ The judgement rule still holds and is not in tension with this one
 JUDGEMENT — should this be required, labelled, charged, allowed — gets options
 and a recommendation, and he chooses.
 
+## ⚠️ 挖到真正的 ROOT CAUSE，从根本解决，不拿补丁当终局 — MANDATORY (owner rule, 2026-08-18)
+
+His words, three times in one session: *"所有的问题都要找出来真的 root cause 然后
+根本解决"*, *"做任何东西都要查找它真正的 root cause，尽量从根本上解决"*, *"一定要
+看一下最适合的方案，给我去做选择"*. And the sharp one that named the failure:
+*"为什么你不找根本 给我们更好的方案做呢"*.
+
+This SHARPENS the two rules "Do not guess, prove it" and "a root cause is a
+request for OPTIONS". Those say: prove the cause, answer with options. This adds
+the bar he keeps raising — **a fix that only stops the symptom is not the
+deliverable.**
+
+1. **Trace the REAL mechanism, with code evidence.** Read the code until you can
+   point at the line where it actually goes wrong — not the symptom, not the
+   first plausible story.
+2. **A workaround is a STOPGAP, and you must SAY it is one.** A switch, a retry,
+   a cache-bust, a flag may ship as immediate relief — but never presented as the
+   fix. Name it a stopgap, name the real root fix beside it, and say what the real
+   fix takes. Shipping the stopgap and calling it done is the exact failure he
+   caught here: flipping a session-fallback switch stopped the random logouts but
+   did NOT touch the latency, and calling that "solved" would have hidden the root
+   (every request re-reads the whole RBAC envelope from the DB on one serialized
+   connection).
+3. **Say how mainstream / large ERPs solve this CLASS of problem, plainly.** He is
+   choosing between our way and the industry's and cannot choose without knowing
+   there is one. The durable answer is usually the industry's; a per-request patch
+   usually is not.
+4. **Give 2-3 named options ranked stopgap → proper, each with effort/risk/benefit,
+   and RECOMMEND one.** He picks. Ending with only the stopgap, or with no
+   recommendation, is half a deliverable.
+
 ## ⚠️ Log every bug in `BUG-HISTORY.md` — MANDATORY (owner rule, everyone)
 
 Every bug you find and fix **must** get an entry in [`BUG-HISTORY.md`](./BUG-HISTORY.md) at the repo root — no exceptions. One short entry: **Symptom → Root cause (traced, not guessed) → Fix → Ref (PR/date)**, newest first, with a severity tag. This is how we stop re-introducing the same class of bug: **read it before touching a subsystem, and add to it in the same PR that fixes the bug.** This applies to every contributor and every agent/session.
