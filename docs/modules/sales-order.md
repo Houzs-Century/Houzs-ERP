@@ -1308,10 +1308,12 @@ No path guesses a date: a proceed with none returns 422
 a guessed date releases a real order to purchasing on the wrong day with nothing
 to show that the date was guessed. A date already on the order is never
 MOVED by a proceed — rescheduling belongs to the header PATCH, which owns the
-lock and the gate table. `proceeded_at` is neither written nor read any more:
-#2396 moved the stock allocator's gate — its last reachable reader — onto
-`processing_date`, and this PR removed the writes that only existed to feed it.
-It was never what makes an order proceeded, and the column DROP is one deploy
+lock and the gate table. `proceeded_at` is now neither written nor read: #2396
+moved its last reachable decision (the stock allocator's gate) onto
+`processing_date`, and this change removed the three remaining writes — the
+create INSERT's stamp, the /status IN_PRODUCTION stamp, and the header PATCH's
+`proceededAt` key. It is no longer what makes an order proceeded, no lock or
+payload consults it, and the column awaits only its DROP — which is one deploy
 behind the code on purpose.
 Net effect: the proceed paths LOOSENED by one condition (email), the
 processing-date path TIGHTENED by four (name / address / postcode / delivery
