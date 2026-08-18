@@ -221,9 +221,23 @@ writes it, and what DECIDES on it. "Decides" means a gate, a lock or an ordering
   `arrives_em_warehouse_date`. These are genuinely distinct milestones — keep.
 * **One type wart:** `eta_arriving_port` was created **`TEXT`**
   (`migrations-pg/0053_scm_delivery_planning_tms.sql:188`) while every sibling on
-  the same migration is `DATE` or `TIMESTAMPTZ`. It is therefore neither type-checked
-  by Postgres nor caught by the empty-string date coercion in `lib/date-coerce.ts`.
-  Not urgent; named so nobody "discovers" it again.
+  the same migration is `DATE` or `TIMESTAMPTZ` (`:184-187`, `:195`). It rides the
+  same PATCH field map as the real dates, so Postgres never type-checks what lands
+  in it. Not urgent; named so nobody "discovers" it again.
+* **There is no shared date-coercion module, and this page will not pretend
+  otherwise.** The empty-string-to-null rule that keeps an unfilled `<input
+  type="date">` from reaching a Postgres `date` column as `""` is written per
+  route: `emptyDate` is a file-local function in
+  `backend/src/scm/routes/delivery-orders-mfg.ts:3675`, and
+  `backend/src/scm/routes/scan-lorry-invoice.ts:175` declares its own `dateOrNull`.
+  Other routes call a `dateOrNull` they import from elsewhere. **If you are adding
+  a date column, find the coercion your route actually uses — do not assume a
+  shared one exists.** An earlier draft of this page cited a shared
+  date-coerce module under `scm/lib`, with a date-column regex inside it.
+  **Neither the file nor the regex exists anywhere in the tree** — the repo's own
+  `audit:doc-refs` gate caught the invented path before this merged. Recorded
+  here rather than quietly deleted, because "a module that sounds like it ought to
+  exist" is exactly how these docs went wrong the last four times.
 
 ### 3.7 The rest, briefly
 

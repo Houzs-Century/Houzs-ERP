@@ -74,10 +74,10 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-messages.ts` | 2 | 189 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 15 | 5632 |
 | `backend/src/scm/routes/delivery-planning-regions.ts` | 7 | 356 |
-| `backend/src/scm/routes/delivery-planning.ts` | 5 | 2915 |
+| `backend/src/scm/routes/delivery-planning.ts` | 5 | 2905 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
-| `backend/src/scm/routes/delivery-returns.ts` | 11 | 1739 |
+| `backend/src/scm/routes/delivery-returns.ts` | 11 | 1755 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 789 |
 | `backend/src/scm/routes/document-flow.ts` | 2 | 1022 |
 | `backend/src/scm/routes/dp-orders.ts` | 5 | 601 |
@@ -101,7 +101,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/lorry-service-records.ts` | 6 | 320 |
 | `backend/src/scm/routes/maintenance-config.ts` | 5 | 410 |
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
-| `backend/src/scm/routes/mfg-products.ts` | 11 | 1220 |
+| `backend/src/scm/routes/mfg-products.ts` | 11 | 1226 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4591 |
 | `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11988 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
@@ -120,15 +120,15 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/public-images.ts` | 2 | 47 |
 | `backend/src/scm/routes/purchase-consignment-orders.ts` | 10 | 711 |
 | `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1323 |
-| `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1125 |
+| `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1127 |
 | `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2455 |
-| `backend/src/scm/routes/purchase-returns.ts` | 13 | 1611 |
+| `backend/src/scm/routes/purchase-returns.ts` | 13 | 1652 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
 | `backend/src/scm/routes/pwp-rules.ts` | 4 | 233 |
 | `backend/src/scm/routes/quotes.ts` | 4 | 321 |
 | `backend/src/scm/routes/reports.ts` | 6 | 1252 |
 | `backend/src/scm/routes/sales-analysis.ts` | 2 | 522 |
-| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2663 |
+| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2634 |
 | `backend/src/scm/routes/scan-lorry-invoice.ts` | 1 | 381 |
 | `backend/src/scm/routes/scan-payment.ts` | 1 | 587 |
 | `backend/src/scm/routes/scan-so.ts` | 11 | 4865 |
@@ -171,7 +171,7 @@ Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1414 files, 571345 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1421 files, 573198 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
@@ -373,7 +373,7 @@ Page files by directory:
 | `frontend/src/mobile/MobileAssistant.tsx` | 298 |
 | `frontend/src/mobile/MobileAutoCountSync.tsx` | 665 |
 | `frontend/src/mobile/MobileCalendar.tsx` | 792 |
-| `frontend/src/mobile/MobileConvertWizard.tsx` | 1079 |
+| `frontend/src/mobile/MobileConvertWizard.tsx` | 1096 |
 | `frontend/src/mobile/MobileDeliveryPlanning.tsx` | 2427 |
 | `frontend/src/mobile/MobileFairReport.tsx` | 735 |
 | `frontend/src/mobile/MobileGantt.tsx` | 230 |
