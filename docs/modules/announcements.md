@@ -392,15 +392,32 @@ still 403 for that reader (`:146, 157, 164, 171, 180`).
 In place:
 - **Per-user, per-scope KV snapshot** of `/banner` in `SESSION_CACHE`, key
   `banner:v{version}:u{userId}:s{scope}` where `scope` is `human | system`
-  (`BannerScope`), TTL 60s
+  (`BannerScope`), TTL **300s**
   (`backend/src/services/configCache.ts`, `CONFIG_CACHE_TTL_SECONDS.banner`),
   applied in the `/banner` handler. Both slices take the cached path; the key
   carries the scope so the human and system payloads never answer each other.
   Response carries `x-config-cache: hit|miss|bypass` (`bypass` only when the KV
   version is unusable — unbound / erroring).
-- **Family-version invalidation** on every broadcast-shaped write — create
-  `:908`, patch `:1089`, remind `:1155`, delete `:1185`; per-user busts on ack
-  (`:1222`) and on a private notice (`personalNotice.ts:114-116`).
+- **TTL MUST exceed the poll.** The frontend polls at 60s
+  (`useAnnouncementBanner.ts` `POLL_MS`); a TTL == poll expires the entry exactly
+  as the next poll arrives, so every poll misses and rebuilds the whole table
+  (measured ~900ms/60s live 2026-08-18 even on the "cached" human slice). 300s =
+  5 polls leaves each poll landing inside a valid entry. Pinned by
+  `configCache.test.ts` ("banner TTL stays comfortably above the 60s poll").
+- **A MISS is one round-trip, not two.** The announcements read and the acks
+  read run in a `Promise.all` (independent reads of the same user), so a rebuild
+  no longer pays ~2 sequential ~450ms awaits.
+- **Family-version invalidation** on every broadcast-shaped write — create,
+  patch, remind, delete; per-user busts (BOTH scopes) on ack and on a private
+  notice (`personalNotice.ts`).
+- **Targeting edits bust the banner** so the 300s TTL never serves a stale
+  audience: `bustBannerForUser` (both scopes) is wired into the user PATCH
+  (`bannerTargetingChanged` = department_id / position_id / role_id / status /
+  department_ids / company_ids), PUT `/:id/companies`, and DELETE `/:id`; a
+  department DELETE bumps the banner family version (bulk multi-user un-assign).
+  The session bust alone did NOT cover this — it fires only on disable / role
+  change, while a dept-only / position-only / company-only edit changes
+  targeting without touching the session.
 - **One query per scope** app-wide via `announcementFeedKey` — the phone's
   pop-up, list, bell and badge share four cache entries between them.
 - **Windowed desktop list** past 40 rows (`Announcements.tsx:355-357`,
@@ -420,8 +437,8 @@ Watch as data grows:
   feed on every ~60s desktop poll (~874-1393ms live, 2026-08-18). The cache key
   is now dimensioned by scope (`…:s{scope}`), so the bell rides the same
   per-user snapshot the human slice does; the per-user bust clears both scopes.
-  The 30s mobile bell may therefore serve up to TTL-stale (60s) — the same trade
-  the human slice already makes.
+  With the 300s TTL, any poll may serve up to TTL-stale (300s) — bounded for
+  targeting by the bust wiring above, and the same trade the human slice makes.
 - **No `LIMIT` on any read.** `GET /` and `/banner` both select the whole table
   and filter in JS. `Announcements.tsx:222-224` already acknowledges this
   ("Capping it server-side is a separate follow-up"). `GET /:id/acks` and
