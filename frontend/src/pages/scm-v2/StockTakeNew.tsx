@@ -221,12 +221,7 @@ export const StockTakeNew = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Take Date *</span>
-              <DateField
-                fullWidth
-                value={takeDate}
-                onChange={(iso) => setTakeDate(iso)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={takeDate} onChange={(iso) => setTakeDate(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>

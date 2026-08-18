@@ -341,12 +341,7 @@ export const StockTransferNew = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Transfer Date *</span>
-              <DateField
-                fullWidth
-                value={transferDate}
-                onChange={(iso) => setTransferDate(iso)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={transferDate} onChange={(iso) => setTransferDate(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>

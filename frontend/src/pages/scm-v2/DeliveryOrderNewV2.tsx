@@ -165,14 +165,7 @@ function TextInput({
    in and out. */
   if (type === "date") {
     return (
-      <DateField
-        value={value}
-        onChange={onChange}
-        placeholder={placeholder}
-        disabled={disabled}
-        className={className}
-        fullWidth
-      />
+      <DateField value={value} onChange={onChange} placeholder={placeholder} disabled={disabled} className={className} fullWidth/>
     );
   }
   return (

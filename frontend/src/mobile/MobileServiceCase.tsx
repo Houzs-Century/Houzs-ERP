@@ -2783,15 +2783,13 @@ function fieldDisplay(f: EditField): string {
   return String(raw);
 }
 
-// A YYYY-MM-DD slice for <input type="date">; tolerates ISO / date-only.
+// The ISO YYYY-MM-DD DateField's `value` takes; display is DateField's job.
 function isoDateOnly(v: any): string {
-  if (!v) return "";
-  const s = String(v);
+  const s = String(v ?? "");
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
   if (m) return m[1];
   const dt = new Date(s);
-  if (isNaN(+dt)) return "";
-  return dt.toISOString().slice(0, 10);
+  return s && !isNaN(+dt) ? dt.toISOString().slice(0, 10) : "";
 }
 
 // ── Single-field inline edit row (Info stage panels) ──────────────
@@ -2863,11 +2861,7 @@ function EditRow({
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
-      ) : type === "date" ? (
-        /* DateField, not <input type="date">: the native one renders in the
-           PHONE's locale, so the same field read DD/MM/YYYY on one handset and
-           MM/DD/YYYY on another. Same ISO contract in and out. */
-        <DateField value={draft} onChange={setDraft} className={`fld-i${mono ? " money" : ""}`} fullWidth />
+      ) : type === "date" ? (<DateField value={draft} onChange={setDraft} className={`fld-i${mono ? " money" : ""}`} fullWidth />
       ) : (
         <input type="text" value={draft} onChange={(e) => setDraft(e.target.value)} className={`fld-i${mono ? " money" : ""}`} style={{ width: "100%", boxSizing: "border-box" }} />
       )}

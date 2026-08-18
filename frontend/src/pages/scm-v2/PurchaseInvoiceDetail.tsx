@@ -867,13 +867,7 @@ const SupplierCard = ({
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Due Date</span>
-            <DateField
-              fullWidth
-              className={styles.fieldInput}
-              value={draft.dueDate}
-              disabled={locked}
-              onChange={(iso) => onField('dueDate', iso)}
-            />
+            <DateField fullWidth className={styles.fieldInput} value={draft.dueDate} disabled={locked} onChange={(iso) => onField('dueDate', iso)}/>
           </label>
           <label className={styles.field} style={{ gridColumn: 'span 2' }}>
             <span className={styles.fieldLabel}>Notes</span>

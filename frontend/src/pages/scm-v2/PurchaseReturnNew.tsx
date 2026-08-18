@@ -376,13 +376,7 @@ export const PurchaseReturnNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Return Date *</span>
-              <DateField
-                fullWidth
-                value={returnDate}
-                onChange={(iso) => setReturnDate(iso)}
-                className={styles.fieldInput}
-                required
-              />
+              <DateField fullWidth value={returnDate} onChange={(iso) => setReturnDate(iso)} className={styles.fieldInput} required/>
             </label>
 
             <label className={styles.field}>

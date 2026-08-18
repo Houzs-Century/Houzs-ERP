@@ -343,9 +343,8 @@ function fmtDowntime(hours: number | null): string {
   return h > 0 ? `${d}d ${h}h` : `${d}d`;
 }
 
-/* Re-exported, not re-implemented. This used to print the STORAGE shape
-   (`2026-08-16 14:30`) straight at the user. LorryRecord.tsx imports the name
-   from here, so the name stays and the rule does not. */
+/* Re-exported, not re-implemented — this printed the STORAGE shape at the
+   user. LorryRecord.tsx imports the name from here. */
 export { fmtDateTime };
 
 export function Pill({ tone, children }: { tone: Tone; children: React.ReactNode }) {
@@ -1860,12 +1859,7 @@ export function ComponentsSection({ vehicleId, currentKm, components, onChanged 
             <div><label className={FIELD_LABEL}>Serial</label><input className={FIELD_CLS} value={serial} onChange={(e) => setSerial(e.target.value)} /></div>
             <div><label className={FIELD_LABEL}>Fitted km</label><input className={FIELD_CLS} value={fittedKm} onChange={(e) => setFittedKm(e.target.value)} inputMode="numeric" /></div>
             <div><label className={FIELD_LABEL}>Price RM</label><input className={FIELD_CLS} value={price} onChange={(e) => setPrice(e.target.value)} inputMode="decimal" /></div>
-            <div className="col-span-2"><label className={FIELD_LABEL}>Warranty until</label><DateField
-              fullWidth
-              className={FIELD_CLS}
-              value={warranty}
-              onChange={(iso) => setWarranty(iso)}
-            /></div>
+            <div className="col-span-2"><label className={FIELD_LABEL}>Warranty until</label><DateField fullWidth className={FIELD_CLS} value={warranty} onChange={(iso) => setWarranty(iso)} /></div>
           </div>
           {err && <div className="mt-2 text-[11px] text-err">{err}</div>}
           <div className="mt-3 flex gap-2">
@@ -2087,18 +2081,8 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
   return (
     <div className="mt-2 space-y-2 rounded-md border border-border bg-surface p-2.5">
       <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
-        <RenewalField label="Issue date"><DateField
-          fullWidth
-          value={issueDate}
-          onChange={(iso) => setIssueDate(iso)}
-          className={RENEWAL_FIELD_CLS}
-        /></RenewalField>
-        <RenewalField label="Expiry date *"><DateField
-          fullWidth
-          value={expiryDate}
-          onChange={(iso) => setExpiryDate(iso)}
-          className={RENEWAL_FIELD_CLS}
-        /></RenewalField>
+        <RenewalField label="Issue date"><DateField fullWidth value={issueDate} onChange={(iso) => setIssueDate(iso)} className={RENEWAL_FIELD_CLS}/></RenewalField>
+        <RenewalField label="Expiry date *"><DateField fullWidth value={expiryDate} onChange={(iso) => setExpiryDate(iso)} className={RENEWAL_FIELD_CLS} /></RenewalField>
         <RenewalField label="Document no"><input type="text" value={documentRef} onChange={(e) => setDocumentRef(e.target.value)} className={RENEWAL_FIELD_CLS} /></RenewalField>
         <RenewalField label="Cost (RM)"><input type="number" min="0" step="0.01" value={cost} onChange={(e) => setCost(e.target.value)} className={RENEWAL_FIELD_CLS} /></RenewalField>
         <RenewalField label="Owner"><input type="text" value={owner} onChange={(e) => setOwner(e.target.value)} placeholder="Who renews it" className={RENEWAL_FIELD_CLS} /></RenewalField>
@@ -2110,12 +2094,7 @@ export function AddRenewalForm({ lorryId, docType, onSaved }: {
               </select>
             </RenewalField>
             {result === "FAIL" && (
-              <RenewalField label="Reinspect by"><DateField
-                fullWidth
-                value={reinspect}
-                onChange={(iso) => setReinspect(iso)}
-                className={RENEWAL_FIELD_CLS}
-              /></RenewalField>
+              <RenewalField label="Reinspect by"><DateField fullWidth value={reinspect} onChange={(iso) => setReinspect(iso)} className={RENEWAL_FIELD_CLS} /></RenewalField>
             )}
           </>
         )}

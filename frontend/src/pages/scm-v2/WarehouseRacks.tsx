@@ -792,20 +792,8 @@ function HistoryTab({ warehouseId }: { warehouseId: string }) {
             </select>
             <ChevronDown className={styles.selectChevron} size={14} strokeWidth={1.75} />
           </span>
-          <DateField
-            fullWidth
-            className={styles.fieldInput}
-            style={{ width: 150 }}
-            value={from}
-            onChange={(iso) => setFrom(iso)}
-          />
-          <DateField
-            fullWidth
-            className={styles.fieldInput}
-            style={{ width: 150 }}
-            value={to}
-            onChange={(iso) => setTo(iso)}
-          />
+          <DateField fullWidth className={styles.fieldInput} style={{ width: 150 }} value={from} onChange={(iso) => setFrom(iso)}/>
+          <DateField fullWidth className={styles.fieldInput} style={{ width: 150 }} value={to} onChange={(iso) => setTo(iso)}/>
           {(type || from || to) && (
             <Button variant="ghost" onClick={() => { setType(''); setFrom(''); setTo(''); }}>Clear</Button>
           )}

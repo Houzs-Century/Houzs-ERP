@@ -4122,11 +4122,7 @@ const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
         <div>
           <label style={fieldLabel}>Effective from</label>
-          <DateField
-            value={effDate}
-            onChange={(iso) => setEffDate(iso)}
-            style={{ ...inputBox, fontFamily: 'var(--font-mono)' }}
-          />
+          <DateField value={effDate} onChange={(iso) => setEffDate(iso)} style={{ ...inputBox, fontFamily: 'var(--font-mono)' }}/>
         </div>
         <div>
           <label style={fieldLabel}>New price</label>

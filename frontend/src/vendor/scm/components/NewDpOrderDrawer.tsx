@@ -527,13 +527,7 @@ export const NewDpOrderDrawer = ({ onClose }: { onClose: () => void }) => {
                 <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>
                   Job date <span style={{ textTransform: 'none', color: 'var(--c-burnt)' }}>— required</span>
                 </div>
-                <DateField
-                  fullWidth
-                  className={styles.searchInput}
-                  style={inputStyle}
-                  value={jobDate}
-                  onChange={(iso) => setJobDate(iso)}
-                />
+                <DateField fullWidth className={styles.searchInput} style={inputStyle} value={jobDate} onChange={(iso) => setJobDate(iso)}/>
               </label>
             </>
           ) : (

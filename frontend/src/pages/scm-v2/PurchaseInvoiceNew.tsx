@@ -627,24 +627,14 @@ export const PurchaseInvoiceNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Invoice Date</span>
-              <DateField
-                fullWidth
-                value={invoiceDate}
-                onChange={(iso) => setInvoiceDate(iso)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={invoiceDate} onChange={(iso) => setInvoiceDate(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Due Date</span>
               {/* Commander 2026-05-29 — auto = Invoice Date + supplier term days
                   (default 30) until the operator edits it (dueTouched). */}
-              <DateField
-                fullWidth
-                value={dueDate}
-                onChange={(iso) => { setDueTouched(true); setDueDate(iso); }}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={dueDate} onChange={(iso) => { setDueTouched(true); setDueDate(iso); }} className={styles.fieldInput}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Notes</span>

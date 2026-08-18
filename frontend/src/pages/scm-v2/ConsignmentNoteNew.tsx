@@ -483,21 +483,11 @@ export const ConsignmentNoteNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Expected Delivery</span>
-              <DateField
-                fullWidth
-                className={styles.fieldInput}
-                value={expectedDeliveryAt}
-                onChange={(iso) => setExpectedDeliveryAt(iso)}
-              />
+              <DateField fullWidth className={styles.fieldInput} value={expectedDeliveryAt} onChange={(iso) => setExpectedDeliveryAt(iso)}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer Delivery Date</span>
-              <DateField
-                fullWidth
-                className={styles.fieldInput}
-                value={customerDeliveryDate}
-                onChange={(iso) => setCustomerDeliveryDate(iso)}
-              />
+              <DateField fullWidth className={styles.fieldInput} value={customerDeliveryDate} onChange={(iso) => setCustomerDeliveryDate(iso)}/>
             </label>
             <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Note</span>

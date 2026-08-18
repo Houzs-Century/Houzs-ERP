@@ -1513,13 +1513,7 @@ const SupplierCard = ({
           <div />
           <label className={styles.field}>
             <span className={styles.fieldLabel}>PO Date</span>
-            <DateField
-              fullWidth
-              className={styles.fieldInput}
-              value={draft.poDate}
-              disabled={locked}
-              onChange={(iso) => onField('poDate', iso)}
-            />
+            <DateField fullWidth className={styles.fieldInput} value={draft.poDate} disabled={locked} onChange={(iso) => onField('poDate', iso)}/>
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Expected Delivery</span>
@@ -1566,13 +1560,7 @@ const SupplierCard = ({
                   )
                 )}
               </span>
-              <DateField
-                fullWidth
-                className={styles.fieldInput}
-                value={draft[k]}
-                disabled={locked}
-                onChange={(iso) => onField(k, iso)}
-              />
+              <DateField fullWidth className={styles.fieldInput} value={draft[k]} disabled={locked} onChange={(iso) => onField(k, iso)}/>
             </label>
           ))}
           {/* PR #77 — Purchase Location: default ship-to warehouse for

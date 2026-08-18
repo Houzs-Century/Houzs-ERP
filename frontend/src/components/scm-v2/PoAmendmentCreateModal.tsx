@@ -278,12 +278,7 @@ export function PoAmendmentCreateModal({
                       </label>
                       <label className="block">
                         <span className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">Delivery date</span>
-                        <DateField
-                          fullWidth
-                          className={inputCls}
-                          value={d.deliveryDate}
-                          onChange={(iso) => setDraft(l, { deliveryDate: iso })}
-                        />
+                        <DateField fullWidth className={inputCls} value={d.deliveryDate} onChange={(iso) => setDraft(l, { deliveryDate: iso })}/>
                       </label>
                     </div>
                   )}
@@ -299,12 +294,7 @@ export function PoAmendmentCreateModal({
           <div className="grid grid-cols-2 gap-2 border-t border-border-subtle pt-3">
             <label className="block">
               <span className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">PO delivery date</span>
-              <DateField
-                fullWidth
-                className={inputCls}
-                value={effectiveExpectedAt}
-                onChange={(iso) => setExpectedAt(iso)}
-              />
+              <DateField fullWidth className={inputCls} value={effectiveExpectedAt} onChange={(iso) => setExpectedAt(iso)}/>
             </label>
             <label className="block">
               <span className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">Notes</span>

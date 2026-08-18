@@ -1157,21 +1157,10 @@ export function EntryPanel({
             <DateField fullWidth value={orderDate} onChange={(iso) => setOrderDate(iso)} className={inputCls}/>
           </Field>
           <Field label="Processing Date">
-            <DateField
-              fullWidth
-              value={processingDate}
-              onChange={(iso) => setProcessingDate(iso)}
-              className={inputCls}
-            />
+            <DateField fullWidth value={processingDate} onChange={(iso) => setProcessingDate(iso)} className={inputCls}/>
           </Field>
           <Field label="Delivery Date">
-            <DateField
-              fullWidth
-              value={deliveryDate}
-              onChange={(iso) => setDeliveryDate(iso)}
-              className={inputCls}
-              placeholder="—"
-            />
+            <DateField fullWidth value={deliveryDate} onChange={(iso) => setDeliveryDate(iso)} className={inputCls} placeholder="—"/>
           </Field>
           <Field label="Status">
             <input value={status1} onChange={(e) => setStatus1(e.target.value)} placeholder="—" className={inputCls} />

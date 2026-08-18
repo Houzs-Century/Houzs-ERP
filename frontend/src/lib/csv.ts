@@ -3,6 +3,11 @@
 // - CRLF line endings
 // - Field quoting per RFC 4180
 
+/* Re-exported at the CSV boundary so a caller has one import for "how a cell
+   leaves". The rule itself lives beside fmtDate — export is the INVERSE of
+   display, and both belong next to each other. */
+export { isoForExport } from "@2990s/shared";
+
 export interface CSVColumn<T> {
   key: string;
   label: string;

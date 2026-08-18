@@ -843,12 +843,7 @@ export const GrnNew = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Received Date</span>
-              <DateField
-                fullWidth
-                value={receivedAt}
-                onChange={(iso) => setReceivedAt(iso)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={receivedAt} onChange={(iso) => setReceivedAt(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>

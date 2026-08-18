@@ -98,14 +98,7 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
         />
       ) : (
         type === "date" ? (
-          <DateField
-            className={inputClass}
-            value={draft}
-            placeholder={placeholder}
-            onChange={setDraft}
-            onBlur={() => commit()}
-            fullWidth
-          />
+          <DateField className={inputClass} value={draft} placeholder={placeholder} onChange={setDraft} onBlur={() => commit()} fullWidth/>
         ) : (
         <input
           type={type}

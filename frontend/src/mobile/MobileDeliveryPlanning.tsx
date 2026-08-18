@@ -2154,11 +2154,7 @@ function DeliveryFieldsCard({
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">Customer delivered date</span>
-            <DateField
-              value={form.customerDeliveredDate}
-              onChange={(iso) => set("customerDeliveredDate", iso)}
-              style={inputStyle}
-            />
+            <DateField value={form.customerDeliveredDate} onChange={(iso) => set("customerDeliveredDate", iso)} style={inputStyle}/>
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">ETA / arriving port (EM/SG)</span>

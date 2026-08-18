@@ -424,13 +424,7 @@ export const PurchaseConsignmentOrderNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Expected Delivery *</span>
-              <DateField
-                fullWidth
-                value={expectedAt}
-                onChange={(iso) => setExpectedAt(iso)}
-                className={styles.fieldInput}
-                required
-              />
+              <DateField fullWidth value={expectedAt} onChange={(iso) => setExpectedAt(iso)} className={styles.fieldInput} required/>
             </label>
 
             <label className={styles.field}>

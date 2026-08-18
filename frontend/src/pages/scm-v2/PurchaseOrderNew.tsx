@@ -791,13 +791,7 @@ export const PurchaseOrderNew = () => {
             </label>
             <label className={styles.field}>
               <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Expected Delivery <span className={styles.req}>*</span></span>
-              <DateField
-                fullWidth
-                value={expectedAt}
-                onChange={(iso) => setExpectedAt(iso)}
-                className={styles.fieldInput}
-                required
-              />
+              <DateField fullWidth value={expectedAt} onChange={(iso) => setExpectedAt(iso)} className={styles.fieldInput} required/>
             </label>
 
             {/* Mig 0026 — supplier-revised header delivery dates. Optional; the
@@ -805,30 +799,15 @@ export const PurchaseOrderNew = () => {
                 carry their own revised date. */}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Supplier Date 2</span>
-              <DateField
-                fullWidth
-                value={supplierDeliveryDate2}
-                onChange={(iso) => setSupplierDeliveryDate2(iso)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={supplierDeliveryDate2} onChange={(iso) => setSupplierDeliveryDate2(iso)} className={styles.fieldInput}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Supplier Date 3</span>
-              <DateField
-                fullWidth
-                value={supplierDeliveryDate3}
-                onChange={(iso) => setSupplierDeliveryDate3(iso)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={supplierDeliveryDate3} onChange={(iso) => setSupplierDeliveryDate3(iso)} className={styles.fieldInput}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Supplier Date 4</span>
-              <DateField
-                fullWidth
-                value={supplierDeliveryDate4}
-                onChange={(iso) => setSupplierDeliveryDate4(iso)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={supplierDeliveryDate4} onChange={(iso) => setSupplierDeliveryDate4(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>

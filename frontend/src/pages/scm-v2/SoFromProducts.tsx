@@ -434,13 +434,7 @@ export const SoFromProducts = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Base date (processing window starts here)</span>
-              <DateField
-                fullWidth
-                value={baseDate}
-                min={todayMY()}
-                onChange={(iso) => setBaseDate(iso)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={baseDate} min={todayMY()} onChange={(iso) => setBaseDate(iso)} className={styles.fieldInput}/>
             </label>
           </div>
 
@@ -514,23 +508,11 @@ export const SoFromProducts = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Processing date</span>
-              <DateField
-                fullWidth
-                value={manualProc}
-                min={todayMY()}
-                onChange={(iso) => setManualProc(iso)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={manualProc} min={todayMY()} onChange={(iso) => setManualProc(iso)} className={styles.fieldInput}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Delivery date</span>
-              <DateField
-                fullWidth
-                value={manualDeliv}
-                min={todayMY()}
-                onChange={(iso) => setManualDeliv(iso)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={manualDeliv} min={todayMY()} onChange={(iso) => setManualDeliv(iso)} className={styles.fieldInput}/>
             </label>
           </div>
 

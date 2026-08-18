@@ -796,13 +796,7 @@ const SupplierCard = ({
           <div />
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Date</span>
-            <DateField
-              fullWidth
-              className={styles.fieldInput}
-              value={draft.poDate}
-              disabled={locked}
-              onChange={(iso) => onField('poDate', iso)}
-            />
+            <DateField fullWidth className={styles.fieldInput} value={draft.poDate} disabled={locked} onChange={(iso) => onField('poDate', iso)}/>
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Expected Delivery</span>

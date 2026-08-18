@@ -284,21 +284,9 @@ export const LorryCapacity = () => {
             />
             {activePreset === 'custom' && (
               <div className="inline-flex items-center gap-1.5">
-                <DateField
-                  fullWidth
-                  className={DATE_INPUT}
-                  value={customFrom}
-                  max={customTo}
-                  onChange={(iso) => setCustom('from', iso)}
-                />
+                <DateField fullWidth className={DATE_INPUT} value={customFrom} max={customTo} onChange={(iso) => setCustom('from', iso)}/>
                 <span className="text-[12px] text-ink-muted">–</span>
-                <DateField
-                  fullWidth
-                  className={DATE_INPUT}
-                  value={customTo}
-                  min={customFrom}
-                  onChange={(iso) => setCustom('to', iso)}
-                />
+                <DateField fullWidth className={DATE_INPUT} value={customTo} min={customFrom} onChange={(iso) => setCustom('to', iso)}/>
               </div>
             )}
             {/* Fleet segment */}

@@ -345,21 +345,11 @@ export const FairReport = () => {
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Date from</span>
-            <DateField
-              fullWidth
-              className={inputCls}
-              value={filters.dateFrom ?? ''}
-              onChange={(iso) => setParam('date_from', iso)}
-            />
+            <DateField fullWidth className={inputCls} value={filters.dateFrom ?? ''} onChange={(iso) => setParam('date_from', iso)}/>
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Date to</span>
-            <DateField
-              fullWidth
-              className={inputCls}
-              value={filters.dateTo ?? ''}
-              onChange={(iso) => setParam('date_to', iso)}
-            />
+            <DateField fullWidth className={inputCls} value={filters.dateTo ?? ''} onChange={(iso) => setParam('date_to', iso)}/>
           </label>
           <SelectFilter label="Branding" value={filters.branding ?? ''} onChange={(v) => setParam('branding', v)}
             options={opts.brandings.map((b) => ({ value: b, label: b }))} allLabel="All brands" />

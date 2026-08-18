@@ -63,23 +63,11 @@ export const Outstanding = () => {
           <div className={styles.actionsRow}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
               <span style={{ color: 'var(--fg-muted)' }}>From</span>
-              <DateField
-                fullWidth
-                className={styles.searchInput}
-                value={from}
-                onChange={(iso) => setFrom(iso)}
-                style={{ width: 150 }}
-              />
+              <DateField fullWidth className={styles.searchInput} value={from} onChange={(iso) => setFrom(iso)} style={{ width: 150 }}/>
             </label>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
               <span style={{ color: 'var(--fg-muted)' }}>To</span>
-              <DateField
-                fullWidth
-                className={styles.searchInput}
-                value={to}
-                onChange={(iso) => setTo(iso)}
-                style={{ width: 150 }}
-              />
+              <DateField fullWidth className={styles.searchInput} value={to} onChange={(iso) => setTo(iso)} style={{ width: 150 }}/>
             </label>
             <div className={styles.statusChips}>
               <FilterChip label="Outstanding" active={mode === 'outstanding'} onClick={() => setMode('outstanding')} />
