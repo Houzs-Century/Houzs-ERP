@@ -59,14 +59,47 @@ test("pagination correctness uses the real SO doc_no key when the list has no id
   assert.match(harness, /pagination row has no id or doc_no identity/);
 });
 
-test("PR CI executes and retains the full 100k PostgreSQL evidence run", async () => {
-  const workflow = await readFile(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
-  /* The job must be PR-gated. Asserted as a PROPERTY, not a format: the
-     condition was a one-liner and became a folded `if: >-` block when a
-     merge_group clause was added, which broke this assertion on origin/main
-     itself without anything about the gate changing. Match the job header, then
-     the expression anywhere in it. */
-  assert.match(workflow, /scale-postgres-contract:[\s\S]*?if:[\s\S]{0,600}?github\.event_name == 'pull_request'/);
+test("CI executes and retains the full 100k PostgreSQL evidence run", async () => {
+  /* THIS GUARD USED TO PIN `ci.yml` AND `github.event_name == 'pull_request'`,
+     and this file's own lesson (see the next test) is why that was wrong: a
+     guard that pins the SHAPE of a correct answer blocks every other correct
+     answer. On 2026-08-18 the job moved to `postsubmit.yml` — it had gone 37
+     runs without a single failure, so it was spending presubmit runner time
+     against a 20-slot ceiling to restate a known result (docs/ci-capacity-coe.md).
+     Nothing about the evidence changed, but the old regex failed.
+
+     The PROPERTY this test exists to protect is not "runs on pull_request". It
+     is: the 100k run EXECUTES once per change, in a workflow that actually
+     triggers, and its report is RETAINED as an artifact that cannot silently be
+     empty. That survives the job living in either workflow, so find it rather
+     than assume it. */
+  const workflows = Object.fromEntries(await Promise.all(
+    ["ci.yml", "postsubmit.yml"].map(async (name) => [
+      name,
+      await readFile(new URL(`../../.github/workflows/${name}`, import.meta.url), "utf8"),
+    ]),
+  ));
+
+  const owners = Object.entries(workflows).filter(([, yaml]) =>
+    /^ {2}scale-postgres-contract:$/m.test(yaml));
+  assert.equal(
+    owners.length, 1,
+    `scale-postgres-contract must be defined in exactly one workflow, found ${owners.length}: ` +
+      `${owners.map(([n]) => n).join(", ") || "none"}. Two copies means it runs twice; ` +
+      "zero means the 100k evidence run stopped happening and nothing said so.",
+  );
+  const [owner, workflow] = owners[0];
+
+  /* It has to be in a workflow that fires on its own, per change — not one that
+     only ever runs by hand. `pull_request` (pre-merge) and `push` (post-merge)
+     both satisfy "once per change"; `workflow_dispatch` alone does not. */
+  const triggers = workflow.slice(0, workflow.search(/^jobs:/m));
+  assert.match(
+    triggers, /^ {2}(pull_request|push):/m,
+    `${owner} defines scale-postgres-contract but is not triggered by pull_request or push, ` +
+      "so the evidence run would only happen when someone remembers to click it.",
+  );
+
   assert.match(workflow, /--orders=100000 --lines=100000 --skus=10000 --users=10000 --runs=20/);
   assert.match(workflow, /--json=artifacts\/scale-pg-100k\.json/);
   assert.match(workflow, /uses: actions\/upload-artifact@v4[\s\S]*if-no-files-found: error/);
