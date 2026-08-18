@@ -162,6 +162,10 @@ describe('the proceed refusal names the condition that failed', () => {
   test('an order that clears every condition is NOT refused — the outcomes did not move', async () => {
     const app = harness({ header: { postcode: '43300' } });
     const res = await proceed(app);
-    expect(res.status).not.toBe(422);
+    /* 200, not merely "not 422". This is the one case in the file that passes on
+       the pre-change tree, so it is the half of the proof carrying the "nothing
+       else moved" claim — and `not.toBe(422)` would also hold on a 500, which is
+       exactly how a proceed path that started throwing would slip past it. */
+    expect(res.status).toBe(200);
   });
 });

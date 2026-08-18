@@ -187,7 +187,6 @@ import { collectProcessingGateProblems, validationFailedBody } from '../shared/s
    router is at its file-size ceiling, and the three helpers were already a
    coherent unit: docNo in, gate FACTS out, judged by the shared pure rules. */
 import {
-  soDepositFacts,
   soProceedGateBlocked,
   soProcessingDateProblemsForDoc,
 } from '../lib/so-proceed-gate';
