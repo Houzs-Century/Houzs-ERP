@@ -107,16 +107,27 @@ describe("Cache API storage layer", () => {
     expect(await hitB!.json()).toEqual({ co: "two" });
   });
 
-  test("banner keys are per-user and bust hits ONLY the target user", async () => {
-    expect(bannerCacheKey(5, 101)).not.toBe(bannerCacheKey(5, 202));
-    expect(bannerCacheKey(5, 101)).not.toBe(bannerCacheKey(6, 101));
+  test("banner keys are per-user AND per-scope; a human entry never answers system", () => {
+    // per-user
+    expect(bannerCacheKey(5, 101, "human")).not.toBe(bannerCacheKey(5, 202, "human"));
+    // per-version
+    expect(bannerCacheKey(5, 101, "human")).not.toBe(bannerCacheKey(6, 101, "human"));
+    // per-SCOPE — the same user/version, different slice, must key apart, or
+    // one scope's payload could be served for the other.
+    expect(bannerCacheKey(5, 101, "human")).not.toBe(bannerCacheKey(5, 101, "system"));
+  });
 
+  test("bust hits ONLY the target user — and ALL of that user's scopes", async () => {
     const v = await configCacheVersion(kvEnv, "banner");
-    await kvEnv.SESSION_CACHE.put(bannerCacheKey(v!, 101), "payload-A");
-    await kvEnv.SESSION_CACHE.put(bannerCacheKey(v!, 202), "payload-B");
+    await kvEnv.SESSION_CACHE.put(bannerCacheKey(v!, 101, "human"), "A-human");
+    await kvEnv.SESSION_CACHE.put(bannerCacheKey(v!, 101, "system"), "A-system");
+    await kvEnv.SESSION_CACHE.put(bannerCacheKey(v!, 202, "human"), "B-human");
     await bustBannerForUser(kvEnv, 101);
-    expect(await kvEnv.SESSION_CACHE.get(bannerCacheKey(v!, 101))).toBeNull();
-    expect(await kvEnv.SESSION_CACHE.get(bannerCacheKey(v!, 202))).toBe("payload-B");
+    // both of user 101's slices are gone
+    expect(await kvEnv.SESSION_CACHE.get(bannerCacheKey(v!, 101, "human"))).toBeNull();
+    expect(await kvEnv.SESSION_CACHE.get(bannerCacheKey(v!, 101, "system"))).toBeNull();
+    // user 202 is untouched
+    expect(await kvEnv.SESSION_CACHE.get(bannerCacheKey(v!, 202, "human"))).toBe("B-human");
   });
 });
 
@@ -380,7 +391,7 @@ const USER_A = { id: 101, department_id: null, position_id: null, permissions: [
 const USER_B = { id: 202, department_id: null, position_id: null, permissions: [] as string[], permissions_set: new Set<string>() };
 const MANAGER = { id: 300, department_id: null, position_id: null, permissions: ["*"], permissions_set: new Set(["*"]) };
 
-async function getBanner(user: any, scope?: "system") {
+async function getBanner(user: any, scope?: "human" | "system") {
   bannerState.user = user;
   const path = scope
     ? `/api/announcements/banner?scope=${scope}`
@@ -439,9 +450,19 @@ describe("/api/announcements/banner — per-user cache", () => {
     expect(a2.cache).toBe("miss"); // busted → rebuilt
     expect(a2.ids).toEqual([]); // ...but the pop-up slice excludes it
     const aSys = await getBanner(USER_A, "system");
-    expect(aSys.cache).toBe("bypass"); // bell slice is a live read
+    expect(aSys.cache).toBe("miss"); // bell slice is cached now — first read misses
     expect(aSys.ids.length).toBe(1);
     const privateId = aSys.ids[0];
+
+    // The bell slice is now cached, keyed on scope: a 2nd system read HITS...
+    const aSys2 = await getBanner(USER_A, "system");
+    expect(aSys2.cache).toBe("hit");
+    expect(aSys2.ids).toEqual([privateId]);
+    // ...and that system entry NEVER answers the human slice for the same user:
+    // A's human read still hits its OWN (empty) entry, not the 1-id system one.
+    const aHuman = await getBanner(USER_A, "human");
+    expect(aHuman.cache).toBe("hit");
+    expect(aHuman.ids).toEqual([]);
 
     // Direction check: B's banner (cached or rebuilt) NEVER shows A's private
     // notice — and B's entry was untouched by A's bust.
