@@ -130,22 +130,24 @@ const MerchantMatrix = ({ companies, merchants, banks, onEdit }: {
                   const usable = banks.filter((b) => b.byCompany[String(co.id)]?.enabled);
                   return (
                     <td key={co.id} className={css.cellCompany}>
-                      <input type="checkbox" className={css.tick} checked={at.enabled}
-                        aria-label={`${m.code} for ${co.name}`}
-                        onChange={(e) => save.mutate({ companyId: co.id, code: m.code, enabled: e.target.checked })} />
-                      {at.enabled && (
-                        <>
-                          <select className={css.bankPick}
-                            aria-label={`${m.code} bank for ${co.name}`} value={at.bankAccountCode ?? ''}
-                            onChange={(e) => save.mutate({ companyId: co.id, code: m.code, bankAccountCode: e.target.value || null })}>
-                            <option value="">money lands in…</option>
-                            {usable.map((b) => (
-                              <option key={b.account_code} value={b.account_code}>{b.account_name}</option>
-                            ))}
-                          </select>
-                          {!at.bankAccountCode && <div className={css.warn}>company default</div>}
-                        </>
-                      )}
+                      <div className={css.cellInner}>
+                        <input type="checkbox" className={css.tick} checked={at.enabled}
+                          aria-label={`${m.code} for ${co.name}`}
+                          onChange={(e) => save.mutate({ companyId: co.id, code: m.code, enabled: e.target.checked })} />
+                        {at.enabled && (
+                          <>
+                            <select className={css.bankPick}
+                              aria-label={`${m.code} bank for ${co.name}`} value={at.bankAccountCode ?? ''}
+                              onChange={(e) => save.mutate({ companyId: co.id, code: m.code, bankAccountCode: e.target.value || null })}>
+                              <option value="">money lands in…</option>
+                              {usable.map((b) => (
+                                <option key={b.account_code} value={b.account_code}>{b.account_name}</option>
+                              ))}
+                            </select>
+                            {!at.bankAccountCode && <div className={css.warn}>company default</div>}
+                          </>
+                        )}
+                      </div>
                     </td>
                   );
                 })}
@@ -201,14 +203,16 @@ const BankMatrix = ({ companies, banks }: { companies: MaintenanceCompany[]; ban
                   }
                   return (
                     <td key={co.id} className={css.cellCompany}>
-                      <input type="checkbox" className={css.tick} checked={at.enabled}
-                        aria-label={`${b.account_code} for ${co.name}`}
-                        onChange={(e) => save.mutate({ companyId: co.id, accountCode: b.account_code, enabled: e.target.checked })} />
-                      {at.usedBy.length > 0 && (
-                        <div className={css.users}>
-                          {at.usedBy.map((code) => <span key={code} className={css.userChip}>{code}</span>)}
-                        </div>
-                      )}
+                      <div className={css.cellInner}>
+                        <input type="checkbox" className={css.tick} checked={at.enabled}
+                          aria-label={`${b.account_code} for ${co.name}`}
+                          onChange={(e) => save.mutate({ companyId: co.id, accountCode: b.account_code, enabled: e.target.checked })} />
+                        {at.usedBy.length > 0 && (
+                          <div className={css.users}>
+                            {at.usedBy.map((code) => <span key={code} className={css.userChip}>{code}</span>)}
+                          </div>
+                        )}
+                      </div>
                     </td>
                   );
                 })}
