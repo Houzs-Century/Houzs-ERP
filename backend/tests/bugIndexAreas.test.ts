@@ -33,6 +33,7 @@
    according to this repo's vocabulary, not English.** */
 import { test } from "vitest";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,8 +42,20 @@ const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", ".
 const GEN = path.join(ROOT, "backend/scripts/gen-bug-index.mjs");
 const INDEX = path.join(ROOT, "docs/generated/bug-index.md");
 
+/* The index is GENERATED and, since 2026-08-18, no longer tracked — a committed
+   copy of a file every PR rewrites made every pair of concurrent PRs conflict.
+   So this test builds the thing it reads instead of assuming someone committed
+   it. That changes nothing about WHAT is asserted below: the subject was always
+   the classifier, and the file was only ever how its output was reached. */
+function ensureIndex(): void {
+  if (fs.existsSync(INDEX)) return;
+  execFileSync(process.execPath, [GEN], { cwd: ROOT, stdio: "pipe" });
+  assert.ok(fs.existsSync(INDEX), "the generator ran but produced no index — that is a broken generator.");
+}
+
 /** area -> [titles], read out of the generated index. */
 function indexByArea(): Map<string, string[]> {
+  ensureIndex();
   const out = new Map<string, string[]>();
   let area = "";
   for (const line of fs.readFileSync(INDEX, "utf8").split(/\r?\n/)) {

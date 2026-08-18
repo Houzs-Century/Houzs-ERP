@@ -93,7 +93,7 @@ import { soPaidCenti, soBalanceCenti, soPaidInputsOf } from '../shared/so-outsta
 import { buildOneShotMints, type OneShotMintReq } from '../lib/one-shot-mint';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { canonicalizeMyState } from '../lib/canonical-state';
-import { deriveLineBrandingFromProduct } from '../lib/derive-line-branding';
+import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines } from '../lib/derive-line-branding';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { correctedSizeDescription, loadSizeSkuMap } from '../lib/size-variant-description';
 import {
@@ -5360,6 +5360,27 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     await deriveLineBrandingFromProduct(sb, rowsWithDoc as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>, activeCompanyId(c) ?? null);
     const { error: iErr } = await sb.from('mfg_sales_order_items').insert(stampCo(rowsWithDoc));
     if (iErr) { await rollbackPwpClaims(); await sb.from('mfg_sales_orders').delete().eq('doc_no', docNo); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
+    /* Stamp the HEADER branding from the representative line's SKU (owner
+       2026-08-18, "我要表头啊"). The insert above wrote `body.branding ?? null`
+       and no shipped client sends that field, so every ERP-created order landed
+       with a blank header — which is exactly the hole the 2990 backfill had to
+       fill for 100 orders, and would have re-opened on the next order created.
+       Only ever fills a BLANK header: an explicit body.branding is the caller's
+       decision and is not second-guessed. A null result leaves it blank rather
+       than inventing one. */
+    if (String((body.branding as string | null | undefined) ?? '').trim() === '') {
+      const headerBrand = await deriveHeaderBrandingFromLines(
+        sb,
+        rowsWithDoc as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>,
+        activeCompanyId(c) ?? null,
+      );
+      if (headerBrand) {
+        await scopeToCompany(
+          sb.from('mfg_sales_orders').update({ branding: headerBrand }).eq('doc_no', docNo),
+          c,
+        );
+      }
+    }
     /* Commander 2026-05-29 — re-roll the header through recomputeTotals so a
        matched sofa SET picks up its MASTER combo cost (spread across the lines).
        The inline rollup above set per-module costs; this corrects them + the
