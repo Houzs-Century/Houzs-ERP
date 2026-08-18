@@ -270,7 +270,12 @@ function handlerSlice(src: string, label: string, startMarker: string): string {
   expect(start, `handler start marker not found in ${label}: ${startMarker}`).toBeGreaterThan(-1);
   const rest = src.slice(start + startMarker.length);
   // To the handler's own closing `});` / `};` at column 0 — ONE handler's body.
-  const end = rest.search(/\n\}\)?;\n/);
+  /* `\r?` is not decoration: this repo is developed on Windows, where the
+     checkout is CRLF, so the LF-only form matched nothing and every
+     assertion below died on "handler end not found". It failed LOUDLY
+     rather than passing empty — but only on Windows, so CI stayed green
+     while the local suite was unusable. Same family as #2062. */
+  const end = rest.search(/\r?\n\}\)?;\r?\n/);
   expect(end, `handler end not found in ${label} for: ${startMarker}`).toBeGreaterThan(-1);
   const slice = rest.slice(0, end);
   expect(slice.trim().length, `empty handler slice in ${label}`).toBeGreaterThan(0);
