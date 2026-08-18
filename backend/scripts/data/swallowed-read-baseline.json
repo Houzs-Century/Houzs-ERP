@@ -238,7 +238,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/consignment-orders.ts": {
-      "reads": 25,
+      "reads": 24,
       "catches": 2
     },
     "backend/src/scm/routes/consignment-returns.ts": {
@@ -318,11 +318,11 @@
       "catches": 0
     },
     "backend/src/scm/routes/mfg-purchase-orders.ts": {
-      "reads": 49,
+      "reads": 48,
       "catches": 0
     },
     "backend/src/scm/routes/mfg-sales-orders.ts": {
-      "reads": 84,
+      "reads": 82,
       "catches": 2
     },
     "backend/src/scm/routes/mrp.ts": {

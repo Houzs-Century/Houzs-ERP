@@ -60,7 +60,10 @@
     "audit:phone-country": "node scripts/find-wrong-country-phones.mjs",
     "audit:sales-org": "node scripts/list-sales.mjs",
     "audit:overpaid-pi": "node scripts/report-overpaid-purchase-invoices.mjs",
-    "audit:branding-vocabulary": "node scripts/check-branding-vocabulary.mjs"
+    "audit:branding-vocabulary": "node scripts/check-branding-vocabulary.mjs",
+    "gen:glossary": "node scripts/gen-glossary.mjs",
+    "audit:glossary": "node scripts/gen-glossary.mjs --check",
+    "audit:vocabulary": "node scripts/check-vocabulary.mjs"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.108.2",
