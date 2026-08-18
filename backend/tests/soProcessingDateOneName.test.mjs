@@ -47,7 +47,8 @@ const DECLARATION = path.join("lib", "so-processing-date.mjs");
    whole statement rather than one column. Deleting it in favour of the generic
    one would trade a message that teaches for a message that only forbids. */
 const REGISTRY = path.join("lib", "vocabulary.mjs");
-const MAY_DECLARE = new Set([DECLARATION, REGISTRY]);
+const CATALOGUE = path.join("lib", "drift-catalogue.mjs");
+const MAY_DECLARE = new Set([DECLARATION, REGISTRY, CATALOGUE]);
 
 /* Source with comments removed, character-identical to the helper
  *  tests/soDatePairWiring.test.ts uses for the same job. A name that appears

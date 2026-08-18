@@ -23,6 +23,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { VOCABULARY, ALWAYS_HISTORICAL } from "./lib/vocabulary.mjs";
+import { DRIFT_CATALOGUE } from "./lib/drift-catalogue.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const OUT = path.join(here, "..", "..", "docs", "generated", "GLOSSARY.md");
@@ -64,6 +65,20 @@ const render = () => {
       L.push("");
     }
   }
+  L.push("## Concepts still carrying several spellings — the unification worklist");
+  L.push("");
+  L.push("Found by the 2026-08-18 full-codebase screening. These are DOCUMENTED, not yet");
+  L.push("enforced: each is retired one concept at a time (a migration per concept, batch 2).");
+  L.push("Until then, prefer the **Target** spelling in new code.");
+  L.push("");
+  L.push("| Sev | Concept | Target | Also seen as |");
+  L.push("| --- | --- | --- | --- |");
+  const sevOrder = { high: 0, med: 1, low: 2 };
+  for (const c of [...DRIFT_CATALOGUE].sort((a, b) => (sevOrder[a.severity] ?? 3) - (sevOrder[b.severity] ?? 3))) {
+    const also = c.seen.filter((x) => x.split(" ")[0] !== c.canonical).map((x) => "`" + x.split(" ")[0] + "`").slice(0, 5).join(" ");
+    L.push(`| ${c.severity} | ${c.concept} | \`${c.canonical}\` | ${also} |`);
+  }
+  L.push("");
   L.push("## Where a retired spelling is not a defect");
   L.push("");
   for (const h of ALWAYS_HISTORICAL) L.push(`- \`${h}\` — records the rename it performed`);
@@ -83,9 +98,9 @@ if (CHECK) {
     );
     process.exit(1);
   }
-  console.log(`GLOSSARY.md is current — ${VOCABULARY.length} concept(s).`);
+  console.log(`GLOSSARY.md is current — ${VOCABULARY.length} enforced + ${DRIFT_CATALOGUE.length} documented concept(s).`);
 } else {
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
   fs.writeFileSync(OUT, body);
-  console.log(`wrote docs/generated/GLOSSARY.md — ${VOCABULARY.length} concept(s)`);
+  console.log(`wrote docs/generated/GLOSSARY.md — ${VOCABULARY.length} enforced + ${DRIFT_CATALOGUE.length} documented concept(s)`);
 }

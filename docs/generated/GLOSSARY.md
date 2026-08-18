@@ -24,7 +24,7 @@ fails when one appears in CODE.
 
 The date the order is prepared on. It had SEVEN names; migration 0286 retired the column `internal_expected_dd`, which no longer exists — code naming it queries nothing and postgres fails the WHOLE statement with 42703. The camelCase PAYLOAD key `internalExpectedDd` is a DIFFERENT thing and is NOT retired: the status route still accepts it from old clients on purpose. `proceeded_at` is a SECOND STORAGE the application no longer reads, but the column is still there and diagnostics may read it. It is NOT a production date.
 
-Entitled to spell a retired name in code: `scripts/lib/so-processing-date.mjs`, `scripts/lib/vocabulary.mjs`, `src/scm/shared/so-processing-date.ts`.
+Entitled to spell a retired name in code: `scripts/lib/so-processing-date.mjs`, `scripts/lib/vocabulary.mjs`, `scripts/lib/drift-catalogue.mjs`, `src/scm/shared/so-processing-date.ts`.
 
 ### Transfer (document conversion)
 
@@ -33,6 +33,48 @@ One rule generates every transfer label. "Transfer to" names the DOCUMENT a docu
 ### Branding
 
 The label rule: SOFA is the company's house brand (ZANOTTI / 2990s Sofa) and does not read the line; MATTRESS is the SKU's branding, falling back to the category noun. The VALUES are maintained by the owner in PMS -> Project Maintenance -> BRANDS (`project_brands`, per company) and checked by `audit:branding-vocabulary`.
+
+## Concepts still carrying several spellings — the unification worklist
+
+Found by the 2026-08-18 full-codebase screening. These are DOCUMENTED, not yet
+enforced: each is retired one concept at a time (a migration per concept, batch 2).
+Until then, prefer the **Target** spelling in new code.
+
+| Sev | Concept | Target | Also seen as |
+| --- | --- | --- | --- |
+| high | Money minor unit (1/100 MYR) | `*_centi` | `*_sen` `*_cents` `amountSen` |
+| high | Salesperson / sales rep | `salesperson_id` | `agent` `sales_reps` `sales_agent` `salesRep` |
+| high | Delivery date (customer promise / per-line / effective) | `customer_delivery_date (header) / line_delivery_date (line)` | `customer_delivery_date` `line_delivery_date` `amended_delivery_date` `expected_at` `supplier_delivery_date_2/3/4` |
+| high | Processing date (release-to-purchasing signal) | `processing_date` | `internal_expected_dd` `proceeded_at` `PDate` `target_date` `so_processing_date` |
+| high | Customer's own reference / their PO number | `customer_so_no` | `po_doc_no` `customer_po` `ToPONo` `ref` `poRef` |
+| high | Product / item / material code (SKU) | `item_code` | `material_code` `product_code` `code` `sku` |
+| high | Warehouse / location an order ships from | `warehouse_id` | `sales_location` `purchase_location_id` `Location` `'stock` `primaryWh` |
+| high | Customer / debtor | `debtor_code / debtor_name` | `debtor_code` `customer_id` `DebtorName` `hasCustomerName` `recipientName` |
+| high | Supplier / creditor | `creditor_code / creditor_name` | `creditor_code` `supplier` `main_supplier` `payee_name` `company_name` |
+| med | Product brand / branding | `branding` | `brand` `item_brand` `first_item_branding` `SOUDF_BRANDING` |
+| med | Venue | `venue (text) + venue_source for provenance` | `venue` `venue_id` `venue_name` `project_venues` `scm.venues` |
+| med | Sofa fabric / colour code (variant axis) | `fabricCode` | `colorCode` `colourCode` `fabricColor` `fabric_code` `colourLabel` |
+| med | Payment method vocabulary | `cash / transfer / merchant / installment` | `merchant` `credit` `Cash` `method` |
+| med | Payment merchant / acquirer / bank | `merchant_provider` | `payment_merchant` `bank` `acquirerCode` `display_name` |
+| med | Document-number suffix convention | `*_no (choose ONE suffix project-wide)` | `*_number` `*_no` `doc_no` `*_doc_no` |
+| med | Quantity (received / accepted) | `qty (+ explicit accepted/received qualifier)` | `qty` `qty_accepted` `received_qty` `invoiced_qty` `qty_returned` |
+| med | Stock readiness status | `stock_status` | `stock_state` `stock_status_effective` `stock_remark` |
+| med | Free-text note / remark | `note` | `notes` `remark` `remark2` `narration` |
+| med | Batch / dye-lot (overloaded onto PO number) | `batch_no` | `allocated_batch_no` `committed_po_batch_no` `expectedBatchNo` `poNumber` |
+| med | Address (structured vs single) | `address1..4` | `address1` `addr1..4` `address` `ship_to_address` `venue_address` |
+| med | Customer / address state | `customer_state` | `state` `location` |
+| med | Transport cost slug | `transport_fee` | `transport_pct` `auto:transport` `transport_setup_dismantle` |
+| med | 2990 company / brand name (master data) | `2990` | `2990s` `2990's` `2990s` |
+| med | Sofa seat-height axis | `seatHeight` | `depth` |
+| med | Sofa compartment / module code | `compartment` | `moduleId` `compartmentId` `buildKey` `cells[].moduleId` |
+| med | Shipped-status display label (homonym collision) | `distinguish the two labels` | `SO.SHIPPED` `DO.DISPATCHED` |
+| low | Sofa leg-height axis | `legHeight` | `sofaLegHeight` |
+| low | Exchange / FX rate | `exchange_rate` | `rate_to_myr` `operatorRate` `fxRate` |
+| low | Payment slip / proof / R2 media key | `*_r2_key (per artifact type)` | `slip_key` `podKey` `photoRef` `logoR2Key` |
+| low | Paid total (running paid figure) | `paid_total_centi` | `paid_centi` `paidCenti` |
+| low | Installment / online payment sub-fields | `installment_months / online_type` | `installment_plan` `online_type` |
+| low | Amendment SO_APPROVED label | `one label per context, documented` | `'SO` `'Applied'` |
+| low | ASSR case number vs SO document number (overload) | `assr_no (cases) / doc_no (SO)` | `assr_no` `doc_no` `case_no` |
 
 ## Where a retired spelling is not a defect
 

@@ -64,6 +64,7 @@ export const VOCABULARY = [
     allow: [
       "scripts/lib/so-processing-date.mjs",
       "scripts/lib/vocabulary.mjs",
+      "scripts/lib/drift-catalogue.mjs",
       "src/scm/shared/so-processing-date.ts",
     ],
     note:
