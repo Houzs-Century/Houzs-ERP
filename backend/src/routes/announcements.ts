@@ -645,9 +645,29 @@ app.get("/banner", async (c) => {
   }
 
   const allowed = allowedCompanyIds(c);
-  const res = await c.env.DB
-    .prepare(`SELECT * FROM announcements ORDER BY created_at DESC`)
-    .all<AnnouncementRow>();
+  // The two reads are independent — the feed does not depend on the acks, and
+  // the acks are keyed on user id alone — so a MISS pays ONE round-trip, not
+  // two sequential ~450ms awaits (~900ms). Behaviour-identical: an error in
+  // either still rejects the handler, exactly as the sequential awaits did.
+  // This user's ack rows (id + when they acked): the popup gate re-pops a
+  // notice the user has NOT acked, OR has acked but was reminded AFTER that
+  // ack. Read dual-keyed (pg folds snake -> camel on read).
+  const [res, ackRes] = await Promise.all([
+    c.env.DB
+      .prepare(`SELECT * FROM announcements ORDER BY created_at DESC`)
+      .all<AnnouncementRow>(),
+    c.env.DB
+      .prepare(
+        "SELECT announcement_id, acked_at FROM announcement_acks WHERE user_id = ?",
+      )
+      .bind(user.id)
+      .all<{
+        announcement_id?: string;
+        announcementId?: string;
+        acked_at?: string | null;
+        ackedAt?: string | null;
+      }>(),
+  ]);
   const active = (res.results ?? []).filter(
     (r) =>
       (systemOnly ? !!r.source : !r.source) &&
@@ -662,19 +682,6 @@ app.get("/banner", async (c) => {
       ),
   );
 
-  // This user's ack rows (id + when they acked). The popup gate re-pops a
-  // notice the user has NOT acked, OR has acked but was reminded AFTER that
-  // ack. Read dual-keyed (pg folds snake -> camel on read).
-  const ackRes = await c.env.DB.prepare(
-    "SELECT announcement_id, acked_at FROM announcement_acks WHERE user_id = ?",
-  )
-    .bind(user.id)
-    .all<{
-      announcement_id?: string;
-      announcementId?: string;
-      acked_at?: string | null;
-      ackedAt?: string | null;
-    }>();
   const ackedAtById = new Map<string, string | null>();
   for (const a of ackRes.results ?? []) {
     const id = a.announcementId ?? a.announcement_id;

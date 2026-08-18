@@ -50,9 +50,19 @@ export const CONFIG_CACHE_TTL_SECONDS: Record<ConfigCacheFamily, number> = {
   // recomputes prices server-side from the live DB (mfg-pricing-recompute
   // reads the table directly, never this HTTP cache).
   maintcfg: 120,
-  // Per-user banner snapshot. 60s = the same freshness window sessionCache
-  // already grants role/department edits, and the frontend polls at 60s.
-  banner: 60,
+  // Per-user banner snapshot. TTL MUST stay COMFORTABLY ABOVE the frontend
+  // poll (60s, useAnnouncementBanner.ts POLL_MS) — do NOT lower it back to 60.
+  // A TTL == poll means the entry expires exactly as the next poll arrives, so
+  // every poll MISSES and rebuilds the full feed: measured live 2026-08-18 at
+  // ~874-984ms on EVERY 60s human poll despite the "cache" being configured
+  // (the neighbouring presence note records the same KV-consistency failure at
+  // 15s). 300s (5 polls) leaves every poll landing inside a valid entry even
+  // with KV propagation lag, matching `branding`. The catch this buys: the
+  // banner filters by department_id/position_id/company grants (userCanSee /
+  // companyCanSee), so a longer TTL would serve STALE TARGETING unless those
+  // edits bust the entry — they do now, via bustBannerForUser wired into the
+  // user PATCH (dept/position/role/company/status) and DELETE paths.
+  banner: 300,
   // Shared who's-online row list. Short by design: presence must stay live, and
   // this rides the EDGE-cache tier (caches.default, read-your-write in the same
   // colo) NOT the KV tier — a 15s KV entry never survives KV's up-to-60s

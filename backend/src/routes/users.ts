@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { createSession, generateToken, hashPassword, isoIn } from "../services/auth";
 import { bustUserSessions } from "../services/sessionCache";
+import { bustBannerForUser } from "../services/configCache";
 import { validatePasswordStrength } from "../services/passwordStrength";
 import {
   requirePermission,
@@ -800,6 +801,10 @@ app.put("/:id/companies", requirePermission("users.manage"), async (c) => {
   if (target.length === 0) return c.json({ error: "User not found" }, 404);
 
   const valid = await setUserCompanies(c, id, incoming as number[]);
+  // Company grants drive the banner's companyCanSee filter — clear this user's
+  // snapshot (both scopes) so a poll inside the 300s TTL cannot serve the old
+  // company audience.
+  await bustBannerForUser(c.env, id);
   return c.json({ ok: true, companies: valid });
 });
 
@@ -1802,6 +1807,25 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
     await syncSalesRepFromUser(c.env, id, me.id);
   }
 
+  // The announcements banner filters by department_id / position_id / company
+  // grants (userCanSee / companyCanSee), and its KV snapshot now lives 300s
+  // (> the 60s poll) — so any edit that moves THIS user between audiences must
+  // clear their banner (BOTH scopes), or a poll would serve up to 5 minutes of
+  // stale targeting. Session bust alone does not cover this: it fires only on
+  // disable / role change, while a dept-only / position-only / company-only
+  // edit changes targeting without touching the session. Covers every such
+  // field in ONE place. Best-effort (bustBannerForUser swallows KV trouble).
+  const bannerTargetingChanged =
+    "department_id" in set ||
+    "position_id" in set ||
+    "role_id" in set ||
+    "status" in set ||
+    finalDeptIds !== null ||
+    hasCompanyChange;
+  if (bannerTargetingChanged) {
+    await bustBannerForUser(c.env, id);
+  }
+
   const changedKeys = [
     ...Object.keys(auditedSet),
     ...(finalDeptIds !== null ? ["department_ids"] : []),
@@ -1878,6 +1902,9 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
   // (reads the live tokens) so a deleted/disabled user can't ride a still-cached
   // session for up to 60s.
   await bustUserSessions(c.env, id);
+  // A deleted/disabled user leaves the audience — clear their banner snapshot
+  // (both scopes) so nothing rides the 300s TTL after they are gone.
+  await bustBannerForUser(c.env, id);
   await db.delete(sessions).where(eq(sessions.user_id, id));
 
   // Hard-delete path — either explicit ?hard=1 or never-joined user.
