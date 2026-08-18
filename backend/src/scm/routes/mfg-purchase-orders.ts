@@ -81,6 +81,7 @@ import { supabaseAuth } from '../middleware/auth';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { PO_LINE_AUDIT_FIELDS, PO_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { computeMrp } from './mrp';
+import { eager } from '../lib/concurrency';
 import { resolvePoSoCoverageForPos, resolveDeliveredDosForPos } from './po-so-coverage';
 import type { Env, Variables } from '../env';
 
@@ -496,10 +497,6 @@ mfgPurchaseOrders.get('/', async (c) => {
     const from = c.req.query('from'); if (from) q = q.gte('po_date', from);
     const to = c.req.query('to'); if (to) q = q.lte('po_date', to);
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
-    const res = await q;
-    data = res.data;
-    error = res.error;
-    total = res.count ?? (res.data?.length ?? 0);
 
     /* Status counts mirror the FE filter-pill buckets (draft / outstanding /
        open / partial / received / cancelled) over the SAME company + supplier
@@ -511,7 +508,15 @@ mfgPurchaseOrders.get('/', async (c) => {
       cq = scopeToCompany(cq, c);
       return cq;
     };
-    const [allC, draftC, outstandingC, openC, partialC, receivedC, cancelledC] = await Promise.all([
+    /* PERF (2026-08-17). These seven head-only counts read NOTHING the page
+       query produces — they key off company + supplierId only, which is why
+       they can legally ignore the status/search/page filters at all. They were
+       nonetheless issued only after the page query had come back, so the PO
+       list paid a whole extra serial round trip that the Sales Order list
+       already avoids. ISSUED here, AWAITED at the original site below: the
+       query text, the count semantics and the order in which an error surfaces
+       (page query first, counts second) are all unchanged. */
+    const countsProm = eager(Promise.all([
       countBase(),
       countBase().in('status', PO_STATUS_BUCKETS.draft),
       countBase().in('status', PO_STATUS_BUCKETS.outstanding),
@@ -519,7 +524,14 @@ mfgPurchaseOrders.get('/', async (c) => {
       countBase().in('status', PO_STATUS_BUCKETS.partial),
       countBase().in('status', PO_STATUS_BUCKETS.received),
       countBase().in('status', PO_STATUS_BUCKETS.cancelled),
-    ]);
+    ]));
+
+    const res = await q;
+    data = res.data;
+    error = res.error;
+    total = res.count ?? (res.data?.length ?? 0);
+
+    const [allC, draftC, outstandingC, openC, partialC, receivedC, cancelledC] = (await countsProm)();
     // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
     const counted = readStatusCounts({ all: allC, draft: draftC, outstanding: outstandingC, open: openC, partial: partialC, received: receivedC, cancelled: cancelledC });
     if (counted.ok) statusCounts = counted.counts; else countError = counted.reason;

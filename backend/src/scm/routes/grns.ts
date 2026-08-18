@@ -73,6 +73,7 @@ import { recordEntityAudit, assertAuditWritable, auditUnavailableBody, diffField
 import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
+import { eager } from '../lib/concurrency';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
 grns.use('*', supabaseAuth);
@@ -1115,10 +1116,6 @@ grns.get('/', async (c) => {
     const from = c.req.query('from'); if (from) q = q.gte('received_at', from);
     const to = c.req.query('to'); if (to) q = q.lte('received_at', to);
     q = q.range(page * pageSize, page * pageSize + pageSize - 1);
-    const res = await q;
-    data = res.data;
-    error = res.error;
-    total = res.count ?? (res.data?.length ?? 0);
 
     /* Status counts mirror the FE filter-pill buckets (draft / posted /
        cancelled) over the SAME company + supplier filters but WITHOUT status /
@@ -1129,12 +1126,26 @@ grns.get('/', async (c) => {
       if (supplierId) cq = cq.eq('supplier_id', supplierId);
       return cq;
     };
-    const [allC, draftC, postedC, cancelledC] = await Promise.all([
+    /* PERF (2026-08-17). These four head-only counts read NOTHING the page
+       query produces — company + supplierId only, which is exactly why they may
+       ignore the status/search/page filters. They were nonetheless issued only
+       after the page query had returned, costing one extra serial round trip.
+       ISSUED here, AWAITED at the original site below: query text, count
+       semantics and the order in which an error surfaces (page query first) are
+       all unchanged. */
+    const countsProm = eager(Promise.all([
       countBase(),
       countBase().in('status', GRN_STATUS_BUCKETS.draft),
       countBase().in('status', GRN_STATUS_BUCKETS.posted),
       countBase().in('status', GRN_STATUS_BUCKETS.cancelled),
-    ]);
+    ]));
+
+    const res = await q;
+    data = res.data;
+    error = res.error;
+    total = res.count ?? (res.data?.length ?? 0);
+
+    const [allC, draftC, postedC, cancelledC] = (await countsProm)();
     // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
     const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, cancelled: cancelledC });
     if (counted.ok) statusCounts = counted.counts; else countError = counted.reason;
@@ -1152,6 +1163,23 @@ grns.get('/', async (c) => {
   // fully_returned).
   const rows = (data ?? []) as Array<{ id: string } & Record<string, unknown>>;
   const ids = rows.map((g) => g.id);
+  /* PERF (2026-08-17). The Assigned-SO / Delivered wave below takes ONE input —
+     the page's purchase_order_ids — and that is known right here, on `rows`. It
+     ran last all the same, so its longest read (computeMrp, ~100 round trips of
+     its own inside resolvePoSoCoveragePerSkuForPos) started only after the
+     grn_items page AND the per-line downstream lookup had both finished, neither
+     of which it consumes. ISSUED here, AWAITED at its original site below, so
+     both resolvers see the same poIds and return the same maps.
+
+     One consequence, stated rather than hidden: when the grn_items read fails,
+     the 500 below now returns with these reads already in flight. They are
+     read-only and their results are discarded; `eager` holds the rejection so a
+     discarded failure cannot become an unhandled rejection. */
+  const poIdsForPage = rows.map((g) => (g as { purchase_order_id?: string | null }).purchase_order_id);
+  const coverageProm = eager(Promise.all([
+    resolvePoSoCoveragePerSkuForPos(sb, c, poIdsForPage),
+    resolveDeliveredByCodeForPos(sb, c, poIdsForPage),
+  ]));
   // Migration 0106 — collect each GRN's lines for the lock/convert flags.
   const linesByGrn = new Map<string, Array<{ qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>>();
   // Owner 2026-07-02 — "Transfer To" list column: map each grn_item → its GRN so
@@ -1207,13 +1235,9 @@ grns.get('/', async (c) => {
      lines), 2026-08-02): the drill matches assignments into the GRN's lines by
      material_code, so a partial-receipt GRN's header must not show parent-PO
      assignments its lines cannot explain. */
-  const poIdsForPage = rows.map((g) => (g as { purchase_order_id?: string | null }).purchase_order_id);
   /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped the goods —
-     per CODE, filtered the same way. One wave, same poIds. */
-  const [originsByPo, deliveredByPoCode] = await Promise.all([
-    resolvePoSoCoveragePerSkuForPos(sb, c, poIdsForPage),
-    resolveDeliveredByCodeForPos(sb, c, poIdsForPage),
-  ]);
+     per CODE, filtered the same way. One wave, same poIds (issued above). */
+  const [originsByPo, deliveredByPoCode] = (await coverageProm)();
   const grns = rows.map((g) => {
     const poId = (g as { purchase_order_id?: string | null }).purchase_order_id ?? null;
     const grnCodes = codesByGrn.get(g.id) ?? new Set<string>();
