@@ -2542,7 +2542,7 @@ export async function createDraftPosFromPicks(
     userId: string;
     /** The company the proposal was raised under. Undefined → unresolved, and
      *  the stamping no-ops exactly as it does pre-migration. */
-    companyId?: number | null;
+    companyId: number | null;
     allowedCompanyIds?: number[] | null;
     /** MUST be the company CODE string, never the company row. companyDocPrefix
      *  stringifies whatever it is handed: the scan job's rebuilt context passed
