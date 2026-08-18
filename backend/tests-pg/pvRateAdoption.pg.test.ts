@@ -8,9 +8,9 @@ import { planPvRateAdoption, roundRate6 } from '../src/scm/lib/pv-rate-adoption'
 /* Real PostgreSQL proof for "the payment defines the FX rate" (owner-approved
    2026-07-30) — the two halves of it that a fake PostgREST client CANNOT establish:
 
-   1. THE CLAMP IS PL/pgSQL, NOT TYPESCRIPT. scm.settle_pi_paid_sen (mig 0147) is
+   1. THE CLAMP IS PL/pgSQL, NOT TYPESCRIPT. scm.settle_pi_paid_centi (mig 0147) is
       what decides how much of an allocation actually reaches the invoice, and the
-      rate adoption keys off exactly that returned applied_sen. If the function's
+      rate adoption keys off exactly that returned applied_centi. If the function's
       arithmetic and the pure decision disagree, the adoption fires on payments that
       moved no money (or misses ones that did). Only the real function settles that.
 
@@ -75,8 +75,8 @@ async function resetFixture(sql: Sql): Promise<void> {
       grn_id        uuid,
       currency      text NOT NULL DEFAULT 'MYR',
       exchange_rate numeric(14,6) NOT NULL DEFAULT 1,
-      total_sen   bigint NOT NULL DEFAULT 0,
-      paid_sen    bigint NOT NULL DEFAULT 0,
+      total_centi   bigint NOT NULL DEFAULT 0,
+      paid_centi    bigint NOT NULL DEFAULT 0,
       status        text NOT NULL DEFAULT 'POSTED',
       updated_at    timestamptz
     );
@@ -90,11 +90,11 @@ async function resetFixture(sql: Sql): Promise<void> {
 const FACE = 2_162_500;
 const RMB_RATE = 0.619838;
 
-type PiRow = { id: string; invoice_number: string; currency: string; exchange_rate: string; grn_id: string | null; total_sen: string; paid_sen: string; status: string };
+type PiRow = { id: string; invoice_number: string; currency: string; exchange_rate: string; grn_id: string | null; total_centi: string; paid_centi: string; status: string };
 
 async function seedPi(over: Partial<{ currency: string; rate: number; paid: number; status: string; grnId: string | null }> = {}): Promise<PiRow> {
   const rows = await admin<PiRow[]>`
-    INSERT INTO scm.purchase_invoices (invoice_number, currency, exchange_rate, grn_id, total_sen, paid_sen, status)
+    INSERT INTO scm.purchase_invoices (invoice_number, currency, exchange_rate, grn_id, total_centi, paid_centi, status)
     VALUES (
       '2990-PI-2607-004',
       ${over.currency ?? 'RMB'},
@@ -108,12 +108,12 @@ async function seedPi(over: Partial<{ currency: string; rate: number; paid: numb
   return rows[0]!;
 }
 
-/** Call the REAL PL/pgSQL clamp, exactly as settlePiPaidSen's atomic path does. */
+/** Call the REAL PL/pgSQL clamp, exactly as settlePiPaidCenti's atomic path does. */
 async function settle(piId: string, delta: number) {
-  const rows = await admin<Array<{ applied_sen: string | null; new_paid_sen: string | null; new_status: string | null; reason: string | null }>>`
-    SELECT * FROM scm.settle_pi_paid_sen(${piId}::uuid, ${delta}::bigint)`;
+  const rows = await admin<Array<{ applied_centi: string | null; new_paid_centi: string | null; new_status: string | null; reason: string | null }>>`
+    SELECT * FROM scm.settle_pi_paid_centi(${piId}::uuid, ${delta}::bigint)`;
   const r = rows[0]!;
-  return { appliedSen: Number(r.applied_sen ?? 0), newStatus: r.new_status, reason: r.reason };
+  return { appliedCenti: Number(r.applied_centi ?? 0), newStatus: r.new_status, reason: r.reason };
 }
 
 async function readPi(piId: string): Promise<PiRow> {
@@ -127,7 +127,7 @@ async function knockOff(pi: PiRow, delta: number, pv: { currency: string; rate: 
   const settled = await settle(pi.id, delta);
   const fresh = await readPi(pi.id);
   const plan = planPvRateAdoption({
-    appliedSen: settled.appliedSen,
+    appliedCenti: settled.appliedCenti,
     pvCurrency: pv.currency,
     pvExchangeRate: pv.rate,
     pi: {
@@ -154,7 +154,7 @@ describePg('the payment defines the FX rate — against real Postgres', () => {
       const pi = await seedPi();
       const { settled, plan } = await knockOff(pi, FACE, { currency: 'RMB', rate: RMB_RATE });
 
-      expect(settled.appliedSen).toBe(FACE);
+      expect(settled.appliedCenti).toBe(FACE);
       expect(settled.newStatus).toBe('PAID');
       expect(plan).toEqual({
         action: 'adopt', rate: RMB_RATE, oldRate: 1,
@@ -166,7 +166,7 @@ describePg('the payment defines the FX rate — against real Postgres', () => {
     test('a PARTIAL knock-off still applies money, so the rate is still adopted', async () => {
       const pi = await seedPi();
       const { settled, plan } = await knockOff(pi, FACE / 2, { currency: 'RMB', rate: RMB_RATE });
-      expect(settled.appliedSen).toBe(FACE / 2);
+      expect(settled.appliedCenti).toBe(FACE / 2);
       expect(settled.newStatus).toBe('PARTIALLY_PAID');
       expect(plan).toMatchObject({ action: 'adopt', rate: RMB_RATE });
     });
@@ -176,7 +176,7 @@ describePg('the payment defines the FX rate — against real Postgres', () => {
       // database can tell us the payment moved nothing onto this invoice.
       const pi = await seedPi({ paid: FACE, status: 'PAID' });
       const { settled, plan } = await knockOff(pi, FACE, { currency: 'RMB', rate: RMB_RATE });
-      expect(settled.appliedSen).toBe(0);
+      expect(settled.appliedCenti).toBe(0);
       expect(plan).toEqual({ action: 'skip', reason: 'nothing_applied' });
       expect(Number((await readPi(pi.id)).exchange_rate)).toBe(1); // still the hole
     });
@@ -184,14 +184,14 @@ describePg('the payment defines the FX rate — against real Postgres', () => {
     test('a PARTIALLY over-allocated payment applies only the remainder — and that is enough to adopt', async () => {
       const pi = await seedPi({ paid: FACE - 100, status: 'PARTIALLY_PAID' });
       const { settled, plan } = await knockOff(pi, FACE, { currency: 'RMB', rate: RMB_RATE });
-      expect(settled.appliedSen).toBe(100);
+      expect(settled.appliedCenti).toBe(100);
       expect(plan).toMatchObject({ action: 'adopt', rate: RMB_RATE });
     });
 
     test('a DRAFT invoice is refused by the function, so no rate is adopted', async () => {
       const pi = await seedPi({ status: 'DRAFT' });
       const { settled, plan } = await knockOff(pi, FACE, { currency: 'RMB', rate: RMB_RATE });
-      expect(settled.appliedSen).toBe(0);
+      expect(settled.appliedCenti).toBe(0);
       expect(settled.reason).toBe('not_live');
       expect(plan).toEqual({ action: 'skip', reason: 'nothing_applied' });
       expect(Number((await readPi(pi.id)).exchange_rate)).toBe(1);
@@ -208,7 +208,7 @@ describePg('the payment defines the FX rate — against real Postgres', () => {
     test('the settlement lands but the stored rate is NOT overwritten', async () => {
       const pi = await seedPi({ rate: 0.62 });
       const { settled, plan } = await knockOff(pi, FACE, { currency: 'RMB', rate: RMB_RATE });
-      expect(settled.appliedSen).toBe(FACE);        // the money still moved
+      expect(settled.appliedCenti).toBe(FACE);        // the money still moved
       expect(plan).toEqual({ action: 'report_mismatch', piRate: 0.62, pvRate: RMB_RATE });
       expect(Number((await readPi(pi.id)).exchange_rate)).toBe(0.62); // untouched
     });
@@ -218,7 +218,7 @@ describePg('the payment defines the FX rate — against real Postgres', () => {
     test('the invoice settles and its rate stays 1', async () => {
       const pi = await seedPi({ currency: 'MYR', rate: 1 });
       const { settled, plan } = await knockOff(pi, FACE, { currency: 'MYR', rate: 1 });
-      expect(settled.appliedSen).toBe(FACE);
+      expect(settled.appliedCenti).toBe(FACE);
       expect(plan).toEqual({ action: 'skip', reason: 'myr_invoice' });
       expect(Number((await readPi(pi.id)).exchange_rate)).toBe(1);
     });
@@ -237,7 +237,7 @@ describePg('the payment defines the FX rate — against real Postgres', () => {
          code wrote a moment ago, and NOT to another adopt that re-costs the GRN
          again on every single payment. */
       const second = planPvRateAdoption({
-        appliedSen: 1,
+        appliedCenti: 1,
         pvCurrency: 'RMB',
         pvExchangeRate: RMB_RATE,
         pi: { piId: pi.id, docNo: pi.invoice_number, currency: 'RMB', exchangeRate: stored, grnId: null },
@@ -263,16 +263,16 @@ describePg('the payment defines the FX rate — against real Postgres', () => {
   });
 
   describe('the reversal a CANCEL performs leaves the rate standing', () => {
-    test('paid_sen unwinds to 0 while exchange_rate keeps the adopted value', async () => {
+    test('paid_centi unwinds to 0 while exchange_rate keeps the adopted value', async () => {
       const pi = await seedPi();
       const { settled } = await knockOff(pi, FACE, { currency: 'RMB', rate: RMB_RATE });
       expect(Number((await readPi(pi.id)).exchange_rate)).toBe(RMB_RATE);
 
       // What cancelPaymentVoucherHandler does: settle the negative of what it applied.
-      const reversed = await settle(pi.id, -settled.appliedSen);
-      expect(reversed.appliedSen).toBe(-FACE);
+      const reversed = await settle(pi.id, -settled.appliedCenti);
+      expect(reversed.appliedCenti).toBe(-FACE);
       const after = await readPi(pi.id);
-      expect(Number(after.paid_sen)).toBe(0);
+      expect(Number(after.paid_centi)).toBe(0);
       expect(after.status).toBe('POSTED');
       // The deliberate choice: the rate is NOT reverted to 1 (the R2 mis-cost).
       expect(Number(after.exchange_rate)).toBe(RMB_RATE);
