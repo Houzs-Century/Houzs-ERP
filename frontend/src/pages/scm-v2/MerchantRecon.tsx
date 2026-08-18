@@ -593,21 +593,93 @@ const SettlementLine = ({ row }: { row: SettlementRow }) => {
   );
 };
 
-/* ── Acquirer setup (决定4) — asked once, shared by every company ──────────── */
+/* ── Merchant setup (决定4) ────────────────────────────────────────────────────
+   Config, read far more often than it is changed — so it reads as a TABLE of
+   what is set, and only the merchant being changed opens into a form. Five
+   merchants each showing a wall of eleven fields was the version the owner
+   looked at and asked "这个界面可以做好看一点吗？". */
 
 const SetupTab = () => {
   const q = useAcquirerSetup();
+  const [editing, setEditing] = useState<string | null>(null);
+  const acquirers = q.data?.acquirers ?? [];
+  const banks = q.data?.bankAccounts ?? [];
+
+  const FEE_LABEL: Record<string, string> = {
+    stated: 'a column on each line',
+    'gross-minus-net': 'gross minus net',
+    'prorated-summary': 'one total for the statement',
+  };
+
+  /* ONE THING AT A TIME here too: changing a merchant replaces the table. It
+     also keeps the editor out of a table cell, where an auto-fill grid has no
+     width to divide and stacks every field into one tall column. */
+  const open = acquirers.find((a) => a.code === editing);
+  if (open) {
+    return (
+      <div className="space-y-3">
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
+          <button type="button" style={btn()} onClick={() => setEditing(null)}>
+            <ArrowLeft {...ICON} /> All merchants
+          </button>
+          <b>{open.display_name}</b>
+        </div>
+        <AcquirerEditor acquirer={open} bankAccounts={banks} onDone={() => setEditing(null)} />
+      </div>
+    );
+  }
+
   return (
     <div className="space-y-3">
       <div style={softText}>
-        Everything below is taught ONCE and shared by every company — except <b>Money lands in</b>, which is this
-        company&rsquo;s own: the same merchant pays different companies into different banks. A merchant that is not
-        set up cannot have a report uploaded against it; one with no receiving bank can be reconciled, but its
-        payout will book to the company default until you choose.
+        Taught once and shared by every company — except <b>Money lands in</b>, which is this company&rsquo;s own:
+        the same merchant pays different companies into different banks.
       </div>
-      {(q.data?.acquirers ?? []).map((a) => (
-        <AcquirerCard key={a.code} acquirer={a} bankAccounts={q.data?.bankAccounts ?? []} />
-      ))}
+
+      {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
+
+      <table style={table}>
+        <thead>
+          <tr style={headRow}>
+            <th style={cell}>Merchant</th>
+            <th style={cell}>File</th>
+            <th style={cell}>Auto-match</th>
+            <th style={cell}>Fee</th>
+            <th style={cell}>Money lands in — this company</th>
+            <th style={cell} />
+          </tr>
+        </thead>
+        <tbody>
+          {acquirers.map((a) => {
+            const bank = banks.find((b) => b.account_code === a.bank_account_code);
+            return (
+              <tr key={a.code} style={rowLine}>
+                  <td style={cell}>
+                    <b>{a.display_name}</b>{' '}
+                    {/* The code is only worth showing when it is not simply the
+                        name again — "AEON AEON" is noise, not information. */}
+                    {a.code !== a.display_name && <span className={styles.codeChip}>{a.code}</span>}{' '}
+                    {!a.ready && <span style={{ color: danger, fontSize: 'var(--fs-12)' }}>not set up</span>}
+                  </td>
+                  <td style={cell}>{a.statement_format ?? <span style={{ color: danger }}>—</span>}</td>
+                  <td style={cell}>
+                    {a.has_unique_ref === true ? 'by reference'
+                      : a.has_unique_ref === false ? <span style={{ color: danger }}>by hand, always</span>
+                      : <span style={{ color: danger }}>—</span>}
+                  </td>
+                  <td style={cell}>{a.fee_method ? FEE_LABEL[a.fee_method] : <span style={{ color: danger }}>—</span>}</td>
+                  <td style={cell}>
+                    {bank ? bank.account_name
+                      : <span style={{ color: danger }}>not set — will use the company default</span>}
+                  </td>
+                  <td style={cell}>
+                    <button type="button" style={btn()} onClick={() => setEditing(a.code)}>Change</button>
+                  </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
     </div>
   );
 };
@@ -623,7 +695,9 @@ const HEADING_FIELDS = [
   { key: 'net', label: 'Net heading', hint: 'e.g. Net Credited' },
 ] as const;
 
-const AcquirerCard = ({ acquirer, bankAccounts }: { acquirer: AcquirerSetup; bankAccounts: BankAccount[] }) => {
+const AcquirerEditor = ({ acquirer, bankAccounts, onDone }: {
+  acquirer: AcquirerSetup; bankAccounts: BankAccount[]; onDone: () => void;
+}) => {
   const save = useSaveAcquirerSetup();
   const [form, setForm] = useState({
     statementFormat: acquirer.statement_format ?? '',
@@ -661,104 +735,119 @@ const AcquirerCard = ({ acquirer, bankAccounts }: { acquirer: AcquirerSetup; ban
         Object.entries(headings).map(([k, v]) => [k, String(v).trim()]).filter(([, v]) => v !== ''),
       ),
       bankAccountCode: form.bankAccountCode || null,
-    });
+    }, { onSuccess: onDone });
   };
 
   /* `key` matters for the heading fields below, which are rendered from a list —
      without it React cannot tell one input from the next and reuses the wrong
      DOM node when the required-field marks change. */
   const field = (label: string, node: React.ReactNode, key?: string) => (
-    <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: 2, fontSize: 'var(--fs-12)' }}>
+    <label key={key} style={{ display: 'flex', flexDirection: 'column', gap: 3, fontSize: 'var(--fs-12)' }}>
       <span style={{ color: 'var(--c-ink-soft, #777)' }}>{label}</span>
       {node}
     </label>
   );
-  const input: React.CSSProperties = { padding: '5px 8px', fontSize: 'var(--fs-13)', minWidth: 150 };
+  /* One grid, one column width — the old flex-wrap put a 3-character tolerance
+     box next to a 30-character heading and let the rows land wherever. */
+  const grid: React.CSSProperties = {
+    display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(190px, 1fr))',
+    gap: 'var(--space-3)',
+  };
+  const input: React.CSSProperties = { padding: '6px 8px', fontSize: 'var(--fs-13)', width: '100%', boxSizing: 'border-box' };
+  const legend: React.CSSProperties = { fontSize: 'var(--fs-12)', fontWeight: 700, letterSpacing: '.04em', textTransform: 'uppercase', color: 'var(--c-ink-soft, #777)' };
 
   return (
-    <section className="space-y-2" style={{
-      padding: 'var(--space-3)', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 'var(--radius-md)',
+    <section className="space-y-3" style={{
+      padding: 'var(--space-4)', borderRadius: 'var(--radius-md)',
+      background: 'var(--c-line, rgba(34,31,32,0.04))',
     }}>
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline' }}>
-        <b>{acquirer.display_name}</b>
-        <span className={styles.codeChip}>{acquirer.code}</span>
-        <span style={{ fontSize: 'var(--fs-12)', color: acquirer.ready ? good : danger }}>
-          {acquirer.ready ? 'ready' : 'not set up'}
-        </span>
-        {acquirer.ready && acquirer.bankReady === false && (
-          <span style={{ fontSize: 'var(--fs-12)', color: danger }}>no receiving bank for this company</span>
-        )}
-        <span style={softText}>transit {acquirer.transit_account_code} · fee {acquirer.fee_account_code}</span>
-      </div>
-      <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-        {field('Statement format', (
-          <select style={input} value={form.statementFormat} aria-label={`${acquirer.code} statement format`}
-            onChange={(e) => setForm({ ...form, statementFormat: e.target.value })}>
-            <option value="">not known</option><option value="CSV">CSV</option>
-            <option value="XLSX">XLSX</option><option value="PDF">PDF</option>
-          </select>
-        ))}
-        {field('Unique transaction reference?', (
-          <select style={input} value={form.hasUniqueRef} aria-label={`${acquirer.code} unique reference`}
-            onChange={(e) => setForm({ ...form, hasUniqueRef: e.target.value })}>
-            <option value="">not known</option><option value="true">yes</option><option value="false">no</option>
-          </select>
-        ))}
-        {field('Fee shown as', (
-          <select style={input} value={form.feeMethod} aria-label={`${acquirer.code} fee method`}
-            onChange={(e) => setForm({ ...form, feeMethod: e.target.value })}>
-            <option value="">not known</option>
-            <option value="stated">a column on each line</option>
-            <option value="gross-minus-net">gross minus net</option>
-            <option value="prorated-summary">one total for the statement</option>
-          </select>
-        ))}
-        {field('Date tolerance (days)', (
-          <input style={{ ...input, minWidth: 80 }} value={form.dateToleranceDays} aria-label={`${acquirer.code} date tolerance`}
-            onChange={(e) => setForm({ ...form, dateToleranceDays: e.target.value })} />
-        ))}
-        {/* THE ONE FIELD THAT IS NOT SHARED. The same merchant pays different
-            companies into different banks — the owner's case: PBB pays Houzs
-            into Maybank and 2990 into Hong Leong. So this is a choice from THIS
-            company's own bank accounts, and the label says whose it is. */}
-        {field('Money lands in — this company only', (
-          <select style={input} value={form.bankAccountCode} aria-label={`${acquirer.code} bank account`}
-            onChange={(e) => setForm({ ...form, bankAccountCode: e.target.value })}>
-            <option value="">not set</option>
-            {bankAccounts.map((b) => (
-              <option key={b.account_code} value={b.account_code}>
-                {b.account_name} ({b.account_code})
-              </option>
-            ))}
-          </select>
-        ))}
-      </div>
-      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--c-ink-soft, #777)', marginTop: 4 }}>
-        Type each heading exactly as it appears in the first row of {acquirer.display_name}'s file.
-      </div>
-      <div style={{ display: 'flex', gap: 'var(--space-3)', flexWrap: 'wrap' }}>
-        {HEADING_FIELDS.map((f) => {
-          const required = requiredHeadings.includes(f.key);
-          return field(`${f.label}${required ? ' *' : ''}`, (
-            <input
-              style={{ ...input, minWidth: 170, borderColor: required && !headings[f.key] ? danger : undefined }}
-              value={headings[f.key] ?? ''} placeholder={f.hint}
-              aria-label={`${acquirer.code} ${f.label}`}
-              onChange={(e) => setHeadings({ ...headings, [f.key]: e.target.value })}
-            />
-          ), f.key);
-        })}
-      </div>
-      {mapError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{mapError}</div>}
-      {form.hasUniqueRef === 'false' && (
-        <div style={{ fontSize: 'var(--fs-12)', color: danger }}>
-          Without a unique reference nothing from {acquirer.code} can be confirmed automatically — every line
-          will be matched by hand.
+      <div className="space-y-2">
+        <div style={legend}>This company only</div>
+        <div style={grid}>
+          {/* THE ONE FIELD THAT IS NOT SHARED. The same merchant pays different
+              companies into different banks — the owner's case: PBB pays Houzs
+              into Maybank and 2990 into Hong Leong. */}
+          {field('Money lands in', (
+            <select style={input} value={form.bankAccountCode} aria-label={`${acquirer.code} bank account`}
+              onChange={(e) => setForm({ ...form, bankAccountCode: e.target.value })}>
+              <option value="">not set</option>
+              {bankAccounts.map((b) => (
+                <option key={b.account_code} value={b.account_code}>
+                  {b.account_name} ({b.account_code})
+                </option>
+              ))}
+            </select>
+          ))}
         </div>
-      )}
-      <button type="button" style={btn(true, save.isPending)} disabled={save.isPending} onClick={submit}>
-        {save.isPending ? 'Saving…' : 'Save'}
-      </button>
+        <div style={softText}>
+          Card money sits in {acquirer.transit_account_code} until it arrives; the fee goes to{' '}
+          {acquirer.fee_account_code}.
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <div style={legend}>How {acquirer.display_name}&rsquo;s report reads — every company shares this</div>
+        <div style={grid}>
+          {field('File format', (
+            <select style={input} value={form.statementFormat} aria-label={`${acquirer.code} statement format`}
+              onChange={(e) => setForm({ ...form, statementFormat: e.target.value })}>
+              <option value="">not known</option><option value="CSV">CSV</option>
+              <option value="XLSX">XLSX</option><option value="PDF">PDF</option>
+            </select>
+          ))}
+          {field('Has a unique reference?', (
+            <select style={input} value={form.hasUniqueRef} aria-label={`${acquirer.code} unique reference`}
+              onChange={(e) => setForm({ ...form, hasUniqueRef: e.target.value })}>
+              <option value="">not known</option><option value="true">yes</option><option value="false">no</option>
+            </select>
+          ))}
+          {field('Fee shown as', (
+            <select style={input} value={form.feeMethod} aria-label={`${acquirer.code} fee method`}
+              onChange={(e) => setForm({ ...form, feeMethod: e.target.value })}>
+              <option value="">not known</option>
+              <option value="stated">a column on each line</option>
+              <option value="gross-minus-net">gross minus net</option>
+              <option value="prorated-summary">one total for the statement</option>
+            </select>
+          ))}
+          {field('Days it may drift', (
+            <input style={input} value={form.dateToleranceDays} aria-label={`${acquirer.code} date tolerance`}
+              onChange={(e) => setForm({ ...form, dateToleranceDays: e.target.value })} />
+          ))}
+        </div>
+        {form.hasUniqueRef === 'false' && (
+          <div style={{ fontSize: 'var(--fs-12)', color: danger }}>
+            Without a unique reference nothing from {acquirer.code} can be confirmed automatically — every line
+            will be matched by hand.
+          </div>
+        )}
+      </div>
+
+      <div className="space-y-2">
+        <div style={legend}>Column headings, exactly as they appear in the file</div>
+        <div style={grid}>
+          {HEADING_FIELDS.map((f) => {
+            const required = requiredHeadings.includes(f.key);
+            return field(`${f.label}${required ? ' *' : ''}`, (
+              <input
+                style={{ ...input, borderColor: required && !headings[f.key] ? danger : undefined }}
+                value={headings[f.key] ?? ''} placeholder={f.hint}
+                aria-label={`${acquirer.code} ${f.label}`}
+                onChange={(e) => setHeadings({ ...headings, [f.key]: e.target.value })}
+              />
+            ), f.key);
+          })}
+        </div>
+      </div>
+
+      {mapError && <div style={{ fontSize: 'var(--fs-13)', color: danger }}>{mapError}</div>}
+
+      <div style={{ display: 'flex', gap: 'var(--space-2)' }}>
+        <button type="button" style={btn(true, save.isPending)} disabled={save.isPending} onClick={submit}>
+          {save.isPending ? 'Saving…' : 'Save'}
+        </button>
+        <button type="button" style={btn()} onClick={onDone}>Cancel</button>
+      </div>
     </section>
   );
 };

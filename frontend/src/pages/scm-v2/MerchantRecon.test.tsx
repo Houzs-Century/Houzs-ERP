@@ -19,7 +19,7 @@ const MBB: AcquirerSetup = {
   transit_account_code: '320-0000', fee_account_code: '930-0000', bank_account_code: '330-0000',
   is_active: true, ready: true, autoMatchable: true,
 };
-const GHL: AcquirerSetup = { ...MBB, code: 'GHL', display_name: 'GHL', has_unique_ref: false, autoMatchable: false, dates_have_no_year: true };
+const GHL: AcquirerSetup = { ...MBB, code: 'GHL', display_name: 'GHL', has_unique_ref: false, autoMatchable: false, dates_have_no_year: true, bank_account_code: null, bankReady: false };
 
 const ROW: SettlementRow = {
   id: 7, line_no: 2, txn_date: '2026-08-03', ref: 'ZZ9',
@@ -46,7 +46,7 @@ const uploadMutateAsync = vi.fn();
 let saveMutate = vi.fn();
 
 vi.mock('./settlement-queries', () => ({
-  useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL] }, isLoading: false }),
+  useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL], bankAccounts: [{ account_code: '330-0000', account_name: 'Bank — Maybank Current' }] }, isLoading: false }),
   useSaveAcquirerSetup: () => ({ mutate: saveMutate, isPending: false }),
   useSettlementBatches: () => ({ data: { batches: [{ id: 1, acquirer_code: 'MBB', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-03', row_count: 2, gross_sen: 177700, fee_sen: 2600, net_sen: 175100, stated_net_sen: null, adjustment_sen: 0, adjustment_je_no: null, received_on: null, received_sen: 0, outstanding_sen: 175100, receipt_count: 0, confirmed_count: 1, open_count: 2, to_choose_count: 1, no_record_count: 1, status: 'OPEN', uploaded_by: null, created_at: '' }] }, isLoading: false }),
   useSettlementBatch: () => ({
@@ -76,6 +76,9 @@ import { MerchantRecon } from './MerchantRecon';
 import { refusalText } from './settlement-ui';
 
 const draw = () => render(<MemoryRouter><MerchantRecon /></MemoryRouter>);
+
+/* The merchant code appears twice in a row (chip and name) — take the row. */
+const rowFor = (code: string) => screen.getAllByText(code)[0].closest('tr') as HTMLElement;
 
 /* The bug the owner hit on the local rig: the page showed "Some of the details
    weren't accepted" instead of the statement's actual problem, because the
@@ -185,10 +188,22 @@ describe('the reconcile tab', () => {
 });
 
 describe('the setup tab', () => {
-  test('names which acquirers are ready, and warns where nothing can auto-confirm', () => {
+  /* Config is read far more often than changed, so it reads as a table and only
+     the merchant being changed opens a form. */
+  test('every merchant is one row, and the receiving bank is named', () => {
     draw();
     fireEvent.click(screen.getByText('Merchant setup'));
-    expect(screen.getAllByText('ready').length).toBe(2);
+    expect(within(rowFor('MBB')).getByText('Bank — Maybank Current')).toBeTruthy();
+    expect(within(rowFor('GHL')).getByText(/not set — will use the company default/)).toBeTruthy();
+    expect(within(rowFor('GHL')).getByText('by hand, always')).toBeTruthy();
+    // nothing is a form until you ask
+    expect(screen.queryByLabelText('MBB Date heading')).toBeNull();
+  });
+
+  test('opening one merchant warns where nothing can auto-confirm', () => {
+    draw();
+    fireEvent.click(screen.getByText('Merchant setup'));
+    fireEvent.click(within(rowFor('GHL')).getByText('Change'));
     expect(screen.getByText(/nothing from GHL can be confirmed automatically/)).toBeTruthy();
   });
 
@@ -197,6 +212,7 @@ describe('the setup tab', () => {
   test('each heading is its own labelled field, seeded from the saved layout', () => {
     draw();
     fireEvent.click(screen.getByText('Merchant setup'));
+    fireEvent.click(within(rowFor('MBB')).getByText('Change'));
     expect((screen.getByLabelText('MBB Date heading') as HTMLInputElement).value).toBe('Txn Date');
     expect((screen.getByLabelText('MBB Amount heading') as HTMLInputElement).value).toBe('Gross');
     expect(screen.getByLabelText('MBB Reference heading')).toBeTruthy();
@@ -207,6 +223,7 @@ describe('the setup tab', () => {
     saveMutate = vi.fn();
     draw();
     fireEvent.click(screen.getByText('Merchant setup'));
+    fireEvent.click(within(rowFor('MBB')).getByText('Change'));
     const dateField = screen.getByLabelText('MBB Date heading');
     fireEvent.change(dateField, { target: { value: '' } });
     const card = within(dateField.closest('section') as HTMLElement);
