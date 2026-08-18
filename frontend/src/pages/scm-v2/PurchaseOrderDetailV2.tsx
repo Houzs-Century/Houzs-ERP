@@ -953,7 +953,7 @@ function PurchaseOrderDetailV2ReadOnly() {
   const isCancelled = rawStatus === "CANCELLED";
 
   return (
-    <div className="pb-24 md:pb-0">
+    <div className="pb-56 md:pb-0">
       {/* Mobile-only dark sticky header */}
       <div className="sticky top-0 z-20 -mx-4 -mt-4 bg-sidebar text-sidebar-ink shadow-slab md:hidden">
         <div className="flex items-center justify-between gap-3 px-4 pt-3">
