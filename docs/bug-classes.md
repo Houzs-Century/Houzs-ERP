@@ -332,15 +332,36 @@ copy per script, and they had drifted apart"* — the weakest copy is what produ
 stored. Measured today: **18 files exist in both `backend/src/scm/shared/` and
 `frontend/src/vendor/shared/`, and 11 of the 18 pairs differ.**
 
-**Why no check here.** The repo already has the right idiom twice
-(`backend/tests/phoneNormaliseMirror.test.ts`, `variantAxesMirror.test.ts`), and
-generalising it is a byte-equality test over the 18 pairs with a
-`DELIBERATE_DIVERGENCE` map. The blocker is that **11 pairs differ today and
-nothing distinguishes a deliberate difference from a regression** — that
-classification is a judgement call per pair, needs the owner of each file, and
-turning the gate on before it is done would either fail main or bake 11 unreviewed
-exemptions into an allowlist. Shipping the empty gate would be theatre of exactly
-the kind class D is about. It is the next piece of work, and it is scoped: 18 pairs.
+**THE CHECK — `npm --prefix backend run audit:duplicated-decisions`**
+(`backend/scripts/check-duplicated-decisions.mjs`, wired into ci.yml
+`backend-typecheck`). Added 2026-08-18, on the owner's ask: *"同一条规则两个家 …
+然后系统也是要查看这些类型的问题"*.
+
+The paragraph this replaces said no check was possible yet, because the blocker
+was classification: 11 same-named pairs differed and nothing distinguished a
+deliberate difference from a regression. That blocker was real, and the answer
+was to stop trying to decide it mechanically. The check finds the SITES and a
+person records the decision — 223 reviewed entries in
+`scripts/data/duplicated-decision-allowlist.json`, each with a reason, a NEW hit
+failing until somebody decides about it. Three detectors: a same-valued string
+set carried by two or more FILES (which sees the case same-named pair comparison
+cannot — a rule re-implemented under a different filename); NEAR-MISS pairs at
+Jaccard ≥ 0.75, which is what finds a rule enforced at N-1 of N; and a
+configured guard symbol missing from the balanced-brace slice of a sibling route
+handler.
+
+**What it does not cover, stated so a green run is not over-read.** A semantic
+duplicate whose copies share no literal is invisible to it — the total-height
+family (divan + leg + gap, sixteen surfaces) shares every literal and diverges
+only in CONTROL FLOW, so D1 and D2 call those copies identical. So is a rule
+expressed once in TypeScript and once in SQL, and so is any set below the
+three-member floor: the PO receivable threshold is two members at four homes and
+the detector cannot see it. Those are covered by tests instead
+(`backend/tests/duplicatedDecisionPins.test.ts`), which is the other half of the
+answer to this class: where a rule must genuinely keep two homes, one corpus is
+fed through BOTH implementations and the answers compared. The same-named-pair
+comparison is still `check-shared-mirrors.mjs`, widened on the same day to walk
+`scm/lib` as well as `scm/shared`.
 
 ### H. A view's output column set, frozen at `CREATE VIEW` time
 

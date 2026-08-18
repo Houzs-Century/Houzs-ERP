@@ -103,6 +103,7 @@ import { useAuth } from "../auth/AuthContext";
 import { usePageAccess } from "../auth/PageGuard";
 import { isSalesStaff, isDirectorUser, isSalesDirectorUser, canCreateEvent } from "../auth/salesAccess";
 import { readProjectAccess, projectAccessUnresolved, holdsChecklistApproval } from "../auth/projectAccess";
+import { isCrewScopedUser } from "../auth/crewScope";
 import { PMS_STAGE_LABEL, pmsStageVariant } from "../vendor/scm/lib/pms-status";
 import { ACCESS_RANK } from "../types";
 import { Forbidden } from "./Forbidden";
@@ -1405,7 +1406,16 @@ function ProjectsListView() {
   const _isDriver = /\bdriver\b/i.test(_pos);
   // Helpers/storekeepers are FORCE-scoped to their assigned events server-side
   // (isCrewScopedUser in backend); drivers are not (they opt in).
-  const _isForceScopedCrew = /\bhelper\b/i.test(_pos) || /storekeeper/i.test(_pos);
+  //
+  // This used to be `/\bhelper\b/i.test(_pos) || /storekeeper/i.test(_pos)` — a
+  // SUBSTRING test with no permission escape, while the server matches the exact
+  // position name and exempts anyone holding `*` or `projects.write`. Two homes,
+  // one rule, and they had already drifted: an owner-created "Warehouse Helper"
+  // caged this UI while the server returned everything, and an admin holding the
+  // Storekeeper position lost controls the server would have allowed. The shared
+  // predicate now lives in auth/crewScope.ts and backend/tests/
+  // duplicatedDecisionPins.test.ts runs one corpus through both copies.
+  const _isForceScopedCrew = isCrewScopedUser(user);
   const _isCrew = _isDriver || _isForceScopedCrew;
   const _isSalesExec = (/sales/i.test(_dept) || /^sales/i.test(_pos)) && !_isDirector;
   const restrictedCohort = _isCrew || _isSalesExec;
