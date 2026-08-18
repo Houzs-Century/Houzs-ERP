@@ -78,41 +78,81 @@ describe('brandingLabel — THE INVARIANT', () => {
   });
 });
 
-describe('brandingLabel — the 2990 spec (owner 2026-08-17)', () => {
+describe('brandingLabel — the 2990 spec (owner 2026-08-18)', () => {
   test('SOFA is 2990\'s own, whatever the line claims', () => {
-    expect(brandingLabel('SOFA', null, CO_2990)).toBe('2990 Sofa');
-    expect(brandingLabel('SOFA', 'HAPPISLEEP', CO_2990)).toBe('2990 Sofa');
+    expect(brandingLabel('SOFA', null, CO_2990)).toBe('2990s Sofa');
+    expect(brandingLabel('SOFA', 'HAPPISLEEP', CO_2990)).toBe('2990s Sofa');
+  });
+
+  test('the sofa label is spelled the way the brand master spells it', () => {
+    /* «2990 sofa=2990s sofa». It read "2990 Sofa" (no s) until 2026-08-18 while
+       all 193 sofa SKUs and the Brands maintenance screen said "2990s Sofa" —
+       so the column disagreed with the master it is supposed to reflect. */
+    expect(brandingLabel('SOFA', null, CO_2990)).toBe('2990s Sofa');
+    expect(brandingLabel('SOFA', null, CO_2990)).not.toBe('2990 Sofa');
   });
 
   test('BEDFRAME is the bedframe label', () => {
     expect(brandingLabel('BEDFRAME', 'ANYTHING', CO_2990)).toBe('Bedframe');
   });
 
-  test('MATTRESS follows the item, falling back to the house mattress', () => {
-    expect(brandingLabel('MATTRESS', 'HAPPISLEEP', CO_2990)).toBe('HAPPISLEEP');
-    expect(brandingLabel('MATTRESS', null, CO_2990)).toBe('2990 Mattress');
-    expect(brandingLabel('MATTRESS', '   ', CO_2990)).toBe('2990 Mattress');
-    for (const stored of ['2990', "2990's", '2990s', '  2990  ', "2990'S"]) {
-      expect(brandingLabel('MATTRESS', stored, CO_2990), `stored ${JSON.stringify(stored)}`).toBe('2990 Mattress');
+  test('MATTRESS follows the SKU, and names the category when the SKU has none', () => {
+    expect(brandingLabel('MATTRESS', 'Happi.S Mattress', CO_2990)).toBe('Happi.S Mattress');
+    expect(brandingLabel('MATTRESS', '2990s Mattress', CO_2990)).toBe('2990s Mattress');
+    expect(brandingLabel('MATTRESS', 'Carres Mattress', CO_2990)).toBe('Carres Mattress');
+    expect(brandingLabel('MATTRESS', null, CO_2990)).toBe('Mattress');
+    expect(brandingLabel('MATTRESS', '   ', CO_2990)).toBe('Mattress');
+  });
+
+  test('NO house-mattress label is synthesised any more', () => {
+    /* The old rule folded "2990" / "2990's" / "2990s" into a manufactured
+       "2990 Mattress" and used it for a blank too. Both are gone: the value is
+       the SKU's, so the six live lines carrying those loose spellings resolve
+       through their SKU ("2990s Mattress") in the caller, not through a
+       normalisation table here that had to know every spelling up front. */
+    expect(brandingLabel('MATTRESS', null, CO_2990)).not.toBe('2990 Mattress');
+    for (const stored of ['2990', "2990's", '2990s', '  2990  ']) {
+      const label = brandingLabel('MATTRESS', stored, CO_2990);
+      expect(label, `stored ${JSON.stringify(stored)}`).toBe(stored.trim());
     }
-    /* merely CONTAINING 2990 is a different brand */
-    expect(brandingLabel('MATTRESS', '2990 PLUS', CO_2990)).toBe('2990 PLUS');
   });
 
   test('ACCESSORY and SERVICE say what they are — the owner\'s actual complaint', () => {
     expect(brandingLabel('ACCESSORY', null, CO_2990)).toBe('Accessory');
     expect(brandingLabel('SERVICE', null, CO_2990)).toBe('Service');
+    /* «如果那个 SKU 有 branding 就根据 branding» — an accessory SKU branded
+       Accessories reads Accessories even when the line text says Happi.S. The
+       label rule only ever sees the resolved value; the caller does the
+       resolving, and the backfill aligns the stored lines with it. */
+    expect(brandingLabel('ACCESSORY', 'Accessories', CO_2990)).toBe('Accessory');
   });
 });
 
-describe('brandingLabel — the HOUZS spec (owner 2026-08-17)', () => {
-  test('SOFA and MATTRESS follow the item\'s own branding', () => {
-    expect(brandingLabel('SOFA', 'AKEMI', CO_HOUZS)).toBe('AKEMI');
-    expect(brandingLabel('MATTRESS', 'HAPPISLEEP', CO_HOUZS)).toBe('HAPPISLEEP');
+describe('brandingLabel — the HOUZS spec (owner 2026-08-18)', () => {
+  test('SOFA is ZANOTTI, whatever the line claims', () => {
+    /* «houzs sofa=zanotti». Symmetric with 2990: one house sofa brand per
+       company, so the line's text is not consulted on either side. */
+    expect(brandingLabel('SOFA', 'AKEMI', CO_HOUZS)).toBe('ZANOTTI');
+    expect(brandingLabel('SOFA', null, CO_HOUZS)).toBe('ZANOTTI');
+    expect(brandingLabel('SOFA', '   ', CO_HOUZS)).toBe('ZANOTTI');
   });
 
-  test('and when the item carries no brand, they name the category — never "2990 ..."', () => {
-    expect(brandingLabel('SOFA', null, CO_HOUZS)).toBe('Sofa');
+  test('an unbranded sofa SKU no longer degrades to the bare category noun', () => {
+    /* The 5526 family — 11 live ACTIVE SKUs, 8 of them already on orders —
+       carries no branding at all, and used to print "Sofa" on a Zanotti sofa. */
+    expect(brandingLabel('SOFA', null, CO_HOUZS)).not.toBe('Sofa');
+  });
+
+  test('MATTRESS follows the SKU, exactly as 2990 does', () => {
+    expect(brandingLabel('MATTRESS', 'AKEMI', CO_HOUZS)).toBe('AKEMI');
+    expect(brandingLabel('MATTRESS', 'DUNLOPILLO', CO_HOUZS)).toBe('DUNLOPILLO');
+    for (const brand of ['AKEMI', 'DUNLOPILLO', 'ERGOTEX', 'MYLATEX', null, '  ']) {
+      expect(brandingLabel('MATTRESS', brand, CO_HOUZS), `brand=${JSON.stringify(brand)}`)
+        .toBe(brandingLabel('MATTRESS', brand, CO_2990));
+    }
+  });
+
+  test('and when the SKU carries no brand, the mattress names the category', () => {
     expect(brandingLabel('MATTRESS', null, CO_HOUZS)).toBe('Mattress');
   });
 
@@ -136,8 +176,8 @@ describe('brandingLabel — the HOUZS spec (owner 2026-08-17)', () => {
 describe('brandingLabel — defaults and absences', () => {
   test('an unstated company keeps the 2990 reading, so no existing caller changed meaning', () => {
     for (const co of [undefined, null, '', '   ']) {
-      expect(brandingLabel('SOFA', null, co), `co=${JSON.stringify(co)}`).toBe('2990 Sofa');
-      expect(brandingLabel('MATTRESS', null, co), `co=${JSON.stringify(co)}`).toBe('2990 Mattress');
+      expect(brandingLabel('SOFA', null, co), `co=${JSON.stringify(co)}`).toBe('2990s Sofa');
+      expect(brandingLabel('MATTRESS', null, co), `co=${JSON.stringify(co)}`).toBe('Mattress');
     }
   });
 
