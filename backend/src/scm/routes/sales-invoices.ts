@@ -53,7 +53,7 @@ import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
-import { doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
+import { doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine, type DoRemainingResult } from '../lib/do-line-remaining';
 import { siShadowRefusal, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
@@ -416,8 +416,11 @@ function buildItemRow(salesInvoiceId: string, it: Record<string, unknown>, lineN
 }
 
 /* LINE-LEVEL, QUANTITY-BASED DO → Sales Invoice remaining. Wraps the shared
-   Pending formula: remaining_to_invoice = delivered − invoiced − returned. */
-async function doInvoiceableRemaining(sb: any, doIds: string[]): Promise<Map<string, DoRemainingLine>> {
+   Pending formula: remaining_to_invoice = delivered − invoiced − returned.
+   Returns a RESULT — `ok: false` is a read that failed, and every caller below
+   decides what that means for ITS path rather than reading it as an empty
+   ledger (which is delivered − 0 − 0, i.e. bill the whole delivery again). */
+async function doInvoiceableRemaining(sb: any, doIds: string[]): Promise<DoRemainingResult> {
   return doLineRemaining(sb, doIds);
 }
 
@@ -461,12 +464,26 @@ async function migratedRefusalForDeliveries(
   };
 }
 
-/* Remaining-to-invoice write guard. */
+/* Remaining-to-invoice write guard.
+   Two REFUSALS, deliberately distinct, because they blame different things:
+     409 over_remaining        — the ledger was read and the request exceeds it.
+                                 The operator asked for too much.
+     503 remaining_check_failed — the ledger could NOT be read. Nobody did
+                                 anything wrong; we cannot tell yet, so nothing
+                                 is saved and the message says exactly that.
+   What must never happen again is the third outcome this used to have: the read
+   fails, every cap silently reads 0 + exclusions, and the guard either refuses a
+   legitimate invoice for the wrong reason or (where an exclusion covers it)
+   waves through an over-invoice. A blip must not be able to decide either. */
+type SiOverRemainingRefusal =
+  | { status: 409; body: { error: string; lines: Array<{ doItemId: string; requested: number; remaining: number }> } }
+  | { status: 503; body: { error: string; message: string } };
+
 async function checkSiOverRemaining(
   sb: any,
   lines: Array<Record<string, unknown>>,
   excludeByDoItem?: Map<string, number>,
-): Promise<{ error: string; lines: Array<{ doItemId: string; requested: number; remaining: number }> } | null> {
+): Promise<SiOverRemainingRefusal | null> {
   const wanted = new Map<string, number>();
   for (const it of lines) {
     const doItemId = (it.doItemId as string | undefined) ?? null;
@@ -474,13 +491,14 @@ async function checkSiOverRemaining(
     wanted.set(doItemId, (wanted.get(doItemId) ?? 0) + Number(it.qty ?? 0));
   }
   if (wanted.size === 0) return null;
-  const remainingMap = await doRemainingByItemId(sb, [...wanted.keys()]);
+  const remaining = await doRemainingByItemId(sb, [...wanted.keys()]);
+  if (!remaining.ok) return { status: 503, body: remainingUnavailableResponse(remaining.reason) };
   const offenders: Array<{ doItemId: string; requested: number; remaining: number }> = [];
   for (const [doItemId, requested] of wanted) {
-    const cap = (remainingMap.get(doItemId) ?? 0) + (excludeByDoItem?.get(doItemId) ?? 0);
+    const cap = (remaining.remaining.get(doItemId) ?? 0) + (excludeByDoItem?.get(doItemId) ?? 0);
     if (requested > cap) offenders.push({ doItemId, requested, remaining: cap });
   }
-  return offenders.length > 0 ? { error: 'over_remaining', lines: offenders } : null;
+  return offenders.length > 0 ? { status: 409, body: { error: 'over_remaining', lines: offenders } } : null;
 }
 
 /* FIX 3's shadow check now lives in unlinked-line-edit-guard (siShadowRefusal),
@@ -860,10 +878,16 @@ salesInvoices.get('/invoiceable-do-lines', async (c) => {
   const sb = c.get('supabase');
   // Company scope (owner 2026-08-10 audit) — without it the no-doIds path
   // enumerated every company's delivery orders into this picker.
-  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
-  if (doIds.length === 0) return c.json({ lines: [] });
-  const remainingMap = await doInvoiceableRemaining(sb, doIds);
-  const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);
+  const candidates = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
+  /* NOT `{ lines: [] }`. An empty picker says "every delivered line has already
+     been invoiced" — a completion claim. When the read failed we do not know
+     that, and the operator acting on it would leave real money unbilled. Refuse
+     to render instead; the screen can say "couldn't load", which is true. */
+  if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
+  if (candidates.doIds.length === 0) return c.json({ lines: [] });
+  const remaining = await doInvoiceableRemaining(sb, candidates.doIds);
+  if (!remaining.ok) return c.json({ error: 'load_failed', reason: remaining.reason }, 500);
+  const lines = [...remaining.lines.values()].filter((l) => l.remaining > 0);
   return c.json({ lines });
 });
 
@@ -945,7 +969,7 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
 
   {
     const over = await checkSiOverRemaining(sb, items);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
 
   /* A delivery carried over from AutoCount is invoiced by the migrated-invoice
@@ -1086,7 +1110,20 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
       .filter((x): x is string => !!x);
     if (pickedDoItemIds.length > 0) {
       const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
-      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck);
+      /* THE RECHECK COULD NOT RUN. Roll back — but never under the race
+         message. Nothing has escaped yet (no revenue posted, no stock moved,
+         the header is not visible to any other document), so undoing leaves a
+         clean tree and bills nobody; whereas keeping an invoice whose ceiling
+         we were unable to verify is exactly the "guard disabled by a blip"
+         failure this file was rewritten to end. The operator loses a keystroke
+         and is told the truth: the check did not run. Calling it
+         `race_conflict` would accuse a colleague who did nothing. */
+      if (!recheck.ok) {
+        await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
+        await sb.from('sales_invoices').delete().eq('id', h.id);
+        return c.json(remainingUnavailableResponse(recheck.reason), 503);
+      }
+      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck.remaining);
       if (over.length > 0) {
         // Undo: lines then header. Nothing else has happened yet — revenue is
         // posted further down, so there is no ledger entry to reverse.
@@ -1226,7 +1263,14 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
     if (mig.refusal) return c.json(mig.refusal, 409);
   }
 
-  const remainingMap = await doInvoiceableRemaining(sb, doIds);
+  const remainingResult = await doInvoiceableRemaining(sb, doIds);
+  /* Pre-write, so this is a plain refusal: nothing exists to undo, and every
+     per-line qty below is capped by `line.remaining`. An unreadable ledger here
+     used to yield an empty map, whose only visible effect was `do_item_not_found`
+     on the first pick — a 404 blaming the operator's selection for a database
+     error. */
+  if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
+  const remainingMap = remainingResult.lines;
 
   const customers = new Set<string>();
   const customerNames = new Set<string>();
@@ -1371,7 +1415,20 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
       .filter((x): x is string => !!x);
     if (pickedDoItemIds.length > 0) {
       const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
-      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck);
+      /* THE RECHECK COULD NOT RUN. Roll back — but never under the race
+         message. Nothing has escaped yet (no revenue posted, no stock moved,
+         the header is not visible to any other document), so undoing leaves a
+         clean tree and bills nobody; whereas keeping an invoice whose ceiling
+         we were unable to verify is exactly the "guard disabled by a blip"
+         failure this file was rewritten to end. The operator loses a keystroke
+         and is told the truth: the check did not run. Calling it
+         `race_conflict` would accuse a colleague who did nothing. */
+      if (!recheck.ok) {
+        await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
+        await sb.from('sales_invoices').delete().eq('id', h.id);
+        return c.json(remainingUnavailableResponse(recheck.reason), 503);
+      }
+      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck.remaining);
       if (over.length > 0) {
         await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
         await sb.from('sales_invoices').delete().eq('id', h.id);
@@ -1520,7 +1577,13 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
     .order('created_at'), c);
 
   const doLines = (doItems as Array<Record<string, unknown>> | null) ?? [];
-  const remainingMap = await doRemainingByItemId(sb, doLines.map((it) => it.id as string));
+  const remainingResult = await doRemainingByItemId(sb, doLines.map((it) => it.id as string));
+  /* This figure is not decoration here — it BOTH selects the lines to append
+     (`remaining > 0`) and caps each appended qty. Unreadable, every line scored
+     0, nothing was appended, and the endpoint answered 200 as if the delivery
+     were already fully invoiced. Refuse before anything is written. */
+  if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
+  const remainingMap = remainingResult.remaining;
   const { data: maxNoRow } = await sb
     .from('sales_invoice_items')
     .select('line_no')
@@ -1739,7 +1802,7 @@ salesInvoices.post('/:id/items', async (c) => {
 
   {
     const over = await checkSiOverRemaining(sb, [it]);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
 
   /* Same refusal as every other path that can attach a delivery line. */
@@ -1862,7 +1925,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   if (it.qty !== undefined && prev.do_item_id && qty > Number(prev.qty)) {
     const exclude = new Map<string, number>([[prev.do_item_id as string, Number(prev.qty)]]);
     const over = await checkSiOverRemaining(sb, [{ doItemId: prev.do_item_id, qty }], exclude);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
   const unitPrice = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : Number(prev.unit_price_centi);
   const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : Number(prev.discount_centi);
@@ -2406,11 +2469,17 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
       .filter((l) => l.do_item_id)
       .map((l) => ({ doItemId: l.do_item_id as string, qty: l.qty }));
     const over = await checkSiOverRemaining(sb, linesForCheck);
+    /* A REOPEN is a write, so an unreadable ledger refuses it — but with the
+       503 body, not this 409. Telling the operator "the quantity has since been
+       invoiced elsewhere" when the truth is "the read timed out" is a false
+       accusation about someone else's work, and it would send him hunting for a
+       duplicate invoice that does not exist. */
+    if (over?.status === 503) return c.json(over.body, 503);
     if (over) {
       return c.json({
         error: 'over_remaining',
         message: 'Cannot reopen — the delivered quantity has since been invoiced elsewhere. The DO lines no longer have room for this invoice.',
-        lines: over.lines,
+        lines: over.body.lines,
       }, 409);
     }
   }
