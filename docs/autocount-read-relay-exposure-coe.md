@@ -124,3 +124,61 @@ master as publicly readable** and do not add anything else to that relay.
    answer instead of a week later.
 3. **Enumerate the whole surface of any host you publish.** Both exposures on
    this machine were invisible because no document said what it serves.
+
+---
+
+## What breaks if you close them — measured 2026-08-18
+
+**Nothing in the ERP.** This section exists because the remediation has been
+sitting OPEN, and the reason it sits open is that nobody could say what closing
+the hole would cost. The answer is: on the ERP side, nothing at all.
+
+Everything the ERP sends to `it-houzs.dev` goes through ONE client,
+`AutoCountClient` in `backend/src/services/autocount.ts`, and every call it makes
+carries the key:
+
+```
+$ grep -c "await fetch(" backend/src/services/autocount.ts     -> 15
+$ grep -c "headers(this.env" backend/src/services/autocount.ts -> 15
+```
+
+`headers()` sets `X-API-KEY: env.AUTOCOUNT_API_KEY` on all fifteen. There is no
+keyless path in the client and no second client — the whole surface is these
+fifteen endpoints:
+
+| | |
+|---|---|
+| SalesOrder | `getAll` `getSince` `getSingle` `getDetail` `getOverdue` `updateFromSheet` |
+| PurchaseOrder | `getAll` `getOutstanding` `getDetail` `update` |
+| DeliveryOrder | `getAll` `getSince` |
+| Creditor | `getAll` `getSingle` |
+| StockItem | `getSingle` |
+
+Now put the two exposed endpoints against that list:
+
+| exposed endpoint | does the ERP call it | what requiring a key costs |
+|---|---|---|
+| `/Debtor/getAll` (200, ~65 KB, the customer master) | **NO — it appears nowhere in the client.** The ERP reads `Creditor`, never `Debtor` | **nothing** |
+| `/PurchaseOrder/getAll` (200, ~52 MB, the purchase history) | yes | **nothing** — the call already sends `X-API-KEY` |
+
+**So the fix is safe to apply to both.** One of them the ERP does not use, and
+the other it already authenticates. What would break is any OTHER consumer that
+has been relying on the keyless path, and this repository is not one — a
+consumer nobody can name is not a reason to leave the customer list on the
+public internet.
+
+### Two things that are true at the same time and must not be confused
+
+- **The relay is LIVE.** `AUTOCOUNT_SYNC_DISABLED = "false"` in production
+  (`backend/wrangler.toml:24`; the staging block at `:302` says `"true"`), so the
+  inbound pull is running. Closing the AUTH hole is not the same as switching the
+  relay off, and this section is only about the first.
+- **The relay's WRITE half is already dead** — `AUTOCOUNT_WRITES_DISABLED = true`,
+  a hard-coded constant in `services/autocount.ts`, so `updateFromSheet` and
+  `PurchaseOrder/update` send nothing regardless.
+
+### Still the owner's, and still not done
+
+The change is on the relay host / Cloudflare, which this repository cannot reach.
+What is removed by this section is the excuse: the blast radius was the open
+question, and it has been measured.

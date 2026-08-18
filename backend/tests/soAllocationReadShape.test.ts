@@ -46,7 +46,14 @@ function fixture() {
   for (let i = 0; i < SO_COUNT; i++) {
     orders.push({
       doc_no: docNo(i), status: 'CONFIRMED', created_at: '2026-08-01T00:00:00Z',
-      customer_delivery_date: null, company_id: 1, proceeded_at: '2026-08-01T00:00:00Z',
+      /* RELEASED FOR ORDERING. This said `proceeded_at` until 2026-08-18, which
+         is the column the allocation gate wrongly read; the gate now reads
+         `processing_date`, the one every write path actually sets. This fixture
+         is about the READ SHAPE (paging + embedded status filters), so the
+         orders have to be un-gated for the walk to reach the lines at all —
+         state that with the real column, so a regression back to the old one
+         fails here too. */
+      customer_delivery_date: null, company_id: 1, processing_date: '2026-08-01',
       generation: 1,
     });
     for (const [suffix, code, group] of [
@@ -73,7 +80,7 @@ function fixture() {
      it through the embedded status filter instead. */
   orders.push({
     doc_no: 'SO-DEAD', status: 'CANCELLED', created_at: '2026-07-01T00:00:00Z',
-    customer_delivery_date: null, company_id: 1, proceeded_at: '2026-07-01T00:00:00Z', generation: 1,
+    customer_delivery_date: null, company_id: 1, processing_date: '2026-07-01', generation: 1,
   });
   lines.push({
     id: 'SO-DEAD-mat', doc_no: 'SO-DEAD', item_code: 'MAT', item_group: 'mattress',

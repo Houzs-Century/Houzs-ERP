@@ -1,7 +1,7 @@
 # COE — the deploy step uploaded secrets before deploying, and Cloudflare refused both
 
-**Status: OPEN at the time of writing.** Production has not taken a backend
-deploy since 2026-08-18T00:11 MYT. Every number below was measured on
+**Status: RESOLVED 2026-08-18.** Production was un-deployed for nine hours and is
+now current on main. The outage numbers below were measured on
 2026-08-18 at 10:28 MYT and will move — re-run the commands, do not quote them.
 
 ---
@@ -133,16 +133,20 @@ is not. Add the secret out-of-band before merging the code that needs it —
 shipping code that cannot run without a simultaneously-created secret was never
 safe in either order.
 
-**This fix is NOT PROVEN.** Per CLAUDE.md, a workflow is not shipped until it has
-run once and reported success, and this one cannot be exercised without a real
-production deploy. Treat the first `Deploy` run after this merges as the test.
+**PROVEN 2026-08-18, by the first run after merge.** Deploy run `32092465770`
+concluded `success` with `backend: success` (not `skipped` — the pair that
+matters). Wrangler logged `Deployed autocount-sync-api triggers` /
+`Current Version ID: b5b241e5-…`, the new `Upload Worker secrets` step ran AFTER
+it and succeeded, and `/health` moved from `3697d41e` to `34f264f1` — main's tip.
+Nine consecutive failures, then one success, with no manual intervention at
+Cloudflare. The self-healing property was the claim; this is the observation.
 
 ## Deferred
 
 | item | owner |
 | --- | --- |
-| **What created a Worker version that was uploaded but never deployed.** UNKNOWN, and the repo cannot answer it — nothing here does it. Remaining candidates are all outside CI: the Cloudflare Workers Builds git integration, a dashboard quick-edit, a hand-run `wrangler versions upload`, or a gradual rollout left below 100%. Settled in one look: Workers → `autocount-sync-api` → Deployments/Versions. | owner (has Cloudflare access) |
-| **The immediate unblock.** Deploying the pending version clears 10215 by itself. Needs Cloudflare credentials and is a production deploy. | owner |
+| **What created a Worker version that was uploaded but never deployed.** UNKNOWN. The repo cannot answer it by reading itself — nothing here does it. Candidates are all outside CI: the Cloudflare Workers Builds git integration, a dashboard quick-edit, a hand-run `wrangler versions upload`, or a gradual rollout left below 100%. **There is now a check rather than an instruction to go and look:** Actions → **Worker version check (read-only)** → Run workflow (`backend/scripts/check-worker-versions.mjs`). It prints every version above the active deployment with its `metadata.source` and author, which is the field that names the culprit. | owner to dispatch |
+| ~~**The immediate unblock.**~~ **RESOLVED 2026-08-18.** Merging the fix below deployed the Worker before touching secrets, which published the newest version and cleared 10215 by itself. Deploy run `32092465770` concluded `success` with `backend: success`; `/health` went from `3697d41e` to `34f264f1` (main tip), catching production up on all 8 stuck commits. No manual dashboard action was needed. | — |
 | **Should the watchdog stay green when it declines to act?** Options: exit non-zero on a knowingly-stale production, or split "stale and I am handling it" from "stale and a human must look". Changing it trades a real alarm against alert fatigue. | owner |
 
 ## Lessons

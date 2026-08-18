@@ -59,6 +59,7 @@ import { posRemarkSpecialOf } from '../lib/pos-remark-special';
 import { useNotify } from './NotifyDialog';
 import { SpecialOrders } from './SpecialOrders';
 import styles from './SoLineCard.module.css';
+import { DateField } from "./DateField";
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -862,14 +863,14 @@ const SoLineCardInner = ({
         />
 
         {/* 6. Delivery Date (2990 addition between Unit Price and Amount) */}
-        <input
-          type="date"
+        <DateField
+          fullWidth
           className={styles.input}
           value={draft.lineDeliveryDate ?? ''}
           disabled={!isEditing}
           title={!draft.lineDeliveryDateOverridden && draft.lineDeliveryDate ? 'Auto-inherited from SO header' : undefined}
-          onChange={(e) => onChange({
-            lineDeliveryDate: e.target.value || null,
+          onChange={(iso) => onChange({
+            lineDeliveryDate: iso || null,
             lineDeliveryDateOverridden: true,
           })}
           style={

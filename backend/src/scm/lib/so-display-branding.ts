@@ -26,7 +26,8 @@
 // been, which is worth knowing before you assume a fix to one touched the
 // other.
 //   · deriveBranding (re-exported from ../shared/so-branding-label) maps a
-//     CATEGORY to a display label — "2990 Sofa", "Bedframe", "Service".
+//     CATEGORY to a display label — "2990s Sofa" / "ZANOTTI" per company,
+//     "Bedframe", "Service".
 //   · deriveDisplayBrandingByDoc, below, returns the line's RAW branding text
 //     and the literal "BEDFRAME" (upper case, not "Bedframe") for a
 //     bedframe-only order, and omits a doc entirely when nothing resolves.
@@ -92,7 +93,26 @@ export async function deriveDisplayBrandingByDoc(
   c: CompanyScopeCtx,
   docNos: string[],
 ): Promise<Map<string, string>> {
-  const out = new Map<string, string>();
+  const rows = await deriveDisplayBrandingRowByDoc(sb, c, docNos);
+  const flat = new Map<string, string>();
+  for (const [docNo, row] of rows) if (row.branding) flat.set(docNo, row.branding);
+  return flat;
+}
+
+/** The representative line's resolved CATEGORY alongside its branding text —
+ *  the two inputs `brandingLabel` needs. Added 2026-08-18 so the SO DETAIL page
+ *  can render the same label as the list instead of its own
+ *  `branding || first_item_branding || "—"`, which printed a dash for any order
+ *  whose rep line carries no brand text (i.e. every sofa). `branding` is null
+ *  when nothing resolved; `category` is null only when the doc has no readable
+ *  line, which is what makes "No Items" distinguishable from a blank brand. */
+export async function deriveDisplayBrandingRowByDoc(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  sb: any,
+  c: CompanyScopeCtx,
+  docNos: string[],
+): Promise<Map<string, { category: string | null; branding: string | null }>> {
+  const out = new Map<string, { category: string | null; branding: string | null }>();
   const uniq = Array.from(new Set(docNos.filter(Boolean)));
   if (uniq.length === 0) return out;
 
@@ -150,14 +170,24 @@ export async function deriveDisplayBrandingByDoc(
     const rep = repLine.get(docNo) ?? firstLine.get(docNo);
     if (!rep) continue;
     let brand = rep.branding;
-    if (isBlank(brand) && resolveLineCat(rep) === 'MATTRESS' && rep.item_code) {
-      brand = productBranding.get(rep.item_code) ?? brand;
+    /* SKU-FIRST for a mattress, in lockstep with the list handler (owner
+       2026-08-18: «mattress follow SKU branding»). It used to borrow the
+       catalog only when the line was blank, which left the loose "2990" /
+       "2990s" line spellings in place here while the list resolved them — the
+       exact kind of divergence between these two copies this file's header
+       warns about. */
+    if (resolveLineCat(rep) === 'MATTRESS' && rep.item_code) {
+      const skuBrand = productBranding.get(rep.item_code);
+      if (!isBlank(skuBrand)) brand = skuBrand!;
     }
     if (isBlank(brand)) {
       const s = catsByDoc.get(docNo);
       if (s && s.has('BEDFRAME') && !s.has('MATTRESS') && !s.has('SOFA')) brand = 'BEDFRAME';
     }
-    if (!isBlank(brand)) out.set(docNo, String(brand).trim());
+    out.set(docNo, {
+      category: resolveLineCat(rep),
+      branding: isBlank(brand) ? null : String(brand).trim(),
+    });
   }
   return out;
 }

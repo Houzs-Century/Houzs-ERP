@@ -29,6 +29,7 @@ import {
 } from '../lib/delivery-planning-queries';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
+import { DateField } from "./DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -87,13 +88,13 @@ export function SetJobDateDrawer({ order, onClose }: { order: PlanningOrder; onC
 
           <label style={{ display: 'block' }}>
             <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Job date</div>
-            <input
-              type="date"
+            <DateField
+              fullWidth
               className={styles.searchInput}
               style={{ width: '100%' }}
               value={date}
               disabled={sched.isPending}
-              onChange={(e) => setDate(e.target.value)}
+              onChange={(iso) => setDate(iso)}
             />
           </label>
           <div style={{ marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', color: 'var(--c-muted, #767b6e)' }}>

@@ -9,6 +9,7 @@ import {
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useIdempotencyKey } from "../lib/idempotency";
 import { MobileSkuPicker, type PickedSku } from "./MobileSkuPicker";
+import { DateField } from "../vendor/scm/components/DateField";
 
 /* ------------------------------------------------------------------ *
  * Mobile New Stock Transfer — From -> To (must differ) + date + notes,
@@ -209,7 +210,7 @@ export function MobileStockTransferNew({
         <div className="st-whrow">
           <div className="st-fld">
             <span className="st-fl">Date</span>
-            <input type="date" className="cal-sel" value={transferDate} onChange={(e) => setTransferDate(e.target.value)} />
+            <DateField fullWidth className="cal-sel" value={transferDate} onChange={(iso) => setTransferDate(iso)}/>
           </div>
           <div className="st-fld">
             <span className="st-fl">Notes</span>

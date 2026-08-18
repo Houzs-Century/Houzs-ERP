@@ -24,6 +24,7 @@ import { z } from 'zod';
 import type { Env, Variables } from '../env';
 import { activeCompanyId, scopeToAllowedCompanies } from '../lib/companyScope';
 import { supabaseAuth } from '../middleware/auth';
+import { effectiveSoDelivery, type SoDeliveryDateRow } from '../shared';
 
 export const deliveryMessages = new Hono<{ Bindings: Env; Variables: Variables }>();
 
@@ -106,7 +107,7 @@ deliveryMessages.post('/send', async (c) => {
       payload[`debtor_name_${n}`] = String(r.debtor_name ?? '');
       // Effective date rule (amended ?? original), same as the board.
       payload[`delivery_date_${n}`] = payloadDate(
-        (r.amended_delivery_date as string | null) ?? (r.customer_delivery_date as string | null),
+        effectiveSoDelivery(r as SoDeliveryDateRow),
       );
       payload[`address4_${n}`] = String(r.address4 ?? '');
     });

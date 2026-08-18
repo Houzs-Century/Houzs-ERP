@@ -65,11 +65,11 @@ import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -158,12 +158,6 @@ const fmtRm = (centi: number): string => fmtCenti(centi);
 // margin_pct_basis is basis points (margin/total x 10000) → percent string.
 const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
 
 // Customer's PO / Ref. Same fallback chain as the SO V2 template.
 const refOf = (r: DoRow): string =>
@@ -362,7 +356,7 @@ function CardsGrid({ rows, onOpen }: { rows: DoRow[]; onOpen: (r: DoRow) => void
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div className="min-w-0">
                 <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
-                  From SO
+                  {transferFromColumnLabel('so')}
                 </div>
                 <div className="mt-0.5 truncate font-mono text-[12px] font-semibold text-ink-secondary">
                   {soOf(r)}
@@ -484,7 +478,7 @@ function DetailDrawer({
               </div>
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From SO" v={soOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('so')} v={soOf(row)} mono />
                 <MetaItem k="Customer ref" v={refOf(row)} mono />
                 {/* Owner 2026-07-24 — Processing date (linked SO's
                     processing_date) must be visible in every quick view. */}
@@ -1111,7 +1105,7 @@ export function MfgDeliveryOrdersListV2() {
       // the parent SO). The useful cross-doc fact for a shipped DO is its Source
       // PO, in the next column.
       key: "so_doc_no",
-      label: "From SO",
+      label: transferFromColumnLabel('so'),
       width: "150px",
       disableSort: true,
       /* 2026-08-04: show the SOs this DO's LINES actually draw on, not the

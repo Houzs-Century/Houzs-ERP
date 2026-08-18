@@ -1,0 +1,261 @@
+{
+  "_README": [
+    "REVIEWED date formatting. ONE DATE FORMAT, ONE PLACE THAT WRITES IT (owner",
+    "2026-08-18: '全套系统的 date format 没有统一'). Every date a user reads is",
+    "DD/MM/YYYY and comes from fmtDate/fmtDateTime in",
+    "frontend/src/vendor/shared/format.ts (mirrored in backend/src/scm/shared/",
+    "format.ts). backend/scripts/check-date-formatting.mjs finds lines that SPELL a",
+    "date by hand; a regex cannot read intent, so this file is where a person",
+    "records the judgement. Every entry needs a `why` that would survive being read",
+    "out loud. A line not listed here FAILS the build - that is the whole point:",
+    "silence becomes a decision.",
+    "",
+    "Keyed by (file, normalized line text) and NOT by line number, so a merge that",
+    "moves a line keeps its review and an EDIT to a line re-opens it.",
+    "",
+    "Entries whose line is gone are reported as STALE and printed, never failed - a",
+    "gate that punishes somebody for fixing a line is a gate that stops fixes.",
+    "",
+    "The four legitimate cases, so they do not have to be re-derived:",
+    "  1. ISO VALUE PRODUCERS. A date input's value, an API payload, an AutoCount",
+    "     field and a sort key are all YYYY-MM-DD. Storage is not display and is",
+    "     outside this rule entirely.",
+    "  2. A WEEKDAY or MONTH NAME used as a LABEL - a calendar header, a chart",
+    "     bucket, 'Monday' beside a fmtDate. It names a period, it is not a date.",
+    "  3. A RANGE compression that prints the year once ('31 Jul - 2 Aug 2026').",
+    "  4. A NAMED PERSON'S NAMED DECISION on a printed or outbound document. Those",
+    "     are listed with the person and the date, and changing one needs them."
+  ],
+  "reviewed": [
+    {
+      "file": "backend/src/routes/assr_print.ts",
+      "text": "return `${yyyy}/${mm}/${dd} ${h12}:${min} ${ampm}`;",
+      "why": "printedStamp — the ASSR sign-off footer, specified by Nico 2026-07-30 as 'yyyy/mm/dd hh:mm AM/PM'. A named person's named decision on a printed sheet; changing it needs him, not this pass."
+    },
+    {
+      "file": "backend/src/routes/finance.ts",
+      "text": "\"Jan\", \"Feb\", \"Mar\", \"Apr\", \"May\", \"Jun\",",
+      "why": "Month LABELS for a chart bucket / KPI card ('August target'), not dates. The label names a period; no day is involved."
+    },
+    {
+      "file": "backend/src/routes/pos.ts",
+      "text": "const KPI_MONTHS = [\"January\",\"February\",\"March\",\"April\",\"May\",\"June\",\"July\",\"August\",\"September\",\"October\",\"November\",\"December\"];",
+      "why": "Month LABELS for a chart bucket / KPI card ('August target'), not dates. The label names a period; no day is involved."
+    },
+    {
+      "file": "backend/src/routes/projects_print.ts",
+      "text": "const MONTHS = [\"Jan\", \"Feb\", \"Mar\", \"Apr\", \"May\", \"Jun\", \"Jul\", \"Aug\", \"Sep\", \"Oct\", \"Nov\", \"Dec\"];",
+      "why": "Feeds fmtRange only — '31 Jul - 2 Aug 2026' for an event SPAN on the printed run sheet, specified from the owner's reference sheet 2026-08-12. Deliberate compression of two dates into one line; the plain fields on the same sheet use fmtDate."
+    },
+    {
+      "file": "backend/src/scm/lib/my-time.ts",
+      "text": "label: new Intl.DateTimeFormat('en-MY', {",
+      "why": "A PERIOD label ('August 2026') for the POS stats window — names a month, not a day. The day-level labels in this file now come from fmtDate."
+    },
+    {
+      "file": "backend/src/scm/routes/delivery-messages.ts",
+      "text": "return String(iso ?? '').slice(0, 10).replace(/-/g, '/');",
+      "why": "The Seampify WhatsApp payload. DEFERRED: the downstream template lives OUTSIDE this repo and expects YYYY/MM/DD, so changing it here could break a customer message. Needs whoever owns that template — flagged in the PR body."
+    },
+    {
+      "file": "backend/src/scm/shared/customer-demographics.ts",
+      "text": "return new Date().toLocaleDateString('en-CA');",
+      "why": "ISO VALUE PRODUCER, not a display: en-CA renders YYYY-MM-DD, which is what the date input / API payload wants. Storage stays ISO and is outside this rule. (Separate known bug, unchanged here: en-CA reads the DEVICE clock, so a machine outside GMT+8 produces the wrong Malaysian day — todayMY() is the timezone-stable fix.)"
+    },
+    {
+      "file": "frontend/src/lib/processingDate.ts",
+      "text": "const lead = d.toLocaleDateString('en-CA');",
+      "why": "ISO VALUE PRODUCER, not a display: en-CA renders YYYY-MM-DD, which is what the date input / API payload wants. Storage stays ISO and is outside this rule. (Separate known bug, unchanged here: en-CA reads the DEVICE clock, so a machine outside GMT+8 produces the wrong Malaysian day — todayMY() is the timezone-stable fix.)"
+    },
+    {
+      "file": "frontend/src/lib/utils.ts",
+      "text": "const iso = `${yyyy}-${mm}-${dd}`;",
+      "why": "An ISO SORT KEY built to compare dates lexicographically (isExpired / isExpiringSoon). Never rendered — the display on these paths is fmtDate."
+    },
+    {
+      "file": "frontend/src/lib/utils.ts",
+      "text": "const parts = new Intl.DateTimeFormat(\"en-CA\", {",
+      "why": "ISO VALUE PRODUCER, not a display: en-CA renders YYYY-MM-DD, which is what the date input / API payload wants. Storage stays ISO and is outside this rule. (Separate known bug, unchanged here: en-CA reads the DEVICE clock, so a machine outside GMT+8 produces the wrong Malaysian day — todayMY() is the timezone-stable fix.)"
+    },
+    {
+      "file": "frontend/src/lib/utils.ts",
+      "text": "return `${yyyy}-${mm}-${dd}` < today;",
+      "why": "An ISO SORT KEY built to compare dates lexicographically (isExpired / isExpiringSoon). Never rendered — the display on these paths is fmtDate."
+    },
+    {
+      "file": "frontend/src/mobile/MobileCalendar.tsx",
+      "text": "\"January\", \"February\", \"March\", \"April\", \"May\", \"June\",",
+      "why": "Month names for a CALENDAR GRID's own header, where the month is the axis rather than part of a date. No date is spelled with a month name here."
+    },
+    {
+      "file": "frontend/src/mobile/MobileCalendar.tsx",
+      "text": "const weekday = new Date(year, month, day).toLocaleDateString(\"en-GB\", { weekday: \"long\" });",
+      "why": "Renders the WEEKDAY NAME only; the date beside it comes from fmtDate. A weekday is a word by design and carries no day/month ambiguity."
+    },
+    {
+      "file": "frontend/src/mobile/MobileDeliveryPlanning.tsx",
+      "text": "? routeDate.toLocaleDateString(\"en-GB\", { weekday: \"long\" })",
+      "why": "Renders the WEEKDAY NAME only; the date beside it comes from fmtDate. A weekday is a word by design and carries no day/month ambiguity."
+    },
+    {
+      "file": "frontend/src/mobile/MobileInbox.tsx",
+      "text": "new Intl.DateTimeFormat(\"en-CA\", {",
+      "why": "ISO VALUE PRODUCER, not a display: en-CA renders YYYY-MM-DD, which is what the date input / API payload wants. Storage stays ISO and is outside this rule. (Separate known bug, unchanged here: en-CA reads the DEVICE clock, so a machine outside GMT+8 produces the wrong Malaysian day — todayMY() is the timezone-stable fix.)"
+    },
+    {
+      "file": "frontend/src/mobile/MobileServiceCase.tsx",
+      "text": "<EditRow label=\"Customer pickup date\" type=\"date\" value={get(c, \"customerPickupAt\", \"customer_pickup_at\")} busy={busy} disabled={dis} onSave={(v) => patchCase({ customer_pickup_at: v }, \"Couldn't save pickup date\")} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/mobile/MobileServiceCase.tsx",
+      "text": "<EditRow label=\"DO date\" type=\"date\" value={get(c, \"doDate\", \"do_date\")} busy={busy} disabled={dis} onSave={(v) => patchCase({ do_date: v }, \"Couldn't save DO date\")} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/mobile/MobileServiceCase.tsx",
+      "text": "<EditRow label=\"QC inspection date\" type=\"date\" value={get(c, \"itemsReadyAt\", \"items_ready_at\")} busy={busy} disabled={dis} onSave={(v) => patchCase({ items_ready_at: v }, \"Couldn't save QC date\")} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/mobile/MobileServiceCase.tsx",
+      "text": "<EditRow label=\"QC issue date\" type=\"date\" value={get(c, \"qcReceiptDate\", \"qc_receipt_date\")} busy={busy} disabled={dis} onSave={(v) => patchCase({ qc_receipt_date: v }, \"Couldn't save QC issue date\")} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/mobile/MobileServiceCase.tsx",
+      "text": "<EditRow label=\"Supplier pickup date\" type=\"date\" value={get(c, \"supplierPickupAt\", \"supplier_pickup_at\")} busy={busy} disabled={dis} onSave={(v) => patchCase({ supplier_pickup_at: v }, \"Couldn't save pickup date\")} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/mobile/MobileServiceCase.tsx",
+      "text": "<EditRow label=\"Supplier return date\" type=\"date\" value={get(c, \"itemsReadyAt\", \"items_ready_at\")} busy={busy} disabled={dis} onSave={(v) => patchCase({ items_ready_at: v }, \"Couldn't save return date\")} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/Overview.tsx",
+      "text": "const dateLabel = `${now.toLocaleDateString(\"en-GB\", { weekday: \"long\" })} ${fmtDate(now)}`.toUpperCase();",
+      "why": "Renders the WEEKDAY NAME only; the date beside it comes from fmtDate. A weekday is a word by design and carries no day/month ambiguity."
+    },
+    {
+      "file": "frontend/src/pages/Projects.tsx",
+      "text": ".toLocaleDateString(\"en-GB\", { weekday: \"long\" });",
+      "why": "Renders the WEEKDAY NAME only; the date beside it comes from fmtDate. A weekday is a word by design and carries no day/month ambiguity."
+    },
+    {
+      "file": "frontend/src/pages/Projects.tsx",
+      "text": "const monthLabel = anchor.toLocaleDateString(\"en-GB\", { month: \"long\", year: \"numeric\" });",
+      "why": "A calendar MONTH header, not a date. DEFERRED ON PURPOSE: Projects.tsx cites the owner for 'November 2025' and ServiceCases.tsx renders exactly the '11/2025' that comment rejects. Both claim him; only he can say which. Not guessed here."
+    },
+    {
+      "file": "frontend/src/pages/Projects.tsx",
+      "text": "d.toLocaleDateString(\"en-GB\", { day: \"2-digit\", month: \"2-digit\" });",
+      "why": "A week-range header 'DD/MM - DD/MM YYYY' — a RANGE compression that prints the year once. Day-first like the rule; dropping the repeated year is the point of it."
+    },
+    {
+      "file": "frontend/src/pages/Projects.tsx",
+      "text": "patchParams({ mode: next, week: `${yyyy}-${mm}-${dd}` });",
+      "why": "A URL query parameter (?week=YYYY-MM-DD), not a display. The address bar carries the storage shape so a shared link resolves the same week everywhere."
+    },
+    {
+      "file": "frontend/src/pages/Projects.tsx",
+      "text": "patchParams({ week: `${yyyy}-${mm}-${dd}` });",
+      "why": "A URL query parameter (?week=YYYY-MM-DD), not a display. The address bar carries the storage shape so a shared link resolves the same week everywhere."
+    },
+    {
+      "file": "frontend/src/pages/ServiceCases.tsx",
+      "text": "const label = `${new Date(iso + \"T00:00:00\").toLocaleDateString(\"en-GB\", { weekday: \"long\" })} ${fmtDate(iso)}`;",
+      "why": "Renders the WEEKDAY NAME only; the date beside it comes from fmtDate. A weekday is a word by design and carries no day/month ambiguity."
+    },
+    {
+      "file": "frontend/src/pages/ServiceCases.tsx",
+      "text": "const monthLabel = anchor.toLocaleDateString(\"en-GB\", { month: \"2-digit\", year: \"numeric\" });",
+      "why": "A calendar MONTH header, not a date. DEFERRED ON PURPOSE: Projects.tsx cites the owner for 'November 2025' and ServiceCases.tsx renders exactly the '11/2025' that comment rejects. Both claim him; only he can say which. Not guessed here."
+    },
+    {
+      "file": "frontend/src/pages/ServiceCases.tsx",
+      "text": "type=\"date\"",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/ConsignmentOrderDetail.tsx",
+      "text": "const today = new Date().toLocaleDateString('en-CA');",
+      "why": "ISO VALUE PRODUCER, not a display: en-CA renders YYYY-MM-DD, which is what the date input / API payload wants. Storage stays ISO and is outside this rule. (Separate known bug, unchanged here: en-CA reads the DEVICE clock, so a machine outside GMT+8 produces the wrong Malaysian day — todayMY() is the timezone-stable fix.)"
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/ConsignmentOrderNew.tsx",
+      "text": "const today = new Date().toLocaleDateString('en-CA');",
+      "why": "ISO VALUE PRODUCER, not a display: en-CA renders YYYY-MM-DD, which is what the date input / API payload wants. Storage stays ISO and is outside this rule. (Separate known bug, unchanged here: en-CA reads the DEVICE clock, so a machine outside GMT+8 produces the wrong Malaysian day — todayMY() is the timezone-stable fix.)"
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/DeliveryOrderNewV2.tsx",
+      "text": "return `${yy}-${mm}-${dd}`;",
+      "why": "todayIso() — an ISO VALUE for a date input's default, not a display."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/DeliveryOrderNewV2.tsx",
+      "text": "type=\"date\"",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/DeliveryRateCards.tsx",
+      "text": "<RMLikeInput label=\"From\" value={range.from} onChange={(v) => setRange((s) => ({ ...s, from: v }))} type=\"date\" width={150} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/DeliveryRateCards.tsx",
+      "text": "<RMLikeInput label=\"To\" value={range.to} onChange={(v) => setRange((s) => ({ ...s, to: v }))} type=\"date\" width={150} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/LorryDetail.tsx",
+      "text": "<Field label=\"First day in service\" type=\"date\" value={form.inServiceDate} onChange={(v) => set('inServiceDate', v)} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/LorryDetail.tsx",
+      "text": "<Field label=\"Insurance expiry\" type=\"date\" value={form.insuranceExpiry} onChange={(v) => set('insuranceExpiry', v)} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/LorryDetail.tsx",
+      "text": "<Field label=\"Manufactured\" type=\"date\" value={form.manufactureDate} onChange={(v) => set('manufactureDate', v)} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/LorryDetail.tsx",
+      "text": "<Field label=\"Next service date\" type=\"date\" value={form.nextServiceDate} onChange={(v) => set('nextServiceDate', v)} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/LorryDetail.tsx",
+      "text": "<Field label=\"Purchase date\" type=\"date\" value={form.purchaseDate} onChange={(v) => set('purchaseDate', v)} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/LorryDetail.tsx",
+      "text": "<Field label=\"Puspakom expiry\" type=\"date\" value={form.puspakomExpiry} onChange={(v) => set('puspakomExpiry', v)} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/LorryDetail.tsx",
+      "text": "<Field label=\"Registered (JPJ)\" type=\"date\" value={form.registrationDate} onChange={(v) => set('registrationDate', v)} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/LorryDetail.tsx",
+      "text": "<Field label=\"Road tax expiry\" type=\"date\" value={form.roadTaxExpiry} onChange={(v) => set('roadTaxExpiry', v)} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/LorryDetail.tsx",
+      "text": "<Field label=\"Service date *\" type=\"date\" value={form.serviceDate} onChange={(v) => set('serviceDate', v)} />",
+      "why": "A type=\"date\" PROP on a wrapper component (InlineEdit / EditRow / TextInput / Field / RMLikeInput), not a native input. Each of those renders <DateField> for this branch, so the display is DD/MM/YYYY on every machine."
+    },
+    {
+      "file": "frontend/src/pages/scm-v2/PurchaseInvoiceNew.tsx",
+      "text": "setDueDate(d.toLocaleDateString('en-CA'));",
+      "why": "ISO VALUE PRODUCER, not a display: en-CA renders YYYY-MM-DD, which is what the date input / API payload wants. Storage stays ISO and is outside this rule. (Separate known bug, unchanged here: en-CA reads the DEVICE clock, so a machine outside GMT+8 produces the wrong Malaysian day — todayMY() is the timezone-stable fix.)"
+    }
+  ]
+}
