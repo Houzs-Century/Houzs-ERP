@@ -1,0 +1,50 @@
+name: Tenant isolation check (read-only)
+
+# Answers the four cross-company questions that cannot be answered from this
+# repository, without anyone opening a SQL console.
+#
+#   1. how many users hold NO user_companies grant  (decides whether
+#      companyContext.ts can be flipped from fail-open to fail-closed)
+#   2. whether scm.fn_consume_fifo / fn_consume_fifo_batch carry a company
+#      predicate — they are CALLED by migs 0088 and 0195 and DEFINED in no file
+#      here, so pg_get_functiondef is the only source
+#   3. how many account codes are held by more than one company (the blast
+#      radius of mig 0306)
+#   4. whether any journal line's company disagrees with its entry's
+#
+# CLAUDE.md: never ask the owner to run a query — build the check instead.
+# Actions already holds secrets.DATABASE_URL for the deploy, so the check runs
+# here and nobody handles the production credential.
+#
+# Manual trigger only. These are questions, not gates, and a production DB read
+# must never become part of routine CI noise.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT in the deploy concurrency group: this touches nothing and must
+# never queue behind — or displace — a release.
+concurrency:
+  group: tenant-isolation-check
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-tenant-isolation.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first
