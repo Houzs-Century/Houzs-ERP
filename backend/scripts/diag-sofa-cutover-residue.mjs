@@ -71,6 +71,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import postgres from "postgres";
 import { SOFA_MODEL_ALIAS, parseSofa } from "./lib/parse-sofa.mjs";
+import { provenanceNoteRe } from "./lib/transfer-vocabulary.mjs";
 import { soProcessingDateFragment } from "./lib/so-processing-date.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -368,7 +369,12 @@ async function main() {
   const linkedIds = new Set(poRows.filter((r) => r.so_item_id).map((r) => r.po_hdr_id));
   const mixedHdr = unlinked.filter((r) => linkedIds.has(r.po_hdr_id));
   const pureStock = unlinked.filter((r) => !linkedIds.has(r.po_hdr_id));
-  const mentionsSo = unlinked.filter((r) => /From SOs?:|HC-SO-|SO-\d/i.test(r.po_notes));
+  // The provenance label (either era, via the shared list) OR a bare doc-number
+  // shape — this one is a HEURISTIC for "the note talks about an order at all",
+  // so it stays broader than the parser on purpose.
+  const mentionsSo = unlinked.filter(
+    (r) => provenanceNoteRe().test(String(r.po_notes ?? "")) || /HC-SO-|SO-\d/i.test(String(r.po_notes ?? "")),
+  );
   log(`    PO lines with a NULL so_item_id            ${unlinked.length} of ${poRows.length}`);
   log(`      on a PO where NO line is linked          ${pureStock.length}   (a stock purchase: nothing to point at — provenance, not a defect)`);
   log(`      on a PO where OTHER lines ARE linked     ${mixedHdr.length}   (same document, some lines claimed and some not — the candidates for a LOST link)`);

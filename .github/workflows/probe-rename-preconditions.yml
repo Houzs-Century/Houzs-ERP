@@ -1,8 +1,16 @@
 name: probe-rename-preconditions
 
-# Pre-flight for migration 0284_scm_processing_date_one_name.sql, read against
-# the LIVE catalog. READ-ONLY: the script runs everything inside a
+# Pre-flight for the Processing Date's name unification, read against the LIVE
+# catalog. READ-ONLY: the script runs everything inside a
 # SET TRANSACTION READ ONLY transaction and writes nothing.
+#
+# SECTIONS A-E are migration 0284's pre-conditions and are what the job's
+# green/red scores. SECTION F, added 2026-08-18 with the sweep that collapsed the
+# Processing Date's remaining names, asks what the NEXT removals need to know —
+# whether anything outside this repo still writes `target_date`, and whether the
+# two surviving aliases still have queued rows behind them. F is printed and
+# never scored, so a red run still means exactly one thing: 0284's assumptions.
+# Read F in the log or the artifact regardless of the job's colour.
 #
 # WHY IT IS A WORKFLOW AND NOT A NOTE IN A PR. 0284 was verified against a
 # PGlite replica built from this repo's own SQL, which proves the migration is

@@ -88,6 +88,7 @@ import { cn } from "../../lib/utils";
 import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetryNavigationState, planPaymentDraftFlush, readPaymentRetryHandoff, readPaymentRetryNavigationState } from "../../lib/paymentRetryHandoff";
+import { transferFromColumnLabel } from "../../lib/convertScope";
 
 // ─── Row shapes (subset — see SalesInvoiceDetail.tsx for the full 40-field
 // header) ───────────────────────────────────────────────────────────────
@@ -1108,7 +1109,7 @@ export function SalesInvoiceDetailV2() {
                   <>
                     <Divider />
                     <span>
-                      From DO{" "}
+                      {transferFromColumnLabel('do')}{" "}
                       <span className="font-mono font-semibold text-ink-secondary">
                         {doOf(salesInvoice)}
                       </span>
@@ -1119,7 +1120,7 @@ export function SalesInvoiceDetailV2() {
                   <>
                     <Divider />
                     <span>
-                      From SO{" "}
+                      {transferFromColumnLabel('so')}{" "}
                       <span className="font-mono font-semibold text-ink-secondary">
                         {soOf(salesInvoice)}
                       </span>
@@ -1280,13 +1281,13 @@ export function SalesInvoiceDetailV2() {
                   muted={!salesInvoice.email}
                 />
                 <Field
-                  label="From DO"
+                  label={transferFromColumnLabel('do')}
                   value={doOf(salesInvoice)}
                   mono={doOf(salesInvoice) !== "—"}
                   muted={doOf(salesInvoice) === "—"}
                 />
                 <Field
-                  label="From SO"
+                  label={transferFromColumnLabel('so')}
                   value={soOf(salesInvoice)}
                   mono={soOf(salesInvoice) !== "—"}
                   muted={soOf(salesInvoice) === "—"}
