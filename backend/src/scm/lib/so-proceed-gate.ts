@@ -38,6 +38,30 @@ export async function soDepositFacts(
   };
 }
 
+/* NO CALLERS, as of 2026-08-18 — and left standing deliberately.
+ *
+ * Its two call sites were both in routes/mfg-sales-orders.ts: the /status
+ * IN_PRODUCTION stamp block, and the header PATCH's `proceededAt` branch. Both
+ * went with the second Processing-Date storage (see "RETIRING THE SECOND
+ * STORAGE" in shared/so-processing-date.ts):
+ *   · the /status branch ran only when the order ALREADY carried a Processing
+ *     Date, i.e. it re-gated a state that had already passed the same gate —
+ *     and inconsistently, since an order that also carried a Proceed stamp was
+ *     not re-gated at all. The first proceed is the request that PUTS the date
+ *     on, and that branch already runs soProcessingDateProblemsForDoc, which is
+ *     a superset of this.
+ *   · the header PATCH branch fired on a bare `proceededAt` timestamp, a key no
+ *     client has ever sent; it cannot be reached at all now that the key is out
+ *     of the PATCH map.
+ *
+ * NOT DELETED because this module and its per-condition refusal landed hours
+ * earlier in #2383 and are the better statement of the rule — deleting a
+ * freshly-shipped export to tidy a merge is how work gets silently undone. If
+ * a future proceed path needs to refuse, this is what it should call. Whoever
+ * concludes it will never have one should remove it on purpose, with the same
+ * note applied to `meetsProceedGate`, which is now callerless for the same
+ * reason (docs/modules/sales-order.md's "TWO enforcement sites" is one live
+ * site and two orphans). */
 export async function soProceedGateBlocked(
   sb: any,
   docNo: string,

@@ -49,10 +49,26 @@ export interface ProceedGateInput {
  *  It answers ONE question — may this order be released for purchasing to order
  *  goods? (owner 2026-08-18; there is no production here) — and every path
  *  that used to ask its own version now asks this: setting `processing_date`
- *  (the date the user picks), auto-stamping `proceeded_at` at create, and the two
- *  manual proceed paths. `proceeded_at` remains a separate COLUMN because it is a
- *  timestamp the system writes, not a date the user picks; what is unified is the
- *  RULE, not the storage.
+ *  (the date the user picks) and the two manual proceed paths.
+ *
+ *  ONE RULE AND ONE STORAGE (owner, 2026-08-18, naming the scope: frontend,
+ *  backend AND database). This docblock used to end: *"`proceeded_at` remains a
+ *  separate COLUMN because it is a timestamp the system writes, not a date the
+ *  user picks; what is unified is the RULE, not the storage."* That argument is
+ *  coherent — an audit stamp and a planned date really are different kinds of
+ *  fact — and the owner has OVERRULED it for the purpose of DECISIONS. His
+ *  reason is the one the bug record supports: every Processing-Date bug this
+ *  repo has had came from there being more than one of them.
+ *
+ *  So no decision anywhere may branch on a second column. What survives is the
+ *  question "WHEN did someone press Proceed", and that has no consumer: the
+ *  desktop Proceed Date field was deleted on 2026-06-05, the dashboard hook that
+ *  carried the value has zero callers, and no export, PDF or AutoCount payload
+ *  names it. Where the fact IS still wanted it belongs in scm.mfg_so_audit_log,
+ *  which nothing gates on.
+ *
+ *  Retirement state and the remaining step are in shared/so-processing-date.ts
+ *  under "RETIRING THE SECOND STORAGE".
  *
  *  WHAT CHANGED, and why each way:
  *   - **Threshold is per company** (HOUZS 30% / 2990 50%). Previously two

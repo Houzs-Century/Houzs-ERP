@@ -9,7 +9,7 @@ import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '..
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
-import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
    the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
@@ -2016,28 +2016,20 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
     `Batch-converted from ${poList.length} PO${poList.length === 1 ? '' : 's'}: ${poNumbersJoined}`,
   );
 
-  /* ERP -> AutoCount PO->GR. A GRN batched across several POs has no AutoCount
-     shape (one transfer, one source document), so it is recorded as skipped
-     rather than invented or dropped. */
-  if (poList.length === 1) {
+  /* ERP -> AutoCount PO->GR, BATCHED OR NOT. A GRN receiving several purchase
+     orders names every one of them: AcSyncService takes FromDocNos and either
+     FullTransfers the array or groups the named line keys per source document.
+     The "one transfer, one source document" limit this used to skip on belongs
+     to the primitive's key array, never to the target. */
+  if (poList.length) {
     await enqueueConvert(sb, {
       companyId: activeCompanyId(c),
       op: 'po_to_gr',
-      from: { table: 'purchase_orders', keyCol: 'id', key: poList[0].id },
+      from: poList.map((po) => ({ table: 'purchase_orders' as const, keyCol: 'id', key: po.id })),
       to: { table: 'grns', keyCol: 'id', key: h.id },
       docType: 'GR',
       docNo: h.grn_number,
       docId: h.id,
-      createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  } else {
-    await recordConvertSkipped(sb, {
-      companyId: activeCompanyId(c),
-      op: 'po_to_gr',
-      docType: 'GR',
-      docNo: h.grn_number,
-      docId: h.id,
-      reason: `batched from ${poList.length} POs (${poNumbersJoined}) — AutoCount transfers from ONE source document, so this GRN has no AutoCount counterpart`,
       createdBy: c.get('houzsUser')?.id ?? null,
     });
   }
@@ -2237,15 +2229,20 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   // supplier's lines may span several POs; the GRN header references the first
   // PO (grns.purchase_order_id is single-FK) while each grn_item keeps its own
   // purchase_order_item_id, so received_qty still rolls up to EVERY source PO.
-  type Bucket = { supplierId: string; primaryPoId: string; poNumbers: Set<string>; warehouseId: string | null; currency: string | null; lines: Array<{ row: ItemRow; qty: number }> };
+  /* `poIds` alongside `poNumbers` because the AutoCount transfer names its
+     sources by ERP ROW, not by printed number: enqueueConvert resolves each
+     ref through linked_ac_docno, and `primaryPoId` alone would name one of
+     the several purchase orders this bucket actually received. */
+  type Bucket = { supplierId: string; primaryPoId: string; poIds: Set<string>; poNumbers: Set<string>; warehouseId: string | null; currency: string | null; lines: Array<{ row: ItemRow; qty: number }> };
   const buckets = new Map<string, Bucket>();
   for (const p of picks) {
     const row = byId.get(p.poItemId)!;
     const key = row.po.supplier_id;
     const cur = buckets.get(key) ?? {
-      supplierId: row.po.supplier_id, primaryPoId: row.po.id, poNumbers: new Set<string>(),
+      supplierId: row.po.supplier_id, primaryPoId: row.po.id, poIds: new Set<string>(), poNumbers: new Set<string>(),
       warehouseId: row.po.purchase_location_id, currency: row.po.currency ?? null, lines: [],
     };
+    cur.poIds.add(row.po.id);
     cur.poNumbers.add(row.po.po_number);
     cur.lines.push({ row, qty: p.qty });
     buckets.set(key, cur);
@@ -2402,26 +2399,19 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
       `Received from ${[...bucket.poNumbers].join(', ')}`,
     );
 
-    /* ERP -> AutoCount PO->GR, per bucket: each bucket IS its own document. */
-    if (bucket.poNumbers.size === 1 && bucket.primaryPoId) {
+    /* ERP -> AutoCount PO->GR, per bucket: each bucket IS its own document, and
+       it names every purchase order it received against. The bucket is grouped
+       by supplier, so all its sources share one creditor. */
+    const bucketPoIds = bucket.poIds.size ? [...bucket.poIds] : (bucket.primaryPoId ? [bucket.primaryPoId] : []);
+    if (bucketPoIds.length) {
       await enqueueConvert(sb, {
         companyId: activeCompanyId(c),
         op: 'po_to_gr',
-        from: { table: 'purchase_orders', keyCol: 'id', key: bucket.primaryPoId },
+        from: bucketPoIds.map((id) => ({ table: 'purchase_orders' as const, keyCol: 'id', key: id })),
         to: { table: 'grns', keyCol: 'id', key: h.id },
         docType: 'GR',
         docNo: h.grn_number,
         docId: h.id,
-        createdBy: c.get('houzsUser')?.id ?? null,
-      });
-    } else {
-      await recordConvertSkipped(sb, {
-        companyId: activeCompanyId(c),
-        op: 'po_to_gr',
-        docType: 'GR',
-        docNo: h.grn_number,
-        docId: h.id,
-        reason: `received against ${bucket.poNumbers.size} POs (${[...bucket.poNumbers].join(', ')}) — AutoCount transfers from ONE source document, so this GRN has no AutoCount counterpart`,
         createdBy: c.get('houzsUser')?.id ?? null,
       });
     }

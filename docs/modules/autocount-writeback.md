@@ -324,7 +324,32 @@ phantom column silences an entire flow (see `BUG-HISTORY.md`, 2026-08-10).
 document** — a mixed key array answers `InvalidTransferItemException` (measured
 on the live book, 2026-08-16). Merging is done by calling it once per source, or
 natively by `FullTransfer(String[] docNos, …)` when the whole of each source
-moves. Some ERP shapes still have no AutoCount shape at all.
+moves.
+
+**A MERGED CONVERSION IS NO LONGER ONE OF THE SHAPES BELOW — since 2026-08-18.**
+The ERP names every source document it drew from and the transfer goes:
+`enqueueConvert` takes `AcDocRef | AcDocRef[]`, one source writes
+`payload.fromDoc` and several write `payload.fromDocs`, and the drain resolves
+each through its `linked_ac_docno` into `FromDocNos`. If any one source has no
+AutoCount counterpart yet the row WAITS rather than sending the subset — a
+delivery order in the book carrying one sales order's lines out of two would be
+`sent`, and nothing would ever look at it again.
+
+Two consequences worth carrying:
+
+- `conversionIsPartial` counts leftovers **per parent**. It used to compare one
+  parent's line count against the total taken from all of them, which is only
+  ever right for a single source; with a merge it reads a partial transfer as a
+  whole-document one and sends no `DtlKeys`, so AutoCount moves every
+  outstanding line on every source. That is D14 one level up.
+- `scm.autocount_outbox` is append-only, so every merged conversion recorded
+  BEFORE that date still carries `AutoCount transfers from ONE source document`
+  and still classifies `no-autocount-shape`. The needle stays for exactly that
+  reason; the remedy now says the row is history. Those documents were never
+  composed, so **Send again cannot help them** — they are a one-off backlog to
+  raise by hand.
+
+Some ERP shapes still have no AutoCount shape at all.
 
 They are written to the outbox with `status = 'skipped'` and the reason in
 `last_error` (`recordConvertSkipped`). Inventing N AutoCount documents would
@@ -772,13 +797,34 @@ promotion would be the service deciding — the same principle that puts the
 SO -> PO transfer/create decision in `scm/shared/po-transfer-shape.ts` rather
 than in the C#.
 
-**Still open, and NOT fixed by this: the ERP cannot SAY a partial quantity.**
-`enqueueConvert` composes `{ DocNo, DocDate?, Ref?, DtlKeys? }`, and
-`readConvertSourceKeys` resolves line IDENTITY only — its own comment says so.
-Every documented `PartialTransfer` overload takes a `Decimal`, so none of them can
-be filled from what the service is told, and a DO shipping 2 of a 5-unit line
-still produces an AutoCount DO of 5 on that line. Naming the right lines does not
-fix the wrong number on them.
+**CLOSED 2026-08-18: the ERP can SAY a partial quantity now.** This paragraph
+used to read *"Still open, and NOT fixed by this: the ERP cannot SAY a partial
+quantity"* — true when it was written, and the ERP half is the part that was
+missing.
+
+`readConvertSourceKeys` now reads the quantity this document took of each source
+line (summed, because several target lines can point at one source row — a sofa
+build's compartments) against the source line's own quantity, and returns
+`details: [{ DtlKey, Qty }]` when any of them is being taken in PART.
+`enqueueConvert` puts it on the payload as `Details`.
+
+**Only when it really is partial**, and that restraint is the design, not
+timidity: a quantity commits the whole document to the documented
+`PartialTransfer` overloads, which `RunTransfer` refuses to fall back from, while
+the plain `DtlKeys` shape is the one PROVEN against this book on every conversion
+type. Measured on the live book 2026-08-11: **10 of 60,939** sales-order lines
+were ever partly transferred, and 6 of 10,351 moved sales orders carried one. So
+this branch is rare by construction and must stay that way — a regression that
+sent quantities on every conversion would put all six document types onto an
+unproven call path at once.
+
+**All-or-nothing per document**, because `PlanTransfer` throws on a key named
+with no `Qty` while another on the same document carries one: a line with no
+number would silently move its whole outstanding quantity. Every named key gets
+a quantity or none do, and `perKey.length === keys.length` is the guard.
+
+Where any of the numbers cannot be read, the ERP sends no quantity at all and the
+old shape applies — a readable wrong answer beats an unreadable one.
 
 The C# half is done: `PlanTransfer` reads `Details:[{ DtlKey, Qty }]` the moment
 it appears, and `RunTransfer` **refuses** a quantity plan it cannot express rather
@@ -1310,6 +1356,20 @@ column, the composer reads another, and nothing opens it on the AutoCount side.*
 |---|---|---|
 | `ToPONo` | `po_doc_no` ?? `customer_po` ?? `customer_so_no` (`soCustomerRef`) | PR #140 dropped the Customer PO card, so nothing writes the first two and the operator's reference lands in the third |
 | `BRANDING` | header `branding`, else the first live LINE's `branding` (`soBranding`), **through the map only** | the header column is NULL on every ERP-created order; the form has never had the field, and the detail page derives `first_item_branding` from the lines for that reason |
+
+> **`soBranding` is NOT the Branding column's rule, and did not move with it on
+> 2026-08-18.** That day the DISPLAY rule (`scm/shared/so-branding-label.ts`)
+> changed: SOFA became the company's house brand (`ZANOTTI` / `2990s Sofa`)
+> without consulting the line, and MATTRESS became the SKU's branding with the
+> manufactured `2990 Mattress` fallback deleted. `soBranding` still reads the
+> header then the first live line's stored text, and still passes it through
+> `BRANDING_MAP` as the allow-list this section argues for. So there are now
+> THREE branding rules in this system and they are meant to differ: the display
+> label, `deriveDisplayBrandingByDoc`'s raw text, and this write-back path.
+> Do not "align" them without re-reading why the allow-list exists — the whole
+> point above is that `mfg_products.branding` is not a brand list, so the value
+> the SO list happily shows a human is exactly the value that must not be opened
+> as a master in the licensed book.
 | `InvAddr3` / `InvAddr4` | `address3` / `address4`, else `postcode` + `city`, then `customer_state` (`soInvoiceAddress`) | only the cutover import ever wrote `address3` / `address4`. FIVE ERP fields into FOUR numbered lines is the one decision here, and it lives in that function's doc comment |
 | `SalesLocation` | `sales_location`, else the stock location the LINES resolve to (`soSalesLocation`) | `deriveSalesLocationFromState` returns null for an order with no customer state, and a blank is `FK_SO_SalesLocation` |
 | `VENUE` | `venue`, kept as-is when the map does not know it | venue is deliberately free text — "every roadshow hall is a one-off" (mig 0229) — against a 7-entry map |
@@ -2197,6 +2257,40 @@ assemblies. Even that is not exclusive — `build-local.ps1` compiles the source
 on any workstation with AutoCount 2.2 installed, which is how a CS0234 was
 caught before it shipped.
 
+## 7p. The line photographs reach the account book
+
+**Shipped 2026-08-18 (ERP half). The AutoCount half was proven 2026-08-15** on
+scratch order `ERP-FDPROBE-1`: the ERP sends JPEG bytes, the host renders a
+metafile into `FurtherDescription`, and the picture appears on the entry screen
+AND in the printed preview — the `XRRichText` path, which was the real risk.
+Read back: `truncated=False`, `pict=1`, `wmetafile8=1`, our own bytes kept
+unchanged. What was missing after that was only this side: nothing composed a
+`Photos` key.
+
+| | |
+|---|---|
+| Contract | `Photos: [{ Jpeg, Caption? }]` per LINE, base64 |
+| Route | **`/edit` only.** `AcSyncService.Edit()` reads it; `CreateSo` does not. A newly created order carries its pictures on its first edit |
+| ERP source | `scm.mfg_sales_order_items.photo_urls` — R2 keys in the `SO_ITEM_PHOTOS` bucket, written by `import-so-line-photos.mjs` at the cutover |
+
+**The payload carries KEYS, not bytes.** `scm.autocount_outbox` is append-only:
+storing base64 would write tens of KB per save of every photographed order,
+forever. The snapshot records what the save MEANT — these pictures, on this
+line — and `dispatchOne` materialises the bytes from R2 in the moment it sends,
+the same division `fromDoc` already runs under.
+
+**A picture the bucket cannot answer sends NO `Photos` key at all.** Not a short
+list: the service REPLACES `FurtherDescription` with what it is given, so three
+of five pictures would delete two from the book. And it never fails the edit —
+a photograph must not cost a price change its trip to the ledger.
+
+Keyed, live lines only. A cancelled line is being zeroed and must not be written
+to; a keyless line is refused by `composeEdit` long before this matters.
+
+**PO line photographs exist and are NOT sent yet** (`import-po-line-photos.mjs`
+wrote them). The sales order is the shape with live-book evidence behind it; the
+purchase order is a second rollout that needs its own.
+
 ## 8. Configuration
 
 | Name | Kind | Notes |
@@ -2617,7 +2711,7 @@ never grows the backlog by a duplicate `skipped` row.
 | `edit` | the document IS in AutoCount, so the documented remedy (fix, then save again) really does re-queue it. Re-composing it here would also silently drop any line `retire` entries the original save carried (§7a), which a `{}` payload cannot recall |
 | `cancel` | either the document was withdrawn before it ever reached AutoCount, so there is nothing there to cancel, or the ERP holds the wrong AutoCount number for it (`grn-mislinked`) and a re-send would name the wrong document in a live book |
 | a **`failed`** transfer | RE-QUEUEABLE since 2026-08-16. The ERP composed it, the queue sent it, and the SERVICE refused — a refusal that stops being true when the service is replaced, which a host rebuild does |
-| a **`skipped`** transfer | still refused, and the three shapes are unchanged: a parentless DO/GR/IV/PI can never exist in AutoCount (§7d), a merged conversion has no shape (§7), and a DtlKey-subset refusal is fixed by the line-key backfill and re-raising the document. Every one of them is a property of the DOCUMENT, and no rebuild touches a document |
+| a **`skipped`** transfer | still refused, and the shapes are properties of the DOCUMENT, which no rebuild touches: a parentless DO/GR/IV/PI can never exist in AutoCount (§7d), and a DtlKey-subset refusal is fixed by the line-key backfill and re-raising the document. A MERGED conversion was the third of these until 2026-08-18 and is now sent (§7); rows recorded before that date stay refused, because nothing was ever composed for them to re-send |
 
 **THE DISCRIMINATOR IS RECORDED, not asserted.** Two facts the queue already
 writes, which agree by construction and are BOTH required:

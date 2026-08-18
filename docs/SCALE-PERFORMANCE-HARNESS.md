@@ -60,17 +60,28 @@ Run the schema/query contract and route-drift checks before measuring:
 npm run test:scale-contract
 ```
 
-Pull-request CI also executes the full 100k fixture against an ephemeral
-PostgreSQL service container and uploads the JSON report as a build artifact.
-That job proves the DDL, seed SQL, correctness checks, queries, rollback and
-post-rollback catalogue assertion are executable at the acceptance cardinality.
-It is still database-contract evidence only — see the Boundary section.
+CI executes the full 100k fixture against an ephemeral PostgreSQL service
+container and uploads the JSON report as a build artifact. That job proves the
+DDL, seed SQL, correctness checks, queries, rollback and post-rollback catalogue
+assertion are executable at the acceptance cardinality. It is still
+database-contract evidence only — see the Boundary section.
 
-It runs on the `pull_request` event only. The same commit also fires a `push`
-run of the same workflow, where this job is skipped by design: a second
+**Where it runs changed on 2026-08-18.** It is now `scale-postgres-contract` in
+`.github/workflows/postsubmit.yml`, triggered by `push` to `main`, not by
+`pull_request` in `ci.yml`.
+
+The invariant this section has always asserted is unchanged: **exactly one
+execution per change, and the skip is never the only report.** A second
 ephemeral PostgreSQL container on the same runner image is not an independent
-environment, so running it twice buys nothing. The skip is therefore never the
-only report — every PR has one execution of this job on the merge ref.
+environment, so running it twice still buys nothing. The single execution simply
+happens on `main` after merge instead of on the pre-merge ref — on the tree that
+actually shipped rather than a speculative merge commit.
+
+What that trades away: a regression is now reported after the merge, not before
+it. That was accepted on evidence — over the 40 `ci.yml` runs preceding the
+move, this job was 37 success / 0 failure / 3 cancelled, having never once
+failed. If it starts failing on `main`, move it back into `ci.yml`; the decision
+is recorded in `docs/ci-capacity-coe.md`.
 
 `npm run test:scale-contract` is wired as `pretest`, not chained inside `test`.
 `npm test -- --shard=i/n` appends its arguments to the LAST command in the
