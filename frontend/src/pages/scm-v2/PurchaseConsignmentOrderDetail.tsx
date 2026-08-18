@@ -67,6 +67,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -340,22 +341,15 @@ export const PurchaseConsignmentOrderDetail = () => {
       priceTouched:   false,
     });
 
-  /* Patch one variant key + auto-compute bedframe Total Height, mirroring
-     Create's setVariant. Editing a variant re-arms the cost auto-recompute. */
-  const parseInches = (s: unknown): number => {
-    if (s == null) return 0;
-    const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-    return m && m[1] ? Number(m[1]) : 0;
-  };
+  /* Patch one variant key + auto-compute bedframe Total Height (from
+     vendor/shared/total-height.ts — the one home, no longer a copy of
+     Create's). Editing a variant re-arms the cost auto-recompute. */
   const setVariant = (rid: string, k: string, v: unknown) =>
     setEditLines((prev) => prev.map((l) => {
       if (l.rid !== rid) return l;
       const variants: Record<string, unknown> = { ...l.variants, [k]: v };
-      if (l.category === 'bedframe' && (k === 'divanHeight' || k === 'legHeight' || k === 'gap')) {
-        const d = parseInches(variants.divanHeight);
-        const lg = parseInches(variants.legHeight);
-        const g = parseInches(variants.gap);
-        variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightCategory(l.category) && isTotalHeightPart(k)) {
+        variants.totalHeight = computeTotalHeight(l.category, variants);
       }
       return { ...l, variants, priceTouched: false };
     }));

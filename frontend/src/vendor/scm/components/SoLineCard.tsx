@@ -34,6 +34,7 @@ import {
   type MfgFabricTier,
 } from '@2990s/shared/mfg-pricing';
 import { missingVariantAxes } from '@2990s/shared/so-variant-rule';
+import { computeTotalHeight, totalHeightPatch } from '../../shared/total-height';
 import { activeOptions, isColourKiv, lineIdentity, maintPickerValues, fmtMoneyCenti } from '@2990s/shared';
 import {
   useMfgProducts,
@@ -421,26 +422,31 @@ const SoLineCardInner = ({
     setShowPicker(false);
   };
 
-  /* PR #136 — Auto-compute bedframe Total Height = Divan + Leg + Gap. */
-  const parseInches = (s: unknown): number => {
-    if (s === null || s === undefined) return 0;
-    const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-    return m && m[1] ? Number(m[1]) : 0;
-  };
-  const computedTotalHeight = useMemo(() => {
-    if (category !== 'bedframe') return '';
-    const d = parseInches(draft.variants.divanHeight);
-    const l = parseInches(draft.variants.legHeight);
-    const g = parseInches(draft.variants.gap);
-    if (d === 0 && l === 0 && g === 0) return '';
-    return `${d + l + g}"`;
-  }, [category, draft.variants.divanHeight, draft.variants.legHeight, draft.variants.gap]);
+  /* PR #136 — Auto-compute bedframe Total Height = Divan + Leg + Gap. The rule
+     itself lives in vendor/shared/total-height.ts; this card is one of sixteen
+     writers that used to carry a private copy of it. */
+  const computedTotalHeight = useMemo(
+    () => computeTotalHeight(category, draft.variants),
+    [category, draft.variants.divanHeight, draft.variants.legHeight, draft.variants.gap],
+  );
 
+  /* THE `if (!computedTotalHeight) return;` THAT USED TO SIT HERE IS GONE, and
+     removing it is the behavioural half of unifying this rule. It made the
+     writer refuse to write an EMPTY total, so clearing divan/leg/gap on a line
+     that already carried one left the OLD number in the draft — and that stale
+     number was saved, priced by mfg-pricing.ts, and gated by
+     allowed-options-check.ts, which can refuse the line for a `total_height`
+     the form has no input to correct. The fourteen purchasing screens had
+     always cleared it; only this card and MobileNewSO did not.
+
+     The decision now lives in `totalHeightPatch`, which returns null ONLY when
+     the stored value already equals the computed one — never merely because the
+     computed one is empty. That is deliberately not a guard a caller can get
+     wrong here again, and it is pinned by total-height.canonical.test.ts. */
   useEffect(() => {
-    if (category !== 'bedframe') return;
-    if (!computedTotalHeight) return;
-    if (String(draft.variants.totalHeight ?? '') === computedTotalHeight) return;
-    onChange({ variants: { ...draft.variants, totalHeight: computedTotalHeight } });
+    const patch = totalHeightPatch(category, draft.variants);
+    if (!patch) return;
+    onChange({ variants: { ...draft.variants, ...patch } });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [computedTotalHeight, category]);
 

@@ -54,20 +54,13 @@ import type { GrnFromPoPick } from './GrnFromPo';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (centi: number | null | undefined, currency = 'MYR'): string => {
   const v = centi ?? 0;
   return `${currency} ${(v / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-};
-
-/* Commander 2026-05-29 — bedframe Total Height is AUTO-COMPUTED = Divan + Leg +
-   Gap (mirrors SoLineCard); it is NOT a manual pick. */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
 };
 
 /* Commander 2026-05-29 — "PO 那边根据 Category 会叫我填写我的 Variant，这个
@@ -989,11 +982,8 @@ export const GrnNew = () => {
                 setLine(l.rid, { variants: (() => {
                   const variants: Record<string, unknown> = { ...(l.variants ?? {}), [key]: value };
                   // Auto-compute bedframe Total Height = Divan + Leg + Gap.
-                  if (l.itemGroup === 'bedframe' && (key === 'divanHeight' || key === 'legHeight' || key === 'gap')) {
-                    const d = parseInches(variants.divanHeight);
-                    const lg = parseInches(variants.legHeight);
-                    const g = parseInches(variants.gap);
-                    variants.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+                  if (isTotalHeightCategory(l.itemGroup) && isTotalHeightPart(key)) {
+                    variants.totalHeight = computeTotalHeight(l.itemGroup, variants);
                   }
                   return variants;
                 })() });

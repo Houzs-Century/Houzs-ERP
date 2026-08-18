@@ -35,18 +35,11 @@ import { PageHeader } from '../../components/Layout';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
+import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 type AdjustmentType = 'increase' | 'decrease';
-
-/* Total Height is AUTO-COMPUTED for bedframe = Divan + Leg + Gap (mirrors the
-   GRN / PO variant editor); it is never a manual pick. */
-const parseInches = (s: unknown): number => {
-  if (s == null) return 0;
-  const m = String(s).match(/(-?\d+(?:\.\d+)?)/);
-  return m && m[1] ? Number(m[1]) : 0;
-};
 
 /* Per-category dropdown — a small local copy of the GRN/PO variant picker so a
    found sofa/bedframe carries the same attributes a real order line needs. */
@@ -169,11 +162,8 @@ export const StockAdjustmentNew = () => {
   const setVariant = (key: string, value: string) =>
     setVariants((prev) => {
       const next: Record<string, unknown> = { ...prev, [key]: value };
-      if (itemGroup === 'bedframe' && (key === 'divanHeight' || key === 'legHeight' || key === 'gap')) {
-        const d  = parseInches(next.divanHeight);
-        const lg = parseInches(next.legHeight);
-        const g  = parseInches(next.gap);
-        next.totalHeight = (d === 0 && lg === 0 && g === 0) ? '' : `${d + lg + g}"`;
+      if (isTotalHeightCategory(itemGroup) && isTotalHeightPart(key)) {
+        next.totalHeight = computeTotalHeight(itemGroup, next);
       }
       return next;
     });

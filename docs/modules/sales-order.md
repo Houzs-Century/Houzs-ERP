@@ -487,7 +487,15 @@ client never sends a `doc_no`, and money crosses the wire as `*_centi` integers.
 - **Bedframe** — Gap ← `maintenanceConfig.gaps`; Divan ←
   `maintenanceConfig.divanHeights`; Leg ← `maintenanceConfig.legHeights`.
   `totalHeight` (= divan + leg + gap) is COMPUTED into the variants blob for the
-  backend, but no longer shown (owner: hide it).
+  backend, but no longer shown (owner: hide it). The rule — the arithmetic, the
+  three parts it reads, and what is written when all three are blank — lives in
+  `backend/src/scm/shared/total-height.ts`, mirrored to
+  `frontend/src/vendor/shared/total-height.ts` and refereed by
+  `total-height.canonical.test.ts`. Blanking divan/leg/gap CLEARS the stored
+  total to `''`; it does not leave the previous number behind. Every surface
+  that authors the value imports `computeTotalHeight` / `totalHeightPatch` —
+  there is no per-screen copy, and the canonical test fails by name if one
+  reappears.
 
 Per-SKU `allowed_options` (Modular ON/OFF) filter every pool via
 `useModelAllowedOptionsByCode`, exactly as `SoLineCard` does. The REQUIRED axes
