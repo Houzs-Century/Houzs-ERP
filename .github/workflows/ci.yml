@@ -34,11 +34,99 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Static backend checks, split out of the test job so a type error is
-  # reported in ~1 minute instead of after the whole suite. Measured on the
-  # old single `backend` job (run 29839727146): npm ci 26s, audit:routes 1s,
-  # typecheck 26s, `npm test` 334s. Typecheck was queued BEHIND those 334s
-  # for no reason — it does not depend on them.
+  # Which halves of the tree this PR can possibly affect.
+  #
+  # deploy.yml has filtered by path since it was written; ci.yml never did, so a
+  # docs-only PR ran the whole backend suite.
+  #
+  # Replaying THIS classifier over the last 60 merged PRs (2026-08-18):
+  #   34  run both halves
+  #   21  skip the frontend half
+  #    3  skip the backend half
+  #    2  skip both (prose only)
+  # So 26 of 60 — 43% — save at least one half, against the 20-slot account
+  # ceiling that is the subject of docs/ci-capacity-coe.md.
+  #
+  # A naive count of path prefixes says 58% instead, by reading 32 PRs as
+  # "backend-only" that also touch a root file or scripts/. Those correctly run
+  # both halves here. 43% is the number this rule actually delivers.
+  #
+  # WHY THIS IS PLAIN SHELL AND NOT dorny/paths-filter, which deploy.yml uses:
+  # the safe question here is "can EVERY changed file be proven irrelevant to
+  # this half", and paths-filter answers "does SOME changed file match". Its
+  # `predicate-quantifier: every` does not close that gap either — it makes all
+  # PATTERNS have to match one file, which is a different question again. A
+  # filter that answers the wrong question fails OPEN: it would skip tests on a
+  # PR that needed them. So the rule is written out where it can be read.
+  #
+  # THE RULE: a half is skipped only when every single changed file is on the
+  # known-irrelevant list for it. Anything unrecognised — a root package.json, a
+  # tsconfig, a new top-level directory — matches nothing and therefore runs
+  # BOTH halves. Unknown means run it.
+  #
+  # THE OTHER TRAP: a REQUIRED check that is SKIPPED is not a passed check —
+  # GitHub leaves the PR pending on it forever. So `backend-typecheck` always
+  # runs (it also carries the doc gates, which a docs-only PR is exactly what
+  # needs), and the `backend` / `frontend` roll-ups accept `skipped` from the
+  # jobs they gate. Those roll-ups are the required contexts, not the jobs below.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.decide.outputs.backend }}
+      frontend: ${{ steps.decide.outputs.frontend }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: decide
+        run: |
+          set -euo pipefail
+
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            # merge_group has no PR base to diff against, and it is the last gate
+            # before main. Run everything.
+            echo "event=${{ github.event_name }}: running both halves"
+            echo "backend=true"  >> "$GITHUB_OUTPUT"
+            echo "frontend=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # checkout gives the PR merge commit: HEAD^1 is the base, HEAD the merge.
+          # `|| true` matters under `set -e`: if HEAD^1 does not resolve the
+          # assignment would abort the job. Falling through to the empty-diff
+          # branch below runs both halves instead, which is the safe answer.
+          files=$(git diff --name-only HEAD^1 HEAD || true)
+
+          if [ -z "$files" ]; then
+            # An empty diff is not "nothing to test", it is a question we failed
+            # to answer. Run everything.
+            echo "::warning::empty diff against HEAD^1 — running both halves"
+            echo "backend=true"  >> "$GITHUB_OUTPUT"
+            echo "frontend=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          backend=false
+          frontend=false
+          while IFS= read -r f; do
+            [ -n "$f" ] || continue
+            case "$f" in
+              # Prose. Cannot affect either half's build or tests.
+              docs/*|tasks/*|*.md) continue ;;
+              # One half only.
+              backend/*)  backend=true ;;
+              frontend/*) frontend=true ;;
+              # Everything else is shared or unclassified: run both.
+              *) backend=true; frontend=true ;;
+            esac
+          done <<< "$files"
+
+          echo "changed files:"
+          echo "$files" | sed 's/^/  /'
+          echo "backend=$backend frontend=$frontend"
+          echo "backend=$backend"   >> "$GITHUB_OUTPUT"
+          echo "frontend=$frontend" >> "$GITHUB_OUTPUT"
+
   backend-typecheck:
     runs-on: ubuntu-latest
     defaults:
@@ -363,6 +451,8 @@ jobs:
   # Sharding is by file-path hash, not by measured duration, so the slowest
   # shard runs somewhat above the mean.
   backend-tests:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     strategy:
       # Let every shard finish. If the pool-collapse signature above ever
@@ -445,10 +535,19 @@ jobs:
     steps:
       - name: Assert all backend jobs succeeded
         run: |
+          ok() {
+            # A gated job that did not run is not a failure — the paths filter
+            # decided it could not be affected. Only success/skipped pass; a
+            # failure, a cancellation, or an empty result still stops the roll-up.
+            case "$2" in
+              success|skipped) ;;
+              *) echo "::error::$1 = ${2:-<empty>}"; exit 1 ;;
+            esac
+          }
           echo "backend-typecheck: ${{ needs.backend-typecheck.result }}"
           echo "backend-tests:     ${{ needs.backend-tests.result }}"
-          [ "${{ needs.backend-typecheck.result }}" = "success" ] || exit 1
-          [ "${{ needs.backend-tests.result }}" = "success" ] || exit 1
+          ok backend-typecheck "${{ needs.backend-typecheck.result }}"
+          ok backend-tests "${{ needs.backend-tests.result }}"
 
   # ── Lint ──────────────────────────────────────────────────────────────────
   # This repo had NO linter until 2026-08-13: no .eslintrc, no eslint.config.*,
@@ -532,71 +631,26 @@ jobs:
       # `npm --prefix backend run lint` locally still gets exit 1 and the truth;
       # only this leg, in CI, is told to report instead of fail.
       - run: npm run lint ${{ matrix.app == 'backend' && '-- --advisory' || '' }}
-
-  scale-postgres-contract:
-    # The full 100k evidence run is deliberately PR-only. GitHub emits both a
-    # push and pull_request event for an open branch; running this job twice
-    # would spend twice the time without adding an independent environment.
-    #
-    # `merge_group` is included because the merge queue is the tree that
-    # actually reaches main, and a queue whose gate is weaker than the PR gate
-    # is worse than no queue: it would let a change through on evidence
-    # gathered against a different tree. Without this line the job simply never
-    # runs once the queue is switched on — silently, since a job that does not
-    # run reports nothing. See docs/ci-capacity-coe.md.
-    if: >-
-      github.event_name == 'pull_request' ||
-      github.event_name == 'merge_group'
-    runs-on: ubuntu-latest
-    timeout-minutes: 20
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_DB: houzs_scale_test
-          POSTGRES_PASSWORD: postgres
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres -d houzs_scale_test"
-          --health-interval 5s
-          --health-timeout 5s
-          --health-retries 10
-    defaults:
-      run:
-        working-directory: backend
-    env:
-      PERF_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/houzs_scale_test
-      PERF_LOCAL_ACK: I_UNDERSTAND_THIS_IS_A_DISPOSABLE_LOCAL_DATABASE
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: backend/package-lock.json
-      - run: npm ci
-      - name: Mark the ephemeral database as disposable
-        run: >-
-          node --input-type=module -e
-          "import postgres from 'postgres';
-          const sql = postgres(process.env.PERF_DATABASE_URL, { max: 1 });
-          try { await sql.unsafe(\"COMMENT ON DATABASE houzs_scale_test IS 'HOUZS_DISPOSABLE_LOCAL_SCALE_V1'\"); }
-          finally { await sql.end(); }"
-      - name: Execute the full real-schema PostgreSQL scale fixture
-        run: |
-          mkdir -p artifacts
-          npm run perf:scale -- --engine=pg --orders=100000 --lines=100000 --skus=10000 --users=10000 --runs=20 --json=artifacts/scale-pg-100k.json
-      - name: Upload immutable scale evidence
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: scale-pg-100k-${{ github.sha }}
-          path: backend/artifacts/scale-pg-100k.json
-          if-no-files-found: error
-          retention-days: 30
-
+  # Real-postgres tests. Kept in PRESUBMIT deliberately, unlike the other two
+  # postgres/perf jobs that moved to postsubmit.yml.
+  #
+  # The measurement that decided it (last 40 runs, 2026-08-18):
+  #   scale-postgres-contract  37 success   0 failure
+  #   frontend-perf            37 success   0 failure
+  #   backend-postgres         34 success   4 FAILURE
+  #
+  # The other two have never once failed, so they were spending runner time to
+  # prove something already known. This one has, and its failures span several
+  # test files at a time (doResyncCorrectionSeq, glViewKeepsReversed,
+  # idRestampExec) — a genuinely broken tree, not a flake. That is the signal
+  # working, so it stays where it can be seen before merge.
+  #
+  # It is NOT a required check (the ruleset requires only backend-typecheck and
+  # frontend), so its red X does not block. Making it required is a separate
+  # deliberate decision and belongs to the repo owner.
   backend-postgres:
+    needs: changes
+    if: needs.changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -640,7 +694,11 @@ jobs:
   # Split, the critical path is the LONGEST of the three rather than their sum.
   # `frontend` stays as a roll-up so the required status check keeps its name —
   # same pattern as `backend` above, and for the same reason.
+
+
   frontend-checks:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -694,6 +752,8 @@ jobs:
   # the `coverage-frontend` artifact it uploads. Splitting the other half out
   # leaves both of those untouched.
   frontend-typecheck:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -718,6 +778,8 @@ jobs:
       - run: node --test scripts/check-typecheck-gate.test.mjs
 
   frontend-build:
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true'
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -785,46 +847,6 @@ jobs:
       - run: npm run check:sw
       - run: npm run test:smoke-script
 
-  frontend-perf:
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: frontend
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v6
-        with:
-          node-version: 22
-          cache: npm
-          cache-dependency-path: frontend/package-lock.json
-      - run: npm ci
-      # Non-skippable local Chromium proof for 10k list geometry/search state.
-      # This suite starts its own Vite lab and never depends on staging data,
-      # credentials, network timing, or optional environment variables.
-      - run: npm run typecheck:perf-local
-      # The browser is ~27s of download on every run and changes only when the
-      # Playwright dependency does, so it is keyed on the lockfile.
-      - name: Cache Playwright browsers
-        id: playwright-cache
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ hashFiles('frontend/package-lock.json') }}
-      - run: npx playwright install --with-deps chromium
-        if: steps.playwright-cache.outputs.cache-hit != 'true'
-      # `--with-deps` installs OS packages too, and those are NOT in the cached
-      # directory, so a cache hit still needs the system half.
-      - run: npx playwright install-deps chromium
-        if: steps.playwright-cache.outputs.cache-hit == 'true'
-      - run: npm run test:perf-local
-
-  # File-size ratchet. Cheap on purpose — no `npm ci`, no build, zero
-  # dependencies — so adding it costs the queue a few seconds, not a runner
-  # slot's worth of install. See scripts/lib/file-size-ratchet.mjs for the rules.
-  #
-  # This does NOT try to split the 39 files already over 2,000 lines. It records
-  # what each one already is and refuses to let it grow, so the problem stops
-  # getting worse while the refactors happen (or do not) on their own schedule.
   file-size:
     runs-on: ubuntu-latest
     steps:
@@ -855,7 +877,7 @@ jobs:
   # `if: always()` plus explicit result assertions, for the reason spelled out
   # on the `backend` roll-up: a skipped check is not a failed check.
   frontend:
-    needs: [frontend-checks, frontend-typecheck, frontend-build, frontend-perf]
+    needs: [frontend-checks, frontend-typecheck, frontend-build]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -866,14 +888,21 @@ jobs:
       # made the typecheck advisory and nothing would have said so.
       - name: Assert all frontend jobs succeeded
         run: |
+          ok() {
+            # A gated job that did not run is not a failure — the paths filter
+            # decided it could not be affected. Only success/skipped pass; a
+            # failure, a cancellation, or an empty result still stops the roll-up.
+            case "$2" in
+              success|skipped) ;;
+              *) echo "::error::$1 = ${2:-<empty>}"; exit 1 ;;
+            esac
+          }
           echo "frontend-checks:    ${{ needs.frontend-checks.result }}"
           echo "frontend-typecheck: ${{ needs.frontend-typecheck.result }}"
           echo "frontend-build:     ${{ needs.frontend-build.result }}"
-          echo "frontend-perf:      ${{ needs.frontend-perf.result }}"
-          [ "${{ needs.frontend-checks.result }}" = "success" ] || exit 1
-          [ "${{ needs.frontend-typecheck.result }}" = "success" ] || exit 1
-          [ "${{ needs.frontend-build.result }}" = "success" ] || exit 1
-          [ "${{ needs.frontend-perf.result }}" = "success" ] || exit 1
+          ok frontend-checks "${{ needs.frontend-checks.result }}"
+          ok frontend-typecheck "${{ needs.frontend-typecheck.result }}"
+          ok frontend-build "${{ needs.frontend-build.result }}"
 
   e2e-contract:
     runs-on: ubuntu-latest

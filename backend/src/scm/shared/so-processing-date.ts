@@ -94,6 +94,99 @@
  */
 export const SO_PROCESSING_DATE_COLUMN = 'processing_date' as const;
 
+/* ─── RETIRING THE SECOND STORAGE ────────────────────────────────────────────
+ *
+ * THE RULING. Owner 2026-07-31, 2026-08-13 and again 2026-08-18, the last time
+ * naming the scope himself: one Processing Date across FRONTEND, BACKEND and
+ * DATABASE. `scm.mfg_sales_orders.proceeded_at` was the second storage.
+ *
+ * DONE, 2026-08-18. NO CODE anywhere reads or writes it:
+ *   · the STOCK ALLOCATOR gate moved to `processing_date` (#2396) — the one
+ *     reachable decision that had been answering a Processing-Date question out
+ *     of the other column.
+ *   · every LOCK decides on `processing_date` + `status` alone —
+ *     soProcessingLocked / soEditLocked, the amendment door, delivery-planning's
+ *     board guard, and the frontend's procLockActive. `status` became a REQUIRED
+ *     key on both predicates, and THAT is what replaced the status-blind
+ *     `proceeded_at` fallback: a caller without one fails to compile instead of
+ *     silently deciding out of a second fact.
+ *   · every PAYLOAD stopped carrying it: SO list, detail, POS board, dashboard
+ *     summary, /status response. Nothing consumed any of them — the desktop
+ *     Proceed Date field was deleted 2026-06-05 and useMfgSalesOrdersSummary has
+ *     zero callers in frontend/src, native/ or e2e/.
+ *   · every WRITE went with the reader, and had to go WITH it and not before:
+ *     the create INSERT's stamp (and `autoProceed`, which existed only to decide
+ *     it), the /status IN_PRODUCTION stamp, the ['proceededAt','proceeded_at']
+ *     PATCH-map entry and the stamp-once filter hanging off it. Stopping the
+ *     writes while the allocator still read the column would have landed every
+ *     NEW order with a NULL stamp and gated it out of allocation forever.
+ *   · the FRONTEND carries no `proceeded_at` at all: no type, no query select
+ *     list, no component field.
+ *
+ * WHAT THAT DELETED BESIDES THE COLUMN'S USES. `soProceedGateBlocked` lost both
+ * call sites and went with them. The RULE it enforced did not move: every path
+ * that sets a Processing Date — after unification, every path that proceeds an
+ * order — runs collectProcessingGateProblems (shared/so-save-problems.ts), which
+ * checks the same four completeness facts INLINE and the money through
+ * meetsDepositGate. The /status branch it guarded fired only when the order
+ * ALREADY had a date, i.e. re-gated a state that had passed — and
+ * inconsistently, since an order that also carried a stamp was not re-gated.
+ *
+ * TWO LOOSE ENDS THIS CREATES, named rather than tidied away. #2383 landed hours
+ * earlier and lifted the proceed gate into lib/so-proceed-gate.ts with a
+ * per-condition refusal; removing the last two call sites leaves BOTH
+ * `soProceedGateBlocked` (that module's export) and `meetsProceedGate`
+ * (order-rules) with no caller in routes, lib or the frontend. Neither is
+ * deleted here — deleting a freshly-shipped export to tidy a merge is how work
+ * gets silently undone, and if a future proceed path needs to refuse, that is
+ * what it should call. docs/modules/sales-order.md has warned since 2026-08-13
+ * that this rule had TWO enforcement sites held in step "by agreement, not by
+ * construction": there is one live site now (collectProcessingGateProblems) and
+ * two orphans. The full note is at soProceedGateBlocked in that module.
+ *
+ * THE ONE STEP LEFT: DROP THE COLUMN, and NOT in this release.
+ * deploy.yml runs `node scripts/pg-migrate.mjs` BEFORE `wrangler deploy`, so for
+ * about a minute the OLD Worker is live against the NEW schema. The currently
+ * deployed code still SELECTs `proceeded_at` in LIST_COLS, the detail read, the
+ * POS board and the dashboard summary — a drop shipped alongside the code that
+ * stops selecting it is therefore a 42703 on every SO read for the length of the
+ * deploy. That is exactly what blocked prod for hours in #1191/0189. Once THIS
+ * commit is live, nothing reads it and the follow-up is 0284's shape:
+ *
+ *   -- Pre-flight, as 0284 does: name any object that still projects the column
+ *   -- rather than failing with a bare catalog error.
+ *   -- scm.mfg_sales_orders_with_payment_totals DOES project it (`SELECT so.*`),
+ *   -- so this WILL fire. DO NOT drop and recreate that view: a recreated view is
+ *   -- a NEW object whose ACL and owner do not survive, and prod died twice with
+ *   -- "permission denied for view" before 0191 copied the grant set back off a
+ *   -- never-dropped sibling. Prefer CREATE OR REPLACE VIEW with the column
+ *   -- omitted (same object, ACL intact); if REPLACE is refused because the
+ *   -- column list changes, copy the grants the way 0191 did and say so.
+ *   ALTER TABLE scm.mfg_sales_orders DROP COLUMN IF EXISTS proceeded_at;
+ *   NOTIFY pgrst, 'reload schema';
+ *
+ * THE 2990 MIRROR needs no change and earlier audits missed it entirely:
+ * routes/so-mirror.ts upserts `applyMap(body.header, …)`, which keeps every
+ * inbound key that exists on the Houzs table, so a `proceeded_at` arriving from
+ * 2990 (a separate repo on its own deploy schedule) was written straight
+ * through. applyMap filters against information_schema, so the drop above ends
+ * that silently and correctly.
+ *
+ * WHAT THE DATA LOOKED LIKE WHEN THE READ MOVED (probe-proceed-split, prod,
+ * 2026-08-18, run 32093080121 — #2396 shipped saying this was UNKNOWN):
+ *   company 1, 2724 live: 519 both set, 2205 neither, ZERO disagreeing. No-op.
+ *   company 2, 77 live: 5 CONFIRMED gained allocation (the bug #2396 fixed);
+ *     16 lost it — 12 CONFIRMED and 4 READY_TO_SHIP carrying a stamp with no
+ *     date. Those 4 visibly drop back to CONFIRMED on the next recompute. By the
+ *     owner's rule they are not proceeded, so that is the rule applied
+ *     correctly; the repair is a human supplying the date, never a script
+ *     inventing one (PROCEED_NEEDS_DATE in order-rules.ts).
+ *
+ * THE AUDIT FACT. "When did someone press Proceed" has no consumer and needs no
+ * column: nothing ever read the value AS a timestamp, and a change to the field
+ * already lands in scm.mfg_so_audit_log.field_changes, which nothing gates on.
+ * ─────────────────────────────────────────────────────────────────────────── */
+
 /** The camelCase key the header PATCH and amendment payloads carry it under. */
 export const SO_PROCESSING_DATE_PAYLOAD_KEY = 'processingDate' as const;
 
@@ -518,9 +611,19 @@ export function readSoProcessingDateFromBody(
  *      that is stamped only at the IN_PRODUCTION transition, so a CONFIRMED SO whose
  *      processing date had passed stayed directly editable (a salesperson could
  *      change a line's colour after we had already PO'd it). DRAFT (not yet
- *      confirmed) and CANCELLED stay editable. When the caller's header select omits
- *      `status` we fall back to the `proceeded_at` marker so a status-blind read can
- *      never OVER-lock a row.
+ *      confirmed) and CANCELLED stay editable.
+ *
+ *      THE STATUS-BLIND FALLBACK IS GONE (2026-08-18). soProcessingLocked used to
+ *      end `return Boolean(header.proceeded_at)`, reached only when the caller's
+ *      select omitted `status`, "so a status-blind read can never OVER-lock a
+ *      row". The protection is kept and the second column is not: `status` is now
+ *      a REQUIRED key on the predicate's parameter type, so a caller without one
+ *      fails to compile instead of quietly deciding out of a different fact, and
+ *      an empty status at runtime answers "not locked" — the same side the marker
+ *      was chosen to protect. It was never a live second opinion: every caller's
+ *      select already named status, and the 2026-08-18 prod census
+ *      (probe-proceed-split, run 32093080121) found no NULL-status row in either
+ *      company across 2826 orders.
  *
  * Shared route guard — fetches the two date columns and returns the 409 body
  *    when locked, null when free. Callers that already hold the header row use
@@ -536,8 +639,8 @@ export function readSoProcessingDateFromBody(
  * ── SO Proceed gate (FIX 2, 2026-07-16) ────────────────────────────────────
  *    meetsProceedGate (shared order-rules) was only consulted at CREATE
  *    auto-proceed. The two MANUAL proceed paths — PATCH /:docNo/status →
- *    IN_PRODUCTION (stamps proceeded_at) and PATCH /:docNo proceededAt — stamped
- *    proceeded_at with NO ≥50%-paid / full-address check, so mobile / API could
+ *    IN_PRODUCTION and PATCH /:docNo proceededAt — proceeded
+ *    with NO ≥50%-paid / full-address check, so mobile / API could
  *    proceed an under-paid or address-less SO (desktop blocked it). Reuse the SAME
  *    shared gate on both manual paths so create + manual + client can't drift.
  *    `paid` mirrors the sibling processing-date gate in this file: Σ payment rows vs

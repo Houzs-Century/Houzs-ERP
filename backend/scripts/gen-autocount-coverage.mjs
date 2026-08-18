@@ -69,6 +69,13 @@ const cs = read('backend/scripts/autocount-service/AcSyncService.cs');
 const implemented = new Set(
   must([...cs.matchAll(/case\s+"(\/[a-z-]+)":/g)].map((m) => m[1]), 'AcSyncService case labels', 8),
 );
+/* THE ROUTES THAT RETURN BEFORE THE SWITCH. `Handle` answers /health from an
+   `if (path == "/health")` above the POST-only check and above the switch, so
+   the case-label scan cannot see it, and the table said the service does NOT
+   implement a route it has always served. A generated artifact that is
+   confidently wrong is worse than a hand-written one, so the scan reads the
+   early branches too rather than being told the answer. */
+for (const m of cs.matchAll(/path\s*==\s*"(\/[a-z-]+)"/g)) implemented.add(m[1]);
 
 // ── 3. which ERP routes enqueue which operation ─────────────────────────────
 /* Read from the route tree rather than from a list, so a new call site appears

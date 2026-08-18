@@ -114,7 +114,8 @@ export const AC_SKIP_KINDS = [
   {
     kind: 'no-autocount-shape',
     needle: 'AutoCount transfers from ONE source document',
-    remedy: 'merged conversion (several sources -> one document) — must be worked by hand in AutoCount',
+    remedy:
+      'recorded before merged conversions could be sent (2026-08-18) — nothing was composed, so Send again has nothing to send; raise it in AutoCount by hand. Documents raised since then sync merged',
   },
   {
     kind: 'mixed-source-lines',
