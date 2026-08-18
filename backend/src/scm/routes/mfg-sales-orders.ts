@@ -5627,7 +5627,7 @@ mfgSalesOrders.post('/recompute-allocation', async (c) => {
 // Status transition with audit row. Reads the prior status, updates, then
 // inserts to mfg_so_status_changes — best-effort (audit failure does NOT
 // roll back the status change).
-mfgSalesOrders.patch('/:docNo/status', async (c) => {
+export const patchMfgSalesOrderStatusHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const user = c.get('user');
   /* `processingDate` — the Processing Date a move to IN_PRODUCTION proceeds
      WITH, for a caller proceeding an order that does not carry one yet.
@@ -5645,14 +5645,17 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
      lowercase-persist bug and lets the transition table judge a canonical value. */
   const toStatus = String(body.status).trim().toUpperCase();
 
-  /* Audit 2026-06-20 — self-scoped sales (sales / sales_executive) must NOT
-     transition or cancel another salesperson's SO by doc_no — a cancel even
-     converts that SO's deposit into a customer credit. Mirror the
-     line-mutation endpoints' self-scope guard. */
+  /* Company scope made STRICT, 2026-08-18. selfScopedSalesBlocked below already
+     refuses a doc outside the active company — that is its step 1, not the
+     salesperson half — but it does so through scopeToCompany, which DEGRADES to
+     NO predicate when the company is unresolved, and only on a READ. This table
+     is cross-company with a guessable `text PRIMARY KEY` doc_no and the client is
+     service-role, so: refuse on unresolved, and predicate the UPDATE too. */
+  const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
-  const { data: prev } = await sb.from('mfg_sales_orders')
-    .select('status, version, edit_lease_token, edit_lease_expires_at, linked_ac_docno')
+  const { data: prev } = await scopeToCompanyId(sb.from('mfg_sales_orders')
+    .select('status, version, edit_lease_token, edit_lease_expires_at, linked_ac_docno'), co.companyId)
     .eq('doc_no', docNo).maybeSingle();
   if (!prev) return c.json({ error: 'not_found' }, 404);
   const fromStatus = (prev as { status: string } | null)?.status ?? null;
@@ -5758,16 +5761,12 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
     const locationProblem = await soLocationProblemForDoc(sb, docNo, c.get('companyCode') ?? null);
     if (locationProblem) return c.json(validationFailedBody([locationProblem]), 422);
   }
-  const patch: Record<string, unknown> = {
-    status: toStatus,
-    version: currentVersion + 1,
-    updated_at: new Date().toISOString(),
-  };
+  const patch: Record<string, unknown> = { status: toStatus, version: currentVersion + 1, updated_at: new Date().toISOString() };
   if (toStatus === 'IN_PRODUCTION') {
     /* Column bound to the constant — see "WHY A CONSTANT" in
        shared/so-processing-date.ts. */
-    const { data: cur } = await sb.from('mfg_sales_orders')
-      .select(`proceeded_at, ${SO_PROCESSING_DATE_COLUMN}, debtor_name, email, address1, postcode, customer_delivery_date`)
+    const { data: cur } = await scopeToCompanyId(sb.from('mfg_sales_orders')
+      .select(`proceeded_at, ${SO_PROCESSING_DATE_COLUMN}, debtor_name, email, address1, postcode, customer_delivery_date`), co.companyId)
       .eq('doc_no', docNo).maybeSingle();
     const curRow = cur as {
       proceeded_at?: string | null; processing_date?: string | null;
@@ -5855,17 +5854,17 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
     const voucherPlan = isCancel ? await planSoCancelVouchers(sbx, docNo) : null;
     if (voucherPlan?.blocked) return c.json(voucherPlan.blocked, 409);
 
-    const { data, error } = await sbx.from('mfg_sales_orders').update(patch)
-      .eq('doc_no', docNo)
+    const { data, error } = await scopeToCompanyId(sbx.from('mfg_sales_orders').update(patch)
       .eq('version', currentVersion)
       .eq('status', fromStatus)
-      .or(`edit_lease_token.is.null,edit_lease_expires_at.lt.${new Date().toISOString()}`)
+      .or(`edit_lease_token.is.null,edit_lease_expires_at.lt.${new Date().toISOString()}`), co.companyId)
+      .eq('doc_no', docNo)
       .select('doc_no, status, proceeded_at, version').maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     // Stale/missing docNo (deleted, wrong tab) matches 0 rows → a clean 404
     // ("no longer found, refresh") instead of an opaque 500 (bug-hunt 2026-06-20).
     if (!data) {
-      const { data: latest } = await sbx.from('mfg_sales_orders').select('version').eq('doc_no', docNo).maybeSingle();
+      const { data: latest } = await scopeToCompanyId(sbx.from('mfg_sales_orders').select('version'), co.companyId).eq('doc_no', docNo).maybeSingle();
       if (!latest) return c.json({ error: 'not_found' }, 404);
       return c.json(soVersionConflict(Number((latest as { version?: number }).version ?? currentVersion)), 409);
     }
@@ -5961,7 +5960,7 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
      credit. Idempotent on (source_type, source_doc_no). Best-effort. */
   if (toStatus === 'CANCELLED' && fromNorm !== 'CANCELLED' && fromNorm !== 'DRAFT') {
     try {
-      const { data: so } = await sb.from('mfg_sales_orders').select('debtor_code, debtor_name').eq('doc_no', docNo).maybeSingle();
+      const { data: so } = await scopeToCompanyId(sb.from('mfg_sales_orders').select('debtor_code, debtor_name'), co.companyId).eq('doc_no', docNo).maybeSingle();
       const s = so as { debtor_code: string | null; debtor_name: string | null } | null;
       if (s?.debtor_code) {
         await creditFromCancelledSo(sb, {
@@ -5977,7 +5976,8 @@ mfgSalesOrders.patch('/:docNo/status', async (c) => {
   // The committed response (incl. any pwpVouchers summary) was built inside the
   // command; the effects above are best-effort and never change it.
   return statusResponse;
-});
+};
+mfgSalesOrders.patch('/:docNo/status', patchMfgSalesOrderStatusHandler);
 
 // ── DELETE /mfg-sales-orders/:docNo — discard a DRAFT ───────────────────────
 // Owner 2026-07-20 — a DRAFT (especially a junk scan / OCR draft) had NO way out
