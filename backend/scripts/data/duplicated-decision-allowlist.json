@@ -1101,16 +1101,6 @@
       "why": "TWO SIDEBAR ENTRIES' ACCESS LISTS differing by PROJECTS.FINANCES. One nav item additionally needs the finances grant. Not a rule with two homes."
     },
     {
-      "check": "D3",
-      "key": "backend/src/scm/routes/consignment-orders.ts|soMainMixIntroduced|.post('/:docNo/items'",
-      "why": "THE SOFA-MIX RULE IS NOT ENFORCED ON THE SERVER FOR CONSIGNMENT ORDERS. soMainMixIntroduced guards BOTH the add and the edit path of a sales order; the consignment routes have no copy, while ConsignmentOrderNew.tsx enforces the rule client-side via hasSofaMixConflict — which exists only in the vendored frontend so-variant-rule.ts and has no backend counterpart. So the rule is enforced at the form and nowhere behind it. Recorded and NOT fixed here: whether a consignment order may mix a sofa with a bedframe is the owner's call, and adding a server refusal is a behaviour change, not a gate. This entry is the dated question."
-    },
-    {
-      "check": "D3",
-      "key": "backend/src/scm/routes/consignment-orders.ts|soMainMixIntroduced|.patch('/:docNo/items/:itemId'",
-      "why": "THE SOFA-MIX RULE IS NOT ENFORCED ON THE SERVER FOR CONSIGNMENT ORDERS. soMainMixIntroduced guards BOTH the add and the edit path of a sales order; the consignment routes have no copy, while ConsignmentOrderNew.tsx enforces the rule client-side via hasSofaMixConflict — which exists only in the vendored frontend so-variant-rule.ts and has no backend counterpart. So the rule is enforced at the form and nowhere behind it. Recorded and NOT fixed here: whether a consignment order may mix a sofa with a bedframe is the owner's call, and adding a server refusal is a behaviour change, not a gate. This entry is the dated question."
-    },
-    {
       "check": "D1",
       "key": "HELPER,STOREKEEPER,STOREKEEPER SUPERVISOR|backend/src/services/projectGates.ts frontend/src/auth/crewScope.ts",
       "why": "THE CREW-SCOPED POSITIONS, and this twin is DELIBERATE: the projects filter bar has to render before any round-trip, so the client cannot wait to be told. It is also the twin that had already drifted — the desktop copy substring-matched the position name and carried no permission escape, so an owner-created \"Warehouse Helper\" caged the UI while the server returned everything, and an admin holding the Storekeeper position lost controls the server would have allowed. PINNED by backend/tests/duplicatedDecisionPins.test.ts, which imports BOTH implementations and runs one corpus of (position, permissions) pairs through them. Added by the same change that created the second home — this gate flagged its own author, which is the behaviour it is for."

@@ -445,11 +445,22 @@ const jaccard = (a, b) => {
    matching a route registration; the handler slice is the balanced brace block
    after the first `=>` that follows it.
 
-   The seed is the main-mix guard. `soMainMixIntroduced` (routes/
-   mfg-sales-orders.ts) is the server's answer to "does this line introduce a
-   SOFA x (bedframe|mattress) mix that did not exist before" — the PR #519
-   create rule, extended to line add and swap. It is applied on BOTH the add and
-   the edit path of a sales order, which is what this asserts stays true. It is
+   The seed is the main-mix guard: the server's answer to "does this line
+   introduce a SOFA x (bedframe|mattress) mix that did not exist before" — the
+   PR #519 create rule, extended to line add and swap. It is applied on BOTH the
+   add and the edit path of a sales order, which is what this asserts stays true.
+
+   THE SYMBOL IS `lineMixRefusal`, AND IT USED TO BE `soMainMixIntroduced`.
+   That rename is why this paragraph is worth reading. `soMainMixIntroduced` was
+   the hand-rolled third form main-mix.ts describes at its own line 47; it was
+   replaced by `lineMixRefusal` (main-mix.ts:193) and no implementation of the
+   old name is left in src — only comments naming it. This config kept pointing
+   at the dead name, so D3 reported BOTH sales-order handlers as unguarded while
+   both in fact call `lineMixRefusal` — and, the part that matters, it could no
+   longer have caught the guard genuinely going missing, because the symbol it
+   watched for was absent everywhere by definition. A guard check pinned to a
+   renamed symbol either passes for the wrong reason or fails for the wrong one;
+   here it did the second. It is
    applied on NEITHER path of a consignment order, while the consignment FORM
    enforces the rule client-side (ConsignmentOrderNew.tsx imports
    hasSofaMixConflict from the vendored so-variant-rule). That gap is real, it
@@ -458,7 +469,7 @@ const jaccard = (a, b) => {
 const GUARD_CONFIG = [
   {
     id: "so-main-mix",
-    guardSymbol: "soMainMixIntroduced",
+    guardSymbol: "lineMixRefusal",
     handlerPattern: /\.(post|patch)\(\s*'\/:docNo\/items(?:\/:itemId)?'\s*,/g,
     files: [
       "backend/src/scm/routes/mfg-sales-orders.ts",
