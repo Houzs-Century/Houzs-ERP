@@ -31,6 +31,7 @@ import {
   createChangeHandler,
 } from "../src/scm/routes/maintenance-config";
 import {
+  CONFIG_CACHE_TTL_SECONDS,
   bannerCacheKey,
   bumpConfigVersion,
   bustBannerForUser,
@@ -82,6 +83,15 @@ describe("version segment + key construction", () => {
 
   test("an EMPTY scope key refuses to mint a shared key", () => {
     expect(configCacheKeyUrl("https://erp.test", "branding", "", 7)).toBeNull();
+  });
+
+  test("banner TTL stays COMFORTABLY above the 60s frontend poll (never == poll)", () => {
+    // A TTL == poll expires the entry exactly as the next poll arrives, so every
+    // poll misses and rebuilds the full feed (measured live ~900ms/60s on
+    // 2026-08-18). Guard against a re-lowering back to 60.
+    const POLL_MS = 60; // useAnnouncementBanner.ts POLL_MS / 1000
+    expect(CONFIG_CACHE_TTL_SECONDS.banner).toBeGreaterThan(POLL_MS);
+    expect(CONFIG_CACHE_TTL_SECONDS.banner).toBeGreaterThanOrEqual(POLL_MS * 2);
   });
 });
 
@@ -510,5 +520,70 @@ describe("/api/announcements/banner — per-user cache", () => {
     expect(a4.ids).not.toContain(privateId);
     expect(b4.ids).not.toContain(privateId);
     expect((await getBanner(USER_A, "system")).ids).toContain(privateId);
+  });
+});
+
+
+// ── The banner bust is WIRED into every targeting-change route ───────────────
+//
+// The 300s banner TTL (> the 60s poll) is only correct if an edit that moves a
+// user between audiences clears their snapshot. bustBannerForUser (both scopes)
+// is proven above; this pins that the production ROUTES actually call it at
+// every targeting-change site. It is a SOURCE-STRUCTURE test, on purpose: the
+// users / departments routes use getDb (drizzle -> postgres), and this vitest
+// harness has NO postgres binding (DATABASE_URL is empty), so those handlers
+// cannot be executed here — the same reason mailAliasRevocation.test.ts asserts
+// the users PATCH by reading its source. The behavioural both-scope clear lives
+// in the bustBannerForUser test above.
+
+const routeSrc = import.meta.glob(
+  ["../src/routes/users.ts", "../src/routes/departments.ts"],
+  { query: "?raw", import: "default", eager: true },
+) as Record<string, string>;
+const usersSrc = Object.entries(routeSrc).find(([k]) => k.includes("users.ts"))![1];
+const deptsSrc = Object.entries(routeSrc).find(([k]) => k.includes("departments.ts"))![1];
+
+describe("banner bust is wired into every targeting-change route", () => {
+  test("users PATCH busts the banner whenever a targeting field changes", () => {
+    const start = usersSrc.indexOf('app.patch("/:id"');
+    const end = usersSrc.indexOf("app.", start + 1);
+    const handler = usersSrc.slice(start, end === -1 ? undefined : end);
+    // The predicate covers every field the banner filters on (dept / position /
+    // company grants) PLUS role/status, and gates a bustBannerForUser call.
+    expect(handler).toContain("bannerTargetingChanged");
+    for (const field of [
+      '"department_id" in set',
+      '"position_id" in set',
+      '"role_id" in set',
+      '"status" in set',
+      "finalDeptIds !== null",
+      "hasCompanyChange",
+    ]) {
+      expect(handler).toContain(field);
+    }
+    expect(handler).toMatch(/if \(bannerTargetingChanged\)\s*{\s*await bustBannerForUser\(c\.env, id\);/);
+  });
+
+  test("users PUT /:id/companies busts the banner after changing grants", () => {
+    const start = usersSrc.indexOf('app.put("/:id/companies"');
+    const end = usersSrc.indexOf("app.", start + 1);
+    const handler = usersSrc.slice(start, end === -1 ? undefined : end);
+    expect(handler).toContain("setUserCompanies(");
+    expect(handler).toContain("bustBannerForUser(c.env, id)");
+  });
+
+  test("users DELETE busts the banner for the removed user", () => {
+    const start = usersSrc.indexOf('app.delete("/:id"');
+    const handler = usersSrc.slice(start);
+    expect(handler).toContain("bustBannerForUser(c.env, id)");
+  });
+
+  test("departments DELETE bumps the banner family version after un-assigning members", () => {
+    const start = deptsSrc.indexOf('app.delete("/:id"');
+    const handler = deptsSrc.slice(start);
+    const nullAt = handler.indexOf("UPDATE users SET department_id = NULL");
+    const bumpAt = handler.indexOf('bumpConfigVersion(c.env, "banner")');
+    expect(nullAt).toBeGreaterThan(-1);
+    expect(bumpAt).toBeGreaterThan(nullAt); // bump AFTER the members are un-assigned
   });
 });
