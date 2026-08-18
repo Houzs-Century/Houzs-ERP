@@ -27,7 +27,7 @@ export type AcquirerSetup = {
   /** Enough config to READ a statement (global — shared by every company). */
   ready: boolean;
   /** A receiving bank account is set FOR THIS COMPANY, so a payout can be
-      booked. Separate from  because the same merchant pays different
+      booked. Separate from the ready flag because the same merchant pays different
       companies into different banks (owner: 例如pbb，在houzs 可能是maybank 收钱，
       但是在2990 是hong leong bank 收钱). */
   bankReady?: boolean;
@@ -154,12 +154,16 @@ export const useSaveAcquirerSetup = () => {
   });
 };
 
-/* ── Maintenance: one screen, every company ─────────────────────────────────
-   The owner maintains this himself across companies (2026-08-18: 我会 overall
-   维护，然后在维护那边选这个公司是使用哪里几个 merchant，然后他有什么 bank), so
-   these carry the company as a parameter instead of relying on the top-bar
-   switcher. The server re-checks it against his own grants. */
+/* ── Maintenance: ONE table, every company at once ──────────────────────────
+   The owner's shape (2026-08-18): 我应该 overall maintenance table，左手边是
+   merchant、bank，上面 header 是公司，这个公司有就 tick. So the read answers for
+   every company he is granted, and the writes name the company they change —
+   which the server re-checks against those same grants. */
 
+export type MaintenanceCompany = { id: number; code: string; name: string };
+
+/** One merchant as the matrix needs it: the shared half on the row, and what
+    each company does with it keyed by company id. */
 export type MaintenanceMerchant = {
   code: string;
   display_name: string;
@@ -168,38 +172,29 @@ export type MaintenanceMerchant = {
   fee_method: string | null;
   date_tolerance_days: number;
   column_map: Record<string, string> | null;
-  /** This company uses it (a link row, switched on). */
-  enabled: boolean;
-  /** A link row exists at all — false means this company was never set up. */
-  linked: boolean;
-  bank_account_code: string | null;
-  transit_account_code: string;
-  fee_account_code: string;
   ready: boolean;
   autoMatchable: boolean;
+  /* Keyed by company id, and only for the companies the server answered for —
+     so a lookup can miss, and every reader has to say what it does then. */
+  byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null } | undefined>;
 };
 
+/** One account CODE across every company — the rows of the bank matrix. */
 export type MaintenanceBank = {
   account_code: string;
   account_name: string;
-  /** This company banks here. */
-  enabled: boolean;
-  /** Merchants that pay into it — unticking is refused while this is not empty. */
-  usedBy: string[];
+  byCompany: Record<string, { inChart: boolean; enabled: boolean; usedBy: string[] } | undefined>;
 };
 
 export type MaintenanceData = {
-  companyId: number;
-  companies: Array<{ id: number; code: string; name: string }>;
+  companies: MaintenanceCompany[];
   merchants: MaintenanceMerchant[];
-  bankAccounts: MaintenanceBank[];
+  banks: MaintenanceBank[];
 };
 
-export const useSettlementMaintenance = (companyId: number | null) => useQuery({
-  queryKey: ['settlement-maintenance', companyId],
-  queryFn: () => authedFetch<MaintenanceData>(
-    `/accounting/settlement/maintenance${companyId == null ? '' : `?companyId=${companyId}`}`,
-  ),
+export const useSettlementMaintenance = () => useQuery({
+  queryKey: ['settlement-maintenance'],
+  queryFn: () => authedFetch<MaintenanceData>('/accounting/settlement/maintenance'),
   staleTime: 30_000,
   retry: retryUnlessClientError,
   retryDelay: 800,

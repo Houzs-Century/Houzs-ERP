@@ -197,69 +197,100 @@ function maintenanceCompany(c: Ctx, asked: unknown): { ok: true; companyId: numb
    uses it and where its money lands, and this company's money accounts with
    whether it banks with them. */
 export const settlementMaintenance = guard(async (c) => {
-  const target = maintenanceCompany(c, c.req.query('companyId'));
-  if (!target.ok) return c.json(target.refusal, 409);
   const sb = c.get('supabase');
-  const companyId = target.companyId;
 
-  const allowed = allowedCompanyIds(c);
-  const companies = ((c.get('companies') as Array<{ id: number; code: string; name: string }> | undefined) ?? [])
-    .filter((co) => allowed === undefined || allowed.includes(Number(co.id)));
+  /* EVERY company he may maintain, in ONE answer — the screen is a matrix, not
+     a company at a time (owner, 2026-08-18: 我应该 overall maintenance table，左
+     手边是 merchant、bank，上面 header 是公司，这个公司有就 tick). */
+  const granted = allowedCompanyIds(c);
+  const all = (c.get('companies') as Array<{ id: number; code: string; name: string }> | undefined) ?? [];
+  const companies = all.filter((co) => granted === undefined || granted.includes(Number(co.id)));
+  if (companies.length === 0) {
+    /* No companies master (pre-migration / cold start): fall back to the active
+       one so the screen still works rather than rendering an empty grid. */
+    const co = requireActiveCompanyId(c);
+    if (!co.ok) return c.json(co.refusal, 409);
+    companies.push({ id: co.companyId, code: String(co.companyId), name: `Company ${co.companyId}` });
+  }
+  const ids = companies.map((co) => Number(co.id));
 
-  /* Every merchant that EXISTS (global), left-joined to this company's link —
-     a company that has never been set up shows them all, unticked, instead of
-     an empty screen nobody can act on. */
+  /* The merchants that EXIST — global, one row each, whatever any company does
+     with them. A merchant no company uses is still a row: that is how a company
+     starts using it. */
   const { data: cfgRaw, error: cErr } = await sb.from('acc_acquirer_config')
     .select('code, display_name, statement_format, has_unique_ref, fee_method, date_tolerance_days, column_map, is_active')
     .order('code');
   if (cErr) return c.json({ error: 'load_failed', reason: cErr.message }, 500);
-  const { data: linkRaw, error: lErr } = await sb.from('acc_company_acquirers')
-    .select('acquirer_code, transit_account_code, fee_account_code, bank_account_code, is_active')
-    .eq('company_id', companyId);
-  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
-  const linkOf = new Map(((linkRaw ?? []) as Array<Record<string, any>>).map((l) => [String(l.acquirer_code), l]));
 
-  const merchants: Array<Record<string, any>> = ((cfgRaw ?? []) as Array<Record<string, any>>).map((g) => {
-    const link = linkOf.get(String(g.code));
+  const { data: linkRaw, error: lErr } = await sb.from('acc_company_acquirers')
+    .select('company_id, acquirer_code, transit_account_code, fee_account_code, bank_account_code, is_active')
+    .in('company_id', ids);
+  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+  const linkOf = new Map(((linkRaw ?? []) as Array<Record<string, any>>)
+    .map((l) => [`${Number(l.company_id)}:${String(l.acquirer_code)}`, l]));
+
+  /* Every company's money accounts. The chart is unified (0297) so the codes
+     mostly agree, but a code one company simply does not carry must read as
+     "not in its chart", never as an unticked box it could tick. */
+  const { data: bankRaw, error: bErr } = await sb.from('accounts')
+    .select('company_id, account_code, account_name, is_active')
+    .in('company_id', ids).eq('acc_money', true).order('account_code');
+  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+  const bankRows = (bankRaw ?? []) as Array<Record<string, any>>;
+
+  const merchants = ((cfgRaw ?? []) as Array<Record<string, any>>).map((g) => {
+    const byCompany: Record<string, { enabled: boolean; linked: boolean; bankAccountCode: string | null }> = {};
+    for (const id of ids) {
+      const link = linkOf.get(`${id}:${String(g.code)}`);
+      byCompany[String(id)] = {
+        /* Used by this company = a link row that is switched on. No row at all
+           is the honest "not set up here", not an error. */
+        enabled: link ? link.is_active !== false : false,
+        linked: Boolean(link),
+        bankAccountCode: link?.bank_account_code ?? null,
+      };
+    }
     return {
-      ...g,
-      /* Used by this company = a link row that is switched on. No row at all is
-         the honest "not set up here", not an error. */
-      enabled: link ? link.is_active !== false : false,
-      linked: Boolean(link),
-      bank_account_code: link?.bank_account_code ?? null,
-      transit_account_code: link?.transit_account_code ?? '320-0000',
-      fee_account_code: link?.fee_account_code ?? '930-0000',
+      code: g.code,
+      display_name: g.display_name,
+      statement_format: g.statement_format,
+      has_unique_ref: g.has_unique_ref,
+      fee_method: g.fee_method,
+      date_tolerance_days: g.date_tolerance_days,
+      column_map: g.column_map,
       ready: Boolean(g.statement_format && g.fee_method && g.column_map?.date && g.column_map?.gross),
       autoMatchable: g.has_unique_ref === true,
+      byCompany,
     };
   });
 
-  /* This company's money accounts. Inactive ones are still listed — unticked —
-     because "this company does not bank here" is a state to be able to undo. */
-  const { data: bankRaw, error: bErr } = await sb.from('accounts')
-    .select('account_code, account_name, is_active')
-    .eq('company_id', companyId).eq('acc_money', true).order('account_code');
-  if (bErr) return c.json({ error: 'load_failed', reason: bErr.message }, 500);
+  /* One row per account CODE across every company — the left-hand column of the
+     matrix — with what each company does with it. */
+  const codes = [...new Set(bankRows.map((b) => String(b.account_code)))].sort();
+  const banks = codes.map((code) => {
+    const byCompany: Record<string, { inChart: boolean; enabled: boolean; usedBy: string[] }> = {};
+    for (const id of ids) {
+      const row = bankRows.find((b) => Number(b.company_id) === id && String(b.account_code) === code);
+      byCompany[String(id)] = {
+        inChart: Boolean(row),
+        enabled: Boolean(row) && row!.is_active !== false,
+        /* Which merchants pay into it FOR THAT COMPANY — so unticking can say
+           what would break instead of breaking it. */
+        usedBy: merchants
+          .filter((m) => m.byCompany[String(id)]?.enabled && m.byCompany[String(id)]?.bankAccountCode === code)
+          .map((m) => String(m.code)),
+      };
+    }
+    return {
+      account_code: code,
+      account_name: bankRows.find((b) => String(b.account_code) === code)?.account_name ?? code,
+      byCompany,
+    };
+  });
 
-  const usedBy = new Map<string, string[]>();
-  for (const m of merchants) {
-    if (!m.bank_account_code || !m.enabled) continue;
-    const list = usedBy.get(String(m.bank_account_code));
-    if (list) list.push(String(m.code));
-    else usedBy.set(String(m.bank_account_code), [String(m.code)]);
-  }
-  const bankAccounts = ((bankRaw ?? []) as Array<Record<string, any>>).map((b) => ({
-    account_code: b.account_code,
-    account_name: b.account_name,
-    enabled: b.is_active !== false,
-    /* Which merchants pay into it — so unticking a bank can say what would
-       break instead of breaking it. */
-    usedBy: usedBy.get(String(b.account_code)) ?? [],
-  }));
-
-  return c.json({ companyId, companies, merchants, bankAccounts });
+  return c.json({ companies, merchants, banks });
 });
+
 
 /* PATCH /maintenance/merchant — tick a merchant on or off for one company, and
    say which of that company's banks it pays into. Creates the link row the

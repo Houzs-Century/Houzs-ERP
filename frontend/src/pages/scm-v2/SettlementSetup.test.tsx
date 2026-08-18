@@ -15,28 +15,45 @@ import { describe, expect, test, vi } from 'vitest';
 import type { MaintenanceData } from './settlement-queries';
 
 const DATA: MaintenanceData = {
-  companyId: 1,
   companies: [{ id: 1, code: 'HOUZS', name: 'Houzs Century' }, { id: 2, code: '2990', name: "2990's Home" }],
   merchants: [
     {
       code: 'PBB', display_name: 'PBB', statement_format: 'CSV', has_unique_ref: true,
       fee_method: 'gross-minus-net', date_tolerance_days: 3,
       column_map: { date: 'Date', gross: 'Amount', ref: 'Approval_code', net: 'Net' },
-      enabled: true, linked: true, bank_account_code: '331-0000',
-      transit_account_code: '320-0000', fee_account_code: '930-0000',
       ready: true, autoMatchable: true,
+      /* His own case: the same merchant, two companies, two banks. */
+      byCompany: {
+        '1': { enabled: true, linked: true, bankAccountCode: '331-0000' },
+        '2': { enabled: true, linked: true, bankAccountCode: '330-0000' },
+      },
     },
     {
       code: 'CIMB', display_name: 'CIMB', statement_format: null, has_unique_ref: null,
       fee_method: null, date_tolerance_days: 3, column_map: null,
-      enabled: false, linked: false, bank_account_code: null,
-      transit_account_code: '320-0000', fee_account_code: '930-0000',
       ready: false, autoMatchable: false,
+      byCompany: {
+        '1': { enabled: false, linked: false, bankAccountCode: null },
+        '2': { enabled: false, linked: false, bankAccountCode: null },
+      },
     },
   ],
-  bankAccounts: [
-    { account_code: '330-0000', account_name: 'Bank — Maybank Current', enabled: true, usedBy: [] },
-    { account_code: '331-0000', account_name: 'Bank — Hong Leong Current', enabled: true, usedBy: ['PBB'] },
+  banks: [
+    {
+      account_code: '330-0000', account_name: 'Bank — Maybank Current',
+      byCompany: {
+        '1': { inChart: true, enabled: true, usedBy: [] },
+        '2': { inChart: true, enabled: true, usedBy: ['PBB'] },
+      },
+    },
+    {
+      account_code: '331-0000', account_name: 'Bank — Hong Leong Current',
+      byCompany: {
+        '1': { inChart: true, enabled: true, usedBy: ['PBB'] },
+        /* 2990 does not carry this code at all — not a box it could tick. */
+        '2': { inChart: false, enabled: false, usedBy: [] },
+      },
+    },
   ],
 };
 
@@ -55,63 +72,74 @@ vi.mock('./settlement-queries', () => ({
 import { SettlementSetup } from './SettlementSetup';
 
 const draw = () => render(<MemoryRouter><SettlementSetup /></MemoryRouter>);
-/* A merchant code appears twice on this screen — its own row, and the "used
-   by" column of the bank it pays into. Find rows by their tick, which is unique. */
-const merchantRow = (code: string) => screen.getByLabelText(`Use ${code}`).closest('tr') as HTMLElement;
-const bankRow = (code: string) => screen.getByLabelText(`Has ${code}`).closest('tr') as HTMLElement;
 
-describe('choosing the company', () => {
-  test('every company he may maintain is on the screen — no switching required', () => {
+/* A merchant code appears in its own row AND in the "used by" of the bank it
+   pays into — find the row by its first-column tick, which is unique. */
+const merchantRow = (code: string) =>
+  screen.getByLabelText(`${code} for Houzs Century`).closest('tr') as HTMLElement;
+
+describe('the maintenance table', () => {
+  /* His shape: 左手边是 merchant、bank，上面 header 是公司，这个公司有就 tick. */
+  test('companies are the columns, merchants and banks are the rows', () => {
     draw();
-    const picker = screen.getByLabelText('Company') as HTMLSelectElement;
-    expect([...picker.options].map((o) => o.textContent)).toEqual(['Houzs Century', "2990's Home"]);
-    expect(picker.value).toBe('1');
-  });
-});
-
-describe('which merchants this company uses', () => {
-  test('a merchant is ticked on, and a company that never set one up sees it unticked', () => {
-    draw();
-    expect((screen.getByLabelText('Use PBB') as HTMLInputElement).checked).toBe(true);
-    expect((screen.getByLabelText('Use CIMB') as HTMLInputElement).checked).toBe(false);
-
-    fireEvent.click(screen.getByLabelText('Use CIMB'));
-    expect(merchantMutate).toHaveBeenCalledWith({ companyId: 1, code: 'CIMB', enabled: true });
+    expect(screen.getAllByText('Houzs Century').length).toBeGreaterThan(0);
+    expect(screen.getAllByText("2990's Home").length).toBeGreaterThan(0);
+    // one tick per merchant per company, named so a cell is never ambiguous
+    expect((screen.getByLabelText("PBB for Houzs Century") as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText("CIMB for Houzs Century") as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText("CIMB for 2990's Home") as HTMLInputElement).checked).toBe(false);
   });
 
-  /* The owner's case: PBB pays Houzs into Maybank and 2990 into Hong Leong. */
-  test('each merchant points at one of THIS company bank accounts', () => {
+  test('ticking a cell names the company it is for', () => {
     draw();
-    const bank = within(merchantRow('PBB')).getByLabelText('PBB bank account') as HTMLSelectElement;
-    expect(bank.value).toBe('331-0000');
-    expect([...bank.options].map((o) => o.textContent))
-      .toEqual(['not set', 'Bank — Maybank Current', 'Bank — Hong Leong Current']);
+    fireEvent.click(screen.getByLabelText("CIMB for 2990's Home"));
+    expect(merchantMutate).toHaveBeenCalledWith({ companyId: 2, code: 'CIMB', enabled: true });
+  });
 
-    fireEvent.change(bank, { target: { value: '330-0000' } });
+  /* The whole reason he wanted a matrix: PBB pays Houzs into Hong Leong and
+     2990 into Maybank, and both are on screen at once. */
+  test('the same merchant can pay two companies into two different banks', () => {
+    draw();
+    expect((screen.getByLabelText("PBB bank for Houzs Century") as HTMLSelectElement).value).toBe('331-0000');
+    expect((screen.getByLabelText("PBB bank for 2990's Home") as HTMLSelectElement).value).toBe('330-0000');
+
+    fireEvent.change(screen.getByLabelText("PBB bank for Houzs Century"), { target: { value: '330-0000' } });
     expect(merchantMutate).toHaveBeenCalledWith({ companyId: 1, code: 'PBB', bankAccountCode: '330-0000' });
+  });
+
+  /* Only banks THAT company has can receive THAT company's money. */
+  test('a company is only offered its own banks', () => {
+    draw();
+    const houzs = screen.getByLabelText("PBB bank for Houzs Century") as HTMLSelectElement;
+    const twoNine = screen.getByLabelText("PBB bank for 2990's Home") as HTMLSelectElement;
+    expect([...houzs.options].map((o) => o.textContent))
+      .toEqual(['money lands in…', 'Bank — Maybank Current', 'Bank — Hong Leong Current']);
+    expect([...twoNine.options].map((o) => o.textContent))
+      .toEqual(['money lands in…', 'Bank — Maybank Current']);
   });
 
   test('a merchant this company does not use has no bank to choose', () => {
     draw();
-    expect((screen.getByLabelText('CIMB bank account') as HTMLSelectElement).disabled).toBe(true);
+    expect(screen.queryByLabelText("CIMB bank for Houzs Century")).toBeNull();
   });
 });
 
-describe('which banks this company has', () => {
-  test('ticking a bank off is sent for THIS company', () => {
+describe('the bank matrix', () => {
+  test('ticking a bank names its company, and says who uses it', () => {
     draw();
-    fireEvent.click(screen.getByLabelText('Has 330-0000'));
+    fireEvent.click(screen.getByLabelText("330-0000 for Houzs Century"));
     expect(bankMutate).toHaveBeenCalledWith({ companyId: 1, accountCode: '330-0000', enabled: false });
+    expect(within(screen.getByLabelText("331-0000 for Houzs Century").closest('td') as HTMLElement).getByText('PBB')).toBeTruthy();
   });
 
-  test('a bank a merchant still pays into names who is using it', () => {
+  /* A code a company does not carry is not an unticked box it could tick. */
+  test('an account missing from a company chart says so instead of offering a tick', () => {
     draw();
-    expect(within(bankRow('331-0000')).getByText('PBB')).toBeTruthy();
+    expect(screen.queryByLabelText("331-0000 for 2990's Home")).toBeNull();
+    expect(screen.getByText('not in its chart')).toBeTruthy();
   });
 
-  /* The server refuses it; the screen must show the server's own sentence, not
-     "some details weren't accepted". */
-  test("the server's refusal reaches the screen word for word", () => {
+  test("the server refusal reaches the screen word for word", () => {
     bankError = Object.assign(new Error("Some of the details weren't accepted."), {
       body: JSON.stringify({ error: 'bank_in_use', message: 'PBB still pays into this account for this company. Point it somewhere else first.' }),
     });
@@ -122,16 +150,17 @@ describe('which banks this company has', () => {
 });
 
 describe('the report layout — the shared half', () => {
-  test('it is reached from the merchant, and says it is shared', () => {
+  test('it sits outside every company column, and says it is shared', () => {
     draw();
-    fireEvent.click(within(merchantRow('PBB')).getByText('Report layout'));
+    expect(screen.getByText(/Report layout — shared by every company/)).toBeTruthy();
+    fireEvent.click(within(merchantRow('PBB')).getByText('Change'));
     expect(screen.getByText(/Every company reads PBB/)).toBeTruthy();
     expect((screen.getByLabelText('PBB Date heading') as HTMLInputElement).value).toBe('Date');
   });
 
   test('a required heading left blank is refused here, not at upload time', () => {
     draw();
-    fireEvent.click(within(merchantRow('PBB')).getByText('Report layout'));
+    fireEvent.click(within(merchantRow('PBB')).getByText('Change'));
     fireEvent.change(screen.getByLabelText('PBB Date heading'), { target: { value: '' } });
     fireEvent.click(screen.getByText('Save'));
     expect(screen.getByText(/Fill in the Date heading/)).toBeTruthy();

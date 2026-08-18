@@ -166,50 +166,45 @@ describe('maintenance — one screen, every company', () => {
     { code: 'CIMB', display_name: 'CIMB', statement_format: null, has_unique_ref: null, fee_method: null, date_tolerance_days: 3, column_map: null, is_active: true },
   ];
 
-  test('shows every merchant, ticked or not, and this company own banks', async () => {
+  test('answers for EVERY company at once — the rows are merchants, the columns are companies', async () => {
     const { app } = harness({
       accounts: CHART_MONEY, acc_acquirer_config: CONFIG,
       acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '331-0000', is_active: true }],
     });
-    const body = await (await app.request('/settlement/maintenance?companyId=1')).json() as {
-      companyId: number;
+    const body = await (await app.request('/settlement/maintenance')).json() as {
       companies: Array<{ id: number }>;
-      merchants: Array<Record<string, unknown>>;
-      bankAccounts: Array<Record<string, unknown>>;
+      merchants: Array<Record<string, any>>;
+      banks: Array<Record<string, any>>;
     };
-    expect(body.companyId).toBe(1);
     expect(body.companies.map((co) => co.id)).toEqual([1, 2]);
-    /* CIMB has no link row at all — shown, unticked, rather than absent. */
-    expect(body.merchants.find((m) => m.code === 'MBB')).toMatchObject({ enabled: true, linked: true, bank_account_code: '331-0000' });
-    expect(body.merchants.find((m) => m.code === 'CIMB')).toMatchObject({ enabled: false, linked: false, bank_account_code: null });
-    /* Company 2's account is not this company's business. */
-    expect(body.bankAccounts.map((b) => b.account_code)).toEqual(['330-0000', '331-0000']);
-    expect(body.bankAccounts.find((b) => b.account_code === '331-0000')).toMatchObject({ usedBy: ['MBB'] });
-  });
 
-  test('another company is maintained without switching, and gets its own answer', async () => {
-    const { app } = harness({
-      accounts: CHART_MONEY, acc_acquirer_config: CONFIG,
-      acc_company_acquirers: [{ company_id: CO, acquirer_code: 'MBB', bank_account_code: '331-0000', is_active: true }],
-    });
-    const body = await (await app.request('/settlement/maintenance?companyId=2')).json() as {
-      companyId: number; merchants: Array<Record<string, unknown>>; bankAccounts: Array<Record<string, unknown>>;
-    };
-    expect(body.companyId).toBe(2);
-    /* Company 2 has never been set up: everything unticked, nothing invented. */
-    expect(body.merchants.every((m) => m.enabled === false)).toBe(true);
-    expect(body.bankAccounts.map((b) => b.account_code)).toEqual(['330-0000']);
+    /* One row per merchant, with what EACH company does with it. CIMB has no
+       link row anywhere — a row all the same, unticked, because that is how a
+       company starts using it. */
+    const mbb = body.merchants.find((m) => m.code === 'MBB')!;
+    expect(mbb.byCompany['1']).toMatchObject({ enabled: true, linked: true, bankAccountCode: '331-0000' });
+    expect(mbb.byCompany['2']).toMatchObject({ enabled: false, linked: false, bankAccountCode: null });
+    const cimb = body.merchants.find((m) => m.code === 'CIMB')!;
+    expect(cimb.byCompany['1']).toMatchObject({ enabled: false, linked: false });
+
+    /* One row per account CODE, with what each company does with it — and an
+       account a company does not carry reads as 'not in its chart', never as
+       an unticked box it could tick. */
+    expect(body.banks.map((b) => b.account_code)).toEqual(['330-0000', '331-0000']);
+    const hlb = body.banks.find((b) => b.account_code === '331-0000')!;
+    expect(hlb.byCompany['1']).toMatchObject({ inChart: true, enabled: true, usedBy: ['MBB'] });
+    expect(hlb.byCompany['2']).toMatchObject({ inChart: false, enabled: false, usedBy: [] });
   });
 
   /* A company id in a request is an instruction, not an authorisation. */
-  test('a company the caller is not granted is refused', async () => {
+  test('a write against a company the caller is not granted is refused', async () => {
     const { app } = harness({ accounts: CHART_MONEY, acc_acquirer_config: CONFIG, acc_company_acquirers: [] });
-    const res = await app.request('/settlement/maintenance?companyId=99');
-    expect(res.status).toBe(409);
-    expect(await res.json()).toMatchObject({ error: 'company_not_granted' });
-
     const write = await patch(app, '/settlement/maintenance/merchant', { companyId: 99, code: 'MBB', enabled: true });
     expect(write.status).toBe(409);
+    expect(await write.json()).toMatchObject({ error: 'company_not_granted' });
+
+    const bank = await patch(app, '/settlement/maintenance/bank', { companyId: 99, accountCode: '330-0000', enabled: false });
+    expect(bank.status).toBe(409);
   });
 
   test('ticking a merchant on creates the link row for that company', async () => {

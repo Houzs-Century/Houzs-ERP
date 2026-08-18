@@ -1,25 +1,25 @@
 // ----------------------------------------------------------------------------
-// RECONCILIATION SETUP — one screen, every company.
+// RECONCILIATION SETUP — ONE maintenance table, every company at once.
 //
-// The owner, 2026-08-18: "我记得我说我这个自动对账要做成每个公司都能用，无论是
-// merchant recon还是bank recon。具体怎样应该是我会overall 维护，然后在维护那边选
-// 这个公司是使用哪里几个 merchant，然后他有什么bank。可能是以勾选的方式选择？"
+// The owner's own shape (2026-08-18): "我应该 overall maintenance table，左手边是
+// merchant、bank，上面 header 是公司，这个公司有就 tick." So merchants and banks
+// are the ROWS, companies are the COLUMNS, and a tick in a cell means that
+// company uses that merchant / banks with that account.
 //
-// So: pick a company at the top, tick what it uses underneath. He does not have
-// to switch the top bar to set up the other company, and a company nobody has
-// set up yet shows every merchant unticked instead of an empty screen.
+// He asked for this because the work is comparative: the question is never
+// "what does Houzs use" on its own, it is "which of my companies use PBB, and
+// where does each of them get paid". A screen showing one company at a time
+// cannot answer that without the operator remembering the last one.
 //
-// What is shared and what is not, made structural rather than explained:
+// What is shared and what is not, made structural:
 //
 //   • HOW a merchant's report reads (format, unique reference, fee, headings)
-//     is taught ONCE and every company uses it — his standing principle;
+//     is taught ONCE and every company uses it — it sits on the ROW, outside
+//     every company column, because that is exactly what it is;
 //   • WHICH merchants a company uses, and WHICH of its banks each pays into,
-//     is that company's own (PBB pays Houzs into Maybank and 2990 into Hong
-//     Leong);
-//   • the BANKS themselves are the chart of accounts, which is already
-//     maintained centrally — his own answer: "chart of account 我也是会做成总维护
-//     不是？" — so this screen ticks which of them a company banks with rather
-//     than inventing a second bank master to drift from the first.
+//     is the CELL — PBB pays Houzs into Maybank and 2990 into Hong Leong;
+//   • the banks themselves are the chart of accounts, already maintained
+//     centrally — his answer: "chart of account 我也是会做成总维护不是？"
 // ----------------------------------------------------------------------------
 
 import { useState } from 'react';
@@ -28,37 +28,37 @@ import { AlertTriangle, ArrowLeft } from 'lucide-react';
 import {
   useSettlementMaintenance, useSaveMaintenanceMerchant, useSaveMaintenanceBank,
   useSaveAcquirerSetup,
-  type MaintenanceMerchant, type MaintenanceBank,
+  type MaintenanceMerchant, type MaintenanceBank, type MaintenanceCompany,
 } from './settlement-queries';
 import {
   ICON, btn, cell, num, table, headRow, rowLine, softText, danger, good, refusalText,
 } from './settlement-ui';
-import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 
+const tick: React.CSSProperties = { width: 18, height: 18, cursor: 'pointer' };
+const colHead: React.CSSProperties = { ...cell, textAlign: 'center', minWidth: 170 };
+const colCell: React.CSSProperties = { ...cell, textAlign: 'center', verticalAlign: 'middle' };
+
 export const SettlementSetup = () => {
-  const [companyId, setCompanyId] = useState<number | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const q = useSettlementMaintenance(companyId);
+  const q = useSettlementMaintenance();
   const data = q.data;
 
+  const companies = data?.companies ?? [];
   const merchants = data?.merchants ?? [];
-  const banks = data?.bankAccounts ?? [];
-  /* The company actually being shown — the server answers with it, so a first
-     load (no companyId yet) still knows which company it is talking about. */
-  const shownId = data?.companyId ?? null;
+  const banks = data?.banks ?? [];
   const open = merchants.find((m) => m.code === editing) ?? null;
+
+  if (open) return <MerchantForm merchant={open} onDone={() => setEditing(null)} />;
 
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance" title="Reconciliation setup" />
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-        <label style={{ fontSize: 'var(--fs-13)', fontWeight: 600 }} htmlFor="setup-company">Company</label>
-        <select id="setup-company" aria-label="Company" style={{ padding: '6px 10px', fontSize: 'var(--fs-13)' }}
-          value={shownId ?? ''} onChange={(e) => { setCompanyId(Number(e.target.value)); setEditing(null); }}>
-          {(data?.companies ?? []).map((co) => <option key={co.id} value={co.id}>{co.name}</option>)}
-        </select>
+        <span style={softText}>
+          Tick what each company uses. The report layout is taught once and shared by all of them.
+        </span>
         <span style={{ flex: 1 }} />
         <Link to="/scm/merchant-recon" style={{ ...btn(), textDecoration: 'none' }}>
           <ArrowLeft {...ICON} /> Merchant reconciliation
@@ -67,123 +67,125 @@ export const SettlementSetup = () => {
 
       {q.isLoading && <div style={{ fontSize: 'var(--fs-13)' }}>Loading…</div>}
 
-      {open && shownId != null
-        ? <MerchantForm merchant={open} onDone={() => setEditing(null)} />
-        : shownId != null && (
-          <>
-            <MerchantTicks companyId={shownId} merchants={merchants} banks={banks} onEdit={setEditing} />
-            <BankTicks companyId={shownId} banks={banks} />
-          </>
-        )}
+      {companies.length > 0 && (
+        <>
+          <MerchantMatrix companies={companies} merchants={merchants} banks={banks} onEdit={setEditing} />
+          <BankMatrix companies={companies} banks={banks} />
+        </>
+      )}
     </div>
   );
 };
 
-/* ── Which merchants this company uses, and where each pays ───────────────── */
+/* ── Merchants down the side, companies across the top ────────────────────── */
 
-const MerchantTicks = ({ companyId, merchants, banks, onEdit }: {
-  companyId: number; merchants: MaintenanceMerchant[]; banks: MaintenanceBank[]; onEdit: (code: string) => void;
+const MerchantMatrix = ({ companies, merchants, banks, onEdit }: {
+  companies: MaintenanceCompany[]; merchants: MaintenanceMerchant[]; banks: MaintenanceBank[];
+  onEdit: (code: string) => void;
 }) => {
   const save = useSaveMaintenanceMerchant();
-  const usable = banks.filter((b) => b.enabled);
 
   return (
     <section className="space-y-2">
-      <b>Which merchants does this company use?</b>
+      <b>Merchants</b>
       <table style={table}>
         <thead>
           <tr style={headRow}>
-            <th style={cell}>Use</th>
             <th style={cell}>Merchant</th>
-            <th style={cell}>Money lands in</th>
-            <th style={cell}>Report</th>
-            <th style={cell} />
+            <th style={cell}>Report layout — shared by every company</th>
+            {companies.map((co) => <th key={co.id} style={colHead}>{co.name}</th>)}
           </tr>
         </thead>
         <tbody>
           {merchants.map((m) => (
             <tr key={m.code} style={rowLine}>
+              <td style={cell}><b>{m.display_name}</b></td>
+              {/* OUTSIDE the company columns, because it belongs to no company. */}
               <td style={cell}>
-                <input type="checkbox" checked={m.enabled} aria-label={`Use ${m.code}`}
-                  onChange={(e) => save.mutate({ companyId, code: m.code, enabled: e.target.checked })} />
+                <span style={{ color: m.ready ? undefined : danger }}>
+                  {m.ready
+                    ? `${m.statement_format} · ${m.autoMatchable ? 'matches by reference' : 'by hand, always'}`
+                    : 'not taught yet'}
+                </span>{' '}
+                <button type="button" style={{ ...btn(), padding: '2px 8px' }} onClick={() => onEdit(m.code)}>
+                  Change
+                </button>
               </td>
-              <td style={cell}>
-                <b>{m.display_name}</b>{' '}
-                {m.code !== m.display_name && <span className={styles.codeChip}>{m.code}</span>}
-              </td>
-              <td style={cell}>
-                {/* Off = no bank to choose. A merchant this company does not use
-                    has no money to land anywhere. */}
-                <select style={{ padding: '4px 8px', fontSize: 'var(--fs-13)', minWidth: 190 }}
-                  aria-label={`${m.code} bank account`} disabled={!m.enabled}
-                  value={m.bank_account_code ?? ''}
-                  onChange={(e) => save.mutate({ companyId, code: m.code, bankAccountCode: e.target.value || null })}>
-                  <option value="">not set</option>
-                  {usable.map((b) => (
-                    <option key={b.account_code} value={b.account_code}>{b.account_name}</option>
-                  ))}
-                </select>
-                {m.enabled && !m.bank_account_code && (
-                  <div style={{ fontSize: 'var(--fs-12)', color: danger }}>will use the company default</div>
-                )}
-              </td>
-              <td style={{ ...cell, color: m.ready ? undefined : danger }}>
-                {m.ready
-                  ? <>{m.statement_format} · {m.autoMatchable ? 'matches by reference' : 'by hand, always'}</>
-                  : 'not taught yet'}
-              </td>
-              <td style={cell}>
-                <button type="button" style={btn()} onClick={() => onEdit(m.code)}>Report layout</button>
-              </td>
+              {companies.map((co) => {
+                const at = m.byCompany[String(co.id)] ?? { enabled: false, linked: false, bankAccountCode: null };
+                /* Only banks THIS company has can receive THIS company's money. */
+                const usable = banks.filter((b) => b.byCompany[String(co.id)]?.enabled);
+                return (
+                  <td key={co.id} style={colCell}>
+                    <input type="checkbox" style={tick} checked={at.enabled}
+                      aria-label={`${m.code} for ${co.name}`}
+                      onChange={(e) => save.mutate({ companyId: co.id, code: m.code, enabled: e.target.checked })} />
+                    {at.enabled && (
+                      <div style={{ marginTop: 4 }}>
+                        <select style={{ padding: '3px 6px', fontSize: 'var(--fs-12)', maxWidth: 160 }}
+                          aria-label={`${m.code} bank for ${co.name}`} value={at.bankAccountCode ?? ''}
+                          onChange={(e) => save.mutate({ companyId: co.id, code: m.code, bankAccountCode: e.target.value || null })}>
+                          <option value="">money lands in…</option>
+                          {usable.map((b) => (
+                            <option key={b.account_code} value={b.account_code}>{b.account_name}</option>
+                          ))}
+                        </select>
+                        {!at.bankAccountCode && (
+                          <div style={{ fontSize: 'var(--fs-12)', color: danger }}>company default</div>
+                        )}
+                      </div>
+                    )}
+                  </td>
+                );
+              })}
             </tr>
           ))}
         </tbody>
       </table>
-      <div style={softText}>
-        The report layout is taught once and every company uses it. The tick and the bank are this company&rsquo;s own.
-      </div>
     </section>
   );
 };
 
-/* ── Which banks this company has ─────────────────────────────────────────── */
+/* ── Banks down the side, the same companies across the top ───────────────── */
 
-const BankTicks = ({ companyId, banks }: { companyId: number; banks: MaintenanceBank[] }) => {
+const BankMatrix = ({ companies, banks }: { companies: MaintenanceCompany[]; banks: MaintenanceBank[] }) => {
   const save = useSaveMaintenanceBank();
 
   return (
     <section className="space-y-2">
-      <b>Which banks does this company have?</b>
-      {banks.length === 0 && (
-        <div style={{ fontSize: 'var(--fs-13)', color: danger }}>
-          This company has no money accounts in its chart yet — add them in Accounting first.
-        </div>
-      )}
-      {banks.length > 0 && (
-        <table style={table}>
-          <thead>
-            <tr style={headRow}>
-              <th style={cell}>Has</th><th style={cell}>Account</th><th style={num}>Code</th>
-              <th style={cell}>Used by</th>
+      <b>Banks</b>
+      <table style={table}>
+        <thead>
+          <tr style={headRow}>
+            <th style={cell}>Account</th><th style={num}>Code</th>
+            {companies.map((co) => <th key={co.id} style={colHead}>{co.name}</th>)}
+          </tr>
+        </thead>
+        <tbody>
+          {banks.map((b) => (
+            <tr key={b.account_code} style={rowLine}>
+              <td style={cell}>{b.account_name}</td>
+              <td style={num}>{b.account_code}</td>
+              {companies.map((co) => {
+                const at = b.byCompany[String(co.id)] ?? { inChart: false, enabled: false, usedBy: [] };
+                /* A code this company simply does not carry is not a box it
+                   could tick — say so rather than offer a lie. */
+                if (!at.inChart) return <td key={co.id} style={{ ...colCell, ...softText }}>not in its chart</td>;
+                return (
+                  <td key={co.id} style={colCell}>
+                    <input type="checkbox" style={tick} checked={at.enabled}
+                      aria-label={`${b.account_code} for ${co.name}`}
+                      onChange={(e) => save.mutate({ companyId: co.id, accountCode: b.account_code, enabled: e.target.checked })} />
+                    {at.usedBy.length > 0 && (
+                      <div style={{ fontSize: 'var(--fs-12)', color: good }}>{at.usedBy.join(', ')}</div>
+                    )}
+                  </td>
+                );
+              })}
             </tr>
-          </thead>
-          <tbody>
-            {banks.map((b) => (
-              <tr key={b.account_code} style={rowLine}>
-                <td style={cell}>
-                  <input type="checkbox" checked={b.enabled} aria-label={`Has ${b.account_code}`}
-                    onChange={(e) => save.mutate({ companyId, accountCode: b.account_code, enabled: e.target.checked })} />
-                </td>
-                <td style={cell}>{b.account_name}</td>
-                <td style={num}>{b.account_code}</td>
-                <td style={{ ...cell, color: b.usedBy.length > 0 ? good : undefined }}>
-                  {b.usedBy.length > 0 ? b.usedBy.join(', ') : '—'}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      )}
+          ))}
+        </tbody>
+      </table>
       {save.isError && (
         <div style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
           <AlertTriangle {...ICON} />
@@ -191,8 +193,8 @@ const BankTicks = ({ companyId, banks }: { companyId: number; banks: Maintenance
         </div>
       )}
       <div style={softText}>
-        These are this company&rsquo;s money accounts from the chart of accounts, which is maintained centrally.
-        Unticking one that a merchant still pays into is refused — point the merchant somewhere else first.
+        The accounts come from the chart of accounts, which is maintained centrally. Unticking one a merchant still
+        pays into is refused — point the merchant somewhere else first.
       </div>
     </section>
   );
@@ -266,9 +268,11 @@ const MerchantForm = ({ merchant, onDone }: { merchant: MaintenanceMerchant; onD
   };
 
   return (
-    <section className="space-y-3">
+    <div className="space-y-4">
+      <PageHeader eyebrow="Finance" title="Reconciliation setup" />
+
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
-        <button type="button" style={btn()} onClick={onDone}><ArrowLeft {...ICON} /> Back</button>
+        <button type="button" style={btn()} onClick={onDone}><ArrowLeft {...ICON} /> All merchants</button>
         <b>{merchant.display_name} — report layout</b>
         <span style={softText}>Taught once. Every company reads {merchant.display_name}&rsquo;s file this way.</span>
       </div>
@@ -336,7 +340,7 @@ const MerchantForm = ({ merchant, onDone }: { merchant: MaintenanceMerchant; onD
         </button>
         <button type="button" style={btn()} onClick={onDone}>Cancel</button>
       </div>
-    </section>
+    </div>
   );
 };
 

@@ -77,11 +77,12 @@ What is on the branch:
   `/scm/bank-recon` is GATED on the first being clean: an unreconciled report is
   not listed there at all, only counted and named. Opening anything replaces the
   list. Shared presentation only (`settlement-ui.ts`).
-- **`/scm/settlement-setup` — one maintenance screen for EVERY company** (他:
-  我会 overall 维护，然后在维护那边选这个公司是使用哪里几个 merchant，然后他有什
-  么 bank). Pick the company at the top, tick merchants and banks. The three
-  endpoints take the company as a parameter and re-check it against the caller
-  grants. A company nobody set up shows everything unticked and creates its row
+- **`/scm/settlement-setup` — ONE maintenance TABLE, every company at once**
+  (他: 我应该 overall maintenance table，左手边是 merchant、bank，上面 header 是公
+  司，这个公司有就 tick). Merchants and banks are the rows, companies the columns;
+  a ticked merchant cell also carries which of that company's banks it pays
+  into. The read answers for every company he is granted; the two writes take
+  the company as a parameter and re-check it against those same grants. A company nobody set up shows everything unticked and creates its row
   on the first tick — no migration for a new company. Unticking a bank a
   merchant still uses is refused by name. Banks come from the chart, which is
   already central (0297) — no second bank master.

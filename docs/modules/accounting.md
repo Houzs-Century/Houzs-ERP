@@ -185,12 +185,16 @@ two days:
   fees, statement charges and part-payments). This is the screen layer 4 will
   feed from the bank statement file.
 
-- `/scm/settlement-setup` — **Reconciliation setup**: ONE screen for EVERY
-  company (owner, 2026-08-18: 我会 overall 维护，然后在维护那边选这个公司是使用哪
-  里几个 merchant，然后他有什么 bank。可能是以勾选的方式选择？). Pick a company at
-  the top; tick which merchants it uses and which of its banks each pays into;
-  tick which banks it has. The three maintenance endpoints take the company as a
-  PARAMETER and re-check it against the caller's own grants (`allowedCompanyIds`)
+- `/scm/settlement-setup` — **Reconciliation setup**: ONE maintenance TABLE,
+  every company at once (owner, 2026-08-18: 我应该 overall maintenance table，左手
+  边是 merchant、bank，上面 header 是公司，这个公司有就 tick). Merchants and banks
+  are the ROWS, companies are the COLUMNS, and a tick in a cell means that
+  company uses it; a ticked merchant cell also carries WHICH of that company's
+  banks its money lands in. The shared half — how the report reads — sits on the
+  row, outside every company column, because that is what it is. The read
+  answers for every company the caller is granted; the two writes take the
+  company as a PARAMETER and re-check it against those same grants
+  (`allowedCompanyIds`)
   — a company id in a request body is an instruction, not an authorisation. A
   company nobody has set up shows every merchant unticked and creates its link
   row on the first tick, so a new company needs no migration. Unticking a bank a
