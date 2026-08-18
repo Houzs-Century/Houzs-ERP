@@ -18,8 +18,10 @@ import { writeFailed } from './mutation-error';
 //   - serviceNotify (the non-React 409/error toast bridge) maps to the vendored
 //     dialog-service serviceNotify.
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { API_URL, authedFetch, humanApiError } from './authed-fetch';
+import type { SoListMrpEnrichment } from '../../../lib/soListEnrichment';
 // The photo PROXY fallback streams raw bytes, which authedFetch would try to
 // JSON-parse — so it uses the shared correlated transport + token accessor
 // directly, exactly as slip.ts does for the same reason.
@@ -90,6 +92,63 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
     retry: retryUnlessClientError,
     retryDelay: 800,
   });
+}
+
+/* Deferred SO-list enrichment — the MRP-derived fields the list no longer
+   computes on its critical path (READY source-PO chips + the readiness/planning
+   verdicts). Fired AFTER the list renders, for the docs it just showed, and
+   merged in by applySoListMrpEnrichment. Desktop (one page) and mobile (many
+   infinite-scroll pages) share this: the docs are chunked at 100 so the request
+   stays bounded no matter how far mobile scrolls, and each chunk is cached
+   independently (a page already fetched is not re-requested when the next
+   loads). The backend runs ONE company-wide computeMrp per request regardless
+   of the chunk size, so chunking costs only extra bounded row reads, never
+   extra allocation work. */
+const ENRICH_CHUNK = 100;
+
+export function useSoListMrpEnrichmentMap(
+  docNos: string[],
+  enabled: boolean,
+): { byDoc: Map<string, SoListMrpEnrichment>; isFetching: boolean } {
+  // Sort so the chunk cache keys are stable across renders (row order can shift
+  // under a re-sort without changing which docs are on screen).
+  const chunks = useMemo(() => {
+    const uniq = [...new Set(docNos.filter(Boolean))].sort();
+    const out: string[][] = [];
+    for (let i = 0; i < uniq.length; i += ENRICH_CHUNK) out.push(uniq.slice(i, i + ENRICH_CHUNK));
+    return out;
+  }, [docNos]);
+
+  const results = useQueries({
+    queries: chunks.map((chunk) => ({
+      enabled: enabled && chunk.length > 0,
+      queryKey: ['mfg-sales-orders-list-mrp-enrichment', chunk.join(',')],
+      queryFn: ({ signal }: { signal?: AbortSignal }) =>
+        authedFetch<{ enrichment: Record<string, SoListMrpEnrichment> }>(
+          `/mfg-sales-orders/list-mrp-enrichment?docNos=${encodeURIComponent(chunk.join(','))}`,
+          { signal },
+        ),
+      staleTime: 30_000,
+      retry: retryUnlessClientError,
+      retryDelay: 800,
+    })),
+  });
+
+  // Signature over the per-chunk update timestamps: rebuild the merged map only
+  // when a chunk's data actually changes, not on every parent render.
+  const sig = results.map((r) => r.dataUpdatedAt).join('|');
+  const isFetching = results.some((r) => r.isFetching);
+  const byDoc = useMemo(() => {
+    const map = new Map<string, SoListMrpEnrichment>();
+    for (const r of results) {
+      const e = r.data?.enrichment;
+      if (e) for (const [k, v] of Object.entries(e)) map.set(k, v);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `results` is read through its `sig` (per-chunk dataUpdatedAt); depending on the array itself would rebuild every render.
+  }, [sig]);
+
+  return { byDoc, isFetching };
 }
 
 // Dashboard summary mode (`?summary=1`) — the backend returns only the 6 cols

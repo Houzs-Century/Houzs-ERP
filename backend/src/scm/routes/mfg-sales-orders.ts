@@ -1392,20 +1392,15 @@ mfgSalesOrders.get('/', async (c) => {
        chips come from source_po_union below. */
     const convertedPoProm = soConvertedPoNumbers(sb, docNos);
     /* Source-PO union (owner 2026-08-02, "他拿的货是谁的货"): the list "PO No."
-       column renders the SAME union of per-line source chips the drill shows —
-       SHIPPED/DELIVERED consumed batches ∪ READY projections — via the shared
-       resolver (lib/source-po-trace.ts). The READY side needs the MRP allocation;
-       ONE computeMrp per list load (the same engine one drill open already
-       costs), fired here so it overlaps the whole enrichment wave. Fail-soft:
-       a failed MRP just drops READY chips, shipped chips still render. */
-    const mrpForListProm: Promise<MrpResult | null> = (async () => {
-      try {
-        return await computeMrp(sb, {
-          catFilter: null, whFilter: null, includeUndated: true,
-          companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB),
-        });
-      } catch { return null; }
-    })();
+       column shows the union of per-line source chips the drill shows —
+       SHIPPED/DELIVERED consumed batches ∪ READY projections. Only the SHIPPED
+       arm is computed HERE (cheap real-batch reads); the READY arm needs the
+       GLOBAL MRP allocation (`computeMrp`), which paginates the company's whole
+       products / balances / PO-lines / SO-lines tables and was the dominant cost
+       of opening this list. It — and the readiness/planning fields it also fed
+       (see below) — are no longer on this path. The client fetches them a beat
+       later from GET /mfg-sales-orders/list-mrp-enrichment and merges them in
+       (lib/so-list-mrp-enrichment.ts). */
 
     /* Order deterministically so the FIRST line per doc_no is the earliest
        one created (matches the detail endpoint's `.order('created_at')`). We
@@ -1602,12 +1597,14 @@ mfgSalesOrders.get('/', async (c) => {
        isServiceLine's strongest signal, so a delivery/dispose SKU whose line
        item_group was saved as 'others' is still recognised as a SERVICE line
        and cannot masquerade as a short accessory. */
-    /* Fed the SAME verdict the drill-down pill shows, not the stored column
-       alone, so board and drill cannot disagree (so-line-effective-stock.ts,
-       §0.4). No query: the union below already awaits this MRP run. */
-    const mrpForList = await mrpForListProm;
+    /* FIRST PAINT uses the STORED stock_status alone (`null` live coverage —
+       so-line-effective-stock.ts's fail-soft path: the stored value stands).
+       The MRP-corrected verdict — which can flip a stale-stored line to READY,
+       the 2026-08-17 union — arrives with the deferred enrichment fetch and the
+       client overlays stock_remark / is_main_ready / planning_state then. Not
+       running computeMrp here is the whole point of the deferral. */
     const readinessByDoc = new Map<string, ReturnType<typeof summariseReadiness>>();
-    const linesByDoc = readinessLinesByDoc(itemRows, mrpForList ? mrpLineCoverage(mrpForList) : null);
+    const linesByDoc = readinessLinesByDoc(itemRows, null);
     attachLineCategories(linesByDoc.values(), productCategory);
     for (const [docNo, ls] of linesByDoc) readinessByDoc.set(docNo, summariseReadiness(ls));
 
@@ -1678,21 +1675,22 @@ mfgSalesOrders.get('/', async (c) => {
     // PO No. — SO doc_no → system PO numbers it was converted into (see wave).
     const convertedPoByDoc = await convertedPoProm;
 
-    /* Source-PO union per SO (defect 2026-08-02-A): shipped trace ∪ READY
-       projection, via the SAME per-line resolvers the drill reads, then the
-       pure per-doc union. Accessories/CS SOs fulfilled from stock bought under
-       other POs finally show "谁的货" instead of a dash. */
+    /* Source-PO union per SO (defect 2026-08-02-A): SHIPPED arm only on this
+       path — shipped trace from `shippedTraceProm` (cheap real-batch reads),
+       run through the SAME pure union the drill uses with an EMPTY ready map.
+       The READY arm (`soLineReadySourcePos`, which needs the global MRP run)
+       arrives via GET /mfg-sales-orders/list-mrp-enrichment and the client
+       unions its chips into this column. Union(shipped-only, ready-only) per
+       doc equals the old combined union (set union is associative), so the
+       final displayed chips are unchanged; they just fill in a beat later. */
     const sourceUnionByDoc = await (async () => {
       try {
-        const pageItems = itemRows as unknown as Array<{ id: string; doc_no: string; item_group: string | null; item_code: string | null; stock_status: string | null; qty: number | null; allocated_batch_no: string | null }>;
-        const [shippedByItem, readyByItem] = await Promise.all([
-          shippedTraceProm,
-          (async () => soLineReadySourcePos(sb, activeCompanyId(c) ?? null, await mrpForListProm, pageItems))(),
-        ]);
+        const pageItems = itemRows as unknown as Array<{ id: string; doc_no: string }>;
+        const shippedByItem = await shippedTraceProm;
         return unionSoLineChips(
           pageItems.map((it) => ({ id: it.id, docNo: it.doc_no })),
           shippedByItem,
-          readyByItem,
+          new Map(),
           fullyShippedItemIds,
         );
       } catch {
