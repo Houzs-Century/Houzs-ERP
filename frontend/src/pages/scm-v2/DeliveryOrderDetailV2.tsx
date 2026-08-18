@@ -42,6 +42,12 @@ import {
 } from "lucide-react";
 import { Badge } from "../../components/Badge";
 import { Button } from "../../components/Button";
+import { NextStepNote } from "../../components/NextStepNote";
+import {
+  doAdvanceBlockReason,
+  doAdvanceStep,
+  siTransferBlockReason,
+} from "../../vendor/scm/lib/do-next-step";
 import { DataTable, type Column } from "../../components/DataTable";
 import { DATA_TABLE_LAYOUT_FAMILIES } from "../../components/dataTableLayoutFamilies";
 import { CommittedBatchCell } from "../../components/DocumentLinesExpansion";
@@ -772,9 +778,19 @@ export function DeliveryOrderDetailV2() {
       updateStatus.mutate({ id: deliveryOrder.id, status: "CANCELLED" });
     }
   };
-  const doMarkSigned = () => {
+  /* The ONE status-advance control. Its verb and its target both come from
+     do-next-step.ts, so a DRAFT delivery order gets the same "Confirm"
+     (→ DISPATCHED) the mobile shell has always offered — until now the desktop
+     had no way to advance a draft at all: `canMarkSigned` excluded DRAFT and no
+     other control on this page or its editor writes a status. A draft raised on
+     the desktop could only be moved forward by picking up a phone, which is
+     precisely the "我又不是两套系统" complaint in a second costume. Same
+     endpoint, same body, same permission gate the phone already uses. */
+  const doAdvance = () => {
     if (!deliveryOrder) return;
-    updateStatus.mutate({ id: deliveryOrder.id, status: "DELIVERED" });
+    const step = doAdvanceStep(deliveryOrder.status);
+    if (!step) return;
+    updateStatus.mutate({ id: deliveryOrder.id, status: step.status });
   };
   const goConvertToSi = () =>
     deliveryOrder && navigate(convertToLink('doToSi', deliveryOrder.id));
@@ -948,12 +964,15 @@ export function DeliveryOrderDetailV2() {
   };
 
   const rawStatus = (deliveryOrder.status || "").toLowerCase();
-  const canMarkSigned =
-    rawStatus === "loaded" ||
-    rawStatus === "dispatched" ||
-    rawStatus === "in_transit";
-  const canConvertToSi =
-    rawStatus === "signed" || rawStatus === "delivered";
+  /* Both questions this page asks about status now come from ONE module, which
+     the list drawer, the phone bar below and the native mobile shell also
+     import. They used to be re-derived here by hand, and the copies disagreed:
+     on DISPATCHED this page offered "Mark signed" while the mobile shell offered
+     "Mark In Transit" for the same document. See vendor/scm/lib/do-next-step.ts. */
+  const advanceStep = doAdvanceStep(deliveryOrder.status);
+  const advanceReason = doAdvanceBlockReason(deliveryOrder.status);
+  const siReason = siTransferBlockReason(deliveryOrder.status);
+  const canConvertToSi = siReason === null;
   const isCancelled = rawStatus === "cancelled";
 
   const soNo = deliveryOrder.so_doc_no;
@@ -1039,7 +1058,8 @@ export function DeliveryOrderDetailV2() {
               </div>
             </div>
           </div>
-          <div className="flex flex-shrink-0 flex-wrap items-center gap-2">
+          <div className="flex flex-shrink-0 flex-col items-end gap-1.5">
+          <div className="flex flex-wrap items-center justify-end gap-2">
             <Button
               variant="ghost"
               icon={<History size={14} />}
@@ -1070,23 +1090,48 @@ export function DeliveryOrderDetailV2() {
                 Cancel DO
               </Button>
             )}
-            {canMarkSigned && canWriteDo && (
+            {/* ── The two status-driven controls. BOTH ARE ALWAYS RENDERED for
+                anyone who may operate a DO — disabled when the state forbids
+                them, never removed, and each carrying the sentence that says
+                why and what to do instead.
+
+                Owner, 2026-08-18, holding one delivery order from each company
+                side by side: "一个公司显示 Transfer to Sales Invoice，另一个公司
+                却是 Mark signed，这不是同一个系统会统一的东西来的吗？我又不是两套
+                系统." The code was correct — the two documents differed only in
+                STATUS — but the transfer was not shown as unavailable, it was
+                not shown at all, so from the second seat the product simply did
+                not have the feature. Absence is not a message.
+
+                The ADVANCE slot keeps one job (move THIS document along) and the
+                TRANSFER slot keeps one job (produce the NEXT document), so the
+                green button in this corner never changes meaning between two
+                documents. That is the other half of the complaint: the operator
+                should not have to read a status badge to learn what the primary
+                button will do. ── */}
+            {canWriteDo && (
               <Button
                 variant="secondary"
                 icon={<CheckCircle2 size={14} />}
-                onClick={doMarkSigned}
+                onClick={doAdvance}
+                disabled={!advanceStep}
+                title={advanceReason ?? undefined}
+                aria-describedby={advanceReason ? "do-advance-reason" : undefined}
               >
-                Mark signed
+                {advanceStep?.label ?? "Mark signed"}
               </Button>
             )}
-            {/* The transfer takes the PRIMARY slot; "Mark signed" above stays
+            {/* The transfer takes the PRIMARY slot; the advance above stays
                 secondary because it changes THIS document's own status rather
                 than producing the next document (owner rule, 2026-08-17). */}
-            {canConvertToSi && canWriteDo && (
+            {canWriteDo && (
               <Button
                 variant="primary"
                 icon={<Receipt size={14} />}
                 onClick={goConvertToSi}
+                disabled={!canConvertToSi}
+                title={siReason ?? undefined}
+                aria-describedby={siReason ? "do-si-reason" : undefined}
               >
                 {transferToLabel('si')}
               </Button>
@@ -1100,6 +1145,16 @@ export function DeliveryOrderDetailV2() {
                 Edit
               </Button>
             )}
+          </div>
+          {/* The reasons, as TEXT. A `title` tooltip needs a hover and would
+              have said nothing on a touch screen — and the ids below are what
+              the disabled buttons point at with aria-describedby. */}
+          {canWriteDo && (
+            <div className="flex max-w-[420px] flex-col items-end gap-0.5 text-right">
+              <NextStepNote id="do-advance-reason" reason={advanceReason} />
+              <NextStepNote id="do-si-reason" reason={siReason} />
+            </div>
+          )}
           </div>
         </div>
       </div>
@@ -1432,14 +1487,52 @@ export function DeliveryOrderDetailV2() {
         </DetailGrid>
       </div>
 
-      {/* Fixed bottom action bar (phone only) */}
+      {/* Fixed bottom action bar (phone only).
+
+          THE SAME TWO CONTROLS AS THE DESKTOP HEADER, and for the same reason.
+          This bar used to carry Edit / Print / Call and nothing else: at phone
+          width this page offered no next step at ANY status — not even a
+          disabled one — so a storeman looking at a signed delivery order saw a
+          finished document and the Sales Invoice was never raised. A fix that
+          lands on one breakpoint of one page reproduces exactly the defect it
+          was written to end, which is how DateField came to be wired into 14 of
+          189 date inputs. The reason renders as TEXT here because a `title`
+          tooltip cannot be summoned on a touch screen. */}
       <div className="fixed inset-x-0 bottom-0 z-20 border-t border-border bg-surface/95 px-3 pb-6 pt-2.5 shadow-slab backdrop-blur-sm md:hidden">
+        {canWriteDo && (
+          <div className="mb-1.5 flex flex-col gap-0.5">
+            <NextStepNote id="do-advance-reason-phone" reason={advanceReason} />
+            <NextStepNote id="do-si-reason-phone" reason={siReason} />
+          </div>
+        )}
+        {canWriteDo && (
+          <div className="mb-2 flex items-center gap-2">
+            <button
+              type="button"
+              onClick={doAdvance}
+              disabled={!advanceStep}
+              aria-describedby={advanceReason ? "do-advance-reason-phone" : undefined}
+              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface text-[13.5px] font-bold text-ink hover:bg-surface-dim disabled:opacity-40"
+            >
+              <CheckCircle2 size={16} /> {advanceStep?.label ?? "Mark signed"}
+            </button>
+            <button
+              type="button"
+              onClick={goConvertToSi}
+              disabled={!canConvertToSi}
+              aria-describedby={siReason ? "do-si-reason-phone" : undefined}
+              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink disabled:bg-primary/40"
+            >
+              <Receipt size={16} /> {transferToLabel('si')}
+            </button>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           {canWriteDo && (
             <button
               type="button"
               onClick={goEdit}
-              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink"
+              className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg border border-border bg-surface text-[13.5px] font-bold text-ink hover:bg-surface-dim"
             >
               <Edit3 size={16} /> Edit
             </button>
