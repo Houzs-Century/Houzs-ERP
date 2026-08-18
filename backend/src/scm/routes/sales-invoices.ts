@@ -44,6 +44,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
 import { insertSiPaymentRow } from '../lib/si-payment-row';
 import { postSiRevenue, reverseSiRevenue, resyncSiRevenue } from '../lib/post-si-revenue';
@@ -51,6 +52,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
+import { readStatusCounts } from '../lib/status-counts';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
 import { doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
@@ -562,14 +564,16 @@ function withPriceWarnings<T extends object>(res: T, warnings: SiPriceWarning[])
 }
 
 /* Filter-pill bucket → the raw sales_invoices.status values it covers. Single
-   source of truth for BOTH the status-count queries and the list `status`
-   filter. sent / partial / paid are MULTI-status buckets; cancelled is 1:1. The
-   FE sends the BUCKET NAME as `status`; a raw DB status still works
-   (backward-compatible fallback). */
+   source of truth for the status-count queries AND the list `status` filter; the
+   FE sends the BUCKET NAME (a raw DB status still works). EVERY VALUE IS AN ENUM
+   MEMBER AND EVERY MEMBER IS IN A BUCKET — a non-member 500s the tab and used to
+   zero its count; a member in no bucket is a row in no tab. Pinned, with the
+   2026-08-17 prod evidence, by tests/statusBucketsEnumMembership.test.mjs: ISSUED / PARTIAL / COMPLETED
+   were never members (INPUT-only via SI_STATUS_CANON), OVERDUE was bucketless and joins `sent`, as the FE did. */
 const SI_STATUS_BUCKETS: Record<string, string[]> = {
-  sent: ['DRAFT', 'SENT', 'ISSUED'],
-  partial: ['PARTIALLY_PAID', 'PARTIAL'],
-  paid: ['PAID', 'COMPLETED'],
+  sent: ['DRAFT', 'SENT', 'OVERDUE'],
+  partial: ['PARTIALLY_PAID'],
+  paid: ['PAID'],
   cancelled: ['CANCELLED'],
 };
 
@@ -839,13 +843,10 @@ salesInvoices.get('/', async (c) => {
     countBase().in('status', SI_STATUS_BUCKETS.paid),
     countBase().in('status', SI_STATUS_BUCKETS.cancelled),
   ]);
-  const statusCounts = {
-    all: allC.count ?? 0,
-    sent: sentC.count ?? 0,
-    partial: partialC.count ?? 0,
-    paid: paidC.count ?? 0,
-    cancelled: cancelledC.count ?? 0,
-  };
+  // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
+  const counted = readStatusCounts({ all: allC, sent: sentC, partial: partialC, paid: paidC, cancelled: cancelledC });
+  if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
+  const statusCounts = counted.counts;
 
   await stampSoDates(sb, data);
   await stampDoNumber(sb, data);
@@ -1028,9 +1029,9 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
     delivery_order_id: (body.deliveryOrderId as string) ?? null,
     debtor_code: (body.debtorCode as string) ?? null,
     debtor_name: debtorName,
-    invoice_date: (body.invoiceDate as string) ?? todayMyt(),
-    due_date: (body.dueDate as string) ?? null,
-    customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
+    invoice_date: dateOrNull(body.invoiceDate) ?? todayMyt(),
+    due_date: dateOrNull(body.dueDate),
+    customer_delivery_date: dateOrNull(body.customerDeliveryDate),
     address1: (body.address1 as string) ?? null,
     address2: (body.address2 as string) ?? null,
     city: (body.city as string) ?? null,
@@ -1661,13 +1662,11 @@ salesInvoices.patch('/:id', async (c) => {
     ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
     ['salesLocation', 'sales_location'], ['ref', 'ref'], ['poDocNo', 'po_doc_no'],
     ['venue', 'venue'], ['venueId', 'venue_id'], ['branding', 'branding'],
-    ['address1', 'address1'], ['address2', 'address2'],
+    ['address1', 'address1'], ['address2', 'address2'], ['note', 'note'], ['notes', 'notes'],
     ['city', 'city'], ['state', 'state'], ['postcode', 'postcode'], ['phone', 'phone'],
-    ['note', 'note'], ['notes', 'notes'],
     ['invoiceDate', 'invoice_date'], ['dueDate', 'due_date'], ['currency', 'currency'],
     ['customerState', 'customer_state'], ['customerCountry', 'customer_country'],
-    ['customerSoNo', 'customer_so_no'],
-    ['customerDeliveryDate', 'customer_delivery_date'],
+    ['customerSoNo', 'customer_so_no'], ['customerDeliveryDate', 'customer_delivery_date'],
     ['email', 'email'], ['customerType', 'customer_type'],
     ['salespersonId', 'salesperson_id'], ['buildingType', 'building_type'],
     ['emergencyContactName', 'emergency_contact_name'],
@@ -1687,7 +1686,8 @@ salesInvoices.patch('/:id', async (c) => {
   }
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
-  const { data, error } = await sb.from('sales_invoices').update(updates).eq('id', id).select('id').maybeSingle();
+  /* "" -> NULL: an unfilled date input would otherwise fail this whole UPDATE. */
+  const { data, error } = await sb.from('sales_invoices').update(coerceEmptyDates(updates)).eq('id', id).select('id').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
 

@@ -238,7 +238,10 @@ describe('a cancel that reached AutoCount is final', () => {
   });
 
   test('the SO status route refuses to leave CANCELLED once linked_ac_docno is set', () => {
-    const h = rawSo.slice(rawSo.indexOf("mfgSalesOrders.patch('/:docNo/status'"));
+    /* Anchor changed 2026-08-18: the handler is now the named export
+       patchMfgSalesOrderStatusHandler, MOUNTED at the bottom of the file, so the old
+       `mfgSalesOrders.patch(...)` anchor lands on the one-line mount and slices nothing. */
+    const h = rawSo.slice(rawSo.indexOf('export const patchMfgSalesOrderStatusHandler'));
     const guard = h.slice(0, h.indexOf('const currentVersion'));
     expect(guard).toContain('cancel_is_final');
     expect(guard).toContain("fromNorm === 'CANCELLED'");
