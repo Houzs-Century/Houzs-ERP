@@ -14,6 +14,7 @@ import { useDailyBank, useDailyClose, useSaveDailyClose, useConfirmDailyClose, t
 import { fmtCenti } from '../../vendor/shared/format';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const fmt = (sen: number | null | undefined) => fmtCenti(sen);
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -92,8 +93,11 @@ export const DailyBank = () => {
 
       <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
         <button type="button" style={btnStyle()} onClick={() => setDate((d) => shiftDate(d, -1))}><ChevronLeft {...ICON} /></button>
-        <input type="date" value={date} onChange={(e) => e.target.value && setDate(e.target.value)}
-          style={{ padding: '6px 10px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 6, fontSize: 'var(--fs-13)' }} />
+        <DateField
+          value={date}
+          onChange={(iso) => iso && setDate(iso)}
+          style={{ padding: '6px 10px', border: '1px solid var(--c-line, rgba(34,31,32,0.2))', borderRadius: 6, fontSize: 'var(--fs-13)' }}
+        />
         <button type="button" style={btnStyle()} onClick={() => setDate((d) => shiftDate(d, 1))}><ChevronRight {...ICON} /></button>
         <button type="button" style={btnStyle()} onClick={() => setDate(todayLocal())}><Calendar {...ICON} /> Today</button>
         <span style={{ flex: 1 }} />

@@ -40,17 +40,16 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import type { DetailListingFilters, DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import styles from '../../pages/scm-v2/SalesOrderDetailListing.module.css';
 import { PrintPreviewModal, usePrintPreview } from './PrintPreviewModal';
-import { fmtDate } from '@2990s/shared';
+import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
 import { todayMyt } from '../../vendor/scm/lib/dates';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-/* Inlined from pdf-common.fmtDocStamp — the PDF chain isn't vendored. */
-const fmtDocStamp = (d: Date = new Date()): string => {
-  const time = d.toLocaleTimeString('en-MY', { hour: 'numeric', minute: '2-digit', hour12: true });
-  return `${fmtDate(d)}, ${time}`;
-};
+/* Was a hand-inlined copy of pdf-common.fmtDocStamp. Both are now the one
+   rule, so the PDF footer and the screen agree by construction. */
+const fmtDocStamp = (d: Date = new Date()): string => fmtDateTime(d);
 
 const PDF_UNAVAILABLE =
   'PDF export is not enabled in this build yet. (jspdf is not installed for the SCM module.)';
@@ -310,10 +309,20 @@ export function DetailListingShell<R extends DetailListingRow>({
                       <option value="range">Filter by range</option>
                       <option value="none">No filter</option>
                     </select>
-                    <input type="date" className={styles.fieldInput} value={dateFrom}
-                      onChange={(e) => setDateFrom(e.target.value)} disabled={docDateMode !== 'range'} />
-                    <input type="date" className={styles.fieldInput} value={dateTo}
-                      onChange={(e) => setDateTo(e.target.value)} disabled={docDateMode !== 'range'} />
+                    <DateField
+                      fullWidth
+                      className={styles.fieldInput}
+                      value={dateFrom}
+                      onChange={(iso) => setDateFrom(iso)}
+                      disabled={docDateMode !== 'range'}
+                    />
+                    <DateField
+                      fullWidth
+                      className={styles.fieldInput}
+                      value={dateTo}
+                      onChange={(iso) => setDateTo(iso)}
+                      disabled={docDateMode !== 'range'}
+                    />
                   </div>
                 </div>
                 <div className={styles.field}>

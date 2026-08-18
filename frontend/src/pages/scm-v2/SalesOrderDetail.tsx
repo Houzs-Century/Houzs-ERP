@@ -142,6 +142,7 @@ import {
 } from './so-version-conflict';
 import { RevisionsTab } from './so-revisions-tab';
 import styles from './SalesOrderDetail.module.css';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -3430,12 +3431,16 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Processing Date</span>
-              <input type="date" className={styles.fieldInput} value={form.processingDate}
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.processingDate}
                 disabled={inputsDisabled || processingLocked}
                 title={processingLocked ? 'Processing date has passed — locked.' : undefined}
                 min={processingLocked ? undefined : today}
-                onChange={(e) => set('processingDate', e.target.value)}
-                style={datesXor && !form.processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined} />
+                onChange={(iso) => set('processingDate', iso)}
+                style={datesXor && !form.processingDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
+              />
               {/* Remove-Processing-Date gate (Owner 2026-07-09) — the server 403s
                   a non-holder's clear; surface the rule up front instead of
                   letting them find out on Save. */}
@@ -3447,11 +3452,15 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Delivery Date</span>
-              <input type="date" className={styles.fieldInput} value={form.customerDeliveryDate}
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.customerDeliveryDate}
                 disabled={inputsDisabled}
                 min={today}
-                onChange={(e) => { set('customerDeliveryDate', e.target.value); onDeliveryDateChange?.(e.target.value); }}
-                style={datesXor && !form.customerDeliveryDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined} />
+                onChange={(iso) => { set('customerDeliveryDate', iso); onDeliveryDateChange?.(iso); }}
+                style={datesXor && !form.customerDeliveryDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
+              />
             </label>
             {/* Proceed Date field removed per request 2026-06-05. It showed a
                 separate server-stamped Proceed timestamp; the owner has since

@@ -136,23 +136,50 @@ never bare `isMainReady`** — see §0.5 for why that distinction exists.
 
 Two things gate it that are easy to miss:
 
-- **No Processing Date, no allocation.** An SO in `allocGated` still has its
-  lines walked, but they are FORCED to `PENDING`, never consume a stock bucket
-  and never claim a sofa batch. Owner's rule, 2026-08-10: *"有 processing date
-  才来分配"*. So an order with stock physically available will sit at PENDING /
-  CONFIRMED until it is proceeded. This is intended, and it is the single most
-  common "why is my order not READY".
+- **No Processing Date, no allocation.** An SO with `processing_date` NULL is in
+  `allocGated`: its lines still walk, but they are FORCED to `PENDING`, never
+  consume a stock bucket and never claim a sofa batch. Owner's rule, 2026-08-10:
+  *"有 processing date 才来分配"*. So an order that genuinely has no Processing
+  Date will sit at PENDING / CONFIRMED however much stock is on the shelf. That
+  much is intended.
 
-  **The gate reads `proceeded_at`, not `processing_date` — and that is the ONE
-  place left where the two disagree.** Everything else moved onto
-  `processing_date` on 2026-08-18. This did not, because the flip moves live
-  orders: measured on prod that day (`probe-proceed-split`, run 32092… see
-  §"One storage" below) company 1 has ZERO orders in either disagreement class,
-  but company 2 has 16 live orders carrying a Proceed stamp with no Processing
-  Date — 12 CONFIRMED and 4 READY_TO_SHIP — every one of which would flip from
-  allocating to gated, the 4 visibly. Until the owner rules on those 16, read
-  this bullet as: *the gate is the Processing-Date rule, implemented on the old
-  column.*
+  > **CORRECTION (2026-08-18) — the previous version of this bullet described a
+  > BUG and called it intended, which is why the bug survived.**
+  >
+  > It read: *"An SO with `proceeded_at` NULL is in `allocGated` … This is
+  > intended, and it is the single most common 'why is my order not READY'."*
+  >
+  > The gate really did read `proceeded_at`, and that was the defect, not the
+  > design. No shipped client writes `proceeded_at` when an operator sets a
+  > Processing Date: CREATE persists the date to `processing_date` and stamps
+  > `proceeded_at` only when the order *also* clears the proceed gate
+  > (`autoProceed`); the header PATCH writes the date and never stamps a proceed;
+  > and no frontend sends `proceededAt` at all. So an order given a Processing
+  > Date on the detail screen locked, showed on the delivery board and pushed to
+  > AutoCount as PDate while **every line was forced PENDING** — never consuming
+  > a bucket, never claiming a sofa batch, never reaching READY_TO_SHIP — with
+  > the goods physically in the warehouse, and with no error, no log and nothing
+  > on screen. The frequency the old text observed was real; the explanation was
+  > not. Anyone who read this page went looking for a missing proceed instead of
+  > a gate on the wrong column.
+  >
+  > The gate now reads `processing_date`, the one column every write path
+  > actually sets. It reads that column ALONE and deliberately does not also
+  > consult `proceeded_at`: a second home for the rule is how it acquired a wrong
+  > one. See BUG-HISTORY 2026-08-18.
+
+  > **AND THE BLAST RADIUS #2396 SHIPPED WITHOUT (measured 2026-08-18,
+  > `backend/scripts/probe-proceed-split.mjs`, prod, run `32093080121`).** That
+  > PR says so itself: *"Blast radius on production is UNKNOWN and not
+  > invented."* It is now measured. Company 1 — 2724 live orders, ZERO in either
+  > disagreement class, so the flip is a true no-op there. Company 2 — 5 live
+  > CONFIRMED orders GAIN allocation (the bug above), and **16 LOSE it**: 12
+  > CONFIRMED and 4 READY_TO_SHIP, each carrying a Proceed stamp with no
+  > Processing Date. Their lines go PENDING on the next recompute and the 4
+  > READY_TO_SHIP orders drop back to CONFIRMED. That is the rule applied
+  > correctly — *"没有 processing date 就代表没有 proceed"* — not a new fault, and
+  > the repair is a human supplying the missing date, never a script inventing
+  > one. Expect it, and do not read those 4 as a regression.
 - **A human editing the order defers the header, not the lines.** If the SO's
   edit lease is held, the line-level flip commits and the header transition is
   recorded in `deferredDocNos` for a later sweep. A deferral is not an error.

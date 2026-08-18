@@ -7,6 +7,7 @@ import { useAuth } from "../auth/AuthContext";
 import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
 import { cn } from "../lib/utils";
+import { fmtDate } from "../vendor/shared/format";
 
 // ── Types for the data this page aggregates ──────────────────
 interface InboxItem {
@@ -66,9 +67,8 @@ export function Overview() {
   );
 
   const now = new Date();
-  const dateLabel = now
-    .toLocaleDateString("en-GB", { weekday: "long", day: "2-digit", month: "2-digit", year: "numeric" })
-    .toUpperCase();
+  /* The WEEKDAY is a word by design; the date beside it is the one rule. */
+  const dateLabel = `${now.toLocaleDateString("en-GB", { weekday: "long" })} ${fmtDate(now)}`.toUpperCase();
   const name = user?.name || user?.email?.split("@")[0] || "";
 
   // Merge the inbox sections into one prioritised "needs me" feed, tagging

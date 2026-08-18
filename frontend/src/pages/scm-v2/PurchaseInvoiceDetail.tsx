@@ -73,6 +73,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipMapButton';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './SalesOrderDetail.module.css';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -856,13 +857,17 @@ const SupplierCard = ({
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Invoice Date</span>
-            <input type="date" className={styles.fieldInput} value={draft.invoiceDate} disabled={locked}
-              onChange={(e) => onField('invoiceDate', e.target.value)} />
+            <DateField
+              fullWidth
+              className={styles.fieldInput}
+              value={draft.invoiceDate}
+              disabled={locked}
+              onChange={(iso) => onField('invoiceDate', iso)}
+            />
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Due Date</span>
-            <input type="date" className={styles.fieldInput} value={draft.dueDate} disabled={locked}
-              onChange={(e) => onField('dueDate', e.target.value)} />
+            <DateField fullWidth className={styles.fieldInput} value={draft.dueDate} disabled={locked} onChange={(iso) => onField('dueDate', iso)}/>
           </label>
           <label className={styles.field} style={{ gridColumn: 'span 2' }}>
             <span className={styles.fieldLabel}>Notes</span>
