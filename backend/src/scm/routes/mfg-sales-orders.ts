@@ -149,6 +149,7 @@ import { signSoItemPhotoUrl, soItemPhotoBindings, type SlipMime } from '../lib/r
 import { baseKeyOf, deleteThumbFor, putOptionalThumb, thumbKeyFor } from '../../services/photoThumbs';
 import { photoProxyPath, proxyFallbackPayload, warnSigningFailedOnce, type PhotoUrlPayload } from '../lib/photoProxyFallback';
 import { slipBindings } from '../lib/slip';
+import { amendmentMixRefusal, createMixRefusal, lineMixRefusal } from '../lib/main-mix';
 import {
   loadMaintenanceConfig,
   loadSpecialAddons,
@@ -804,31 +805,6 @@ function unexplainedExtraAddonResponse(
     itemCode: String(itemCode ?? ''),
     extraAddonAmountRM: amountRM,
   };
-}
-
-/* MAIN-mix composition (the PR #519 create rule, extended to line add / swap,
-   Loo 2026-06-11): SOFA is exclusive among the MAIN categories. Returns true
-   when replacing `excludeItemId`'s line (null = a pure add) with `newCode`
-   INTRODUCES a sofa × (bedframe | mattress) mix that did not exist before —
-   a pre-rule SO that already mixes stays editable (grandfathered). */
-async function soMainMixIntroduced(sb: any, docNo: string, excludeItemId: string | null, newCode: string, companyId?: number | null): Promise<boolean> {
-  const { data: lines } = await sb.from('mfg_sales_order_items')
-    .select('id, item_code')
-    .eq('doc_no', docNo).eq('cancelled', false);
-  const rows = ((lines ?? []) as Array<{ id: string; item_code: string }>);
-  const cats = await loadProductsByCodes(sb, rows.map((r) => r.item_code).concat(newCode), companyId);
-  const mix = (codeList: string[]): boolean => {
-    let sofa = false, bedOrMatt = false;
-    for (const code of codeList) {
-      const cat = String(cats.get(code)?.category ?? '').toUpperCase();
-      if (cat === 'SOFA') sofa = true;
-      else if (cat === 'BEDFRAME' || cat === 'MATTRESS') bedOrMatt = true;
-    }
-    return sofa && bedOrMatt;
-  };
-  const beforeCodes = rows.map((r) => r.item_code);
-  const afterCodes = rows.filter((r) => r.id !== excludeItemId).map((r) => r.item_code).concat(newCode);
-  return mix(afterCodes) && !mix(beforeCodes);
 }
 
 /* PR — Commander 2026-05-28 — Server-side combo recompute.
@@ -3231,49 +3207,17 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       kivOffenders: procDate ? findColourKivLines(linesForVariantCheck) : [],
     });
     if (createProblems.length > 0) return c.json(validationFailedBody(createProblems), 422);
-    if (items.length > 0) {
-      const lineCodes = items.map((it) => String(it.itemCode ?? '')).filter(Boolean);
-      const metaByCode = new Map<string, { category: string }>();
-      if (lineCodes.length > 0) {
-        // SoCreateContext is not a Hono Context, so scopeToCompany can't type-
-        // check here; add the company predicate directly from the local companyId
-        // (mfg_products is per-company; shared `code` collides across companies).
-        let metaQ = sb.from('mfg_products').select('code, category').in('code', lineCodes);
-        if (companyId != null) metaQ = metaQ.eq('company_id', companyId);
-        const { data: meta } = await metaQ;
-        for (const m of (meta ?? []) as Array<{ code: string; category: string }>) {
-          metaByCode.set(m.code, { category: m.category });
-        }
-      }
-      const normCat = (raw: string): string => {
-        const g = (raw ?? '').trim().toUpperCase();
-        if (g.includes('BEDFRAME')) return 'BEDFRAME';
-        if (g.includes('SOFA'))     return 'SOFA';
-        if (g.includes('MATTRESS')) return 'MATTRESS';
-        if (g.includes('ACCESSOR')) return 'ACCESSORY';
-        if (g.includes('SERVICE'))  return 'SERVICE';
-        return 'OTHERS';
-      };
-      // MAIN products carry the mixing constraints; SERVICE / ACCESSORY /
-      // OTHERS are universal add-ons that ride on any SO.
-      const MAIN = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
-      const cats = items.map((it) =>
-        normCat(metaByCode.get(String(it.itemCode ?? ''))?.category ?? (it.itemGroup as string) ?? ''),
-      );
-      // Rule 2 — sofa is exclusive among MAIN products: no bedframe / mattress
-      // alongside a sofa. Service / accessory add-ons are always fine.
-      if (cats.includes('SOFA') && cats.some((cat) => cat !== 'SOFA' && MAIN.has(cat))) {
-        return c.json({
-          error: 'so_sofa_no_other_main',
-          reason: 'A sofa Sales Order cannot also contain a bedframe or mattress. Service and accessory items are fine.',
-        }, 400);
-      }
-      /* Loo 2026-06-07 — mattress lines MAY mix brands on one SO. The old
-         Rule 3 (`so_mattress_one_brand`, #280) blocked e.g. a Happi.S +
-         2990 mattress in one order at the POS counter; the owner never set
-         that rule. Sofa exclusivity above is the only MAIN-mix gate.
-         Don't re-add a brand gate here. */
-    }
+    /* Rule 2 — sofa is exclusive among MAIN products: no bedframe / mattress
+       alongside a sofa. SERVICE / ACCESSORY / OTHERS ride on any SO. The rule
+       and its classifier live in lib/main-mix.ts and are shared with the three
+       SO line paths and the three CO paths — it used to be a closure here, which
+       is exactly why the CO line routes were written without it.
+       Loo 2026-06-07 — mattress lines MAY mix BRANDS on one SO. The old Rule 3
+       (`so_mattress_one_brand`, #280) blocked e.g. a Happi.S + 2990 mattress in
+       one order at the POS counter; the owner never set that rule. Sofa
+       exclusivity is the only MAIN-mix gate. Don't re-add a brand gate here. */
+    const mainMix = await createMixRefusal(sb, items, companyId);
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   let docNo = await nextDocNo(sb, c);
@@ -7650,13 +7594,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      violation is rejected — a pre-rule SO that already mixes is left
      editable (grandfathered). */
   {
-    const introduced = await soMainMixIntroduced(sb, docNo, null, it.itemCode as string, activeCompanyId(c));
-    if (introduced) {
-      return c.json({
-        error: 'so_sofa_no_other_main',
-        reason: 'A sofa cannot share a Sales Order with a bedframe or mattress.',
-      }, 400);
-    }
+    const mainMix = await lineMixRefusal(sb, 'mfg_sales_order_items', docNo, null, it.itemCode as string, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   /* PR-E — pull customer_delivery_date alongside debtor/agent/venue so a
@@ -8251,13 +8190,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
   /* Composition guard (Loo 2026-06-11) — a product swap must not INTRODUCE a
      sofa × (bedframe | mattress) mix (PR #519 create rule, now on swap too). */
   if (it.itemCode !== undefined) {
-    const introduced = await soMainMixIntroduced(sb, docNo, itemId, it.itemCode as string, activeCompanyId(c));
-    if (introduced) {
-      return c.json({
-        error: 'so_sofa_no_other_main',
-        reason: 'A sofa cannot share a Sales Order with a bedframe or mattress.',
-      }, 400);
-    }
+    const mainMix = await lineMixRefusal(sb, 'mfg_sales_order_items', docNo, itemId, it.itemCode as string, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). */
@@ -9264,11 +9198,9 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
   }
 
   /* Composition — a swap must not INTRODUCE a sofa × (bedframe|mattress) mix. */
-  if (await soMainMixIntroduced(sb, docNo, itemId, newCode, activeCompanyId(c))) {
-    return c.json({
-      error: 'so_sofa_no_other_main',
-      reason: 'A sofa cannot share a Sales Order with a bedframe or mattress.',
-    }, 400);
+  {
+    const mainMix = await lineMixRefusal(sb, 'mfg_sales_order_items', docNo, itemId, newCode, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   const qty = Number(prev.qty);
@@ -11723,6 +11655,23 @@ mfgSalesOrders.post('/:docNo/amendments', async (c) => {
       const codeCheck = await validateItemCodes(sb, requestedCodes, activeCompanyId(c), { requireActive: true });
       if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown, codeCheck.inactive), 409);
     }
+  }
+
+  /* Composition, same rule and same home as every other line write (see
+     lib/main-mix.ts). This route is the one path that can ADD a line without
+     going through POST /:docNo/items, and it had no copy of the rule — nor does
+     applySoAmendment — so an amendment could put a sofa on a bedframe order.
+     Refused at SUBMIT for the same reason the code check above is: the requester
+     can fix it, the approver cannot. Grandfathered like every other edit path —
+     an order that already mixes is not made unamendable. */
+  {
+    const mixLines = submittedLines.map((l) => ({
+      salesOrderItemId: typeof l.salesOrderItemId === 'string' ? l.salesOrderItemId : null,
+      changeType:       typeof l.changeType === 'string' ? l.changeType : null,
+      newItemCode:      typeof l.newItemCode === 'string' ? l.newItemCode : null,
+    }));
+    const mainMix = await amendmentMixRefusal(sb, docNo, mixLines, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   /* Date sanity on a requested schedule change (mirrors the create/edit form's
