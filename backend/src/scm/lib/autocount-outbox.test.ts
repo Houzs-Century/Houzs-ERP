@@ -912,6 +912,23 @@ describe('the masters a document names are opened BEFORE the document is sent', 
     expect(outbox(sb)[0].last_error).toContain('masters not opened');
   });
 
+  /* /ensure-masters read `!= null` off the creditor and threw the CompanyName
+     away, so 400-H004 resolving to HAO HUA FURNITURE looked like a right code.
+     It REPORTS and never refuses (guide 7e1) — both halves are asserted. */
+  test('a creditor the book holds under ANOTHER name is reported, document still goes', async () => {
+    const sb = withFlag('1', { autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }] });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const mismatched = [{ master: 'creditor:400-H004', erp: 'HOOKKA INDUSTRIES SDN. BHD.', book: 'HAO HUA FURNITURE' }];
+    const fetchImpl = vi.fn(async (url: string) => (String(url).includes('/ensure-masters')
+      ? jsonRes(200, { ok: true, mismatched }) : jsonRes(200, { ok: true, docNo: 'SO-000123' }))) as never;
+    const outcome = await dispatchOne(env, sb as never, createRow({ DocNo: 'HC-SO-9', Details: [{ ItemCode: 'NEW-SKU' }] }), fetchImpl);
+    const said = warn.mock.calls.map((c) => c.join(' ')).join('\n');
+    warn.mockRestore();
+    expect(outcome).toBe('sent');
+    expect(said).toContain('MISMATCH creditor:400-H004 erp=HOOKKA INDUSTRIES SDN. BHD. book=HAO HUA FURNITURE');
+    expect(outbox(sb)[0].status).toBe('sent');
+  });
+
   test('a conversion opens nothing — it transfers lines the book already holds', async () => {
     const sb = withFlag('1', { autocount_outbox: [{ id: 'ob-1', status: 'pending', attempts: 0 }] });
     const calls: string[] = [];
