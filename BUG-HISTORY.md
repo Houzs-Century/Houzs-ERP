@@ -4,9 +4,25 @@
 purchase orders, an invoice covering several DOs — every one of them landed in
 `scm.autocount_outbox` as `skipped`, reason *"AutoCount transfers from ONE source
 document, so this DO has no AutoCount counterpart"*, and the document existed in
-the ERP and nowhere else. Merging is the daily shape on the delivery board and
-the GRN picker, so this was not an edge: it was a standing stream of documents
-that had to be re-typed into the account book by hand, or not at all.
+the ERP and nowhere else.
+
+> **HOW COMMON, MEASURED 2026-08-18 — and the first version of this entry got it
+> wrong.** It said *"merging is the daily shape on the delivery board and the GRN
+> picker, so this was not an edge: it was a standing stream"*. Nobody had counted.
+> `ac-fidelity-do-lines.json.gz` (47,329 rows, `AED_HOUZS` live read 2026-08-11)
+> grouped by `DocNo` -> distinct `FromDocNo`: **1 merged delivery order out of
+> 11,134** — `DO-005907` from `SO-006615` + `SO-007830`. 0.0%.
+>
+> The honest caveat, which does not rescue the original claim: that is how the
+> business shipped WHILE IT RAN ON AUTOCOUNT, where merging was awkward, and the
+> ERP added `/from-sos` deliberately. The right denominator is `scm.delivery_orders`
+> and it was not read either. **Neither denominator was measured when the claim was
+> written**, which is the defect worth recording here.
+>
+> The fix stands on its own merits — it deletes a refusal that was never true of
+> AutoCount's target, and it uncovered the `conversionIsPartial` defect below,
+> which is real regardless of how many merges exist. It is not the emergency the
+> first version implied.
 
 **Root cause (read on both sides, not inferred).** The sentence was true of ONE
 SDK method and was applied to the whole integration. `AddPartialTransferDetail`
