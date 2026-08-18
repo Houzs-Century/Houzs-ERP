@@ -74,6 +74,8 @@ import { RelationshipMapButton } from '../../vendor/scm/components/RelationshipM
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import styles from './SalesOrderDetail.module.css';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
+import { transferFromColumnLabel } from "../../lib/convertScope";
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -805,7 +807,7 @@ const SupplierCard = ({
             {/* Owner 2026-07-23: "PI need show Do number" — the source GRN and
                 the supplier's delivery-note (DO) ref recorded on it. Manual
                 PIs have no GRN, so both cells fall back to the dash. */}
-            <InfoCell label="Source GRN" value={pi.grn?.grn_number || null} />
+            <InfoCell label={transferFromColumnLabel('grn')} value={pi.grn?.grn_number || null} />
             <InfoCell label="Supplier DO #" value={pi.grn?.delivery_note_ref || null} />
             {/* Owner 2026-07-23 ("要的") — OUR delivery to the customer this
                 purchase covers. Dash for stock POs (no so_item linkage). */}
@@ -850,13 +852,17 @@ const SupplierCard = ({
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Invoice Date</span>
-            <input type="date" className={styles.fieldInput} value={draft.invoiceDate} disabled={locked}
-              onChange={(e) => onField('invoiceDate', e.target.value)} />
+            <DateField
+              fullWidth
+              className={styles.fieldInput}
+              value={draft.invoiceDate}
+              disabled={locked}
+              onChange={(iso) => onField('invoiceDate', iso)}
+            />
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Due Date</span>
-            <input type="date" className={styles.fieldInput} value={draft.dueDate} disabled={locked}
-              onChange={(e) => onField('dueDate', e.target.value)} />
+            <DateField fullWidth className={styles.fieldInput} value={draft.dueDate} disabled={locked} onChange={(iso) => onField('dueDate', iso)}/>
           </label>
           <label className={styles.field} style={{ gridColumn: 'span 2' }}>
             <span className={styles.fieldLabel}>Notes</span>

@@ -25,7 +25,7 @@ import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeVariantKey, type VariantAttrs } from '../shared';
-import { doLineRemaining, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
+import { doLineRemaining, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine, type DoRemainingResult } from '../lib/do-line-remaining';
 import { todayMyt } from '../lib/my-time';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { isServiceLine } from '../shared';
@@ -643,7 +643,7 @@ async function reopenSoFromReturn(
    remaining_to_return = delivered − invoiced − returned. The SAME pool as
    remaining_to_invoice — invoiced units can't be returned + vice-versa.
    Cancelling a return releases its qty back to Pending. */
-async function doReturnableRemaining(sb: any, doIds: string[]): Promise<Map<string, DoRemainingLine>> {
+async function doReturnableRemaining(sb: any, doIds: string[]): Promise<DoRemainingResult> {
   return doLineRemaining(sb, doIds);
 }
 
@@ -653,10 +653,14 @@ async function doReturnableRemaining(sb: any, doIds: string[]): Promise<Map<stri
    reaching here is DO-linked. Mirrors the convert-from-DO picker's per-line check
    so the New-Return form is not a back door that returns more than was delivered.
    Returns a 409 body to reject, or null to allow. */
+type DrOverRemainingRefusal =
+  | { status: 409; body: { error: string; message: string; lines: Array<{ doItemId: string; requested: number; remaining: number }> } }
+  | { status: 503; body: { error: string; message: string } };
+
 async function checkDrOverRemaining(
   sb: any,
   items: Array<Record<string, unknown>>,
-): Promise<{ error: string; message: string; lines: Array<{ doItemId: string; requested: number; remaining: number }> } | null> {
+): Promise<DrOverRemainingRefusal | null> {
   const wanted = new Map<string, number>();
   for (const it of items) {
     const doItemId = (it.doItemId as string | undefined) ?? null;
@@ -671,20 +675,28 @@ async function checkDrOverRemaining(
     .from('delivery_order_items')
     .select('id, delivery_order_id')
     .in('id', ids);
-  if (error) return null; // load failure → don't block; the insert will surface real errors
+  /* WAS `return null` — "load failure → don't block; the insert will surface
+     real errors". It does not: the insert is a plain INSERT with no cap of its
+     own, so the only thing standing between a blip and an over-return WAS this
+     read. A guard that answers "allowed" when it could not run is not a guard. */
+  if (error) return { status: 503, body: remainingUnavailableResponse(`delivery_order_items: ${error.message}`) };
   const doIds = [...new Set((rows ?? []).map((r: { delivery_order_id: string }) => r.delivery_order_id))] as string[];
-  const remainingMap = await doReturnableRemaining(sb, doIds);
+  const remaining = await doReturnableRemaining(sb, doIds);
+  if (!remaining.ok) return { status: 503, body: remainingUnavailableResponse(remaining.reason) };
 
   const offenders: Array<{ doItemId: string; requested: number; remaining: number }> = [];
   for (const [doItemId, requested] of wanted) {
-    const remaining = remainingMap.get(doItemId)?.remaining ?? 0;
-    if (requested > remaining) offenders.push({ doItemId, requested, remaining });
+    const open = remaining.lines.get(doItemId)?.remaining ?? 0;
+    if (requested > open) offenders.push({ doItemId, requested, remaining: open });
   }
   if (offenders.length === 0) return null;
   return {
-    error: 'over_remaining',
-    message: 'One or more lines return more than the remaining (delivered − invoiced − returned) quantity.',
-    lines: offenders,
+    status: 409,
+    body: {
+      error: 'over_remaining',
+      message: 'One or more lines return more than the remaining (delivered − invoiced − returned) quantity.',
+      lines: offenders,
+    },
   };
 }
 
@@ -823,10 +835,15 @@ deliveryReturns.get('/', async (c) => {
 deliveryReturns.get('/returnable-do-lines', async (c) => {
   const sb = c.get('supabase');
   // Company scope (owner 2026-08-10 audit) — see resolveCandidateDoIds.
-  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
-  if (doIds.length === 0) return c.json({ lines: [] });
-  const remainingMap = await doReturnableRemaining(sb, doIds);
-  const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);
+  const candidates = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
+  /* Same reasoning as the invoiceable picker: an empty list is a claim that
+     nothing delivered is still returnable, and a failed read is not entitled to
+     make it. Refuse to render. */
+  if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
+  if (candidates.doIds.length === 0) return c.json({ lines: [] });
+  const remaining = await doReturnableRemaining(sb, candidates.doIds);
+  if (!remaining.ok) return c.json({ error: 'load_failed', reason: remaining.reason }, 500);
+  const lines = [...remaining.lines.values()].filter((l) => l.remaining > 0);
   if (!canViewScmFinance(c)) {
     for (const l of lines) delete (l as unknown as Record<string, unknown>).unitCostCenti;
   }
@@ -1098,7 +1115,7 @@ deliveryReturns.post('/', async (c) => {
      can't over-return a delivered line. */
   {
     const over = await checkDrOverRemaining(sb, items);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
 
   const { data: header, error: hErr } = await insertHeader(sb, user.id, body, c);
@@ -1129,13 +1146,24 @@ deliveryReturns.post('/', async (c) => {
       .map((it) => (it.doItemId as string | undefined) ?? null)
       .filter((x): x is string => !!x))];
     if (drItemDoIds.length > 0) {
-      const { data: rowsForDo } = await sb.from('delivery_order_items')
+      const { data: rowsForDo, error: rowsErr } = await sb.from('delivery_order_items')
         .select('delivery_order_id').in('id', drItemDoIds);
       const doIds = [...new Set(((rowsForDo ?? []) as Array<{ delivery_order_id: string }>)
         .map((r) => r.delivery_order_id))];
-      const recheck = await doReturnableRemaining(sb, doIds);
+      const recheck = rowsErr
+        ? { ok: false as const, reason: `delivery_order_items: ${rowsErr.message}` }
+        : await doReturnableRemaining(sb, doIds);
+      /* Unverifiable → undo, and say so honestly. Stock has NOT been written yet
+         (increaseInventoryForReturn runs below), so the rollback is clean and
+         the operator is out one keystroke rather than the warehouse being out a
+         phantom return. `race_conflict` is reserved for an actual race. */
+      if (!recheck.ok) {
+        await sb.from('delivery_return_items').delete().eq('delivery_return_id', h.id);
+        await sb.from('delivery_returns').delete().eq('id', h.id);
+        return c.json(remainingUnavailableResponse(recheck.reason), 503);
+      }
       const overReturned = drItemDoIds
-        .map((doItemId) => recheck.get(doItemId))
+        .map((doItemId) => recheck.lines.get(doItemId))
         .filter((l): l is DoRemainingLine => l !== undefined && l.remaining < 0);
       if (overReturned.length > 0) {
         await sb.from('delivery_return_items').delete().eq('delivery_return_id', h.id);
@@ -1241,7 +1269,12 @@ export const convertDoLinesToReturn = async (c: any) => {
   if (missing.length > 0) return c.json({ error: 'do_item_not_found', missing }, 404);
 
   const doIds = [...new Set([...idToDo.values()])];
-  const remainingMap = await doReturnableRemaining(sb, doIds);
+  const remainingResult = await doReturnableRemaining(sb, doIds);
+  /* Pre-write refusal — nothing has been created yet, and every per-pick qty
+     below is capped by `line.remaining`. Without this the empty map surfaced as
+     `do_item_not_found`, blaming the operator's pick for a read error. */
+  if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
+  const remainingMap = remainingResult.lines;
 
   // 2a. Same-customer guard — every picked line must share ONE customer.
   const customers = new Set<string>();
@@ -1378,8 +1411,15 @@ export const convertDoLinesToReturn = async (c: any) => {
      picked line went negative. No inventory was written yet → clean rollback. */
   {
     const recheck = await doReturnableRemaining(sb, doIds);
+    /* Same call as the bulk path: undo rather than keep a return whose ceiling
+       could not be re-derived, and never under the race message. */
+    if (!recheck.ok) {
+      await sb.from('delivery_return_items').delete().eq('delivery_return_id', h.id);
+      await sb.from('delivery_returns').delete().eq('id', h.id);
+      return c.json(remainingUnavailableResponse(recheck.reason), 503);
+    }
     const overReturned = pickedIds
-      .map((doItemId) => recheck.get(doItemId))
+      .map((doItemId) => recheck.lines.get(doItemId))
       .filter((l): l is DoRemainingLine => l !== undefined && l.remaining < 0);
     if (overReturned.length > 0) {
       await sb.from('delivery_return_items').delete().eq('delivery_return_id', h.id);
@@ -1491,7 +1531,7 @@ deliveryReturns.post('/:id/items', async (c) => {
   /* Over-return guard for the single-add path too. */
   {
     const over = await checkDrOverRemaining(sb, [it]);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
 
   const row = buildItemRow(id, it, await sourceUnitCostByItemId(
@@ -1557,7 +1597,7 @@ deliveryReturns.patch('/:id/items/:itemId', async (c) => {
     const delta = qty - Number(prev.qty_returned ?? 0);
     if (doItemId && delta > 0) {
       const over = await checkDrOverRemaining(sb, [{ doItemId, qtyReturned: delta } as Record<string, unknown>]);
-      if (over) return c.json(over, 409);
+      if (over) return c.json(over.body, over.status);
     }
   }
 

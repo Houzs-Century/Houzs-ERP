@@ -29,7 +29,7 @@ import { allocateAcrossBuckets } from '../lib/bucket-cost-allocation';
 import { doHasDownstream } from '../lib/downstream-lock';
 import { claimedSoItemIdsOnDo, fillMissingSoItemIds } from '../lib/derive-do-so-item-id';
 import { DO_AUDIT_FIELDS, DO_AUDIT_SELECT, DO_LINE_AUDIT_FIELDS } from '../lib/do-audit-fields';
-import { enqueueConvert, recordConvertSkipped, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 
 /* ERP -> AutoCount DO edit, the DO's counterpart of mfg-sales-orders'
    queueAcSoEdit. Every DO mutation route funnels through it, so exactly one
@@ -50,7 +50,7 @@ async function queueAcDoEdit(c: any, id: string, retire: AcRetiredLine[] = []): 
   });
 }
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
-import { computeVariantKey, isServiceLine, type VariantAttrs } from '../shared';
+import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttrs } from '../shared';
 import { loadIncomingLines, subtractOutstanding, allocateExpectedBatches } from '../lib/do-live-allocator';
 import { loadCommittedShipments } from '../lib/committed-shipments';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
@@ -3166,7 +3166,7 @@ deliveryOrdersMfg.get('/:id', async (c) => {
       const { data: soHdrs } = await sb.from('mfg_sales_orders')
         .select('doc_no, customer_delivery_date, amended_delivery_date').in('doc_no', docNos);
       for (const h of (soHdrs ?? []) as Array<{ doc_no: string | null; customer_delivery_date: string | null; amended_delivery_date: string | null }>) {
-        if (h.doc_no) soDeliveryByDoc.set(h.doc_no, h.amended_delivery_date ?? h.customer_delivery_date ?? null);
+        if (h.doc_no) soDeliveryByDoc.set(h.doc_no, effectiveSoDelivery(h));
       }
     }
   }
@@ -4199,31 +4199,25 @@ export const createDoFromSoLinesHandler = async (c: Context<{ Bindings: Env; Var
     `Converted from Sales Order${docNos.length === 1 ? '' : 's'} ${docNos.join(', ')}`,
   );
 
-  /* ERP -> AutoCount SO->DO. A MERGED DO (several source SOs) has no AutoCount
-     shape — see recordConvertSkipped — so it is written down as skipped instead
-     of being invented or dropped. */
+  /* ERP -> AutoCount SO->DO, MERGED OR NOT.
+     A DO built from several sales orders used to be recorded `skipped` here,
+     because AddPartialTransferDetail refuses a key array spanning more than one
+     source document. The TARGET never had that limit: AcSyncService takes
+     `FromDocNos` and either calls the documented FullTransfer with the array or
+     groups the named keys per source and invokes the primitive once each. So
+     every source this DO drew from is named, and the merge syncs. */
   /* companyId picks the AutoCount BOOK the transfer is written into, and gates
      it on that company's writeback flag. A 2990 DO belongs in 2990's book
      whoever converted it, so this is the document's company, not the active one. */
-  if (docNos.length === 1) {
+  if (docNos.length) {
     await enqueueConvert(sb, {
       companyId: doCompanyId,
       op: 'so_to_do',
-      from: { table: 'mfg_sales_orders', keyCol: 'doc_no', key: docNos[0] },
+      from: docNos.map((n) => ({ table: 'mfg_sales_orders' as const, keyCol: 'doc_no', key: n })),
       to: { table: 'delivery_orders', keyCol: 'id', key: dh.id },
       docType: 'DO',
       docNo: dh.do_number,
       docId: dh.id,
-      createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  } else if (docNos.length > 1) {
-    await recordConvertSkipped(sb, {
-      companyId: doCompanyId,
-      op: 'so_to_do',
-      docType: 'DO',
-      docNo: dh.do_number,
-      docId: dh.id,
-      reason: `merged from ${docNos.length} Sales Orders (${docNos.join(', ')}) — AutoCount transfers from ONE source document, so this DO has no AutoCount counterpart`,
       createdBy: c.get('houzsUser')?.id ?? null,
     });
   }

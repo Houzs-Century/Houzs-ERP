@@ -68,6 +68,7 @@ import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -789,13 +790,17 @@ const SupplierCard = ({
           <div />
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Date</span>
-            <input type="date" className={styles.fieldInput} value={draft.poDate} disabled={locked}
-              onChange={(e) => onField('poDate', e.target.value)} />
+            <DateField fullWidth className={styles.fieldInput} value={draft.poDate} disabled={locked} onChange={(iso) => onField('poDate', iso)}/>
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Expected Delivery</span>
-            <input type="date" className={styles.fieldInput} value={draft.expectedAt} disabled={locked}
-              onChange={(e) => onField('expectedAt', e.target.value)} />
+            <DateField
+              fullWidth
+              className={styles.fieldInput}
+              value={draft.expectedAt}
+              disabled={locked}
+              onChange={(iso) => onField('expectedAt', iso)}
+            />
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Purchase Location</span>

@@ -1,3 +1,5 @@
+import { mapBounded } from './concurrency';
+
 // ----------------------------------------------------------------------------
 // paginateAll — page through a PostgREST query so the default 1000-row cap can
 // never silently truncate a result set.
@@ -138,15 +140,49 @@ export function chunkSizeForUrl(values: readonly InValue[]): number {
  */
 export const UUID_CHUNK = chunkSizeForUrl(['00000000-0000-4000-8000-000000000000']);
 
+/**
+ * How many batches may be in flight at once.
+ *
+ * The batches are independent — each is its own `in.(…)` filter over the same
+ * table — so running them one after another spends their latency in series for
+ * no reason. Measured on production 2026-08-18 AFTER chunking landed and BEFORE
+ * this change: the SO list went 2450ms -> ~5900ms, PO 2767 -> ~5900, GRN 2566
+ * -> ~5200. Sizing batches by URL bytes had cut them from 200 to 76 values, so
+ * the SAME work became 2.6x as many serial round trips. The chunking was right;
+ * doing it in series was the cost.
+ *
+ * 6, not more: these run inside a Worker against one connection pool, and this
+ * repo has twice blown the per-request subrequest cap. Concurrency does not
+ * change how many subrequests are issued — only how long the wall clock is —
+ * but it does change how many hit the pool at once, and 6 is the figure the MRP
+ * engine already settled on in mrp.ts for the same reason.
+ */
+const CHUNK_CONCURRENCY = 6;
+
 export async function chunkIn<T = Record<string, unknown>, V extends InValue = string>(
   codes: readonly V[],
   makeQuery: (batch: V[], from: number, to: number) => PromiseLike<PageResult<T>>,
   size = chunkSizeForUrl(codes),
 ): Promise<{ data: T[]; error: { message: string; code?: string } | null }> {
+  const batches: V[][] = [];
+  for (let i = 0; i < codes.length; i += size) batches.push(codes.slice(i, i + size));
+  if (batches.length === 0) return { data: [], error: null };
+
+  /* mapBounded returns results in INPUT order, never completion order, so the
+     concatenation below is byte-identical to what the sequential loop produced.
+     That is load-bearing: several callers rely on the merged order matching the
+     order they passed their ids in. */
+  const results = await mapBounded(batches, CHUNK_CONCURRENCY, (batch) =>
+    paginateAll<T>((from, to) => makeQuery(batch, from, to)),
+  );
+
+  /* Error semantics preserved exactly: the sequential form returned at the
+     FIRST failing batch with everything merged so far, so the first failure in
+     INPUT order wins and the batches before it are kept. The later batches have
+     already run here — that is the only difference, and it costs a discarded
+     result, never a wrong one. */
   const merged: T[] = [];
-  for (let i = 0; i < codes.length; i += size) {
-    const batch = codes.slice(i, i + size);
-    const { data, error } = await paginateAll<T>((from, to) => makeQuery(batch, from, to));
+  for (const { data, error } of results) {
     if (error) return { data: merged, error };
     merged.push(...(data ?? []));
   }

@@ -53,6 +53,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -768,12 +769,7 @@ export const PurchaseOrderNew = () => {
             </label>
             <label className={styles.field}>
               <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Date <span className={styles.req}>*</span></span>
-              <input
-                type="date"
-                value={poDate}
-                onChange={(e) => setPoDate(e.target.value)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={poDate} onChange={(iso) => setPoDate(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>
@@ -790,13 +786,7 @@ export const PurchaseOrderNew = () => {
             </label>
             <label className={styles.field}>
               <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Expected Delivery <span className={styles.req}>*</span></span>
-              <input
-                type="date"
-                value={expectedAt}
-                onChange={(e) => setExpectedAt(e.target.value)}
-                className={styles.fieldInput}
-                required
-              />
+              <DateField fullWidth value={expectedAt} onChange={(iso) => setExpectedAt(iso)} className={styles.fieldInput} required/>
             </label>
 
             {/* Mig 0026 — supplier-revised header delivery dates. Optional; the
@@ -804,30 +794,15 @@ export const PurchaseOrderNew = () => {
                 carry their own revised date. */}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Supplier Date 2</span>
-              <input
-                type="date"
-                value={supplierDeliveryDate2}
-                onChange={(e) => setSupplierDeliveryDate2(e.target.value)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={supplierDeliveryDate2} onChange={(iso) => setSupplierDeliveryDate2(iso)} className={styles.fieldInput}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Supplier Date 3</span>
-              <input
-                type="date"
-                value={supplierDeliveryDate3}
-                onChange={(e) => setSupplierDeliveryDate3(e.target.value)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={supplierDeliveryDate3} onChange={(iso) => setSupplierDeliveryDate3(iso)} className={styles.fieldInput}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Supplier Date 4</span>
-              <input
-                type="date"
-                value={supplierDeliveryDate4}
-                onChange={(e) => setSupplierDeliveryDate4(e.target.value)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={supplierDeliveryDate4} onChange={(iso) => setSupplierDeliveryDate4(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>
@@ -1333,10 +1308,10 @@ export const PurchaseOrderNew = () => {
                   </label>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Delivery Date</span>
-                    <input
-                      type="date"
+                    <DateField
+                      fullWidth
                       value={l.deliveryDate ?? ''}
-                      onChange={(e) => setLine(l.rid, { deliveryDate: e.target.value })}
+                      onChange={(iso) => setLine(l.rid, { deliveryDate: iso })}
                       className={styles.fieldInput}
                     />
                   </label>

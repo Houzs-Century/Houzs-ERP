@@ -42,16 +42,12 @@ import {
   ChevronDown, RotateCcw, History, Check, Download, Send,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDateTime } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
+import { buildVariantSummary, fmtDate, fmtDateTime } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
 import { poDisplayNumber } from '../../vendor/scm/lib/po-status';
 import { convertToLink } from '../../lib/convertScope';
 
-/* dd/mm/yyyy — the V2 detail header's date shape, for the meta line. */
-const fmtDmy = (iso: string | null | undefined): string => {
-  if (!iso) return '—';
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})/.exec(iso);
-  return m ? `${m[3]}/${m[2]}/${m[1]}` : iso;
-};
+/* dd/mm/yyyy — the one rule, under the name this file already uses. */
+const fmtDmy = fmtDate;
 import { formatPhone } from '@2990s/shared/phone';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
@@ -96,6 +92,7 @@ import {
 } from '../../vendor/scm/lib/so-amendment-queries';
 import styles from './SalesOrderDetail.module.css';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -1510,15 +1507,19 @@ const SupplierCard = ({
           <div />
           <label className={styles.field}>
             <span className={styles.fieldLabel}>PO Date</span>
-            <input type="date" className={styles.fieldInput} value={draft.poDate} disabled={locked}
-              onChange={(e) => onField('poDate', e.target.value)} />
+            <DateField fullWidth className={styles.fieldInput} value={draft.poDate} disabled={locked} onChange={(iso) => onField('poDate', iso)}/>
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Expected Delivery</span>
             {/* Commander 2026-05-29 — changing this cascades to every line's
                 Delivery Date (handled in the page's setHeaderField). */}
-            <input type="date" className={styles.fieldInput} value={draft.expectedAt} disabled={locked}
-              onChange={(e) => onField('expectedAt', e.target.value)} />
+            <DateField
+              fullWidth
+              className={styles.fieldInput}
+              value={draft.expectedAt}
+              disabled={locked}
+              onChange={(iso) => onField('expectedAt', iso)}
+            />
           </label>
           {/* Mig 0026 — supplier-revised header delivery dates. Typing one fans
               it down to lines that have NO value in that slot (setHeaderField).
@@ -1553,8 +1554,7 @@ const SupplierCard = ({
                   )
                 )}
               </span>
-              <input type="date" className={styles.fieldInput} value={draft[k]} disabled={locked}
-                onChange={(e) => onField(k, e.target.value)} />
+              <DateField fullWidth className={styles.fieldInput} value={draft[k]} disabled={locked} onChange={(iso) => onField(k, iso)}/>
             </label>
           ))}
           {/* PR #77 — Purchase Location: default ship-to warehouse for

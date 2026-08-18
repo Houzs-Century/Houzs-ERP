@@ -55,6 +55,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -835,7 +836,7 @@ export const GrnNew = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Received Date</span>
-              <input type="date" value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} className={styles.fieldInput} />
+              <DateField fullWidth value={receivedAt} onChange={(iso) => setReceivedAt(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>

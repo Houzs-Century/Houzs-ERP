@@ -42,6 +42,7 @@ import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -349,7 +350,7 @@ export const PurchaseConsignmentReturnNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Return Date *</span>
-              <input type="date" value={returnDate} onChange={(e) => setReturnDate(e.target.value)} className={styles.fieldInput} required />
+              <DateField fullWidth value={returnDate} onChange={(iso) => setReturnDate(iso)} className={styles.fieldInput} required/>
             </label>
 
             <label className={styles.field}>

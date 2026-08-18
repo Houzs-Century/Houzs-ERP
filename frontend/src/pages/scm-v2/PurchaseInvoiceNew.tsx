@@ -56,6 +56,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
 import { computeTotalHeight, isTotalHeightCategory, isTotalHeightPart } from '../../vendor/shared/total-height';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -619,14 +620,14 @@ export const PurchaseInvoiceNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Invoice Date</span>
-              <input type="date" value={invoiceDate} onChange={(e) => setInvoiceDate(e.target.value)} className={styles.fieldInput} />
+              <DateField fullWidth value={invoiceDate} onChange={(iso) => setInvoiceDate(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Due Date</span>
               {/* Commander 2026-05-29 — auto = Invoice Date + supplier term days
                   (default 30) until the operator edits it (dueTouched). */}
-              <input type="date" value={dueDate} onChange={(e) => { setDueTouched(true); setDueDate(e.target.value); }} className={styles.fieldInput} />
+              <DateField fullWidth value={dueDate} onChange={(iso) => { setDueTouched(true); setDueDate(iso); }} className={styles.fieldInput}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Notes</span>
