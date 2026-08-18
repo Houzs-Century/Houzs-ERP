@@ -17,7 +17,7 @@ import { companyHeader } from "../lib/activeCompany";
 // AUTH_TOKEN_KEY is no longer imported here: tokenStore below now delegates to
 // writeAuthToken/clearAuthToken instead of poking both stores itself, so the
 // session-only-logout suppression rule lives in exactly one place.
-import { clearAuthToken, readAuthToken, writeAuthToken } from "../lib/authToken";
+import { clearAuthToken, readAuthToken, writeAuthToken, readAuthPass, writeAuthPass } from "../lib/authToken";
 import {
   consumeCorrelated,
   correlateError,
@@ -52,6 +52,17 @@ export const tokenStore = {
   },
   clear() {
     clearAuthToken();
+  },
+};
+
+/** The signed staff pass (stage 2). Written beside the token on login; cleared
+ *  by `tokenStore.clear()` because `clearAuthToken` clears both. It has no
+ *  `clear()` of its own so the pass and the token can never drift out of the
+ *  same lifecycle. Nothing sends or verifies it yet — stage 3 does. */
+export const passStore = {
+  get: readAuthPass,
+  set(pass: string, persistent = true) {
+    writeAuthPass(pass, persistent);
   },
 };
 
