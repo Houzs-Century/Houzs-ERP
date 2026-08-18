@@ -1,3 +1,88 @@
+## The whole system's vocabulary drift, screened and catalogued; the SO guide still claimed a retired column was written [medium]
+
+**Symptom.** Owner, 2026-08-18: read the whole system once, find every place the
+same thing has more than one spelling and every place the docs disagree with the
+code, and put something in place so it never has to be done by hand again.
+
+**Root cause / findings (a 12-agent full-codebase read, 1,360 source files,
+2.8M tokens).** 33 concepts carry more than one genuine spelling — money
+(`_centi`/`_sen`/`_cents`), salesperson (`salesperson_id`/`agent`/`sales_reps`),
+customer vs debtor, supplier vs creditor, item vs material vs product code,
+warehouse vs sales_location, the delivery date under five names, and more. 21
+defects surfaced in passing (0 high; a tenant-predicate gap on PUT
+delivery-orders crew, a DP-number mint that swallows a read error, a DO
+cancelled-detection that only matches "T", and others). One doc-drift:
+`docs/modules/sales-order.md` line 101 and line 1207 still said the
+`IN_PRODUCTION` transition and POS "Proceed" stamp `proceeded_at`, a column
+neither written nor read since #2396 / mig 0286 — the guide even contradicted
+itself, correcting the claim at line 1316.
+
+**Fix (batch 1 — stop the bleeding, this PR).**
+- The full report is saved as `docs/system-screening-2026-08-18.md`, the batch-2 worklist.
+- `drift-catalogue.mjs` holds the 33 concepts as REFERENCE data; the generated
+  `docs/generated/GLOSSARY.md` now prints a "say this / also seen as" row per
+  concept, so anyone can look up the agreed word. Nothing is retired here —
+  retiring a live column is a migration, one concept per PR (batch 2) — so the
+  guard's contract is unchanged and stays honest.
+- The two stale `sales-order.md` claims are corrected.
+- `docs/VOCABULARY-UNIFICATION-PROGRESS.md` tracks the programme's stages and worktrees.
+
+**Money is a display rule, not a storage change.** Exports read `35.00` by
+formatting the stored integer as RM at the edge; storage stays an integer minor
+unit because decimals reintroduce the float-rounding bugs `money.ts` exists to
+prevent. Batch 2 unifies the NAME, not the type.
+
+**Ref.** 2026-08-18, branch `feat/one-vocabulary`.
+
+## Same thing, several spellings — and adding a fourth concept meant remembering to write a fourth guard [medium]
+
+**Symptom.** Owner, 2026-08-18: 「我跟你讲 Processing Date, 你却去找成 Process
+Date ... 这种问题其实也是名词的统一」. Branding, the Processing Date and
+Transfer to/from each carry more than one spelling, so every conversation starts
+by re-agreeing which word is meant, and an audit script that guesses wrong
+queries a column that does not exist — 42703 fails the WHOLE statement, so it
+answers nothing rather than answering less.
+
+**Root cause (the pattern, not the words).** The repo had already solved this
+THREE times, by hand each time: `so-processing-date.mjs` plus an 80-line
+directory-walking test, `transfer-vocabulary.ts` plus another, the catalogue
+series plus a third. Every one works. But a FOURTH concept costs somebody
+remembering to write a fourth test, and the concept nobody remembers is exactly
+the one that drifts. The cost of guarding a word was the defect.
+
+Separately, nothing existed for a HUMAN to read. The canonical spelling was in
+the tree in plain text — and only programs ever opened the file.
+
+**Fix.** One registry (`scripts/lib/vocabulary.mjs`), three consumers:
+
+| | |
+| --- | --- |
+| `audit:vocabulary` | ONE guard for every concept. Comments, migrations and tests may name a retired spelling — a rename is a story worth telling; CODE may not |
+| `audit:glossary` | `docs/generated/GLOSSARY.md`, GENERATED. A hand-written glossary is one more document to keep in sync, which is the problem, not the fix |
+| working-agreement rule 2 | now fires on a LOGIC change in a documented file, not only the five surface shapes |
+
+**THE REGISTRY'S FIRST DRAFT WAS WRONG TWICE, both caught by running it rather
+than by reasoning, and both are now regression tests.** `proceeded_at` was
+listed as retired: the column still exists on `scm.mfg_sales_orders` and the
+diagnostic probes read it on purpose, so the guard produced **175 findings,
+essentially all false** — the exact failure the file's own header warns about,
+committed by its author. Then `internalExpectedDd` was listed: that is the
+PAYLOAD key the status route still accepts from old clients deliberately, a
+different thing from the dropped COLUMN it resembles. Only
+`internal_expected_dd`, which `information_schema` no longer has, survived.
+
+**Proven red before being trusted green.** A planted `internal_expected_dd` in
+code exits 1; the same word in a comment exits 0; the guard self-tests its
+matcher at startup and exits 2 rather than reporting a verdict it could not have
+computed.
+
+**Blast radius of the working-agreement half, measured:** of the last 30 merges,
+19 touched a file some guide quotes and **8 never opened the guide** — one of
+them the commit that created the shared Branding rule. Those 8 would now be
+asked for the guide, or for the `no-guide-change` label, which prints the waiver
+into the log.
+
+**Ref.** 2026-08-18, branch `feat/one-vocabulary`.
 ## A salesperson could not set an SO line to RM 0 — the save succeeded and silently reverted [medium]
 
 **Symptom.** In Houzs ERP, a salesperson edited a line from RM 2,990 to 0 and
