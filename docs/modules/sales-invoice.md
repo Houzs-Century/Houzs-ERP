@@ -196,6 +196,44 @@ posting.
   parentless UNCONDITIONALLY, so every desktop from-DO invoice was filed as
   ERP-only — see BUG-HISTORY and `docs/modules/autocount-writeback.md` §7d.
 
+### Every line verb on an invoice is STRICTLY company-scoped — a stamp is not a gate
+
+All four line verbs resolve the invoice by `id`, which is a uuid and therefore
+globally unique — so the danger here is not an ambiguous key, it is that a uuid
+from the other company's books resolves perfectly well. Each one must prove the
+INVOICE is ours before touching a line:
+
+| verb | gate |
+| --- | --- |
+| `POST /:id/items` | `requireActiveCompanyId` + `scopeToCompanyId` |
+| `PATCH /:id/items/:itemId` | `requireActiveCompanyId` + `scopeToCompanyId` |
+| `DELETE /:id/items/:itemId` | `requireActiveCompanyId` + `scopeToCompanyId` |
+| `POST /:id/items/from-do/:doId` | `scopeToCompany` on the invoice AND on the source DO |
+
+`POST /:id/items` had none of it until 2026-08-19 — the other three were fixed in
+the 2026-08-13 sweep and this one was missed. What made it invisible is worth
+knowing, because the shape recurs: the insert carried
+`company_id: activeCompanyId(c)`, so the statement MENTIONED the company and read
+as scoped. **A stamp is not a predicate.** It wrote our company onto a line
+appended to their invoice, and the recompute, the AR/GL re-post and the AutoCount
+outbox row all followed from that line. This is the fifth blind spot named in
+`CLAUDE.md`; `check-company-scope.mjs` asserts against it in its own self-test.
+
+**Use the STRICT pair, not `scopeToCompany`, on a money write.** `scopeToCompany`
+DEGRADES to no predicate when the company is unresolved — correct for a read that
+must keep serving, wrong for a write that posts to a ledger.
+`requireActiveCompanyId` refuses with a 409 instead.
+
+**The gate goes BEFORE business validation.** Item-code validation used to run
+first, so a caller pointed at another company's invoice was told its *item code*
+was wrong — an answer about a document they cannot see. Same ordering rule the
+price-override handler in `mfg-sales-orders.ts` adopted on 2026-07-22.
+
+Covered by `backend/tests/companyScopeSalesInvoiceMoney.test.ts`, which mounts the
+exported handlers against a fake PostgREST client and asserts BOTH directions plus
+"nothing was written" — a refusal that still inserted would pass a status-only
+check.
+
 ### `recomputePaid` (`:1730-1775`) — read this before touching payments
 
 Fails **closed**: a failed payments read or header read aborts with a log rather

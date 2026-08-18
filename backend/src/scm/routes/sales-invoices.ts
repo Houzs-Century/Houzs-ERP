@@ -1705,19 +1705,34 @@ salesInvoices.patch('/:id', async (c) => {
 });
 
 // ── Item CRUD ─────────────────────────────────────────────────────────────
-salesInvoices.post('/:id/items', async (c) => {
+/* Exported so tests/companyScopeSalesInvoiceMoney.test.ts can mount it: the
+   sibling line verbs are already exported for exactly this reason, and an
+   inline arrow is the reason this one had no company test to fail. */
+export const appendSalesInvoiceItemHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
+  /* STRICT, matching PATCH and DELETE on this same resource. Adding a line was
+     the one line-write on an invoice that resolved the header by `id` alone —
+     and the insert below carried `company_id: activeCompanyId(c)`, which is a
+     STAMP, not a predicate: it wrote OUR company onto a line appended to THEIR
+     invoice, then recomputed the totals and re-posted the AR/GL from it. */
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
 
+  /* TENANCY BEFORE BUSINESS VALIDATION — the same ordering rule the price-override
+     handler in mfg-sales-orders.ts learned on 2026-07-22 ("AUTHZ BEFORE
+     CONCURRENCY"). Item-code validation used to run first, so a caller pointed at
+     another company's invoice was told its ITEM CODE was wrong. That answer is
+     about a document they cannot see, and it is the wrong thing to tell them. */
+  const { data: header } = await scopeToCompanyId(sb.from('sales_invoices').select('id, invoice_number, status, delivery_order_id').eq('id', id), co.companyId).maybeSingle();
+  if (!header) return c.json(NOT_THIS_COMPANY, 404);
+
   {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
+    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], co.companyId);
     if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   }
-
-  const { data: header } = await sb.from('sales_invoices').select('id, invoice_number, status, delivery_order_id').eq('id', id).maybeSingle();
-  if (!header) return c.json({ error: 'not_found' }, 404);
   if (((header as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
     return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before adding lines.' }, 409);
   }
@@ -1766,7 +1781,7 @@ salesInvoices.post('/:id/items', async (c) => {
   const priceWarnings = await siPriceDriftWarnings(sb, [it]);
 
   const row = buildItemRow(id, it, nextLineNo);
-  const { data, error } = await sb.from('sales_invoice_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
+  const { data, error } = await sb.from('sales_invoice_items').insert({ ...row, company_id: co.companyId }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
   await recomputePaid(sb, id);
@@ -1795,7 +1810,8 @@ salesInvoices.post('/:id/items', async (c) => {
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-add-line resync failed:', e); }
   await queueAcSiEdit(c, id);
   return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);
-});
+};
+salesInvoices.post('/:id/items', appendSalesInvoiceItemHandler);
 
 salesInvoices.patch('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId');
