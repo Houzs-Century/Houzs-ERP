@@ -6,11 +6,16 @@
 --   returned NONE), so the recreated views restore the same empty ACL and there
 --   is no grant to re-apply. This is the check 0189 failed: there it was a
 --   granted view; here the census proves there is nothing to lose.
--- Verified against: production scm schema census 2026-08-18 (291 base+view columns, 70 tables, 11 views, 2 functions).
+-- Verified against: production scm schema census 2026-08-18 (291 base+view columns, 70 tables, 11 views, 1 matview, 2 functions).
 
 BEGIN;
 
 -- ── views first: drop (they depend on the columns being renamed) ──
+-- The mv_ar_aging MATERIALIZED VIEW depends on five of the outstanding views, so
+-- it must be dropped before them (it lives in pg_matviews, not information_schema
+-- .views, which is why the first cut of this migration missed it). Recreated with
+-- its unique index at the end. No grants (census verified), like the plain views.
+DROP MATERIALIZED VIEW IF EXISTS scm.mv_ar_aging;
 DROP VIEW IF EXISTS scm.mfg_sales_orders_with_payment_totals;
 DROP VIEW IF EXISTS scm.v_ap_aging;
 DROP VIEW IF EXISTS scm.v_ar_aging;
@@ -621,6 +626,73 @@ CREATE VIEW scm.v_so_outstanding AS
         END AS is_outstanding,
     company_id
    FROM scm.mfg_sales_orders so;
+
+
+-- ── recreate the mv_ar_aging materialized view + its unique index (dropped above) ──
+CREATE MATERIALIZED VIEW scm.mv_ar_aging AS
+ SELECT COALESCE(v_po_outstanding.company_id, 0::bigint) AS company_id,
+    'po'::text AS module,
+    count(*) AS cnt,
+    COALESCE(sum(v_po_outstanding.total_sen), 0::bigint) AS total_sen,
+    0::bigint AS total_outstanding_sen
+   FROM scm.v_po_outstanding
+  WHERE v_po_outstanding.is_outstanding
+  GROUP BY (COALESCE(v_po_outstanding.company_id, 0::bigint))
+UNION ALL
+ SELECT COALESCE(v_grn_outstanding.company_id, 0::bigint) AS company_id,
+    'grn'::text AS module,
+    count(*) AS cnt,
+    0::bigint AS total_sen,
+    0::bigint AS total_outstanding_sen
+   FROM scm.v_grn_outstanding
+  WHERE v_grn_outstanding.is_outstanding
+  GROUP BY (COALESCE(v_grn_outstanding.company_id, 0::bigint))
+UNION ALL
+ SELECT COALESCE(v_pi_outstanding.company_id, 0::bigint) AS company_id,
+    'pi'::text AS module,
+    count(*) AS cnt,
+    COALESCE(sum(v_pi_outstanding.total_sen), 0::bigint) AS total_sen,
+    COALESCE(sum(v_pi_outstanding.outstanding_sen), 0::bigint) AS total_outstanding_sen
+   FROM scm.v_pi_outstanding
+  WHERE v_pi_outstanding.is_outstanding
+  GROUP BY (COALESCE(v_pi_outstanding.company_id, 0::bigint))
+UNION ALL
+ SELECT COALESCE(v_pr_outstanding.company_id, 0::bigint) AS company_id,
+    'pr'::text AS module,
+    count(*) AS cnt,
+    0::bigint AS total_sen,
+    0::bigint AS total_outstanding_sen
+   FROM scm.v_pr_outstanding
+  WHERE v_pr_outstanding.is_outstanding
+  GROUP BY (COALESCE(v_pr_outstanding.company_id, 0::bigint))
+UNION ALL
+ SELECT COALESCE(v_so_outstanding.company_id, 0::bigint) AS company_id,
+    'so'::text AS module,
+    count(*) AS cnt,
+    COALESCE(sum(v_so_outstanding.local_total_sen), 0::bigint) AS total_sen,
+    0::bigint AS total_outstanding_sen
+   FROM scm.v_so_outstanding
+  WHERE v_so_outstanding.is_outstanding
+  GROUP BY (COALESCE(v_so_outstanding.company_id, 0::bigint))
+UNION ALL
+ SELECT COALESCE(v_do_outstanding.company_id, 0::bigint) AS company_id,
+    'do'::text AS module,
+    count(*) AS cnt,
+    0::bigint AS total_sen,
+    0::bigint AS total_outstanding_sen
+   FROM scm.v_do_outstanding
+  WHERE v_do_outstanding.is_outstanding
+  GROUP BY (COALESCE(v_do_outstanding.company_id, 0::bigint))
+UNION ALL
+ SELECT COALESCE(v_si_outstanding.company_id, 0::bigint) AS company_id,
+    'si'::text AS module,
+    count(*) AS cnt,
+    COALESCE(sum(v_si_outstanding.total_sen), 0::bigint) AS total_sen,
+    COALESCE(sum(v_si_outstanding.outstanding_sen), 0::bigint) AS total_outstanding_sen
+   FROM scm.v_si_outstanding
+  WHERE v_si_outstanding.is_outstanding AND v_si_outstanding.status <> 'DRAFT'::scm.sales_invoice_status
+  GROUP BY (COALESCE(v_si_outstanding.company_id, 0::bigint));
+CREATE UNIQUE INDEX mv_ar_aging_company_module_uidx ON scm.mv_ar_aging USING btree (company_id, module);
 
 -- ── recreate the 2 functions whose bodies reference the renamed columns ──
 -- Neither has a trigger binding (verified 2026-08-18); both are called by RPC/SELECT.
