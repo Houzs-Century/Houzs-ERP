@@ -96,21 +96,37 @@ function harness(over: {
   return app;
 }
 
-/** The act: mark this order Proceeded. */
+/** The act: mark this order Proceeded.
+ *
+ *  THIS USED TO SEND `proceededAt`, and on 2026-08-18 that stopped being an act
+ *  at all. The owner ruled, for the third time, that there is ONE Processing
+ *  Date across frontend, backend and database, so `proceeded_at` — the second
+ *  storage — left the header PATCH map entirely: no request body can reach the
+ *  column, and a PATCH carrying that key is now a no-op rather than a proceed.
+ *  Proceeding IS setting the Processing Date (*"只要有 Processing Date，就代表他
+ *  Proceed 了"*), so that is what this sends.
+ *
+ *  EVERY ASSERTION BELOW IS THE ONE #2383 WROTE, and every one still holds on
+ *  this path: one problem per failed condition, named, with the word "deposit"
+ *  absent from a zero-total order. What moved is the envelope — `validation_failed`
+ *  with `message`, not `proceed_gate_unmet` with `reason`, because the surviving
+ *  refusal is the aggregated Processing-Date gate. authed-fetch.ts renders both
+ *  (it has carried a `validation_failed` entry since before either change), and
+ *  the per-condition problems[] the operator reads are byte-identical. */
 const proceed = (app: Hono) => app.request('/mfg-sales-orders/SO-PROCEED-1', {
   method: 'PATCH',
   headers: { 'content-type': 'application/json' },
-  body: JSON.stringify({ proceededAt: '2026-08-17T02:00:00.000Z', version: 1 }),
+  body: JSON.stringify({ processingDate: '2099-04-01', customerDeliveryDate: '2099-05-01', version: 1 }),
 });
 
 describe('the proceed refusal names the condition that failed', () => {
   test("THE OWNER'S ORDER: zero total, nothing paid, no postcode — the body says POSTCODE and never says deposit", async () => {
     const res = await proceed(harness());
     expect(res.status).toBe(422);
-    const body = await res.json() as { error: string; reason: string; problems: Array<{ field?: string; message: string }> };
+    const body = await res.json() as { error: string; message: string; problems: Array<{ field?: string; message: string }> };
 
-    /* Clients match on the code — it may not move. */
-    expect(body.error).toBe('proceed_gate_unmet');
+    /* Clients match on the code. It DID move, with the act — see `proceed`. */
+    expect(body.error).toBe('validation_failed');
 
     /* Exactly one condition failed, and the refusal names exactly it. */
     expect(body.problems).toHaveLength(1);
@@ -122,11 +138,12 @@ describe('the proceed refusal names the condition that failed', () => {
        deposit term PASSED on this order (total <= 0), so naming it is a lie. */
     expect(JSON.stringify(body).toLowerCase()).not.toContain('deposit');
 
-    /* And `reason` — the key an un-migrated client, a log line or a PDF reads —
-       is now the failing condition rather than a recital of all five. */
-    expect(body.reason.toLowerCase()).toContain('postcode');
-    expect(body.reason.toLowerCase()).not.toContain('customer name');
-    expect(body.reason.toLowerCase()).not.toContain('delivery date');
+    /* And the single-string key an un-migrated client, a log line or a PDF reads
+       is the failing condition rather than a recital of all five. THE POINT OF
+       #2383, preserved verbatim through the envelope change. */
+    expect(body.message.toLowerCase()).toContain('postcode');
+    expect(body.message.toLowerCase()).not.toContain('customer name');
+    expect(body.message.toLowerCase()).not.toContain('delivery date');
   });
 
   test('several conditions missing → EVERY one is named, in one response (owner 2026-07-18)', async () => {
@@ -136,7 +153,9 @@ describe('the proceed refusal names the condition that failed', () => {
     const res = await proceed(app);
     expect(res.status).toBe(422);
     const body = await res.json() as { problems: Array<{ field?: string }> };
-    expect(body.problems.map((p) => p.field)).toEqual(['Customer', 'Address', 'Postcode', 'Delivery date']);
+    /* Delivery date is supplied BY this request (the pair rule refuses a
+       Processing Date without one), so the three the row is missing are named. */
+    expect(body.problems.map((p) => p.field)).toEqual(['Customer', 'Address', 'Postcode']);
     /* Still no deposit line: the order is still worth nothing. */
     expect(JSON.stringify(body).toLowerCase()).not.toContain('deposit');
   });

@@ -636,7 +636,12 @@ OVERDUE          !readyToShip && daysLeft <= 3            (daysLeft vs the EFFEC
 PENDING_DELIVERY otherwise
 ```
 
-Effective delivery date = `amended_delivery_date ?? customer_delivery_date`
+Effective delivery date = `amended_delivery_date ?? customer_delivery_date`,
+and since 2026-08-18 that rule is not this board's private property: it lives in
+`scm/shared/effective-delivery.ts` (`effectiveSoDelivery`), and MRP and the stock
+allocator read the SAME function. Before that they ranked on
+`customer_delivery_date` alone, so a rescheduled order moved here and did not
+move in the queue that decides who gets stock
 (`:277-278`). The original customer date is never overwritten.
 `backend/src/services/agents/delivery-agent.ts:53` imports this same function,
 so the agent and the board cannot disagree.

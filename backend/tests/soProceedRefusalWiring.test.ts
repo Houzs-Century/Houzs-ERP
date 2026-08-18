@@ -123,23 +123,40 @@ describe('every proceed refusal path carries the detail', () => {
     expect(helper).toContain('totalCenti');
   });
 
-  test('both refusing call sites forward that body verbatim', () => {
-    /* /status -> IN_PRODUCTION (the first Proceed), and the header PATCH that
-       sets proceededAt directly (mobile / API). Neither may re-word it. */
-    expect(countOf(SO, 'await soProceedGateBlocked(sb, docNo, {')).toBe(2);
-    /* And there is exactly ONE of them to call. */
+  /* THE TWO CALL SITES THIS FILE COUNTED ARE GONE (2026-08-18), and the count is
+     kept rather than deleted — an assertion that a population is EMPTY is worth
+     as much as one that it is two, and more here, because it is what stops the
+     old paths coming back by habit.
+
+     Both were removed by the one-storage work, hours after this file landed:
+       · /status -> IN_PRODUCTION ran the gate only when the order ALREADY had a
+         Processing Date, i.e. re-gated a state that had passed the same gate —
+         and inconsistently, since an order that also carried a Proceed stamp was
+         not re-gated at all. The first proceed is the request that PUTS the date
+         on, and it already runs soProcessingDateProblemsForDoc, a superset.
+       · the header PATCH's `proceededAt` branch cannot be reached at all now
+         that the key is out of the PATCH map.
+     The per-condition refusal this file exists to protect did NOT go with them:
+     it is asserted end-to-end, over the surviving act, in
+     tests/soProceedRefusalNamesCondition.test.ts. */
+  test('no route mints its own proceed refusal — there are no call sites left to', () => {
+    expect(countOf(SO, 'await soProceedGateBlocked(sb, docNo, {')).toBe(0);
+    expect(countOf(SO, 'if (gate) return c.json(gate, 422);')).toBe(0);
+    /* And the one gate to call still exists, unedited, for the next path that
+       needs to refuse. Deleting a freshly-shipped export to tidy a merge is how
+       work gets silently undone. */
     expect(countOf(GATE, 'export async function soProceedGateBlocked')).toBe(1);
-    expect(countOf(SO, 'if (gate) return c.json(gate, 422);')).toBe(2);
   });
 
-  test('the only other meetsProceedGate caller refuses NOTHING, so it has no refusal to name', () => {
-    /* CREATE auto-proceed: a handover that misses the gate is simply created
-       un-proceeded, in Order Placed. Asserted rather than assumed — if this
-       site ever starts returning a body, this test fails and the body has to be
-       classified instead of quietly shipping the old anonymous sentence. */
-    expect(countOf(SO, 'meetsProceedGate({')).toBe(1);
-    const createSite = between(SO, 'const autoProceed = !!procDateOnCreate && meetsProceedGate({', '});');
-    expect(createSite).not.toContain('c.json');
-    expect(createSite).not.toContain('return');
+  test('the create path no longer weighs the gate at all, so it has no refusal to name', () => {
+    /* CREATE auto-proceed was the third meetsProceedGate caller and the only one
+       that refused NOTHING — a handover that missed the gate was simply created
+       un-proceeded, in Order Placed. It went with the Proceed stamp it existed
+       to decide: `autoProceed` could only ever be true when a Processing Date
+       was ALSO being written, and the create already refuses (422) to write that
+       date unless the same conditions pass. So the rule did not loosen; it
+       stopped being asked twice. */
+    expect(countOf(SO, 'meetsProceedGate({')).toBe(0);
+    expect(countOf(SO, 'autoProceed')).toBe(0);
   });
 });
