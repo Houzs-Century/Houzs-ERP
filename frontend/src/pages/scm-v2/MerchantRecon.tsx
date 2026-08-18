@@ -85,6 +85,8 @@ const ReconcileTab = () => {
   const watchlist = useSettlementWatchlist();
   const upload = useUploadStatement();
   const [batchId, setBatchId] = useState<number | null>(null);
+  /* The batches the last upload created — the summary screen it lands on. */
+  const [justUploaded, setJustUploaded] = useState<number[] | null>(null);
   const [showDone, setShowDone] = useState(false);
 
   const acquirers = setup.data?.acquirers ?? [];
@@ -135,7 +137,10 @@ const ReconcileTab = () => {
        found the button dead because the file it was talking about had been
        thrown away. Only the ones that got through are cleared. */
     const rejected: Array<{ name: string; content: string }> = [];
-    let lastBatch: number | null = null;
+    /* EVERY batch this upload created, not just the last: the owner uploads a
+       month of reports in one go and wants one answer for the lot — 当我上传完全
+       部文件后…让我知道我 upload 的文件有哪里几笔是 match 的… */
+    const made: number[] = [];
     /* Sequential, not parallel: each upload's matching must see the payments
        the previous one already claimed, or two statements could both take the
        same money and only the database's unique index would catch it. */
@@ -148,7 +153,7 @@ const ReconcileTab = () => {
           summaryFeeSen: summaryFee.trim() ? Math.round(Number(summaryFee) * 100) : null,
           statementMonth: statementMonth || null,
         });
-        lastBatch = r.batchId;
+        made.push(r.batchId);
         done.push({
           name: f.name,
           ok: true,
@@ -164,11 +169,17 @@ const ReconcileTab = () => {
     }
     setBusy(false);
     setFiles(rejected);
-    if (lastBatch != null) setBatchId(lastBatch);
+    if (made.length > 0) setJustUploaded(made);
   };
 
   /* ONE THING AT A TIME. Working a statement replaces everything else. */
   if (batchId != null) return <BatchView batchId={batchId} onBack={() => setBatchId(null)} />;
+  if (justUploaded != null) {
+    return (
+      <UploadSummary batchIds={justUploaded} refusals={results.filter((r) => !r.ok)}
+        onOpen={setBatchId} onDone={() => setJustUploaded(null)} />
+    );
+  }
 
   const all = batches.data?.batches ?? [];
   const open = all.filter((b) => (b.open_count ?? 0) > 0);
@@ -341,6 +352,132 @@ const ReconcileTab = () => {
     </div>
   );
 };
+
+/* ── What the upload found ────────────────────────────────────────────────────
+   The owner uploads a month of reports in one go, and asked for one answer for
+   the lot rather than being dropped into the last file (2026-08-18): 当我上传完
+   全部文件后…让我知道我 upload 的文件有哪里几笔是 match 的，有哪里几笔是我要
+   manual check 或 verify 的，有哪里几笔会是 merchant 收到但完全 match 不上的.
+
+   Those are exactly three numbers, and they are three different jobs:
+     matched by reference — a button;
+     to check by hand     — candidates found, a person must choose;
+     no sale in the ERP   — the merchant reported money nobody recorded. */
+
+const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
+  batchIds: number[];
+  refusals: Array<{ name: string; text: string }>;
+  onOpen: (id: number) => void;
+  onDone: () => void;
+}) => {
+  const batches = useSettlementBatches();
+  const confirmAll = useConfirmMatched();
+  const [busy, setBusy] = useState(false);
+  const [posted, setPosted] = useState<{ confirmed: number; failed: number } | null>(null);
+
+  const mine = (batches.data?.batches ?? []).filter((b) => batchIds.includes(b.id));
+  const sum = (pick: (b: SettlementBatch) => number) => mine.reduce((s, b) => s + pick(b), 0);
+  const lines = sum((b) => b.row_count);
+  const toConfirm = sum((b) => b.to_confirm_count ?? 0);
+  const toCheck = sum((b) => b.to_choose_count ?? 0);
+  const noRecord = sum((b) => b.no_record_count ?? 0);
+  const done = sum((b) => b.confirmed_count ?? 0);
+
+  /* One button for the whole upload: every report's reference matches, posted
+     one report at a time so a refusal names its own file instead of failing
+     the lot. */
+  const confirmEverything = () => {
+    setBusy(true);
+    let confirmed = 0;
+    let failed = 0;
+    const next = (i: number) => {
+      if (i >= mine.length) { setBusy(false); setPosted({ confirmed, failed }); return; }
+      confirmAll.mutate(mine[i].id, {
+        onSuccess: (r) => { confirmed += r.confirmed; failed += r.failed.length; next(i + 1); },
+        onError: () => { failed += 1; next(i + 1); },
+      });
+    };
+    next(0);
+  };
+
+  return (
+    <div className="space-y-4">
+      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
+        <button type="button" style={btn()} onClick={onDone}><ArrowLeft {...ICON} /> All reports</button>
+        <b>{`${mine.length} report${mine.length === 1 ? '' : 's'} read · ${lines} line${lines === 1 ? '' : 's'}`}</b>
+      </div>
+
+      {/* The three numbers, largest first — each one a different job. */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 'var(--space-3)' }}>
+        <Tally n={toConfirm} label="matched by reference" note="ready to confirm" tone="good" />
+        <Tally n={toCheck} label="to check by hand" note="candidates found — you choose" tone="plain" />
+        <Tally n={noRecord} label="no sale in the ERP" note="the merchant reported it, nobody recorded it" tone="danger" />
+      </div>
+
+      {toConfirm > 0 && (
+        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button type="button" style={btn(true, busy)} disabled={busy} onClick={confirmEverything}>
+            <CheckCheck {...ICON} /> {busy ? 'Posting…' : `Confirm all ${toConfirm} matched`}
+          </button>
+          <span style={softText}>Books each line&rsquo;s fee. The money itself is the next screen.</span>
+        </div>
+      )}
+      {posted && (
+        <div style={{ fontSize: 'var(--fs-13)', color: posted.failed ? danger : good }}>
+          Posted {posted.confirmed}.{posted.failed > 0 ? ` ${posted.failed} could not be — open the report to see why.` : ''}
+        </div>
+      )}
+      {done > 0 && !posted && <div style={softText}>{done} line(s) were already confirmed.</div>}
+
+      {/* A file the server refused never became a report — it has no row below,
+          so it says its own reason here or it says nothing anywhere. */}
+      {refusals.map((r) => (
+        <div key={r.name} style={{ fontSize: 'var(--fs-13)', color: danger, display: 'flex', gap: 6 }}>
+          <AlertTriangle {...ICON} />
+          <span><b>{r.name}</b> — {r.text}</span>
+        </div>
+      ))}
+
+      <table style={table}>
+        <thead>
+          <tr style={headRow}>
+            <th style={cell}>Merchant</th><th style={cell}>Report</th><th style={cell}>Period</th>
+            <th style={num}>Lines</th><th style={num}>Matched</th><th style={num}>To check</th>
+            <th style={num}>No sale</th><th style={cell} />
+          </tr>
+        </thead>
+        <tbody>
+          {mine.map((b) => (
+            <tr key={b.id} style={rowLine}>
+              <td style={cell}><span className={styles.codeChip}>{b.acquirer_code}</span></td>
+              <td style={cell}>{b.file_name}</td>
+              <td style={cell}>{b.period_from} → {b.period_to}</td>
+              <td style={num}>{b.row_count}</td>
+              <td style={{ ...num, color: good }}>{(b.to_confirm_count ?? 0) + (b.confirmed_count ?? 0) || '—'}</td>
+              <td style={num}>{b.to_choose_count || '—'}</td>
+              <td style={{ ...num, color: b.no_record_count ? danger : undefined, fontWeight: b.no_record_count ? 700 : undefined }}>
+                {b.no_record_count || '—'}
+              </td>
+              <td style={cell}>
+                <button type="button" style={btn()} onClick={() => onOpen(b.id)}>Open</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+};
+
+const Tally = ({ n, label, note, tone }: {
+  n: number; label: string; note: string; tone: 'good' | 'danger' | 'plain';
+}) => (
+  <div style={{ ...panel(n === 0 ? 'plain' : tone), display: 'flex', flexDirection: 'column', gap: 2 }}>
+    <div style={{ fontSize: 'var(--fs-24, 22px)', fontWeight: 700 }}>{n}</div>
+    <div style={{ fontWeight: 600 }}>{label}</div>
+    <div style={softText}>{note}</div>
+  </div>
+);
 
 /* ── One statement: the lines still to decide ─────────────────────────────────
    Lines already decided are OFF this screen by default — "只会显示还没对上的".

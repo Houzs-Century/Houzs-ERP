@@ -163,11 +163,20 @@ two days:
 
 - `/scm/merchant-recon` — **Merchant reconciliation** (step 1 of 2): the
   MERCHANT statement against what the ERP recorded. It books fees; it never
-  books the bank. Two tabs only — To reconcile, Merchant setup (决定4) — and the
-  first shows ONLY what is not matched yet (owner: 应该就只会显示还没对上的
-  transaction 吧): the reports with lines still to decide, split into the two
-  kinds of problem (`to_choose_count` — a choice he can make; `no_record_count`
-  — the report has it and no sale in the ERP does), and underneath, the card
+  books the bank. Setup moved out to its own screen, so this one is the work.
+
+  Uploading lands on WHAT THE UPLOAD FOUND, across every file at once (owner,
+  2026-08-18: 当我上传完全部文件后…让我知道我 upload 的文件有哪里几笔是 match 的，
+  有哪里几笔是我要 manual check 或 verify 的，有哪里几笔会是 merchant 收到但完全
+  match 不上的) — three counts because they are three different jobs, a per-file
+  breakdown, and one button that confirms every reference-matched line in the
+  whole upload, report by report so a refusal names its own file.
+
+  Then the work list, which shows ONLY what is not matched yet (owner: 应该就只会
+  显示还没对上的 transaction 吧): the reports with lines still to decide, split by
+  the kind of problem (`to_confirm_count` — matched by reference, one button;
+  `to_choose_count` — a choice he can make; `no_record_count` — the report has it
+  and no sale in the ERP does), and underneath, the card
   payments the sales team keyed in that no report has reported yet. A report
   whose lines are all decided leaves the screen, saying where it went. Opening
   one shows its open lines and nothing else; one checkbox brings the finished

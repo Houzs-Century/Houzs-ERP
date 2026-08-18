@@ -8,7 +8,7 @@
 //   • the money side is NOT here — it is BankRecon.test.tsx, and the setup is
 //     SettlementSetup.test.tsx: three jobs, three screens, as the owner asked.
 
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { describe, expect, test, vi } from 'vitest';
 import type { AcquirerSetup, SettlementRow } from './settlement-queries';
@@ -57,7 +57,7 @@ const saveMutate = vi.fn();
 vi.mock('./settlement-queries', () => ({
   useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL], bankAccounts: [{ account_code: '330-0000', account_name: 'Bank — Maybank Current' }] }, isLoading: false }),
   useSaveAcquirerSetup: () => ({ mutate: saveMutate, isPending: false }),
-  useSettlementBatches: () => ({ data: { batches: [{ id: 1, acquirer_code: 'MBB', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-03', row_count: 2, gross_sen: 177700, fee_sen: 2600, net_sen: 175100, stated_net_sen: null, adjustment_sen: 0, adjustment_je_no: null, received_on: null, received_sen: 0, outstanding_sen: 175100, receipt_count: 0, confirmed_count: 1, open_count: 2, to_choose_count: 1, no_record_count: 1, status: 'OPEN', uploaded_by: null, created_at: '' }] }, isLoading: false }),
+  useSettlementBatches: () => ({ data: { batches: [{ id: 1, acquirer_code: 'MBB', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-03', row_count: 2, gross_sen: 177700, fee_sen: 2600, net_sen: 175100, stated_net_sen: null, adjustment_sen: 0, adjustment_je_no: null, received_on: null, received_sen: 0, outstanding_sen: 175100, receipt_count: 0, confirmed_count: 1, open_count: 3, to_confirm_count: 1, to_choose_count: 1, no_record_count: 1, status: 'OPEN', uploaded_by: null, created_at: '' }] }, isLoading: false }),
   useSettlementBatch: () => ({
     data: {
       batch: {
@@ -118,12 +118,42 @@ describe('the reconcile tab', () => {
     expect(screen.getByLabelText('Statement files').hasAttribute('multiple')).toBe(true);
   });
 
+  /* After uploading, he wants ONE answer for the lot — not to be dropped into
+     the last file (2026-08-18: 让我知道我 upload 的文件有哪里几笔是 match 的，有
+     哪里几笔是我要 manual check 或 verify 的，有哪里几笔会是 merchant 收到但完全
+     match 不上的). Three numbers, three different jobs. */
+  test('uploading lands on what the upload found, across every file', async () => {
+    uploadMutateAsync.mockResolvedValue({
+      batchId: 1, rows: 2, skippedLines: 0, statedNetSen: null, adjustmentSen: 0,
+      grossSen: 177700, feeSen: 2600, netSen: 175100,
+      periodFrom: '2026-08-01', periodTo: '2026-08-03',
+      buckets: { MATCHED: 1, NEEDS_CONFIRM: 1, UNMATCHED: 1, IGNORED: 0 },
+    });
+    draw();
+    fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'MBB' } });
+    const picker = screen.getByLabelText('Statement files');
+    const file = new File(['Txn Date,Gross'], 'aug.csv', { type: 'text/csv' });
+    /* jsdom's File carries no .text() — the page reads the file with it. */
+    Object.defineProperty(file, 'text', { value: () => Promise.resolve('Txn Date,Gross') });
+    fireEvent.change(picker, { target: { files: [file] } });
+    await waitFor(() => expect((screen.getByText(/^Upload merchant report/) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByText(/^Upload merchant report/));
+
+    await waitFor(() => expect(screen.getByText(/report read/)).toBeTruthy());
+    /* The three counts come from the batch list, which the fixture answers. */
+    expect(screen.getByText('matched by reference')).toBeTruthy();
+    expect(screen.getByText('to check by hand')).toBeTruthy();
+    expect(screen.getByText('no sale in the ERP')).toBeTruthy();
+    /* And one button finishes the easy half of the whole upload. */
+    expect(screen.getByText(/Confirm all 1 matched/)).toBeTruthy();
+  });
+
   /* His answer to "what should this screen open on": 应该就只会显示还没对上的
      transaction 吧. Both kinds of not-matched, named, on the landing view. */
   test('the landing shows only what is not matched yet, from both sides', () => {
     draw();
     // a report with lines still to decide, split by which kind of problem
-    expect(screen.getByText('1 to choose · 1 with no sale in the ERP')).toBeTruthy();
+    expect(screen.getByText('1 to confirm · 1 to choose · 1 with no sale in the ERP')).toBeTruthy();
     // and the payments the sales team keyed in that no report has reported
     expect(screen.getByText('Card payments no merchant report has reported yet (1)')).toBeTruthy();
     expect(screen.getByText('SO-2607-088')).toBeTruthy();
