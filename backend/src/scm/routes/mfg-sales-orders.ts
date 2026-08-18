@@ -3608,7 +3608,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const freeGiftBaseByIdx = new Map<number, number>();       // gift line idx → granted base (always 0)
   // Free Item Campaign (migration 0176) — idx → resolved {campaignId, campaignName}.
   const freeItemByIdx = new Map<number, { campaignId: string; campaignName: string }>();
-  const claimedPwpCodes: Array<{ code: string; prevStatus: string }> = [];
+  /* companyId travels WITH each claim: the rollback below runs outside the loop
+     that resolved it, and a restore keyed on code alone can un-burn another
+     company's row (mig 0188 re-keyed pwp_codes on (company_id, code)). */
+  const claimedPwpCodes: Array<{ code: string; prevStatus: string; companyId: number }> = [];
   /* Loo 2026-06-05 (VALOR / PW-Test-voucher incident) — a line that CARRIES a
      pwpCode but fails the grant used to be silently repriced at full price,
      surfacing later as an inscrutable pricing_drift. Track WHY each code was
@@ -3652,6 +3655,15 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     if (!code) continue;
     const reject = (reason: string) =>
       pwpRejections.push({ idx, itemCode: String(it?.itemCode ?? ''), code, reason });
+    /* mig 0188 re-keyed pwp_codes on (company_id, code): a WRITE keyed on `code`
+       alone reaches whichever company's row sorts first, and this is the path
+       that BURNS the voucher. The add-line claim further down this file already
+       refuses when the company cannot be resolved (409 company_unresolved); this
+       bulk/create path did not, so it is made to refuse the same way rather than
+       write unscoped. Claiming nothing is the safe outcome; claiming another
+       company's identically named code is not. */
+    if (companyId == null) { reject('cannot tell which company this order belongs to — reload and try again'); continue; }
+    const pwpCompanyId: number = companyId;
     if (seenPwpCodes.has(code)) { reject('code is already applied to another line on this order'); continue; }
     seenPwpCodes.add(code);
     /* One code = one redemption = ONE unit (Loo 2026-06-12, POS line-quantity).
@@ -3767,7 +3779,11 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         redeemed_item_code: product.code,
         updated_at:         new Date().toISOString(),
       })
-      .eq('code', code);
+      /* mig 0188 re-keyed pwp_codes on (company_id, code): without the company
+         filter the claim reaches whichever company's row sorts first, on the
+         path that BURNS the voucher. Refused above when it cannot be resolved. */
+      .eq('code', code)
+      .eq('company_id', pwpCompanyId);
     // Orphaned-USED re-claim must match the orphan row exactly (USED + the same
     // dead doc_no) so a parallel legitimate redemption can't be hijacked.
     claimQ = orphanedUsed
@@ -3783,7 +3799,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const prevStatus = orphanedUsed
       ? (cRow.owner_staff_id ? 'RESERVED' : 'AVAILABLE')
       : cRow.status;
-    claimedPwpCodes.push({ code, prevStatus });
+    claimedPwpCodes.push({ code, prevStatus, companyId: pwpCompanyId });
     if (grantSofaComboIds) pwpSofaByIdx.set(idx, grantSofaComboIds);
     else pwpBaseByIdx.set(idx, grantPwpPrice);
   }
@@ -3791,13 +3807,18 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      after the claim (drift 400 / insert failure) so a failed order never
      silently burns a voucher. */
   const rollbackPwpClaims = async () => {
-    for (const { code, prevStatus } of claimedPwpCodes) {
+    for (const { code, prevStatus, companyId: claimedCompanyId } of claimedPwpCodes) {
       const patch: Record<string, unknown> = {
         status: prevStatus, redeemed_doc_no: null, redeemed_item_code: null,
         updated_at: new Date().toISOString(),
       };
       if (prevStatus === 'RESERVED') patch.source_doc_no = null;  // we stamped it on claim
-      await sb.from('pwp_codes').update(patch).eq('code', code).eq('status', 'USED');
+      /* Company-filtered for the reason given at the claim: a rollback keyed on
+         code alone can un-burn ANOTHER company's row. Reachable only for codes
+         this request actually claimed, and a claim is refused unless the company
+         resolved, so pwpCompanyId is non-null here by construction. */
+      await sb.from('pwp_codes').update(patch)
+        .eq('code', code).eq('status', 'USED').eq('company_id', claimedCompanyId);
     }
   };
 
@@ -10143,16 +10164,25 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     if (error) console.error('[tbc-swap-sofa] sofa reward revert failed for', uid, error.message); // eslint-disable-line no-console
   }
   if (rewardCtx) {
+    /* Same (company_id, code) hazard as the claim path: keying a WRITE on `code`
+       alone reaches whichever company's row sorts first. Both branches below
+       re-point or RELEASE a voucher, so an unfiltered one hands another
+       company's code back to stock. */
+    const rewardCompanyId = activeCompanyId(c);
+    /* Refuse rather than write unscoped. An unresolved company on a voucher write
+       is not a reason to widen the filter to every company — the add-line claim
+       answers the same situation with 409 company_unresolved. */
+    if (rewardCompanyId == null) throw new Error('TBC sofa reward code write refused: company unresolved');
     if (rewardComboMatch) {
       const { error } = await sb.from('pwp_codes')
         .update({ redeemed_item_code: newLeadCode, updated_at: new Date().toISOString() })
-        .eq('code', rewardCtx.code);
+        .eq('code', rewardCtx.code).eq('company_id', rewardCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC sofa reward code re-point failed');
       if (error) console.error('[tbc-swap-sofa] reward code re-point failed:', error.message); // eslint-disable-line no-console
     } else {
       const { error } = await sb.from('pwp_codes')
         .update({ status: 'AVAILABLE', redeemed_doc_no: null, redeemed_item_code: null, updated_at: new Date().toISOString() })
-        .eq('code', rewardCtx.code);
+        .eq('code', rewardCtx.code).eq('company_id', rewardCompanyId);
       throwAtomicCommandWrite(sb, error, 'TBC sofa reward code release failed');
       if (error) console.error('[tbc-swap-sofa] reward code release failed:', error.message); // eslint-disable-line no-console
       else pwpVoucherReleased = rewardCtx.code;
