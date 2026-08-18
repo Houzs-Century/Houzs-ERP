@@ -43,6 +43,7 @@ import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { recomputePcoReceived } from './purchase-consignment-receives';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -468,6 +469,8 @@ purchaseConsignmentReturns.post('/', async (c) => {
     .filter((x): x is string => !!x))];
   const remainingByReceiveItem = new Map<string, number>();
   if (preReceiveItemIds.length > 0) {
+    const xl = await assertSourceLinesInCompany(sb, c, 'purchase_consignment_receive_items', preReceiveItemIds);
+    if (!xl.ok) return c.json(xl.body, xl.status);
     const { data: giRows } = await sb.from('purchase_consignment_receive_items')
       .select('id, qty_accepted, returned_qty').in('id', preReceiveItemIds);
     for (const r of (giRows ?? []) as Array<{ id: string; qty_accepted: number; returned_qty: number }>) {
@@ -957,6 +960,8 @@ purchaseConsignmentReturns.post('/:id/items', async (c) => {
   // PC-receive-linked line: cap qty at that receive line's remaining.
   const receiveItemId = (it.pcReceiveItemId as string) ?? null;
   if (receiveItemId) {
+    const xl = await assertSourceLinesInCompany(sb, c, 'purchase_consignment_receive_items', [receiveItemId]);
+    if (!xl.ok) return c.json(xl.body, xl.status);
     const capLock = await qtyCapRefusal(sb, {
       table: 'purchase_consignment_receive_items', id: receiveItemId,
       capColumn: 'qty_accepted', drawnColumns: ['returned_qty'],

@@ -89,6 +89,13 @@ function harness(tables: Record<string, Row[]>, opts?: { perms?: string[] }) {
     { id: CALLER_STAFF, user_id: CALLER_HOUZS_ID, name: 'Counter' },
     { id: OTHER_STAFF, user_id: 10, name: 'Someone Else' },
   ];
+  /* The count warehouse, in THIS company. Added 2026-08-18 with
+     assertWarehouseInCompany (scm/lib/ref-in-company.ts): create now proves the
+     body's warehouseId belongs to the active company before it snapshots
+     anything, so a fixture with no warehouses table answers 404 — which is the
+     new guard working, not a regression. Modelling it here keeps the accountability
+     tests about accountability. */
+  tables.warehouses ??= [{ id: 'w1', company_id: CO, code: 'MAIN', name: 'Main' }];
   const app = new Hono();
   app.use('*', async (c, next) => {
     c.set('supabase' as never, {
@@ -279,9 +286,9 @@ describe('blind counts — server-side stripping', () => {
 describe('create — assignee required, NONZERO scope', () => {
   const createTables = (): Record<string, Row[]> => ({
     v_inventory_all_skus: [
-      { warehouse_id: 'w1', product_code: 'CODY', product_name: 'Cody sofa', category: 'SOFA' },
-      { warehouse_id: 'w1', product_code: 'EMPTY', product_name: 'Ghost SKU', category: 'SOFA' },
-      { warehouse_id: 'w1', product_code: 'ZEROED', product_name: 'Consumed SKU', category: 'SOFA' },
+      { company_id: CO, warehouse_id: 'w1', product_code: 'CODY', product_name: 'Cody sofa', category: 'SOFA' },
+      { company_id: CO, warehouse_id: 'w1', product_code: 'EMPTY', product_name: 'Ghost SKU', category: 'SOFA' },
+      { company_id: CO, warehouse_id: 'w1', product_code: 'ZEROED', product_name: 'Consumed SKU', category: 'SOFA' },
     ],
     inventory_balances: [
       { company_id: CO, warehouse_id: 'w1', product_code: 'CODY', variant_key: 'fabriccode=bf-16', product_name: 'Cody sofa', qty: 3 },

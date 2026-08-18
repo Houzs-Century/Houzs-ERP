@@ -87,10 +87,28 @@ const jsonOut = process.argv.includes("--json");
    NAME appearing in a handler proves nothing (see the note at the scope test).*/
 const DELEGATION_GUARDS = [
   "selfScopedSalesBlocked",   // mfg-sales-orders.ts:806  - 18 /:docNo handlers
-  "salesDocOutOfScope",       // lib/salesScope.ts
+  /* REMOVED 2026-08-18: "salesDocOutOfScope". It was listed as a delegation
+     guard — a named function whose body performs the SCOPED READ — and it does
+     nothing of the kind. lib/salesScope.ts:86-95 resolves the caller's
+     SALESPERSON subtree (resolveSalesScopeIds) and answers "is this document's
+     salesperson_id outside it". There is no company id in that function, in the
+     function it calls, or in the table it reads. Two callers in the same book
+     both pass it; a view-all tier makes it return false unconditionally.
+     Every entry on this list is supposed to have been opened and verified, and
+     this one was verified against the wrong question — "does it scope?" rather
+     than "does it scope by COMPANY?". Deleting it takes the honest finding count
+     from 19 to 21. */
   "requireScmCompany",
   "loadAmendmentForWrite",    // so-amendments.ts:122     - all 6 mutation gates
   "resolveAllocationParent",  // mfg-purchase-orders.ts:3354
+  /* routes/projects.ts — the child-row / parent-project ownership gates added
+     2026-08-18. Each runs `SELECT 1 ... WHERE id = ?` with activeCompanySql (or
+     an EXISTS on the parent project for the child tables that carry no
+     company_id) and returns a 404 the handler returns as-is, BEFORE any other
+     probe. Verified by reading both, which is the bar for this list — see the
+     salesDocOutOfScope note above for what happens when it is not met. */
+  "refuseForeignChild",
+  "refuseForeignProject",
 ];
 
 /* SCOPE PRIMITIVES - only count inside an actual  query. */
@@ -173,14 +191,185 @@ const ID_PREDICATE = /\.eq\(\s*['"`](id|[a-z_]+_id)['"`]/;
    tables proven to carry company_id — because a wide list on a checker that
    cannot parse SQL would produce noise, and noise is how a checker dies. */
 const RAW_SQL_STMT = /\.prepare\(|\bsql`|\bdb\.query\(/;
+
+/* FRAGMENT DEFINITION-USE LINKING — added 2026-08-18, and it is what keeps the
+   widened table list above from drowning the report.
+
+   The dominant raw-SQL idiom here computes the predicate ONCE at the top of the
+   handler and interpolates it into several statements:
+
+       const coSql = assrCompanySql(c);
+       ...
+       `UPDATE assr_cases SET archived_at = ... WHERE id = ?${coSql}`
+
+   The statement window looks back six lines, so it sees `${coSql}` and not what
+   coSql holds. Widening the window is the wrong fix — this file's history is
+   four separate mis-slices from windows that were too wide or too narrow. Link
+   the two instead: collect the NAMES assigned from a known fragment builder
+   anywhere in the handler, then treat a statement that interpolates one of THOSE
+   names as scoped. That is a definition-use link, not a "the helper is mentioned
+   somewhere" match — which is the acquittal this checker has already been burned
+   by twice. A name that is never assigned from a builder still proves nothing. */
+const FRAGMENT_BUILDERS =
+  "activeCompanySql|allowedCompaniesSql|houzsCompanySql|companyScopeSql|companiesPred|assrCompanySql";
+const FRAGMENT_ASSIGN_G = new RegExp(
+  `\\b(?:const|let|var)\\s+([A-Za-z_$][\\w$]*)\\s*=\\s*(?:${FRAGMENT_BUILDERS})\\s*\\(`,
+  "g",
+);
 /* `company_id` bare (no `=`) counts too: an INSERT names it in the column list,
    e.g. `INSERT INTO project_venues (name, ..., company_id) VALUES (...)`. That
    is the row being stamped with its company, which is the scoping act for a
    create. Requiring `=` or `IN` reported every such INSERT as unscoped. */
 const RAW_SQL_SCOPED =
-  /\bcompany_id\b|activeCompanySql|allowedCompaniesSql|houzsCompanySql|companyScopeSql|companiesPred/i;
+  /\bcompany_id\b|\bcompany_code\b|activeCompanySql|allowedCompaniesSql|houzsCompanySql|companyScopeSql|companiesPred|activeCompanyCodePred|refuseForeignChild|refuseForeignProject/i;
+/* WIDENED 2026-08-18. The list was "deliberately narrow — only tables proven to
+   carry company_id", and it stayed narrow enough to miss the two worst raw-SQL
+   leaks in the tree:
+     · email_outbox — GET /mail-center/outbox and /outbox/:id returned every
+       company's outbound mail INCLUDING body_html, which carries the
+       /invite/<token> and /reset/<token> links. Its company column is
+       company_code (mig 0094), not company_id, which is why RAW_SQL_SCOPED had
+       to learn that name too.
+     · assr_cases — the PRE-AUTH GET /assr-form-intake/status-export dumped
+       customer_name / phone / addr1-4 / complaint_issue for both companies.
+   Both tables were proven to carry a company column before being added, which
+   remains the bar: a wide list on a checker that cannot parse SQL is noise, and
+   noise is how a checker dies. */
 const RAW_SQL_TABLES =
-  /\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:scm\.)?(warehouses|mfg_sales_orders|delivery_orders|purchase_orders|grns|purchase_invoices|sales_invoices|payment_vouchers|suppliers|mfg_products|project_venues|trips|stock_transfers|consignment_sales_orders|consignment_delivery_orders)\b/i;
+  /\b(?:FROM|JOIN|UPDATE|INTO)\s+(?:scm\.)?(warehouses|mfg_sales_orders|delivery_orders|purchase_orders|grns|purchase_invoices|sales_invoices|payment_vouchers|suppliers|mfg_products|project_venues|trips|stock_transfers|consignment_sales_orders|consignment_delivery_orders|email_outbox|assr_cases|project_finance_lines|project_checklist|project_checklist_sections|project_checklist_attachments|projects)\b/i;
+
+/* ══════════════════════════════════════════════════════════════════════════
+   THE THREE SHAPES THIS CHECKER COULD NOT SEE AT ALL — added 2026-08-18.
+
+   Everything above is anchored on "a row addressed BY ID". That is one shape of
+   cross-company access and it is not the common one. On 2026-08-18 this script
+   printed `0 of them WRITE` over a tree that contained, among others, a
+   cross-tenant account-takeover surface and a platform-wide staff directory —
+   because none of them addressed a row by id. A gate that reports zero while the
+   leaks exist is worse than no gate: it ENDS the search.
+
+   1. SET-READ — a LIST with no predicate at all. `.from('staff').select(...)
+      .eq('active', true)` has no id, so ID_PREDICATE never fires and the
+      statement is invisible. hr.ts GET /pickers is exactly this, sitting in the
+      SAME Promise.all as four siblings that each carry
+      `.eq('company_id', co.companyId)`. This pass is judged PER STATEMENT and
+      is deliberately NOT acquitted by a scoped sibling — a scoped sibling is
+      precisely what made that handler look fine.
+
+   2. GLOBAL NATURAL KEY — a write addressed by a human-meaningful key, or an
+      upsert whose onConflict target omits company_id. The LIBRARY pass already
+      does this for src/scm/lib (it is what found the pwp_codes burn); route
+      handlers had no equivalent, so the same shape in a route was unseen. An
+      upsert onto a key two companies can each hold their own of is how
+      scm.pos_carts let one company's cart overwrite the other's (CLAUDE.md).
+
+   3. RPC DELEGATION — `.rpc('fn_x', {...})`. The predicate moves inside a
+      Postgres function this scanner cannot read, so the handler looks clean
+      whatever the function does. This pass cannot judge the function; it
+      reports the call when NO company argument is passed, which is the only
+      thing it can honestly say, and leaves the verdict to a reader.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* Tables where a FULL LIST is a disclosure and which are PROVEN to carry a
+   company column. Same bar as RAW_SQL_TABLES: proven, not guessed, because a
+   speculative entry produces noise and noise is how a checker gets switched
+   off. Provenance for each is migration 0083 / 0086 / 0090 / 0093 / 0170 unless
+   noted. */
+const SET_READ_TABLES = new Set([
+  "warehouses", "mfg_products", "suppliers", "customers", "fabric_library",
+  "special_addons", "showrooms", "mfg_sales_orders", "purchase_orders", "grns",
+  "purchase_invoices", "sales_invoices", "purchase_returns", "delivery_orders",
+  "payment_vouchers", "stock_transfers", "stock_takes", "inventory_balances",
+  "inventory_lots", "project_venues", "trips", "dp_orders", "trip_stops",
+  "purchase_order_items", "grn_items",
+]);
+
+/** `.from('x')` / `.from("x")` — the table this statement reads or writes. */
+const FROM_TABLE = /\.from\(\s*['"`]([a-z][a-z0-9_]*)['"`]\s*\)/;
+
+/** Any row-narrowing predicate at all: an id, or an `.in('id', ...)`. */
+const ANY_ID_NARROWING = /\.(eq|in)\(\s*['"`](id|[a-z_]+_id)['"`]/;
+
+/* BUILDER-IN-A-VARIABLE, linked by NAME. The by-id passes have `wrapsABuilder`
+   for this shape, and it is deliberately loose there ("any bare identifier")
+   because it only ever ACQUITS a handler that already had a scoped statement.
+   The SET-READ pass cannot borrow that: it is judged per statement precisely so
+   a scoped sibling cannot excuse an unscoped list, and `wrapsABuilder` would
+   hand it exactly that sibling-acquittal back.
+
+   So link the two by the VARIABLE:
+
+       let soQ = sb.from('mfg_sales_orders').select(...).limit(2000);
+       ...
+       soQ = scopeToAllowedCompanies(soQ, c);          // ar-reconciliation.ts:93
+
+       const soQuery = sb.from('mfg_sales_orders').select(...);
+       ...
+       scopeToCompany(soQuery, c)                       // routes/search.ts
+
+   A list is acquitted only when the scope is applied to THAT NAME. Without this
+   the pass reported 137 set-reads, the great majority of them this shape and
+   correct; with it the number is the honest one. */
+const QUERY_ASSIGN = /\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?[A-Za-z_$][\w$]*\s*$|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:await\s+)?[A-Za-z_$][\w$]*\s*\.\s*from\(/;
+const scopeAppliedToName = (joined, name) =>
+  new RegExp(
+    `(?:scopeToCompany|scopeToCompanyId|scopeToAllowedCompanies)\\s*\\(\\s*${name}\\b` +
+      `|\\b${name}\\s*=\\s*${name}\\s*\\.\\s*(?:eq|in)\\(\\s*['"\`]company_id` +
+      `|\\b${name}\\s*\\.\\s*(?:eq|in)\\(\\s*['"\`]company_id`,
+  ).test(joined);
+
+/** `.upsert(..., { onConflict: 'a,b' })` — captures the conflict target. */
+const UPSERT_ON_CONFLICT = /onConflict\s*:\s*['"`]([^'"`]*)['"`]/;
+
+/** `.rpc('name'` — captures the function name. */
+const RPC_CALL = /\.rpc\(\s*['"`]([a-z_][a-z0-9_]*)['"`]/;
+
+/** A company argument handed to an RPC: p_company_id / companyId / company_id. */
+const RPC_COMPANY_ARG = /\b(p_)?company(_id|Id)\b/;
+
+/* SELF-TEST for the three new passes, same rule as every other pattern here:
+   a pattern that cannot match produces a plausible report, so assert each one
+   against a string that is REAL code from this tree before scanning. */
+{
+  const ok =
+    FROM_TABLE.test("sb.from('staff').select('id, name')") &&
+    FROM_TABLE.exec("sb.from('staff').select('id')")[1] === "staff" &&
+    !ANY_ID_NARROWING.test("sb.from('staff').select('id, name').eq('active', true)") &&
+    ANY_ID_NARROWING.test(".eq('company_id', x)") &&
+    ANY_ID_NARROWING.test(".in('id', ids)") &&
+    UPSERT_ON_CONFLICT.exec("{ onConflict: 'model_id' }")[1] === "model_id" &&
+    UPSERT_ON_CONFLICT.exec("{ onConflict: 'staff_id,company_id' }")[1] === "staff_id,company_id" &&
+    RPC_CALL.exec("await sb.rpc('fn_stock_transfer_apply', {")[1] === "fn_stock_transfer_apply" &&
+    RPC_COMPANY_ARG.test("p_company_id: co.companyId") &&
+    RPC_COMPANY_ARG.test("companyId: co.companyId") &&
+    !RPC_COMPANY_ARG.test("p_transfer_id: id, p_user_id: user.id") &&
+    [...("  const coSql = assrCompanySql(c);".matchAll(FRAGMENT_ASSIGN_G))].map((m) => m[1])[0] === "coSql" &&
+    [...("  const brandCoSql = activeCompanySql(c, \"b.company_id\");".matchAll(FRAGMENT_ASSIGN_G))].map((m) => m[1])[0] === "brandCoSql" &&
+    [...("  const notAFragment = someOtherThing(c);".matchAll(FRAGMENT_ASSIGN_G))].length === 0 &&
+    (() => { const m = QUERY_ASSIGN.exec("  let soQ = sb\n    .from('mfg_sales_orders')"); return (m?.[1] ?? m?.[2]) === "soQ"; })() &&
+    (() => { const m = QUERY_ASSIGN.exec("  const prodQuery = sb.from('mfg_products').select('id')"); return (m?.[1] ?? m?.[2]) === "prodQuery"; })() &&
+    scopeAppliedToName("  soQ = scopeToAllowedCompanies(soQ, c);", "soQ") &&
+    scopeAppliedToName("  const { data } = await scopeToCompany(soQuery, c);", "soQuery") &&
+    !scopeAppliedToName("  soQ = soQ.in('salesperson_id', scopeIds);", "soQ");
+  if (!ok) {
+    console.error("check-company-scope: NEW-SHAPES self-test FAILED - not reporting.");
+    process.exit(2);
+  }
+}
+
+/* EXTENDED 2026-08-18 when the route pass started using it. Exclusion (2) in
+   the paragraph above is "CONCURRENCY GUARDS — a compare-and-swap predicate,
+   not identity", and the list only ever named the two examples that had bitten:
+   `.eq('paid_centi', prev)` and `.eq('updated_at', prev)`. The route handlers
+   run the same class under different names — `version`, `edit_lease_token`,
+   `apply_lease_token` — and they produced 20 of the route pass's first 40
+   findings, all of them compare-and-swap on a row the caller had already
+   chosen. `stop_type` is exclusion (3), a STATE filter, and slipped through only
+   because the list spelt it `type` exactly rather than `*_type`. Each addition
+   below is one of those two documented exclusions, not a new one. */
+const NOT_IDENTITY =
+  /^(id|.*_id|status|state|.*_at|.*_centi|.*_sen|qty|.*_qty|type|.*_type|kind|active|deleted|version|.*_version|.*_token|reason)$/;
+const NATURAL_KEY_EQ_G = /\.eq\(\s*['"`]([a-z][a-z0-9_]*)['"`]/g;
 
 /* A registration whose body is a NAMED function declared elsewhere:
      paymentVouchers.post('/:id/cancel', cancelPaymentVoucherHandler);
@@ -248,6 +437,23 @@ function stripComments(lines) {
 }
 
 const findings = [];
+/* THE SUPPRESSION LEDGER. `// company-scope:` used to make a handler vanish
+   from this report with no trace that it had ever been considered — 67 of them
+   across the two route trees, and one sat on scm/routes/staff.ts PATCH
+   /by-user/:userId/showroom, whose write keyed on user_id alone. It was not even
+   written as an opt-out: it was the first two words of a paragraph explaining
+   the WAREHOUSE half, and this test is a substring match, so prose silenced the
+   handler. A suppression the reader cannot see is a suppression nobody
+   re-checks, which is the same rule the LIBRARY pass already follows for its
+   file-level exemptions. They are all printed now, with their reason. */
+const suppressions = [];
+function recordSuppression(file, line, text, handler) {
+  const reason = (String(text).split("company-scope:")[1] ?? "").trim().replace(/\*\/\s*$/, "").trim();
+  suppressions.push({ file, line, handler, reason: reason.slice(0, 90) });
+}
+/* The three shapes ID_PREDICATE cannot see. Kept in their own bucket so the
+   historical count above stays comparable across runs. */
+const shapeFindings = [];
 let handlersChecked = 0;
 
 for (const dir of ROUTE_DIRS) {
@@ -281,7 +487,13 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.end
        BODY works too. Both are natural places to put it, and checking only one
        meant a correctly annotated handler kept being reported — which is how an
        opt-out mechanism gets ignored. */
-    if (rawBody.some((l) => l.includes("company-scope:"))) return;
+    {
+      const at = rawBody.findIndex((l) => l.includes("company-scope:"));
+      if (at >= 0) {
+        recordSuppression(`backend/${relDir}/${file}`, start + at + 1, rawBody[at], `${method} ${routePath}`);
+        return;
+      }
+    }
 
     /* If the registration names a handler declared elsewhere, scan THAT body.
        Slicing "this registration to the next" would otherwise read the wrong
@@ -335,9 +547,23 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.end
     /* Second opt-out pass — see the note on the first. For a NAMED handler the
        body scanned above is somewhere else in the file, so an annotation
        written as the function's first line is invisible to the naive slice. */
-    if (raw.slice(scanOffset, scanOffset + scanBody.length).some((l) => l.includes("company-scope:"))) return;
+    {
+      const window = raw.slice(scanOffset, scanOffset + scanBody.length);
+      const at = window.findIndex((l) => l.includes("company-scope:"));
+      if (at >= 0) {
+        recordSuppression(`backend/${relDir}/${file}`, scanOffset + at + 1, window[at], `${method} ${routePath}`);
+        return;
+      }
+    }
 
     const joined = scanBody.join("\n");
+
+    /* Names this handler assigned from a raw-SQL fragment builder. Recomputed
+       per handler so a name defined in a DIFFERENT handler can never acquit
+       this one. */
+    const fragmentNames = new Set(
+      [...joined.matchAll(FRAGMENT_ASSIGN_G)].map((m) => m[1]),
+    );
 
     /** The statement containing line i: from its `.from(` back-anchor forward. */
     const statementAround = (i) => {
@@ -405,6 +631,77 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.end
        read and verified. A scope PRIMITIVE only counts inside a real `.from(`
        QUERY: that is the difference between a predicate and a mention, and it
        is exactly what delivery-orders-mfg PATCH /:id exploited by accident. */
+    /* ── THE THREE NEW SHAPES, judged PER STATEMENT ─────────────────────────
+       Run BEFORE the by-id acquittals below, and never acquitted by them: a
+       scoped SIBLING statement is exactly what hid hr.ts GET /pickers, so
+       "something else in this handler was scoped" must not excuse a list that
+       is not. Reported in their own bucket. */
+    scanBody.forEach((l, i) => {
+      if (!l.includes(".from(") && !l.includes(".rpc(")) return;
+      const stmtRaw = statementAround(i);
+      const stmt = stripInsertPayload(stmtRaw);
+      const abs = scanOffset + i;
+      const scoped = SCOPE_PRIMITIVES.some((h) => stmt.includes(h)) || MANUAL_SCOPE.test(stmt);
+
+      // 3. RPC DELEGATION — the predicate moved somewhere this cannot read.
+      const rpc = RPC_CALL.exec(l);
+      if (rpc) {
+        if (!RPC_COMPANY_ARG.test(stmtRaw)) {
+          shapeFindings.push({
+            file: `backend/${relDir}/${file}`, handler: `${method} ${routePath}`,
+            kind: "rpc", writes: true, line: abs + 1,
+            text: `${rpc[1]}() — no company argument passed`,
+          });
+        }
+        return;
+      }
+
+      const tbl = FROM_TABLE.exec(l) ?? FROM_TABLE.exec(stmt);
+      if (!tbl) return;
+      const table = tbl[1];
+
+      // 2. GLOBAL NATURAL KEY — a write addressed by a human-meaningful key, or
+      //    an upsert whose conflict target omits company_id.
+      const isWrite = /\.update\(|\.delete\(|\.upsert\(|\.insert\(/.test(stmtRaw);
+      if (isWrite && !scoped) {
+        const conflict = UPSERT_ON_CONFLICT.exec(stmtRaw);
+        if (conflict && !/\bcompany_id\b/.test(conflict[1])) {
+          shapeFindings.push({
+            file: `backend/${relDir}/${file}`, handler: `${method} ${routePath}`,
+            kind: "upsert-key", writes: true, line: abs + 1,
+            text: `${table} upsert onConflict '${conflict[1]}' — no company_id in the conflict target`,
+          });
+          return;
+        }
+        const keys = [...stmt.matchAll(NATURAL_KEY_EQ_G)].map((m) => m[1])
+          .filter((k) => !NOT_IDENTITY.test(k));
+        if (keys.length && /\.update\(|\.delete\(/.test(stmtRaw)) {
+          shapeFindings.push({
+            file: `backend/${relDir}/${file}`, handler: `${method} ${routePath}`,
+            kind: "natural-key", writes: true, line: abs + 1,
+            text: `${table} written by '${[...new Set(keys)].join(", ")}' — a key each company can hold its own of`,
+          });
+          return;
+        }
+      }
+
+      // 1. SET-READ — a list with no row narrowing and no company predicate.
+      if (!SET_READ_TABLES.has(table)) return;
+      if (!/\.select\(/.test(stmt)) return;
+      if (isWrite) return;                       // handled above
+      if (ANY_ID_NARROWING.test(stmt)) return;   // narrowed to known rows
+      if (scoped) return;
+      // Scope applied later, to THIS query's variable. See QUERY_ASSIGN.
+      const qa = QUERY_ASSIGN.exec(stmtRaw);
+      const qName = qa ? (qa[1] ?? qa[2]) : null;
+      if (qName && scopeAppliedToName(joined, qName)) return;
+      shapeFindings.push({
+        file: `backend/${relDir}/${file}`, handler: `${method} ${routePath}`,
+        kind: "set-read", writes: false, line: abs + 1,
+        text: `${table} listed with no row narrowing and no company predicate`,
+      });
+    });
+
     const delegated = DELEGATION_GUARDS.some((h) => joined.includes(h));
     const hasScopedQuery = scanBody.some((l, i) => {
       if (!l.includes(".from(")) return false;
@@ -464,6 +761,10 @@ for (const file of fs.readdirSync(dir).filter((f) => f.endsWith(".ts") && !f.end
       const stmt = scanBody.slice(back, Math.min(i + 12, scanBody.length)).join("\n");
       if (!RAW_SQL_TABLES.test(stmt)) return;
       if (RAW_SQL_SCOPED.test(stmt)) return;
+      // A fragment variable this handler assigned from a real builder, and that
+      // THIS statement interpolates. See FRAGMENT_ASSIGN_G.
+      if (fragmentNames.size > 0 &&
+          [...fragmentNames].some((n) => stmt.includes("${" + n + "}"))) return;
       const abs = scanOffset + i;
       hits.push({
         line: abs + 1,
@@ -549,8 +850,8 @@ const LIB_WRITE = /\.(update|delete|upsert)\s*\(/;
 
    What is left is what bit us: a HUMAN-MEANINGFUL key that two companies can
    each hold their own of. */
-const NOT_IDENTITY = /^(id|.*_id|status|state|.*_at|.*_centi|.*_sen|qty|.*_qty|type|kind|active|deleted)$/;
-const NATURAL_KEY_EQ_G = /\.eq\(\s*['"`]([a-z][a-z0-9_]*)['"`]/g;
+/* Both moved ABOVE the handler passes on 2026-08-18 — the route-handler
+   natural-key pass needs them too, and a second copy is how a rule drifts. */
 /* SELF-TEST for this pass, same rule as the one at the top of the file: a
    pattern that cannot match produces a plausible report. Both assertions below
    encode a false positive this pass actually produced, so a future edit that
@@ -563,6 +864,10 @@ const NATURAL_KEY_EQ_G = /\.eq\(\s*['"`]([a-z][a-z0-9_]*)['"`]/g;
     keysOf(".eq('so_item_id', x)").length === 0 &&
     keysOf(".eq('paid_centi', prev)").length === 0 &&   // concurrency guard, not identity
     keysOf(".eq('status', 'USED')").length === 0 &&     // state filter, not identity
+    keysOf(".eq('version', prev)").length === 0 &&      // concurrency guard, not identity
+    keysOf(".eq('edit_lease_token', tok)").length === 0 &&
+    keysOf(".eq('stop_type', 'DELIVERY')").length === 0 &&
+    keysOf(".eq('code', args.code)").length === 1 &&    // STILL the real signal
     MANUAL_SCOPE.test(".eq('company_id', args.companyId)") &&
     /* A stamp is not a predicate. Asserted so the fifth blind spot cannot
        return: seven cross-company MONEY writes hid behind this exact shape. */
@@ -650,9 +955,21 @@ for (const dir of LIB_DIRS) {
 }
 
 findings.sort((a, b) => Number(b.writes) - Number(a.writes) || a.file.localeCompare(b.file) || a.line - b.line);
+shapeFindings.sort((a, b) => a.kind.localeCompare(b.kind) || a.file.localeCompare(b.file) || a.line - b.line);
+suppressions.sort((a, b) => a.file.localeCompare(b.file) || a.line - b.line);
+
+const KIND_LABEL = {
+  "set-read": "SET-READ      a list with no row narrowing and no company predicate",
+  "natural-key": "NATURAL-KEY   a write addressed by a key each company can hold its own of",
+  "upsert-key": "UPSERT-KEY    an upsert whose onConflict target omits company_id",
+  rpc: "RPC           the predicate moved into a Postgres function this cannot read",
+};
 
 if (jsonOut) {
-  console.log(JSON.stringify({ handlersChecked, findings, libStatementsChecked, libFindings }, null, 2));
+  console.log(JSON.stringify(
+    { handlersChecked, findings, shapeFindings, suppressions, libStatementsChecked, libFindings },
+    null, 2,
+  ));
 } else {
   const w = findings.filter((f) => f.writes).length;
   console.log(
@@ -669,6 +986,47 @@ if (jsonOut) {
     }
     console.log(`  ${f.writes ? "WRITE" : "read "}  L${f.line}  ${f.handler}`);
     for (const h of f.hits) console.log(`           L${h.line}  ${h.text}`);
+  }
+
+  /* ── The three shapes ID_PREDICATE cannot see ────────────────────────────
+     Printed as their OWN section, not folded into the count above, so the
+     historical number stays comparable run to run and a reader can tell which
+     pass produced which finding. */
+  const shapeWrites = shapeFindings.filter((f) => f.writes).length;
+  console.log(
+    `\n\nShapes the by-id passes are BLIND to (set-reads, global natural keys, RPC delegation):\n` +
+      `${shapeFindings.length} statement(s), ${shapeWrites} of them WRITE or delegate a write.\n` +
+      `Judged PER STATEMENT and deliberately NOT excused by a scoped sibling — a scoped\n` +
+      `sibling in the same handler is exactly what hid the staff-picker leak.\n`,
+  );
+  let lastKind = "";
+  let lastShapeFile = "";
+  for (const f of shapeFindings) {
+    if (f.kind !== lastKind) {
+      console.log(`\n  ${KIND_LABEL[f.kind] ?? f.kind}`);
+      lastKind = f.kind;
+      lastShapeFile = "";
+    }
+    if (f.file !== lastShapeFile) { console.log(`\n  ${f.file}`); lastShapeFile = f.file; }
+    console.log(`    ${f.writes ? "WRITE" : "read "}  L${f.line}  ${f.handler}`);
+    console.log(`             ${f.text}`);
+  }
+
+  /* ── The suppression ledger ──────────────────────────────────────────────
+     Every `// company-scope:` that silenced a handler, with the reason it gave.
+     Silent before 2026-08-18, which is how one came to sit on an unscoped write
+     without being an opt-out at all — it was the opening words of a paragraph
+     about a DIFFERENT table in the same handler, and this test is a substring
+     match. Read this list when it changes; that is the whole point of it. */
+  console.log(
+    `\n\nSuppressions — "// company-scope:" annotations that silenced a handler: ${suppressions.length}.\n` +
+      `A suppression the reader cannot see is a suppression nobody re-checks.\n`,
+  );
+  let lastSupFile = "";
+  for (const sup of suppressions) {
+    if (sup.file !== lastSupFile) { console.log(`\n  ${sup.file}`); lastSupFile = sup.file; }
+    console.log(`    L${sup.line}  ${sup.handler}`);
+    console.log(`             ${sup.reason || "(no reason given)"}`);
   }
 
   console.log(
@@ -700,5 +1058,16 @@ if (jsonOut) {
    a gate someone switches off. The read findings are still printed above.
    Sibling checks make the same split: check-silent-mutations gates on SILENT
    (not CAUGHT/UNRESOLVED), check-shared-mirrors on DIVERGED (not COSMETIC). */
-const writeFindings = findings.filter((f) => f.writes).length;
-process.exit(strict && writeFindings ? 1 : 0);
+const writeFindings =
+  findings.filter((f) => f.writes).length + shapeFindings.filter((f) => f.writes).length;
+/* `process.exitCode`, NOT `process.exit()`. Found 2026-08-18 by a test that
+   ran this script and read its stdout: when stdout is a PIPE (a shell
+   redirect, `| grep`, execFileSync, a CI log collector) Node's writes are
+   ASYNCHRONOUS, and `process.exit()` tears the process down before the buffer
+   drains — so the REPORT IS TRUNCATED, silently, and only when piped. Measured:
+   8,647 characters through a pipe against 40,000+ on a terminal, with the whole
+   new-shapes section and the suppression ledger simply missing. A gate that
+   prints less than it found, only when a machine is reading it, is the same
+   class of fault as the one this script exists to catch. Setting exitCode lets
+   node exit naturally once stdout has flushed; the exit STATUS is unchanged. */
+process.exitCode = strict && writeFindings ? 1 : 0;

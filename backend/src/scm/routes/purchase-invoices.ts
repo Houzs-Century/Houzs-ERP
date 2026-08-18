@@ -22,6 +22,7 @@ import { escapeForOr } from '../lib/postgrest-search';
 import {
   findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
 } from '../lib/return-unlinked-lines';
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -2077,14 +2078,13 @@ purchaseInvoices.post('/:id/items', async (c) => {
   // (accepted - invoiced - returned).
   const grnItemId = (it.grnItemId as string) ?? null;
   if (grnItemId) {
+    const xl = await assertSourceLinesInCompany(sb, c, 'grn_items', [grnItemId]);
+    if (!xl.ok) return c.json(xl.body, xl.status);
     /* Same refusal as every other path that can attach a GRN line — a receipt
        carried over from AutoCount is invoiced by the converter, never by hand. */
     const mig = await migratedRefusalForGrnItems(sb, [grnItemId]);
     if (!mig.ok) return c.json({ error: 'load_failed', reason: mig.reason }, 500);
     if (mig.refusal) return c.json(mig.refusal, 409);
-    /* The remaining-quantity cap was hand-rolled here and main replaced it with
-       the shared helper, which takes the row lock this arithmetic never did.
-       Keep the helper; the migrated refusal above is a different question. */
     const capLock = await qtyCapRefusal(sb, {
       table: 'grn_items', id: grnItemId,
       capColumn: 'qty_accepted', drawnColumns: ['invoiced_qty', 'returned_qty'],

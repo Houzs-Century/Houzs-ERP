@@ -48,6 +48,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
+import { assertWarehouseInCompany } from '../lib/ref-in-company';
 import { recordEntityAudit, compactChanges, fieldChange, statusChange, assertAuditWritable, auditUnavailableBody, type FieldChange } from '../lib/entity-audit';
 import { resolveForcedUnitCostSen, type LotCostRow } from '../shared';
 import {
@@ -135,12 +136,26 @@ const fetchScopedSkus = async (
   c: any,
 ): Promise<{ rows: ScopedSku[]; error?: string }> => {
   // 1) Scope → the set of product_codes (+ names) at this warehouse.
-  // NOTE: v_inventory_all_skus intentionally aggregates across companies and has
-  // NO company_id column (see inventory.ts) — product codes are per-company, and
-  // the balances read below is company-scoped, so the snapshot stays isolated.
-  let q = sb.from('v_inventory_all_skus')
+  /* ⚠️ CORRECTED 2026-08-18. This read used to carry: "v_inventory_all_skus
+     intentionally aggregates across companies and has NO company_id column (see
+     inventory.ts) — product codes are per-company, and the balances read below
+     is company-scoped, so the snapshot stays isolated."
+
+     The view DOES have company_id. Migration 0156 rebuilt it precisely because
+     it was a "CONFIRMED live leak", appending `w.company_id` as the last column
+     specifically "so the route can .eq('company_id', <active>) it", and adding
+     `p.company_id = w.company_id` to its WHERE. So the column existed and was
+     put there for this. The rest of the old note was also doing work it could
+     not do: a scoped BALANCES read cannot isolate a SKU LIST — a zero-stock SKU
+     has no balance row at all, which is exactly the row this view exists to
+     serve, and the ALL / CATEGORY / CODE_PREFIX scopes are built from this list.
+
+     The warehouse is now proved to be the active company's at the call site, so
+     this is belt-and-braces rather than the only boundary — but it is one line
+     and the view was rebuilt to accept it. */
+  let q = scopeToCompany(sb.from('v_inventory_all_skus')
     .select('product_code, product_name, category')
-    .eq('warehouse_id', warehouseId);
+    .eq('warehouse_id', warehouseId), c);
   if (scopeType === 'CATEGORY' && scopeValue) {
     q = q.eq('category', scopeValue);
   } else if (scopeType === 'CODE_PREFIX' && scopeValue) {
@@ -346,6 +361,17 @@ export const createStockTakeHandler = async (c: any) => {
 
   const warehouseId = body.warehouseId as string | undefined;
   if (!warehouseId) return c.json({ error: 'warehouse_required' }, 400);
+
+  /* THE WAREHOUSE IS A BODY FIELD. Nothing above proves it is ours, and this
+     handler goes on to snapshot every SKU at it and write a stock_takes header
+     against it — whose POST then writes ADJUSTMENT movements into it. See
+     lib/ref-in-company.ts; this is the call site that primitive was missing.
+     Before fetchScopedSkus, so a foreign warehouse id cannot be used to read a
+     SKU list either. */
+  const whCo = requireActiveCompanyId(c);
+  if (!whCo.ok) return c.json(whCo.refusal, 409);
+  const whCheck = await assertWarehouseInCompany(sb, warehouseId, whCo.companyId);
+  if (!whCheck.ok) return c.json(whCheck.body, whCheck.status);
 
   /* Phase 1: a take has a PERSON RESPONSIBLE from the moment it exists.
      Required — an unowned count sheet is exactly the accountability gap this

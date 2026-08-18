@@ -46,6 +46,66 @@ async function badIntakeKey(c: any): Promise<Response | null> {
   return c.json({ error: "unauthorized" }, 401);
 }
 
+/* ── WHICH COMPANY A SHARED SECRET SPEAKS FOR ──────────────────────────────
+   These endpoints are PRE-AUTH by design: Google's servers call them, there is
+   no session and no X-Company-Id, so companyContext never runs and there is no
+   caller whose grants could scope the query. That is exactly why the export
+   below dumped customer_name / phone / addr1-4 / complaint_issue for EVERY
+   company's cases to whoever held either key.
+
+   The fix is therefore NOT "add the caller's company predicate" — there is no
+   caller. It is to give each SECRET its own company and scope to that, because
+   a shared secret held by one company's Google account is a credential FOR that
+   company. Both keys in existence today are Houzs Century artifacts:
+     · FORM_INTAKE_KEY — the staff service-request Google Form, whose cases
+       resolve their customer data from Houzs SOs (createAssrCase).
+     · SHEET_SYNC_KEY  — the HC (Houzs Century) Delivery sheet's own Apps
+       Script (types.ts:29).
+   A future 2990 sheet gets its OWN key and its own row here; it must never be
+   given one of these two.
+
+   Consequence worth stating plainly: if a 2990 case ever needs to reach the HC
+   sheet, that is now a REFUSAL to notice rather than silent PII disclosure. */
+const INTAKE_KEY_COMPANY = "HOUZS";
+
+/** The company code the presented X-Intake-Key speaks for, or null if neither
+ *  secret matched. Constant-time compare for both, same as badIntakeKey. */
+function intakeKeyCompanyCode(c: any): string | null {
+  const provided = c.req.header("X-Intake-Key") || "";
+  const keys: Array<[string | undefined, string]> = [
+    [c.env.FORM_INTAKE_KEY, INTAKE_KEY_COMPANY],
+    [c.env.SHEET_SYNC_KEY, INTAKE_KEY_COMPANY],
+  ];
+  for (const [secret, code] of keys) {
+    if (secret && timingSafeEqualStr(provided, secret)) return code;
+  }
+  return null;
+}
+
+/** Resolve a company code to its id for the raw-SQL predicate.
+ *  · `{ master: false }` — the companies master is not readable AT ALL
+ *    (pre-migration / the D1 test mirror). The install is single-company, there
+ *    is no second tenant to leak to, so the caller degrades to no predicate —
+ *    the same three-state contract as scm/lib/companyScope.ts.
+ *  · `{ master: true, id: null }` — the master IS readable and has no row for
+ *    this code. That is a MISCONFIGURATION, not a legacy state, and the caller
+ *    must refuse: falling back to "no predicate" here would re-open the exact
+ *    hole on the day someone renames a company code. */
+async function intakeCompany(
+  db: D1Database,
+  code: string,
+): Promise<{ master: boolean; id: number | null }> {
+  try {
+    const row = await db
+      .prepare(`SELECT id FROM companies WHERE code = ? LIMIT 1`)
+      .bind(code)
+      .first<{ id: number | string }>();
+    return { master: true, id: row?.id != null ? Number(row.id) : null };
+  } catch {
+    return { master: false, id: null };
+  }
+}
+
 // Photo relay limits — Apps Script reads the Drive file and streams the
 // bytes here. Mirrors the portal upload allow-list, plus mp4 because
 // the form column is literally "Photo / Video".
@@ -407,15 +467,29 @@ app.get("/status-export", async (c) => {
   // script's key) or SHEET_SYNC_KEY (issued for the HC Delivery
   // sheet's own Apps Script, which lives in a different Google account
   // and never held the intake key).
-  const provided = c.req.header("X-Intake-Key") || "";
-  const keys = [c.env.FORM_INTAKE_KEY, c.env.SHEET_SYNC_KEY];
-  const ok = keys.some((k) => k && timingSafeEqualStr(provided, k));
-  if (!ok) {
+  const keyCompanyCode = intakeKeyCompanyCode(c);
+  if (!keyCompanyCode) {
     const limited = await checkRateLimit(c, "intake_badkey", clientIp(c), 10, 900);
     await new Promise((r) => setTimeout(r, 250));
     if (limited) return limited;
     return c.json({ error: "unauthorized" }, 401);
   }
+
+  /* COMPANY SCOPE — see INTAKE_KEY_COMPANY above for why this is the SECRET's
+     company and not a caller's. Without it this pre-auth endpoint returned
+     customer_name, phone, addr1-4 and complaint_issue for every non-archived
+     case in BOTH companies to whoever held either key. */
+  const keyCo = await intakeCompany(c.env.DB, keyCompanyCode);
+  if (keyCo.master && keyCo.id == null) {
+    return c.json(
+      {
+        error: "company_unresolved",
+        message: `No company is configured for code ${keyCompanyCode}, so this export cannot be scoped and is refused.`,
+      },
+      503,
+    );
+  }
+  const coSql = keyCo.id != null ? ` AND company_id = ${keyCo.id}` : "";
 
   // Append fields (Nico 2026-08-07): with the Google Form closed, the
   // sheet's Apps Script now auto-APPENDS rows for ERP cases the sheet
@@ -431,7 +505,7 @@ app.get("/status-export", async (c) => {
               WHERE i.assr_id = assr_cases.id
                 AND i.item_code IS NOT NULL AND i.item_code != '') as items_codes
        FROM assr_cases
-      WHERE archived_at IS NULL`
+      WHERE archived_at IS NULL${coSql}`
   ).all<{
     assr_no: string;
     doc_no: string | null;
@@ -521,15 +595,31 @@ function normSheetDate(raw: unknown): string | null {
 }
 
 app.post("/delivery-dates", async (c) => {
-  const provided = c.req.header("X-Intake-Key") || "";
-  const keys = [c.env.FORM_INTAKE_KEY, c.env.SHEET_SYNC_KEY];
-  const ok = keys.some((k) => k && timingSafeEqualStr(provided, k));
-  if (!ok) {
+  const keyCompanyCode = intakeKeyCompanyCode(c);
+  if (!keyCompanyCode) {
     const limited = await checkRateLimit(c, "intake_badkey", clientIp(c), 10, 900);
     await new Promise((r) => setTimeout(r, 250));
     if (limited) return limited;
     return c.json({ error: "unauthorized" }, 401);
   }
+
+  /* COMPANY SCOPE, same rule as /status-export — and this leg is a WRITE. The
+     lookup below resolves a case by assr_no, which is NOT unique across
+     companies, so unscoped the HC sheet could stamp a scheduled inspection /
+     pickup / delivery date onto the OTHER company's case and file an
+     assr_activity note under it. The predicate goes on the SELECT; the UPDATE
+     then keys on the id that scoped read returned. */
+  const keyCo = await intakeCompany(c.env.DB, keyCompanyCode);
+  if (keyCo.master && keyCo.id == null) {
+    return c.json(
+      {
+        error: "company_unresolved",
+        message: `No company is configured for code ${keyCompanyCode}, so this write cannot be scoped and is refused.`,
+      },
+      503,
+    );
+  }
+  const coSql = keyCo.id != null ? ` AND company_id = ${keyCo.id}` : "";
 
   const body = await c.req
     .json<{ updates?: Array<{ assr_no?: string; job?: string; date?: string }> }>()
@@ -548,7 +638,7 @@ app.post("/delivery-dates", async (c) => {
       continue;
     }
     const row = await c.env.DB.prepare(
-      `SELECT id, ${col} AS cur FROM assr_cases WHERE assr_no = ?`
+      `SELECT id, ${col} AS cur FROM assr_cases WHERE assr_no = ?${coSql}`
     )
       .bind(assrNo)
       .first<{ id: number; cur: string | null }>();

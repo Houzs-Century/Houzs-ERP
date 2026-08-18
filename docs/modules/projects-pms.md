@@ -1040,3 +1040,31 @@ Watch, in rough order of size:
 
 No load test or measured latency figure exists for this module; every claim above
 is structural, read from the code.
+
+## Child rows are NOT reached through their parent — the gate that assumes they are (2026-08-18)
+
+`routes/projects.ts` carried a header claiming child tables "are ALWAYS read
+through their parent `project_id`", and migration 0292's prose repeated it. It is
+true only where the URL carries the parent. `PATCH`/`DELETE /finance/lines/:lineId`,
+`/checklist/:itemId`, `/checklist/attachments/:attId`, `/sections/:sectionId`,
+`/defects/:defectId`, `/sales-reports/:reportId`, `/team/:teamId`,
+`/attachments/:attId` and the three `/stock-transfers/:tid` routes have no parent
+in the path and no middleware supplying one — each was a bare `WHERE id = ?`
+against a service-role client.
+
+`backend/src/routes/lib/project-company-gate.ts` is the boundary now, and it has
+exactly two shapes:
+
+- **`refuseForeignChild(c, table, id)`** — for a child addressed by its own id.
+  Tables that HAVE `company_id` (`project_checklist`, its sections / attachments
+  / comments per mig 0093, and `project_finance_lines` per 0170) are checked on
+  that column; tables that do not (`project_stock_transfers`, `project_defects`,
+  `project_sales_reports`, `project_team`, `project_attachments`) go through
+  `EXISTS (SELECT 1 FROM projects p WHERE p.id = t.project_id …)`.
+- **`refuseForeignProject(c, id)`** — for the `/:id/<child>` CREATE routes, which
+  bind `:id` as `project_id` on the INSERT.
+
+Both answer **404**, deliberately the same answer as a missing row, and both
+DEGRADE to a no-op when `activeCompanySql` yields "" (pre-migration / D1 test
+mirror / cold-start). `project_event_types` and `project_organizers` are shared
+masters with no `company_id` at all and are deliberately NOT gated.
