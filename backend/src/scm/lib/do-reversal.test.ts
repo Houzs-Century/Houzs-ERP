@@ -22,7 +22,7 @@ const ctx = (over: Partial<Parameters<typeof buildDoReversalRows>[1]> = {}) => (
 });
 
 const out = (over: Partial<DoMov> = {}): DoReversalMovement => ({
-  movement_type: 'OUT', warehouse_id: 'wh-1', product_code: 'CHAIR-A',
+  movement_type: 'OUT', warehouse_id: 'wh-1', item_code: 'CHAIR-A',
   variant_key: '', batch_no: null, qty: 5, total_cost_sen: 1000, product_name: 'Chair A',
   ...over,
 });
@@ -31,7 +31,7 @@ type DoMov = DoReversalMovement;
 describe('buildDoReversalRows — SQL fn already handled the DO', () => {
   test('non-drop-ship: nonDropshipHandled skips EVERY bucket (fn_reverse_do_out did it)', () => {
     const rows = buildDoReversalRows(
-      [out({ batch_no: null }), out({ batch_no: 'DYE-77', product_code: 'SOFA-X' })],
+      [out({ batch_no: null }), out({ batch_no: 'DYE-77', item_code: 'SOFA-X' })],
       ctx({ nonDropshipHandled: true }),
     );
     expect(rows).toEqual([]);
@@ -40,13 +40,13 @@ describe('buildDoReversalRows — SQL fn already handled the DO', () => {
   test('drop-ship: dropshipBatchedHandled skips only BATCHED buckets, keeps plain', () => {
     const rows = buildDoReversalRows(
       [
-        out({ batch_no: 'DYE-77', product_code: 'SOFA-X', qty: 2, total_cost_sen: 400 }),
-        out({ batch_no: null, product_code: 'CHAIR-A', qty: 5, total_cost_sen: 1000 }),
+        out({ batch_no: 'DYE-77', item_code: 'SOFA-X', qty: 2, total_cost_sen: 400 }),
+        out({ batch_no: null, item_code: 'CHAIR-A', qty: 5, total_cost_sen: 1000 }),
       ],
       ctx({ dropshipBatchedHandled: true }),
     );
     expect(rows).toHaveLength(1);
-    expect(rows[0]).toMatchObject({ product_code: 'CHAIR-A', movement_type: 'ADJUSTMENT' });
+    expect(rows[0]).toMatchObject({ item_code: 'CHAIR-A', movement_type: 'ADJUSTMENT' });
   });
 });
 
@@ -56,7 +56,7 @@ describe('buildDoReversalRows — legacy fallback (SQL fn absent / errored)', ()
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       movement_type: 'ADJUSTMENT',
-      product_code: 'CHAIR-A',
+      item_code: 'CHAIR-A',
       qty: 4,
       unit_cost_sen: 250, // round(1000 / 4)
       source_doc_type: 'ADJUSTMENT',
@@ -68,13 +68,13 @@ describe('buildDoReversalRows — legacy fallback (SQL fn absent / errored)', ()
 
   test('sofa (batched) bucket -> reversing IN carrying the exact batch_no', () => {
     const rows = buildDoReversalRows(
-      [out({ product_code: 'SOFA-X', batch_no: 'DYE-77', qty: 3, total_cost_sen: 999 })],
+      [out({ item_code: 'SOFA-X', batch_no: 'DYE-77', qty: 3, total_cost_sen: 999 })],
       ctx(),
     );
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
       movement_type: 'IN',
-      product_code: 'SOFA-X',
+      item_code: 'SOFA-X',
       batch_no: 'DYE-77',
       qty: 3,
       unit_cost_sen: 333, // round(999 / 3)
@@ -110,14 +110,14 @@ describe('buildDoReversalRows — legacy fallback (SQL fn absent / errored)', ()
   test('plain and sofa buckets of the same DO are reversed independently', () => {
     const rows = buildDoReversalRows(
       [
-        out({ product_code: 'CHAIR-A', batch_no: null, qty: 4, total_cost_sen: 800 }),
-        out({ product_code: 'SOFA-X', batch_no: 'DYE-77', qty: 2, total_cost_sen: 500 }),
+        out({ item_code: 'CHAIR-A', batch_no: null, qty: 4, total_cost_sen: 800 }),
+        out({ item_code: 'SOFA-X', batch_no: 'DYE-77', qty: 2, total_cost_sen: 500 }),
       ],
       ctx(),
     );
     expect(rows).toHaveLength(2);
-    const chair = rows.find((r) => r.product_code === 'CHAIR-A');
-    const sofa = rows.find((r) => r.product_code === 'SOFA-X');
+    const chair = rows.find((r) => r.item_code === 'CHAIR-A');
+    const sofa = rows.find((r) => r.item_code === 'SOFA-X');
     expect(chair).toMatchObject({ movement_type: 'ADJUSTMENT', unit_cost_sen: 200 });
     expect(sofa).toMatchObject({ movement_type: 'IN', batch_no: 'DYE-77', unit_cost_sen: 250 });
   });
@@ -128,7 +128,7 @@ describe('buildDoReversalRows — legacy fallback (SQL fn absent / errored)', ()
 
   test('drop-ship fallback (fn errored): batched bucket still gets a legacy IN', () => {
     const rows = buildDoReversalRows(
-      [out({ product_code: 'SOFA-X', batch_no: 'DYE-77', qty: 2, total_cost_sen: 400 })],
+      [out({ item_code: 'SOFA-X', batch_no: 'DYE-77', qty: 2, total_cost_sen: 400 })],
       ctx({ dropshipBatchedHandled: false }),
     );
     expect(rows).toHaveLength(1);

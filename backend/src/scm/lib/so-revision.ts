@@ -1107,12 +1107,12 @@ export async function reviseBoundPo(
      two gates (a re-run, or a manual delete) simply drops out here — idempotent. */
   let orphanRows: Array<{
     id: string; purchase_order_id: string | null; received_qty: number | null;
-    material_code: string | null; material_name: string | null;
+    item_code: string | null; material_name: string | null;
   }> = [];
   if (orphanPoItemIds.length > 0) {
     const { data: oRows, error: oErr } = await sb
       .from('purchase_order_items')
-      .select('id, purchase_order_id, received_qty, material_code, material_name')
+      .select('id, purchase_order_id, received_qty, item_code, material_name')
       .in('id', orphanPoItemIds);
     if (oErr) throw new Error(`reviseBoundPo: orphan PO lines load failed: ${oErr.message}`);
     orphanRows = (oRows ?? []) as typeof orphanRows;
@@ -1213,17 +1213,17 @@ export async function reviseBoundPo(
     const mainBindingByCode = new Map<string, { supplierId: string; supplierSku: string | null }>();
     if (codes.length > 0) {
       let q = sb.from('supplier_material_bindings')
-        .select('material_code, supplier_id, supplier_sku, is_main_supplier')
-        .in('material_code', codes)
+        .select('item_code, supplier_id, supplier_sku, is_main_supplier')
+        .in('item_code', codes)
         .eq('material_kind', 'mfg_product')
         .order('is_main_supplier', { ascending: false });
       if (soCompanyId != null) q = q.eq('company_id', soCompanyId);
       const { data: bRows, error: bErr } = await q;
       if (bErr) throw new Error(`reviseBoundPo: added-line supplier binding load failed: ${bErr.message}`);
       // is_main_supplier DESC → the first row seen per code is its main supplier.
-      for (const b of (bRows ?? []) as Array<{ material_code: string; supplier_id: string; supplier_sku: string | null }>) {
-        if (!mainBindingByCode.has(b.material_code)) {
-          mainBindingByCode.set(b.material_code, { supplierId: b.supplier_id, supplierSku: b.supplier_sku ?? null });
+      for (const b of (bRows ?? []) as Array<{ item_code: string; supplier_id: string; supplier_sku: string | null }>) {
+        if (!mainBindingByCode.has(b.item_code)) {
+          mainBindingByCode.set(b.item_code, { supplierId: b.supplier_id, supplierSku: b.supplier_sku ?? null });
         }
       }
     }
@@ -1283,11 +1283,11 @@ export async function reviseBoundPo(
     // (12a) RE-DERIVE each surviving line in place from its revised SO line.
     for (const pi of matchedByPo.get(po.id) ?? []) {
       const revised = revisedById.get(pi.so_item_id as string)!;
-      // Read the existing PO line's discount + material_code (the SKU the
+      // Read the existing PO line's discount + item_code (the SKU the
       // supplier binding is keyed on).
       const { data: existing, error: exErr } = await sb
         .from('purchase_order_items')
-        .select('material_code, discount_sen')
+        .select('item_code, discount_sen')
         .eq('id', pi.id)
         .maybeSingle();
       if (exErr) throw new Error(`reviseBoundPo: PO line load failed: ${exErr.message}`);
@@ -1298,12 +1298,12 @@ export async function reviseBoundPo(
       // Re-derive the revised PO line's supplier cost from the NOW-REVISED SO
       // line's spec (SAME cost-anchor "Create PO from SO" runs). The SKU the cost
       // is keyed on = the revised SO line's item_code (a SPEC change may swap it),
-      // falling back to the PO line's existing material_code.
-      const materialCode = revised.item_code
-        ?? String((existing as { material_code?: string } | null)?.material_code ?? '');
+      // falling back to the PO line's existing item_code.
+      const itemCode = revised.item_code
+        ?? String((existing as { item_code?: string } | null)?.item_code ?? '');
       const unitPriceSen = await deriveMfgPoUnitCost(sb, {
         supplierId: po.supplier_id ?? '',
-        itemCode:   materialCode,
+        itemCode:   itemCode,
         itemGroup,
         variants:   variants ?? null,
       });
@@ -1328,7 +1328,7 @@ export async function reviseBoundPo(
        re-run finds the line already gone (it dropped out of orphanRows above). */
     for (const orow of orphansByPo.get(po.id) ?? []) {
       const receivedQty = Number(orow.received_qty ?? 0);
-      const label = (orow.material_name || orow.material_code || 'a removed item').trim();
+      const label = (orow.material_name || orow.item_code || 'a removed item').trim();
       if (receivedQty > 0) {
         warnings.push(`A removed item (${label}) was already received on purchase order ${po.po_number}, so it was left on the purchase order and needs manual handling (for example, a purchase return).`);
         continue;
@@ -1358,7 +1358,7 @@ export async function reviseBoundPo(
         ...(po.company_id != null ? { company_id: po.company_id } : {}),
         purchase_order_id: po.id,
         material_kind:     'mfg_product',
-        material_code:     line.item_code ?? '',
+        item_code:     line.item_code ?? '',
         material_name:     line.description ?? line.item_code ?? '',
         supplier_sku:      add.supplierSku ?? '',
         qty,

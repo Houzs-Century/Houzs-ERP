@@ -136,7 +136,7 @@ const buildColumns = (): DataGridColumn<PrRow>[] => [
 /* ── Drill-down — per-line breakdown for one return ── */
 type PrItem = Record<string, unknown> & {
   id: string;
-  material_code?: string | null;
+  item_code?: string | null;
   material_name?: string | null;
   description?: string | null;
   item_group?: string | null;
@@ -149,9 +149,9 @@ type PrItem = Record<string, unknown> & {
 const buildDrilldownColumns = (): DataGridColumn<PrItem>[] => [
   {
     key: 'item_code', label: 'Item Code', width: 130,
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.material_code ?? '—'}</span>,
-    searchValue: (it) => it.material_code ?? '',
-    sortFn: (a, b) => (a.material_code ?? '').localeCompare(b.material_code ?? ''),
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.item_code ?? '—'}</span>,
+    searchValue: (it) => it.item_code ?? '',
+    sortFn: (a, b) => (a.item_code ?? '').localeCompare(b.item_code ?? ''),
   },
   {
     key: 'description', label: 'Description', width: 260, minWidth: 180,

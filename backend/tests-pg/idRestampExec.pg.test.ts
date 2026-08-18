@@ -83,7 +83,7 @@ describePg('execIdRestamp against real Postgres (savepoints + a real partial uni
         source_doc_no text,
         source_doc_id uuid,
         warehouse_id uuid NOT NULL,
-        product_code text NOT NULL,
+        item_code text NOT NULL,
         variant_key text NOT NULL DEFAULT '',
         batch_no text,
         created_at timestamptz NOT NULL DEFAULT now()
@@ -113,7 +113,7 @@ describePg('execIdRestamp against real Postgres (savepoints + a real partial uni
        instead of precomputing the key; any unique index raises the same class. */
     await admin.unsafe(`
       CREATE UNIQUE INDEX uq_test_mov_do_source
-        ON "${SCHEMA}".inventory_movements (source_doc_id, warehouse_id, product_code, variant_key, COALESCE(batch_no, ''))
+        ON "${SCHEMA}".inventory_movements (source_doc_id, warehouse_id, item_code, variant_key, COALESCE(batch_no, ''))
         WHERE source_doc_type = 'DO'`);
   });
 
@@ -126,7 +126,7 @@ describePg('execIdRestamp against real Postgres (savepoints + a real partial uni
     await admin.unsafe(`TRUNCATE "${SCHEMA}".inventory_movements, "${SCHEMA}".inventory_lot_consumptions, "${SCHEMA}".inventory_lots`);
     const mov = (id: string, docId: string, product: string, qty = 2) =>
       admin.unsafe(
-        `INSERT INTO "${SCHEMA}".inventory_movements (id, company_id, movement_type, qty, total_cost_sen, source_doc_type, source_doc_no, source_doc_id, warehouse_id, product_code)
+        `INSERT INTO "${SCHEMA}".inventory_movements (id, company_id, movement_type, qty, total_cost_sen, source_doc_type, source_doc_no, source_doc_id, warehouse_id, item_code)
          VALUES ($1, 2, 'OUT', $5, 100, 'DO', '2990-DO-TEST-1', $2, $3, $4)`,
         [id, docId, WH, product, qty],
       );

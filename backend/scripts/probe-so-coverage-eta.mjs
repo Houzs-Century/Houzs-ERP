@@ -97,7 +97,7 @@ async function main() {
                  p.purchase_location_id::text AS purchase_location_id
             FROM scm.purchase_order_items i
             JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-           WHERE i.company_id = ${h.company_id} AND i.material_code = ${l.item_code}
+           WHERE i.company_id = ${h.company_id} AND i.item_code = ${l.item_code}
            ORDER BY p.po_number`;
         note(`        purchase_order_items naming this code: ${po.length}`);
         for (const r of po) {

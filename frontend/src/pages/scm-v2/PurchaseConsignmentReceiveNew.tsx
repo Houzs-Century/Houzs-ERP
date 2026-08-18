@@ -92,7 +92,7 @@ type DraftLine = {
   rid:               string;
   purchaseOrderItemId: string | null;
   materialKind:      string;
-  materialCode:      string;
+  itemCode:      string;
   materialName:      string;
   itemGroup:         string | null;
   variants:          Record<string, unknown> | null;
@@ -159,7 +159,7 @@ export const PurchaseConsignmentReceiveNew = () => {
     if (!fromPicks || picksLoaded) return;
     type Stash = {
       orderItemId: string; purchaseConsignmentOrderId: string;
-      materialKind: string; materialCode: string; materialName: string;
+      materialKind: string; itemCode: string; materialName: string;
       supplierSku: string | null; itemGroup: string | null; description: string | null;
       uom: string | null; qty: number; unitPriceSen: number; variants: unknown;
     };
@@ -169,7 +169,7 @@ export const PurchaseConsignmentReceiveNew = () => {
       rid:                 `p${s.orderItemId}`,
       purchaseOrderItemId: s.orderItemId,
       materialKind:        s.materialKind || 'mfg_product',
-      materialCode:        s.materialCode,
+      itemCode:        s.itemCode,
       materialName:        s.materialName,
       itemGroup:           s.itemGroup,
       variants:            (s.variants as Record<string, unknown> | null) ?? null,
@@ -193,7 +193,7 @@ export const PurchaseConsignmentReceiveNew = () => {
         rid:                 `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         purchaseOrderItemId: null,
         materialKind:        'mfg_product',
-        materialCode:        '',
+        itemCode:        '',
         materialName:        '',
         itemGroup:           null,
         variants:            null,
@@ -215,7 +215,7 @@ export const PurchaseConsignmentReceiveNew = () => {
           rid:               `r${it.id}`,
           purchaseOrderItemId: it.id,
           materialKind:      it.material_kind,
-          materialCode:      it.material_code,
+          itemCode:      it.item_code,
           materialName:      it.material_name,
           itemGroup:         it.item_group ?? null,
           variants:          (it.variants as Record<string, unknown> | null) ?? null,
@@ -294,7 +294,7 @@ export const PurchaseConsignmentReceiveNew = () => {
       rid:                 `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       purchaseOrderItemId: null,
       materialKind:        'mfg_product',
-      materialCode:        '',
+      itemCode:        '',
       materialName:        '',
       itemGroup:           null,
       variants:            null,
@@ -310,7 +310,7 @@ export const PurchaseConsignmentReceiveNew = () => {
   const pickItemForLine = (rid: string, code: string) => {
     const sku = (productsQ.data ?? []).find((p) => p.code === code);
     setLine(rid, {
-      materialCode: code,
+      itemCode: code,
       materialName: sku?.name ?? code,
       itemGroup:    sku?.category ? sku.category.toLowerCase() : null,
     });
@@ -318,10 +318,10 @@ export const PurchaseConsignmentReceiveNew = () => {
 
   const pickBindingForLine = (rid: string, b: typeof bindings[number]) => {
     setLine(rid, {
-      materialCode:   b.material_code,
+      itemCode:   b.item_code,
       materialName:   b.material_name,
       unitPriceSen: b.unit_price_sen,
-      itemGroup:      categoryForCode(b.material_code) ?? null,
+      itemGroup:      categoryForCode(b.item_code) ?? null,
     });
   };
 
@@ -330,13 +330,13 @@ export const PurchaseConsignmentReceiveNew = () => {
   const addPickedItems = (codes: string[]) => {
     if (codes.length === 0) return;
     const mk = (code: string): DraftLine => {
-      const b = supplierId ? bindings.find((x) => x.material_code === code) : undefined;
+      const b = supplierId ? bindings.find((x) => x.item_code === code) : undefined;
       const sku = (allSkusQ.data ?? []).find((p) => p.code === code);
       return {
         rid:                 `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}-${code}`,
         purchaseOrderItemId: null,
         materialKind:        'mfg_product',
-        materialCode:        code,
+        itemCode:        code,
         materialName:        b?.material_name ?? sku?.name ?? code,
         itemGroup:           categoryForCode(code) ?? (sku?.category ? sku.category.toLowerCase() : null),
         variants:            null,
@@ -349,8 +349,8 @@ export const PurchaseConsignmentReceiveNew = () => {
       };
     };
     setLines((prev) => {
-      const kept = prev.filter((l) => l.materialCode.trim() !== '');
-      const existing = new Set(kept.map((l) => l.materialCode));
+      const kept = prev.filter((l) => l.itemCode.trim() !== '');
+      const existing = new Set(kept.map((l) => l.itemCode));
       const fresh = codes.filter((c) => !existing.has(c)).map(mk);
       return [...kept, ...fresh];
     });
@@ -359,7 +359,7 @@ export const PurchaseConsignmentReceiveNew = () => {
   const pickerItems = useMemo(() => {
     const q = pickerSearch.trim().toLowerCase();
     const base = (supplierId && bindings.length > 0)
-      ? bindings.map((b) => ({ code: b.material_code, name: b.material_name, sub: `${b.supplier_sku ?? ''} · ${fmtRm(b.unit_price_sen, b.currency)}` }))
+      ? bindings.map((b) => ({ code: b.item_code, name: b.material_name, sub: `${b.supplier_sku ?? ''} · ${fmtRm(b.unit_price_sen, b.currency)}` }))
       : (allSkusQ.data ?? []).map((p) => ({ code: p.code, name: p.name, sub: p.category }));
     if (!q) return base;
     return base.filter((it) => it.code.toLowerCase().includes(q) || it.name.toLowerCase().includes(q));
@@ -373,7 +373,7 @@ export const PurchaseConsignmentReceiveNew = () => {
       setDialog({ title: 'Pick a supplier', body: 'Choose the order you are receiving against, or pick a supplier for a manual receipt.' });
       return;
     }
-    const realLines = lines.filter((l) => l.materialCode.trim());
+    const realLines = lines.filter((l) => l.itemCode.trim());
     if (realLines.length === 0) {
       setDialog({ title: 'Add at least one item', body: 'Pick at least one SKU to receive.' });
       return;
@@ -399,7 +399,7 @@ export const PurchaseConsignmentReceiveNew = () => {
         items: realLines.map((l) => ({
           pcOrderItemId:       l.purchaseOrderItemId,
           materialKind:        l.materialKind,
-          materialCode:        l.materialCode,
+          itemCode:        l.itemCode,
           materialName:        l.materialName,
           qtyReceived:         l.qtyReceived,
           qtyAccepted:         l.qtyReceived,
@@ -683,17 +683,17 @@ export const PurchaseConsignmentReceiveNew = () => {
                           <input
                             type="text"
                             list={`pcr-products-${l.rid}`}
-                            value={l.materialCode}
+                            value={l.itemCode}
                             onChange={(e) => {
                               const code = e.target.value;
                               setProductQuery(code);
                               const bound = supplierId
-                                ? bindings.find((b) => b.material_code === code)
+                                ? bindings.find((b) => b.item_code === code)
                                 : undefined;
                               if (bound) { pickBindingForLine(l.rid, bound); return; }
                               const match = (productsQ.data ?? []).find((p) => p.code === code);
                               if (match) { pickItemForLine(l.rid, code); return; }
-                              setLine(l.rid, { materialCode: code });
+                              setLine(l.rid, { itemCode: code });
                             }}
                             placeholder={supplierId && bindings.length > 0
                               ? 'Pick one of this supplier’s bound SKUs…'
@@ -704,7 +704,7 @@ export const PurchaseConsignmentReceiveNew = () => {
                           <datalist id={`pcr-products-${l.rid}`}>
                             {supplierId && bindings.length > 0
                               ? sortByText(bindings).map((b) => (
-                                  <option key={b.id} value={b.material_code}>
+                                  <option key={b.id} value={b.item_code}>
                                     {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                                   </option>
                                 ))
@@ -717,7 +717,7 @@ export const PurchaseConsignmentReceiveNew = () => {
                         <input
                           type="text"
                           readOnly
-                          value={l.materialCode}
+                          value={l.itemCode}
                           className={styles.fieldInput}
                           style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
@@ -755,7 +755,7 @@ export const PurchaseConsignmentReceiveNew = () => {
                       }}>{l.itemGroup} Variants</div>
                       <PcVariantEditor
                         category={l.itemGroup ?? ''}
-                        itemCode={l.materialCode}
+                        itemCode={l.itemCode}
                         variants={(l.variants ?? {}) as Record<string, unknown>}
                         onChange={setVariant}
                         fabrics={fabrics}
@@ -890,7 +890,7 @@ export const PurchaseConsignmentReceiveNew = () => {
                 </p>
               ) : pickerItems.map((it) => {
                 const on = pickerSel.has(it.code);
-                const already = lines.some((l) => l.materialCode === it.code);
+                const already = lines.some((l) => l.itemCode === it.code);
                 return (
                   <label key={it.code} style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-2)', padding: '8px 0', borderBottom: '1px solid var(--line)', cursor: already ? 'default' : 'pointer', opacity: already ? 0.5 : 1 }}>
                     <input

@@ -14,7 +14,7 @@
 //  - po_number = "HC-" + AutoCount PO no; the raw number goes to linked_ac_docno
 //    so write-back updates that PO instead of creating a duplicate.
 //  - supplier_id  <- CreditorCode (matches scm.suppliers.code exactly)
-//  - material_code <- ItemCode via the AutoCount<->ERP binding CSV;
+//  - item_code <- ItemCode via the AutoCount<->ERP binding CSV;
 //    material_name <- the ERP product name; supplier_sku keeps the AutoCount code
 //  - warehouse_id <- Location, via the same short-code -> full warehouse name map
 //    the SO import uses (KL -> KL WAREHOUSE ...)
@@ -296,7 +296,7 @@ async function main() {
       const poId = ins[0].id;
       for (const i of o.items) {
         await tx`INSERT INTO scm.purchase_order_items
-          (purchase_order_id, material_kind, material_code, material_name, supplier_sku,
+          (purchase_order_id, material_kind, item_code, material_name, supplier_sku,
            qty, unit_price_sen, line_total_sen, received_qty, item_group,
            description, description2, uom, notes, gap_inches, divan_height_inches, leg_height_inches,
            custom_specials, variants, warehouse_id, delivery_date, from_mrp, company_id,

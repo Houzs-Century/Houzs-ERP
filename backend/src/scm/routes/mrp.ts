@@ -206,7 +206,7 @@ type DemandRow = {
 };
 
 type PoLineRow = {
-  material_code: string;
+  item_code: string;
   item_group: string | null;
   variants: Record<string, unknown> | null;
   qty: number;
@@ -231,7 +231,7 @@ type PoLineRow = {
 };
 
 type ProductRow = { code: string; name: string | null; category: string | null };
-type BalanceRow = { product_code: string; warehouse_id: string; variant_key: string | null; qty: number };
+type BalanceRow = { item_code: string; warehouse_id: string; variant_key: string | null; qty: number };
 
 type AllocSource = 'stock' | 'po' | 'shortage';
 
@@ -545,14 +545,14 @@ export async function computeMrp(
   const catRowsProm = eager(paginateAll<{ category: string | null }>((from, to) =>
     scoped(sb.from('mfg_products').select('category')).order('id').range(from, to)));
   const balancesProm = eager(paginateAll<BalanceRow>((from, to) => {
-    let q = scoped(sb.from('inventory_balances').select('product_code, warehouse_id, variant_key, qty'));
+    let q = scoped(sb.from('inventory_balances').select('item_code, warehouse_id, variant_key, qty'));
     if (whFilter) q = q.eq('warehouse_id', whFilter);
-    return q.order('product_code').order('warehouse_id').order('variant_key').order('company_id').range(from, to);
+    return q.order('item_code').order('warehouse_id').order('variant_key').order('company_id').range(from, to);
   }));
   const poRawProm = eager(paginateAll<PoLineRow>((from, to) => scoped(sb
     .from('purchase_order_items')
     .select(`
-      material_code, item_group, variants, qty, received_qty, delivery_date,
+      item_code, item_group, variants, qty, received_qty, delivery_date,
       supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4,
       warehouse_id, so_item_id,
       po:purchase_orders!inner ( po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id, supplier_id )
@@ -799,7 +799,7 @@ export async function computeMrp(
   // PAGED: 1,065 balance rows in prod on 2026-08-16 — unpaged, the last ~65
   // buckets read as zero stock and MRP invented a shortage for each of them.
   // inventory_balances is a VIEW (migration 0084) grouped by
-  // (warehouse_id, product_code, variant_key, company_id) and has no id, so
+  // (warehouse_id, item_code, variant_key, company_id) and has no id, so
   // that four-column tuple IS its unique key — order by all four or the
   // paging is not total. company_id matters precisely when it is NOT filtered
   // (companyId null), which is the case that would otherwise tie. The query
@@ -808,7 +808,7 @@ export async function computeMrp(
   if (balErr) throw new Error(`mrp_load_failed: ${balErr.message}`);
   const stockByKey = new Map<string, number>();
   for (const b of balances ?? []) {
-    const k = composite(b.warehouse_id ?? null, b.product_code, b.variant_key ?? '');
+    const k = composite(b.warehouse_id ?? null, b.item_code, b.variant_key ?? '');
     stockByKey.set(k, (stockByKey.get(k) ?? 0) + (b.qty ?? 0));
   }
 
@@ -861,7 +861,7 @@ export async function computeMrp(
     if (left <= 0) continue;
     const poWh = r.warehouse_id ?? r.po.purchase_location_id ?? null;
     if (whFilter && poWh !== whFilter) continue;
-    const k = composite(poWh, r.material_code, variantKeyOf(r.item_group, r.variants));
+    const k = composite(poWh, r.item_code, variantKeyOf(r.item_group, r.variants));
     poDrafts.push({
       bucketKey: k, poNumber: r.po.po_number, eta, qtyLeft: left, supplierId: r.po.supplier_id ?? null,
     });
@@ -932,29 +932,29 @@ export async function computeMrp(
      they belonged to showed no supplier at all, which is the difference between
      a row you can convert to a PO and a row you cannot.
      ORDER: is_main_supplier DESC stays FIRST because `mainByCode` takes the
-     first binding it sees per code as the main one. material_code + supplier_id
+     first binding it sees per code as the main one. item_code + supplier_id
      follow only to make the order total, which is what makes `.range()` pages
      coherent; they cannot displace a main binding from the front of its code. */
   if (codes.length > 0) {
-    type BindRow = { material_code: string; is_main_supplier: boolean; supplier_id: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null };
+    type BindRow = { item_code: string; is_main_supplier: boolean; supplier_id: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null };
     const { data: binds, error: bindErr } = await chunkIn<BindRow>(codes, (batch, from, to) => scoped(sb
       .from('supplier_material_bindings')
-      .select('material_code, is_main_supplier, supplier_id, supplier:suppliers(code, name)')
+      .select('item_code, is_main_supplier, supplier_id, supplier:suppliers(code, name)')
       .eq('material_kind', 'mfg_product')
-      .in('material_code', batch))
+      .in('item_code', batch))
       .order('is_main_supplier', { ascending: false })
-      .order('material_code')
+      .order('item_code')
       .order('id')
       .range(from, to));
     if (bindErr) throw new Error(`mrp_load_failed: ${bindErr.message}`);
     for (const b of binds) {
       const s = Array.isArray(b.supplier) ? b.supplier[0] : b.supplier;
       if (!s) continue; // orphaned binding (supplier deleted) — skip
-      const arr = suppliersByCode.get(b.material_code) ?? [];
+      const arr = suppliersByCode.get(b.item_code) ?? [];
       arr.push({ supplierId: b.supplier_id, code: s.code, name: s.name, isMain: b.is_main_supplier });
-      suppliersByCode.set(b.material_code, arr);
+      suppliersByCode.set(b.item_code, arr);
       // First (is_main_supplier first via ORDER BY) wins as the default main.
-      if (!mainByCode.has(b.material_code)) mainByCode.set(b.material_code, { code: s.code, name: s.name });
+      if (!mainByCode.has(b.item_code)) mainByCode.set(b.item_code, { code: s.code, name: s.name });
     }
   }
 
@@ -1466,7 +1466,7 @@ export type PoCoverageAssignment = {
    Sales-Order line(s) its supply is currently floating-assigned to, and that SO
    line's delivery date — matched by SKU (coverage is computed per
    (warehouse, code, variant) bucket, so an assignment's itemCode always equals
-   the covering PO line's material_code).
+   the covering PO line's item_code).
 
    ADVISORY, NOT A BINDING. This is linkage A (pooled, read-time, evaporates on
    delivery), never a stored PO↔SO link — the owner raises POs against the PO,

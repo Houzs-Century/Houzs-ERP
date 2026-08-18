@@ -135,13 +135,13 @@ function LotCard({ l, consignment, first }: { l: InventoryReservation; consignme
 }
 
 export function MobileStockCard({
-  productCode,
+  itemCode,
   productName,
   canTransfer,
   onBack,
   onNewTransfer,
 }: {
-  productCode: string;
+  itemCode: string;
   productName: string | null;
   canTransfer: boolean;
   onBack: () => void;
@@ -154,8 +154,8 @@ export function MobileStockCard({
   const warehousesQ = useWarehouses();
   // ONE per-lot feed drives both the stat header and the merged lot list — the
   // SAME endpoint + transform the desktop drawer uses.
-  const reservationsQ = useInventoryReservations({ productCode, warehouseId });
-  const movementsQ = useInventoryMovements({ productCode, warehouseId });
+  const reservationsQ = useInventoryReservations({ itemCode, warehouseId });
+  const movementsQ = useInventoryMovements({ itemCode, warehouseId });
 
   const warehouses = warehousesQ.data ?? [];
   // Movements carry only warehouse_id; map it to the SHORT code-name ("KL
@@ -191,10 +191,10 @@ export function MobileStockCard({
           <button className="back" onClick={onBack}>
             <span className="chev">‹</span> Inventory
           </button>
-          <span className="eyebrow">Stock Card · {productCode}</span>
+          <span className="eyebrow">Stock Card · {itemCode}</span>
         </div>
         <div className="hdr-row" style={{ marginTop: 2 }}>
-          <div className="scr-title">{productName || productCode}</div>
+          <div className="scr-title">{productName || itemCode}</div>
         </div>
       </header>
 

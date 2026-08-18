@@ -97,7 +97,7 @@ async function loadGrnSources() {
     WHERE g.company_id = ${CO} AND g.migrated_no_stock = true
     ORDER BY g.grn_number`;
   const items = await sql`
-    SELECT i.id, i.grn_id, i.material_kind, i.material_code, i.material_name, i.item_group,
+    SELECT i.id, i.grn_id, i.material_kind, i.item_code, i.material_name, i.item_group,
            i.description, i.description2, i.uom, i.unit_price_sen, i.discount_sen,
            i.qty_accepted, i.invoiced_qty, i.returned_qty, i.purchase_order_item_id,
            i.variants, i.gap_inches, i.divan_height_inches, i.divan_price_sen,
@@ -119,7 +119,7 @@ async function loadGrnSources() {
     const raw = REFS.grToPi[acGr] ?? [];
     const lines = (byDoc.get(g.id) ?? []).map((i) => ({
       lineId: i.id,
-      itemCode: i.material_code,
+      itemCode: i.item_code,
       /* Remaining, not accepted: a receipt can be invoiced across several
          invoices, and anything returned to the supplier is not billable. */
       qty: n(i.qty_accepted) - n(i.invoiced_qty) - n(i.returned_qty),
@@ -337,7 +337,7 @@ async function writePi(plan, lineIndex, headIndex) {
       RETURNING id`;
     const rows = lines.map((l) => ({
       purchase_invoice_id: h.id, grn_item_id: l._row.id, company_id: CO,
-      material_kind: l._row.material_kind, material_code: l._row.material_code,
+      material_kind: l._row.material_kind, item_code: l._row.item_code,
       material_name: l._row.material_name, item_group: l._row.item_group,
       description: l._row.description, description2: l._row.description2,
       uom: l._row.uom ?? 'UNIT', qty: l.qty, unit_price_sen: l.unitPriceSen,

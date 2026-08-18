@@ -309,12 +309,12 @@ describe('GRN -> purchase invoice, picked lines', () => {
   const grnItems = (): Row[] => [
     {
       id: 'gi-a', grn_id: 'grn-a', company_id: CO_A, qty_accepted: 5, invoiced_qty: 0, returned_qty: 0,
-      material_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', discount_sen: 0, unit_price_sen: 100,
+      item_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', discount_sen: 0, unit_price_sen: 100,
       grn: { id: 'grn-a', grn_number: 'HC-GRN-2608-001', supplier_id: 's1', purchase_order_id: null, status: 'POSTED', currency: 'MYR', exchange_rate: 1, company_id: CO_A },
     },
     {
       id: 'gi-b', grn_id: 'grn-b', company_id: CO_B, qty_accepted: 5, invoiced_qty: 0, returned_qty: 0,
-      material_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', discount_sen: 0, unit_price_sen: 100,
+      item_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', discount_sen: 0, unit_price_sen: 100,
       grn: { id: 'grn-b', grn_number: '2990-GRN-2608-001', supplier_id: 's9', purchase_order_id: null, status: 'POSTED', currency: 'MYR', exchange_rate: 1, company_id: CO_B },
     },
   ];
@@ -366,8 +366,8 @@ describe('GRN -> purchase return (draws stock back out and consumes the GRN line
      to return" rule the moment the source becomes visible. That stop is the
      marker the source WAS found — the half a scope sweep breaks silently. */
   const grnItems = (): Row[] => [
-    { id: 'gi-a', grn_id: 'grn-a', company_id: CO_A, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_sen: 100, material_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
-    { id: 'gi-b', grn_id: 'grn-b', company_id: CO_B, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_sen: 100, material_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
+    { id: 'gi-a', grn_id: 'grn-a', company_id: CO_A, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_sen: 100, item_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
+    { id: 'gi-b', grn_id: 'grn-b', company_id: CO_B, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_sen: 100, item_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
   ];
   const tables = (): Record<string, Row[]> => ({
     grns: grns(),
@@ -475,12 +475,12 @@ describe('PO -> GRN, picked lines', () => {
   const poItems = (): Row[] => [
     {
       id: 'poi-a', purchase_order_id: 'po-a', company_id: CO_A, qty: 5, received_qty: 0,
-      material_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', unit_price_sen: 100,
+      item_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', unit_price_sen: 100,
       po: { id: 'po-a', po_number: 'HC-PO-2608-001', supplier_id: 's1', status: 'SUBMITTED', purchase_location_id: 'wh1', currency: 'MYR' },
     },
     {
       id: 'poi-b', purchase_order_id: 'po-b', company_id: CO_B, qty: 5, received_qty: 0,
-      material_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', unit_price_sen: 100,
+      item_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', unit_price_sen: 100,
       po: { id: 'po-b', po_number: '2990-PO-2608-001', supplier_id: 's9', status: 'SUBMITTED', purchase_location_id: 'wh9', currency: 'MYR' },
     },
   ];
@@ -560,8 +560,8 @@ describe('PC Receive -> PC Return', () => {
   /* qty_rejected 0 and qty_accepted fully returned, so BOTH converters stop on
      their own "nothing left to return" rule once the source is visible. */
   const receiveItems = (): Row[] => [
-    { id: 'pcri-a', pc_receive_id: 'pcr-a', company_id: CO_A, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_sen: 100, material_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
-    { id: 'pcri-b', pc_receive_id: 'pcr-b', company_id: CO_B, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_sen: 100, material_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
+    { id: 'pcri-a', pc_receive_id: 'pcr-a', company_id: CO_A, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_sen: 100, item_code: 'M1', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
+    { id: 'pcri-b', pc_receive_id: 'pcr-b', company_id: CO_B, qty_accepted: 2, qty_rejected: 0, returned_qty: 2, unit_price_sen: 100, item_code: 'M9', material_name: 'Mat', material_kind: 'mfg_product', item_group: null, variants: null, description: null, description2: null, uom: 'UNIT', rejection_reason: null },
   ];
   const tables = (): Record<string, Row[]> => ({
     purchase_consignment_receives: receives(),

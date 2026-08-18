@@ -55,20 +55,20 @@ try {
   // sum(qty) over inventory_movements is WRONG here — OUT is stored positive and
   // the view negates it — and that mistake hides every negative.
   const negatives = await pg`
-    SELECT company_id, warehouse_id, product_code, variant_key, qty
+    SELECT company_id, warehouse_id, item_code, variant_key, qty
     FROM scm.inventory_balances
     WHERE qty < 0
-    ORDER BY company_id, product_code, variant_key`;
+    ORDER BY company_id, item_code, variant_key`;
 
   // Product-level net per (company, warehouse, product): if this is >= 0 while a
   // single variant bucket is negative, the negative is a variant-key SPLIT
   // (received under one spec-key, delivered under another) — the product total
   // is fine, only the per-variant ledger is uneven.
   const productNet = await pg`
-    SELECT company_id, warehouse_id, product_code, SUM(qty) AS net
+    SELECT company_id, warehouse_id, item_code, SUM(qty) AS net
     FROM scm.inventory_balances
-    GROUP BY company_id, warehouse_id, product_code`;
-  const netKey = (r) => `${r.company_id}|${r.warehouse_id}|${r.product_code}`;
+    GROUP BY company_id, warehouse_id, item_code`;
+  const netKey = (r) => `${r.company_id}|${r.warehouse_id}|${r.item_code}`;
   const netOf = new Map(productNet.map((r) => [netKey(r), Number(r.net)]));
 
   // Ship-anyway fingerprint: an OUT movement booked at cost 0 for this exact
@@ -76,11 +76,11 @@ try {
   // delivery-orders-mfg.ts), so a zero-cost OUT is the signature of "operator
   // insisted, shipped without stock, clears when the receipt lands".
   const zeroCostOut = await pg`
-    SELECT DISTINCT company_id, warehouse_id, product_code, variant_key
+    SELECT DISTINCT company_id, warehouse_id, item_code, variant_key
     FROM scm.inventory_movements
     WHERE movement_type = 'OUT' AND COALESCE(total_cost_sen, 0) = 0`;
   const bucketKey = (r) =>
-    `${r.company_id}|${r.warehouse_id}|${r.product_code}|${r.variant_key ?? ""}`;
+    `${r.company_id}|${r.warehouse_id}|${r.item_code}|${r.variant_key ?? ""}`;
   const shipAnyway = new Set(zeroCostOut.map(bucketKey));
 
   // The two ledgers: movement-derived balance vs lot-derived remaining. In a
@@ -88,22 +88,22 @@ try {
   // clear. Reported as its own section, not merged into the negatives.
   const ledgerMismatch = await pg`
     WITH mv AS (
-      SELECT company_id, warehouse_id, product_code, variant_key, qty
+      SELECT company_id, warehouse_id, item_code, variant_key, qty
       FROM scm.inventory_balances),
     lot AS (
-      SELECT company_id, warehouse_id, product_code, variant_key,
+      SELECT company_id, warehouse_id, item_code, variant_key,
              SUM(qty_remaining) AS q
       FROM scm.inventory_lots
-      GROUP BY company_id, warehouse_id, product_code, variant_key)
+      GROUP BY company_id, warehouse_id, item_code, variant_key)
     SELECT COALESCE(mv.company_id, lot.company_id) AS company_id,
-           COALESCE(mv.product_code, lot.product_code) AS product_code,
+           COALESCE(mv.item_code, lot.item_code) AS item_code,
            COALESCE(mv.variant_key, lot.variant_key) AS variant_key,
            COALESCE(mv.qty, 0) AS mv_qty,
            COALESCE(lot.q, 0) AS lot_qty
     FROM mv FULL OUTER JOIN lot
       ON mv.company_id = lot.company_id
      AND mv.warehouse_id = lot.warehouse_id
-     AND mv.product_code = lot.product_code
+     AND mv.item_code = lot.item_code
      AND COALESCE(mv.variant_key, '') = COALESCE(lot.variant_key, '')
     WHERE COALESCE(mv.qty, 0) <> COALESCE(lot.q, 0)
     ORDER BY ABS(COALESCE(mv.qty, 0) - COALESCE(lot.q, 0)) DESC`;
@@ -124,14 +124,14 @@ try {
   console.log("                  INVESTIGATE = neither — a real shortage to chase.\n");
   for (const r of rows) {
     console.log(
-      `  [${r.label}] company ${r.company_id}  ${r.product_code}  qty ${r.qty}` +
+      `  [${r.label}] company ${r.company_id}  ${r.item_code}  qty ${r.qty}` +
       `  variant="${(r.variant_key ?? "").slice(0, 60)}"`);
   }
 
   console.log(`\nLEDGER MISMATCH (movements vs lots) — ${ledgerMismatch.length} bucket(s)`);
   for (const r of ledgerMismatch) {
     console.log(
-      `  company ${r.company_id}  ${r.product_code}  movements=${r.mv_qty} lots=${r.lot_qty}` +
+      `  company ${r.company_id}  ${r.item_code}  movements=${r.mv_qty} lots=${r.lot_qty}` +
       `  diff=${Number(r.mv_qty) - Number(r.lot_qty)}`);
   }
 

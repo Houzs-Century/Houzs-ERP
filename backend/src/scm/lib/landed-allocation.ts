@@ -40,7 +40,7 @@ export function normalizeAllocationMethod(raw: unknown): AllocationMethod {
 export interface AllocLine {
   id: string;
   itemGroup: string | null | undefined;
-  materialCode: string | null | undefined;
+  itemCode: string | null | undefined;
   /** received/accepted qty driving inventory + allocation. */
   qty: number;
   /** line amount in the GRN's OWN currency (unit_price_sen × qty − discount,
@@ -83,8 +83,8 @@ export function allocateLandedCharges(
   method: AllocationMethod,
   grnRate: unknown,
 ): AllocationResult {
-  const goodsLines = lines.filter((l) => !isServiceLine({ itemGroup: l.itemGroup, itemCode: l.materialCode }));
-  const serviceLines = lines.filter((l) => isServiceLine({ itemGroup: l.itemGroup, itemCode: l.materialCode }));
+  const goodsLines = lines.filter((l) => !isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode }));
+  const serviceLines = lines.filter((l) => isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode }));
 
   // Charge pool (MYR) = Σ service-line amounts converted at the GRN rate.
   const chargePoolMyr = serviceLines.reduce(

@@ -48,7 +48,7 @@ export async function attachPiAssignedSos(
     }
     const poIds = [...poByGrn.values()];
     /* Each PI's OWN line codes (header ≡ ∪(drill lines), 2026-08-02): the drill
-       matches assignments into the PI's lines by material_code, so the header
+       matches assignments into the PI's lines by item_code, so the header
        cells roll up ONLY those SKUs — a partial-billing PI must not inherit
        its parent PO's whole assignment history. */
     const piIds = rows.map((r) => r.id).filter(Boolean);
@@ -57,14 +57,14 @@ export async function attachPiAssignedSos(
       const chunk = piIds.slice(k, k + 300);
       if (chunk.length === 0) continue;
       const { data: piLines, error: lineErr } = await sb.from('purchase_invoice_items')
-        .select('purchase_invoice_id, material_code')
+        .select('purchase_invoice_id, item_code')
         .in('purchase_invoice_id', chunk);
       if (lineErr) {
         /* eslint-disable-next-line no-console */
         console.error('[pi-assigned-sos] PI line-code read failed — Assigned SO column will be short:', lineErr.message);
       }
-      for (const l of (piLines ?? []) as Array<{ purchase_invoice_id: string; material_code: string | null }>) {
-        const code = (l.material_code ?? '').trim();
+      for (const l of (piLines ?? []) as Array<{ purchase_invoice_id: string; item_code: string | null }>) {
+        const code = (l.item_code ?? '').trim();
         if (!code) continue;
         const set = codesByPi.get(l.purchase_invoice_id) ?? new Set<string>();
         set.add(code);

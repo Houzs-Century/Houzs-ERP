@@ -104,7 +104,7 @@ try {
   /* The reversal tags its add-back rows source_doc_type='ADJUSTMENT' with the
      DO's id — the same signal fn_reverse_do_out's own idempotency check reads. */
   const adjustments = await pg`
-    SELECT id, warehouse_id, product_code, COALESCE(variant_key,'') AS vkey, batch_no,
+    SELECT id, warehouse_id, item_code, COALESCE(variant_key,'') AS vkey, batch_no,
            qty, total_cost_sen, unit_cost_sen, notes
       FROM scm.inventory_movements
      WHERE source_doc_type = 'ADJUSTMENT' AND source_doc_id = ${doRow.id}
@@ -119,7 +119,7 @@ try {
      ADJUSTMENT +qty, TRANSFER +qty. Re-deriving with a different convention
      would produce a number that disagrees with every screen. */
   const netByBucket = await pg`
-    SELECT warehouse_id, product_code, COALESCE(variant_key,'') AS vkey,
+    SELECT warehouse_id, item_code, COALESCE(variant_key,'') AS vkey,
            SUM(CASE movement_type
                  WHEN 'IN'         THEN qty
                  WHEN 'OUT'        THEN -qty
@@ -130,17 +130,17 @@ try {
       FROM scm.inventory_movements
      WHERE source_doc_id = ${doRow.id}
        AND source_doc_type IN ('DO', 'ADJUSTMENT')
-     GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')
+     GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')
   `;
   const netOffenders = netByBucket.filter((b) => num(b.net) !== 0);
   check("This DO's own movements net to zero, per SKU", netOffenders.length === 0,
-    netOffenders.map((b) => `${pad(b.product_code, 30)} net ${num(b.net)} (should be 0)`).join("\n"));
+    netOffenders.map((b) => `${pad(b.item_code, 30)} net ${num(b.net)} (should be 0)`).join("\n"));
 
   // ── C. Did the COGS leave? ─────────────────────────────────────────────────
   console.log("\nC. The costing was unwound (FIFO + COGS ledgers)");
 
   const leftoverCons = await pg`
-    SELECT c.id, mo.product_code, c.qty_consumed
+    SELECT c.id, mo.item_code, c.qty_consumed
       FROM scm.inventory_lot_consumptions c
       JOIN scm.inventory_movements mo ON mo.id = c.movement_id
      WHERE mo.source_doc_type = 'DO'
@@ -148,17 +148,17 @@ try {
        AND mo.movement_type   = 'OUT'
   `;
   check("No lot consumption still attributed to this DO", leftoverCons.length === 0,
-    leftoverCons.map((r) => `${pad(r.product_code, 30)} qty ${num(r.qty_consumed)} still counted as COGS`).join("\n"));
+    leftoverCons.map((r) => `${pad(r.item_code, 30)} qty ${num(r.qty_consumed)} still counted as COGS`).join("\n"));
 
   const stampedOuts = await pg`
-    SELECT product_code, qty, total_cost_sen, unit_cost_sen
+    SELECT item_code, qty, total_cost_sen, unit_cost_sen
       FROM scm.inventory_movements
      WHERE source_doc_type = 'DO' AND source_doc_id = ${doRow.id}
        AND movement_type = 'OUT'
        AND (COALESCE(total_cost_sen,0) <> 0 OR COALESCE(unit_cost_sen,0) <> 0)
   `;
   check("The OUT movements' cost stamps are zeroed", stampedOuts.length === 0,
-    stampedOuts.map((r) => `${pad(r.product_code, 30)} total_cost_sen ${num(r.total_cost_sen)}`).join("\n"));
+    stampedOuts.map((r) => `${pad(r.item_code, 30)} total_cost_sen ${num(r.total_cost_sen)}`).join("\n"));
 
   /* The add-back must NOT open a lot: the goods returned to their ORIGINAL lots
      in step (a), so a fresh open lot here is the same stock twice — and it would
@@ -166,21 +166,21 @@ try {
   let openAddBackLots = [];
   if (adjustments.length > 0) {
     openAddBackLots = await pg`
-      SELECT l.id, l.product_code, l.qty_remaining
+      SELECT l.id, l.item_code, l.qty_remaining
         FROM scm.inventory_lots l
        WHERE l.movement_id IN ${pg(adjustments.map((a) => a.id))}
          AND l.qty_remaining > 0
     `;
   }
   check("The add-back minted no open lot", openAddBackLots.length === 0,
-    openAddBackLots.map((l) => `${pad(l.product_code, 30)} lot still open with ${num(l.qty_remaining)}`).join("\n"));
+    openAddBackLots.map((l) => `${pad(l.item_code, 30)} lot still open with ${num(l.qty_remaining)}`).join("\n"));
 
   // ── D. THE ONE THAT ANSWERS THE QUESTION ───────────────────────────────────
   console.log("\nD. The two ledgers agree for every SKU this DO touched");
   console.log("   (movement ledger vs FIFO lot ledger — the divergence class in");
   console.log("    docs/inventory-ledger-divergence-coe.md)\n");
 
-  const buckets = netByBucket.map((b) => ({ w: b.warehouse_id, p: b.product_code, v: b.vkey, name: b.product_name }));
+  const buckets = netByBucket.map((b) => ({ w: b.warehouse_id, p: b.item_code, v: b.vkey, name: b.product_name }));
   const drift = [];
   for (const b of buckets) {
     const [mv] = await pg`
@@ -191,13 +191,13 @@ try {
                  WHEN 'TRANSFER'   THEN qty
                  ELSE 0 END), 0) AS qty
         FROM scm.inventory_movements
-       WHERE warehouse_id = ${b.w} AND product_code = ${b.p}
+       WHERE warehouse_id = ${b.w} AND item_code = ${b.p}
          AND COALESCE(variant_key,'') = ${b.v}
     `;
     const [lot] = await pg`
       SELECT COALESCE(SUM(qty_remaining), 0) AS qty
         FROM scm.inventory_lots
-       WHERE warehouse_id = ${b.w} AND product_code = ${b.p}
+       WHERE warehouse_id = ${b.w} AND item_code = ${b.p}
          AND COALESCE(variant_key,'') = ${b.v}
     `;
     const movQty = num(mv.qty), lotQty = num(lot.qty);
@@ -221,7 +221,7 @@ try {
     const rows = await pg`
       SELECT movement_type, qty, source_doc_no, created_at
         FROM scm.inventory_movements
-       WHERE warehouse_id = ${b.w} AND product_code = ${b.p}
+       WHERE warehouse_id = ${b.w} AND item_code = ${b.p}
          AND COALESCE(variant_key,'') = ${b.v}
        ORDER BY created_at DESC
        LIMIT 8

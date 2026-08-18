@@ -46,7 +46,7 @@ export const GRN_LINE_AUDIT_FIELDS: AuditFieldMap = [
   ['discountSen', 'discount_sen'],
   ['unitCostSen', 'unit_cost_sen'],
   ['lineTotalSen', 'line_total_sen'],
-  ['materialCode', 'material_code'],
+  ['itemCode', 'item_code'],
   ['materialName', 'material_name'],
   ['supplierSku', 'supplier_sku'],
   ['itemGroup', 'item_group'],
@@ -59,7 +59,7 @@ export const GRN_LINE_AUDIT_FIELDS: AuditFieldMap = [
 
 export const GRN_LINE_AUDIT_SELECT =
   'qty_received, qty_accepted, qty_rejected, rejection_reason, unit_price_sen, ' +
-  'discount_sen, unit_cost_sen, line_total_sen, material_code, material_name, ' +
+  'discount_sen, unit_cost_sen, line_total_sen, item_code, material_name, ' +
   'supplier_sku, item_group, description, uom, notes, delivery_date, rack_id';
 
 /* ── Sales Invoice line ────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ export const PO_LINE_AUDIT_FIELDS: AuditFieldMap = [
   ['discountSen', 'discount_sen'],
   ['unitCostSen', 'unit_cost_sen'],
   ['lineTotalSen', 'line_total_sen'],
-  ['materialCode', 'material_code'],
+  ['itemCode', 'item_code'],
   ['materialName', 'material_name'],
   ['supplierSku', 'supplier_sku'],
   ['itemGroup', 'item_group'],
@@ -112,7 +112,7 @@ export const PO_LINE_AUDIT_FIELDS: AuditFieldMap = [
 
 export const PO_LINE_AUDIT_SELECT =
   'qty, unit_price_sen, discount_sen, unit_cost_sen, line_total_sen, ' +
-  'material_code, material_name, supplier_sku, item_group, description, uom, notes, ' +
+  'item_code, material_name, supplier_sku, item_group, description, uom, notes, ' +
   'delivery_date, warehouse_id, supplier_delivery_date_2, supplier_delivery_date_3, ' +
   'supplier_delivery_date_4';
 
@@ -125,7 +125,7 @@ export const PI_LINE_AUDIT_FIELDS: AuditFieldMap = [
   ['discountSen', 'discount_sen'],
   ['unitCostSen', 'unit_cost_sen'],
   ['lineTotalSen', 'line_total_sen'],
-  ['materialCode', 'material_code'],
+  ['itemCode', 'item_code'],
   ['materialName', 'material_name'],
   ['itemGroup', 'item_group'],
   ['description', 'description'],
@@ -135,7 +135,7 @@ export const PI_LINE_AUDIT_FIELDS: AuditFieldMap = [
 
 export const PI_LINE_AUDIT_SELECT =
   'qty, unit_price_sen, discount_sen, unit_cost_sen, line_total_sen, ' +
-  'material_code, material_name, item_group, description, uom, notes';
+  'item_code, material_name, item_group, description, uom, notes';
 
 /**
  * Which audited columns are MISSING from a select string — empty means covered.

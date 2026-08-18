@@ -903,7 +903,7 @@ export function composeDescription2(line: ErpLine): string | null {
  *      text still decodes to the compartments the ERP holds, composed and
  *      re-decoded when it does not, refused when neither survives the gate.
  *   2. RESOLVE (D10). Every remaining line gets exactly one AutoCount ItemCode
- *      out of the cutover map. There is no fallback to material_code.
+ *      out of the cutover map. There is no fallback to item_code.
  *
  * BOTH STEPS REFUSE THE WHOLE DOCUMENT rather than sending part of it. A
  * half-synced order is a divergence with no marker on either side; a refusal is

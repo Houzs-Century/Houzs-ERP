@@ -337,7 +337,7 @@ CREATE TABLE "grn_items" (
 	"grn_id" uuid NOT NULL,
 	"purchase_order_item_id" uuid,
 	"material_kind" "material_kind" NOT NULL,
-	"material_code" text NOT NULL,
+	"item_code" text NOT NULL,
 	"material_name" text NOT NULL,
 	"qty_received" integer NOT NULL,
 	"qty_accepted" integer NOT NULL,
@@ -427,7 +427,7 @@ CREATE TABLE "inventory_lot_consumptions" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"lot_id" uuid NOT NULL,
 	"warehouse_id" uuid NOT NULL,
-	"product_code" text NOT NULL,
+	"item_code" text NOT NULL,
 	"variant_key" text DEFAULT '' NOT NULL,
 	"qty_consumed" integer NOT NULL,
 	"unit_cost_sen" integer NOT NULL,
@@ -443,7 +443,7 @@ CREATE TABLE "inventory_lot_consumptions" (
 CREATE TABLE "inventory_lots" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"warehouse_id" uuid NOT NULL,
-	"product_code" text NOT NULL,
+	"item_code" text NOT NULL,
 	"product_name" text,
 	"variant_key" text DEFAULT '' NOT NULL,
 	"qty_received" integer NOT NULL,
@@ -464,7 +464,7 @@ CREATE TABLE "inventory_movements" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"movement_type" "inventory_movement_type" NOT NULL,
 	"warehouse_id" uuid NOT NULL,
-	"product_code" text NOT NULL,
+	"item_code" text NOT NULL,
 	"product_name" text,
 	"variant_key" text DEFAULT '' NOT NULL,
 	"qty" integer NOT NULL,
@@ -523,7 +523,7 @@ CREATE TABLE "maintenance_config_history" (
 
 CREATE TABLE "master_price_history" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
-	"product_code" text NOT NULL,
+	"item_code" text NOT NULL,
 	"field" text NOT NULL,
 	"old_value_sen" integer,
 	"new_value_sen" integer,
@@ -964,7 +964,7 @@ CREATE TABLE "product_compartments" (
 );
 
 CREATE TABLE "product_dept_configs" (
-	"product_code" text PRIMARY KEY NOT NULL,
+	"item_code" text PRIMARY KEY NOT NULL,
 	"unit_m3_milli" integer DEFAULT 0 NOT NULL,
 	"fabric_usage_sen" integer DEFAULT 0 NOT NULL,
 	"price2_sen" integer DEFAULT 0 NOT NULL,
@@ -1053,7 +1053,7 @@ CREATE TABLE "purchase_invoice_items" (
 	"purchase_invoice_id" uuid NOT NULL,
 	"grn_item_id" uuid,
 	"material_kind" "material_kind" NOT NULL,
-	"material_code" text NOT NULL,
+	"item_code" text NOT NULL,
 	"material_name" text NOT NULL,
 	"qty" integer NOT NULL,
 	"unit_price_sen" integer NOT NULL,
@@ -1105,7 +1105,7 @@ CREATE TABLE "purchase_order_items" (
 	"purchase_order_id" uuid NOT NULL,
 	"binding_id" uuid,
 	"material_kind" "material_kind" NOT NULL,
-	"material_code" text NOT NULL,
+	"item_code" text NOT NULL,
 	"material_name" text NOT NULL,
 	"supplier_sku" text,
 	"qty" integer NOT NULL,
@@ -1174,7 +1174,7 @@ CREATE TABLE "purchase_return_items" (
 	"purchase_return_id" uuid NOT NULL,
 	"grn_item_id" uuid,
 	"material_kind" "material_kind" NOT NULL,
-	"material_code" text NOT NULL,
+	"item_code" text NOT NULL,
 	"material_name" text NOT NULL,
 	"qty_returned" integer NOT NULL,
 	"unit_price_sen" integer DEFAULT 0 NOT NULL,
@@ -1467,7 +1467,7 @@ CREATE TABLE "state_warehouse_mappings" (
 CREATE TABLE "stock_take_lines" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"stock_take_id" uuid NOT NULL,
-	"product_code" text NOT NULL,
+	"item_code" text NOT NULL,
 	"product_name" text,
 	"system_qty" integer DEFAULT 0 NOT NULL,
 	"counted_qty" integer,
@@ -1497,7 +1497,7 @@ CREATE TABLE "stock_takes" (
 CREATE TABLE "stock_transfer_lines" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"stock_transfer_id" uuid NOT NULL,
-	"product_code" text NOT NULL,
+	"item_code" text NOT NULL,
 	"product_name" text,
 	"variant_key" text DEFAULT '' NOT NULL,
 	"qty" integer NOT NULL,
@@ -1527,7 +1527,7 @@ CREATE TABLE "supplier_material_bindings" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"supplier_id" uuid NOT NULL,
 	"material_kind" "material_kind" NOT NULL,
-	"material_code" text NOT NULL,
+	"item_code" text NOT NULL,
 	"material_name" text NOT NULL,
 	"supplier_sku" text NOT NULL,
 	"unit_price_sen" integer DEFAULT 0 NOT NULL,
@@ -1590,7 +1590,7 @@ CREATE TABLE "venues" (
 CREATE TABLE "warehouse_rack_items" (
 	"id" uuid PRIMARY KEY DEFAULT gen_random_uuid() NOT NULL,
 	"rack_id" uuid NOT NULL,
-	"product_code" text NOT NULL,
+	"item_code" text NOT NULL,
 	"variant_key" text DEFAULT '' NOT NULL,
 	"product_name" text,
 	"size_label" text,
@@ -1611,7 +1611,7 @@ CREATE TABLE "warehouse_rack_movements" (
 	"to_rack_id" uuid,
 	"to_rack_label" text,
 	"warehouse_id" uuid,
-	"product_code" text,
+	"item_code" text,
 	"variant_key" text DEFAULT '' NOT NULL,
 	"product_name" text,
 	"source_doc_no" text,
@@ -1810,9 +1810,9 @@ CREATE INDEX "idx_grn_status" ON "grns" USING btree ("status");
 CREATE INDEX "idx_inv_cons_lot" ON "inventory_lot_consumptions" USING btree ("lot_id");
 CREATE INDEX "idx_inv_cons_doc" ON "inventory_lot_consumptions" USING btree ("source_doc_type","source_doc_id");
 CREATE INDEX "idx_inv_cons_consumed" ON "inventory_lot_consumptions" USING btree ("consumed_at");
-CREATE INDEX "idx_inv_lots_wh_product" ON "inventory_lots" USING btree ("warehouse_id","product_code","received_at");
-CREATE INDEX "idx_inv_lots_batch" ON "inventory_lots" USING btree ("warehouse_id","batch_no","product_code","variant_key");
-CREATE INDEX "idx_inv_mov_warehouse_product" ON "inventory_movements" USING btree ("warehouse_id","product_code");
+CREATE INDEX "idx_inv_lots_wh_product" ON "inventory_lots" USING btree ("warehouse_id","item_code","received_at");
+CREATE INDEX "idx_inv_lots_batch" ON "inventory_lots" USING btree ("warehouse_id","batch_no","item_code","variant_key");
+CREATE INDEX "idx_inv_mov_warehouse_product" ON "inventory_movements" USING btree ("warehouse_id","item_code");
 CREATE INDEX "idx_inv_mov_doc" ON "inventory_movements" USING btree ("source_doc_type","source_doc_id");
 CREATE INDEX "idx_inv_mov_created" ON "inventory_movements" USING btree ("created_at");
 CREATE INDEX "idx_je_date" ON "journal_entries" USING btree ("entry_date");
@@ -1822,7 +1822,7 @@ CREATE INDEX "idx_jel_je" ON "journal_entry_lines" USING btree ("journal_entry_i
 CREATE INDEX "idx_jel_account" ON "journal_entry_lines" USING btree ("account_code");
 CREATE INDEX "idx_jel_party" ON "journal_entry_lines" USING btree ("party_type","party_code");
 CREATE INDEX "idx_mch_scope_eff" ON "maintenance_config_history" USING btree ("scope","effective_from");
-CREATE INDEX "idx_mph_code" ON "master_price_history" USING btree ("product_code");
+CREATE INDEX "idx_mph_code" ON "master_price_history" USING btree ("item_code");
 CREATE INDEX "idx_mfg_products_code" ON "mfg_products" USING btree ("code");
 CREATE INDEX "idx_mfg_products_category" ON "mfg_products" USING btree ("category");
 CREATE INDEX "idx_mfg_products_base_model" ON "mfg_products" USING btree ("base_model");
@@ -1893,7 +1893,7 @@ CREATE INDEX "idx_sofa_combo_pricing_supplier" ON "sofa_combo_pricing" USING btr
 CREATE INDEX "idx_personal_quick_picks_lookup" ON "sofa_personal_quick_picks" USING btree ("staff_id","base_model","sort_order") WHERE "sofa_personal_quick_picks"."deleted_at" IS NULL;
 CREATE INDEX "idx_sofa_quick_picks_lookup" ON "sofa_quick_picks" USING btree ("base_model","sort_order") WHERE "sofa_quick_picks"."deleted_at" IS NULL;
 CREATE INDEX "idx_stock_take_lines_take" ON "stock_take_lines" USING btree ("stock_take_id");
-CREATE UNIQUE INDEX "stock_take_lines_take_product_unique" ON "stock_take_lines" USING btree ("stock_take_id","product_code");
+CREATE UNIQUE INDEX "stock_take_lines_take_product_unique" ON "stock_take_lines" USING btree ("stock_take_id","item_code");
 CREATE INDEX "idx_stock_takes_status" ON "stock_takes" USING btree ("status","take_date");
 CREATE INDEX "idx_stock_takes_warehouse" ON "stock_takes" USING btree ("warehouse_id");
 CREATE INDEX "idx_stock_transfer_lines_xfer" ON "stock_transfer_lines" USING btree ("stock_transfer_id");
@@ -1901,10 +1901,10 @@ CREATE INDEX "idx_stock_transfers_status" ON "stock_transfers" USING btree ("sta
 CREATE INDEX "idx_stock_transfers_from_wh" ON "stock_transfers" USING btree ("from_warehouse_id");
 CREATE INDEX "idx_stock_transfers_to_wh" ON "stock_transfers" USING btree ("to_warehouse_id");
 CREATE INDEX "idx_smb_supplier" ON "supplier_material_bindings" USING btree ("supplier_id");
-CREATE INDEX "idx_smb_material" ON "supplier_material_bindings" USING btree ("material_kind","material_code");
-CREATE INDEX "idx_smb_main_per_material" ON "supplier_material_bindings" USING btree ("material_kind","material_code") WHERE "supplier_material_bindings"."is_main_supplier" = true;
+CREATE INDEX "idx_smb_material" ON "supplier_material_bindings" USING btree ("material_kind","item_code");
+CREATE INDEX "idx_smb_main_per_material" ON "supplier_material_bindings" USING btree ("material_kind","item_code") WHERE "supplier_material_bindings"."is_main_supplier" = true;
 CREATE INDEX "idx_warehouse_rack_items_rack" ON "warehouse_rack_items" USING btree ("rack_id");
-CREATE INDEX "idx_warehouse_rack_items_product" ON "warehouse_rack_items" USING btree ("product_code");
+CREATE INDEX "idx_warehouse_rack_items_product" ON "warehouse_rack_items" USING btree ("item_code");
 CREATE INDEX "idx_warehouse_rack_movements_type" ON "warehouse_rack_movements" USING btree ("movement_type");
 CREATE INDEX "idx_warehouse_rack_movements_rack" ON "warehouse_rack_movements" USING btree ("rack_id");
 CREATE INDEX "idx_warehouse_rack_movements_created" ON "warehouse_rack_movements" USING btree ("created_at");

@@ -82,13 +82,13 @@ async function main() {
      WHERE h.company_id = ${CO} AND h.linked_ac_docno IS NOT NULL AND i.item_group = 'sofa'
      ORDER BY i.doc_no, i.line_no`;
   const po = await sql`
-    SELECT i.id, p.po_number, i.material_code, i.photo_urls
+    SELECT i.id, p.po_number, i.item_code, i.photo_urls
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
      WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL AND i.item_group = 'sofa'
      ORDER BY p.po_number, i.id`;
   await pass("SALES ORDER", so, "id", "doc_no", "item_code", "scm.mfg_sales_order_items");
-  await pass("PURCHASE ORDER", po, "id", "po_number", "material_code", "scm.purchase_order_items");
+  await pass("PURCHASE ORDER", po, "id", "po_number", "item_code", "scm.purchase_order_items");
   if (!APPLY) log("DRY-RUN — set APPLY=1 to write.");
   await sql.end();
 }

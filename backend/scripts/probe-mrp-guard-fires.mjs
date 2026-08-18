@@ -37,7 +37,7 @@ const SIGS = [
   ['2 product master  (AFTER the guard)', ['%pgrst_source%', '%mfg_products%', '%"code"%', '%"name"%', '%"category"%']],
   ['2b warehouses     (AFTER the guard)', ['%pgrst_source%', '%warehouses%', '%is_active%']],
   ['2c state mappings (AFTER the guard)', ['%pgrst_source%', '%state_warehouse_mappings%']],
-  ['3 inventory_bal   (AFTER the guard)', ['%pgrst_source%', '%inventory_balances%', '%variant_key%', '%product_code%']],
+  ['3 inventory_bal   (AFTER the guard)', ['%pgrst_source%', '%inventory_balances%', '%variant_key%', '%item_code%']],
   ['4 PO supply       (AFTER the guard)', ['%pgrst_source%', '%purchase_order_items%', '%supplier_delivery_date_4%']],
   ['5 bindings        (AFTER the guard)', ['%pgrst_source%', '%supplier_material_bindings%', '%is_main_supplier%']],
 ];

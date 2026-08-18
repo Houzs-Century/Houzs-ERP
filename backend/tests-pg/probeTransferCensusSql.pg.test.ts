@@ -60,7 +60,7 @@ async function schema(db: Sql) {
   }
   // The window / histogram / doc-no queries touch these directly.
   need('purchase_order_items', 'qty'); need('purchase_order_items', 'received_qty');
-  need('purchase_order_items', 'purchase_order_id'); need('purchase_order_items', 'material_code');
+  need('purchase_order_items', 'purchase_order_id'); need('purchase_order_items', 'item_code');
   need('purchase_orders', 'status'); need('purchase_orders', 'po_number');
   need('purchase_orders', 'company_id');
   need('grn_items', 'purchase_order_item_id');
@@ -70,7 +70,7 @@ async function schema(db: Sql) {
     const defs = [...cs].map((c) => {
       if (c === 'id') return 'id uuid PRIMARY KEY DEFAULT gen_random_uuid()';
       if (numeric.has(c)) return `${c} int`;
-      if (c === 'status' || c === 'po_number' || c === 'material_code') return `${c} text`;
+      if (c === 'status' || c === 'po_number' || c === 'item_code') return `${c} text`;
       if (c.endsWith('_id')) return `${c} uuid`;
       return `${c} numeric`;            // every qty / tally column
     });
@@ -115,7 +115,7 @@ async function seedPoWindow(db: Sql) {
     -- PO-NEWEST: three FULLY RECEIVED lines. They are not outstanding, but under
     -- the old query they still consumed the window, because the remaining-qty
     -- filter ran in JavaScript AFTER the limit. This is mechanism #1.
-    INSERT INTO scm.purchase_order_items (purchase_order_id, qty, received_qty, company_id, material_code) VALUES
+    INSERT INTO scm.purchase_order_items (purchase_order_id, qty, received_qty, company_id, item_code) VALUES
       ('ffffffff-0000-0000-0000-000000000001', 5, 5, 1, 'AAA'),
       ('ffffffff-0000-0000-0000-000000000001', 5, 5, 1, 'BBB'),
       ('ffffffff-0000-0000-0000-000000000001', 5, 5, 1, 'CCC'),
@@ -144,15 +144,15 @@ async function seedDoubleTransfer(db: Sql) {
     -- HID1 has qty 4. Two POSTED GRNs take 4 and 3 → 7 moved, over by 3.
     INSERT INTO scm.grn_items (grn_id, purchase_order_item_id, qty_accepted, company_id)
     SELECT 'aaaaaaaa-0000-0000-0000-000000000001', i.id, 4, 1
-      FROM scm.purchase_order_items i WHERE i.material_code = 'HID1';
+      FROM scm.purchase_order_items i WHERE i.item_code = 'HID1';
     INSERT INTO scm.grn_items (grn_id, purchase_order_item_id, qty_accepted, company_id)
     SELECT 'aaaaaaaa-0000-0000-0000-000000000002', i.id, 3, 1
-      FROM scm.purchase_order_items i WHERE i.material_code = 'HID1';
+      FROM scm.purchase_order_items i WHERE i.item_code = 'HID1';
 
     -- A CANCELLED GRN takes 99 and must NOT count: every converter releases it.
     INSERT INTO scm.grn_items (grn_id, purchase_order_item_id, qty_accepted, company_id)
     SELECT 'aaaaaaaa-0000-0000-0000-000000000003', i.id, 99, 1
-      FROM scm.purchase_order_items i WHERE i.material_code = 'HID2';
+      FROM scm.purchase_order_items i WHERE i.item_code = 'HID2';
 
     -- An UNBOUND GRN line: takes stock in, ticks nothing off, invisible to the
     -- ceiling. One of the two KNOWN EXPOSURES in convert-ceilings.test.ts.
@@ -268,7 +268,7 @@ describePg('probe-transfer-census SQL — every statement runs on real Postgres'
       await sql.unsafe(`
         INSERT INTO scm.purchase_orders (id, po_number, status, company_id)
         VALUES ('00000000-0000-0000-0000-0000000000ff', 'PO-NULLSTATUS', NULL, 1);
-        INSERT INTO scm.purchase_order_items (purchase_order_id, qty, received_qty, company_id, material_code)
+        INSERT INTO scm.purchase_order_items (purchase_order_id, qty, received_qty, company_id, item_code)
         VALUES ('00000000-0000-0000-0000-0000000000ff', 3, 0, 1, 'NUL1');
       `);
       const rows = await Q.poStatusHistogram(sql, 1) as unknown as Array<{
@@ -278,7 +278,7 @@ describePg('probe-transfer-census SQL — every statement runs on real Postgres'
       expect(nul, 'a NULL-status PO vanished from the histogram').toBeDefined();
       expect(nul!.excluded_by_picker).toBe(true);
       await sql.unsafe(`
-        DELETE FROM scm.purchase_order_items WHERE material_code = 'NUL1';
+        DELETE FROM scm.purchase_order_items WHERE item_code = 'NUL1';
         DELETE FROM scm.purchase_orders WHERE po_number = 'PO-NULLSTATUS';
       `);
     });
@@ -339,12 +339,12 @@ describePg('probe-transfer-census SQL — every statement runs on real Postgres'
   describe('the screenshot lookup', () => {
     test('an outstanding, receivable PO is returned line by line', async () => {
       const rows = await Q.poByDocNo(sql, 'PO-HIDDEN') as unknown as Array<{
-        status: string; material_code: string; remaining: string; grn_lines: number;
+        status: string; item_code: string; remaining: string; grn_lines: number;
       }>;
       expect(rows).toHaveLength(2);
       expect(rows[0]!.status).toBe('SUBMITTED');
-      expect(rows.map((r) => r.material_code)).toEqual(['HID1', 'HID2']);
-      expect(Number(rows.find((r) => r.material_code === 'HID1')!.remaining)).toBe(4);
+      expect(rows.map((r) => r.item_code)).toEqual(['HID1', 'HID2']);
+      expect(Number(rows.find((r) => r.item_code === 'HID1')!.remaining)).toBe(4);
     });
 
     test('the lookup is case-insensitive on the document number', async () => {

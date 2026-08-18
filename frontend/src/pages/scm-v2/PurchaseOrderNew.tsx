@@ -76,7 +76,7 @@ type DraftLine = {
   rid: string;
   bindingId?: string;
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku?: string;
   qty: number;
@@ -90,7 +90,7 @@ type DraftLine = {
   supplierDeliveryDate3?: string;
   supplierDeliveryDate4?: string;
   warehouseId?: string;
-  /* PR #126 — set when materialCode matches an mfg_product so the row knows
+  /* PR #126 — set when itemCode matches an mfg_product so the row knows
      which variant editor to render (sofa / bedframe / mattress). Lowercase
      to match SoLineCard's itemGroup convention. */
   category?: string;
@@ -112,7 +112,7 @@ type DraftLine = {
 const newLine = (): DraftLine => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   materialKind: 'mfg_product',
-  materialCode: '',
+  itemCode: '',
   materialName: '',
   qty: 1,
   unitPriceSen: 0,
@@ -226,11 +226,11 @@ export const PurchaseOrderNew = () => {
         ...l,
         bindingId:      b.id,
         materialKind:   b.material_kind,
-        materialCode:   b.material_code,
+        itemCode:   b.item_code,
         materialName:   b.material_name,
         supplierSku:    b.supplier_sku,
         unitPriceSen: b.unit_price_sen,
-        category:       categoryForCode(b.material_code) ?? l.category,
+        category:       categoryForCode(b.item_code) ?? l.category,
       } : l)));
       setPendingItemPick(null);
     }
@@ -241,13 +241,13 @@ export const PurchaseOrderNew = () => {
 
   // Item-first companion effect — once supplier resolves (commander clicked a
   // hint banner link, or picked manually after typing an item), backfill any
-  // line whose materialCode matches a binding but lacks a bindingId. Mirrors
+  // line whose itemCode matches a binding but lacks a bindingId. Mirrors
   // pickBinding without forcing commander to re-type the code.
   useEffect(() => {
     if (!supplierId || bindings.length === 0) return;
     setLines((prev) => prev.map((l) => {
-      if (l.bindingId || !l.materialCode) return l;
-      const b = bindings.find((x) => x.material_code === l.materialCode);
+      if (l.bindingId || !l.itemCode) return l;
+      const b = bindings.find((x) => x.item_code === l.itemCode);
       if (!b) return l;
       return {
         ...l,
@@ -256,7 +256,7 @@ export const PurchaseOrderNew = () => {
         materialName:   b.material_name,
         supplierSku:    b.supplier_sku,
         unitPriceSen: l.unitPriceSen || b.unit_price_sen,
-        category:       l.category ?? categoryForCode(b.material_code),
+        category:       l.category ?? categoryForCode(b.item_code),
       };
     }));
     // Banner has done its job once a supplier is chosen.
@@ -300,11 +300,11 @@ export const PurchaseOrderNew = () => {
       if (supplierId) {
         return (suppliers.data ?? []).find((s) => s.id === supplierId)?.code ?? null;
       }
-      const existing = lines.find((l) => l.materialCode.trim());
+      const existing = lines.find((l) => l.itemCode.trim());
       if (!existing) return null;
       const b = existing.bindingId
         ? bindings.find((x) => x.id === existing.bindingId)
-        : bindings.find((x) => x.material_code === existing.materialCode);
+        : bindings.find((x) => x.item_code === existing.itemCode);
       // bindings only resolve once a supplierId is set, so this is mostly a
       // no-op when supplierId is empty — the explicit-creditor branch above is
       // the real guard. Returned for completeness.
@@ -348,7 +348,7 @@ export const PurchaseOrderNew = () => {
     const mapped: DraftLine[] = keep.map((p) => ({
       rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       materialKind: 'mfg_product',
-      materialCode: p.itemCode,
+      itemCode: p.itemCode,
       materialName: p.description ?? p.itemCode,
       qty: p._pickQty ?? (p.remainingQty > 0 ? p.remainingQty : p.qty),
       unitPriceSen: 0,
@@ -360,7 +360,7 @@ export const PurchaseOrderNew = () => {
       soItemId: p.soItemId,
     }));
     // Replace the initial blank line if the form is still empty; else append.
-    setLines((prev) => (prev.some((l) => l.materialCode.trim()) ? [...prev, ...mapped] : mapped));
+    setLines((prev) => (prev.some((l) => l.itemCode.trim()) ? [...prev, ...mapped] : mapped));
 
     /* Commander 2026-05-29 — carry the SO's header context onto the PO so the
        buyer doesn't re-key it: "为什么 convert 进来不会把 SO 的 Purchase
@@ -471,10 +471,10 @@ export const PurchaseOrderNew = () => {
      overridden the price (priceTouched). Combos are OUT OF SCOPE this phase —
      PO lines are per-SKU, so there's no combo override here. */
   const recomputeLineCost = (line: DraftLine): number => {
-    // Find the line's binding: by id when known, else by material_code.
+    // Find the line's binding: by id when known, else by item_code.
     const binding = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
-      : bindings.find((b) => b.material_code === line.materialCode);
+      : bindings.find((b) => b.item_code === line.itemCode);
     if (!binding) return line.unitPriceSen;
     // No maint config loaded yet (or none seeded) → don't crash / zero out;
     // computeMfgPoUnitCost still returns the matrix/flat base with no
@@ -518,11 +518,11 @@ export const PurchaseOrderNew = () => {
     setLine(rid, {
       bindingId:      b.id,
       materialKind:   b.material_kind,
-      materialCode:   b.material_code,
+      itemCode:   b.item_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku,
       unitPriceSen: b.unit_price_sen,
-      category:       categoryForCode(b.material_code),
+      category:       categoryForCode(b.item_code),
       // Phase 3 — picking a (new) SKU re-arms supplier-price auto-fill; the
       // auto-pricing effect below then overwrites the flat seed with the
       // matrix + maintenance cost (mirrors SoLineCard re-enabling on re-pick).
@@ -605,11 +605,11 @@ export const PurchaseOrderNew = () => {
       notify({ title: 'Purchase Location is required.', tone: 'error' });
       return;
     }
-    const validLines = lines.filter((l) => l.materialCode.trim() && l.qty > 0);
+    const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
     const items: NewPoItem[] = validLines.map((l) => ({
       materialKind:   l.materialKind,
-      materialCode:   l.materialCode,
-      materialName:   l.materialName || l.materialCode,
+      itemCode:   l.itemCode,
+      materialName:   l.materialName || l.itemCode,
       supplierSku:    l.supplierSku,
       qty:            l.qty,
       unitPriceSen: l.unitPriceSen,
@@ -670,7 +670,7 @@ export const PurchaseOrderNew = () => {
                 const b = JSON.parse(e.body.slice(e.body.indexOf('{'))) as
                   { soItemId?: string; requested?: number; remaining?: number };
                 const ln = lines.find((l) => l.soItemId === b.soItemId);
-                const code = ln?.materialCode || ln?.materialName || 'This line';
+                const code = ln?.itemCode || ln?.materialName || 'This line';
                 detail = `${code}: ordering ${b.requested}, but this Sales Order line only needs ${b.remaining} more.`;
               } catch { /* keep the generic fallback */ }
               const proceed = await serviceConfirm({
@@ -1025,12 +1025,12 @@ export const PurchaseOrderNew = () => {
                     <input
                       type="text"
                       list={`bindings-${l.rid}`}
-                      value={l.materialCode}
+                      value={l.itemCode}
                       onChange={(e) => {
                         const code = e.target.value;
                         // Bound match wins (autofills supplier SKU + price).
                         const match = supplierId
-                          ? bindings.find((b) => b.material_code === code)
+                          ? bindings.find((b) => b.item_code === code)
                           : undefined;
                         if (match) { pickBinding(l.rid, match); return; }
                         // No binding (no supplier yet, OR supplier has no binding
@@ -1038,7 +1038,7 @@ export const PurchaseOrderNew = () => {
                         // from the master SKU list so the row isn't left blank.
                         const sku = (allSkus.data ?? []).find((p) => p.code === code);
                         setLine(l.rid, {
-                          materialCode: code,
+                          itemCode: code,
                           materialName: sku?.name ?? l.materialName,
                           bindingId: undefined,
                           category: sku?.category.toLowerCase() ?? categoryForCode(code),
@@ -1057,7 +1057,7 @@ export const PurchaseOrderNew = () => {
                           the full catalogue so the picker is never dead. */}
                       {supplierId && bindings.length > 0
                         ? sortByText(bindings).map((b) => (
-                            <option key={b.id} value={b.material_code}>
+                            <option key={b.id} value={b.item_code}>
                               {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                             </option>
                           ))
@@ -1073,7 +1073,7 @@ export const PurchaseOrderNew = () => {
                     <span className={styles.fieldLabel}>Supplier SKU</span>
                     {/* PR #134 — Bi-directional picker: typing/picking a
                         supplier_sku reverse-fills the matching binding's
-                        internal materialCode + name + price (same as
+                        internal itemCode + name + price (same as
                         picking from the Item Code side). Commander: "怎么
                         不能选 Supplier Code 呢". Requires supplier picked
                         first (we only know which bindings to search). */}
@@ -1103,7 +1103,7 @@ export const PurchaseOrderNew = () => {
                     <datalist id={`supplier-skus-${l.rid}`}>
                       {supplierId && sortByText(bindings).map((b) => (
                         <option key={b.id} value={b.supplier_sku || ''}>
-                          {b.material_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
+                          {b.item_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
                         </option>
                       ))}
                     </datalist>

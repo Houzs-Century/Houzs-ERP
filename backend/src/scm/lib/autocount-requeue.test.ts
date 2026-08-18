@@ -260,7 +260,7 @@ describe('the PO create, which is the other half of what is re-queueable', () =>
       }],
       suppliers: [{ id: 'sup-1', code: '400-H004', name: 'Supplier' }],
       purchase_order_items: [{
-        purchase_order_id: 'po-1', material_code: ERP_A, description: 'D', qty: 3,
+        purchase_order_id: 'po-1', item_code: ERP_A, description: 'D', qty: 3,
         unit_price_sen: 5000, warehouse_id: 'wh-1',
       }],
       warehouses: [{ id: 'wh-1', code: 'KL', name: 'KL WAREHOUSE' }],

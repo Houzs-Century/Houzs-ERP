@@ -279,7 +279,7 @@ async function main() {
         "price_matrix", "updated_at", "company_id",
       ]);
       const bind = await pg.unsafe(
-        `SELECT ${bCols} FROM ${smb.q} WHERE material_code = $1 ORDER BY updated_at DESC LIMIT 10`, [code],
+        `SELECT ${bCols} FROM ${smb.q} WHERE item_code = $1 ORDER BY updated_at DESC LIMIT 10`, [code],
       );
       line(`  (b) supplier_material_bindings for this code: ${bind.length}`);
       for (const b of bind) {
@@ -305,7 +305,7 @@ async function main() {
     if (mph) {
       const hCols = mph.sel(["field", "old_value_sen", "new_value_sen", "reason", "changed_at", "changed_by"]);
       const hist = await pg.unsafe(
-        `SELECT ${hCols} FROM ${mph.q} WHERE product_code = $1 ORDER BY changed_at DESC LIMIT 10`, [code],
+        `SELECT ${hCols} FROM ${mph.q} WHERE item_code = $1 ORDER BY changed_at DESC LIMIT 10`, [code],
       );
       line(`  (c) master_price_history (latest ${hist.length}):`);
       for (const h of hist) {
@@ -323,7 +323,7 @@ async function main() {
       ]);
       const scoped = lots.has("company_id") && Number.isFinite(Number(companyId));
       lotRows = await pg.unsafe(
-        `SELECT ${lCols} FROM ${lots.q} WHERE product_code = $1${scoped ? " AND company_id = $2" : ""} ORDER BY received_at DESC LIMIT 25`,
+        `SELECT ${lCols} FROM ${lots.q} WHERE item_code = $1${scoped ? " AND company_id = $2" : ""} ORDER BY received_at DESC LIMIT 25`,
         scoped ? [code, Number(companyId)] : [code],
       );
       const scope = scoped ? ", SO company" : "";
@@ -346,9 +346,9 @@ async function main() {
           const g = (await pg.unsafe(`SELECT ${gCols} FROM ${grns.q} WHERE id = $1`, [gid]))[0];
           const rate = g && grns.has("exchange_rate") ? Number(g.exchange_rate ?? 1) : 1;
           line(`      GRN ${g?.grn_number ?? gid}  currency=${g?.currency ?? "MYR"}  exchange_rate=${g ? (g.exchange_rate ?? "—") : "—"}  status=${g?.status ?? "—"}`);
-          const giCols = grnItems.sel(["id", "material_code", "qty_accepted", "unit_price_sen", "allocated_charge_sen"]);
+          const giCols = grnItems.sel(["id", "item_code", "qty_accepted", "unit_price_sen", "allocated_charge_sen"]);
           const gi = await pg.unsafe(
-            `SELECT ${giCols} FROM ${grnItems.q} WHERE grn_id = $1 AND material_code = $2`, [gid, code],
+            `SELECT ${giCols} FROM ${grnItems.q} WHERE grn_id = $1 AND item_code = $2`, [gid, code],
           );
           for (const glr of gi) {
             const myr = Math.round(Number(glr.unit_price_sen ?? 0) * (Number.isFinite(rate) && rate > 0 ? rate : 1));

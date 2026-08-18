@@ -485,7 +485,7 @@ export function useUpdateMfgProductPrices() {
 
 export type MasterPriceHistoryRow = {
   id: string;
-  product_code: string;
+  item_code: string;
   field: string;
   old_value_sen: number | null;
   new_value_sen: number | null;

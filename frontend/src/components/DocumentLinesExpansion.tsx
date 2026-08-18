@@ -18,7 +18,7 @@ import { ItemGroupPill } from "../vendor/scm/lib/category-badges";
 import type { OriginAssignment } from "../vendor/scm/lib/flow-queries";
 import { cn, formatDate } from "../lib/utils";
 
-// A single normalised drill line. Callers resolve `code` (e.g. material_code ||
+// A single normalised drill line. Callers resolve `code` (e.g. item_code ||
 // item_code), `qty` (ordered / received / returned as the document means) and
 // `amountSen` (line_total_sen / total_sen) themselves; `itemGroup` +
 // `variants` feed the same live buildVariantSummary the detail drawers use.
@@ -71,9 +71,7 @@ export type DocumentDrillLine = {
 // omits one falls through to the `??` defaults in the wrapper.
 export type DrillItemFields = {
   item_group?: string | null;
-  material_code?: string | null;
   item_code?: string | null;
-  product_code?: string | null;
   description?: string | null;
   material_name?: string | null;
   product_name?: string | null;

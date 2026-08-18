@@ -64,16 +64,16 @@ async function main() {
     const prodRows = await tx`SELECT id, code, name, category, base_price_sen, price1_sen, seat_height_prices, base_model, model_id
                               FROM scm.mfg_products WHERE company_id = ${cid}`;
     const prodByCode = new Map(prodRows.map((p) => [p.code, p]));
-    const bindRows = await tx`SELECT b.id, b.supplier_id, b.material_code, b.supplier_sku, b.unit_price_sen,
+    const bindRows = await tx`SELECT b.id, b.supplier_id, b.item_code, b.supplier_sku, b.unit_price_sen,
                                      b.price_matrix, b.is_main_supplier, s.code AS sup_code
                               FROM scm.supplier_material_bindings b
                               JOIN scm.suppliers s ON s.id = b.supplier_id
                               WHERE b.company_id = ${cid} AND b.material_kind = 'mfg_product'`;
-    const bindBySupMat = new Map(bindRows.map((b) => [`${b.sup_code}||${b.material_code}`, b]));
+    const bindBySupMat = new Map(bindRows.map((b) => [`${b.sup_code}||${b.item_code}`, b]));
     const bindsByMat = new Map();
     for (const b of bindRows) {
-      if (!bindsByMat.has(b.material_code)) bindsByMat.set(b.material_code, []);
-      bindsByMat.get(b.material_code).push(b);
+      if (!bindsByMat.has(b.item_code)) bindsByMat.set(b.item_code, []);
+      bindsByMat.get(b.item_code).push(b);
     }
     const modelRows = await tx`SELECT id, model_code, name, category, allowed_options
                                FROM scm.product_models WHERE company_id = ${cid} AND category = 'SOFA'`;
@@ -81,13 +81,13 @@ async function main() {
     const now = new Date().toISOString();
 
     const demoted = new Set(); // materials whose non-target mains we already cleared
-    async function setMain(target, materialCode) {
-      const siblings = (bindsByMat.get(materialCode) || []).filter((b) => b.id !== target.id && b.is_main_supplier);
-      if (siblings.length && !demoted.has(materialCode)) {
-        demoted.add(materialCode);
+    async function setMain(target, itemCode) {
+      const siblings = (bindsByMat.get(itemCode) || []).filter((b) => b.id !== target.id && b.is_main_supplier);
+      if (siblings.length && !demoted.has(itemCode)) {
+        demoted.add(itemCode);
         if (APPLY) await tx`UPDATE scm.supplier_material_bindings SET is_main_supplier = false, updated_at = ${now}
                             WHERE company_id = ${cid} AND material_kind = 'mfg_product'
-                              AND material_code = ${materialCode} AND id <> ${target.id}`;
+                              AND item_code = ${itemCode} AND id <> ${target.id}`;
       }
       if (APPLY) await tx`UPDATE scm.supplier_material_bindings SET is_main_supplier = true, updated_at = ${now}
                           WHERE id = ${target.id}`;
@@ -95,7 +95,7 @@ async function main() {
 
     async function audit(code, field, oldSen, newSen) {
       if (!APPLY) return;
-      await tx`INSERT INTO scm.master_price_history (product_code, field, old_value_sen, new_value_sen, reason, changed_at, company_id)
+      await tx`INSERT INTO scm.master_price_history (item_code, field, old_value_sen, new_value_sen, reason, changed_at, company_id)
                VALUES (${code}, ${field}, ${oldSen ?? null}, ${newSen}, ${"supplier-price-list-2026-08 load"}, ${now}, ${cid})`;
     }
 
@@ -108,10 +108,10 @@ async function main() {
         if (!b) {
           const p = prodByCode.get(o.erp);
           if (!p) { bump(o.op, "skip_no_product"); continue; }
-          b = { id: null, supplier_id: supId, material_code: o.erp, unit_price_sen: 0, price_matrix: null, is_main_supplier: false };
+          b = { id: null, supplier_id: supId, item_code: o.erp, unit_price_sen: 0, price_matrix: null, is_main_supplier: false };
           if (APPLY) {
             const [ins] = await tx`INSERT INTO scm.supplier_material_bindings
-              (supplier_id, material_kind, material_code, material_name, supplier_sku,
+              (supplier_id, material_kind, item_code, material_name, supplier_sku,
                unit_price_sen, is_main_supplier, company_id, created_at, updated_at)
               VALUES (${supId}, 'mfg_product', ${o.erp}, ${p.name}, ${o.ac},
                       ${o.cost_sen ?? 0}, false, ${cid}, ${now}, ${now})
@@ -233,7 +233,7 @@ async function main() {
         if (!b) {
           if (APPLY) {
             const [ins] = await tx`INSERT INTO scm.supplier_material_bindings
-              (supplier_id, material_kind, material_code, material_name, supplier_sku,
+              (supplier_id, material_kind, item_code, material_name, supplier_sku,
                unit_price_sen, price_matrix, is_main_supplier, company_id, created_at, updated_at)
               VALUES (${supId}, 'mfg_product', ${o.erp}, ${p.name}, ${o.ac ?? o.erp},
                       0, ${tx.json(o.matrix)}, false, ${cid}, ${now}, ${now})

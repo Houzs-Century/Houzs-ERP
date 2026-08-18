@@ -147,7 +147,7 @@ export async function deriveMfgPoUnitCost(
   const { data: bindingRow } = await sb
     .from('supplier_material_bindings')
     .select('unit_price_sen, price_matrix')
-    .eq('material_code', input.itemCode)
+    .eq('item_code', input.itemCode)
     .eq('material_kind', 'mfg_product')
     .eq('supplier_id', input.supplierId)
     .order('is_main_supplier', { ascending: false })

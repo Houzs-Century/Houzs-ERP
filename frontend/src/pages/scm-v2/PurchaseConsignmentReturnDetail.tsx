@@ -88,7 +88,7 @@ type LineDraft = {
 
 type PrItemRow = Record<string, unknown> & {
   id: string;
-  material_code: string;
+  item_code: string;
   material_name: string;
   qty_returned: number;
   unit_price_sen: number;
@@ -189,7 +189,7 @@ export const PurchaseConsignmentReturnDetail = () => {
       supplier: pr.supplier ?? undefined,
     };
     const pdfItems = items.map((it) => ({
-      material_code: it.material_code,
+      item_code: it.item_code,
       material_name: it.material_name,
       qty_returned: it.qty_returned,
       unit_price_sen: it.unit_price_sen,
@@ -409,7 +409,7 @@ export const PurchaseConsignmentReturnDetail = () => {
                   <Fragment key={it.id}>
                   <tr>
                     <td>
-                      <div className={styles.codeCell}>{it.material_code}</div>
+                      <div className={styles.codeCell}>{it.item_code}</div>
                       {(() => {
                         const summary = buildVariantSummary(it.item_group ?? null, it.variants as Record<string, unknown> | null)
                           || it.description
@@ -496,7 +496,7 @@ export const PurchaseConsignmentReturnDetail = () => {
                               </div>
                               <PcVariantEditor
                                 category={d.itemGroup ?? ''}
-                                itemCode={it.material_code}
+                                itemCode={it.item_code}
                                 variants={(d.variants ?? {}) as Record<string, unknown>}
                                 onChange={(k, v) => setVariant(it, k, v)}
                                 fabrics={fabrics}

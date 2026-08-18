@@ -299,7 +299,7 @@ async function resyncNoteInventory(sb: any, noteId: string, performedBy: string 
   if (!cancelled && !SHIPPED_STATES.includes(status)) return [];
 
   // 1. TARGET net OUT per bucket = sum of current active lines (empty if cancelled).
-  type Bucket = { warehouse_id: string; product_code: string; variant_key: string; product_name: string | null; qty: number; batch_no: string | null };
+  type Bucket = { warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; batch_no: string | null };
   const targetByBucket = new Map<string, Bucket>();
   if (!cancelled) {
     const { data: items } = await sb.from('consignment_delivery_order_items')
@@ -324,20 +324,20 @@ async function resyncNoteInventory(sb: any, noteId: string, performedBy: string 
       const k = `${wh}::${it.item_code}::${vk}::${batch ?? ''}`;
       const cur = targetByBucket.get(k);
       if (cur) cur.qty += qty;
-      else targetByBucket.set(k, { warehouse_id: wh, product_code: it.item_code, variant_key: vk, product_name: it.description, qty, batch_no: batch });
+      else targetByBucket.set(k, { warehouse_id: wh, item_code: it.item_code, variant_key: vk, product_name: it.description, qty, batch_no: batch });
     }
   }
 
   // 2. CURRENT net OUT per bucket from ALL this note's movements (CS_DO ship +
   //    any prior STOCK_TRANSFER resync/cancel deltas).
   const { data: movs } = await sb.from('inventory_movements')
-    .select('movement_type, warehouse_id, product_code, variant_key, batch_no, qty, total_cost_sen, product_name')
+    .select('movement_type, warehouse_id, item_code, variant_key, batch_no, qty, total_cost_sen, product_name')
     .eq('source_doc_id', noteId)
     .in('source_doc_type', ['CS_DO', 'STOCK_TRANSFER']);
   type Agg = { out_qty: number; in_qty: number; out_total_cost: number; product_name: string | null };
   const aggByBucket = new Map<string, Agg>();
-  for (const m of (movs ?? []) as Array<{ movement_type: string; warehouse_id: string; product_code: string; variant_key: string | null; batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null }>) {
-    const k = `${m.warehouse_id}::${m.product_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
+  for (const m of (movs ?? []) as Array<{ movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null }>) {
+    const k = `${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
     let a = aggByBucket.get(k);
     if (!a) { a = { out_qty: 0, in_qty: 0, out_total_cost: 0, product_name: m.product_name }; aggByBucket.set(k, a); }
     if (m.movement_type === 'OUT') { a.out_qty += Number(m.qty ?? 0); a.out_total_cost += Number(m.total_cost_sen ?? 0); }
@@ -364,7 +364,7 @@ async function resyncNoteInventory(sb: any, noteId: string, performedBy: string 
       const useCsDo = neverMoved && !csDoEmitted.has(`${pc}::${vk}`);
       if (useCsDo) csDoEmitted.add(`${pc}::${vk}`);
       writes.push({
-        movement_type: 'OUT', warehouse_id: wh ?? '', product_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
+        movement_type: 'OUT', warehouse_id: wh ?? '', item_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
         qty: delta,
         source_doc_type: useCsDo ? 'CS_DO' : 'STOCK_TRANSFER',
         source_doc_id: noteId, source_doc_no: noteNo,
@@ -375,7 +375,7 @@ async function resyncNoteInventory(sb: any, noteId: string, performedBy: string 
     } else {
       const unitCost = a.out_qty > 0 ? Math.round(a.out_total_cost / a.out_qty) : 0;
       writes.push({
-        movement_type: 'IN', warehouse_id: wh ?? '', product_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
+        movement_type: 'IN', warehouse_id: wh ?? '', item_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
         qty: -delta, unit_cost_sen: unitCost,
         source_doc_type: 'STOCK_TRANSFER',
         source_doc_id: noteId, source_doc_no: cancelled ? `${noteNo}-CANCEL` : noteNo,

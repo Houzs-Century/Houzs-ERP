@@ -44,7 +44,7 @@ async function main() {
 
   // 4. sofa remap
   let bind = 0, delSku = 0, delModel = 0, missingExisting = 0;
-  const existingBind = new Set((await sql`SELECT material_code, supplier_id FROM scm.supplier_material_bindings WHERE company_id=${cid}`).map((b) => `${norm(b.material_code)}||${b.supplier_id}`));
+  const existingBind = new Set((await sql`SELECT item_code, supplier_id FROM scm.supplier_material_bindings WHERE company_id=${cid}`).map((b) => `${norm(b.item_code)}||${b.supplier_id}`));
   for (const s of d.sofa_remap) {
     const exists = await sql`SELECT 1 FROM scm.mfg_products WHERE company_id=${cid} AND code=${s.existing_sku} LIMIT 1`;
     if (!exists.length) { console.log(`  sofa ${s.my_sku}: existing ${s.existing_sku} NOT FOUND, skip`); missingExisting++; continue; }
@@ -54,13 +54,13 @@ async function main() {
       if (existingBind.has(`${norm(s.existing_sku)}||${sid}`)) continue;
       existingBind.add(`${norm(s.existing_sku)}||${sid}`);
       if (apply) await sql`INSERT INTO scm.supplier_material_bindings ${sql({
-        supplier_id: sid, material_kind: "mfg_product", material_code: s.existing_sku,
+        supplier_id: sid, material_kind: "mfg_product", item_code: s.existing_sku,
         material_name: s.existing_sku, supplier_sku: s.autocount_code, is_main_supplier: false,
         company_id: cid })}`;
       bind++;
     }
     if (apply) {
-      await sql`DELETE FROM scm.supplier_material_bindings WHERE company_id=${cid} AND material_code=${s.my_sku}`;
+      await sql`DELETE FROM scm.supplier_material_bindings WHERE company_id=${cid} AND item_code=${s.my_sku}`;
       delSku += (await sql`DELETE FROM scm.mfg_products WHERE company_id=${cid} AND code=${s.my_sku}`).count;
       delModel += (await sql`DELETE FROM scm.product_models WHERE company_id=${cid} AND model_code=${s.my_model} AND category='SOFA'`).count;
     }
@@ -71,7 +71,7 @@ async function main() {
   let leav = 0;
   for (const code of d.leaving_delete) {
     if (apply) {
-      await sql`DELETE FROM scm.supplier_material_bindings WHERE company_id=${cid} AND material_code=${code}`;
+      await sql`DELETE FROM scm.supplier_material_bindings WHERE company_id=${cid} AND item_code=${code}`;
       leav += (await sql`DELETE FROM scm.mfg_products WHERE company_id=${cid} AND code=${code}`).count;
     } else leav++;
   }

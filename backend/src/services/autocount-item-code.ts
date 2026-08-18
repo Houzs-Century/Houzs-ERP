@@ -1,7 +1,7 @@
 // ----------------------------------------------------------------------------
 // autocount-item-code — divergence D10.
 //
-// THE PROBLEM. The ERP's material_code is NOT AutoCount's ItemCode. "9028-1S"
+// THE PROBLEM. The ERP's item_code is NOT AutoCount's ItemCode. "9028-1S"
 // is an ERP code; the account book calls the same sofa "AMN-SF9028 SOFA". Until
 // now the write-back composed details with identityResolver and sent the ERP
 // code straight through, so a create would have written line after line of item
@@ -22,7 +22,7 @@
 //
 // WHAT THIS MODULE DOES ABOUT THAT: it REFUSES. Every line resolves to exactly
 // one AutoCount ItemCode or is reported with a named reason and the candidates
-// it could not choose between. There is NO fallback to material_code — that
+// it could not choose between. There is NO fallback to item_code — that
 // fallback is what would put a nonexistent item into a licensed account book,
 // and on a purchase order the resulting line cannot be deleted.
 // ----------------------------------------------------------------------------
@@ -33,7 +33,7 @@ import { SOFA_MODEL_ALIAS } from '../../scripts/lib/parse-sofa.mjs';
 export interface AcItemMapEntry {
   /** The AutoCount ItemCode. */
   ac: string;
-  /** The ERP material_code it was opened as. */
+  /** The ERP item_code it was opened as. */
   erp: string;
   category: string;
   /** AutoCount creditor code, which is also scm.suppliers.code. */
@@ -175,7 +175,7 @@ export function resolveAcItemCode(
      * THE LIVE BINDING, and it wins.
      *
      * `scm.supplier_material_bindings` is where this ERP records what AutoCount
-     * calls each of its products: `material_code` is our internal code,
+     * calls each of its products: `item_code` is our internal code,
      * `supplier_sku` is the AutoCount one, one row per supplier. It was
      * populated at the cutover for exactly this purpose — so the ERP codes
      * could be pushed BACK — and it is the only one of the two sources that

@@ -126,13 +126,13 @@ async function main() {
     SELECT n.item_code, n.lines, n.qty,
       (SELECT p.po_number FROM scm.purchase_order_items poi
          JOIN scm.purchase_orders p ON p.id = poi.purchase_order_id
-        WHERE poi.material_code = n.item_code AND p.company_id = ${CO}
+        WHERE poi.item_code = n.item_code AND p.company_id = ${CO}
           AND p.status::text NOT IN ('CANCELLED','DRAFT')
           AND COALESCE(poi.received_qty,0) < poi.qty
         ORDER BY COALESCE(poi.delivery_date, p.expected_at::date) NULLS LAST LIMIT 1) AS next_po,
       (SELECT COALESCE(poi.delivery_date, p.expected_at::date) FROM scm.purchase_order_items poi
          JOIN scm.purchase_orders p ON p.id = poi.purchase_order_id
-        WHERE poi.material_code = n.item_code AND p.company_id = ${CO}
+        WHERE poi.item_code = n.item_code AND p.company_id = ${CO}
           AND p.status::text NOT IN ('CANCELLED','DRAFT')
           AND COALESCE(poi.received_qty,0) < poi.qty
         ORDER BY COALESCE(poi.delivery_date, p.expected_at::date) NULLS LAST LIMIT 1) AS eta
@@ -176,11 +176,11 @@ async function main() {
     FROM scm.purchase_order_items poi JOIN scm.purchase_orders p ON p.id = poi.purchase_order_id
     WHERE p.company_id = ${CO}`;
   log(`PO lines company-wide: ${ovr.lines}; with received_qty > that line's own qty (a REAL over-receipt): ${ovr.over_received}; excess units: ${ovr.over_units}`);
-  const ovrRows = await sql`SELECT p.po_number, p.status::text po_status, poi.material_code, poi.qty, COALESCE(poi.received_qty,0) received_qty
+  const ovrRows = await sql`SELECT p.po_number, p.status::text po_status, poi.item_code, poi.qty, COALESCE(poi.received_qty,0) received_qty
     FROM scm.purchase_order_items poi JOIN scm.purchase_orders p ON p.id = poi.purchase_order_id
     WHERE p.company_id = ${CO} AND COALESCE(poi.received_qty,0) > poi.qty
     ORDER BY (COALESCE(poi.received_qty,0) - poi.qty) DESC, p.po_number LIMIT 20`;
-  for (const r of ovrRows) log(`   ${r.po_number} (${r.po_status}) ${r.material_code}: ordered ${r.qty}, received ${r.received_qty}`);
+  for (const r of ovrRows) log(`   ${r.po_number} (${r.po_status}) ${r.item_code}: ordered ${r.qty}, received ${r.received_qty}`);
 
   /* Same population section 2 prints, scored both ways: how many of those rows
      LOOK over-received under the old comparison, and how many actually are. */
@@ -214,14 +214,14 @@ async function main() {
   const probePos = [...new Set(probe.map((r) => r.po_number))];
   if (probePos.length) {
     const grnProbe = await sql`SELECT p.po_number, g.grn_number, g.status::text grn_status,
-        gi.material_code, gi.qty_received, gi.qty_accepted, g.received_at
+        gi.item_code, gi.qty_received, gi.qty_accepted, g.received_at
       FROM scm.grn_items gi
       JOIN scm.grns g ON g.id = gi.grn_id
       JOIN scm.purchase_order_items poi ON poi.id = gi.purchase_order_item_id
       JOIN scm.purchase_orders p ON p.id = poi.purchase_order_id
       WHERE p.company_id = ${CO} AND p.po_number = ANY(${probePos})
       ORDER BY g.received_at`;
-    for (const r of grnProbe) log(`   ${r.po_number} receipt: ${r.grn_number} (${r.grn_status}) ${r.material_code} received ${r.qty_received} accepted ${r.qty_accepted} on ${String(r.received_at).slice(0, 10)}`);
+    for (const r of grnProbe) log(`   ${r.po_number} receipt: ${r.grn_number} (${r.grn_status}) ${r.item_code} received ${r.qty_received} accepted ${r.qty_accepted} on ${String(r.received_at).slice(0, 10)}`);
     if (!grnProbe.length) log(`   ${probePos.join(", ")}: no GRN line rows in the ERP — received_qty on the PO line came from the AutoCount import, not from an ERP receipt`);
   }
 

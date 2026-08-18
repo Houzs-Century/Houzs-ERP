@@ -212,16 +212,16 @@ async function main() {
     const codesAll = [...new Set(live.map((x) => x.item_code).filter(Boolean))];
     if (codesAll.length) {
       const mv = await sql`
-        SELECT product_code, movement_type, qty, coalesce(variant_key,'') AS variant_key,
+        SELECT item_code, movement_type, qty, coalesce(variant_key,'') AS variant_key,
                source_doc_type, source_doc_no, warehouse_id::text AS warehouse_id,
                created_at::text AS created_at
           FROM scm.inventory_movements
-         WHERE product_code IN ${sql(codesAll)}
+         WHERE item_code IN ${sql(codesAll)}
          ORDER BY created_at DESC
          LIMIT 40`;
       note(`\n    --- last ${mv.length} stock movement(s) for this order's codes (ALL companies) ---`);
       for (const m of mv) {
-        note(`      ${m.created_at}  ${String(m.movement_type).padEnd(4)} ${String(m.product_code).padEnd(24)} qty=${String(m.qty).padStart(4)} key=${JSON.stringify(m.variant_key)} src=${m.source_doc_type ?? '-'} ${m.source_doc_no ?? ''}`);
+        note(`      ${m.created_at}  ${String(m.movement_type).padEnd(4)} ${String(m.item_code).padEnd(24)} qty=${String(m.qty).padStart(4)} key=${JSON.stringify(m.variant_key)} src=${m.source_doc_type ?? '-'} ${m.source_doc_no ?? ''}`);
       }
     }
     const r = summariseReadiness(live.map((l) => ({ item_group: l.item_group, item_code: l.item_code, stock_status: l.stock_status, cancelled: false })));
@@ -235,7 +235,7 @@ async function main() {
                coalesce(b.variant_key,'') AS variant_key, b.qty
           FROM scm.inventory_balances b
           LEFT JOIN scm.warehouses w ON w.id = b.warehouse_id
-         WHERE b.product_code = ${l.item_code} AND b.qty <> 0
+         WHERE b.item_code = ${l.item_code} AND b.qty <> 0
          ORDER BY b.company_id, w.name`;
       for (const b of bal) {
         const same = b.warehouse_id === l.warehouse_id ? '  <-- LINE WAREHOUSE' : '';
@@ -309,13 +309,13 @@ async function main() {
   for (let i = 0; i < codes.length; i += CHUNK) {
     const batch = codes.slice(i, i + CHUNK);
     const bal = await sql`
-      SELECT warehouse_id::text AS warehouse_id, product_code,
+      SELECT warehouse_id::text AS warehouse_id, item_code,
              coalesce(variant_key,'') AS variant_key, sum(qty) AS qty
         FROM scm.inventory_balances
-       WHERE product_code IN ${sql(batch)}
+       WHERE item_code IN ${sql(batch)}
        GROUP BY 1,2,3`;
     for (const b of bal) {
-      const k = `${b.warehouse_id}::${b.product_code}::${b.variant_key}`;
+      const k = `${b.warehouse_id}::${b.item_code}::${b.variant_key}`;
       onHand.set(k, (onHand.get(k) ?? 0) + Number(b.qty ?? 0));
     }
   }

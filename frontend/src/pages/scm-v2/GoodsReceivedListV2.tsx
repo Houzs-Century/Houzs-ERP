@@ -89,7 +89,6 @@ type GrnRow = {
 
 type GrnItem = {
   id: string;
-  material_code?: string | null;
   item_code?: string | null;
   description?: string | null;
   description2?: string | null;
@@ -325,7 +324,7 @@ function DetailDrawer({
                 {!detailQ.isLoading && items.length === 0 && <div className="px-4 py-8 text-center text-[12px] text-ink-muted">No lines</div>}
                 {items.map((l, i) => {
                   const { primary, secondary } = orderLineIdentity({
-                    code: l.material_code || l.item_code,
+                    code: l.item_code || l.item_code,
                     description: l.description,
                     variant:
                       buildVariantSummary(l.item_group ?? "others", l.variants ?? null) ||
@@ -457,10 +456,10 @@ function GrnLinesExpansion({ id }: { id: string }) {
   const items =
     ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => {
-    const code = (l.material_code || l.item_code || "").trim();
+    const code = (l.item_code || l.item_code || "").trim();
     return {
       itemGroup: l.item_group ?? null,
-      code: l.material_code || l.item_code || null,
+      code: l.item_code || l.item_code || null,
       description: l.description ?? null,
       description2: l.description2 ?? null,
       variants: l.variants ?? null,

@@ -183,20 +183,20 @@ async function main() {
   // GRN line costs TODAY — 0 means the cost is missing, which is the thing the
   // conversion is meant to fix.
   const gLines = await sql.unsafe(`
-    SELECT g.grn_number, gi.material_code, gi.qty_received,
+    SELECT g.grn_number, gi.item_code, gi.qty_received,
            COALESCE(gi.unit_price_sen, 0) AS unit_price_sen,
            pi2.linked_ac_dtlkey
     FROM ${G} g
     JOIN ${GI} gi ON gi.grn_id = g.id
     LEFT JOIN ${PI_} pi2 ON pi2.id = gi.purchase_order_item_id
     WHERE g.company_id = ${CO} AND g.migrated_no_stock = true
-    ORDER BY g.grn_number, gi.material_code`);
+    ORDER BY g.grn_number, gi.item_code`);
   let gl = 0, glKeyed = 0, glZero = 0;
   for (const r of gLines) {
     gl++;
     if (r.linked_ac_dtlkey != null) glKeyed++;
     if (Number(r.unit_price_sen) === 0) glZero++;
-    row(`GRNLINE\t${r.grn_number}\t${r.material_code}\t${r.qty_received}\t${r.unit_price_sen}\t${r.linked_ac_dtlkey ?? ""}`);
+    row(`GRNLINE\t${r.grn_number}\t${r.item_code}\t${r.qty_received}\t${r.unit_price_sen}\t${r.linked_ac_dtlkey ?? ""}`);
   }
   notice(`migrated GRN lines: ${gl}; with an exact AutoCount PO line key: ${glKeyed}; currently ZERO cost: ${glZero}`);
 
@@ -275,18 +275,18 @@ async function main() {
   const prodCols = sProd ? await colsOf(sProd, "products") : new Set();
   const joinProd = sProd && prodCols.has("code");
   const lotRows = await sql.unsafe(`
-    SELECT l.product_code, COALESCE(l.source_doc_type,'') AS src,
+    SELECT l.item_code, COALESCE(l.source_doc_type,'') AS src,
            COALESCE(l.source_doc_no,'') AS docno, l.qty_remaining,
            ${lotCols.has("variant_key") ? "COALESCE(l.variant_key,'')" : "''"} AS variant_key,
            ${lotCols.has("warehouse_id") ? "COALESCE(l.warehouse_id::text,'')" : "''"} AS wh,
            ${joinProd && prodCols.has("name") ? "COALESCE(p.name,'')" : "''"} AS pname,
            ${joinProd && prodCols.has("item_group") ? "COALESCE(p.item_group,'')" : "''"} AS pgroup
     FROM ${L} l
-    ${joinProd ? `LEFT JOIN "${ident(sProd)}"."products" p ON p.code = l.product_code` : ""}
+    ${joinProd ? `LEFT JOIN "${ident(sProd)}"."products" p ON p.code = l.item_code` : ""}
     WHERE l.qty_remaining > 0 AND COALESCE(l.unit_cost_sen,0) <= 0 ${lotWhere.replace(/company_id/g, "l.company_id")}
-    ORDER BY l.product_code`);
+    ORDER BY l.item_code`);
   for (const r of lotRows) {
-    row(`ZEROLOT\t${r.product_code}\t${r.variant_key}\t${r.src}\t${r.docno}\t${r.qty_remaining}\t${r.wh}\t${String(r.pname).replace(/\s+/g, " ")}\t${r.pgroup}`);
+    row(`ZEROLOT\t${r.item_code}\t${r.variant_key}\t${r.src}\t${r.docno}\t${r.qty_remaining}\t${r.wh}\t${String(r.pname).replace(/\s+/g, " ")}\t${r.pgroup}`);
   }
 
   // ── Q5. Our already-priced lines, for the cross-check against AutoCount ────
@@ -299,15 +299,15 @@ async function main() {
   // handle the conversion itself would use. That is the honest test: it
   // exercises exactly the matching the plan depends on.
   const poLines = await sql.unsafe(`
-    SELECT p.linked_ac_docno AS ac_po_no, i.material_code,
+    SELECT p.linked_ac_docno AS ac_po_no, i.item_code,
            COALESCE(i.unit_price_sen,0) AS unit_price_sen,
            COALESCE(i.qty,0) AS qty, COALESCE(i.received_qty,0) AS received_qty,
            COALESCE(i.linked_ac_dtlkey::text,'') AS dtlkey
     FROM ${PI_} i JOIN ${P} p ON p.id = i.purchase_order_id
     WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL
-    ORDER BY p.linked_ac_docno, i.material_code`);
+    ORDER BY p.linked_ac_docno, i.item_code`);
   for (const r of poLines) {
-    row(`POLINE\t${r.ac_po_no}\t${r.material_code}\t${r.unit_price_sen}\t${r.qty}\t${r.received_qty}\t${r.dtlkey}`);
+    row(`POLINE\t${r.ac_po_no}\t${r.item_code}\t${r.unit_price_sen}\t${r.qty}\t${r.received_qty}\t${r.dtlkey}`);
   }
   const pricedN = poLines.filter((r) => Number(r.unit_price_sen) > 0).length;
   notice(`our PO lines on cutover POs: ${poLines.length}; of those with a non-zero cost: ${pricedN}`);

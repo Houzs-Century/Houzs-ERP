@@ -161,7 +161,7 @@ $$;
 --        consignment_note_items          -> consignment_delivery_order_items (item_code)
 --        consignment_order_items         -> consignment_sales_order_items    (item_code)
 --        purchase_consignment_note_items -> purchase_consignment_receive_items
---                                           (column is material_code, NOT item_code)
+--                                           (column is item_code, NOT item_code)
 --   2) The 2990 body opens with `IF NOT is_admin() THEN RAISE forbidden`. scm
 --      has no is_admin()/auth machinery (it runs under the service role, RLS
 --      bypassed, exactly like every other ported SCM route). The admin gate now
@@ -247,47 +247,47 @@ BEGIN
   GET DIAGNOSTICS n = ROW_COUNT; counts := counts || jsonb_build_object('consignment_sales_order_items', n);
 
   -- purchase_consignment_note_items (2990) -> purchase_consignment_receive_items (scm);
-  -- column is material_code on the scm side (NOT item_code).
-  UPDATE purchase_consignment_receive_items SET material_code = left(material_code, length(material_code) - length(v_from)) || v_to
-   WHERE right(material_code, length(v_from) + 1) = '-' || v_from;
+  -- column is item_code on the scm side (NOT item_code).
+  UPDATE purchase_consignment_receive_items SET item_code = left(item_code, length(item_code) - length(v_from)) || v_to
+   WHERE right(item_code, length(v_from) + 1) = '-' || v_from;
   GET DIAGNOSTICS n = ROW_COUNT; counts := counts || jsonb_build_object('purchase_consignment_receive_items', n);
 
   UPDATE grn_items SET
-         material_code = CASE WHEN right(material_code, length(v_from) + 1) = '-' || v_from
-                              THEN left(material_code, length(material_code) - length(v_from)) || v_to ELSE material_code END,
+         item_code = CASE WHEN right(item_code, length(v_from) + 1) = '-' || v_from
+                              THEN left(item_code, length(item_code) - length(v_from)) || v_to ELSE item_code END,
          supplier_sku  = CASE WHEN right(coalesce(supplier_sku, ''), length(v_from) + 1) = '-' || v_from
                               THEN left(supplier_sku, length(supplier_sku) - length(v_from)) || v_to ELSE supplier_sku END
-   WHERE right(material_code, length(v_from) + 1) = '-' || v_from
+   WHERE right(item_code, length(v_from) + 1) = '-' || v_from
       OR right(coalesce(supplier_sku, ''), length(v_from) + 1) = '-' || v_from;
   GET DIAGNOSTICS n = ROW_COUNT; counts := counts || jsonb_build_object('grn_items', n);
 
   UPDATE purchase_order_items SET
-         material_code = CASE WHEN right(material_code, length(v_from) + 1) = '-' || v_from
-                              THEN left(material_code, length(material_code) - length(v_from)) || v_to ELSE material_code END,
+         item_code = CASE WHEN right(item_code, length(v_from) + 1) = '-' || v_from
+                              THEN left(item_code, length(item_code) - length(v_from)) || v_to ELSE item_code END,
          supplier_sku  = CASE WHEN right(coalesce(supplier_sku, ''), length(v_from) + 1) = '-' || v_from
                               THEN left(supplier_sku, length(supplier_sku) - length(v_from)) || v_to ELSE supplier_sku END
-   WHERE right(material_code, length(v_from) + 1) = '-' || v_from
+   WHERE right(item_code, length(v_from) + 1) = '-' || v_from
       OR right(coalesce(supplier_sku, ''), length(v_from) + 1) = '-' || v_from;
   GET DIAGNOSTICS n = ROW_COUNT; counts := counts || jsonb_build_object('purchase_order_items', n);
 
-  UPDATE purchase_consignment_order_items SET material_code = left(material_code, length(material_code) - length(v_from)) || v_to
-   WHERE right(material_code, length(v_from) + 1) = '-' || v_from;
+  UPDATE purchase_consignment_order_items SET item_code = left(item_code, length(item_code) - length(v_from)) || v_to
+   WHERE right(item_code, length(v_from) + 1) = '-' || v_from;
   GET DIAGNOSTICS n = ROW_COUNT; counts := counts || jsonb_build_object('purchase_consignment_order_items', n);
 
-  UPDATE purchase_invoice_items SET material_code = left(material_code, length(material_code) - length(v_from)) || v_to
-   WHERE right(material_code, length(v_from) + 1) = '-' || v_from;
+  UPDATE purchase_invoice_items SET item_code = left(item_code, length(item_code) - length(v_from)) || v_to
+   WHERE right(item_code, length(v_from) + 1) = '-' || v_from;
   GET DIAGNOSTICS n = ROW_COUNT; counts := counts || jsonb_build_object('purchase_invoice_items', n);
 
-  UPDATE purchase_return_items SET material_code = left(material_code, length(material_code) - length(v_from)) || v_to
-   WHERE right(material_code, length(v_from) + 1) = '-' || v_from;
+  UPDATE purchase_return_items SET item_code = left(item_code, length(item_code) - length(v_from)) || v_to
+   WHERE right(item_code, length(v_from) + 1) = '-' || v_from;
   GET DIAGNOSTICS n = ROW_COUNT; counts := counts || jsonb_build_object('purchase_return_items', n);
 
   UPDATE supplier_material_bindings SET
-         material_code = CASE WHEN right(material_code, length(v_from) + 1) = '-' || v_from
-                              THEN left(material_code, length(material_code) - length(v_from)) || v_to ELSE material_code END,
+         item_code = CASE WHEN right(item_code, length(v_from) + 1) = '-' || v_from
+                              THEN left(item_code, length(item_code) - length(v_from)) || v_to ELSE item_code END,
          supplier_sku  = CASE WHEN right(coalesce(supplier_sku, ''), length(v_from) + 1) = '-' || v_from
                               THEN left(supplier_sku, length(supplier_sku) - length(v_from)) || v_to ELSE supplier_sku END
-   WHERE right(material_code, length(v_from) + 1) = '-' || v_from
+   WHERE right(item_code, length(v_from) + 1) = '-' || v_from
       OR right(coalesce(supplier_sku, ''), length(v_from) + 1) = '-' || v_from;
   GET DIAGNOSTICS n = ROW_COUNT; counts := counts || jsonb_build_object('supplier_material_bindings', n);
 

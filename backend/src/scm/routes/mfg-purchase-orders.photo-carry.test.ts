@@ -102,7 +102,7 @@ async function convertAndCapture(soLines: Row[]): Promise<Row[]> {
     warehouses: [{ id: 'wh-kl', code: 'KL', name: 'KL' }],
     suppliers: [{ id: SUPPLIER_ID, code: 'SUP1', name: 'Supplier One' }],
     supplier_material_bindings: soLines.map((l) => ({
-      material_code: l.item_code,
+      item_code: l.item_code,
       material_kind: 'mfg_product',
       supplier_id: SUPPLIER_ID,
       supplier_sku: `SKU-${l.item_code}`,

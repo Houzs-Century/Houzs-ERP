@@ -557,11 +557,11 @@ CREATE POLICY cdri_all  ON consignment_delivery_return_items   FOR ALL TO authen
 --      CS_DR — consignment return                  (value-neutral transfer IN)
 -- ════════════════════════════════════════════════════════════════════════════
 CREATE UNIQUE INDEX IF NOT EXISTS uq_inv_mov_cs_do_source
-  ON inventory_movements (source_doc_type, source_doc_id, product_code, variant_key)
+  ON inventory_movements (source_doc_type, source_doc_id, item_code, variant_key)
   WHERE source_doc_type = 'CS_DO';
 
 CREATE UNIQUE INDEX IF NOT EXISTS uq_inv_mov_cs_dr_source
-  ON inventory_movements (source_doc_type, source_doc_id, product_code, variant_key)
+  ON inventory_movements (source_doc_type, source_doc_id, item_code, variant_key)
   WHERE source_doc_type = 'CS_DR';
 
 COMMIT;

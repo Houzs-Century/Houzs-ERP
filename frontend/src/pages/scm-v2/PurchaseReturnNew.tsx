@@ -95,7 +95,7 @@ type DraftLine = {
   rid:            string;
   grnItemId:      string | null;
   materialKind:   string;
-  materialCode:   string;
+  itemCode:   string;
   materialName:   string;
   /* Commander 2026-05-29 — carry the source GRN/PO line's category + variant
      selections so the return shows WHAT is going back (PO/GRN parity). */
@@ -111,7 +111,7 @@ const newLine = (): DraftLine => ({
   rid:            `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   grnItemId:      null,
   materialKind:   'mfg_product',
-  materialCode:   '',
+  itemCode:   '',
   materialName:   '',
   itemGroup:      null,
   variants:       null,
@@ -197,7 +197,7 @@ export const PurchaseReturnNew = () => {
         rid:            `r${it.id}`,
         grnItemId:      it.id,
         materialKind:   it.material_kind,
-        materialCode:   it.material_code,
+        itemCode:   it.item_code,
         materialName:   it.material_name,
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
@@ -218,7 +218,7 @@ export const PurchaseReturnNew = () => {
       rid:            `r${it.id}`,
       grnItemId:      null,
       materialKind:   it.material_kind,
-      materialCode:   it.material_code,
+      itemCode:   it.item_code,
       materialName:   it.material_name,
       itemGroup:      it.item_group ?? null,
       variants:       (it.variants as Record<string, unknown> | null) ?? null,
@@ -259,7 +259,7 @@ export const PurchaseReturnNew = () => {
   const pickItemForLine = (rid: string, code: string) => {
     const sku = (productsQ.data ?? []).find((p) => p.code === code);
     setLine(rid, {
-      materialCode: code,
+      itemCode: code,
       materialName: sku?.name ?? code,
       itemGroup:    sku?.category ? sku.category.toLowerCase() : null,
     });
@@ -282,7 +282,7 @@ export const PurchaseReturnNew = () => {
     return s ? `${s.code} · ${s.name}` : '';
   }, [grn, po, suppliersQ.data, supplierId]);
 
-  const validLines = lines.filter((l) => l.materialCode.trim() && l.qtyReturned > 0);
+  const validLines = lines.filter((l) => l.itemCode.trim() && l.qtyReturned > 0);
   const canSave = !!supplierId && validLines.length > 0;
 
   const onSave = async () => {
@@ -299,7 +299,7 @@ export const PurchaseReturnNew = () => {
         items: validLines.map((l) => ({
           grnItemId:      l.grnItemId,
           materialKind:   l.materialKind,
-          materialCode:   l.materialCode,
+          itemCode:   l.itemCode,
           materialName:   l.materialName,
           qtyReturned:    l.qtyReturned,
           unitPriceSen: l.unitPriceSen,
@@ -498,7 +498,7 @@ export const PurchaseReturnNew = () => {
                           <input
                             type="text"
                             list={`pr-products-${l.rid}`}
-                            value={l.materialCode}
+                            value={l.itemCode}
                             onChange={(e) => {
                               const code = e.target.value;
                               setProductQuery(code);
@@ -506,7 +506,7 @@ export const PurchaseReturnNew = () => {
                               const match = (productsQ.data ?? []).find((p) => p.code === code);
                               if (match) { pickItemForLine(l.rid, code); return; }
                               // Free typing — keep what's typed so the field stays editable.
-                              setLine(l.rid, { materialCode: code });
+                              setLine(l.rid, { itemCode: code });
                             }}
                             placeholder="Type ≥2 chars to search SKUs by code or name…"
                             className={styles.fieldInput}
@@ -522,7 +522,7 @@ export const PurchaseReturnNew = () => {
                         <input
                           type="text"
                           readOnly
-                          value={l.materialCode}
+                          value={l.itemCode}
                           className={styles.fieldInput}
                           style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />

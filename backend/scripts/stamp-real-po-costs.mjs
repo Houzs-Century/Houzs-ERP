@@ -127,20 +127,20 @@ async function main() {
 
   // ── candidates ────────────────────────────────────────────────────────────
   const poLines = await sql.unsafe(`
-    SELECT i.id, i.unit_price_sen, i.material_code, p.po_number, p.linked_ac_docno
+    SELECT i.id, i.unit_price_sen, i.item_code, p.po_number, p.linked_ac_docno
       FROM "${sPoI}"."purchase_order_items" i
       JOIN "${sPo}"."purchase_orders" p ON p.id = i.purchase_order_id
      WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL
-     ORDER BY p.po_number, i.material_code`);
+     ORDER BY p.po_number, i.item_code`);
 
   const grnLines = await sql.unsafe(`
-    SELECT gi.id, gi.unit_price_sen, gi.material_code, g.grn_number,
+    SELECT gi.id, gi.unit_price_sen, gi.item_code, g.grn_number,
            g.migrated_no_stock, p.po_number, p.linked_ac_docno
       FROM "${sGrnI}"."grn_items" gi
       JOIN "${sGrn}"."grns" g ON g.id = gi.grn_id
       JOIN "${sPo}"."purchase_orders" p ON p.id = g.purchase_order_id
      WHERE g.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL
-     ORDER BY g.grn_number, gi.material_code`);
+     ORDER BY g.grn_number, gi.item_code`);
 
   log(`candidates: ${poLines.length} PO lines, ${grnLines.length} GRN lines (company ${CO}, AutoCount-linked)`);
 
@@ -154,11 +154,11 @@ async function main() {
     ["grn", grnLines, (r) => r.grn_number],
   ]) {
     for (const r of rows) {
-      const res = resolvePrice(idx, r.linked_ac_docno, r.material_code);
+      const res = resolvePrice(idx, r.linked_ac_docno, r.item_code);
       const p = planWrite(r.unit_price_sen, res);
       if (p.action === "WRITE") {
         plan[kind].push({
-          id: r.id, doc: docOf(r), acPo: r.linked_ac_docno, code: r.material_code,
+          id: r.id, doc: docOf(r), acPo: r.linked_ac_docno, code: r.item_code,
           centi: p.priceSen, piNo: res.piNo, piDate: res.piDate, grNo: res.grNo,
           desc2: res.desc2, migrated: r.migrated_no_stock ?? null,
         });
@@ -166,7 +166,7 @@ async function main() {
         bump(skip[kind], p.reason);
         if (p.reason === "SKIP_AMBIGUOUS") {
           ambiguous.push({
-            kind, doc: docOf(r), acPo: r.linked_ac_docno, code: r.material_code,
+            kind, doc: docOf(r), acPo: r.linked_ac_docno, code: r.item_code,
             prices: res.prices, sources: res.sources,
           });
         }

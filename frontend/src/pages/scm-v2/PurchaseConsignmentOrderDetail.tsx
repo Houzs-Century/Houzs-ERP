@@ -109,7 +109,7 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   itemId:         it.id,
   bindingId:      it.binding_id ?? undefined,
   materialKind:   it.material_kind,
-  materialCode:   it.material_code,
+  itemCode:   it.item_code,
   materialName:   it.material_name,
   supplierSku:    it.supplier_sku ?? undefined,
   qty:            it.qty,
@@ -211,7 +211,7 @@ export const PurchaseConsignmentOrderDetail = () => {
   const recomputeLineCost = (line: EditLine): number => {
     const binding = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
-      : bindings.find((b) => b.material_code === line.materialCode);
+      : bindings.find((b) => b.item_code === line.itemCode);
     if (!binding) return line.unitPriceSen;
     const category = (line.category?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
@@ -343,11 +343,11 @@ export const PurchaseConsignmentOrderDetail = () => {
     patchLine(rid, {
       bindingId:      b.id,
       materialKind:   b.material_kind,
-      materialCode:   b.material_code,
+      itemCode:   b.item_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku,
       unitPriceSen: b.unit_price_sen,
-      category:       categoryForCode(b.material_code),
+      category:       categoryForCode(b.item_code),
       priceTouched:   false,
     });
 
@@ -406,7 +406,7 @@ export const PurchaseConsignmentOrderDetail = () => {
   };
 
   /* Single Save (T12) — whole-line diff. For each draft:
-       · no itemId → ADD (full payload incl. variants / materialCode / SKU)
+       · no itemId → ADD (full payload incl. variants / itemCode / SKU)
        · itemId + changed any field → UPDATE (full payload)
      Deletes already fired server-side in removeLine. Then commit the header (if
      touched) and drop back to View.
@@ -415,7 +415,7 @@ export const PurchaseConsignmentOrderDetail = () => {
      columns don't exist on Houzs's consignment schema). */
   const handleSave = async () => {
     if (savingDraft) return;
-    const blankLine = editLines.find((d) => !d.materialCode.trim());
+    const blankLine = editLines.find((d) => !d.itemCode.trim());
     if (blankLine) {
       notify({ title: 'Every line needs a product', body: 'Pick a product for each line, or remove the empty one before saving.', tone: 'error' });
       return;
@@ -431,8 +431,8 @@ export const PurchaseConsignmentOrderDetail = () => {
           await addItem.mutateAsync({
             poId: po.id,
             materialKind:   d.materialKind,
-            materialCode:   d.materialCode,
-            materialName:   d.materialName || d.materialCode,
+            itemCode:   d.itemCode,
+            materialName:   d.materialName || d.itemCode,
             supplierSku:    d.supplierSku,
             qty:            d.qty,
             unitPriceSen: d.unitPriceSen,
@@ -448,8 +448,8 @@ export const PurchaseConsignmentOrderDetail = () => {
         const it = byId.get(d.itemId);
         if (!it) continue;
         const changed =
-          d.materialCode !== it.material_code ||
-          (d.materialName || d.materialCode) !== it.material_name ||
+          d.itemCode !== it.item_code ||
+          (d.materialName || d.itemCode) !== it.material_name ||
           (d.supplierSku ?? '') !== (it.supplier_sku ?? '') ||
           (d.category ?? '') !== (it.item_group ?? '') ||
           d.qty !== it.qty ||
@@ -461,8 +461,8 @@ export const PurchaseConsignmentOrderDetail = () => {
         if (!changed) continue;
         await updateItem.mutateAsync({
           poId: po.id, itemId: d.itemId,
-          materialCode:   d.materialCode,
-          materialName:   d.materialName || d.materialCode,
+          itemCode:   d.itemCode,
+          materialName:   d.materialName || d.itemCode,
           supplierSku:    d.supplierSku,
           qty:            d.qty,
           unitPriceSen: d.unitPriceSen,
@@ -648,7 +648,7 @@ export const PurchaseConsignmentOrderDetail = () => {
                 return (
                   <tr key={it.id}>
                     <td>
-                      <div className={styles.codeCell}>{it.material_code}</div>
+                      <div className={styles.codeCell}>{it.item_code}</div>
                       {(() => {
                         const summary = buildVariantSummary(it.item_group, it.variants as Record<string, unknown> | null)
                           || it.description

@@ -80,7 +80,7 @@ const PRICE_FIELDS = new Set(['base_price_sen', 'price1_sen', 'cost_price_sen', 
    all bindings is an owner decision — see the PR flag. */
 async function syncAnchorBindingFromProduct(
   supabase: SupabaseClient,
-  productCode: string,
+  itemCode: string,
   product: {
     base_price_sen: number | null;
     price1_sen: number | null;
@@ -90,13 +90,13 @@ async function syncAnchorBindingFromProduct(
 ): Promise<void> {
   try {
     // The anchor binding for this code (at most one — enforced app-side).
-    // Multi-company: material_code is shared across companies, so pin to the
+    // Multi-company: item_code is shared across companies, so pin to the
     // active company or the maybeSingle() could resolve the other company's row.
     let bindingQ = supabase
       .from('supplier_material_bindings')
       .select('id, price_matrix')
       .eq('material_kind', 'mfg_product')
-      .eq('material_code', productCode)
+      .eq('item_code', itemCode)
       .eq('is_cost_anchor', true);
     if (companyId != null) bindingQ = bindingQ.eq('company_id', companyId);
     const { data: binding } = await bindingQ.maybeSingle();
@@ -107,7 +107,7 @@ async function syncAnchorBindingFromProduct(
     let prodQ = supabase
       .from('mfg_products')
       .select('category')
-      .eq('code', productCode);
+      .eq('code', itemCode);
     if (companyId != null) prodQ = prodQ.eq('company_id', companyId);
     const { data: prod } = await prodQ.maybeSingle();
 
@@ -404,7 +404,7 @@ mfgProducts.post('/batch-import', async (c) => {
 // have lingering inventory_stock_lots / inventory_movements / supplier_
 // material_bindings rows from earlier QA reject the plain DELETE with a
 // 23503 FK violation. Force mode wipes those side-tables first (by
-// material_code / product_code) then drops the SKU row. Front-end exposes
+// item_code / item_code) then drops the SKU row. Front-end exposes
 // it as a follow-up "Force delete" button after a normal delete fails so
 // commander never destroys side data unintentionally.
 export const deleteMfgProductHandler = async (c: any) => {
@@ -449,19 +449,19 @@ export const deleteMfgProductHandler = async (c: any) => {
   }
 
   if (force) {
-    // Multi-company: product code/material_code is shared across companies
+    // Multi-company: product code/item_code is shared across companies
     // (UNIQUE(company_id, code)), so cleaning side tables by code ALONE would
     // wipe the OTHER company's rows for the same code. Scope every code-keyed
     // delete to the active company (resolved strictly above).
     const cid = co.companyId;
     const cleanup: Array<{ table: string; column: string; value: string; scoped: boolean }> = [
-      // Inventory side — movements key off product_code (per-company; company_id NOT NULL).
+      // Inventory side — movements key off item_code (per-company; company_id NOT NULL).
       // inventory_stock_lots has no company_id column (legacy/absent table) — leave unscoped;
       // its delete is a swallowed no-op on deployments where it doesn't exist.
-      { table: 'inventory_stock_lots',         column: 'product_code',  value: code, scoped: false },
-      { table: 'inventory_movements',          column: 'product_code',  value: code, scoped: true  },
-      // Procurement side — supplier ↔ material bindings key off material_code (per-company).
-      { table: 'supplier_material_bindings',   column: 'material_code', value: code, scoped: true  },
+      { table: 'inventory_stock_lots',         column: 'item_code',  value: code, scoped: false },
+      { table: 'inventory_movements',          column: 'item_code',  value: code, scoped: true  },
+      // Procurement side — supplier ↔ material bindings key off item_code (per-company).
+      { table: 'supplier_material_bindings',   column: 'item_code', value: code, scoped: true  },
     ];
     for (const c2 of cleanup) {
       let delQ = supabase.from(c2.table).delete().eq(c2.column, c2.value);
@@ -533,12 +533,12 @@ mfgProducts.get('/:id', async (c) => {
     for (const k of PRODUCT_FINANCE_KEYS) delete product[k];
   }
 
-  // Side-load the per-dept config row (one-to-one on product_code) so the
+  // Side-load the per-dept config row (one-to-one on item_code) so the
   // UI can show working times without a second roundtrip.
   const { data: cfg } = await supabase
     .from('product_dept_configs')
     .select('*')
-    .eq('product_code', data.code)
+    .eq('item_code', data.code)
     .eq('company_id', activeCompanyId(c))
     .maybeSingle();
 
@@ -745,7 +745,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
   /* SKU-code rename cascade (2990 PR #720, Owner 2026-07-13 MAKOTA→MAKOTO
      typo). The code is snapshotted as TEXT (no FK) across the whole ERP — doc
      lines, supplier bindings and, critically, FIFO stock (inventory_lots keys
-     stock ON HAND by product_code). PR #89's plain-column rename silently
+     stock ON HAND by item_code). PR #89's plain-column rename silently
      stranded all of those under the old code: the renamed SKU showed zero
      stock, its supplier binding died, and PO/GRN conversion lookups missed.
      So a code change now renames every snapshot in the same request.
@@ -792,14 +792,14 @@ export const patchMfgProductHandler = async (c: AppContext) => {
       if (dup.length > 0) {
         return c.json({ error: 'duplicate_code', reason: 'Another SKU already uses that code.' }, 409);
       }
-      /* material_code tables carry material_kind (mfg_product | fabric | raw) —
+      /* item_code tables carry material_kind (mfg_product | fabric | raw) —
          scope those so a fabric that happens to share the string is untouched. */
       const CASCADE: Array<{ table: string; col: string; kind?: true }> = [
-        { table: 'supplier_material_bindings', col: 'material_code', kind: true },
-        { table: 'purchase_order_items',       col: 'material_code', kind: true },
-        { table: 'grn_items',                  col: 'material_code', kind: true },
-        { table: 'purchase_invoice_items',     col: 'material_code', kind: true },
-        { table: 'purchase_return_items',      col: 'material_code', kind: true },
+        { table: 'supplier_material_bindings', col: 'item_code', kind: true },
+        { table: 'purchase_order_items',       col: 'item_code', kind: true },
+        { table: 'grn_items',                  col: 'item_code', kind: true },
+        { table: 'purchase_invoice_items',     col: 'item_code', kind: true },
+        { table: 'purchase_return_items',      col: 'item_code', kind: true },
         { table: 'mfg_sales_order_items',      col: 'item_code' },
         { table: 'mfg_so_price_overrides',     col: 'item_code' },
         { table: 'delivery_order_items',       col: 'item_code' },
@@ -808,15 +808,15 @@ export const patchMfgProductHandler = async (c: AppContext) => {
         { table: 'pwp_codes',                  col: 'trigger_item_code' },
         { table: 'pwp_codes',                  col: 'redeemed_item_code' },
         { table: 'hr_item_kpi',                col: 'ref' },
-        { table: 'product_dept_configs',       col: 'product_code' },
-        { table: 'master_price_history',       col: 'product_code' },
-        { table: 'inventory_movements',        col: 'product_code' },
-        { table: 'inventory_lots',             col: 'product_code' },
-        { table: 'inventory_lot_consumptions', col: 'product_code' },
-        { table: 'stock_transfer_lines',       col: 'product_code' },
-        { table: 'stock_take_lines',           col: 'product_code' },
-        { table: 'warehouse_rack_items',       col: 'product_code' },
-        { table: 'warehouse_rack_movements',   col: 'product_code' },
+        { table: 'product_dept_configs',       col: 'item_code' },
+        { table: 'master_price_history',       col: 'item_code' },
+        { table: 'inventory_movements',        col: 'item_code' },
+        { table: 'inventory_lots',             col: 'item_code' },
+        { table: 'inventory_lot_consumptions', col: 'item_code' },
+        { table: 'stock_transfer_lines',       col: 'item_code' },
+        { table: 'stock_take_lines',           col: 'item_code' },
+        { table: 'warehouse_rack_items',       col: 'item_code' },
+        { table: 'warehouse_rack_movements',   col: 'item_code' },
       ];
       for (const t of CASCADE) {
         let q = scopeToCompanyId(
@@ -902,7 +902,7 @@ export const patchMfgProductHandler = async (c: AppContext) => {
     if (!PRICE_FIELDS.has(ch.field) && !ch.field.startsWith('seat_height')) continue;
     await supabase.from('master_price_history').insert({
       company_id: activeCompanyId(c),
-      product_code: finalCode,
+      item_code: finalCode,
       field: ch.field,
       old_value_sen: ch.oldValueSen,
       new_value_sen: ch.newValueSen,
@@ -985,8 +985,8 @@ mfgProducts.get('/:id/price-history', async (c) => {
 
   const { data, error } = await supabase
     .from('master_price_history')
-    .select('id, product_code, field, old_value_sen, new_value_sen, reason, changed_at, changed_by')
-    .eq('product_code', product.code)
+    .select('id, item_code, field, old_value_sen, new_value_sen, reason, changed_at, changed_by')
+    .eq('item_code', product.code)
     .eq('company_id', activeCompanyId(c))
     .order('changed_at', { ascending: false });
 
@@ -1025,7 +1025,7 @@ mfgProducts.get('/:id/suppliers', async (c) => {
       lead_time_days, moq, is_main_supplier, notes,
       suppliers(code, name, phone)
     `)
-    .eq('material_code', (product as { code: string }).code)
+    .eq('item_code', (product as { code: string }).code)
     .eq('company_id', activeCompanyId(c))
     .order('is_main_supplier', { ascending: false })
     .order('unit_price_sen', { ascending: true });
@@ -1120,7 +1120,7 @@ export const createPriceChangeHandler = async (c: any) => {
       .from('mfg_product_price_history')
       .select('id')
       .eq('company_id', co.companyId)
-      .eq('product_code', code)
+      .eq('item_code', code)
       .limit(1)
       .maybeSingle();
     if (existErr) return c.json({ error: 'load_failed', reason: existErr.message }, 500);
@@ -1128,7 +1128,7 @@ export const createPriceChangeHandler = async (c: any) => {
       baselined = true;
       toInsert.push({
         company_id: co.companyId,
-        product_code: code,
+        item_code: code,
         sell_price_sen: currentSellPriceSen,
         effective_from: today,
         notes: 'Auto-baseline: current price before the first scheduled change.',
@@ -1138,7 +1138,7 @@ export const createPriceChangeHandler = async (c: any) => {
   }
   toInsert.push({
     company_id: co.companyId,
-    product_code: code,
+    item_code: code,
     sell_price_sen: sellPriceSen,
     effective_from: effectiveFrom,
     notes: body.notes?.trim() ? body.notes.trim() : null,
@@ -1207,7 +1207,7 @@ export const listPriceChangesHandler = async (c: any) => {
     .from('mfg_product_price_history')
     .select('id, effective_from, sell_price_sen, notes, created_by, created_at')
     .eq('company_id', co.companyId)
-    .eq('product_code', code)
+    .eq('item_code', code)
     .order('effective_from', { ascending: false })
     .order('created_at', { ascending: false });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);

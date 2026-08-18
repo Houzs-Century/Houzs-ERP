@@ -1,5 +1,5 @@
 /**
- * D10 — the ERP's material_code is NOT AutoCount's ItemCode.
+ * D10 — the ERP's item_code is NOT AutoCount's ItemCode.
  *
  * The write-back used to compose details with identityResolver, so "9028-1S"
  * would have been written into the licensed account book as an ItemCode. The
@@ -9,7 +9,7 @@
  * The contract these tests pin is TOTALITY, not coverage: every line resolves to
  * exactly ONE AutoCount ItemCode, or the whole document is refused with a named
  * reason and the candidates it could not choose between. A silent fallback to
- * material_code is the one behaviour that must be impossible.
+ * item_code is the one behaviour that must be impossible.
  */
 import { describe, expect, it, test } from 'vitest';
 import {
@@ -199,7 +199,7 @@ describe('resolution is TOTAL — one ItemCode, or a named refusal', () => {
   });
 });
 
-/* This block used to be titled "REFUSAL, never a fallback to material_code",
+/* This block used to be titled "REFUSAL, never a fallback to item_code",
    and the rule was right for the reason it gave: sending a code the licensed
    book does not hold would reference a nonexistent item, and on a purchase
    order the resulting line cannot be deleted.

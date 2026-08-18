@@ -34,7 +34,7 @@ import {
    supplier_sku at all, and keying only on supplier_sku called 183 of them
    missing. Inserting those would have duplicated real lines. */
 
-type Row = { supplierSku: string | null; materialCode?: string };
+type Row = { supplierSku: string | null; itemCode?: string };
 const acLine = (docNo: string, itemCode: string, extra: Record<string, unknown> = {}) => ({
   DocNo: docNo, DtlKey: String(Math.random()).slice(2), ItemCode: itemCode, Qty: 1, ...extra,
 });
@@ -49,16 +49,16 @@ const claim = (ls: { itemCode: string }[], rows: Row[]) => {
 
 describe("the mixed-document shortfall the document-level check could not see", () => {
   test("a document holding only its non-sofa line is SHORT, not complete", () => {
-    const r = claim(lines, [{ supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" }]);
+    const r = claim(lines, [{ supplierSku: "AMN-SQUARE PILLOW", itemCode: "SQP-01" }]);
     expect(r.short).toBe(1);
     expect(r.fam("AMN-SF9028 SOFA").claimed).toBe(0);
   });
 
   test("the same document, once the sofa compartments are written, is complete", () => {
     expect(claim(lines, [
-      { supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" },
-      { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", materialCode: "9028-2A(LHF)" },
-      { supplierSku: "AMN-SF9028 SOFA 1A(RHF)", materialCode: "9028-1A(RHF)" },
+      { supplierSku: "AMN-SQUARE PILLOW", itemCode: "SQP-01" },
+      { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", itemCode: "9028-2A(LHF)" },
+      { supplierSku: "AMN-SF9028 SOFA 1A(RHF)", itemCode: "9028-1A(RHF)" },
     ]).short).toBe(0);
   });
 
@@ -68,23 +68,23 @@ describe("the mixed-document shortfall the document-level check could not see", 
      Under-report, never false-alarm. */
   test("one compartment clears the ItemCode - the check never guesses the piece count", () => {
     expect(claim(lines, [
-      { supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" },
-      { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", materialCode: "9028-2A(LHF)" },
+      { supplierSku: "AMN-SQUARE PILLOW", itemCode: "SQP-01" },
+      { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", itemCode: "9028-2A(LHF)" },
     ]).short).toBe(0);
   });
 
   test("two AutoCount lines of the same code need two ERP rows, not one", () => {
     // PO-009751 really does carry two AMN-SF9028 SOFA lines with different builds
     const two = [{ itemCode: "AMN-SF9028 SOFA" }, { itemCode: "AMN-SF9028 SOFA" }];
-    expect(claim(two, [{ supplierSku: "AMN-SF9028 SOFA 1S", materialCode: "9028-1S" }]).short).toBe(1);
+    expect(claim(two, [{ supplierSku: "AMN-SF9028 SOFA 1S", itemCode: "9028-1S" }]).short).toBe(1);
     expect(claim(two, [
-      { supplierSku: "AMN-SF9028 SOFA 1S", materialCode: "9028-1S" },
-      { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", materialCode: "9028-2A(LHF)" },
+      { supplierSku: "AMN-SF9028 SOFA 1S", itemCode: "9028-1S" },
+      { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", itemCode: "9028-2A(LHF)" },
     ]).short).toBe(0);
   });
 
   test("an ERP row belonging to no AutoCount line is surfaced, not silently counted", () => {
-    const r = claim(lines, [{ supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" }, { supplierSku: "HAND-ADDED", materialCode: "Z" }]);
+    const r = claim(lines, [{ supplierSku: "AMN-SQUARE PILLOW", itemCode: "SQP-01" }, { supplierSku: "HAND-ADDED", itemCode: "Z" }]);
     expect(r.unassigned.map((x: Row) => x.supplierSku)).toEqual(["HAND-ADDED"]);
     expect(r.short).toBe(1); // the hand-added row must NOT be allowed to cover the sofa line
   });
@@ -95,8 +95,8 @@ describe("linked_ac_dtlkey, the strongest claim - migration 0273 (#1819)", () =>
 
   test("a row carrying the line key is claimed by it, whatever its supplier_sku says", () => {
     const r = claim(keyed, [
-      { supplierSku: "SOMETHING-ELSE-ENTIRELY", materialCode: "9028-CNR", linkedAcDtlKey: 886047 },
-      { supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" },
+      { supplierSku: "SOMETHING-ELSE-ENTIRELY", itemCode: "9028-CNR", linkedAcDtlKey: 886047 },
+      { supplierSku: "AMN-SQUARE PILLOW", itemCode: "SQP-01" },
     ]);
     expect(r.short).toBe(0);
     expect(r.fam("AMN-SF9028 SOFA").keyRows).toBe(1);
@@ -107,8 +107,8 @@ describe("linked_ac_dtlkey, the strongest claim - migration 0273 (#1819)", () =>
      cover a different line. */
   test("a key naming a line not on this document claims nothing and is reported", () => {
     const r = claim(keyed, [
-      { supplierSku: "AMN-SF9028 SOFA 1S", materialCode: "9028-1S", linkedAcDtlKey: 999999 },
-      { supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" },
+      { supplierSku: "AMN-SF9028 SOFA 1S", itemCode: "9028-1S", linkedAcDtlKey: 999999 },
+      { supplierSku: "AMN-SQUARE PILLOW", itemCode: "SQP-01" },
     ]);
     expect(r.unassigned).toHaveLength(1);
     expect(r.short).toBe(1);
@@ -116,9 +116,9 @@ describe("linked_ac_dtlkey, the strongest claim - migration 0273 (#1819)", () =>
 
   test("every compartment of one sofa line shares that line's key", () => {
     const r = claim(keyed, [
-      { supplierSku: null, materialCode: "9028-2A(LHF)", linkedAcDtlKey: 886047 },
-      { supplierSku: null, materialCode: "9028-1A(RHF)", linkedAcDtlKey: 886047 },
-      { supplierSku: null, materialCode: "SQP-01", linkedAcDtlKey: 886051 },
+      { supplierSku: null, itemCode: "9028-2A(LHF)", linkedAcDtlKey: 886047 },
+      { supplierSku: null, itemCode: "9028-1A(RHF)", linkedAcDtlKey: 886047 },
+      { supplierSku: null, itemCode: "SQP-01", linkedAcDtlKey: 886051 },
     ]);
     expect(r.short).toBe(0);
     expect(r.fam("AMN-SF9028 SOFA").keyRows).toBe(2);
@@ -129,28 +129,28 @@ describe("rows that carry no supplier_sku - 225 of the 862 live migrated lines",
   /* apply-sofa-compartment-corrections.mjs:212-217 INSERTs a corrected
      compartment by SELECTing from the source row and never carries
      supplier_sku. Those rows are real AutoCount lines. Claiming them by
-     material_code is what stops the repair duplicating them. */
-  test("a no-supplier_sku bedframe row is claimed by its exact material_code", () => {
+     item_code is what stops the repair duplicating them. */
+  test("a no-supplier_sku bedframe row is claimed by its exact item_code", () => {
     const bed = [{ itemCode: "AMN-SQUARE PILLOW" }];
-    expect(claim(bed, [{ supplierSku: null, materialCode: "SQP-01" }]).short).toBe(0);
+    expect(claim(bed, [{ supplierSku: null, itemCode: "SQP-01" }]).short).toBe(0);
   });
 
   test("a no-supplier_sku sofa compartment is claimed by the model prefix", () => {
     expect(claim(lines, [
-      { supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" },
-      { supplierSku: null, materialCode: "9028-CNR" },
+      { supplierSku: "AMN-SQUARE PILLOW", itemCode: "SQP-01" },
+      { supplierSku: null, itemCode: "9028-CNR" },
     ]).short).toBe(0);
   });
 
   test("a row two ItemCodes could both claim is claimed by NEITHER, and is reported", () => {
     const twoModels = [{ itemCode: "DSL-9028 SOFA" }, { itemCode: "AMN-SF9028 SOFA" }];
-    const r = claim(twoModels, [{ supplierSku: null, materialCode: "9028-CNR" }]);
+    const r = claim(twoModels, [{ supplierSku: null, itemCode: "9028-CNR" }]);
     expect(r.ambiguous).toHaveLength(1);
     expect(r.short).toBe(2); // both stay short: guessing which one owns it is how a compartment gets doubled
   });
 
   test("a no-supplier_sku row whose code belongs to nothing here is unassigned, not a free pass", () => {
-    const r = claim(lines, [{ supplierSku: null, materialCode: "SOMETHING-ELSE" }]);
+    const r = claim(lines, [{ supplierSku: null, itemCode: "SOMETHING-ELSE" }]);
     expect(r.unassigned).toHaveLength(1);
     expect(r.short).toBe(2);
   });
@@ -171,7 +171,7 @@ describe("supplier_sku family membership", () => {
   test("a prefix code does not steal the longer code's rows", () => {
     const ls = [{ itemCode: "AMN-SF9028 SOFA" }, { itemCode: "AMN-SF9028 SOFA XL" }];
     const fams = buildFamilies(ls, resolve);
-    claimErpRows(fams, [{ supplierSku: "AMN-SF9028 SOFA XL 1S", materialCode: "9028-1S" }]);
+    claimErpRows(fams, [{ supplierSku: "AMN-SF9028 SOFA XL 1S", itemCode: "9028-1S" }]);
     expect(fams.find((f: { itemCode: string }) => f.itemCode === "AMN-SF9028 SOFA XL").claimed).toBe(1);
     expect(fams.find((f: { itemCode: string }) => f.itemCode === "AMN-SF9028 SOFA").claimed).toBe(0);
   });
@@ -179,12 +179,12 @@ describe("supplier_sku family membership", () => {
 
 describe("the repair is all-or-nothing per ItemCode", () => {
   const expected = [
-    { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", materialCode: "9028-2A(LHF)" },
-    { supplierSku: "AMN-SF9028 SOFA 1A(RHF)", materialCode: "9028-1A(RHF)" },
+    { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", itemCode: "9028-2A(LHF)" },
+    { supplierSku: "AMN-SF9028 SOFA 1A(RHF)", itemCode: "9028-1A(RHF)" },
   ];
 
   test("zero rows present -> write them all (the confirmed defect shape)", () => {
-    const r = claim(lines, [{ supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" }]);
+    const r = claim(lines, [{ supplierSku: "AMN-SQUARE PILLOW", itemCode: "SQP-01" }]);
     const p = planFamilyInserts(r.fam("AMN-SF9028 SOFA"), expected);
     expect(p.verdict).toBe("absent");
     expect(p.insert).toHaveLength(2);
@@ -194,8 +194,8 @@ describe("the repair is all-or-nothing per ItemCode", () => {
      corrected by hand. Writing the "missing" half would double a compartment. */
   test("some rows present but fewer than expected -> write NOTHING, report it", () => {
     const r = claim(lines, [
-      { supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" },
-      { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", materialCode: "9028-2A(LHF)" },
+      { supplierSku: "AMN-SQUARE PILLOW", itemCode: "SQP-01" },
+      { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", itemCode: "9028-2A(LHF)" },
     ]);
     const p = planFamilyInserts(r.fam("AMN-SF9028 SOFA"), expected);
     expect(p.verdict).toBe("partial");
@@ -204,9 +204,9 @@ describe("the repair is all-or-nothing per ItemCode", () => {
 
   test("everything present -> nothing to do", () => {
     const r = claim(lines, [
-      { supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" },
-      { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", materialCode: "9028-2A(LHF)" },
-      { supplierSku: "AMN-SF9028 SOFA 1A(RHF)", materialCode: "9028-1A(RHF)" },
+      { supplierSku: "AMN-SQUARE PILLOW", itemCode: "SQP-01" },
+      { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", itemCode: "9028-2A(LHF)" },
+      { supplierSku: "AMN-SF9028 SOFA 1A(RHF)", itemCode: "9028-1A(RHF)" },
     ]);
     expect(planFamilyInserts(r.fam("AMN-SF9028 SOFA"), expected).verdict).toBe("present");
   });
@@ -214,21 +214,21 @@ describe("the repair is all-or-nothing per ItemCode", () => {
 
 describe("the last guard before an INSERT", () => {
   const expected = [
-    { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", materialCode: "9028-2A(LHF)" },
-    { supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" },
+    { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", itemCode: "9028-2A(LHF)" },
+    { supplierSku: "AMN-SQUARE PILLOW", itemCode: "SQP-01" },
   ];
 
   test("re-running inserts nothing - idempotent", () => {
     expect(diffExpectedRows(expected, expected.map((e) => ({ ...e }))).toInsert).toHaveLength(0);
   });
 
-  /* material_code is NOT part of this key on purpose. A row already present
+  /* item_code is NOT part of this key on purpose. A row already present
      under a different code is still PRESENT; keying on the code too would
      insert a duplicate of a line that exists. It is reported instead. */
-  test("a row present under a different material_code is not duplicated, it is reported", () => {
+  test("a row present under a different item_code is not duplicated, it is reported", () => {
     const live = [
-      { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", materialCode: "9028-2A" },
-      { supplierSku: "AMN-SQUARE PILLOW", materialCode: "SQP-01" },
+      { supplierSku: "AMN-SF9028 SOFA 2A(LHF)", itemCode: "9028-2A" },
+      { supplierSku: "AMN-SQUARE PILLOW", itemCode: "SQP-01" },
     ];
     const { toInsert, codeDisagreements } = diffExpectedRows(expected, live);
     expect(toInsert).toHaveLength(0);

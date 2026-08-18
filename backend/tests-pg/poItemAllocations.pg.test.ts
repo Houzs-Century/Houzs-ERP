@@ -78,7 +78,7 @@ async function resetFixture(sql: Sql): Promise<void> {
     CREATE TABLE scm.purchase_order_items (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       purchase_order_id uuid,
-      material_code text,
+      item_code text,
       qty integer NOT NULL
     );
 
@@ -88,7 +88,7 @@ async function resetFixture(sql: Sql): Promise<void> {
       item_code text
     );
 
-    INSERT INTO scm.purchase_order_items (id, material_code, qty) VALUES
+    INSERT INTO scm.purchase_order_items (id, item_code, qty) VALUES
       ('${LINE}',  'MAKOTO-Q', 5),
       ('${LINE2}', 'BF-15',    2);
     INSERT INTO scm.mfg_sales_order_items (id, doc_no, item_code) VALUES

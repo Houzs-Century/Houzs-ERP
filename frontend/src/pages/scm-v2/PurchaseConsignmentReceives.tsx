@@ -132,7 +132,7 @@ const buildColumns = (): DataGridColumn<GrnRow>[] => [
 /* ── Drill-down — per-line breakdown for one receive ── */
 type GrnItem = Record<string, unknown> & {
   id: string;
-  material_code?: string | null;
+  item_code?: string | null;
   material_name?: string | null;
   description?: string | null;
   item_group?: string | null;
@@ -148,9 +148,9 @@ type GrnItem = Record<string, unknown> & {
 const buildDrilldownColumns = (currency: string): DataGridColumn<GrnItem>[] => [
   {
     key: 'item_code', label: 'Item Code', width: 130,
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.material_code ?? '—'}</span>,
-    searchValue: (it) => it.material_code ?? '',
-    sortFn: (a, b) => (a.material_code ?? '').localeCompare(b.material_code ?? ''),
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.item_code ?? '—'}</span>,
+    searchValue: (it) => it.item_code ?? '',
+    sortFn: (a, b) => (a.item_code ?? '').localeCompare(b.item_code ?? ''),
   },
   {
     key: 'source_po', label: transferFromColumnLabel('po'), width: 160,

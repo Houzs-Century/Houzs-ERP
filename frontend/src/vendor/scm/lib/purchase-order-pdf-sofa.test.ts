@@ -37,7 +37,7 @@ const header = {
    suffix ("XAMMAR-2A(LHF)"), item_group 'sofa', NO stored x/y geometry — the
    reconstruction path (buildDefaultSofaCells) must draw the default layout. */
 const sofaLine = (moduleId: string) => ({
-  material_code: `XAMMAR-${moduleId}`,
+  item_code: `XAMMAR-${moduleId}`,
   material_name: `SOFA XAMMAR ${moduleId}`,
   supplier_sku: `5531-${moduleId}`,
   qty: 1,
@@ -71,7 +71,7 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
 
   it('draws nothing sofa-shaped for a non-sofa PO', async () => {
     const b64 = await purchaseOrderPdfBase64(header, [{
-      material_code: 'ANGGN-FIRM-K',
+      item_code: 'ANGGN-FIRM-K',
       material_name: '2990 ANGGN-FIRM MATTRESS (183X190X35CM)',
       supplier_sku: 'NF-ANGGN-K',
       qty: 1,
