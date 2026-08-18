@@ -1126,13 +1126,9 @@ grns.get('/', async (c) => {
       if (supplierId) cq = cq.eq('supplier_id', supplierId);
       return cq;
     };
-    /* PERF (2026-08-17). These four head-only counts read NOTHING the page
-       query produces — company + supplierId only, which is exactly why they may
-       ignore the status/search/page filters. They were nonetheless issued only
-       after the page query had returned, costing one extra serial round trip.
-       ISSUED here, AWAITED at the original site below: query text, count
-       semantics and the order in which an error surfaces (page query first) are
-       all unchanged. */
+    /* PERF: these four head-only counts read nothing the page query produces —
+       company + supplierId only — so they are ISSUED here and AWAITED below.
+       Query text, count semantics and error order are unchanged. */
     const countsProm = eager(Promise.all([
       countBase(),
       countBase().in('status', GRN_STATUS_BUCKETS.draft),
@@ -1163,18 +1159,10 @@ grns.get('/', async (c) => {
   // fully_returned).
   const rows = (data ?? []) as Array<{ id: string } & Record<string, unknown>>;
   const ids = rows.map((g) => g.id);
-  /* PERF (2026-08-17). The Assigned-SO / Delivered wave below takes ONE input —
-     the page's purchase_order_ids — and that is known right here, on `rows`. It
-     ran last all the same, so its longest read (computeMrp, ~100 round trips of
-     its own inside resolvePoSoCoveragePerSkuForPos) started only after the
-     grn_items page AND the per-line downstream lookup had both finished, neither
-     of which it consumes. ISSUED here, AWAITED at its original site below, so
-     both resolvers see the same poIds and return the same maps.
-
-     One consequence, stated rather than hidden: when the grn_items read fails,
-     the 500 below now returns with these reads already in flight. They are
-     read-only and their results are discarded; `eager` holds the rejection so a
-     discarded failure cannot become an unhandled rejection. */
+  /* PERF: the Assigned-SO / Delivered wave takes ONE input — `rows` — known two
+     waves earlier, so it is issued here and overlaps the grn_items page and
+     grnLineDownstream. Stated rather than hidden: when the grn_items read fails
+     this wave has already been issued, and its result is discarded. */
   const poIdsForPage = rows.map((g) => (g as { purchase_order_id?: string | null }).purchase_order_id);
   const coverageProm = eager(Promise.all([
     resolvePoSoCoveragePerSkuForPos(sb, c, poIdsForPage),

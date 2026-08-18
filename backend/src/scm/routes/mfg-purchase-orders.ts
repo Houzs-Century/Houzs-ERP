@@ -508,14 +508,8 @@ mfgPurchaseOrders.get('/', async (c) => {
       cq = scopeToCompany(cq, c);
       return cq;
     };
-    /* PERF (2026-08-17). These seven head-only counts read NOTHING the page
-       query produces — they key off company + supplierId only, which is why
-       they can legally ignore the status/search/page filters at all. They were
-       nonetheless issued only after the page query had come back, so the PO
-       list paid a whole extra serial round trip that the Sales Order list
-       already avoids. ISSUED here, AWAITED at the original site below: the
-       query text, the count semantics and the order in which an error surfaces
-       (page query first, counts second) are all unchanged. */
+    /* PERF: the seven head-only counts read nothing the page query produces, so
+       they are issued alongside it rather than after it. Semantics unchanged. */
     const countsProm = eager(Promise.all([
       countBase(),
       countBase().in('status', PO_STATUS_BUCKETS.draft),
