@@ -1,3 +1,45 @@
+## Mobile delivery "On the way" and "POD complete" taps failed silently to the driver [low]
+
+**Symptom.** On the mobile delivery-planning stop card, a driver taps "On the way" (IN_TRANSIT) or "POD complete" (DELIVERED); if the PATCH is refused the button simply re-enables and nothing is shown. The owner's own report shape for this class is "the button does nothing" — the arrival/departure the customer is supposed to see never lands and the driver has no idea.
+
+**Root cause (traced, not guessed — read frontend/src/mobile/MobileDeliveryPlanning.tsx).** The three DO-lifecycle useMutation hooks sit together: `start` (~line 1275, status IN_TRANSIT), `arrive` (~line 1298, stamps arrivalAt) and `complete` (~line 1322, status DELIVERED). `arrive` was fixed earlier and carries an `onError` that calls `notify({...})`; `start` and `complete` carried only `onSuccess: async () => { await invalidate(); }` with no error path at all. `notify` (useNotify, line 1162) was already in scope and already used by the DO-create paths and by arrive.onError, so the two hooks were the only silent survivors — the exact "a failure that reaches nobody is worse than a crash" class the repo tracks via check-silent-mutations.
+
+**Fix.** Added an `onError` to both `start` and `complete`, copying the arrive mutation's pattern verbatim: `notify({ title, body: e instanceof Error ? e.message : "Something went wrong. Please try again." })` with titles "Couldn't start the delivery" / "Couldn't complete the delivery". Behaviour-preserving otherwise. Test pins all three taps against silent-failure regression.
+
+**Ref.** 2026-08-18.
+
+## verifiedSave object-field compare was key-order sensitive — spurious "save did not stick" [medium]
+
+Symptom: Saving a record whose object field (e.g. address, variants) persisted correctly could still surface the operator-facing "<Noun> not saved — <field> still shows ... instead of ..." message. The write had actually stuck; verifiedSave reported a false mismatch.
+
+Root cause (traced, not guessed): frontend/src/vendor/scm/lib/verified-save.ts `valuesEqual` compared non-scalar values with `JSON.stringify(a) === JSON.stringify(b)` (line ~100) and no key normalisation. JSON.stringify emits object keys in insertion order, so a readback returning `{b:2,a:1}` against an `expect` of `{a:1,b:2}` — the same value — stringified to different text and was flagged unequal by computeSaveDiffs, producing `{ ok:false, reason:'mismatch' }`.
+
+Fix: Added a local `stableStringify` (JSON.stringify with a replacer that emits every plain object's keys in sorted order, recursively; arrays left in order so a genuine reorder is still a change) and switched `valuesEqual`'s object branch to compare via it. Added verified-save.test.ts covering reordered keys (equal), nested reordered keys (equal), a genuine value change (still flagged), and array reorder (still flagged). Frontend-only, no behaviour change beyond removing the false positive.
+
+## Rack stock-in/out + rack create/update refusals were silent [medium]
+
+Symptom: In the Warehouse (Rack/REC) desktop page, a refused stock-in, stock-out, rack create, or rack update produced no toast, no inline message, no console line — the classic "the button does nothing". The sibling rack transfer surfaced its failures correctly.
+
+Root cause traced: In frontend/src/vendor/scm/lib/warehouse-queries.ts, useCreateRack, useUpdateRack, useStockIn and useStockOut each carried only `onSuccess` and no `onError`, while useTransfer already used `onError: writeFailedAs('Rack transfer not saved')`. Because authedFetch rejects with the server's own sentence and nothing on these four mutations (nor a consumer) caught it, a backend refusal — area-guard wanting `edit`, a 404 on the other company's row, a 409 before the active company resolves — was dropped on the floor. This is the exact shape documented in mutation-error.ts and swept by frontend/scripts/check-silent-mutations.mjs.
+
+Fix: Added `onError: writeFailedAs(...)` to the four mutations (titles 'Rack not created', 'Rack not updated', 'Stock-in not saved', 'Stock-out not saved'), matching the already-correct useTransfer pattern; writeFailedAs was already imported. Behaviour-preserving except that failures now notify. useDeleteRack has the same silent shape and was left for a scoped follow-up. Ref: <PR>/2026-08-18.
+
+## Legacy 'cancel' status rendered a neutral pill instead of cancelled [sev: low]
+
+Symptom: an SCM list row whose status is the legacy bare verb 'cancel' (SO/DO legacy rows) showed the muted cancelled-row background (dt-row-cancelled) but a NEUTRAL grey status pill — the row and its own pill disagreed on whether it was cancelled.
+
+Root cause traced: frontend/src/lib/scm.ts has two helpers that must agree. isCancelledDocStatus() returns true for both 'CANCELLED' and legacy 'CANCEL' (uppercased). scmStatusClasses() only listed `case \"CANCELLED\":` on the err branch, so an uppercased 'CANCEL' matched no case and hit the neutral `default:`. The two helpers drifted: one counted 'CANCEL' as cancelled, the other did not.
+
+Fix: added `case \"CANCEL\":` to scmStatusClasses()'s err branch alongside 'CANCELLED', so a legacy-cancelled status gets the err pill that matches its cancelled row treatment. Added a drift-guard test asserting scmStatusClasses returns the err class for every status isCancelledDocStatus classifies as cancelled.
+
+## PO amendment create parsed money with a float multiply and swallowed unreadable prices [sev: med]
+
+**Symptom:** Raising a PO amendment (PoAmendmentCreateModal) and editing a unit cost with a pasted or imperfect value — 'RM 1,200', a full-width IME number, a thousands comma, or an over-precise 19.995 — either silently rounded the amount or silently DROPPED the price edit, submitting the amendment with the OLD price and no warning to the buyer.
+
+**Root cause (traced, not guessed):** The modal used a local `myrToCenti = (myr) => { const n = Number(myr); if (!Number.isFinite(n)) return null; return Math.round(n * 100); }` and gated the change with `newCenti != null`. This is the exact `parseFloat`-style pattern `frontend/src/lib/money.ts` was written to eliminate: `Number('RM 1,200')`/`Number('１２００')` -> NaN -> null -> `priceChanged` false, so the edit vanished; and `Math.round(n*100)` rounds over-precision away instead of refusing it. Confirmed by reading the current file (helper at lines 43-47, sole call in buildPayload at line 129) against money.ts and the sibling correct callers Products.tsx:3436 and ProductModels.tsx:854.
+
+**Fix:** Replaced `myrToCenti` with `parseMoneyToSen` from `../../lib/money` (integer-sen assembly, accepts currency prefix / commas / full-width digits, REFUSES ambiguous/over-precision input as a plain-language message). buildPayload now returns an `error` field; submit() shows it via notify(tone:'error') and blocks the save, so an unreadable price can no longer post the old price silently. Readable and empty inputs are unchanged. No mobile counterpart: the mobile PO-amendment screens are read/approve only. Ref: <PR>/2026-08-18.
+
 ## Journal-entry number prefix was keyed on a hardcoded company id, so it could land under the wrong company in some environments [medium]
 
 <!-- area: Accounting + GL -->
