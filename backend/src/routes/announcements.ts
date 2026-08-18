@@ -30,6 +30,7 @@ import {
   bustBannerForUser,
   configCacheVersion,
 } from "../services/configCache";
+import type { BannerScope } from "../services/configCache";
 import {
   translateAnnouncement,
   type AnnouncementTranslations,
@@ -607,26 +608,30 @@ app.get("/banner", async (c) => {
   // requesting the unscoped feed gets the human slice too.
   const scope = (c.req.query("scope") ?? "").toLowerCase();
   const systemOnly = scope === "system";
+  // The payload depends only on this boolean: default and scope=human are the
+  // identical human slice, so BOTH key as "human" (one entry, shared). Keyed
+  // separately from "system" so the two payloads can never answer each other.
+  const bannerScope: BannerScope = systemOnly ? "system" : "human";
 
-  // PER-USER KV snapshot (inbox.ts pattern) — this payload is per-user three
-  // times over (own ackedIds, dept/position/user-id targeting, the reader's
-  // company grants), so it must NEVER enter a shared cache; the key's scope
-  // dimension is the USER id. The family version orphans every user's entry
-  // on any broadcast-shaped mutation (create/edit/delete/remind below);
-  // per-user changes (own ack, a private notice) bust just that user's key.
-  // 60s TTL matches the frontend's poll and sessionCache's freshness window
-  // for role/dept edits. Best-effort: any KV trouble serves the live build.
+  // PER-USER + PER-SCOPE KV snapshot (inbox.ts pattern) — this payload is
+  // per-user three times over (own ackedIds, dept/position/user-id targeting,
+  // the reader's company grants) AND per-scope (human vs system filter), so it
+  // must NEVER enter a shared cache; the key's scope dimensions are the USER id
+  // and the slice. The family version orphans every user's entry on any
+  // broadcast-shaped mutation (create/edit/delete/remind below); per-user
+  // changes (own ack, a private notice) bust BOTH of that user's slices.
+  // 60s TTL matches the desktop poll and sessionCache's freshness window for
+  // role/dept edits — the mobile bell polls at 30s, so it may serve up to
+  // TTL-stale, the same trade the human slice already makes. Best-effort: any
+  // KV trouble serves the live build.
   const bannerVersion = await configCacheVersion(c.env, "banner");
-  // Only the SYSTEM slice bypasses the snapshot (the cache key is not keyed on
-  // the scope) — a cheap live read + in-memory filter; the mobile bell polls at
-  // 30s. The pop-up slice is the SAME payload whether asked for as the default
-  // or as scope=human, so both are served from (and fill) the one per-user
-  // snapshot — which also un-does the cache bypass the mobile human surfaces
-  // had been paying since the scope split.
+  // Both slices now take the cached path (the key carries the slice). The only
+  // bypass is a best-effort one: an UNUSABLE cache version (KV unbound /
+  // erroring) reads null, and a guessed version could serve an orphaned entry.
   const cacheKey =
-    bannerVersion == null || systemOnly
+    bannerVersion == null
       ? null
-      : bannerCacheKey(bannerVersion, user.id);
+      : bannerCacheKey(bannerVersion, user.id, bannerScope);
   if (cacheKey) {
     try {
       const cached = await c.env.SESSION_CACHE?.get(cacheKey);

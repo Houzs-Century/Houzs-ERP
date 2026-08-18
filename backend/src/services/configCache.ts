@@ -187,17 +187,40 @@ export function toClientResponse(hit: Response): Response {
 
 // ── Per-user KV tier (announcements banner) ───────────────────────────────
 
+/**
+ * The banner endpoint serves TWO per-user payloads that must never share a
+ * cache entry: the POP-UP slice ("human" — human-authored posts, source IS
+ * NULL) and the notification-BELL slice ("system" — machine notices, source
+ * NOT NULL). The default (unscoped) request is the SAME payload as the human
+ * slice, so it maps to "human" too — there are only these two distinct
+ * payloads, never a third. A cache key that carried the user id but not the
+ * slice would let one scope's payload answer the other; the scope is a
+ * REQUIRED key dimension for exactly the reason userId is.
+ */
+export type BannerScope = "human" | "system";
+
+/** Every banner scope that can hold a per-user entry — the set a per-user bust
+ *  must clear, since a user's own ack / private notice can affect either. */
+export const BANNER_SCOPES: readonly BannerScope[] = ["human", "system"];
+
 /** KV key for one user's banner snapshot under the family's current version.
- *  Both parts REQUIRED — the user id is the scope dimension here. */
-export function bannerCacheKey(version: number, userId: number): string {
-  return `banner:v${version}:u${userId}`;
+ *  All three parts REQUIRED — userId AND scope are both scope dimensions, and
+ *  omitting the scope would collide the human and system payloads. */
+export function bannerCacheKey(
+  version: number,
+  userId: number,
+  scope: BannerScope,
+): string {
+  return `banner:v${version}:u${userId}:s${scope}`;
 }
 
 /**
- * Bust ONE user's banner snapshot (their own ack / a private notice targeted
- * at them). Broadcast-shaped changes (create / edit / delete / remind) must
- * bump the `banner` family version instead — every user's entry is affected.
- * Best-effort: a failed delete falls back to the 60s TTL.
+ * Bust ONE user's banner snapshots (their own ack / a private notice targeted
+ * at them) — ALL scope variants, since an ack or a private notice can land on
+ * either the pop-up or the bell slice. Broadcast-shaped changes (create / edit
+ * / delete / remind) must bump the `banner` family version instead — every
+ * user's entry is affected. Best-effort: a failed delete falls back to the 60s
+ * TTL.
  */
 export async function bustBannerForUser(
   env: ConfigCacheEnv,
@@ -207,7 +230,12 @@ export async function bustBannerForUser(
   try {
     const version = await configCacheVersion(env, "banner");
     if (version == null) return; // nothing reachable was cached
-    await env.SESSION_CACHE.delete(bannerCacheKey(version, userId));
+    const kv = env.SESSION_CACHE;
+    await Promise.all(
+      BANNER_SCOPES.map((scope) =>
+        kv.delete(bannerCacheKey(version, userId, scope)),
+      ),
+    );
   } catch {
     /* non-fatal */
   }
