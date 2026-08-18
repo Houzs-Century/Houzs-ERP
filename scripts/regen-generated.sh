@@ -12,4 +12,5 @@ root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$root" || exit 0
 npm --prefix backend run gen:bug-index   >/dev/null 2>&1 || true
 npm --prefix backend run gen:route-locator >/dev/null 2>&1 || true
+node backend/scripts/gen-codebase-map.mjs  >/dev/null 2>&1 || true
 exit 0
