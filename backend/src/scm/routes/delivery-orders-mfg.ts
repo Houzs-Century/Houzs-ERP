@@ -4261,10 +4261,8 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  /* Per-company write (DO header + crew upsert). Service-role bypasses RLS, so without
-     this gate `id` alone was the boundary — company-A could overwrite company-B's crew.
-     Reads as 404 rather than 403 on purpose: "that document exists, but not for you"
-     is itself a leak. Nothing is re-homed — the crew row inherits the DO's company. */
+  /* Per-company write (DO header + crew upsert). Service-role bypasses RLS, so `id`
+     alone was the boundary. 404 not 403 on purpose — "exists, but not yours" leaks. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: doRow, error: doErr } = await scopeToCompanyId(sb.from('delivery_orders')
