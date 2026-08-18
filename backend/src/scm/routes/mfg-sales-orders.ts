@@ -4879,6 +4879,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         ? Math.trunc(body.pendingDepositCenti)
         : 0,
     );
+    /* Strict `=== true`: a stray truthy value must not waive a money condition. */
+    const manualEntry = body.manualEntry === true;
     const depositProblems = procDateOnCreate
       ? collectProcessingGateProblems({
           /* Per-company deposit rule (owner 2026-07-31: Houzs 30%, 2990 50%).
@@ -4895,7 +4897,21 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
             hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),
             hasPostcode: typeof body.postcode === 'string' && !!body.postcode.trim(),
           },
-          deposit: { paidCenti: depositTotalCenti + pendingDepositCenti, totalCenti: grandTotal },
+          /* `null` = this path has no deposit condition, the same way the
+             consignment mirror passes null (ProcessingGateFacts.deposit).
+             HAND-KEYED ORDERS ONLY. The desktop New-SO screen sets the flag
+             read above; a salesperson writes the order up for a
+             customer who has not paid yet, and it still has to be released for
+             purchasing to order against. The other four conditions — name,
+             address, postcode, delivery date — are untouched, so a manual order
+             is not a way to release an order nobody can deliver.
+             This is NOT a security boundary and does not pretend to be. The
+             route runs supabaseAuth, so only signed-in staff reach it, and the
+             same person can already open the New-SO screen and get this result
+             legitimately. The flag routes; it grants nothing new. */
+          deposit: manualEntry
+            ? null
+            : { paidCenti: depositTotalCenti + pendingDepositCenti, totalCenti: grandTotal },
         })
       : [];
     if (depositProblems.length > 0) {
