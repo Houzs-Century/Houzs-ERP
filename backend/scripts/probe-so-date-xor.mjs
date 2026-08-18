@@ -2,9 +2,9 @@
 /* Read-only: how many live orders already break the both-dates-or-neither rule.
 
    THE RULE (owner, restated 2026-08-13): "processing date 和 delivery date 必须
-   同时有或者同时没有". A Processing Date is the go-to-production signal and a
-   Delivery Date is what it is promised against; one without the other is a
-   half-stated schedule.
+   同时有或者同时没有". A Processing Date RELEASES the order to purchasing to go
+   and order the goods (owner 2026-08-18) and a Delivery Date is what it is
+   promised against; one without the other is half a statement.
 
    WHERE IT IS ENFORCED, AND WHERE IT IS NOT.
      client  frontend/src/vendor/scm/lib/so-form-validate.ts:94
