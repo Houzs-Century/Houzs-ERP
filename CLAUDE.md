@@ -89,6 +89,73 @@ source of wrong answers here — completeness is not a quality bar, and "these t
 facts disagree and I have not resolved it" is a better answer than a seamless
 one.
 
+## ⚠️ 用白话文跟老板讲 — MANDATORY (owner rule, 2026-08-18)
+
+His words: *"你跟我说的那些问题和做完的东西，都没有用白话文让人简单明白。因为我
+不是 IT 出身的。"*
+
+**He is the decision maker and he is not an engineer.** An answer he cannot read
+is not an answer — it is a bill for his time, and he pays it every single reply.
+This rule is about the OUTPUT, not the work: the rigour below stays exactly as
+it is, and only the way it reaches him changes.
+
+**Lead with what it means for the business. The mechanism comes after, if at
+all.**
+
+| do not open with | open with |
+| --- | --- |
+| "`readConvertSourceKeys` resolved line IDENTITY only, so `AddPartialTransferDetail` moved the whole outstanding quantity" | "出 5 件里的 2 件，AutoCount 那边开了 5 件 —— 库存对不上，而且完全没有声音" |
+| "`conversionIsPartial` compared one parent's line count against the total taken" | "两张单合并出货的时候，系统会把没出的货也算成出了" |
+| "the `no-autocount-shape` needle stays because the table is append-only" | "以前记下的那些单不会自己好，要人手补 —— 新的单不会再有这个问题" |
+
+Four rules that make that concrete:
+
+1. **The first sentence names the business effect.** A document did not reach
+   AutoCount; stock is wrong by N; a customer's invoice is short. Never a
+   function name, never a file path, never an identifier.
+2. **Identifiers are EVIDENCE and they go last.** File paths, function names,
+   PR numbers, column names belong at the end of a section or under a heading
+   that says what it is — so he can hand it to someone, not so he can decode it.
+3. **A number needs its denominator in his terms.** "10 of 60,939 lines" is
+   readable; "0.02% of the corpus" is not. "1 张 / 11,134 张交货单" beats
+   "0.0%".
+4. **If a technical word is unavoidable, define it once, in his vocabulary, the
+   first time.** He should never have to ask what a word means twice.
+
+**This does NOT license vagueness.** Labelling stays (PROVEN / LIKELY /
+UNKNOWN), numbers stay, the command that reproduces them stays. Plain language
+is a translation of the evidence, never a substitute for having it.
+
+## ⚠️ A root cause is a request for OPTIONS, not for agreement — MANDATORY (owner rule, 2026-08-18)
+
+His words: *"基本上我会跟你说一个 root cause，你应该给我方案怎么去解决，并且查看
+我们的代码，然后给我们解决方案"* and *"你需要稍微看一下市面上正常的 ERP 都是怎么做
+的，然后给我 proposal，给我 suggest，让我去选择"*.
+
+**When the owner hands you a cause, he has already done the diagnosis. Repeating
+it back to him is not work.** What he is asking for is the next step, and it has
+a required shape:
+
+1. **Read OUR code first.** The proposal must say what changes in THIS system —
+   which module, which table, what it breaks, what it costs. Generic advice is
+   worth nothing to him and he can get it anywhere.
+2. **Say what a normal ERP does.** He is choosing between our way and the
+   industry's, and he cannot make that choice without knowing there is one.
+   Name the convention (how AutoCount / SAP / Odoo / NetSuite handle it) and say
+   plainly whether ours differs and why.
+3. **Give 2 to 3 NAMED options**, each with its consequence: what it costs to
+   build, what it breaks, what it means for the documents already in the account
+   book, and what it is like to live with afterwards.
+4. **RECOMMEND one, and say why.** "It is your call" without a recommendation
+   pushes the work back onto him. Recommending is not deciding — he still picks.
+5. **Never end a diagnosis without options.** A finished investigation whose last
+   line is "this is broken" is half a deliverable.
+
+The judgement rule still holds and is not in tension with this one
+(`owner-rule-ask-when-unsure`): a PROVABLE defect gets fixed without asking; a
+JUDGEMENT — should this be required, labelled, charged, allowed — gets options
+and a recommendation, and he chooses.
+
 ## ⚠️ Log every bug in `BUG-HISTORY.md` — MANDATORY (owner rule, everyone)
 
 Every bug you find and fix **must** get an entry in [`BUG-HISTORY.md`](./BUG-HISTORY.md) at the repo root — no exceptions. One short entry: **Symptom → Root cause (traced, not guessed) → Fix → Ref (PR/date)**, newest first, with a severity tag. This is how we stop re-introducing the same class of bug: **read it before touching a subsystem, and add to it in the same PR that fixes the bug.** This applies to every contributor and every agent/session.
