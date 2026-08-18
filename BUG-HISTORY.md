@@ -65,7 +65,35 @@ invoice and the return were actually created for goods already billed. The two
 rollback cases carry a CONTROL proving the same request succeeds when every read
 works, so the 503 is the post-insert recheck and not the pre-check.
 `audit:swallowed-reads` records the direction: `do-line-remaining.ts` 8 -> 0
-(dropped from the baseline entirely), `delivery-returns.ts` 20 -> 19.
+(dropped from the baseline entirely), `delivery-returns.ts` 20 -> 19,
+`sales-invoices.ts` 29 -> 27.
+
+**C — the two doors the first pass left half-shut.** Review found the guard was
+consulted at ten call sites but that two of them never reached it, because the
+list they hand it was itself built from a swallowed read.
+
+`PATCH /sales-invoices/:id/status` (REOPEN, CANCELLED -> SENT) read its own
+`sales_invoice_items` with `const { data: reopenLines }` and no `error`, then
+passed the result to `checkSiOverRemaining`, whose first act is `if
+(wanted.size === 0) return null`. So a failed read produced an EMPTY line list
+and the ceiling was never consulted — the 503 branch two lines below it was
+unreachable by construction. The invoice went back to SENT and `postSiRevenue`
+re-posted AR and GL revenue for goods a second invoice had already billed. This
+is the worst of the set: it fails open on the money path, and it does so
+silently, with a 200.
+
+`POST /sales-invoices/:id/items/from-do/:doId` (APPEND) has the same shape one
+table earlier. Its `delivery_order_items` read dropped `error`, so a failure
+yielded zero candidate lines and the handler answered 409 `do_fully_invoiced` —
+"this delivery has already been invoiced in full" — from a read that returned
+nothing at all. A caller that believes it records delivered-but-unbilled goods
+as billed.
+
+Both now bind the error and refuse with the same 503 `remaining_check_failed`
+the other eight callers use. Four cases in `doRemainingFailsClosed.test.ts`
+pin it, two of them CONTROLs; against the pre-fix tree the two new assertions
+fail `expected 200 to be 503` and `expected 409 to be 503`, which is the
+reopen waving the double-bill through and the append claiming completion.
 ## The deploy uploaded secrets before deploying, and Cloudflare refused both — 8 merges stuck out of production [high]
 
 **Symptom.** Eight consecutive `Deploy` runs failed from 2026-08-18T01:08 MYT.

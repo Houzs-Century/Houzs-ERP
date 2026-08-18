@@ -1504,7 +1504,7 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
   }
 
   // LINE-level half of the same source document, under the same predicate.
-  const { data: doItems } = await scopeToCompany(sb.from('delivery_order_items').select(
+  const { data: doItems, error: doItemsErr } = await scopeToCompany(sb.from('delivery_order_items').select(
     'id, item_code, item_group, description, description2, uom, qty, ' +
     'unit_price_centi, discount_centi, unit_cost_centi, variants, notes, ' +
     'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
@@ -1513,6 +1513,12 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
     .order('line_no', { ascending: true, nullsFirst: false })
     .order('created_at'), c);
 
+  /* Same trap one table earlier: zero candidate lines and the handler answers
+     409 `do_fully_invoiced` — "this delivery has already been invoiced in full"
+     — from a read that returned nothing at all. Refuse before that sentence. */
+  if (doItemsErr) {
+    return c.json(remainingUnavailableResponse(`delivery_order_items: ${doItemsErr.message}`), 503);
+  }
   const doLines = (doItems as Array<Record<string, unknown>> | null) ?? [];
   const remainingResult = await doRemainingByItemId(sb, doLines.map((it) => it.id as string));
   /* Selects the lines to append (`remaining > 0`) AND caps each one; unreadable,
@@ -2395,10 +2401,19 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
      been invoiced elsewhere while this invoice sat cancelled. */
   const isReopen = prevStatus === 'CANCELLED' && status !== 'CANCELLED';
   if (isReopen && status === 'SENT') {
-    const { data: reopenLines } = await sb
+    const { data: reopenLines, error: reopenErr } = await sb
       .from('sales_invoice_items')
       .select('do_item_id, qty')
       .eq('sales_invoice_id', id);
+    /* AN UNREADABLE LINE LIST IS NOT AN EMPTY ONE. checkSiOverRemaining
+       short-circuits `if (wanted.size === 0) return null`, so discarding this
+       error handed it zero lines and the reopen sailed past the ceiling at the
+       full delivered quantity — re-posting AR/GL revenue for goods another
+       invoice had already billed. Refuse under the same 503 the picked-line
+       paths use: the check could not run, so nobody is being blamed. */
+    if (reopenErr) {
+      return c.json(remainingUnavailableResponse(`sales_invoice_items: ${reopenErr.message}`), 503);
+    }
     const linesForCheck = ((reopenLines ?? []) as Array<{ do_item_id: string | null; qty: number }>)
       .filter((l) => l.do_item_id)
       .map((l) => ({ doItemId: l.do_item_id as string, qty: l.qty }));

@@ -28,6 +28,7 @@ import {
   createSalesInvoiceHandler,
   createSalesInvoiceFromDoLinesHandler,
   appendDoLinesToSalesInvoiceHandler,
+  patchSalesInvoiceStatusHandler,
 } from '../src/scm/routes/sales-invoices';
 import { convertDoLinesToReturn } from '../src/scm/routes/delivery-returns';
 
@@ -137,6 +138,7 @@ function harness(tables: Record<string, Row[]>, spec: FailSpec = {}) {
   app.post('/sales-invoices', createSalesInvoiceHandler as never);
   app.post('/sales-invoices/from-dos', createSalesInvoiceFromDoLinesHandler as never);
   app.post('/sales-invoices/:id/items/from-do/:doId', appendDoLinesToSalesInvoiceHandler as never);
+  app.patch('/sales-invoices/:id/status', patchSalesInvoiceStatusHandler as never);
   app.post('/delivery-returns/from-dos', convertDoLinesToReturn as never);
   return app;
 }
@@ -144,6 +146,13 @@ function harness(tables: Record<string, Row[]>, spec: FailSpec = {}) {
 const postJson = (app: Hono, url: string, body?: Row) =>
   app.request(url, {
     method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body ?? {}),
+  });
+
+const patchJson = (app: Hono, url: string, body?: Row) =>
+  app.request(url, {
+    method: 'PATCH',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(body ?? {}),
   });
@@ -332,5 +341,97 @@ describe('the post-insert race recheck rolls back rather than keeping an unverif
        stock is not credited for goods that were never proved to have come back. */
     expect(t.delivery_returns).toHaveLength(0);
     expect(t.delivery_return_items).toHaveLength(0);
+  });
+});
+
+/* THE FIFTH DOOR — REOPEN, and the sixth, APPEND.
+ *
+ * Both were left half-closed by the first pass on this branch, and both fail in
+ * the direction that costs money rather than the direction that costs a retry.
+ *
+ * REOPEN reads its own line list to work out what the cancelled invoice would
+ * re-consume, then hands that list to checkSiOverRemaining — which begins
+ * `if (wanted.size === 0) return null`. So an unreadable read produced an EMPTY
+ * list, the ceiling was never consulted at all, and the 503 branch sitting two
+ * lines below it could not be reached. The invoice went back to SENT and
+ * postSiRevenue re-posted AR/GL for goods a second invoice had already billed.
+ *
+ * APPEND has the same shape one table earlier: zero candidate DO lines is
+ * indistinguishable from "every line is already billed", and the handler says
+ * exactly that — 409 `do_fully_invoiced` — to a caller whose read simply failed.
+ * A caller that writes that down has unbilled deliveries recorded as billed.
+ */
+const CANCELLED_AGAINST_A_CONSUMED_LINE = (): Record<string, Row[]> => {
+  const t = tables();
+  /* si-old (SENT) already consumes all 10 delivered units. si-cxl is the
+     cancelled invoice for the SAME delivered line — reopening it would bill
+     those 10 units a second time. */
+  t.sales_invoices.push({
+    id: 'si-cxl', company_id: CO, status: 'CANCELLED', invoice_number: 'HC-SI-2608-003',
+  });
+  t.sales_invoice_items.push({
+    id: 'sii-cxl', sales_invoice_id: 'si-cxl', company_id: CO, do_item_id: 'dl-1', qty: 10,
+  });
+  return t;
+};
+
+describe('reopening a cancelled invoice refuses when the Pending ledger cannot be read', () => {
+  test('CONTROL: with every read working, the reopen is refused 409 over_remaining and the invoice stays CANCELLED', async () => {
+    const t = CANCELLED_AGAINST_A_CONSUMED_LINE();
+    const res = await patchJson(harness(t), '/sales-invoices/si-cxl/status', { status: 'SENT' });
+    expect(res.status).toBe(409);
+    expect((await body(res)).error).toBe('over_remaining');
+    expect(t.sales_invoices.find((r) => r.id === 'si-cxl')?.status).toBe('CANCELLED');
+  });
+
+  test('the reopen refuses 503 — not 200 — when its own line list is unreadable', async () => {
+    /* THE REGRESSION THIS PINS. Before the fix this returned 200 with
+       {"salesInvoice":{"status":"SENT"}}: the empty line list short-circuited
+       the ceiling check, so the guard did not degrade, it switched off. */
+    const t = CANCELLED_AGAINST_A_CONSUMED_LINE();
+    const res = await patchJson(
+      harness(t, { failing: ['sales_invoice_items'] }),
+      '/sales-invoices/si-cxl/status',
+      { status: 'SENT' },
+    );
+    expect(res.status).toBe(503);
+    const b = await body(res);
+    expect(b.error).toBe('remaining_check_failed');
+    // Nobody raced them and nobody asked for too much — the check could not run.
+    expect(b.error).not.toBe('over_remaining');
+    // The money assertion: still cancelled, so no revenue was re-posted.
+    expect(t.sales_invoices.find((r) => r.id === 'si-cxl')?.status).toBe('CANCELLED');
+  });
+});
+
+describe('appending a delivery refuses rather than calling it fully invoiced', () => {
+  test('CONTROL: with every read working, an unconsumed delivery really does append', async () => {
+    /* Without this the 503 below could be any earlier refusal on the path, and
+       the test would prove nothing about the DO-line read at all. */
+    const t = UNCONSUMED();
+    t.sales_invoices.push({
+      id: 'si-draft', company_id: CO, status: 'DRAFT', invoice_number: 'HC-SI-2608-002',
+    });
+    const res = await postJson(harness(t), '/sales-invoices/si-draft/items/from-do/do-1');
+    expect(res.status).toBe(201);
+    expect(t.sales_invoice_items).toHaveLength(1);
+  });
+
+  test('an unreadable DO-line list answers 503, never 409 do_fully_invoiced', async () => {
+    const t = UNCONSUMED();
+    t.sales_invoices.push({
+      id: 'si-draft', company_id: CO, status: 'DRAFT', invoice_number: 'HC-SI-2608-002',
+    });
+    const res = await postJson(
+      harness(t, { failing: ['delivery_order_items'] }),
+      '/sales-invoices/si-draft/items/from-do/do-1',
+    );
+    expect(res.status).toBe(503);
+    const b = await body(res);
+    expect(b.error).toBe('remaining_check_failed');
+    /* The sentence that used to come back. A caller acting on it records
+       delivered-but-unbilled goods as billed. */
+    expect(b.error).not.toBe('do_fully_invoiced');
+    expect(t.sales_invoice_items).toHaveLength(0);
   });
 });
