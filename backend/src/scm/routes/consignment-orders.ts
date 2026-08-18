@@ -32,6 +32,7 @@ import {
   deriveCountryFromState, deriveSalesLocationFromState, snapshotUnitCostSen,
 } from '../lib/sales-doc-derive';
 import { escapeForOr } from '../lib/postgrest-search';
+import { createMixRefusal, lineMixRefusal } from '../lib/main-mix';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
@@ -628,43 +629,12 @@ consignmentOrders.post('/', async (c) => {
         : [],
     });
     if (coProblems.length > 0) return c.json(validationFailedBody(coProblems), 422);
-    if (items.length > 0) {
-      const lineCodes = items.map((it) => String(it.itemCode ?? '')).filter(Boolean);
-      const metaByCode = new Map<string, { category: string }>();
-      if (lineCodes.length > 0) {
-        const { data: meta } = await scopeToCompany(
-          sb
-            .from('mfg_products')
-            .select('code, category')
-            .in('code', lineCodes),
-          c,
-        );
-        for (const m of (meta ?? []) as Array<{ code: string; category: string }>) {
-          metaByCode.set(m.code, { category: m.category });
-        }
-      }
-      const normCat = (raw: string): string => {
-        const g = (raw ?? '').trim().toUpperCase();
-        if (g.includes('BEDFRAME')) return 'BEDFRAME';
-        if (g.includes('SOFA'))     return 'SOFA';
-        if (g.includes('MATTRESS')) return 'MATTRESS';
-        if (g.includes('ACCESSOR')) return 'ACCESSORY';
-        if (g.includes('SERVICE'))  return 'SERVICE';
-        return 'OTHERS';
-      };
-      const MAIN = new Set(['SOFA', 'BEDFRAME', 'MATTRESS']);
-      const cats = items.map((it) =>
-        normCat(metaByCode.get(String(it.itemCode ?? ''))?.category ?? (it.itemGroup as string) ?? ''),
-      );
-      if (cats.includes('SOFA') && cats.some((cat) => cat !== 'SOFA' && MAIN.has(cat))) {
-        return c.json({
-          error: 'so_sofa_no_other_main',
-          reason: 'A sofa order cannot also contain a bedframe or mattress. Service and accessory items are fine.',
-        }, 400);
-      }
-      /* Loo 2026-06-07 — mattress brand mixing is allowed (old Rule 3
-         `so_mattress_one_brand` removed; mirrors mfg-sales-orders.ts). */
-    }
+    /* Sofa is exclusive among MAIN products — one rule, one home
+       (lib/main-mix.ts), shared with the SO paths and with this router's own
+       add-line / edit-line handlers below. Loo 2026-06-07 — mattress BRAND
+       mixing is allowed (old Rule 3 `so_mattress_one_brand` removed). */
+    const mainMix = await createMixRefusal(sb, items, activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
   }
 
   // Minted inside insertWithDocNoRetry below so a concurrent-create collision
@@ -1517,6 +1487,16 @@ consignmentOrders.post('/:docNo/items', async (c) => {
   const childLock = await coHasDownstream(sb, docNo);
   if (childLock) return c.json(childLock, 409);
 
+  /* Composition guard. The create path above refuses a sofa that shares a
+     document with a bedframe / mattress; this path had NO copy of that rule, so
+     a CO created bedframe-only (which create legitimately permits — no sofa
+     present) accepted a sofa line and built a document the business rule says
+     cannot exist. coHasDownstream is not a substitute: it only blocks once a
+     DO / SI exists, and a fresh CO has neither. INTRODUCED, not flat — an order
+     that already mixes stays editable. */
+  const mainMix = await lineMixRefusal(sb, 'consignment_sales_order_items', docNo, null, String(it.itemCode), activeCompanyId(c));
+  if (mainMix) return c.json(mainMix.body, mainMix.status);
+
   const { data: header } = await scopeToCompanyId(sb.from('consignment_sales_orders').select('debtor_code, debtor_name, agent, branding, venue, customer_delivery_date, customer_state').eq('doc_no', docNo), co.companyId).maybeSingle();
   if (!header) return c.json(NOT_THIS_COMPANY, 404);
 
@@ -1673,6 +1653,15 @@ consignmentOrders.patch('/:docNo/items/:itemId', async (c) => {
     .select('qty, unit_price_centi, discount_centi, unit_cost_centi, item_code, item_group, description, description2, uom, variants, remark, cancelled')
     .eq('id', itemId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
+  /* Composition guard — a product SWAP must not INTRODUCE a sofa x
+     (bedframe | mattress) mix. Same rule, same home as the create + add paths;
+     this path had no copy of it either. Only when the caller actually changes
+     the code: an untouched line cannot introduce anything. */
+  if (it.itemCode !== undefined) {
+    const mainMix = await lineMixRefusal(sb, 'consignment_sales_order_items', docNo, itemId, String(it.itemCode), activeCompanyId(c));
+    if (mainMix) return c.json(mainMix.body, mainMix.status);
+  }
+
   const qty = it.qty !== undefined ? Number(it.qty) : prev.qty;
   const clientUnit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : prev.unit_price_centi;
   const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : prev.discount_centi;

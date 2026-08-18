@@ -31,7 +31,7 @@ import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/Prin
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
 import { SoSourceChips } from '../../components/SoSourceChips';
 import { useSetBreadcrumbs } from '../../hooks/useBreadcrumbs';
-import { buildVariantSummary, canonicalizeVariants, fmtCenti, fmtDateOrDash, fmtMoneyCenti, lineIdentity, missingVariantAxes, hasSofaMixConflict, SOFA_MIX_MESSAGE } from '@2990s/shared'; // Commander 2026-05-28
+import { buildVariantSummary, canonicalizeVariants, fmtCenti, fmtDateOrDash, fmtMoneyCenti, lineIdentity, missingVariantAxes, sofaMixIntroduced, SOFA_MIX_MESSAGE } from '@2990s/shared'; // Commander 2026-05-28
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import {
@@ -856,16 +856,26 @@ export const SalesOrderDetail = () => {
       setSaveError('Every line must have a product selected before saving.');
       return;
     }
-    // Sofa is exclusive among main products — the server 400s
-    // `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
-    // Block + warn here so the operator gets one plain sentence, not a raw 400.
-    // In edit mode every existing line is seeded into editingDrafts, so this
-    // (+ EVERY staged add) covers the whole order.
+    /* Sofa is exclusive among main products — the server 400s
+       `so_sofa_no_other_main` when a sofa line rides with a bedframe/mattress.
+       Block + warn here so the operator gets one plain sentence, not a raw 400.
+       In edit mode every existing line is seeded into editingDrafts, so this
+       (+ EVERY staged add) covers the whole order.
+
+       INTRODUCED, not flat (2026-08-18). This asked `hasSofaMixConflict` on the
+       edited set alone, which is the CREATE path's question. The three server
+       line paths ask a different one — `mainMixIntroduced` refuses only a change
+       that INTRODUCES the mix, so an order written before the rule existed stays
+       editable — and the flat client check sat in front of them refusing saves
+       the server would have accepted. An operator on a pre-rule mixed order could
+       not save ANY change to it, not even a phone number, and the sentence blamed
+       a rule the server itself grandfathers. */
+    const storedGroups = items.map((it) => it.item_group);
     const editedGroups = [
       ...Object.values(editingDrafts),
       ...stagedAddDrafts(addingDrafts),
     ].filter((d) => d.itemCode.trim()).map((d) => d.itemGroup);
-    if (hasSofaMixConflict(editedGroups)) {
+    if (sofaMixIntroduced(storedGroups, editedGroups)) {
       setSaveError(SOFA_MIX_MESSAGE);
       return;
     }
