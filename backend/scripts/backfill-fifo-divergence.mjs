@@ -749,9 +749,9 @@ async function runBasisCost() {
        ORDER BY created_at DESC, id DESC LIMIT 20`,
       [b.companyId, b.productCode, b.variantKey]);
     const poCands = await pg`
-      SELECT COALESCE(NULLIF(poi.unit_cost_centi, 0), poi.unit_price_centi) AS cost_sen,
+      SELECT COALESCE(NULLIF(poi.unit_cost_sen, 0), poi.unit_price_sen) AS cost_sen,
              po.po_number,
-             CASE WHEN COALESCE(poi.unit_cost_centi, 0) > 0 THEN 'unit_cost_centi' ELSE 'unit_price_centi' END AS cost_col,
+             CASE WHEN COALESCE(poi.unit_cost_sen, 0) > 0 THEN 'unit_cost_sen' ELSE 'unit_price_sen' END AS cost_col,
              poi.created_at
         FROM scm.purchase_order_items poi
         JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
@@ -766,7 +766,7 @@ async function runBasisCost() {
       refusedBuckets += 1;
       continue;
     }
-    const basisCol = basis.source === "PO" ? ` (${poCands.find((p) => p.po_number === basis.docNo)?.cost_col ?? "unit_price_centi"})` : " (IN movement landed unit_cost_sen)";
+    const basisCol = basis.source === "PO" ? ` (${poCands.find((p) => p.po_number === basis.docNo)?.cost_col ?? "unit_price_sen"})` : " (IN movement landed unit_cost_sen)";
     notice(`  BASIS per unit: ${basis.unitCostSen} sen = ${rm(basis.unitCostSen)}  from ${basis.source} ${basis.docNo}${basisCol}${basis.skippedZeroCost ? `; ${basis.skippedZeroCost} newer zero-cost candidate(s) skipped` : ""}`);
     for (const t of b.targets) {
       const sf = Math.abs(Number(t.qty)) - Number(t.consumed);

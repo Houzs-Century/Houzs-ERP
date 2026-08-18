@@ -21,7 +21,7 @@ import {
   SI_TRANSFER_MOBILE_ROUTE_HINT,
   siTransferBlockReason,
 } from "../vendor/scm/lib/do-next-step";
-import { fmtCenti } from "../lib/scm";
+import { fmtSen } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { PAYMENT_METHOD_CODES, PAYMENT_METHOD_DEFAULT_LABELS } from "../vendor/scm/lib/payment-methods";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
@@ -55,15 +55,15 @@ import "./mobile.css";
 //   purchase-consignment-returns GET /purchase-consignment-returns/:id  → { purchaseReturn,         items }
 // ---------------------------------------------------------------------------
 
-// Money is stored as integer *_centi — delegate display to the shared SCM
-// formatter (fmtCenti). The local Number() coercion is what this adds: the
-// callers hand in `unknown` (raw payload fields), which fmtCenti does not take.
-// The non-finite guard now also lives INSIDE fmtCenti/fmtAmt, so this one is
+// Money is stored as integer *_sen — delegate display to the shared SCM
+// formatter (fmtSen). The local Number() coercion is what this adds: the
+// callers hand in `unknown` (raw payload fields), which fmtSen does not take.
+// The non-finite guard now also lives INSIDE fmtSen/fmtAmt, so this one is
 // belt-and-braces — do not read it as the only thing standing between a stray
 // NaN and the user.
 const money = (centi: unknown) => {
   const n = Number(centi);
-  return fmtCenti(Number.isFinite(n) ? n : 0);
+  return fmtSen(Number.isFinite(n) ? n : 0);
 };
 
 /** DD/MM/YYYY (TZ-aware via the shared helper), or em-dash when absent / unparseable. */
@@ -183,8 +183,8 @@ function Eyebrow({ children }: { children: string }) {
 }
 
 /** One `.docrow` line item: name + qty on top, unit price + amount below. */
-function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch }: {
-  name: string; sub?: string; qty: unknown; unitCenti: unknown; amountCenti: unknown;
+function LineItem({ name, sub, qty, unitSen, amountSen, assigned, sourceLinked, provenance, allocations, poNumber, sourcePos, sourceAdj, delivered, committedBatch }: {
+  name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown;
   // Present (even if empty) only for purchase docs (PO/GRN/PI): the REAL origin
   // Sales Order(s) this line was raised from + that SO's effective delivery
   // date, matched by SKU. Empty array → dash, mirroring the desktop columns.
@@ -229,10 +229,10 @@ function LineItem({ name, sub, qty, unitCenti, amountCenti, assigned, sourceLink
       <span style={{ flex: 1, minWidth: 0, fontSize: 12.5, fontWeight: 600, color: "#11140f" }}>
         {name || "—"} <span style={{ color: "#9aa093", fontWeight: 600 }}>{"×"}{qtyLabel}</span>
       </span>
-      <span className="money" style={{ fontSize: 12.5, fontWeight: 800, color: "#11140f", flex: "none" }}>{money(amountCenti)}</span>
+      <span className="money" style={{ fontSize: 12.5, fontWeight: 800, color: "#11140f", flex: "none" }}>{money(amountSen)}</span>
       <div className="money" style={{ flexBasis: "100%", fontSize: 10.5, color: "#9aa093" }}>
         {sub ? <span style={{ marginRight: 8 }}>{sub}</span> : null}
-        <span>@ {money(unitCenti)}</span>
+        <span>@ {money(unitSen)}</span>
       </div>
       {assigned && (
         /* Purchase docs — the per-SO PAIRED rows (owner 2026-08-02): one row
@@ -338,7 +338,7 @@ type DocMap = {
   meta: (h: any) => Array<[string, string]>;
   /** [Total, Secondary, Tertiary] stats — each [label, value, color] or null. */
   stats: (h: any) => Array<[string, string, string] | null>;
-  line: (it: any) => { name: string; sub?: string; qty: unknown; unitCenti: unknown; amountCenti: unknown };
+  line: (it: any) => { name: string; sub?: string; qty: unknown; unitSen: unknown; amountSen: unknown };
   /** Optional amber warning bar between the stats and the line items —
    *  computed from the SAME detail payload (header + items), so no extra
    *  fetch. Return null for "nothing to warn about". */
@@ -367,7 +367,7 @@ const DOC_MODULES: Record<string, DocMap> = {
        document view for EVERYONE (desktop parity — the DO detail Totals·Margin
        card was removed too). Costing moves to the separate Finance module. */
     stats: (h) => [
-      ["Total", money(h.local_total_centi), "var(--ink)"],
+      ["Total", money(h.local_total_sen), "var(--ink)"],
     ],
     /* Description ONCE, code NOT displayed — the shared rule
        (vendor/shared/line-identity.ts). `name` already preferred the
@@ -377,8 +377,8 @@ const DOC_MODULES: Record<string, DocMap> = {
       name: lineIdentity({ code: it.item_code, description: it.description }).primary,
       sub: join(it.warehouse_code, dmy(it.line_delivery_date) !== "—" ? dmy(it.line_delivery_date) : ""),
       qty: it.qty,
-      unitCenti: it.unit_price_centi,
-      amountCenti: it.line_total_centi,
+      unitSen: it.unit_price_sen,
+      amountSen: it.line_total_sen,
     }),
   },
 
@@ -398,12 +398,12 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Salesperson", firstOf(h.agent)],
     ],
     stats: (h) => {
-      const totalCenti = Number(h.total_centi ?? h.local_total_centi ?? 0);
-      const paidCenti = Number(h.paid_centi ?? 0);
-      const bal = Math.max(0, (Number.isFinite(totalCenti) ? totalCenti : 0) - (Number.isFinite(paidCenti) ? paidCenti : 0));
+      const totalSen = Number(h.total_sen ?? h.local_total_sen ?? 0);
+      const paidSen = Number(h.paid_sen ?? 0);
+      const bal = Math.max(0, (Number.isFinite(totalSen) ? totalSen : 0) - (Number.isFinite(paidSen) ? paidSen : 0));
       return [
-        ["Total", money(h.total_centi ?? h.local_total_centi), "var(--ink)"],
-        ["Paid", money(h.paid_centi), "#2f8a5b"],
+        ["Total", money(h.total_sen ?? h.local_total_sen), "var(--ink)"],
+        ["Paid", money(h.paid_sen), "#2f8a5b"],
         ["Balance", money(bal), bal > 0 ? "#a16a2e" : "var(--ink)"],
       ];
     },
@@ -424,8 +424,8 @@ const DOC_MODULES: Record<string, DocMap> = {
         name: primary,
         sub: secondary ?? "",
         qty: it.qty,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
@@ -448,16 +448,16 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Currency", firstOf(h.currency)],
     ],
     stats: (h) => [
-      ["Subtotal", money(h.subtotal_centi), "var(--ink)"],
-      ["Tax", money(h.tax_centi), "#767b6e"],
-      ["Total", money(h.total_centi), "var(--ink)"],
+      ["Subtotal", money(h.subtotal_sen), "var(--ink)"],
+      ["Tax", money(h.tax_sen), "#767b6e"],
+      ["Total", money(h.total_sen), "var(--ink)"],
     ],
     line: (it) => ({
       name: firstOf(it.material_name, it.description, it.material_code),
       sub: join(it.material_code, s(it.qty_accepted).trim() ? `Accepted ${s(it.qty_accepted)}` : ""),
       qty: it.qty_received ?? it.qty_accepted,
-      unitCenti: it.unit_price_centi,
-      amountCenti: it.line_total_centi,
+      unitSen: it.unit_price_sen,
+      amountSen: it.line_total_sen,
     }),
   },
 
@@ -477,9 +477,9 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Submitted", dmy(h.submitted_at)],
     ],
     stats: (h) => [
-      ["Subtotal", money(h.subtotal_centi), "var(--ink)"],
-      ["Tax", money(h.tax_centi), "#767b6e"],
-      ["Total", money(h.total_centi), "var(--ink)"],
+      ["Subtotal", money(h.subtotal_sen), "var(--ink)"],
+      ["Tax", money(h.tax_sen), "#767b6e"],
+      ["Total", money(h.total_sen), "var(--ink)"],
     ],
     line: (it) => ({
       name: firstOf(it.material_name, it.description, it.material_code),
@@ -493,8 +493,8 @@ const DOC_MODULES: Record<string, DocMap> = {
         s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : "",
       ),
       qty: it.qty,
-      unitCenti: it.unit_price_centi,
-      amountCenti: it.line_total_centi,
+      unitSen: it.unit_price_sen,
+      amountSen: it.line_total_sen,
     }),
     /* SO→PO drift (desktop parity, Commander 2026-06-16) — the detail payload's
        items already carry so_drift; same status gate as the desktop banner
@@ -511,7 +511,7 @@ const DOC_MODULES: Record<string, DocMap> = {
 
   /* Purchase Invoice — supplier + PI number in the header, supplier code +
      supplier_invoice_ref (their invoice) as subtitle, PO + GRN in the meta
-     grid. Balance = total_centi − paid_centi (mirrors the SI stat trio). */
+     grid. Balance = total_sen − paid_sen (mirrors the SI stat trio). */
   "purchase-invoices": {
     path: "/purchase-invoices",
     headerKey: "purchaseInvoice",
@@ -532,12 +532,12 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Posted", dmy(h.posted_at)],
     ],
     stats: (h) => {
-      const totalCenti = Number(h.total_centi ?? 0);
-      const paidCenti = Number(h.paid_centi ?? 0);
-      const bal = Math.max(0, (Number.isFinite(totalCenti) ? totalCenti : 0) - (Number.isFinite(paidCenti) ? paidCenti : 0));
+      const totalSen = Number(h.total_sen ?? 0);
+      const paidSen = Number(h.paid_sen ?? 0);
+      const bal = Math.max(0, (Number.isFinite(totalSen) ? totalSen : 0) - (Number.isFinite(paidSen) ? paidSen : 0));
       return [
-        ["Total", money(h.total_centi), "var(--ink)"],
-        ["Paid", money(h.paid_centi), "#2f8a5b"],
+        ["Total", money(h.total_sen), "var(--ink)"],
+        ["Paid", money(h.paid_sen), "#2f8a5b"],
         ["Balance", money(bal), bal > 0 ? "#a16a2e" : "var(--ink)"],
       ];
     },
@@ -554,8 +554,8 @@ const DOC_MODULES: Record<string, DocMap> = {
         name: primary,
         sub: buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
         qty: it.qty,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
@@ -585,7 +585,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Completed", dmy(h.completed_at)],
     ],
     stats: (h) => [
-      ["Refund", money(h.refund_centi), "var(--ink)"],
+      ["Refund", money(h.refund_sen), "var(--ink)"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
@@ -599,16 +599,16 @@ const DOC_MODULES: Record<string, DocMap> = {
           it.warehouse_code,
         ),
         qty: it.qty_returned,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_refund_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_refund_sen,
       };
     },
   },
 
   /* Delivery Return — the SO-side twin of purchase-returns. Customer + return
      number in the header, source DO number as subtitle. Total + Refund stats
-     because the header carries both local_total_centi (line sum) and
-     refund_centi (payable-out); the customer sees both on the printed slip. */
+     because the header carries both local_total_sen (line sum) and
+     refund_sen (payable-out); the customer sees both on the printed slip. */
   "delivery-returns": {
     path: "/delivery-returns",
     headerKey: "deliveryReturn",
@@ -628,8 +628,8 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Reference", firstOf(h.ref)],
     ],
     stats: (h) => [
-      ["Total", money(h.local_total_centi), "var(--ink)"],
-      ["Refund", money(h.refund_centi), "#a16a2e"],
+      ["Total", money(h.local_total_sen), "var(--ink)"],
+      ["Refund", money(h.refund_sen), "#a16a2e"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
@@ -644,8 +644,8 @@ const DOC_MODULES: Record<string, DocMap> = {
           it.warehouse_code,
         ),
         qty: it.qty_returned,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
@@ -674,12 +674,12 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Salesperson", firstOf(h.agent)],
     ],
     stats: (h) => {
-      const totalCenti = Number(h.local_total_centi ?? 0);
-      const paidCenti = Number(h.paid_centi ?? 0);
-      const bal = Math.max(0, (Number.isFinite(totalCenti) ? totalCenti : 0) - (Number.isFinite(paidCenti) ? paidCenti : 0));
+      const totalSen = Number(h.local_total_sen ?? 0);
+      const paidSen = Number(h.paid_sen ?? 0);
+      const bal = Math.max(0, (Number.isFinite(totalSen) ? totalSen : 0) - (Number.isFinite(paidSen) ? paidSen : 0));
       return [
-        ["Total", money(h.local_total_centi), "var(--ink)"],
-        ["Paid", money(h.paid_centi), "#2f8a5b"],
+        ["Total", money(h.local_total_sen), "var(--ink)"],
+        ["Paid", money(h.paid_sen), "#2f8a5b"],
         ["Balance", money(bal), bal > 0 ? "#a16a2e" : "var(--ink)"],
       ];
     },
@@ -692,15 +692,15 @@ const DOC_MODULES: Record<string, DocMap> = {
         name: primary,
         sub: buildVariantSummary(it.item_group, it.variants) || (it.description2 ?? ""),
         qty: it.qty,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.total_sen,
       };
     },
   },
 
   /* Consignment Note — the CN is the CO's delivery twin (a shipped loaner).
      Endpoint /consignment-notes/:id returns { deliveryOrder, items }. Header
-     carries local_total_centi (line sum); no paid/balance because payment on
+     carries local_total_sen (line sum); no paid/balance because payment on
      a consignment happens against the CO, not the note. */
   "consignment-notes": {
     path: "/consignment-notes",
@@ -718,7 +718,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Driver", firstOf(h.driver_name)],
     ],
     stats: (h) => [
-      ["Total", money(h.local_total_centi), "var(--ink)"],
+      ["Total", money(h.local_total_sen), "var(--ink)"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
@@ -733,15 +733,15 @@ const DOC_MODULES: Record<string, DocMap> = {
           dmy(it.line_delivery_date) !== "—" ? dmy(it.line_delivery_date) : "",
         ),
         qty: it.qty,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
 
   /* Consignment Return — the CN's reverse. Endpoint /consignment-returns/:id
      returns { deliveryReturn, items }. Same two-money stats as delivery-returns
-     (Total = local_total_centi, Refund = refund_centi). */
+     (Total = local_total_sen, Refund = refund_sen). */
   "consignment-returns": {
     path: "/consignment-returns",
     headerKey: "deliveryReturn",
@@ -760,8 +760,8 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Refunded", dmy(h.refunded_at)],
     ],
     stats: (h) => [
-      ["Total", money(h.local_total_centi), "var(--ink)"],
-      ["Refund", money(h.refund_centi), "#a16a2e"],
+      ["Total", money(h.local_total_sen), "var(--ink)"],
+      ["Refund", money(h.refund_sen), "#a16a2e"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
@@ -775,8 +775,8 @@ const DOC_MODULES: Record<string, DocMap> = {
           it.condition,
         ),
         qty: it.qty_returned,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
@@ -800,9 +800,9 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Submitted", dmy(h.submitted_at)],
     ],
     stats: (h) => [
-      ["Subtotal", money(h.subtotal_centi), "var(--ink)"],
-      ["Tax", money(h.tax_centi), "#767b6e"],
-      ["Total", money(h.total_centi), "var(--ink)"],
+      ["Subtotal", money(h.subtotal_sen), "var(--ink)"],
+      ["Tax", money(h.tax_sen), "#767b6e"],
+      ["Total", money(h.total_sen), "var(--ink)"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
@@ -817,8 +817,8 @@ const DOC_MODULES: Record<string, DocMap> = {
           s(it.received_qty).trim() ? `Received ${s(it.received_qty)}` : "",
         ),
         qty: it.qty,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
@@ -846,9 +846,9 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Posted", dmy(h.posted_at)],
     ],
     stats: (h) => [
-      ["Subtotal", money(h.subtotal_centi), "var(--ink)"],
-      ["Tax", money(h.tax_centi), "#767b6e"],
-      ["Total", money(h.total_centi), "var(--ink)"],
+      ["Subtotal", money(h.subtotal_sen), "var(--ink)"],
+      ["Tax", money(h.tax_sen), "#767b6e"],
+      ["Total", money(h.total_sen), "var(--ink)"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
@@ -863,14 +863,14 @@ const DOC_MODULES: Record<string, DocMap> = {
           s(it.qty_accepted).trim() ? `Accepted ${s(it.qty_accepted)}` : "",
         ),
         qty: it.qty_received ?? it.qty_accepted,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_total_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_total_sen,
       };
     },
   },
 
   /* Purchase Consignment Return — the reverse of a PC Receive. Endpoint
-     returns { purchaseReturn, items }. Only stat is refund_centi (a supplier
+     returns { purchaseReturn, items }. Only stat is refund_sen (a supplier
      credit); no per-line warehouse column on this doc's ITEM select. */
   "purchase-consignment-returns": {
     path: "/purchase-consignment-returns",
@@ -894,7 +894,7 @@ const DOC_MODULES: Record<string, DocMap> = {
       ["Completed", dmy(h.completed_at)],
     ],
     stats: (h) => [
-      ["Refund", money(h.refund_centi), "var(--ink)"],
+      ["Refund", money(h.refund_sen), "var(--ink)"],
     ],
     line: (it) => {
       const { primary } = lineIdentity({
@@ -905,8 +905,8 @@ const DOC_MODULES: Record<string, DocMap> = {
         name: primary,
         sub: buildVariantSummary(it.item_group, it.variants),
         qty: it.qty_returned,
-        unitCenti: it.unit_price_centi,
-        amountCenti: it.line_refund_centi,
+        unitSen: it.unit_price_sen,
+        amountSen: it.line_refund_sen,
       };
     },
   },
@@ -964,8 +964,8 @@ type DocAction = {
 
 /** true when total − paid still leaves a balance (Record Payment worth offering). */
 function hasBalance(h: any): boolean {
-  const total = Number(h?.total_centi ?? h?.local_total_centi ?? 0);
-  const paid = Number(h?.paid_centi ?? 0);
+  const total = Number(h?.total_sen ?? h?.local_total_sen ?? 0);
+  const paid = Number(h?.paid_sen ?? 0);
   const t = Number.isFinite(total) ? total : 0;
   const p = Number.isFinite(paid) ? paid : 0;
   return t > 0 && t - p > 0;
@@ -1121,8 +1121,8 @@ function statusActionsFor(moduleKey: string, id: string, header: any, mayOperate
         return out;
       }
       // POSTED / PARTIALLY_PAID — cancel allowed only while unpaid; the backend
-      // rejects a cancel once paid_centi > 0, so hide Cancel then.
-      const paid = Number(header?.paid_centi ?? 0);
+      // rejects a cancel once paid_sen > 0, so hide Cancel then.
+      const paid = Number(header?.paid_sen ?? 0);
       if (!(Number.isFinite(paid) && paid > 0)) {
         out.push({ key: "cancel", label: "Cancel", variant: "danger", request: { path: `/purchase-invoices/${enc}/cancel`, method: "PATCH" }, confirm: { title: "Cancel this purchase invoice?", body: "This voids the PI and reverses its accounting.", confirmLabel: "Cancel PI" } });
       }
@@ -1155,14 +1155,14 @@ function actSkin(variant: ActVariant, disabled: boolean): React.CSSProperties {
 }
 
 /** Record-Payment bottom sheet. `kind` picks the endpoint + payload:
- *  si → POST /sales-invoices/:id/payments { paidAt, method, amountCenti, ... }
- *  pi → PATCH /purchase-invoices/:id/payment { amountCenti, notes }. */
+ *  si → POST /sales-invoices/:id/payments { paidAt, method, amountSen, ... }
+ *  pi → PATCH /purchase-invoices/:id/payment { amountSen, notes }. */
 function PaymentSheet({ kind, id, header, onClose, onDone }: {
   kind: PayKind; id: string; header: any; onClose: () => void; onDone: () => void;
 }) {
   const notify = useNotify();
-  const total = Number(header?.total_centi ?? header?.local_total_centi ?? 0);
-  const paid = Number(header?.paid_centi ?? 0);
+  const total = Number(header?.total_sen ?? header?.local_total_sen ?? 0);
+  const paid = Number(header?.paid_sen ?? 0);
   const balance = Math.max(0, (Number.isFinite(total) ? total : 0) - (Number.isFinite(paid) ? paid : 0));
 
   const [amount, setAmount] = useState(() => (balance > 0 ? (balance / 100).toFixed(2) : ""));
@@ -1178,19 +1178,19 @@ function PaymentSheet({ kind, id, header, onClose, onDone }: {
 
   const mutation = useMutation({
     mutationFn: async () => {
-      const amountCenti = Math.round(Number(amount) * 100);
-      if (!Number.isFinite(amountCenti) || amountCenti <= 0) throw new Error("Enter a valid amount greater than zero.");
+      const amountSen = Math.round(Number(amount) * 100);
+      if (!Number.isFinite(amountSen) || amountSen <= 0) throw new Error("Enter a valid amount greater than zero.");
       if (kind === "si") {
-        const body: Record<string, unknown> = { paidAt: date, method, amountCenti };
+        const body: Record<string, unknown> = { paidAt: date, method, amountSen };
         if (ref.trim()) body.approvalCode = ref.trim();
         await authedFetch(`/sales-invoices/${encodeURIComponent(id)}/payments`,
           idempotentInit(idemKey, { method: "POST", body: JSON.stringify(body) }));
       } else {
-        const body: Record<string, unknown> = { amountCenti };
+        const body: Record<string, unknown> = { amountSen };
         if (ref.trim()) body.notes = ref.trim();
         /* The PI payment PATCH is ADDITIVE — purchase-invoices.ts:644 computes
-           `newPaid = c0.paid_centi + amount`, so a double-fire pays the supplier
-           twice on paper. Its optimistic-concurrency loop gates on the paid_centi
+           `newPaid = c0.paid_sen + amount`, so a double-fire pays the supplier
+           twice on paper. Its optimistic-concurrency loop gates on the paid_sen
            it just read, which stops a concurrent write from being LOST; it does
            nothing about the same payment arriving twice. Hence the key. */
         await authedFetch(`/purchase-invoices/${encodeURIComponent(id)}/payment`,
@@ -1606,7 +1606,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
                   : null;
                 const delivered = coverageType ? (deliveredMap.get(code) ?? []) : undefined;
                 const provenance = coverageType ? (provByCode.get(code) ?? []) : undefined;
-                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitCenti={l.unitCenti} amountCenti={l.amountCenti} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} />;
+                return <LineItem key={s(it?.id) || i} name={l.name} sub={l.sub} qty={l.qty} unitSen={l.unitSen} amountSen={l.amountSen} assigned={assigned} sourceLinked={coverageType ? linkedSkus.has(code) : undefined} provenance={provenance} allocations={allocations} poNumber={s(header?.po_number)} sourcePos={sourcePos} sourceAdj={sourceAdj} delivered={delivered} committedBatch={committedBatch} />;
               }) : <div style={{ fontSize: 11.5, color: "#9aa093", padding: "9px 0" }}>No line items.</div>)}
             </div>
           </div>
@@ -1636,7 +1636,7 @@ function DocumentDetail({ map, row, moduleKey, onBack, onEdit, onPOD, flowNav }:
 /** Humanize a snake_case / camelCase key into a Title-Case label. */
 function humanize(key: string): string {
   return key
-    .replace(/_centi$|_sen$/i, "")
+    .replace(/_sen$|_sen$/i, "")
     .replace(/_id$/i, "")
     .replace(/_/g, " ")
     .replace(/([a-z])([A-Z])/g, "$1 $2")
@@ -1660,7 +1660,7 @@ function rowToFields(row: any): Field[] {
     let value: string;
     let mono = false;
     let wide = false;
-    if (/_centi$|_sen$/i.test(key)) {
+    if (/_sen$|_sen$/i.test(key)) {
       value = money(raw);
       mono = true;
     } else if (/_date$|_at$|^date$/i.test(key)) {
@@ -1829,7 +1829,7 @@ function SimpleDetail({ moduleKey, row, title, onBack, onEdit }: { moduleKey: st
   });
 
   // Doc-like simple modules (PI / PR / DR) fetch their full header so the
-  // read-only detail shows the richer fields the list row lacks (paid_centi /
+  // read-only detail shows the richer fields the list row lacks (paid_sen /
   // notes / dates). The 4 richer doc types (DO/SI/GRN/PO) never reach here —
   // they use DocumentDetail.
   const docCfg = SIMPLE_DOC_PATHS[moduleKey];

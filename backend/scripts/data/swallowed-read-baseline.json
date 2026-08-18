@@ -70,7 +70,7 @@
       "catches": 0
     },
     "backend/src/scm/lib/customer-credits.ts": {
-      "reads": 3,
+      "reads": 2,
       "catches": 0
     },
     "backend/src/scm/lib/derive-line-branding.ts": {

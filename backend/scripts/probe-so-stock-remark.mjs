@@ -26,7 +26,7 @@ const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
 const CO = Number(process.env.COMPANY || 2);
 const DEBTOR = (process.env.DEBTOR || 'James Pak').trim();
-const TOTAL_CENTI = process.env.TOTAL_CENTI ? Number(process.env.TOTAL_CENTI) : null;
+const TOTAL_SEN = process.env.TOTAL_SEN ? Number(process.env.TOTAL_SEN) : null;
 
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -117,7 +117,7 @@ async function main() {
 
   note(`\n${'='.repeat(78)}\nB. The named order — company ${CO}, debtor ILIKE '%${DEBTOR}%'`);
   const heads = await sql`
-    SELECT doc_no, status, branding, debtor_name, local_total_centi, balance_centi,
+    SELECT doc_no, status, branding, debtor_name, local_total_sen, balance_sen,
            so_date::text AS so_date,
            processing_date::text AS processing_date,
            proceeded_at::text AS proceeded_at,
@@ -127,14 +127,14 @@ async function main() {
       FROM scm.mfg_sales_orders
      WHERE company_id = ${CO}::bigint
        AND debtor_name ILIKE ${'%' + DEBTOR + '%'}
-       ${TOTAL_CENTI == null ? sql`` : sql`AND local_total_centi = ${TOTAL_CENTI}::bigint`}
+       ${TOTAL_SEN == null ? sql`` : sql`AND local_total_sen = ${TOTAL_SEN}::bigint`}
      ORDER BY so_date DESC NULLS LAST, doc_no`;
   note(`  header matches: ${heads.length}`);
 
   for (const h of heads) {
     note(`\n  ${'-'.repeat(72)}`);
     note(`  ${h.doc_no}  status=${h.status}  branding=${h.branding ?? '(null)'}`);
-    note(`    total_centi=${h.local_total_centi}  (= RM ${(Number(h.local_total_centi) / 100).toFixed(2)})  balance_centi=${h.balance_centi}`);
+    note(`    total_sen=${h.local_total_sen}  (= RM ${(Number(h.local_total_sen) / 100).toFixed(2)})  balance_sen=${h.balance_sen}`);
     note(`    so_date=${h.so_date}  processing_date=${h.processing_date ?? '(null)'}  proceeded_at=${h.proceeded_at ?? '(NULL → ALLOC-GATED)'}`);
     note(`    customer_delivery_date=${h.customer_delivery_date ?? '(null)'}  line_count=${h.line_count}`);
     note(`    remark2=${JSON.stringify(h.remark2)}  remark3=${JSON.stringify(h.remark3)}  remark4=${JSON.stringify(h.remark4)}`);

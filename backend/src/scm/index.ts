@@ -583,7 +583,7 @@ scm.route("/venues", venues);
 // four 404'd. Read-only nested-join reads over mfg_sales_order_items /
 // delivery_order_items / sales_invoice_items / delivery_return_items (+ headers
 // + mfg_sales_order_payments + staff). All referenced tables exist in the scm
-// schema. paid_centi on mfg_sales_orders does NOT exist in Houzs (dropped on
+// schema. paid_sen on mfg_sales_orders does NOT exist in Houzs (dropped on
 // port) — paid totals derive from the payments ledger.
 // reports: read-only cross-area detail listings — left on the coarse gate (see
 // SHARED READ HELPERS note above).

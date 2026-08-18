@@ -22,14 +22,14 @@
 //                    pickups=PICKUP; services=SERVICE+INSPECTION;
 //                    setup_dismantle=SETUP+DISMANTLE.
 //   orders_per_trip   = deliveries ÷ total_trips.
-//   delivery_revenue  = Σ trip_stops.revenue_centi where stop_type=DELIVERY (cents).
+//   delivery_revenue  = Σ trip_stops.revenue_sen where stop_type=DELIVERY (cents).
 //   revenue_per_order = delivery_revenue ÷ deliveries.
 //   revenue_per_trip  = delivery_revenue ÷ total_trips.
 // All ÷ guard div-by-zero (→ null, rendered "—" by the client). DRAFT does not
 // exist for trips; CANCELLED trips are excluded everywhere.
 //
-// Money: revenue_centi is BIGINT cents; the dashboard returns cents and the
-// client divides by 100 for the RM display (fmtCenti).
+// Money: revenue_sen is BIGINT cents; the dashboard returns cents and the
+// client divides by 100 for the RM display (fmtSen).
 //
 // Repair Days inline edit — PUT /lorry-capacity/lorries/:id/repair-days
 // {from,to,days}. A single dashboard-managed lorry_maintenance window represents
@@ -173,7 +173,7 @@ lorryCapacity.get('/', async (c) => {
     pickups: number;
     services: number;
     setupDismantle: number;
-    deliveryRevenueCenti: number;
+    deliveryRevenueSen: number;
   };
   const byLorry = new Map<string, LorryAcc>();
   for (const r of (lorryRows ?? []) as Array<Record<string, unknown>>) {
@@ -191,7 +191,7 @@ lorryCapacity.get('/', async (c) => {
       pickups: 0,
       services: 0,
       setupDismantle: 0,
-      deliveryRevenueCenti: 0,
+      deliveryRevenueSen: 0,
     });
   }
 
@@ -255,7 +255,7 @@ lorryCapacity.get('/', async (c) => {
       const batch = tripIds.slice(i, i + CHUNK);
       const { data: stops } = await paginateAll<Record<string, unknown>>((lo, hi) =>
         sb.from('trip_stops')
-          .select('trip_id, stop_type, revenue_centi')
+          .select('trip_id, stop_type, revenue_sen')
           .in('trip_id', batch)
           .range(lo, hi),
       );
@@ -268,7 +268,7 @@ lorryCapacity.get('/', async (c) => {
         const kind = String(dual<string>(s, 'stop_type') ?? '').toUpperCase();
         if (kind === 'DELIVERY') {
           acc.deliveries += 1;
-          acc.deliveryRevenueCenti += Number(dual(s, 'revenue_centi') ?? 0);
+          acc.deliveryRevenueSen += Number(dual(s, 'revenue_sen') ?? 0);
           if (meta.date) acc.deliveryTripDates.add(meta.date);
         } else if (kind === 'PICKUP') {
           acc.pickups += 1;
@@ -295,8 +295,8 @@ lorryCapacity.get('/', async (c) => {
     const deliveryDays = a.deliveryTripDates.size;
     const utilisation = safeDiv(a.totalTrips, availableDays);         // CAN exceed 1
     const ordersPerTrip = safeDiv(a.deliveries, a.totalTrips);
-    const revenuePerOrderCenti = safeDiv(a.deliveryRevenueCenti, a.deliveries);
-    const revenuePerTripCenti = safeDiv(a.deliveryRevenueCenti, a.totalTrips);
+    const revenuePerOrderSen = safeDiv(a.deliveryRevenueSen, a.deliveries);
+    const revenuePerTripSen = safeDiv(a.deliveryRevenueSen, a.totalTrips);
     return {
       lorry_id: a.id,
       plate: a.plate,
@@ -313,9 +313,9 @@ lorryCapacity.get('/', async (c) => {
       setup_dismantle: a.setupDismantle,
       pickups: a.pickups,
       services: a.services,
-      delivery_revenue_centi: a.deliveryRevenueCenti,
-      revenue_per_order_centi: revenuePerOrderCenti == null ? null : Math.round(revenuePerOrderCenti),
-      revenue_per_trip_centi: revenuePerTripCenti == null ? null : Math.round(revenuePerTripCenti),
+      delivery_revenue_sen: a.deliveryRevenueSen,
+      revenue_per_order_sen: revenuePerOrderSen == null ? null : Math.round(revenuePerOrderSen),
+      revenue_per_trip_sen: revenuePerTripSen == null ? null : Math.round(revenuePerTripSen),
     };
   });
 
@@ -326,19 +326,19 @@ lorryCapacity.get('/', async (c) => {
   const totalTrips = sum((l) => l.total_trips);
   const availableDaysTotal = sum((l) => l.available_days);
   const deliveriesTotal = sum((l) => l.deliveries);
-  const deliveryRevenueTotal = sum((l) => l.delivery_revenue_centi);
+  const deliveryRevenueTotal = sum((l) => l.delivery_revenue_sen);
   const totals = {
     lorries: lorries.length,
     total_trips: totalTrips,
     available_days: availableDaysTotal,
     utilisation: round(safeDiv(totalTrips, availableDaysTotal), 4),
     orders_per_delivery_trip: round(safeDiv(deliveriesTotal, totalTrips), 2),
-    delivery_revenue_centi: deliveryRevenueTotal,
-    revenue_per_order_centi: (() => {
+    delivery_revenue_sen: deliveryRevenueTotal,
+    revenue_per_order_sen: (() => {
       const v = safeDiv(deliveryRevenueTotal, deliveriesTotal);
       return v == null ? null : Math.round(v);
     })(),
-    revenue_per_trip_centi: (() => {
+    revenue_per_trip_sen: (() => {
       const v = safeDiv(deliveryRevenueTotal, totalTrips);
       return v == null ? null : Math.round(v);
     })(),

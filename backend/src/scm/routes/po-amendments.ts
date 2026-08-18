@@ -123,7 +123,7 @@ poAmendments.get('/:id', async (c) => {
       .eq('id', id), c).maybeSingle(),
     sb.from('po_amendment_lines')
       .select('id, amendment_id, purchase_order_item_id, change_type, new_material_code, ' +
-        'new_material_name, new_variants, new_qty, new_unit_price_centi, new_delivery_date, old_snapshot')
+        'new_material_name, new_variants, new_qty, new_unit_price_sen, new_delivery_date, old_snapshot')
       .eq('amendment_id', id),
   ]);
   if (amdRes.error) return c.json({ error: 'load_failed', reason: amdRes.error.message }, 500);
@@ -163,7 +163,7 @@ poAmendments.post('/', async (c) => {
       newMaterialName?: string | null;
       newVariants?: unknown;
       newQty?: number | null;
-      newUnitPriceCenti?: number | null;
+      newUnitPriceSen?: number | null;
       newDeliveryDate?: string | null;
       oldSnapshot?: unknown;
     }>;
@@ -258,7 +258,7 @@ poAmendments.post('/', async (c) => {
       new_material_name:      l.newMaterialName ?? null,
       new_variants:           (l.newVariants ?? null) as Record<string, unknown> | null,
       new_qty:                l.newQty ?? null,
-      new_unit_price_centi:   l.newUnitPriceCenti ?? null,
+      new_unit_price_sen:   l.newUnitPriceSen ?? null,
       // `??` is nullish — a blank <input type="date"> posts "" and would reach
       // po_amendment_lines.new_delivery_date (DATE, mig 0194:87), 500ing the
       // insert and rolling the header amendment back at :268.

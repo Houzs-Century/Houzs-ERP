@@ -45,7 +45,7 @@ const SO = {
   phone: '012-1111111', emergency_contact_phone: null,
   ref: null, po_doc_no: null, customer_po: null, customer_so_no: null,
   processing_date: null,
-  total_revenue_centi: 500_00, balance_centi: 500_00, deposit_centi: 0,
+  total_revenue_sen: 500_00, balance_sen: 500_00, deposit_sen: 0,
   /* Already in the account book — an order with no counterpart has nothing to
      edit, and enqueueEdit correctly says nothing about it. */
   linked_ac_docno: 'SO-000021',
@@ -53,7 +53,7 @@ const SO = {
 
 const ITEM = {
   doc_no: 'HC-SO-P1', item_code: ERP_ITEM, description: 'Mattress',
-  qty: 1, unit_price_centi: 500_00, line_delivery_date: null,
+  qty: 1, unit_price_sen: 500_00, line_delivery_date: null,
   /* An edit addresses a line by AutoCount's own key and refuses a line without
      one, so the fixture carries it. */
   linked_ac_dtlkey: 991,
@@ -77,7 +77,7 @@ const payment = (over: Row = {}) => ({
   docNo: 'HC-SO-P1',
   paidAt: '2026-08-15',
   method: 'cash' as const,
-  amountCenti: 300_00,
+  amountSen: 300_00,
   slipKey: null,
   createdBy: '00000000-0000-4000-8000-000000000001',
   ...over,
@@ -114,7 +114,7 @@ describe('a recorded payment queues the AutoCount edit that carries the new bala
      the book goes on showing a debt that has been paid. */
   test('a payment that settles the order sends 0.00', async () => {
     const sb = seed('1');
-    await recordSoPaymentRow(sb, payment({ amountCenti: 500_00 }));
+    await recordSoPaymentRow(sb, payment({ amountSen: 500_00 }));
 
     const header = outbox(sb)[0].payload.body.Header as Record<string, Record<string, string>>;
     expect(header.UDF.BALANCE).toBe('0.00');

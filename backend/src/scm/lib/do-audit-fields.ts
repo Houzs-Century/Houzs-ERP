@@ -12,7 +12,7 @@
 //
 // The camelCase half of every tuple is LOAD-BEARING: AUDIT_FINANCE_FIELDS
 // (lib/finance-keys) is keyed on those exact spellings, and stripAuditFinance
-// matches them literally, so a cost recorded as 'unit_cost_centi' or 'unitCost'
+// matches them literally, so a cost recorded as 'unit_cost_sen' or 'unitCost'
 // sails past the strip and hands the cost basis to every reader of the
 // document. The line list's siblings for GRN / SI / PO / PI live in
 // entity-audit-fields.ts and are guarded by entityAudit.test.ts for exactly
@@ -53,17 +53,17 @@ export const DO_AUDIT_FIELDS: AuditFieldMap = [
 export const DO_AUDIT_SELECT =
   `id, do_number, status, company_id, ${DO_AUDIT_FIELDS.map(([, snake]) => snake).join(', ')}`;
 
-/* The auditable LINE fields. The camel names are deliberate: unitCostCenti,
-   lineCostCenti and lineMarginCenti are the exact keys AUDIT_FINANCE_FIELDS
+/* The auditable LINE fields. The camel names are deliberate: unitCostSen,
+   lineCostSen and lineMarginSen are the exact keys AUDIT_FINANCE_FIELDS
    (lib/finance-keys) strips from field_changes, so recording a line's cost here
    is gated on read by the same rule that gates it on the detail payload.
    Spelling one of them differently would leak cost to every reader. */
 export const DO_LINE_AUDIT_FIELDS: AuditFieldMap = [
   ['qty', 'qty'],
-  ['unitPriceCenti', 'unit_price_centi'],
-  ['discountCenti', 'discount_centi'],
-  ['unitCostCenti', 'unit_cost_centi'],
-  ['lineTotalCenti', 'line_total_centi'],
+  ['unitPriceSen', 'unit_price_sen'],
+  ['discountSen', 'discount_sen'],
+  ['unitCostSen', 'unit_cost_sen'],
+  ['lineTotalSen', 'line_total_sen'],
   ['itemCode', 'item_code'],
   ['itemGroup', 'item_group'],
   ['description', 'description'],

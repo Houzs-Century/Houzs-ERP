@@ -86,7 +86,7 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
     // spellings), summing to `all`. Keys beyond the original four are optional
     // so a mid-deploy old backend (four-bucket shape) still typechecks — the
     // pages read every bucket with `?? 0`.
-    queryFn: ({ signal }) => authedFetch<{ salesOrders: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; draft: number; confirmed: number; cancelled: number } & Partial<Record<'in_production' | 'ready_to_ship' | 'shipped' | 'delivered' | 'invoiced' | 'closed' | 'on_hold' | 'other', number>>; aggregates?: { revenueCenti: number; outstandingCenti: number; paidCenti: number } }>(`/mfg-sales-orders?${usp.toString()}`, { signal }),
+    queryFn: ({ signal }) => authedFetch<{ salesOrders: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; draft: number; confirmed: number; cancelled: number } & Partial<Record<'in_production' | 'ready_to_ship' | 'shipped' | 'delivered' | 'invoiced' | 'closed' | 'on_hold' | 'other', number>>; aggregates?: { revenueSen: number; outstandingSen: number; paidSen: number } }>(`/mfg-sales-orders?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,
     staleTime: 30_000,
     retry: retryUnlessClientError,
@@ -171,14 +171,14 @@ export function useEnrichedSoListRows<T extends EnrichableSoRow>(
 }
 
 // Dashboard summary mode (`?summary=1`) — the backend returns only the 6 cols
-// the lifecycle-bucket KPIs need (doc_no, status, local_total_centi,
+// the lifecycle-bucket KPIs need (doc_no, status, local_total_sen,
 // created_at, so_date), non-DRAFT, company + sales-scope scoped, so the dashboard
 // isn't paying for 500 fully-hydrated rows. Bucketing stays in the FE (single
 // source of truth). Ported from 2990's useMfgSalesOrdersSummary.
 export type SoSummaryRow = {
   doc_no: string;
   status: string;
-  local_total_centi: number;
+  local_total_sen: number;
   created_at: string | null;
   so_date: string | null;
 };
@@ -201,7 +201,7 @@ export type ScmCustomerOrder = {
   status: string;
   so_date: string | null;
   created_at: string | null;
-  local_total_centi: number;
+  local_total_sen: number;
   line_count: number;
 };
 export type ScmCustomer = {
@@ -209,7 +209,7 @@ export type ScmCustomer = {
   name: string;
   phone: string | null;
   order_count: number;
-  lifetime_value_centi: number;
+  lifetime_value_sen: number;
   last_order_at: string;
   orders: ScmCustomerOrder[];
 };
@@ -285,7 +285,7 @@ export type SoPayment = {
   installment_months: number | null;
   online_type: string | null;
   approval_code: string | null;
-  amount_centi: number;
+  amount_sen: number;
   account_sheet: string | null;
   slip_key?: string | null;
   collected_by: string | null;
@@ -533,7 +533,7 @@ export const useOverrideMfgSoLinePrice = () => {
       docNo: string; itemId: string; overridePriceSen: number; reason?: string;
     }) => {
       await runSoVersionedMutation(qc, docNo, 'price-override', ({ leaseToken }) =>
-        authedFetch<{ items: Array<{ id: string; unit_price_centi: number }> }>(
+        authedFetch<{ items: Array<{ id: string; unit_price_sen: number }> }>(
           `/mfg-sales-orders/${docNo}/items/${itemId}/override`,
           {
             method: 'POST',

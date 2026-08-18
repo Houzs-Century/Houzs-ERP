@@ -51,7 +51,7 @@ export interface AssignGroup {
   /** The order refs (SO doc numbers) on this trip, in packing order. */
   orders: string[];
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
   /** The lorry A1 packed this group onto — the preferred assignment. */
   preferredLorryId: string | null;
 }
@@ -66,7 +66,7 @@ export interface AssignLorry {
   status: string;
   /** Per-lorry ceilings; null => use the config default. */
   maxSets: number | null;
-  maxRevenueCenti: number | null;
+  maxRevenueSen: number | null;
   layer: CapacityLayer;
   /** The lorry's regular driver, matched by plate (caller resolves). */
   driverId: string | null;
@@ -87,7 +87,7 @@ export interface AssignHelper {
 
 export interface AssignConfig {
   defaultMaxSets: number;
-  defaultMaxRevenueCenti: number;
+  defaultMaxRevenueSen: number;
   /** A3: max trips one own-fleet lorry runs per day before the rest spill to 3PL
    *  overflow. Default 1 (one full-day delivery run). Overridable per request. */
   maxTripsPerLorryPerDay?: number;
@@ -99,11 +99,11 @@ export interface AssignedGroup {
   group: string;
   orders: string[];
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
   lorryId: string;
   plate: string;
   ceilingSets: number | null;
-  ceilingRevenueCenti: number | null;
+  ceilingRevenueSen: number | null;
   /** The group exceeds the chosen lorry's active ceiling but still ships. */
   overCeiling: boolean;
   driverId: string | null;
@@ -125,7 +125,7 @@ export interface OverflowGroup {
   group: string;
   orders: string[];
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
   reason: string;
 }
 
@@ -141,27 +141,27 @@ export interface AssignResult {
 
 interface Ceilings {
   sets: number | null;
-  revenueCenti: number | null;
+  revenueSen: number | null;
 }
 
 function ceilingsFor(lorry: AssignLorry, cfg: AssignConfig): Ceilings {
   const sets = lorry.maxSets ?? cfg.defaultMaxSets;
-  const rev = lorry.maxRevenueCenti ?? cfg.defaultMaxRevenueCenti;
+  const rev = lorry.maxRevenueSen ?? cfg.defaultMaxRevenueSen;
   switch (lorry.layer) {
     case 'SETS':
-      return { sets, revenueCenti: null };
+      return { sets, revenueSen: null };
     case 'REVENUE':
-      return { sets: null, revenueCenti: rev };
+      return { sets: null, revenueSen: rev };
     case 'BOTH':
     default:
-      return { sets, revenueCenti: rev };
+      return { sets, revenueSen: rev };
   }
 }
 
 /** Does the group blow past EITHER active ceiling on the chosen lorry? */
 function exceeds(group: AssignGroup, ceil: Ceilings): boolean {
   if (ceil.sets != null && group.sets > ceil.sets) return true;
-  if (ceil.revenueCenti != null && group.revenueCenti > ceil.revenueCenti) return true;
+  if (ceil.revenueSen != null && group.revenueSen > ceil.revenueSen) return true;
   return false;
 }
 
@@ -204,7 +204,7 @@ export function assignFleet(input: {
   if (eligible.length === 0) {
     // No own fleet at all -> the whole day is 3PL overflow (A3), not a dead end.
     for (const g of groups) {
-      overflow.push({ key: g.key, date: g.date, group: g.group, orders: g.orders, sets: g.sets, revenueCenti: g.revenueCenti, reason: 'no dispatchable own-fleet lorry — assign a 3PL carrier' });
+      overflow.push({ key: g.key, date: g.date, group: g.group, orders: g.orders, sets: g.sets, revenueSen: g.revenueSen, reason: 'no dispatchable own-fleet lorry — assign a 3PL carrier' });
     }
     return { assignments, unassigned, overflow, excludedLorries };
   }
@@ -212,10 +212,10 @@ export function assignFleet(input: {
   const lorryById = new Map(eligible.map((l) => [l.id, l]));
   // Running per-(date, lorry) load, so balancing is per-day: a lorry idle on one
   // day is fair game even if busy on another.
-  const load = new Map<string, { sets: number; revenueCenti: number; groups: number }>();
+  const load = new Map<string, { sets: number; revenueSen: number; groups: number }>();
   const loadKey = (date: string, lorryId: string) => `${date}::${lorryId}`;
   const loadOf = (date: string, lorryId: string) =>
-    load.get(loadKey(date, lorryId)) ?? { sets: 0, revenueCenti: 0, groups: 0 };
+    load.get(loadKey(date, lorryId)) ?? { sets: 0, revenueSen: 0, groups: 0 };
 
   // Drivers/helpers are a per-day resource too (a person crews one lorry a day).
   const usedDrivers = new Map<string, Set<string>>(); // date -> driverIds used
@@ -242,7 +242,7 @@ export function assignFleet(input: {
 
     if (withSlot.length === 0) {
       // Own fleet is full for this date -> spill to 3PL overflow (A3).
-      overflow.push({ key: g.key, date: g.date, group: g.group, orders: g.orders, sets: g.sets, revenueCenti: g.revenueCenti, reason: 'own fleet is full for this day — assign a 3PL carrier' });
+      overflow.push({ key: g.key, date: g.date, group: g.group, orders: g.orders, sets: g.sets, revenueSen: g.revenueSen, reason: 'own fleet is full for this day — assign a 3PL carrier' });
       continue;
     }
 
@@ -256,7 +256,7 @@ export function assignFleet(input: {
       const lb = loadOf(g.date, b.id);
       if (la.groups !== lb.groups) return la.groups - lb.groups;   // fewer trips first
       if (la.sets !== lb.sets) return la.sets - lb.sets;           // then lighter
-      if (la.revenueCenti !== lb.revenueCenti) return la.revenueCenti - lb.revenueCenti;
+      if (la.revenueSen !== lb.revenueSen) return la.revenueSen - lb.revenueSen;
       return a.plate.localeCompare(b.plate);                        // stable
     });
 
@@ -296,11 +296,11 @@ export function assignFleet(input: {
       group: g.group,
       orders: g.orders,
       sets: g.sets,
-      revenueCenti: g.revenueCenti,
+      revenueSen: g.revenueSen,
       lorryId: chosen.id,
       plate: chosen.plate,
       ceilingSets: ceil.sets,
-      ceilingRevenueCenti: ceil.revenueCenti,
+      ceilingRevenueSen: ceil.revenueSen,
       overCeiling,
       driverId,
       driverName,
@@ -311,7 +311,7 @@ export function assignFleet(input: {
     const cur = loadOf(g.date, chosen.id);
     load.set(loadKey(g.date, chosen.id), {
       sets: cur.sets + g.sets,
-      revenueCenti: cur.revenueCenti + g.revenueCenti,
+      revenueSen: cur.revenueSen + g.revenueSen,
       groups: cur.groups + 1,
     });
   }

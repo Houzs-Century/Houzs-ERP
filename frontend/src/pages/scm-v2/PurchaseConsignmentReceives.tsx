@@ -30,7 +30,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
-import { fmtDateOrDash, buildVariantSummary, fmtMoneyCenti } from '@2990s/shared';
+import { fmtDateOrDash, buildVariantSummary, fmtMoneySen } from '@2990s/shared';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
@@ -41,7 +41,7 @@ const ICON = { size: 16, strokeWidth: 1.75 } as const;
 // Colours + labels come from the canonical lib/status-pill map via <StatusPill>.
 const STATUS_CHIPS = ['all', 'POSTED', 'CLOSED', 'CANCELLED'] as const;
 
-const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 const PCR_LIST_STORAGE_KEY = 'pc-receive-list.layout.v1';
 
@@ -51,7 +51,7 @@ type GrnRow = Record<string, unknown> & {
   status: string;
   received_at: string | null;
   delivery_note_ref: string | null;
-  total_centi?: number;
+  total_sen?: number;
   currency?: string;
   supplier?: { id: string; code: string; name: string } | null;
   purchase_consignment_order?: { id: string; pc_number: string } | null;
@@ -107,16 +107,16 @@ const buildColumns = (): DataGridColumn<GrnRow>[] => [
     searchValue: (g) => g.delivery_note_ref ?? '',
   },
   {
-    key: 'total_centi', label: 'Total', width: 130, sortable: true, align: 'right', groupable: false,
+    key: 'total_sen', label: 'Total', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (g) => (
       <span style={{ fontFamily: 'var(--font-mark)', color: '#16695f', fontWeight: 800 }}>
-        {fmtMoney(Number(g.total_centi ?? 0), g.currency)}
+        {fmtMoney(Number(g.total_sen ?? 0), g.currency)}
       </span>
     ),
-    searchValue: (g) => fmtMoney(Number(g.total_centi ?? 0), g.currency),
+    searchValue: (g) => fmtMoney(Number(g.total_sen ?? 0), g.currency),
     /* Accessor is JSX → export the NUMBER in ringgit so Excel can SUM it. */
-    exportValue: (g) => Number(g.total_centi ?? 0) / 100,
-    sortFn: (a, b) => Number(a.total_centi ?? 0) - Number(b.total_centi ?? 0),
+    exportValue: (g) => Number(g.total_sen ?? 0) / 100,
+    sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
   },
   {
     key: 'status', label: 'Status', width: 130, sortable: true, groupable: true,
@@ -139,8 +139,8 @@ type GrnItem = Record<string, unknown> & {
   variants?: Record<string, unknown> | null;
   qty?: number | null;
   qty_received?: number | null;
-  unit_price_centi?: number | null;
-  line_total_centi?: number | null;
+  unit_price_sen?: number | null;
+  line_total_sen?: number | null;
   source_po_number?: string | null;
   received_at?: string | null;
 };
@@ -179,15 +179,15 @@ const buildDrilldownColumns = (currency: string): DataGridColumn<GrnItem>[] => [
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 110, align: 'right',
-    accessor: (it) => fmtMoney(Number(it.unit_price_centi ?? 0), currency),
-    searchValue: (it) => String(it.unit_price_centi ?? 0),
-    sortFn: (a, b) => Number(a.unit_price_centi ?? 0) - Number(b.unit_price_centi ?? 0),
+    accessor: (it) => fmtMoney(Number(it.unit_price_sen ?? 0), currency),
+    searchValue: (it) => String(it.unit_price_sen ?? 0),
+    sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
   },
   {
     key: 'line_total', label: 'Line Total', width: 120, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_total_centi ?? 0), currency)}</span>,
-    searchValue: (it) => String(it.line_total_centi ?? 0),
-    sortFn: (a, b) => Number(a.line_total_centi ?? 0) - Number(b.line_total_centi ?? 0),
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_total_sen ?? 0), currency)}</span>,
+    searchValue: (it) => String(it.line_total_sen ?? 0),
+    sortFn: (a, b) => Number(a.line_total_sen ?? 0) - Number(b.line_total_sen ?? 0),
   },
   {
     key: 'received_at', label: 'Receive Date', width: 120,
@@ -217,7 +217,7 @@ const ExpandedLines = ({ grn }: { grn: GrnRow }) => {
     return <div style={{ padding: '8px 12px', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>No line items.</div>;
   }
   let subtotal = 0;
-  for (const it of items) subtotal += Number(it.line_total_centi ?? 0);
+  for (const it of items) subtotal += Number(it.line_total_sen ?? 0);
 
   const columns = buildDrilldownColumns(currency);
 

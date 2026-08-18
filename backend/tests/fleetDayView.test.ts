@@ -36,7 +36,7 @@ const trip = (over: Partial<RawTripRow> & { id: string }): RawTripRow => ({
 
 const stop = (over: Partial<RawStopRow> & { id: string; trip_id: string }): RawStopRow => ({
   stop_no: 1, stop_type: "DELIVERY", do_id: null, so_id: null,
-  customer_name: null, address: null, revenue_centi: 0, eta_offset_s: null, leg_distance_m: null,
+  customer_name: null, address: null, revenue_sen: 0, eta_offset_s: null, leg_distance_m: null,
   ...over,
 });
 
@@ -63,26 +63,26 @@ describe("assembleDayView", () => {
     const out = assembleDayView(baseInput({
       trips: [trip({ id: "T1" })],
       stops: [
-        stop({ id: "d1", trip_id: "T1", stop_no: 1, stop_type: "DELIVERY", revenue_centi: 10_00 }),
-        stop({ id: "p1", trip_id: "T1", stop_no: 2, stop_type: "SUPPLIER_PICKUP", revenue_centi: 5_00 }),
-        stop({ id: "d2", trip_id: "T1", stop_no: 3, stop_type: "DELIVERY", revenue_centi: 20_00 }),
+        stop({ id: "d1", trip_id: "T1", stop_no: 1, stop_type: "DELIVERY", revenue_sen: 10_00 }),
+        stop({ id: "p1", trip_id: "T1", stop_no: 2, stop_type: "SUPPLIER_PICKUP", revenue_sen: 5_00 }),
+        stop({ id: "d2", trip_id: "T1", stop_no: 3, stop_type: "DELIVERY", revenue_sen: 20_00 }),
       ],
     }));
     expect(out.trips[0].total_drops).toBe(2);
-    expect(out.trips[0].total_revenue_centi).toBe(3500);
+    expect(out.trips[0].total_revenue_sen).toBe(3500);
   });
 
   test("negative / non-finite revenue is floored to 0 per stop", () => {
     const out = assembleDayView(baseInput({
       trips: [trip({ id: "T1" })],
       stops: [
-        stop({ id: "a", trip_id: "T1", stop_no: 1, revenue_centi: -100 }),
-        stop({ id: "b", trip_id: "T1", stop_no: 2, revenue_centi: null }),
-        stop({ id: "c", trip_id: "T1", stop_no: 3, revenue_centi: 12_34 }),
+        stop({ id: "a", trip_id: "T1", stop_no: 1, revenue_sen: -100 }),
+        stop({ id: "b", trip_id: "T1", stop_no: 2, revenue_sen: null }),
+        stop({ id: "c", trip_id: "T1", stop_no: 3, revenue_sen: 12_34 }),
       ],
     }));
-    expect(out.trips[0].total_revenue_centi).toBe(1234);
-    expect(out.trips[0].stops[0].revenue_centi).toBe(0);
+    expect(out.trips[0].total_revenue_sen).toBe(1234);
+    expect(out.trips[0].stops[0].revenue_sen).toBe(0);
   });
 
   test("merges enrichment (phone / house type / window / access note) onto stops", () => {

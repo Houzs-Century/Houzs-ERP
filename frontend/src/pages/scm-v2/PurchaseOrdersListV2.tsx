@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   Plus,
@@ -86,7 +86,7 @@ type StatusTab =
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtRm = (centi: number): string => fmtCenti(centi);
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 const supplierNameOf = (r: PoHeaderRow): string =>
   r.supplier?.name || r.supplier_id || "—";
@@ -109,9 +109,9 @@ const locationOf = (r: PoHeaderRow): string =>
 const supplierSkusOf = (r: PoHeaderRow): string =>
   (r.items ?? []).map((it) => it.supplier_sku?.trim() || "—").join(" · ");
 
-// Committed value = total_centi (subtotal + tax); the PO's face value.
+// Committed value = total_sen (subtotal + tax); the PO's face value.
 const totalOf = (r: PoHeaderRow): number =>
-  r.total_centi ?? r.subtotal_centi ?? 0;
+  r.total_sen ?? r.subtotal_sen ?? 0;
 
 // PO lifecycle: DRAFT → SUBMITTED → PARTIALLY_RECEIVED → RECEIVED, plus
 // CANCELLED. Bucket them for the pills; the raw status still surfaces in
@@ -546,7 +546,7 @@ function DetailDrawer({
                         {balance > 0 ? balance : "—"}
                       </span>
                       <span className="text-right font-money text-[12.5px] font-semibold text-ink">
-                        {fmtRm(l.line_total_centi ?? 0)}
+                        {fmtRm(l.line_total_sen ?? 0)}
                       </span>
                     </div>
                   );
@@ -650,10 +650,10 @@ function TotalRow({ k, v, strong }: { k: string; v: string; strong?: boolean }) 
 }
 
 // Table column key → backend sort-whitelist column. PO backend whitelist is
-// { po_date, po_number, status, total_centi }; only `total` differs from its
+// { po_date, po_number, status, total_sen }; only `total` differs from its
 // backend name. Non-whitelisted columns (supplier / expected) carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
-  total: "total_centi",
+  total: "total_sen",
 };
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
@@ -682,7 +682,7 @@ function PoLinesExpansion({ id }: { id: string }) {
     description2: l.description2 ?? null,
     variants: l.variants ?? null,
     qty: Number(l.qty ?? 0),
-    amountCenti: l.line_total_centi ?? 0,
+    amountSen: l.line_total_sen ?? 0,
     assignedSos: byCode.get((l.material_code ?? "").trim()) ?? [],
     sourceLinked: linkedSkus.has((l.material_code ?? "").trim()),
     provenance: provByCode.get((l.material_code ?? "").trim()) ?? [],

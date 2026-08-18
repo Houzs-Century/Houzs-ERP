@@ -75,7 +75,7 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import { formatPhone } from '@2990s/shared/phone';
-import { maintValues, fmtCenti, fmtDateOrDash, fmtQty } from '@2990s/shared';
+import { maintValues, fmtSen, fmtDateOrDash, fmtQty } from '@2990s/shared';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import styles from './SupplierDetail.module.css';
@@ -142,11 +142,11 @@ const fmtCurrency = (centi: number, currency: Currency): string => {
   return currency === 'MYR' ? `RM ${v}` : `${v} ${currency}`;
 };
 
-/* Display dates + RM totals use the shared `fmtDateOrDash` / `fmtCenti`
+/* Display dates + RM totals use the shared `fmtDateOrDash` / `fmtSen`
    (Commander 2026-06-18 — one canonical format system-wide). The old local
    fmtDate/fmtRm helpers were exact equivalents and have been retired. The
    currency-aware `fmtCurrency` above stays — it renders non-MYR binding prices
-   (RMB/USD/SGD) which `fmtCenti` (MYR-only) cannot. */
+   (RMB/USD/SGD) which `fmtSen` (MYR-only) cannot. */
 
 /* ────────────────────────────────────────────────────────────────────────
    usePersistedOpen — collapsible-panel state persisted per panel in
@@ -1149,9 +1149,9 @@ const DefaultSkuMappingsTable = ({
           <InlineUnitPrice binding={b} supplierId={supplierId} update={update} />
         </CellStop>
       ),
-      searchValue: (b) => fmtCurrency(b.unit_price_centi, b.currency),
-      filterValue: (b) => fmtCurrency(b.unit_price_centi, b.currency),
-      sortFn: (a, b) => a.unit_price_centi - b.unit_price_centi,
+      searchValue: (b) => fmtCurrency(b.unit_price_sen, b.currency),
+      filterValue: (b) => fmtCurrency(b.unit_price_sen, b.currency),
+      sortFn: (a, b) => a.unit_price_sen - b.unit_price_sen,
     },
     ...bindingTailColumns(supplierId, update, remove, onEdit, setAnchor),
   ], [supplierId, update, remove, onEdit, setAnchor]);
@@ -1418,7 +1418,7 @@ const MainStarCell = ({
    AnchorCell — the ⚓ "Cost anchor" toggle (migration 0177).
 
    Marks THIS binding as the cost anchor for its material_code: while anchored,
-   editing either side's cost (this binding's unit_price_centi / price_matrix,
+   editing either side's cost (this binding's unit_price_sen / price_matrix,
    or the linked mfg_products base_price_sen / price1_sen) mirrors onto the
    other, so Product-Maintenance cost == this supplier's cost. Setting the
    anchor clears it on any other binding for the same product (one per code,
@@ -1598,12 +1598,12 @@ const InlineUnitPrice = ({
   // and no clobbering from background refetches (see MoneyInput.tsx).
   return (
     <MoneyInput
-      valueSen={binding.unit_price_centi}
+      valueSen={binding.unit_price_sen}
       currency={binding.currency === 'MYR' ? 'RM' : binding.currency}
       onCommit={(sen) => {
         const next = sen ?? 0;
-        if (next === binding.unit_price_centi) return;
-        update.mutate({ supplierId, bindingId: binding.id, unitPriceCenti: next });
+        if (next === binding.unit_price_sen) return;
+        update.mutate({ supplierId, bindingId: binding.id, unitPriceSen: next });
       }}
     />
   );
@@ -1618,7 +1618,7 @@ const InlineUnitPrice = ({
    We intentionally treat the matrix as a sparse object: clearing a cell sets
    the value to undefined, which `removeMatrixCell` strips out so the row's
    JSON doesn't accumulate `null`s. NULL of the entire object means "fall
-   back to unit_price_centi or 0" downstream (see SO line pricing).
+   back to unit_price_sen or 0" downstream (see SO line pricing).
    ════════════════════════════════════════════════════════════════════════ */
 
 /** Read sen value from a sofa matrix cell. Tolerant of empty / missing
@@ -1879,7 +1879,7 @@ function csvCell(v: unknown): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
-/** Centi → RM (2dp). Treat `0`/`null` as blank so the CSV doesn't write
+/** Sen → RM (2dp). Treat `0`/`null` as blank so the CSV doesn't write
  *  "0.00" into every cell that's never been filled. */
 function fmtRmCell(centi: number | null | undefined): string {
   if (centi == null || centi === 0) return '';
@@ -1982,7 +1982,7 @@ function exportBindingsCsv(
       if (emitted === 0) emit(b, 'bedframe', '', '', '');
     } else {
       // mattress / accessory / service — a single flat unit price.
-      emit(b, 'other', '', '', fmtRmCell(b.unit_price_centi));
+      emit(b, 'other', '', '', fmtRmCell(b.unit_price_sen));
     }
   }
 
@@ -2149,7 +2149,7 @@ function buildWidePatches(
     applyScalarCols(r, scalarCols, binding, patch);
     if (kind === 'other' && colUnitPriceRm >= 0) {
       const sen = parseRmCell(r[colUnitPriceRm]);
-      if (sen != null && sen !== binding.unit_price_centi) patch.unitPriceCenti = sen;
+      if (sen != null && sen !== binding.unit_price_sen) patch.unitPriceSen = sen;
     }
 
     // Price matrix updates are wholesale (send the merged matrix) so a partial
@@ -2251,7 +2251,7 @@ function buildLongPatches(
     if (kind === 'other') {
       // Flat unit price. Blank price on an "other" row = no change (don't zero
       // a price just because an anchor row carried no value).
-      if (sen != null && sen !== binding.unit_price_centi) acc.patch.unitPriceCenti = sen;
+      if (sen != null && sen !== binding.unit_price_sen) acc.patch.unitPriceSen = sen;
     } else if (kind === 'bedframe') {
       if (tier === 'P1' || tier === 'P2') {
         const m = bedMatrices.get(binding.id) ?? { ...((binding.price_matrix ?? {}) as BedframePriceMatrix) };
@@ -2454,7 +2454,7 @@ type LastPo = {
   poDate: string;
   expectedDate: string | null;
   receivedDate: string | null;
-  totalCenti: number;
+  totalSen: number;
   orderedQty: number;
   receivedQty: number;
 };
@@ -2495,7 +2495,7 @@ const LastTenPOsTable = ({ rows }: { rows: LastPo[] }) => {
               <td className={styles.muted}>{po.status}</td>
               <td className={`${styles.tableRight} ${styles.muted}`}>{fmtQty(po.orderedQty)}</td>
               <td className={`${styles.tableRight} ${styles.muted}`}>{fmtQty(po.receivedQty)}</td>
-              <td className={styles.priceCell}>{fmtCenti(po.totalCenti)}</td>
+              <td className={styles.priceCell}>{fmtSen(po.totalSen)}</td>
               <td className={styles.muted}>{fmtDateOrDash(po.expectedDate)}</td>
               <td className={styles.muted}>{fmtDateOrDash(po.receivedDate)}</td>
               <td>
@@ -2528,7 +2528,7 @@ type SkuDraft = {
   materialCode: string;
   materialName: string;
   supplierSku: string;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   currency: Currency;
   leadTimeDays: number;
   moq: number;
@@ -2562,7 +2562,7 @@ const SkuFormDialog = ({
           materialCode: editing.material_code,
           materialName: editing.material_name,
           supplierSku: editing.supplier_sku,
-          unitPriceCenti: editing.unit_price_centi,
+          unitPriceSen: editing.unit_price_sen,
           currency: editing.currency,
           leadTimeDays: editing.lead_time_days,
           moq: editing.moq,
@@ -2573,7 +2573,7 @@ const SkuFormDialog = ({
           materialCode: '',
           materialName: '',
           supplierSku: '',
-          unitPriceCenti: 0,
+          unitPriceSen: 0,
           currency: 'MYR',
           leadTimeDays: 0,
           moq: 0,
@@ -2769,10 +2769,10 @@ const SkuFormDialog = ({
               <span className={styles.fieldLabel}>Unit Price</span>
               <MoneyInput
                 bare
-                valueSen={draft.unitPriceCenti}
+                valueSen={draft.unitPriceSen}
                 inputClassName={styles.fieldInput}
                 align="left"
-                onCommit={(sen) => set('unitPriceCenti', sen ?? 0)}
+                onCommit={(sen) => set('unitPriceSen', sen ?? 0)}
               />
             </label>
 
@@ -3151,7 +3151,7 @@ type ModelDraft = {
   // into supplier_material_bindings.notes for every SKU fanned out from
   // this Model. Same value applied across the batch.
   description: string;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   leadTimeDays: number;
   moq: number;
   isMainSupplier: boolean;
@@ -3295,7 +3295,7 @@ const ModelSkuPickerDialog = ({
           .map((s) => s.code),
         supplierCode: '',
         description: '',
-        unitPriceCenti: avgPrice,
+        unitPriceSen: avgPrice,
         leadTimeDays: 7,
         moq: 1,
         isMainSupplier: false,
@@ -3331,7 +3331,7 @@ const ModelSkuPickerDialog = ({
           materialCode: sku.code,
           materialName: sku.name ?? sku.code,
           supplierSku,
-          unitPriceCenti: d.unitPriceCenti,
+          unitPriceSen: d.unitPriceSen,
           currency: 'MYR' as Currency,
           leadTimeDays: d.leadTimeDays,
           moq: d.moq,
@@ -3656,8 +3656,8 @@ const ModelSkuPickerDialog = ({
                             <td className={styles.tableRight}>
                               <MoneyInput
                                 bare
-                                valueSen={d.unitPriceCenti}
-                                onCommit={(sen) => setDraft(d.modelId, { unitPriceCenti: sen ?? 0 })}
+                                valueSen={d.unitPriceSen}
+                                onCommit={(sen) => setDraft(d.modelId, { unitPriceSen: sen ?? 0 })}
                                 style={{ ...smallInputStyle, width: 100, textAlign: 'right' }}
                               />
                             </td>
@@ -3735,7 +3735,7 @@ type MultiDraft = {
   materialCode: string;
   materialName: string;
   supplierSku: string;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   leadTimeDays: number;
   moq: number;
   isMainSupplier: boolean;
@@ -3813,7 +3813,7 @@ const MultiSkuPickerDialog = ({
         materialCode: p.code,
         materialName: p.name,
         supplierSku: '',
-        unitPriceCenti: p.base_price_sen ?? 0,
+        unitPriceSen: p.base_price_sen ?? 0,
         leadTimeDays: 7,
         moq: 1,
         isMainSupplier: false,
@@ -3833,7 +3833,7 @@ const MultiSkuPickerDialog = ({
       materialCode: d.materialCode,
       materialName: d.materialName,
       supplierSku: d.supplierSku.trim() || d.materialCode,
-      unitPriceCenti: d.unitPriceCenti,
+      unitPriceSen: d.unitPriceSen,
       currency: 'MYR' as Currency,
       leadTimeDays: d.leadTimeDays,
       moq: d.moq,
@@ -4012,8 +4012,8 @@ const MultiSkuPickerDialog = ({
                         <td className={styles.tableRight}>
                           <MoneyInput
                             bare
-                            valueSen={d.unitPriceCenti}
-                            onCommit={(sen) => setDraft(d.materialCode, { unitPriceCenti: sen ?? 0 })}
+                            valueSen={d.unitPriceSen}
+                            onCommit={(sen) => setDraft(d.materialCode, { unitPriceSen: sen ?? 0 })}
                             style={{ ...smallInputStyle, width: 100, textAlign: 'right' }}
                           />
                         </td>

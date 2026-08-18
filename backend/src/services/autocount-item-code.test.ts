@@ -40,7 +40,7 @@ const line = (over: Partial<ErpLine>): ErpLine => ({
   description: 'x',
   description2: null,
   qty: 1,
-  unit_price_centi: 1000,
+  unit_price_sen: 1000,
   location: 'KL',
   ...over,
 } as ErpLine);
@@ -357,8 +357,8 @@ describe('a sofa CREATE sends one line per compartment', () => {
   it('a clean build reaches AutoCount as TWO lines, each under its own code', () => {
     const d2 = '1 + 1 (28") / COL: BEIGE';
     const so = composeCreateSo({ doc_no: 'SO-1', customer_name: 'X' } as never, [
-      line({ item_code: '5526-1A(LHF)', item_group: 'sofa', description2: d2, unit_price_centi: 250000 }),
-      line({ item_code: '5526-1A(RHF)', item_group: 'sofa', description2: d2, unit_price_centi: 0 }),
+      line({ item_code: '5526-1A(LHF)', item_group: 'sofa', description2: d2, unit_price_sen: 250000 }),
+      line({ item_code: '5526-1A(RHF)', item_group: 'sofa', description2: d2, unit_price_sen: 0 }),
     ], 'KINGSLEY', null, []);
     expect(so.Details).toHaveLength(2);
     expect(so.Details.map((d) => d.ItemCode)).toEqual(['5526-1A(LHF)', '5526-1A(RHF)']);
@@ -371,8 +371,8 @@ describe('a sofa CREATE sends one line per compartment', () => {
   it('the SAME build already folded in the book stays ONE line, on the book\'s item', () => {
     const d2 = '1 + 1 (28") / COL: BEIGE';
     const { details } = composeDetails([
-      line({ item_code: '5526-1A(LHF)', item_group: 'sofa', description2: d2, unit_price_centi: 250000, linked_ac_dtlkey: 501 }),
-      line({ item_code: '5526-1A(RHF)', item_group: 'sofa', description2: d2, unit_price_centi: 0, linked_ac_dtlkey: 501 }),
+      line({ item_code: '5526-1A(LHF)', item_group: 'sofa', description2: d2, unit_price_sen: 250000, linked_ac_dtlkey: 501 }),
+      line({ item_code: '5526-1A(RHF)', item_group: 'sofa', description2: d2, unit_price_sen: 0, linked_ac_dtlkey: 501 }),
     ]);
     expect(details).toHaveLength(1);
     expect(details[0].ItemCode).toBe('RDS-5526 SOFA');

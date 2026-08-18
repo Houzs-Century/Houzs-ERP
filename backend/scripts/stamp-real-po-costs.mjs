@@ -4,8 +4,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // WHAT THIS WRITES, AND WHAT IT DELIBERATELY DOES NOT
 // ─────────────────────────────────────────────────────────────────────────────
-// WRITES:  scm.purchase_order_items.unit_price_centi
-//          scm.grn_items.unit_price_centi
+// WRITES:  scm.purchase_order_items.unit_price_sen
+//          scm.grn_items.unit_price_sen
 //          ...only where the line is blank (0/NULL) today.
 //
 // DOES NOT WRITE: scm.inventory_lots.unit_cost_sen — and that is a finding, not
@@ -30,7 +30,7 @@
 //
 // What it DOES do is stop the owner's requested GR -> PI conversion from writing
 // a wave of zero-value invoices. A PI built from a GRN copies grn_items.
-// unit_price_centi; a blank one produces a POSTED purchase invoice worth RM 0
+// unit_price_sen; a blank one produces a POSTED purchase invoice worth RM 0
 // that books no AP entry, consumes the GRN line's invoiceable quantity, and can
 // only be undone by cancelling it. Pricing the line first is what makes that
 // conversion correct. For any receipt posted from here on, the same price also
@@ -41,7 +41,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 //   · DRY-RUN by default. APPLY=1 writes.
 //   · Fills blanks only — never overwrites a hand-entered price.
-//   · RE-RUN: inert. The UPDATE re-asserts COALESCE(unit_price_centi,0)=0 in its
+//   · RE-RUN: inert. The UPDATE re-asserts COALESCE(unit_price_sen,0)=0 in its
 //     own WHERE, so a line this run priced is no longer a candidate and a second
 //     run plans and writes nothing for it.
 //   · Idempotent: once written, the line is no longer a candidate.
@@ -127,14 +127,14 @@ async function main() {
 
   // ── candidates ────────────────────────────────────────────────────────────
   const poLines = await sql.unsafe(`
-    SELECT i.id, i.unit_price_centi, i.material_code, p.po_number, p.linked_ac_docno
+    SELECT i.id, i.unit_price_sen, i.material_code, p.po_number, p.linked_ac_docno
       FROM "${sPoI}"."purchase_order_items" i
       JOIN "${sPo}"."purchase_orders" p ON p.id = i.purchase_order_id
      WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL
      ORDER BY p.po_number, i.material_code`);
 
   const grnLines = await sql.unsafe(`
-    SELECT gi.id, gi.unit_price_centi, gi.material_code, g.grn_number,
+    SELECT gi.id, gi.unit_price_sen, gi.material_code, g.grn_number,
            g.migrated_no_stock, p.po_number, p.linked_ac_docno
       FROM "${sGrnI}"."grn_items" gi
       JOIN "${sGrn}"."grns" g ON g.id = gi.grn_id
@@ -155,11 +155,11 @@ async function main() {
   ]) {
     for (const r of rows) {
       const res = resolvePrice(idx, r.linked_ac_docno, r.material_code);
-      const p = planWrite(r.unit_price_centi, res);
+      const p = planWrite(r.unit_price_sen, res);
       if (p.action === "WRITE") {
         plan[kind].push({
           id: r.id, doc: docOf(r), acPo: r.linked_ac_docno, code: r.material_code,
-          centi: p.priceCenti, piNo: res.piNo, piDate: res.piDate, grNo: res.grNo,
+          centi: p.priceSen, piNo: res.piNo, piDate: res.piDate, grNo: res.grNo,
           desc2: res.desc2, migrated: r.migrated_no_stock ?? null,
         });
       } else {
@@ -240,8 +240,8 @@ async function main() {
       // Re-assert the blank in the UPDATE itself, so a concurrent hand-entry
       // between plan and write is never clobbered.
       const res = await sql.unsafe(
-        `UPDATE "${schema}"."${table}" SET unit_price_centi = $1
-          WHERE id = $2 AND COALESCE(unit_price_centi, 0) = 0`, [w.centi, w.id]);
+        `UPDATE "${schema}"."${table}" SET unit_price_sen = $1
+          WHERE id = $2 AND COALESCE(unit_price_sen, 0) = 0`, [w.centi, w.id]);
       if (res.count > 0) { done++; written.push({ schema, table, id: w.id, centi: w.centi, doc: w.doc, code: w.code }); }
       else log(`SKIPPED AT WRITE (no longer blank) ${kind} ${w.doc} ${w.code}`);
     }
@@ -262,15 +262,15 @@ async function main() {
       const mine = written.filter((w) => w.schema === schema && w.table === table);
       if (!mine.length) continue;
       const back = await check.unsafe(
-        `SELECT id::text AS id, unit_price_centi, pg_typeof(unit_price_centi)::text AS t
+        `SELECT id::text AS id, unit_price_sen, pg_typeof(unit_price_sen)::text AS t
            FROM "${schema}"."${table}" WHERE id = ANY($1::uuid[])`, [mine.map((w) => w.id)]);
       const seen = new Map(back.map((r) => [r.id, r]));
-      log(`VERIFY (fresh connection) ${schema}.${table}: read back ${back.length}/${mine.length}; unit_price_centi type ${back[0]?.t ?? "n/a"}`);
+      log(`VERIFY (fresh connection) ${schema}.${table}: read back ${back.length}/${mine.length}; unit_price_sen type ${back[0]?.t ?? "n/a"}`);
       for (const w of mine) {
         const r = seen.get(String(w.id));
         if (!r) { wrong.push(`${w.doc} ${w.code}: row not readable on a fresh connection`); continue; }
-        if (!Number.isInteger(Number(r.unit_price_centi))) { wrong.push(`${w.doc} ${w.code}: unit_price_centi=${r.unit_price_centi} is not an integer`); continue; }
-        if (Number(r.unit_price_centi) !== Number(w.centi)) wrong.push(`${w.doc} ${w.code}: wrote ${w.centi} but the row now reads ${r.unit_price_centi}`);
+        if (!Number.isInteger(Number(r.unit_price_sen))) { wrong.push(`${w.doc} ${w.code}: unit_price_sen=${r.unit_price_sen} is not an integer`); continue; }
+        if (Number(r.unit_price_sen) !== Number(w.centi)) wrong.push(`${w.doc} ${w.code}: wrote ${w.centi} but the row now reads ${r.unit_price_sen}`);
       }
     }
     if (wrong.length) {

@@ -16,7 +16,7 @@ import {
 } from "../src/scm/lib/fulfillment-costing";
 import { canViewScmFinance } from "../src/scm/lib/houzs-perms";
 import {
-  parseAmountCenti,
+  parseAmountSen,
   buildLines,
   buildAllocations,
 } from "../src/scm/routes/payment-vouchers";
@@ -26,7 +26,7 @@ import type { AuthUser } from "../src/services/auth";
    (① order / ② DO ship-time FIFO / ③ SI landed) that must stay distinct after a
    supplier PI recost collapses ②→③ in the live column. These pin the exact
    behaviours the migration + write-path change exist to guarantee:
-     (a) ship freezes ship_cost_centi ONCE;
+     (a) ship freezes ship_cost_sen ONCE;
      (b) a later recost changes the live unit cost but leaves the frozen ②;
      (c) the report shows three DISTINCT numbers for a shipped+PI'd line and
          falls back + flags legacy rows;
@@ -41,8 +41,8 @@ describe("freezeShipCost — freeze once, never overwrite", () => {
   });
 
   test("(b) a later recost does NOT rewrite it: already set → undefined (no write)", () => {
-    // undefined is the signal the route uses to omit ship_cost_centi from the
-    // UPDATE — so recost changes unit_cost_centi but leaves the frozen ②.
+    // undefined is the signal the route uses to omit ship_cost_sen from the
+    // UPDATE — so recost changes unit_cost_sen but leaves the frozen ②.
     expect(freezeShipCost(1000, 1200)).toBeUndefined();
   });
 
@@ -57,7 +57,7 @@ describe("freezeShipCost — freeze once, never overwrite", () => {
     expect(atShip).toBe(1000);
     // PI lands, recost re-runs restampDoActualCost with the landed unit = 1200.
     const atRecost = freezeShipCost(atShip ?? null, 1200);
-    expect(atRecost).toBeUndefined(); // ship_cost_centi stays 1000; unit becomes 1200.
+    expect(atRecost).toBeUndefined(); // ship_cost_sen stays 1000; unit becomes 1200.
   });
 });
 
@@ -65,51 +65,51 @@ describe("freezeShipCost — freeze once, never overwrite", () => {
 describe("aggregateDoLines — ② resolution", () => {
   test("frozen ship cost is used and is distinct from the live (landed) cost", () => {
     const agg = aggregateDoLines([
-      { qty: 2, unit_cost_centi: 1200, line_cost_centi: 2400, ship_cost_centi: 1000 },
+      { qty: 2, unit_cost_sen: 1200, line_cost_sen: 2400, ship_cost_sen: 1000 },
     ]);
     expect(agg.present).toBe(true);
     expect(agg.isLegacy).toBe(false);
-    expect(agg.shipUnitCenti).toBe(1000); // ② frozen
-    expect(agg.shipLineCenti).toBe(2000);
-    expect(agg.liveUnitCenti).toBe(1200); // == ③ after PI
+    expect(agg.shipUnitSen).toBe(1000); // ② frozen
+    expect(agg.shipLineSen).toBe(2000);
+    expect(agg.liveUnitSen).toBe(1200); // == ③ after PI
   });
 
   test("weighted across multiple delivering DO lines", () => {
     const agg = aggregateDoLines([
-      { qty: 2, unit_cost_centi: 1200, line_cost_centi: 2400, ship_cost_centi: 1000 },
-      { qty: 1, unit_cost_centi: 1200, line_cost_centi: 1200, ship_cost_centi: 1300 },
+      { qty: 2, unit_cost_sen: 1200, line_cost_sen: 2400, ship_cost_sen: 1000 },
+      { qty: 1, unit_cost_sen: 1200, line_cost_sen: 1200, ship_cost_sen: 1300 },
     ]);
     expect(agg.qty).toBe(3);
-    expect(agg.shipLineCenti).toBe(2 * 1000 + 1 * 1300); // 3300
-    expect(agg.shipUnitCenti).toBe(Math.round(3300 / 3)); // 1100
+    expect(agg.shipLineSen).toBe(2 * 1000 + 1 * 1300); // 3300
+    expect(agg.shipUnitSen).toBe(Math.round(3300 / 3)); // 1100
   });
 
   test("legacy: a NULL ship_cost taints the line — ② falls back to live + is flagged", () => {
     const agg = aggregateDoLines([
-      { qty: 1, unit_cost_centi: 1200, line_cost_centi: 1200, ship_cost_centi: null },
+      { qty: 1, unit_cost_sen: 1200, line_cost_sen: 1200, ship_cost_sen: null },
     ]);
     expect(agg.isLegacy).toBe(true);
-    expect(agg.shipUnitCenti).toBe(1200); // == live, honest fallback
-    expect(agg.liveUnitCenti).toBe(1200);
+    expect(agg.shipUnitSen).toBe(1200); // == live, honest fallback
+    expect(agg.liveUnitSen).toBe(1200);
   });
 
   test("no DO lines → not present, no legacy", () => {
     const agg = aggregateDoLines([]);
     expect(agg.present).toBe(false);
     expect(agg.isLegacy).toBe(false);
-    expect(agg.shipUnitCenti).toBeNull();
+    expect(agg.shipUnitSen).toBeNull();
   });
 });
 
 describe("aggregateSiLines — ③ resolution", () => {
   test("weighted landed unit cost", () => {
     const agg = aggregateSiLines([
-      { qty: 2, unit_cost_centi: 1200, line_cost_centi: 2400 },
-      { qty: 1, unit_cost_centi: 1500, line_cost_centi: 1500 },
+      { qty: 2, unit_cost_sen: 1200, line_cost_sen: 2400 },
+      { qty: 1, unit_cost_sen: 1500, line_cost_sen: 1500 },
     ]);
     expect(agg.present).toBe(true);
-    expect(agg.lineCenti).toBe(3900);
-    expect(agg.unitCenti).toBe(Math.round(3900 / 3)); // 1300
+    expect(agg.lineSen).toBe(3900);
+    expect(agg.unitSen).toBe(Math.round(3900 / 3)); // 1300
   });
 
   test("no SI lines → not present (this is what makes a line 'pending')", () => {
@@ -134,47 +134,47 @@ describe("computeLineComparison — (c) the three-way split", () => {
   test("shipped + PI'd line shows three DISTINCT numbers with correct variances", () => {
     const row = computeLineComparison({
       dims: dims({ qty: 2 }),
-      order: { unitCenti: 800, lineCenti: 1600 },
-      doAgg: aggregateDoLines([{ qty: 2, unit_cost_centi: 1200, line_cost_centi: 2400, ship_cost_centi: 1000 }]),
-      siAgg: aggregateSiLines([{ qty: 2, unit_cost_centi: 1200, line_cost_centi: 2400 }]),
+      order: { unitSen: 800, lineSen: 1600 },
+      doAgg: aggregateDoLines([{ qty: 2, unit_cost_sen: 1200, line_cost_sen: 2400, ship_cost_sen: 1000 }]),
+      siAgg: aggregateSiLines([{ qty: 2, unit_cost_sen: 1200, line_cost_sen: 2400 }]),
     });
     // ① 800  ② 1000  ③ 1200 — all different.
-    expect(row.order_unit_centi).toBe(800);
-    expect(row.do_unit_centi).toBe(1000);
-    expect(row.si_unit_centi).toBe(1200);
-    expect(new Set([row.order_unit_centi, row.do_unit_centi, row.si_unit_centi]).size).toBe(3);
+    expect(row.order_unit_sen).toBe(800);
+    expect(row.do_unit_sen).toBe(1000);
+    expect(row.si_unit_sen).toBe(1200);
+    expect(new Set([row.order_unit_sen, row.do_unit_sen, row.si_unit_sen]).size).toBe(3);
     expect(row.do_cost_is_legacy).toBe(false);
     expect(row.pending).toBe(false);
     // variances (unit): ②−① = +200 (+25%), ③−② = +200 (+20%), ③−① = +400 (+50%).
-    expect(row.var_do_order_centi).toBe(200);
+    expect(row.var_do_order_sen).toBe(200);
     expect(row.var_do_order_pct).toBeCloseTo(25);
-    expect(row.var_si_do_centi).toBe(200);
+    expect(row.var_si_do_sen).toBe(200);
     expect(row.var_si_do_pct).toBeCloseTo(20);
-    expect(row.var_si_order_centi).toBe(400);
+    expect(row.var_si_order_sen).toBe(400);
     expect(row.max_abs_var_pct).toBeCloseTo(25);
   });
 
   test("legacy DO row: ②≈③ but FLAGGED so the owner reads it as a limitation, not convergence", () => {
     const row = computeLineComparison({
       dims: dims(),
-      order: { unitCenti: 800, lineCenti: 800 },
-      doAgg: aggregateDoLines([{ qty: 1, unit_cost_centi: 1200, line_cost_centi: 1200, ship_cost_centi: null }]),
-      siAgg: aggregateSiLines([{ qty: 1, unit_cost_centi: 1200, line_cost_centi: 1200 }]),
+      order: { unitSen: 800, lineSen: 800 },
+      doAgg: aggregateDoLines([{ qty: 1, unit_cost_sen: 1200, line_cost_sen: 1200, ship_cost_sen: null }]),
+      siAgg: aggregateSiLines([{ qty: 1, unit_cost_sen: 1200, line_cost_sen: 1200 }]),
     });
     expect(row.do_cost_is_legacy).toBe(true);
-    expect(row.do_unit_centi).toBe(row.si_unit_centi); // ②≈③, the legacy limit
+    expect(row.do_unit_sen).toBe(row.si_unit_sen); // ②≈③, the legacy limit
   });
 
   test("pending: delivered but not yet invoiced → no ③, flagged pending", () => {
     const row = computeLineComparison({
       dims: dims(),
-      order: { unitCenti: 800, lineCenti: 800 },
-      doAgg: aggregateDoLines([{ qty: 1, unit_cost_centi: 1000, line_cost_centi: 1000, ship_cost_centi: 1000 }]),
+      order: { unitSen: 800, lineSen: 800 },
+      doAgg: aggregateDoLines([{ qty: 1, unit_cost_sen: 1000, line_cost_sen: 1000, ship_cost_sen: 1000 }]),
       siAgg: aggregateSiLines([]),
     });
     expect(row.pending).toBe(true);
     expect(row.si_present).toBe(false);
-    expect(row.si_unit_centi).toBeNull();
+    expect(row.si_unit_sen).toBeNull();
     expect(row.var_si_do_pct).toBeNull(); // no lie off an absent stage
   });
 });
@@ -184,9 +184,9 @@ function sampleRows(): LineComparison[] {
   const mk = (over: Partial<LineDims>, order: number, doShip: number, si: number | null) =>
     computeLineComparison({
       dims: dims(over),
-      order: { unitCenti: order, lineCenti: order * (over.qty ?? 1) },
-      doAgg: aggregateDoLines([{ qty: over.qty ?? 1, unit_cost_centi: doShip, line_cost_centi: doShip * (over.qty ?? 1), ship_cost_centi: doShip }]),
-      siAgg: si == null ? aggregateSiLines([]) : aggregateSiLines([{ qty: over.qty ?? 1, unit_cost_centi: si, line_cost_centi: si * (over.qty ?? 1) }]),
+      order: { unitSen: order, lineSen: order * (over.qty ?? 1) },
+      doAgg: aggregateDoLines([{ qty: over.qty ?? 1, unit_cost_sen: doShip, line_cost_sen: doShip * (over.qty ?? 1), ship_cost_sen: doShip }]),
+      siAgg: si == null ? aggregateSiLines([]) : aggregateSiLines([{ qty: over.qty ?? 1, unit_cost_sen: si, line_cost_sen: si * (over.qty ?? 1) }]),
     });
   return [
     mk({ so_item_id: "a", item_code: "ITM-1", category: "MATTRESS", menu: "Model A", customer_state: "Selangor" }, 1000, 1000, 1010), // ~1% var
@@ -245,9 +245,9 @@ describe("groupRows — (d) all four dimensions", () => {
     const mk = (id: string, category: string, order: number) =>
       computeLineComparison({
         dims: dims({ so_item_id: id, category }),
-        order: { unitCenti: order, lineCenti: order },
+        order: { unitSen: order, lineSen: order },
         doAgg: aggregateDoLines([]),
-        siAgg: aggregateSiLines([{ qty: 1, unit_cost_centi: order + 100, line_cost_centi: order + 100 }]),
+        siAgg: aggregateSiLines([{ qty: 1, unit_cost_sen: order + 100, line_cost_sen: order + 100 }]),
       });
     const g = groupRows(
       [mk("a", "bedframe", 1000), mk("b", "BEDFRAME", 2000), mk("c", "Bedframe", 3000)],
@@ -259,8 +259,8 @@ describe("groupRows — (d) all four dimensions", () => {
     // The whole point: the count and the money are the SUM of all three
     // spellings, not whichever spelling happened to be stored first.
     expect(g[0].lines).toBe(3);
-    expect(g[0].order_cost_centi).toBe(6000);
-    expect(g[0].variance_centi).toBe(300);
+    expect(g[0].order_cost_sen).toBe(6000);
+    expect(g[0].variance_sen).toBe(300);
   });
 
   test("surrounding whitespace does not fork a category either", () => {
@@ -292,7 +292,7 @@ describe("groupRows — (d) all four dimensions", () => {
   test("a missing dimension value groups under Unspecified, not dropped", () => {
     const rows = [computeLineComparison({
       dims: dims({ customer_state: null }),
-      order: { unitCenti: 100, lineCenti: 100 },
+      order: { unitSen: 100, lineSen: 100 },
       doAgg: aggregateDoLines([]),
       siAgg: aggregateSiLines([]),
     })];
@@ -308,12 +308,12 @@ describe("summarize — the 5-tile strip", () => {
   test("totals, variance, pending + legacy counts", () => {
     const s = summarize(sampleRows());
     expect(s.lines).toBe(3);
-    expect(s.order_cost_centi).toBe(3000);          // 1000*3
-    expect(s.do_cost_centi).toBe(1000 + 1200 + 1000); // 3200
-    expect(s.si_cost_centi).toBe(1010 + 1200 + 0);    // 2210 (pending row contributes 0)
+    expect(s.order_cost_sen).toBe(3000);          // 1000*3
+    expect(s.do_cost_sen).toBe(1000 + 1200 + 1000); // 3200
+    expect(s.si_cost_sen).toBe(1010 + 1200 + 0);    // 2210 (pending row contributes 0)
     expect(s.pending_count).toBe(1);
     expect(s.legacy_count).toBe(0);
-    expect(s.variance_centi).toBe(s.si_cost_centi - s.order_cost_centi);
+    expect(s.variance_sen).toBe(s.si_cost_sen - s.order_cost_sen);
   });
 });
 
@@ -362,31 +362,31 @@ describe("(e) the report's finance gate blocks sales, admits finance", () => {
 
    These pin the boundary: a payable amount is a non-negative INTEGER sen. */
 describe("payment voucher — line amounts are validated, not clamped", () => {
-  test("parseAmountCenti admits a plain non-negative integer sen", () => {
-    expect(parseAmountCenti(0)).toBe(0);
-    expect(parseAmountCenti(150000)).toBe(150000);
+  test("parseAmountSen admits a plain non-negative integer sen", () => {
+    expect(parseAmountSen(0)).toBe(0);
+    expect(parseAmountSen(150000)).toBe(150000);
   });
 
-  test("parseAmountCenti refuses what the old clamp turned into a silent zero", () => {
-    expect(parseAmountCenti(-500000)).toBeNull();   // was 0
-    expect(parseAmountCenti("abc")).toBeNull();     // was 0
-    expect(parseAmountCenti(NaN)).toBeNull();       // was 0
-    expect(parseAmountCenti(Infinity)).toBeNull();  // was 0
+  test("parseAmountSen refuses what the old clamp turned into a silent zero", () => {
+    expect(parseAmountSen(-500000)).toBeNull();   // was 0
+    expect(parseAmountSen("abc")).toBeNull();     // was 0
+    expect(parseAmountSen(NaN)).toBeNull();       // was 0
+    expect(parseAmountSen(Infinity)).toBeNull();  // was 0
   });
 
-  test("parseAmountCenti refuses a fractional amount — that is RM in a sen field", () => {
-    expect(parseAmountCenti(48.5)).toBeNull();
+  test("parseAmountSen refuses a fractional amount — that is RM in a sen field", () => {
+    expect(parseAmountSen(48.5)).toBeNull();
   });
 
   test("a negative line is refused outright rather than saved as a zero line", () => {
-    expect(buildLines([{ debitAccountCode: "500-0000", amountCenti: -500000 }]))
+    expect(buildLines([{ debitAccountCode: "500-0000", amountSen: -500000 }]))
       .toEqual({ error: "line_amount_invalid" });
   });
 
   test("a valid line still builds, and the header total is its sum", () => {
     const built = buildLines([
-      { debitAccountCode: "500-0000", amountCenti: 150000 },
-      { debitAccountCode: "500-0001", amountCenti: 25000 },
+      { debitAccountCode: "500-0000", amountSen: 150000 },
+      { debitAccountCode: "500-0001", amountSen: 25000 },
     ]);
     expect("error" in built).toBe(false);
     if ("error" in built) return;
@@ -395,22 +395,22 @@ describe("payment voucher — line amounts are validated, not clamped", () => {
   });
 
   test("an existing guard is untouched — a line with no debit account still fails on that", () => {
-    expect(buildLines([{ amountCenti: 1000 }])).toEqual({ error: "debit_account_required" });
+    expect(buildLines([{ amountSen: 1000 }])).toEqual({ error: "debit_account_required" });
   });
 
   test("a negative ALLOCATION is refused, not silently dropped as a zero row", () => {
-    expect(buildAllocations([{ piId: "pi-1", amountCenti: -1 }]))
+    expect(buildAllocations([{ piId: "pi-1", amountSen: -1 }]))
       .toEqual({ error: "allocation_amount_invalid" });
   });
 
   test("allocations still sum, and an explicit zero row is still dropped", () => {
     const a = buildAllocations([
-      { piId: "pi-1", amountCenti: 40000 },
-      { piId: "pi-2", amountCenti: 0 },
+      { piId: "pi-1", amountSen: 40000 },
+      { piId: "pi-2", amountSen: 0 },
     ]);
     expect("error" in a).toBe(false);
     if ("error" in a) return;
     expect(a.total).toBe(40000);
-    expect(a.rows).toEqual([{ pi_id: "pi-1", amount_centi: 40000 }]);
+    expect(a.rows).toEqual([{ pi_id: "pi-1", amount_sen: 40000 }]);
   });
 });

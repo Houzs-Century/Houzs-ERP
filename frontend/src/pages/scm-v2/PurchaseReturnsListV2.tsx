@@ -5,7 +5,7 @@
 // side where every other doc is money-out.
 
 import { useMemo, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -56,7 +56,7 @@ type PrRow = {
   return_number: string;
   status: string;
   return_date: string | null;
-  refund_centi?: number;
+  refund_sen?: number;
   reason?: string | null;
   notes?: string | null;
   currency?: string;
@@ -81,18 +81,18 @@ type PrItem = {
   /* Per-line reason (backend purchase_return_items.reason) — nullable; when
      unset the header-level reason (shown as a callout above) is the fallback. */
   reason?: string | null;
-  unit_price_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen?: number;
+  line_total_sen?: number;
 };
 
 type StatusTab = "all" | "draft" | "posted" | "completed" | "cancelled";
 
-const fmtRm = (centi: number): string => fmtCenti(centi);
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 const supplierNameOf = (r: PrRow): string => r.supplier?.name || "—";
 const supplierCodeOf = (r: PrRow): string => r.supplier?.code || "—";
 const sourceOf = (r: PrRow): string => r.grn?.grn_number || r.purchase_order?.po_number || "—";
-const refundOf = (r: PrRow): number => r.refund_centi ?? 0;
+const refundOf = (r: PrRow): number => r.refund_sen ?? 0;
 
 const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }> = {
   DRAFT:     { tone: "warning", label: "Draft",     bucket: "draft" },
@@ -344,7 +344,7 @@ function DetailDrawer({
                     <span className="truncate text-[12px] italic text-ink-secondary" title={l.reason ?? ''}>
                       {l.reason ? l.reason : <span className="not-italic text-ink-muted">—</span>}
                     </span>
-                    <span className="text-right font-money text-[12.5px] font-semibold text-synced">{fmtRm(l.line_total_centi ?? 0)}</span>
+                    <span className="text-right font-money text-[12.5px] font-semibold text-synced">{fmtRm(l.line_total_sen ?? 0)}</span>
                   </div>
                   );
                 })}
@@ -441,7 +441,7 @@ function PrLinesExpansion({ id }: { id: string }) {
     description2: l.description2 ?? null,
     variants: l.variants ?? null,
     qty: Number(l.qty_returned ?? l.qty ?? 0),
-    amountCenti: l.line_total_centi ?? 0,
+    amountSen: l.line_total_sen ?? 0,
   }));
   return (
     <DocumentLinesExpansion

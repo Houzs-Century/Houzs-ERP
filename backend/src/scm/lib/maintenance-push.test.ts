@@ -28,8 +28,8 @@ const remote = () => ({
   ],
   totalHeights: [{ value: '10"', priceSen: 40000 }],
   sofaCompartmentMeta: {
-    '1A(LHF)': { description: 'Armless left', defaultPriceCenti: 0 },
-    Console: { description: 'Wood console', defaultPriceCenti: 15000 },
+    '1A(LHF)': { description: 'Armless left', defaultPriceSen: 0 },
+    Console: { description: 'Wood console', defaultPriceSen: 15000 },
   },
 });
 
@@ -38,7 +38,7 @@ describe('collectPriceAnchors', () => {
     const a = collectPriceAnchors(remote());
     expect(a.get('divanHeights[#10"].sellingPriceSen')).toBe('12500');
     expect(a.get('totalHeights[#10"].priceSen')).toBe('40000');
-    expect(a.get('sofaCompartmentMeta.Console.defaultPriceCenti')).toBe('15000');
+    expect(a.get('sofaCompartmentMeta.Console.defaultPriceSen')).toBe('15000');
   });
 
   test('reordering a pool does not move an anchor (no false positives)', () => {

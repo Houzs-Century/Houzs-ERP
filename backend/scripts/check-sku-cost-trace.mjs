@@ -9,7 +9,7 @@
 // could have fed it so the wrong one is identifiable by inspection.
 //
 // WHAT THE CODE SAYS THAT COLUMN IS (trace of origin/main, 2026-08-08):
-//   mfg_sales_order_items.unit_cost_centi is the ①-stage ORDER-TIME ESTIMATE
+//   mfg_sales_order_items.unit_cost_sen is the ①-stage ORDER-TIME ESTIMATE
 //   (fulfillment-costing.ts three-way model: ① SO estimate, ② DO ship-time
 //   FIFO, ③ SI landed after PI recost). It is stamped at SO create
 //   (mfg-sales-orders.ts ~4155: recompute unit_cost_sen > 0, else
@@ -20,7 +20,7 @@
 //   computeMfgLineCost ~483); for SOFA it is the per-(height,tier) COST grid
 //   seat_height_prices[].priceSen summed per module (mfg-pricing-recompute.ts
 //   ~463). NOTHING ever writes a FIFO/GRN/PI cost back onto the SO line — the
-//   actuals land on delivery_order_items (restampDoActualCost / ship_cost_centi)
+//   actuals land on delivery_order_items (restampDoActualCost / ship_cost_sen)
 //   and sales_invoice_items (recost.ts) only. So:
 //     * a WRONG NON-ZERO SO cost = a wrong PRODUCT-MASTER cost field, and
 //     * an ALL-ZERO SO cost = the product master carries no cost for those
@@ -28,7 +28,7 @@
 //   One known feeder of the product-master field: the cost-anchor supplier
 //   binding mirror (suppliers.ts syncAnchoredProductFromBinding →
 //   cost-anchor-sync.ts FLAT lane) copies supplier_material_bindings
-//   .unit_price_centi → mfg_products.base_price_sen 1:1 WITH NO CURRENCY
+//   .unit_price_sen → mfg_products.base_price_sen 1:1 WITH NO CURRENCY
 //   CONVERSION, and the binding HAS a currency column (can be RMB). This
 //   script prints the binding currency so that case is visible.
 //
@@ -42,7 +42,7 @@
 //          unique across companies) — cost_price_sen / base_price_sen /
 //          price1_sen / sell_price_sen / seat-cost-grid summary, and WHICH
 //          field (if any) equals the stamped SO cost
-//       b. supplier_material_bindings for the code — unit_price_centi,
+//       b. supplier_material_bindings for the code — unit_price_sen,
 //          CURRENCY, is_cost_anchor, price_matrix presence
 //       c. master_price_history — who/when last changed the cost fields
 //       d. FIFO lots (qty received/remaining, unit_cost_sen, batch/source GRN)
@@ -142,8 +142,8 @@ async function main() {
   // ── [1] SO header ─────────────────────────────────────────────────────────
   const hdrCols = so.sel([
     "doc_no", "company_id", "status", "so_date", "created_at", "debtor_name",
-    "local_total_centi", "total_cost_centi", "total_margin_centi",
-    "margin_pct_basis", "mattress_sofa_cost_centi", "line_count",
+    "local_total_sen", "total_cost_sen", "total_margin_sen",
+    "margin_pct_basis", "mattress_sofa_cost_sen", "line_count",
   ]);
   const hdr = (await pg.unsafe(
     `SELECT ${hdrCols} FROM ${so.q} WHERE doc_no = $1`, [SO_DOC_NO],
@@ -154,22 +154,22 @@ async function main() {
   }
   const companyId = hdr.company_id ?? null;
   line(`[1] SO ${hdr.doc_no}  company_id=${companyId ?? "—"}  status=${hdr.status}  so_date=${hdr.so_date ?? "—"}  created_at=${hdr.created_at ?? "—"}`);
-  line(`    debtor=${short(hdr.debtor_name, 40)}  total=${rm(hdr.local_total_centi)}  TOTAL COST=${rm(hdr.total_cost_centi)}  margin=${rm(hdr.total_margin_centi)}  margin_bp=${hdr.margin_pct_basis ?? "—"}`);
+  line(`    debtor=${short(hdr.debtor_name, 40)}  total=${rm(hdr.local_total_sen)}  TOTAL COST=${rm(hdr.total_cost_sen)}  margin=${rm(hdr.total_margin_sen)}  margin_bp=${hdr.margin_pct_basis ?? "—"}`);
   line("");
 
   // ── [2] every line's stamped figures ──────────────────────────────────────
   const liCols = soi.sel([
     "id", "item_code", "description", "item_group", "qty", "cancelled",
-    "unit_price_centi", "discount_centi", "total_centi",
-    "unit_cost_centi", "line_cost_centi", "line_margin_centi", "warehouse_id",
+    "unit_price_sen", "discount_sen", "total_sen",
+    "unit_cost_sen", "line_cost_sen", "line_margin_sen", "warehouse_id",
   ]);
   const items = await pg.unsafe(
     `SELECT ${liCols} FROM ${soi.q} WHERE doc_no = $1 ORDER BY id`, [SO_DOC_NO],
   );
-  line(`[2] SO lines (${items.length}) — stamped order-time figures (col: mfg_sales_order_items.unit_cost_centi):`);
+  line(`[2] SO lines (${items.length}) — stamped order-time figures (col: mfg_sales_order_items.unit_cost_sen):`);
   for (const it of items) {
     line(
-      `    ${short(it.item_code, 34).padEnd(34)} ${short(it.description, 30).padEnd(30)} qty=${String(it.qty).padStart(3)}  sell=${rm(it.unit_price_centi).padStart(11)}  COST=${rm(it.unit_cost_centi).padStart(11)}  lineCost=${rm(it.line_cost_centi).padStart(12)}  margin=${rm(it.line_margin_centi).padStart(12)}${it.cancelled ? "  [CANCELLED]" : ""}`,
+      `    ${short(it.item_code, 34).padEnd(34)} ${short(it.description, 30).padEnd(30)} qty=${String(it.qty).padStart(3)}  sell=${rm(it.unit_price_sen).padStart(11)}  COST=${rm(it.unit_cost_sen).padStart(11)}  lineCost=${rm(it.line_cost_sen).padStart(12)}  margin=${rm(it.line_margin_sen).padStart(12)}${it.cancelled ? "  [CANCELLED]" : ""}`,
     );
   }
   line("");
@@ -216,7 +216,7 @@ async function main() {
 
   for (const code of codes) {
     const myLines = traced.filter((it) => String(it.item_code) === code);
-    const stamped = [...new Set(myLines.map((it) => Number(it.unit_cost_centi ?? 0)))];
+    const stamped = [...new Set(myLines.map((it) => Number(it.unit_cost_sen ?? 0)))];
     line(`──────────────────────────────────────────────────────────────────────`);
     line(`[3] ${code} — stamped unit cost(s): ${stamped.map(rm).join(", ")}`);
 
@@ -275,7 +275,7 @@ async function main() {
     //    with NO currency conversion (cost-anchor-sync FLAT lane).
     if (smb) {
       const bCols = smb.sel([
-        "id", "supplier_id", "unit_price_centi", "currency", "is_cost_anchor",
+        "id", "supplier_id", "unit_price_sen", "currency", "is_cost_anchor",
         "price_matrix", "updated_at", "company_id",
       ]);
       const bind = await pg.unsafe(
@@ -291,11 +291,11 @@ async function main() {
           supName = s[0] ? `${s[0].name}${s[0].country ? ` (${s[0].country})` : ""}` : "—";
         }
         const anchor = smb.has("is_cost_anchor") ? (b.is_cost_anchor ? "YES" : "no") : "n/a";
-        line(`      supplier=${short(supName, 34)}  unit_price=${rm(b.unit_price_centi)}  currency=${b.currency ?? "MYR"}  cost_anchor=${anchor}  matrix=${b.price_matrix ? "yes" : "no"}  updated=${short(b.updated_at, 20)}`);
+        line(`      supplier=${short(supName, 34)}  unit_price=${rm(b.unit_price_sen)}  currency=${b.currency ?? "MYR"}  cost_anchor=${anchor}  matrix=${b.price_matrix ? "yes" : "no"}  updated=${short(b.updated_at, 20)}`);
         const cur = String(b.currency ?? "MYR").toUpperCase();
         for (const s of stamped) {
-          if (s > 0 && Number(b.unit_price_centi ?? -1) === s && cur !== "MYR") {
-            verdicts.push(`${code}: WARNING — the supplier binding price ${cur} ${(s / 100).toFixed(2)} equals the stamped SO cost figure, and the cost-anchor mirror (suppliers.ts syncAnchoredProductFromBinding -> cost-anchor-sync FLAT lane) copies binding.unit_price_centi into mfg_products.base_price_sen 1:1 with NO currency conversion. The "RM" cost is very likely a raw ${cur} figure.`);
+          if (s > 0 && Number(b.unit_price_sen ?? -1) === s && cur !== "MYR") {
+            verdicts.push(`${code}: WARNING — the supplier binding price ${cur} ${(s / 100).toFixed(2)} equals the stamped SO cost figure, and the cost-anchor mirror (suppliers.ts syncAnchoredProductFromBinding -> cost-anchor-sync FLAT lane) copies binding.unit_price_sen into mfg_products.base_price_sen 1:1 with NO currency conversion. The "RM" cost is very likely a raw ${cur} figure.`);
           }
         }
       }
@@ -346,15 +346,15 @@ async function main() {
           const g = (await pg.unsafe(`SELECT ${gCols} FROM ${grns.q} WHERE id = $1`, [gid]))[0];
           const rate = g && grns.has("exchange_rate") ? Number(g.exchange_rate ?? 1) : 1;
           line(`      GRN ${g?.grn_number ?? gid}  currency=${g?.currency ?? "MYR"}  exchange_rate=${g ? (g.exchange_rate ?? "—") : "—"}  status=${g?.status ?? "—"}`);
-          const giCols = grnItems.sel(["id", "material_code", "qty_accepted", "unit_price_centi", "allocated_charge_centi"]);
+          const giCols = grnItems.sel(["id", "material_code", "qty_accepted", "unit_price_sen", "allocated_charge_sen"]);
           const gi = await pg.unsafe(
             `SELECT ${giCols} FROM ${grnItems.q} WHERE grn_id = $1 AND material_code = $2`, [gid, code],
           );
           for (const glr of gi) {
-            const myr = Math.round(Number(glr.unit_price_centi ?? 0) * (Number.isFinite(rate) && rate > 0 ? rate : 1));
-            line(`        GRN line: qty=${glr.qty_accepted}  price=${(Number(glr.unit_price_centi ?? 0) / 100).toFixed(2)} ${g?.currency ?? "MYR"}  (= ${rm(myr)} at rate)  freight_alloc=${rm(glr.allocated_charge_centi)}`);
+            const myr = Math.round(Number(glr.unit_price_sen ?? 0) * (Number.isFinite(rate) && rate > 0 ? rate : 1));
+            line(`        GRN line: qty=${glr.qty_accepted}  price=${(Number(glr.unit_price_sen ?? 0) / 100).toFixed(2)} ${g?.currency ?? "MYR"}  (= ${rm(myr)} at rate)  freight_alloc=${rm(glr.allocated_charge_sen)}`);
             if (pi && piItems) {
-              const piCols = piItems.sel(["purchase_invoice_id", "qty", "unit_price_centi", "allocated_charge_centi"]);
+              const piCols = piItems.sel(["purchase_invoice_id", "qty", "unit_price_sen", "allocated_charge_sen"]);
               const pil = await pg.unsafe(
                 `SELECT ${piCols} FROM ${piItems.q} WHERE grn_item_id = $1`, [glr.id],
               );
@@ -362,10 +362,10 @@ async function main() {
                 const phCols = pi.sel(["invoice_number", "status", "currency", "exchange_rate"]);
                 const ph = (await pg.unsafe(`SELECT ${phCols} FROM ${pi.q} WHERE id = $1`, [pl.purchase_invoice_id]))[0];
                 const prate = ph && pi.has("exchange_rate") ? Number(ph.exchange_rate ?? 1) : 1;
-                const pMyr = Math.round(Number(pl.unit_price_centi ?? 0) * (Number.isFinite(prate) && prate > 0 ? prate : 1));
-                line(`        PI ${ph?.invoice_number ?? pl.purchase_invoice_id}  [${ph?.status ?? "—"}]  qty=${pl.qty}  price=${(Number(pl.unit_price_centi ?? 0) / 100).toFixed(2)} ${ph?.currency ?? "MYR"}  rate=${ph?.exchange_rate ?? "—"}  -> landed ${rm(pMyr)}/unit  freight_alloc=${rm(pl.allocated_charge_centi)}`);
+                const pMyr = Math.round(Number(pl.unit_price_sen ?? 0) * (Number.isFinite(prate) && prate > 0 ? prate : 1));
+                line(`        PI ${ph?.invoice_number ?? pl.purchase_invoice_id}  [${ph?.status ?? "—"}]  qty=${pl.qty}  price=${(Number(pl.unit_price_sen ?? 0) / 100).toFixed(2)} ${ph?.currency ?? "MYR"}  rate=${ph?.exchange_rate ?? "—"}  -> landed ${rm(pMyr)}/unit  freight_alloc=${rm(pl.allocated_charge_sen)}`);
                 for (const s of stamped) {
-                  if (s > 0 && Number(pl.unit_price_centi ?? -1) === s && String(ph?.currency ?? "MYR").toUpperCase() !== "MYR") {
+                  if (s > 0 && Number(pl.unit_price_sen ?? -1) === s && String(ph?.currency ?? "MYR").toUpperCase() !== "MYR") {
                     verdicts.push(`${code}: NOTE — PI ${ph?.invoice_number} bills ${ph?.currency} ${(s / 100).toFixed(2)}/unit, numerically equal to the stamped SO cost. If they share a source figure, the SO cost is a raw ${ph?.currency} number booked as RM.`);
                   }
                 }
@@ -381,7 +381,7 @@ async function main() {
     // f. downstream DO/SI lines for these SO lines (the ②/③ actuals).
     const soItemIds = myLines.map((it) => it.id);
     if (doi && soItemIds.length > 0 && doi.has("so_item_id")) {
-      const dCols = doi.sel(["delivery_order_id", "qty", "unit_cost_centi", "line_cost_centi", "ship_cost_centi"]);
+      const dCols = doi.sel(["delivery_order_id", "qty", "unit_cost_sen", "line_cost_sen", "ship_cost_sen"]);
       const dRows = await pg.unsafe(
         `SELECT ${dCols} FROM ${doi.q} WHERE so_item_id::text = ANY($1)`, [soItemIds.map(String)],
       );
@@ -392,12 +392,12 @@ async function main() {
           const dh = (await pg.unsafe(`SELECT ${dos.sel(["do_number", "status"])} FROM ${dos.q} WHERE id = $1`, [d.delivery_order_id]))[0];
           doNo = dh ? `${dh.do_number} [${dh.status}]` : doNo;
         }
-        line(`      ${short(doNo, 34)}  qty=${d.qty}  live_cost=${rm(d.unit_cost_centi)}  ship_frozen=${doi.has("ship_cost_centi") ? rm(d.ship_cost_centi) : "n/a"}`);
+        line(`      ${short(doNo, 34)}  qty=${d.qty}  live_cost=${rm(d.unit_cost_sen)}  ship_frozen=${doi.has("ship_cost_sen") ? rm(d.ship_cost_sen) : "n/a"}`);
       }
       if (dRows.length === 0) line("      (none — undelivered; the ② ship-time FIFO cost does not exist yet)");
     }
     if (sii && soItemIds.length > 0 && sii.has("so_item_id")) {
-      const sCols = sii.sel(["sales_invoice_id", "qty", "unit_cost_centi", "line_cost_centi"]);
+      const sCols = sii.sel(["sales_invoice_id", "qty", "unit_cost_sen", "line_cost_sen"]);
       const sRows = await pg.unsafe(
         `SELECT ${sCols} FROM ${sii.q} WHERE so_item_id::text = ANY($1)`, [soItemIds.map(String)],
       );
@@ -408,7 +408,7 @@ async function main() {
           const sh = (await pg.unsafe(`SELECT ${sis.sel(["invoice_number", "status"])} FROM ${sis.q} WHERE id = $1`, [s.sales_invoice_id]))[0];
           siNo = sh ? `${sh.invoice_number} [${sh.status}]` : siNo;
         }
-        line(`      ${short(siNo, 34)}  qty=${s.qty}  landed_cost=${rm(s.unit_cost_centi)}`);
+        line(`      ${short(siNo, 34)}  qty=${s.qty}  landed_cost=${rm(s.unit_cost_sen)}`);
       }
     }
     line("");
@@ -420,7 +420,7 @@ async function main() {
     notice("No stamped figure matched any candidate source verbatim — compare the printed product-master fields, binding currency and GRN/PI landed units by eye; the divergent one is the answer.");
   }
   for (const v of verdicts) notice(v);
-  notice("Reminder: mfg_sales_order_items.unit_cost_centi is the create-time PRODUCT-MASTER estimate (①). FIFO/GRN/PI actuals live on DO (②, ship_cost_centi) and SI (③) and are never written back to the SO.");
+  notice("Reminder: mfg_sales_order_items.unit_cost_sen is the create-time PRODUCT-MASTER estimate (①). FIFO/GRN/PI actuals live on DO (②, ship_cost_sen) and SI (③) and are never written back to the SO.");
 }
 
 main()

@@ -1,17 +1,17 @@
 /* ── Zero-cost receipt guard ────────────────────────────────────────────────
    Houzs suppliers do not price a purchase order. The price appears on the
    supplier's GOODS RECEIVED document, so a PO line legitimately carries
-   unit_price_centi = 0 (live AutoCount: HOOKKA 2,264/2,264 PO lines unpriced,
+   unit_price_sen = 0 (live AutoCount: HOOKKA 2,264/2,264 PO lines unpriced,
    OHANA 100%, DORSETTLOFT 100%). The GRN create paths copy that price verbatim
    onto the receipt line, and from there nothing ever puts a cost back:
 
-     purchase_order_items.unit_price_centi = 0
-      -> grn_items.unit_price_centi = 0
+     purchase_order_items.unit_price_sen = 0
+      -> grn_items.unit_price_sen = 0
       -> postGrnAndRollup: unit_cost_sen = landedUnitCostMyr ?? toMyrSen(0, rate)
       -> the FIFO trigger's IN branch is COALESCE(NEW.unit_cost_sen, 0) — the
          weighted-average fallback exists ONLY in the ADJUSTMENT branch
       -> the OUT consumes that lot at RM0 COGS
-      -> DO line cost 0 -> sales_invoice_items.line_cost_centi 0
+      -> DO line cost 0 -> sales_invoice_items.line_cost_sen 0
       -> the margin report reads 100%.
 
    A zero that reaches a lot is invisible: nothing downstream distinguishes

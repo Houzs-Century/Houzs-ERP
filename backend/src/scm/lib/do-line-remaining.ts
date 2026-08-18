@@ -81,9 +81,9 @@ export type DoRemainingLine = {
   returned: number;
   /** delivered − invoiced − returned (= Pending = remaining to invoice OR return) */
   remaining: number;
-  unitPriceCenti: number;
-  unitCostCenti: number;
-  discountCenti: number;
+  unitPriceSen: number;
+  unitCostSen: number;
+  discountSen: number;
   variants: unknown;
   /* Migration 0058 — dedicated sofa/bedframe variant-breakdown columns. Carried
      so the DO→SI picker convert keeps them (sales_invoice_items has them too);
@@ -189,7 +189,7 @@ export async function doLineRemaining(
     .from('delivery_order_items')
     .select(
       'id, delivery_order_id, item_code, item_group, description, description2, uom, qty, ' +
-      'unit_price_centi, unit_cost_centi, discount_centi, variants, ' +
+      'unit_price_sen, unit_cost_sen, discount_sen, variants, ' +
       'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
       'custom_specials, line_suffix, special_order_price_sen',
     )
@@ -297,9 +297,9 @@ export async function doLineRemaining(
       invoiced,
       returned,
       remaining: delivered - invoiced - returned,
-      unitPriceCenti: Number(l.unit_price_centi ?? 0),
-      unitCostCenti: Number(l.unit_cost_centi ?? 0),
-      discountCenti: Number(l.discount_centi ?? 0),
+      unitPriceSen: Number(l.unit_price_sen ?? 0),
+      unitCostSen: Number(l.unit_cost_sen ?? 0),
+      discountSen: Number(l.discount_sen ?? 0),
       variants: l.variants ?? null,
       /* Migration 0058 — carry the dedicated variant-breakdown columns (supabase-js
          returns snake_case; dual-read camelCase ?? snake_case stays safe either way). */

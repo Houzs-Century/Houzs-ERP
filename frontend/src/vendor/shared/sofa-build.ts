@@ -1310,18 +1310,18 @@ const groupPrice = (group: Cell[], depth: Depth, pricing: SofaProductPricing): S
       pricing.combos,
     );
     if (match) {
-      // `match.comboPriceCenti` is CENTI, which IS sen — the combo dialog
+      // `match.comboPriceSen` is SEN, which IS sen — the combo dialog
       // stores `Math.round(rm * 100)`. Everything in groupPrice is sen now, so
       // it is carried straight through.
       //
-      // This line used to read `Math.round(match.comboPriceCenti / 100)`,
+      // This line used to read `Math.round(match.comboPriceSen / 100)`,
       // converting the combo total DOWN to whole MYR because the rest of the
       // object was whole-MYR. That is the defect: production carries 23
       // part-ringgit combo prices out of 163, so RM3152.63 billed as RM3153.00
       // and RM5712.11 as RM5712.00 — over- and under-charging, with margin
       // computed against a rounded revenue while cost stayed exact.
       // Ledger B4, answered by Actions -> "Sofa price rounding check".
-      const comboPriceSen = match.comboPriceCenti;
+      const comboPriceSen = match.comboPriceSen;
       // À-la-carte sum of the matched subset (the cells the combo replaces).
       // SEN — sums compartment `.priceSen`.
       const matchedSet = new Set(match.matchedIndices);

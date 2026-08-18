@@ -18,7 +18,7 @@
  *
  * WHAT IT COMPARES
  *   requested = scm.so_amendment_lines.new_unit_price_sen  (what was approved)
- *   landed    = scm.mfg_sales_order_items.unit_price_centi (what is on the order)
+ *   landed    = scm.mfg_sales_order_items.unit_price_sen (what is on the order)
  *   catalogue = scm.mfg_products.sell_price_sen            (what the bug writes)
  *
  * WHAT IT CANNOT PROVE, AND SAYS SO. A line can be edited by other paths after an
@@ -71,7 +71,7 @@ async function main() {
       i.id                AS item_id,
       i.item_code,
       i.qty,
-      i.unit_price_centi                         AS landed_sen,
+      i.unit_price_sen                         AS landed_sen,
       coalesce(i.divan_price_sen, 0)
         + coalesce(i.leg_price_sen, 0)
         + coalesce(i.special_order_price_sen, 0) AS surcharges_sen,
@@ -162,13 +162,13 @@ async function main() {
   const adds = await sql`
     SELECT a.so_doc_no, a.amendment_no, a.so_approved_at,
            l.new_item_code, l.new_qty, l.new_unit_price_sen AS requested_sen,
-           i.id AS item_id, i.unit_price_centi AS landed_sen,
+           i.id AS item_id, i.unit_price_sen AS landed_sen,
            p.sell_price_sen AS catalogue_sen, p.category, so.linked_ac_docno
       FROM scm.so_amendments a
       JOIN scm.so_amendment_lines l  ON l.amendment_id = a.id
       JOIN scm.mfg_sales_orders   so ON so.doc_no = a.so_doc_no
       LEFT JOIN LATERAL (
-        SELECT x.id, x.unit_price_centi FROM scm.mfg_sales_order_items x
+        SELECT x.id, x.unit_price_sen FROM scm.mfg_sales_order_items x
          WHERE x.doc_no = a.so_doc_no AND x.item_code = l.new_item_code
            AND x.qty = l.new_qty
          ORDER BY x.id LIMIT 1

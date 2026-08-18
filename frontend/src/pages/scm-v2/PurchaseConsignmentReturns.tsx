@@ -57,7 +57,7 @@ type PrRow = Record<string, unknown> & {
   return_number: string;
   status: string;
   return_date: string | null;
-  refund_centi?: number;
+  refund_sen?: number;
   supplier?: { id: string; code: string; name: string } | null;
   purchase_order?: { id: string; po_number: string } | null;
   pc_receive?: { id: string; receive_number: string } | null;
@@ -107,16 +107,16 @@ const buildColumns = (): DataGridColumn<PrRow>[] => [
     filterType: 'date', dateValue: (r) => r.return_date,
   },
   {
-    key: 'refund_centi', label: 'Refund', width: 130, sortable: true, align: 'right', groupable: false,
+    key: 'refund_sen', label: 'Refund', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (r) => (
       <span style={{ fontFamily: 'var(--font-mark)', color: '#16695f', fontWeight: 800 }}>
-        {fmtMoney(Number(r.refund_centi ?? 0))}
+        {fmtMoney(Number(r.refund_sen ?? 0))}
       </span>
     ),
-    searchValue: (r) => fmtMoney(Number(r.refund_centi ?? 0)),
+    searchValue: (r) => fmtMoney(Number(r.refund_sen ?? 0)),
     /* Accessor is JSX → export the NUMBER in ringgit so Excel can SUM it. */
-    exportValue: (r) => Number(r.refund_centi ?? 0) / 100,
-    sortFn: (a, b) => Number(a.refund_centi ?? 0) - Number(b.refund_centi ?? 0),
+    exportValue: (r) => Number(r.refund_sen ?? 0) / 100,
+    sortFn: (a, b) => Number(a.refund_sen ?? 0) - Number(b.refund_sen ?? 0),
   },
   {
     key: 'status', label: 'Status', width: 130, sortable: true, groupable: true,
@@ -142,8 +142,8 @@ type PrItem = Record<string, unknown> & {
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
   qty_returned?: number | null;
-  unit_price_centi?: number | null;
-  line_refund_centi?: number | null;
+  unit_price_sen?: number | null;
+  line_refund_sen?: number | null;
 };
 
 const buildDrilldownColumns = (): DataGridColumn<PrItem>[] => [
@@ -174,15 +174,15 @@ const buildDrilldownColumns = (): DataGridColumn<PrItem>[] => [
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 110, align: 'right',
-    accessor: (it) => fmtMoney(Number(it.unit_price_centi ?? 0)),
-    searchValue: (it) => String(it.unit_price_centi ?? 0),
-    sortFn: (a, b) => Number(a.unit_price_centi ?? 0) - Number(b.unit_price_centi ?? 0),
+    accessor: (it) => fmtMoney(Number(it.unit_price_sen ?? 0)),
+    searchValue: (it) => String(it.unit_price_sen ?? 0),
+    sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
   },
   {
     key: 'line_total', label: 'Line Total', width: 120, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_refund_centi ?? 0))}</span>,
-    searchValue: (it) => String(it.line_refund_centi ?? 0),
-    sortFn: (a, b) => Number(a.line_refund_centi ?? 0) - Number(b.line_refund_centi ?? 0),
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_refund_sen ?? 0))}</span>,
+    searchValue: (it) => String(it.line_refund_sen ?? 0),
+    sortFn: (a, b) => Number(a.line_refund_sen ?? 0) - Number(b.line_refund_sen ?? 0),
   },
 ];
 
@@ -204,7 +204,7 @@ const ExpandedLines = ({ pr }: { pr: PrRow }) => {
     return <div style={{ padding: '8px 12px', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>No line items.</div>;
   }
   let subtotal = 0;
-  for (const it of items) subtotal += Number(it.line_refund_centi ?? 0);
+  for (const it of items) subtotal += Number(it.line_refund_sen ?? 0);
 
   const columns = buildDrilldownColumns();
 

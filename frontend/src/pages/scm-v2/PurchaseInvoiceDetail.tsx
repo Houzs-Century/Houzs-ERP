@@ -24,7 +24,7 @@
 //
 // purchase_invoice_status enum: POSTED / PARTIALLY_PAID / PAID / CANCELLED.
 // POSTED → "Confirmed" (editable). isLocked = CANCELLED OR any payment recorded
-// (paid_centi > 0) — migration 0106.
+// (paid_sen > 0) — migration 0106.
 //
 // HOUZS VENDOR — verbatim from apps/backend/src/pages/PurchaseInvoiceDetail.tsx.
 // Import boundary only: react-router → react-router-dom; the PI hooks come from
@@ -101,9 +101,9 @@ type PiItemRow = Record<string, unknown> & {
   material_code: string;
   material_name: string;
   qty: number;
-  unit_price_centi: number;
-  discount_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen: number;
+  discount_sen?: number;
+  line_total_sen?: number;
   item_group?: string | null;
   material_kind?: string | null;
   description?: string | null;
@@ -141,8 +141,8 @@ const draftFromItem = (it: PiItemRow): EditLine => ({
   materialName:   it.material_name,
   supplierSku:    it.supplier_sku ?? undefined,
   qty:            it.qty,
-  unitPriceCenti: it.unit_price_centi,
-  discountCenti:  it.discount_centi ?? 0,
+  unitPriceSen: it.unit_price_sen,
+  discountSen:  it.discount_sen ?? 0,
   category:       it.item_group ?? undefined,
   variants:       (it.variants as Record<string, unknown> | null) ?? {},
   /* An existing line's stored price is authoritative — don't let the cost
@@ -221,9 +221,9 @@ export const PurchaseInvoiceDetail = () => {
   const [savingDraft, setSavingDraft] = useState(false);
 
   // Unified edit-lock (migration 0106): a PI is read-only once it has ANY
-  // payment recorded (paid_centi > 0) OR is CANCELLED. POSTED with zero payment
+  // payment recorded (paid_sen > 0) OR is CANCELLED. POSTED with zero payment
   // stays editable.
-  const isLocked = pi ? (pi.status === 'CANCELLED' || (pi.paid_centi ?? 0) > 0) : true;
+  const isLocked = pi ? (pi.status === 'CANCELLED' || (pi.paid_sen ?? 0) > 0) : true;
   // DRAFT lifecycle — a DRAFT PI is editable (not locked) and shows a Confirm
   // banner; confirming flips DRAFT → POSTED (where AP/GL post + GRN consume run).
   const isDraft = (pi?.status as string) === 'DRAFT';
@@ -265,17 +265,17 @@ export const PurchaseInvoiceDetail = () => {
     const binding = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
       : bindings.find((b) => b.material_code === line.materialCode);
-    if (!binding) return line.unitPriceCenti;
+    if (!binding) return line.unitPriceSen;
     const category = (line.category?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
-    if (!category) return binding.unit_price_centi;
+    if (!category) return binding.unit_price_sen;
     const v = line.variants;
     const specials = Array.isArray(v.specials) ? (v.specials as string[]) : [];
     const breakdown = computeMfgPoUnitCost(
       {
         category,
         priceMatrix:    (binding.price_matrix ?? null) as PoPriceMatrix,
-        unitPriceCenti: binding.unit_price_centi,
+        unitPriceSen: binding.unit_price_sen,
         fabricTier:     fabricTierForLine(line),
         seatSize:       category === 'SOFA' ? (v.seatHeight as string | undefined) ?? null : null,
         divanHeight:    (v.divanHeight as string | undefined) ?? null,
@@ -298,9 +298,9 @@ export const PurchaseInvoiceDetail = () => {
       const next = prev.map((l) => {
         if (l.priceTouched || l.grnLinked) return l;
         const cost = recomputeLineCost(l);
-        if (cost === l.unitPriceCenti) return l;
+        if (cost === l.unitPriceSen) return l;
         changed = true;
-        return { ...l, unitPriceCenti: cost };
+        return { ...l, unitPriceSen: cost };
       });
       return changed ? next : prev;
     });
@@ -352,12 +352,12 @@ export const PurchaseInvoiceDetail = () => {
   /* Totals — in Edit, sum the live editLines (incl. unsaved edits); in View, the
      stored line totals. */
   const itemsSubtotal = isEditing
-    ? editLines.reduce((s, d) => s + Math.max(0, d.qty * d.unitPriceCenti - (d.discountCenti ?? 0)), 0)
-    : visibleItems.reduce((s, it) => s + (it.line_total_centi ?? (it.qty * it.unit_price_centi - (it.discount_centi ?? 0))), 0);
-  const taxCenti = pi.tax_centi ?? 0;
-  const grandTotal = itemsSubtotal + taxCenti;
-  const paidCenti = pi.paid_centi ?? 0;
-  const balanceCenti = grandTotal - paidCenti;
+    ? editLines.reduce((s, d) => s + Math.max(0, d.qty * d.unitPriceSen - (d.discountSen ?? 0)), 0)
+    : visibleItems.reduce((s, it) => s + (it.line_total_sen ?? (it.qty * it.unit_price_sen - (it.discount_sen ?? 0))), 0);
+  const taxSen = pi.tax_sen ?? 0;
+  const grandTotal = itemsSubtotal + taxSen;
+  const paidSen = pi.paid_sen ?? 0;
+  const balanceSen = grandTotal - paidSen;
 
   const headerView = headerDraft ?? headerSnapshot(pi);
 
@@ -377,7 +377,7 @@ export const PurchaseInvoiceDetail = () => {
       materialCode:   b.material_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku,
-      unitPriceCenti: b.unit_price_centi,
+      unitPriceSen: b.unit_price_sen,
       category:       categoryForCode(b.material_code),
       priceTouched:   false,
     });
@@ -462,8 +462,8 @@ export const PurchaseInvoiceDetail = () => {
             materialCode:   d.materialCode,
             materialName:   d.materialName || d.materialCode,
             qty:            d.qty,
-            unitPriceCenti: d.unitPriceCenti,
-            discountCenti:  d.discountCenti ?? 0,
+            unitPriceSen: d.unitPriceSen,
+            discountSen:  d.discountSen ?? 0,
             bindingId:      d.bindingId,
             itemGroup:      d.category,
             variants:       Object.keys(d.variants).length ? d.variants : undefined,
@@ -477,8 +477,8 @@ export const PurchaseInvoiceDetail = () => {
           (d.materialName || d.materialCode) !== it.material_name ||
           (d.category ?? '') !== (it.item_group ?? '') ||
           d.qty !== it.qty ||
-          d.unitPriceCenti !== it.unit_price_centi ||
-          (d.discountCenti ?? 0) !== (it.discount_centi ?? 0) ||
+          d.unitPriceSen !== it.unit_price_sen ||
+          (d.discountSen ?? 0) !== (it.discount_sen ?? 0) ||
           JSON.stringify(d.variants ?? {}) !== JSON.stringify((it.variants as Record<string, unknown> | null) ?? {});
         if (!changed) continue;
         await updateItem.mutateAsync({
@@ -486,8 +486,8 @@ export const PurchaseInvoiceDetail = () => {
           materialCode:   d.materialCode,
           materialName:   d.materialName || d.materialCode,
           qty:            d.qty,
-          unitPriceCenti: d.unitPriceCenti,
-          discountCenti:  d.discountCenti ?? 0,
+          unitPriceSen: d.unitPriceSen,
+          discountSen:  d.discountSen ?? 0,
           itemGroup:      d.category,
           variants:       d.variants ?? {},
         });
@@ -710,9 +710,9 @@ export const PurchaseInvoiceDetail = () => {
                   </td>
                   <td className={styles.muted}>{it.item_group ?? it.material_kind ?? '—'}</td>
                   <td className={styles.tableRight}>{it.qty}</td>
-                  <td className={styles.tableRight}>{fmtRm(it.unit_price_centi, pi.currency)}</td>
-                  <td className={styles.tableRight}>{(it.discount_centi ?? 0) > 0 ? fmtRm(it.discount_centi, pi.currency) : '—'}</td>
-                  <td className={styles.priceCell}>{fmtRm(it.line_total_centi ?? (it.qty * it.unit_price_centi - (it.discount_centi ?? 0)), pi.currency)}</td>
+                  <td className={styles.tableRight}>{fmtRm(it.unit_price_sen, pi.currency)}</td>
+                  <td className={styles.tableRight}>{(it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen, pi.currency) : '—'}</td>
+                  <td className={styles.priceCell}>{fmtRm(it.line_total_sen ?? (it.qty * it.unit_price_sen - (it.discount_sen ?? 0)), pi.currency)}</td>
                 </tr>
               ))}
             </tbody>
@@ -736,7 +736,7 @@ export const PurchaseInvoiceDetail = () => {
             </div>
             <div className={styles.totalRow}>
               <span className={styles.totalLabel}>Tax</span>
-              <span className={styles.totalValue}>{fmtRm(taxCenti, pi.currency)}</span>
+              <span className={styles.totalValue}>{fmtRm(taxSen, pi.currency)}</span>
             </div>
             <div className={`${styles.totalRow} ${styles.grandTotalRow}`}>
               <span className={styles.totalLabel}>Total</span>
@@ -744,11 +744,11 @@ export const PurchaseInvoiceDetail = () => {
             </div>
             <div className={styles.totalRow}>
               <span className={styles.totalLabel}>Paid</span>
-              <span className={styles.totalValue}>{fmtRm(paidCenti, pi.currency)}</span>
+              <span className={styles.totalValue}>{fmtRm(paidSen, pi.currency)}</span>
             </div>
             <div className={styles.totalRow}>
               <span className={styles.totalLabel}>Balance</span>
-              <span className={styles.totalValue}>{fmtRm(balanceCenti, pi.currency)}</span>
+              <span className={styles.totalValue}>{fmtRm(balanceSen, pi.currency)}</span>
             </div>
           </div>
         </div>

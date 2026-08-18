@@ -36,7 +36,7 @@ import {
   useBrowserNotificationPreference,
 } from "../lib/browserNotificationPreference";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
-import { fmtCenti } from "../lib/scm";
+import { fmtSen } from "../lib/scm";
 import {
   LANG_LABELS,
   LANG_SUBLABELS,
@@ -226,14 +226,14 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
   const mtdQ = useQuery({
     queryKey: ["mobile-profile-mtd"],
     queryFn: () =>
-      api.get<{ mtd_orders?: number; mtd_sales_centi?: number }>(
+      api.get<{ mtd_orders?: number; mtd_sales_sen?: number }>(
         "/api/scm/mfg-sales-orders/my-mtd",
       ),
     staleTime: 60_000,
     retry: false,
   });
   const mtdOrders = Number(mtdQ.data?.mtd_orders ?? 0);
-  const mtdSalesCenti = Number(mtdQ.data?.mtd_sales_centi ?? 0);
+  const mtdSalesSen = Number(mtdQ.data?.mtd_sales_sen ?? 0);
 
   // Open service cases assigned to the caller (third stat tile) — the same
   // self-scoped list the desktop "My Cases" page reads. "Open" = any stage
@@ -310,7 +310,7 @@ export function MobileProfile({ onLogout, orgItems, onOpenOrg }: {
     }
   };
 
-  const mtdSales = fmtCenti(mtdSalesCenti);
+  const mtdSales = fmtSen(mtdSalesSen);
 
   // Prototype #profile VERBATIM: DARK header eyebrow "Account" + "Profile" +
   // a settings icon button, DARK identity card (#15161a) with a radial-glow

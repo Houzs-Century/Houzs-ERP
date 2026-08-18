@@ -35,8 +35,8 @@ HEADER is fatal for the list read unless the view is recreated in the same PR.
 - The view was created by `backend/scripts/scm-schema/apply-scm-views.mjs`,
   which pulls 2990's view-creating migrations in numeric order. The LAST one
   it applies for this view is 2990's mig `0155_so_sku_p2_service_bucket_skus_deposit.sql`,
-  which DROP + CREATE the view as `SELECT so.*` (plus `paid_total_centi` +
-  `balance_centi_live` computed cols). It does NOT apply 2990's later fixes
+  which DROP + CREATE the view as `SELECT so.*` (plus `paid_total_sen` +
+  `balance_sen_live` computed cols). It does NOT apply 2990's later fixes
   (`0193_currencies_master.sql`, `0200_recreate_so_payment_view.sql`,
   `0201_amend_reason.sql`).
 - Houzs has since added columns to `scm.mfg_sales_orders` via local migrations
@@ -53,7 +53,7 @@ HEADER is fatal for the list read unless the view is recreated in the same PR.
   is exactly the 2990 pattern (P-2 below).
 - `backend/src/scm/routes/delivery-planning.ts` reads the SO header off the
   BASE table `mfg_sales_orders` (safe) and only hits the view for one
-  view-native column (`balance_centi_live`). Also safe.
+  view-native column (`balance_sen_live`). Also safe.
 
 ---
 
