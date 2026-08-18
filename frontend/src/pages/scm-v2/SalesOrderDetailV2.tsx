@@ -116,7 +116,6 @@ type SoHeader = {
   // The processing-date column the lock reads. Label, API field and column are
   // finally the same word (mig 0284 renamed it from internal_expected_dd).
   processing_date?: string | null;
-  proceeded_at?: string | null;
   // Server-derived SO-lock / amendment flags (see the /:docNo detail handler).
   // has_children = a non-cancelled DO/SI references this SO (hard lock);
   // amendment_eligible = processing-locked but still amendable; has_open_amendment

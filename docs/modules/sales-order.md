@@ -167,6 +167,19 @@ Two things gate it that are easy to miss:
   > actually sets. It reads that column ALONE and deliberately does not also
   > consult `proceeded_at`: a second home for the rule is how it acquired a wrong
   > one. See BUG-HISTORY 2026-08-18.
+
+  > **AND THE BLAST RADIUS #2396 SHIPPED WITHOUT (measured 2026-08-18,
+  > `backend/scripts/probe-proceed-split.mjs`, prod, run `32093080121`).** That
+  > PR says so itself: *"Blast radius on production is UNKNOWN and not
+  > invented."* It is now measured. Company 1 — 2724 live orders, ZERO in either
+  > disagreement class, so the flip is a true no-op there. Company 2 — 5 live
+  > CONFIRMED orders GAIN allocation (the bug above), and **16 LOSE it**: 12
+  > CONFIRMED and 4 READY_TO_SHIP, each carrying a Proceed stamp with no
+  > Processing Date. Their lines go PENDING on the next recompute and the 4
+  > READY_TO_SHIP orders drop back to CONFIRMED. That is the rule applied
+  > correctly — *"没有 processing date 就代表没有 proceed"* — not a new fault, and
+  > the repair is a human supplying the missing date, never a script inventing
+  > one. Expect it, and do not read those 4 as a regression.
 - **A human editing the order defers the header, not the lines.** If the SO's
   edit lease is held, the line-level flip commits and the header transition is
   recorded in `deferredDocNos` for a later sweep. A deferral is not an error.
@@ -1295,11 +1308,13 @@ No path guesses a date: a proceed with none returns 422
 a guessed date releases a real order to purchasing on the wrong day with nothing
 to show that the date was guessed. A date already on the order is never
 MOVED by a proceed — rescheduling belongs to the header PATCH, which owns the
-lock and the gate table. `proceeded_at` is still written, but as of #2396 no
-reachable decision reads it any more — the stock allocator's gate was the last
-one, and it now reads `processing_date` (the column every path that sets a
-Processing Date actually writes). It is no longer what makes an order proceeded,
-and it is on its way out; the drop lives on `feat/processing-date-has-one-storage`.
+lock and the gate table. `proceeded_at` is now neither written nor read: #2396
+moved its last reachable decision (the stock allocator's gate) onto
+`processing_date`, and this change removed the three remaining writes — the
+create INSERT's stamp, the /status IN_PRODUCTION stamp, and the header PATCH's
+`proceededAt` key. It is no longer what makes an order proceeded, no lock or
+payload consults it, and the column awaits only its DROP — which is one deploy
+behind the code on purpose.
 Net effect: the proceed paths LOOSENED by one condition (email), the
 processing-date path TIGHTENED by four (name / address / postcode / delivery
 date), and the threshold became per-company.
@@ -1369,13 +1384,60 @@ processing date 和 process date 都直接整合变成一个"* — PR #2077 / #2
 519 company-1 orders out of `proceeded_at` into the SO's own Processing-Date
 column; both companies reported zero split **when measured on 2026-08-13**. Mig
 `0286` then renamed that column `internal_expected_dd` → `processing_date` on
-`scm.mfg_sales_orders` and on the consignment twin. **`proceeded_at` is NOT being retired**, and this paragraph said it was
-("stop-writing / stop-reading ahead of a drop, not a second fact") — which
-also contradicted the registry row below. It is a live, separate column on
-`scm.mfg_sales_orders`: `lib/so-stock-allocation.ts` selects and GATES on it,
-`routes/mfg-sales-orders.ts` maps `proceededAt → proceeded_at`, and
-`routes/delivery-planning.ts` selects it. Only the CONSIGNMENT twin was
-dropped (mig 0284), because that one had zero readers and zero writers.
+`scm.mfg_sales_orders` and on the consignment twin.
+
+**AND NOW `proceeded_at` IS BEING RETIRED (owner 2026-08-18).** This paragraph
+said the opposite for five days — *"`proceeded_at` is NOT being retired … it is
+a live, separate column"* — on the argument recorded in `order-rules.ts`: an
+audit stamp is a different KIND of fact from a date a user picks, so what was
+unified was the RULE, not the storage. The owner has overruled that FOR THE
+PURPOSE OF DECISIONS, naming the scope himself: frontend, backend and database.
+His reason is the one the bug record supports — every Processing-Date bug this
+repo has had came from there being more than one of them.
+
+Where it stands after 2026-08-18:
+
+| layer | state |
+|---|---|
+| frontend | **Done.** No type, no query select list, no component field mentions it. `procLockActive` decides on `processing_date` + `status`; `status` is now a REQUIRED parameter, which is what replaced the status-blind `proceeded_at` fallback. |
+| backend, locks | **Done.** `soProcessingLocked`, `soEditLocked`, the amendment door and `delivery-planning`'s board guard all read `processing_date` + `status` only. |
+| backend, payloads | **Done.** The SO list projection, the detail select, the POS board select, the dashboard summary and the `/status` response no longer carry it. Nothing consumed any of them. |
+| backend, the leak | **Done.** Remove-Processing-Date used to clear the date and leave the stamp, which the stamp-once filter then froze permanently — the one live path that manufactures a split row. The header PATCH now clears both together. |
+| backend, the allocator | **Done (#2396).** `allocGated` reads `processing_date`. Its measured blast radius — which #2396 shipped without — is in the bullet in §"Allocation" above. |
+| backend, the writes | **Done, and only after the read moved.** The create INSERT's stamp (and `autoProceed`, which existed only to decide it), the `/status` IN_PRODUCTION stamp, the `['proceededAt','proceeded_at']` PATCH-map entry and its stamp-once filter are gone. Stopping the writes while the allocator still read the column would have landed every NEW order with a NULL stamp and gated it out of allocation forever, so the order mattered. |
+| database | **The one step left, and deliberately NOT in this release.** `deploy.yml` runs `pg-migrate` BEFORE `wrangler deploy`, so a column dropped in the same release that stops selecting it 42703s every SO read for the length of the deploy (that is #1191/0189). Once this commit is live, nothing reads it and the drop is 0284's shape. The exact SQL, and the view-ACL trap it must clear without dropping the view, are in `shared/so-processing-date.ts` under "RETIRING THE SECOND STORAGE". |
+
+One writer nobody had counted: **the 2990 mirror.** `routes/so-mirror.ts` upserts
+`applyMap(body.header, …)`, which keeps every inbound key that exists on the
+Houzs table — so a `proceeded_at` arriving from 2990 (a separate repo on its own
+deploy schedule, which never got the 2026-08-13 unification) was written straight
+through. It needs no code change: `applyMap` filters against
+`information_schema`, so the drop silently ends it. Until then it is the only
+thing that can still put a value in the column, and nothing reads it.
+
+Also gone with the writes: **`soProceedGateBlocked`**, whose two call sites were
+the `/status` stamp block and the header PATCH's `proceededAt` branch. The RULE
+did not move — every path that sets a Processing Date runs
+`collectProcessingGateProblems`, which checks the same four completeness facts
+inline and the money through `meetsDepositGate`; after unification that is every
+path that proceeds an order.
+
+> **The "TWO enforcement sites" table below is now ONE site and TWO orphans.**
+> #2383 landed hours earlier and lifted the proceed gate into
+> `backend/src/scm/lib/so-proceed-gate.ts` with a per-condition refusal. Removing
+> the last two call sites leaves both that module's `soProceedGateBlocked` and
+> `order-rules`'s `meetsProceedGate` with no caller in routes, lib or the
+> frontend. **Neither is deleted** — deleting a freshly-shipped export to tidy a
+> merge is how work gets silently undone, and a future proceed path that needs to
+> refuse should call it. The table warned that the two enforcement sites were held
+> in step *"by agreement, not by construction"*; that agreement now has one party,
+> `collectProcessingGateProblems`. Full note at `soProceedGateBlocked` itself. The `/status` branch it guarded fired only when the order
+ALREADY carried a date, i.e. it re-gated a state that had already passed the same
+gate — and inconsistently, since an order that also carried a stamp was not
+re-gated at all.
+
+Only the CONSIGNMENT twin is already gone (mig 0284), because that one had zero
+readers and zero writers.
 
 #### The client-side address marks — all three surfaces now say the same thing (2026-08-13)
 
@@ -1487,7 +1549,7 @@ table is the whole answer.
 |--------|--------------------|--------|
 | `scm.mfg_sales_orders.processing_date` | **THE Processing Date.** The SO's one user-picked date, behind the UI label "Processing Date". Named `internal_expected_dd` until mig 0286 (2026-08-13). | **The only storage this concept has. Use this one** — via `SO_PROCESSING_DATE_COLUMN` in `backend/src/scm/shared/so-processing-date.ts:41`, never a hand-typed literal. In a `.mjs` script, which cannot import TypeScript, via the pinned mirror `backend/scripts/lib/so-processing-date.mjs`. |
 | `scm.consignment_sales_orders.processing_date` | The same concept for a Consignment Order. CO create + PATCH read/write only this. Renamed by the same mig 0286. | Live, correct. |
-| `scm.mfg_sales_orders.proceeded_at` | The TIMESTAMP the system stamped when the order was Proceeded. **The SAME fact in the wrong shape**, not a different one — "proceeded" IS "has a Processing Date" (owner, pinned 2026-08-13). Its last reachable decision was `recomputeSoStockAllocation`, which gated on it (NULL ⇒ every line forced PENDING) **while no shipped client wrote it** — the #2396 defect. | **DYING.** #2396 moved that gate onto `processing_date`; nothing reads this column to decide anything any more. The column DROP is on branch `feat/processing-date-has-one-storage`, which measures the two columns' disagreement before flipping. Do not add a new reader. |
+| `scm.mfg_sales_orders.proceeded_at` | The TIMESTAMP the system used to stamp when an order was Proceeded. **The SAME fact in the wrong shape**, not a different one — "proceeded" IS "has a Processing Date" (owner, pinned 2026-08-13). Its last reachable decision was `recomputeSoStockAllocation`, which gated on it (NULL ⇒ every line forced PENDING) **while no shipped client wrote it** — the #2396 defect. | **RETIRED IN CODE 2026-08-18; the column awaits its DROP.** This row used to read "stays a separate column ON PURPOSE. What was unified with the Processing Date is the RULE, never the storage" — overruled by the owner: one concept, one storage, all three layers. #2396 moved the gate; this PR removed the writes that only existed to feed it, so **no code reads or writes it any more**. The DROP is one deploy behind on purpose (see the `database` row above) — `pg-migrate` runs before `wrangler deploy`, and the live Worker still SELECTs it. Nothing ever read the value AS a timestamp: the desktop Proceed Date field was deleted 2026-06-05, the dashboard hook carrying it has zero callers, and no export or AutoCount payload names it. The "when" is already in `scm.mfg_so_audit_log`, which nothing gates on. Do not add a new reader. |
 | `scm.mfg_sales_orders.processing_date` **(the OLD one, 2025–2026-08)** | Dead legacy snapshot that squatted on this name. Had no writer after PR #140, so it was NULL on every SO created/edited since — and rendered blank wherever someone bound to it (BUG-HISTORY: "SO read views showed a blank Processing date"). | **DROPPED — mig 0189.** The name was then free, which is why 0286 could take it. Do not confuse this dead column with the live one in row 1. |
 | `scm.consignment_sales_orders.proceeded_at` | Never anything. Existed only because the consignment module was cloned from `mfg_sales_orders` wholesale; on this table it had zero readers and zero writers, ever. | **DROPPED — mig 0284** (`0284_retire_consignment_proceeded_at.sql`). |
 | `scm.consignment_sales_orders.processing_date` **(the OLD one, mig 0153)** | Same clone artifact. Zero writers ever (the create INSERT omits it; the header PATCH builds its update from a closed allowlist that never contained it), so it was NULL on every row. | **DROPPED — mig 0286, step 1.** No longer a follow-up: 0286 had to clear this dead name before it could rename the live column onto it, and its guard drops it only while BOTH names are present, so a re-run cannot take the users' dates. |

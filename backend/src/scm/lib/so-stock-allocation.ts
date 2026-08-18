@@ -236,8 +236,37 @@ async function runSoStockAllocation(
        which only runs after `processing_date` has already decided. The data was
        consolidated into this column on 2026-08-13 (mig 0286 header: 519
        company-1 orders moved out of `proceeded_at`, both companies verified at
-       zero split), and no live path can reopen the split: `autoProceed` requires
-       a date, and the IN_PRODUCTION transition refuses without one. */
+       zero split).
+
+       THE BLAST RADIUS, WHICH #2396 SHIPPED WITHOUT — measured the same day on
+       prod, read-only (backend/scripts/probe-proceed-split.mjs, run
+       32093080121). #2396's own message says it: *"Blast radius on production is
+       UNKNOWN and not invented — the probe that measures it is on a branch that
+       is not yet dispatchable."* It is now measured, and it is not nil:
+
+         company 1 — 2724 live orders: 519 both columns set, 2205 neither, ZERO
+           in either disagreement class. This flip is a genuine no-op here.
+         company 2 — 77 live orders: 5 (all CONFIRMED) gain allocation, which is
+           the bug #2396 describes. But 16 LOSE it — 12 CONFIRMED and 4
+           READY_TO_SHIP, each carrying a Proceed stamp and NO Processing Date.
+           Their lines are forced PENDING on the next 5-minute recompute and the
+           4 READY_TO_SHIP orders visibly drop back to CONFIRMED.
+
+       Those 16 are not a regression to undo: by the owner's rule (*"没有
+       processing date 就代表没有 proceed"*) an order with no date is not
+       proceeded, so gating it is the rule applied correctly, and the repair is a
+       human supplying the date — never a script inventing one (PROCEED_NEEDS_DATE
+       in shared/order-rules.ts). They are named here so the 4 that move are read
+       as this change working rather than as a new fault.
+
+       AND A LIVE PATH COULD STILL REOPEN THE SPLIT — this said it could not.
+       `autoProceed` requiring a date and IN_PRODUCTION refusing without one
+       cover the two paths that STAMP. They are not the only ways a row becomes
+       stamp-without-date: Remove-Processing-Date cleared the date and left the
+       stamp (closed 2026-08-18 in the header PATCH), and routes/so-mirror.ts
+       replicates whatever 2990 sends, including a stamp, through applyMap. Both
+       end for good with the column; see "RETIRING THE SECOND STORAGE" in
+       shared/so-processing-date.ts. */
     const allocGated = new Set(
       orders.filter((o) => !o[SO_PROCESSING_DATE_COLUMN]).map((o) => o.doc_no),
     );
