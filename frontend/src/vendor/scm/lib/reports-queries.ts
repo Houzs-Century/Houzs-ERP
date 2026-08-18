@@ -43,23 +43,23 @@ export type SoDetailListingRow = Record<string, unknown> & {
   uom: string;
   location: string | null;
   qty: number;
-  unit_price_centi: number;
-  discount_centi: number;
-  total_centi: number;
-  tax_centi: number;
-  total_inc_centi: number;
-  balance_centi: number;
+  unit_price_sen: number;
+  discount_sen: number;
+  total_sen: number;
+  tax_sen: number;
+  total_inc_sen: number;
+  balance_sen: number;
   cancelled: boolean;
   currency: string;
   status: string | null;
-  local_total_centi: number;
+  local_total_sen: number;
   remark4: string | null;
   remark2: string | null;
   remark3: string | null;
   sales_exemption_expiry: string | null;
   customer_delivery_date: string | null;
-  /** Live paid total summed from mfg_sales_order_payments (replaces legacy paid_centi). */
-  paid_total_centi: number;
+  /** Live paid total summed from mfg_sales_order_payments (replaces legacy paid_sen). */
+  paid_total_sen: number;
   /* Task #121 — country snapshot, auto-derived from customer_state via
      my_localities at SO create/PATCH time (migration 0082). */
   customer_state: string | null;
@@ -67,9 +67,9 @@ export type SoDetailListingRow = Record<string, unknown> & {
   /* Task #114 — per-line cost snapshot (from mfg_products.cost_price_sen
      server-side) + derived line cost + margin. Used by the listing
      report's cost columns + 6-tile KPI bar. */
-  unit_cost_centi: number;
-  line_cost_centi: number;
-  line_margin_centi: number;
+  unit_cost_sen: number;
+  line_cost_sen: number;
+  line_margin_sen: number;
   /* Task #63 — Houzs port gap closure. Line-level variant + payment-ledger
      fields surfaced by the API so the Detail Listing's Fabric / Divan
      Height / Leg Height / Specials / Account Sheet / Approval Code / Last
@@ -136,9 +136,9 @@ export type DetailListingRow = Record<string, unknown> & {
   item_code: string;
   description?: string | null;
   qty?: number;
-  unit_price_centi?: number;
-  total_centi?: number;
-  balance_centi?: number;
+  unit_price_sen?: number;
+  total_sen?: number;
+  balance_sen?: number;
   status?: string | null;
 };
 

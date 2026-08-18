@@ -85,7 +85,7 @@ import {
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { clearPaymentRetryHandoff, completePaymentRetryDraft, consumePaymentRetryNavigationState, planPaymentDraftFlush, readPaymentRetryHandoff, readPaymentRetryNavigationState } from "../../lib/paymentRetryHandoff";
 import { transferFromColumnLabel } from "../../lib/convertScope";
@@ -137,25 +137,25 @@ type SiHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
-  local_total_centi: number;
-  total_centi: number;
-  paid_centi: number;
+  local_total_sen: number;
+  total_sen: number;
+  paid_sen: number;
   line_count: number;
   currency: string;
   // Finance-gated cost / margin fields (served on the detail payload; shown only
   // to a project_finance_viewer — same rule as the SI list columns, #574).
-  mattress_sofa_centi?: number;
-  bedframe_centi?: number;
-  accessories_centi?: number;
-  others_centi?: number;
-  service_centi?: number | null;
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?: number;
-  accessories_cost_centi?: number;
-  others_cost_centi?: number;
-  service_cost_centi?: number | null;
-  total_cost_centi?: number;
-  total_margin_centi?: number;
+  mattress_sofa_sen?: number;
+  bedframe_sen?: number;
+  accessories_sen?: number;
+  others_sen?: number;
+  service_sen?: number | null;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?: number;
+  accessories_cost_sen?: number;
+  others_cost_sen?: number;
+  service_cost_sen?: number | null;
+  total_cost_sen?: number;
+  total_margin_sen?: number;
   margin_pct_basis?: number;
 };
 
@@ -166,10 +166,10 @@ type SiItem = {
   description2: string | null;
   uom: string;
   qty: number;
-  unit_price_centi: number;
-  discount_centi: number;
-  line_total_centi: number;
-  unit_cost_centi?: number;
+  unit_price_sen: number;
+  discount_sen: number;
+  line_total_sen: number;
+  unit_cost_sen?: number;
   cancelled?: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
@@ -180,7 +180,7 @@ type SiItem = {
 /* ONE shared centi formatter (vendor/shared/format.ts) — the page-local copy
    this replaces had no finite guard, so an absent / non-numeric cost rendered
    the literal "MYR NaN"; the shared helper renders "—" instead. */
-const fmtMoney = fmtMoneyCenti;
+const fmtMoney = fmtMoneySen;
 
 // Days between today and an ISO date; positive when the date is in the past.
 // Only used for the due-date overdue check, so time-of-day noise is fine.
@@ -214,10 +214,10 @@ const brandOf = (h: SiHeader): string => h.branding || "—";
 // exist for display. If for any reason the header total is 0 while the lines
 // aren't, fall back to the line sum so the drawer never lies.
 const totalOf = (h: SiHeader, items: SiItem[]): number =>
-  h.total_centi || h.local_total_centi || items.reduce((s, l) => s + (l.line_total_centi ?? 0), 0);
+  h.total_sen || h.local_total_sen || items.reduce((s, l) => s + (l.line_total_sen ?? 0), 0);
 
 const outstandingOf = (h: SiHeader, items: SiItem[]): number =>
-  Math.max(0, totalOf(h, items) - (h.paid_centi ?? 0));
+  Math.max(0, totalOf(h, items) - (h.paid_sen ?? 0));
 
 // Payment-lifecycle bucket for tone + blurb.
 type Effective = "draft" | "sent" | "partial" | "paid" | "overdue" | "cancelled";
@@ -225,7 +225,7 @@ const effectiveOf = (h: SiHeader, items: SiItem[]): Effective => {
   const s = (h.status || "").toUpperCase();
   if (s === "CANCELLED") return "cancelled";
   if (s === "PAID" || outstandingOf(h, items) === 0) return "paid";
-  if (s === "PARTIALLY_PAID" || (h.paid_centi ?? 0) > 0) return "partial";
+  if (s === "PARTIALLY_PAID" || (h.paid_sen ?? 0) > 0) return "partial";
   if (s === "OVERDUE") return "overdue";
   if (s === "DRAFT") return "draft";
   // Sent + anything else with no payment yet.
@@ -446,7 +446,7 @@ function OutstandingHeroCard({
   const eff = effectiveOf(header, items);
   const t = EFFECTIVE_TONE[eff];
   const total = totalOf(header, items);
-  const paid = header.paid_centi ?? 0;
+  const paid = header.paid_sen ?? 0;
   const outstanding = outstandingOf(header, items);
   const isPaid = outstanding === 0;
   return (
@@ -599,7 +599,7 @@ export function SalesInvoiceDetailV2() {
         merchantProvider: p.merchant_provider ?? "",
         installmentMonthsLabel: installmentLabel,
         onlineType: p.online_type ?? "",
-        amountCenti: p.amount_centi,
+        amountSen: p.amount_sen,
         accountSheet: p.account_sheet ?? "",
         approvalCode: p.approval_code ?? "",
         collectedBy: p.collected_by ?? "",
@@ -657,7 +657,7 @@ export function SalesInvoiceDetailV2() {
 
   const total = salesInvoice ? totalOf(salesInvoice, items) : 0;
   const outstanding = salesInvoice ? outstandingOf(salesInvoice, items) : 0;
-  const paid = salesInvoice?.paid_centi ?? 0;
+  const paid = salesInvoice?.paid_sen ?? 0;
 
   const overdueDays = salesInvoice ? daysPast(salesInvoice.due_date) : -1;
   const isOverdue = overdueDays > 0 && outstanding > 0;
@@ -815,13 +815,13 @@ export function SalesInvoiceDetailV2() {
       await deletePayment.mutateAsync({ id: salesInvoice.id, paymentId });
     }
     for (const d of plan.draftsToPost) {
-      if (d.amountCenti <= 0) continue;
+      if (d.amountSen <= 0) continue;
       const { method } = labelToApi(d.methodLabel);
       const body: { id: string } & Record<string, unknown> = {
         id: salesInvoice.id,
         paidAt: d.paidAt,
         method,
-        amountCenti: d.amountCenti,
+        amountSen: d.amountSen,
         accountSheet: d.accountSheet || null,
         approvalCode: d.approvalCode || null,
         collectedBy: d.collectedBy || null,
@@ -927,10 +927,10 @@ export function SalesInvoiceDetailV2() {
       label: "Unit price",
       width: "108px",
       align: "right",
-      getValue: (l) => l.unit_price_centi,
+      getValue: (l) => l.unit_price_sen,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {fmtMoney(l.unit_price_centi, salesInvoice?.currency)}
+          {fmtMoney(l.unit_price_sen, salesInvoice?.currency)}
         </span>
       ),
     },
@@ -939,10 +939,10 @@ export function SalesInvoiceDetailV2() {
       label: "Disc",
       width: "88px",
       align: "right",
-      getValue: (l) => l.discount_centi,
+      getValue: (l) => l.discount_sen,
       render: (l) => {
         const isFoc =
-          l.unit_price_centi === 0 && (l.line_total_centi ?? 0) === 0;
+          l.unit_price_sen === 0 && (l.line_total_sen ?? 0) === 0;
         if (isFoc) {
           return (
             <Badge tone="warning" size="xs">
@@ -950,10 +950,10 @@ export function SalesInvoiceDetailV2() {
             </Badge>
           );
         }
-        if (l.discount_centi > 0) {
+        if (l.discount_sen > 0) {
           return (
             <span className="font-money text-[13px] text-ink-secondary">
-              {fmtMoney(l.discount_centi, salesInvoice?.currency)}
+              {fmtMoney(l.discount_sen, salesInvoice?.currency)}
             </span>
           );
         }
@@ -965,10 +965,10 @@ export function SalesInvoiceDetailV2() {
       label: "Amount",
       width: "132px",
       align: "right",
-      getValue: (l) => l.line_total_centi,
+      getValue: (l) => l.line_total_sen,
       render: (l) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtMoney(l.line_total_centi ?? 0, salesInvoice?.currency)}
+          {fmtMoney(l.line_total_sen ?? 0, salesInvoice?.currency)}
         </span>
       ),
     },
@@ -1508,7 +1508,7 @@ export function SalesInvoiceDetailV2() {
                     docNo={null}
                     payments={editingPayments ? paymentDrafts : persistedDrafts}
                     onChange={setPaymentDrafts}
-                    grandTotalCenti={total}
+                    grandTotalSen={total}
                     currency={salesInvoice.currency}
                     locked={!editingPayments || isCancelled}
                   />

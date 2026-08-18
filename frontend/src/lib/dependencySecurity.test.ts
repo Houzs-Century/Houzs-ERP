@@ -154,7 +154,7 @@ describe("security-upgraded document dependencies", () => {
           description: "测试沙发",
           qty: 1,
           m3_milli: 1250,
-          unit_price_centi: 10000,
+          unit_price_sen: 10000,
           source_pos: ["PO-001"],
           racks: ["RACK-A1"],
         }],

@@ -118,10 +118,10 @@ async function main() {
 
   // ── 2. the migrated lines the backfill would touch ──────────────────────────
   /* COLUMN NAMES. The recompute's `unit_price_sen` is persisted into the column
-     `unit_price_centi` (mfg-sales-orders.ts:4291) — there is NO `unit_price_sen`
+     `unit_price_sen` (mfg-sales-orders.ts:4291) — there is NO `unit_price_sen`
      column on either line table. Reading a `_sen` column here would just error;
-     summing one would prove nothing. SO totals live in `total_centi`, PO totals
-     in `line_total_centi`. */
+     summing one would prove nothing. SO totals live in `total_sen`, PO totals
+     in `line_total_sen`. */
   /* WHAT MARKS A LINE AS MIGRATED. Not `migrated_no_stock` — that column exists
      only on scm.grns and scm.delivery_orders. On the SO and PO headers the
      marker is `linked_ac_docno IS NOT NULL`, which is what
@@ -129,12 +129,12 @@ async function main() {
      already filters on, so the flag this query read was redundant with its own
      WHERE clause. Selecting it failed outright on prod (42703, run 31420902643). */
   const soLines = await sql`SELECT i.id, i.doc_no AS doc, i.item_code AS code, i.item_group AS grp,
-      i.description2 AS d2, i.variants, i.unit_price_centi AS unit_centi, i.total_centi AS tot_centi,
+      i.description2 AS d2, i.variants, i.unit_price_sen AS unit_sen, i.total_sen AS tot_sen,
       i.line_no, i.linked_ac_dtlkey, h.linked_ac_docno AS acdoc
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL`;
   const poLines = await sql`SELECT i.id, h.po_number AS doc, i.material_code AS code, i.item_group AS grp,
-      i.description2 AS d2, i.variants, i.unit_price_centi AS unit_centi, i.line_total_centi AS tot_centi,
+      i.description2 AS d2, i.variants, i.unit_price_sen AS unit_sen, i.line_total_sen AS tot_sen,
       NULL::int AS line_no, i.linked_ac_dtlkey, h.linked_ac_docno AS acdoc
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL`;
@@ -147,7 +147,7 @@ async function main() {
      (`authoritativeSellingSen = effectiveBaseSen + breakdown.unitPriceSen`),
      and that value is used only when
      `hasAuthoritativeSelling = category !== 'SOFA' && effectiveBaseSen > 0` (:436).
-     The SOFA branch prices from `computeSofaSellingSen + fabricAddonCenti +
+     The SOFA branch prices from `computeSofaSellingSen + fabricAddonSen +
      extraSen` (:563) and never adds the specials surcharge; in the whole
      recompute file `specialsSurchargeSen` appears only in a comment (:369) and
      as the persisted reporting field `special_order_sen` (:603).
@@ -199,7 +199,7 @@ async function main() {
         const reprices = cat !== "SOFA" && sellBase > 0;
         affected.push({
           which, doc: r.doc, line_no: r.line_no, id: r.id, code: r.code, cat,
-          unit_centi: Number(r.unit_centi ?? 0), tot_centi: Number(r.tot_centi ?? 0),
+          unit_sen: Number(r.unit_sen ?? 0), tot_sen: Number(r.tot_sen ?? 0),
           acdoc: r.acdoc, acdtl: r.linked_ac_dtlkey,
           codes: pricedAdded, delta, deltaCost, sellBase, reprices,
         });
@@ -219,14 +219,14 @@ async function main() {
   log("");
   log(`=== THE AFFECTED LINES (would gain a PRICED code) : ${affected.length} ===`);
   log(`   ${"src".padEnd(3)} ${"doc".padEnd(16)} ${"item_code".padEnd(20)} ${"cat".padEnd(8)} ` +
-      `${"unit_centi".padStart(11)} ${"sellbase".padStart(9)} ${"+delta".padStart(7)} ${"REPRICES".padEnd(8)} ` +
+      `${"unit_sen".padStart(11)} ${"sellbase".padStart(9)} ${"+delta".padStart(7)} ${"REPRICES".padEnd(8)} ` +
       `${"ac_docno".padEnd(12)} ${"ac_dtlkey".padStart(9)}  codes`);
   let totalDelta = 0, totalDeltaCost = 0, realDelta = 0;
   for (const a of affected.sort((x, y) => String(x.doc).localeCompare(String(y.doc)))) {
     totalDelta += a.delta; totalDeltaCost += a.deltaCost;
     if (a.reprices) realDelta += a.delta;
     log(`   ${a.which.padEnd(3)} ${String(a.doc ?? "").padEnd(16)} ${String(a.code ?? "").padEnd(20)} ` +
-        `${a.cat.padEnd(8)} ${String(a.unit_centi).padStart(11)} ${String(a.sellBase).padStart(9)} ` +
+        `${a.cat.padEnd(8)} ${String(a.unit_sen).padStart(11)} ${String(a.sellBase).padStart(9)} ` +
         `${String(a.delta).padStart(7)} ${(a.reprices ? "YES" : "no").padEnd(8)} ` +
         `${String(a.acdoc ?? "").padEnd(12)} ${String(a.acdtl ?? "").padStart(9)}  ${a.codes.join("+")}`);
   }

@@ -62,7 +62,7 @@ import { useBranding } from "../../hooks/useBranding";
 import { shortCompanyName, getBrandingCompanyCode } from "../../lib/branding";
 import { brandingLabel } from "../../vendor/shared/so-branding-label";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
-import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail } from "../../vendor/scm/lib/sales-order-queries";
+import { useMfgSalesOrdersPaged, useUpdateMfgSalesOrderStatus, useMfgSalesOrderDetail, useEnrichedSoListRows } from "../../vendor/scm/lib/sales-order-queries";
 import { ScanOrderModal } from "../../vendor/scm/components/ScanOrderModal";
 import { authedFetch } from "../../vendor/scm/lib/authed-fetch";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -79,7 +79,7 @@ import { poCellChips } from "../../lib/soPoChips";
 import { useAuth } from "../../auth/AuthContext";
 import { canViewScmCosting, canOperateDeliveryOrders } from "../../auth/salesAccess";
 import { capability } from "../../auth/capabilities";
-import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -102,20 +102,20 @@ type SoRow = {
   branding: string | null;
   first_item_branding: string | null; first_item_category: string | null;
   status: string;
-  local_total_centi: number;
+  local_total_sen: number;
   /* Stored snapshots — NOT the truth, and never read without the live
-     fallbacks below. `balance_centi` is rewritten to the gross grandTotal by
+     fallbacks below. `balance_sen` is rewritten to the gross grandTotal by
      the backend's recomputeTotals on every edit (so it never reflects a
-     payment) and `paid_centi` is a deprecated column no writer maintains. The
+     payment) and `paid_sen` is a deprecated column no writer maintains. The
      list payload carries the ledger-derived pair; prefer them. */
-  balance_centi: number;
-  paid_centi: number;
+  balance_sen: number;
+  paid_sen: number;
   /* Ledger-derived, from mfg_sales_orders_with_payment_totals — already in the
-     backend's LIST_COLS. paid_total_centi = Σ payments, balance_centi_live =
+     backend's LIST_COLS. paid_total_sen = Σ payments, balance_sen_live =
      local_total − Σ payments. Same source the mobile SO list and Delivery
      Planning read. Optional so an absent view row falls back, not crashes. */
-  paid_total_centi?: number | null;
-  balance_centi_live?: number | null;
+  paid_total_sen?: number | null;
+  balance_sen_live?: number | null;
   phone: string | null;
   email: string | null;
   address1: string | null;
@@ -154,20 +154,20 @@ type SoRow = {
   //    backend OMITS these keys entirely for non-finance callers
   //    (canViewScmFinance), so every one is optional. margin_pct_basis is
   //    basis points (margin/total x 10000).
-  mattress_sofa_centi?: number;
-  bedframe_centi?: number;
-  accessories_centi?: number;
-  others_centi?: number;
-  service_centi?: number;
-  mattress_sofa_cost_centi?: number;
-  bedframe_cost_centi?: number;
-  accessories_cost_centi?: number;
-  others_cost_centi?: number;
-  service_cost_centi?: number;
-  total_cost_centi?: number;
-  total_margin_centi?: number;
+  mattress_sofa_sen?: number;
+  bedframe_sen?: number;
+  accessories_sen?: number;
+  others_sen?: number;
+  service_sen?: number;
+  mattress_sofa_cost_sen?: number;
+  bedframe_cost_sen?: number;
+  accessories_cost_sen?: number;
+  others_cost_sen?: number;
+  service_cost_sen?: number;
+  total_cost_sen?: number;
+  total_margin_sen?: number;
   margin_pct_basis?: number;
-  deposit_centi?: number;
+  deposit_sen?: number;
 };
 
 /* Every status the backend vocabulary carries (mfg-sales-orders.ts
@@ -206,7 +206,7 @@ const SO_STATUS_TABS: Array<{ value: StatusTab; label: string }> = [
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtRm = (centi: number): string => fmtCenti(centi);
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 // margin_pct_basis is basis points (margin/total x 10000) → percent string.
 const fmtPctBasis = (basis: number | null | undefined): string =>
@@ -418,7 +418,7 @@ function CardsGrid({ rows, onOpen }: { rows: SoRow[]; onOpen: (r: SoRow) => void
                 </div>
               </div>
               <span className="font-money text-[15px] font-bold text-ink">
-                {fmtRm(r.local_total_centi)}
+                {fmtRm(r.local_total_sen)}
               </span>
             </div>
           </button>
@@ -459,11 +459,11 @@ function DetailDrawer({
 }) {
   const detailQ = useMfgSalesOrderDetail(row?.doc_no ?? null);
   // API (GET /mfg-sales-orders/:docNo) returns raw item columns: description,
-  // item_code, qty, unit_price_centi, discount_centi, total_centi. Read those
+  // item_code, qty, unit_price_sen, discount_sen, total_sen. Read those
   // exact names (matches SalesOrderDetailV2). The old product_name/product_code/
-  // amount_centi names never existed → "—" for every SO, and for mirrored 2990
-  // POS lines (money in total_centi, unit_price_centi≈0) the qty×unit fallback
-  // rendered RM 0.00. Prefer the authoritative total_centi.
+  // amount_sen names never existed → "—" for every SO, and for mirrored 2990
+  // POS lines (money in total_sen, unit_price_sen≈0) the qty×unit fallback
+  // rendered RM 0.00. Prefer the authoritative total_sen.
   // Owner 2026-07-15 — the quick-view line must read like the customer doc:
   // "order line must show description, colour, divan etc." The detail response
   // already carries item_group / description2 / variants for every line (they
@@ -477,8 +477,8 @@ function DetailDrawer({
     item_group?: string | null;
     variants?: Record<string, unknown> | null;
     qty?: number;
-    unit_price_centi?: number;
-    total_centi?: number;
+    unit_price_sen?: number;
+    total_sen?: number;
   }> =
     (detailQ.data as { items?: unknown[] } | undefined)?.items as Array<{
       item_code?: string;
@@ -487,8 +487,8 @@ function DetailDrawer({
       item_group?: string | null;
       variants?: Record<string, unknown> | null;
       qty?: number;
-      unit_price_centi?: number;
-      total_centi?: number;
+      unit_price_sen?: number;
+      total_sen?: number;
     }> ?? [];
 
   const open = !!row;
@@ -500,15 +500,15 @@ function DetailDrawer({
   // prices are quoted SST-inclusive (mirrors SalesOrderDetailV2's "SST ·
   // Inclusive" line). Adding another 6 % double-taxed the drawer's Total
   // against the aside on the detail page. Total is now just subtotal.
-  const subtotalCenti =
+  const subtotalSen =
     items.length > 0
-      ? items.reduce((sum, l) => sum + (l.total_centi ?? (l.qty ?? 0) * (l.unit_price_centi ?? 0)), 0)
-      : row?.local_total_centi ?? 0;
-  const totalCenti = subtotalCenti;
-  // Ledger-derived paid (Σ payments); the stored paid_centi is a deprecated
+      ? items.reduce((sum, l) => sum + (l.total_sen ?? (l.qty ?? 0) * (l.unit_price_sen ?? 0)), 0)
+      : row?.local_total_sen ?? 0;
+  const totalSen = subtotalSen;
+  // Ledger-derived paid (Σ payments); the stored paid_sen is a deprecated
   // column no writer maintains, kept only as the absent-view fallback.
-  const paidCenti = row?.paid_total_centi ?? row?.paid_centi ?? 0;
-  const outstandingCenti = totalCenti - paidCenti;
+  const paidSen = row?.paid_total_sen ?? row?.paid_sen ?? 0;
+  const outstandingSen = totalSen - paidSen;
 
   return (
     <ResizableDetailDrawer
@@ -630,7 +630,7 @@ function DetailDrawer({
                   </div>
                 )}
                 {items.map((l, i) => {
-                  const amt = l.total_centi ?? (l.qty ?? 0) * (l.unit_price_centi ?? 0);
+                  const amt = l.total_sen ?? (l.qty ?? 0) * (l.unit_price_sen ?? 0);
                   /* Item CODE first, then the variant subtitle; description
                      dropped (owner 2026-07-24) — the shared order-line rule
                      (vendor/shared/line-identity.ts). Live variant summary wins
@@ -673,13 +673,13 @@ function DetailDrawer({
 
               {/* totals */}
               <div className="mt-4 rounded-lg border border-border bg-surface px-5 py-4">
-                <TotalRow k="Subtotal" v={fmtRm(subtotalCenti)} />
-                <TotalRow k="Total" v={fmtRm(totalCenti)} strong />
-                {paidCenti > 0 ? (
-                  <TotalRow k="Paid" v={fmtRm(paidCenti)} tone="success" />
+                <TotalRow k="Subtotal" v={fmtRm(subtotalSen)} />
+                <TotalRow k="Total" v={fmtRm(totalSen)} strong />
+                {paidSen > 0 ? (
+                  <TotalRow k="Paid" v={fmtRm(paidSen)} tone="success" />
                 ) : null}
-                {outstandingCenti !== 0 ? ( // `> 0` hid the row on exactly the orders that need it: an over-collection is not "nothing outstanding"
-                  <TotalRow k={outstandingCenti < 0 ? "Over-collected" : "Outstanding"} v={fmtRm(outstandingCenti)} tone="error" />
+                {outstandingSen !== 0 ? ( // `> 0` hid the row on exactly the orders that need it: an over-collection is not "nothing outstanding"
+                  <TotalRow k={outstandingSen < 0 ? "Over-collected" : "Outstanding"} v={fmtRm(outstandingSen)} tone="error" />
                 ) : null}
               </div>
             </div>
@@ -845,11 +845,11 @@ function TotalRow({
 }
 
 // Table column key → backend sort-whitelist column. Only the mismatched key
-// ("amount" → "local_total_centi") needs a map; doc_no / so_date / debtor_name
+// ("amount" → "local_total_sen") needs a map; doc_no / so_date / debtor_name
 // / status already match the backend names 1:1. Columns not in this map that
 // are also not backend-sortable are marked `disableSort` on the column def.
 const SORT_COL_MAP: Record<string, string> = {
-  amount: "local_total_centi",
+  amount: "local_total_sen",
 };
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
@@ -867,8 +867,8 @@ type DrillItem = {
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
   qty?: number;
-  unit_price_centi?: number;
-  total_centi?: number;
+  unit_price_sen?: number;
+  total_sen?: number;
   /* Per-line readiness — all already stamped by GET /mfg-sales-orders/:docNo
      (the same payload this expansion fetches); the old four-column layout just
      dropped them on the floor (owner 2026-07-24: "怎么没有每一个 line 的
@@ -928,7 +928,7 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
           <span>Incoming PO</span>
         </div>
         {items.map((l, i) => {
-          const amt = l.total_centi ?? (l.qty ?? 0) * (l.unit_price_centi ?? 0);
+          const amt = l.total_sen ?? (l.qty ?? 0) * (l.unit_price_sen ?? 0);
           /* Item CODE first, then the variant subtitle; description dropped
              (owner 2026-07-24) — the shared order-line rule
              (vendor/shared/line-identity.ts). This drill-down row is the TWIN
@@ -960,7 +960,7 @@ function SoLinesExpansion({ docNo }: { docNo: string }) {
                 {l.qty ?? 0}
               </span>
               <span className="text-right font-money text-[12px] text-ink-secondary">
-                {fmtRm(l.unit_price_centi ?? 0)}
+                {fmtRm(l.unit_price_sen ?? 0)}
               </span>
               <span className="text-right font-money text-[12px] font-semibold text-ink">
                 {fmtRm(amt)}
@@ -1034,7 +1034,7 @@ export function MfgSalesOrdersListV2() {
 
   const [selected, setSelected] = useState<SoRow | null>(null);
   // Server-side sort, formatted "<col>:<dir>" for the backend whitelist
-  // (so_date/doc_no/debtor_name/status/local_total_centi/customer_delivery_date).
+  // (so_date/doc_no/debtor_name/status/local_total_sen/customer_delivery_date).
   const [sort, setSort] = useState<string | undefined>(undefined);
   // Gate the list query until the DataTable has reported its localStorage-
   // restored sort up to us (its one-shot mount effect → setSortAndReset below).
@@ -1084,7 +1084,7 @@ export function MfgSalesOrdersListV2() {
   // The server already filtered (status + search) and sorted this page; the
   // rows are rendered verbatim — NO client re-filter / re-sort (that would be
   // wrong on a partial page).
-  const rows = (data?.salesOrders ?? []) as SoRow[];
+  const rows = useEnrichedSoListRows((data?.salesOrders ?? []) as SoRow[], !listLoading); // SHIPPED chips + stored placeholders; deferred MRP heals 4 fields a beat later
   const total = data?.total ?? 0;
   // Status tab counts come from the server over the FULL scoped set (not the
   // page), so the pills stay correct while paging / searching.
@@ -1099,18 +1099,18 @@ export function MfgSalesOrdersListV2() {
   const aggregates = data?.aggregates;
   const stats = useMemo(() => {
     if (aggregates) return { ...aggregates, fullSet: true };
-    let revenueCenti = 0;
-    let outstandingCenti = 0;
-    let paidCenti = 0;
+    let revenueSen = 0;
+    let outstandingSen = 0;
+    let paidSen = 0;
     // Client-side fallback sum (legacy non-paginated path only — the paginated
     // path uses the server's full-set `aggregates`). Same ledger-derived
     // columns the server now sums, so both paths agree.
     for (const r of rows) {
-      revenueCenti += r.local_total_centi ?? 0;
-      outstandingCenti += r.balance_centi_live ?? r.balance_centi ?? 0;
-      paidCenti += r.paid_total_centi ?? r.paid_centi ?? 0;
+      revenueSen += r.local_total_sen ?? 0;
+      outstandingSen += r.balance_sen_live ?? r.balance_sen ?? 0;
+      paidSen += r.paid_total_sen ?? r.paid_sen ?? 0;
     }
-    return { revenueCenti, outstandingCenti, paidCenti, fullSet: false };
+    return { revenueSen, outstandingSen, paidSen, fullSet: false };
   }, [aggregates, rows]);
 
   // Write the page index to the URL. p<=0 drops the param (clean default).
@@ -1460,10 +1460,10 @@ export function MfgSalesOrdersListV2() {
       label: "Amount",
       width: "128px",
       align: "right",
-      getValue: (r) => r.local_total_centi,
+      getValue: (r) => r.local_total_sen,
       render: (r) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtRm(r.local_total_centi)}
+          {fmtRm(r.local_total_sen)}
         </span>
       ),
     },
@@ -1628,9 +1628,9 @@ export function MfgSalesOrdersListV2() {
       align: "right",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.paid_total_centi ?? r.paid_centi ?? 0,
+      getValue: (r) => r.paid_total_sen ?? r.paid_sen ?? 0,
       render: (r) => (
-        <span className="font-money text-[13px] text-ink">{fmtRm(r.paid_total_centi ?? r.paid_centi ?? 0)}</span>
+        <span className="font-money text-[13px] text-ink">{fmtRm(r.paid_total_sen ?? r.paid_sen ?? 0)}</span>
       ),
     },
     {
@@ -1641,9 +1641,9 @@ export function MfgSalesOrdersListV2() {
       align: "right",
       defaultHidden: true,
       disableSort: true,
-      getValue: (r) => r.balance_centi_live ?? r.balance_centi, // `?? 0` was dead: balance_centi is `number`, never nullish
+      getValue: (r) => r.balance_sen_live ?? r.balance_sen, // `?? 0` was dead: balance_sen is `number`, never nullish
       render: (r) => ( // negative = over-collected → text-err, the app's negative-money convention (owner 2026-08-16)
-        <span className={cn("font-money text-[13px]", (r.balance_centi_live ?? r.balance_centi) < 0 ? "text-err" : "text-ink")}>{fmtRm(r.balance_centi_live ?? r.balance_centi)}</span>
+        <span className={cn("font-money text-[13px]", (r.balance_sen_live ?? r.balance_sen) < 0 ? "text-err" : "text-ink")}>{fmtRm(r.balance_sen_live ?? r.balance_sen)}</span>
       ),
     },
     // ── Re-added columns (Phase 2) — NON-finance fields that already travel on
@@ -1767,159 +1767,159 @@ export function MfgSalesOrdersListV2() {
     ...(canFinance
       ? ([
           {
-            key: "mattress_sofa_centi",
+            key: "mattress_sofa_sen",
             group: "Finance",
             label: "Mattress/Sofa",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_centi ?? 0,
+            getValue: (r) => r.mattress_sofa_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.mattress_sofa_sen ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_centi",
+            key: "bedframe_sen",
             group: "Finance",
             label: "Bedframe",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_centi ?? 0,
+            getValue: (r) => r.bedframe_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.bedframe_sen ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_centi",
+            key: "accessories_sen",
             group: "Finance",
             label: "Accessories",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_centi ?? 0,
+            getValue: (r) => r.accessories_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.accessories_sen ?? 0)}</span>
             ),
           },
           {
-            key: "others_centi",
+            key: "others_sen",
             group: "Finance",
             label: "Others",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_centi ?? 0,
+            getValue: (r) => r.others_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.others_sen ?? 0)}</span>
             ),
           },
           {
-            key: "service_centi",
+            key: "service_sen",
             group: "Finance",
             label: "Service",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.service_centi ?? 0,
+            getValue: (r) => r.service_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.service_sen ?? 0)}</span>
             ),
           },
           {
-            key: "mattress_sofa_cost_centi",
+            key: "mattress_sofa_cost_sen",
             group: "Finance",
             label: "Mattress/Sofa Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.mattress_sofa_cost_centi ?? 0,
+            getValue: (r) => r.mattress_sofa_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.mattress_sofa_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "bedframe_cost_centi",
+            key: "bedframe_cost_sen",
             group: "Finance",
             label: "Bedframe Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.bedframe_cost_centi ?? 0,
+            getValue: (r) => r.bedframe_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.bedframe_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "accessories_cost_centi",
+            key: "accessories_cost_sen",
             group: "Finance",
             label: "Accessories Cost",
             width: "140px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.accessories_cost_centi ?? 0,
+            getValue: (r) => r.accessories_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.accessories_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "others_cost_centi",
+            key: "others_cost_sen",
             group: "Finance",
             label: "Others Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.others_cost_centi ?? 0,
+            getValue: (r) => r.others_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.others_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "service_cost_centi",
+            key: "service_cost_sen",
             group: "Finance",
             label: "Service Cost",
             width: "130px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.service_cost_centi ?? 0,
+            getValue: (r) => r.service_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.service_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "total_cost_centi",
+            key: "total_cost_sen",
             group: "Finance",
             label: "Total Cost",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_cost_centi ?? 0,
+            getValue: (r) => r.total_cost_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink-secondary">{fmtRm(r.total_cost_sen ?? 0)}</span>
             ),
           },
           {
-            key: "total_margin_centi",
+            key: "total_margin_sen",
             group: "Finance",
             label: "Margin",
             width: "120px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.total_margin_centi ?? 0,
+            getValue: (r) => r.total_margin_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.total_margin_sen ?? 0)}</span>
             ),
           },
           {
@@ -1936,16 +1936,16 @@ export function MfgSalesOrdersListV2() {
             ),
           },
           {
-            key: "deposit_centi",
+            key: "deposit_sen",
             group: "Amounts",
             label: "Deposit",
             width: "110px",
             align: "right",
             defaultHidden: true,
             disableSort: true,
-            getValue: (r) => r.deposit_centi ?? 0,
+            getValue: (r) => r.deposit_sen ?? 0,
             render: (r) => (
-              <span className="font-money text-[13px] text-ink">{fmtRm(r.deposit_centi ?? 0)}</span>
+              <span className="font-money text-[13px] text-ink">{fmtRm(r.deposit_sen ?? 0)}</span>
             ),
           },
         ] satisfies Column<SoRow>[])
@@ -2052,7 +2052,7 @@ export function MfgSalesOrdersListV2() {
           </h1>
           <div className="mt-0.5 text-[12.5px] text-ink-muted">
             {total} order{total === 1 ? "" : "s"} ·{" "}
-            <span className="font-money">{fmtRm(stats.revenueCenti)}</span>
+            <span className="font-money">{fmtRm(stats.revenueSen)}</span>
           </div>
         </div>
       </div>
@@ -2114,14 +2114,14 @@ export function MfgSalesOrdersListV2() {
             <StatCard
               pending={statsPending}
               label="Revenue"
-              value={fmtRm(stats.revenueCenti)}
+              value={fmtRm(stats.revenueSen)}
               subtitle={stats.fullSet ? "All matching orders" : "Sum on this page"}
               rail="bg-accent"
             />
             <StatCard
               pending={statsPending}
               label="Outstanding"
-              value={fmtRm(stats.outstandingCenti)}
+              value={fmtRm(stats.outstandingSen)}
               subtitle={stats.fullSet ? "Balance due" : "Balance on this page"}
               tone="error"
               rail="bg-err"
@@ -2129,7 +2129,7 @@ export function MfgSalesOrdersListV2() {
             <StatCard
               pending={statsPending}
               label="Paid"
-              value={fmtRm(stats.paidCenti)}
+              value={fmtRm(stats.paidSen)}
               subtitle={stats.fullSet ? "Receipts to date" : "Receipts on this page"}
               tone="success"
               rail="bg-synced"

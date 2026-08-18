@@ -26,6 +26,7 @@ import { entityAuditLog } from "./routes/entity-audit-log";
 import { autocountOutbox } from "./routes/autocount-outbox";
 import { currencies } from "./routes/currencies";
 import { mfgSalesOrders } from "./routes/mfg-sales-orders";
+import { mfgSalesOrdersListEnrichment } from "./routes/mfg-sales-orders-list-enrichment";
 import { soAmendments } from "./routes/so-amendments";
 import { soHandover } from "./routes/so-handover";
 import { poAmendments } from "./routes/po-amendments";
@@ -258,6 +259,11 @@ scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
 scm.route("/purchase-invoices", purchaseInvoices);
 // ── Sales Orders (scm.sales.orders) ─────────────────────────────────────────
 scm.use("/mfg-sales-orders/*", scmAreaGuard("scm.sales.orders"));
+// Deferred list enrichment — the MRP-derived SO-list fields the list no longer
+// computes on its critical path (READY source-PO chips + readiness/planning
+// verdicts). Mounted BEFORE the main router so its static `/list-mrp-enrichment`
+// path resolves ahead of `/:docNo`. Shares the guard above via the path prefix.
+scm.route("/mfg-sales-orders", mfgSalesOrdersListEnrichment);
 scm.route("/mfg-sales-orders", mfgSalesOrders);
 // SO amendment / revision workflow — SO-centric, so it rides the same L2 area
 // guard as Sales Orders (GET=view, PATCH=edit); the finer scm.amendment.* gates
@@ -577,7 +583,7 @@ scm.route("/venues", venues);
 // four 404'd. Read-only nested-join reads over mfg_sales_order_items /
 // delivery_order_items / sales_invoice_items / delivery_return_items (+ headers
 // + mfg_sales_order_payments + staff). All referenced tables exist in the scm
-// schema. paid_centi on mfg_sales_orders does NOT exist in Houzs (dropped on
+// schema. paid_sen on mfg_sales_orders does NOT exist in Houzs (dropped on
 // port) — paid totals derive from the payments ledger.
 // reports: read-only cross-area detail listings — left on the coarse gate (see
 // SHARED READ HELPERS note above).

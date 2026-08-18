@@ -123,7 +123,10 @@ describe('the four downstream document types queue an edit on every line and hea
 
   test('Sales Invoice — header PATCH and line add / edit / delete', () => {
     expect(between(SI, "salesInvoices.patch('/:id',", 'return c.json({ ok: true, id });')).toContain('queueAcSiEdit(c, id)');
-    expect(between(SI, "salesInvoices.post('/:id/items',", 'return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);')).toContain('queueAcSiEdit(c, id)');
+    /* Anchored on the DECLARATION, not the registration: this handler was extracted
+     as a named export in 2026-08-19's company-scope fix so a test could mount it,
+     which moved `salesInvoices.post('/:id/items', ...)` below the body. */
+  expect(between(SI, 'export const appendSalesInvoiceItemHandler =', 'return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);')).toContain('queueAcSiEdit(c, id)');
     expect(between(SI, "salesInvoices.patch('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcSiEdit(c, id)');
     expect(between(SI, "salesInvoices.delete('/:id/items/:itemId',", 'return c.json({ ok: true });')).toContain('queueAcSiEdit(c, id, retire)');
   });
@@ -137,7 +140,7 @@ describe('the four downstream document types queue an edit on every line and hea
 });
 
 describe('the SO and PO mutation paths the named-anchor test did not cover', () => {
-  test('SO price override — the admin side-door that writes unit_price_centi', () => {
+  test('SO price override — the admin side-door that writes unit_price_sen', () => {
     /* UnitPrice IS an AutoCount field. This route was the one price path that
        does not go through PATCH /:docNo/items/:itemId, so the ERP and the
        account book quoted different money for the same line. */

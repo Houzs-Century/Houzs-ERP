@@ -557,7 +557,7 @@ dpOrders.post('/:id/schedule', async (c) => {
         stop_type: d.job_type,
         customer_name: (d.party_name as string | null) ?? null,
         address,
-        revenue_centi: 0,
+        revenue_sen: 0,
         /* The SAME number the order header carries — a mirror, not a second
            identity. Writing it here is also what keeps trip_stops the complete
            registry the minter scans. */

@@ -37,7 +37,7 @@
    "erp": "AK- ESSENTIAL BOLSTER",
    "ac": "AK- ESSENTIAL BOLSTER",
    "main": true,
-   "cost_centi": 2160
+   "cost_sen": 2160
   },
   {
    "op": "product_cost",
@@ -51,7 +51,7 @@
    "erp": "AK- LTX CLS PIL",
    "ac": "AK- LTX CLS PIL",
    "main": true,
-   "cost_centi": 9400
+   "cost_sen": 9400
   },
   {
    "op": "product_cost",
@@ -65,7 +65,7 @@
    "erp": "AK- SL ES WP QLT FIT MP (K)",
    "ac": "AK- SL ES WP QLT FIT MP (K)",
    "main": true,
-   "cost_centi": 11600
+   "cost_sen": 11600
   },
   {
    "op": "product_cost",
@@ -79,7 +79,7 @@
    "erp": "AK- SL ES WP QLT FIT MP (Q)",
    "ac": "AK- SL ES WP QLT FIT MP (Q)",
    "main": true,
-   "cost_centi": 10400
+   "cost_sen": 10400
   },
   {
    "op": "product_cost",
@@ -93,7 +93,7 @@
    "erp": "AK- SL ES WP QLT FIT MP (SS)",
    "ac": "AK- SL ES WP QLT FIT MP (SS)",
    "main": true,
-   "cost_centi": 8000
+   "cost_sen": 8000
   },
   {
    "op": "product_cost",
@@ -107,7 +107,7 @@
    "erp": "AK-AV DR ROL PACK PIL",
    "ac": "AK-AV DR ROL PACK PIL",
    "main": true,
-   "cost_centi": 2300
+   "cost_sen": 2300
   },
   {
    "op": "product_cost",
@@ -121,7 +121,7 @@
    "erp": "AK-COOL HUGGY BLANKET",
    "ac": "AK-COOL HUGGY BLANKET",
    "main": true,
-   "cost_centi": 19000
+   "cost_sen": 19000
   },
   {
    "op": "product_cost",
@@ -135,7 +135,7 @@
    "erp": "AK-COOL HUGGY BLANKET (SK)",
    "ac": "AK-COOL HUGGY BLANKET (SK)",
    "main": true,
-   "cost_centi": 29000
+   "cost_sen": 29000
   },
   {
    "op": "product_cost",
@@ -149,7 +149,7 @@
    "erp": "AK-CS AIRLOFT COMFY PIL",
    "ac": "AK-CS AIRLOFT COMFY PIL",
    "main": true,
-   "cost_centi": 7500
+   "cost_sen": 7500
   },
   {
    "op": "product_cost",
@@ -163,7 +163,7 @@
    "erp": "AK-CT HYD.G BB CHC MEM PIL",
    "ac": "AK-CT HYD.G BB CHC MEM PIL",
    "main": true,
-   "cost_centi": 13400
+   "cost_sen": 13400
   },
   {
    "op": "product_cost",
@@ -177,7 +177,7 @@
    "erp": "AK-HAPPY SLEEP EASY",
    "ac": "AK-HAPPY SLEEP EASY",
    "main": true,
-   "cost_centi": 2300
+   "cost_sen": 2300
   },
   {
    "op": "product_cost",
@@ -191,7 +191,7 @@
    "erp": "AK-HP CM MATT CVR S+AD",
    "ac": "AK-HP CM MATT CVR S+AD",
    "main": true,
-   "cost_centi": 3080
+   "cost_sen": 3080
   },
   {
    "op": "product_cost",
@@ -205,7 +205,7 @@
    "erp": "AK-HP LL AQU AD BL CS",
    "ac": "AK-HP LL AQU AD BL CS",
    "main": true,
-   "cost_centi": 910
+   "cost_sen": 910
   },
   {
    "op": "product_cost",
@@ -219,7 +219,7 @@
    "erp": "AK-HP LL AQU AD PIL CS",
    "ac": "AK-HP LL AQU AD PIL CS",
    "main": true,
-   "cost_centi": 1330
+   "cost_sen": 1330
   },
   {
    "op": "product_cost",
@@ -233,7 +233,7 @@
    "erp": "AK-HP LL BRR AD BL CS",
    "ac": "AK-HP LL BRR AD BL CS",
    "main": true,
-   "cost_centi": 910
+   "cost_sen": 910
   },
   {
    "op": "product_cost",
@@ -247,7 +247,7 @@
    "erp": "AK-HP LL BRR AD PIL CS",
    "ac": "AK-HP LL BRR AD PIL CS",
    "main": true,
-   "cost_centi": 1330
+   "cost_sen": 1330
   },
   {
    "op": "product_cost",
@@ -261,7 +261,7 @@
    "erp": "AK-HP LL GRY AD PIL CS",
    "ac": "AK-HP LL GRY AD PIL CS",
    "main": true,
-   "cost_centi": 1330
+   "cost_sen": 1330
   },
   {
    "op": "product_cost",
@@ -275,7 +275,7 @@
    "erp": "AK-HP LL WIN AD BL CS",
    "ac": "AK-HP LL WIN AD BL CS",
    "main": true,
-   "cost_centi": 910
+   "cost_sen": 910
   },
   {
    "op": "product_cost",
@@ -289,7 +289,7 @@
    "erp": "AK-HP LL WIN AD PIL CS",
    "ac": "AK-HP LL WIN AD PIL CS",
    "main": true,
-   "cost_centi": 1330
+   "cost_sen": 1330
   },
   {
    "op": "product_cost",
@@ -303,7 +303,7 @@
    "erp": "AK-HP LL WOD AD PIL CS",
    "ac": "AK-HP LL WOD AD PIL CS",
    "main": true,
-   "cost_centi": 1330
+   "cost_sen": 1330
   },
   {
    "op": "product_cost",
@@ -317,7 +317,7 @@
    "erp": "AK-HP SL ERGO PIL",
    "ac": "AK-HP SL ERGO PIL",
    "main": true,
-   "cost_centi": 4800
+   "cost_sen": 4800
   },
   {
    "op": "product_cost",
@@ -331,7 +331,7 @@
    "erp": "AK-HP SL MP (K)",
    "ac": "AK-HP SL MP (K)",
    "main": true,
-   "cost_centi": 6230
+   "cost_sen": 6230
   },
   {
    "op": "product_cost",
@@ -345,7 +345,7 @@
    "erp": "AK-HP SL MP (Q)",
    "ac": "AK-HP SL MP (Q)",
    "main": true,
-   "cost_centi": 5530
+   "cost_sen": 5530
   },
   {
    "op": "product_cost",
@@ -359,7 +359,7 @@
    "erp": "AK-HP SL MP (SS)",
    "ac": "AK-HP SL MP (SS)",
    "main": true,
-   "cost_centi": 4130
+   "cost_sen": 4130
   },
   {
    "op": "product_cost",
@@ -373,7 +373,7 @@
    "erp": "AK-M+H AV SOFT TC MEM PIL (IM)",
    "ac": "AK-M+H AV SOFT TC MEM PIL (IM)",
    "main": true,
-   "cost_centi": 13400
+   "cost_sen": 13400
   },
   {
    "op": "product_cost",
@@ -387,7 +387,7 @@
    "erp": "AK-NA DUAL DS LTX PIL",
    "ac": "AK-NA DUAL DS LTX PIL",
    "main": true,
-   "cost_centi": 16700
+   "cost_sen": 16700
   },
   {
    "op": "product_cost",
@@ -401,7 +401,7 @@
    "erp": "AK-NT VTL LTX PIL",
    "ac": "AK-NT VTL LTX PIL",
    "main": true,
-   "cost_centi": 16500
+   "cost_sen": 16500
   },
   {
    "op": "product_cost",
@@ -415,7 +415,7 @@
    "erp": "AK-OL AC HILOFT PIL",
    "ac": "AK-OL AC HILOFT PIL",
    "main": true,
-   "cost_centi": 16000
+   "cost_sen": 16000
   },
   {
    "op": "product_cost",
@@ -429,7 +429,7 @@
    "erp": "AK-OL AC MEM PIL",
    "ac": "AK-OL AC MEM PIL",
    "main": true,
-   "cost_centi": 20000
+   "cost_sen": 20000
   },
   {
    "op": "product_cost",
@@ -443,7 +443,7 @@
    "erp": "AK-SK + MICROFIL PIL",
    "ac": "AK-SK + MICROFIL PIL",
    "main": true,
-   "cost_centi": 8530
+   "cost_sen": 8530
   },
   {
    "op": "product_cost",
@@ -457,7 +457,7 @@
    "erp": "AK-SK CT MEM FOAM PIL",
    "ac": "AK-SK CT MEM FOAM PIL",
    "main": true,
-   "cost_centi": 21200
+   "cost_sen": 21200
   },
   {
    "op": "product_cost",
@@ -471,7 +471,7 @@
    "erp": "AK-SK FX AIRLOFT PIL",
    "ac": "AK-SK FX AIRLOFT PIL",
    "main": true,
-   "cost_centi": 8530
+   "cost_sen": 8530
   },
   {
    "op": "product_cost",
@@ -485,7 +485,7 @@
    "erp": "AK-SL ES FIT MP+PIL PRO",
    "ac": "AK-SL ES FIT MP+PIL PRO",
    "main": true,
-   "cost_centi": 3100
+   "cost_sen": 3100
   },
   {
    "op": "product_cost",
@@ -499,7 +499,7 @@
    "erp": "AK-SLEEP ES DENSEFIL PILLOW",
    "ac": "AK-SLEEP ES DENSEFIL PILLOW",
    "main": true,
-   "cost_centi": 2600
+   "cost_sen": 2600
   },
   {
    "op": "product_cost",
@@ -520,7 +520,7 @@
    "erp": "AK-SLEEP ESSENTIAL 7 HOLES",
    "ac": "AK-SLEEP ESSENTIAL 7 HOLES",
    "main": true,
-   "cost_centi": 1800
+   "cost_sen": 1800
   },
   {
    "op": "product_cost",
@@ -534,7 +534,7 @@
    "erp": "AMN-SOFA PILLOW",
    "ac": "AMN-SOFA PILLOW",
    "main": true,
-   "cost_centi": 1000
+   "cost_sen": 1000
   },
   {
    "op": "product_cost",
@@ -548,7 +548,7 @@
    "erp": "CR- MICROFIBER WP MP (K)",
    "ac": "CR- MICROFIBER WP MP (K)",
    "main": true,
-   "cost_centi": 2600
+   "cost_sen": 2600
   },
   {
    "op": "product_cost",
@@ -562,7 +562,7 @@
    "erp": "CR- MICROFIBER WP MP (Q)",
    "ac": "CR- MICROFIBER WP MP (Q)",
    "main": true,
-   "cost_centi": 2400
+   "cost_sen": 2400
   },
   {
    "op": "product_cost",
@@ -576,7 +576,7 @@
    "erp": "DL-5' WATERPROOF PROTECTOR",
    "ac": "DL-5' WATERPROOF PROTECTOR",
    "main": true,
-   "cost_centi": 7700
+   "cost_sen": 7700
   },
   {
    "op": "product_cost",
@@ -590,7 +590,7 @@
    "erp": "DL-6' WATERPROOF MP",
    "ac": "DL-6' WATERPROOF MP",
    "main": true,
-   "cost_centi": 8800
+   "cost_sen": 8800
   },
   {
    "op": "product_cost",
@@ -604,7 +604,7 @@
    "erp": "DL-ECO COMFORT LATEX PILLOW",
    "ac": "DL-ECO COMFORT LATEX PILLOW",
    "main": true,
-   "cost_centi": 15400
+   "cost_sen": 15400
   },
   {
    "op": "product_cost",
@@ -618,7 +618,7 @@
    "erp": "DL-ECO COOL LATEX PILLOW",
    "ac": "DL-ECO COOL LATEX PILLOW",
    "main": true,
-   "cost_centi": 22400
+   "cost_sen": 22400
   },
   {
    "op": "product_cost",
@@ -632,7 +632,7 @@
    "erp": "DL-ECO NECK COMFORT PIL",
    "ac": "DL-ECO NECK COMFORT PIL",
    "main": true,
-   "cost_centi": 15400
+   "cost_sen": 15400
   },
   {
    "op": "product_cost",
@@ -646,7 +646,7 @@
    "erp": "DL-ECO SUPPORT CONTOUR PILLOW",
    "ac": "DL-ECO SUPPORT CONTOUR PILLOW",
    "main": true,
-   "cost_centi": 17400
+   "cost_sen": 17400
   },
   {
    "op": "product_cost",
@@ -660,7 +660,7 @@
    "erp": "DL-HOTEL PILLOW(M)",
    "ac": "DL-HOTEL PILLOW(M)",
    "main": true,
-   "cost_centi": 10100
+   "cost_sen": 10100
   },
   {
    "op": "product_cost",
@@ -674,7 +674,7 @@
    "erp": "DL-HOTEL PILLOW(XL)",
    "ac": "DL-HOTEL PILLOW(XL)",
    "main": true,
-   "cost_centi": 14300
+   "cost_sen": 14300
   },
   {
    "op": "product_cost",
@@ -695,7 +695,7 @@
    "erp": "DL-MP(K)",
    "ac": "DL-MP(K)",
    "main": true,
-   "cost_centi": 8800
+   "cost_sen": 8800
   },
   {
    "op": "product_cost",
@@ -709,7 +709,7 @@
    "erp": "DL-MP(Q)",
    "ac": "DL-MP(Q)",
    "main": true,
-   "cost_centi": 7700
+   "cost_sen": 7700
   },
   {
    "op": "product_cost",
@@ -723,7 +723,7 @@
    "erp": "DL-MP(S)",
    "ac": "DL-MP(S)",
    "main": true,
-   "cost_centi": 5000
+   "cost_sen": 5000
   },
   {
    "op": "product_cost",
@@ -737,7 +737,7 @@
    "erp": "DL-MP(SS)",
    "ac": "DL-MP(SS)",
    "main": true,
-   "cost_centi": 5500
+   "cost_sen": 5500
   },
   {
    "op": "product_cost",
@@ -758,7 +758,7 @@
    "erp": "DL-SERENE LATEX PILLOW",
    "ac": "DL-SERENE LATEX PILLOW",
    "main": true,
-   "cost_centi": 19400
+   "cost_sen": 19400
   },
   {
    "op": "product_cost",
@@ -772,7 +772,7 @@
    "erp": "DL-SERENITY LTX PIL",
    "ac": "DL-SERENITY LTX PIL",
    "main": true,
-   "cost_centi": 18800
+   "cost_sen": 18800
   },
   {
    "op": "product_cost",
@@ -793,7 +793,7 @@
    "erp": "DL-WHITE BOLSTER",
    "ac": "DL-WHITE BOLSTER",
    "main": true,
-   "cost_centi": 4400
+   "cost_sen": 4400
   },
   {
    "op": "product_cost",
@@ -807,7 +807,7 @@
    "erp": "DL-WHITE PILLOW",
    "ac": "DL-WHITE PILLOW",
    "main": true,
-   "cost_centi": 3300
+   "cost_sen": 3300
   },
   {
    "op": "product_cost",
@@ -877,7 +877,7 @@
    "erp": "HB109M-CC",
    "ac": "HB109M-CC",
    "main": true,
-   "cost_centi": 3000
+   "cost_sen": 3000
   },
   {
    "op": "product_cost",
@@ -891,7 +891,7 @@
    "erp": "HB109NL",
    "ac": "HB109NL",
    "main": true,
-   "cost_centi": 5500
+   "cost_sen": 5500
   },
   {
    "op": "product_cost",
@@ -905,7 +905,7 @@
    "erp": "HB208M-CC",
    "ac": "HB208M-CC",
    "main": true,
-   "cost_centi": 3000
+   "cost_sen": 3000
   },
   {
    "op": "product_cost",
@@ -919,7 +919,7 @@
    "erp": "HB208NL",
    "ac": "HB208NL",
    "main": true,
-   "cost_centi": 5500
+   "cost_sen": 5500
   },
   {
    "op": "product_cost",
@@ -933,7 +933,7 @@
    "erp": "HB209M-CC",
    "ac": "HB209M-CC",
    "main": true,
-   "cost_centi": 3000
+   "cost_sen": 3000
   },
   {
    "op": "product_cost",
@@ -947,7 +947,7 @@
    "erp": "HB209NL",
    "ac": "HB209NL",
    "main": true,
-   "cost_centi": 5500
+   "cost_sen": 5500
   },
   {
    "op": "product_cost",
@@ -961,7 +961,7 @@
    "erp": "HB211NL",
    "ac": "HB211NL",
    "main": true,
-   "cost_centi": 5500
+   "cost_sen": 5500
   },
   {
    "op": "product_cost",
@@ -975,7 +975,7 @@
    "erp": "HB709M-CC",
    "ac": "HB709M-CC",
    "main": true,
-   "cost_centi": 3000
+   "cost_sen": 3000
   },
   {
    "op": "product_cost",
@@ -989,7 +989,7 @@
    "erp": "HB709NL",
    "ac": "HB709NL",
    "main": true,
-   "cost_centi": 8500
+   "cost_sen": 8500
   },
   {
    "op": "product_cost",
@@ -1003,7 +1003,7 @@
    "erp": "JM-BAMBOO JACQUARD WP MP (K)",
    "ac": "JM-BAMBOO JACQUARD WP MP (K)",
    "main": true,
-   "cost_centi": 4623
+   "cost_sen": 4623
   },
   {
    "op": "product_cost",
@@ -1017,7 +1017,7 @@
    "erp": "JM-BAMBOO JACQUARD WP MP (Q)",
    "ac": "JM-BAMBOO JACQUARD WP MP (Q)",
    "main": true,
-   "cost_centi": 4063
+   "cost_sen": 4063
   },
   {
    "op": "product_cost",
@@ -1031,7 +1031,7 @@
    "erp": "JM-BAMBOO JACQUARD WP MP (S)",
    "ac": "JM-BAMBOO JACQUARD WP MP (S)",
    "main": true,
-   "cost_centi": 2922
+   "cost_sen": 2922
   },
   {
    "op": "product_cost",
@@ -1045,7 +1045,7 @@
    "erp": "JM-BAMBOO JACQUARD WP MP (SK)",
    "ac": "JM-BAMBOO JACQUARD WP MP (SK)",
    "main": true,
-   "cost_centi": 5002
+   "cost_sen": 5002
   },
   {
    "op": "product_cost",
@@ -1059,7 +1059,7 @@
    "erp": "JM-BAMBOO JACQUARD WP MP (SS)",
    "ac": "JM-BAMBOO JACQUARD WP MP (SS)",
    "main": true,
-   "cost_centi": 3267
+   "cost_sen": 3267
   },
   {
    "op": "product_cost",
@@ -1073,7 +1073,7 @@
    "erp": "JM-CL JAC WP MP (K)",
    "ac": "JM-CL JAC WP MP (K)",
    "main": true,
-   "cost_centi": 7171
+   "cost_sen": 7171
   },
   {
    "op": "product_cost",
@@ -1087,7 +1087,7 @@
    "erp": "JM-CL JAC WP MP (Q)",
    "ac": "JM-CL JAC WP MP (Q)",
    "main": true,
-   "cost_centi": 6308
+   "cost_sen": 6308
   },
   {
    "op": "product_cost",
@@ -1101,7 +1101,7 @@
    "erp": "JM-CL JAC WP MP (S)",
    "ac": "JM-CL JAC WP MP (S)",
    "main": true,
-   "cost_centi": 4555
+   "cost_sen": 4555
   },
   {
    "op": "product_cost",
@@ -1115,7 +1115,7 @@
    "erp": "JM-CL JAC WP MP (SK)",
    "ac": "JM-CL JAC WP MP (SK)",
    "main": true,
-   "cost_centi": 7739
+   "cost_sen": 7739
   },
   {
    "op": "product_cost",
@@ -1129,7 +1129,7 @@
    "erp": "JM-CL JAC WP MP (SS)",
    "ac": "JM-CL JAC WP MP (SS)",
    "main": true,
-   "cost_centi": 5003
+   "cost_sen": 5003
   },
   {
    "op": "product_cost",
@@ -1150,7 +1150,7 @@
    "erp": "NTYR-CL MX MICR PIL",
    "ac": "NTYR-CL MX MICR PIL",
    "main": true,
-   "cost_centi": 3100
+   "cost_sen": 3100
   },
   {
    "op": "product_cost",
@@ -1164,7 +1164,7 @@
    "erp": "NTYR-CS LTX PIL + CSC",
    "ac": "NTYR-CS LTX PIL + CSC",
    "main": true,
-   "cost_centi": 5100
+   "cost_sen": 5100
   },
   {
    "op": "product_cost",
@@ -1178,7 +1178,7 @@
    "erp": "NTYR-ERGO LTX PIL",
    "ac": "NTYR-ERGO LTX PIL",
    "main": true,
-   "cost_centi": 4700
+   "cost_sen": 4700
   },
   {
    "op": "product_cost",
@@ -1192,7 +1192,7 @@
    "erp": "NTYR-MEM FM CT PIL",
    "ac": "NTYR-MEM FM CT PIL",
    "main": true,
-   "cost_centi": 3800
+   "cost_sen": 3800
   },
   {
    "op": "product_cost",
@@ -1206,7 +1206,7 @@
    "erp": "NTYR-TECHGEL MEM PIL",
    "ac": "NTYR-TECHGEL MEM PIL",
    "main": true,
-   "cost_centi": 6400
+   "cost_sen": 6400
   },
   {
    "op": "product_cost",
@@ -1240,7 +1240,7 @@
    "erp": "DIVAN ONLY-(K)",
    "ac": "AERO-DIVAN ONLY (K)",
    "main": true,
-   "cost_centi": 37000
+   "cost_sen": 37000
   },
   {
    "op": "product_cost",
@@ -1254,7 +1254,7 @@
    "erp": "DIVAN ONLY-(Q)",
    "ac": "AERO-DIVAN ONLY (Q)",
    "main": true,
-   "cost_centi": 30000
+   "cost_sen": 30000
   },
   {
    "op": "product_cost",
@@ -1282,7 +1282,7 @@
    "erp": "Y04-(K)",
    "ac": "AERO-Y04 (K)",
    "main": true,
-   "cost_centi": 111000
+   "cost_sen": 111000
   },
   {
    "op": "product_cost",
@@ -1296,7 +1296,7 @@
    "erp": "Y04-(Q)",
    "ac": "AERO-Y04 (Q)",
    "main": true,
-   "cost_centi": 96500
+   "cost_sen": 96500
   },
   {
    "op": "product_cost",
@@ -1310,7 +1310,7 @@
    "erp": "Y04-(S)",
    "ac": "AERO-Y04 (S)",
    "main": true,
-   "cost_centi": 72000
+   "cost_sen": 72000
   },
   {
    "op": "product_cost",
@@ -1324,7 +1324,7 @@
    "erp": "Y04-(SS)",
    "ac": "AERO-Y04 (SS)",
    "main": true,
-   "cost_centi": 80000
+   "cost_sen": 80000
   },
   {
    "op": "product_cost",
@@ -1338,7 +1338,7 @@
    "erp": "Y09-(K)",
    "ac": "AERO-Y09 (K)",
    "main": true,
-   "cost_centi": 117000
+   "cost_sen": 117000
   },
   {
    "op": "product_cost",
@@ -1352,7 +1352,7 @@
    "erp": "Y09-(Q)",
    "ac": "AERO-Y09 (Q)",
    "main": true,
-   "cost_centi": 101500
+   "cost_sen": 101500
   },
   {
    "op": "product_cost",
@@ -1366,7 +1366,7 @@
    "erp": "Y09-(S)",
    "ac": "AERO-Y09 (S)",
    "main": true,
-   "cost_centi": 75200
+   "cost_sen": 75200
   },
   {
    "op": "product_cost",
@@ -1380,7 +1380,7 @@
    "erp": "Y09-(SS)",
    "ac": "AERO-Y09 (SS)",
    "main": true,
-   "cost_centi": 83700
+   "cost_sen": 83700
   },
   {
    "op": "product_cost",
@@ -1394,7 +1394,7 @@
    "erp": "Y103-(K)",
    "ac": "AERO-Y103 (K)",
    "main": true,
-   "cost_centi": 81600
+   "cost_sen": 81600
   },
   {
    "op": "product_cost",
@@ -1408,7 +1408,7 @@
    "erp": "Y103-(Q)",
    "ac": "AERO-Y103 (Q)",
    "main": true,
-   "cost_centi": 72000
+   "cost_sen": 72000
   },
   {
    "op": "product_cost",
@@ -1422,7 +1422,7 @@
    "erp": "Y103-(S)",
    "ac": "AERO-Y103 (S)",
    "main": true,
-   "cost_centi": 55700
+   "cost_sen": 55700
   },
   {
    "op": "product_cost",
@@ -1436,7 +1436,7 @@
    "erp": "Y103-(SS)",
    "ac": "AERO-Y103 (SS)",
    "main": true,
-   "cost_centi": 61000
+   "cost_sen": 61000
   },
   {
    "op": "product_cost",
@@ -1478,7 +1478,7 @@
    "erp": "Y41-(K)",
    "ac": "AERO-Y41 (K)",
    "main": true,
-   "cost_centi": 72000
+   "cost_sen": 72000
   },
   {
    "op": "product_cost",
@@ -1492,7 +1492,7 @@
    "erp": "Y41-(Q)",
    "ac": "AERO-Y41 (Q)",
    "main": true,
-   "cost_centi": 64000
+   "cost_sen": 64000
   },
   {
    "op": "product_cost",
@@ -1506,7 +1506,7 @@
    "erp": "Y41-(S)",
    "ac": "AERO-Y41 (S)",
    "main": true,
-   "cost_centi": 50400
+   "cost_sen": 50400
   },
   {
    "op": "product_cost",
@@ -1520,7 +1520,7 @@
    "erp": "Y41-(SS)",
    "ac": "AERO-Y41 (SS)",
    "main": true,
-   "cost_centi": 54800
+   "cost_sen": 54800
   },
   {
    "op": "product_cost",
@@ -1590,7 +1590,7 @@
    "erp": "Y78-(K)",
    "ac": "AERO-Y78 (K)",
    "main": true,
-   "cost_centi": 94800
+   "cost_sen": 94800
   },
   {
    "op": "product_cost",
@@ -1604,7 +1604,7 @@
    "erp": "Y78-(Q)",
    "ac": "AERO-Y78 (Q)",
    "main": true,
-   "cost_centi": 83000
+   "cost_sen": 83000
   },
   {
    "op": "product_cost",
@@ -1618,7 +1618,7 @@
    "erp": "Y78-(S)",
    "ac": "AERO-Y78 (S)",
    "main": true,
-   "cost_centi": 63000
+   "cost_sen": 63000
   },
   {
    "op": "product_cost",
@@ -1632,7 +1632,7 @@
    "erp": "Y78-(SS)",
    "ac": "AERO-Y78 (SS)",
    "main": true,
-   "cost_centi": 69500
+   "cost_sen": 69500
   },
   {
    "op": "product_cost",
@@ -1646,7 +1646,7 @@
    "erp": "PEBBLE GREY-(K)",
    "ac": "AKBF-PEBBLE GREY (K)",
    "main": true,
-   "cost_centi": 125900
+   "cost_sen": 125900
   },
   {
    "op": "product_cost",
@@ -1660,7 +1660,7 @@
    "erp": "PEBBLE GREY-(Q)",
    "ac": "AKBF-PEBBLE GREY (Q)",
    "main": true,
-   "cost_centi": 104900
+   "cost_sen": 104900
   },
   {
    "op": "product_cost",
@@ -1674,7 +1674,7 @@
    "erp": "PEBBLE GREY-(S)",
    "ac": "AKBF-PEBBLE GREY (S)",
    "main": true,
-   "cost_centi": 90900
+   "cost_sen": 90900
   },
   {
    "op": "product_cost",
@@ -1688,7 +1688,7 @@
    "erp": "PEBBLE GREY-(SK)",
    "ac": "AKBF-PEBBLE GREY (SK)",
    "main": true,
-   "cost_centi": 160900
+   "cost_sen": 160900
   },
   {
    "op": "product_cost",
@@ -1702,7 +1702,7 @@
    "erp": "PEBBLE GREY-(SS)",
    "ac": "AKBF-PEBBLE GREY (SS)",
    "main": true,
-   "cost_centi": 97900
+   "cost_sen": 97900
   },
   {
    "op": "product_cost",
@@ -1716,7 +1716,7 @@
    "erp": "SANDY BEACH-(K)",
    "ac": "AKBF-SANDY BEACH (K)",
    "main": true,
-   "cost_centi": 160900
+   "cost_sen": 160900
   },
   {
    "op": "product_cost",
@@ -1730,7 +1730,7 @@
    "erp": "SANDY BEACH-(Q)",
    "ac": "AKBF-SANDY BEACH (Q)",
    "main": true,
-   "cost_centi": 132900
+   "cost_sen": 132900
   },
   {
    "op": "product_cost",
@@ -1744,7 +1744,7 @@
    "erp": "SANDY BEACH-(S)",
    "ac": "AKBF-SANDY BEACH (S)",
    "main": true,
-   "cost_centi": 104900
+   "cost_sen": 104900
   },
   {
    "op": "product_cost",
@@ -1758,7 +1758,7 @@
    "erp": "AKEMI -SANDY BEACH-(SK)",
    "ac": "AKBF-SANDY BEACH (SK)",
    "main": true,
-   "cost_centi": 202900
+   "cost_sen": 202900
   },
   {
    "op": "product_cost",
@@ -1772,7 +1772,7 @@
    "erp": "SANDY BEACH-(SS)",
    "ac": "AKBF-SANDY BEACH (SS)",
    "main": true,
-   "cost_centi": 111900
+   "cost_sen": 111900
   },
   {
    "op": "product_cost",
@@ -1856,7 +1856,7 @@
    "erp": "CB015-(K)",
    "ac": "BC-CB015(K)",
    "main": true,
-   "cost_centi": 94800
+   "cost_sen": 94800
   },
   {
    "op": "product_cost",
@@ -1871,7 +1871,7 @@
    "erp": "CB015-(Q)",
    "ac": "BC-CB015(Q)",
    "main": true,
-   "cost_centi": 79000
+   "cost_sen": 79000
   },
   {
    "op": "product_cost",
@@ -1886,7 +1886,7 @@
    "erp": "CB015-(S)",
    "ac": "BC-CB015(S)",
    "main": true,
-   "cost_centi": 63200
+   "cost_sen": 63200
   },
   {
    "op": "product_cost",
@@ -1901,7 +1901,7 @@
    "erp": "CB015-(SS)",
    "ac": "BC-CB015(SS)",
    "main": true,
-   "cost_centi": 67200
+   "cost_sen": 67200
   },
   {
    "op": "product_cost",
@@ -1915,7 +1915,7 @@
    "sup": "400-B002",
    "erp": "GINA-(SS)",
    "ac": "BC-CB028(SS)",
-   "cost_centi": 67200,
+   "cost_sen": 67200,
    "main": true
   },
   {
@@ -1931,7 +1931,7 @@
    "erp": "HANZ-(K)",
    "ac": "BC-CB052A(K)",
    "main": true,
-   "cost_centi": 79200
+   "cost_sen": 79200
   },
   {
    "op": "product_cost",
@@ -1946,7 +1946,7 @@
    "erp": "HANZ-(Q)",
    "ac": "BC-CB052A(Q)",
    "main": true,
-   "cost_centi": 66000
+   "cost_sen": 66000
   },
   {
    "op": "product_cost",
@@ -1961,7 +1961,7 @@
    "erp": "HANZ-(S)",
    "ac": "BC-CB052A(S)",
    "main": true,
-   "cost_centi": 52800
+   "cost_sen": 52800
   },
   {
    "op": "product_cost",
@@ -1976,7 +1976,7 @@
    "erp": "HANZ-(SS)",
    "ac": "BC-CB052A(SS)",
    "main": true,
-   "cost_centi": 56100
+   "cost_sen": 56100
   },
   {
    "op": "product_cost",
@@ -2033,7 +2033,7 @@
    "erp": "DUKE-(K)",
    "ac": "BC-F10(K)",
    "main": true,
-   "cost_centi": 94800
+   "cost_sen": 94800
   },
   {
    "op": "product_cost",
@@ -2048,7 +2048,7 @@
    "erp": "DUKE-(Q)",
    "ac": "BC-F10(Q)",
    "main": true,
-   "cost_centi": 79000
+   "cost_sen": 79000
   },
   {
    "op": "product_cost",
@@ -2063,7 +2063,7 @@
    "erp": "DUKE-(S)",
    "ac": "BC-F10(S)",
    "main": true,
-   "cost_centi": 63200
+   "cost_sen": 63200
   },
   {
    "op": "product_cost",
@@ -2078,7 +2078,7 @@
    "erp": "DUKE-(SS)",
    "ac": "BC-F10(SS)",
    "main": true,
-   "cost_centi": 67200
+   "cost_sen": 67200
   },
   {
    "op": "product_cost",
@@ -2128,7 +2128,7 @@
    "erp": "PRINCE-(Q)",
    "ac": "BC-K818(Q)",
    "main": true,
-   "cost_centi": 103000
+   "cost_sen": 103000
   },
   {
    "op": "product_cost",
@@ -2150,7 +2150,7 @@
    "erp": "NINA LV626-MD/SC-1521-1 -KING",
    "ac": "CR-LV626-MD/SC-1521-1 (K)",
    "main": true,
-   "cost_centi": 118000
+   "cost_sen": 118000
   },
   {
    "op": "product_cost",
@@ -2164,7 +2164,7 @@
    "erp": "NINA LV626-MD/SC-1521-1 -QUEEN",
    "ac": "CR-LV626-MD/SC-1521-1 (Q)",
    "main": true,
-   "cost_centi": 116000
+   "cost_sen": 116000
   },
   {
    "op": "product_cost",
@@ -2220,7 +2220,7 @@
    "erp": "DIVAN ONLY-(SS)",
    "ac": "HOK- DIVAN ONLY (SS)",
    "main": true,
-   "cost_centi": 30750
+   "cost_sen": 30750
   },
   {
    "op": "product_cost",
@@ -2234,7 +2234,7 @@
    "erp": "HILTON (A)-(K)",
    "ac": "HOK-1003 (A) (K)",
    "main": true,
-   "cost_centi": 71000
+   "cost_sen": 71000
   },
   {
    "op": "product_cost",
@@ -2248,7 +2248,7 @@
    "erp": "HILTON (A)-(Q)",
    "ac": "HOK-1003 (A) (Q)",
    "main": true,
-   "cost_centi": 58500
+   "cost_sen": 58500
   },
   {
    "op": "product_cost",
@@ -2262,7 +2262,7 @@
    "erp": "HILTON (A)-(S)",
    "ac": "HOK-1003 (A) (S)",
    "main": true,
-   "cost_centi": 51500
+   "cost_sen": 51500
   },
   {
    "op": "product_cost",
@@ -2276,7 +2276,7 @@
    "erp": "HILTON (A)-(SK)",
    "ac": "HOK-1003 (A) (SK)",
    "main": true,
-   "cost_centi": 117000
+   "cost_sen": 117000
   },
   {
    "op": "product_cost",
@@ -2297,7 +2297,7 @@
    "erp": "HILTON (A)-(SS)",
    "ac": "HOK-1003 (A) (SS)",
    "main": true,
-   "cost_centi": 54750
+   "cost_sen": 54750
   },
   {
    "op": "product_cost",
@@ -2311,7 +2311,7 @@
    "erp": "HILTON 2.0 (A)(F)-(K)",
    "ac": "HOK-1003 (A)(HF)(W) (K)",
    "main": true,
-   "cost_centi": 71000
+   "cost_sen": 71000
   },
   {
    "op": "product_cost",
@@ -2325,7 +2325,7 @@
    "erp": "HILTON 2.0 (A)(F)-(Q)",
    "ac": "HOK-1003 (A)(HF)(W) (Q)",
    "main": true,
-   "cost_centi": 58500
+   "cost_sen": 58500
   },
   {
    "op": "product_cost",
@@ -2339,7 +2339,7 @@
    "erp": "HILTON 2.0 (A)(F)-(S)",
    "ac": "HOK-1003 (A)(HF)(W) (S)",
    "main": true,
-   "cost_centi": 51500
+   "cost_sen": 51500
   },
   {
    "op": "product_cost",
@@ -2353,7 +2353,7 @@
    "erp": "HILTON 2.0 (A)(F)-(SK)",
    "ac": "HOK-1003 (A)(HF)(W) (SK)",
    "main": true,
-   "cost_centi": 117000
+   "cost_sen": 117000
   },
   {
    "op": "product_cost",
@@ -2374,7 +2374,7 @@
    "erp": "HILTON 2.0 (A)(F)-(SS)",
    "ac": "HOK-1003 (A)(HF)(W) (SS)",
    "main": true,
-   "cost_centi": 54750
+   "cost_sen": 54750
   },
   {
    "op": "product_cost",
@@ -2388,7 +2388,7 @@
    "erp": "FENRIR-(K)",
    "ac": "HOK-1005 (K)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -2403,7 +2403,7 @@
    "erp": "FENRIR-(Q)",
    "ac": "HOK-1005 (Q)",
    "main": true,
-   "cost_centi": 42500
+   "cost_sen": 42500
   },
   {
    "op": "product_cost",
@@ -2418,7 +2418,7 @@
    "erp": "FENRIR-(S)",
    "ac": "HOK-1005 (S)",
    "main": true,
-   "cost_centi": 39500
+   "cost_sen": 39500
   },
   {
    "op": "product_cost",
@@ -2433,7 +2433,7 @@
    "erp": "FENRIR-(SK)",
    "ac": "HOK-1005 (SK)",
    "main": true,
-   "cost_centi": 109000
+   "cost_sen": 109000
   },
   {
    "op": "product_cost",
@@ -2455,7 +2455,7 @@
    "erp": "FENRIR-(SS)",
    "ac": "HOK-1005 (SS)",
    "main": true,
-   "cost_centi": 40750
+   "cost_sen": 40750
   },
   {
    "op": "product_cost",
@@ -2470,7 +2470,7 @@
    "erp": "CODY 2.0 (F)-(K)",
    "ac": "HOK-1007 (HF)(W) (K)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -2484,7 +2484,7 @@
    "erp": "CODY 2.0 (F)-(Q)",
    "ac": "HOK-1007 (HF)(W) (Q)",
    "main": true,
-   "cost_centi": 42500
+   "cost_sen": 42500
   },
   {
    "op": "product_cost",
@@ -2498,7 +2498,7 @@
    "erp": "CODY 2.0 (F)-(S)",
    "ac": "HOK-1007 (HF)(W) (S)",
    "main": true,
-   "cost_centi": 39500
+   "cost_sen": 39500
   },
   {
    "op": "product_cost",
@@ -2526,7 +2526,7 @@
    "erp": "CODY 2.0 (F)-(SS)",
    "ac": "HOK-1007 (HF)(W) (SS)",
    "main": true,
-   "cost_centi": 40750
+   "cost_sen": 40750
   },
   {
    "op": "product_cost",
@@ -2540,7 +2540,7 @@
    "erp": "CODY-(K)",
    "ac": "HOK-1007 (K)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -2554,7 +2554,7 @@
    "erp": "CODY-(Q)",
    "ac": "HOK-1007 (Q)",
    "main": true,
-   "cost_centi": 42500
+   "cost_sen": 42500
   },
   {
    "op": "product_cost",
@@ -2568,7 +2568,7 @@
    "erp": "CODY-(S)",
    "ac": "HOK-1007 (S)",
    "main": true,
-   "cost_centi": 39500
+   "cost_sen": 39500
   },
   {
    "op": "product_cost",
@@ -2582,7 +2582,7 @@
    "erp": "CODY-(SK)",
    "ac": "HOK-1007 (SK)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -2604,7 +2604,7 @@
    "erp": "CODY-(SS)",
    "ac": "HOK-1007 (SS)",
    "main": true,
-   "cost_centi": 40750
+   "cost_sen": 40750
   },
   {
    "op": "product_cost",
@@ -2618,7 +2618,7 @@
    "erp": "VALKYRIE (A)-(K)",
    "ac": "HOK-1009 (A) (K)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -2632,7 +2632,7 @@
    "erp": "VALKYRIE (A)-(Q)",
    "ac": "HOK-1009 (A) (Q)",
    "main": true,
-   "cost_centi": 42500
+   "cost_sen": 42500
   },
   {
    "op": "product_cost",
@@ -2646,7 +2646,7 @@
    "erp": "VALKYRIE (A)-(S)",
    "ac": "HOK-1009 (A) (S)",
    "main": true,
-   "cost_centi": 39500
+   "cost_sen": 39500
   },
   {
    "op": "product_cost",
@@ -2674,7 +2674,7 @@
    "erp": "VALKYRIE (A)-(SS)",
    "ac": "HOK-1009 (A) (SS)",
    "main": true,
-   "cost_centi": 40750
+   "cost_sen": 40750
   },
   {
    "op": "product_cost",
@@ -2688,7 +2688,7 @@
    "erp": "JAGER-(K)",
    "ac": "HOK-1013 (K)",
    "main": true,
-   "cost_centi": 43000
+   "cost_sen": 43000
   },
   {
    "op": "product_cost",
@@ -2703,7 +2703,7 @@
    "erp": "JAGER-(Q)",
    "ac": "HOK-1013 (Q)",
    "main": true,
-   "cost_centi": 30500
+   "cost_sen": 30500
   },
   {
    "op": "product_cost",
@@ -2718,7 +2718,7 @@
    "erp": "JAGER-(S)",
    "ac": "HOK-1013 (S)",
    "main": true,
-   "cost_centi": 27500
+   "cost_sen": 27500
   },
   {
    "op": "product_cost",
@@ -2733,7 +2733,7 @@
    "erp": "JAGER-(SK)",
    "ac": "HOK-1013 (SK)",
    "main": true,
-   "cost_centi": 61000
+   "cost_sen": 61000
   },
   {
    "op": "product_cost",
@@ -2755,7 +2755,7 @@
    "erp": "JAGER-(SS)",
    "ac": "HOK-1013 (SS)",
    "main": true,
-   "cost_centi": 28750
+   "cost_sen": 28750
   },
   {
    "op": "product_cost",
@@ -2770,7 +2770,7 @@
    "erp": "ARIZONA 2.0 (A) (F)-(K)",
    "ac": "HOK-1019 (A) (HF)(W) (K)",
    "main": true,
-   "cost_centi": 70000
+   "cost_sen": 70000
   },
   {
    "op": "product_cost",
@@ -2784,7 +2784,7 @@
    "erp": "ARIZONA 2.0 (A) (F)-(Q)",
    "ac": "HOK-1019 (A) (HF)(W) (Q)",
    "main": true,
-   "cost_centi": 57500
+   "cost_sen": 57500
   },
   {
    "op": "product_cost",
@@ -2798,7 +2798,7 @@
    "erp": "ARIZONA 2.0 (A) (F)-(S)",
    "ac": "HOK-1019 (A) (HF)(W) (S)",
    "main": true,
-   "cost_centi": 48500
+   "cost_sen": 48500
   },
   {
    "op": "product_cost",
@@ -2826,7 +2826,7 @@
    "erp": "ARIZONA 2.0 (A) (F)-(SS)",
    "ac": "HOK-1019 (A) (HF)(W) (SS)",
    "main": true,
-   "cost_centi": 53750
+   "cost_sen": 53750
   },
   {
    "op": "product_cost",
@@ -2840,7 +2840,7 @@
    "erp": "ARIZONA (A)-(K)",
    "ac": "HOK-1019 (K)",
    "main": true,
-   "cost_centi": 70000
+   "cost_sen": 70000
   },
   {
    "op": "product_cost",
@@ -2854,7 +2854,7 @@
    "erp": "ARIZONA (A)-(Q)",
    "ac": "HOK-1019 (Q)",
    "main": true,
-   "cost_centi": 57500
+   "cost_sen": 57500
   },
   {
    "op": "product_cost",
@@ -2868,7 +2868,7 @@
    "erp": "ARIZONA (A)-(S)",
    "ac": "HOK-1019 (S)",
    "main": true,
-   "cost_centi": 48500
+   "cost_sen": 48500
   },
   {
    "op": "product_cost",
@@ -2882,7 +2882,7 @@
    "erp": "ARIZONA (A)-(SK)",
    "ac": "HOK-1019 (SK)",
    "main": true,
-   "cost_centi": 115000
+   "cost_sen": 115000
   },
   {
    "op": "product_cost",
@@ -2904,7 +2904,7 @@
    "erp": "ARIZONA (A)-(SS)",
    "ac": "HOK-1019 (SS)",
    "main": true,
-   "cost_centi": 53750
+   "cost_sen": 53750
   },
   {
    "op": "product_cost",
@@ -2918,7 +2918,7 @@
    "erp": "COTY 2.0 (F)-(K)",
    "ac": "HOK-1023 (HF)(W) (K)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -2932,7 +2932,7 @@
    "erp": "COTY 2.0 (F)-(Q)",
    "ac": "HOK-1023 (HF)(W) (Q)",
    "main": true,
-   "cost_centi": 42500
+   "cost_sen": 42500
   },
   {
    "op": "product_cost",
@@ -2946,7 +2946,7 @@
    "erp": "COTY 2.0 (F)-(S)",
    "ac": "HOK-1023 (HF)(W) (S)",
    "main": true,
-   "cost_centi": 39500
+   "cost_sen": 39500
   },
   {
    "op": "product_cost",
@@ -2974,7 +2974,7 @@
    "erp": "COTY 2.0 (F)-(SS)",
    "ac": "HOK-1023 (HF)(W) (SS)",
    "main": true,
-   "cost_centi": 40750
+   "cost_sen": 40750
   },
   {
    "op": "product_cost",
@@ -2988,7 +2988,7 @@
    "erp": "COTY-(K)",
    "ac": "HOK-1023 (K)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -3002,7 +3002,7 @@
    "erp": "COTY-(Q)",
    "ac": "HOK-1023 (Q)",
    "main": true,
-   "cost_centi": 42500
+   "cost_sen": 42500
   },
   {
    "op": "product_cost",
@@ -3016,7 +3016,7 @@
    "erp": "COTY-(S)",
    "ac": "HOK-1023 (S)",
    "main": true,
-   "cost_centi": 39500
+   "cost_sen": 39500
   },
   {
    "op": "product_cost",
@@ -3030,7 +3030,7 @@
    "erp": "COTY-(SK)",
    "ac": "HOK-1023 (SK)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -3052,7 +3052,7 @@
    "erp": "COTY-(SS)",
    "ac": "HOK-1023 (SS)",
    "main": true,
-   "cost_centi": 40750
+   "cost_sen": 40750
   },
   {
    "op": "product_cost",
@@ -3066,7 +3066,7 @@
    "erp": "TIFANNY 2.0 (F)-(K)",
    "ac": "HOK-1030 (HF)(W) (K)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -3080,7 +3080,7 @@
    "erp": "TIFANNY 2.0 (F)-(Q)",
    "ac": "HOK-1030 (HF)(W) (Q)",
    "main": true,
-   "cost_centi": 42500
+   "cost_sen": 42500
   },
   {
    "op": "product_cost",
@@ -3094,7 +3094,7 @@
    "erp": "TIFANNY 2.0 (F)-(S)",
    "ac": "HOK-1030 (HF)(W) (S)",
    "main": true,
-   "cost_centi": 39500
+   "cost_sen": 39500
   },
   {
    "op": "product_cost",
@@ -3122,7 +3122,7 @@
    "erp": "TIFANNY 2.0 (F)-(SS)",
    "ac": "HOK-1030 (HF)(W) (SS)",
    "main": true,
-   "cost_centi": 40750
+   "cost_sen": 40750
   },
   {
    "op": "product_cost",
@@ -3136,7 +3136,7 @@
    "erp": "TIFANNY-(K)",
    "ac": "HOK-1030 (K)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -3150,7 +3150,7 @@
    "erp": "TIFANNY-(Q)",
    "ac": "HOK-1030 (Q)",
    "main": true,
-   "cost_centi": 42500
+   "cost_sen": 42500
   },
   {
    "op": "product_cost",
@@ -3164,7 +3164,7 @@
    "erp": "TIFANNY-(S)",
    "ac": "HOK-1030 (S)",
    "main": true,
-   "cost_centi": 39500
+   "cost_sen": 39500
   },
   {
    "op": "product_cost",
@@ -3178,7 +3178,7 @@
    "erp": "TIFANNY-(SK)",
    "ac": "HOK-1030 (SK)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -3200,7 +3200,7 @@
    "erp": "TIFANNY-(SS)",
    "ac": "HOK-1030 (SS)",
    "main": true,
-   "cost_centi": 40750
+   "cost_sen": 40750
   },
   {
    "op": "product_cost",
@@ -3214,7 +3214,7 @@
    "erp": "VICTORIA-(K)",
    "ac": "HOK-1041 (K)",
    "main": true,
-   "cost_centi": 52500
+   "cost_sen": 52500
   },
   {
    "op": "product_cost",
@@ -3228,7 +3228,7 @@
    "erp": "VICTORIA-(Q)",
    "ac": "HOK-1041 (Q)",
    "main": true,
-   "cost_centi": 40000
+   "cost_sen": 40000
   },
   {
    "op": "product_cost",
@@ -3242,7 +3242,7 @@
    "erp": "VICTORIA-(S)",
    "ac": "HOK-1041 (S)",
    "main": true,
-   "cost_centi": 37000
+   "cost_sen": 37000
   },
   {
    "op": "product_cost",
@@ -3256,7 +3256,7 @@
    "erp": "VICTORIA-(SK)",
    "ac": "HOK-1041 (SK)",
    "main": true,
-   "cost_centi": 80000
+   "cost_sen": 80000
   },
   {
    "op": "product_cost",
@@ -3278,7 +3278,7 @@
    "erp": "VICTORIA-(SS)",
    "ac": "HOK-1041 (SS)",
    "main": true,
-   "cost_centi": 38250
+   "cost_sen": 38250
   },
   {
    "op": "product_cost",
@@ -3292,7 +3292,7 @@
    "erp": "STAR-(K)",
    "ac": "HOK-1051 (K)",
    "main": true,
-   "cost_centi": 48000
+   "cost_sen": 48000
   },
   {
    "op": "product_cost",
@@ -3306,7 +3306,7 @@
    "erp": "STAR-(Q)",
    "ac": "HOK-1051 (Q)",
    "main": true,
-   "cost_centi": 35500
+   "cost_sen": 35500
   },
   {
    "op": "product_cost",
@@ -3320,7 +3320,7 @@
    "erp": "STAR-(S)",
    "ac": "HOK-1051 (S)",
    "main": true,
-   "cost_centi": 32500
+   "cost_sen": 32500
   },
   {
    "op": "product_cost",
@@ -3334,7 +3334,7 @@
    "erp": "STAR-(SK)",
    "ac": "HOK-1051 (SK)",
    "main": true,
-   "cost_centi": 71000
+   "cost_sen": 71000
   },
   {
    "op": "product_cost",
@@ -3356,7 +3356,7 @@
    "erp": "STAR-(SS)",
    "ac": "HOK-1051 (SS)",
    "main": true,
-   "cost_centi": 33750
+   "cost_sen": 33750
   },
   {
    "op": "product_cost",
@@ -3370,7 +3370,7 @@
    "erp": "CASUAL-(K)",
    "ac": "HOK-1052 (K)",
    "main": true,
-   "cost_centi": 48000
+   "cost_sen": 48000
   },
   {
    "op": "product_cost",
@@ -3384,7 +3384,7 @@
    "erp": "CASUAL-(Q)",
    "ac": "HOK-1052 (Q)",
    "main": true,
-   "cost_centi": 35500
+   "cost_sen": 35500
   },
   {
    "op": "product_cost",
@@ -3398,7 +3398,7 @@
    "erp": "CASUAL-(S)",
    "ac": "HOK-1052 (S)",
    "main": true,
-   "cost_centi": 32500
+   "cost_sen": 32500
   },
   {
    "op": "product_cost",
@@ -3412,7 +3412,7 @@
    "erp": "CASUAL-(SK)",
    "ac": "HOK-1052 (SK)",
    "main": true,
-   "cost_centi": 71000
+   "cost_sen": 71000
   },
   {
    "op": "product_cost",
@@ -3434,7 +3434,7 @@
    "erp": "CASUAL-(SS)",
    "ac": "HOK-1052 (SS)",
    "main": true,
-   "cost_centi": 33750
+   "cost_sen": 33750
   },
   {
    "op": "product_cost",
@@ -3448,7 +3448,7 @@
    "erp": "ELEPHANE-(K)",
    "ac": "HOK-2003 (K)",
    "main": true,
-   "cost_centi": 93000
+   "cost_sen": 93000
   },
   {
    "op": "product_cost",
@@ -3462,7 +3462,7 @@
    "erp": "ELEPHANE-(Q)",
    "ac": "HOK-2003 (Q)",
    "main": true,
-   "cost_centi": 82500
+   "cost_sen": 82500
   },
   {
    "op": "product_cost",
@@ -3476,7 +3476,7 @@
    "erp": "ELEPHANE-(S)",
    "ac": "HOK-2003 (S)",
    "main": true,
-   "cost_centi": 73500
+   "cost_sen": 73500
   },
   {
    "op": "product_cost",
@@ -3490,7 +3490,7 @@
    "erp": "ELEPHANE-(SK)",
    "ac": "HOK-2003 (SK)",
    "main": true,
-   "cost_centi": 165000
+   "cost_sen": 165000
   },
   {
    "op": "product_cost",
@@ -3512,7 +3512,7 @@
    "erp": "ELEPHANE-(SS)",
    "ac": "HOK-2003 (SS)",
    "main": true,
-   "cost_centi": 76750
+   "cost_sen": 76750
   },
   {
    "op": "product_cost",
@@ -3526,7 +3526,7 @@
    "erp": "REGAL (A)-(K)",
    "ac": "HOK-2006(A) (K)",
    "main": true,
-   "cost_centi": 70000
+   "cost_sen": 70000
   },
   {
    "op": "product_cost",
@@ -3540,7 +3540,7 @@
    "erp": "REGAL (A)-(Q)",
    "ac": "HOK-2006(A) (Q)",
    "main": true,
-   "cost_centi": 57500
+   "cost_sen": 57500
   },
   {
    "op": "product_cost",
@@ -3554,7 +3554,7 @@
    "erp": "REGAL (A)-(S)",
    "ac": "HOK-2006(A) (S)",
    "main": true,
-   "cost_centi": 48500
+   "cost_sen": 48500
   },
   {
    "op": "product_cost",
@@ -3568,7 +3568,7 @@
    "erp": "REGAL (A)-(SK)",
    "ac": "HOK-2006(A) (SK)",
    "main": true,
-   "cost_centi": 114000
+   "cost_sen": 114000
   },
   {
    "op": "product_cost",
@@ -3589,7 +3589,7 @@
    "erp": "REGAL (A)-(SS)",
    "ac": "HOK-2006(A) (SS)",
    "main": true,
-   "cost_centi": 53750
+   "cost_sen": 53750
   },
   {
    "op": "product_cost",
@@ -3603,7 +3603,7 @@
    "erp": "TRION (A) (HB STR)-(K)",
    "ac": "HOK-2008(A) (K)",
    "main": true,
-   "cost_centi": 83000
+   "cost_sen": 83000
   },
   {
    "op": "product_cost",
@@ -3617,7 +3617,7 @@
    "erp": "TRION (A) (HB STR)-(Q)",
    "ac": "HOK-2008(A) (Q)",
    "main": true,
-   "cost_centi": 72500
+   "cost_sen": 72500
   },
   {
    "op": "product_cost",
@@ -3631,7 +3631,7 @@
    "erp": "TRION (A) (HB STR)-(S)",
    "ac": "HOK-2008(A) (S)",
    "main": true,
-   "cost_centi": 65500
+   "cost_sen": 65500
   },
   {
    "op": "product_cost",
@@ -3645,7 +3645,7 @@
    "erp": "TRION (A) (HB STR)-(SK)",
    "ac": "HOK-2008(A) (SK)",
    "main": true,
-   "cost_centi": 165000
+   "cost_sen": 165000
   },
   {
    "op": "product_cost",
@@ -3666,7 +3666,7 @@
    "erp": "TRION (A) (HB STR)-(SS)",
    "ac": "HOK-2008(A) (SS)",
    "main": true,
-   "cost_centi": 38750
+   "cost_sen": 38750
   },
   {
    "op": "product_cost",
@@ -3680,7 +3680,7 @@
    "erp": "TRION (A)-(K)",
    "ac": "HOK-2009(A) (K)",
    "main": true,
-   "cost_centi": 83000
+   "cost_sen": 83000
   },
   {
    "op": "product_cost",
@@ -3694,7 +3694,7 @@
    "erp": "TRION (A)-(Q)",
    "ac": "HOK-2009(A) (Q)",
    "main": true,
-   "cost_centi": 72500
+   "cost_sen": 72500
   },
   {
    "op": "product_cost",
@@ -3708,7 +3708,7 @@
    "erp": "TRION (A)-(S)",
    "ac": "HOK-2009(A) (S)",
    "main": true,
-   "cost_centi": 65500
+   "cost_sen": 65500
   },
   {
    "op": "product_cost",
@@ -3722,7 +3722,7 @@
    "erp": "TRION (A)-(SK)",
    "ac": "HOK-2009(A) (SK)",
    "main": true,
-   "cost_centi": 165000
+   "cost_sen": 165000
   },
   {
    "op": "product_cost",
@@ -3743,7 +3743,7 @@
    "erp": "TRION (A)-(SS)",
    "ac": "HOK-2009(A) (SS)",
    "main": true,
-   "cost_centi": 38750
+   "cost_sen": 38750
   },
   {
    "op": "product_cost",
@@ -3757,7 +3757,7 @@
    "erp": "TRION (A) WITHOUT PIPING-(K)",
    "ac": "HOK-2010(A) (K)",
    "main": true,
-   "cost_centi": 83000
+   "cost_sen": 83000
   },
   {
    "op": "product_cost",
@@ -3771,7 +3771,7 @@
    "erp": "TRION (A) WITHOUT PIPING-(Q)",
    "ac": "HOK-2010(A) (Q)",
    "main": true,
-   "cost_centi": 72500
+   "cost_sen": 72500
   },
   {
    "op": "product_cost",
@@ -3785,7 +3785,7 @@
    "erp": "TRION (A) WITHOUT PIPING-(S)",
    "ac": "HOK-2010(A) (S)",
    "main": true,
-   "cost_centi": 65500
+   "cost_sen": 65500
   },
   {
    "op": "product_cost",
@@ -3799,7 +3799,7 @@
    "erp": "TRION (A) WITHOUT PIPING-(SK)",
    "ac": "HOK-2010(A) (SK)",
    "main": true,
-   "cost_centi": 165000
+   "cost_sen": 165000
   },
   {
    "op": "product_cost",
@@ -3820,7 +3820,7 @@
    "erp": "TRION (A) WITHOUT PIPING-(SS)",
    "ac": "HOK-2010(A) (SS)",
    "main": true,
-   "cost_centi": 38750
+   "cost_sen": 38750
   },
   {
    "op": "product_cost",
@@ -3834,7 +3834,7 @@
    "erp": "TRION (A) NO PIPING (HB STR)-(K)",
    "ac": "HOK-2011(A) (K)",
    "main": true,
-   "cost_centi": 83000
+   "cost_sen": 83000
   },
   {
    "op": "product_cost",
@@ -3848,7 +3848,7 @@
    "erp": "TRION (A) NO PIPING (HB STR)-(Q)",
    "ac": "HOK-2011(A) (Q)",
    "main": true,
-   "cost_centi": 72500
+   "cost_sen": 72500
   },
   {
    "op": "product_cost",
@@ -3862,7 +3862,7 @@
    "erp": "TRION (A) NO PIPING (HB STR)-(S)",
    "ac": "HOK-2011(A) (S)",
    "main": true,
-   "cost_centi": 65500
+   "cost_sen": 65500
   },
   {
    "op": "product_cost",
@@ -3876,7 +3876,7 @@
    "erp": "TRION (A) NO PIPING (HB STR)-(SK)",
    "ac": "HOK-2011(A) (SK)",
    "main": true,
-   "cost_centi": 165000
+   "cost_sen": 165000
   },
   {
    "op": "product_cost",
@@ -3897,7 +3897,7 @@
    "erp": "TRION (A) NO PIPING (HB STR)-(SS)",
    "ac": "HOK-2011(A) (SS)",
    "main": true,
-   "cost_centi": 38750
+   "cost_sen": 38750
   },
   {
    "op": "product_cost",
@@ -3911,7 +3911,7 @@
    "erp": "CODY ADJUSTABLE BED (S+S)-(K)",
    "ac": "HOK-2023 (K)",
    "main": true,
-   "cost_centi": 73000
+   "cost_sen": 73000
   },
   {
    "op": "product_cost",
@@ -3925,7 +3925,7 @@
    "erp": "CODY ADJUSTABLE BED-(S)",
    "ac": "HOK-2023 (S)",
    "main": true,
-   "cost_centi": 57500
+   "cost_sen": 57500
   },
   {
    "op": "product_cost",
@@ -3939,7 +3939,7 @@
    "erp": "BREEVA (W)-(K)",
    "ac": "HOK-2027 (K)",
    "main": true,
-   "cost_centi": 83000
+   "cost_sen": 83000
   },
   {
    "op": "product_cost",
@@ -3953,7 +3953,7 @@
    "erp": "BREEVA (W)-(Q)",
    "ac": "HOK-2027 (Q)",
    "main": true,
-   "cost_centi": 72500
+   "cost_sen": 72500
   },
   {
    "op": "product_cost",
@@ -3967,7 +3967,7 @@
    "erp": "BREEVA (W)-(S)",
    "ac": "HOK-2027 (S)",
    "main": true,
-   "cost_centi": 65500
+   "cost_sen": 65500
   },
   {
    "op": "product_cost",
@@ -3981,7 +3981,7 @@
    "erp": "BREEVA (W)-(SK)",
    "ac": "HOK-2027 (SK)",
    "main": true,
-   "cost_centi": 145000
+   "cost_sen": 145000
   },
   {
    "op": "product_cost",
@@ -4003,7 +4003,7 @@
    "erp": "BREEVA (W)-(SS)",
    "ac": "HOK-2027 (SS)",
    "main": true,
-   "cost_centi": 68750
+   "cost_sen": 68750
   },
   {
    "op": "product_cost",
@@ -4017,7 +4017,7 @@
    "erp": "JACOB 2.0 (F)-(K)",
    "ac": "HOK-2033 (HF)(W) (K)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -4031,7 +4031,7 @@
    "erp": "JACOB 2.0 (F)-(Q)",
    "ac": "HOK-2033 (HF)(W) (Q)",
    "main": true,
-   "cost_centi": 72500
+   "cost_sen": 72500
   },
   {
    "op": "product_cost",
@@ -4045,7 +4045,7 @@
    "erp": "JACOB 2.0 (F)-(S)",
    "ac": "HOK-2033 (HF)(W) (S)",
    "main": true,
-   "cost_centi": 65500
+   "cost_sen": 65500
   },
   {
    "op": "product_cost",
@@ -4073,7 +4073,7 @@
    "erp": "JACOB 2.0 (F)-(SS)",
    "ac": "HOK-2033 (HF)(W) (SS)",
    "main": true,
-   "cost_centi": 68750
+   "cost_sen": 68750
   },
   {
    "op": "product_cost",
@@ -4087,7 +4087,7 @@
    "erp": "JACOB-(K)",
    "ac": "HOK-2033 (K)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -4101,7 +4101,7 @@
    "erp": "JACOB-(Q)",
    "ac": "HOK-2033 (Q)",
    "main": true,
-   "cost_centi": 72500
+   "cost_sen": 72500
   },
   {
    "op": "product_cost",
@@ -4115,7 +4115,7 @@
    "erp": "JACOB-(S)",
    "ac": "HOK-2033 (S)",
    "main": true,
-   "cost_centi": 65500
+   "cost_sen": 65500
   },
   {
    "op": "product_cost",
@@ -4129,7 +4129,7 @@
    "erp": "JACOB-(SK)",
    "ac": "HOK-2033 (SK)",
    "main": true,
-   "cost_centi": 145000
+   "cost_sen": 145000
   },
   {
    "op": "product_cost",
@@ -4151,7 +4151,7 @@
    "erp": "JACOB-(SS)",
    "ac": "HOK-2033 (SS)",
    "main": true,
-   "cost_centi": 68750
+   "cost_sen": 68750
   },
   {
    "op": "product_cost",
@@ -4165,7 +4165,7 @@
    "erp": "CELENE (A)-(K)",
    "ac": "HOK-2038 (A) (K)",
    "main": true,
-   "cost_centi": 71000
+   "cost_sen": 71000
   },
   {
    "op": "product_cost",
@@ -4179,7 +4179,7 @@
    "erp": "CELENE (A)-(Q)",
    "ac": "HOK-2038 (A) (Q)",
    "main": true,
-   "cost_centi": 58500
+   "cost_sen": 58500
   },
   {
    "op": "product_cost",
@@ -4193,7 +4193,7 @@
    "erp": "CELENE (A)-(S)",
    "ac": "HOK-2038 (A) (S)",
    "main": true,
-   "cost_centi": 51500
+   "cost_sen": 51500
   },
   {
    "op": "product_cost",
@@ -4221,7 +4221,7 @@
    "erp": "CELENE (A)-(SS)",
    "ac": "HOK-2038 (A) (SS)",
    "main": true,
-   "cost_centi": 54750
+   "cost_sen": 54750
   },
   {
    "op": "product_cost",
@@ -4235,7 +4235,7 @@
    "erp": "CELENE 2.0 (A)(F)-(K)",
    "ac": "HOK-2038 (A)(HF)(W) (K)",
    "main": true,
-   "cost_centi": 71000
+   "cost_sen": 71000
   },
   {
    "op": "product_cost",
@@ -4249,7 +4249,7 @@
    "erp": "CELENE 2.0 (A)(F)-(Q)",
    "ac": "HOK-2038 (A)(HF)(W) (Q)",
    "main": true,
-   "cost_centi": 58500
+   "cost_sen": 58500
   },
   {
    "op": "product_cost",
@@ -4263,7 +4263,7 @@
    "erp": "CELENE 2.0 (A)(F)-(S)",
    "ac": "HOK-2038 (A)(HF)(W) (S)",
    "main": true,
-   "cost_centi": 51500
+   "cost_sen": 51500
   },
   {
    "op": "product_cost",
@@ -4291,7 +4291,7 @@
    "erp": "CELENE 2.0 (A)(F)-(SS)",
    "ac": "HOK-2038 (A)(HF)(W) (SS)",
    "main": true,
-   "cost_centi": 54750
+   "cost_sen": 54750
   },
   {
    "op": "product_cost",
@@ -4305,7 +4305,7 @@
    "erp": "ELEGANT (A)-(K)",
    "ac": "HOK-2041 (A) (K)",
    "main": true,
-   "cost_centi": 71000
+   "cost_sen": 71000
   },
   {
    "op": "product_cost",
@@ -4319,7 +4319,7 @@
    "erp": "ELEGANT (A)-(Q)",
    "ac": "HOK-2041 (A) (Q)",
    "main": true,
-   "cost_centi": 58500
+   "cost_sen": 58500
   },
   {
    "op": "product_cost",
@@ -4333,7 +4333,7 @@
    "erp": "ELEGANT (A)-(S)",
    "ac": "HOK-2041 (A) (S)",
    "main": true,
-   "cost_centi": 51500
+   "cost_sen": 51500
   },
   {
    "op": "product_cost",
@@ -4361,7 +4361,7 @@
    "erp": "ELEGANT (A)-(SS)",
    "ac": "HOK-2041 (A) (SS)",
    "main": true,
-   "cost_centi": 54750
+   "cost_sen": 54750
   },
   {
    "op": "product_cost",
@@ -4375,7 +4375,7 @@
    "erp": "FENRIR ADJUSTABLE BED (S+S)-(K)",
    "ac": "HOK-2049 (K)",
    "main": true,
-   "cost_centi": 73000
+   "cost_sen": 73000
   },
   {
    "op": "product_cost",
@@ -4389,7 +4389,7 @@
    "erp": "FENRIR ADJUSTABLE BED-(S)",
    "ac": "HOK-2049 (S)",
    "main": true,
-   "cost_centi": 57500
+   "cost_sen": 57500
   },
   {
    "op": "product_cost",
@@ -4403,7 +4403,7 @@
    "erp": "DIVAN ONLY-(K)",
    "ac": "HOK-DIVAN ONLY (K)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -4417,7 +4417,7 @@
    "erp": "DIVAN ONLY-(Q)",
    "ac": "HOK-DIVAN ONLY (Q)",
    "main": true,
-   "cost_centi": 42500
+   "cost_sen": 42500
   },
   {
    "op": "product_cost",
@@ -4431,7 +4431,7 @@
    "erp": "DIVAN ONLY-(S)",
    "ac": "HOK-DIVAN ONLY (S)",
    "main": true,
-   "cost_centi": 39500
+   "cost_sen": 39500
   },
   {
    "op": "product_cost",
@@ -4445,7 +4445,7 @@
    "erp": "DIVAN ONLY-(SK)",
    "ac": "HOK-DIVAN ONLY (SK)",
    "main": true,
-   "cost_centi": 65000
+   "cost_sen": 65000
   },
   {
    "op": "product_cost",
@@ -4502,7 +4502,7 @@
    "erp": "DIVAN ONLY-(SS)",
    "ac": "NB- DIVAN ONLY (SS)",
    "main": true,
-   "cost_centi": 29750
+   "cost_sen": 29750
   },
   {
    "op": "product_cost",
@@ -4523,7 +4523,7 @@
    "erp": "DIVAN ONLY-(K)",
    "ac": "NB-DIVAN ONLY (K)",
    "main": true,
-   "cost_centi": 45000
+   "cost_sen": 45000
   },
   {
    "op": "product_cost",
@@ -4538,7 +4538,7 @@
    "erp": "DIVAN ONLY-(Q)",
    "ac": "NB-DIVAN ONLY (Q)",
    "main": true,
-   "cost_centi": 32500
+   "cost_sen": 32500
   },
   {
    "op": "product_cost",
@@ -4553,7 +4553,7 @@
    "erp": "DIVAN ONLY-(S)",
    "ac": "NB-DIVAN ONLY (S)",
    "main": true,
-   "cost_centi": 29500
+   "cost_sen": 29500
   },
   {
    "op": "product_cost",
@@ -4624,7 +4624,7 @@
    "erp": "EIGMA-(K)",
    "ac": "NB-KHA01(K)",
    "main": true,
-   "cost_centi": 93000
+   "cost_sen": 93000
   },
   {
    "op": "product_cost",
@@ -4638,7 +4638,7 @@
    "erp": "EIGMA-(Q)",
    "ac": "NB-KHA01(Q)",
    "main": true,
-   "cost_centi": 80500
+   "cost_sen": 80500
   },
   {
    "op": "product_cost",
@@ -4652,7 +4652,7 @@
    "erp": "EIGMA-(S)",
    "ac": "NB-KHA01(S)",
    "main": true,
-   "cost_centi": 73500
+   "cost_sen": 73500
   },
   {
    "op": "product_cost",
@@ -4666,7 +4666,7 @@
    "erp": "EIGMA (AA)-(SS)",
    "ac": "NB-KHA01(SS)",
    "main": true,
-   "cost_centi": 76750
+   "cost_sen": 76750
   },
   {
    "op": "product_cost",
@@ -4806,7 +4806,7 @@
    "erp": "FLAT-(K)",
    "ac": "NB-KHJ01(K)",
    "main": true,
-   "cost_centi": 48000
+   "cost_sen": 48000
   },
   {
    "op": "product_cost",
@@ -4820,7 +4820,7 @@
    "erp": "FLAT-(Q)",
    "ac": "NB-KHJ01(Q)",
    "main": true,
-   "cost_centi": 35500
+   "cost_sen": 35500
   },
   {
    "op": "product_cost",
@@ -4834,7 +4834,7 @@
    "erp": "FLAT-(S)",
    "ac": "NB-KHJ01(S)",
    "main": true,
-   "cost_centi": 32500
+   "cost_sen": 32500
   },
   {
    "op": "product_cost",
@@ -4848,7 +4848,7 @@
    "erp": "FLAT-(SS)",
    "ac": "NB-KHJ01(SS)",
    "main": true,
-   "cost_centi": 33750
+   "cost_sen": 33750
   },
   {
    "op": "product_cost",
@@ -4876,7 +4876,7 @@
    "erp": "CASUAL-(K)",
    "ac": "NB-KHJ02(K)",
    "main": true,
-   "cost_centi": 48000
+   "cost_sen": 48000
   },
   {
    "op": "product_cost",
@@ -4890,7 +4890,7 @@
    "erp": "CASUAL-(Q)",
    "ac": "NB-KHJ02(Q)",
    "main": true,
-   "cost_centi": 35500
+   "cost_sen": 35500
   },
   {
    "op": "product_cost",
@@ -4904,7 +4904,7 @@
    "erp": "CASUAL-(S)",
    "ac": "NB-KHJ02(S)",
    "main": true,
-   "cost_centi": 32500
+   "cost_sen": 32500
   },
   {
    "op": "product_cost",
@@ -4918,7 +4918,7 @@
    "erp": "CASUAL-(SS)",
    "ac": "NB-KHJ02(SS)",
    "main": true,
-   "cost_centi": 33750
+   "cost_sen": 33750
   },
   {
    "op": "product_cost",
@@ -4946,7 +4946,7 @@
    "erp": "STAR-(K)",
    "ac": "NB-KHJ05(K)",
    "main": true,
-   "cost_centi": 48000
+   "cost_sen": 48000
   },
   {
    "op": "product_cost",
@@ -4960,7 +4960,7 @@
    "erp": "STAR-(Q)",
    "ac": "NB-KHJ05(Q)",
    "main": true,
-   "cost_centi": 35500
+   "cost_sen": 35500
   },
   {
    "op": "product_cost",
@@ -4974,7 +4974,7 @@
    "erp": "STAR-(S)",
    "ac": "NB-KHJ05(S)",
    "main": true,
-   "cost_centi": 32500
+   "cost_sen": 32500
   },
   {
    "op": "product_cost",
@@ -4988,7 +4988,7 @@
    "erp": "STAR-(SS)",
    "ac": "NB-KHJ05(SS)",
    "main": true,
-   "cost_centi": 33750
+   "cost_sen": 33750
   },
   {
    "op": "product_cost",
@@ -5016,7 +5016,7 @@
    "erp": "SIMPLE-(K)",
    "ac": "NB-KHJ06(K)",
    "main": true,
-   "cost_centi": 48000
+   "cost_sen": 48000
   },
   {
    "op": "product_cost",
@@ -5030,7 +5030,7 @@
    "erp": "SIMPLE-(Q)",
    "ac": "NB-KHJ06(Q)",
    "main": true,
-   "cost_centi": 35500
+   "cost_sen": 35500
   },
   {
    "op": "product_cost",
@@ -5044,7 +5044,7 @@
    "erp": "SIMPLE-(S)",
    "ac": "NB-KHJ06(S)",
    "main": true,
-   "cost_centi": 32500
+   "cost_sen": 32500
   },
   {
    "op": "product_cost",
@@ -5058,7 +5058,7 @@
    "erp": "SIMPLE-(SS)",
    "ac": "NB-KHJ06(SS)",
    "main": true,
-   "cost_centi": 33750
+   "cost_sen": 33750
   },
   {
    "op": "product_cost",
@@ -5128,7 +5128,7 @@
    "erp": "VICTORIA-(K)",
    "ac": "NB-KHJ21(K)",
    "main": true,
-   "cost_centi": 52500
+   "cost_sen": 52500
   },
   {
    "op": "product_cost",
@@ -5142,7 +5142,7 @@
    "erp": "VICTORIA-(Q)",
    "ac": "NB-KHJ21(Q)",
    "main": true,
-   "cost_centi": 40000
+   "cost_sen": 40000
   },
   {
    "op": "product_cost",
@@ -5156,7 +5156,7 @@
    "erp": "VICTORIA-(S)",
    "ac": "NB-KHJ21(S)",
    "main": true,
-   "cost_centi": 37000
+   "cost_sen": 37000
   },
   {
    "op": "product_cost",
@@ -5170,7 +5170,7 @@
    "erp": "VICTORIA-(SS)",
    "ac": "NB-KHJ21(SS)",
    "main": true,
-   "cost_centi": 38250
+   "cost_sen": 38250
   },
   {
    "op": "product_cost",
@@ -5191,7 +5191,7 @@
    "erp": "ELEGANT (A)-(K)",
    "ac": "NB-KHJ33(K)",
    "main": true,
-   "cost_centi": 71000
+   "cost_sen": 71000
   },
   {
    "op": "product_cost",
@@ -5205,7 +5205,7 @@
    "erp": "ELEGANT (A)-(Q)",
    "ac": "NB-KHJ33(Q)",
    "main": true,
-   "cost_centi": 58500
+   "cost_sen": 58500
   },
   {
    "op": "product_cost",
@@ -5219,7 +5219,7 @@
    "erp": "ELEGANT (A)-(S)",
    "ac": "NB-KHJ33(S)",
    "main": true,
-   "cost_centi": 51500
+   "cost_sen": 51500
   },
   {
    "op": "product_cost",
@@ -5240,7 +5240,7 @@
    "erp": "ELEGANT (A)-(SS)",
    "ac": "NB-KHJ33(SS)",
    "main": true,
-   "cost_centi": 54750
+   "cost_sen": 54750
   },
   {
    "op": "product_cost",
@@ -5255,7 +5255,7 @@
    "erp": "FENRIR-(K)",
    "ac": "NB-KHJ35 (K)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -5270,7 +5270,7 @@
    "erp": "FENRIR-(Q)",
    "ac": "NB-KHJ35 (Q)",
    "main": true,
-   "cost_centi": 42500
+   "cost_sen": 42500
   },
   {
    "op": "product_cost",
@@ -5285,7 +5285,7 @@
    "erp": "FENRIR-(S)",
    "ac": "NB-KHJ35 (S)",
    "main": true,
-   "cost_centi": 39500
+   "cost_sen": 39500
   },
   {
    "op": "product_cost",
@@ -5314,7 +5314,7 @@
    "erp": "FENRIR-(SS)",
    "ac": "NB-KHJ35 (SS)",
    "main": true,
-   "cost_centi": 40750
+   "cost_sen": 40750
   },
   {
    "op": "product_cost",
@@ -5329,7 +5329,7 @@
    "erp": "CELENE 2.0 (A)(F)-(K)",
    "ac": "NB-KHJ38 (A)(F) (K)",
    "main": true,
-   "cost_centi": 71000
+   "cost_sen": 71000
   },
   {
    "op": "product_cost",
@@ -5343,7 +5343,7 @@
    "erp": "CELENE 2.0 (A)(F)-(Q)",
    "ac": "NB-KHJ38 (A)(F) (Q)",
    "main": true,
-   "cost_centi": 58500
+   "cost_sen": 58500
   },
   {
    "op": "product_cost",
@@ -5357,7 +5357,7 @@
    "erp": "CELENE 2.0 (A)(F)-(S)",
    "ac": "NB-KHJ38 (A)(F) (S)",
    "main": true,
-   "cost_centi": 51500
+   "cost_sen": 51500
   },
   {
    "op": "product_cost",
@@ -5385,7 +5385,7 @@
    "erp": "CELENE 2.0 (A)(F)-(SS)",
    "ac": "NB-KHJ38 (A)(F) (SS)",
    "main": true,
-   "cost_centi": 54750
+   "cost_sen": 54750
   },
   {
    "op": "product_cost",
@@ -5413,7 +5413,7 @@
    "erp": "CELENE (A)-(K)",
    "ac": "NB-KHJ38(K)",
    "main": true,
-   "cost_centi": 71000
+   "cost_sen": 71000
   },
   {
    "op": "product_cost",
@@ -5427,7 +5427,7 @@
    "erp": "CELENE (A)-(Q)",
    "ac": "NB-KHJ38(Q)",
    "main": true,
-   "cost_centi": 58500
+   "cost_sen": 58500
   },
   {
    "op": "product_cost",
@@ -5441,7 +5441,7 @@
    "erp": "CELENE (A)-(S)",
    "ac": "NB-KHJ38(S)",
    "main": true,
-   "cost_centi": 51500
+   "cost_sen": 51500
   },
   {
    "op": "product_cost",
@@ -5455,7 +5455,7 @@
    "erp": "CELENE (A)-(SS)",
    "ac": "NB-KHJ38(SS)",
    "main": true,
-   "cost_centi": 54750
+   "cost_sen": 54750
   },
   {
    "op": "product_cost",
@@ -5469,7 +5469,7 @@
    "erp": "HILTON 2.0 (A)(F)-(K)",
    "ac": "NB-KHJ50 (A)(F) (K)",
    "main": true,
-   "cost_centi": 71000
+   "cost_sen": 71000
   },
   {
    "op": "product_cost",
@@ -5483,7 +5483,7 @@
    "erp": "HILTON 2.0 (A)(F)-(Q)",
    "ac": "NB-KHJ50 (A)(F) (Q)",
    "main": true,
-   "cost_centi": 58500
+   "cost_sen": 58500
   },
   {
    "op": "product_cost",
@@ -5497,7 +5497,7 @@
    "erp": "HILTON 2.0 (A)(F)-(S)",
    "ac": "NB-KHJ50 (A)(F) (S)",
    "main": true,
-   "cost_centi": 51500
+   "cost_sen": 51500
   },
   {
    "op": "product_cost",
@@ -5525,7 +5525,7 @@
    "erp": "HILTON 2.0 (A)(F)-(SS)",
    "ac": "NB-KHJ50 (A)(F) (SS)",
    "main": true,
-   "cost_centi": 54750
+   "cost_sen": 54750
   },
   {
    "op": "product_cost",
@@ -5553,7 +5553,7 @@
    "erp": "HILTON (A)-(K)",
    "ac": "NB-KHJ50(K)",
    "main": true,
-   "cost_centi": 71000
+   "cost_sen": 71000
   },
   {
    "op": "product_cost",
@@ -5567,7 +5567,7 @@
    "erp": "HILTON (A)-(Q)",
    "ac": "NB-KHJ50(Q)",
    "main": true,
-   "cost_centi": 58500
+   "cost_sen": 58500
   },
   {
    "op": "product_cost",
@@ -5581,7 +5581,7 @@
    "erp": "HILTON (A)-(S)",
    "ac": "NB-KHJ50(S)",
    "main": true,
-   "cost_centi": 51500
+   "cost_sen": 51500
   },
   {
    "op": "product_cost",
@@ -5595,7 +5595,7 @@
    "erp": "HILTON (A)-(SS)",
    "ac": "NB-KHJ50(SS)",
    "main": true,
-   "cost_centi": 54750
+   "cost_sen": 54750
   },
   {
    "op": "product_cost",
@@ -5609,7 +5609,7 @@
    "erp": "CODY 2.0 (F)-(K)",
    "ac": "NB-KHJ57 (F) (K)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -5623,7 +5623,7 @@
    "erp": "CODY 2.0 (F)-(Q)",
    "ac": "NB-KHJ57 (F) (Q)",
    "main": true,
-   "cost_centi": 42500
+   "cost_sen": 42500
   },
   {
    "op": "product_cost",
@@ -5637,7 +5637,7 @@
    "erp": "CODY 2.0 (F)-(S)",
    "ac": "NB-KHJ57 (F) (S)",
    "main": true,
-   "cost_centi": 39500
+   "cost_sen": 39500
   },
   {
    "op": "product_cost",
@@ -5665,7 +5665,7 @@
    "erp": "CODY 2.0 (F)-(SS)",
    "ac": "NB-KHJ57 (F) (SS)",
    "main": true,
-   "cost_centi": 40750
+   "cost_sen": 40750
   },
   {
    "op": "product_cost",
@@ -5693,7 +5693,7 @@
    "erp": "CODY-(K)",
    "ac": "NB-KHJ57(K)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -5707,7 +5707,7 @@
    "erp": "CODY-(Q)",
    "ac": "NB-KHJ57(Q)",
    "main": true,
-   "cost_centi": 42500
+   "cost_sen": 42500
   },
   {
    "op": "product_cost",
@@ -5722,7 +5722,7 @@
    "erp": "CODY-(S)",
    "ac": "NB-KHJ57(S)",
    "main": true,
-   "cost_centi": 39500
+   "cost_sen": 39500
   },
   {
    "op": "product_cost",
@@ -5736,7 +5736,7 @@
    "erp": "CODY-(SS)",
    "ac": "NB-KHJ57(SS)",
    "main": true,
-   "cost_centi": 40750
+   "cost_sen": 40750
   },
   {
    "op": "product_cost",
@@ -5778,7 +5778,7 @@
    "erp": "JAGER-(K)",
    "ac": "NB-LSD013 (K)",
    "main": true,
-   "cost_centi": 35000
+   "cost_sen": 35000
   },
   {
    "op": "product_cost",
@@ -5792,7 +5792,7 @@
    "erp": "JAGER-(Q)",
    "ac": "NB-LSD013 (Q)",
    "main": true,
-   "cost_centi": 22500
+   "cost_sen": 22500
   },
   {
    "op": "product_cost",
@@ -5806,7 +5806,7 @@
    "erp": "JAGER-(S)",
    "ac": "NB-LSD013 (S)",
    "main": true,
-   "cost_centi": 19500
+   "cost_sen": 19500
   },
   {
    "op": "product_cost",
@@ -5834,7 +5834,7 @@
    "erp": "JAGER-(SS)",
    "ac": "NB-LSD013 (SS)",
    "main": true,
-   "cost_centi": 20750
+   "cost_sen": 20750
   },
   {
    "op": "product_cost",
@@ -5911,7 +5911,7 @@
    "erp": "MORGANT-(SS)",
    "ac": "NB-NBG02(SS)",
    "main": true,
-   "cost_centi": 129750
+   "cost_sen": 129750
   },
   {
    "op": "product_cost",
@@ -5968,7 +5968,7 @@
    "erp": "CROWN-(K)",
    "ac": "NB-NBG06(K)",
    "main": true,
-   "cost_centi": 126000
+   "cost_sen": 126000
   },
   {
    "op": "product_cost",
@@ -5982,7 +5982,7 @@
    "erp": "CROWN-(Q)",
    "ac": "NB-NBG06(Q)",
    "main": true,
-   "cost_centi": 115500
+   "cost_sen": 115500
   },
   {
    "op": "product_cost",
@@ -5996,7 +5996,7 @@
    "erp": "CROWN-(S)",
    "ac": "NB-NBG06(S)",
    "main": true,
-   "cost_centi": 73500
+   "cost_sen": 73500
   },
   {
    "op": "product_cost",
@@ -6010,7 +6010,7 @@
    "erp": "CROWN-(SS)",
    "ac": "NB-NBG06(SS)",
    "main": true,
-   "cost_centi": 79750
+   "cost_sen": 79750
   },
   {
    "op": "product_cost",
@@ -6032,7 +6032,7 @@
    "erp": "TRIPLET-(S)",
    "ac": "NB-NBG09(S)",
    "main": true,
-   "cost_centi": 109500
+   "cost_sen": 109500
   },
   {
    "op": "product_cost",
@@ -6047,7 +6047,7 @@
    "erp": "JACOB 2.0 (F)-(K)",
    "ac": "NB-NH112 (F) (K)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -6061,7 +6061,7 @@
    "erp": "JACOB 2.0 (F)-(Q)",
    "ac": "NB-NH112 (F) (Q)",
    "main": true,
-   "cost_centi": 72500
+   "cost_sen": 72500
   },
   {
    "op": "product_cost",
@@ -6075,7 +6075,7 @@
    "erp": "JACOB 2.0 (F)-(S)",
    "ac": "NB-NH112 (F) (S)",
    "main": true,
-   "cost_centi": 65500
+   "cost_sen": 65500
   },
   {
    "op": "product_cost",
@@ -6103,7 +6103,7 @@
    "erp": "JACOB 2.0 (F)-(SS)",
    "ac": "NB-NH112 (F) (SS)",
    "main": true,
-   "cost_centi": 68750
+   "cost_sen": 68750
   },
   {
    "op": "product_cost",
@@ -6117,7 +6117,7 @@
    "erp": "FLUFY-(K)",
    "ac": "NB-NH125 (KD) (K)",
    "main": true,
-   "cost_centi": 151000
+   "cost_sen": 151000
   },
   {
    "op": "product_cost",
@@ -6131,7 +6131,7 @@
    "erp": "FLUFY-(Q)",
    "ac": "NB-NH125 (KD) (Q)",
    "main": true,
-   "cost_centi": 130500
+   "cost_sen": 130500
   },
   {
    "op": "product_cost",
@@ -6145,7 +6145,7 @@
    "erp": "FLUFY-(S)",
    "ac": "NB-NH125 (KD) (S)",
    "main": true,
-   "cost_centi": 119500
+   "cost_sen": 119500
   },
   {
    "op": "product_cost",
@@ -6173,7 +6173,7 @@
    "erp": "FLUFY-(SS)",
    "ac": "NB-NH125 (KD) (SS)",
    "main": true,
-   "cost_centi": 124750
+   "cost_sen": 124750
   },
   {
    "op": "product_cost",
@@ -6187,7 +6187,7 @@
    "erp": "MACRO (A)-(K)",
    "ac": "NB-NH23 (K)",
    "main": true,
-   "cost_centi": 83000
+   "cost_sen": 83000
   },
   {
    "op": "product_cost",
@@ -6201,7 +6201,7 @@
    "erp": "MACRO (A)-(Q)",
    "ac": "NB-NH23 (Q)",
    "main": true,
-   "cost_centi": 72500
+   "cost_sen": 72500
   },
   {
    "op": "product_cost",
@@ -6215,7 +6215,7 @@
    "erp": "MACRO (A)-(S)",
    "ac": "NB-NH23 (S)",
    "main": true,
-   "cost_centi": 67500
+   "cost_sen": 67500
   },
   {
    "op": "product_cost",
@@ -6243,7 +6243,7 @@
    "erp": "MACRO (A)-(SS)",
    "ac": "NB-NH23 (SS)",
    "main": true,
-   "cost_centi": 70750
+   "cost_sen": 70750
   },
   {
    "op": "product_cost",
@@ -6271,7 +6271,7 @@
    "erp": "SUMO (A)-(K)",
    "ac": "NB-NH25(A)(K)",
    "main": true,
-   "cost_centi": 87000
+   "cost_sen": 87000
   },
   {
    "op": "product_cost",
@@ -6285,7 +6285,7 @@
    "erp": "SUMO (A)-(Q)",
    "ac": "NB-NH25(A)(Q)",
    "main": true,
-   "cost_centi": 74500
+   "cost_sen": 74500
   },
   {
    "op": "product_cost",
@@ -6299,7 +6299,7 @@
    "erp": "SUMO (A)-(S)",
    "ac": "NB-NH25(A)(S)",
    "main": true,
-   "cost_centi": 67500
+   "cost_sen": 67500
   },
   {
    "op": "product_cost",
@@ -6313,7 +6313,7 @@
    "erp": "SUMO (A)-(SS)",
    "ac": "NB-NH25(A)(SS)",
    "main": true,
-   "cost_centi": 70750
+   "cost_sen": 70750
   },
   {
    "op": "product_cost",
@@ -6327,7 +6327,7 @@
    "erp": "MASCO (A)-(K)",
    "ac": "NB-NH27 (K)",
    "main": true,
-   "cost_centi": 87000
+   "cost_sen": 87000
   },
   {
    "op": "product_cost",
@@ -6341,7 +6341,7 @@
    "erp": "MASCO (A)-(Q)",
    "ac": "NB-NH27 (Q)",
    "main": true,
-   "cost_centi": 74500
+   "cost_sen": 74500
   },
   {
    "op": "product_cost",
@@ -6356,7 +6356,7 @@
    "erp": "MASCO (A)-(S)",
    "ac": "NB-NH27 (S)",
    "main": true,
-   "cost_centi": 67500
+   "cost_sen": 67500
   },
   {
    "op": "product_cost",
@@ -6370,7 +6370,7 @@
    "erp": "MASCO (A)-(SS)",
    "ac": "NB-NH27 (SS)",
    "main": true,
-   "cost_centi": 70750
+   "cost_sen": 70750
   },
   {
    "op": "product_cost",
@@ -6433,7 +6433,7 @@
    "erp": "REGAL (A)-(K)",
    "ac": "NB-NH36 (K)",
    "main": true,
-   "cost_centi": 70000
+   "cost_sen": 70000
   },
   {
    "op": "product_cost",
@@ -6448,7 +6448,7 @@
    "erp": "REGAL (A)-(Q)",
    "ac": "NB-NH36 (Q)",
    "main": true,
-   "cost_centi": 57500
+   "cost_sen": 57500
   },
   {
    "op": "product_cost",
@@ -6477,7 +6477,7 @@
    "erp": "REGAL (A)-(S)",
    "ac": "NB-NH36(S)",
    "main": true,
-   "cost_centi": 48500
+   "cost_sen": 48500
   },
   {
    "op": "product_cost",
@@ -6492,7 +6492,7 @@
    "erp": "REGAL (A)-(SS)",
    "ac": "NB-NH36(SS)",
    "main": true,
-   "cost_centi": 53750
+   "cost_sen": 53750
   },
   {
    "op": "product_cost",
@@ -6514,7 +6514,7 @@
    "erp": "TRION (A)-(K)",
    "ac": "NB-NH39(A)(K)",
    "main": true,
-   "cost_centi": 83000
+   "cost_sen": 83000
   },
   {
    "op": "product_cost",
@@ -6528,7 +6528,7 @@
    "erp": "TRION (A)-(Q)",
    "ac": "NB-NH39(A)(Q)",
    "main": true,
-   "cost_centi": 72500
+   "cost_sen": 72500
   },
   {
    "op": "product_cost",
@@ -6542,7 +6542,7 @@
    "erp": "TRION (A)-(S)",
    "ac": "NB-NH39(A)(S)",
    "main": true,
-   "cost_centi": 65500
+   "cost_sen": 65500
   },
   {
    "op": "product_cost",
@@ -6563,7 +6563,7 @@
    "erp": "TRION (A)-(SS)",
    "ac": "NB-NH39(A)(SS)",
    "main": true,
-   "cost_centi": 38750
+   "cost_sen": 38750
   },
   {
    "op": "product_cost",
@@ -6577,7 +6577,7 @@
    "erp": "MONDEO-(K)",
    "ac": "NB-NH41 (K)",
    "main": true,
-   "cost_centi": 70000
+   "cost_sen": 70000
   },
   {
    "op": "product_cost",
@@ -6591,7 +6591,7 @@
    "erp": "MONDEO-(Q)",
    "ac": "NB-NH41 (Q)",
    "main": true,
-   "cost_centi": 57500
+   "cost_sen": 57500
   },
   {
    "op": "product_cost",
@@ -6633,7 +6633,7 @@
    "erp": "LEOMAG (A)-(K)",
    "ac": "NB-NH44 (K)",
    "main": true,
-   "cost_centi": 87000
+   "cost_sen": 87000
   },
   {
    "op": "product_cost",
@@ -6647,7 +6647,7 @@
    "erp": "LEOMAG (A)-(Q)",
    "ac": "NB-NH44 (Q)",
    "main": true,
-   "cost_centi": 74500
+   "cost_sen": 74500
   },
   {
    "op": "product_cost",
@@ -6661,7 +6661,7 @@
    "erp": "LEOMAG (A)-(S)",
    "ac": "NB-NH44 (S)",
    "main": true,
-   "cost_centi": 67500
+   "cost_sen": 67500
   },
   {
    "op": "product_cost",
@@ -6675,7 +6675,7 @@
    "erp": "LEOMAG (A)-(SS)",
    "ac": "NB-NH44 (SS)",
    "main": true,
-   "cost_centi": 70750
+   "cost_sen": 70750
   },
   {
    "op": "product_cost",
@@ -6717,7 +6717,7 @@
    "erp": "KINGDOM-(K)",
    "ac": "NB-NH61(K)",
    "main": true,
-   "cost_centi": 153000
+   "cost_sen": 153000
   },
   {
    "op": "product_cost",
@@ -6731,7 +6731,7 @@
    "erp": "KINGDOM-(Q)",
    "ac": "NB-NH61(Q)",
    "main": true,
-   "cost_centi": 132500
+   "cost_sen": 132500
   },
   {
    "op": "product_cost",
@@ -6745,7 +6745,7 @@
    "erp": "DAISON (A)-(K)",
    "ac": "NB-NH63 (K)",
    "main": true,
-   "cost_centi": 116000
+   "cost_sen": 116000
   },
   {
    "op": "product_cost",
@@ -6759,7 +6759,7 @@
    "erp": "DAISON (A)-(Q)",
    "ac": "NB-NH63 (Q)",
    "main": true,
-   "cost_centi": 105500
+   "cost_sen": 105500
   },
   {
    "op": "product_cost",
@@ -6773,7 +6773,7 @@
    "erp": "DAISON (A)-(S)",
    "ac": "NB-NH63 (S)",
    "main": true,
-   "cost_centi": 98500
+   "cost_sen": 98500
   },
   {
    "op": "product_cost",
@@ -6787,7 +6787,7 @@
    "erp": "DAISON (A)-(SS)",
    "ac": "NB-NH63 (SS)",
    "main": true,
-   "cost_centi": 101750
+   "cost_sen": 101750
   },
   {
    "op": "product_cost",
@@ -6829,7 +6829,7 @@
    "erp": "HIPSTER (A)-(K)",
    "ac": "NB-NH66(A)(K)",
    "main": true,
-   "cost_centi": 111000
+   "cost_sen": 111000
   },
   {
    "op": "product_cost",
@@ -6843,7 +6843,7 @@
    "erp": "HIPSTER (A)-(Q)",
    "ac": "NB-NH66(A)(Q)",
    "main": true,
-   "cost_centi": 90500
+   "cost_sen": 90500
   },
   {
    "op": "product_cost",
@@ -6871,7 +6871,7 @@
    "erp": "ESSENCE (A)-(K)",
    "ac": "NB-NH72(A)(K)",
    "main": true,
-   "cost_centi": 123000
+   "cost_sen": 123000
   },
   {
    "op": "product_cost",
@@ -6885,7 +6885,7 @@
    "erp": "ESSENCE (A)-(Q)",
    "ac": "NB-NH72(A)(Q)",
    "main": true,
-   "cost_centi": 110500
+   "cost_sen": 110500
   },
   {
    "op": "product_cost",
@@ -6899,7 +6899,7 @@
    "erp": "GOYO (A)-(K)",
    "ac": "NB-NH79(A) (K)",
    "main": true,
-   "cost_centi": 90000
+   "cost_sen": 90000
   },
   {
    "op": "product_cost",
@@ -6913,7 +6913,7 @@
    "erp": "GOYO (A)-(Q)",
    "ac": "NB-NH79(A) (Q)",
    "main": true,
-   "cost_centi": 77500
+   "cost_sen": 77500
   },
   {
    "op": "product_cost",
@@ -6948,7 +6948,7 @@
    "erp": "CANVAS (A)-(K)",
    "ac": "NB-NH85(A) (K)",
    "main": true,
-   "cost_centi": 77000
+   "cost_sen": 77000
   },
   {
    "op": "product_cost",
@@ -6962,7 +6962,7 @@
    "erp": "CANVAS (A)-(Q)",
    "ac": "NB-NH85(A) (Q)",
    "main": true,
-   "cost_centi": 64500
+   "cost_sen": 64500
   },
   {
    "op": "product_cost",
@@ -6976,7 +6976,7 @@
    "erp": "CANVAS (A)-(S)",
    "ac": "NB-NH85(A) (S)",
    "main": true,
-   "cost_centi": 57500
+   "cost_sen": 57500
   },
   {
    "op": "product_cost",
@@ -7004,7 +7004,7 @@
    "erp": "CANVAS (A)-(SS)",
    "ac": "NB-NH85(A) (SS)",
    "main": true,
-   "cost_centi": 60750
+   "cost_sen": 60750
   },
   {
    "op": "product_cost",
@@ -7018,7 +7018,7 @@
    "erp": "ELEPAHNE-(K)",
    "ac": "NB-NH86 (K)",
    "main": true,
-   "cost_centi": 93000
+   "cost_sen": 93000
   },
   {
    "op": "product_cost",
@@ -7032,7 +7032,7 @@
    "erp": "ELEPAHNE-(Q)",
    "ac": "NB-NH86 (Q)",
    "main": true,
-   "cost_centi": 82500
+   "cost_sen": 82500
   },
   {
    "op": "product_cost",
@@ -7046,7 +7046,7 @@
    "erp": "ELEPAHNE-(S)",
    "ac": "NB-NH86 (S)",
    "main": true,
-   "cost_centi": 73500
+   "cost_sen": 73500
   },
   {
    "op": "product_cost",
@@ -7060,7 +7060,7 @@
    "erp": "ELEPAHNE-(SK)",
    "ac": "NB-NH86 (SK)",
    "main": true,
-   "cost_centi": 160000
+   "cost_sen": 160000
   },
   {
    "op": "product_cost",
@@ -7082,7 +7082,7 @@
    "erp": "ELEPAHNE-(SS)",
    "ac": "NB-NH86 (SS)",
    "main": true,
-   "cost_centi": 76750
+   "cost_sen": 76750
   },
   {
    "op": "product_cost",
@@ -7096,7 +7096,7 @@
    "erp": "RICARDO-(K)",
    "ac": "NK-1003 (K)",
    "main": true,
-   "cost_centi": 40824
+   "cost_sen": 40824
   },
   {
    "op": "product_cost",
@@ -7110,7 +7110,7 @@
    "erp": "RICARDO-(Q)",
    "ac": "NK-1003 (Q)",
    "main": true,
-   "cost_centi": 35100
+   "cost_sen": 35100
   },
   {
    "op": "product_cost",
@@ -7138,7 +7138,7 @@
    "erp": "RICARDO-(SP)",
    "ac": "NK-1003 (SP)",
    "main": true,
-   "cost_centi": 34992
+   "cost_sen": 34992
   },
   {
    "op": "product_cost",
@@ -7152,7 +7152,7 @@
    "erp": "RICARDO-(SS)",
    "ac": "NK-1003 (SS)",
    "main": true,
-   "cost_centi": 58320
+   "cost_sen": 58320
   },
   {
    "op": "product_cost",
@@ -7166,7 +7166,7 @@
    "erp": "HIBANA-(K)",
    "ac": "NK-1005 (K)",
    "main": true,
-   "cost_centi": 44388
+   "cost_sen": 44388
   },
   {
    "op": "product_cost",
@@ -7180,7 +7180,7 @@
    "erp": "HIBANA-(Q)",
    "ac": "NK-1005 (Q)",
    "main": true,
-   "cost_centi": 38556
+   "cost_sen": 38556
   },
   {
    "op": "product_cost",
@@ -7208,7 +7208,7 @@
    "erp": "HIBANA-(SP)",
    "ac": "NK-1005 (SP)",
    "main": true,
-   "cost_centi": 39744
+   "cost_sen": 39744
   },
   {
    "op": "product_cost",
@@ -7222,7 +7222,7 @@
    "erp": "HIBANA-(SS)",
    "ac": "NK-1005 (SS)",
    "main": true,
-   "cost_centi": 95688
+   "cost_sen": 95688
   },
   {
    "op": "product_cost",
@@ -7236,7 +7236,7 @@
    "erp": "GRANDE-(K)",
    "ac": "NK-1007 (K)",
    "main": true,
-   "cost_centi": 81648
+   "cost_sen": 81648
   },
   {
    "op": "product_cost",
@@ -7250,7 +7250,7 @@
    "erp": "GRANDE-(Q)",
    "ac": "NK-1007 (Q)",
    "main": true,
-   "cost_centi": 75816
+   "cost_sen": 75816
   },
   {
    "op": "product_cost",
@@ -7278,7 +7278,7 @@
    "erp": "GRANDE-(SP)",
    "ac": "NK-1007 (SP)",
    "main": true,
-   "cost_centi": 77004
+   "cost_sen": 77004
   },
   {
    "op": "product_cost",
@@ -7292,7 +7292,7 @@
    "erp": "GRANDE-(SS)",
    "ac": "NK-1007 (SS)",
    "main": true,
-   "cost_centi": 95688
+   "cost_sen": 95688
   },
   {
    "op": "product_cost",
@@ -7306,7 +7306,7 @@
    "erp": "MOZZIE-(K)",
    "ac": "NK-1008 (K)",
    "main": true,
-   "cost_centi": 81648
+   "cost_sen": 81648
   },
   {
    "op": "product_cost",
@@ -7320,7 +7320,7 @@
    "erp": "MOZZIE-(Q)",
    "ac": "NK-1008 (Q)",
    "main": true,
-   "cost_centi": 75816
+   "cost_sen": 75816
   },
   {
    "op": "product_cost",
@@ -7348,7 +7348,7 @@
    "erp": "MOZZIE-(SP)",
    "ac": "NK-1008 (SP)",
    "main": true,
-   "cost_centi": 77004
+   "cost_sen": 77004
   },
   {
    "op": "product_cost",
@@ -7362,7 +7362,7 @@
    "erp": "MOZZIE-(SS)",
    "ac": "NK-1008 (SS)",
    "main": true,
-   "cost_centi": 69984
+   "cost_sen": 69984
   },
   {
    "op": "product_cost",
@@ -7376,7 +7376,7 @@
    "erp": "FINKA-(K)",
    "ac": "NK-1009 (K)",
    "main": true,
-   "cost_centi": 56052
+   "cost_sen": 56052
   },
   {
    "op": "product_cost",
@@ -7390,7 +7390,7 @@
    "erp": "FINKA-(Q)",
    "ac": "NK-1009 (Q)",
    "main": true,
-   "cost_centi": 50220
+   "cost_sen": 50220
   },
   {
    "op": "product_cost",
@@ -7418,7 +7418,7 @@
    "erp": "FINKA-(SP)",
    "ac": "NK-1009 (SP)",
    "main": true,
-   "cost_centi": 51408
+   "cost_sen": 51408
   },
   {
    "op": "product_cost",
@@ -7474,7 +7474,7 @@
    "erp": "VICTORIAS-(SS)",
    "ac": "NK-1010 (SS)",
    "main": true,
-   "cost_centi": 58320
+   "cost_sen": 58320
   },
   {
    "op": "product_cost",
@@ -7488,7 +7488,7 @@
    "erp": "ZOFIA-(K)",
    "ac": "NK-1011 (K)",
    "main": true,
-   "cost_centi": 44388
+   "cost_sen": 44388
   },
   {
    "op": "product_cost",
@@ -7502,7 +7502,7 @@
    "erp": "ZOFIA-(Q)",
    "ac": "NK-1011 (Q)",
    "main": true,
-   "cost_centi": 38556
+   "cost_sen": 38556
   },
   {
    "op": "product_cost",
@@ -7530,7 +7530,7 @@
    "erp": "ZOFIA-(SP)",
    "ac": "NK-1011 (SP)",
    "main": true,
-   "cost_centi": 39744
+   "cost_sen": 39744
   },
   {
    "op": "product_cost",
@@ -7544,7 +7544,7 @@
    "erp": "ZOFIA-(SS)",
    "ac": "NK-1011 (SS)",
    "main": true,
-   "cost_centi": 43200
+   "cost_sen": 43200
   },
   {
    "op": "product_cost",
@@ -7558,7 +7558,7 @@
    "erp": "MAVERICK-(K)",
    "ac": "NK-1013 (K)",
    "main": true,
-   "cost_centi": 29160
+   "cost_sen": 29160
   },
   {
    "op": "product_cost",
@@ -7572,7 +7572,7 @@
    "erp": "MAVERICK-(Q)",
    "ac": "NK-1013 (Q)",
    "main": true,
-   "cost_centi": 23328
+   "cost_sen": 23328
   },
   {
    "op": "product_cost",
@@ -7600,7 +7600,7 @@
    "erp": "MAVERICK-(SP)",
    "ac": "NK-1013 (SP)",
    "main": true,
-   "cost_centi": 24516
+   "cost_sen": 24516
   },
   {
    "op": "product_cost",
@@ -7614,7 +7614,7 @@
    "erp": "MAVERICK-(SS)",
    "ac": "NK-1013 (SS)",
    "main": true,
-   "cost_centi": 60696
+   "cost_sen": 60696
   },
   {
    "op": "product_cost",
@@ -7628,7 +7628,7 @@
    "erp": "FLORES-(K)",
    "ac": "NK-1016 (K)",
    "main": true,
-   "cost_centi": 46656
+   "cost_sen": 46656
   },
   {
    "op": "product_cost",
@@ -7656,7 +7656,7 @@
    "erp": "FLORES-(SP)",
    "ac": "NK-1016 (SP)",
    "main": true,
-   "cost_centi": 42012
+   "cost_sen": 42012
   },
   {
    "op": "product_cost",
@@ -7670,7 +7670,7 @@
    "erp": "FLORES-(SS)",
    "ac": "NK-1016 (SS)",
    "main": true,
-   "cost_centi": 40824
+   "cost_sen": 40824
   },
   {
    "op": "product_cost",
@@ -7726,7 +7726,7 @@
    "erp": "1025-(SS)",
    "ac": "NK-1025 (SS)",
    "main": true,
-   "cost_centi": 101520
+   "cost_sen": 101520
   },
   {
    "op": "product_cost",
@@ -7740,7 +7740,7 @@
    "erp": "ARTI-(K)",
    "ac": "NK-1026 (K)",
    "main": true,
-   "cost_centi": 87480
+   "cost_sen": 87480
   },
   {
    "op": "product_cost",
@@ -7768,7 +7768,7 @@
    "erp": "ARTI-(SP)",
    "ac": "NK-1026 (SP)",
    "main": true,
-   "cost_centi": 81648
+   "cost_sen": 81648
   },
   {
    "op": "product_cost",
@@ -7782,7 +7782,7 @@
    "erp": "ARTI-(S)",
    "ac": "NK-1026(S)",
    "main": true,
-   "cost_centi": 82836
+   "cost_sen": 82836
   },
   {
    "op": "product_cost",
@@ -7838,7 +7838,7 @@
    "erp": "JORDAN-(SS)",
    "ac": "NK-1030 (SS)",
    "main": true,
-   "cost_centi": 43200
+   "cost_sen": 43200
   },
   {
    "op": "product_cost",
@@ -7852,7 +7852,7 @@
    "erp": "CODYS-(K)",
    "ac": "NK-1038 (K)",
    "main": true,
-   "cost_centi": 29160
+   "cost_sen": 29160
   },
   {
    "op": "product_cost",
@@ -7866,7 +7866,7 @@
    "erp": "CODYS-(Q)",
    "ac": "NK-1038 (Q)",
    "main": true,
-   "cost_centi": 17496
+   "cost_sen": 17496
   },
   {
    "op": "product_cost",
@@ -7894,7 +7894,7 @@
    "erp": "CODYS-(SP)",
    "ac": "NK-1038 (SP)",
    "main": true,
-   "cost_centi": 20412
+   "cost_sen": 20412
   },
   {
    "op": "product_cost",
@@ -7908,7 +7908,7 @@
    "erp": "CODYS-(SS)",
    "ac": "NK-1038 (SS)",
    "main": true,
-   "cost_centi": 81648
+   "cost_sen": 81648
   },
   {
    "op": "product_cost",
@@ -7922,7 +7922,7 @@
    "erp": "MARVIS-(K)",
    "ac": "NK-1044 (K)",
    "main": true,
-   "cost_centi": 67716
+   "cost_sen": 67716
   },
   {
    "op": "product_cost",
@@ -7936,7 +7936,7 @@
    "erp": "MARVIS-(Q)",
    "ac": "NK-1044 (Q)",
    "main": true,
-   "cost_centi": 61884
+   "cost_sen": 61884
   },
   {
    "op": "product_cost",
@@ -7964,7 +7964,7 @@
    "erp": "MARVIS-(SP)",
    "ac": "NK-1044 (SP)",
    "main": true,
-   "cost_centi": 63072
+   "cost_sen": 63072
   },
   {
    "op": "product_cost",
@@ -7978,7 +7978,7 @@
    "erp": "MARVIS-(SS)",
    "ac": "NK-1044 (SS)",
    "main": true,
-   "cost_centi": 54864
+   "cost_sen": 54864
   },
   {
    "op": "product_cost",
@@ -7992,7 +7992,7 @@
    "erp": "VALKYRIE-(K)",
    "ac": "NK-1045 (K)",
    "main": true,
-   "cost_centi": 40824
+   "cost_sen": 40824
   },
   {
    "op": "product_cost",
@@ -8006,7 +8006,7 @@
    "erp": "VALKYRIE-(Q)",
    "ac": "NK-1045 (Q)",
    "main": true,
-   "cost_centi": 34992
+   "cost_sen": 34992
   },
   {
    "op": "product_cost",
@@ -8034,7 +8034,7 @@
    "erp": "VALKYRIE-(SP)",
    "ac": "NK-1045 (SP)",
    "main": true,
-   "cost_centi": 36180
+   "cost_sen": 36180
   },
   {
    "op": "product_cost",
@@ -8048,7 +8048,7 @@
    "erp": "VALKYRIE-(SS)",
    "ac": "NK-1045 (SS)",
    "main": true,
-   "cost_centi": 93312
+   "cost_sen": 93312
   },
   {
    "op": "product_cost",
@@ -8062,7 +8062,7 @@
    "erp": "MINI-(K)",
    "ac": "NK-1046 (K)",
    "main": true,
-   "cost_centi": 79380
+   "cost_sen": 79380
   },
   {
    "op": "product_cost",
@@ -8076,7 +8076,7 @@
    "erp": "MINI-(Q)",
    "ac": "NK-1046 (Q)",
    "main": true,
-   "cost_centi": 71172
+   "cost_sen": 71172
   },
   {
    "op": "product_cost",
@@ -8104,7 +8104,7 @@
    "erp": "MINI-(SP)",
    "ac": "NK-1046 (SP)",
    "main": true,
-   "cost_centi": 74736
+   "cost_sen": 74736
   },
   {
    "op": "product_cost",
@@ -8118,7 +8118,7 @@
    "erp": "MINI-(SS)",
    "ac": "NK-1046 (SS)",
    "main": true,
-   "cost_centi": 46656
+   "cost_sen": 46656
   },
   {
    "op": "product_cost",
@@ -8132,7 +8132,7 @@
    "erp": "ARUNI-(K)",
    "ac": "NK-1058 (K)",
    "main": true,
-   "cost_centi": 32616
+   "cost_sen": 32616
   },
   {
    "op": "product_cost",
@@ -8146,7 +8146,7 @@
    "erp": "ARUNI-(Q)",
    "ac": "NK-1058 (Q)",
    "main": true,
-   "cost_centi": 26892
+   "cost_sen": 26892
   },
   {
    "op": "product_cost",
@@ -8174,7 +8174,7 @@
    "erp": "ARUNI-(SP)",
    "ac": "NK-1058 (SP)",
    "main": true,
-   "cost_centi": 28080
+   "cost_sen": 28080
   },
   {
    "op": "product_cost",
@@ -8188,7 +8188,7 @@
    "erp": "ARUNI-(SS)",
    "ac": "NK-1058 (SS)",
    "main": true,
-   "cost_centi": 49032
+   "cost_sen": 49032
   },
   {
    "op": "product_cost",
@@ -8202,7 +8202,7 @@
    "erp": "FENRIRS-(K)",
    "ac": "NK-1075B (K)",
    "main": true,
-   "cost_centi": 34992
+   "cost_sen": 34992
   },
   {
    "op": "product_cost",
@@ -8216,7 +8216,7 @@
    "erp": "FENRIRS-(Q)",
    "ac": "NK-1075B (Q)",
    "main": true,
-   "cost_centi": 29160
+   "cost_sen": 29160
   },
   {
    "op": "product_cost",
@@ -8244,7 +8244,7 @@
    "erp": "FENRIRS-(SP)",
    "ac": "NK-1075B (SP)",
    "main": true,
-   "cost_centi": 30348
+   "cost_sen": 30348
   },
   {
    "op": "product_cost",
@@ -8335,7 +8335,7 @@
    "erp": "AF RM CBS BRW 4KFIT",
    "ac": "AK-AF RM CBS BRW 4KFIT",
    "main": true,
-   "cost_centi": 16800
+   "cost_sen": 16800
   },
   {
    "op": "product_cost",
@@ -8349,7 +8349,7 @@
    "erp": "AF RM CBS BRW 4QFIT",
    "ac": "AK-AF RM CBS BRW 4QFIT",
    "main": true,
-   "cost_centi": 14700
+   "cost_sen": 14700
   },
   {
    "op": "product_cost",
@@ -8363,7 +8363,7 @@
    "erp": "AF RM LQ KHK 3SSFIT",
    "ac": "AK-AF RM LQ KHK 3SSFIT",
    "main": true,
-   "cost_centi": 12600
+   "cost_sen": 12600
   },
   {
    "op": "product_cost",
@@ -8377,7 +8377,7 @@
    "erp": "AF RM LQ KHK 4KFIT",
    "ac": "AK-AF RM LQ KHK 4KFIT",
    "main": true,
-   "cost_centi": 16800
+   "cost_sen": 16800
   },
   {
    "op": "product_cost",
@@ -8391,7 +8391,7 @@
    "erp": "AF RM LQ KHK 4QFIT",
    "ac": "AK-AF RM LQ KHK 4QFIT",
    "main": true,
-   "cost_centi": 14700
+   "cost_sen": 14700
   },
   {
    "op": "product_cost",
@@ -8405,7 +8405,7 @@
    "erp": "AF RM LQ KHK 5KQLT",
    "ac": "AK-AF RM LQ KHK 5KQLT",
    "main": true,
-   "cost_centi": 30900
+   "cost_sen": 30900
   },
   {
    "op": "product_cost",
@@ -8419,7 +8419,7 @@
    "erp": "AF RM LQ KHK 5QQLT",
    "ac": "AK-AF RM LQ KHK 5QQLT",
    "main": true,
-   "cost_centi": 28000
+   "cost_sen": 28000
   },
   {
    "op": "product_cost",
@@ -8433,7 +8433,7 @@
    "erp": "AF RM MIL BLU 4KFIT",
    "ac": "AK-AF RM MIL BLU 4KFIT",
    "main": true,
-   "cost_centi": 16800
+   "cost_sen": 16800
   },
   {
    "op": "product_cost",
@@ -8447,7 +8447,7 @@
    "erp": "AF RM MIL BLU 4QFIT",
    "ac": "AK-AF RM MIL BLU 4QFIT",
    "main": true,
-   "cost_centi": 14700
+   "cost_sen": 14700
   },
   {
    "op": "product_cost",
@@ -8461,7 +8461,7 @@
    "erp": "AF RM PE PNK 3SSFIT",
    "ac": "AK-AF RM PE PNK 3SSFIT",
    "main": true,
-   "cost_centi": 12600
+   "cost_sen": 12600
   },
   {
    "op": "product_cost",
@@ -8475,7 +8475,7 @@
    "erp": "AF RM PE PNK 4KFIT",
    "ac": "AK-AF RM PE PNK 4KFIT",
    "main": true,
-   "cost_centi": 16800
+   "cost_sen": 16800
   },
   {
    "op": "product_cost",
@@ -8489,7 +8489,7 @@
    "erp": "AF RM PE PNK 4QFIT",
    "ac": "AK-AF RM PE PNK 4QFIT",
    "main": true,
-   "cost_centi": 14700
+   "cost_sen": 14700
   },
   {
    "op": "product_cost",
@@ -8503,7 +8503,7 @@
    "erp": "AF RM PL CRM 3SSFIT",
    "ac": "AK-AF RM PL CRM 3SSFIT",
    "main": true,
-   "cost_centi": 12600
+   "cost_sen": 12600
   },
   {
    "op": "product_cost",
@@ -8517,7 +8517,7 @@
    "erp": "AF RM PL CRM 4KFIT",
    "ac": "AK-AF RM PL CRM 4KFIT",
    "main": true,
-   "cost_centi": 16800
+   "cost_sen": 16800
   },
   {
    "op": "product_cost",
@@ -8531,7 +8531,7 @@
    "erp": "AF RM PL CRM 4QFIT",
    "ac": "AK-AF RM PL CRM 4QFIT",
    "main": true,
-   "cost_centi": 14700
+   "cost_sen": 14700
   },
   {
    "op": "product_cost",
@@ -8545,7 +8545,7 @@
    "erp": "AF RM PL CRM 5KQLT",
    "ac": "AK-AF RM PL CRM 5KQLT",
    "main": true,
-   "cost_centi": 30900
+   "cost_sen": 30900
   },
   {
    "op": "product_cost",
@@ -8559,7 +8559,7 @@
    "erp": "AF RM PL CRM 5QQLT",
    "ac": "AK-AF RM PL CRM 5QQLT",
    "main": true,
-   "cost_centi": 28000
+   "cost_sen": 28000
   },
   {
    "op": "product_cost",
@@ -8573,7 +8573,7 @@
    "erp": "AF RM RN BLU 3SSFIT",
    "ac": "AK-AF RM RN BLU 3SSFIT",
    "main": true,
-   "cost_centi": 12600
+   "cost_sen": 12600
   },
   {
    "op": "product_cost",
@@ -8587,7 +8587,7 @@
    "erp": "AF RM RN BLU 4KFIT",
    "ac": "AK-AF RM RN BLU 4KFIT",
    "main": true,
-   "cost_centi": 16800
+   "cost_sen": 16800
   },
   {
    "op": "product_cost",
@@ -8601,7 +8601,7 @@
    "erp": "AF RM RN BLU 4QFIT",
    "ac": "AK-AF RM RN BLU 4QFIT",
    "main": true,
-   "cost_centi": 14700
+   "cost_sen": 14700
   },
   {
    "op": "product_cost",
@@ -8615,7 +8615,7 @@
    "erp": "AF RM RN BLU 5KQLT",
    "ac": "AK-AF RM RN BLU 5KQLT",
    "main": true,
-   "cost_centi": 30900
+   "cost_sen": 30900
   },
   {
    "op": "product_cost",
@@ -8629,7 +8629,7 @@
    "erp": "AF RM RN BLU 5QQLT",
    "ac": "AK-AF RM RN BLU 5QQLT",
    "main": true,
-   "cost_centi": 28000
+   "cost_sen": 28000
   },
   {
    "op": "product_cost",
@@ -8643,7 +8643,7 @@
    "erp": "AF RM VI PUP 4KFIT",
    "ac": "AK-AF RM VI PUP 4KFIT",
    "main": true,
-   "cost_centi": 16800
+   "cost_sen": 16800
   },
   {
    "op": "product_cost",
@@ -8657,7 +8657,7 @@
    "erp": "AF RM VI PUP 4QFIT",
    "ac": "AK-AF RM VI PUP 4QFIT",
    "main": true,
-   "cost_centi": 14700
+   "cost_sen": 14700
   },
   {
    "op": "product_cost",
@@ -8671,7 +8671,7 @@
    "erp": "HM CL BRW 4SSQLT",
    "ac": "AK-HM CL BRW 4SSQLT",
    "main": true,
-   "cost_centi": 19300
+   "cost_sen": 19300
   },
   {
    "op": "product_cost",
@@ -8685,7 +8685,7 @@
    "erp": "HM CL BRW 5KQLT",
    "ac": "AK-HM CL BRW 5KQLT",
    "main": true,
-   "cost_centi": 25200
+   "cost_sen": 25200
   },
   {
    "op": "product_cost",
@@ -8699,7 +8699,7 @@
    "erp": "HM CL BRW 5QQLT",
    "ac": "AK-HM CL BRW 5QQLT",
    "main": true,
-   "cost_centi": 23100
+   "cost_sen": 23100
   },
   {
    "op": "product_cost",
@@ -8713,7 +8713,7 @@
    "erp": "HM FR APC 5KQLT",
    "ac": "AK-HM FR APC 5KQLT",
    "main": true,
-   "cost_centi": 25200
+   "cost_sen": 25200
   },
   {
    "op": "product_cost",
@@ -8727,7 +8727,7 @@
    "erp": "HM FR APC 5QQLT",
    "ac": "AK-HM FR APC 5QQLT",
    "main": true,
-   "cost_centi": 23100
+   "cost_sen": 23100
   },
   {
    "op": "product_cost",
@@ -8741,7 +8741,7 @@
    "erp": "HM HD GRN 4SSQLT",
    "ac": "AK-HM HD GRN 4SSQLT",
    "main": true,
-   "cost_centi": 19300
+   "cost_sen": 19300
   },
   {
    "op": "product_cost",
@@ -8755,7 +8755,7 @@
    "erp": "HM HD GRN 5KQLT",
    "ac": "AK-HM HD GRN 5KQLT",
    "main": true,
-   "cost_centi": 25200
+   "cost_sen": 25200
   },
   {
    "op": "product_cost",
@@ -8769,7 +8769,7 @@
    "erp": "HM HD GRN 5QQLT",
    "ac": "AK-HM HD GRN 5QQLT",
    "main": true,
-   "cost_centi": 23100
+   "cost_sen": 23100
   },
   {
    "op": "product_cost",
@@ -8783,7 +8783,7 @@
    "erp": "HM IN GRY 4SSQLT",
    "ac": "AK-HM IN GRY 4SSQLT",
    "main": true,
-   "cost_centi": 19300
+   "cost_sen": 19300
   },
   {
    "op": "product_cost",
@@ -8797,7 +8797,7 @@
    "erp": "HM IN GRY 5KQLT",
    "ac": "AK-HM IN GRY 5KQLT",
    "main": true,
-   "cost_centi": 25200
+   "cost_sen": 25200
   },
   {
    "op": "product_cost",
@@ -8811,7 +8811,7 @@
    "erp": "HM IN GRY 5QQLT",
    "ac": "AK-HM IN GRY 5QQLT",
    "main": true,
-   "cost_centi": 23100
+   "cost_sen": 23100
   },
   {
    "op": "product_cost",
@@ -8825,7 +8825,7 @@
    "erp": "HM RY YLW 4SSQLT",
    "ac": "AK-HM RY YLW 4SSQLT",
    "main": true,
-   "cost_centi": 19300
+   "cost_sen": 19300
   },
   {
    "op": "product_cost",
@@ -8839,7 +8839,7 @@
    "erp": "HM RY YLW 5KQLT",
    "ac": "AK-HM RY YLW 5KQLT",
    "main": true,
-   "cost_centi": 25200
+   "cost_sen": 25200
   },
   {
    "op": "product_cost",
@@ -8853,7 +8853,7 @@
    "erp": "HM RY YLW 5QQLT",
    "ac": "AK-HM RY YLW 5QQLT",
    "main": true,
-   "cost_centi": 23100
+   "cost_sen": 23100
   },
   {
    "op": "product_cost",
@@ -8867,7 +8867,7 @@
    "erp": "HM TF BGE 5KQLT",
    "ac": "AK-HM TF BGE 5KQLT",
    "main": true,
-   "cost_centi": 25200
+   "cost_sen": 25200
   },
   {
    "op": "product_cost",
@@ -8881,7 +8881,7 @@
    "erp": "HM TF BGE 5QQLT",
    "ac": "AK-HM TF BGE 5QQLT",
    "main": true,
-   "cost_centi": 23100
+   "cost_sen": 23100
   },
   {
    "op": "product_cost",
@@ -8895,7 +8895,7 @@
    "erp": "HP LL AQU 4KFIT",
    "ac": "AK-HP LL AQU 4KFIT",
    "main": true,
-   "cost_centi": 5530
+   "cost_sen": 5530
   },
   {
    "op": "product_cost",
@@ -8909,7 +8909,7 @@
    "erp": "HP LL AQU 4QFIT",
    "ac": "AK-HP LL AQU 4QFIT",
    "main": true,
-   "cost_centi": 4830
+   "cost_sen": 4830
   },
   {
    "op": "product_cost",
@@ -8923,7 +8923,7 @@
    "erp": "HP LL BRR 3SSFIT",
    "ac": "AK-HP LL BRR 3SSFIT",
    "main": true,
-   "cost_centi": 3430
+   "cost_sen": 3430
   },
   {
    "op": "product_cost",
@@ -8937,7 +8937,7 @@
    "erp": "HP LL BRR 4KFIT",
    "ac": "AK-HP LL BRR 4KFIT",
    "main": true,
-   "cost_centi": 5530
+   "cost_sen": 5530
   },
   {
    "op": "product_cost",
@@ -8951,7 +8951,7 @@
    "erp": "HP LL BRR 4QFIT",
    "ac": "AK-HP LL BRR 4QFIT",
    "main": true,
-   "cost_centi": 4830
+   "cost_sen": 4830
   },
   {
    "op": "product_cost",
@@ -8965,7 +8965,7 @@
    "erp": "HP LL BRR CFT (K)",
    "ac": "AK-HP LL BRR CFT (K)",
    "main": true,
-   "cost_centi": 7630
+   "cost_sen": 7630
   },
   {
    "op": "product_cost",
@@ -8979,7 +8979,7 @@
    "erp": "HP LL BRR CFT (Q)",
    "ac": "AK-HP LL BRR CFT (Q)",
    "main": true,
-   "cost_centi": 6930
+   "cost_sen": 6930
   },
   {
    "op": "product_cost",
@@ -8993,7 +8993,7 @@
    "erp": "HP LL BRR CFT (SS)",
    "ac": "AK-HP LL BRR CFT (SS)",
    "main": true,
-   "cost_centi": 5530
+   "cost_sen": 5530
   },
   {
    "op": "product_cost",
@@ -9007,7 +9007,7 @@
    "erp": "HP LL WIN 3SSFIT",
    "ac": "AK-HP LL WIN 3SSFIT",
    "main": true,
-   "cost_centi": 3430
+   "cost_sen": 3430
   },
   {
    "op": "product_cost",
@@ -9021,7 +9021,7 @@
    "erp": "HP LL WIN 4KFIT",
    "ac": "AK-HP LL WIN 4KFIT",
    "main": true,
-   "cost_centi": 5530
+   "cost_sen": 5530
   },
   {
    "op": "product_cost",
@@ -9035,7 +9035,7 @@
    "erp": "HP LL WIN 4QFIT",
    "ac": "AK-HP LL WIN 4QFIT",
    "main": true,
-   "cost_centi": 4830
+   "cost_sen": 4830
   },
   {
    "op": "product_cost",
@@ -9049,7 +9049,7 @@
    "erp": "HP LL WIN CFT (K)",
    "ac": "AK-HP LL WIN CFT (K)",
    "main": true,
-   "cost_centi": 7630
+   "cost_sen": 7630
   },
   {
    "op": "product_cost",
@@ -9063,7 +9063,7 @@
    "erp": "HP LL WIN CFT (Q)",
    "ac": "AK-HP LL WIN CFT (Q)",
    "main": true,
-   "cost_centi": 6930
+   "cost_sen": 6930
   },
   {
    "op": "product_cost",
@@ -9077,7 +9077,7 @@
    "erp": "HP LL WIN CFT (SS)",
    "ac": "AK-HP LL WIN CFT (SS)",
    "main": true,
-   "cost_centi": 5530
+   "cost_sen": 5530
   },
   {
    "op": "product_cost",
@@ -9091,7 +9091,7 @@
    "erp": "HP MM VR EM GRN 3SSFIT",
    "ac": "AK-HP MM VR EM GRN 3SSFIT",
    "main": true,
-   "cost_centi": 3430
+   "cost_sen": 3430
   },
   {
    "op": "product_cost",
@@ -9105,7 +9105,7 @@
    "erp": "HP MM VR EM GRN 4KFIT",
    "ac": "AK-HP MM VR EM GRN 4KFIT",
    "main": true,
-   "cost_centi": 5530
+   "cost_sen": 5530
   },
   {
    "op": "product_cost",
@@ -9119,7 +9119,7 @@
    "erp": "HP MM VR EM GRN 4QFIT",
    "ac": "AK-HP MM VR EM GRN 4QFIT",
    "main": true,
-   "cost_centi": 4830
+   "cost_sen": 4830
   },
   {
    "op": "product_cost",
@@ -9133,7 +9133,7 @@
    "erp": "HP MM VR EM GRN CFT (K)",
    "ac": "AK-HP MM VR EM GRN CFT (K)",
    "main": true,
-   "cost_centi": 7630
+   "cost_sen": 7630
   },
   {
    "op": "product_cost",
@@ -9147,7 +9147,7 @@
    "erp": "HP MM VR EM GRN CFT (Q)",
    "ac": "AK-HP MM VR EM GRN CFT (Q)",
    "main": true,
-   "cost_centi": 6930
+   "cost_sen": 6930
   },
   {
    "op": "product_cost",
@@ -9161,7 +9161,7 @@
    "erp": "HP MM VR EM GRN CFT (SS)",
    "ac": "AK-HP MM VR EM GRN CFT (SS)",
    "main": true,
-   "cost_centi": 5530
+   "cost_sen": 5530
   },
   {
    "op": "product_cost",
@@ -9175,7 +9175,7 @@
    "erp": "HP MM VR TR NAV 3SSFIT",
    "ac": "AK-HP MM VR TR NAV 3SSFIT",
    "main": true,
-   "cost_centi": 3430
+   "cost_sen": 3430
   },
   {
    "op": "product_cost",
@@ -9189,7 +9189,7 @@
    "erp": "HP MM VR TR NAV 4KFIT",
    "ac": "AK-HP MM VR TR NAV 4KFIT",
    "main": true,
-   "cost_centi": 5530
+   "cost_sen": 5530
   },
   {
    "op": "product_cost",
@@ -9203,7 +9203,7 @@
    "erp": "HP MM VR TR NAV 4QFIT",
    "ac": "AK-HP MM VR TR NAV 4QFIT",
    "main": true,
-   "cost_centi": 4830
+   "cost_sen": 4830
   },
   {
    "op": "product_cost",
@@ -9217,7 +9217,7 @@
    "erp": "HP MM VR TR NAV CFT (K)",
    "ac": "AK-HP MM VR TR NAV CFT (K)",
    "main": true,
-   "cost_centi": 7630
+   "cost_sen": 7630
   },
   {
    "op": "product_cost",
@@ -9231,7 +9231,7 @@
    "erp": "HP MM VR TR NAV CFT (Q)",
    "ac": "AK-HP MM VR TR NAV CFT (Q)",
    "main": true,
-   "cost_centi": 6930
+   "cost_sen": 6930
   },
   {
    "op": "product_cost",
@@ -9245,7 +9245,7 @@
    "erp": "HP MM VR TR NAV CFT (SS)",
    "ac": "AK-HP MM VR TR NAV CFT (SS)",
    "main": true,
-   "cost_centi": 5530
+   "cost_sen": 5530
   },
   {
    "op": "product_cost",
@@ -9259,7 +9259,7 @@
    "erp": "SL ES LF MIC WHT QLT (K)",
    "ac": "AK-SL ES LF MIC WHT QLT (K)",
    "main": true,
-   "cost_centi": 12800
+   "cost_sen": 12800
   },
   {
    "op": "product_cost",
@@ -9273,7 +9273,7 @@
    "erp": "SL ES LF MIC WHT QLT (Q)",
    "ac": "AK-SL ES LF MIC WHT QLT (Q)",
    "main": true,
-   "cost_centi": 11200
+   "cost_sen": 11200
   },
   {
    "op": "product_cost",
@@ -9287,7 +9287,7 @@
    "erp": "SL ES LF MIC WHT QLT (SS)",
    "ac": "AK-SL ES LF MIC WHT QLT (SS)",
    "main": true,
-   "cost_centi": 8000
+   "cost_sen": 8000
   },
   {
    "op": "product_cost",
@@ -9301,7 +9301,7 @@
    "erp": "VI OD 4KFIT",
    "ac": "AK-VI OD 4KFIT",
    "main": true,
-   "cost_centi": 23100
+   "cost_sen": 23100
   },
   {
    "op": "product_cost",
@@ -9315,7 +9315,7 @@
    "erp": "VI OD 4QFIT",
    "ac": "AK-VI OD 4QFIT",
    "main": true,
-   "cost_centi": 21700
+   "cost_sen": 21700
   },
   {
    "op": "product_cost",
@@ -9329,7 +9329,7 @@
    "erp": "VI OD 5KQLT",
    "ac": "AK-VI OD 5KQLT",
    "main": true,
-   "cost_centi": 44100
+   "cost_sen": 44100
   },
   {
    "op": "product_cost",
@@ -9343,7 +9343,7 @@
    "erp": "VI OD 5QQLT",
    "ac": "AK-VI OD 5QQLT",
    "main": true,
-   "cost_centi": 40600
+   "cost_sen": 40600
   },
   {
    "op": "product_cost",
@@ -9357,7 +9357,7 @@
    "erp": "VI RT 4KFIT",
    "ac": "AK-VI RT 4KFIT",
    "main": true,
-   "cost_centi": 23100
+   "cost_sen": 23100
   },
   {
    "op": "product_cost",
@@ -9371,7 +9371,7 @@
    "erp": "VI RT 4QFIT",
    "ac": "AK-VI RT 4QFIT",
    "main": true,
-   "cost_centi": 21700
+   "cost_sen": 21700
   },
   {
    "op": "product_cost",
@@ -9385,7 +9385,7 @@
    "erp": "VI RT 5KQLT",
    "ac": "AK-VI RT 5KQLT",
    "main": true,
-   "cost_centi": 44100
+   "cost_sen": 44100
   },
   {
    "op": "product_cost",
@@ -9399,7 +9399,7 @@
    "erp": "VI RT 5QQLT",
    "ac": "AK-VI RT 5QQLT",
    "main": true,
-   "cost_centi": 40600
+   "cost_sen": 40600
   },
   {
    "op": "product_cost",
@@ -9413,7 +9413,7 @@
    "erp": "RD DIF EV lll LIN 24",
    "ac": "AK-RD DIF EV lll LIN 24",
    "main": true,
-   "cost_centi": 5250
+   "cost_sen": 5250
   },
   {
    "op": "product_cost",
@@ -9427,7 +9427,7 @@
    "erp": "RD DIF EV lll LLV 24",
    "ac": "AK-RD DIF EV lll LLV 24",
    "main": true,
-   "cost_centi": 5250
+   "cost_sen": 5250
   },
   {
    "op": "product_cost",
@@ -9441,7 +9441,7 @@
    "erp": "RD DIF EV lll WHT 24",
    "ac": "AK-RD DIF EV lll WHT 24",
    "main": true,
-   "cost_centi": 5250
+   "cost_sen": 5250
   },
   {
    "op": "product_cost",
@@ -9476,7 +9476,7 @@
    "erp": "HL-BC-KOHANA 111",
    "ac": "HL-BC-KOHANA 111",
    "main": true,
-   "cost_centi": 30800
+   "cost_sen": 30800
   },
   {
    "op": "product_cost",
@@ -9490,7 +9490,7 @@
    "erp": "HL-BC-KOHANA 111 (1.0M)",
    "ac": "HL-BC-KOHANA 111 (1.0M)",
    "main": true,
-   "cost_centi": 26400
+   "cost_sen": 26400
   },
   {
    "op": "product_cost",
@@ -9504,7 +9504,7 @@
    "erp": "HL-BC-LOFTUS 102/112 (1.1M)",
    "ac": "HL-BC-LOFTUS 102/112 (1.1M)",
    "main": true,
-   "cost_centi": 28600
+   "cost_sen": 28600
   },
   {
    "op": "product_cost",
@@ -9518,7 +9518,7 @@
    "erp": "HL-CT-DOVER 109/113",
    "ac": "HL-CT-DOVER 109/113",
    "main": true,
-   "cost_centi": 44000
+   "cost_sen": 44000
   },
   {
    "op": "product_cost",
@@ -9532,7 +9532,7 @@
    "erp": "HL-CT-LAMAR 109",
    "ac": "HL-CT-LAMAR 109",
    "main": true,
-   "cost_centi": 34000
+   "cost_sen": 34000
   },
   {
    "op": "product_cost",
@@ -9546,7 +9546,7 @@
    "erp": "HL-CT-LOFTUS 102/112",
    "ac": "HL-CT-LOFTUS 102/112",
    "main": true,
-   "cost_centi": 50650
+   "cost_sen": 50650
   },
   {
    "op": "product_cost",
@@ -9560,7 +9560,7 @@
    "erp": "HL-CT-LUDLOW 111",
    "ac": "HL-CT-LUDLOW 111",
    "main": true,
-   "cost_centi": 77050
+   "cost_sen": 77050
   },
   {
    "op": "product_cost",
@@ -9574,7 +9574,7 @@
    "erp": "HL-DC BEVERLY 109/367",
    "ac": "HL-DC BEVERLY 109/367",
    "main": true,
-   "cost_centi": 12950
+   "cost_sen": 12950
   },
   {
    "op": "product_cost",
@@ -9588,7 +9588,7 @@
    "erp": "HL-DC TACY 109/520",
    "ac": "HL-DC TACY 109/520",
    "main": true,
-   "cost_centi": 19850
+   "cost_sen": 19850
   },
   {
    "op": "product_cost",
@@ -9602,7 +9602,7 @@
    "erp": "HL-DC-BEVERLY 109/520",
    "ac": "HL-DC-BEVERLY 109/520",
    "main": true,
-   "cost_centi": 12950
+   "cost_sen": 12950
   },
   {
    "op": "product_cost",
@@ -9616,7 +9616,7 @@
    "erp": "HL-DC-HEATH 109/3720",
    "ac": "HL-DC-HEATH 109/3720",
    "main": true,
-   "cost_centi": 30800
+   "cost_sen": 30800
   },
   {
    "op": "product_cost",
@@ -9630,7 +9630,7 @@
    "erp": "HL-DC-KAIRI 102/6184",
    "ac": "HL-DC-KAIRI 102/6184",
    "main": true,
-   "cost_centi": 21600
+   "cost_sen": 21600
   },
   {
    "op": "product_cost",
@@ -9644,7 +9644,7 @@
    "erp": "HL-DC-LOTFI 109/113/6368",
    "ac": "HL-DC-LOTFI 109/113/6368",
    "main": true,
-   "cost_centi": 20000
+   "cost_sen": 20000
   },
   {
    "op": "product_cost",
@@ -9658,7 +9658,7 @@
    "erp": "HL-DC-LOWEN 111",
    "ac": "HL-DC-LOWEN 111",
    "main": true,
-   "cost_centi": 22050
+   "cost_sen": 22050
   },
   {
    "op": "product_cost",
@@ -9672,7 +9672,7 @@
    "erp": "HL-DC-LOWEN 111/3790",
    "ac": "HL-DC-LOWEN 111/3790",
    "main": true,
-   "cost_centi": 22050
+   "cost_sen": 22050
   },
   {
    "op": "product_cost",
@@ -9686,7 +9686,7 @@
    "erp": "HL-DC-LOWEN 111/3791",
    "ac": "HL-DC-LOWEN 111/3791",
    "main": true,
-   "cost_centi": 22050
+   "cost_sen": 22050
   },
   {
    "op": "product_cost",
@@ -9700,7 +9700,7 @@
    "erp": "HL-DC-REVA 102/3724",
    "ac": "HL-DC-REVA 102/3724",
    "main": true,
-   "cost_centi": 24250
+   "cost_sen": 24250
   },
   {
    "op": "product_cost",
@@ -9714,7 +9714,7 @@
    "erp": "HL-DT KACEY 102 (900X1500)",
    "ac": "HL-DT KACEY 102 (900X1500)",
    "main": true,
-   "cost_centi": 36100
+   "cost_sen": 36100
   },
   {
    "op": "product_cost",
@@ -9728,7 +9728,7 @@
    "erp": "HL-DT-GERALD 114/109 (900X1800",
    "ac": "HL-DT-GERALD 114/109 (900X1800",
    "main": true,
-   "cost_centi": 56000
+   "cost_sen": 56000
   },
   {
    "op": "product_cost",
@@ -9742,7 +9742,7 @@
    "erp": "HL-DT-KIVA 111 (900X1800)",
    "ac": "HL-DT-KIVA 111 (900X1800)",
    "main": true,
-   "cost_centi": 114400
+   "cost_sen": 114400
   },
   {
    "op": "product_cost",
@@ -9756,7 +9756,7 @@
    "erp": "HL-DT-LOFTUS 102/112 (800X1500",
    "ac": "HL-DT-LOFTUS 102/112 (800X1500",
    "main": true,
-   "cost_centi": 61600
+   "cost_sen": 61600
   },
   {
    "op": "product_cost",
@@ -9770,7 +9770,7 @@
    "erp": "HL-DT-LOFTUS 102/112 (900X1800",
    "ac": "HL-DT-LOFTUS 102/112 (900X1800",
    "main": true,
-   "cost_centi": 83650
+   "cost_sen": 83650
   },
   {
    "op": "product_cost",
@@ -9784,7 +9784,7 @@
    "erp": "HL-DT-LONY 111 (750X1200 )",
    "ac": "HL-DT-LONY 111 (750X1200 )",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -9798,7 +9798,7 @@
    "erp": "HL-DT-OKARA 113 (DIA1200)",
    "ac": "HL-DT-OKARA 113 (DIA1200)",
    "main": true,
-   "cost_centi": 112200
+   "cost_sen": 112200
   },
   {
    "op": "product_cost",
@@ -9812,7 +9812,7 @@
    "erp": "HL-FT ROUND-TRIS 109/113",
    "ac": "HL-FT ROUND-TRIS 109/113",
    "main": true,
-   "cost_centi": 16000
+   "cost_sen": 16000
   },
   {
    "op": "product_cost",
@@ -9826,7 +9826,7 @@
    "erp": "HL-FT SQ-LUDLOW 111",
    "ac": "HL-FT SQ-LUDLOW 111",
    "main": true,
-   "cost_centi": 92450
+   "cost_sen": 92450
   },
   {
    "op": "product_cost",
@@ -9840,7 +9840,7 @@
    "erp": "HL-FT-DOVER 109/113",
    "ac": "HL-FT-DOVER 109/113",
    "main": true,
-   "cost_centi": 50000
+   "cost_sen": 50000
   },
   {
    "op": "product_cost",
@@ -9854,7 +9854,7 @@
    "erp": "HL-FT-LAMAR 109",
    "ac": "HL-FT-LAMAR 109",
    "main": true,
-   "cost_centi": 36000
+   "cost_sen": 36000
   },
   {
    "op": "product_cost",
@@ -9868,7 +9868,7 @@
    "erp": "HL-FT-LOFTUS 102/112",
    "ac": "HL-FT-LOFTUS 102/112",
    "main": true,
-   "cost_centi": 61600
+   "cost_sen": 61600
   },
   {
    "op": "product_cost",
@@ -9882,7 +9882,7 @@
    "erp": "HL-FT-LUDLOW 111",
    "ac": "HL-FT-LUDLOW 111",
    "main": true,
-   "cost_centi": 79250
+   "cost_sen": 79250
   },
   {
    "op": "product_cost",
@@ -9896,7 +9896,7 @@
    "erp": "HL-SB-DOVER 109/113 (1.8M)",
    "ac": "HL-SB-DOVER 109/113 (1.8M)",
    "main": true,
-   "cost_centi": 100000
+   "cost_sen": 100000
   },
   {
    "op": "product_cost",
@@ -9910,7 +9910,7 @@
    "erp": "HL-SB-LOFTUS 102/112 (1.8M)",
    "ac": "HL-SB-LOFTUS 102/112 (1.8M)",
    "main": true,
-   "cost_centi": 134200
+   "cost_sen": 134200
   },
   {
    "op": "product_cost",
@@ -9924,7 +9924,7 @@
    "erp": "HL-ST-DOVER  109/113",
    "ac": "HL-ST-DOVER  109/113",
    "main": true,
-   "cost_centi": 34000
+   "cost_sen": 34000
   },
   {
    "op": "product_cost",
@@ -9938,7 +9938,7 @@
    "erp": "HL-ST-LUDLOW 111",
    "ac": "HL-ST-LUDLOW 111",
    "main": true,
-   "cost_centi": 61600
+   "cost_sen": 61600
   },
   {
    "op": "product_cost",
@@ -9952,7 +9952,7 @@
    "erp": "HL-WK-DOVER 109/113",
    "ac": "HL-WK-DOVER 109/113",
    "main": true,
-   "cost_centi": 50000
+   "cost_sen": 50000
   },
   {
    "op": "product_cost",
@@ -9966,7 +9966,7 @@
    "erp": "HL-WK-LOFTUS 102/112",
    "ac": "HL-WK-LOFTUS 102/112",
    "main": true,
-   "cost_centi": 65150
+   "cost_sen": 65150
   },
   {
    "op": "product_cost",
@@ -9980,7 +9980,7 @@
    "erp": "HL-WK-LUDLOW 111",
    "ac": "HL-WK-LUDLOW 111",
    "main": true,
-   "cost_centi": 88050
+   "cost_sen": 88050
   },
   {
    "op": "product_cost",
@@ -10029,7 +10029,7 @@
    "erp": "AKEMI APEX MATT (K)",
    "ac": "AK-APEX MATT (K)",
    "main": true,
-   "cost_centi": 130000
+   "cost_sen": 130000
   },
   {
    "op": "product_cost",
@@ -10043,7 +10043,7 @@
    "erp": "AKEMI APEX MATT (Q)",
    "ac": "AK-APEX MATT (Q)",
    "main": true,
-   "cost_centi": 108000
+   "cost_sen": 108000
   },
   {
    "op": "product_cost",
@@ -10057,7 +10057,7 @@
    "erp": "AKEMI APEX MATT (S)",
    "ac": "AK-APEX MATT (S)",
    "main": true,
-   "cost_centi": 70000
+   "cost_sen": 70000
   },
   {
    "op": "product_cost",
@@ -10071,7 +10071,7 @@
    "erp": "AKEMI APEX MATT (SK)",
    "ac": "AK-APEX MATT (SK)",
    "main": true,
-   "cost_centi": 170000
+   "cost_sen": 170000
   },
   {
    "op": "product_cost",
@@ -10092,7 +10092,7 @@
    "erp": "AKEMI APEX MATT (SS)",
    "ac": "AK-APEX MATT (SS)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -10106,14 +10106,14 @@
    "erp": "AKEMI ARISTOI MATT (K)",
    "ac": "AK-ARISTOI MATT (K)",
    "main": true,
-   "cost_centi": 280000
+   "cost_sen": 280000
   },
   {
    "op": "bind_upsert",
    "sup": "400-D002",
    "erp": "AKEMI ARISTOI MATT (Q)",
    "ac": "AK-ARISTOI MATT (Q)",
-   "cost_centi": 240000,
+   "cost_sen": 240000,
    "main": true
   },
   {
@@ -10122,7 +10122,7 @@
    "erp": "AKEMI ARISTOI MATT (S)",
    "ac": "AK-ARISTOI MATT (S)",
    "main": true,
-   "cost_centi": 155000
+   "cost_sen": 155000
   },
   {
    "op": "bind_update",
@@ -10130,7 +10130,7 @@
    "erp": "AKEMI ARISTOI MATT (SK)",
    "ac": "AK-ARISTOI MATT (SK)",
    "main": true,
-   "cost_centi": 360000
+   "cost_sen": 360000
   },
   {
    "op": "bind_update",
@@ -10145,7 +10145,7 @@
    "erp": "AKEMI ARISTOI MATT (SS)",
    "ac": "AK-ARISTOI MATT (SS)",
    "main": true,
-   "cost_centi": 175000
+   "cost_sen": 175000
   },
   {
    "op": "bind_update",
@@ -10153,7 +10153,7 @@
    "erp": "AKEMI ARMOUR MATT (K)",
    "ac": "AK-ARMOUR MATT (K)",
    "main": true,
-   "cost_centi": 188000
+   "cost_sen": 188000
   },
   {
    "op": "bind_update",
@@ -10161,7 +10161,7 @@
    "erp": "AKEMI ARMOUR MATT (Q)",
    "ac": "AK-ARMOUR MATT (Q)",
    "main": true,
-   "cost_centi": 158000
+   "cost_sen": 158000
   },
   {
    "op": "bind_update",
@@ -10169,7 +10169,7 @@
    "erp": "AKEMI ARMOUR MATT (S)",
    "ac": "AK-ARMOUR MATT (S)",
    "main": true,
-   "cost_centi": 97000
+   "cost_sen": 97000
   },
   {
    "op": "bind_update",
@@ -10177,7 +10177,7 @@
    "erp": "AKEMI ARMOUR MATT (SK)",
    "ac": "AK-ARMOUR MATT (SK)",
    "main": true,
-   "cost_centi": 238000
+   "cost_sen": 238000
   },
   {
    "op": "bind_update",
@@ -10192,7 +10192,7 @@
    "erp": "AKEMI ARMOUR MATT (SS)",
    "ac": "AK-ARMOUR MATT (SS)",
    "main": true,
-   "cost_centi": 117000
+   "cost_sen": 117000
   },
   {
    "op": "bind_update",
@@ -10200,7 +10200,7 @@
    "erp": "AKEMI BASTION MATT (K)",
    "ac": "AK-BASTION MATT (K)",
    "main": true,
-   "cost_centi": 125000
+   "cost_sen": 125000
   },
   {
    "op": "bind_update",
@@ -10208,7 +10208,7 @@
    "erp": "AKEMI BASTION MATT (Q)",
    "ac": "AK-BASTION MATT (Q)",
    "main": true,
-   "cost_centi": 105000
+   "cost_sen": 105000
   },
   {
    "op": "bind_update",
@@ -10216,7 +10216,7 @@
    "erp": "AKEMI BASTION MATT (S)",
    "ac": "AK-BASTION MATT (S)",
    "main": true,
-   "cost_centi": 69000
+   "cost_sen": 69000
   },
   {
    "op": "bind_update",
@@ -10224,7 +10224,7 @@
    "erp": "AKEMI BASTION MATT (SK)",
    "ac": "AK-BASTION MATT (SK)",
    "main": true,
-   "cost_centi": 155000
+   "cost_sen": 155000
   },
   {
    "op": "bind_update",
@@ -10239,7 +10239,7 @@
    "erp": "AKEMI BASTION MATT (SS)",
    "ac": "AK-BASTION MATT (SS)",
    "main": true,
-   "cost_centi": 80000
+   "cost_sen": 80000
   },
   {
    "op": "bind_update",
@@ -10247,7 +10247,7 @@
    "erp": "AKEMI BULWARK MATT (K)",
    "ac": "AK-BULWARK MATT (K)",
    "main": true,
-   "cost_centi": 260000
+   "cost_sen": 260000
   },
   {
    "op": "bind_update",
@@ -10255,7 +10255,7 @@
    "erp": "AKEMI BULWARK MATT (Q)",
    "ac": "AK-BULWARK MATT (Q)",
    "main": true,
-   "cost_centi": 220000
+   "cost_sen": 220000
   },
   {
    "op": "bind_update",
@@ -10263,7 +10263,7 @@
    "erp": "AKEMI BULWARK MATT (S)",
    "ac": "AK-BULWARK MATT (S)",
    "main": true,
-   "cost_centi": 140000
+   "cost_sen": 140000
   },
   {
    "op": "bind_update",
@@ -10271,7 +10271,7 @@
    "erp": "AKEMI BULWARK MATT (SK)",
    "ac": "AK-BULWARK MATT (SK)",
    "main": true,
-   "cost_centi": 330000
+   "cost_sen": 330000
   },
   {
    "op": "bind_update",
@@ -10286,7 +10286,7 @@
    "erp": "AKEMI BULWARK MATT (SS)",
    "ac": "AK-BULWARK MATT (SS)",
    "main": true,
-   "cost_centi": 160000
+   "cost_sen": 160000
   },
   {
    "op": "bind_update",
@@ -10294,7 +10294,7 @@
    "erp": "AKEMI COCOON MATT (K)",
    "ac": "AK-COCOON MATT (K)",
    "main": true,
-   "cost_centi": 280000
+   "cost_sen": 280000
   },
   {
    "op": "product_cost",
@@ -10308,7 +10308,7 @@
    "erp": "AKEMI COCOON MATT (Q)",
    "ac": "AK-COCOON MATT (Q)",
    "main": true,
-   "cost_centi": 240000
+   "cost_sen": 240000
   },
   {
    "op": "product_cost",
@@ -10322,7 +10322,7 @@
    "erp": "AKEMI COCOON MATT (S)",
    "ac": "AK-COCOON MATT (S)",
    "main": true,
-   "cost_centi": 155000
+   "cost_sen": 155000
   },
   {
    "op": "product_cost",
@@ -10336,7 +10336,7 @@
    "erp": "AKEMI COCOON MATT (SK)",
    "ac": "AK-COCOON MATT (SK)",
    "main": true,
-   "cost_centi": 360000
+   "cost_sen": 360000
   },
   {
    "op": "product_cost",
@@ -10357,7 +10357,7 @@
    "erp": "AKEMI COCOON MATT (SS)",
    "ac": "AK-COCOON MATT (SS)",
    "main": true,
-   "cost_centi": 175000
+   "cost_sen": 175000
   },
   {
    "op": "product_cost",
@@ -10371,7 +10371,7 @@
    "erp": "HAPPI SLEEP COMFORT H+CUBE MATT (S)",
    "ac": "AK-COMFORT H+C MATT (S)",
    "main": true,
-   "cost_centi": 19400
+   "cost_sen": 19400
   },
   {
    "op": "product_cost",
@@ -10385,7 +10385,7 @@
    "erp": "HAPPI SLEEP COMFORT H BASE MATT (K)",
    "ac": "AK-COMFORT HB MATT (K)",
    "main": true,
-   "cost_centi": 59900
+   "cost_sen": 59900
   },
   {
    "op": "product_cost",
@@ -10399,7 +10399,7 @@
    "erp": "HAPPI SLEEP COMFORT H BASE MATT (Q)",
    "ac": "AK-COMFORT HB MATT (Q)",
    "main": true,
-   "cost_centi": 47900
+   "cost_sen": 47900
   },
   {
    "op": "product_cost",
@@ -10413,7 +10413,7 @@
    "erp": "HAPPI SLEEP COMFORT H BASE MATT (S)",
    "ac": "AK-COMFORT HB MATT (S)",
    "main": true,
-   "cost_centi": 29900
+   "cost_sen": 29900
   },
   {
    "op": "product_cost",
@@ -10427,7 +10427,7 @@
    "erp": "HAPPI SLEEP COMFORT H BASE MATT (SS)",
    "ac": "AK-COMFORT HB MATT (SS)",
    "main": true,
-   "cost_centi": 35900
+   "cost_sen": 35900
   },
   {
    "op": "product_cost",
@@ -10441,7 +10441,7 @@
    "erp": "AKEMI ELEVATION MATT (K)",
    "ac": "AK-ELEVATION MATT (K)",
    "main": true,
-   "cost_centi": 460000
+   "cost_sen": 460000
   },
   {
    "op": "product_cost",
@@ -10455,7 +10455,7 @@
    "erp": "AKEMI ELEVATION MATT (Q)",
    "ac": "AK-ELEVATION MATT (Q)",
    "main": true,
-   "cost_centi": 390000
+   "cost_sen": 390000
   },
   {
    "op": "product_cost",
@@ -10469,7 +10469,7 @@
    "erp": "AKEMI ELEVATION MATT (S)",
    "ac": "AK-ELEVATION MATT (S)",
    "main": true,
-   "cost_centi": 240000
+   "cost_sen": 240000
   },
   {
    "op": "product_cost",
@@ -10483,7 +10483,7 @@
    "erp": "AKEMI ELEVATION MATT (SK)",
    "ac": "AK-ELEVATION MATT (SK)",
    "main": true,
-   "cost_centi": 540000
+   "cost_sen": 540000
   },
   {
    "op": "product_cost",
@@ -10497,7 +10497,7 @@
    "erp": "AKEMI ELEVATION MATT (SS)",
    "ac": "AK-ELEVATION MATT (SS)",
    "main": true,
-   "cost_centi": 280000
+   "cost_sen": 280000
   },
   {
    "op": "product_cost",
@@ -10511,7 +10511,7 @@
    "erp": "AKEMI EMINENT MATT (K)",
    "ac": "AK-EMINENT MATT (K)",
    "main": true,
-   "cost_centi": 255000
+   "cost_sen": 255000
   },
   {
    "op": "product_cost",
@@ -10525,7 +10525,7 @@
    "erp": "AKEMI EMINENT MATT (Q)",
    "ac": "AK-EMINENT MATT (Q)",
    "main": true,
-   "cost_centi": 215000
+   "cost_sen": 215000
   },
   {
    "op": "product_cost",
@@ -10539,7 +10539,7 @@
    "erp": "AKEMI EMINENT MATT (S)",
    "ac": "AK-EMINENT MATT (S)",
    "main": true,
-   "cost_centi": 140000
+   "cost_sen": 140000
   },
   {
    "op": "product_cost",
@@ -10553,7 +10553,7 @@
    "erp": "AKEMI EMINENT MATT (SK)",
    "ac": "AK-EMINENT MATT (SK)",
    "main": true,
-   "cost_centi": 325000
+   "cost_sen": 325000
   },
   {
    "op": "product_cost",
@@ -10574,7 +10574,7 @@
    "erp": "AKEMI EMINENT MATT (SS)",
    "ac": "AK-EMINENT MATT (SS)",
    "main": true,
-   "cost_centi": 160000
+   "cost_sen": 160000
   },
   {
    "op": "product_cost",
@@ -10588,7 +10588,7 @@
    "erp": "AKEMI EQUINOX MATT (K)",
    "ac": "AK-EQUINOX MATT (K)",
    "main": true,
-   "cost_centi": 130000
+   "cost_sen": 130000
   },
   {
    "op": "product_cost",
@@ -10602,7 +10602,7 @@
    "erp": "AKEMI EQUINOX MATT (Q)",
    "ac": "AK-EQUINOX MATT (Q)",
    "main": true,
-   "cost_centi": 108000
+   "cost_sen": 108000
   },
   {
    "op": "product_cost",
@@ -10616,7 +10616,7 @@
    "erp": "AKEMI EQUINOX MATT (S)",
    "ac": "AK-EQUINOX MATT (S)",
    "main": true,
-   "cost_centi": 70000
+   "cost_sen": 70000
   },
   {
    "op": "product_cost",
@@ -10630,7 +10630,7 @@
    "erp": "AKEMI EQUINOX MATT (SK)",
    "ac": "AK-EQUINOX MATT (SK)",
    "main": true,
-   "cost_centi": 170000
+   "cost_sen": 170000
   },
   {
    "op": "product_cost",
@@ -10651,7 +10651,7 @@
    "erp": "AKEMI EQUINOX MATT (SS)",
    "ac": "AK-EQUINOX MATT (SS)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -10665,7 +10665,7 @@
    "erp": "AKEMI EXALTED MATT (K)",
    "ac": "AK-EXALTED MATT (K)",
    "main": true,
-   "cost_centi": 255000
+   "cost_sen": 255000
   },
   {
    "op": "product_cost",
@@ -10679,7 +10679,7 @@
    "erp": "AKEMI EXALTED MATT (Q)",
    "ac": "AK-EXALTED MATT (Q)",
    "main": true,
-   "cost_centi": 215000
+   "cost_sen": 215000
   },
   {
    "op": "product_cost",
@@ -10693,7 +10693,7 @@
    "erp": "AKEMI EXALTED MATT (S)",
    "ac": "AK-EXALTED MATT (S)",
    "main": true,
-   "cost_centi": 140000
+   "cost_sen": 140000
   },
   {
    "op": "product_cost",
@@ -10707,7 +10707,7 @@
    "erp": "AKEMI EXALTED MATT (SK)",
    "ac": "AK-EXALTED MATT (SK)",
    "main": true,
-   "cost_centi": 325000
+   "cost_sen": 325000
   },
   {
    "op": "product_cost",
@@ -10728,7 +10728,7 @@
    "erp": "AKEMI EXALTED MATT (SS)",
    "ac": "AK-EXALTED MATT (SS)",
    "main": true,
-   "cost_centi": 160000
+   "cost_sen": 160000
   },
   {
    "op": "product_cost",
@@ -10742,7 +10742,7 @@
    "erp": "AKEMI FORTRESS MATT (K)",
    "ac": "AK-FORTRESS MATT (K)",
    "main": true,
-   "cost_centi": 260000
+   "cost_sen": 260000
   },
   {
    "op": "product_cost",
@@ -10756,7 +10756,7 @@
    "erp": "AKEMI FORTRESS MATT (Q)",
    "ac": "AK-FORTRESS MATT (Q)",
    "main": true,
-   "cost_centi": 220000
+   "cost_sen": 220000
   },
   {
    "op": "product_cost",
@@ -10770,7 +10770,7 @@
    "erp": "AKEMI FORTRESS MATT (S)",
    "ac": "AK-FORTRESS MATT (S)",
    "main": true,
-   "cost_centi": 140000
+   "cost_sen": 140000
   },
   {
    "op": "product_cost",
@@ -10784,7 +10784,7 @@
    "erp": "AKEMI FORTRESS MATT (SK)",
    "ac": "AK-FORTRESS MATT (SK)",
    "main": true,
-   "cost_centi": 330000
+   "cost_sen": 330000
   },
   {
    "op": "product_cost",
@@ -10798,7 +10798,7 @@
    "erp": "AKEMI FORTRESS MATT (SS)",
    "ac": "AK-FORTRESS MATT (SS)",
    "main": true,
-   "cost_centi": 160000
+   "cost_sen": 160000
   },
   {
    "op": "product_cost",
@@ -10812,7 +10812,7 @@
    "erp": "AKEMI GUARDIAN MATT (K)",
    "ac": "AK-GUARDIAN MATT (K)",
    "main": true,
-   "cost_centi": 130000
+   "cost_sen": 130000
   },
   {
    "op": "product_cost",
@@ -10826,7 +10826,7 @@
    "erp": "AKEMI GUARDIAN MATT (Q)",
    "ac": "AK-GUARDIAN MATT (Q)",
    "main": true,
-   "cost_centi": 108000
+   "cost_sen": 108000
   },
   {
    "op": "product_cost",
@@ -10840,7 +10840,7 @@
    "erp": "AKEMI GUARDIAN MATT (S)",
    "ac": "AK-GUARDIAN MATT (S)",
    "main": true,
-   "cost_centi": 70000
+   "cost_sen": 70000
   },
   {
    "op": "product_cost",
@@ -10854,7 +10854,7 @@
    "erp": "AKEMI GUARDIAN MATT (SK)",
    "ac": "AK-GUARDIAN MATT (SK)",
    "main": true,
-   "cost_centi": 170000
+   "cost_sen": 170000
   },
   {
    "op": "product_cost",
@@ -10875,7 +10875,7 @@
    "erp": "AKEMI GUARDIAN MATT (SS)",
    "ac": "AK-GUARDIAN MATT (SS)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -10889,7 +10889,7 @@
    "erp": "AK-HP SL MOB MATT (Q) -2F",
    "ac": "AK-HP SL MOB MATT (Q) -2F",
    "main": true,
-   "cost_centi": 17900
+   "cost_sen": 17900
   },
   {
    "op": "product_cost",
@@ -10903,7 +10903,7 @@
    "erp": "AK-HP SL MOB MATT (S) -2F",
    "ac": "AK-HP SL MOB MATT (S) -2F",
    "main": true,
-   "cost_centi": 11900
+   "cost_sen": 11900
   },
   {
    "op": "product_cost",
@@ -10917,7 +10917,7 @@
    "erp": "AK-HP SL MOB MATT (S) -3F",
    "ac": "AK-HP SL MOB MATT (S) -3F",
    "main": true,
-   "cost_centi": 17900
+   "cost_sen": 17900
   },
   {
    "op": "product_cost",
@@ -10931,7 +10931,7 @@
    "erp": "AK-HP SL MOB MATT (S) -5F",
    "ac": "AK-HP SL MOB MATT (S) -5F",
    "main": true,
-   "cost_centi": 6900
+   "cost_sen": 6900
   },
   {
    "op": "product_cost",
@@ -10945,7 +10945,7 @@
    "erp": "HAPPI SLEEP SOLACE MATT (K)",
    "ac": "AK-HS SOLACE (K)",
    "main": true,
-   "cost_centi": 101900
+   "cost_sen": 101900
   },
   {
    "op": "product_cost",
@@ -10959,7 +10959,7 @@
    "erp": "HAPPI SLEEP SOLACE MATT (Q)",
    "ac": "AK-HS SOLACE (Q)",
    "main": true,
-   "cost_centi": 83900
+   "cost_sen": 83900
   },
   {
    "op": "product_cost",
@@ -10973,7 +10973,7 @@
    "erp": "HAPPI SLEEP SOLACE MATT (S)",
    "ac": "AK-HS SOLACE (S)",
    "main": true,
-   "cost_centi": 53900
+   "cost_sen": 53900
   },
   {
    "op": "product_cost",
@@ -11001,7 +11001,7 @@
    "erp": "HAPPI SLEEP SOLACE MATT (SS)",
    "ac": "AK-HS SOLACE (SS)",
    "main": true,
-   "cost_centi": 59900
+   "cost_sen": 59900
   },
   {
    "op": "product_cost",
@@ -11015,7 +11015,7 @@
    "erp": "AKEMI IMMORTAL MATT (K)",
    "ac": "AK-IMMORTAL MATT (K)",
    "main": true,
-   "cost_centi": 155000
+   "cost_sen": 155000
   },
   {
    "op": "product_cost",
@@ -11029,7 +11029,7 @@
    "erp": "AKEMI IMMORTAL MATT (Q)",
    "ac": "AK-IMMORTAL MATT (Q)",
    "main": true,
-   "cost_centi": 130000
+   "cost_sen": 130000
   },
   {
    "op": "product_cost",
@@ -11043,7 +11043,7 @@
    "erp": "AKEMI IMMORTAL MATT (S)",
    "ac": "AK-IMMORTAL MATT (S)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -11057,7 +11057,7 @@
    "erp": "AKEMI IMMORTAL MATT (SK)",
    "ac": "AK-IMMORTAL MATT (SK)",
    "main": true,
-   "cost_centi": 195000
+   "cost_sen": 195000
   },
   {
    "op": "product_cost",
@@ -11078,7 +11078,7 @@
    "erp": "AKEMI IMMORTAL MATT (SS)",
    "ac": "AK-IMMORTAL MATT (SS)",
    "main": true,
-   "cost_centi": 100000
+   "cost_sen": 100000
   },
   {
    "op": "product_cost",
@@ -11092,7 +11092,7 @@
    "erp": "AKEMI LAVISH MATT (K)",
    "ac": "AK-LAVISH MATT (K)",
    "main": true,
-   "cost_centi": 155000
+   "cost_sen": 155000
   },
   {
    "op": "product_cost",
@@ -11106,7 +11106,7 @@
    "erp": "AKEMI LAVISH MATT (Q)",
    "ac": "AK-LAVISH MATT (Q)",
    "main": true,
-   "cost_centi": 130000
+   "cost_sen": 130000
   },
   {
    "op": "product_cost",
@@ -11120,7 +11120,7 @@
    "erp": "AKEMI LAVISH MATT (S)",
    "ac": "AK-LAVISH MATT (S)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -11134,7 +11134,7 @@
    "erp": "AKEMI LAVISH MATT (SK)",
    "ac": "AK-LAVISH MATT (SK)",
    "main": true,
-   "cost_centi": 195000
+   "cost_sen": 195000
   },
   {
    "op": "product_cost",
@@ -11155,7 +11155,7 @@
    "erp": "AKEMI LAVISH MATT (SS)",
    "ac": "AK-LAVISH MATT (SS)",
    "main": true,
-   "cost_centi": 100000
+   "cost_sen": 100000
   },
   {
    "op": "product_cost",
@@ -11169,7 +11169,7 @@
    "erp": "AKEMI MONARCH MATT (K)",
    "ac": "AK-MONARCH MATT (K)",
    "main": true,
-   "cost_centi": 185000
+   "cost_sen": 185000
   },
   {
    "op": "product_cost",
@@ -11183,7 +11183,7 @@
    "erp": "AKEMI MONARCH MATT (Q)",
    "ac": "AK-MONARCH MATT (Q)",
    "main": true,
-   "cost_centi": 160000
+   "cost_sen": 160000
   },
   {
    "op": "product_cost",
@@ -11197,7 +11197,7 @@
    "erp": "AKEMI MONARCH MATT (S)",
    "ac": "AK-MONARCH MATT (S)",
    "main": true,
-   "cost_centi": 98000
+   "cost_sen": 98000
   },
   {
    "op": "product_cost",
@@ -11211,7 +11211,7 @@
    "erp": "AKEMI MONARCH MATT (SK)",
    "ac": "AK-MONARCH MATT (SK)",
    "main": true,
-   "cost_centi": 235000
+   "cost_sen": 235000
   },
   {
    "op": "product_cost",
@@ -11232,7 +11232,7 @@
    "erp": "AKEMI MONARCH MATT (SS)",
    "ac": "AK-MONARCH MATT (SS)",
    "main": true,
-   "cost_centi": 115000
+   "cost_sen": 115000
   },
   {
    "op": "product_cost",
@@ -11246,7 +11246,7 @@
    "erp": "AKEMI NOBILITY MATT (K)",
    "ac": "AK-NOBILITY MATT (K)",
    "main": true,
-   "cost_centi": 125000
+   "cost_sen": 125000
   },
   {
    "op": "product_cost",
@@ -11260,7 +11260,7 @@
    "erp": "AKEMI NOBILITY MATT (Q)",
    "ac": "AK-NOBILITY MATT (Q)",
    "main": true,
-   "cost_centi": 105000
+   "cost_sen": 105000
   },
   {
    "op": "product_cost",
@@ -11274,7 +11274,7 @@
    "erp": "AKEMI NOBILITY MATT (S)",
    "ac": "AK-NOBILITY MATT (S)",
    "main": true,
-   "cost_centi": 69000
+   "cost_sen": 69000
   },
   {
    "op": "product_cost",
@@ -11288,7 +11288,7 @@
    "erp": "AKEMI NOBILITY MATT (SK)",
    "ac": "AK-NOBILITY MATT (SK)",
    "main": true,
-   "cost_centi": 155000
+   "cost_sen": 155000
   },
   {
    "op": "product_cost",
@@ -11309,7 +11309,7 @@
    "erp": "AKEMI NOBILITY MATT (SS)",
    "ac": "AK-NOBILITY MATT (SS)",
    "main": true,
-   "cost_centi": 80000
+   "cost_sen": 80000
   },
   {
    "op": "product_cost",
@@ -11323,7 +11323,7 @@
    "erp": "AKEMI OASIS MATT (K)",
    "ac": "AK-OASIS MATT (K)",
    "main": true,
-   "cost_centi": 188000
+   "cost_sen": 188000
   },
   {
    "op": "product_cost",
@@ -11337,7 +11337,7 @@
    "erp": "AKEMI OASIS MATT (Q)",
    "ac": "AK-OASIS MATT (Q)",
    "main": true,
-   "cost_centi": 158000
+   "cost_sen": 158000
   },
   {
    "op": "product_cost",
@@ -11351,7 +11351,7 @@
    "erp": "AKEMI OASIS MATT (S)",
    "ac": "AK-OASIS MATT (S)",
    "main": true,
-   "cost_centi": 97000
+   "cost_sen": 97000
   },
   {
    "op": "product_cost",
@@ -11365,7 +11365,7 @@
    "erp": "AKEMI OASIS MATT (SK)",
    "ac": "AK-OASIS MATT (SK)",
    "main": true,
-   "cost_centi": 238000
+   "cost_sen": 238000
   },
   {
    "op": "product_cost",
@@ -11386,7 +11386,7 @@
    "erp": "AKEMI OASIS MATT (SS)",
    "ac": "AK-OASIS MATT (SS)",
    "main": true,
-   "cost_centi": 117000
+   "cost_sen": 117000
   },
   {
    "op": "product_cost",
@@ -11400,7 +11400,7 @@
    "erp": "AKEMI OMNIA MATT (K)",
    "ac": "AK-OMNIA MATT (K)",
    "main": true,
-   "cost_centi": 125000
+   "cost_sen": 125000
   },
   {
    "op": "product_cost",
@@ -11414,7 +11414,7 @@
    "erp": "AKEMI OMNIA MATT (Q)",
    "ac": "AK-OMNIA MATT (Q)",
    "main": true,
-   "cost_centi": 105000
+   "cost_sen": 105000
   },
   {
    "op": "product_cost",
@@ -11428,7 +11428,7 @@
    "erp": "AKEMI OMNIA MATT (S)",
    "ac": "AK-OMNIA MATT (S)",
    "main": true,
-   "cost_centi": 69000
+   "cost_sen": 69000
   },
   {
    "op": "product_cost",
@@ -11442,7 +11442,7 @@
    "erp": "AKEMI OMNIA MATT (SK)",
    "ac": "AK-OMNIA MATT (SK)",
    "main": true,
-   "cost_centi": 155000
+   "cost_sen": 155000
   },
   {
    "op": "product_cost",
@@ -11463,7 +11463,7 @@
    "erp": "AKEMI OMNIA MATT (SS)",
    "ac": "AK-OMNIA MATT (SS)",
    "main": true,
-   "cost_centi": 80000
+   "cost_sen": 80000
   },
   {
    "op": "product_cost",
@@ -11477,7 +11477,7 @@
    "erp": "AKEMI PANTHEON MATT (K)",
    "ac": "AK-PANTHEON MATT (K)",
    "main": true,
-   "cost_centi": 280000
+   "cost_sen": 280000
   },
   {
    "op": "product_cost",
@@ -11491,7 +11491,7 @@
    "erp": "AKEMI PANTHEON MATT (Q)",
    "ac": "AK-PANTHEON MATT (Q)",
    "main": true,
-   "cost_centi": 240000
+   "cost_sen": 240000
   },
   {
    "op": "product_cost",
@@ -11505,7 +11505,7 @@
    "erp": "AKEMI PANTHEON MATT (S)",
    "ac": "AK-PANTHEON MATT (S)",
    "main": true,
-   "cost_centi": 155000
+   "cost_sen": 155000
   },
   {
    "op": "product_cost",
@@ -11519,7 +11519,7 @@
    "erp": "AKEMI PANTHEON MATT (SK)",
    "ac": "AK-PANTHEON MATT (SK)",
    "main": true,
-   "cost_centi": 360000
+   "cost_sen": 360000
   },
   {
    "op": "product_cost",
@@ -11533,7 +11533,7 @@
    "erp": "AKEMI PANTHEON MATT (SS)",
    "ac": "AK-PANTHEON MATT (SS)",
    "main": true,
-   "cost_centi": 175000
+   "cost_sen": 175000
   },
   {
    "op": "product_cost",
@@ -11547,7 +11547,7 @@
    "erp": "AKEMI PINNACLE MATT (K)",
    "ac": "AK-PINNACLE MATT (K)",
    "main": true,
-   "cost_centi": 130000
+   "cost_sen": 130000
   },
   {
    "op": "product_cost",
@@ -11561,7 +11561,7 @@
    "erp": "AKEMI PINNACLE MATT (Q)",
    "ac": "AK-PINNACLE MATT (Q)",
    "main": true,
-   "cost_centi": 108000
+   "cost_sen": 108000
   },
   {
    "op": "product_cost",
@@ -11575,7 +11575,7 @@
    "erp": "AKEMI PINNACLE MATT (S)",
    "ac": "AK-PINNACLE MATT (S)",
    "main": true,
-   "cost_centi": 70000
+   "cost_sen": 70000
   },
   {
    "op": "product_cost",
@@ -11589,7 +11589,7 @@
    "erp": "AKEMI PINNACLE MATT (SK)",
    "ac": "AK-PINNACLE MATT (SK)",
    "main": true,
-   "cost_centi": 170000
+   "cost_sen": 170000
   },
   {
    "op": "product_cost",
@@ -11610,7 +11610,7 @@
    "erp": "AKEMI PINNACLE MATT (SS)",
    "ac": "AK-PINNACLE MATT (SS)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -11624,7 +11624,7 @@
    "erp": "AKEMI PRIME COOL MATT (K)",
    "ac": "AK-PRIME COOL MATT (K)",
    "main": true,
-   "cost_centi": 107000
+   "cost_sen": 107000
   },
   {
    "op": "product_cost",
@@ -11638,7 +11638,7 @@
    "erp": "HAPPI SLEEP PRIME COOL MATT (Q)",
    "ac": "AK-PRIME COOL MATT (Q)",
    "main": true,
-   "cost_centi": 90000
+   "cost_sen": 90000
   },
   {
    "op": "product_cost",
@@ -11652,7 +11652,7 @@
    "erp": "HAPPI SLEEP PRIME COOL MATT (S)",
    "ac": "AK-PRIME COOL MATT (S)",
    "main": true,
-   "cost_centi": 60000
+   "cost_sen": 60000
   },
   {
    "op": "product_cost",
@@ -11666,7 +11666,7 @@
    "erp": "AKEMI PRIME COOL MATT (SS)",
    "ac": "AK-PRIME COOL MATT (SS)",
    "main": true,
-   "cost_centi": 70000
+   "cost_sen": 70000
   },
   {
    "op": "product_cost",
@@ -11680,7 +11680,7 @@
    "erp": "AKEMI SANCTUM MATT (K)",
    "ac": "AK-SANCTUM MATT (K)",
    "main": true,
-   "cost_centi": 260000
+   "cost_sen": 260000
   },
   {
    "op": "product_cost",
@@ -11694,7 +11694,7 @@
    "erp": "AKEMI SANCTUM MATT (Q)",
    "ac": "AK-SANCTUM MATT (Q)",
    "main": true,
-   "cost_centi": 220000
+   "cost_sen": 220000
   },
   {
    "op": "product_cost",
@@ -11708,7 +11708,7 @@
    "erp": "AKEMI SANCTUM MATT (S)",
    "ac": "AK-SANCTUM MATT (S)",
    "main": true,
-   "cost_centi": 140000
+   "cost_sen": 140000
   },
   {
    "op": "product_cost",
@@ -11722,7 +11722,7 @@
    "erp": "AKEMI SANCTUM MATT (SK)",
    "ac": "AK-SANCTUM MATT (SK)",
    "main": true,
-   "cost_centi": 330000
+   "cost_sen": 330000
   },
   {
    "op": "product_cost",
@@ -11743,7 +11743,7 @@
    "erp": "AKEMI SANCTUM MATT (SS)",
    "ac": "AK-SANCTUM MATT (SS)",
    "main": true,
-   "cost_centi": 160000
+   "cost_sen": 160000
   },
   {
    "op": "product_cost",
@@ -11757,7 +11757,7 @@
    "erp": "AKEMI SOLITUDE MATT (K)",
    "ac": "AK-SOLITUDE MATT (K)",
    "main": true,
-   "cost_centi": 101900
+   "cost_sen": 101900
   },
   {
    "op": "product_cost",
@@ -11771,7 +11771,7 @@
    "erp": "HAPPI SLEEP SOLITUDE MATT (Q)",
    "ac": "AK-SOLITUDE MATT (Q)",
    "main": true,
-   "cost_centi": 83900
+   "cost_sen": 83900
   },
   {
    "op": "product_cost",
@@ -11785,7 +11785,7 @@
    "erp": "HAPPI SLEEP SOLITUDE MATT (S)",
    "ac": "AK-SOLITUDE MATT (S)",
    "main": true,
-   "cost_centi": 53900
+   "cost_sen": 53900
   },
   {
    "op": "product_cost",
@@ -11813,7 +11813,7 @@
    "erp": "AKEMI SOLITUDE MATT (SS)",
    "ac": "AK-SOLITUDE MATT (SS)",
    "main": true,
-   "cost_centi": 59900
+   "cost_sen": 59900
   },
   {
    "op": "product_cost",
@@ -11827,7 +11827,7 @@
    "erp": "AKEMI TRANQUIL MATT (K)",
    "ac": "AK-TRANQUIL MATT (K)",
    "main": true,
-   "cost_centi": 155000
+   "cost_sen": 155000
   },
   {
    "op": "product_cost",
@@ -11841,7 +11841,7 @@
    "erp": "AKEMI TRANQUIL MATT (Q)",
    "ac": "AK-TRANQUIL MATT (Q)",
    "main": true,
-   "cost_centi": 130000
+   "cost_sen": 130000
   },
   {
    "op": "product_cost",
@@ -11855,7 +11855,7 @@
    "erp": "AKEMI TRANQUIL MATT (S)",
    "ac": "AK-TRANQUIL MATT (S)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -11869,7 +11869,7 @@
    "erp": "AKEMI TRANQUIL MATT (SK)",
    "ac": "AK-TRANQUIL MATT (SK)",
    "main": true,
-   "cost_centi": 195000
+   "cost_sen": 195000
   },
   {
    "op": "product_cost",
@@ -11890,7 +11890,7 @@
    "erp": "AKEMI TRANQUIL MATT (SS)",
    "ac": "AK-TRANQUIL MATT (SS)",
    "main": true,
-   "cost_centi": 100000
+   "cost_sen": 100000
   },
   {
    "op": "product_cost",
@@ -11904,7 +11904,7 @@
    "erp": "AKEMI ULTIMATE MATT (K)",
    "ac": "AK-ULTIMATE MATT (K)",
    "main": true,
-   "cost_centi": 155000
+   "cost_sen": 155000
   },
   {
    "op": "product_cost",
@@ -11918,7 +11918,7 @@
    "erp": "AKEMI ULTIMATE MATT (Q)",
    "ac": "AK-ULTIMATE MATT (Q)",
    "main": true,
-   "cost_centi": 130000
+   "cost_sen": 130000
   },
   {
    "op": "product_cost",
@@ -11932,7 +11932,7 @@
    "erp": "AKEMI ULTIMATE MATT (S)",
    "ac": "AK-ULTIMATE MATT (S)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -11946,7 +11946,7 @@
    "erp": "AKEMI ULTIMATE MATT (SK)",
    "ac": "AK-ULTIMATE MATT (SK)",
    "main": true,
-   "cost_centi": 195000
+   "cost_sen": 195000
   },
   {
    "op": "product_cost",
@@ -11967,7 +11967,7 @@
    "erp": "AKEMI ULTIMATE MATT (SS)",
    "ac": "AK-ULTIMATE MATT (SS)",
    "main": true,
-   "cost_centi": 100000
+   "cost_sen": 100000
   },
   {
    "op": "product_cost",
@@ -11981,7 +11981,7 @@
    "erp": "AKEMI ZEN COOL MATT (K)",
    "ac": "AK-ZEN COOL MATT (K)",
    "main": true,
-   "cost_centi": 107000
+   "cost_sen": 107000
   },
   {
    "op": "product_cost",
@@ -11995,7 +11995,7 @@
    "erp": "HAPPI SLEEP ZEN COOL MATT (Q)",
    "ac": "AK-ZEN COOL MATT (Q)",
    "main": true,
-   "cost_centi": 90000
+   "cost_sen": 90000
   },
   {
    "op": "product_cost",
@@ -12009,7 +12009,7 @@
    "erp": "HAPPI SLEEP ZEN COOL MATT (S)",
    "ac": "AK-ZEN COOL MATT (S)",
    "main": true,
-   "cost_centi": 60000
+   "cost_sen": 60000
   },
   {
    "op": "product_cost",
@@ -12023,7 +12023,7 @@
    "erp": "AKEMI ZEN COOL MATT (SS)",
    "ac": "AK-ZEN COOL MATT (SS)",
    "main": true,
-   "cost_centi": 70000
+   "cost_sen": 70000
   },
   {
    "op": "product_cost",
@@ -12037,7 +12037,7 @@
    "erp": "AKEMI ZENITHAL MATT (K)",
    "ac": "AK-ZENITHAL MATT (K)",
    "main": true,
-   "cost_centi": 460000
+   "cost_sen": 460000
   },
   {
    "op": "product_cost",
@@ -12051,7 +12051,7 @@
    "erp": "AKEMI ZENITHAL MATT (Q)",
    "ac": "AK-ZENITHAL MATT (Q)",
    "main": true,
-   "cost_centi": 390000
+   "cost_sen": 390000
   },
   {
    "op": "product_cost",
@@ -12065,7 +12065,7 @@
    "erp": "AKEMI ZENITHAL MATT (S)",
    "ac": "AK-ZENITHAL MATT (S)",
    "main": true,
-   "cost_centi": 240000
+   "cost_sen": 240000
   },
   {
    "op": "product_cost",
@@ -12079,7 +12079,7 @@
    "erp": "AKEMI ZENITHAL MATT (SK)",
    "ac": "AK-ZENITHAL MATT (SK)",
    "main": true,
-   "cost_centi": 540000
+   "cost_sen": 540000
   },
   {
    "op": "product_cost",
@@ -12093,7 +12093,7 @@
    "erp": "AKEMI ZENITHAL MATT (SS)",
    "ac": "AK-ZENITHAL MATT (SS)",
    "main": true,
-   "cost_centi": 280000
+   "cost_sen": 280000
   },
   {
    "op": "product_cost",
@@ -12107,7 +12107,7 @@
    "erp": "ELECTRIC ADJUSTABLE BED MATT (S)",
    "ac": "CH-ELEC ADJT BED (S)",
    "main": true,
-   "cost_centi": 80000
+   "cost_sen": 80000
   },
   {
    "op": "product_cost",
@@ -12121,7 +12121,7 @@
    "erp": "B1201F MATT (K)",
    "ac": "CR-B1201F MATT (K)",
    "main": true,
-   "cost_centi": 88200
+   "cost_sen": 88200
   },
   {
    "op": "product_cost",
@@ -12135,7 +12135,7 @@
    "erp": "B1201F MATT (Q)",
    "ac": "CR-B1201F MATT (Q)",
    "main": true,
-   "cost_centi": 73800
+   "cost_sen": 73800
   },
   {
    "op": "product_cost",
@@ -12149,7 +12149,7 @@
    "erp": "B1201F MATT (S)",
    "ac": "CR-B1201F MATT (S)",
    "main": true,
-   "cost_centi": 51000
+   "cost_sen": 51000
   },
   {
    "op": "product_cost",
@@ -12163,7 +12163,7 @@
    "erp": "B1201F MATT (SK)",
    "ac": "CR-B1201F MATT (SK)",
    "main": true,
-   "cost_centi": 114700
+   "cost_sen": 114700
   },
   {
    "op": "product_cost",
@@ -12184,7 +12184,7 @@
    "erp": "B1201F MATT (SS)",
    "ac": "CR-B1201F MATT (SS)",
    "main": true,
-   "cost_centi": 57600
+   "cost_sen": 57600
   },
   {
    "op": "product_cost",
@@ -12198,7 +12198,7 @@
    "erp": "B1201S MATT (K)",
    "ac": "CR-B1201S MATT (K)",
    "main": true,
-   "cost_centi": 88200
+   "cost_sen": 88200
   },
   {
    "op": "product_cost",
@@ -12212,7 +12212,7 @@
    "erp": "B1201S MATT (Q)",
    "ac": "CR-B1201S MATT (Q)",
    "main": true,
-   "cost_centi": 73800
+   "cost_sen": 73800
   },
   {
    "op": "product_cost",
@@ -12226,7 +12226,7 @@
    "erp": "B1201S MATT (S)",
    "ac": "CR-B1201S MATT (S)",
    "main": true,
-   "cost_centi": 51000
+   "cost_sen": 51000
   },
   {
    "op": "product_cost",
@@ -12240,7 +12240,7 @@
    "erp": "B1201S MATT (SK)",
    "ac": "CR-B1201S MATT (SK)",
    "main": true,
-   "cost_centi": 114700
+   "cost_sen": 114700
   },
   {
    "op": "product_cost",
@@ -12254,7 +12254,7 @@
    "erp": "B1201S MATT (SS)",
    "ac": "CR-B1201S MATT (SS)",
    "main": true,
-   "cost_centi": 57600
+   "cost_sen": 57600
   },
   {
    "op": "product_cost",
@@ -12268,7 +12268,7 @@
    "erp": "E1601 MATT (K)",
    "ac": "CR-E1601 MATT (K)",
    "main": true,
-   "cost_centi": 300000
+   "cost_sen": 300000
   },
   {
    "op": "product_cost",
@@ -12282,7 +12282,7 @@
    "erp": "E1601 MATT (Q)",
    "ac": "CR-E1601 MATT (Q)",
    "main": true,
-   "cost_centi": 300000
+   "cost_sen": 300000
   },
   {
    "op": "product_cost",
@@ -12296,7 +12296,7 @@
    "erp": "H1401F MATT (K)",
    "ac": "CR-H1401F MATT (K)",
    "main": true,
-   "cost_centi": 107300
+   "cost_sen": 107300
   },
   {
    "op": "product_cost",
@@ -12310,7 +12310,7 @@
    "erp": "H1401F MATT (Q)",
    "ac": "CR-H1401F MATT (Q)",
    "main": true,
-   "cost_centi": 89800
+   "cost_sen": 89800
   },
   {
    "op": "product_cost",
@@ -12324,7 +12324,7 @@
    "erp": "H1401F MATT (S)",
    "ac": "CR-H1401F MATT (S)",
    "main": true,
-   "cost_centi": 62000
+   "cost_sen": 62000
   },
   {
    "op": "product_cost",
@@ -12338,7 +12338,7 @@
    "erp": "H1401F MATT (SK)",
    "ac": "CR-H1401F MATT (SK)",
    "main": true,
-   "cost_centi": 139500
+   "cost_sen": 139500
   },
   {
    "op": "product_cost",
@@ -12352,7 +12352,7 @@
    "erp": "H1401F MATT (SS)",
    "ac": "CR-H1401F MATT (SS)",
    "main": true,
-   "cost_centi": 70200
+   "cost_sen": 70200
   },
   {
    "op": "product_cost",
@@ -12366,7 +12366,7 @@
    "erp": "H1401S MATT (K)",
    "ac": "CR-H1401S MATT (K)",
    "main": true,
-   "cost_centi": 107300
+   "cost_sen": 107300
   },
   {
    "op": "product_cost",
@@ -12380,7 +12380,7 @@
    "erp": "H1401S MATT (Q)",
    "ac": "CR-H1401S MATT (Q)",
    "main": true,
-   "cost_centi": 89800
+   "cost_sen": 89800
   },
   {
    "op": "product_cost",
@@ -12394,7 +12394,7 @@
    "erp": "H1401S MATT (S)",
    "ac": "CR-H1401S MATT (S)",
    "main": true,
-   "cost_centi": 62000
+   "cost_sen": 62000
   },
   {
    "op": "product_cost",
@@ -12408,7 +12408,7 @@
    "erp": "H1401S MATT (SK)",
    "ac": "CR-H1401S MATT (SK)",
    "main": true,
-   "cost_centi": 139500
+   "cost_sen": 139500
   },
   {
    "op": "product_cost",
@@ -12422,7 +12422,7 @@
    "erp": "H1401S MATT (SS)",
    "ac": "CR-H1401S MATT (SS)",
    "main": true,
-   "cost_centi": 70200
+   "cost_sen": 70200
   },
   {
    "op": "product_cost",
@@ -12436,7 +12436,7 @@
    "erp": "L1201F MATT (K)",
    "ac": "CR-L1201F MATT (K)",
    "main": true,
-   "cost_centi": 70500
+   "cost_sen": 70500
   },
   {
    "op": "product_cost",
@@ -12450,7 +12450,7 @@
    "erp": "L1201F MATT (Q)",
    "ac": "CR-L1201F MATT (Q)",
    "main": true,
-   "cost_centi": 59000
+   "cost_sen": 59000
   },
   {
    "op": "product_cost",
@@ -12464,7 +12464,7 @@
    "erp": "L1201F MATT (S)",
    "ac": "CR-L1201F MATT (S)",
    "main": true,
-   "cost_centi": 40800
+   "cost_sen": 40800
   },
   {
    "op": "product_cost",
@@ -12478,7 +12478,7 @@
    "erp": "L1201F MATT (SK)",
    "ac": "CR-L1201F MATT (SK)",
    "main": true,
-   "cost_centi": 91650
+   "cost_sen": 91650
   },
   {
    "op": "product_cost",
@@ -12492,7 +12492,7 @@
    "erp": "L1201F MATT (SS)",
    "ac": "CR-L1201F MATT (SS)",
    "main": true,
-   "cost_centi": 46150
+   "cost_sen": 46150
   },
   {
    "op": "product_cost",
@@ -12506,7 +12506,7 @@
    "erp": "L1201S MATT (K)",
    "ac": "CR-L1201S MATT (K)",
    "main": true,
-   "cost_centi": 70500
+   "cost_sen": 70500
   },
   {
    "op": "product_cost",
@@ -12520,7 +12520,7 @@
    "erp": "L1201S MATT (Q)",
    "ac": "CR-L1201S MATT (Q)",
    "main": true,
-   "cost_centi": 59000
+   "cost_sen": 59000
   },
   {
    "op": "product_cost",
@@ -12534,7 +12534,7 @@
    "erp": "L1201S MATT (S)",
    "ac": "CR-L1201S MATT (S)",
    "main": true,
-   "cost_centi": 40800
+   "cost_sen": 40800
   },
   {
    "op": "product_cost",
@@ -12548,7 +12548,7 @@
    "erp": "L1201S MATT (SK)",
    "ac": "CR-L1201S MATT (SK)",
    "main": true,
-   "cost_centi": 91650
+   "cost_sen": 91650
   },
   {
    "op": "product_cost",
@@ -12562,7 +12562,7 @@
    "erp": "L1201S MATT (SS)",
    "ac": "CR-L1201S MATT (SS)",
    "main": true,
-   "cost_centi": 46150
+   "cost_sen": 46150
   },
   {
    "op": "product_cost",
@@ -12576,7 +12576,7 @@
    "erp": "M1401F MATT (K)",
    "ac": "CR-M1401F MATT (K)",
    "main": true,
-   "cost_centi": 95600
+   "cost_sen": 95600
   },
   {
    "op": "product_cost",
@@ -12590,7 +12590,7 @@
    "erp": "M1401F MATT (Q)",
    "ac": "CR-M1401F MATT (Q)",
    "main": true,
-   "cost_centi": 79900
+   "cost_sen": 79900
   },
   {
    "op": "product_cost",
@@ -12604,7 +12604,7 @@
    "erp": "M1401F MATT (S)",
    "ac": "CR-M1401F MATT (S)",
    "main": true,
-   "cost_centi": 55200
+   "cost_sen": 55200
   },
   {
    "op": "product_cost",
@@ -12618,7 +12618,7 @@
    "erp": "M1401F MATT (SK)",
    "ac": "CR-M1401F MATT (SK)",
    "main": true,
-   "cost_centi": 124300
+   "cost_sen": 124300
   },
   {
    "op": "product_cost",
@@ -12632,7 +12632,7 @@
    "erp": "M1401F MATT (SS)",
    "ac": "CR-M1401F MATT (SS)",
    "main": true,
-   "cost_centi": 62400
+   "cost_sen": 62400
   },
   {
    "op": "product_cost",
@@ -12646,7 +12646,7 @@
    "erp": "M1401S MATT (K)",
    "ac": "CR-M1401S MATT (K)",
    "main": true,
-   "cost_centi": 95600
+   "cost_sen": 95600
   },
   {
    "op": "product_cost",
@@ -12660,7 +12660,7 @@
    "erp": "M1401S MATT (Q)",
    "ac": "CR-M1401S MATT (Q)",
    "main": true,
-   "cost_centi": 79900
+   "cost_sen": 79900
   },
   {
    "op": "product_cost",
@@ -12674,7 +12674,7 @@
    "erp": "M1401S MATT (S)",
    "ac": "CR-M1401S MATT (S)",
    "main": true,
-   "cost_centi": 55200
+   "cost_sen": 55200
   },
   {
    "op": "product_cost",
@@ -12688,7 +12688,7 @@
    "erp": "M1401S MATT (SK)",
    "ac": "CR-M1401S MATT (SK)",
    "main": true,
-   "cost_centi": 124300
+   "cost_sen": 124300
   },
   {
    "op": "product_cost",
@@ -12702,7 +12702,7 @@
    "erp": "M1401S MATT (SS)",
    "ac": "CR-M1401S MATT (SS)",
    "main": true,
-   "cost_centi": 62400
+   "cost_sen": 62400
   },
   {
    "op": "product_cost",
@@ -12716,7 +12716,7 @@
    "erp": "N1001F MATT (K)",
    "ac": "CR-N1001F MATT (K)",
    "main": true,
-   "cost_centi": 178000
+   "cost_sen": 178000
   },
   {
    "op": "product_cost",
@@ -12730,7 +12730,7 @@
    "erp": "N1001F MATT (Q)",
    "ac": "CR-N1001F MATT (Q)",
    "main": true,
-   "cost_centi": 149000
+   "cost_sen": 149000
   },
   {
    "op": "product_cost",
@@ -12744,7 +12744,7 @@
    "erp": "N1001F MATT (S)",
    "ac": "CR-N1001F MATT (S)",
    "main": true,
-   "cost_centi": 100000
+   "cost_sen": 100000
   },
   {
    "op": "product_cost",
@@ -12758,7 +12758,7 @@
    "erp": "N1001S MATT (K)",
    "ac": "CR-N1001S MATT (K)",
    "main": true,
-   "cost_centi": 158000
+   "cost_sen": 158000
   },
   {
    "op": "product_cost",
@@ -12772,7 +12772,7 @@
    "erp": "N1001S MATT (Q)",
    "ac": "CR-N1001S MATT (Q)",
    "main": true,
-   "cost_centi": 132000
+   "cost_sen": 132000
   },
   {
    "op": "product_cost",
@@ -12786,7 +12786,7 @@
    "erp": "N1001S MATT (S)",
    "ac": "CR-N1001S MATT (S)",
    "main": true,
-   "cost_centi": 89500
+   "cost_sen": 89500
   },
   {
    "op": "product_cost",
@@ -12800,7 +12800,7 @@
    "erp": "S1601F MATT (K)",
    "ac": "CR-S1601F MATT (K)",
    "main": true,
-   "cost_centi": 132500
+   "cost_sen": 132500
   },
   {
    "op": "product_cost",
@@ -12814,7 +12814,7 @@
    "erp": "S1601F MATT (Q)",
    "ac": "CR-S1601F MATT (Q)",
    "main": true,
-   "cost_centi": 110800
+   "cost_sen": 110800
   },
   {
    "op": "product_cost",
@@ -12828,7 +12828,7 @@
    "erp": "S1601F MATT (S)",
    "ac": "CR-S1601F MATT (S)",
    "main": true,
-   "cost_centi": 76500
+   "cost_sen": 76500
   },
   {
    "op": "product_cost",
@@ -12842,7 +12842,7 @@
    "erp": "S1601F MATT (SK)",
    "ac": "CR-S1601F MATT (SK)",
    "main": true,
-   "cost_centi": 177250
+   "cost_sen": 177250
   },
   {
    "op": "product_cost",
@@ -12856,7 +12856,7 @@
    "erp": "S1601F MATT (SS)",
    "ac": "CR-S1601F MATT (SS)",
    "main": true,
-   "cost_centi": 86500
+   "cost_sen": 86500
   },
   {
    "op": "product_cost",
@@ -12870,7 +12870,7 @@
    "erp": "S1601S MATT (K)",
    "ac": "CR-S1601S MATT (K)",
    "main": true,
-   "cost_centi": 154000
+   "cost_sen": 154000
   },
   {
    "op": "product_cost",
@@ -12884,7 +12884,7 @@
    "erp": "S1601S MATT (Q)",
    "ac": "CR-S1601S MATT (Q)",
    "main": true,
-   "cost_centi": 128800
+   "cost_sen": 128800
   },
   {
    "op": "product_cost",
@@ -12898,7 +12898,7 @@
    "erp": "S1601S MATT (S)",
    "ac": "CR-S1601S MATT (S)",
    "main": true,
-   "cost_centi": 88900
+   "cost_sen": 88900
   },
   {
    "op": "product_cost",
@@ -12912,7 +12912,7 @@
    "erp": "S1601S MATT (SK)",
    "ac": "CR-S1601S MATT (SK)",
    "main": true,
-   "cost_centi": 200200
+   "cost_sen": 200200
   },
   {
    "op": "product_cost",
@@ -12933,7 +12933,7 @@
    "erp": "S1601S MATT (SS)",
    "ac": "CR-S1601S MATT (SS)",
    "main": true,
-   "cost_centi": 100500
+   "cost_sen": 100500
   },
   {
    "op": "product_cost",
@@ -12947,7 +12947,7 @@
    "erp": "DUNLOPILLO AMIRA DELUXE PLUS MATT (K)",
    "ac": "DL-AMIRA DELUXE PLUS (K)",
    "main": true,
-   "cost_centi": 143900
+   "cost_sen": 143900
   },
   {
    "op": "product_cost",
@@ -12961,7 +12961,7 @@
    "erp": "DUNLOPILLO AMIRA DELUXE PLUS MATT (Q)",
    "ac": "DL-AMIRA DELUXE PLUS (Q)",
    "main": true,
-   "cost_centi": 119900
+   "cost_sen": 119900
   },
   {
    "op": "product_cost",
@@ -12975,7 +12975,7 @@
    "erp": "DUNLOPILLO AMIRA DELUXE PLUS MATT (S)",
    "ac": "DL-AMIRA DELUXE PLUS (S)",
    "main": true,
-   "cost_centi": 101900
+   "cost_sen": 101900
   },
   {
    "op": "product_cost",
@@ -12989,7 +12989,7 @@
    "erp": "DUNLOPILLO AMIRA DELUXE PLUS MATT (SS)",
    "ac": "DL-AMIRA DELUXE PLUS (SS)",
    "main": true,
-   "cost_centi": 107900
+   "cost_sen": 107900
   },
   {
    "op": "product_cost",
@@ -13003,7 +13003,7 @@
    "erp": "DUNLOPILLO AMIRA PREMIUM MATT (K)",
    "ac": "DL-AMIRA PREMUIM (K)",
    "main": true,
-   "cost_centi": 197900
+   "cost_sen": 197900
   },
   {
    "op": "product_cost",
@@ -13017,7 +13017,7 @@
    "erp": "DUNLOPILLO AMIRA PREMIUM MATT (Q)",
    "ac": "DL-AMIRA PREMUIM (Q)",
    "main": true,
-   "cost_centi": 179900
+   "cost_sen": 179900
   },
   {
    "op": "product_cost",
@@ -13031,7 +13031,7 @@
    "erp": "DUNLOPILLO AMIRA PREMIUM MATT (S)",
    "ac": "DL-AMIRA PREMUIM (S)",
    "main": true,
-   "cost_centi": 137900
+   "cost_sen": 137900
   },
   {
    "op": "product_cost",
@@ -13045,7 +13045,7 @@
    "erp": "DUNLOPILLO AMIRA PREMIUM MATT (SS)",
    "ac": "DL-AMIRA PREMUIM (SS)",
    "main": true,
-   "cost_centi": 149900
+   "cost_sen": 149900
   },
   {
    "op": "product_cost",
@@ -13066,7 +13066,7 @@
    "erp": "DUNLOPILLO OTHOREST AQUA SHIELD RELAXER 300 MATT (K)",
    "ac": "DL-AQUA RELAXER 300(K)",
    "main": true,
-   "cost_centi": 173900
+   "cost_sen": 173900
   },
   {
    "op": "product_cost",
@@ -13081,7 +13081,7 @@
    "erp": "DUNLOPILLO OTHOREST AQUA SHIELD RELAXER 300 MATT (Q)",
    "ac": "DL-AQUA RELAXER 300(Q)",
    "main": true,
-   "cost_centi": 149900
+   "cost_sen": 149900
   },
   {
    "op": "product_cost",
@@ -13138,7 +13138,7 @@
    "erp": "DUNLOPILLO OTHOREST BIOKINETIC SUPPORTER 100 MATT (K)",
    "ac": "DL-BIOKINETIC SUPPORTER 100(K)",
    "main": true,
-   "cost_centi": 179900
+   "cost_sen": 179900
   },
   {
    "op": "product_cost",
@@ -13153,7 +13153,7 @@
    "erp": "DUNLOPILLO OTHOREST BIOKINETIC SUPPORTER 100 MATT (Q)",
    "ac": "DL-BIOKINETIC SUPPORTER 100(Q)",
    "main": true,
-   "cost_centi": 149900
+   "cost_sen": 149900
   },
   {
    "op": "product_cost",
@@ -13168,7 +13168,7 @@
    "erp": "DUNLOPILLO CLASSIC PEARL MATT (K)",
    "ac": "DL-CLASSIC PEARL (K)",
    "main": true,
-   "cost_centi": 183500
+   "cost_sen": 183500
   },
   {
    "op": "product_cost",
@@ -13182,7 +13182,7 @@
    "erp": "DUNLOPILLO CLASSIC PEARL MATT (Q)",
    "ac": "DL-CLASSIC PEARL (Q)",
    "main": true,
-   "cost_centi": 161900
+   "cost_sen": 161900
   },
   {
    "op": "product_cost",
@@ -13196,7 +13196,7 @@
    "erp": "DUNLOPILLO CLASSIC RUBY MATT (K)",
    "ac": "DL-CLASSIC RUBY (K)",
    "main": true,
-   "cost_centi": 183500
+   "cost_sen": 183500
   },
   {
    "op": "product_cost",
@@ -13210,7 +13210,7 @@
    "erp": "DUNLOPILLO CLASSIC RUBY MATT (Q)",
    "ac": "DL-CLASSIC RUBY (Q)",
    "main": true,
-   "cost_centi": 161900
+   "cost_sen": 161900
   },
   {
    "op": "product_cost",
@@ -13224,7 +13224,7 @@
    "erp": "DL-CS2 NN-WINTER DREAM MATT (K",
    "ac": "DL-CS2 ARCTIC DREAM (K)",
    "main": true,
-   "cost_centi": 453500
+   "cost_sen": 453500
   },
   {
    "op": "product_cost",
@@ -13238,7 +13238,7 @@
    "erp": "DL-CS2 NN-WINTER DREAM MATT (Q",
    "ac": "DL-CS2 ARCTIC DREAM (Q)",
    "main": true,
-   "cost_centi": 399500
+   "cost_sen": 399500
   },
   {
    "op": "product_cost",
@@ -13252,7 +13252,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (S)",
    "ac": "DL-CS2 ARCTIC DREAM (S)",
    "main": true,
-   "cost_centi": 77900
+   "cost_sen": 77900
   },
   {
    "op": "product_cost",
@@ -13267,7 +13267,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 ARCTIC DREAM MATT (SS)",
    "ac": "DL-CS2 ARCTIC DREAM (SS)",
    "main": true,
-   "cost_centi": 95900
+   "cost_sen": 95900
   },
   {
    "op": "product_cost",
@@ -13282,7 +13282,7 @@
    "erp": "DUNLOPILLO CS2 COOL EXTRA FIRM MATT (K)",
    "ac": "DL-CS2 COOL EXTRA FIRM (K)",
    "main": true,
-   "cost_centi": 253700
+   "cost_sen": 253700
   },
   {
    "op": "product_cost",
@@ -13296,7 +13296,7 @@
    "erp": "DUNLOPILLO CS2 COOL EXTRA FIRM MATT (Q)",
    "ac": "DL-CS2 COOL EXTRA FIRM (Q)",
    "main": true,
-   "cost_centi": 226700
+   "cost_sen": 226700
   },
   {
    "op": "product_cost",
@@ -13310,7 +13310,7 @@
    "erp": "DUNLOPILLO CS2 COOL EXTRA FIRM MATT (S)",
    "ac": "DL-CS2 COOL EXTRA FIRM (S)",
    "main": true,
-   "cost_centi": 145700
+   "cost_sen": 145700
   },
   {
    "op": "product_cost",
@@ -13324,7 +13324,7 @@
    "erp": "DUNLOPILLO CS2 COOL EXTRA FIRM MATT (SS)",
    "ac": "DL-CS2 COOL EXTRA FIRM (SS)",
    "main": true,
-   "cost_centi": 151100
+   "cost_sen": 151100
   },
   {
    "op": "product_cost",
@@ -13338,7 +13338,7 @@
    "erp": "DUNLOPILLO CS2 COOL FRESH MATT (K)",
    "ac": "DL-CS2 COOL FRESH (K)",
    "main": true,
-   "cost_centi": 237500
+   "cost_sen": 237500
   },
   {
    "op": "product_cost",
@@ -13352,7 +13352,7 @@
    "erp": "DUNLOPILLO CS2 COOL FRESH MATT (Q)",
    "ac": "DL-CS2 COOL FRESH (Q)",
    "main": true,
-   "cost_centi": 205100
+   "cost_sen": 205100
   },
   {
    "op": "product_cost",
@@ -13380,7 +13380,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 COOL LUXE MATT (K)",
    "ac": "DL-CS2 COOL LUXE (K)",
    "main": true,
-   "cost_centi": 399500
+   "cost_sen": 399500
   },
   {
    "op": "product_cost",
@@ -13394,7 +13394,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 COOL LUXE MATT (Q)",
    "ac": "DL-CS2 COOL LUXE (Q)",
    "main": true,
-   "cost_centi": 345500
+   "cost_sen": 345500
   },
   {
    "op": "product_cost",
@@ -13422,7 +13422,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 ELEGANCE SUITE MATT (K)",
    "ac": "DL-CS2 ELEGANCE SUITE (K)",
    "main": true,
-   "cost_centi": 296900
+   "cost_sen": 296900
   },
   {
    "op": "product_cost",
@@ -13436,7 +13436,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 ELEGANCE SUITE MATT (Q)",
    "ac": "DL-CS2 ELEGANCE SUITE (Q)",
    "main": true,
-   "cost_centi": 237500
+   "cost_sen": 237500
   },
   {
    "op": "product_cost",
@@ -13450,7 +13450,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 ELEGANCE SUITE MATT (S)",
    "ac": "DL-CS2 ELEGANCE SUITE (S)",
    "main": true,
-   "cost_centi": 172700
+   "cost_sen": 172700
   },
   {
    "op": "product_cost",
@@ -13478,7 +13478,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 ELEGANCE SUITE MATT (SS)",
    "ac": "DL-CS2 ELEGANCE SUITE (SS)",
    "main": true,
-   "cost_centi": 194300
+   "cost_sen": 194300
   },
   {
    "op": "product_cost",
@@ -13492,7 +13492,7 @@
    "erp": "DUNLOPILLO CS2 GLACIAL COMFORT MATT (K)",
    "ac": "DL-CS2 GLACIAL COMFORT (K)",
    "main": true,
-   "cost_centi": 296900
+   "cost_sen": 296900
   },
   {
    "op": "product_cost",
@@ -13506,7 +13506,7 @@
    "erp": "DUNLOPILLO CS2 GLACIAL COMFORT MATT (Q)",
    "ac": "DL-CS2 GLACIAL COMFORT (Q)",
    "main": true,
-   "cost_centi": 253700
+   "cost_sen": 253700
   },
   {
    "op": "product_cost",
@@ -13520,7 +13520,7 @@
    "erp": "DUNLOPILLO CS2 GLACIAL COMFORT MATT (S)",
    "ac": "DL-CS2 GLACIAL COMFORT (S)",
    "main": true,
-   "cost_centi": 172700
+   "cost_sen": 172700
   },
   {
    "op": "product_cost",
@@ -13534,7 +13534,7 @@
    "erp": "DUNLOPILLO CS2 GLACIAL COMFORT MATT (SS)",
    "ac": "DL-CS2 GLACIAL COMFORT (SS)",
    "main": true,
-   "cost_centi": 188900
+   "cost_sen": 188900
   },
   {
    "op": "product_cost",
@@ -13548,7 +13548,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 HEAVENLY SLEEP MATT (K)",
    "ac": "DL-CS2 HEAVENLY SLEEP (K)",
    "main": true,
-   "cost_centi": 475100
+   "cost_sen": 475100
   },
   {
    "op": "product_cost",
@@ -13562,7 +13562,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 HEAVENLY SLEEP MATT (Q)",
    "ac": "DL-CS2 HEAVENLY SLEEP (Q)",
    "main": true,
-   "cost_centi": 415700
+   "cost_sen": 415700
   },
   {
    "op": "product_cost",
@@ -13618,7 +13618,7 @@
    "erp": "DL-CS2 NN-WINTER SLEEP MATT (K",
    "ac": "DL-CS2 NANO BREEZE (K)",
    "main": true,
-   "cost_centi": 345500
+   "cost_sen": 345500
   },
   {
    "op": "product_cost",
@@ -13632,7 +13632,7 @@
    "erp": "DL-CS2 NN-WINTER SLEEP MATT (Q",
    "ac": "DL-CS2 NANO BREEZE (Q)",
    "main": true,
-   "cost_centi": 291500
+   "cost_sen": 291500
   },
   {
    "op": "product_cost",
@@ -13660,7 +13660,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 NANO-G THE CONTINENTAL MATT (K)",
    "ac": "DL-CS2 NN-G T.CTNT (K)",
    "main": true,
-   "cost_centi": 539900
+   "cost_sen": 539900
   },
   {
    "op": "product_cost",
@@ -13674,7 +13674,7 @@
    "sup": "400-D001",
    "erp": "DL-CS2 NN-WINTER DREAM MATT (K",
    "ac": "DL-CS2 NN-WINTER DREAM MATT (K",
-   "cost_centi": 466200,
+   "cost_sen": 466200,
    "main": true
   },
   {
@@ -13688,7 +13688,7 @@
    "sup": "400-D001",
    "erp": "DL-CS2 NN-WINTER DREAM MATT (Q",
    "ac": "DL-CS2 NN-WINTER DREAM MATT (Q",
-   "cost_centi": 420000,
+   "cost_sen": 420000,
    "main": true
   },
   {
@@ -13703,7 +13703,7 @@
    "erp": "DL-CS2 NN-WINTER FROST MATT (K",
    "ac": "DL-CS2 NN-WINTER FLOW MATT (K)",
    "main": true,
-   "cost_centi": 247800
+   "cost_sen": 247800
   },
   {
    "op": "product_cost",
@@ -13717,7 +13717,7 @@
    "erp": "DL-CS2 NN-WINTER FROST MATT (Q",
    "ac": "DL-CS2 NN-WINTER FLOW MATT (Q)",
    "main": true,
-   "cost_centi": 201600
+   "cost_sen": 201600
   },
   {
    "op": "product_cost",
@@ -13730,7 +13730,7 @@
    "sup": "400-D001",
    "erp": "DL-CS2 NN-WINTER FROST MATT (K",
    "ac": "DL-CS2 NN-WINTER FROST MATT (K",
-   "cost_centi": 466200,
+   "cost_sen": 466200,
    "main": true
   },
   {
@@ -13744,7 +13744,7 @@
    "sup": "400-D001",
    "erp": "DL-CS2 NN-WINTER FROST MATT (Q",
    "ac": "DL-CS2 NN-WINTER FROST MATT (Q",
-   "cost_centi": 420000,
+   "cost_sen": 420000,
    "main": true
   },
   {
@@ -13758,7 +13758,7 @@
    "sup": "400-D001",
    "erp": "DL-CS2 NN-WINTER FROST MATT (K",
    "ac": "DL-CS2 NN-WINTER REST MATT (K)",
-   "cost_centi": 247800,
+   "cost_sen": 247800,
    "main": true
   },
   {
@@ -13772,7 +13772,7 @@
    "sup": "400-D001",
    "erp": "DL-CS2 NN-WINTER FROST MATT (Q",
    "ac": "DL-CS2 NN-WINTER REST MATT (Q)",
-   "cost_centi": 201600,
+   "cost_sen": 201600,
    "main": true
   },
   {
@@ -13786,7 +13786,7 @@
    "sup": "400-D001",
    "erp": "DL-CS2 NN-WINTER SLEEP MATT (K",
    "ac": "DL-CS2 NN-WINTER SLEEP MATT (K",
-   "cost_centi": 327600,
+   "cost_sen": 327600,
    "main": true
   },
   {
@@ -13800,7 +13800,7 @@
    "sup": "400-D001",
    "erp": "DL-CS2 NN-WINTER SLEEP MATT (Q",
    "ac": "DL-CS2 NN-WINTER SLEEP MATT (Q",
-   "cost_centi": 281400,
+   "cost_sen": 281400,
    "main": true
   },
   {
@@ -13815,7 +13815,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 PARADISE DREAMS MATT (K)",
    "ac": "DL-CS2 PARADISE DREAMS (K)",
    "main": true,
-   "cost_centi": 131900
+   "cost_sen": 131900
   },
   {
    "op": "product_cost",
@@ -13830,7 +13830,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 PARADISE DREAMS MATT (Q)",
    "ac": "DL-CS2 PARADISE DREAMS (Q)",
    "main": true,
-   "cost_centi": 113900
+   "cost_sen": 113900
   },
   {
    "op": "product_cost",
@@ -13845,7 +13845,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 PARADISE DREAMS MATT (S)",
    "ac": "DL-CS2 PARADISE DREAMS (S)",
    "main": true,
-   "cost_centi": 77900
+   "cost_sen": 77900
   },
   {
    "op": "product_cost",
@@ -13860,7 +13860,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 PARADISE DREAMS MATT (SS)",
    "ac": "DL-CS2 PARADISE DREAMS (SS)",
    "main": true,
-   "cost_centi": 95900
+   "cost_sen": 95900
   },
   {
    "op": "product_cost",
@@ -13875,7 +13875,7 @@
    "erp": "DUNLOPILLO CS2 PERFECT DREAMS MATT (K)",
    "ac": "DL-CS2 PERFECT DREAMS (K)",
    "main": true,
-   "cost_centi": 253700
+   "cost_sen": 253700
   },
   {
    "op": "product_cost",
@@ -13889,7 +13889,7 @@
    "erp": "DUNLOPILLO CS2 PERFECT DREAMS MATT (Q)",
    "ac": "DL-CS2 PERFECT DREAMS (Q)",
    "main": true,
-   "cost_centi": 226700
+   "cost_sen": 226700
   },
   {
    "op": "product_cost",
@@ -13903,7 +13903,7 @@
    "erp": "DUNLOPILLO CS2 PERFECT DREAMS MATT (S)",
    "ac": "DL-CS2 PERFECT DREAMS (S)",
    "main": true,
-   "cost_centi": 145700
+   "cost_sen": 145700
   },
   {
    "op": "product_cost",
@@ -13917,7 +13917,7 @@
    "erp": "DUNLOPILLO CS2 PERFECT DREAMS MATT (SS)",
    "ac": "DL-CS2 PERFECT DREAMS (SS)",
    "main": true,
-   "cost_centi": 151100
+   "cost_sen": 151100
   },
   {
    "op": "product_cost",
@@ -13931,7 +13931,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 PURE BREEZE MATT (K)",
    "ac": "DL-CS2 PURE BREEZE (K)",
    "main": true,
-   "cost_centi": 291500
+   "cost_sen": 291500
   },
   {
    "op": "product_cost",
@@ -13945,7 +13945,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 PURE BREEZE MATT (Q)",
    "ac": "DL-CS2 PURE BREEZE (Q)",
    "main": true,
-   "cost_centi": 237500
+   "cost_sen": 237500
   },
   {
    "op": "product_cost",
@@ -13959,7 +13959,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 PURE BREEZE MATT (S)",
    "ac": "DL-CS2 PURE BREEZE (S)",
    "main": true,
-   "cost_centi": 167300
+   "cost_sen": 167300
   },
   {
    "op": "product_cost",
@@ -13973,7 +13973,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 PURE BREEZE MATT (SS)",
    "ac": "DL-CS2 PURE BREEZE (SS)",
    "main": true,
-   "cost_centi": 188900
+   "cost_sen": 188900
   },
   {
    "op": "product_cost",
@@ -13987,7 +13987,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 RITZ LUXURY MATT (K)",
    "ac": "DL-CS2 RITZ LUXURY (K)",
    "main": true,
-   "cost_centi": 296900
+   "cost_sen": 296900
   },
   {
    "op": "product_cost",
@@ -14001,7 +14001,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 RITZ LUXURY MATT (Q)",
    "ac": "DL-CS2 RITZ LUXURY (Q)",
    "main": true,
-   "cost_centi": 237500
+   "cost_sen": 237500
   },
   {
    "op": "product_cost",
@@ -14015,7 +14015,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 RITZ LUXURY MATT (S)",
    "ac": "DL-CS2 RITZ LUXURY (S)",
    "main": true,
-   "cost_centi": 172700
+   "cost_sen": 172700
   },
   {
    "op": "product_cost",
@@ -14029,7 +14029,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 RITZ LUXURY MATT (SS)",
    "ac": "DL-CS2 RITZ LUXURY (SS)",
    "main": true,
-   "cost_centi": 194300
+   "cost_sen": 194300
   },
   {
    "op": "product_cost",
@@ -14043,7 +14043,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 VISCO BLISS MATT (K)",
    "ac": "DL-CS2 VISCO BLISS (K)",
    "main": true,
-   "cost_centi": 296900
+   "cost_sen": 296900
   },
   {
    "op": "product_cost",
@@ -14057,7 +14057,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 VISCO BLISS MATT (Q)",
    "ac": "DL-CS2 VISCO BLISS (Q)",
    "main": true,
-   "cost_centi": 237500
+   "cost_sen": 237500
   },
   {
    "op": "product_cost",
@@ -14078,7 +14078,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 VISCO BLISS MATT (SS)",
    "ac": "DL-CS2 VISCO BLISS (SS)",
    "main": true,
-   "cost_centi": 188900
+   "cost_sen": 188900
   },
   {
    "op": "product_cost",
@@ -14120,7 +14120,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 VISCO DREAM MATT (K)",
    "ac": "DL-CS2 VISCO DREAM (K)",
    "main": true,
-   "cost_centi": 415700
+   "cost_sen": 415700
   },
   {
    "op": "product_cost",
@@ -14134,7 +14134,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 VISCO DREAM MATT (Q)",
    "ac": "DL-CS2 VISCO DREAM (Q)",
    "main": true,
-   "cost_centi": 356300
+   "cost_sen": 356300
   },
   {
    "op": "product_cost",
@@ -14148,7 +14148,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 VISCO DREAM MATT (S)",
    "ac": "DL-CS2 VISCO DREAM (S)",
    "main": true,
-   "cost_centi": 77900
+   "cost_sen": 77900
   },
   {
    "op": "product_cost",
@@ -14163,7 +14163,7 @@
    "erp": "DUNLOPILLO COOLSILK 2.0 VISCO DREAM MATT (SS)",
    "ac": "DL-CS2 VISCO DREAM (SS)",
    "main": true,
-   "cost_centi": 95900
+   "cost_sen": 95900
   },
   {
    "op": "product_cost",
@@ -14206,7 +14206,7 @@
    "erp": "DUNLOPILLO DS ESCAPADE MATT MATT (K)",
    "ac": "DL-D.ESCAPADE(K)",
    "main": true,
-   "cost_centi": 230400
+   "cost_sen": 230400
   },
   {
    "op": "product_cost",
@@ -14221,7 +14221,7 @@
    "erp": "DUNLOPILLO DS ESCAPADE MATT MATT (Q)",
    "ac": "DL-D.ESCAPADE(Q)",
    "main": true,
-   "cost_centi": 192000
+   "cost_sen": 192000
   },
   {
    "op": "product_cost",
@@ -14236,7 +14236,7 @@
    "erp": "DUNLOPILLO DS ESCAPADE MATT MATT (SS)",
    "ac": "DL-D.ESCAPADE(SS)",
    "main": true,
-   "cost_centi": 163200
+   "cost_sen": 163200
   },
   {
    "op": "product_cost",
@@ -14279,7 +14279,7 @@
    "erp": "DUNLOPILLO DEEP SLEEP MATT (K)",
    "ac": "DL-DEEP SLEEP (K)",
    "main": true,
-   "cost_centi": 119900
+   "cost_sen": 119900
   },
   {
    "op": "product_cost",
@@ -14294,7 +14294,7 @@
    "erp": "DUNLOPILLO DEEP SLEEP MATT (Q)",
    "ac": "DL-DEEP SLEEP (Q)",
    "main": true,
-   "cost_centi": 101900
+   "cost_sen": 101900
   },
   {
    "op": "product_cost",
@@ -14309,7 +14309,7 @@
    "erp": "DUNLOPILLO DEEP SLEEP MATT (S)",
    "ac": "DL-DEEP SLEEP (S)",
    "main": true,
-   "cost_centi": 83900
+   "cost_sen": 83900
   },
   {
    "op": "product_cost",
@@ -14331,7 +14331,7 @@
    "erp": "DUNLOPILLO DEEP SLEEP MATT (SS)",
    "ac": "DL-DEEP SLEEP (SS)",
    "main": true,
-   "cost_centi": 89900
+   "cost_sen": 89900
   },
   {
    "op": "product_cost",
@@ -14360,7 +14360,7 @@
    "erp": "DUNLOPILLO NB DR.SLEEP MATT (K)",
    "ac": "DL-DR SLEEP(K)",
    "main": true,
-   "cost_centi": 252400
+   "cost_sen": 252400
   },
   {
    "op": "product_cost",
@@ -14375,7 +14375,7 @@
    "erp": "DUNLOPILLO NB DR.SLEEP MATT (Q)",
    "ac": "DL-DR SLEEP(Q)",
    "main": true,
-   "cost_centi": 200900
+   "cost_sen": 200900
   },
   {
    "op": "product_cost",
@@ -14390,7 +14390,7 @@
    "erp": "DUNLOPILLO DR SLEEP MATT (SS)",
    "ac": "DL-DR SLEEP(SS)",
    "main": true,
-   "cost_centi": 175100
+   "cost_sen": 175100
   },
   {
    "op": "product_cost",
@@ -14405,7 +14405,7 @@
    "erp": "DUNLOPILLO DUN CLASSIC PALACE COMFORT MATT (Q)",
    "ac": "DL-DUN CLS PALACE COMFORT (Q)",
    "main": true,
-   "cost_centi": 203900
+   "cost_sen": 203900
   },
   {
    "op": "product_cost",
@@ -14434,7 +14434,7 @@
    "erp": "DUNLOPILLO GENERASI 5\" MATT (K)",
    "ac": "DL-GENERASI (K)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -14449,7 +14449,7 @@
    "erp": "DUNLOPILLO GENERASI 5\" MATT (S)",
    "ac": "DL-GENERASI (S)",
    "main": true,
-   "cost_centi": 23900
+   "cost_sen": 23900
   },
   {
    "op": "product_cost",
@@ -14463,7 +14463,7 @@
    "erp": "DUNLOPILLO GENERASI 5\" MATT (SS)",
    "ac": "DL-GENERASI (SS)",
    "main": true,
-   "cost_centi": 31500
+   "cost_sen": 31500
   },
   {
    "op": "product_cost",
@@ -14477,7 +14477,7 @@
    "erp": "DUNLOPILLO OTHOREST GENERASI 3.0 MATT (K)",
    "ac": "DL-GENERASI 3.0 20CM (K)",
    "main": true,
-   "cost_centi": 85000
+   "cost_sen": 85000
   },
   {
    "op": "product_cost",
@@ -14491,7 +14491,7 @@
    "erp": "DUNLOPILLO OTHOREST GENERASI 3.0 MATT (Q)",
    "ac": "DL-GENERASI 3.0 20CM (Q)",
    "main": true,
-   "cost_centi": 70000
+   "cost_sen": 70000
   },
   {
    "op": "product_cost",
@@ -14505,7 +14505,7 @@
    "erp": "DUNLOPILLO OTHOREST GENERASI 3.0 MATT (S)",
    "ac": "DL-GENERASI 3.0 20CM (S)",
    "main": true,
-   "cost_centi": 55000
+   "cost_sen": 55000
   },
   {
    "op": "product_cost",
@@ -14519,7 +14519,7 @@
    "erp": "DUNLOPILLO OTHOREST GENERASI 3.0 MATT (SS)",
    "ac": "DL-GENERASI 3.0 20CM (SS)",
    "main": true,
-   "cost_centi": 46500
+   "cost_sen": 46500
   },
   {
    "op": "product_cost",
@@ -14540,7 +14540,7 @@
    "erp": "DUNLOPILLO GENERASI PLUS TENCEL- 3 FOLD MATT MATT (S)",
    "ac": "DL-GN + TCL FD MATT (S)",
    "main": true,
-   "cost_centi": 32800
+   "cost_sen": 32800
   },
   {
    "op": "product_cost",
@@ -14561,7 +14561,7 @@
    "erp": "DUNLOPILLO OTHOREST RELAX BED LITE MATT (S)",
    "ac": "DL-ORT RELAX BED LITE MATT(S)",
    "main": true,
-   "cost_centi": 24400
+   "cost_sen": 24400
   },
   {
    "op": "product_cost",
@@ -14575,7 +14575,7 @@
    "erp": "DUNLOPILLO OTHOREST RELAX BED LITE MATT (SS)",
    "ac": "DL-ORT RELAX BED LITE MATT(SS)",
    "main": true,
-   "cost_centi": 32300
+   "cost_sen": 32300
   },
   {
    "op": "product_cost",
@@ -14603,7 +14603,7 @@
    "erp": "DUNLOPILLO OTHOREST AQUA DREAM MATT (K)",
    "ac": "DL-OTR AQUA DREAM (K)",
    "main": true,
-   "cost_centi": 131900
+   "cost_sen": 131900
   },
   {
    "op": "product_cost",
@@ -14618,7 +14618,7 @@
    "erp": "DUNLOPILLO OTHOREST AQUA DREAM MATT (Q)",
    "ac": "DL-OTR AQUA DREAM (Q)",
    "main": true,
-   "cost_centi": 113900
+   "cost_sen": 113900
   },
   {
    "op": "product_cost",
@@ -14633,7 +14633,7 @@
    "erp": "DUNLOPILLO PERFECT POSTURE MATT (K)",
    "ac": "DL-PERFECT POSTURE (K)",
    "main": true,
-   "cost_centi": 303900
+   "cost_sen": 303900
   },
   {
    "op": "product_cost",
@@ -14648,7 +14648,7 @@
    "erp": "DUNLOPILLO PERFECT POSTURE MATT (Q)",
    "ac": "DL-PERFECT POSTURE (Q)",
    "main": true,
-   "cost_centi": 252400
+   "cost_sen": 252400
   },
   {
    "op": "product_cost",
@@ -14677,7 +14677,7 @@
    "erp": "DUNLOPILLO RELAX SLEEP LUXURTY MATT (K)",
    "ac": "DL-RELAX SLEEP LUXURY (K)",
    "main": true,
-   "cost_centi": 222000
+   "cost_sen": 222000
   },
   {
    "op": "product_cost",
@@ -14692,7 +14692,7 @@
    "erp": "DUNLOPILLO RELAX SLEEP LUXURTY MATT (Q)",
    "ac": "DL-RELAX SLEEP LUXURY (Q)",
    "main": true,
-   "cost_centi": 185000
+   "cost_sen": 185000
   },
   {
    "op": "product_cost",
@@ -14707,7 +14707,7 @@
    "erp": "DUNLOPILLO RELAX SLEEP LUXURT MATT (S)",
    "ac": "DL-RELAX SLEEP LUXURY (S)",
    "main": true,
-   "cost_centi": 135000
+   "cost_sen": 135000
   },
   {
    "op": "product_cost",
@@ -14722,7 +14722,7 @@
    "erp": "DUNLOPILLO RELAX SLEEP LUXURT MATT (SS)",
    "ac": "DL-RELAX SLEEP LUXURY (SS)",
    "main": true,
-   "cost_centi": 145000
+   "cost_sen": 145000
   },
   {
    "op": "product_cost",
@@ -14779,7 +14779,7 @@
    "erp": "DUNLOPILLO ROYAL IMPERIAL MATT (K)",
    "ac": "DL-ROYAL IMPERIAL (K)",
    "main": true,
-   "cost_centi": 513000
+   "cost_sen": 513000
   },
   {
    "op": "product_cost",
@@ -14794,7 +14794,7 @@
    "erp": "DUNLOPILLO ROYAL IMPERIAL MATT (Q)",
    "ac": "DL-ROYAL IMPERIAL (Q)",
    "main": true,
-   "cost_centi": 450600
+   "cost_sen": 450600
   },
   {
    "op": "product_cost",
@@ -14879,7 +14879,7 @@
    "erp": "DUNLOPILLO TENCEL DREAM MATT (K)",
    "ac": "DL-TENCEL DREAM (K)",
    "main": true,
-   "cost_centi": 131900
+   "cost_sen": 131900
   },
   {
    "op": "product_cost",
@@ -14894,7 +14894,7 @@
    "erp": "DUNLOPILLO TENCEL DREAM MATT (Q)",
    "ac": "DL-TENCEL DREAM (Q)",
    "main": true,
-   "cost_centi": 113900
+   "cost_sen": 113900
   },
   {
    "op": "product_cost",
@@ -14909,7 +14909,7 @@
    "erp": "DUNLOPILLO TENCEL DREAM MATT (S)",
    "ac": "DL-TENCEL DREAM (S)",
    "main": true,
-   "cost_centi": 77900
+   "cost_sen": 77900
   },
   {
    "op": "product_cost",
@@ -14931,7 +14931,7 @@
    "erp": "DUNLOPILLO TENCEL DREAM MATT (SS)",
    "ac": "DL-TENCEL DREAM (SS)",
    "main": true,
-   "cost_centi": 95900
+   "cost_sen": 95900
   },
   {
    "op": "product_cost",
@@ -14946,7 +14946,7 @@
    "erp": "DUNLOPILLO ORT TENCEL SENSACTION 2.0 MATT (K)",
    "ac": "DL-TENCEL SENSACTION 2.0 (K)",
    "main": true,
-   "cost_centi": 219900
+   "cost_sen": 219900
   },
   {
    "op": "product_cost",
@@ -14961,7 +14961,7 @@
    "erp": "DUNLOPILLO ORT TENCEL SENSACTION 2.0 MATT (Q)",
    "ac": "DL-TENCEL SENSACTION 2.0 (Q)",
    "main": true,
-   "cost_centi": 179900
+   "cost_sen": 179900
   },
   {
    "op": "product_cost",
@@ -14976,7 +14976,7 @@
    "erp": "DUNLOPILLO OTHOREST BACK SUPPORTER 100 MATT (K)",
    "ac": "DL-BACK SUPPORTER 100 (K)",
    "main": true,
-   "cost_centi": 155900
+   "cost_sen": 155900
   },
   {
    "op": "product_cost",
@@ -14990,7 +14990,7 @@
    "erp": "DUNLOPILLO OTHOREST BACK SUPPORTER 100 MATT (Q)",
    "ac": "DL-BACK SUPPORTER 100 (Q)",
    "main": true,
-   "cost_centi": 131900
+   "cost_sen": 131900
   },
   {
    "op": "product_cost",
@@ -15004,7 +15004,7 @@
    "erp": "DUNLOPILLO OTHOREST BACK SUPPORTER 100 MATT (S)",
    "ac": "DL-BACK SUPPORTER 100 (S)",
    "main": true,
-   "cost_centi": 95900
+   "cost_sen": 95900
   },
   {
    "op": "product_cost",
@@ -15018,7 +15018,7 @@
    "erp": "DUNLOPILLO OTHOREST BACK SUPPORTER 100 MATT (SS)",
    "ac": "DL-BACK SUPPORTER 100 (SS)",
    "main": true,
-   "cost_centi": 113900
+   "cost_sen": 113900
   },
   {
    "op": "product_cost",
@@ -15032,7 +15032,7 @@
    "erp": "DUNLOPILLO OTHOREST AQUA SHIELD SENSATION 2.0 MATT (K)",
    "ac": "DL-AQUA SENSATION 2.0  (K)",
    "main": true,
-   "cost_centi": 219900
+   "cost_sen": 219900
   },
   {
    "op": "product_cost",
@@ -15046,7 +15046,7 @@
    "erp": "ERGOTEX CLOUDREST MATT (K)",
    "ac": "EG-CLOUDREST MATT (K)",
    "main": true,
-   "cost_centi": 156200
+   "cost_sen": 156200
   },
   {
    "op": "product_cost",
@@ -15060,7 +15060,7 @@
    "erp": "ERGOTEX CLOUDREST MATT (Q)",
    "ac": "EG-CLOUDREST MATT (Q)",
    "main": true,
-   "cost_centi": 130300
+   "cost_sen": 130300
   },
   {
    "op": "product_cost",
@@ -15074,7 +15074,7 @@
    "erp": "ERGOTEX CLOUDREST MATT (S)",
    "ac": "EG-CLOUDREST MATT (S)",
    "main": true,
-   "cost_centi": 89900
+   "cost_sen": 89900
   },
   {
    "op": "product_cost",
@@ -15088,7 +15088,7 @@
    "erp": "ERGOTEX CLOUDREST MATT (SK)",
    "ac": "EG-CLOUDREST MATT (SK)",
    "main": true,
-   "cost_centi": 203060
+   "cost_sen": 203060
   },
   {
    "op": "product_cost",
@@ -15109,7 +15109,7 @@
    "erp": "ERGOTEX CLOUDREST MATT (SS)",
    "ac": "EG-CLOUDREST MATT (SS)",
    "main": true,
-   "cost_centi": 101600
+   "cost_sen": 101600
   },
   {
    "op": "product_cost",
@@ -15123,7 +15123,7 @@
    "erp": "ERGOTEX ECOZONE-C MATT (K)",
    "ac": "EG-ECOZONE-C MATT (K)",
    "main": true,
-   "cost_centi": 204400
+   "cost_sen": 204400
   },
   {
    "op": "product_cost",
@@ -15137,7 +15137,7 @@
    "erp": "ERGOTEX ECOZONE-C MATT (Q)",
    "ac": "EG-ECOZONE-C MATT (Q)",
    "main": true,
-   "cost_centi": 170400
+   "cost_sen": 170400
   },
   {
    "op": "product_cost",
@@ -15158,7 +15158,7 @@
    "erp": "ERGOTEX ECOZONE-S MATT (K)",
    "ac": "EG-ECOZONE-S MATT (K)",
    "main": true,
-   "cost_centi": 204400
+   "cost_sen": 204400
   },
   {
    "op": "product_cost",
@@ -15172,7 +15172,7 @@
    "erp": "ERGOTEX ECOZONE-S MATT (Q)",
    "ac": "EG-ECOZONE-S MATT (Q)",
    "main": true,
-   "cost_centi": 170400
+   "cost_sen": 170400
   },
   {
    "op": "product_cost",
@@ -15193,7 +15193,7 @@
    "erp": "ERGOTEX ERGOLITE MATT (K)",
    "ac": "EG-ERGOLITE MATT (K)",
    "main": true,
-   "cost_centi": 95700
+   "cost_sen": 95700
   },
   {
    "op": "product_cost",
@@ -15207,7 +15207,7 @@
    "erp": "ERGOTEX ERGOLITE MATT (Q)",
    "ac": "EG-ERGOLITE MATT (Q)",
    "main": true,
-   "cost_centi": 79900
+   "cost_sen": 79900
   },
   {
    "op": "product_cost",
@@ -15221,7 +15221,7 @@
    "erp": "ERGOTEX ERGOLITE MATT (S)",
    "ac": "EG-ERGOLITE MATT (S)",
    "main": true,
-   "cost_centi": 55100
+   "cost_sen": 55100
   },
   {
    "op": "product_cost",
@@ -15249,7 +15249,7 @@
    "erp": "ERGOTEX ERGOLITE MATT (SS)",
    "ac": "EG-ERGOLITE MATT (SS)",
    "main": true,
-   "cost_centi": 62300
+   "cost_sen": 62300
   },
   {
    "op": "product_cost",
@@ -15263,7 +15263,7 @@
    "erp": "ERGOTEX FLEXICARE-C MATT (K)",
    "ac": "EG-FLEXICARE-C MATT (K)",
    "main": true,
-   "cost_centi": 119500
+   "cost_sen": 119500
   },
   {
    "op": "product_cost",
@@ -15277,7 +15277,7 @@
    "erp": "ERGOTEX FLEXICARE-C MATT (Q)",
    "ac": "EG-FLEXICARE-C MATT (Q)",
    "main": true,
-   "cost_centi": 99800
+   "cost_sen": 99800
   },
   {
    "op": "product_cost",
@@ -15291,7 +15291,7 @@
    "erp": "ERGOTEX FLEXICARE-C MATT (S)",
    "ac": "EG-FLEXICARE-C MATT (S)",
    "main": true,
-   "cost_centi": 58400
+   "cost_sen": 58400
   },
   {
    "op": "product_cost",
@@ -15305,7 +15305,7 @@
    "erp": "ERGOTEX FLEXICARE-C MATT (SK)",
    "ac": "EG-FLEXICARE-C MATT (SK)",
    "main": true,
-   "cost_centi": 155350
+   "cost_sen": 155350
   },
   {
    "op": "product_cost",
@@ -15326,7 +15326,7 @@
    "erp": "ERGOTEX FLEXICARE-C MATT (SS)",
    "ac": "EG-FLEXICARE-C MATT (SS)",
    "main": true,
-   "cost_centi": 66000
+   "cost_sen": 66000
   },
   {
    "op": "product_cost",
@@ -15340,7 +15340,7 @@
    "erp": "ERGOTEX FLEXICARE-S MATT (K)",
    "ac": "EG-FLEXICARE-S MATT (K)",
    "main": true,
-   "cost_centi": 119500
+   "cost_sen": 119500
   },
   {
    "op": "product_cost",
@@ -15354,7 +15354,7 @@
    "erp": "ERGOTEX FLEXICARE-S MATT (Q)",
    "ac": "EG-FLEXICARE-S MATT (Q)",
    "main": true,
-   "cost_centi": 99800
+   "cost_sen": 99800
   },
   {
    "op": "product_cost",
@@ -15368,7 +15368,7 @@
    "erp": "ERGOTEX FLEXICARE-S MATT (S)",
    "ac": "EG-FLEXICARE-S MATT (S)",
    "main": true,
-   "cost_centi": 68800
+   "cost_sen": 68800
   },
   {
    "op": "product_cost",
@@ -15382,7 +15382,7 @@
    "erp": "ERGOTEX FLEXICARE-S MATT (SK)",
    "ac": "EG-FLEXICARE-S MATT (SK)",
    "main": true,
-   "cost_centi": 155350
+   "cost_sen": 155350
   },
   {
    "op": "product_cost",
@@ -15403,7 +15403,7 @@
    "erp": "ERGOTEX FLEXICARE-S MATT (SS)",
    "ac": "EG-FLEXICARE-S MATT (SS)",
    "main": true,
-   "cost_centi": 77800
+   "cost_sen": 77800
   },
   {
    "op": "product_cost",
@@ -15417,7 +15417,7 @@
    "erp": "ERGOTEX FLEXMOTION-C MATT (K)",
    "ac": "EG-FLEXMOTION-C MATT (K)",
    "main": true,
-   "cost_centi": 144700
+   "cost_sen": 144700
   },
   {
    "op": "product_cost",
@@ -15431,7 +15431,7 @@
    "erp": "ERGOTEX FLEXMOTION-C MATT (Q)",
    "ac": "EG-FLEXMOTION-C MATT (Q)",
    "main": true,
-   "cost_centi": 120700
+   "cost_sen": 120700
   },
   {
    "op": "product_cost",
@@ -15445,7 +15445,7 @@
    "erp": "ERGOTEX FLEXMOTION-C MATT (S)",
    "ac": "EG-FLEXMOTION-C MATT (S)",
    "main": true,
-   "cost_centi": 83300
+   "cost_sen": 83300
   },
   {
    "op": "product_cost",
@@ -15466,7 +15466,7 @@
    "erp": "ERGOTEX FLEXMOTION-C MATT (SS)",
    "ac": "EG-FLEXMOTION-C MATT (SS)",
    "main": true,
-   "cost_centi": 91400
+   "cost_sen": 91400
   },
   {
    "op": "product_cost",
@@ -15480,7 +15480,7 @@
    "erp": "ERGOTEX FLEXMOTION-S MATT (K)",
    "ac": "EG-FLEXMOTION-S MATT (K)",
    "main": true,
-   "cost_centi": 144700
+   "cost_sen": 144700
   },
   {
    "op": "product_cost",
@@ -15494,7 +15494,7 @@
    "erp": "ERGOTEX FLEXMOTION-S MATT (Q)",
    "ac": "EG-FLEXMOTION-S MATT (Q)",
    "main": true,
-   "cost_centi": 120700
+   "cost_sen": 120700
   },
   {
    "op": "product_cost",
@@ -15508,7 +15508,7 @@
    "erp": "ERGOTEX FLEXMOTION-S MATT (S)",
    "ac": "EG-FLEXMOTION-S MATT (S)",
    "main": true,
-   "cost_centi": 83300
+   "cost_sen": 83300
   },
   {
    "op": "product_cost",
@@ -15529,7 +15529,7 @@
    "erp": "ERGOTEX FLEXMOTION-S MATT (SS)",
    "ac": "EG-FLEXMOTION-S MATT (SS)",
    "main": true,
-   "cost_centi": 91400
+   "cost_sen": 91400
   },
   {
    "op": "product_cost",
@@ -15543,7 +15543,7 @@
    "erp": "ERGOTEX PUREZONE-C MATT (K)",
    "ac": "EG-PUREZONE-C MATT (K)",
    "main": true,
-   "cost_centi": 217000
+   "cost_sen": 217000
   },
   {
    "op": "product_cost",
@@ -15557,7 +15557,7 @@
    "erp": "ERGOTEX PUREZONE-C MATT (Q)",
    "ac": "EG-PUREZONE-C MATT (Q)",
    "main": true,
-   "cost_centi": 181000
+   "cost_sen": 181000
   },
   {
    "op": "product_cost",
@@ -15585,7 +15585,7 @@
    "erp": "ERGOTEX PUREZONE-S MATT (K)",
    "ac": "EG-PUREZONE-S MATT (K)",
    "main": true,
-   "cost_centi": 217000
+   "cost_sen": 217000
   },
   {
    "op": "product_cost",
@@ -15599,7 +15599,7 @@
    "erp": "ERGOTEX PUREZONE-S MATT (Q)",
    "ac": "EG-PUREZONE-S MATT (Q)",
    "main": true,
-   "cost_centi": 181000
+   "cost_sen": 181000
   },
   {
    "op": "product_cost",
@@ -15627,7 +15627,7 @@
    "erp": "ERGOTEX SPINECARE-C MATT (K)",
    "ac": "EG-SPINECARE-C MATT (K)",
    "main": true,
-   "cost_centi": 132800
+   "cost_sen": 132800
   },
   {
    "op": "product_cost",
@@ -15641,7 +15641,7 @@
    "erp": "ERGOTEX SPINECARE-C MATT (Q)",
    "ac": "EG-SPINECARE-C MATT (Q)",
    "main": true,
-   "cost_centi": 110700
+   "cost_sen": 110700
   },
   {
    "op": "product_cost",
@@ -15655,7 +15655,7 @@
    "erp": "ERGOTEX SPINECARE-C MATT (S)",
    "ac": "EG-SPINECARE-C MATT (S)",
    "main": true,
-   "cost_centi": 76300
+   "cost_sen": 76300
   },
   {
    "op": "product_cost",
@@ -15669,7 +15669,7 @@
    "erp": "ERGOTEX SPINECARE-C MATT (SK)",
    "ac": "EG-SPINECARE-C MATT (SK)",
    "main": true,
-   "cost_centi": 172640
+   "cost_sen": 172640
   },
   {
    "op": "product_cost",
@@ -15690,7 +15690,7 @@
    "erp": "ERGOTEX SPINECARE-C MATT (SS)",
    "ac": "EG-SPINECARE-C MATT (SS)",
    "main": true,
-   "cost_centi": 86300
+   "cost_sen": 86300
   },
   {
    "op": "product_cost",
@@ -15704,7 +15704,7 @@
    "erp": "ERGOTEX SPINECARE-S MATT (K)",
    "ac": "EG-SPINECARE-S MATT (K)",
    "main": true,
-   "cost_centi": 132800
+   "cost_sen": 132800
   },
   {
    "op": "product_cost",
@@ -15718,7 +15718,7 @@
    "erp": "ERGOTEX SPINECARE-S MATT (Q)",
    "ac": "EG-SPINECARE-S MATT (Q)",
    "main": true,
-   "cost_centi": 110700
+   "cost_sen": 110700
   },
   {
    "op": "product_cost",
@@ -15732,7 +15732,7 @@
    "erp": "ERGOTEX SPINECARE-S MATT (S)",
    "ac": "EG-SPINECARE-S MATT (S)",
    "main": true,
-   "cost_centi": 76300
+   "cost_sen": 76300
   },
   {
    "op": "product_cost",
@@ -15746,7 +15746,7 @@
    "erp": "ERGOTEX SPINECARE-S MATT (SK)",
    "ac": "EG-SPINECARE-S MATT (SK)",
    "main": true,
-   "cost_centi": 172640
+   "cost_sen": 172640
   },
   {
    "op": "product_cost",
@@ -15767,7 +15767,7 @@
    "erp": "ERGOTEX SPINECARE-S MATT (SS)",
    "ac": "EG-SPINECARE-S MATT (SS)",
    "main": true,
-   "cost_centi": 86300
+   "cost_sen": 86300
   },
   {
    "op": "product_cost",
@@ -15851,7 +15851,7 @@
    "erp": "AURORA MATT (K)",
    "ac": "MYLATEX AURORA (K)",
    "main": true,
-   "cost_centi": 120000
+   "cost_sen": 120000
   },
   {
    "op": "product_cost",
@@ -15865,7 +15865,7 @@
    "erp": "AURORA MATT (Q)",
    "ac": "MYLATEX AURORA (Q)",
    "main": true,
-   "cost_centi": 100000
+   "cost_sen": 100000
   },
   {
    "op": "product_cost",
@@ -15879,7 +15879,7 @@
    "erp": "AURORA MATT (S)",
    "ac": "MYLATEX AURORA (S)",
    "main": true,
-   "cost_centi": 66000
+   "cost_sen": 66000
   },
   {
    "op": "product_cost",
@@ -15907,7 +15907,7 @@
    "erp": "AURORA MATT (SS)",
    "ac": "MYLATEX AURORA (SS)",
    "main": true,
-   "cost_centi": 77000
+   "cost_sen": 77000
   },
   {
    "op": "product_cost",
@@ -15921,7 +15921,7 @@
    "erp": "BACKSHIRE MATT (K)",
    "ac": "MYLATEX BACKSHIRE (K)",
    "main": true,
-   "cost_centi": 144000
+   "cost_sen": 144000
   },
   {
    "op": "product_cost",
@@ -15935,7 +15935,7 @@
    "erp": "BACKSHIRE MATT (Q)",
    "ac": "MYLATEX BACKSHIRE (Q)",
    "main": true,
-   "cost_centi": 120000
+   "cost_sen": 120000
   },
   {
    "op": "product_cost",
@@ -15949,7 +15949,7 @@
    "erp": "BACKSHIRE MATT (S)",
    "ac": "MYLATEX BACKSHIRE (S)",
    "main": true,
-   "cost_centi": 79200
+   "cost_sen": 79200
   },
   {
    "op": "product_cost",
@@ -15970,7 +15970,7 @@
    "erp": "BACKSHIRE MATT (SS)",
    "ac": "MYLATEX BACKSHIRE (SS)",
    "main": true,
-   "cost_centi": 92400
+   "cost_sen": 92400
   },
   {
    "op": "product_cost",
@@ -15984,7 +15984,7 @@
    "erp": "BACKTON MATT (K)",
    "ac": "MYLATEX BACKTON (K)",
    "main": true,
-   "cost_centi": 192000
+   "cost_sen": 192000
   },
   {
    "op": "product_cost",
@@ -15998,7 +15998,7 @@
    "erp": "BACKTON MATT (Q)",
    "ac": "MYLATEX BACKTON (Q)",
    "main": true,
-   "cost_centi": 160000
+   "cost_sen": 160000
   },
   {
    "op": "product_cost",
@@ -16012,7 +16012,7 @@
    "erp": "BACKTON MATT (S)",
    "ac": "MYLATEX BACKTON (S)",
    "main": true,
-   "cost_centi": 105600
+   "cost_sen": 105600
   },
   {
    "op": "product_cost",
@@ -16026,7 +16026,7 @@
    "erp": "BACKTON MATT (SK)",
    "ac": "MYLATEX BACKTON (SK)",
    "main": true,
-   "cost_centi": 230400
+   "cost_sen": 230400
   },
   {
    "op": "product_cost",
@@ -16040,7 +16040,7 @@
    "erp": "BACKTON MATT (SS)",
    "ac": "MYLATEX BACKTON (SS)",
    "main": true,
-   "cost_centi": 123200
+   "cost_sen": 123200
   },
   {
    "op": "product_cost",
@@ -16054,7 +16054,7 @@
    "erp": "CELESTIA MATT (K)",
    "ac": "MYLATEX CELESTIA (K)",
    "main": true,
-   "cost_centi": 312000
+   "cost_sen": 312000
   },
   {
    "op": "product_cost",
@@ -16068,7 +16068,7 @@
    "erp": "CELESTIA MATT (Q)",
    "ac": "MYLATEX CELESTIA (Q)",
    "main": true,
-   "cost_centi": 260000
+   "cost_sen": 260000
   },
   {
    "op": "product_cost",
@@ -16082,7 +16082,7 @@
    "erp": "CELESTIA MATT (S)",
    "ac": "MYLATEX CELESTIA (S)",
    "main": true,
-   "cost_centi": 171600
+   "cost_sen": 171600
   },
   {
    "op": "product_cost",
@@ -16103,7 +16103,7 @@
    "erp": "CELESTIA MATT (SS)",
    "ac": "MYLATEX CELESTIA (SS)",
    "main": true,
-   "cost_centi": 200200
+   "cost_sen": 200200
   },
   {
    "op": "product_cost",
@@ -16117,7 +16117,7 @@
    "erp": "CRESTLAKE MATT (K)",
    "ac": "MYLATEX CRESTLAKE (K)",
    "main": true,
-   "cost_centi": 156000
+   "cost_sen": 156000
   },
   {
    "op": "product_cost",
@@ -16131,7 +16131,7 @@
    "erp": "CRESTLAKE MATT (Q)",
    "ac": "MYLATEX CRESTLAKE (Q)",
    "main": true,
-   "cost_centi": 130000
+   "cost_sen": 130000
   },
   {
    "op": "product_cost",
@@ -16145,7 +16145,7 @@
    "erp": "CRESTLAKE MATT (S)",
    "ac": "MYLATEX CRESTLAKE (S)",
    "main": true,
-   "cost_centi": 85800
+   "cost_sen": 85800
   },
   {
    "op": "product_cost",
@@ -16166,7 +16166,7 @@
    "erp": "CRESTLAKE MATT (SS)",
    "ac": "MYLATEX CRESTLAKE (SS)",
    "main": true,
-   "cost_centi": 100100
+   "cost_sen": 100100
   },
   {
    "op": "product_cost",
@@ -16180,7 +16180,7 @@
    "erp": "LUMBARIA MATT (K)",
    "ac": "MYLATEX LUMBARIA (K)",
    "main": true,
-   "cost_centi": 96000
+   "cost_sen": 96000
   },
   {
    "op": "product_cost",
@@ -16194,7 +16194,7 @@
    "erp": "LUMBARIA MATT (Q)",
    "ac": "MYLATEX LUMBARIA (Q)",
    "main": true,
-   "cost_centi": 80000
+   "cost_sen": 80000
   },
   {
    "op": "product_cost",
@@ -16208,7 +16208,7 @@
    "erp": "LUMBARIA MATT (S)",
    "ac": "MYLATEX LUMBARIA (S)",
    "main": true,
-   "cost_centi": 52800
+   "cost_sen": 52800
   },
   {
    "op": "product_cost",
@@ -16222,7 +16222,7 @@
    "erp": "LUMBARIA MATT (SK)",
    "ac": "MYLATEX LUMBARIA (SK)",
    "main": true,
-   "cost_centi": 124800
+   "cost_sen": 124800
   },
   {
    "op": "product_cost",
@@ -16236,7 +16236,7 @@
    "erp": "LUMBARIA MATT (SS)",
    "ac": "MYLATEX LUMBARIA (SS)",
    "main": true,
-   "cost_centi": 61600
+   "cost_sen": 61600
   },
   {
    "op": "product_cost",
@@ -16250,7 +16250,7 @@
    "erp": "VELVETON MATT (K)",
    "ac": "MYLATEX VELVETON (K)",
    "main": true,
-   "cost_centi": 228000
+   "cost_sen": 228000
   },
   {
    "op": "product_cost",
@@ -16264,7 +16264,7 @@
    "erp": "VELVETON MATT (Q)",
    "ac": "MYLATEX VELVETON (Q)",
    "main": true,
-   "cost_centi": 190000
+   "cost_sen": 190000
   },
   {
    "op": "product_cost",
@@ -16278,7 +16278,7 @@
    "erp": "VELVETON MATT (S)",
    "ac": "MYLATEX VELVETON (S)",
    "main": true,
-   "cost_centi": 125400
+   "cost_sen": 125400
   },
   {
    "op": "product_cost",
@@ -16299,7 +16299,7 @@
    "erp": "VELVETON MATT (SS)",
    "ac": "MYLATEX VELVETON (SS)",
    "main": true,
-   "cost_centi": 146300
+   "cost_sen": 146300
   },
   {
    "op": "product_cost",
@@ -16347,7 +16347,7 @@
    "sup": "400-A004",
    "erp": "9050-1S",
    "ac": "AMN-SF9050 SOFA",
-   "cost_centi": null,
+   "cost_sen": null,
    "main": true
   },
   {
@@ -16418,7 +16418,7 @@
    "sup": "400-D004",
    "erp": "9028-1S",
    "ac": "DSL-9028 SOFA",
-   "cost_centi": null,
+   "cost_sen": null,
    "main": true
   },
   {
@@ -16426,7 +16426,7 @@
    "sup": "400-D004",
    "erp": "9058-1S",
    "ac": "DSL-9058 SOFA",
-   "cost_centi": null,
+   "cost_sen": null,
    "main": true
   },
   {
@@ -16434,7 +16434,7 @@
    "sup": "400-D004",
    "erp": "LONG PILLOW",
    "ac": "DSL-LONG PILLOW",
-   "cost_centi": null,
+   "cost_sen": null,
    "main": true
   },
   {
@@ -16456,7 +16456,7 @@
    "sup": "400-O002",
    "erp": "9028-1S",
    "ac": "HOK-5530 SOFA",
-   "cost_centi": null,
+   "cost_sen": null,
    "main": true
   },
   {
@@ -16478,7 +16478,7 @@
    "sup": "400-O002",
    "erp": "9058-1S",
    "ac": "HOK-5536 SOFA",
-   "cost_centi": null,
+   "cost_sen": null,
    "main": true
   },
   {
@@ -16486,7 +16486,7 @@
    "sup": "400-O002",
    "erp": "8030-1S",
    "ac": "HOK-5540 SOFA",
-   "cost_centi": null,
+   "cost_sen": null,
    "main": true
   },
   {
@@ -16494,7 +16494,7 @@
    "sup": "400-O002",
    "erp": "LONG PILLOW",
    "ac": "HOK-LONG PILLOW",
-   "cost_centi": null,
+   "cost_sen": null,
    "main": true
   },
   {
@@ -16509,7 +16509,7 @@
    "sup": "400-O002",
    "erp": "STOOL",
    "ac": "HOK-STOOL",
-   "cost_centi": null,
+   "cost_sen": null,
    "main": true
   },
   {
@@ -16783,7 +16783,7 @@
    "sup": "400-T005",
    "erp": "5080-1S",
    "ac": "TD-SF5080 SOFA",
-   "cost_centi": null,
+   "cost_sen": null,
    "main": true
   },
   {

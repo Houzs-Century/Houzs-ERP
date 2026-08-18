@@ -80,8 +80,8 @@ type DraftLine = {
   materialName: string;
   supplierSku?: string;
   qty: number;
-  unitPriceCenti: number;
-  discountCenti?: number;
+  unitPriceSen: number;
+  discountSen?: number;
   deliveryDate?: string;
   /* Mig 0026 — supplier-revised per-line delivery dates (optional). The
      supplier pushes the date back; effective = MAX over non-null of
@@ -115,7 +115,7 @@ const newLine = (): DraftLine => ({
   materialCode: '',
   materialName: '',
   qty: 1,
-  unitPriceCenti: 0,
+  unitPriceSen: 0,
   variants: {},
 });
 
@@ -229,7 +229,7 @@ export const PurchaseOrderNew = () => {
         materialCode:   b.material_code,
         materialName:   b.material_name,
         supplierSku:    b.supplier_sku,
-        unitPriceCenti: b.unit_price_centi,
+        unitPriceSen: b.unit_price_sen,
         category:       categoryForCode(b.material_code) ?? l.category,
       } : l)));
       setPendingItemPick(null);
@@ -255,7 +255,7 @@ export const PurchaseOrderNew = () => {
         materialKind:   b.material_kind,
         materialName:   b.material_name,
         supplierSku:    b.supplier_sku,
-        unitPriceCenti: l.unitPriceCenti || b.unit_price_centi,
+        unitPriceSen: l.unitPriceSen || b.unit_price_sen,
         category:       l.category ?? categoryForCode(b.material_code),
       };
     }));
@@ -351,7 +351,7 @@ export const PurchaseOrderNew = () => {
       materialCode: p.itemCode,
       materialName: p.description ?? p.itemCode,
       qty: p._pickQty ?? (p.remainingQty > 0 ? p.remainingQty : p.qty),
-      unitPriceCenti: 0,
+      unitPriceSen: 0,
       variants: (p.variants ?? {}) as Record<string, unknown>,
       category: categoryForCode(p.itemCode),
       deliveryDate: p.lineDeliveryDate ?? p.deliveryDate ?? undefined,
@@ -465,7 +465,7 @@ export const PurchaseOrderNew = () => {
 
   /* Phase 3 (2026-05-29) — Auto-fill a PO line's unit COST from the SUPPLIER's
      own price table (binding.price_matrix) + that supplier's maintenance
-     surcharges, instead of the flat binding.unit_price_centi. Falls back to
+     surcharges, instead of the flat binding.unit_price_sen. Falls back to
      the flat binding price when there's no binding / matrix / maint, and is a
      no-op (returns the line's current cost) when the operator has manually
      overridden the price (priceTouched). Combos are OUT OF SCOPE this phase —
@@ -475,20 +475,20 @@ export const PurchaseOrderNew = () => {
     const binding = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
       : bindings.find((b) => b.material_code === line.materialCode);
-    if (!binding) return line.unitPriceCenti;
+    if (!binding) return line.unitPriceSen;
     // No maint config loaded yet (or none seeded) → don't crash / zero out;
     // computeMfgPoUnitCost still returns the matrix/flat base with no
     // surcharges, which is the right fallback.
     const category = (line.category?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
-    if (!category) return binding.unit_price_centi;
+    if (!category) return binding.unit_price_sen;
     const v = line.variants;
     const specials = Array.isArray(v.specials) ? (v.specials as string[]) : [];
     const breakdown = computeMfgPoUnitCost(
       {
         category,
         priceMatrix:    (binding.price_matrix ?? null) as PoPriceMatrix,
-        unitPriceCenti: binding.unit_price_centi,
+        unitPriceSen: binding.unit_price_sen,
         fabricTier:     fabricTierForLine(line),
         // Sofa seat SIZE lives on variants.seatHeight; sofa leg height is the
         // same variants.legHeight field (the editor only renders one leg input).
@@ -521,7 +521,7 @@ export const PurchaseOrderNew = () => {
       materialCode:   b.material_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku,
-      unitPriceCenti: b.unit_price_centi,
+      unitPriceSen: b.unit_price_sen,
       category:       categoryForCode(b.material_code),
       // Phase 3 — picking a (new) SKU re-arms supplier-price auto-fill; the
       // auto-pricing effect below then overwrites the flat seed with the
@@ -566,9 +566,9 @@ export const PurchaseOrderNew = () => {
       const next = prev.map((l) => {
         if (l.priceTouched) return l;
         const cost = recomputeLineCost(l);
-        if (cost === l.unitPriceCenti) return l;
+        if (cost === l.unitPriceSen) return l;
         changed = true;
-        return { ...l, unitPriceCenti: cost };
+        return { ...l, unitPriceSen: cost };
       });
       return changed ? next : prev;
     });
@@ -577,9 +577,9 @@ export const PurchaseOrderNew = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bindings, fabrics, maint, lines]);
 
-  const subtotalCenti = useMemo(
+  const subtotalSen = useMemo(
     () => lines.reduce(
-      (s, l) => s + Math.max(0, l.qty * l.unitPriceCenti - (l.discountCenti ?? 0)),
+      (s, l) => s + Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0)),
       0,
     ),
     [lines],
@@ -612,9 +612,9 @@ export const PurchaseOrderNew = () => {
       materialName:   l.materialName || l.materialCode,
       supplierSku:    l.supplierSku,
       qty:            l.qty,
-      unitPriceCenti: l.unitPriceCenti,
+      unitPriceSen: l.unitPriceSen,
       bindingId:      l.bindingId,
-      discountCenti:  l.discountCenti,
+      discountSen:  l.discountSen,
       deliveryDate:   l.deliveryDate || undefined,
       /* Mig 0026 — per-line supplier-revised delivery dates. */
       supplierDeliveryDate2: l.supplierDeliveryDate2 || undefined,
@@ -918,7 +918,7 @@ export const PurchaseOrderNew = () => {
                   >
                     {b.supplier.code} · {b.supplier.name}
                   </button>
-                  {' '}({fmtRm(b.unit_price_centi, b.currency)})
+                  {' '}({fmtRm(b.unit_price_sen, b.currency)})
                 </span>
               ))}
             </div>
@@ -949,7 +949,7 @@ export const PurchaseOrderNew = () => {
               sections: identity (item + supplier code), description,
               variants (per category), pricing. */}
           {lines.map((l, idx) => {
-            const lineTotalCenti = Math.max(0, l.qty * l.unitPriceCenti - (l.discountCenti ?? 0));
+            const lineTotalSen = Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0));
             const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
             // PR #135 — drop mattress from the variant editor list.
             // Commander 2026-05-26: "mattress variant 还有 branding 为什么要带
@@ -999,7 +999,7 @@ export const PurchaseOrderNew = () => {
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                    <span className={styles.previewPrice}>{fmtRm(lineTotalCenti, currency)}</span>
+                    <span className={styles.previewPrice}>{fmtRm(lineTotalSen, currency)}</span>
                     <button
                       type="button"
                       onClick={() => dropLine(l.rid)}
@@ -1058,7 +1058,7 @@ export const PurchaseOrderNew = () => {
                       {supplierId && bindings.length > 0
                         ? sortByText(bindings).map((b) => (
                             <option key={b.id} value={b.material_code}>
-                              {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_centi, b.currency)}
+                              {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                             </option>
                           ))
                         : sortByText(allSkus.data ?? []).map((p) => (
@@ -1103,7 +1103,7 @@ export const PurchaseOrderNew = () => {
                     <datalist id={`supplier-skus-${l.rid}`}>
                       {supplierId && sortByText(bindings).map((b) => (
                         <option key={b.id} value={b.supplier_sku || ''}>
-                          {b.material_code} · {b.material_name} · {fmtRm(b.unit_price_centi, b.currency)}
+                          {b.material_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
                         </option>
                       ))}
                     </datalist>
@@ -1295,8 +1295,8 @@ export const PurchaseOrderNew = () => {
                         overwriting this line. */}
                     <MoneyInput
                       bare
-                      valueSen={l.unitPriceCenti}
-                      onCommit={(sen) => setLine(l.rid, { unitPriceCenti: sen ?? 0, priceTouched: true })}
+                      valueSen={l.unitPriceSen}
+                      onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0, priceTouched: true })}
                       inputClassName={styles.fieldInput}
                       selectOnFocus
                     />
@@ -1305,8 +1305,8 @@ export const PurchaseOrderNew = () => {
                     <span className={styles.fieldLabel}>Discount ({currency})</span>
                     <MoneyInput
                       bare
-                      valueSen={l.discountCenti ?? 0}
-                      onCommit={(sen) => setLine(l.rid, { discountCenti: sen ?? 0 })}
+                      valueSen={l.discountSen ?? 0}
+                      onCommit={(sen) => setLine(l.rid, { discountSen: sen ?? 0 })}
                       inputClassName={styles.fieldInput}
                       selectOnFocus
                     />
@@ -1369,7 +1369,7 @@ export const PurchaseOrderNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
               <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
             <div style={{
               display: 'flex',
@@ -1380,7 +1380,7 @@ export const PurchaseOrderNew = () => {
               paddingTop: 'var(--space-2)',
             }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
           </div>
         </section>

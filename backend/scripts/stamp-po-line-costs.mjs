@@ -7,7 +7,7 @@
 // paperwork, not a data fault: in live AutoCount HOOKKA is 2,264/2,264 PO lines
 // unpriced, OHANA 100%, DORSETTLOFT 100%, while GRDTL is 17,377/19,013 priced
 // (91.4%). The cutover copied that faithfully -- 565 of the 579 SO-linked PO
-// lines carry unit_price_centi = 0.
+// lines carry unit_price_sen = 0.
 //
 // WHY IT MATTERS. Nothing downstream puts a cost back. On the next receipt the
 // zero rides purchase_order_items -> grn_items -> the FIFO trigger's IN branch
@@ -65,13 +65,13 @@
 //
 // SAFETY -- only touches lines that are all of:
 //   . on a PO imported from AutoCount (purchase_orders.linked_ac_docno set),
-//   . still unpriced (unit_price_centi = 0), so a hand-entered price is never
+//   . still unpriced (unit_price_sen = 0), so a hand-entered price is never
 //     overwritten, and
 //   . still open (received_qty < qty), so no settled receipt is re-costed.
 // A line two AutoCount lines want at DIFFERENT prices is refused, not resolved.
-// Idempotent: the unit_price_centi = 0 predicate means a second run finds
+// Idempotent: the unit_price_sen = 0 predicate means a second run finds
 // nothing left to do.
-// RE-RUN: inert. Every UPDATE re-asserts COALESCE(unit_price_centi, 0) = 0, so
+// RE-RUN: inert. Every UPDATE re-asserts COALESCE(unit_price_sen, 0) = 0, so
 // a second run plans the same lines and writes none of them, and a price a
 // person entered in between is never clobbered.
 //
@@ -137,13 +137,13 @@ async function main() {
      mapping CSV. */
   const rows = await sql`
     SELECT i.id, i.material_code, i.supplier_sku, i.description2, i.qty, i.received_qty,
-           i.unit_price_centi, i.linked_ac_dtlkey,
+           i.unit_price_sen, i.linked_ac_dtlkey,
            h.linked_ac_docno AS ac_doc, h.po_number
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
      WHERE i.company_id = ${CO}
        AND h.linked_ac_docno IS NOT NULL
-       AND COALESCE(i.unit_price_centi, 0) = 0
+       AND COALESCE(i.unit_price_sen, 0) = 0
        AND COALESCE(i.received_qty, 0) < i.qty`;
   log(`ERP imported PO lines still unpriced and still open: ${rows.length}`);
 
@@ -194,9 +194,9 @@ async function main() {
        between the read and here is never clobbered, and a re-run is a no-op. */
     const res = await sql`
       UPDATE scm.purchase_order_items
-         SET unit_price_centi = ${p.centi},
-             line_total_centi = ${p.centi} * qty
-       WHERE id = ${p.id} AND COALESCE(unit_price_centi, 0) = 0`;
+         SET unit_price_sen = ${p.centi},
+             line_total_sen = ${p.centi} * qty
+       WHERE id = ${p.id} AND COALESCE(unit_price_sen, 0) = 0`;
     if (res.count > 0) done += res.count; else skippedWrite++;
   }
   /* plan holds one entry per ERP id, so `done` short of plan.length is never a
@@ -215,16 +215,16 @@ async function main() {
     log("VERIFY (fresh connection) - reading the priced rows back:");
     const ids = plan.slice(0, 300).map((p) => p.id);
     if (!ids.length) { log("  nothing planned, nothing to read back."); return; }
-    const rows = await check`SELECT id::text AS id, unit_price_centi, line_total_centi, qty
+    const rows = await check`SELECT id::text AS id, unit_price_sen, line_total_sen, qty
                                FROM scm.purchase_order_items WHERE id = ANY(${ids})`;
     const by = new Map(rows.map((r) => [r.id, r]));
     let ok = 0, wrong = 0, stillZero = 0;
     for (const p of plan.slice(0, 300)) {
       const r = by.get(String(p.id));
       if (!r) continue;
-      const price = Number(r.unit_price_centi ?? 0);
+      const price = Number(r.unit_price_sen ?? 0);
       if (price === 0) { stillZero++; continue; }
-      const total = Number(r.line_total_centi ?? 0);
+      const total = Number(r.line_total_sen ?? 0);
       if (price === p.centi && total === p.centi * Number(r.qty ?? 0)) ok++;
       else { wrong++; log(`  MISMATCH ${p.id}: unit ${price} (wanted ${p.centi}), line total ${total} (wanted ${p.centi * Number(r.qty ?? 0)})`); }
     }

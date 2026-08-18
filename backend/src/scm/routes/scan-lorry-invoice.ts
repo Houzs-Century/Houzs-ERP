@@ -223,14 +223,14 @@ export function normalizeDoc(raw: unknown): ExtractedRepairDoc {
   };
 }
 
-const rmToCenti = (rm: number | null): number | null => (rm == null ? null : Math.round(rm * 100));
+const rmToSen = (rm: number | null): number | null => (rm == null ? null : Math.round(rm * 100));
 
 /** What one line costs, from what was extracted. Same precedence the stored
- *  record uses (services/fleet-status.ts workOrderLineCenti): a printed amount
+ *  record uses (services/fleet-status.ts workOrderLineSen): a printed amount
  *  wins, else qty x unit x (1 - disc). Duplicated rather than imported because
  *  that module is DB-row shaped and this one is document shaped; the two are
  *  kept honest by the reconciliation below, which fails loudly on a drift. */
-export function lineCenti(l: ExtractedRepairLine): number {
+export function lineSen(l: ExtractedRepairLine): number {
   if (l.amountRm != null) return Math.max(0, Math.round(l.amountRm * 100));
   const gross = (l.qty ?? 0) * (l.unitPriceRm ?? 0) * 100;
   const pct = l.discountPct ?? 0;
@@ -247,12 +247,12 @@ export function lineCenti(l: ExtractedRepairLine): number {
  *
  *  One sen of slack per line absorbs the vendor's own rounding without letting
  *  a missing line through. */
-export function reconcile(doc: ExtractedRepairDoc): { linesCenti: number; printedCenti: number | null; matches: boolean | null; deltaCenti: number | null } {
-  const linesCenti = doc.lines.reduce((s, l) => s + lineCenti(l), 0);
-  const printedCenti = rmToCenti(doc.grandTotalRm);
-  if (printedCenti == null) return { linesCenti, printedCenti: null, matches: null, deltaCenti: null };
-  const delta = linesCenti - printedCenti;
-  return { linesCenti, printedCenti, matches: Math.abs(delta) <= Math.max(1, doc.lines.length), deltaCenti: delta };
+export function reconcile(doc: ExtractedRepairDoc): { linesSen: number; printedSen: number | null; matches: boolean | null; deltaSen: number | null } {
+  const linesSen = doc.lines.reduce((s, l) => s + lineSen(l), 0);
+  const printedSen = rmToSen(doc.grandTotalRm);
+  if (printedSen == null) return { linesSen, printedSen: null, matches: null, deltaSen: null };
+  const delta = linesSen - printedSen;
+  return { linesSen, printedSen, matches: Math.abs(delta) <= Math.max(1, doc.lines.length), deltaSen: delta };
 }
 
 // ── POST /extract ────────────────────────────────────────────────────────────
@@ -356,12 +356,12 @@ scanLorryInvoice.post('/extract', async (c) => {
     /* Everything below is DERIVED for the review screen. The record is not
        written here — the operator confirms first. */
     totals: {
-      linesCenti: check.linesCenti,
-      printedTotalCenti: check.printedCenti,
+      linesSen: check.linesSen,
+      printedTotalSen: check.printedSen,
       /* null = the document printed no total, so there was nothing to check
          against. That is not the same as "checked and agreed". */
       reconciles: check.matches,
-      deltaCenti: check.deltaCenti,
+      deltaSen: check.deltaSen,
     },
     lines: parsed.lines.map((l) => ({
       section: l.section,
@@ -370,10 +370,10 @@ scanLorryInvoice.post('/extract', async (c) => {
       partNo: l.partNo,
       uom: l.uom,
       qty: l.qty,
-      unitPriceCenti: rmToCenti(l.unitPriceRm),
+      unitPriceSen: rmToSen(l.unitPriceRm),
       discountPct: l.discountPct,
-      amountCenti: rmToCenti(l.amountRm),
-      lineCenti: lineCenti(l),
+      amountSen: rmToSen(l.amountRm),
+      lineSen: lineSen(l),
     })),
   });
 });

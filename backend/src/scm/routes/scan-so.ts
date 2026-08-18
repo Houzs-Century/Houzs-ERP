@@ -3312,15 +3312,15 @@ async function findDuplicateSo(
       const slipDate = /^\d{4}-\d{2}-\d{2}$/.test((parsed.slipDate ?? '').trim())
         ? (parsed.slipDate as string).trim()
         : null;
-      const totalCenti = typeof parsed.totalRm === 'number' && parsed.totalRm > 0
+      const totalSen = typeof parsed.totalRm === 'number' && parsed.totalRm > 0
         ? Math.round(parsed.totalRm * 100)
         : null;
       // Nothing comparable beyond the phone alone → phone-only would be far
       // too noisy (repeat customers are normal); skip.
-      if (ref || (slipDate && totalCenti != null)) {
+      if (ref || (slipDate && totalSen != null)) {
         let dupQ = svc
           .from('mfg_sales_orders')
-          .select('doc_no, customer_so_no, so_date, total_revenue_centi')
+          .select('doc_no, customer_so_no, so_date, total_revenue_sen')
           .eq('phone', storedPhone)
           .neq('status', 'CANCELLED');
         // Multi-company: never link a scan to the OTHER company's SO by phone.
@@ -3334,8 +3334,8 @@ async function findDuplicateSo(
           const candRef = String(r.customerSoNo ?? r.customer_so_no ?? '').trim().toUpperCase();
           if (ref && candRef && candRef === ref) return { docNo: doc, rule: 'content' };
           const candDate = String(r.soDate ?? r.so_date ?? '').slice(0, 10);
-          const candTotal = Number(r.totalRevenueCenti ?? r.total_revenue_centi ?? NaN);
-          if (slipDate && totalCenti != null && candDate === slipDate && candTotal === totalCenti) {
+          const candTotal = Number(r.totalRevenueSen ?? r.total_revenue_sen ?? NaN);
+          if (slipDate && totalSen != null && candDate === slipDate && candTotal === totalSen) {
             return { docNo: doc, rule: 'content' };
           }
         }
@@ -3484,20 +3484,20 @@ async function recordScanReceiptPayments(
     }
   }
   // Fingerprint set — one batched query over every approval code the planned
-  // rows carry, keyed "approvalCode|amountCenti".
+  // rows carry, keyed "approvalCode|amountSen".
   const bookedFingerprints = new Set<string>();
   const approvalCodes = [...new Set(planned.map((p) => p.approvalCode).filter((a): a is string => !!a))];
   if (approvalCodes.length > 0) {
     try {
       const { data: fpRows, error: fpErr } = await svc
         .from('mfg_sales_order_payments')
-        .select('approval_code, amount_centi')
+        .select('approval_code, amount_sen')
         .in('approval_code', approvalCodes);
       if (fpErr) console.warn('[scan-job] payment fingerprint check failed:', fpErr.message);
       else {
         for (const r of ((fpRows as Array<Record<string, unknown>> | null) ?? [])) {
           const code = (r.approvalCode ?? r.approval_code) as string | undefined;
-          const amt = Number(r.amountCenti ?? r.amount_centi ?? NaN);
+          const amt = Number(r.amountSen ?? r.amount_sen ?? NaN);
           if (typeof code === 'string' && code !== '' && Number.isFinite(amt)) {
             bookedFingerprints.add(`${code}|${amt}`);
           }
@@ -3515,7 +3515,7 @@ async function recordScanReceiptPayments(
     // A receipt that already backs a payment row books NOTHING — the caller
     // appends the plain "matching payment already recorded" note instead.
     const keyDup = row.slipKey != null && alreadyBookedKeys.has(row.slipKey);
-    const fpDup = row.approvalCode != null && bookedFingerprints.has(`${row.approvalCode}|${row.amountCenti}`);
+    const fpDup = row.approvalCode != null && bookedFingerprints.has(`${row.approvalCode}|${row.amountSen}`);
     if (keyDup || fpDup) {
       skippedDuplicate += 1;
       console.warn('[scan-job] receipt already booked — skipped:', args.docNo, row.slipKey ?? `img#${row.imageIndex}`);
@@ -3532,14 +3532,14 @@ async function recordScanReceiptPayments(
         installmentMonths: row.installmentMonths,
         onlineType: row.onlineType,
         approvalCode: row.approvalCode,
-        amountCenti: row.amountCenti,
+        amountSen: row.amountSen,
         slipKey: row.slipKey,
         collectedBy: args.salespersonId,
         note: noteParts.join('; '),
         createdBy: args.salespersonId,
         actorName: args.salespersonName,
         // The first receipt row IS the header deposit — is_deposit stops the
-        // list/detail paid-rollup adding the header deposit_centi on top of
+        // list/detail paid-rollup adding the header deposit_sen on top of
         // this ledger row (double count).
         isDeposit: row.isDeposit,
         auditSource: 'automation',
@@ -3588,7 +3588,7 @@ function buildEmptyShellBody(
     debtorName: SHELL_NAME,
     phone: SHELL_PHONE,
     note: null,
-    depositCenti: 0,
+    depositSen: 0,
     slipImageKey: keys.imageKey,
     receiptImageKey: keys.receiptImageKey,
     asDraft: true,
@@ -3810,7 +3810,7 @@ function buildDraftSoBodyFromSlip(
       itemGroup: cat,
       description: name,
       qty: l.qtyGuess > 0 ? l.qtyGuess : 1,
-      unitPriceCenti: Math.round(Math.max(0, l.priceRmGuess ?? 0) * 100),
+      unitPriceSen: Math.round(Math.max(0, l.priceRmGuess ?? 0) * 100),
       lineDeliveryDate: null,
       ...(Object.keys(variants).length > 0 ? { variants } : {}),
     });
@@ -3893,7 +3893,7 @@ function buildDraftSoBodyFromSlip(
     // and recordSoPaymentRow nulls it otherwise). One rule, both writers.
     installmentMonths: paymentMethod === 'Merchant' ? planMonths : null,
     approvalCode: (parsed.approvalCode ?? '').trim() || null,
-    depositCenti: parsed.depositRm && parsed.depositRm > 0 ? Math.round(parsed.depositRm * 100) : 0,
+    depositSen: parsed.depositRm && parsed.depositRm > 0 ? Math.round(parsed.depositRm * 100) : 0,
     // Provenance — the SO detail page serves these back as Order Slip /
     // Payment Receipt proof (same keys the interactive flow carries).
     slipImageKey: keys.imageKey,
@@ -4090,7 +4090,7 @@ async function runScanJob(
         itemGroup: 'others',
         description: it.description,
         qty: it.qty,
-        unitPriceCenti: it.unitPriceCenti,
+        unitPriceSen: it.unitPriceSen,
         lineDeliveryDate: null,
       }));
       outcome = await replay(body);

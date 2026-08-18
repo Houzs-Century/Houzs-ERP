@@ -68,20 +68,20 @@ import { canViewScmFinance } from '../lib/houzs-perms';
    rather than by re-declaring the shared vocabulary. Checked against
    scm/lib/finance-keys.ts on 2026-08-15: SEVEN of these eight columns appear
    in NO canonical list — unit_cost_sen, total_cost_sen, value_sen, cost_sen,
-   avg_cost_sen, margin_sen, main_supplier_price_centi. They are STOCK
+   avg_cost_sen, margin_sen, main_supplier_price_sen. They are STOCK
    VALUATION columns and `_sen`-denominated, while the document vocabulary
-   (SO_FINANCE_KEYS / SO_ITEM_FINANCE_KEYS) is `_centi`. Different table,
+   (SO_FINANCE_KEYS / SO_ITEM_FINANCE_KEYS) is `_sen`. Different table,
    different denomination — folding them into the shared list would make it
    wrong for the documents that list exists for.
 
-   The ONE overlap is `unit_cost_centi`, which IS in SO_ITEM_FINANCE_KEYS.
+   The ONE overlap is `unit_cost_sen`, which IS in SO_ITEM_FINANCE_KEYS.
    Kept here deliberately: this route emits it on inventory rows too, and a
    subset that silently omitted it would leak a cost the SO path strips.
    If this list ever loses its `_sen` columns, delete it and import instead. */
 const INVENTORY_FINANCE_KEYS = [
   'unit_cost_sen', 'total_cost_sen', 'value_sen', 'cost_sen', 'avg_cost_sen',
   // eslint-disable-next-line no-restricted-syntax -- per-document subset; see the note above the declaration
-  'main_supplier_price_centi', 'margin_sen', 'unit_cost_centi',
+  'main_supplier_price_sen', 'margin_sen', 'unit_cost_sen',
 ] as const;
 
 /** Drop the finance columns from a row set. Caller decides WHETHER. */

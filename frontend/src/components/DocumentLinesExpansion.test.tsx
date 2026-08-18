@@ -29,7 +29,7 @@ const line = (over: Partial<DocumentDrillLine> = {}): DocumentDrillLine => ({
   description2: null,
   variants: null,
   qty: 1,
-  amountCenti: 100000,
+  amountSen: 100000,
   ...over,
 });
 

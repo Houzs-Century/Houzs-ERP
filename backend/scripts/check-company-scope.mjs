@@ -841,7 +841,7 @@ const LIB_WRITE = /\.(update|delete|upsert)\s*\(/;
 
    1. `id` / `*_id` — a uuid primary key is globally unique, so addressing by one
       cannot cross a company boundary.
-   2. CONCURRENCY GUARDS — `.eq('paid_centi', prev)`, `.eq('updated_at', prev)`.
+   2. CONCURRENCY GUARDS — `.eq('paid_sen', prev)`, `.eq('updated_at', prev)`.
       These are compare-and-swap predicates, not identity: they narrow a row the
       caller already chose. Flagging them buried the real signal under money
       columns.
@@ -862,7 +862,7 @@ const LIB_WRITE = /\.(update|delete|upsert)\s*\(/;
     keysOf(".eq('code', args.code)").length === 1 &&
     keysOf(".eq('id', x)").length === 0 &&
     keysOf(".eq('so_item_id', x)").length === 0 &&
-    keysOf(".eq('paid_centi', prev)").length === 0 &&   // concurrency guard, not identity
+    keysOf(".eq('paid_sen', prev)").length === 0 &&   // concurrency guard, not identity
     keysOf(".eq('status', 'USED')").length === 0 &&     // state filter, not identity
     keysOf(".eq('version', prev)").length === 0 &&      // concurrency guard, not identity
     keysOf(".eq('edit_lease_token', tok)").length === 0 &&

@@ -60,7 +60,7 @@ export type ReturnablePcReceiveLine = {
   accepted: number;
   returned: number;
   remaining: number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   variants: unknown;
 };
 

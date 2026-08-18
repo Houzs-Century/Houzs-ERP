@@ -31,7 +31,7 @@ const productionSoListColumns = (source) => {
      until 2026-08-18; note that removing it from the route WITHOUT removing it
      here left this test GREEN while describing the wrong world, which is why
      it is spelled out rather than derived. */
-  return `${stringExpressionValue(initializer).replace(/,\s*customer_po_image_b64/, "")}, paid_total_centi, balance_centi_live`
+  return `${stringExpressionValue(initializer).replace(/,\s*customer_po_image_b64/, "")}, paid_total_sen, balance_sen_live`
     .split(", ")
     .map((column) => column.trim());
 };

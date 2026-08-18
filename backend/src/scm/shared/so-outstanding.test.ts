@@ -1,29 +1,29 @@
 import { describe, expect, test } from 'vitest';
-import { soPaidCenti, soOutstandingCenti, soPaidInputsOf } from './so-outstanding';
+import { soPaidSen, soOutstandingSen, soPaidInputsOf } from './so-outstanding';
 
 /* WHICH COLUMN is the load-bearing half of this module, not the arithmetic.
-   `balance_centi` is the one that looks like the answer — the cutover's own
+   `balance_sen` is the one that looks like the answer — the cutover's own
    UDF_BALANCE landed in it and `recomputeTotals` then overwrote it with the
    gross total — so a reader that picked it would be wrong in a way no unit test
    of the arithmetic could catch. */
 describe('the columns the rule reads off a mfg_sales_orders row', () => {
-  test('the total comes from total_revenue_centi, and balance_centi is ignored', () => {
+  test('the total comes from total_revenue_sen, and balance_sen is ignored', () => {
     const inputs = soPaidInputsOf(
-      { total_revenue_centi: 500_00, balance_centi: 999_00, deposit_centi: 100_00 },
+      { total_revenue_sen: 500_00, balance_sen: 999_00, deposit_sen: 100_00 },
       0, false,
     );
-    expect(inputs.totalRevenueCenti).toBe(500_00);
-    expect(inputs.headerDepositCenti).toBe(100_00);
-    expect(soOutstandingCenti(inputs)).toBe(400_00);
+    expect(inputs.totalRevenueSen).toBe(500_00);
+    expect(inputs.headerDepositSen).toBe(100_00);
+    expect(soOutstandingSen(inputs)).toBe(400_00);
   });
 
   test('an absent or non-numeric column reads as 0 rather than NaN', () => {
     expect(soPaidInputsOf({}, 0, false)).toEqual({
-      totalRevenueCenti: 0, headerDepositCenti: 0, ledgerPaidCenti: 0, depositInLedger: false,
+      totalRevenueSen: 0, headerDepositSen: 0, ledgerPaidSen: 0, depositInLedger: false,
     });
-    expect(soPaidInputsOf({ total_revenue_centi: null, deposit_centi: '5' }, 0, false).totalRevenueCenti)
+    expect(soPaidInputsOf({ total_revenue_sen: null, deposit_sen: '5' }, 0, false).totalRevenueSen)
       .toBe(0);
-    expect(soPaidInputsOf(null, 0, false).headerDepositCenti).toBe(0);
+    expect(soPaidInputsOf(null, 0, false).headerDepositSen).toBe(0);
   });
 });
 
@@ -33,19 +33,19 @@ describe('the columns the rule reads off a mfg_sales_orders row', () => {
    expressions. */
 describe('what a sales order still owes', () => {
   const base = {
-    totalRevenueCenti: 500_00,
-    headerDepositCenti: 0,
-    ledgerPaidCenti: 0,
+    totalRevenueSen: 500_00,
+    headerDepositSen: 0,
+    ledgerPaidSen: 0,
     depositInLedger: false,
   };
 
   test('nothing paid means the whole total is outstanding', () => {
-    expect(soOutstandingCenti(base)).toBe(500_00);
-    expect(soPaidCenti(base)).toBe(0);
+    expect(soOutstandingSen(base)).toBe(500_00);
+    expect(soPaidSen(base)).toBe(0);
   });
 
   test('the payments ledger is the paid amount', () => {
-    expect(soOutstandingCenti({ ...base, ledgerPaidCenti: 200_00 })).toBe(300_00);
+    expect(soOutstandingSen({ ...base, ledgerPaidSen: 200_00 })).toBe(300_00);
   });
 
   /* The one case that needs a rule rather than a sum. Since the SO create path
@@ -53,13 +53,13 @@ describe('what a sales order still owes', () => {
      top would double count every modern order; leaving it out would under-count
      the legacy ones that never reached the ledger. */
   test('a legacy header deposit counts — the ledger has no is_deposit row for it', () => {
-    expect(soPaidCenti({ ...base, headerDepositCenti: 150_00, ledgerPaidCenti: 50_00 }))
+    expect(soPaidSen({ ...base, headerDepositSen: 150_00, ledgerPaidSen: 50_00 }))
       .toBe(200_00);
   });
 
   test('the same deposit does NOT count twice once it is in the ledger', () => {
-    expect(soPaidCenti({
-      ...base, headerDepositCenti: 150_00, ledgerPaidCenti: 150_00, depositInLedger: true,
+    expect(soPaidSen({
+      ...base, headerDepositSen: 150_00, ledgerPaidSen: 150_00, depositInLedger: true,
     })).toBe(150_00);
   });
 
@@ -69,10 +69,10 @@ describe('what a sales order still owes', () => {
      licensed ledger — note that AutoCount's own UDF_BALANCE DOES hold negatives
      on 47 of the extract's 13,015 headers, and the ERP has no way to say that. */
   test('an overpaid order is 0, never negative', () => {
-    expect(soOutstandingCenti({ ...base, ledgerPaidCenti: 900_00 })).toBe(0);
+    expect(soOutstandingSen({ ...base, ledgerPaidSen: 900_00 })).toBe(0);
   });
 
   test('a zero-total order owes nothing', () => {
-    expect(soOutstandingCenti({ ...base, totalRevenueCenti: 0 })).toBe(0);
+    expect(soOutstandingSen({ ...base, totalRevenueSen: 0 })).toBe(0);
   });
 });

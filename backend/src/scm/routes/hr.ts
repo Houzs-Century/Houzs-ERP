@@ -91,8 +91,8 @@ import {
   computeChainCommission,
   computeShowroomCommission,
   kpiFlagFiresOnUnit,
-  unitKpiCenti,
-  unitKpiExcludedCenti,
+  unitKpiSen,
+  unitKpiExcludedSen,
   type CommissionConfig,
   type CommissionRow,
   type OverrideLevel,
@@ -142,13 +142,13 @@ const issues = (e: z.ZodError) => e.issues.map((i) => ({ path: i.path, message: 
 
 // ── config ───────────────────────────────────────────────────────────────
 const CONFIG_SELECT =
-  'base_bps, personal_kpi_threshold_centi, personal_kpi_bonus_bps, showroom_kpi_threshold_centi, showroom_kpi_bonus_bps, override_base_bps, override_kpi_bonus_bps, override_mode, updated_at';
+  'base_bps, personal_kpi_threshold_sen, personal_kpi_bonus_bps, showroom_kpi_threshold_sen, showroom_kpi_bonus_bps, override_base_bps, override_kpi_bonus_bps, override_mode, updated_at';
 
 type ConfigRow = {
   base_bps: number;
-  personal_kpi_threshold_centi: number;
+  personal_kpi_threshold_sen: number;
   personal_kpi_bonus_bps: number;
-  showroom_kpi_threshold_centi: number;
+  showroom_kpi_threshold_sen: number;
   showroom_kpi_bonus_bps: number;
   override_base_bps: number;
   override_kpi_bonus_bps: number;
@@ -167,9 +167,9 @@ const isOverrideMode = (v: unknown): v is OverrideMode => v === 'showroom' || v 
 
 const toConfigApi = (r: ConfigRow) => ({
   baseBps: r.base_bps,
-  personalKpiThresholdCenti: r.personal_kpi_threshold_centi,
+  personalKpiThresholdSen: r.personal_kpi_threshold_sen,
   personalKpiBonusBps: r.personal_kpi_bonus_bps,
-  showroomKpiThresholdCenti: r.showroom_kpi_threshold_centi,
+  showroomKpiThresholdSen: r.showroom_kpi_threshold_sen,
   showroomKpiBonusBps: r.showroom_kpi_bonus_bps,
   overrideBaseBps: r.override_base_bps,
   overrideKpiBonusBps: r.override_kpi_bonus_bps,
@@ -179,9 +179,9 @@ const toConfigApi = (r: ConfigRow) => ({
 
 const toConfig = (r: ConfigRow): CommissionConfig => ({
   baseBps: r.base_bps,
-  personalKpiThresholdCenti: r.personal_kpi_threshold_centi,
+  personalKpiThresholdSen: r.personal_kpi_threshold_sen,
   personalKpiBonusBps: r.personal_kpi_bonus_bps,
-  showroomKpiThresholdCenti: r.showroom_kpi_threshold_centi,
+  showroomKpiThresholdSen: r.showroom_kpi_threshold_sen,
   showroomKpiBonusBps: r.showroom_kpi_bonus_bps,
   overrideBaseBps: r.override_base_bps,
   overrideKpiBonusBps: r.override_kpi_bonus_bps,
@@ -226,9 +226,9 @@ hr.get('/config', async (c) => {
 
 const configPatchSchema = z.object({
   baseBps: z.number().int().nonnegative().optional(),
-  personalKpiThresholdCenti: z.number().int().nonnegative().optional(),
+  personalKpiThresholdSen: z.number().int().nonnegative().optional(),
   personalKpiBonusBps: z.number().int().nonnegative().optional(),
-  showroomKpiThresholdCenti: z.number().int().nonnegative().optional(),
+  showroomKpiThresholdSen: z.number().int().nonnegative().optional(),
   showroomKpiBonusBps: z.number().int().nonnegative().optional(),
   overrideBaseBps: z.number().int().nonnegative().optional(),
   overrideKpiBonusBps: z.number().int().nonnegative().optional(),
@@ -257,9 +257,9 @@ hr.patch('/config', async (c) => {
   };
   const d = parsed.data;
   if (d.baseBps !== undefined) patch.base_bps = d.baseBps;
-  if (d.personalKpiThresholdCenti !== undefined) patch.personal_kpi_threshold_centi = d.personalKpiThresholdCenti;
+  if (d.personalKpiThresholdSen !== undefined) patch.personal_kpi_threshold_sen = d.personalKpiThresholdSen;
   if (d.personalKpiBonusBps !== undefined) patch.personal_kpi_bonus_bps = d.personalKpiBonusBps;
-  if (d.showroomKpiThresholdCenti !== undefined) patch.showroom_kpi_threshold_centi = d.showroomKpiThresholdCenti;
+  if (d.showroomKpiThresholdSen !== undefined) patch.showroom_kpi_threshold_sen = d.showroomKpiThresholdSen;
   if (d.showroomKpiBonusBps !== undefined) patch.showroom_kpi_bonus_bps = d.showroomKpiBonusBps;
   if (d.overrideBaseBps !== undefined) patch.override_base_bps = d.overrideBaseBps;
   if (d.overrideKpiBonusBps !== undefined) patch.override_kpi_bonus_bps = d.overrideKpiBonusBps;
@@ -451,11 +451,11 @@ hr.delete('/profiles/:id', async (c) => {
 });
 
 // ── item KPIs ───────────────────────────────────────────────────────────────
-const ITEM_KPI_SELECT = 'id, flag_type, ref, label, bonus_centi, active, created_at, updated_at';
+const ITEM_KPI_SELECT = 'id, flag_type, ref, label, bonus_sen, active, created_at, updated_at';
 
 type ItemKpiRow = {
   id: string; flag_type: 'product' | 'category' | 'fabric' | 'special'; ref: string;
-  label: string; bonus_centi: number; active: boolean;
+  label: string; bonus_sen: number; active: boolean;
 };
 
 const toItemKpiApi = (r: ItemKpiRow) => ({
@@ -463,7 +463,7 @@ const toItemKpiApi = (r: ItemKpiRow) => ({
   flagType: r.flag_type,
   ref: r.ref,
   label: r.label,
-  bonusCenti: r.bonus_centi,
+  bonusSen: r.bonus_sen,
   active: r.active,
 });
 
@@ -487,7 +487,7 @@ const itemKpiCreateSchema = z.object({
   flagType: z.enum(['product', 'category', 'fabric', 'special']),
   ref: z.string().min(1),
   label: z.string().default(''),
-  bonusCenti: z.number().int().nonnegative(),
+  bonusSen: z.number().int().nonnegative(),
   active: z.boolean().default(true),
 });
 
@@ -506,7 +506,7 @@ hr.post('/item-kpi', async (c) => {
       flag_type: parsed.data.flagType,
       ref: parsed.data.ref,
       label: parsed.data.label,
-      bonus_centi: parsed.data.bonusCenti,
+      bonus_sen: parsed.data.bonusSen,
       active: parsed.data.active,
       company_id: co.companyId,
     })
@@ -518,7 +518,7 @@ hr.post('/item-kpi', async (c) => {
 
 const itemKpiPatchSchema = z.object({
   label: z.string().optional(),
-  bonusCenti: z.number().int().nonnegative().optional(),
+  bonusSen: z.number().int().nonnegative().optional(),
   active: z.boolean().optional(),
 });
 
@@ -533,7 +533,7 @@ hr.patch('/item-kpi/:id', async (c) => {
   if (!parsed.success) return c.json({ error: 'validation_failed', issues: issues(parsed.error) }, 400);
   const patch: Record<string, unknown> = { updated_at: new Date().toISOString() };
   if (parsed.data.label !== undefined) patch.label = parsed.data.label;
-  if (parsed.data.bonusCenti !== undefined) patch.bonus_centi = parsed.data.bonusCenti;
+  if (parsed.data.bonusSen !== undefined) patch.bonus_sen = parsed.data.bonusSen;
   if (parsed.data.active !== undefined) patch.active = parsed.data.active;
   const sb = c.get('supabase');
   const { data, error } = await sb
@@ -810,16 +810,16 @@ const COMMISSION_EXCLUDED_STATUS_FILTER = `(${COMMISSION_EXCLUDED_STATUSES.join(
 type OrderRow = {
   doc_no: string;
   salesperson_id: string | null;
-  mattress_sofa_centi: number | null;
-  bedframe_centi: number | null;
-  accessories_centi: number | null;
-  others_centi: number | null;
+  mattress_sofa_sen: number | null;
+  bedframe_sen: number | null;
+  accessories_sen: number | null;
+  others_sen: number | null;
 };
 
 /* Goods that drive commission = the four GOODS category buckets only. Delivery
  * fee + SERVICE-category lines (SVC-DELIVERY* / dispose / lift) live in their own
- * `service_centi` bucket (recomputeTotals routes them there FIRST so they can
- * never leak into goods) and `delivery_fee_centi` is a separate header column —
+ * `service_sen` bucket (recomputeTotals routes them there FIRST so they can
+ * never leak into goods) and `delivery_fee_sen` is a separate header column —
  * neither is summed here. So delivery + service are ALREADY excluded from both
  * the % commission and the 100k/400k thresholds (Loo 2026-06-20). The item-KPI
  * add-on exclusion below removes the remaining flagged-add-on amounts.
@@ -829,7 +829,7 @@ type OrderRow = {
  * about an unknown. Contrast the config/read paths above, where a missing value
  * genuinely means "unknown" and is an explicit error. */
 const goodsOf = (o: OrderRow): number =>
-  (o.mattress_sofa_centi ?? 0) + (o.bedframe_centi ?? 0) + (o.accessories_centi ?? 0) + (o.others_centi ?? 0);
+  (o.mattress_sofa_sen ?? 0) + (o.bedframe_sen ?? 0) + (o.accessories_sen ?? 0) + (o.others_sen ?? 0);
 
 // display order within a showroom: managers (tier 2) first, then sales (tier 1).
 const TIER_RANK: Record<string, number> = { manager: 0, sales: 1 };
@@ -932,12 +932,12 @@ async function rollUpChainGoods(
 
 type BuiltRow = CommissionRow & {
   staffName: string;
-  kpiDetail: Array<{ label: string; qty: number; bonusCenti: number; lineCenti: number }>;
+  kpiDetail: Array<{ label: string; qty: number; bonusSen: number; lineSen: number }>;
 };
 type BuiltShowroom = {
   showroomId: string;
   showroomName: string;
-  showroomGoodsCenti: number;
+  showroomGoodsSen: number;
   showroomKpiHit: boolean;
   rows: BuiltRow[];
 };
@@ -1032,7 +1032,7 @@ async function buildCommissionLive(
   // orders in range, excluding cancelled/on-hold/draft. Header columns only.
   const ordRes = await paginateAll<OrderRow>((f, t) => sb
     .from('mfg_sales_orders')
-    .select('doc_no, salesperson_id, mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi')
+    .select('doc_no, salesperson_id, mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen')
     .gte('so_date', from)
     .lte('so_date', to)
     .not('status', 'in', COMMISSION_EXCLUDED_STATUS_FILTER)
@@ -1054,9 +1054,9 @@ async function buildCommissionLive(
   // item-KPI — a flagged purchase earns the FIXED bonus INSTEAD of % commission
   // on the flagged add-on, so that amount leaves goods (kpi-units.ts is the
   // single source).
-  const itemKpiCenti = new Map<string, number>();       // salesperson_id → fixed bonus centi
+  const itemKpiSen = new Map<string, number>();       // salesperson_id → fixed bonus centi
   const kpiExcludedGoods = new Map<string, number>();   // salesperson_id → goods to remove
-  const kpiDetail = new Map<string, Map<string, { label: string; qty: number; bonusCenti: number; lineCenti: number }>>();
+  const kpiDetail = new Map<string, Map<string, { label: string; qty: number; bonusSen: number; lineSen: number }>>();
   if (docToSalesperson.size > 0) {
     let kpi;
     try {
@@ -1071,9 +1071,9 @@ async function buildCommissionLive(
       const sp = docToSalesperson.get(docNo);
       if (!sp) continue;
       for (const u of units) {
-        const bonus = unitKpiCenti(u, flags);
-        const excluded = unitKpiExcludedCenti(u, flags);
-        if (bonus > 0) itemKpiCenti.set(sp, (itemKpiCenti.get(sp) ?? 0) + bonus);
+        const bonus = unitKpiSen(u, flags);
+        const excluded = unitKpiExcludedSen(u, flags);
+        if (bonus > 0) itemKpiSen.set(sp, (itemKpiSen.get(sp) ?? 0) + bonus);
         if (excluded > 0) kpiExcludedGoods.set(sp, (kpiExcludedGoods.get(sp) ?? 0) + excluded);
         if (bonus <= 0) continue;
         for (const f of flags) {
@@ -1084,9 +1084,9 @@ async function buildCommissionLive(
           const key = `${f.flagType}:${f.ref}`;
           if (!kpiDetail.has(sp)) kpiDetail.set(sp, new Map());
           const m = kpiDetail.get(sp)!;
-          const prev = m.get(key) ?? { label: flagLabel.get(key) ?? f.ref, qty: 0, bonusCenti: f.bonusCenti, lineCenti: 0 };
+          const prev = m.get(key) ?? { label: flagLabel.get(key) ?? f.ref, qty: 0, bonusSen: f.bonusSen, lineSen: 0 };
           prev.qty += u.qty;
-          prev.lineCenti += u.qty * f.bonusCenti;
+          prev.lineSen += u.qty * f.bonusSen;
           m.set(key, prev);
         }
       }
@@ -1126,8 +1126,8 @@ async function buildCommissionLive(
     byShowroom.get(sid)!.push({
       staffId: p.staff_id,
       tier: p.tier as 'sales' | 'manager',
-      personalGoodsCenti: commissionableGoods.get(p.staff_id) ?? 0,
-      itemKpiCenti: itemKpiCenti.get(p.staff_id) ?? 0,
+      personalGoodsSen: commissionableGoods.get(p.staff_id) ?? 0,
+      itemKpiSen: itemKpiSen.get(p.staff_id) ?? 0,
     });
   }
 
@@ -1142,7 +1142,7 @@ async function buildCommissionLive(
        on B's goods while sitting in A's group. That is inherent to overriding a
        reporting line instead of a room, not a bug, and this number keeps its
        meaning either way: it is what the RM 400k gate reads. */
-    const sg = people.reduce((acc, m) => acc + m.personalGoodsCenti, 0);
+    const sg = people.reduce((acc, m) => acc + m.personalGoodsSen, 0);
     const computed = mode === 'chain'
       ? computeChainCommission(config, sg, levels, people.map((p) => ({
           ...p,
@@ -1159,8 +1159,8 @@ async function buildCommissionLive(
     return {
       showroomId: sid,
       showroomName: showroomName.get(sid) ?? sid,
-      showroomGoodsCenti: sg,
-      showroomKpiHit: sg >= config.showroomKpiThresholdCenti,
+      showroomGoodsSen: sg,
+      showroomKpiHit: sg >= config.showroomKpiThresholdSen,
       rows,
     };
   });
@@ -1176,26 +1176,26 @@ async function buildCommissionLive(
 // live — the freeze is opt-in, per period, and dated.
 
 const PERIOD_SELECT =
-  'id, company_id, period_from, period_to, revision, status, engine_version, config_snapshot, override_mode, override_levels_snapshot, total_centi, row_count, closed_by_name, closed_at, reopened_by_name, reopened_at, reopen_reason';
+  'id, company_id, period_from, period_to, revision, status, engine_version, config_snapshot, override_mode, override_levels_snapshot, total_sen, row_count, closed_by_name, closed_at, reopened_by_name, reopened_at, reopen_reason';
 
 type PeriodRow = {
   id: string; period_from: string; period_to: string; revision: number; status: string;
   engine_version: string; config_snapshot: unknown; override_mode: string;
-  override_levels_snapshot: unknown; total_centi: number; row_count: number;
+  override_levels_snapshot: unknown; total_sen: number; row_count: number;
   closed_by_name: string; closed_at: string;
   reopened_by_name: string | null; reopened_at: string | null; reopen_reason: string | null;
 };
 
 type PayoutRowRec = {
   staff_id: string; staff_name: string; showroom_id: string | null; showroom_name: string;
-  showroom_goods_centi: number; showroom_kpi_hit: boolean; tier: string;
-  personal_goods_centi: number; personal_rate_bps: number; personal_commission_centi: number;
-  override_rate_bps: number | null; override_commission_centi: number; override_detail: unknown;
-  item_kpi_centi: number; kpi_detail: unknown; total_centi: number; sort_index: number;
+  showroom_goods_sen: number; showroom_kpi_hit: boolean; tier: string;
+  personal_goods_sen: number; personal_rate_bps: number; personal_commission_sen: number;
+  override_rate_bps: number | null; override_commission_sen: number; override_detail: unknown;
+  item_kpi_sen: number; kpi_detail: unknown; total_sen: number; sort_index: number;
 };
 
 const PAYOUT_ROW_SELECT =
-  'staff_id, staff_name, showroom_id, showroom_name, showroom_goods_centi, showroom_kpi_hit, tier, personal_goods_centi, personal_rate_bps, personal_commission_centi, override_rate_bps, override_commission_centi, override_detail, item_kpi_centi, kpi_detail, total_centi, sort_index';
+  'staff_id, staff_name, showroom_id, showroom_name, showroom_goods_sen, showroom_kpi_hit, tier, personal_goods_sen, personal_rate_bps, personal_commission_sen, override_rate_bps, override_commission_sen, override_detail, item_kpi_sen, kpi_detail, total_sen, sort_index';
 
 /* The LIVE closed snapshot for this exact period, or null. status='CLOSED' only:
    a PENDING row is a half-written close (see 0125) and a REOPENED one has been
@@ -1227,7 +1227,7 @@ const toPeriodApi = (p: PeriodRow) => ({
   revision: p.revision,
   status: p.status,
   engineVersion: p.engine_version,
-  totalCenti: p.total_centi,
+  totalSen: p.total_sen,
   rowCount: p.row_count,
   closedByName: p.closed_by_name,
   closedAt: p.closed_at,
@@ -1261,7 +1261,7 @@ function frozenToShowrooms(rows: PayoutRowRec[]): BuiltShowroom[] {
       sr = {
         showroomId: sid,
         showroomName: r.showroom_name,
-        showroomGoodsCenti: r.showroom_goods_centi,
+        showroomGoodsSen: r.showroom_goods_sen,
         showroomKpiHit: r.showroom_kpi_hit,
         rows: [],
       };
@@ -1272,15 +1272,15 @@ function frozenToShowrooms(rows: PayoutRowRec[]): BuiltShowroom[] {
       staffId: r.staff_id,
       staffName: r.staff_name,
       tier: r.tier as 'sales' | 'manager',
-      personalGoodsCenti: r.personal_goods_centi,
+      personalGoodsSen: r.personal_goods_sen,
       personalRateBps: r.personal_rate_bps,
-      personalCommissionCenti: r.personal_commission_centi,
+      personalCommissionSen: r.personal_commission_sen,
       overrideRateBps: r.override_rate_bps,
-      overrideCommissionCenti: r.override_commission_centi,
+      overrideCommissionSen: r.override_commission_sen,
       overrideDetail: (r.override_detail as BuiltRow['overrideDetail']) ?? undefined,
-      itemKpiCenti: r.item_kpi_centi,
+      itemKpiSen: r.item_kpi_sen,
       kpiDetail: (r.kpi_detail as BuiltRow['kpiDetail']) ?? [],
-      totalCenti: r.total_centi,
+      totalSen: r.total_sen,
     });
   }
   return out;
@@ -1417,7 +1417,7 @@ hr.post('/payout/close', async (c) => {
   const revision = ((revRes.data as { revision?: number } | null)?.revision ?? 0) + 1;
 
   const flat = showrooms.flatMap((s) => s.rows.map((r) => ({ showroom: s, row: r })));
-  const totalCenti = flat.reduce((acc, x) => acc + x.row.totalCenti, 0);
+  const totalSen = flat.reduce((acc, x) => acc + x.row.totalSen, 0);
 
   const hu = c.get('houzsUser');
   const period = {
@@ -1430,7 +1430,7 @@ hr.post('/payout/close', async (c) => {
     config_snapshot: toConfigApi(configRow),
     override_mode: mode,
     override_levels_snapshot: levels,
-    total_centi: totalCenti,
+    total_sen: totalSen,
     row_count: flat.length,
     // Attribute to the REAL caller. `user.id` is the bridge's pinned system
     // staff row — stamping it on a payroll approval is an audit lie.
@@ -1459,18 +1459,18 @@ hr.post('/payout/close', async (c) => {
     staff_name: row.staffName,
     showroom_id: showroom.showroomId || null,
     showroom_name: showroom.showroomName,
-    showroom_goods_centi: showroom.showroomGoodsCenti,
+    showroom_goods_sen: showroom.showroomGoodsSen,
     showroom_kpi_hit: showroom.showroomKpiHit,
     tier: row.tier,
-    personal_goods_centi: row.personalGoodsCenti,
+    personal_goods_sen: row.personalGoodsSen,
     personal_rate_bps: row.personalRateBps,
-    personal_commission_centi: row.personalCommissionCenti,
+    personal_commission_sen: row.personalCommissionSen,
     override_rate_bps: row.overrideRateBps, // null in chain mode — deliberate
-    override_commission_centi: row.overrideCommissionCenti,
+    override_commission_sen: row.overrideCommissionSen,
     override_detail: row.overrideDetail ?? null,
-    item_kpi_centi: row.itemKpiCenti,
+    item_kpi_sen: row.itemKpiSen,
     kpi_detail: row.kpiDetail,
-    total_centi: row.totalCenti,
+    total_sen: row.totalSen,
     sort_index: i, // global order — frozenToShowrooms rebuilds the exact shape
   }));
 

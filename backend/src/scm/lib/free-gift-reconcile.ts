@@ -6,7 +6,7 @@
 //   - remove a trigger (e.g. a mattress) → its free gift auto-deletes;
 //   - add a trigger → the gift auto-inserts;
 //   - a free-gift line with no real trigger is deleted (honest-pricing);
-//   - gift lines stay at unit_price_centi = 0.
+//   - gift lines stay at unit_price_sen = 0.
 //
 // Both POS and Backend edits funnel through the same /mfg-sales-orders edit
 // endpoints, so reconciling here fixes both surfaces. The trigger set is built
@@ -44,7 +44,7 @@ interface SoItemRow {
   item_group: string | null;
   qty: number | null;
   variants: Record<string, unknown> | null;
-  unit_price_centi: number | null;
+  unit_price_sen: number | null;
   line_no: number | null;
 }
 
@@ -57,7 +57,7 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
     // 1. Load the SO's non-cancelled lines.
     const { data: itemsRaw } = await sb
       .from('mfg_sales_order_items')
-      .select('id, item_code, item_group, qty, variants, unit_price_centi, line_no')
+      .select('id, item_code, item_group, qty, variants, unit_price_sen, line_no')
       .eq('doc_no', docNo)
       .eq('cancelled', false);
     const items = ((itemsRaw ?? []) as SoItemRow[]);
@@ -211,17 +211,17 @@ export async function reconcileFreeGiftLinesForSo(sb: any, docNo: string, c: any
           description:       acc.name ?? null,
           uom:               'UNIT',
           qty,
-          unit_price_centi:  0,
-          discount_centi:    0,
-          total_centi:       0,
-          total_inc_centi:   0,
-          balance_centi:     0,
+          unit_price_sen:  0,
+          discount_sen:    0,
+          total_sen:       0,
+          total_inc_sen:   0,
+          balance_sen:     0,
           venue:             header.venue ?? null,
           branding:          header.branding ?? null,
           variants:          { freeGift: { giftProductId: g.giftProductId, campaignName: g.campaignName ?? null } },
-          unit_cost_centi:   cost,
-          line_cost_centi:   qty * cost,
-          line_margin_centi: -(qty * cost),                    // free line: revenue 0 − cost
+          unit_cost_sen:   cost,
+          line_cost_sen:   qty * cost,
+          line_margin_sen: -(qty * cost),                    // free line: revenue 0 − cost
           warehouse_id:      giftWarehouseId,                  // follows the SO — see above
           cancelled:         false,
         });

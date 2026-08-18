@@ -11,10 +11,10 @@ const sofaLine = (variants: Record<string, unknown>) => ({
   item_code: 'XAMMAR-2A(LHF)',
   item_group: 'sofa',
   qty: 1,
-  unit_price_centi: 155750,
-  discount_centi: 0,
-  unit_cost_centi: 99225,
-  total_centi: 155750,
+  unit_price_sen: 155750,
+  discount_sen: 0,
+  unit_cost_sen: 99225,
+  total_sen: 155750,
   description2: 'EZ-002 / SEAT 24',
   leg_price_sen: 0,
   variants,
@@ -32,10 +32,10 @@ describe('soLineFieldChanges', () => {
     const prev = sofaLine(BASE_VARIANTS);
     const changes = soLineFieldChanges(prev, {
       qty: 1,
-      unit_price_centi: 155750,
-      discount_centi: 0,
-      unit_cost_centi: 99225,
-      total_centi: 155750,
+      unit_price_sen: 155750,
+      discount_sen: 0,
+      unit_cost_sen: 99225,
+      total_sen: 155750,
       variants: WITH_LEG,
       description2: 'EZ-002 / SEAT 24 / LEG 6"',
     });
@@ -58,7 +58,7 @@ describe('soLineFieldChanges', () => {
   test('an unchanged line produces no changes at all', () => {
     const prev = sofaLine(BASE_VARIANTS);
     const changes = soLineFieldChanges(prev, {
-      qty: 1, unit_price_centi: 155750, discount_centi: 0, unit_cost_centi: 99225,
+      qty: 1, unit_price_sen: 155750, discount_sen: 0, unit_cost_sen: 99225,
       variants: { ...BASE_VARIANTS }, description2: 'EZ-002 / SEAT 24',
     });
     expect(changes).toEqual([]);
@@ -75,12 +75,12 @@ describe('soLineFieldChanges', () => {
   test('derived money columns are suppressed, their inputs are not', () => {
     const changes = soLineFieldChanges(sofaLine(BASE_VARIANTS), {
       qty: 2,
-      unit_price_centi: 155750,
-      total_centi: 311500,      // derived
-      total_inc_centi: 311500,  // derived
-      balance_centi: 311500,    // derived
-      line_cost_centi: 198450,  // derived
-      line_margin_centi: 113050, // derived
+      unit_price_sen: 155750,
+      total_sen: 311500,      // derived
+      total_inc_sen: 311500,  // derived
+      balance_sen: 311500,    // derived
+      line_cost_sen: 198450,  // derived
+      line_margin_sen: 113050, // derived
     });
     expect(fieldsOf(changes)).toEqual(['qty']);
   });
@@ -124,14 +124,14 @@ describe('soLineFieldChanges', () => {
     const changes = soLineFieldChanges(
       { ...sofaLine(BASE_VARIANTS), line_delivery_date: '2026-09-15' },
       {
-        unit_price_centi: 160000,
+        unit_price_sen: 160000,
         variants: WITH_LEG,
         line_delivery_date: '2026-09-20',
         line_delivery_date_overridden: true,
       },
     );
     const fields = fieldsOf(changes);
-    expect(fields).toContain('unitPriceCenti');
+    expect(fields).toContain('unitPriceSen');
     expect(fields).toContain('spec');
     expect(fields).toContain('lineDeliveryDate');
     expect(fields).toContain('lineDeliveryDateOverridden');

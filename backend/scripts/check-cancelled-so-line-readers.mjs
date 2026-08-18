@@ -96,7 +96,7 @@ async function main() {
              stock_qty_ready,
              allocated_batch_no,
              warehouse_id::text AS warehouse_id,
-             unit_price_centi, total_centi, balance_centi,
+             unit_price_sen, total_sen, balance_sen,
              LEFT(COALESCE(description, ''), 40) AS description
         FROM scm.mfg_sales_order_items
        WHERE doc_no = ${doc}
@@ -106,7 +106,7 @@ async function main() {
       log(`     line_no=${l.line_no} ${l.item_code} group=${l.item_group} qty=${l.qty} ` +
           `cancelled=${l.cancelled} stock_status=${JSON.stringify(l.stock_status)} ` +
           `ready_qty=${l.stock_qty_ready} batch=${JSON.stringify(l.allocated_batch_no)} ` +
-          `wh=${l.warehouse_id ?? "null"} unit=${money(l.unit_price_centi)} total=${money(l.total_centi)} id=${l.id.slice(0, 8)}`);
+          `wh=${l.warehouse_id ?? "null"} unit=${money(l.unit_price_sen)} total=${money(l.total_sen)} id=${l.id.slice(0, 8)}`);
     }
 
     // ---- B. sofa detection, replaying detectSofa ----------------------------
@@ -202,14 +202,14 @@ async function main() {
     // literally the row list handed to generateSalesOrderPdf by the mobile
     // detail and by the desktop LIST bulk print.
     const printed = lines;
-    const printedTotal = printed.reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
-    const liveTotal = printed.filter((l) => !l.cancelled).reduce((s, l) => s + Number(l.total_centi ?? 0), 0);
+    const printedTotal = printed.reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
+    const liveTotal = printed.filter((l) => !l.cancelled).reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
     const cancelledPrinted = printed.filter((l) => l.cancelled);
     log(`  F. GAP 3 (PDF) — GET /:docNo returns ${printed.length} rows, of which ${cancelledPrinted.length} cancelled.`);
     log(`     a PDF built from that payload prints ${printed.length} line rows and totals RM ${money(printedTotal)}; ` +
         `the correct figure over live lines only is RM ${money(liveTotal)}.`);
     if (cancelledPrinted.length > 0) {
-      log(`     >>> GAP 3 IS LIVE: ${cancelledPrinted.map((l) => `${l.item_code} qty ${l.qty} @ RM ${money(l.total_centi)}`).join("; ")} ` +
+      log(`     >>> GAP 3 IS LIVE: ${cancelledPrinted.map((l) => `${l.item_code} qty ${l.qty} @ RM ${money(l.total_sen)}`).join("; ")} ` +
           `appears on the customer document (mobile detail print + desktop list bulk print). ` +
           `Money moved by it: RM ${money(printedTotal - liveTotal)}.`);
     } else {
@@ -221,12 +221,12 @@ async function main() {
   log("");
   log("=== G. every cancelled sales-order line in production ===");
   const all = await sql`
-    SELECT doc_no, line_no, item_code, item_group, qty, stock_status, total_centi, company_id
+    SELECT doc_no, line_no, item_code, item_group, qty, stock_status, total_sen, company_id
       FROM scm.mfg_sales_order_items WHERE cancelled ORDER BY doc_no, line_no`;
   log(`  ${all.length} row(s) with cancelled = true:`);
   for (const r of all) {
     log(`    ${r.doc_no} line ${r.line_no} ${r.item_code} group=${r.item_group} qty=${r.qty} ` +
-        `stock_status=${JSON.stringify(r.stock_status)} total=${money(r.total_centi)} company=${r.company_id}`);
+        `stock_status=${JSON.stringify(r.stock_status)} total=${money(r.total_sen)} company=${r.company_id}`);
   }
   const readyCancelled = all.filter((r) => String(r.stock_status ?? "") === "READY");
   log(`  of those, ${readyCancelled.length} carry stock_status='READY' — the shape that makes gap 1 bite.`);

@@ -61,8 +61,8 @@ export type PcLineDraft = {
   materialName: string;
   supplierSku?: string;
   qty: number;
-  unitPriceCenti: number;
-  discountCenti?: number;
+  unitPriceSen: number;
+  discountSen?: number;
   deliveryDate?: string;
   /* Supplier-revised per-line delivery dates (migration 0181). All optional;
      the supplier pushes the date back. Display-only on consignment (no MRP /
@@ -90,7 +90,7 @@ export const emptyPcLine = (): PcLineDraft => ({
   materialCode: '',
   materialName: '',
   qty: 1,
-  unitPriceCenti: 0,
+  unitPriceSen: 0,
   variants: {},
 });
 
@@ -147,7 +147,7 @@ export const PcLineCard = ({
   identityReadOnly?: boolean;
 }) => {
   const l = line;
-  const lineTotalCenti = Math.max(0, l.qty * l.unitPriceCenti - (l.discountCenti ?? 0));
+  const lineTotalSen = Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0));
   const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
   const showVariants = Boolean(l.category) && ['sofa', 'bedframe'].includes(l.category ?? '') && Boolean(maint);
   // The whole card's `disabled` (locked doc) wins over everything; identityLocked
@@ -194,7 +194,7 @@ export const PcLineCard = ({
           )}
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-          <span className={styles.previewPrice}>{fmtRm(lineTotalCenti, currency)}</span>
+          <span className={styles.previewPrice}>{fmtRm(lineTotalSen, currency)}</span>
           {!disabled && (
             <button
               type="button"
@@ -247,7 +247,7 @@ export const PcLineCard = ({
             {supplierId && bindings.length > 0
               ? bindings.map((b) => (
                   <option key={b.id} value={b.material_code}>
-                    {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_centi, b.currency)}
+                    {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                   </option>
                 ))
               : allSkus.map((p) => (
@@ -287,7 +287,7 @@ export const PcLineCard = ({
           <datalist id={`pc-supplier-skus-${l.rid}`}>
             {supplierId && bindings.map((b) => (
               <option key={b.id} value={b.supplier_sku || ''}>
-                {b.material_code} · {b.material_name} · {fmtRm(b.unit_price_centi, b.currency)}
+                {b.material_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
               </option>
             ))}
           </datalist>
@@ -359,9 +359,9 @@ export const PcLineCard = ({
           <span className={styles.fieldLabel}>Unit Price ({currency})</span>
           <MoneyInput
             bare
-            valueSen={l.unitPriceCenti}
+            valueSen={l.unitPriceSen}
             disabled={disabled}
-            onCommit={(sen) => onChange({ unitPriceCenti: sen ?? 0, priceTouched: true })}
+            onCommit={(sen) => onChange({ unitPriceSen: sen ?? 0, priceTouched: true })}
             inputClassName={styles.fieldInput}
             selectOnFocus
           />
@@ -370,9 +370,9 @@ export const PcLineCard = ({
           <span className={styles.fieldLabel}>Discount ({currency})</span>
           <MoneyInput
             bare
-            valueSen={l.discountCenti ?? 0}
+            valueSen={l.discountSen ?? 0}
             disabled={disabled}
-            onCommit={(sen) => onChange({ discountCenti: sen ?? 0 })}
+            onCommit={(sen) => onChange({ discountSen: sen ?? 0 })}
             inputClassName={styles.fieldInput}
             selectOnFocus
           />

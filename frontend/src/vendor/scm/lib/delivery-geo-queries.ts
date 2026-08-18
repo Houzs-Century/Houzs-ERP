@@ -28,7 +28,7 @@ export type DeliveryGeoPoint = {
   state: string | null;
   postcode: string | null;
   sets: number;
-  revenueCenti: number;
+  revenueSen: number;
   customer: string | null;
   address: string;
 };

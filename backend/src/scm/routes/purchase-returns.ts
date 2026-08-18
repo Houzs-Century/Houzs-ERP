@@ -50,11 +50,11 @@ purchaseReturns.use('*', supabaseAuth);
 
 const HEADER =
   'id, return_number, purchase_order_id, grn_id, supplier_id, return_date, ' +
-  'reason, status, posted_at, completed_at, credit_note_ref, refund_centi, ' +
+  'reason, status, posted_at, completed_at, credit_note_ref, refund_sen, ' +
   'notes, created_at, created_by, updated_at';
 const ITEM =
   'id, purchase_return_id, grn_item_id, material_kind, material_code, ' +
-  'material_name, qty_returned, unit_price_centi, line_refund_centi, reason, notes, ' +
+  'material_name, qty_returned, unit_price_sen, line_refund_sen, reason, notes, ' +
   /* item_group + variants drive the canonical SKU/build read-order sort (the
      sofa module walk + category rank); selected here so the PR detail + PDF
      order matches the sales side. */
@@ -68,19 +68,19 @@ const nextNum = async (sb: any, c: any): Promise<string> => {
 };
 
 /* ── Recompute PR header money rollup (mirror recomputeGrnTotals) ──────────
-   Sum line_refund_centi across purchase_return_items → write refund_centi on
+   Sum line_refund_sen across purchase_return_items → write refund_sen on
    the purchase_returns header. A return is qty × unit price (no tax/discount),
-   so refund_centi is the document total.
+   so refund_sen is the document total.
 
    Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
    recomputeTotals (mfg-sales-orders.ts), which carries the full rationale.
    See BUG-HISTORY 2026-07-17 (fix/zeroing-twins). */
 async function recomputePrTotals(sb: any, prId: string) {
   const { data: items, error: itemsErr } = await sb.from('purchase_return_items')
-    .select('line_refund_centi')
+    .select('line_refund_sen')
     .eq('purchase_return_id', prId);
   /* A failed READ is not an empty return, and `?? []` cannot tell them apart — it
-     folded a transient blip into refund_centi ZERO, i.e. a refund the supplier
+     folded a transient blip into refund_sen ZERO, i.e. a refund the supplier
      owes us silently became no refund. The ERROR is the signal, never the
      emptiness: a genuinely empty return resolves error === null with data === []
      and MUST still fall through to zero the header. */
@@ -89,9 +89,9 @@ async function recomputePrTotals(sb: any, prId: string) {
     console.error('[pr-recompute] item read failed — header left unchanged:', prId, itemsErr.message);
     return;
   }
-  const refund = (items ?? []).reduce((s: number, r: any) => s + (r.line_refund_centi ?? 0), 0);
+  const refund = (items ?? []).reduce((s: number, r: any) => s + (r.line_refund_sen ?? 0), 0);
   const { error: updErr } = await sb.from('purchase_returns').update({
-    refund_centi: refund,
+    refund_sen: refund,
     updated_at: new Date().toISOString(),
   }).eq('id', prId);
   if (updErr) {
@@ -488,7 +488,7 @@ async function checkPrStockAvailability(
   }
   const shortages: StockShortage[] = [];
   for (const [wh, reqs] of byWh) {
-    shortages.push(...(await checkStockAvailability(sb, wh, reqs)));
+    shortages.push(...(await checkStockAvailability(sb, wh, reqs, companyId)));
   }
   return shortages;
 }
@@ -739,7 +739,7 @@ purchaseReturns.post('/', async (c) => {
   const itemRows = items.map((it) => {
     const grnItemId = (it.grnItemId as string | undefined) ?? null;
     const qty = Number(it.qtyReturned ?? 0);
-    const unit = Number(it.unitPriceCenti ?? 0);
+    const unit = Number(it.unitPriceSen ?? 0);
     // Refund follows the returned qty (a return has no discount).
     const lineRefund = qty * unit;
     totalRefund += lineRefund;
@@ -749,8 +749,8 @@ purchaseReturns.post('/', async (c) => {
       material_code: it.materialCode,
       material_name: it.materialName,
       qty_returned: qty,
-      unit_price_centi: unit,
-      line_refund_centi: lineRefund,
+      unit_price_sen: unit,
+      line_refund_sen: lineRefund,
       reason: (it.reason as string | undefined) ?? null,
       notes: (it.notes as string | undefined) ?? null,
       // Commander 2026-05-29 — persist category + variants (columns exist;
@@ -807,7 +807,7 @@ purchaseReturns.post('/', async (c) => {
     supplier_id: body.supplierId,
     return_date: dateOrNull(body.returnDate) ?? todayMyt(),
     reason: (body.reason as string | undefined) ?? null,
-    refund_centi: totalRefund,
+    refund_sen: totalRefund,
     notes: (body.notes as string | undefined) ?? null,
     status: 'POSTED',
     posted_at: new Date().toISOString(),
@@ -887,7 +887,7 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
      `.in('grn_id', grnIds)` is itself an id-keyed read and that is the shape
      this sweep exists for. */
   const { data: items } = await scopeToCompany(sb.from('grn_items')
-    .select('id, grn_id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_centi, item_group, variants, description, description2, uom')
+    .select('id, grn_id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_sen, item_group, variants, description, description2, uom')
     .in('grn_id', grnIds)
     .gt('qty_rejected', 0), c);
   // Cap each line's return at its remaining (qty_accepted - returned_qty, 0106) —
@@ -895,7 +895,7 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
   // returned. We return min(qty_rejected, remaining).
   const rejectedItems = ((items ?? []) as Array<{
     id: string; grn_id: string; material_kind: string; material_code: string; material_name: string;
-    qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_centi: number;
+    qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_sen: number;
     item_group: string | null; variants: Record<string, unknown> | null; description: string | null; description2: string | null; uom: string | null;
   }>)
     .map((it) => {
@@ -917,7 +917,7 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
     mintMonthlyDocNo(sb, 'purchase_returns', 'return_number', `${p}PRT-${yymm}`);
 
   const grnNumbersJoined = grnList.map((g) => g.grn_number).join(', ');
-  const totalRefund = rejectedItems.reduce((s, it) => s + (it._qty * it.unit_price_centi), 0);
+  const totalRefund = rejectedItems.reduce((s, it) => s + (it._qty * it.unit_price_sen), 0);
 
   const primaryGrnId = grnList[0]!.id;
 
@@ -955,7 +955,7 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
     supplier_id: supplierId,
     return_date: todayMyt(),
     reason: body.reason ?? `Batch from ${grnList.length} GRNs: ${grnNumbersJoined}`,
-    refund_centi: totalRefund,
+    refund_sen: totalRefund,
     notes: body.notes ?? null,
     /* PR-DRAFT-removal — auto-POSTED on create. */
     status: 'POSTED',
@@ -973,8 +973,8 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
     material_code: it.material_code,
     material_name: it.material_name,
     qty_returned: it._qty,
-    unit_price_centi: it.unit_price_centi,
-    line_refund_centi: it._qty * it.unit_price_centi,
+    unit_price_sen: it.unit_price_sen,
+    line_refund_sen: it._qty * it.unit_price_sen,
     reason: it.rejection_reason,
     item_group: it.item_group,
     variants: it.variants,
@@ -1038,12 +1038,12 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
 
   // LINE-level half of the same source document, under the same predicate.
   const { data: items } = await scopeToCompany(sb.from('grn_items')
-    .select('id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_centi, item_group, variants, description, description2, uom')
+    .select('id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_sen, item_group, variants, description, description2, uom')
     .eq('grn_id', grnId)
     .gt('qty_accepted', 0), c);
   const allLines = ((items ?? []) as Array<{
     id: string; material_kind: string; material_code: string; material_name: string;
-    qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_centi: number;
+    qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_sen: number;
     item_group: string | null; variants: Record<string, unknown> | null; description: string | null; description2: string | null; uom: string | null;
   }>);
   // Only copy lines with remaining = qty_accepted - returned_qty > 0, and return
@@ -1079,7 +1079,7 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
     }
   }
 
-  const totalRefund = lines.reduce((s, it) => s + (it._remaining * it.unit_price_centi), 0);
+  const totalRefund = lines.reduce((s, it) => s + (it._remaining * it.unit_price_sen), 0);
 
   const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; return_number: string }>(
     () => nextNum(sb, c),
@@ -1091,7 +1091,7 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
     supplier_id: g.supplier_id,
     return_date: todayMyt(),
     reason: body.reason ?? `From ${g.grn_number}`,
-    refund_centi: totalRefund,
+    refund_sen: totalRefund,
     notes: body.notes ?? null,
     status: 'POSTED',
     posted_at: new Date().toISOString(),
@@ -1108,8 +1108,8 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
     material_code: it.material_code,
     material_name: it.material_name,
     qty_returned: it._remaining,
-    unit_price_centi: it.unit_price_centi,
-    line_refund_centi: it._remaining * it.unit_price_centi,
+    unit_price_sen: it.unit_price_sen,
+    line_refund_sen: it._remaining * it.unit_price_sen,
     reason: it.rejection_reason,
     item_group: it.item_group,
     variants: it.variants,
@@ -1126,7 +1126,7 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
   }
 
   const movementErrors = await writePurchaseReturnMovements(sb, h.id, h.return_number, g.id, user.id);
-  // Refresh header refund_centi from the inserted lines (parity with GRN).
+  // Refresh header refund_sen from the inserted lines (parity with GRN).
   await recomputePrTotals(sb, h.id);
 
   return c.json({ id: h.id, returnNumber: h.return_number, movementErrors: movementErrors.length ? movementErrors : undefined }, 201);
@@ -1294,9 +1294,9 @@ purchaseReturns.patch('/:id/cancel', cancelPurchaseReturnHandler);
 /* ════════════════════════════════════════════════════════════════════════
    PR PO-clone CRUD (PATCH header + line add / edit / delete) — mirrors the
    GRN detail page's confirmed/immediate-save editing (apps/api/src/routes/grns.ts).
-   The editable line quantity is qty_returned; line_refund_centi =
-   qty_returned * unit_price_centi (a return has no discount/delivery);
-   recomputePrTotals rolls the header refund_centi.
+   The editable line quantity is qty_returned; line_refund_sen =
+   qty_returned * unit_price_sen (a return has no discount/delivery);
+   recomputePrTotals rolls the header refund_sen.
    ════════════════════════════════════════════════════════════════════════ */
 
 /* ── PATCH /:id — header update (mirror GRN's PATCH /:id) ── */
@@ -1373,8 +1373,8 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
   }
 
   const qtyReturned = Number(it.qty ?? 1);
-  const unitPriceCenti = Number(it.unitPriceCenti ?? 0);
-  const lineRefund = qtyReturned * unitPriceCenti;
+  const unitPriceSen = Number(it.unitPriceSen ?? 0);
+  const lineRefund = qtyReturned * unitPriceSen;
 
   // GRN-linked line: cap qty at that GRN line's remaining (accepted - returned).
   const grnItemId = (it.grnItemId as string) ?? null;
@@ -1397,8 +1397,8 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
     material_name: it.materialName,
     // PR line money meaning: qty = qty_returned; total = qty * unit price.
     qty_returned: qtyReturned,
-    unit_price_centi: unitPriceCenti,
-    line_refund_centi: lineRefund,
+    unit_price_sen: unitPriceSen,
+    line_refund_sen: lineRefund,
     reason: (it.reason as string) ?? null,
     notes: (it.notes as string) ?? null,
     /* variant fields (mirror GRN/PO line) */
@@ -1507,7 +1507,7 @@ export const patchPurchaseReturnItemHandler = async (c: any) => {
      must 404, not edit another PR's line while the GRN release / stock
      movement / recompute run against this one. */
   const { data: prev } = await scopeToCompanyId(sb.from('purchase_return_items')
-    .select('qty_returned, unit_price_centi, item_group, variants, grn_item_id, material_code, material_name')
+    .select('qty_returned, unit_price_sen, item_group, variants, grn_item_id, material_code, material_name')
     .eq('id', itemId).eq('purchase_return_id', prId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
@@ -1515,13 +1515,13 @@ export const patchPurchaseReturnItemHandler = async (c: any) => {
   const prevQty = (prev as { qty_returned: number }).qty_returned;
   const grnItemId = (prev as { grn_item_id: string | null }).grn_item_id ?? null;
   const qtyReturned = it.qty !== undefined ? Number(it.qty) : prevQty;
-  const unit = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : (prev as { unit_price_centi: number }).unit_price_centi;
+  const unit = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : (prev as { unit_price_sen: number }).unit_price_sen;
   const lineRefund = qtyReturned * unit;
 
   const updates: Record<string, unknown> = {
     qty_returned: qtyReturned,
-    unit_price_centi: unit,
-    line_refund_centi: lineRefund,
+    unit_price_sen: unit,
+    line_refund_sen: lineRefund,
   };
   for (const [from, to] of [
     ['materialCode', 'material_code'], ['materialName', 'material_name'],

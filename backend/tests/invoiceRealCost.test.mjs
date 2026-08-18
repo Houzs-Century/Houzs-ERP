@@ -71,7 +71,7 @@ test("the invoice gives each PO its OWN price; inference cannot", () => {
   for (const [poNo, centi] of Object.entries(expected)) {
     const r = resolvePrice(idx, poNo, "NH39-A-(K)");
     assert.equal(r.status, "RESOLVED", `${poNo} must resolve`);
-    assert.equal(r.priceCenti, centi, `${poNo} must take ITS OWN invoice price`);
+    assert.equal(r.priceSen, centi, `${poNo} must take ITS OWN invoice price`);
   }
   // provenance is mandatory — a price with no invoice behind it is unauditable
   assert.equal(resolvePrice(idx, "PO-000278", "NH39-A-(K)").piNo, "PI-000875");
@@ -99,7 +99,7 @@ test("AMBIGUOUS is refused, never guessed", () => {
   const p = planWrite(0, r);
   assert.equal(p.action, "SKIP");
   assert.equal(p.reason, "SKIP_AMBIGUOUS");
-  assert.equal(p.priceCenti, undefined, "an ambiguous key must carry NO value");
+  assert.equal(p.priceSen, undefined, "an ambiguous key must carry NO value");
 });
 
 test("the many-to-one item map can only ADD ambiguity, never invent agreement", () => {
@@ -128,7 +128,7 @@ test("a hand-entered price is never overwritten, and writes are idempotent", () 
     assert.equal(p.reason, "SKIP_ALREADY_PRICED");
   }
   // idempotency: after the write lands, the same plan is a no-op
-  assert.equal(planWrite(r.priceCenti, r).reason, "SKIP_ALREADY_PRICED");
+  assert.equal(planWrite(r.priceSen, r).reason, "SKIP_ALREADY_PRICED");
 });
 
 test("a zero-priced invoice line is not a price", () => {
@@ -147,7 +147,7 @@ test("an unmapped AutoCount item never reaches an ERP line", () => {
 test("document numbers match across formatting differences", () => {
   const idx = buildPriceIndex([row("PO 000255", "NB-NH39(A)(K)", 640, "PI-000900", "GR-000500")], acToErp);
   // ac-gr-refs.json.gz writes "PO 000255"; PODTL writes "PO-000255".
-  assert.equal(resolvePrice(idx, "PO-000255", "NH39-A-(K)").priceCenti, 64000);
+  assert.equal(resolvePrice(idx, "PO-000255", "NH39-A-(K)").priceSen, 64000);
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -66,8 +66,8 @@ type DraftLine = {
   materialName: string;
   supplierSku?: string;
   qty: number;
-  unitPriceCenti: number;
-  discountCenti?: number;
+  unitPriceSen: number;
+  discountSen?: number;
   deliveryDate?: string;
   warehouseId?: string;
   category?: string;
@@ -81,7 +81,7 @@ const newLine = (): DraftLine => ({
   materialCode: '',
   materialName: '',
   qty: 1,
-  unitPriceCenti: 0,
+  unitPriceSen: 0,
   variants: {},
 });
 
@@ -152,7 +152,7 @@ export const PurchaseConsignmentOrderNew = () => {
         materialCode:   b.material_code,
         materialName:   b.material_name,
         supplierSku:    b.supplier_sku,
-        unitPriceCenti: b.unit_price_centi,
+        unitPriceSen: b.unit_price_sen,
         category:       categoryForCode(b.material_code) ?? l.category,
       } : l)));
       setPendingItemPick(null);
@@ -174,7 +174,7 @@ export const PurchaseConsignmentOrderNew = () => {
         materialKind:   b.material_kind,
         materialName:   b.material_name,
         supplierSku:    b.supplier_sku,
-        unitPriceCenti: l.unitPriceCenti || b.unit_price_centi,
+        unitPriceSen: l.unitPriceSen || b.unit_price_sen,
         category:       l.category ?? categoryForCode(b.material_code),
       };
     }));
@@ -207,17 +207,17 @@ export const PurchaseConsignmentOrderNew = () => {
     const binding = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
       : bindings.find((b) => b.material_code === line.materialCode);
-    if (!binding) return line.unitPriceCenti;
+    if (!binding) return line.unitPriceSen;
     const category = (line.category?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
-    if (!category) return binding.unit_price_centi;
+    if (!category) return binding.unit_price_sen;
     const v = line.variants;
     const specials = Array.isArray(v.specials) ? (v.specials as string[]) : [];
     const breakdown = computeMfgPoUnitCost(
       {
         category,
         priceMatrix:    (binding.price_matrix ?? null) as PoPriceMatrix,
-        unitPriceCenti: binding.unit_price_centi,
+        unitPriceSen: binding.unit_price_sen,
         fabricTier:     fabricTierForLine(line),
         seatSize:       category === 'SOFA' ? (v.seatHeight as string | undefined) ?? null : null,
         divanHeight:    (v.divanHeight as string | undefined) ?? null,
@@ -246,7 +246,7 @@ export const PurchaseConsignmentOrderNew = () => {
       materialCode:   b.material_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku,
-      unitPriceCenti: b.unit_price_centi,
+      unitPriceSen: b.unit_price_sen,
       category:       categoryForCode(b.material_code),
       priceTouched:   false,
     });
@@ -276,18 +276,18 @@ export const PurchaseConsignmentOrderNew = () => {
       const next = prev.map((l) => {
         if (l.priceTouched) return l;
         const cost = recomputeLineCost(l);
-        if (cost === l.unitPriceCenti) return l;
+        if (cost === l.unitPriceSen) return l;
         changed = true;
-        return { ...l, unitPriceCenti: cost };
+        return { ...l, unitPriceSen: cost };
       });
       return changed ? next : prev;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bindings, fabrics, maint, lines]);
 
-  const subtotalCenti = useMemo(
+  const subtotalSen = useMemo(
     () => lines.reduce(
-      (s, l) => s + Math.max(0, l.qty * l.unitPriceCenti - (l.discountCenti ?? 0)),
+      (s, l) => s + Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0)),
       0,
     ),
     [lines],
@@ -313,9 +313,9 @@ export const PurchaseConsignmentOrderNew = () => {
       materialName:   l.materialName || l.materialCode,
       supplierSku:    l.supplierSku,
       qty:            l.qty,
-      unitPriceCenti: l.unitPriceCenti,
+      unitPriceSen: l.unitPriceSen,
       bindingId:      l.bindingId,
-      discountCenti:  l.discountCenti,
+      discountSen:  l.discountSen,
       deliveryDate:   l.deliveryDate || undefined,
       warehouseId:    l.warehouseId  || undefined,
       itemGroup:      l.category,
@@ -531,7 +531,7 @@ export const PurchaseConsignmentOrderNew = () => {
                   >
                     {b.supplier.code} · {b.supplier.name}
                   </button>
-                  {' '}({fmtRm(b.unit_price_centi, b.currency)})
+                  {' '}({fmtRm(b.unit_price_sen, b.currency)})
                 </span>
               ))}
             </div>
@@ -553,7 +553,7 @@ export const PurchaseConsignmentOrderNew = () => {
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
           {lines.map((l, idx) => {
-            const lineTotalCenti = Math.max(0, l.qty * l.unitPriceCenti - (l.discountCenti ?? 0));
+            const lineTotalSen = Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0));
             const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
             const showVariants  = l.category && ['sofa', 'bedframe'].includes(l.category) && maint;
 
@@ -597,7 +597,7 @@ export const PurchaseConsignmentOrderNew = () => {
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                    <span className={styles.previewPrice}>{fmtRm(lineTotalCenti, currency)}</span>
+                    <span className={styles.previewPrice}>{fmtRm(lineTotalSen, currency)}</span>
                     <button
                       type="button"
                       onClick={() => dropLine(l.rid)}
@@ -647,7 +647,7 @@ export const PurchaseConsignmentOrderNew = () => {
                       {supplierId && bindings.length > 0
                         ? sortByText(bindings).map((b) => (
                             <option key={b.id} value={b.material_code}>
-                              {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_centi, b.currency)}
+                              {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                             </option>
                           ))
                         : sortByText(allSkus.data ?? []).map((p) => (
@@ -686,7 +686,7 @@ export const PurchaseConsignmentOrderNew = () => {
                     <datalist id={`supplier-skus-${l.rid}`}>
                       {supplierId && sortByText(bindings).map((b) => (
                         <option key={b.id} value={b.supplier_sku || ''}>
-                          {b.material_code} · {b.material_name} · {fmtRm(b.unit_price_centi, b.currency)}
+                          {b.material_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
                         </option>
                       ))}
                     </datalist>
@@ -752,8 +752,8 @@ export const PurchaseConsignmentOrderNew = () => {
                     <span className={styles.fieldLabel}>Unit Price ({currency})</span>
                     <MoneyInput
                       bare
-                      valueSen={l.unitPriceCenti}
-                      onCommit={(sen) => setLine(l.rid, { unitPriceCenti: sen ?? 0, priceTouched: true })}
+                      valueSen={l.unitPriceSen}
+                      onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0, priceTouched: true })}
                       inputClassName={styles.fieldInput}
                       selectOnFocus
                     />
@@ -762,8 +762,8 @@ export const PurchaseConsignmentOrderNew = () => {
                     <span className={styles.fieldLabel}>Discount ({currency})</span>
                     <MoneyInput
                       bare
-                      valueSen={l.discountCenti ?? 0}
-                      onCommit={(sen) => setLine(l.rid, { discountCenti: sen ?? 0 })}
+                      valueSen={l.discountSen ?? 0}
+                      onCommit={(sen) => setLine(l.rid, { discountSen: sen ?? 0 })}
                       inputClassName={styles.fieldInput}
                       selectOnFocus
                     />
@@ -826,7 +826,7 @@ export const PurchaseConsignmentOrderNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
               <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
             <div style={{
               display: 'flex',
@@ -837,7 +837,7 @@ export const PurchaseConsignmentOrderNew = () => {
               paddingTop: 'var(--space-2)',
             }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
           </div>
         </section>

@@ -1168,7 +1168,7 @@ async function planGrnGap() {
     const lines = await pg`
       SELECT gi.id, gi.material_code, gi.material_name, gi.qty_accepted,
              COALESCE(gi.returned_qty, 0)::int AS returned_qty,
-             gi.unit_price_centi, gi.variants, gi.item_group
+             gi.unit_price_sen, gi.variants, gi.item_group
         FROM scm.grn_items gi WHERE gi.grn_id = ${g.id}::uuid ORDER BY gi.material_code, gi.id`;
     // The GRN's own IN movements, grouped into the DISTINCT buckets + costs
     // that prove (or refuse) the insert.
@@ -1218,7 +1218,7 @@ async function planGrnGap() {
       const v = classifyGrnInboundGap({ productCode: code, lineQty: p.lineQty, buckets });
       log(`    product ${code}: accepted-net=${v.lineQty}  movements=${v.movQty}  delta=${v.delta}  -> ${v.verdict}`);
       for (const l of p.lines) {
-        log(`      line ${l.id}  accepted=${l.qty_accepted} returned=${l.returned_qty}  unit_price_centi=${l.unit_price_centi}  group=${l.item_group ?? "-"}`);
+        log(`      line ${l.id}  accepted=${l.qty_accepted} returned=${l.returned_qty}  unit_price_sen=${l.unit_price_sen}  group=${l.item_group ?? "-"}`);
       }
       for (const b of buckets) {
         log(`      movement bucket wh=${b.warehouseId} variant="${b.variantKey}" batch=${b.batchNo ?? "-"} co=${b.companyId}: qty=${b.movQty} unitCosts=[${b.unitCosts.join(", ")}]`);
@@ -1231,7 +1231,7 @@ async function planGrnGap() {
       } else if (v.verdict === "no-sibling") {
         // Live run 2026-08-01: the short line wrote NO movement at all, so
         // there is no sibling to copy. Fall back to the LINE'S OWN landed
-        // cost — round(unit_price_centi x GRN exchange_rate), the same
+        // cost — round(unit_price_sen x GRN exchange_rate), the same
         // toMyrSen path grns.ts uses — and to the GRN's own single-valued
         // facts for the bucket (deriveGrnLineBasis: refused when the product
         // has several lines, no warehouse resolves, or the cost is zero).
@@ -1630,7 +1630,7 @@ async function planFifoAttrRepair() {
     log(`  ${p.po_number} (company ${p.company_id}, status ${p.status})`);
     // The PO's lines + allocation rows (SO doc resolved for the prints).
     const lineRows = await pg`
-      SELECT i.id::text AS id, i.material_code, i.item_group, i.variants, i.qty, i.unit_price_centi
+      SELECT i.id::text AS id, i.material_code, i.item_group, i.variants, i.qty, i.unit_price_sen
         FROM scm.purchase_order_items i
        WHERE i.purchase_order_id = ${p.id}::uuid
        ORDER BY i.created_at, i.id`;
@@ -1673,7 +1673,7 @@ async function planFifoAttrRepair() {
       itemCode: l.material_code,
       variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
       qty: Number(l.qty ?? 0),
-      unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+      unitPriceSen: l.unit_price_sen == null ? null : Number(l.unit_price_sen),
     })));
     let duplicateOf = null;
     if (p.supplier_id) {
@@ -1688,13 +1688,13 @@ async function planFifoAttrRepair() {
         const gap = dateGapDays(p.po_date, t.po_date);
         if (gap == null || gap > 3) continue;
         const tLines = await pg`
-          SELECT material_code, item_group, variants, qty, unit_price_centi
+          SELECT material_code, item_group, variants, qty, unit_price_sen
             FROM scm.purchase_order_items WHERE purchase_order_id = ${t.id}::uuid`;
         const tKey = docLineMultisetKey(tLines.map((l) => ({
           itemCode: l.material_code,
           variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
           qty: Number(l.qty ?? 0),
-          unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+          unitPriceSen: l.unit_price_sen == null ? null : Number(l.unit_price_sen),
         })));
         if (tKey !== selfKey) continue;
         const tDelivered = await pg`

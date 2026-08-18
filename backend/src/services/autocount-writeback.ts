@@ -268,7 +268,7 @@ export interface ErpLine {
   description: string | null;
   description2?: string | null;
   qty: number;
-  unit_price_centi: number;
+  unit_price_sen: number;
   location?: string | null;
   delivery_date?: string | null;
   variants?: Record<string, unknown> | null;
@@ -953,7 +953,7 @@ export function composeDetails(
       Description: l.description ?? null,
       Desc2: desc2,
       Qty: Number(l.qty) || 0,
-      UnitPrice: price(l.unit_price_centi),
+      UnitPrice: price(l.unit_price_sen),
     };
     /* A KEY THE ERP DOES NOT OWN IS OMITTED, NOT SENT AS NULL.
      *
@@ -1132,11 +1132,11 @@ export function composeCreateSo(
    *
    * Pass an explicit `null` to state that the ERP has no answer; the key is
    * then omitted and the book keeps its own. The computation is
-   * `soOutstandingCenti` in `scm/shared/so-outstanding.ts` and the payments
+   * `soOutstandingSen` in `scm/shared/so-outstanding.ts` and the payments
    * read lives beside the other header reads in `scm/lib/autocount-outbox.ts`,
    * the same division `withLocations` and `readSalespersonName` draw.
    */
-  outstandingCenti: number | null,
+  outstandingSen: number | null,
   /**
    * The payment references this order carries, oldest first — REQUIRED, never
    * optional, for the same reason as the two above: it DECIDES what the account
@@ -1193,7 +1193,7 @@ export function composeCreateSo(
          without it, and every Processing Date silently stops reaching the
          account book. See SO_PROCESSING_DATE_AC_UDF. */
       [SO_PROCESSING_DATE_AC_UDF]: acUdfDate(header.processing_date),
-      BALANCE: acUdfMoney(outstandingCenti),
+      BALANCE: acUdfMoney(outstandingSen),
       /* The misspelling is AutoCount's own — the field is UDF_PAYEMENT in the
          book, and the cutover read it (import-ac-outstanding-so.mjs). */
       PAYEMENT: composePaymentUdf(paymentRefs),

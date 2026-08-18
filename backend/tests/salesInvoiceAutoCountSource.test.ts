@@ -123,7 +123,7 @@ const doHeader = (id: string, number: string): Row => ({
 const doLine = (id: string, doId: string, code: string): Row => ({
   id, delivery_order_id: doId, company_id: CO_A, item_code: code, item_group: null,
   description: null, description2: null, uom: 'UNIT', qty: 5,
-  unit_price_centi: 1000, unit_cost_centi: 500, discount_centi: 0, variants: null,
+  unit_price_sen: 1000, unit_cost_sen: 500, discount_sen: 0, variants: null,
   line_no: 0, linked_ac_dtlkey: Number(id.replace(/\D/g, '') || 1) + 1000,
 });
 
@@ -146,7 +146,7 @@ const baseTables = (): Record<string, Row[]> => ({
 });
 
 const line = (code: string, doItemId: string | null): Row => ({
-  itemCode: code, qty: 1, unitPriceCenti: 1000, unitCostCenti: 500, uom: 'UNIT',
+  itemCode: code, qty: 1, unitPriceSen: 1000, unitCostSen: 500, uom: 'UNIT',
   ...(doItemId ? { doItemId } : {}),
 });
 

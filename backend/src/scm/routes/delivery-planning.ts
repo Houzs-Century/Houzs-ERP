@@ -433,7 +433,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     customer_delivery_date: string | null; processing_date: string | null;
     so_date: string | null; address1: string | null; address2: string | null;
     postcode: string | null; building_type: string | null;
-    local_total_centi: number | null; balance_centi: number | null;
+    local_total_sen: number | null; balance_sen: number | null;
     // Amendment dates. The ORIGINAL customer_delivery_date is never overwritten;
     // amended_delivery_date drives the effective countdown. dual-read camelCase.
     amend_date_from_customer: string | null; amended_delivery_date: string | null;
@@ -453,7 +453,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
            has no `id` column: selecting it makes PostgREST reject the whole query and
            the board 500s. Identity here is doc_no; every join below keys on it. */
-        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_centi, balance_centi, possession_date, house_type, replacement_disposal, referral')
+        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
         .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
@@ -474,12 +474,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
   }
 
   /* 2b. LIVE balance per SO — same source-of-truth as the SO list Balance column
-        (mfg_sales_orders_with_payment_totals.balance_centi_live = local_total −
-        Σpayments). Looked up by doc_no; the base-table balance_centi above stays
+        (mfg_sales_orders_with_payment_totals.balance_sen_live = local_total −
+        Σpayments). Looked up by doc_no; the base-table balance_sen above stays
         as the fallback when the view row is absent. */
   /* VIEW-TRAP (see backend/docs/scm-view-trap-coe.md): this select hits the
      VIEW. STRUCTURALLY SAFE today — only 2 cols, both view-native (doc_no +
-     view-computed balance_centi_live), not a shared HEADER. KEEP IT THIS WAY:
+     view-computed balance_sen_live), not a shared HEADER. KEEP IT THIS WAY:
      do NOT extend this select with base-table cols added after the view was
      last recreated (delivery_state, possession_date, house_type,
      replacement_disposal, referral, amend_date_from_customer, amended_
@@ -488,15 +488,15 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
      view). Adding any of those here will 500 the Delivery Planning board. */
   const liveBalanceByDoc = new Map<string, number>();
   {
-    const { data: balRows, error: balErr } = await chunkIn<{ doc_no: string | null; balance_centi_live: number | null }>(docNos, (batch, from, to) =>
+    const { data: balRows, error: balErr } = await chunkIn<{ doc_no: string | null; balance_sen_live: number | null }>(docNos, (batch, from, to) =>
       sb.from('mfg_sales_orders_with_payment_totals')
-        .select('doc_no, balance_centi_live')
+        .select('doc_no, balance_sen_live')
         .in('doc_no', batch).order('doc_no').range(from, to),
     );
     noteDegradedRead('live_balance', balErr);
     for (const b of (balRows ?? [])) {
-      if (b.doc_no != null && b.balance_centi_live != null) {
-        liveBalanceByDoc.set(String(b.doc_no), Number(b.balance_centi_live));
+      if (b.doc_no != null && b.balance_sen_live != null) {
+        liveBalanceByDoc.set(String(b.doc_no), Number(b.balance_sen_live));
       }
     }
   }
@@ -909,10 +909,10 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       delivery_state_override: stored && (DELIVERY_STATES as string[]).includes(stored) ? stored : null,
       // money — balance / outstanding (centi). Live balance (= local_total −
       // Σpayments, from mfg_sales_orders_with_payment_totals view) is the SO list
-      // source-of-truth; base-table balance_centi is the fallback.
-      balance_centi: Number(r.balance_centi ?? 0),
-      balance_centi_live: liveBalanceByDoc.has(docNo) ? liveBalanceByDoc.get(docNo)! : null,
-      local_total_centi: Number(r.local_total_centi ?? 0),
+      // source-of-truth; base-table balance_sen is the fallback.
+      balance_sen: Number(r.balance_sen ?? 0),
+      balance_sen_live: liveBalanceByDoc.has(docNo) ? liveBalanceByDoc.get(docNo)! : null,
+      local_total_sen: Number(r.local_total_sen ?? 0),
       /* AR-005 delivery-release gate (docs/agents/operating-spec.md §7.10 —
          "provides payment gate to Fulfilment and Delivery"). ADVISORY + read-only:
          it reports RELEASE / RELEASE_WITH_COLLECTION (what POD must collect) / HOLD
@@ -921,18 +921,18 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
          floor, so a normal outstanding balance surfaces as a collection amount, not
          a hold. Live balance = GREEN; only the base-table fallback = AMBER. */
       release_gate: (() => {
-        const total = Number(r.local_total_centi ?? 0);
+        const total = Number(r.local_total_sen ?? 0);
         const live = liveBalanceByDoc.has(docNo) ? liveBalanceByDoc.get(docNo)! : null;
-        const bal = live != null ? live : Number(r.balance_centi ?? 0);
+        const bal = live != null ? live : Number(r.balance_sen ?? 0);
         const g = computeReleaseGate({
-          totalCenti: total,
-          paidCenti: Math.max(0, total - bal),
+          totalSen: total,
+          paidSen: Math.max(0, total - bal),
           dataQuality: live != null ? 'GREEN' : 'AMBER',
         });
         return {
           decision: g.decision,
-          remaining_centi: g.remainingCenti,
-          collect_on_delivery_centi: g.collectOnDeliveryCenti,
+          remaining_sen: g.remainingSen,
+          collect_on_delivery_sen: g.collectOnDeliverySen,
           reason: g.reason,
         };
       })(),
@@ -1102,19 +1102,19 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           // service case surfaces under Pending Delivery until it's scheduled out).
           delivery_state: 'PENDING_DELIVERY',
           delivery_state_override: null,
-          balance_centi: 0,
-          balance_centi_live: null,
-          local_total_centi: 0,
+          balance_sen: 0,
+          balance_sen_live: null,
+          local_total_sen: 0,
           /* Service cases carry no order balance, so the release gate is a plain
              RELEASE — parity with the SO row's field (the board unions the two
              shapes). Computed, not a literal, so the shape can never drift from
              the SO side. */
           release_gate: (() => {
-            const g = computeReleaseGate({ totalCenti: 0, paidCenti: 0 });
+            const g = computeReleaseGate({ totalSen: 0, paidSen: 0 });
             return {
               decision: g.decision,
-              remaining_centi: g.remainingCenti,
-              collect_on_delivery_centi: g.collectOnDeliveryCenti,
+              remaining_sen: g.remainingSen,
+              collect_on_delivery_sen: g.collectOnDeliverySen,
               reason: 'service case — no order balance',
             };
           })(),
@@ -1273,13 +1273,13 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         status: String(d.status ?? ''),
         delivery_state: scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE',
         delivery_state_override: null,
-        balance_centi: 0,
-        balance_centi_live: null,
-        local_total_centi: 0,
+        balance_sen: 0,
+        balance_sen_live: null,
+        local_total_sen: 0,
         // A DP job carries no order balance — plain RELEASE, computed for parity.
         release_gate: (() => {
-          const g = computeReleaseGate({ totalCenti: 0, paidCenti: 0 });
-          return { decision: g.decision, remaining_centi: g.remainingCenti, collect_on_delivery_centi: g.collectOnDeliveryCenti, reason: 'DP job — no order balance' };
+          const g = computeReleaseGate({ totalSen: 0, paidSen: 0 });
+          return { decision: g.decision, remaining_sen: g.remainingSen, collect_on_delivery_sen: g.collectOnDeliverySen, reason: 'DP job — no order balance' };
         })(),
         so_date: null,
         customer_delivery_date: date,
@@ -1409,12 +1409,12 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           // committed fleet job, so it surfaces under Pending Delivery.
           delivery_state: 'PENDING_DELIVERY',
           delivery_state_override: null,
-          balance_centi: 0,
-          balance_centi_live: null,
-          local_total_centi: 0,
+          balance_sen: 0,
+          balance_sen_live: null,
+          local_total_sen: 0,
           release_gate: (() => {
-            const g = computeReleaseGate({ totalCenti: 0, paidCenti: 0 });
-            return { decision: g.decision, remaining_centi: g.remainingCenti, collect_on_delivery_centi: g.collectOnDeliveryCenti, reason: 'PMS project — no order balance' };
+            const g = computeReleaseGate({ totalSen: 0, paidSen: 0 });
+            return { decision: g.decision, remaining_sen: g.remainingSen, collect_on_delivery_sen: g.collectOnDeliverySen, reason: 'PMS project — no order balance' };
           })(),
           so_date: null,
           customer_delivery_date: leg.date,
@@ -1556,12 +1556,12 @@ deliveryPlanning.get('/geo', async (c) => {
     customer_country: string | null; customerCountry?: string | null;
     address1: string | null; address2: string | null;
     postcode: string | null;
-    local_total_centi: number | null; localTotalCenti?: number | null;
+    local_total_sen: number | null; localTotalSen?: number | null;
   };
   const { data: soRowsRaw, error: soErr } = await paginateAll<GeoSoRow>((from, to) =>
     scopeToAllowedCompanies(
       sb.from('mfg_sales_orders')
-        .select('doc_no, debtor_name, customer_state, customer_country, address1, address2, postcode, local_total_centi')
+        .select('doc_no, debtor_name, customer_state, customer_country, address1, address2, postcode, local_total_sen')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
         .or(`amended_delivery_date.eq.${date},and(amended_delivery_date.is.null,customer_delivery_date.eq.${date})`)
@@ -1770,7 +1770,7 @@ deliveryPlanning.get('/geo', async (c) => {
   const points: Array<{
     ref: string; so_doc_no: string; lat: number; lng: number;
     zone: string | null; region: Region; state: string | null; postcode: string | null;
-    sets: number; revenueCenti: number; customer: string | null; address: string;
+    sets: number; revenueSen: number; customer: string | null; address: string;
   }> = [];
   const ungeocoded: Array<{ ref: string; reason: string }> = [];
   const missResolved = new Map<string, { lat: number; lng: number } | null>();
@@ -1812,7 +1812,7 @@ deliveryPlanning.get('/geo', async (c) => {
       state: r.customerState ?? r.customer_state ?? null,
       postcode: r.postcode ?? null,
       sets: sc.sets,
-      revenueCenti: Number(r.localTotalCenti ?? r.local_total_centi ?? 0) || 0,
+      revenueSen: Number(r.localTotalSen ?? r.local_total_sen ?? 0) || 0,
       customer: r.debtorName ?? r.debtor_name ?? null,
       address: addr,
     });
@@ -1845,7 +1845,7 @@ deliveryPlanning.get('/:docNo/lines', async (c) => {
      pre-line_no docs fall back to created_at), IDENTICAL to the detail read. */
   const { data: items, error } = await scopeToAllowedCompanies(
     sb.from('mfg_sales_order_items')
-      .select('id, doc_no, item_group, item_code, description, description2, uom, qty, unit_price_centi, discount_centi, total_centi, variants, stock_status, cancelled')
+      .select('id, doc_no, item_group, item_code, description, description2, uom, qty, unit_price_sen, discount_sen, total_sen, variants, stock_status, cancelled')
       .eq('doc_no', docNo),
     c,
   )
@@ -2170,7 +2170,7 @@ const scheduleSchema = z.object({
   // Scheduling an order onto a trip. Either tripId (append to an existing trip)
   // OR {lorryId, driverId, tripDate?} (find-or-create a trip for that lorry+date).
   // When given, a trip_stops row (stop_type DELIVERY, do_id/so_id, revenue from
-  // the DO/SO local_total_centi) is created. With no trip info, behaviour is
+  // the DO/SO local_total_sen) is created. With no trip info, behaviour is
   // unchanged (date only).
   tripId: z.string().uuid().nullable().optional(),
   lorryId: z.string().uuid().nullable().optional(),
@@ -2199,7 +2199,7 @@ const scheduleSchema = z.object({
   // OUTSOURCE lorry (is_internal=false). Written on a trip CREATE only, alongside
   // the derived is_outsourced flag. This is the SEAM Module C's rate-card will
   // compute against. Omitted on an own-fleet schedule -> NULL, behaviour unchanged.
-  threePlCostCenti: z.number().int().min(0).nullable().optional(),
+  threePlCostSen: z.number().int().min(0).nullable().optional(),
 });
 
 /* is_outsourced derives from the lorry's is_internal (NOT is_internal). */
@@ -2485,7 +2485,7 @@ export function staleStopSweepFor(doId: string | null, soId: string | null): Sta
 
 /* ──────────────────────────────────────────────────────────────────────────
    scheduleOntoTrip — the trip integration. Find-or-create the trip and append a
-   DELIVERY trip_stop for this order (revenue from the DO/SO local_total_centi).
+   DELIVERY trip_stop for this order (revenue from the DO/SO local_total_sen).
    Idempotent on re-schedule: an existing stop for the same (trip, do_id|so_id)
    is reused, not duplicated, and the order's stops on every OTHER trip are
    dropped so a re-point cannot leave one behind.
@@ -2514,7 +2514,7 @@ async function scheduleOntoTrip(
     let doId: string | null = null;
     let soId: string | null = null;
     let soDocNo: string | null = null;
-    let revenueCenti = 0;
+    let revenueSen = 0;
     let customerName: string | null = null;
     let address: string | null = null;
     let tripWarehouseId: string | null = p.warehouseId ?? null;
@@ -2522,10 +2522,10 @@ async function scheduleOntoTrip(
     if (type === 'do') {
       doId = id;
       const { data: doRow } = await sb.from('delivery_orders')
-        .select('local_total_centi, debtor_name, address1, address2, warehouse_id').eq('id', id).maybeSingle();
+        .select('local_total_sen, debtor_name, address1, address2, warehouse_id').eq('id', id).maybeSingle();
       if (doRow) {
         const r = doRow as Record<string, unknown>;
-        revenueCenti = Number((r.localTotalCenti ?? r.local_total_centi) ?? 0);
+        revenueSen = Number((r.localTotalSen ?? r.local_total_sen) ?? 0);
         customerName = (r.debtorName ?? r.debtor_name ?? null) as string | null;
         address = [r.address1, r.address2].filter(Boolean).join(', ') || null;
         if (!tripWarehouseId) tripWarehouseId = (r.warehouseId ?? r.warehouse_id ?? null) as string | null;
@@ -2538,16 +2538,16 @@ async function scheduleOntoTrip(
          schedule. An SO therefore has no UUID to put in trip_stops.so_id — it stays
          null, and the stop reaches its SO through the DO (do_id) instead. */
       const { data: soRow } = await sb.from('mfg_sales_orders')
-        .select('local_total_centi, debtor_name, address1, address2').eq('doc_no', id).maybeSingle();
+        .select('local_total_sen, debtor_name, address1, address2').eq('doc_no', id).maybeSingle();
       if (soRow) {
         const r = soRow as Record<string, unknown>;
         soId = null;
-        revenueCenti = Number((r.localTotalCenti ?? r.local_total_centi) ?? 0);
+        revenueSen = Number((r.localTotalSen ?? r.local_total_sen) ?? 0);
         customerName = (r.debtorName ?? r.debtor_name ?? null) as string | null;
         address = [r.address1, r.address2].filter(Boolean).join(', ') || null;
       }
     }
-    revenueCenti = Math.max(0, Math.round(revenueCenti) || 0);
+    revenueSen = Math.max(0, Math.round(revenueSen) || 0);
 
     /* Find-or-create the trip. tripId given → use it; else find an existing
        PLANNED trip for (lorry, date) or create one. */
@@ -2586,7 +2586,7 @@ async function scheduleOntoTrip(
         /* A3: the captured 3PL cost — only meaningful for an outsourced trip. Kept
            NULL for an own-fleet trip even if a value slipped through, so the seam
            column never carries a cost against internal capacity. */
-        three_pl_cost_centi: isOutsourced ? (p.threePlCostCenti ?? null) : null,
+        three_pl_cost_sen: isOutsourced ? (p.threePlCostSen ?? null) : null,
         created_by:    user?.id ?? null,
         }).select('id, trip_no').single(),
       );
@@ -2662,7 +2662,7 @@ async function scheduleOntoTrip(
         so_id:         soId,
         customer_name: customerName,
         address,
-        revenue_centi: revenueCenti,
+        revenue_sen: revenueSen,
         dp_no:         dpNo,
         /* Phase 3 apply — persist the proposed ETA + leg metrics (mig 0134
            columns) so the route survives the round-trip without re-billing
@@ -2680,7 +2680,7 @@ async function scheduleOntoTrip(
        resolves to a DIFFERENT trip, and the stop written for the previous one
        simply stays behind. The order then sits on two trips at once and
        lorry-capacity counts it against BOTH: two deliveries, and its revenue
-       added twice (lorry-capacity.ts sums revenue_centi per DELIVERY stop).
+       added twice (lorry-capacity.ts sums revenue_sen per DELIVERY stop).
        That inflates the fleet numbers this feature exists to make honest, and it
        puts the job on a driver's route who was re-pointed off it.
 
@@ -2871,7 +2871,7 @@ async function scheduleAssrOntoTrip(
         assr_case_id:  caseId,
         customer_name: customerName,
         address,
-        revenue_centi: 0,
+        revenue_sen: 0,
         dp_no:         dpNo,
       });
     }

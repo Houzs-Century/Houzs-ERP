@@ -7,10 +7,10 @@
  * aggregate fast path must equal the OLD paginateAll JS reduce on the same data,
  * not merely "run".
  *
- * How byte-identity is provable at all: `local_total_centi` is
+ * How byte-identity is provable at all: `local_total_sen` is
  * `integer DEFAULT 0 NOT NULL` (backend/scripts/scm-schema/2990s-full-schema.sql),
- * and the view's `paid_total_centi` (= COALESCE(Σ payments,0)) and
- * `balance_centi_live` (= local_total − paid) are arithmetic over it, so none is
+ * and the view's `paid_total_sen` (= COALESCE(Σ payments,0)) and
+ * `balance_sen_live` (= local_total − paid) are arithmetic over it, so none is
  * ever null when the view exposes it. SQL SUM skips nulls and the JS reduce
  * coalesces them to 0 — with no nulls present the two are the same number, and
  * SUM over zero rows is NULL which the parser coalesces to 0, matching the empty
@@ -65,7 +65,7 @@ class FakeQuery {
       // SQL SUM: NULLs skipped; SUM over zero rows is NULL.
       const sum = (k: string) => (f.length === 0 ? null : f.reduce((s, r) => s + (r[k] == null ? 0 : Number(r[k])), 0));
       return Promise.resolve({
-        data: [{ rev: sum('local_total_centi'), outLive: sum('balance_centi_live'), paid: sum('paid_total_centi') }],
+        data: [{ rev: sum('local_total_sen'), outLive: sum('balance_sen_live'), paid: sum('paid_total_sen') }],
         error: null,
       }).then(res, rej);
     }
@@ -107,26 +107,26 @@ const predFor = (opts: { scopeIds?: string[]; company?: number; status?: string;
   };
 
 /* The OLD paginateAll JS reduce, verbatim — this is the number the change must
-   reproduce. `?? balance_centi ?? 0` mirrors the handler's absent-view fallback. */
+   reproduce. `?? balance_sen ?? 0` mirrors the handler's absent-view fallback. */
 const oldReduce = (rows: Row[]) => {
-  let revenueCenti = 0, outstandingCenti = 0, paidCenti = 0;
+  let revenueSen = 0, outstandingSen = 0, paidSen = 0;
   for (const m of rows) {
-    revenueCenti += m.local_total_centi ?? 0;
-    outstandingCenti += m.balance_centi_live ?? m.balance_centi ?? 0;
-    paidCenti += m.paid_total_centi ?? 0;
+    revenueSen += m.local_total_sen ?? 0;
+    outstandingSen += m.balance_sen_live ?? m.balance_sen ?? 0;
+    paidSen += m.paid_total_sen ?? 0;
   }
-  return { revenueCenti, outstandingCenti, paidCenti };
+  return { revenueSen, outstandingSen, paidSen };
 };
 
-/* Fixture: prod-shaped rows — local_total_centi / balance_centi_live /
-   paid_total_centi all present and non-null (the NOT NULL / COALESCE guarantee),
+/* Fixture: prod-shaped rows — local_total_sen / balance_sen_live /
+   paid_total_sen all present and non-null (the NOT NULL / COALESCE guarantee),
    spread across two companies, several statuses and a date range. */
 const FIXTURE: Row[] = [
-  { doc_no: 'SO-1', salesperson_id: 's1', company_id: 1, status: 'CONFIRMED', so_date: '2026-08-01', local_total_centi: 100000, balance_centi: 100000, balance_centi_live: 40000, paid_total_centi: 60000 },
-  { doc_no: 'SO-2', salesperson_id: 's1', company_id: 1, status: 'PROCESSING', so_date: '2026-08-05', local_total_centi: 250050, balance_centi: 250050, balance_centi_live: 250050, paid_total_centi: 0 },
-  { doc_no: 'SO-3', salesperson_id: 's2', company_id: 1, status: 'CONFIRMED', so_date: '2026-08-10', local_total_centi: 33333, balance_centi: 33333, balance_centi_live: 0, paid_total_centi: 33333 },
-  { doc_no: 'SO-4', salesperson_id: 's3', company_id: 2, status: 'CONFIRMED', so_date: '2026-08-12', local_total_centi: 999999, balance_centi: 999999, balance_centi_live: 500000, paid_total_centi: 499999 },
-  { doc_no: 'SO-5', salesperson_id: 's2', company_id: 1, status: 'DELIVERED', so_date: '2026-07-20', local_total_centi: 12345, balance_centi: 12345, balance_centi_live: -5, paid_total_centi: 12350 },
+  { doc_no: 'SO-1', salesperson_id: 's1', company_id: 1, status: 'CONFIRMED', so_date: '2026-08-01', local_total_sen: 100000, balance_sen: 100000, balance_sen_live: 40000, paid_total_sen: 60000 },
+  { doc_no: 'SO-2', salesperson_id: 's1', company_id: 1, status: 'PROCESSING', so_date: '2026-08-05', local_total_sen: 250050, balance_sen: 250050, balance_sen_live: 250050, paid_total_sen: 0 },
+  { doc_no: 'SO-3', salesperson_id: 's2', company_id: 1, status: 'CONFIRMED', so_date: '2026-08-10', local_total_sen: 33333, balance_sen: 33333, balance_sen_live: 0, paid_total_sen: 33333 },
+  { doc_no: 'SO-4', salesperson_id: 's3', company_id: 2, status: 'CONFIRMED', so_date: '2026-08-12', local_total_sen: 999999, balance_sen: 999999, balance_sen_live: 500000, paid_total_sen: 499999 },
+  { doc_no: 'SO-5', salesperson_id: 's2', company_id: 1, status: 'DELIVERED', so_date: '2026-07-20', local_total_sen: 12345, balance_sen: 12345, balance_sen_live: -5, paid_total_sen: 12350 },
 ];
 
 describe('soListMoneyKpis — aggregate fast path is byte-identical to the old JS reduce', () => {
@@ -156,7 +156,7 @@ describe('soListMoneyKpis — aggregate fast path is byte-identical to the old J
   test('empty set → zeros (SUM over zero rows is NULL, coalesced to 0)', async () => {
     const stats: Stats = { aggReads: 0, rangeReads: 0 };
     const res = await soListMoneyKpis(makeSb(FIXTURE, stats, true), filtersFor({ company: 999 }));
-    expect(res.data).toEqual({ revenueCenti: 0, outstandingCenti: 0, paidCenti: 0 });
+    expect(res.data).toEqual({ revenueSen: 0, outstandingSen: 0, paidSen: 0 });
   });
 
   test('the fast path is ONE aggregate read and ZERO paged range reads', async () => {
@@ -179,20 +179,20 @@ describe('soListMoneyKpis — fallback (aggregate unavailable) preserves the num
     expect(stats.rangeReads).toBeGreaterThanOrEqual(1);
   });
 
-  test('view lacks balance_centi_live → fallback uses balance_centi per row', async () => {
-    // Rows with NO balance_centi_live key model the absent computed column: in
-    // prod the aggregate would 500 on `balance_centi_live.sum()` and we fall
-    // through to this path, which reads balance_centi. `?? balance_centi` must
+  test('view lacks balance_sen_live → fallback uses balance_sen per row', async () => {
+    // Rows with NO balance_sen_live key model the absent computed column: in
+    // prod the aggregate would 500 on `balance_sen_live.sum()` and we fall
+    // through to this path, which reads balance_sen. `?? balance_sen` must
     // carry it.
-    const noLive = FIXTURE.map(({ balance_centi_live: _drop, ...r }) => r);
+    const noLive = FIXTURE.map(({ balance_sen_live: _drop, ...r }) => r);
     const stats: Stats = { aggReads: 0, rangeReads: 0 };
     const opts = { company: 1 };
     const res = await soListMoneyKpis(makeSb(noLive, stats, false), filtersFor(opts));
     expect(res.data).toEqual(oldReduce(noLive.filter(predFor(opts))));
-    // outstanding here is driven by balance_centi, so it equals revenue (gross)
+    // outstanding here is driven by balance_sen, so it equals revenue (gross)
     const scoped = noLive.filter(predFor(opts));
-    const gross = scoped.reduce((s, r) => s + r.balance_centi, 0);
-    expect(res.data!.outstandingCenti).toBe(gross);
+    const gross = scoped.reduce((s, r) => s + r.balance_sen, 0);
+    expect(res.data!.outstandingSen).toBe(gross);
   });
 });
 

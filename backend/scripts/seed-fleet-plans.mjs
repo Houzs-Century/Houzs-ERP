@@ -39,24 +39,24 @@ const sql = postgres(DSN, { ssl: /localhost|127\.0\.0\.1/.test(DSN) ? false : "r
 
 const d = (off) => new Date(Date.now() + off * 86_400_000).toISOString().slice(0, 10);
 
-// The default plan set — [component, interval_km, interval_months, est_cost_centi].
+// The default plan set — [component, interval_km, interval_months, est_cost_sen].
 // A null interval means "not tracked on that axis"; the plan is due on whichever
 // of the two set intervals comes first. Demo last-done (SEED_LAST_DONE) uses
 // lastDoneOffDays (days ago) + lastDoneKmBack (km before a nominal odometer) so
 // the seeded fleet lands across ok / due-soon / overdue.
 const DEFAULT_PLANS = [
-  { component: "ENGINE_OIL",       intervalKm: 10_000,  intervalMonths: 4,  estCostCenti: 45_000,  lastDoneOffDays: -110, lastDoneKmBack: 9_400 },
-  { component: "OIL_FILTER",       intervalKm: 10_000,  intervalMonths: 4,  estCostCenti: 8_000,   lastDoneOffDays: -110, lastDoneKmBack: 9_400 },
-  { component: "GEARBOX_OIL",      intervalKm: 40_000,  intervalMonths: 24, estCostCenti: 60_000,  lastDoneOffDays: -300, lastDoneKmBack: 22_000 },
-  { component: "BRAKE_INSPECTION", intervalKm: 20_000,  intervalMonths: 6,  estCostCenti: 12_000,  lastDoneOffDays: -160, lastDoneKmBack: 14_000 },
-  { component: "BRAKE_PADS",       intervalKm: 40_000,  intervalMonths: 18, estCostCenti: 55_000,  lastDoneOffDays: -260, lastDoneKmBack: 30_000 },
-  { component: "TYRES",            intervalKm: 60_000,  intervalMonths: 36, estCostCenti: 320_000, lastDoneOffDays: -400, lastDoneKmBack: 40_000 },
-  { component: "BATTERY",          intervalKm: null,    intervalMonths: 24, estCostCenti: 45_000,  lastDoneOffDays: -690, lastDoneKmBack: null },
-  { component: "ALIGNMENT",        intervalKm: 20_000,  intervalMonths: 12, estCostCenti: 9_000,   lastDoneOffDays: -200, lastDoneKmBack: 16_000 },
-  { component: "AIRCON",           intervalKm: null,    intervalMonths: 12, estCostCenti: 15_000,  lastDoneOffDays: -350, lastDoneKmBack: null },
-  { component: "SUSPENSION",       intervalKm: 80_000,  intervalMonths: 36, estCostCenti: 120_000, lastDoneOffDays: -420, lastDoneKmBack: 50_000 },
-  { component: "COOLING_SYSTEM",   intervalKm: 60_000,  intervalMonths: 24, estCostCenti: 40_000,  lastDoneOffDays: -300, lastDoneKmBack: 35_000 },
-  { component: "PUSPAKOM_PREP",    intervalKm: null,    intervalMonths: 6,  estCostCenti: 6_000,   lastDoneOffDays: -150, lastDoneKmBack: null },
+  { component: "ENGINE_OIL",       intervalKm: 10_000,  intervalMonths: 4,  estCostSen: 45_000,  lastDoneOffDays: -110, lastDoneKmBack: 9_400 },
+  { component: "OIL_FILTER",       intervalKm: 10_000,  intervalMonths: 4,  estCostSen: 8_000,   lastDoneOffDays: -110, lastDoneKmBack: 9_400 },
+  { component: "GEARBOX_OIL",      intervalKm: 40_000,  intervalMonths: 24, estCostSen: 60_000,  lastDoneOffDays: -300, lastDoneKmBack: 22_000 },
+  { component: "BRAKE_INSPECTION", intervalKm: 20_000,  intervalMonths: 6,  estCostSen: 12_000,  lastDoneOffDays: -160, lastDoneKmBack: 14_000 },
+  { component: "BRAKE_PADS",       intervalKm: 40_000,  intervalMonths: 18, estCostSen: 55_000,  lastDoneOffDays: -260, lastDoneKmBack: 30_000 },
+  { component: "TYRES",            intervalKm: 60_000,  intervalMonths: 36, estCostSen: 320_000, lastDoneOffDays: -400, lastDoneKmBack: 40_000 },
+  { component: "BATTERY",          intervalKm: null,    intervalMonths: 24, estCostSen: 45_000,  lastDoneOffDays: -690, lastDoneKmBack: null },
+  { component: "ALIGNMENT",        intervalKm: 20_000,  intervalMonths: 12, estCostSen: 9_000,   lastDoneOffDays: -200, lastDoneKmBack: 16_000 },
+  { component: "AIRCON",           intervalKm: null,    intervalMonths: 12, estCostSen: 15_000,  lastDoneOffDays: -350, lastDoneKmBack: null },
+  { component: "SUSPENSION",       intervalKm: 80_000,  intervalMonths: 36, estCostSen: 120_000, lastDoneOffDays: -420, lastDoneKmBack: 50_000 },
+  { component: "COOLING_SYSTEM",   intervalKm: 60_000,  intervalMonths: 24, estCostSen: 40_000,  lastDoneOffDays: -300, lastDoneKmBack: 35_000 },
+  { component: "PUSPAKOM_PREP",    intervalKm: null,    intervalMonths: 6,  estCostSen: 6_000,   lastDoneOffDays: -150, lastDoneKmBack: null },
 ];
 
 // A nominal current odometer to hang demo last-done km off. Real environments
@@ -99,10 +99,10 @@ async function main() {
       const lastDoneKm = SEED_LAST_DONE && p.lastDoneKmBack != null ? NOMINAL_ODO - p.lastDoneKmBack : null;
       await sql`
         INSERT INTO scm.lorry_maintenance_plans
-          (company_id, lorry_id, component, interval_km, interval_months, last_done_date, last_done_km, est_cost_centi, active)
+          (company_id, lorry_id, component, interval_km, interval_months, last_done_date, last_done_km, est_cost_sen, active)
         VALUES
           (${companyId}, ${l.id}, ${p.component}, ${p.intervalKm}, ${p.intervalMonths},
-           ${lastDoneDate}, ${lastDoneKm}, ${p.estCostCenti}, true)
+           ${lastDoneDate}, ${lastDoneKm}, ${p.estCostSen}, true)
         ON CONFLICT (lorry_id, component) DO NOTHING`;
       plansInserted++;
     }

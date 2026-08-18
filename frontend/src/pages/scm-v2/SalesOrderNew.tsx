@@ -97,7 +97,7 @@ import {
 import { soDateGuardError, soStockLocationError } from '../../vendor/scm/lib/so-form-validate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -117,7 +117,7 @@ const newLine = (deliveryDate: string | null = null): DraftLine => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
 });
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 export const SalesOrderNew = () => {
   const navigate = useNavigate();
@@ -334,9 +334,9 @@ export const SalesOrderNew = () => {
         description:    it.description ?? '',
         uom:            it.uom ?? 'UNIT',
         qty:            it.qty ?? 1,
-        unitPriceCenti: it.unit_price_centi ?? 0,
-        discountCenti:  it.discount_centi ?? 0,
-        unitCostCenti:  it.unit_cost_centi ?? 0,
+        unitPriceSen: it.unit_price_sen ?? 0,
+        discountSen:  it.discount_sen ?? 0,
+        unitCostSen:  it.unit_cost_sen ?? 0,
         variants:       (it.variants as Record<string, unknown>) ?? {},
         remark:         it.remark ?? '',
       })));
@@ -445,7 +445,7 @@ export const SalesOrderNew = () => {
         installmentMonthsLabel: p.installmentLabel || '',
         onlineType:             p.onlineTypeValue || '',
         approvalCode:           p.approvalCode || '',
-        amountCenti:            p.depositCenti > 0 ? p.depositCenti : 0,
+        amountSen:            p.depositSen > 0 ? p.depositSen : 0,
         /* Bug #3 (2026-06-24) — the card receipt scanned in the modal IS this
            deposit's slip. Tag the draft with the receipt's R2 key so the save
            records the deposit through the SO-create proof (receiptImageKey on
@@ -526,7 +526,7 @@ export const SalesOrderNew = () => {
           itemGroup:      l.itemGroup || 'others',
           description:    l.description,
           qty:            l.qty > 0 ? l.qty : 1,
-          unitPriceCenti: l.unitPriceCenti,
+          unitPriceSen: l.unitPriceSen,
           remark:         l.remark,
           ...((fabricCode || specialCodes.length > 0)
             ? { variants: { ...seeded.variants, ...fabricVariants, ...specialVariants } }
@@ -698,7 +698,7 @@ export const SalesOrderNew = () => {
           itemCode:       p.code,
           itemGroup:      category,
           description:    p.name,
-          unitPriceCenti: p.sell_price_sen ?? 0,
+          unitPriceSen: p.sell_price_sen ?? 0,
           variants:       inherited ? { ...inherited } : {},
           overriddenKeys: [],
         };
@@ -776,9 +776,9 @@ export const SalesOrderNew = () => {
     if (didUpdate) setLines(next);
   }, [lines]);
 
-  const subtotalCenti = useMemo(
+  const subtotalSen = useMemo(
     () => lines.reduce(
-      (s, l) => s + Math.max(0, l.qty * l.unitPriceCenti - l.discountCenti),
+      (s, l) => s + Math.max(0, l.qty * l.unitPriceSen - l.discountSen),
       0,
     ),
     [lines],
@@ -1174,7 +1174,7 @@ export const SalesOrderNew = () => {
     return { failed, skipped };
   };
 
-  const paymentIntents = () => paymentDrafts.filter((d) => d.amountCenti > 0 && !d.receiptImageKey);
+  const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0 && !d.receiptImageKey);
 
   const flushPaymentDrafts = async (docNo: string, drafts: PaymentDraft[]): Promise<{ failedDrafts: PaymentDraft[] }> => {
     const tasks = drafts
@@ -1193,7 +1193,7 @@ export const SalesOrderNew = () => {
           idempotencyKey:  d.idempotencyKey,
           paidAt:          d.paidAt,
           method,
-          amountCenti:     d.amountCenti,
+          amountSen:     d.amountSen,
           accountSheet:    d.accountSheet || null,
           approvalCode:    d.approvalCode || null,
           collectedBy:     d.collectedBy  || null,
@@ -1331,7 +1331,7 @@ export const SalesOrderNew = () => {
         return {
           rawText,
           qtyGuess: l.qty,
-          priceRmGuess: l.unitPriceCenti > 0 ? l.unitPriceCenti / 100 : null,
+          priceRmGuess: l.unitPriceSen > 0 ? l.unitPriceSen / 100 : null,
           skuMatch: l.itemCode
             ? {
                 code: l.itemCode,
@@ -1533,7 +1533,7 @@ export const SalesOrderNew = () => {
        exactly what to pick. Only checks amount-bearing rows (a zeroed/blank row
        is dropped at flush time). */
     const methodGaps = paymentDrafts
-      .map((d, i) => ({ row: i + 1, method: d.methodLabel, missing: d.amountCenti > 0 ? missingMethodSubField(d) : null }))
+      .map((d, i) => ({ row: i + 1, method: d.methodLabel, missing: d.amountSen > 0 ? missingMethodSubField(d) : null }))
       .filter((x) => x.missing !== null);
     if (methodGaps.length > 0) {
       const g = methodGaps[0]!;
@@ -1555,13 +1555,13 @@ export const SalesOrderNew = () => {
        upload (the receipt, on the header as receipt_image_key, IS the proof).
        flushPaymentDrafts skips it. A manually-added row is unaffected. */
     const receiptDeposit = paymentDrafts.find(
-      (d) => d.amountCenti > 0 && Boolean(d.receiptImageKey),
+      (d) => d.amountSen > 0 && Boolean(d.receiptImageKey),
     );
     const receiptDepositBody = receiptDeposit
       ? (() => {
           const { method } = labelToApi(receiptDeposit.methodLabel);
           return {
-            depositCenti:      receiptDeposit.amountCenti,
+            depositSen:      receiptDeposit.amountSen,
             paymentMethod:     method,
             merchantProvider:  receiptDeposit.merchantProvider || undefined,
             installmentMonths: parseInstallmentMonths(receiptDeposit.installmentMonthsLabel) ?? undefined,
@@ -1586,14 +1586,14 @@ export const SalesOrderNew = () => {
        would have re-opened the very deadlock this field exists to close, a
        slip-less deposit counting as RM0 against a Processing Date the operator
        can see is paid for. */
-    const pendingDepositCenti = paymentIntents()
-      .reduce((sum, d) => sum + d.amountCenti, 0);
+    const pendingDepositSen = paymentIntents()
+      .reduce((sum, d) => sum + d.amountSen, 0);
 
     create.mutate(
       {
         idempotencyKey: idemKey,
         ...receiptDepositBody,
-        pendingDepositCenti: pendingDepositCenti > 0 ? pendingDepositCenti : undefined,
+        pendingDepositSen: pendingDepositSen > 0 ? pendingDepositSen : undefined,
         /* DRAFT flow — backend reads `asDraft: true` to create the SO as 'DRAFT'
            not 'CONFIRMED'. Omitted on a normal Create, so that body is unchanged. */
         asDraft: asDraft || undefined,
@@ -1651,9 +1651,9 @@ export const SalesOrderNew = () => {
           description:    l.description,
           uom:            l.uom,
           qty:            l.qty,
-          unitPriceCenti: l.unitPriceCenti,
-          discountCenti:  l.discountCenti,
-          unitCostCenti:  l.unitCostCenti,
+          unitPriceSen: l.unitPriceSen,
+          discountSen:  l.discountSen,
+          unitCostSen:  l.unitCostSen,
           variants:       l.variants,
           remark:         l.remark,
           /* PR-E — per-item delivery date + cascade override flag. */
@@ -2289,7 +2289,7 @@ export const SalesOrderNew = () => {
             fontWeight: 800,
             color: 'var(--c-burnt)',
           }}>
-            Subtotal: {fmtRm(subtotalCenti)}
+            Subtotal: {fmtRm(subtotalSen)}
           </div>
         </div>
       </section>
@@ -2305,7 +2305,7 @@ export const SalesOrderNew = () => {
         docNo={null}
         payments={paymentDrafts}
         onChange={setPaymentDrafts}
-        grandTotalCenti={subtotalCenti}
+        grandTotalSen={subtotalSen}
         currency="MYR"
         slipUpload
         collectedByAllowedIds={paymentsCollectedByAllowedIds}

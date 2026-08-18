@@ -21,8 +21,8 @@ type SiHeader = {
   invoice_number: string; status: string;
   so_doc_no: string | null; debtor_code: string | null; debtor_name: string;
   invoice_date: string; due_date: string | null; currency: string;
-  subtotal_centi: number; discount_centi: number; tax_centi: number;
-  total_centi: number; paid_centi: number; notes: string | null;
+  subtotal_sen: number; discount_sen: number; tax_sen: number;
+  total_sen: number; paid_sen: number; notes: string | null;
   /* The route has always CAPTURED these (sales-invoices.ts HEADER + the from-DO
      convert copies them off the DO header) — they were simply never printed, so
      the invoice went to the customer with no address on it. Optional because the
@@ -43,12 +43,12 @@ type SiHeader = {
 };
 type SiItem = {
   item_code: string; description: string | null;
-  qty: number; unit_price_centi: number;
+  qty: number; unit_price_sen: number;
   // Older items table rows in 2990s may omit these — keep optional so the
   // detail-page items shape is assignable without forcing a schema-wide
   // type widening.
-  discount_centi?: number; tax_centi?: number;
-  line_total_centi: number;
+  discount_sen?: number; tax_sen?: number;
+  line_total_sen: number;
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
 };
@@ -130,9 +130,9 @@ export async function renderSalesInvoiceInto(
     it.item_code,
     [it.description, docVariantLine(it, fabric.ext, fabric.desc)].filter(Boolean).join('\n') || '—',
     String(it.qty),
-    fmtRm(it.unit_price_centi, header.currency),
-    (it.discount_centi ?? 0) > 0 ? fmtRm(it.discount_centi ?? 0, header.currency) : '—',
-    fmtRm(it.line_total_centi, header.currency),
+    fmtRm(it.unit_price_sen, header.currency),
+    (it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen ?? 0, header.currency) : '—',
+    fmtRm(it.line_total_sen, header.currency),
   ]);
   autoTable(doc, {
     startY: y,
@@ -164,16 +164,16 @@ export async function renderSalesInvoiceInto(
   };
   doc.setFontSize(9);
   let ty = lastY;
-  drawRow('Subtotal', fmtRm(header.subtotal_centi, header.currency), ty); ty += 4;
-  drawRow('Discount', fmtRm(header.discount_centi, header.currency), ty); ty += 4;
-  drawRow('Tax',      fmtRm(header.tax_centi,      header.currency), ty); ty += 5;
+  drawRow('Subtotal', fmtRm(header.subtotal_sen, header.currency), ty); ty += 4;
+  drawRow('Discount', fmtRm(header.discount_sen, header.currency), ty); ty += 4;
+  drawRow('Tax',      fmtRm(header.tax_sen,      header.currency), ty); ty += 5;
   doc.setDrawColor(0); doc.line(totalsX, ty - 2, pageW - margin, ty - 2);
   doc.setFontSize(11);
-  drawRow('GRAND TOTAL', fmtRm(header.total_centi, header.currency), ty + 2, true);
+  drawRow('GRAND TOTAL', fmtRm(header.total_sen, header.currency), ty + 2, true);
   ty += 6;
   doc.setFontSize(9);
-  drawRow('Paid',        fmtRm(header.paid_centi, header.currency), ty + 4); ty += 4;
-  drawRow('Outstanding', fmtRm(header.total_centi - header.paid_centi, header.currency), ty + 4, true);
+  drawRow('Paid',        fmtRm(header.paid_sen, header.currency), ty + 4); ty += 4;
+  drawRow('Outstanding', fmtRm(header.total_sen - header.paid_sen, header.currency), ty + 4, true);
   ty += 12;
 
   ty = drawSignatureBoxes(doc, ty, 'Customer Acknowledgement', `${COMPANY.name} Authorised Signature`);

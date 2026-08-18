@@ -2,7 +2,7 @@
 // The owner's point: cost should be what we ACTUALLY PAID, not a rate field. The
 // system already models that — payment_vouchers.exchange_rate is the cash-out rate
 // (fx.ts header). So for every foreign doc at rate 1, this reports the three numbers
-// that decide the true basis: the currency MASTER's rate, the PI's paid_centi, and
+// that decide the true basis: the currency MASTER's rate, the PI's paid_sen, and
 // any payment voucher's own rate/amount. One SELECT per question, no writes.
 import postgres from "postgres";
 const DSN = process.env.DATABASE_URL;
@@ -48,16 +48,16 @@ async function main() {
   else {
     const pis = await sql`
       SELECT invoice_number, currency::text AS currency, exchange_rate,
-             total_centi, paid_centi, status, grn_id
+             total_sen, paid_sen, status, grn_id
         FROM ${sql(piSchema)}.purchase_invoices
        WHERE currency::text <> 'MYR' AND COALESCE(exchange_rate,1) = 1
-       ORDER BY total_centi DESC`;
+       ORDER BY total_sen DESC`;
     notice(`  foreign PIs at rate 1: ${pis.length}`);
     for (const p of pis) {
       notice(`    ${p.invoice_number}  ${p.currency}  rate=${p.exchange_rate}  status=${p.status}`);
-      notice(`       invoiced total : ${p.total_centi} centi  -> booked as ${rm(p.total_centi)} (rate 1 = no-op)`);
-      notice(`       paid_centi     : ${p.paid_centi} centi  -> ${rm(p.paid_centi)}`);
-      notice(`       ^ if paid_centi is in the DOC currency it is ${p.currency}, NOT MYR. Read (3) for the cash-out rate.`);
+      notice(`       invoiced total : ${p.total_sen} centi  -> booked as ${rm(p.total_sen)} (rate 1 = no-op)`);
+      notice(`       paid_sen     : ${p.paid_sen} centi  -> ${rm(p.paid_sen)}`);
+      notice(`       ^ if paid_sen is in the DOC currency it is ${p.currency}, NOT MYR. Read (3) for the cash-out rate.`);
     }
   }
 
@@ -76,7 +76,7 @@ async function main() {
        ORDER BY created_at DESC NULLS LAST LIMIT 25`;
     notice(`  non-MYR payment vouchers: ${pvs.length}`);
     for (const v of pvs) {
-      const amt = v.amount_centi ?? v.total_centi ?? v.amount ?? "?";
+      const amt = v.amount_sen ?? v.total_sen ?? v.amount ?? "?";
       notice(`    ${v.voucher_number ?? v.id}  ${v.currency}  rate=${v.exchange_rate}  amount=${amt}  status=${v.status ?? "-"}`);
     }
     if (!pvs.length) notice("  ^ NONE. So the system holds no record of what was actually paid in MYR for the RMB invoice — the true basis is outside the system (bank slip).");

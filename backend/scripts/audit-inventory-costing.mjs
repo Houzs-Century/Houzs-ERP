@@ -617,11 +617,11 @@ async function main() {
     notice("  Correct = the recostFromGrn cascade's own answer: per lot identity");
     notice("  (product_code, variant_key, batch_no), the qty-weighted average of");
     notice("     goods = PI line price (in MYR at the PI's rate) if > 0, else GR price x GRN rate if > 0, else PENDING");
-    notice("     freight = round(grn_items.allocated_charge_centi / qty) + round(PI allocated_charge_centi / qty)");
+    notice("     freight = round(grn_items.allocated_charge_sen / qty) + round(PI allocated_charge_sen / qty)");
     notice("  Zero is NOT a price in this schema — it encodes 'no price known yet' (recost.ts).");
 
     const canCost =
-      has("grn_items", "id", "grn_id", "material_code", "qty_accepted", "unit_price_centi") &&
+      has("grn_items", "id", "grn_id", "material_code", "qty_accepted", "unit_price_sen") &&
       has("grns", "id", "status") &&
       has("purchase_order_items", "id", "purchase_order_id") &&
       has("purchase_orders", "id", "po_number") &&
@@ -629,9 +629,9 @@ async function main() {
     if (canCost) {
       const grnRate = C.grns.has("exchange_rate") ? "COALESCE(g.exchange_rate,1)" : "1";
       const piRate = C.purchase_invoices.has("exchange_rate") ? "COALESCE(pi.exchange_rate,1)" : "1";
-      const giFreight = C.grn_items.has("allocated_charge_centi") ? "COALESCE(gi.allocated_charge_centi,0)" : "0";
-      const piFreight = C.purchase_invoice_items.has("allocated_charge_centi") ? "COALESCE(pii.allocated_charge_centi,0)" : "0";
-      const havePi = has("purchase_invoice_items", "grn_item_id", "qty", "unit_price_centi") && has("purchase_invoices", "id", "status");
+      const giFreight = C.grn_items.has("allocated_charge_sen") ? "COALESCE(gi.allocated_charge_sen,0)" : "0";
+      const piFreight = C.purchase_invoice_items.has("allocated_charge_sen") ? "COALESCE(pii.allocated_charge_sen,0)" : "0";
+      const havePi = has("purchase_invoice_items", "grn_item_id", "qty", "unit_price_sen") && has("purchase_invoices", "id", "status");
 
       /* Rebuild the authoritative landed cost per GRN LINE exactly as recost.ts
          does, then aggregate to the lot identity. Every rounding step mirrors the
@@ -642,7 +642,7 @@ async function main() {
           ${havePi ? `
           SELECT pii.grn_item_id,
                  SUM(pii.qty) AS qty,
-                 SUM(pii.qty * ROUND(COALESCE(pii.unit_price_centi,0) * ${piRate})) AS amt,
+                 SUM(pii.qty * ROUND(COALESCE(pii.unit_price_sen,0) * ${piRate})) AS amt,
                  SUM(${piFreight}) AS freight
             FROM ${q("purchase_invoice_items")} pii
             JOIN ${q("purchase_invoices")} pi ON pi.id = pii.purchase_invoice_id
@@ -655,8 +655,8 @@ async function main() {
                  GREATEST(0, COALESCE(gi.qty_accepted,0)) AS qty,
                  CASE WHEN COALESCE(p.qty,0) > 0 AND ROUND(p.amt / p.qty) > 0
                       THEN ROUND(p.amt / p.qty)
-                      WHEN COALESCE(gi.unit_price_centi,0) > 0
-                      THEN ROUND(COALESCE(gi.unit_price_centi,0) * ${grnRate})
+                      WHEN COALESCE(gi.unit_price_sen,0) > 0
+                      THEN ROUND(COALESCE(gi.unit_price_sen,0) * ${grnRate})
                       ELSE NULL END AS goods,
                  CASE WHEN GREATEST(0, COALESCE(gi.qty_accepted,0)) > 0
                       THEN ROUND(${giFreight}::numeric / GREATEST(0, COALESCE(gi.qty_accepted,0)))
@@ -822,50 +822,50 @@ async function main() {
       "NOTE: recostFromGrn deliberately restamps BOTH the lot and its consumptions, so a disagreement means a half-applied recost");
 
     // 6e. Sales Invoice cost vs the DO cost it copied. restampSiFromDo copies
-    //     delivery_order_items.unit_cost_centi x qty onto sales_invoice_items
-    //     .line_cost_centi, so the two must agree on every non-cancelled invoice.
-    if (has("sales_invoice_items", "do_item_id", "qty", "line_cost_centi") &&
-        has("delivery_order_items", "id", "unit_cost_centi") &&
+    //     delivery_order_items.unit_cost_sen x qty onto sales_invoice_items
+    //     .line_cost_sen, so the two must agree on every non-cancelled invoice.
+    if (has("sales_invoice_items", "do_item_id", "qty", "line_cost_sen") &&
+        has("delivery_order_items", "id", "unit_cost_sen") &&
         has("sales_invoices", "id", "status")) {
       const siNoCol = ["invoice_number", "si_number", "doc_no"].find((c) => C.sales_invoices.has(c));
       const siRows = await pg.unsafe(`
         SELECT si.id AS si_id, ${siNoCol ? `si."${ident(siNoCol)}"` : "si.id::text"} AS doc_no,
                ${C.sales_invoices.has("company_id") ? "si.company_id" : "NULL::int AS company_id"},
-               sii.id AS line_id, sii.qty, sii.line_cost_centi,
-               di.unit_cost_centi, (sii.qty * COALESCE(di.unit_cost_centi,0)) AS expected_cost
+               sii.id AS line_id, sii.qty, sii.line_cost_sen,
+               di.unit_cost_sen, (sii.qty * COALESCE(di.unit_cost_sen,0)) AS expected_cost
           FROM ${q("sales_invoice_items")} sii
           JOIN ${q("sales_invoices")} si ON si.id = sii.sales_invoice_id
           JOIN ${q("delivery_order_items")} di ON di.id = sii.do_item_id
          WHERE UPPER(si.status::text) <> 'CANCELLED'`);
-      const bad = siRows.filter((r) => Number(r.line_cost_centi ?? 0) !== Number(r.expected_cost));
-      const zero = siRows.filter((r) => Number(r.line_cost_centi ?? 0) === 0);
+      const bad = siRows.filter((r) => Number(r.line_cost_sen ?? 0) !== Number(r.expected_cost));
+      const zero = siRows.filter((r) => Number(r.line_cost_sen ?? 0) === 0);
       notice("");
       notice("  6e. Sales Invoice line cost vs the DO line cost it copies (restampSiFromDo)");
       notice(`      SI lines linked to a DO line scanned : ${siRows.length}`);
-      notice(`      ... line_cost_centi != qty x DO unit_cost_centi : ${bad.length}`);
-      notice(`      ... line_cost_centi = 0              : ${zero.length}`);
+      notice(`      ... line_cost_sen != qty x DO unit_cost_sen : ${bad.length}`);
+      notice(`      ... line_cost_sen = 0              : ${zero.length}`);
       for (const r of bad.slice(0, SAMPLE)) {
-        notice(`        co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} qty=${pad(r.qty, 5)} stored=${pad(rm(r.line_cost_centi), 12)} expected=${pad(rm(r.expected_cost), 12)} delta=${rm(Number(r.line_cost_centi ?? 0) - Number(r.expected_cost))}`);
+        notice(`        co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} qty=${pad(r.qty, 5)} stored=${pad(rm(r.line_cost_sen), 12)} expected=${pad(rm(r.expected_cost), 12)} delta=${rm(Number(r.line_cost_sen ?? 0) - Number(r.expected_cost))}`);
       }
       verdict("6e", "Sales Invoice line cost == DO line cost x qty", bad.length, siRows.length,
         bad.length === 0 ? "PASS" : "DEFECT",
         "a gap means a DO recost did not cascade to the invoice, so the invoice's margin is wrong");
 
       // 6f. SI header totals must equal the sum of their own lines (recomputeSiTotals).
-      if (C.sales_invoices.has("total_cost_centi")) {
+      if (C.sales_invoices.has("total_cost_sen")) {
         const hdrRows = await pg.unsafe(`
           WITH s AS (
-            SELECT sales_invoice_id, SUM(COALESCE(line_cost_centi,0))::bigint AS line_cost
+            SELECT sales_invoice_id, SUM(COALESCE(line_cost_sen,0))::bigint AS line_cost
               FROM ${q("sales_invoice_items")} GROUP BY sales_invoice_id
           )
           SELECT si.id, ${siNoCol ? `si."${ident(siNoCol)}"` : "si.id::text"} AS doc_no,
                  ${C.sales_invoices.has("company_id") ? "si.company_id" : "NULL::int AS company_id"},
-                 COALESCE(si.total_cost_centi,0) AS hdr_cost, COALESCE(s.line_cost,0) AS line_cost
+                 COALESCE(si.total_cost_sen,0) AS hdr_cost, COALESCE(s.line_cost,0) AS line_cost
             FROM ${q("sales_invoices")} si LEFT JOIN s ON s.sales_invoice_id = si.id
            WHERE UPPER(si.status::text) <> 'CANCELLED'`);
         const badHdr = hdrRows.filter((r) => Number(r.hdr_cost) !== Number(r.line_cost));
         notice("");
-        notice("  6f. Sales Invoice header total_cost_centi vs the sum of its lines");
+        notice("  6f. Sales Invoice header total_cost_sen vs the sum of its lines");
         notice(`      invoices scanned                 : ${hdrRows.length}`);
         notice(`      ... header != Sigma(lines)       : ${badHdr.length}`);
         for (const r of badHdr.slice(0, SAMPLE)) {
@@ -873,7 +873,7 @@ async function main() {
         }
         verdict("6f", "SI header cost total == sum of its line costs", badHdr.length, hdrRows.length,
           badHdr.length === 0 ? "PASS" : "DEFECT",
-          "total_cost_centi is what the P&L reads; a stale header understates or overstates margin directly");
+          "total_cost_sen is what the P&L reads; a stale header understates or overstates margin directly");
       }
     } else {
       notice("");
@@ -888,13 +888,13 @@ async function main() {
     // SECTION 7 — PO -> GRN -> PI chain
     // ==========================================================================
     hdr("7. COSTING — PO -> GRN -> PI chain");
-    if (has("purchase_invoice_items", "grn_item_id", "qty", "unit_price_centi") &&
+    if (has("purchase_invoice_items", "grn_item_id", "qty", "unit_price_sen") &&
         has("purchase_invoices", "id", "status") &&
-        has("grn_items", "id", "qty_accepted", "unit_price_centi") && has("grns", "id", "status")) {
+        has("grn_items", "id", "qty_accepted", "unit_price_sen") && has("grns", "id", "status")) {
       const retCol = C.grn_items.has("returned_qty") ? "COALESCE(gi.returned_qty,0)" : "0";
-      const piAmtExpr = C.purchase_invoice_items.has("line_total_centi")
-        ? "COALESCE(pii.line_total_centi, pii.qty * COALESCE(pii.unit_price_centi,0))"
-        : "pii.qty * COALESCE(pii.unit_price_centi,0)";
+      const piAmtExpr = C.purchase_invoice_items.has("line_total_sen")
+        ? "COALESCE(pii.line_total_sen, pii.qty * COALESCE(pii.unit_price_sen,0))"
+        : "pii.qty * COALESCE(pii.unit_price_sen,0)";
       const chain = await pg.unsafe(`
         WITH pi AS (
           SELECT pii.grn_item_id, SUM(pii.qty)::int AS pi_qty,
@@ -908,7 +908,7 @@ async function main() {
                ${C.grns.has("company_id") ? "g.company_id" : "NULL::int AS company_id"},
                SUM(GREATEST(0, COALESCE(gi.qty_accepted,0) - ${retCol}))::int AS recv_qty,
                SUM(COALESCE(pi.pi_qty,0))::int AS billed_qty,
-               SUM(COALESCE(gi.qty_accepted,0) * COALESCE(gi.unit_price_centi,0))::bigint AS grn_amt,
+               SUM(COALESCE(gi.qty_accepted,0) * COALESCE(gi.unit_price_sen,0))::bigint AS grn_amt,
                SUM(COALESCE(pi.pi_amt,0))::bigint AS pi_amt,
                count(*) FILTER (WHERE pi.grn_item_id IS NULL)::int AS unbilled_lines,
                count(*)::int AS lines
@@ -1293,22 +1293,22 @@ async function main() {
     // ==========================================================================
     hdr("11. GROSS PROFIT — does the SI margin fall out of the lots actually consumed?");
     notice("  The chain is: consumptions -> inventory_movements.total_cost_sen -> restampDoActualCost");
-    notice("  -> delivery_order_items.unit_cost_centi/line_cost_centi -> sales_invoice_items.line_cost_centi");
-    notice("  -> sales_invoices.total_cost_centi -> total_margin_centi. Each link is checked separately");
+    notice("  -> delivery_order_items.unit_cost_sen/line_cost_sen -> sales_invoice_items.line_cost_sen");
+    notice("  -> sales_invoices.total_cost_sen -> total_margin_sen. Each link is checked separately");
     notice("  so a break can be located, not merely detected.");
-    notice("  Unit note: *_sen and *_centi are the SAME unit (1/100 MYR); the sen->centi hand-off in");
+    notice("  Unit note: *_sen and *_sen are the SAME unit (1/100 MYR); the sen->centi hand-off in");
     notice("  restampDoActualCost is therefore a rename, not a conversion.");
 
     // 11a. DO line cost vs the FIFO cost its own movements actually booked.
     if (has("delivery_order_items", "delivery_order_id", "item_code", "qty") &&
         has("delivery_orders", "id", "status") &&
-        C.delivery_order_items.has("line_cost_centi")) {
+        C.delivery_order_items.has("line_cost_sen")) {
       const svcDo = svc("di.item_group", "di.item_code");
       const doCost = await pg.unsafe(`
         WITH lines AS (
           SELECT di.delivery_order_id AS doc_id, di.item_code,
                  SUM(COALESCE(di.qty,0))::int AS qty,
-                 SUM(COALESCE(di.line_cost_centi,0))::bigint AS line_cost
+                 SUM(COALESCE(di.line_cost_sen,0))::bigint AS line_cost
             FROM ${q("delivery_order_items")} di
            WHERE NOT ${svcDo}
            GROUP BY di.delivery_order_id, di.item_code
@@ -1345,17 +1345,17 @@ async function main() {
     }
 
     // 11b. Margin identity on every SI line, and on the header.
-    if (has("sales_invoice_items", "sales_invoice_id", "line_total_centi", "line_cost_centi") &&
-        C.sales_invoice_items.has("line_margin_centi") && has("sales_invoices", "id", "status")) {
+    if (has("sales_invoice_items", "sales_invoice_id", "line_total_sen", "line_cost_sen") &&
+        C.sales_invoice_items.has("line_margin_sen") && has("sales_invoices", "id", "status")) {
       const siNoCol2 = ["invoice_number", "si_number", "doc_no"].find((c) => C.sales_invoices.has(c));
       const gpLine = await pg.unsafe(`
         SELECT ${siNoCol2 ? `si."${ident(siNoCol2)}"` : "si.id::text"} AS doc_no,
                ${C.sales_invoices.has("company_id") ? "si.company_id" : "NULL::int AS company_id"},
-               sii.id, sii.line_total_centi, sii.line_cost_centi, sii.line_margin_centi
+               sii.id, sii.line_total_sen, sii.line_cost_sen, sii.line_margin_sen
           FROM ${q("sales_invoice_items")} sii
           JOIN ${q("sales_invoices")} si ON si.id = sii.sales_invoice_id
          WHERE UPPER(si.status::text) NOT IN ('CANCELLED','DRAFT')
-           AND COALESCE(sii.line_margin_centi,0) <> COALESCE(sii.line_total_centi,0) - COALESCE(sii.line_cost_centi,0)`);
+           AND COALESCE(sii.line_margin_sen,0) <> COALESCE(sii.line_total_sen,0) - COALESCE(sii.line_cost_sen,0)`);
       const gpLineTotal = (await pg.unsafe(`
         SELECT count(*)::int AS n FROM ${q("sales_invoice_items")} sii
           JOIN ${q("sales_invoices")} si ON si.id = sii.sales_invoice_id
@@ -1365,17 +1365,17 @@ async function main() {
       notice(`       issued SI lines scanned      : ${gpLineTotal}`);
       notice(`       ... margin identity BROKEN   : ${gpLine.length}`);
       for (const r of gpLine.slice(0, SAMPLE)) {
-        notice(`         co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} rev=${pad(rm(r.line_total_centi), 13)} cost=${pad(rm(r.line_cost_centi), 13)} margin=${pad(rm(r.line_margin_centi), 13)} shouldBe=${rm(Number(r.line_total_centi ?? 0) - Number(r.line_cost_centi ?? 0))}`);
+        notice(`         co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} rev=${pad(rm(r.line_total_sen), 13)} cost=${pad(rm(r.line_cost_sen), 13)} margin=${pad(rm(r.line_margin_sen), 13)} shouldBe=${rm(Number(r.line_total_sen ?? 0) - Number(r.line_cost_sen ?? 0))}`);
       }
       verdict("11b", "SI line margin == line revenue - line cost", gpLine.length, gpLineTotal,
         gpLine.length === 0 ? "PASS" : "DEFECT",
         "a broken identity means the GP shown on the invoice is not the GP its own numbers imply");
 
       // 11c. GP traced end to end: SI line cost -> DO line -> FIFO consumptions.
-      if (C.sales_invoice_items.has("do_item_id") && C.delivery_order_items.has("unit_cost_centi")) {
+      if (C.sales_invoice_items.has("do_item_id") && C.delivery_order_items.has("unit_cost_sen")) {
         const gpTrace = await pg.unsafe(`
           WITH si_line AS (
-            SELECT sii.id, sii.do_item_id, sii.qty, sii.line_total_centi, sii.line_cost_centi,
+            SELECT sii.id, sii.do_item_id, sii.qty, sii.line_total_sen, sii.line_cost_sen,
                    ${siNoCol2 ? `si."${ident(siNoCol2)}"` : "si.id::text"} AS doc_no,
                    ${C.sales_invoices.has("company_id") ? "si.company_id" : "NULL::int AS company_id"}
               FROM ${q("sales_invoice_items")} sii
@@ -1383,7 +1383,7 @@ async function main() {
              WHERE UPPER(si.status::text) NOT IN ('CANCELLED','DRAFT') AND sii.do_item_id IS NOT NULL
           ), do_line AS (
             SELECT di.id, di.delivery_order_id, di.item_code, di.qty AS do_qty,
-                   COALESCE(di.unit_cost_centi,0) AS unit_cost, COALESCE(di.line_cost_centi,0) AS do_line_cost,
+                   COALESCE(di.unit_cost_sen,0) AS unit_cost, COALESCE(di.line_cost_sen,0) AS do_line_cost,
                    ${C.delivery_order_items.has("item_group") ? "di.item_group" : "NULL::text AS item_group"}
               FROM ${q("delivery_order_items")} di
           ), fifo AS (
@@ -1396,7 +1396,7 @@ async function main() {
             SELECT doc_id, product_code, SUM(cons_qty)::int AS cons_qty, SUM(cons_cost)::bigint AS cons_cost
               FROM fifo GROUP BY doc_id, product_code
           )
-          SELECT s.doc_no, s.company_id, dl.item_code, s.qty, s.line_total_centi, s.line_cost_centi,
+          SELECT s.doc_no, s.company_id, dl.item_code, s.qty, s.line_total_sen, s.line_cost_sen,
                  dl.unit_cost, COALESCE(f.cons_qty,0) AS cons_qty, COALESCE(f.cons_cost,0) AS cons_cost
             FROM si_line s
             JOIN do_line dl ON dl.id = s.do_item_id
@@ -1407,16 +1407,16 @@ async function main() {
            consumed lots. Zero consumed units with a non-zero billed cost (or the
            reverse) is the break the owner is asking about. */
         const noFifo = gpTrace.filter((r) => Number(r.cons_qty) === 0);
-        const zeroCost = gpTrace.filter((r) => Number(r.line_cost_centi ?? 0) === 0);
+        const zeroCost = gpTrace.filter((r) => Number(r.line_cost_sen ?? 0) === 0);
         notice("");
         notice("  11c. SI goods lines traced back to a real FIFO consumption");
         notice(`       issued SI goods lines linked to a DO line : ${gpTrace.length}`);
         notice(`       ... whose DO bucket consumed NO lot at all : ${noFifo.length}  <- GP on these is not FIFO-derived`);
         notice(`       ... billed at zero cost (GP = 100%)        : ${zeroCost.length}`);
-        const gpAtRisk = noFifo.reduce((a, r) => a + Number(r.line_total_centi ?? 0), 0);
+        const gpAtRisk = noFifo.reduce((a, r) => a + Number(r.line_total_sen ?? 0), 0);
         notice(`       revenue sitting on a non-FIFO-derived GP   : ${rm(gpAtRisk)}`);
         for (const r of noFifo.slice(0, SAMPLE)) {
-          notice(`         co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} ${pad(short(r.item_code, 22), 22)} qty=${pad(r.qty, 4)} rev=${pad(rm(r.line_total_centi), 13)} cost=${pad(rm(r.line_cost_centi), 13)} consumedUnits=${r.cons_qty}`);
+          notice(`         co=${r.company_id ?? "-"} ${pad(short(r.doc_no, 22), 22)} ${pad(short(r.item_code, 22), 22)} qty=${pad(r.qty, 4)} rev=${pad(rm(r.line_total_sen), 13)} cost=${pad(rm(r.line_cost_sen), 13)} consumedUnits=${r.cons_qty}`);
         }
         verdict("11c", "SI goods line GP derived from a real FIFO consumption",
           noFifo.length, gpTrace.length, noFifo.length === 0 ? "PASS" : "DEFECT",
@@ -1424,16 +1424,16 @@ async function main() {
       }
 
       // 11d. SI header margin identity.
-      if (C.sales_invoices.has("total_margin_centi") && C.sales_invoices.has("total_cost_centi")) {
-        const revCol = C.sales_invoices.has("local_total_centi") ? "local_total_centi" : "total_centi";
+      if (C.sales_invoices.has("total_margin_sen") && C.sales_invoices.has("total_cost_sen")) {
+        const revCol = C.sales_invoices.has("local_total_sen") ? "local_total_sen" : "total_sen";
         const gpHdr = await pg.unsafe(`
           SELECT ${siNoCol2 ? `si."${ident(siNoCol2)}"` : "si.id::text"} AS doc_no,
                  ${C.sales_invoices.has("company_id") ? "si.company_id" : "NULL::int AS company_id"},
-                 COALESCE(si."${ident(revCol)}",0) AS rev, COALESCE(si.total_cost_centi,0) AS cost,
-                 COALESCE(si.total_margin_centi,0) AS margin
+                 COALESCE(si."${ident(revCol)}",0) AS rev, COALESCE(si.total_cost_sen,0) AS cost,
+                 COALESCE(si.total_margin_sen,0) AS margin
             FROM ${q("sales_invoices")} si
            WHERE UPPER(si.status::text) NOT IN ('CANCELLED','DRAFT')
-             AND COALESCE(si.total_margin_centi,0) <> COALESCE(si."${ident(revCol)}",0) - COALESCE(si.total_cost_centi,0)`);
+             AND COALESCE(si.total_margin_sen,0) <> COALESCE(si."${ident(revCol)}",0) - COALESCE(si.total_cost_sen,0)`);
         const hdrTotal = (await pg.unsafe(`
           SELECT count(*)::int AS n FROM ${q("sales_invoices")} WHERE UPPER(status::text) NOT IN ('CANCELLED','DRAFT')`))[0].n;
         notice("");
@@ -1445,7 +1445,7 @@ async function main() {
         }
         verdict("11d", "SI header margin == header revenue - header cost", gpHdr.length, hdrTotal,
           gpHdr.length === 0 ? "PASS" : "DEFECT",
-          "total_margin_centi is what the P&L reads; a broken identity misstates reported GP directly");
+          "total_margin_sen is what the P&L reads; a broken identity misstates reported GP directly");
       }
     }
   } catch (e) {

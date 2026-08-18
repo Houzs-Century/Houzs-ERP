@@ -19,8 +19,8 @@ import { buildFeeLineRow, dateOnly } from '../scripts/repair-so-fee-line-integri
 const RPC_ROW_COLUMNS = [
   'doc_no', 'line_no', 'line_date', 'debtor_name', 'item_group', 'item_code',
   'description', 'description2', 'remark', 'uom', 'qty',
-  'unit_price_centi', 'discount_centi', 'total_centi', 'total_inc_centi', 'balance_centi',
-  'variants', 'unit_cost_centi', 'line_cost_centi', 'line_margin_centi',
+  'unit_price_sen', 'discount_sen', 'total_sen', 'total_inc_sen', 'balance_sen',
+  'variants', 'unit_cost_sen', 'line_cost_sen', 'line_margin_sen',
   'divan_price_sen', 'leg_price_sen', 'special_order_price_sen', 'custom_specials',
   'line_delivery_date', 'line_delivery_date_overridden', 'warehouse_id',
   'branding', 'venue', 'stock_status',
@@ -32,7 +32,7 @@ const base = {
   venue: 'SHOWROOM KL',
   customerDeliveryDate: '2026-08-20',
   crossCategorySourceDocNo: null,
-  feeCenti: 25000,
+  feeSen: 25000,
   keptMaxLineNo: 1,
   lineDate: '2026-08-08',
 };
@@ -61,10 +61,10 @@ describe('buildFeeLineRow — the record jsonb_populate_recordset consumes', () 
     expect(row.description).toBe('Delivery fee');
     expect(row.remark).toBeNull();
     expect(row.qty).toBe(1);
-    for (const k of ['unit_price_centi', 'total_centi', 'total_inc_centi', 'balance_centi', 'line_margin_centi']) {
+    for (const k of ['unit_price_sen', 'total_sen', 'total_inc_sen', 'balance_sen', 'line_margin_sen']) {
       expect(row[k]).toBe(25000);
     }
-    for (const k of ['discount_centi', 'unit_cost_centi', 'line_cost_centi', 'divan_price_sen', 'leg_price_sen', 'special_order_price_sen']) {
+    for (const k of ['discount_sen', 'unit_cost_sen', 'line_cost_sen', 'divan_price_sen', 'leg_price_sen', 'special_order_price_sen']) {
       expect(row[k]).toBe(0);
     }
     expect(row.line_no).toBe(2); // kept max + 1, matching recomputeDeliveryFeeCore
@@ -77,7 +77,7 @@ describe('buildFeeLineRow — the record jsonb_populate_recordset consumes', () 
     expect(row.item_code).toBe('SVC-DELIVERY-CROSS');
     expect(row.description).toBe('Cross-category delivery');
     expect(row.remark).toBe('Follow-up of 2990-SO-2607-001');
-    expect(row.total_centi).toBe(25000);
+    expect(row.total_sen).toBe(25000);
   });
 
   test('no kept lines → line_no null; date from a Date object lands as YYYY-MM-DD', () => {
@@ -91,8 +91,8 @@ describe('buildFeeLineRow — the record jsonb_populate_recordset consumes', () 
   });
 
   test('refuses a non-positive or non-finite fee', () => {
-    expect(() => buildFeeLineRow({ ...base, feeCenti: 0 })).toThrow();
-    expect(() => buildFeeLineRow({ ...base, feeCenti: NaN })).toThrow();
+    expect(() => buildFeeLineRow({ ...base, feeSen: 0 })).toThrow();
+    expect(() => buildFeeLineRow({ ...base, feeSen: NaN })).toThrow();
   });
 });
 

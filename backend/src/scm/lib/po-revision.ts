@@ -6,7 +6,7 @@
 // revised SO), so applyPoAmendment applies the operator's requested line + header
 // diffs to the PO IN PLACE. It does NOT re-run honest selling-price pricing — a
 // PO carries the supplier COST the purchaser negotiated, so the amendment's
-// new_unit_price_centi is authoritative and is written through as given.
+// new_unit_price_sen is authoritative and is written through as given.
 //
 // On approve, for the ONE bound PO the amendment targets:
 //   • snapshot the CURRENT PO into scm.po_revisions (reusing snapshotPo from
@@ -37,7 +37,7 @@ import { routingNote, type AmendmentFieldKind } from '../shared/amendment-routin
    frontend poLineFieldKinds / poHeaderFieldKind so the audit routing note matches
    what the detail page and PDF show. */
 function poAmendmentFieldKinds(
-  lines: Array<{ change_type: string; new_material_code: string | null; new_qty: number | null; new_unit_price_centi: number | null; new_delivery_date: string | null; old_snapshot: Record<string, unknown> | null }>,
+  lines: Array<{ change_type: string; new_material_code: string | null; new_qty: number | null; new_unit_price_sen: number | null; new_delivery_date: string | null; old_snapshot: Record<string, unknown> | null }>,
   headerChanges: Record<string, unknown> | null,
 ): AmendmentFieldKind[] {
   const kinds: AmendmentFieldKind[] = [];
@@ -47,7 +47,7 @@ function poAmendmentFieldKinds(
     const old = l.old_snapshot ?? {};
     if (l.new_material_code != null && String(l.new_material_code) !== String(old.material_code ?? '')) kinds.push('SPEC');
     if (l.new_qty != null && Number(l.new_qty) !== Number(old.qty ?? NaN)) kinds.push('QTY');
-    if (l.new_unit_price_centi != null && Number(l.new_unit_price_centi) !== Number(old.unit_price_centi ?? NaN)) kinds.push('PRICE');
+    if (l.new_unit_price_sen != null && Number(l.new_unit_price_sen) !== Number(old.unit_price_sen ?? NaN)) kinds.push('PRICE');
     if (l.new_delivery_date != null && String(l.new_delivery_date) !== String(old.delivery_date ?? '')) kinds.push('DELIVERY');
   }
   if (headerChanges) {
@@ -70,7 +70,7 @@ type PoAmendmentLine = {
   new_material_name: string | null;
   new_variants: Record<string, unknown> | null;
   new_qty: number | null;
-  new_unit_price_centi: number | null;
+  new_unit_price_sen: number | null;
   new_delivery_date: string | null;
   old_snapshot: Record<string, unknown> | null;
 };
@@ -91,8 +91,8 @@ export type ApplyPoAmendmentResult = {
 const centi = (v: unknown): number => Number(v ?? 0);
 
 /** Recompute a PO line's total from its qty / unit price / discount, clamped >= 0. */
-function lineTotal(qty: number, unitPriceCenti: number, discountCenti: number): number {
-  return Math.max(0, qty * unitPriceCenti - discountCenti);
+function lineTotal(qty: number, unitPriceSen: number, discountSen: number): number {
+  return Math.max(0, qty * unitPriceSen - discountSen);
 }
 
 export async function applyPoAmendment(
@@ -116,14 +116,14 @@ export async function applyPoAmendment(
   const { data: lineRows, error: lineErr } = await sb
     .from('po_amendment_lines')
     .select('id, purchase_order_item_id, change_type, new_material_code, new_material_name, ' +
-      'new_variants, new_qty, new_unit_price_centi, new_delivery_date, old_snapshot')
+      'new_variants, new_qty, new_unit_price_sen, new_delivery_date, old_snapshot')
     .eq('amendment_id', amendmentId);
   if (lineErr) throw new Error(`applyPoAmendment: amendment lines load failed: ${lineErr.message}`);
   const amendmentLines = (lineRows ?? []) as PoAmendmentLine[];
 
   const { data: poHeader, error: poErr } = await sb
     .from('purchase_orders')
-    .select('id, po_number, supplier_id, expected_at, notes, tax_centi, revision, company_id')
+    .select('id, po_number, supplier_id, expected_at, notes, tax_sen, revision, company_id')
     .eq('id', poId)
     .maybeSingle();
   if (poErr) throw new Error(`applyPoAmendment: PO header load failed: ${poErr.message}`);
@@ -213,7 +213,7 @@ export async function applyPoAmendment(
       const materialCode = String(diff.new_material_code ?? '').trim();
       if (!materialCode) throw new Error('applyPoAmendment: ADD line has no new_material_code');
       const qty = Math.max(1, Number(diff.new_qty ?? 1));
-      const unit = centi(diff.new_unit_price_centi);
+      const unit = centi(diff.new_unit_price_sen);
       const { error: insErr } = await sb.from('purchase_order_items').insert({
         ...(companyId != null ? { company_id: companyId } : {}),
         purchase_order_id: poId,
@@ -221,10 +221,10 @@ export async function applyPoAmendment(
         material_code:     materialCode,
         material_name:     diff.new_material_name ?? materialCode,
         qty,
-        unit_price_centi:  unit,
-        discount_centi:    0,
-        line_total_centi:  lineTotal(qty, unit, 0),
-        unit_cost_centi:   unit,
+        unit_price_sen:  unit,
+        discount_sen:    0,
+        line_total_sen:  lineTotal(qty, unit, 0),
+        unit_cost_sen:   unit,
         received_qty:      0,
         variants:          diff.new_variants ?? null,
         item_group:        String((diff.new_variants?.itemGroup as string | undefined) ?? 'others'),
@@ -242,7 +242,7 @@ export async function applyPoAmendment(
     if (!diff.purchase_order_item_id) continue;
     const { data: existing, error: exErr } = await sb
       .from('purchase_order_items')
-      .select('id, qty, unit_price_centi, discount_centi, material_code, material_name, variants, delivery_date')
+      .select('id, qty, unit_price_sen, discount_sen, material_code, material_name, variants, delivery_date')
       .eq('id', diff.purchase_order_item_id)
       .maybeSingle();
     if (exErr) throw new Error(`applyPoAmendment: line load failed: ${exErr.message}`);
@@ -250,12 +250,12 @@ export async function applyPoAmendment(
     const row = existing as Record<string, unknown>;
 
     const qty = diff.new_qty != null ? Math.max(1, Number(diff.new_qty)) : Math.max(1, centi(row.qty));
-    const unit = diff.new_unit_price_centi != null ? centi(diff.new_unit_price_centi) : centi(row.unit_price_centi);
-    const discount = centi(row.discount_centi);
+    const unit = diff.new_unit_price_sen != null ? centi(diff.new_unit_price_sen) : centi(row.unit_price_sen);
+    const discount = centi(row.discount_sen);
     const patch: Record<string, unknown> = {
       qty,
-      unit_price_centi: unit,
-      line_total_centi: lineTotal(qty, unit, discount),
+      unit_price_sen: unit,
+      line_total_sen: lineTotal(qty, unit, discount),
     };
     if (change === 'SPEC') {
       if (diff.new_material_code) patch.material_code = String(diff.new_material_code).trim();
@@ -268,7 +268,7 @@ export async function applyPoAmendment(
       if (String(from ?? '') !== String(to ?? '')) lineFieldChanges.push({ field, from: from ?? null, to: to ?? null });
     };
     noteFromTo(`qty_${row.material_code ?? diff.purchase_order_item_id}`, row.qty, qty);
-    noteFromTo(`price_${row.material_code ?? diff.purchase_order_item_id}`, row.unit_price_centi, unit);
+    noteFromTo(`price_${row.material_code ?? diff.purchase_order_item_id}`, row.unit_price_sen, unit);
     if (change === 'SPEC') noteFromTo(`spec_${diff.purchase_order_item_id}`, row.material_code, patch.material_code ?? row.material_code);
     if (diff.new_delivery_date != null) noteFromTo(`delivery_${row.material_code ?? diff.purchase_order_item_id}`, row.delivery_date, diff.new_delivery_date);
 
@@ -284,12 +284,12 @@ export async function applyPoAmendment(
   //     then bump the revision. Mirrors reviseBoundPo's roll-up.
   const { data: liveLines, error: liveErr } = await sb
     .from('purchase_order_items')
-    .select('line_total_centi, delivery_date')
+    .select('line_total_sen, delivery_date')
     .eq('purchase_order_id', poId);
   if (liveErr) throw new Error(`applyPoAmendment: PO lines re-read failed: ${liveErr.message}`);
-  const rows = (liveLines ?? []) as Array<{ line_total_centi: number | null; delivery_date: string | null }>;
-  const subtotal = rows.reduce((s, r) => s + centi(r.line_total_centi), 0);
-  const tax = centi((poHeader as { tax_centi?: number }).tax_centi);
+  const rows = (liveLines ?? []) as Array<{ line_total_sen: number | null; delivery_date: string | null }>;
+  const subtotal = rows.reduce((s, r) => s + centi(r.line_total_sen), 0);
+  const tax = centi((poHeader as { tax_sen?: number }).tax_sen);
   const dates = rows.map((r) => r.delivery_date).filter((d): d is string => Boolean(d)).sort();
 
   if (rows.length === 0 && linesRemoved > 0) {
@@ -297,8 +297,8 @@ export async function applyPoAmendment(
   }
 
   const bump: Record<string, unknown> = {
-    subtotal_centi: subtotal,
-    total_centi:    subtotal + tax,
+    subtotal_sen: subtotal,
+    total_sen:    subtotal + tax,
     revision:       nextRevision,
     updated_at:     new Date().toISOString(),
   };

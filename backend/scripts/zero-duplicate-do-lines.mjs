@@ -58,8 +58,8 @@ const sql = postgres(DSN, { ssl: "require", prepare: false, max: 1 });
 /* The money columns a delivery line can carry. A surplus row is only safe to
    zero if all of them are absent or zero - otherwise the value stays behind a
    zero quantity and the document stops adding up. */
-const MONEY = ["unit_price_centi", "discount_centi", "line_total_centi",
-  "unit_cost_centi", "line_cost_centi", "line_margin_centi", "ship_cost_centi"];
+const MONEY = ["unit_price_sen", "discount_sen", "line_total_sen",
+  "unit_cost_sen", "line_cost_sen", "line_margin_sen", "ship_cost_sen"];
 
 const nz = (v) => v != null && Number(v) !== 0;
 
@@ -99,12 +99,12 @@ async function groups(client) {
 // header money + line_count, the numbers that may not move
 const headerTotals = (client, ids) => client`
   SELECT id::text AS id, do_number, line_count,
-         local_total_centi, total_cost_centi, total_margin_centi,
+         local_total_sen, total_cost_sen, total_margin_sen,
          (SELECT COALESCE(SUM(qty),0)::numeric FROM scm.delivery_order_items i
            WHERE i.delivery_order_id = scm.delivery_orders.id) AS sum_qty,
          (SELECT COUNT(*)::int FROM scm.delivery_order_items i
            WHERE i.delivery_order_id = scm.delivery_orders.id) AS n_lines,
-         (SELECT COALESCE(SUM(COALESCE(line_total_centi,0)),0)::numeric
+         (SELECT COALESCE(SUM(COALESCE(line_total_sen,0)),0)::numeric
             FROM scm.delivery_order_items i WHERE i.delivery_order_id = scm.delivery_orders.id) AS sum_line_total
     FROM scm.delivery_orders WHERE id = ANY(${ids}::uuid[]) ORDER BY do_number`;
 
@@ -199,7 +199,7 @@ async function main() {
   const totalsBefore = await headerTotals(sql, docIds);
   log("");
   log("=== DOCUMENT TOTALS BEFORE ===");
-  for (const h of totalsBefore) log(`  ${h.do_number} lines=${h.n_lines} line_count=${h.line_count} sum_qty=${h.sum_qty} local_total_centi=${h.local_total_centi} total_cost_centi=${h.total_cost_centi} total_margin_centi=${h.total_margin_centi} sum_line_total_centi=${h.sum_line_total}`);
+  for (const h of totalsBefore) log(`  ${h.do_number} lines=${h.n_lines} line_count=${h.line_count} sum_qty=${h.sum_qty} local_total_sen=${h.local_total_sen} total_cost_sen=${h.total_cost_sen} total_margin_sen=${h.total_margin_sen} sum_line_total_sen=${h.sum_line_total}`);
 
   const overBefore = await overDelivered(sql, []);
   log("");
@@ -300,8 +300,8 @@ async function main() {
     log("=== DOCUMENT TOTALS AFTER (must be identical except sum_qty) ===");
     for (const h of totalsAfter) {
       const b = totalsBefore.find((x) => x.id === h.id);
-      log(`  ${h.do_number} lines=${h.n_lines} line_count=${h.line_count} sum_qty=${b.sum_qty} -> ${h.sum_qty} local_total_centi=${h.local_total_centi} total_cost_centi=${h.total_cost_centi} total_margin_centi=${h.total_margin_centi} sum_line_total_centi=${h.sum_line_total}`);
-      for (const c of ["line_count", "local_total_centi", "total_cost_centi", "total_margin_centi", "n_lines", "sum_line_total"]) {
+      log(`  ${h.do_number} lines=${h.n_lines} line_count=${h.line_count} sum_qty=${b.sum_qty} -> ${h.sum_qty} local_total_sen=${h.local_total_sen} total_cost_sen=${h.total_cost_sen} total_margin_sen=${h.total_margin_sen} sum_line_total_sen=${h.sum_line_total}`);
+      for (const c of ["line_count", "local_total_sen", "total_cost_sen", "total_margin_sen", "n_lines", "sum_line_total"]) {
         if (String(b[c]) !== String(h[c])) { bad++; err(`${h.do_number} ${c} MOVED ${b[c]} -> ${h[c]}`); }
       }
     }

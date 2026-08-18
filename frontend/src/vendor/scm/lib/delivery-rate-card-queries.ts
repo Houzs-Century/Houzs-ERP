@@ -28,8 +28,8 @@ export type RateCard = {
   isOwnFleet: boolean;
   basis: RateBasis;
   aggregation: RateAggregation;
-  minChargeCenti: number | null;
-  capCenti: number | null;
+  minChargeSen: number | null;
+  capSen: number | null;
   rounding: RateRounding;
   isActive: boolean;
   notes: string | null;
@@ -46,7 +46,7 @@ export type RateRule = {
   bracketMin: number | null;
   bracketMax: number | null;
   zone: string | null;
-  amountCenti: number;
+  amountSen: number;
   params: Record<string, unknown> | null;
   sortOrder: number;
 };
@@ -61,10 +61,10 @@ export type RateCardMeta = {
 export type CostLine = {
   ruleType: string;
   label: string;
-  amountCenti: number;
+  amountSen: number;
   detail?: Record<string, unknown>;
 };
-export type CostBreakdown = { totalCenti: number; subtotalCenti: number; lines: CostLine[] };
+export type CostBreakdown = { totalSen: number; subtotalSen: number; lines: CostLine[] };
 
 export type DeliveryFacts = {
   setCount?: number | null;
@@ -93,9 +93,9 @@ export type ReconcileRow = {
   dropCount: number;
   derivedSetCount: number;
   derivedZone: string | null;
-  billedCenti: number;
-  expectedCenti: number | null;
-  deltaCenti: number | null;
+  billedSen: number;
+  expectedSen: number | null;
+  deltaSen: number | null;
   flagged: boolean;
   factsComplete: boolean;
   breakdown: CostBreakdown | null;
@@ -140,8 +140,8 @@ export type NewRateCard = {
      route ignores it (mig 0246). Own fleet IS "no carrier". */
   basis?: RateBasis;
   aggregation?: RateAggregation;
-  minChargeCenti?: number | null;
-  capCenti?: number | null;
+  minChargeSen?: number | null;
+  capSen?: number | null;
   rounding?: RateRounding;
   isActive?: boolean;
   notes?: string | null;
@@ -182,7 +182,7 @@ export type NewRateRule = {
   bracketMin?: number | null;
   bracketMax?: number | null;
   zone?: string | null;
-  amountCenti: number;
+  amountSen: number;
   sortOrder?: number;
 };
 

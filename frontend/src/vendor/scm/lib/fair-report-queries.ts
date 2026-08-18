@@ -52,11 +52,11 @@ export type FairDims = {
 };
 
 export type FairCostByCategory = {
-  mattress_sofa_cost_centi: number;
-  bedframe_cost_centi: number;
-  accessories_cost_centi: number;
-  others_cost_centi: number;
-  service_cost_centi: number;
+  mattress_sofa_cost_sen: number;
+  bedframe_cost_sen: number;
+  accessories_cost_sen: number;
+  others_cost_sen: number;
+  service_cost_sen: number;
 };
 
 // ── stage=so ─────────────────────────────────────────────────────────────────
@@ -64,15 +64,15 @@ export type FairSoRow = FairDims & {
   so_date: string | null;
   so_no: string;
   order_form: string | null;      // ref (handwritten HC number)
-  amount_centi: number;           // product + service
-  selling_centi: number;          // product only
-  service_rev_centi: number;
+  amount_sen: number;           // product + service
+  selling_sen: number;          // product only
+  service_rev_sen: number;
   cost_by_category: FairCostByCategory;
-  total_so_cost_centi: number;
+  total_so_cost_sen: number;
   margin_pct: number | null;
-  balance_centi: number;
-  paid_total_centi: number;
-  deposit_centi: number;
+  balance_sen: number;
+  paid_total_sen: number;
+  deposit_sen: number;
   payment_methods: FairTenderLabel[];
   deposit_by_tender: FairTenderSplit;
   below_deposit: boolean;
@@ -80,13 +80,13 @@ export type FairSoRow = FairDims & {
 
 export type FairSoSummary = {
   orders: number;
-  total_amount_centi: number;
-  total_selling_centi: number;
-  total_service_rev_centi: number;
-  total_so_cost_centi: number;
-  total_margin_centi: number;
+  total_amount_sen: number;
+  total_selling_sen: number;
+  total_service_rev_sen: number;
+  total_so_cost_sen: number;
+  total_margin_sen: number;
   margin_pct: number | null;
-  total_balance_centi: number;
+  total_balance_sen: number;
   below_deposit_count: number;
   tender_totals: FairTenderSplit;
 };
@@ -98,20 +98,20 @@ export type FairDoRow = FairDims & {
   so_no: string | null;
   status: string | null;
   qty: number;
-  so_amount_centi: number | null;   // linked SO's amount (matches the SO tab)
-  total_so_cost_centi: number;
-  total_do_cost_centi: number;
+  so_amount_sen: number | null;   // linked SO's amount (matches the SO tab)
+  total_so_cost_sen: number;
+  total_do_cost_sen: number;
   do_cost_is_legacy: boolean;
-  cost_delta_centi: number;       // do − so (positive = cost grew at delivery)
+  cost_delta_sen: number;       // do − so (positive = cost grew at delivery)
   so_margin_pct: number | null;
   do_margin_pct: number | null;
 };
 
 export type FairDoSummary = {
   deliveries: number;
-  total_so_cost_centi: number;
-  total_do_cost_centi: number;
-  cost_delta_centi: number;
+  total_so_cost_sen: number;
+  total_do_cost_sen: number;
+  cost_delta_sen: number;
   legacy_count: number;
 };
 
@@ -122,19 +122,19 @@ export type FairInvoiceRow = FairDims & {
   so_no: string | null;
   do_id: string | null;
   status: string | null;
-  invoiced_centi: number;
-  so_cost_centi: number;
-  do_cost_centi: number;
-  si_cost_centi: number;          // landed
+  invoiced_sen: number;
+  so_cost_sen: number;
+  do_cost_sen: number;
+  si_cost_sen: number;          // landed
   margin_pct: number | null;      // invoiced vs landed
 };
 
 export type FairInvoiceSummary = {
   invoices: number;
-  total_invoiced_centi: number;
-  total_so_cost_centi: number;
-  total_do_cost_centi: number;
-  total_si_cost_centi: number;
+  total_invoiced_sen: number;
+  total_so_cost_sen: number;
+  total_do_cost_sen: number;
+  total_si_cost_sen: number;
   margin_pct: number | null;
 };
 
@@ -145,42 +145,42 @@ export type FairPnlRow = FairDims & {
   so_date: string | null;
   so_no: string;
   order_form: string | null;
-  revenue_centi: number;             // product + service
-  product_rev_centi: number;
-  service_rev_centi: number;
-  so_cost_centi: number;             // SO category cost
-  do_cost_centi: number | null;      // null when no DO exists yet
-  si_cost_centi: number | null;      // null when no SI exists yet
-  effective_cost_centi: number;      // most-progressed booked cost (COGS)
+  revenue_sen: number;             // product + service
+  product_rev_sen: number;
+  service_rev_sen: number;
+  so_cost_sen: number;             // SO category cost
+  do_cost_sen: number | null;      // null when no DO exists yet
+  si_cost_sen: number | null;      // null when no SI exists yet
+  effective_cost_sen: number;      // most-progressed booked cost (COGS)
   effective_cost_stage: FairPnlCostStage;
-  gross_profit_centi: number;        // revenue − effective cost
+  gross_profit_sen: number;        // revenue − effective cost
   margin_pct: number | null;
 };
 
 export type FairOverheads = {
-  transport_centi: number;
-  merchandise_centi: number;
-  commission_centi: number;
+  transport_sen: number;
+  merchandise_sen: number;
+  commission_sen: number;
   commission_pct: number;
   commission_is_boost: boolean;
-  total_overhead_centi: number;
+  total_overhead_sen: number;
 };
 
 export type FairPnlSummary = {
   orders: number;
   delivered_orders: number;
   invoiced_orders: number;
-  total_revenue_centi: number;
-  total_product_rev_centi: number;
-  total_service_rev_centi: number;
-  total_so_cost_centi: number;
-  total_do_cost_centi: number;
-  total_si_cost_centi: number;
-  total_cogs_centi: number;
-  gross_profit_centi: number;
+  total_revenue_sen: number;
+  total_product_rev_sen: number;
+  total_service_rev_sen: number;
+  total_so_cost_sen: number;
+  total_do_cost_sen: number;
+  total_si_cost_sen: number;
+  total_cogs_sen: number;
+  gross_profit_sen: number;
   gross_margin_pct: number | null;
   overheads: FairOverheads;
-  net_profit_centi: number;
+  net_profit_sen: number;
   net_margin_pct: number | null;
 };
 
@@ -295,16 +295,16 @@ export type FairDetailLine = {
   description2: string | null;
   variants: Record<string, unknown> | null;
   qty: number | null;
-  unit_price_centi: number | null;
-  amount_centi: number | null;
-  unit_cost_centi: number | null;
-  line_cost_centi: number | null;
+  unit_price_sen: number | null;
+  amount_sen: number | null;
+  unit_cost_sen: number | null;
+  line_cost_sen: number | null;
   cancelled: boolean | null;
 };
 
 export type FairDetailPayment = {
   tender: string | null;
-  amount_centi: number | null;
+  amount_sen: number | null;
   merchant_provider: string | null;
   installment_months: number | null;
   approval_code: string | null;
@@ -316,15 +316,15 @@ export type FairDetailResponse = FairDims & {
   so_no: string;
   order_form: string | null;
   so_date: string | null;
-  amount_centi: number;
-  selling_centi: number;
-  service_rev_centi: number;
+  amount_sen: number;
+  selling_sen: number;
+  service_rev_sen: number;
   cost_by_category: FairCostByCategory;
-  total_so_cost_centi: number;
+  total_so_cost_sen: number;
   margin_pct: number | null;
-  balance_centi: number;
-  deposit_centi: number;
-  paid_total_centi: number;
+  balance_sen: number;
+  deposit_sen: number;
+  paid_total_sen: number;
   below_deposit: boolean;
   payment_methods: FairTenderLabel[];
   deposit_by_tender: FairTenderSplit;

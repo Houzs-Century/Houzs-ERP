@@ -63,7 +63,7 @@ export type SoAmendmentDetail = {
      amendment { amendment_no, status, reason, created_at, requested_by,
                  approved_by, approved_at }
      lines[]   { change_type, new_material_code, new_material_name, new_qty,
-                 new_unit_price_centi, new_delivery_date, old_snapshot }
+                 new_unit_price_sen, new_delivery_date, old_snapshot }
      purchaseOrder { po_number, status, revision } */
 export type PoAmendmentDetail = {
   amendment: {
@@ -80,7 +80,7 @@ export type PoAmendmentDetail = {
     new_material_code?: string | null;
     new_material_name?: string | null;
     new_qty?: number | null;
-    new_unit_price_centi?: number | null;
+    new_unit_price_sen?: number | null;
     new_delivery_date?: string | null;
     old_snapshot?: Record<string, unknown> | null;
   }>;
@@ -138,8 +138,8 @@ function buildSoRows(lines: SoAmendmentDetail['lines']): AmendmentChangeRow[] {
     if (l.new_qty != null && String(l.new_qty) !== String(snap.qty ?? '')) {
       rows.push({ item, field: 'Quantity', before: str(snap.qty), after: str(l.new_qty), kind: 'CHANGE' });
     }
-    if (l.new_unit_price_sen != null && String(l.new_unit_price_sen) !== String(snap.unit_price_sen ?? snap.unit_price_centi ?? '')) {
-      rows.push({ item, field: 'Unit price', before: money((snap.unit_price_sen ?? snap.unit_price_centi) as number | null), after: money(l.new_unit_price_sen), kind: 'CHANGE' });
+    if (l.new_unit_price_sen != null && String(l.new_unit_price_sen) !== String(snap.unit_price_sen ?? snap.unit_price_sen ?? '')) {
+      rows.push({ item, field: 'Unit price', before: money((snap.unit_price_sen ?? snap.unit_price_sen) as number | null), after: money(l.new_unit_price_sen), kind: 'CHANGE' });
     }
     /* mig 0280 — routed through the shared changed-fields test above so the
        printed document and the on-screen card never disagree about whether the
@@ -169,7 +169,7 @@ function buildPoRows(lines: PoAmendmentDetail['lines']): AmendmentChangeRow[] {
       continue;
     }
     if (change === 'ADD') {
-      rows.push({ item, field: 'Line', before: '—', after: `Qty ${str(l.new_qty)} @ ${money(l.new_unit_price_centi)}`, kind: 'ADD' });
+      rows.push({ item, field: 'Line', before: '—', after: `Qty ${str(l.new_qty)} @ ${money(l.new_unit_price_sen)}`, kind: 'ADD' });
       continue;
     }
     if (change === 'SPEC' && l.new_material_code && String(l.new_material_code) !== String(snap.material_code ?? '')) {
@@ -178,8 +178,8 @@ function buildPoRows(lines: PoAmendmentDetail['lines']): AmendmentChangeRow[] {
     if (l.new_qty != null && String(l.new_qty) !== String(snap.qty ?? '')) {
       rows.push({ item, field: 'Quantity', before: str(snap.qty), after: str(l.new_qty), kind: 'CHANGE' });
     }
-    if (l.new_unit_price_centi != null && String(l.new_unit_price_centi) !== String(snap.unit_price_centi ?? '')) {
-      rows.push({ item, field: 'Unit cost', before: money(snap.unit_price_centi as number | null), after: money(l.new_unit_price_centi), kind: 'CHANGE' });
+    if (l.new_unit_price_sen != null && String(l.new_unit_price_sen) !== String(snap.unit_price_sen ?? '')) {
+      rows.push({ item, field: 'Unit cost', before: money(snap.unit_price_sen as number | null), after: money(l.new_unit_price_sen), kind: 'CHANGE' });
     }
     if (l.new_delivery_date != null && String(l.new_delivery_date) !== String(snap.delivery_date ?? '')) {
       rows.push({ item, field: 'Delivery date', before: str(snap.delivery_date), after: str(l.new_delivery_date), kind: 'CHANGE' });

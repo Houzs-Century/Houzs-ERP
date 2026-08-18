@@ -9,12 +9,12 @@
         Math.max(0, ...). Printed here from pg_get_viewdef so the claim is
         about the DEPLOYED view, not the migration file.
      2. over-collected rows EXIST anyway — POST/PATCH /:docNo/payments refuse
-        an over-payment, so any row where sum(payments) > total_revenue_centi
+        an over-payment, so any row where sum(payments) > total_revenue_sen
         got there some other way (SO-create deposit, the scan job, or the
         order total being edited DOWN after the money landed).
      3. the excess was absorbed into ITEM VALUE — if that happened, the order
         would carry a line price change (mfg_so_audit_log UPDATE_LINE with
-        unitPriceCenti, or a row in mfg_so_price_overrides) dated AFTER the
+        unitPriceSen, or a row in mfg_so_price_overrides) dated AFTER the
         payment, and the delta would look like the excess.
 
    Writes nothing. Prints counts, sums and up to LIMIT worked examples.
@@ -51,90 +51,90 @@ async function main() {
 
   // ── 2. How many orders have collected more than they are worth ───────────
   note('\n' + '='.repeat(72));
-  note('=== 2. over-collected sales orders (sum(payments) > total_revenue_centi)');
+  note('=== 2. over-collected sales orders (sum(payments) > total_revenue_sen)');
   const agg = await sql`
     WITH pay AS (
-      SELECT so_doc_no, sum(amount_centi)::bigint AS paid, count(*)::int AS n_rows,
+      SELECT so_doc_no, sum(amount_sen)::bigint AS paid, count(*)::int AS n_rows,
              bool_or(coalesce(is_deposit,false)) AS has_deposit_row,
              min(paid_at)::text AS first_paid, max(paid_at)::text AS last_paid
         FROM scm.mfg_sales_order_payments
        GROUP BY so_doc_no
     )
     SELECT count(*)::int                                   AS n_orders,
-           coalesce(sum(p.paid - s.total_revenue_centi),0)::bigint AS excess_sen,
-           coalesce(max(p.paid - s.total_revenue_centi),0)::bigint AS worst_sen
+           coalesce(sum(p.paid - s.total_revenue_sen),0)::bigint AS excess_sen,
+           coalesce(max(p.paid - s.total_revenue_sen),0)::bigint AS worst_sen
       FROM scm.mfg_sales_orders s
       JOIN pay p ON p.so_doc_no = s.doc_no
      WHERE s.status NOT IN ('CANCELLED','DRAFT')
        AND (${CO}::bigint = 0 OR s.company_id = ${CO}::bigint)
-       AND p.paid > s.total_revenue_centi`;
+       AND p.paid > s.total_revenue_sen`;
   note(`orders over-collected : ${agg[0].n_orders}`);
   note(`total excess          : ${rm(agg[0].excess_sen)}`);
   note(`worst single order    : ${rm(agg[0].worst_sen)}`);
 
-  // Same question against local_total_centi (what the LIST view subtracts).
+  // Same question against local_total_sen (what the LIST view subtracts).
   const agg2 = await sql`
-    WITH pay AS (SELECT so_doc_no, sum(amount_centi)::bigint AS paid
+    WITH pay AS (SELECT so_doc_no, sum(amount_sen)::bigint AS paid
                    FROM scm.mfg_sales_order_payments GROUP BY so_doc_no)
     SELECT count(*)::int AS n_orders,
-           coalesce(sum(p.paid - s.local_total_centi),0)::bigint AS excess_sen
+           coalesce(sum(p.paid - s.local_total_sen),0)::bigint AS excess_sen
       FROM scm.mfg_sales_orders s JOIN pay p ON p.so_doc_no = s.doc_no
      WHERE s.status NOT IN ('CANCELLED','DRAFT')
        AND (${CO}::bigint = 0 OR s.company_id = ${CO}::bigint)
-       AND p.paid > s.local_total_centi`;
-  note(`\nsame vs local_total_centi (the LIST view's minuend): ${agg2[0].n_orders} orders, ${rm(agg2[0].excess_sen)}`);
+       AND p.paid > s.local_total_sen`;
+  note(`\nsame vs local_total_sen (the LIST view's minuend): ${agg2[0].n_orders} orders, ${rm(agg2[0].excess_sen)}`);
 
-  // The soPaidCenti rule the DETAIL page uses: header deposit counts too when
+  // The soPaidSen rule the DETAIL page uses: header deposit counts too when
   // no is_deposit ledger row exists. A DIFFERENT over-collection population.
   const agg3 = await sql`
     WITH pay AS (
-      SELECT so_doc_no, sum(amount_centi)::bigint AS paid,
+      SELECT so_doc_no, sum(amount_sen)::bigint AS paid,
              bool_or(coalesce(is_deposit,false)) AS has_deposit_row
         FROM scm.mfg_sales_order_payments GROUP BY so_doc_no
     )
     SELECT count(*)::int AS n_orders,
            coalesce(sum(
-             (CASE WHEN coalesce(p.has_deposit_row,false) THEN 0 ELSE coalesce(s.deposit_centi,0) END)
-             + coalesce(p.paid,0) - s.total_revenue_centi),0)::bigint AS excess_sen
+             (CASE WHEN coalesce(p.has_deposit_row,false) THEN 0 ELSE coalesce(s.deposit_sen,0) END)
+             + coalesce(p.paid,0) - s.total_revenue_sen),0)::bigint AS excess_sen
       FROM scm.mfg_sales_orders s LEFT JOIN pay p ON p.so_doc_no = s.doc_no
      WHERE s.status NOT IN ('CANCELLED','DRAFT')
        AND (${CO}::bigint = 0 OR s.company_id = ${CO}::bigint)
-       AND (CASE WHEN coalesce(p.has_deposit_row,false) THEN 0 ELSE coalesce(s.deposit_centi,0) END)
-           + coalesce(p.paid,0) > s.total_revenue_centi`;
-  note(`detail-page rule (soPaidCenti, header deposit folded in): ${agg3[0].n_orders} orders, ${rm(agg3[0].excess_sen)}`);
+       AND (CASE WHEN coalesce(p.has_deposit_row,false) THEN 0 ELSE coalesce(s.deposit_sen,0) END)
+           + coalesce(p.paid,0) > s.total_revenue_sen`;
+  note(`detail-page rule (soPaidSen, header deposit folded in): ${agg3[0].n_orders} orders, ${rm(agg3[0].excess_sen)}`);
 
   // ── 3. Worked examples, with what each SCREEN would show ─────────────────
   note('\n' + '='.repeat(72));
   note(`=== 3. worst ${LIMIT} over-collected orders — and what the screens show`);
   const rows = await sql`
     WITH pay AS (
-      SELECT so_doc_no, sum(amount_centi)::bigint AS paid, count(*)::int AS n_rows,
+      SELECT so_doc_no, sum(amount_sen)::bigint AS paid, count(*)::int AS n_rows,
              min(paid_at)::text AS first_paid, max(paid_at)::text AS last_paid
         FROM scm.mfg_sales_order_payments GROUP BY so_doc_no
     )
     SELECT s.doc_no, s.company_id, s.status, s.so_date::text AS so_date,
            s.created_at::text AS created_at,
-           s.total_revenue_centi, s.local_total_centi, s.balance_centi,
-           s.deposit_centi, s.line_count,
+           s.total_revenue_sen, s.local_total_sen, s.balance_sen,
+           s.deposit_sen, s.line_count,
            p.paid, p.n_rows, p.first_paid, p.last_paid,
-           v.balance_centi_live, v.paid_total_centi
+           v.balance_sen_live, v.paid_total_sen
       FROM scm.mfg_sales_orders s
       JOIN pay p ON p.so_doc_no = s.doc_no
       LEFT JOIN scm.mfg_sales_orders_with_payment_totals v ON v.doc_no = s.doc_no
      WHERE s.status NOT IN ('CANCELLED','DRAFT')
        AND (${CO}::bigint = 0 OR s.company_id = ${CO}::bigint)
-       AND p.paid > s.total_revenue_centi
-     ORDER BY (p.paid - s.total_revenue_centi) DESC
+       AND p.paid > s.total_revenue_sen
+     ORDER BY (p.paid - s.total_revenue_sen) DESC
      LIMIT ${LIMIT}::int`;
 
   for (const r of rows) {
-    const excess = Number(r.paid) - Number(r.total_revenue_centi);
+    const excess = Number(r.paid) - Number(r.total_revenue_sen);
     note(`\n  ${r.doc_no}  co=${r.company_id}  ${r.status}  so_date=${r.so_date}`);
-    note(`    total_revenue=${rm(r.total_revenue_centi)}  local_total=${rm(r.local_total_centi)}  lines=${r.line_count}`);
-    note(`    paid(ledger)=${rm(r.paid)} over ${r.n_rows} row(s)  ${r.first_paid} .. ${r.last_paid}   header deposit=${rm(r.deposit_centi)}`);
+    note(`    total_revenue=${rm(r.total_revenue_sen)}  local_total=${rm(r.local_total_sen)}  lines=${r.line_count}`);
+    note(`    paid(ledger)=${rm(r.paid)} over ${r.n_rows} row(s)  ${r.first_paid} .. ${r.last_paid}   header deposit=${rm(r.deposit_sen)}`);
     note(`    OVER-COLLECTED BY ${rm(excess)}`);
-    note(`    view balance_centi_live = ${rm(r.balance_centi_live)}   (would be ${rm(excess * -1)} if unclamped)`);
-    note(`    header balance_centi    = ${rm(r.balance_centi)}`);
+    note(`    view balance_sen_live = ${rm(r.balance_sen_live)}   (would be ${rm(excess * -1)} if unclamped)`);
+    note(`    header balance_sen    = ${rm(r.balance_sen)}`);
 
     // 3a. Did a LINE price move on this order, and when relative to the money?
     const lineAudit = await tryQ('audit-log', () => sql`
@@ -144,7 +144,7 @@ async function main() {
        WHERE a.so_doc_no = ${r.doc_no}::text
          AND a.action IN ('UPDATE_LINE','ADD_LINE','DELETE_LINE')
        ORDER BY a.created_at`);
-    const priceMoves = lineAudit.filter((a) => /unitPriceCenti|totalCenti|qty/.test(a.changes ?? ''));
+    const priceMoves = lineAudit.filter((a) => /unitPriceSen|totalSen|qty/.test(a.changes ?? ''));
     note(`    line-change audit rows: ${lineAudit.length} (of which price/qty bearing: ${priceMoves.length})`);
     for (const a of priceMoves.slice(-6)) {
       note(`      ${a.at}  ${a.action}  ${a.who ?? '?'}  ${String(a.changes).slice(0, 220)}`);
@@ -161,11 +161,11 @@ async function main() {
 
     // 3c. The payment rows themselves.
     const pays = await tryQ('payments', () => sql`
-      SELECT paid_at::text AS at, method, amount_centi, coalesce(is_deposit,false) AS is_deposit,
+      SELECT paid_at::text AS at, method, amount_sen, coalesce(is_deposit,false) AS is_deposit,
              created_at::text AS created_at, coalesce(note,'') AS note
         FROM scm.mfg_sales_order_payments WHERE so_doc_no = ${r.doc_no}::text ORDER BY created_at`);
     for (const p of pays) {
-      note(`      pay ${p.at}  ${String(p.method).padEnd(11)} ${rm(p.amount_centi).padStart(13)}  ${p.is_deposit ? 'DEPOSIT' : 'balance'}  ${p.note.slice(0, 60)}`);
+      note(`      pay ${p.at}  ${String(p.method).padEnd(11)} ${rm(p.amount_sen).padStart(13)}  ${p.is_deposit ? 'DEPOSIT' : 'balance'}  ${p.note.slice(0, 60)}`);
     }
   }
 
@@ -173,14 +173,14 @@ async function main() {
   note('\n' + '='.repeat(72));
   note('=== 4. how the over-collection arose (audit-based, best effort)');
   const how = await tryQ('how-arose', () => sql`
-    WITH pay AS (SELECT so_doc_no, sum(amount_centi)::bigint AS paid
+    WITH pay AS (SELECT so_doc_no, sum(amount_sen)::bigint AS paid
                    FROM scm.mfg_sales_order_payments GROUP BY so_doc_no),
     over AS (
       SELECT s.doc_no
         FROM scm.mfg_sales_orders s JOIN pay p ON p.so_doc_no = s.doc_no
        WHERE s.status NOT IN ('CANCELLED','DRAFT')
          AND (${CO}::bigint = 0 OR s.company_id = ${CO}::bigint)
-         AND p.paid > s.total_revenue_centi
+         AND p.paid > s.total_revenue_sen
     )
     SELECT
       count(*) FILTER (WHERE le.n IS NULL OR le.n = 0)::int AS never_line_edited,
@@ -206,22 +206,22 @@ async function main() {
         FROM scm.mfg_so_audit_log a
         CROSS JOIN LATERAL jsonb_array_elements(a.field_changes) fc
        WHERE a.action IN ('UPDATE_LINE')
-         AND fc->>'field' = 'unitPriceCenti'
+         AND fc->>'field' = 'unitPriceSen'
          AND jsonb_typeof(fc->'from') = 'number' AND jsonb_typeof(fc->'to') = 'number'
          AND (fc->>'to')::bigint > (fc->>'from')::bigint
     )
     SELECT m.so_doc_no, m.created_at::text AS at,
            m.from_sen, m.to_sen, (m.to_sen - m.from_sen) AS delta_sen,
-           p.amount_centi, p.paid_at::text AS paid_at
+           p.amount_sen, p.paid_at::text AS paid_at
       FROM price_moves m
       JOIN scm.mfg_sales_order_payments p
         ON p.so_doc_no = m.so_doc_no
-       AND p.amount_centi = (m.to_sen - m.from_sen)
+       AND p.amount_sen = (m.to_sen - m.from_sen)
      ORDER BY m.created_at DESC
      LIMIT 40`);
   note(`price rises whose delta EQUALS a payment amount on the same order: ${match.length}`);
   for (const m of match) {
-    note(`  ${m.so_doc_no}  ${m.at}  line ${rm(m.from_sen)} -> ${rm(m.to_sen)} (delta ${rm(m.delta_sen)})  payment ${rm(m.amount_centi)} on ${m.paid_at}`);
+    note(`  ${m.so_doc_no}  ${m.at}  line ${rm(m.from_sen)} -> ${rm(m.to_sen)} (delta ${rm(m.delta_sen)})  payment ${rm(m.amount_sen)} on ${m.paid_at}`);
   }
 
   /* ── 6. Does an SO payment reach the accounting ledger at all? ───────────
