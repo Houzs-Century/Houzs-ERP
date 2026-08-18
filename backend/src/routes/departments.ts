@@ -9,6 +9,7 @@ import { hasPermission } from "../services/permissions";
 import { getDb } from "../db/client";
 import { departments, users } from "../db/schema";
 import { and, eq, sql } from "drizzle-orm";
+import { bumpConfigVersion } from "../services/configCache";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -180,6 +181,12 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
     .bind(id)
     .run();
   await db.delete(departments).where(eq(departments.id, id));
+  // Every member just lost this department_id — a banner targeted at the
+  // department no longer matches them. The affected set is an unknown subset,
+  // so bump the banner family version (the broadcast-shaped bust) rather than
+  // enumerate + per-user delete: it orphans all affected entries in one op,
+  // and stale targeting would otherwise persist up to the 300s TTL.
+  await bumpConfigVersion(c.env, "banner");
   return c.json({ ok: true });
 });
 

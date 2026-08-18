@@ -115,6 +115,15 @@ position / manager ids exist in the `invitations` table but are NOT selected.
   to the clipboard, preferring the server-built `invite_url`.
 - **Client-side list.** `/api/users` is one unbounded fetch; every filter,
   count and search is computed in the component. No `ListPager`.
+- **A targeting edit busts the member's announcements banner cache.** The banner
+  filters by department_id / position_id / company grants, and its per-user KV
+  snapshot lives 300s (> the 60s poll), so PATCH `/:id` (when it changes
+  department / position / role / status / department_ids / company_ids), PUT
+  `/:id/companies`, and DELETE `/:id` all call `bustBannerForUser` (both scopes);
+  a department DELETE (`routes/departments.ts`) bumps the banner family version
+  because it un-assigns an unknown set of members at once. Session bust alone did
+  NOT cover this — it fires only on disable / role change. See the announcements
+  guide §6 and `configCache.ts`.
 - **Both surfaces or neither.** Invite/edit/action semantics changed on
   desktop must land in the mobile pair (`MobileModuleList` config +
   `MemberActions`) in the same PR.

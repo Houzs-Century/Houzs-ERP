@@ -45,6 +45,96 @@ sets up and is deferred.
 **Ref.** 2026-08-18, branch `perf/mrp-off-list-load`. Tests:
 `backend/tests/soListMrpEnrichment.test.ts`,
 `frontend/src/lib/soListEnrichment.test.ts`.
+## The announcements banner "cache" was configured but never HIT — its TTL equalled the poll, so every 60s poll still rebuilt the whole table [medium]
+
+<!-- area: Mail, search, notifications -->
+
+**Symptom.** Even the HUMAN banner slice — which was already cached — was
+measured live on 2026-08-18 returning ~874-984ms on EVERY ~60s poll. A cache
+that truly hits is not slow on every poll. So the cache was configured but not
+hitting. (This is the contradiction that showed the scope-cache fix below was
+necessary but INSUFFICIENT.)
+
+**Root cause traced — two independent causes.**
+
+1. **TTL == poll.** `CONFIG_CACHE_TTL_SECONDS.banner` was 60s and
+   `useAnnouncementBanner.ts` polls at `POLL_MS = 60_000` (60s). A 60s KV entry
+   expires exactly as the next 60s poll arrives, so the poll almost always
+   MISSES and rebuilds the full feed. The neighbouring `presence` note in
+   `configCache.ts` already recorded the same class of failure ("KV at 15s
+   stayed 100% miss") from KV's up-to-60s negative-cache + eventual consistency.
+
+2. **Serial DB reads.** The banner handler `await`ed the announcements read and
+   then the acks read sequentially, so every MISS paid ~2 round-trips (~900ms)
+   instead of ~1.
+
+**Fix.**
+- Raise `CONFIG_CACHE_TTL_SECONDS.banner` to 300s (5 polls, matching
+  `branding`), so a poll lands inside a valid entry even with KV propagation
+  lag. Commented at the TTL definition as a MUST-exceed-poll invariant, with the
+  live evidence, so nobody re-lowers it to == poll.
+- Raising the TTL makes department/position/company targeting stale unless those
+  edits bust the banner, so wire `bustBannerForUser` (BOTH scopes) into every
+  targeting-change route: the users PATCH (a `bannerTargetingChanged` predicate
+  over department_id / position_id / role_id / status / department_ids /
+  company_ids), PUT `/:id/companies`, and DELETE `/:id`; and bump the banner
+  family version on department DELETE (a bulk multi-user un-assign). Note the
+  existing session bust was NOT enough: it fires only on disable / role change,
+  while a dept-only / position-only / company-only edit changes targeting
+  without touching the session.
+- Parallelize the announcements + acks reads with `Promise.all` so even a MISS
+  is ~1 round-trip. Behaviour-identical: both are independent reads of the same
+  user, and an error in either still rejects the handler.
+
+**Measurement.** Before: human + system ~900ms every 60s, live 2026-08-18,
+`[perf]` console. Structural after: a poll now lands inside the 300s TTL (proven
+by the miss->hit banner tests) and a MISS is halved by the parallel reads. A
+production stopwatch is DEFERRED (owner-run probe) — not fabricated.
+
+**Ref.** 2026-08-18, branch `perf/banner-scope-cache` (same PR as the entry
+below). Tests: `backend/tests/configCache.test.ts` (TTL > poll invariant;
+bustBannerForUser clears both scopes; the bust is wired into every
+targeting-change route) and `announcementsBannerFilter.test.ts` (payload
+unchanged through the parallelized reads).
+
+## The notification-bell banner re-queried the whole announcements table on every 60s poll, from every desktop session [medium]
+
+<!-- area: Mail, search, notifications -->
+
+**Symptom.** `GET /api/announcements/banner?scope=system` (the notification
+bell) and `?scope=human` (the pop-up banner) are polled ~every 60s from every
+desktop session. Live `[perf] slow` console logs on 2026-08-18 showed BOTH
+taking ~874-1393ms every ~60s. The human slice was already cached; the system
+slice was not, so the bell paid a full-table build on every poll, on every
+screen, for every signed-in user.
+
+**Root cause traced.** In `backend/src/routes/announcements.ts` the banner
+handler computed `cacheKey = bannerVersion == null || systemOnly ? null : …` —
+so the `scope=system` variant BYPASSED the per-user KV snapshot and ran the
+live build each poll: `SELECT * FROM announcements ORDER BY created_at DESC`
+(full-table) + a per-user acks query + an in-memory filter. It was assumed a
+"cheap live read", but at ~900ms it is not. (The `humanOnly` half of the bypass
+had already been removed in an earlier change; only the system half remained.)
+
+**Fix.** Cache the system slice too, keyed on scope so the two per-user payloads
+(human / system) can never answer each other. `bannerCacheKey(version, userId)`
+gains a required `scope: BannerScope` (`"human" | "system"`) dimension — default
+and `scope=human` are the identical human slice, so both map to `"human"`; only
+the machine-notice bell is `"system"`. The handler now always computes a
+cacheKey (keeping only the best-effort `bannerVersion == null` guard) and takes
+the read-from-cache + waitUntil-fill path for both slices, exactly as the human
+slice already did. The per-user bust (`bustBannerForUser`, called from an ack
+and from `postPersonalNotice`) now clears BOTH scope variants for that user via
+`BANNER_SCOPES`, so an ack / private notice still reflects within the poll; the
+broadcast bust works unchanged because `bannerVersion` is in every key. Same
+endpoint, same response shape — no surface change. TTL stays 60s (desktop poll);
+mobile bell polls 30s so it may serve up to TTL-stale, the trade the human slice
+already makes.
+
+**Ref.** 2026-08-18, branch `perf/banner-scope-cache`. Tests:
+`backend/tests/configCache.test.ts` (per-scope keys never collide; bust clears
+all scopes) and `backend/tests/announcementsBannerFilter.test.ts` (system slice
+now miss→hit, and a system entry never answers the human read).
 ## Mobile delivery "On the way" and "POD complete" taps failed silently to the driver [low]
 
 **Symptom.** On the mobile delivery-planning stop card, a driver taps "On the way" (IN_TRANSIT) or "POD complete" (DELIVERED); if the PATCH is refused the button simply re-enables and nothing is shown. The owner's own report shape for this class is "the button does nothing" — the arrival/departure the customer is supposed to see never lands and the driver has no idea.
