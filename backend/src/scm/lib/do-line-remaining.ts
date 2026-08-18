@@ -50,6 +50,16 @@
 //     them is true.
 // Neither blames the operator for a blip they could not have caused, which is
 // the house rule a gate has to satisfy.
+//
+// AND THE POST-INSERT RECHECK, which is the one real trade-off. Every convert
+// re-derives this ledger AFTER inserting, to catch two operators billing the
+// same delivery at the same instant. When THAT read fails the choice is between
+// rolling back a document the pre-check passed and keeping one whose ceiling
+// nobody verified. It rolls back: at that point nothing has escaped — no revenue
+// posted, no stock moved, no other document references the header — so undoing
+// costs a keystroke and keeping costs a double bill. But never under
+// `race_conflict`: nobody raced them, and accusing a colleague would send the
+// operator hunting for a duplicate that does not exist.
 // ----------------------------------------------------------------------------
 
 import { paginateAll, chunkIn } from './paginate-all';
@@ -395,6 +405,49 @@ export const custKeyOf = (l: { debtorCode: string | null; debtorName: string | n
   (l.debtorCode && l.debtorCode.trim())
     ? `code:${l.debtorCode.trim().toUpperCase()}`
     : `name:${(l.debtorName ?? '').trim().toUpperCase()}`;
+
+/* The PRE-INSERT half of the remaining-to-invoice invariant — the read-before-
+ * write cap every path that can attach a delivery to an invoice is checked
+ * against (POST /, POST /:id/items, the qty PATCH, and the cancelled-invoice
+ * reopen). It lives beside its post-insert twin below rather than in the route,
+ * because the two are one rule and the route file may only shrink.
+ *
+ * TWO REFUSALS, deliberately distinct, because they blame different things:
+ *   409 over_remaining         — the ledger was read and the request exceeds it.
+ *                                The operator asked for too much.
+ *   503 remaining_check_failed — the ledger could NOT be read. Nobody did
+ *                                anything wrong; we cannot tell yet, so nothing
+ *                                is saved and the message says exactly that.
+ * What must never happen again is the third outcome this used to have: the read
+ * fails, every cap silently reads 0 + exclusions, and the guard either refuses a
+ * legitimate invoice for the wrong reason or (where an exclusion covers it)
+ * waves through an over-invoice. A blip must not be able to decide either.
+ */
+export type SiOverRemainingRefusal =
+  | { status: 409; body: { error: string; lines: Array<{ doItemId: string; requested: number; remaining: number }> } }
+  | { status: 503; body: { error: string; message: string } };
+
+export async function checkSiOverRemaining(
+  sb: any,
+  lines: Array<Record<string, unknown>>,
+  excludeByDoItem?: Map<string, number>,
+): Promise<SiOverRemainingRefusal | null> {
+  const wanted = new Map<string, number>();
+  for (const it of lines) {
+    const doItemId = (it.doItemId as string | undefined) ?? null;
+    if (!doItemId) continue;
+    wanted.set(doItemId, (wanted.get(doItemId) ?? 0) + Number(it.qty ?? 0));
+  }
+  if (wanted.size === 0) return null;
+  const remaining = await doRemainingByItemId(sb, [...wanted.keys()]);
+  if (!remaining.ok) return { status: 503, body: remainingUnavailableResponse(remaining.reason) };
+  const offenders: Array<{ doItemId: string; requested: number; remaining: number }> = [];
+  for (const [doItemId, requested] of wanted) {
+    const cap = (remaining.remaining.get(doItemId) ?? 0) + (excludeByDoItem?.get(doItemId) ?? 0);
+    if (requested > cap) offenders.push({ doItemId, requested, remaining: cap });
+  }
+  return offenders.length > 0 ? { status: 409, body: { error: 'over_remaining', lines: offenders } } : null;
+}
 
 /* The POST-INSERT half of the remaining-to-invoice invariant, extracted pure so
  * the money-path guard is unit testable without booting the route.
