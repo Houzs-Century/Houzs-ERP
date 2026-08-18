@@ -1149,7 +1149,10 @@ purchaseReturns.patch('/:id/post', async (c) => {
   return c.json({ error: 'cannot_post', message: `Cannot post a ${row.status} return.` }, 409);
 });
 
-purchaseReturns.patch('/:id/complete', async (c) => {
+// Exported for the lifecycle tests: supabaseAuth cannot run in the vitest
+// harness, so the tests mount the handler rather than the router (same reason
+// cancelPurchaseReturnHandler below is exported).
+export const completePurchaseReturnHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -1168,12 +1171,21 @@ purchaseReturns.patch('/:id/complete', async (c) => {
   };
   if (body.creditNoteRef) updates.credit_note_ref = body.creditNoteRef;
 
+  /* maybeSingle, NOT single. The `.eq('status','POSTED')` gate makes a zero-row
+     result the ORDINARY outcome for a DRAFT/COMPLETED/CANCELLED return, and
+     PostgREST reports zero rows to `.single()` as PGRST116 — so `error` was set,
+     the 500 above fired, and the `409 not_posted` below could never be reached.
+     Same defect and same fix as stock-transfers.ts's cancel (`already_cancelled`
+     was unreachable and a repeat cancel 500'd) and as the sibling
+     purchase-consignment-returns.ts `/:id/complete`, which already uses
+     maybeSingle for exactly this reason. */
   const { data, error } = await scopeToCompanyId(sb.from('purchase_returns').update(updates)
-    .eq('id', id), co.companyId).eq('status', 'POSTED').select('id, status, completed_at').single();
+    .eq('id', id), co.companyId).eq('status', 'POSTED').select('id, status, completed_at').maybeSingle();
   if (error) return c.json({ error: 'complete_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_posted' }, 409);
   return c.json({ purchaseReturn: data });
-});
+};
+purchaseReturns.patch('/:id/complete', completePurchaseReturnHandler);
 
 /* ── PATCH /:id/cancel — cancel a PR + reverse its return ───────────────────
    Commander 2026-05-30 — the PR module is a Confirmed-clone of the PO module,

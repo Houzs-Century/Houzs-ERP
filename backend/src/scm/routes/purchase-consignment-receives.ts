@@ -66,11 +66,16 @@ async function postPcReceiveAndRollup(sb: any, receiveId: string): Promise<{ ok:
   // Receives are created POSTED directly; this is idempotent on already-POSTED
   // rows (matches any non-CLOSED status). The inventory IN is booked by the
   // resync below.
+  /* maybeSingle, NOT single: the two .neq gates make a zero-row result the
+     ORDINARY outcome for a CLOSED/CANCELLED receive, and PostgREST reports zero
+     rows to .single() as PGRST116 — so `error` was set, the 500 fired, and the
+     `409 cannot_post` below was unreachable. Same fix as stock-transfers.ts's
+     cancel and purchase-returns.ts's /:id/complete. */
   const { data, error } = await sb.from('purchase_consignment_receives').update({
     status: 'POSTED',
     posted_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
-  }).eq('id', receiveId).neq('status', 'CLOSED').neq('status', 'CANCELLED').select('id, status, posted_at').single();
+  }).eq('id', receiveId).neq('status', 'CLOSED').neq('status', 'CANCELLED').select('id, status, posted_at').maybeSingle();
   if (error) return { ok: false, reason: error.message, status: 500 };
   if (!data) return { ok: false, reason: 'cannot_post', status: 409 };
 
@@ -1004,7 +1009,10 @@ purchaseConsignmentReceives.patch('/:id/post', async (c) => {
   }
   const res = await postPcReceiveAndRollup(sb, id);
   if (!res.ok) return c.json({ error: 'post_failed', reason: res.reason }, 500);
-  const { data } = await scopeToCompanyId(sb.from('purchase_consignment_receives').select('id, status, posted_at').eq('id', id), co.companyId).single();
+  /* maybeSingle: a company-scoped by-id read can legitimately match zero rows (a
+     cancel that raced in behind the post), and .single() turns that into a
+     PGRST116 error — a post that COMMITTED answering 500. */
+  const { data } = await scopeToCompanyId(sb.from('purchase_consignment_receives').select('id, status, posted_at').eq('id', id), co.companyId).maybeSingle();
   /* recountError surfaced, matching the GRN post which returns the same field.
      The receive IS posted — a stale received_qty on the parent PC Order must not
      un-post it — but the operator and /inventory/reconcile now learn that the
