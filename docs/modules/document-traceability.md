@@ -910,7 +910,16 @@ lied about exactly the nodes an operator needs:
 
 **Shipped (`feat/r8-docflow-do-si-dr`, display-only):**
 `frontend/src/pages/scm-v2/sales-doc-relationship-map.ts` — the ONE builder for
-all three, mirroring `so-relationship-map.ts`. Each hook
+all three, mirroring `so-relationship-map.ts`.
+
+> **Customer reference — ONE rule since 2026-08-18 (`fix/unify-customer-ref-builders`).**
+> The four builders here and in `so-relationship-map.ts` each inlined their own
+> fallback for the "Customer PO" cell (three different orders), so one order
+> could show a different reference on the DO map than the SI map. They now all
+> call `customerRefOf(header)` from `frontend/src/lib/customer-ref.ts`, which
+> resolves `ref || customer_so_no || po_doc_no`. Owner ruling: `ref` is the
+> customer-reference field; `customer_so_no` is a retired near-duplicate and
+> `po_doc_no`/`customer_po*` are dead columns dropped in a later migration. Each hook
 (`useDoRelationshipMap` / `useSiRelationshipMap` / `useDrRelationshipMap`) reads
 `useDocumentFlow(type, id)` — linkage **B**, the same company-scoped graph the
 SO map, the vendor `DocumentFlowModal` and the purchase-side maps use — and a

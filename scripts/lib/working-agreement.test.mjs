@@ -259,3 +259,57 @@ test("rule 3 has no label escape, and no migration means no demand", () => {
   assert.equal(evaluate({ ...base, labels: ["no-guide-change", "no-bug-history-needed"], files }).ok, false);
   assert.equal(evaluate({ ...base, files: parseUnifiedDiff(diff("backend/src/db/migrations/0287_x.sql", ["ALTER TABLE x ADD COLUMN b text;"])) }).ok, true);
 });
+
+/* LOGIC changes, not only surface ones (owner 2026-08-18). These three cases are
+   the whole rule: a rule change in a documented file FAILS, the same change with
+   the guide updated PASSES, and a comment-only edit says nothing at all.
+
+   The middle one matters as much as the first. A gate that cannot be satisfied
+   is a gate people route around, and the escape label already exists for the
+   cases where the guide genuinely does not need to move. */
+test("rule 2 fails a LOGIC change in a documented file, even with no surface change", () => {
+  /* No route, no permission, no status, no required flip, no lock — just a rule
+     that now reads a different column. detectSurfaceChanges sees nothing here. */
+  const logic = diff("backend/src/scm/routes/mfg-sales-orders.ts", [
+    "  const brand = product.branding ?? line.branding;",
+  ], [
+    "  const brand = line.branding ?? product.branding;",
+  ]);
+
+  const bad = evaluate({ ...base, files: parseUnifiedDiff(logic) });
+  assert.equal(bad.ok, false, "a documented file whose logic moved must ask for its guide");
+  const fail = bad.findings.find((f) => f.level === "fail" && f.rule === "module-guide");
+  assert.match(fail.message, /guide that documents it was not updated/);
+  assert.match(fail.detail, /docs\/modules\/sales-order\.md/);
+
+  const good = evaluate({
+    ...base,
+    files: parseUnifiedDiff(`${logic}
+${diff("docs/modules/sales-order.md", ["Branding now reads the SKU first."])}`),
+  });
+  assert.equal(good.ok, true, "updating the guide has to be enough, or the gate is unsatisfiable");
+});
+
+test("rule 2 stays silent on a comment-only edit to a documented file", () => {
+  /* The false-positive that would get this gate deleted: fixing a typo in a
+     comment is not a logic change, and must not demand a doc update. */
+  const commentOnly = diff("backend/src/scm/routes/mfg-sales-orders.ts", [
+    "  /* Reads the SKU first — owner 2026-08-18. */",
+    "",
+  ], [
+    "  /* Reads the SKU frist — owner 2026-08-18. */",
+  ]);
+  const res = evaluate({ ...base, files: parseUnifiedDiff(commentOnly) });
+  assert.equal(res.ok, true);
+  assert.equal(res.findings.some((f) => f.level === "fail" && f.rule === "module-guide"), false);
+});
+
+test("rule 2 ignores a file no guide quotes, so the gate cannot spread on its own", () => {
+  /* Scope is the 343 files a guide names BY PATH. A file nobody documented is
+     not this PR's debt, and failing it would make the gate everyone's problem. */
+  const undocumented = diff("backend/src/scm/lib/some-undocumented-helper.ts", [
+    "  return rows.filter((r) => r.active);",
+  ]);
+  const res = evaluate({ ...base, files: parseUnifiedDiff(undocumented) });
+  assert.equal(res.findings.some((f) => f.level === "fail" && f.rule === "module-guide"), false);
+});

@@ -1,5 +1,6 @@
 import type { Env } from "../types";
 import type { AuthUser } from "./auth";
+import { revokeUser } from "./session-revocation";
 
 // KV-backed cache for the hydrated session user. Every authenticated request
 // currently runs a 3-table JOIN (sessions+users+roles) + a page-access load +
@@ -67,6 +68,11 @@ export async function bustCachedUser(env: Env, token: string): Promise<void> {
 // efficiency only; getUserBySession still rejects deleted/disabled sessions via
 // its authoritative D1 gate.
 export async function bustUserSessions(env: Env, userId: number, exceptToken?: string): Promise<void> {
+  // Void every SIGNED PASS this user holds: a role/permission change or a
+  // disable must take effect on the next request, and a pass verifies with no
+  // DB read. The board is uid-level here (all devices), unlike a logout's
+  // sid-level. Best-effort; passes also self-expire in 8h.
+  await revokeUser(env, userId, Date.now());
   if (!env.SESSION_CACHE) return;
   try {
     const rows = await env.DB.prepare(`SELECT token FROM sessions WHERE user_id = ?`)

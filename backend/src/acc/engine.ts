@@ -189,7 +189,7 @@ export async function postJournal(sb: any, input: PostJournalInput): Promise<Pos
   // 5 — mint + insert, re-minting on a number collision (§2.12). Two
   // concurrent posts both read the same max; the loser's insert hits the
   // je_no unique index and the next attempt reads past the winner.
-  const prefix = jePrefixForCompany(companyId);
+  const prefix = await jePrefixForCompany(sb, companyId);
   const companyCol = companyId != null ? { company_id: companyId } : {};
   let je: { id: string; je_no: string } | null = null;
   let lastErr: { code?: string; message?: string } | null = null;
@@ -364,7 +364,7 @@ export async function reverseJournal(sb: any, input: ReverseJournalInput): Promi
 
   const companyId = orig.company_id ?? null;
   const companyCol = companyId != null ? { company_id: companyId } : {};
-  const prefix = jePrefixForCompany(companyId);
+  const prefix = await jePrefixForCompany(sb, companyId);
 
   let revJe: { id: string; je_no: string } | null = null;
   let lastErr: { code?: string; message?: string } | null = null;
