@@ -23,6 +23,24 @@ permissions:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # REQUIRED, and not decoration. There are NO `CLOUDFLARE_*` secrets at repo
+    # level — `gh api repos/.../actions/secrets` lists none. They live in the
+    # `Production` ENVIRONMENT, which is why `deploy.yml`'s backend job declares
+    # `environment: Production` (deploy.yml:134). A job without this line gets
+    # them as EMPTY STRINGS, not as an error: the first dispatch of this workflow
+    # (run 32095704847) printed `CLOUDFLARE_API_TOKEN:` with nothing after it.
+    #
+    # `Production` carries no protection rules today (no reviewers, no wait
+    # timer, no branch policy — `gh api repos/.../environments/Production`), so
+    # this adds no approval step. If a rule is ever added there, this read-only
+    # check starts needing approval too; move the secrets to repo level rather
+    # than dropping the check.
+    #
+    # Cosmetic cost, accepted: jobs naming an environment appear in that
+    # environment's deployment list, so this diagnostic shows up beside real
+    # releases. It deploys nothing. It has its own concurrency group above, so it
+    # still cannot queue behind or displace one.
+    environment: Production
     defaults:
       run:
         working-directory: backend

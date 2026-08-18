@@ -1325,14 +1325,51 @@ that is not what the code does:
 
 | path | enforced by |
 |---|---|
-| create-time auto-stamp of `proceeded_at`, and both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`) | `meetsProceedGate` (`order-rules.ts:71`), called at `mfg-sales-orders.ts:624` and `:5110` — its ONLY two call sites |
-| setting the processing date | `so-save-problems.ts` — the four completeness checks written out INLINE, plus `meetsDepositGate` for the money (imported at `:20`, called at `:187`). It contains **zero** references to `meetsProceedGate` |
+| create-time auto-stamp of `proceeded_at`, and both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`) | `meetsProceedGate` (`order-rules.ts`). The create site reads it directly; both manual proceed paths reach it through `soProceedGateBlocked` (`backend/src/scm/lib/so-proceed-gate.ts`) → `collectProceedGateProblems` (`so-save-problems.ts`) |
+| setting the processing date | `so-save-problems.ts` `collectProcessingGateProblems` — the four completeness conditions plus `meetsDepositGate` for the money. It contains **zero** references to `meetsProceedGate` |
 
 Both sites read the same per-company threshold through the shared
 `processingDateThresholdFor` and demand the same four facts, so the rule is one
-rule TODAY. It is one rule by agreement, not by construction — edit either and
-re-check the other. Believing the two shared a function is how a rule change
-would land on half the system.
+rule TODAY. The two PREDICATES are still one rule by agreement, not by
+construction — edit either and re-check the other. Believing the two shared a
+function is how a rule change would land on half the system.
+
+Their WORDING, since 2026-08-18, is one table by construction: both render every
+condition through `completenessProblem` / `depositProblem` in `so-save-problems.ts`,
+which differ only in a trailing clause ("before a Processing Date can be set" vs
+"before this order can be proceeded"). `tests/soProceedRefusalWiring.test.ts`
+fails if either grows its own sentence.
+
+**A REFUSAL NAMES THE CONDITION THAT FAILED (2026-08-18).** The proceed paths
+used to refuse with ONE stored sentence naming all five conditions whenever any
+single one was unmet. On 2026-08-17 that cost the owner a day: he read the word
+"deposit" on a ZERO-TOTAL order and chased a money bug that did not exist — the
+deposit term is vacuously met at `total <= 0` (`meetsDepositGate`), and the order
+was missing its postcode. The 422 body now is:
+
+```json
+{
+  "error": "proceed_gate_unmet",
+  "reason": "Delivery postcode is required before this order can be proceeded",
+  "problems": [
+    { "code": "processing_date_incomplete",
+      "message": "Delivery postcode is required before this order can be proceeded",
+      "field": "Postcode" }
+  ]
+}
+```
+
+`error` is unchanged — clients match on it, and this is additive. `problems` is
+the SAME aggregated key the save gate uses (`validationFailedBody`), so the
+surfaces that already render every reason at once (`parseSaveProblems`, owner
+2026-07-18) picked it up with no client change. The deposit line states the real
+shortfall (paid, needed, company %) and **never appears for a zero-or-negative
+total** — `depositProblem` asks `meetsDepositGate` rather than testing the total
+itself, so it cannot drift back.
+
+`meetsProceedGate` is now DEFINED as `proceedGateFailures(i).length === 0`. The
+verdict and the list of reasons are one expression, not two readings of one rule
+— which is the only shape in which they cannot disagree about an input.
 
 > A note on the money predicate, because the name is a trap: there is no
 > `meetsProcessingDatePaymentGate` any more. `order-rules.ts:82-87` records it
@@ -1384,13 +1421,16 @@ did not move — every path that sets a Processing Date runs
 inline and the money through `meetsDepositGate`; after unification that is every
 path that proceeds an order.
 
-> **The "TWO enforcement sites" table below is now ONE site and an orphan.**
-> `meetsProceedGate` has no production caller left — `git grep -n
-> "meetsProceedGate("` returns only its own unit test. The table warned that the
-> two were held in step "by agreement, not by construction"; that agreement now
-> has one party. Deliberately not resolved here:
-> `fix/proceed-gate-names-what-failed` is rewriting that function, so its fate
-> belongs to whichever branch lands second. The `/status` branch it guarded fired only when the order
+> **The "TWO enforcement sites" table below is now ONE site and TWO orphans.**
+> #2383 landed hours earlier and lifted the proceed gate into
+> `backend/src/scm/lib/so-proceed-gate.ts` with a per-condition refusal. Removing
+> the last two call sites leaves both that module's `soProceedGateBlocked` and
+> `order-rules`'s `meetsProceedGate` with no caller in routes, lib or the
+> frontend. **Neither is deleted** — deleting a freshly-shipped export to tidy a
+> merge is how work gets silently undone, and a future proceed path that needs to
+> refuse should call it. The table warned that the two enforcement sites were held
+> in step *"by agreement, not by construction"*; that agreement now has one party,
+> `collectProcessingGateProblems`. Full note at `soProceedGateBlocked` itself. The `/status` branch it guarded fired only when the order
 ALREADY carried a date, i.e. it re-gated a state that had already passed the same
 gate — and inconsistently, since an order that also carried a stamp was not
 re-gated at all.

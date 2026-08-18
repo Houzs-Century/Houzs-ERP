@@ -77,9 +77,9 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-planning.ts` | 5 | 2905 |
 | `backend/src/scm/routes/delivery-rate-cards.ts` | 11 | 689 |
 | `backend/src/scm/routes/delivery-residence-rules.ts` | 4 | 227 |
-| `backend/src/scm/routes/delivery-returns.ts` | 11 | 1781 |
+| `backend/src/scm/routes/delivery-returns.ts` | 11 | 1821 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 789 |
-| `backend/src/scm/routes/document-flow.ts` | 2 | 1029 |
+| `backend/src/scm/routes/document-flow.ts` | 2 | 1036 |
 | `backend/src/scm/routes/dp-orders.ts` | 5 | 605 |
 | `backend/src/scm/routes/driver-leave.ts` | 3 | 156 |
 | `backend/src/scm/routes/drivers.ts` | 3 | 198 |
@@ -103,7 +103,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/maintenance-push.ts` | 2 | 351 |
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1226 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 25 | 4591 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11917 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11864 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 134 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1558 |
@@ -128,7 +128,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/quotes.ts` | 4 | 321 |
 | `backend/src/scm/routes/reports.ts` | 6 | 1252 |
 | `backend/src/scm/routes/sales-analysis.ts` | 2 | 522 |
-| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2634 |
+| `backend/src/scm/routes/sales-invoices.ts` | 15 | 2632 |
 | `backend/src/scm/routes/scan-lorry-invoice.ts` | 1 | 381 |
 | `backend/src/scm/routes/scan-payment.ts` | 1 | 587 |
 | `backend/src/scm/routes/scan-so.ts` | 11 | 4865 |
@@ -150,7 +150,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/suppliers.ts` | 12 | 1009 |
 | `backend/src/scm/routes/threepl-companies.ts` | 5 | 319 |
 | `backend/src/scm/routes/trips.ts` | 14 | 1211 |
-| `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 404 |
+| `backend/src/scm/routes/unbilled-deliveries.ts` | 1 | 412 |
 | `backend/src/scm/routes/venues.ts` | 4 | 283 |
 | `backend/src/scm/routes/warehouse-mirror.ts` | 1 | 164 |
 | `backend/src/scm/routes/warehouse.ts` | 8 | 571 |
@@ -165,19 +165,19 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 148 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 300 | `0302_scm_so_item_delete_audit.sql` (0302) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 301 | `0303_scm_si_items_do_item_id.sql` (0303) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1452 files, 578633 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1458 files, 580401 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
 | `frontend/src/pages/Projects.tsx` | 15120 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11917 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11864 |
 | `frontend/src/pages/ServiceCases.tsx` | 8844 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
 | `frontend/src/pages/Team.tsx` | 5790 |

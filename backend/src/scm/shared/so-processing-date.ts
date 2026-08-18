@@ -78,13 +78,17 @@ export const SO_PROCESSING_DATE_COLUMN = 'processing_date' as const;
  * ALREADY had a date, i.e. re-gated a state that had passed — and
  * inconsistently, since an order that also carried a stamp was not re-gated.
  *
- * A LOOSE END THIS CREATES, named rather than tidied away: `meetsProceedGate`
- * now has NO production caller (`git grep -n "meetsProceedGate("` returns only
- * its own unit test). docs/modules/sales-order.md has warned since 2026-08-13
+ * TWO LOOSE ENDS THIS CREATES, named rather than tidied away. #2383 landed hours
+ * earlier and lifted the proceed gate into lib/so-proceed-gate.ts with a
+ * per-condition refusal; removing the last two call sites leaves BOTH
+ * `soProceedGateBlocked` (that module's export) and `meetsProceedGate`
+ * (order-rules) with no caller in routes, lib or the frontend. Neither is
+ * deleted here — deleting a freshly-shipped export to tidy a merge is how work
+ * gets silently undone, and if a future proceed path needs to refuse, that is
+ * what it should call. docs/modules/sales-order.md has warned since 2026-08-13
  * that this rule had TWO enforcement sites held in step "by agreement, not by
- * construction" — there is one live site now and one orphan. Not deleted here
- * because fix/proceed-gate-names-what-failed is actively rewriting that
- * function; its fate belongs to whichever of the two lands second.
+ * construction": there is one live site now (collectProcessingGateProblems) and
+ * two orphans. The full note is at soProceedGateBlocked in that module.
  *
  * THE ONE STEP LEFT: DROP THE COLUMN, and NOT in this release.
  * deploy.yml runs `node scripts/pg-migrate.mjs` BEFORE `wrangler deploy`, so for

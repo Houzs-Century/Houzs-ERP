@@ -183,7 +183,20 @@ import {
 import { findColourKivLines, findIncompleteVariantLines, type ColourKivOffender, type VariantOffender } from '../lib/so-variant-check';
 /* Aggregate ALL Processing-Date/save gate failures into one response instead of
    returning on the first (owner 2026-07-18). Pure — no I/O. */
-import { collectProcessingGateProblems, validationFailedBody, type SaveProblem } from '../shared/so-save-problems';
+import { collectProcessingGateProblems, validationFailedBody } from '../shared/so-save-problems';
+/* The gate's DB reads and its refusals. Lifted out of this file (2026-08-18)
+   when the proceed refusal grew the per-condition detail it now carries — this
+   router is at its file-size ceiling, and the three helpers were already a
+   coherent unit: docNo in, gate FACTS out, judged by the shared pure rules.
+
+   Only ONE of the three is imported now. `soProceedGateBlocked` lost both of
+   its call sites here on the same day, with the second Processing-Date storage;
+   `soDepositFacts` is reached through the helper below. Where the proceed rule
+   is actually enforced after that, and what it leaves orphaned, is written at
+   soProceedGateBlocked itself in that module. */
+import {
+  soProcessingDateProblemsForDoc,
+} from '../lib/so-proceed-gate';
 import {
   SO_PROCESSING_DATE_COLUMN,
   readSoProcessingDateFromBody,
@@ -532,84 +545,6 @@ async function soEditLocked(
   return soProcessingLocked(header) || await soPoLocked(sb, docNo);
 }
 
-/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-async function soDepositFacts(
-  sb: any,
-  docNo: string,
-): Promise<{ paidCenti: number; totalCenti: number }> {
-  const [{ data: totRow }, { data: pays }] = await Promise.all([
-    sb.from('mfg_sales_orders').select('local_total_centi').eq('doc_no', docNo).maybeSingle(),
-    sb.from('mfg_sales_order_payments').select('amount_centi').eq('so_doc_no', docNo),
-  ]);
-  return {
-    totalCenti: Number((totRow as { local_total_centi?: number } | null)?.local_total_centi ?? 0),
-    paidCenti: ((pays ?? []) as Array<{ amount_centi?: number | null }>)
-      .reduce((s, p) => s + Number(p.amount_centi ?? 0), 0),
-  };
-}
-
-/* `soProceedGateBlocked` lived here and is GONE (2026-08-18). Its two call sites
-   were the /status stamp block and the header PATCH's `proceededAt` branch, and
-   both went with the second storage. Its refusal body SO_PROCEED_GATE_RESPONSE
-   went with it, superseded by the aggregated `validation_failed` list, which
-   names WHICH condition failed instead of reciting all five in one sentence.
-
-   THE RULE DID NOT GO ANYWHERE — but say precisely WHERE it lives now, because
-   this is the shape that drifts. Every path that sets a Processing Date, which
-   after unification is every path that proceeds an order, runs
-   collectProcessingGateProblems (shared/so-save-problems.ts): the same four
-   completeness facts checked INLINE, and the money through meetsDepositGate.
-
-   AND NOTE WHAT THAT LEAVES. `meetsProceedGate` now has NO production caller at
-   all — grepping its call shape over routes, lib and the frontend returns
-   nothing, and only its own unit test still invokes it. (Written without the
-   literal call shape ON PURPOSE: the PR gate that enumerates that population
-   re-runs the grep, and a comment quoting it would put itself in the result.)
-   docs/modules/sales-order.md has warned since 2026-08-13 that this rule had TWO
-   enforcement sites kept in step "by agreement, not by construction"; there is
-   one live site now and one orphan. Deliberately NOT deleted here: the branch
-   fix/proceed-gate-names-what-failed is rewriting that function, so its fate
-   belongs to whichever of the two lands second. */
-
-/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-async function soProcessingDateProblemsForDoc(
-  sb: any,
-  docNo: string,
-  procDate: string,
-  header: {
-    customerName?: string | null;
-    address1?: string | null; postcode?: string | null; deliveryDate?: string | null;
-  },
-  companyCode?: string | null,
-): Promise<SaveProblem[]> {
-  const [{ data: liveItems }, deposit] = await Promise.all([
-    sb.from('mfg_sales_order_items')
-      .select('id, item_code, item_group, variants, cancelled').eq('doc_no', docNo),
-    soDepositFacts(sb, docNo),
-  ]);
-  const lines = ((liveItems ?? []) as Array<{
-    id: string; item_code: string; item_group: string;
-    variants: Record<string, unknown> | null; cancelled: boolean;
-  }>)
-    .filter((it) => !it.cancelled)
-    .map((it) => ({ id: it.id, itemCode: it.item_code, group: it.item_group, variants: it.variants }));
-  return collectProcessingGateProblems({
-    companyCode,
-    procDate,
-    delivDate: String(header.deliveryDate ?? '').slice(0, 10) || null,
-    todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
-    /* No orig* dates: this helper only runs when the order has NO stored
-       Processing Date, so the date is new and nothing can be grandfathered. */
-    variantOffenders: findIncompleteVariantLines(lines),
-    kivOffenders: findColourKivLines(lines),
-    completeness: {
-      hasCustomerName: !!header.customerName?.trim(),
-      hasAddress: !!header.address1?.trim(),
-      hasPostcode: !!header.postcode?.trim(),
-    },
-    deposit,
-  });
-}
 
 /* The identity lock (which columns freeze once a DO / SI exists, and why
    `salesperson_id` no longer does) lives in shared/so-identity-lock.ts. */
@@ -4871,19 +4806,24 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const depositTotalCenti = posPaymentsTotalCenti
     ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0);
   /* `autoProceed` — the boolean that decided whether to stamp `proceeded_at`
-     here — is GONE with the stamp (2026-08-18). It could only ever be true when
-     a Processing Date was ALSO being written, and the create already refuses
-     (422, below) to write that date unless the same gate passes, so "this order
-     proceeded at create" is now fully expressed by the date landing on the row.
-     The 422 block below is what actually protects the shop floor. */
+     here — is GONE with the stamp (2026-08-18), and with it this file's last
+     `meetsProceedGate` call. #2383 had just documented this site as "THE ONE
+     meetsProceedGate CALLER THAT CARRIES NO PROBLEM LIST", because it REFUSES
+     NOTHING: a handover that missed the gate was simply created un-proceeded for
+     the salesperson to complete manually. That is exactly why it can go —
+     `autoProceed` could only ever be true when a Processing Date was ALSO being
+     written, and the create already refuses (422, below) to write that date
+     unless the same conditions pass. "Proceeded at create" is now the date
+     landing on the row, and the 422 block below is the gate that refuses. */
 
   /* Processing-Date payment gate (Loo 2026-06-30) — a Processing Date is
      production's "ready to build" signal: once set, the backend orders materials
      / starts the build when the date arrives. So it must NOT be set until the
      company's deposit is collected (processingDateThresholdFor — Houzs 30%,
-     2990 50%). The SAME deposit rule autoProceed weighs above, because they are
-     the same act. depositTotalCenti = the POS deposit on this create;
-     grandTotal = order total — both in scope from the autoProceed block. */
+     2990 50%). THE deposit rule for this create — since `autoProceed` went with
+     the Proceed stamp, this is the only place the create weighs money, which is
+     the point of one storage. depositTotalCenti = the POS deposit on this
+     create; grandTotal = the order total. */
   {
     /* Same helper as the INSERT, or a legacy create writes an unjudged date. */
     const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
@@ -4903,9 +4843,9 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        a Processing Date and a hand-entered deposit could not be saved at all.
        `pendingDepositCenti` is the total the client is about to post; the client
        only sends it for drafts that already carry a verified slip session, and it
-       is counted HERE and NOWHERE ELSE — not in deposit_centi, not in autoProceed,
-       not in any ledger — so it cannot double-book and cannot mark an order
-       proceeded against money that has not landed. */
+       is counted HERE and NOWHERE ELSE — not in deposit_centi, not in any
+       ledger — so it cannot double-book and cannot mark an order proceeded
+       against money that has not landed. */
     const pendingDepositCenti = Math.max(
       0,
       typeof body.pendingDepositCenti === 'number' && Number.isFinite(body.pendingDepositCenti)
@@ -4921,8 +4861,8 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
           procDate: procDateOnCreate,
           delivDate: (body.customerDeliveryDate as string | null | undefined) || null,
           todayMY: new Date(Date.now() + 8 * 3600 * 1000).toISOString().slice(0, 10),
-          /* The SAME facts autoProceed reads a few lines above — one rule
-             (owner 2026-07-31: Processing Date IS Proceed). No email. */
+          /* One rule (owner 2026-07-31: Processing Date IS Proceed), and since
+             2026-08-18 one place that applies it on this path. No email. */
           completeness: {
             hasCustomerName: !!customerName?.trim(),
             hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),
@@ -5059,7 +4999,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        processing_date was wired on PATCH (update header) but missed
        on the POST (create) — so the New SO form's Processing Date field
        never persisted; reopening the SO showed an empty field. */
-    /* The SAME helper `autoProceed` and the create gate read; this said
+    /* The SAME helper the create gate reads; this said
        `dateOrNull(body.processingDate)`, so a legacy create wrote NO date. */
     processing_date: dateOrNull(procDateOnCreate),
     /* Mig 0053 (port of 2990 0199 + 0201) — amendment carriers. The customer's
