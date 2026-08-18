@@ -1,4 +1,5 @@
-import { useEffect, useState, lazy, Suspense, type ReactNode } from "react";
+import { useEffect, useState, lazy, type ReactNode } from "react";
+import { LazySlot } from "../components/LazySlot";
 import { useAuth } from "./AuthContext";
 import {
   HOUZS_COMPANY_CODE,
@@ -74,6 +75,25 @@ export function AuthGate({ children }: { children: ReactNode }) {
     return () => window.removeEventListener("hashchange", onHash);
   }, []);
 
+  // Every slot below is a LazySlot, never a bare <Suspense>. This file is where
+  // the whole mobile product is chosen (`<MobileApp />`), and until 2026-08-18
+  // it mounted from a bare <Suspense> with no boundary between it and
+  // main.tsx's UNKEYED top-level ChunkReloadBoundary. A phone holding a cached
+  // index.html that signs in after a deploy fetches a hashed MobileApp-*.js
+  // that no longer exists; once the automatic ladder is spent, that top-level
+  // panel replaced the ENTIRE tree — including the <NewVersionBanner /> mounted
+  // beside AuthGate in main.tsx, i.e. the one thing on screen that explains
+  // what happened. The five auth screens have the same shape and are reached
+  // exactly when a session expires onto a chunk this tab never fetched.
+  //
+  // Scoped here, the crash panel replaces only the gate's own subtree: the
+  // banner survives next to it, and any move between gate screens (#forgot →
+  // login, invite → login, signing in) changes `resetKey` and clears it without
+  // a reload. The mobile SHELL key is deliberately near-constant — there is no
+  // navigation above it to clear a crash with — so for that slot the win is the
+  // banner surviving and the panel's own Reload being the honest exit.
+  const slotKey = (screen: string) => `authgate:${screen}:${hash}`;
+
   // Initial loading state — neutral splash
   if (loading) {
     return <AuthSplash />;
@@ -82,9 +102,9 @@ export function AuthGate({ children }: { children: ReactNode }) {
   // No users in the database → first-owner bootstrap
   if (hasUsers === false) {
     return (
-      <Suspense fallback={<AuthSplash />}>
+      <LazySlot resetKey={slotKey("bootstrap")} fallback={<AuthSplash />}>
         <BootstrapScreen />
-      </Suspense>
+      </LazySlot>
     );
   }
 
@@ -93,33 +113,33 @@ export function AuthGate({ children }: { children: ReactNode }) {
   if (!user) {
     if (hash.startsWith("#invite=")) {
       return (
-        <Suspense fallback={<AuthSplash />}>
+        <LazySlot resetKey={slotKey("invite")} fallback={<AuthSplash />}>
           <AcceptInviteScreen />
-        </Suspense>
+        </LazySlot>
       );
     }
     if (hash === "#forgot") {
       return (
-        <Suspense fallback={<AuthSplash />}>
+        <LazySlot resetKey={slotKey("forgot")} fallback={<AuthSplash />}>
           <ForgotPasswordScreen />
-        </Suspense>
+        </LazySlot>
       );
     }
     return mobileEnabled ? (
-      <Suspense fallback={null}>
+      <LazySlot resetKey={slotKey("login-mobile")} fallback={null}>
         <MobileLogin />
-      </Suspense>
+      </LazySlot>
     ) : (
-      <Suspense fallback={<AuthSplash />}>
+      <LazySlot resetKey={slotKey("login")} fallback={<AuthSplash />}>
         <LoginScreen />
-      </Suspense>
+      </LazySlot>
     );
   }
 
   return mobileEnabled ? (
-    <Suspense fallback={null}>
+    <LazySlot resetKey={slotKey("shell-mobile")} fallback={null}>
       <MobileApp />
-    </Suspense>
+    </LazySlot>
   ) : (
     <>{children}</>
   );

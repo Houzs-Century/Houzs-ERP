@@ -1451,6 +1451,29 @@ export const AC_ROUTE = {
 
 export type AcOp = keyof typeof AC_ROUTE;
 
+/**
+ * A master the account book ALREADY HELD, under a DIFFERENT company name.
+ *
+ * `/ensure-masters` used to ask `CreditorExists(acc)` — `GetCreditor(acc) !=
+ * null` — and throw away the `CompanyName` it had just read, so a code that
+ * resolves to the WRONG company was indistinguishable from one that resolves to
+ * the right company at every layer. That is how HC-PO-2608-001 came to be
+ * booked against `400-H004`, which the book holds as HAO HUA FURNITURE, for a
+ * purchase order the ERP names HOOKKA INDUSTRIES SDN. BHD.
+ *
+ * IT REPORTS AND IT NEVER REFUSES. The ERP legitimately holds a shorter trading
+ * name than the book's registered one on many suppliers, so failing the document
+ * would block real purchasing in bulk. `ok` is untouched by a mismatch.
+ */
+export interface AcMasterMismatch {
+  /** `creditor:400-H004` — the kind and the account, as the service names it. */
+  master: string;
+  /** The name the ERP sent alongside the code. */
+  erp: string;
+  /** The name the account book holds against that code. */
+  book: string;
+}
+
 export interface AcCallResult {
   ok: boolean;
   /** HTTP status, or 0 when the host could not be reached at all. */
@@ -1465,6 +1488,14 @@ export interface AcCallResult {
    */
   lines: AcCreatedLine[];
   error: string | null;
+  /**
+   * Masters the book already held under a different name. ALWAYS EMPTY except
+   * on `/ensure-masters`, and empty is not the same as clean: a host still
+   * running a build older than this field simply does not send it, and
+   * `GET /health`'s `builtAt` / `mvid` is the only thing that says which build
+   * answered. Absent reads as "not reported", never as "compared and agreed".
+   */
+  mismatches: AcMasterMismatch[];
   /** False for a refusal a retry cannot fix (a 4xx, or AutoCount saying no). */
   retryable: boolean;
 }
@@ -1494,6 +1525,29 @@ export function parseCreatedLines(raw: unknown): AcCreatedLine[] {
   return out;
 }
 
+/**
+ * Read the `mismatched` array off an `/ensure-masters` response, keeping only
+ * entries that carry all three strings. A half-parsed entry is DROPPED rather
+ * than coerced — the same rule `parseCreatedLines` follows one function up, and
+ * for a sharper reason here: a mismatch line with a blank `book` would read as
+ * "the account book calls this supplier nothing", which is a claim about the
+ * book that nobody measured.
+ */
+export function parseAcMismatches(raw: unknown): AcMasterMismatch[] {
+  if (!Array.isArray(raw)) return [];
+  const out: AcMasterMismatch[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const r = entry as Record<string, unknown>;
+    const master = typeof r.master === 'string' ? r.master.trim() : '';
+    const erp = typeof r.erp === 'string' ? r.erp.trim() : '';
+    const book = typeof r.book === 'string' ? r.book.trim() : '';
+    if (!master || !erp || !book) continue;
+    out.push({ master, erp, book });
+  }
+  return out;
+}
+
 /** Config, not a secret. Absent = the write-back cannot run, and says so. */
 export function acServiceConfig(env: Env): { url: string; key: string | null } | null {
   const url = (env as unknown as { AC_SYNC_URL?: string }).AC_SYNC_URL;
@@ -1520,7 +1574,10 @@ export async function callAcService(
 ): Promise<AcCallResult> {
   const cfg = acServiceConfig(env);
   if (!cfg) {
-    return { ok: false, status: 0, docNo: null, lines: [], error: 'AC_SYNC_URL is not configured', retryable: false };
+    return {
+      ok: false, status: 0, docNo: null, lines: [], mismatches: [],
+      error: 'AC_SYNC_URL is not configured', retryable: false,
+    };
   }
   let res: Response;
   try {
@@ -1539,13 +1596,14 @@ export async function callAcService(
       status: 0,
       docNo: null,
       lines: [],
+      mismatches: [],
       error: e instanceof Error ? e.message : String(e),
       retryable: true,
     };
   }
 
   const text = await res.text().catch(() => '');
-  let body: { ok?: boolean; docNo?: string; error?: string; lines?: unknown } = {};
+  let body: { ok?: boolean; docNo?: string; error?: string; lines?: unknown; mismatched?: unknown } = {};
   try { body = text ? JSON.parse(text) : {}; } catch { /* keep the raw text below */ }
 
   if (res.ok && body.ok !== false) {
@@ -1554,6 +1612,7 @@ export async function callAcService(
       status: res.status,
       docNo: body.docNo ?? null,
       lines: parseCreatedLines(body.lines),
+      mismatches: parseAcMismatches(body.mismatched),
       error: null,
       retryable: false,
     };
@@ -1564,6 +1623,10 @@ export async function callAcService(
     status: res.status,
     docNo: null,
     lines: [],
+    /* Carried on the failure path too. A payload can name ten creditors, have
+       nine of them agree, one of them disagree, and fail on an unrelated ITEM —
+       dropping the finding because the call failed would lose it for good. */
+    mismatches: parseAcMismatches(body.mismatched),
     error,
     /* 4xx is configuration or a bad payload — a retry cannot fix either, so
        fail it now with the message intact. 5xx is ambiguous by construction:

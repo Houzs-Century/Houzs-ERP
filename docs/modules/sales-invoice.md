@@ -232,7 +232,7 @@ Unlike the DO and the GRN, **half of this document's statuses are machine-set**:
 | `SENT` | the confirm branch; create-not-draft; **and `recomputePaid` writes it back** when the paid total rolls back to 0 | both |
 | `PARTIALLY_PAID` | `recomputePaid` only | **automatic**, on payment add/delete |
 | `PAID` | `recomputePaid` only | **automatic** |
-| `OVERDUE` | **no writer exists in `backend/src`.** It is a legal target of the transition table and is read by the collection agent, but nothing in this repo computes or writes it. UNKNOWN whether an external job does | — |
+| `OVERDUE` | **no writer exists in `backend/src`.** It is a legal target of the transition table and is read by the collection agent, but nothing in this repo computes or writes it. UNKNOWN whether an external job does. Since 2026-08-17 it is at least VISIBLE if one arrives: it sits in the `sent` filter bucket, where it was in none | — |
 | `CANCELLED` | the status PATCH handler | manual |
 
 `recomputePaid` deliberately refuses to touch a DRAFT or CANCELLED invoice, so a
@@ -270,10 +270,25 @@ The authoritative in-code column lists are `HEADER` (`sales-invoices.ts:187-198`
 | `journal_entries` + `journal_entry_lines` | GL. Dr **1100** (AR) / Cr **4000** (Sales Revenue) = `total_centi`, keyed on `(source_type='SI', source_doc_no=invoice_number)` so it can never double-post (`sales-invoices.ts:10-14`). |
 | `scm.delivery_orders` / `scm.delivery_order_items` | Upstream. The DO's `has_children` lock counts non-cancelled SIs. |
 
-Status vocabulary: canonical set at `:552-567`. Filter buckets (`:542-547`):
-`sent` = DRAFT+SENT+ISSUED, `partial` = PARTIALLY_PAID+PARTIAL,
-`paid` = PAID+COMPLETED, `cancelled` = CANCELLED. Note `sent` deliberately
-includes DRAFT.
+Status vocabulary: canonical set at `SI_STATUS_CANON`. Filter buckets
+(`SI_STATUS_BUCKETS`): `sent` = DRAFT+SENT+OVERDUE, `partial` = PARTIALLY_PAID,
+`paid` = PAID, `cancelled` = CANCELLED. Note `sent` deliberately includes DRAFT.
+Every member of `sales_invoice_status` is in exactly one bucket and no bucket
+holds a non-member — pinned by
+`backend/tests/statusBucketsEnumMembership.test.mjs`.
+
+> **FIXED 2026-08-17, two faults in one map.** (1) The buckets carried `ISSUED`,
+> `PARTIAL` and `COMPLETED` under a comment calling them a "backward-compatible
+> fallback". They are not members of the enum, so no row can ever have held one,
+> and each made its tab **500 `invalid input value for enum
+> sales_invoice_status`** while its count failed silently to 0 (production, both
+> companies: `total=1` with `{sent:0, partial:0, paid:0, cancelled:0}`). The
+> three spellings survive on the WRITE path via `SI_STATUS_CANON`, which is where
+> an input alias belongs. (2) `OVERDUE` was in NO bucket, so an overdue invoice
+> counted in `all` and appeared in no tab; it is in `sent` now — the bucket
+> `SalesInvoicesListV2`'s `statusFor()` already put it in by fallback, and an
+> overdue invoice is an issued, unpaid one. A count that cannot be read now
+> returns `500 status_counts_failed` rather than 0.
 
 ---
 

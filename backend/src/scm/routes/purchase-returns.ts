@@ -17,6 +17,7 @@ import { Hono, type Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { qtyCapRefusal } from '../lib/qty-cap';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { writeMovements, reverseMovements, defaultWarehouseId } from '../lib/inventory-movements';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
@@ -803,7 +804,7 @@ purchaseReturns.post('/', async (c) => {
     purchase_order_id: (body.purchaseOrderId as string | undefined) ?? null,
     grn_id: grnId,
     supplier_id: body.supplierId,
-    return_date: (body.returnDate as string) ?? todayMyt(),
+    return_date: dateOrNull(body.returnDate) ?? todayMyt(),
     reason: (body.reason as string | undefined) ?? null,
     refund_centi: totalRefund,
     notes: (body.notes as string | undefined) ?? null,
@@ -1148,7 +1149,10 @@ purchaseReturns.patch('/:id/post', async (c) => {
   return c.json({ error: 'cannot_post', message: `Cannot post a ${row.status} return.` }, 409);
 });
 
-purchaseReturns.patch('/:id/complete', async (c) => {
+// Exported for the lifecycle tests: supabaseAuth cannot run in the vitest
+// harness, so the tests mount the handler rather than the router (same reason
+// cancelPurchaseReturnHandler below is exported).
+export const completePurchaseReturnHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
@@ -1167,12 +1171,21 @@ purchaseReturns.patch('/:id/complete', async (c) => {
   };
   if (body.creditNoteRef) updates.credit_note_ref = body.creditNoteRef;
 
+  /* maybeSingle, NOT single. The `.eq('status','POSTED')` gate makes a zero-row
+     result the ORDINARY outcome for a DRAFT/COMPLETED/CANCELLED return, and
+     PostgREST reports zero rows to `.single()` as PGRST116 — so `error` was set,
+     the 500 above fired, and the `409 not_posted` below could never be reached.
+     Same defect and same fix as stock-transfers.ts's cancel (`already_cancelled`
+     was unreachable and a repeat cancel 500'd) and as the sibling
+     purchase-consignment-returns.ts `/:id/complete`, which already uses
+     maybeSingle for exactly this reason. */
   const { data, error } = await scopeToCompanyId(sb.from('purchase_returns').update(updates)
-    .eq('id', id), co.companyId).eq('status', 'POSTED').select('id, status, completed_at').single();
+    .eq('id', id), co.companyId).eq('status', 'POSTED').select('id, status, completed_at').maybeSingle();
   if (error) return c.json({ error: 'complete_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_posted' }, 409);
   return c.json({ purchaseReturn: data });
-});
+};
+purchaseReturns.patch('/:id/complete', completePurchaseReturnHandler);
 
 /* ── PATCH /:id/cancel — cancel a PR + reverse its return ───────────────────
    Commander 2026-05-30 — the PR module is a Confirmed-clone of the PO module,
@@ -1298,6 +1311,9 @@ purchaseReturns.patch('/:id', async (c) => {
   ] as const) {
     if (body[from] !== undefined) updates[to] = body[from];
   }
+  /* A cleared return date posts "" and this loop wrote it through to the date
+     column, which Postgres rejects and 500s the save. */
+  coerceEmptyDates(updates);
   const sb = c.get('supabase');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);

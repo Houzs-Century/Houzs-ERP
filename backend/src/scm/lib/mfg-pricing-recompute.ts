@@ -31,6 +31,7 @@ import {
   type MfgSeatHeightPrice,
   type SpecialAddonDef,
 } from '../shared/mfg-pricing';
+import { chunkIn } from './paginate-all';
 import {
   computeSofaSellingSen,
   comboChargedPrices,
@@ -939,11 +940,20 @@ export async function loadFabricSellingTiersByIds(
 ): Promise<Map<string, { sofaTier: FabricTier | null; bedframeTier: FabricTier | null }>> {
   const uniq = Array.from(new Set(ids.map((i) => (i ?? '').trim()).filter(Boolean)));
   if (uniq.length === 0) return new Map();
-  const { data } = await sb
-    .from('fabric_library')
-    .select('id, sofa_tier, bedframe_tier')
-    .in('id', uniq);
-  return new Map((((data as Array<{ id: string; sofa_tier?: string | null; bedframe_tier?: string | null }>) ?? [])).map((r) => [
+  /* chunkIn — sales-analysis hands this the distinct fabricId of every SO line
+     in its window (uuids), while its two sibling reads there were already
+     chunked and this one was not. Keyed by id, so merging batches is a no-op on
+     the result. */
+  const { data } = await chunkIn<{ id: string; sofa_tier?: string | null; bedframe_tier?: string | null }>(
+    uniq,
+    (batch, from, to) => sb
+      .from('fabric_library')
+      .select('id, sofa_tier, bedframe_tier')
+      .in('id', batch)
+      .order('id')
+      .range(from, to),
+  );
+  return new Map(data.map((r) => [
     r.id,
     {
       sofaTier:     (r.sofa_tier ?? null) as FabricTier | null,

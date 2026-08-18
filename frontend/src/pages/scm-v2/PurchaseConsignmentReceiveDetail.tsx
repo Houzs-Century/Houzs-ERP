@@ -167,6 +167,43 @@ export const PurchaseConsignmentReceiveDetail = () => {
     }
   }, [isLocked, isEditing]);
 
+  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
+     until 2026-08-17, so the loading render called fewer hooks than the loaded
+     one and React threw #310 ("rendered more hooks than during the previous
+     render") the moment the query resolved — a blank "Something went wrong
+     loading this page." on a direct URL / refresh. Arriving from the list hid
+     it: react-query already had the detail cached, so the isPending branch
+     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
+     grn; it can only ever be CALLED from the preview dialog, which does not
+     exist until the record has loaded. */
+  const deliverPrintPdf = (action: PdfAction) => {
+    if (!grn) return;
+    // A consignment receive has no QC accept/reject — accepted = received.
+    const pdfHeader = {
+      grn_number: grn.grn_number,
+      status: String(grn.status),
+      received_at: grn.received_at ?? '',
+      delivery_note_ref: grn.delivery_note_ref ?? null,
+      notes: grn.notes ?? null,
+      posted_at: grn.posted_at ?? null,
+      supplier: grn.supplier ?? undefined,
+    };
+    const pdfItems = items.map((it) => ({
+      material_code: it.material_code,
+      material_name: it.material_name,
+      qty_received: it.qty_received,
+      qty_accepted: it.qty_received,
+      qty_rejected: 0,
+      rejection_reason: null,
+      unit_price_centi: it.unit_price_centi,
+    }));
+    return import('../../vendor/scm/lib/grn-pdf')
+      .then(({ generateGrnPdf }) =>
+        generateGrnPdf(pdfHeader as never, pdfItems as never, { docTitle: 'CONSIGNMENT RECEIVE', docNoLabel: 'Receive No', action }))
+      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+
   if (detail.isPending) {
     return <SkeletonDetailPage />;
   }
@@ -197,33 +234,6 @@ export const PurchaseConsignmentReceiveDetail = () => {
   const totalQty = visibleItems.reduce((s, it) => s + (isEditing ? lineOf(it).qty : (it.qty_received ?? 0)), 0);
 
   const headerView = headerDraft ?? headerSnapshot(grn);
-
-  const deliverPrintPdf = (action: PdfAction) => {
-    // A consignment receive has no QC accept/reject — accepted = received.
-    const pdfHeader = {
-      grn_number: grn.grn_number,
-      status: String(grn.status),
-      received_at: grn.received_at ?? '',
-      delivery_note_ref: grn.delivery_note_ref ?? null,
-      notes: grn.notes ?? null,
-      posted_at: grn.posted_at ?? null,
-      supplier: grn.supplier ?? undefined,
-    };
-    const pdfItems = items.map((it) => ({
-      material_code: it.material_code,
-      material_name: it.material_name,
-      qty_received: it.qty_received,
-      qty_accepted: it.qty_received,
-      qty_rejected: 0,
-      rejection_reason: null,
-      unit_price_centi: it.unit_price_centi,
-    }));
-    return import('../../vendor/scm/lib/grn-pdf')
-      .then(({ generateGrnPdf }) =>
-        generateGrnPdf(pdfHeader as never, pdfItems as never, { docTitle: 'CONSIGNMENT RECEIVE', docNoLabel: 'Receive No', action }))
-      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
-  };
-  const print = usePrintPreview(deliverPrintPdf);
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(grn)), [k]: v }));

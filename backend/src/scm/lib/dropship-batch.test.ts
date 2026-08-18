@@ -24,6 +24,21 @@ function fakeSb(tables: Record<string, Row[]>) {
       if (op === 'is' && val === null) this.rows = this.rows.filter((r) => r[col] != null);
       return this;
     }
+    /* Both reads are batched + paged now (chunkIn), so the stub has to answer
+       the same two calls PostgREST does. Without `range` the stub returned every
+       row on every page and paginateAll would never terminate; without `order`
+       the chain threw on undefined and the resolver's own try/catch turned the
+       whole thing into "no PO", which is the LENIENT answer — the tests here
+       went green-to-red rather than silently passing, but only because they
+       assert a PO is found. */
+    order(col: string) {
+      this.rows = [...this.rows].sort((a, b) => String(a[col] ?? '').localeCompare(String(b[col] ?? '')));
+      return this;
+    }
+    range(from: number, to: number) {
+      this.rows = this.rows.slice(from, to + 1);
+      return this;
+    }
     then<T>(onFulfilled: (v: { data: Row[]; error: null }) => T, onRejected?: (e: unknown) => T) {
       return Promise.resolve({ data: this.rows, error: null }).then(onFulfilled, onRejected);
     }

@@ -16,6 +16,7 @@ import {
   SofaCollapseError,
   resolveAcAgent,
   parseCreatedLines,
+  parseAcMismatches,
   composeDescription2,
   ItemCodeError,
   MissingCreditorError,
@@ -687,6 +688,40 @@ describe('parseCreatedLines', () => {
       { Seq: 2, DtlKey: -5, ItemCode: 'C' },
       { Seq: 3, DtlKey: 13, ItemCode: 'D' },
     ])).toEqual([{ Seq: 3, DtlKey: 13, ItemCode: 'D', Desc2: null }]);
+  });
+});
+
+/* THE FINDING THE OLD SERVICE THREW AWAY. `/ensure-masters` fetched the creditor
+   and kept only `!= null`, so a code resolving to the WRONG company looked
+   identical to a code resolving to the right one — which is how HC-PO-2608-001
+   ended up on 400-H004, HAO HUA FURNITURE in the book, for a purchase order the
+   ERP names HOOKKA INDUSTRIES SDN. BHD. An entry missing any of the three
+   strings is dropped: a blank `book` would assert something about the account
+   book that nobody measured. */
+describe('parseAcMismatches', () => {
+  test('reads well-formed entries and trims them', () => {
+    expect(parseAcMismatches([
+      { master: 'creditor:400-H004', erp: ' HOOKKA INDUSTRIES SDN. BHD. ', book: 'HAO HUA FURNITURE' },
+    ])).toEqual([
+      { master: 'creditor:400-H004', erp: 'HOOKKA INDUSTRIES SDN. BHD.', book: 'HAO HUA FURNITURE' },
+    ]);
+  });
+
+  test('an absent field is NOT REPORTED, which is not the same as compared and agreed', () => {
+    expect(parseAcMismatches(undefined)).toEqual([]);
+    expect(parseAcMismatches(null)).toEqual([]);
+    expect(parseAcMismatches('nope')).toEqual([]);
+  });
+
+  test('an entry missing any of the three strings is dropped, never coerced', () => {
+    expect(parseAcMismatches([
+      { master: 'creditor:400-A001', erp: 'A', book: '' },
+      { master: '', erp: 'B', book: 'C' },
+      { master: 'creditor:400-B002', erp: '', book: 'D' },
+      { master: 'creditor:400-C002', erp: 7, book: 'E' },
+      null,
+      { master: 'creditor:400-D001', erp: 'ERP NAME', book: 'BOOK NAME' },
+    ])).toEqual([{ master: 'creditor:400-D001', erp: 'ERP NAME', book: 'BOOK NAME' }]);
   });
 });
 
