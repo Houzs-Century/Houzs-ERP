@@ -1283,6 +1283,14 @@ function StopDetail({
     onSuccess: async () => {
       await invalidate();
     },
+    /* A failed "On the way" said NOTHING either — same silent-tap gap the
+       "Mark arrived" onError below closes. Surface it the same way. */
+    onError: async (e) => {
+      await notify({
+        title: "Couldn't start the delivery",
+        body: e instanceof Error ? e.message : "Something went wrong. Please try again.",
+      });
+    },
   });
 
   /* "Arrived" — stamps delivery_orders.arrival_at with the CURRENT time.
@@ -1329,6 +1337,14 @@ function StopDetail({
     },
     onSuccess: async () => {
       await invalidate();
+    },
+    /* A failed "POD complete" was silent too — the driver taps, the button
+       returns, and the delivery never gets marked done. Match the arrive path. */
+    onError: async (e) => {
+      await notify({
+        title: "Couldn't complete the delivery",
+        body: e instanceof Error ? e.message : "Something went wrong. Please try again.",
+      });
     },
   });
 
