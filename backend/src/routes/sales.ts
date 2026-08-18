@@ -23,6 +23,14 @@ import {
 // here; it's undefined only pre-migration / DB cold-start, and the scoping +
 // stamping both no-op in that case so single-company Houzs is unchanged.
 import { activeCompanyId } from "../scm/lib/companyScope";
+// THE one name for this date, and the seam that folds the other spellings onto
+// it. Imported rather than re-typed so this module moves with a future rename
+// instead of quietly stopping matching — see the SO_FORM_TEXT_FIELDS note below.
+import {
+  canonicaliseSoHeaderChanges,
+  SO_PROCESSING_DATE_COLUMN,
+  SO_PROCESSING_DATE_PAYLOAD_KEY,
+} from "../scm/shared/so-processing-date";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -38,36 +46,60 @@ const PAYMENT_TYPES = new Set(["cash", "card_cc", "card_db", "epp", "cheque", "o
 // have constraints (amounts / dates / payment-method enum) and lets
 // the rest flow as TEXT.
 //
-// ─── `processing_date` HERE IS NOT THE SALES ORDER'S PROCESSING DATE ───
-// WHAT IT IS: a date on a `sales_entries` row — the LEGACY NATIVE Sales module
-// (the /sales page, Sales.tsx). A sales entry is its OWN document: it has no
-// SO row, no doc-flow parent, no DO/SI downstream, and none of the SCM
-// Processing-Date machinery touches it — no deposit gate
+// ─── `processing_date` HERE IS THE SAME CONCEPT, ON A DIFFERENT DOCUMENT ───
+//
+// THE OWNER RULED ON IT, 2026-08-18: *"全部我们只有一个 Processing Date"*. An
+// earlier census recommended treating this module's date as a separate concept
+// and that recommendation was OVERRULED. There is one Processing Date in this
+// business and it means one thing — *"Processing Date 就代表这张单可以安排订货了"*:
+// the date the document is RELEASED for purchasing to order goods. There is no
+// production scheduling here ("我们都没有排产的"), so nothing about it is a
+// factory date on either document.
+//
+// WHAT IS STILL DIFFERENT, and it is the ROW, not the concept. A `sales_entries`
+// row is its OWN document: no SO row, no doc-flow parent, no DO/SI downstream,
+// and none of the SCM Processing-Date MACHINERY reaches it — no deposit gate
 // (`processing_date_unpaid`), no variant/KIV completeness gate, no elapsed-date
 // lock (`so_locked_processing`), no `scm.so.remove_processing_date` permission,
-// no stock allocation. It is a plain user-typed TEXT date that this module
-// stores and renders. Nothing joins it to any SCM table.
+// no stock allocation, no pair rule. So: same word, same meaning, same spelling
+// — and still do NOT coalesce, join or migrate one table's column into the
+// other's. Unifying the NAME is the owner's instruction; merging the ROWS is not.
 //
-// WHAT IT IS NOT: the SCM Sales Order's Processing Date. That concept has
-// exactly ONE storage, `scm.mfg_sales_orders.internal_expected_dd` (owner,
-// stated more than three times: internal expected date / processing date /
-// process date are one thing and must carry one name). Do NOT coalesce these
-// two, migrate one into the other, or "unify" them — they are different dates on
-// different documents that merely share a word.
+// ─── THE RENAME TRAP, AND WHERE THIS PR STOPPED ────────────────────────────
 //
-// WHY IT STILL CARRIES THE CONFUSING NAME (a rename was considered and rejected
-// as UNSAFE, deliberately, not overlooked). `applyEntryPatch` below builds its
-// UPDATE as `SET ${k} = ?` for each `k` of FIELDS that is `in body` — and one of
-// its two callers is the change-request APPROVAL path, which JSON.parses `body`
-// out of `sales_entry_change_requests.payload`, a row written at REQUEST time
-// and applied possibly days later. Those stored payloads are keyed by the
-// column names as they were when the request was queued. Rename the column (and
-// therefore this allowlist) and every already-queued payload carrying
-// "processing_date" stops matching any FIELDS entry — so on approval the loop
-// simply never emits a SET for it. The request approves, reports ok, and
-// SILENTLY DROPS the field. Stale SPA clients still posting the old key fail the
-// same silent way. A silent wrong-value-on-approve is strictly worse than an
-// awkward name, and there is no error path to catch it.
+// `applyEntryPatch` below builds its UPDATE as `SET ${k} = ?` for each `k` of
+// FIELDS that is `in body` — and one of its two callers is the change-request
+// APPROVAL path, which JSON.parses `body` out of
+// `sales_entry_change_requests.payload`, a row written at REQUEST time and
+// applied possibly days later. Those stored payloads are keyed by the column
+// names as they were when the request was queued. Drop a key from this allowlist
+// and every already-queued payload carrying it stops matching any FIELDS entry —
+// the loop never emits a SET, the request approves, reports ok, and SILENTLY
+// DROPS the field. There is no error path to catch it.
+//
+// So the unification is STAGED, and only the first stage has shipped:
+//
+//   STAGE 1 (SHIPPED 2026-08-18) — ACCEPT BOTH. `canonicaliseSalesEntryBody`
+//     below folds the ERP-canonical camelCase `processingDate` onto this
+//     module's stored `processing_date` on every road in: the create POST, the
+//     direct PATCH, the change-request QUEUE (so newly parked payloads are
+//     stored already-canonical) and the approve replay. Nothing was removed, so
+//     no queued payload and no stale SPA can break. When a body carries BOTH
+//     spellings the CANONICAL one wins — a body with both was written by newer
+//     code (same rule as `canonicaliseSoHeaderChanges`, whose seam this reuses).
+//
+//   STAGE 2 (NOT SHIPPED) — retire `processing_date` as an INBOUND key, leaving
+//     `processingDate` as the only spelling a client may send. PRECONDITION,
+//     which is a question about production rows and cannot be answered from
+//     source: no `sales_entry_change_requests` row in status 'pending' still
+//     carries the old key. Measure it, do not assume it:
+//
+//       SELECT count(*) FROM sales_entry_change_requests
+//        WHERE status = 'pending' AND json_extract(payload, '$.processing_date') IS NOT NULL;
+//
+//     and confirm no deployed client still sends it BEFORE reading that count,
+//     because a stale client can queue a new one at any time. The COLUMN keeps
+//     its name either way — it already spells the canonical word.
 const SO_FORM_TEXT_FIELDS = [
   "doc_no",
   "processing_date",
@@ -86,6 +118,41 @@ const SO_FORM_TEXT_FIELDS = [
   "source",
   "remarks",
 ] as const;
+
+/**
+ * The inbound spellings this module accepts for the Processing Date, mapped onto
+ * the one it STORES.
+ *
+ * Left: the ERP-canonical payload key every other surface sends. Right: this
+ * module's column, which already spells the canonical word and is therefore what
+ * everything folds onto. Both sides come from `scm/shared/so-processing-date`, so
+ * a future rename moves this table with it rather than leaving it aliasing two
+ * words the code no longer uses.
+ *
+ * Adding to this table is always safe; REMOVING from it is the staged half — read
+ * the precondition on SO_FORM_TEXT_FIELDS above.
+ */
+export const SALES_ENTRY_KEY_ALIASES: Readonly<Record<string, string>> = {
+  [SO_PROCESSING_DATE_PAYLOAD_KEY]: SO_PROCESSING_DATE_COLUMN,
+};
+
+/**
+ * Fold a request / stored payload's key spellings onto the ones this module
+ * writes. Returns a NEW object; every key with no alias passes through
+ * untouched, so items / payments / custom / project_id are unaffected.
+ *
+ * Reuses the SCM seam verbatim (`canonicaliseSoHeaderChanges` takes its alias
+ * map as a parameter for exactly this reason) so the two modules cannot drift
+ * into two different answers for "the body carries both spellings" — the
+ * canonical one wins, in both.
+ *
+ * Call it as EARLY as possible on each road in. Every `"key" in body` test
+ * downstream — the FIELDS loop, the create loop, `summariseChange` — has to see
+ * the same shape, or the field is accepted by one and dropped by the next.
+ */
+export const canonicaliseSalesEntryBody = (
+  body: Record<string, any> | null | undefined,
+): Record<string, any> => canonicaliseSoHeaderChanges(body, SALES_ENTRY_KEY_ALIASES) ?? {};
 
 // Quick-log marker. Reps logging from a busy event capture only
 // amount + ref_no; the customer_name column (NOT NULL on the
@@ -800,10 +867,15 @@ app.post("/entries", requirePageAccess("sales"), async (c) => {
     user?.id ?? 0,
     body.sales_person_id ?? user?.id ?? null,
   ];
+  /* Same fold as the PATCH path: a create that sends the ERP-canonical
+     `processingDate` must land in the same column as one sending
+     `processing_date`, or the two roads in disagree about a field the operator
+     filled on the same form. */
+  const canonBody = canonicaliseSalesEntryBody(body);
   for (const k of SO_FORM_TEXT_FIELDS) {
     if (k === "doc_no") continue;
     cols.push(k);
-    const v = body[k];
+    const v = canonBody[k];
     vals.push(typeof v === "string" ? v.trim() || null : v ?? null);
   }
 
@@ -939,6 +1011,11 @@ async function applyEntryPatch(
   currentProjectId: number | null,
   companyId?: number,
 ): Promise<void> {
+  /* STAGE 1 of the Processing-Date name unification (see SO_FORM_TEXT_FIELDS).
+     BOTH callers pass through here — the direct PATCH and the change-request
+     APPROVE, which replays a payload parked days ago — so folding the spellings
+     once, here, is what makes a body from either era write the same column. */
+  body = canonicaliseSalesEntryBody(body);
   const sets: string[] = [];
   const binds: any[] = [];
   const FIELDS = [
@@ -1010,7 +1087,10 @@ async function applyEntryPatch(
 /** Short human-readable summary of which fields a change request touches. */
 export function summariseChange(body: Record<string, any>): string {
   const parts: string[] = [];
-  for (const k of Object.keys(body)) {
+  /* The summary is what the approver reads before pressing approve, so it must
+     name the field the apply will actually write — not the spelling the client
+     happened to send. */
+  for (const k of Object.keys(canonicaliseSalesEntryBody(body))) {
     if (k === "custom") parts.push("custom fields");
     else if (k === "items" && Array.isArray(body.items)) parts.push(`items(${body.items.length})`);
     else if (k === "payments" && Array.isArray(body.payments)) parts.push(`payments(${body.payments.length})`);
@@ -1028,6 +1108,11 @@ export async function queueEntryChange(
   requestedBy: number | null | undefined,
   companyId?: number,
 ): Promise<number> {
+  /* Canonicalise BEFORE the payload is frozen, so a request parked today is
+     already keyed the way stage 2 will require. The approve path folds again on
+     the way out, which is what covers the rows parked before this shipped —
+     applying the fold twice is a no-op (an already-canonical key has no alias). */
+  body = canonicaliseSalesEntryBody(body);
   await env.DB.prepare(
     `UPDATE sales_entry_change_requests
         SET status = 'superseded', decided_at = datetime('now')

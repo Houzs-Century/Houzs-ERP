@@ -50,8 +50,19 @@ if (!TOKEN || !ACCOUNT) {
   process.exit(1);
 }
 
-/** Never interpolate the token into a message. Only ever a header. */
-async function cf(path) {
+/** Never interpolate the token into a message. Only ever a header.
+ *
+ *  `soft: true` returns null instead of exiting. Used ONLY for the per-version
+ *  detail fetches: one unreadable version must not take down the answer to the
+ *  question actually being asked (is the newest version deployed?). The two
+ *  reads that ARE the answer stay hard — if either fails we know nothing, and
+ *  saying nothing is the honest outcome. */
+async function cf(path, { soft = false } = {}) {
+  const fail = (msg) => {
+    if (soft) return null;
+    console.error(`::error::check-worker-versions: ${msg}`);
+    process.exit(1);
+  };
   let res;
   try {
     res = await fetch(`${API}${path}`, {
@@ -59,29 +70,52 @@ async function cf(path) {
       signal: AbortSignal.timeout(30_000),
     });
   } catch (e) {
-    console.error(`::error::check-worker-versions: could not reach Cloudflare (${e.name}: ${e.message}).`);
-    process.exit(1);
+    return fail(`could not reach Cloudflare (${e.name}: ${e.message}).`);
   }
   const body = await res.json().catch(() => null);
   if (!res.ok || !body?.success) {
     const why = body?.errors?.map((e) => `${e.code}: ${e.message}`).join('; ') ?? `HTTP ${res.status}`;
-    console.error(`::error::check-worker-versions: Cloudflare refused ${path} — ${why}`);
-    process.exit(1);
+    return fail(`Cloudflare refused ${path} — ${why}`);
   }
   return body.result;
 }
 
 const short = (id) => String(id ?? '').slice(0, 8);
-const when = (v) => String(v?.metadata?.created_on ?? '').replace('T', ' ').slice(0, 16) || '?';
+/* SECONDS, not minutes. The first run of this script printed `03:55` against two
+   different versions and left the ORDER of the pair unknowable — and the order is
+   the whole question when you are asking which of `deploy` and `secret bulk`
+   created which version. Truncating a timestamp threw away the only field that
+   answers it. */
+const when = (v) => String(v?.metadata?.created_on ?? '').replace('T', ' ').slice(0, 19) || '?';
 const source = (v) => v?.metadata?.source ?? 'unknown';
 const author = (v) => v?.metadata?.author_email ?? '—';
-/* The deploy stamps the commit as a var, so a CI-built version can be told from
-   a hand-built one by more than its source label. */
-const gitSha = (v) => {
-  const b = v?.resources?.bindings ?? [];
-  const hit = b.find((x) => x?.name === 'GIT_SHA');
-  return hit?.text ? String(hit.text).slice(0, 8) : null;
-};
+
+/* GIT_SHA lives in the version's bindings, and THE LIST ENDPOINT DOES NOT RETURN
+   BINDINGS. The first version of this script read `v.resources.bindings` off the
+   list response, so every row printed `GIT_SHA=(none)` — including deploys that
+   demonstrably set it, since /health serves that exact var. Harmless on its own;
+   not harmless beside the line this script used to print, "a source of wrangler
+   with no GIT_SHA is a bare hand-run deploy", which turned a field this script
+   could not read into an accusation against every deploy we make.
+   A column that cannot be populated must not be reported as a finding.
+
+   So the value is fetched per version, and the three cases are kept apart:
+     - a sha        -> stamped by CI
+     - (none)       -> read the bindings, GIT_SHA genuinely absent = hand-run
+     - (unreadable) -> the detail fetch failed; we do not know, and say so */
+async function gitShaOf(versionId) {
+  let detail;
+  try {
+    detail = await cf(`/accounts/${ACCOUNT}/workers/scripts/${SCRIPT}/versions/${versionId}`, { soft: true });
+  } catch {
+    return '(unreadable)';
+  }
+  if (!detail) return '(unreadable)';
+  const bindings = detail?.resources?.bindings ?? detail?.bindings ?? [];
+  const hit = bindings.find((x) => x?.name === 'GIT_SHA');
+  const text = hit?.text ?? hit?.value;
+  return text ? String(text).slice(0, 8) : '(none)';
+}
 
 const deployments = await cf(`/accounts/${ACCOUNT}/workers/scripts/${SCRIPT}/deployments`);
 const versionList = await cf(`/accounts/${ACCOUNT}/workers/scripts/${SCRIPT}/versions`);
@@ -112,11 +146,27 @@ for (const v of versions) {
   stray.push(v);
 }
 
+const shown = versions.slice(0, 10);
+/* One detail fetch per printed version, in parallel — ten small GETs, and the
+   whole point of the column is that it is populated. */
+const shas = await Promise.all(shown.map((v) => gitShaOf(v.id)));
+
 console.log('\nVERSIONS (newest first, up to 10):');
-for (const v of versions.slice(0, 10)) {
+shown.forEach((v, i) => {
   const mark = activeIds.has(v.id) ? '<-- SERVING' : (stray.includes(v) ? '<-- NOT DEPLOYED' : '');
-  const sha = gitSha(v);
-  console.log(`  ${short(v.id)}  ${when(v)}  source=${source(v)}  by ${author(v)}${sha ? `  GIT_SHA=${sha}` : '  GIT_SHA=(none)'}  ${mark}`);
+  console.log(`  ${short(v.id)}  ${when(v)}  source=${source(v)}  by ${author(v)}  GIT_SHA=${shas[i]}  ${mark}`);
+});
+
+/* Two versions per deploy is NORMAL here, and it looked alarming until the
+   seconds were printed. `wrangler deploy` creates one; the `secret bulk` step
+   that follows it creates another, because in Cloudflare's model a secret change
+   IS a new version. Both carry source=wrangler and the same CI author, so only
+   the timestamp tells them apart — which is why `when` prints seconds. */
+const stamps = shown.map((v) => String(v?.metadata?.created_on ?? ''));
+const sameSecond = stamps.filter((s, i) => s && s === stamps[i + 1]).length;
+if (sameSecond > 0) {
+  console.log(`\nNote: ${sameSecond} adjacent pair(s) share a timestamp to the second. If that is every pair,`);
+  console.log('the two-versions-per-deploy pattern is deploy + secret bulk, and is expected.');
 }
 
 if (stray.length === 0) {
@@ -130,8 +180,14 @@ console.log('normal deploy clears this by itself — but the SOURCE below is wha
 for (const v of stray) {
   console.log(`  ${short(v.id)}  ${when(v)}  source=${source(v)}  by ${author(v)}`);
 }
-console.log('\nA source of `wrangler` with no GIT_SHA is a bare hand-run deploy. `dash` is a dashboard edit.');
-console.log('`workers_ci` means the Cloudflare git integration is building this Worker in parallel with GitHub Actions,');
-console.log('which is the one worth switching off — two systems publishing one Worker will keep doing this.');
+console.log('\nReading the SOURCE column:');
+console.log('  dash        a dashboard edit.');
+console.log('  api         something driving the REST API directly.');
+console.log('  workers_ci  the Cloudflare git integration is building this Worker IN PARALLEL with GitHub Actions.');
+console.log('              That is the one worth switching off — two systems publishing one Worker keep reproducing this.');
+console.log('  wrangler    our own deploy, OR a bare hand-run `wrangler deploy` from someone\'s machine.');
+console.log('              GIT_SHA is what separates those two: our deploy passes --var GIT_SHA, a hand-run one does not.');
+console.log('              Trust that column ONLY when it reads a sha or (none); `(unreadable)` means the detail fetch');
+console.log('              failed and the version is unclassified, not that it is rogue.');
 // A finding is an ANSWER, not a broken check.
 process.exit(0);

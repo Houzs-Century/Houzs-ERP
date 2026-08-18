@@ -48,6 +48,28 @@ const TOOLBAR_BTN =
   'inline-flex h-8 items-center gap-1.5 rounded-md border border-border bg-surface px-3 text-[11px] font-semibold uppercase tracking-wider text-ink-secondary transition-colors hover:border-primary/40 hover:bg-primary-soft hover:text-primary disabled:cursor-default disabled:opacity-50';
 
 
+/* The Delivery cell for an SO line. A missing delivery date is NOT the same
+   fact as a missing debtor name or warehouse, and since 2026-08-18 these rows
+   sit in the default view alongside dated ones — so it gets a word instead of
+   the same em-dash every other empty cell renders. Undated rows sort LAST in
+   the allocation (byDateAsc, mrp.ts) and cannot take supply from a dated line;
+   the tag is what makes that visible on the row rather than only in the banner.
+
+   Not orderable yet is the POINT: the operator should see the demand exists and
+   see, in the same glance, that it has no promised date behind it. */
+function DeliveryCell({ iso }: { iso: string | null }) {
+  if (iso) return <td>{fmtDate(iso)}</td>;
+  return (
+    <td>
+      <span
+        className="inline-flex items-center rounded border border-warning-text/30 bg-warning-bg px-1.5 py-0.5 text-[10.5px] font-semibold uppercase tracking-wide text-warning-text"
+        title="No delivery date on this line or its Sales Order — planned last, not ready to order">
+        No date
+      </span>
+    </td>
+  );
+}
+
 type View = 'sofa' | 'bedframe' | 'mattress' | 'accessory';
 
 // Lead-time maintenance shows the four orderable categories (Service excluded,
@@ -411,6 +433,14 @@ export const Mrp = () => {
   const [dateBasis, setDateBasis] = useState<'delivery' | 'processing' | 'soDate' | 'orderBy'>('delivery');
   const [dateFrom, setDateFrom] = useState<string>('');
   const [dateTo, setDateTo] = useState<string>('');
+  /* HIDDEN by default (owner, 2026-08-18, ruling on a build that had it shown):
+     "这个应该是要把没有日期的藏起来的,不过我点 show no date 它才会出来." This is
+     the ordering worklist and undated demand is not orderable yet, so it stays
+     off the list until asked for. What was actually broken was never the rows
+     being absent — it was the page saying NOTHING about withholding them; the
+     banner below carries the count in both directions, so the operator always
+     knows there is something behind the toggle. Ticking shows them, marked
+     "No date" and sorted last. See parseIncludeUndated in mrp.ts. */
   const [showUndated, setShowUndated] = useState<boolean>(false);
   /* Commander 2026-05-29 — focus view: hide everything that's fully covered and
      show ONLY the rows that still need ordering (shortage > 0), so the operator
@@ -442,12 +472,18 @@ export const Mrp = () => {
   const apiCategory = VIEW_CATEGORY[view];
   const q = useMrp({ category: apiCategory, warehouseId, includeUndated: showUndated });
   const data = q.data;
-  /* How much undated demand this tab is not rendering. The sofa view reads the
-     sofa tally (section 8 is SOFA-only and ignores the category filter); every
-     other view reads the general one, which IS category-filtered. Reading the
-     wrong one would report the whole sofa book on the Mattress tab. */
-  const undatedHidden = view === 'sofa' ? (data?.undated?.sofaSets ?? 0) : (data?.undated?.lines ?? 0);
-  const undatedHiddenShort = view === 'sofa' ? (data?.undated?.sofaShortageUnits ?? 0) : (data?.undated?.shortageUnits ?? 0);
+  /* How much undated demand this tab is carrying — whether it is on screen or
+     withheld. The sofa view reads the sofa tally (section 8 is SOFA-only and
+     ignores the category filter); every other view reads the general one, which
+     IS category-filtered. Reading the wrong one would report the whole sofa
+     book on the Mattress tab. */
+  const undatedCount = view === 'sofa' ? (data?.undated?.sofaSets ?? 0) : (data?.undated?.lines ?? 0);
+  const undatedShortUnits = view === 'sofa' ? (data?.undated?.sofaShortageUnits ?? 0) : (data?.undated?.shortageUnits ?? 0);
+  /* What the RUN did, from the response — not from `showUndated`. A request the
+     server did not honour must not be reported as the state the operator asked
+     for. `undated` is optional on the type, so an older/partial payload leaves
+     this undefined and the banner below stays off rather than guessing. */
+  const undatedHidden = data?.undated?.hidden;
   const createPos = useCreatePosFromSoItems();
 
   /* One key per convert RUN — the intent this page DOES have, and the reason
@@ -911,32 +947,39 @@ export const Mrp = () => {
         ))}
       </div>
 
-      {/* Undated demand that this view is NOT showing. Owner, 2026-08-16:
+      {/* Undated demand — STATED IN BOTH DIRECTIONS. Owner, 2026-08-16:
           "明明这个东西没有 ready,可是我的 MRP 却 show 不出来" — half of 2990's live
           demand was absent by default and the page said nothing, so a real
           shortage read as no shortage at all.
 
-          The DEFAULT is deliberately unchanged (undated demand is not orderable
-          yet, Commander 2026-05-29 — this page is the ordering worklist). What
-          was wrong was the SILENCE, so the hidden set is now a stated fact with
-          the toggle one click away. `hidden` comes from the server, not from
-          showUndated, so a request the server did not honour still reads true.
+          The rows stay HIDDEN by default (owner 2026-08-18: "这个应该是要把没有
+          日期的藏起来的,不过我点 show no date 它才会出来") — hiding is legitimate on
+          an ordering worklist, and it was never the hiding that broke; it was
+          the SILENCE. So the banner is the fix, not the default: it renders
+          whenever there IS undated demand and says which of the two things is
+          true of it, in either direction, so a later flip cannot reintroduce the
+          same silence. The one-click toggle works from whichever side the
+          operator is currently on.
+
+          `hidden` comes from the RESPONSE, not from showUndated, so a request
+          the server did not honour is described as it actually came back.
 
           Sofa counts sets and is not category-filtered; every other tab counts
           general lines — see MrpResponse['undated']. */}
-      {undatedHidden > 0 && data?.undated?.hidden && (
+      {undatedCount > 0 && undatedHidden !== undefined && (
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-warning-text/25 bg-warning-bg px-4 py-2.5 text-[12.5px] leading-relaxed text-warning-text">
           <Clock {...ICON} className="shrink-0" />
           <span>
-            <strong className="font-semibold">{undatedHidden}</strong>{' '}
-            {view === 'sofa' ? (undatedHidden === 1 ? 'sofa set' : 'sofa sets') : (undatedHidden === 1 ? 'order line' : 'order lines')}
-            {' '}with no delivery date {undatedHidden === 1 ? 'is' : 'are'} hidden from this view
-            {undatedHiddenShort > 0 && (
-              <> — <strong className="font-semibold">{undatedHiddenShort}</strong> {undatedHiddenShort === 1 ? 'unit is' : 'units are'} short</>
+            <strong className="font-semibold">{undatedCount}</strong>{' '}
+            {view === 'sofa' ? (undatedCount === 1 ? 'sofa set' : 'sofa sets') : (undatedCount === 1 ? 'order line' : 'order lines')}
+            {' '}with no delivery date {undatedCount === 1 ? 'is' : 'are'}{' '}
+            {undatedHidden ? 'hidden from this view' : 'listed below, sorted last and marked No date'}
+            {undatedShortUnits > 0 && (
+              <> — <strong className="font-semibold">{undatedShortUnits}</strong> {undatedShortUnits === 1 ? 'unit is' : 'units are'} short</>
             )}.
           </span>
-          <button type="button" className={TOOLBAR_BTN} onClick={() => setShowUndated(true)}>
-            Show them
+          <button type="button" className={TOOLBAR_BTN} onClick={() => setShowUndated(undatedHidden)}>
+            {undatedHidden ? 'Show them' : 'Hide them'}
           </button>
         </div>
       )}
@@ -1448,7 +1491,7 @@ const ChildLine = ({ ln, suppliers, whCode, whName, selected, onToggleLine, chos
       <td>{ln.debtorName ?? '—'}</td>
       <td>{ln.customerState ?? '—'}</td>
       <td>{fmtDate(ln.processingDate)}</td>
-      <td>{fmtDate(ln.deliveryDate)}</td>
+      <DeliveryCell iso={ln.deliveryDate} />
       <td className={styles.num}>{ln.qty}</td>
       <td>
         {ln.source === 'stock' && <span className={`${styles.tag} ${styles.tagStock}`}>stock</span>}
@@ -1534,7 +1577,7 @@ const SofaSoTable = ({ group, selected, onToggleLine, lineSupplier, onLineSuppli
             <td>{ln.debtorName ?? '—'}</td>
             <td>{ln.customerState ?? '—'}</td>
             <td>{fmtDate(ln.processingDate)}</td>
-            <td>{fmtDate(ln.deliveryDate)}</td>
+            <DeliveryCell iso={ln.deliveryDate} />
             <td className={styles.num}>{ln.qty}</td>
             <td>
               {ln.source === 'stock' && <span className={`${styles.tag} ${styles.tagStock}`}>stock</span>}

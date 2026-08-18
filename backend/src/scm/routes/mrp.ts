@@ -592,9 +592,11 @@ export async function computeMrp(
     .range(from, to));
   if (demandErr) throw new Error(`mrp_load_failed: ${demandErr.message}`);
 
-  /* Undated lines (no line delivery date AND no SO delivery date) are not
-     ready to order, so the MRP page hides them by default — but they are STILL
-     DEMAND, and audit D6 (2026-08-01) proved the old shape of this switch let
+  /* Undated lines (no line delivery date AND no SO delivery date) are not ready
+     to order — the MRP page HIDES them by default (owner 2026-08-18;
+     ?includeUndated=true shows them, marked "No date" and sorted last) and
+     COUNTS them either way. They are STILL DEMAND either way, and audit D6
+     (2026-08-01) proved the old shape of this switch let
      two screens disagree: excluding them from the ALLOCATION itself meant the
      page (includeUndated=false) and the SO drill-down / PO Assigned-SO
      (includeUndated=true) computed over two different demand sets, breaking
@@ -1494,7 +1496,8 @@ export function mrpReverseCoverage(result: MrpResult): Map<string, PoCoverageAss
 }
 
 /* The accepted spellings of `?includeUndated`. Absent = the documented default
-   (false). Present-and-unrecognised THROWS — it is never quietly false.
+   (TRUE since 2026-08-18 — see parseIncludeUndated). Present-and-unrecognised
+   THROWS — it is never quietly false.
 
    `=== 'true'` was the whole parser until 2026-08-16, and `?includeUndated=1`
    — verified against production that day — returned the default plan with no
@@ -1517,9 +1520,38 @@ export class InvalidQueryFlag extends Error {
   }
 }
 
+/* THE DEFAULT IS FALSE — undated demand is HIDDEN until the operator asks for
+   it. Owner, 2026-08-18, ruling directly on a build that had flipped it to
+   shown: "这个应该是要把没有日期的藏起来的,不过我点 show no date 它才会出来."
+
+   THE EARLIER READING WAS WRONG, and the record should say so rather than
+   quietly changing. Measured on production 2026-08-16, the hidden-by-default
+   view returned 82 of 163 live 2990 SO-item ids and 8 of 68 short sofa sets, so
+   roughly half the demand was off-screen — and the owner's complaint that
+   started this work was "明明这个东西没有 ready,可是我的 MRP 却 show 不出来".
+   The inference drawn from that was that the rows should be shown by default.
+   It was the wrong inference. What he could not see was not the ROWS but the
+   FACT THAT ROWS EXISTED: nothing on the page said anything was being withheld.
+   The banner fixes that; the default does not need to move to fix it, and this
+   page is the ordering worklist, where undated demand is not yet orderable.
+
+   SO THE CONTRACT IS: hidden by default, ALWAYS counted and always announced,
+   one click away. Hiding is legitimate. Hiding SILENTLY is not.
+
+   43% of 2990's sales orders carry no delivery date, flat across June/July/
+   August — a habit, not an import artefact. Requiring a date was considered and
+   REJECTED: a forced date gets a fake one typed into it, and a fake date is
+   worse than a null one because allocation is BY DELIVERY DATE — a fake promise
+   would jump the queue ahead of a real one. So undated demand keeps its null
+   and stops being invisible instead.
+
+   SAFE ONLY BECAUSE THE FLAG IS DISPLAY-ONLY (audit D6, 2026-08-01). The
+   allocation always ran over the full active set with undated sorted LAST
+   (byDateAsc returns 1 for null), so flipping this changes which rows are
+   RENDERED and cannot change who gets supply. mrp.test.ts pins both halves. */
 /** Exported for `mrp.test.ts` — the spellings are the contract, so they get a test. */
 export function parseIncludeUndated(raw: string | undefined): boolean {
-  if (raw === undefined) return false;              // omitted = documented default
+  if (raw === undefined) return false;              // omitted = documented default (hidden)
   const v = raw.trim().toLowerCase();
   if (UNDATED_TRUE.has(v)) return true;
   if (UNDATED_FALSE.has(v)) return false;
@@ -1532,15 +1564,18 @@ mrp.get('/', async (c) => {
   const warehouseId = c.req.query('warehouseId');
   const catFilter = category && category !== 'all' ? category.toUpperCase() : null;
   const whFilter = warehouseId && warehouseId !== 'all' ? warehouseId : null;
-  // Commander 2026-05-29 — an SO line with NO delivery date means the customer
-  // isn't ready for goods yet, so it shouldn't drive ordering. HIDE undated
-  // demand by default; ?includeUndated=true shows it. Since audit D6
-  // (2026-08-01) the flag is display-only: the allocation itself always runs
-  // over the full demand set (undated last), so this page, the SO drill-down
-  // and the PO Assigned-SO column read ONE identical allocation.
+  // An SO line with NO delivery date means the customer isn't ready for goods
+  // yet, so it must not drive ordering — but it is still demand, so it is
+  // HIDDEN by default (?includeUndated=true shows it) and COUNTED either way.
+  // See parseIncludeUndated for why hiding is fine and hiding silently is not,
+  // the right observation. Since audit D6 (2026-08-01) the flag is display-only:
+  // the allocation itself always runs over the full demand set (undated last),
+  // so this page, the SO drill-down and the PO Assigned-SO column read ONE
+  // identical allocation, and this default cannot move a single unit of supply.
   //
-  // What is hidden is REPORTED either way — `result.undated` — so the page can
-  // never again render half the demand with nothing saying so.
+  // The undated tally is REPORTED under either flag — `result.undated`, counted
+  // before the visibility `continue` — so the page can state what it is showing
+  // or withholding rather than rendering a fraction of the demand in silence.
   let includeUndated: boolean;
   try {
     includeUndated = parseIncludeUndated(c.req.query('includeUndated'));
