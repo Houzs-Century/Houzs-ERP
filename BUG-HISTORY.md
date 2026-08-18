@@ -8,10 +8,16 @@ small PR (#2405) hit it **four times in one afternoon**, and #2352, #2394 and
 **Root cause (measured, not inferred).**
 
 ```
-$ git log origin/main --oneline -50 --name-only -- docs/generated/bug-index.md \
-    | grep -c "docs/generated/bug-index.md"
+$ git log origin/main --oneline -50 --name-only -- docs/generated/ \
+    | grep -c "bug-index"
 50
 ```
+
+(The command filters on the DIRECTORY, not the file, because
+`docs/generated/bug-index.md` [gone] no longer resolves in the tree — which is
+exactly what this entry records. The marker has to sit on the SAME line as the
+path: check-docs-drift reads them as a pair, so a line-wrap between them reads as
+an unmarked missing file.)
 
 **All 50 of the last 50 commits touch that file.** It is GENERATED from
 `BUG-HISTORY.md`, the working agreement requires every code PR to append an
@@ -7772,7 +7778,7 @@ exist.
 
 <!-- area: Repo tooling: tests, ratchets, generators -->
 
-**Symptom.** None, which is the point. `docs/generated/bug-index.md` is the only
+**Symptom.** None, which is the point. `docs/generated/bug-index.md` [gone] is the only
 way into a 9,000-line ledger — "have we hit this before?" is answered by reading
 one area's rows. `audit:bug-index` was green throughout: it checks that the FILE
 matches the GENERATOR, never that the generator is right. A reader looking under
