@@ -12,7 +12,7 @@
 //         chrome only.)
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { transferFromLabel } from '../../lib/convertScope';
+import { transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { canViewScmCosting, canOperateSalesInvoices } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -69,7 +69,7 @@ import { cn } from "../../lib/utils";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 import { useAuth } from "../../auth/AuthContext";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
@@ -156,12 +156,6 @@ const fmtRm = (centi: number): string =>
 // margin_pct_basis is basis points (margin/total x 10000) → percent string.
 const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
 
 // Customer's PO / Ref — same fallback chain as SO/DO V2.
 const refOf = (r: SiRow): string =>
@@ -501,8 +495,8 @@ function DetailDrawer({
               </div>
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From SO" v={soOf(row)} mono />
-                <MetaItem k="From DO" v={doOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('so')} v={soOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('do')} v={doOf(row)} mono />
                 <MetaItem k="Customer ref" v={refOf(row)} mono />
                 <MetaItem k="Due date" v={fmtDate(row.due_date)} />
                 {/* Owner 2026-07-24 — Processing (linked SO's
@@ -1121,7 +1115,7 @@ export function SalesInvoicesListV2() {
     },
     {
       key: "so_doc_no",
-      label: "From SO",
+      label: transferFromColumnLabel('so'),
       width: "128px",
       disableSort: true,
       getValue: (r) => r.so_doc_no ?? "",
@@ -1134,7 +1128,7 @@ export function SalesInvoicesListV2() {
          from. Previously only the raw delivery_order_id UUID was on the row, so
          the list could not show a readable source DO. */
       key: "do_number",
-      label: "From DO",
+      label: transferFromColumnLabel('do'),
       width: "128px",
       disableSort: true,
       getValue: (r) => r.do_number ?? "",

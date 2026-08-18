@@ -72,7 +72,7 @@ import {
 } from "../../lib/paymentRetryHandoff";
 import { cn, formatDate } from "../../lib/utils";
 import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   isLocked as isSoLocked,
@@ -116,7 +116,6 @@ type SoHeader = {
   // The processing-date column the lock reads. Label, API field and column are
   // finally the same word (mig 0284 renamed it from internal_expected_dd).
   processing_date?: string | null;
-  proceeded_at?: string | null;
   // Server-derived SO-lock / amendment flags (see the /:docNo detail handler).
   // has_children = a non-cancelled DO/SI references this SO (hard lock);
   // amendment_eligible = processing-locked but still amendable; has_open_amendment
@@ -196,15 +195,6 @@ type SoItem = {
    absent / non-numeric cost rendered the literal "MYR NaN" at the user; the
    shared helper renders "—" for a number the ERP does not have. */
 const fmtMoney = fmtMoneyCenti;
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  // Present as dd/mm/yyyy per Malaysian convention.
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
 
 const refOf = (h: SoHeader): string =>
   h.po_doc_no || h.customer_so_no || h.ref || "—";

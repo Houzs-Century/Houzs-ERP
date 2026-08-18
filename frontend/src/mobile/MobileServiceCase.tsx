@@ -18,14 +18,15 @@ import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../vendor/scm/components/ChoiceDialog";
 import { todayMyt } from "../vendor/scm/lib/dates";
+import { DateField } from "../vendor/scm/components/DateField";
 import {
   ASSR_STAGES,
-  ASSR_STAGE_INDEX,
   activeAssrStages,
   type AssrStageDef,
   assrSubStatus,
   ASSR_SUB_STATUSES,
 } from "../vendor/scm/lib/assr/stages";
+import { ASSR_STAGE_LABEL } from "../vendor/scm/lib/assr-stage-labels";
 import "./mobile.css";
 
 // The core /api/assr route (NOT scm). The list returns
@@ -78,7 +79,6 @@ const FIELD_BG = "#f4f6f3";
 type MStage = { key: string; label: string; long: string; owner: string };
 const toMStage = (s: AssrStageDef): MStage => ({ key: s.key, label: s.short, long: s.long, owner: s.owner });
 const STAGES: MStage[] = ASSR_STAGES.map(toMStage);
-const STAGE_INDEX: Record<string, number> = ASSR_STAGE_INDEX;
 // Active (resolution-filtered) canonical stages for a case, in the mobile
 // view-model shape. Internal resolution → Supplier Pickup + Item Ready drop.
 const activeMStages = (method: string | null | undefined, currentStage: string): MStage[] =>
@@ -276,11 +276,10 @@ const RESOLUTION_LABELS: Record<string, string> = {
   return_visit: "2nd Services",
 };
 const resolutionLabel = (v: string) => RESOLUTION_LABELS[v] ?? cap(v.replace(/_/g, " "));
-const prettyStage = (stage: string) => {
-  if (stage === "voided") return "Voided — Not Valid";
-  const idx = STAGE_INDEX[stage];
-  return idx != null ? STAGES[idx].long : cap(stage.replace(/_/g, " ")) || "—";
-};
+/* The `voided` literal is gone: STAGES has no row for a terminal alt-outcome so
+   mobile carried the word itself. STAGES still answers the ORDER question. */
+const prettyStage = (stage: string) =>
+  ASSR_STAGE_LABEL[stage] ?? (cap(stage.replace(/_/g, " ")) || "—");
 // Numeric DD/MM/YYYY (+ HH:mm) via the shared formatter — house rule, and it
 // UTC-tags bare SQLite timestamps so they don't shift by the device timezone.
 const dm = (d: string | null | undefined) => formatDate(d);
@@ -1012,7 +1011,9 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const transitionTo = async (target: string, withConfirm = true) => {
     if (!target || target === stageOf(c)) return;
     if (withConfirm) {
-      const label = STAGES[STAGE_INDEX[target]]?.long ?? target;
+      /* prettyStage, not the stepper-by-index it used to read: that has no row
+         for a terminal alt-outcome, so this asked "Move to voided?". */
+      const label = prettyStage(target);
       if (!(await confirm({ title: `Move to ${label}?`, confirmLabel: "Change stage" }))) return;
     }
     await runWrite(async () => {
@@ -2782,15 +2783,13 @@ function fieldDisplay(f: EditField): string {
   return String(raw);
 }
 
-// A YYYY-MM-DD slice for <input type="date">; tolerates ISO / date-only.
+// The ISO YYYY-MM-DD DateField's `value` takes; display is DateField's job.
 function isoDateOnly(v: any): string {
-  if (!v) return "";
-  const s = String(v);
+  const s = String(v ?? "");
   const m = /^(\d{4}-\d{2}-\d{2})/.exec(s);
   if (m) return m[1];
   const dt = new Date(s);
-  if (isNaN(+dt)) return "";
-  return dt.toISOString().slice(0, 10);
+  return s && !isNaN(+dt) ? dt.toISOString().slice(0, 10) : "";
 }
 
 // ── Single-field inline edit row (Info stage panels) ──────────────
@@ -2862,8 +2861,9 @@ function EditRow({
             <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
+      ) : type === "date" ? (<DateField value={draft} onChange={setDraft} className={`fld-i${mono ? " money" : ""}`} fullWidth />
       ) : (
-        <input type={type === "date" ? "date" : "text"} value={draft} onChange={(e) => setDraft(e.target.value)} className={`fld-i${mono ? " money" : ""}`} style={{ width: "100%", boxSizing: "border-box" }} />
+        <input type="text" value={draft} onChange={(e) => setDraft(e.target.value)} className={`fld-i${mono ? " money" : ""}`} style={{ width: "100%", boxSizing: "border-box" }} />
       )}
       <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
         <button onClick={() => setEditing(false)} disabled={busy} className="tinybtn" style={{ flex: 1 }}>Cancel</button>

@@ -168,48 +168,48 @@ Total: 1034 route registrations across 137 files.
 - L3283  PATCH  /:id/logistics/:logId
 
 ## backend/src/scm/routes/mfg-sales-orders.ts  (42)
-- L1149  GET    /
-- L1872  GET    /customers
-- L1947  GET    /my-mtd
-- L1988  GET    /mine
-- L2165  GET    /:docNo/slip-url
-- L2263  GET    /cross-category-eligibility
-- L2286  GET    /cross-category-match
-- L2340  GET    /customer-search
-- L2457  GET    /active-venue
-- L2511  GET    /:docNo
-- L2906  GET    /:docNo/items
-- L2998  GET    /customer-credit/:debtorCode
-- L3063  POST   /backfill-warehouses
-- L5535  POST   /
-- L5621  POST   /recompute-allocation
-- L5630  PATCH  /:docNo/status
-- L6004  DELETE /:docNo
-- L6096  GET    /:docNo/audit-log
-- L6114  GET    /:docNo/status-changes
-- L6130  GET    /:docNo/revisions
-- L6141  GET    /:docNo/price-overrides
-- L6153  POST   /:docNo/items/:itemId/override
-- L7380  PATCH  /:docNo
-- L7640  POST   /:docNo/items
-- L8235  PATCH  /:docNo/items/:itemId
-- L8687  DELETE /:docNo/items/:itemId
-- L9086  POST   /:docNo/items/:itemId/tbc-update
-- L9557  POST   /:docNo/items/:itemId/tbc-swap
-- L10375  POST   /:docNo/items/:itemId/tbc-swap-sofa
-- L10420  POST   /:docNo/items/:itemId/photos
-- L10615  GET    /:docNo/items/:itemId/photos/:photoKey/signed
-- L10630  GET    /:docNo/items/:itemId/photos/:photoKey
-- L10679  DELETE /:docNo/items/:itemId/photos/:photoKey
-- L10746  GET    /:docNo/payments
-- L10799  POST   /:docNo/payments
-- L10988  PATCH  /:docNo/payments/:id
-- L11190  DELETE /:docNo/payments/:id
-- L11310  GET    /:docNo/payments/:id/slip-url
-- L11364  POST   /:docNo/payments/:id/slip
-- L11461  GET    /debtors/search
-- L11491  PATCH  /:docNo/items/:itemId/stock-status
-- L11631  POST   /:docNo/amendments
+- L1078  GET    /
+- L1795  GET    /customers
+- L1870  GET    /my-mtd
+- L1911  GET    /mine
+- L2087  GET    /:docNo/slip-url
+- L2185  GET    /cross-category-eligibility
+- L2208  GET    /cross-category-match
+- L2262  GET    /customer-search
+- L2379  GET    /active-venue
+- L2433  GET    /:docNo
+- L2825  GET    /:docNo/items
+- L2917  GET    /customer-credit/:debtorCode
+- L2982  POST   /backfill-warehouses
+- L5472  POST   /
+- L5558  POST   /recompute-allocation
+- L5907  PATCH  /:docNo/status
+- L5931  DELETE /:docNo
+- L6023  GET    /:docNo/audit-log
+- L6041  GET    /:docNo/status-changes
+- L6057  GET    /:docNo/revisions
+- L6068  GET    /:docNo/price-overrides
+- L6080  POST   /:docNo/items/:itemId/override
+- L7278  PATCH  /:docNo
+- L7538  POST   /:docNo/items
+- L8133  PATCH  /:docNo/items/:itemId
+- L8586  DELETE /:docNo/items/:itemId
+- L8985  POST   /:docNo/items/:itemId/tbc-update
+- L9456  POST   /:docNo/items/:itemId/tbc-swap
+- L10274  POST   /:docNo/items/:itemId/tbc-swap-sofa
+- L10319  POST   /:docNo/items/:itemId/photos
+- L10514  GET    /:docNo/items/:itemId/photos/:photoKey/signed
+- L10529  GET    /:docNo/items/:itemId/photos/:photoKey
+- L10578  DELETE /:docNo/items/:itemId/photos/:photoKey
+- L10645  GET    /:docNo/payments
+- L10698  POST   /:docNo/payments
+- L10887  PATCH  /:docNo/payments/:id
+- L11089  DELETE /:docNo/payments/:id
+- L11209  GET    /:docNo/payments/:id/slip-url
+- L11263  POST   /:docNo/payments/:id/slip
+- L11360  GET    /debtors/search
+- L11390  PATCH  /:docNo/items/:itemId/stock-status
+- L11530  POST   /:docNo/amendments
 
 ## backend/src/routes/agent-console.ts  (33)
 - L119  GET    /status
@@ -247,30 +247,30 @@ Total: 1034 route registrations across 137 files.
 - L1225  GET    /${base}/brief
 
 ## backend/src/scm/routes/mfg-purchase-orders.ts  (25)
-- L413  GET    /
-- L610  GET    /outstanding-so-items
-- L738  GET    /so-line-candidates
-- L885  GET    /:id
-- L1062  GET    /:id/linked
-- L1107  GET    /:id/revisions
-- L1122  POST   /
-- L2502  POST   /from-sos
-- L2582  PATCH  /:id
-- L2738  POST   /bulk-supplier-date
-- L3037  POST   /:id/items
-- L3160  PATCH  /:id/items/:itemId
-- L3336  DELETE /:id/items/:itemId
-- L3506  GET    /:id/items/:itemId/allocations
-- L3516  POST   /:id/items/:itemId/allocations
-- L3569  PATCH  /:id/items/:itemId/allocations/:allocationId
-- L3618  DELETE /:id/items/:itemId/allocations/:allocationId
-- L3709  GET    /:id/items/:itemId/photos/:photoKey/signed
-- L3767  GET    /:id/items/:itemId/photos/:photoKey
-- L3781  POST   /:id/convert-from-so
-- L4045  PATCH  /:id/submit
-- L4156  PATCH  /:id/confirm
-- L4177  POST   /:id/send-to-supplier
-- L4340  PATCH  /:id/cancel
+- L415  GET    /
+- L611  GET    /outstanding-so-items
+- L739  GET    /so-line-candidates
+- L886  GET    /:id
+- L1063  GET    /:id/linked
+- L1108  GET    /:id/revisions
+- L1123  POST   /
+- L2501  POST   /from-sos
+- L2581  PATCH  /:id
+- L2740  POST   /bulk-supplier-date
+- L3039  POST   /:id/items
+- L3162  PATCH  /:id/items/:itemId
+- L3337  DELETE /:id/items/:itemId
+- L3507  GET    /:id/items/:itemId/allocations
+- L3517  POST   /:id/items/:itemId/allocations
+- L3570  PATCH  /:id/items/:itemId/allocations/:allocationId
+- L3619  DELETE /:id/items/:itemId/allocations/:allocationId
+- L3710  GET    /:id/items/:itemId/photos/:photoKey/signed
+- L3768  GET    /:id/items/:itemId/photos/:photoKey
+- L3782  POST   /:id/convert-from-so
+- L4046  PATCH  /:id/submit
+- L4157  PATCH  /:id/confirm
+- L4178  POST   /:id/send-to-supplier
+- L4456  PATCH  /:id/cancel
 - L4465  PATCH  /:id/reopen
 
 ## backend/src/scm/routes/fleet-maintenance.ts  (23)
@@ -322,60 +322,60 @@ Total: 1034 route registrations across 137 files.
 - L2200  PATCH  /threads/:id
 
 ## backend/src/routes/users.ts  (21)
-- L453  GET    /
-- L621  GET    /:id/brands
-- L637  PUT    /:id/brands
-- L686  GET    /:id/companies
-- L765  PUT    /:id/companies
-- L793  GET    /:id/activity
-- L827  PUT    /me/profile-pic
-- L859  DELETE /me/profile-pic
-- L876  GET    /:id/profile-pic
-- L909  PUT    /:id/profile-pic
-- L936  POST   /invite
-- L1345  POST   /:id/resend-invite
-- L1420  PATCH  /:id
-- L1822  DELETE /:id
-- L1945  GET    /invitations
-- L2001  DELETE /invitations/:id
-- L2031  POST   /:id/impersonate
-- L2088  POST   /:id/reset-password
-- L2199  POST   /:id/totp/disable
-- L2242  GET    /impersonation-enabled
-- L2248  POST   /:id/impersonate
+- L454  GET    /
+- L622  GET    /:id/brands
+- L638  PUT    /:id/brands
+- L687  GET    /:id/companies
+- L787  PUT    /:id/companies
+- L815  GET    /:id/activity
+- L849  PUT    /me/profile-pic
+- L881  DELETE /me/profile-pic
+- L898  GET    /:id/profile-pic
+- L931  PUT    /:id/profile-pic
+- L958  POST   /invite
+- L1367  POST   /:id/resend-invite
+- L1442  PATCH  /:id
+- L1844  DELETE /:id
+- L1967  GET    /invitations
+- L2023  DELETE /invitations/:id
+- L2053  POST   /:id/impersonate
+- L2110  POST   /:id/reset-password
+- L2221  POST   /:id/totp/disable
+- L2264  GET    /impersonation-enabled
+- L2270  POST   /:id/impersonate
 
 ## backend/src/scm/routes/accounting.ts  (21)
-- L83  GET    /accounts
-- L100  GET    /journal-entries
-- L126  GET    /journal-entries/:id
-- L147  POST   /journal-entries
-- L268  POST   /journal-entries/:id/post
-- L274  POST   /post/si/:invoiceNumber
-- L412  POST   /post/pi/:invoiceNumber
-- L541  GET    /gl
-- L561  GET    /balances
-- L573  GET    /ar-aging
-- L593  GET    /ap-aging
-- L620  POST   /accounts
-- L661  PATCH  /accounts/:code
-- L725  POST   /journal-entries/:id/reverse
-- L764  GET    /control-check
-- L870  GET    /acquirers
-- L886  POST   /backfill/customer-payments
-- L900  GET    /daily-bank
-- L961  GET    /daily-close
-- L996  PUT    /daily-close
-- L1044  POST   /daily-close/confirm
+- L84  GET    /accounts
+- L101  GET    /journal-entries
+- L127  GET    /journal-entries/:id
+- L148  POST   /journal-entries
+- L272  POST   /journal-entries/:id/post
+- L278  POST   /post/si/:invoiceNumber
+- L416  POST   /post/pi/:invoiceNumber
+- L545  GET    /gl
+- L565  GET    /balances
+- L577  GET    /ar-aging
+- L597  GET    /ap-aging
+- L624  POST   /accounts
+- L665  PATCH  /accounts/:code
+- L729  POST   /journal-entries/:id/reverse
+- L768  GET    /control-check
+- L874  GET    /acquirers
+- L890  POST   /backfill/customer-payments
+- L904  GET    /daily-bank
+- L965  GET    /daily-close
+- L1000  PUT    /daily-close
+- L1048  POST   /daily-close/confirm
 
 ## backend/src/scm/routes/consignment-orders.ts  (19)
-- L207  GET    /
-- L424  GET    /mine
-- L530  GET    /:docNo
-- L578  POST   /
-- L1018  PATCH  /:docNo/status
-- L1021  GET    /:docNo/audit-log
-- L1055  POST   /:docNo/items/:itemId/override
-- L1109  PATCH  /:docNo
+- L208  GET    /
+- L425  GET    /mine
+- L531  GET    /:docNo
+- L579  POST   /
+- L1019  PATCH  /:docNo/status
+- L1022  GET    /:docNo/audit-log
+- L1056  POST   /:docNo/items/:itemId/override
+- L1110  PATCH  /:docNo
 - L1500  POST   /:docNo/items
 - L1653  PATCH  /:docNo/items/:itemId
 - L1843  DELETE /:docNo/items/:itemId
@@ -414,18 +414,18 @@ Total: 1034 route registrations across 137 files.
 - L137  POST   /warehouses
 - L317  PATCH  /warehouses/:id
 - L331  DELETE /warehouses/:id
-- L410  GET    /
-- L484  GET    /products
-- L878  GET    /breakdown/:productCode
-- L936  GET    /movements
-- L966  GET    /lots/:productCode
-- L999  GET    /batches
-- L1101  GET    /cogs
-- L1128  GET    /value
-- L1153  GET    /analytics
-- L1323  GET    /reconcile
-- L1352  GET    /buckets/:productCode
-- L1414  GET    /reservations
+- L416  GET    /
+- L490  GET    /products
+- L884  GET    /breakdown/:productCode
+- L942  GET    /movements
+- L972  GET    /lots/:productCode
+- L1005  GET    /batches
+- L1107  GET    /cogs
+- L1134  GET    /value
+- L1159  GET    /analytics
+- L1329  GET    /reconcile
+- L1358  GET    /buckets/:productCode
+- L1420  GET    /reservations
 
 ## backend/src/scm/routes/product-models.ts  (16)
 - L93  GET    /:id/photo/:key
@@ -446,38 +446,38 @@ Total: 1034 route registrations across 137 files.
 - L1407  PATCH  /:id/photos/:photoId
 
 ## backend/src/scm/routes/delivery-orders-mfg.ts  (15)
-- L2711  GET    /
-- L2934  GET    /deliverable-so-lines
-- L3023  GET    /so-source/:docNo
-- L3049  GET    /:id
-- L3239  POST   /
-- L4261  POST   /from-sos
-- L4272  PUT    /:id/crew
-- L4417  PATCH  /:id
-- L4616  POST   /:id/items
-- L4840  PATCH  /:id/items/:itemId
-- L5140  DELETE /:id/items/:itemId
-- L5230  GET    /:id/payments
-- L5286  POST   /:id/payments
-- L5328  DELETE /:id/payments/:paymentId
-- L5632  PATCH  /:id/status
+- L2715  GET    /
+- L2936  GET    /deliverable-so-lines
+- L3025  GET    /so-source/:docNo
+- L3051  GET    /:id
+- L3241  POST   /
+- L4254  POST   /from-sos
+- L4265  PUT    /:id/crew
+- L4410  PATCH  /:id
+- L4613  POST   /:id/items
+- L4838  PATCH  /:id/items/:itemId
+- L5139  DELETE /:id/items/:itemId
+- L5229  GET    /:id/payments
+- L5285  POST   /:id/payments
+- L5327  DELETE /:id/payments/:paymentId
+- L5631  PATCH  /:id/status
 
 ## backend/src/scm/routes/sales-invoices.ts  (15)
-- L789  GET    /
-- L893  GET    /invoiceable-do-lines
-- L905  GET    /:id
-- L1214  POST   /
-- L1505  POST   /from-dos
-- L1645  POST   /:id/items/from-do/:doId
-- L1648  PATCH  /:id
-- L1756  POST   /:id/items
-- L1853  PATCH  /:id/items/:itemId
-- L1983  DELETE /:id/items/:itemId
-- L2047  GET    /:id/payments
-- L2208  POST   /:id/payments
-- L2210  DELETE /:id/payments/:paymentId
-- L2596  PATCH  /:id/status
-- L2600  PATCH  /:id/payment
+- L731  GET    /
+- L832  GET    /invoiceable-do-lines
+- L848  GET    /:id
+- L1159  POST   /
+- L1460  POST   /from-dos
+- L1606  POST   /:id/items/from-do/:doId
+- L1609  PATCH  /:id
+- L1716  POST   /:id/items
+- L1808  PATCH  /:id/items/:itemId
+- L1953  DELETE /:id/items/:itemId
+- L2017  GET    /:id/payments
+- L2178  POST   /:id/payments
+- L2180  DELETE /:id/payments/:paymentId
+- L2565  PATCH  /:id/status
+- L2569  PATCH  /:id/payment
 
 ## backend/src/routes/assrPortal.ts  (14)
 - L41  GET    /profiles
@@ -496,23 +496,23 @@ Total: 1034 route registrations across 137 files.
 - L515  POST   /alerts/override
 
 ## backend/src/scm/routes/purchase-consignment-returns.ts  (14)
-- L302  GET    /
-- L320  GET    /returnable-receive-lines
-- L372  GET    /:id
-- L404  GET    /:id/linked
-- L432  POST   /
-- L685  POST   /from-pc-receives
-- L790  POST   /from-pc-receive
-- L792  PATCH  /:id/post
-- L806  PATCH  /:id/complete
-- L888  PATCH  /:id/cancel
-- L899  PATCH  /:id
-- L932  POST   /:id/items
-- L1032  PATCH  /:id/items/:itemId
-- L1102  DELETE /:id/items/:itemId
+- L303  GET    /
+- L321  GET    /returnable-receive-lines
+- L373  GET    /:id
+- L405  GET    /:id/linked
+- L433  POST   /
+- L688  POST   /from-pc-receives
+- L793  POST   /from-pc-receive
+- L795  PATCH  /:id/post
+- L809  PATCH  /:id/complete
+- L891  PATCH  /:id/cancel
+- L902  PATCH  /:id
+- L938  POST   /:id/items
+- L1038  PATCH  /:id/items/:itemId
+- L1108  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/purchase-invoices.ts  (14)
-- L363  GET    /
+- L367  GET    /
 - L466  GET    /outstanding-grn-items
 - L561  GET    /:id
 - L673  GET    /:id/linked
@@ -528,20 +528,20 @@ Total: 1034 route registrations across 137 files.
 - L2372  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/trips.ts  (14)
-- L145  GET    /
-- L200  GET    /day
-- L412  GET    /:id
-- L454  POST   /
-- L576  PATCH  /:id
-- L632  PATCH  /:id/status
-- L652  POST   /:id/stops
-- L763  DELETE /:id/stops/:stopId
-- L810  DELETE /:id
-- L874  POST   /:id/optimize-route
-- L897  POST   /propose-schedule
-- L1073  POST   /:id/location
-- L1149  GET    /:id/locations/latest
-- L1182  GET    /active/locations
+- L146  GET    /
+- L201  GET    /day
+- L413  GET    /:id
+- L455  POST   /
+- L579  PATCH  /:id
+- L635  PATCH  /:id/status
+- L655  POST   /:id/stops
+- L766  DELETE /:id/stops/:stopId
+- L813  DELETE /:id
+- L877  POST   /:id/optimize-route
+- L900  POST   /propose-schedule
+- L1076  POST   /:id/location
+- L1152  GET    /:id/locations/latest
+- L1185  GET    /active/locations
 
 ## backend/src/routes/auth.ts  (13)
 - L50  GET    /status
@@ -559,78 +559,78 @@ Total: 1034 route registrations across 137 files.
 - L805  POST   /me/password
 
 ## backend/src/routes/sales.ts  (13)
-- L166  GET    /entries
-- L318  GET    /entries/export
-- L480  GET    /entries/change-requests
-- L566  POST   /entries/change-requests/:reqId/approve
-- L598  POST   /entries/change-requests/:reqId/reject
-- L601  GET    /entries/:id
-- L684  POST   /entries
-- L846  PATCH  /entries/:id
-- L1061  POST   /entries/:id/submit
-- L1102  POST   /entries/:id/unsubmit
-- L1118  POST   /entries/:id/void
-- L1142  DELETE /entries/:id
-- L1178  POST   /entries/:id/push
+- L233  GET    /entries
+- L385  GET    /entries/export
+- L547  GET    /entries/change-requests
+- L633  POST   /entries/change-requests/:reqId/approve
+- L665  POST   /entries/change-requests/:reqId/reject
+- L668  GET    /entries/:id
+- L751  POST   /entries
+- L918  PATCH  /entries/:id
+- L1146  POST   /entries/:id/submit
+- L1187  POST   /entries/:id/unsubmit
+- L1203  POST   /entries/:id/void
+- L1227  DELETE /entries/:id
+- L1263  POST   /entries/:id/push
 
 ## backend/src/scm/routes/grns.ts  (13)
-- L1061  GET    /
-- L1283  GET    /outstanding-po-items
-- L1387  GET    /:id
-- L1457  GET    /:id/linked
-- L1526  POST   /
-- L2052  POST   /from-pos
-- L2152  PATCH  /:id/post
-- L2466  POST   /from-po-items
-- L2480  PATCH  /:id/cancel
-- L2705  PATCH  /:id
-- L2936  POST   /:id/items
-- L3189  PATCH  /:id/items/:itemId
-- L3485  DELETE /:id/items/:itemId
+- L1054  GET    /
+- L1279  GET    /outstanding-po-items
+- L1383  GET    /:id
+- L1453  GET    /:id/linked
+- L1522  POST   /
+- L2049  POST   /from-pos
+- L2149  PATCH  /:id/post
+- L2463  POST   /from-po-items
+- L2477  PATCH  /:id/cancel
+- L2702  PATCH  /:id
+- L2932  POST   /:id/items
+- L3184  PATCH  /:id/items/:itemId
+- L3487  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/purchase-consignment-receives.ts  (13)
-- L442  GET    /
-- L478  GET    /outstanding-pco-items
-- L576  GET    /outstanding-order-lines
-- L629  GET    /:id
-- L683  GET    /:id/linked
-- L718  POST   /
-- L985  POST   /from-pcos
-- L987  PATCH  /:id/post
-- L1075  PATCH  /:id/cancel
-- L1086  PATCH  /:id
-- L1109  POST   /:id/items
-- L1217  PATCH  /:id/items/:itemId
-- L1299  DELETE /:id/items/:itemId
+- L448  GET    /
+- L484  GET    /outstanding-pco-items
+- L582  GET    /outstanding-order-lines
+- L635  GET    /:id
+- L689  GET    /:id/linked
+- L724  POST   /
+- L991  POST   /from-pcos
+- L993  PATCH  /:id/post
+- L1084  PATCH  /:id/cancel
+- L1095  PATCH  /:id
+- L1121  POST   /:id/items
+- L1229  PATCH  /:id/items/:itemId
+- L1312  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/purchase-returns.ts  (13)
-- L175  GET    /
-- L189  GET    /:id
-- L232  GET    /:id/linked
-- L639  POST   /
-- L989  POST   /from-grns
-- L1123  POST   /from-grn
-- L1125  PATCH  /:id/post
-- L1142  PATCH  /:id/complete
-- L1269  PATCH  /:id/cancel
-- L1280  PATCH  /:id
-- L1446  POST   /:id/items
-- L1550  PATCH  /:id/items/:itemId
-- L1611  DELETE /:id/items/:itemId
+- L177  GET    /
+- L191  GET    /:id
+- L234  GET    /:id/linked
+- L641  POST   /
+- L996  POST   /from-grns
+- L1133  POST   /from-grn
+- L1135  PATCH  /:id/post
+- L1188  PATCH  /:id/complete
+- L1291  PATCH  /:id/cancel
+- L1302  PATCH  /:id
+- L1491  POST   /:id/items
+- L1607  PATCH  /:id/items/:itemId
+- L1668  DELETE /:id/items/:itemId
 
 ## backend/src/scm/routes/consignment-notes.ts  (12)
-- L453  GET    /
-- L571  GET    /deliverable-order-lines
-- L644  GET    /:id
-- L681  POST   /
-- L777  PATCH  /:id
-- L827  POST   /:id/items
-- L869  PATCH  /:id/items/:itemId
-- L945  DELETE /:id/items/:itemId
-- L970  GET    /:id/payments
-- L1005  POST   /:id/payments
-- L1045  DELETE /:id/payments/:paymentId
-- L1128  PATCH  /:id/status
+- L454  GET    /
+- L572  GET    /deliverable-order-lines
+- L645  GET    /:id
+- L682  POST   /
+- L778  PATCH  /:id
+- L831  POST   /:id/items
+- L873  PATCH  /:id/items/:itemId
+- L950  DELETE /:id/items/:itemId
+- L975  GET    /:id/payments
+- L1010  POST   /:id/payments
+- L1050  DELETE /:id/payments/:paymentId
+- L1162  PATCH  /:id/status
 
 ## backend/src/scm/routes/suppliers.ts  (12)
 - L258  GET    /
@@ -673,30 +673,30 @@ Total: 1034 route registrations across 137 files.
 - L678  GET    /:id
 
 ## backend/src/scm/routes/delivery-returns.ts  (11)
-- L742  GET    /
-- L821  GET    /returnable-do-lines
-- L835  GET    /:id
-- L999  POST   /
-- L1401  POST   /from-do
-- L1402  POST   /from-dos
-- L1405  PATCH  /:id
-- L1448  POST   /:id/items
-- L1508  PATCH  /:id/items/:itemId
-- L1608  DELETE /:id/items/:itemId
-- L1739  PATCH  /:id/status
+- L756  GET    /
+- L835  GET    /returnable-do-lines
+- L854  GET    /:id
+- L1018  POST   /
+- L1445  POST   /from-do
+- L1446  POST   /from-dos
+- L1449  PATCH  /:id
+- L1495  POST   /:id/items
+- L1555  PATCH  /:id/items/:itemId
+- L1668  DELETE /:id/items/:itemId
+- L1821  PATCH  /:id/status
 
 ## backend/src/scm/routes/mfg-products.ts  (11)
-- L218  GET    /
-- L229  POST   /
-- L293  POST   /batch-import
-- L492  DELETE /:id
-- L495  GET    /:id
-- L915  PATCH  /:id
-- L922  POST   /:id/activate-one-shot
-- L965  GET    /:id/price-history
-- L1000  GET    /:id/suppliers
-- L1173  POST   /:id/price-changes
-- L1220  GET    /:id/price-changes
+- L224  GET    /
+- L235  POST   /
+- L299  POST   /batch-import
+- L498  DELETE /:id
+- L501  GET    /:id
+- L921  PATCH  /:id
+- L928  POST   /:id/activate-one-shot
+- L971  GET    /:id/price-history
+- L1006  GET    /:id/suppliers
+- L1179  POST   /:id/price-changes
+- L1226  GET    /:id/price-changes
 
 ## backend/src/scm/routes/scan-so.ts  (11)
 - L2273  GET    /salespeople
@@ -736,16 +736,16 @@ Total: 1034 route registrations across 137 files.
 - L365  GET    /sofa-combos
 
 ## backend/src/scm/routes/purchase-consignment-orders.ts  (10)
-- L115  GET    /
-- L194  GET    /:id
-- L248  GET    /:id/linked
-- L290  POST   /
-- L429  PATCH  /:id
-- L487  POST   /:id/items
-- L548  PATCH  /:id/items/:itemId
-- L604  DELETE /:id/items/:itemId
-- L625  PATCH  /:id/submit
-- L678  PATCH  /:id/cancel
+- L116  GET    /
+- L195  GET    /:id
+- L249  GET    /:id/linked
+- L291  POST   /
+- L430  PATCH  /:id
+- L492  POST   /:id/items
+- L553  PATCH  /:id/items/:itemId
+- L610  DELETE /:id/items/:itemId
+- L631  PATCH  /:id/submit
+- L692  PATCH  /:id/cancel
 
 ## backend/src/routes/announcements.ts  (9)
 - L530  GET    /
@@ -781,15 +781,15 @@ Total: 1034 route registrations across 137 files.
 - L387  POST   /attachments/:attId/archive
 
 ## backend/src/scm/routes/consignment-returns.ts  (9)
-- L440  GET    /
-- L533  GET    /returnable-note-lines
-- L616  GET    /:id
-- L800  POST   /
-- L855  PATCH  /:id
-- L927  POST   /:id/items
-- L971  PATCH  /:id/items/:itemId
-- L1054  DELETE /:id/items/:itemId
-- L1141  PATCH  /:id/status
+- L441  GET    /
+- L534  GET    /returnable-note-lines
+- L617  GET    /:id
+- L801  POST   /
+- L856  PATCH  /:id
+- L931  POST   /:id/items
+- L975  PATCH  /:id/items/:itemId
+- L1058  DELETE /:id/items/:itemId
+- L1164  PATCH  /:id/status
 
 ## backend/src/scm/routes/delivery-zones.ts  (9)
 - L103  GET    /
@@ -803,15 +803,15 @@ Total: 1034 route registrations across 137 files.
 - L772  DELETE /locks/:id
 
 ## backend/src/scm/routes/fabric-tracking.ts  (9)
-- L147  POST   /
-- L219  POST   /bulk-upsert
-- L320  DELETE /:id
-- L337  GET    /
-- L373  PATCH  /:id/active
-- L406  PATCH  /:id/series
-- L440  PATCH  /:id/supplier-code
-- L496  PATCH  /:id/description
-- L539  PATCH  /:id/tier
+- L148  POST   /
+- L220  POST   /bulk-upsert
+- L321  DELETE /:id
+- L338  GET    /
+- L374  PATCH  /:id/active
+- L407  PATCH  /:id/series
+- L441  PATCH  /:id/supplier-code
+- L497  PATCH  /:id/description
+- L628  PATCH  /:id/tier
 
 ## backend/src/scm/routes/so-amendments.ts  (9)
 - L242  GET    /
@@ -917,20 +917,20 @@ Total: 1034 route registrations across 137 files.
 - L293  GET    /:id/invoice
 
 ## backend/src/scm/routes/payment-vouchers.ts  (6)
-- L232  GET    /
-- L247  GET    /:id
-- L393  POST   /
-- L399  PATCH  /:id
-- L849  POST   /:id/post
-- L1027  POST   /:id/cancel
+- L233  GET    /
+- L248  GET    /:id
+- L394  POST   /
+- L400  PATCH  /:id
+- L858  POST   /:id/post
+- L1036  POST   /:id/cancel
 
 ## backend/src/scm/routes/po-amendments.ts  (6)
-- L100  GET    /
-- L113  GET    /:id
-- L147  POST   /
-- L425  PATCH  /:id/approve
-- L435  PATCH  /:id/reject
-- L578  PATCH  /:id/withdraw
+- L101  GET    /
+- L114  GET    /:id
+- L148  POST   /
+- L429  PATCH  /:id/approve
+- L439  PATCH  /:id/reject
+- L582  PATCH  /:id/withdraw
 
 ## backend/src/scm/routes/reports.ts  (6)
 - L81  GET    /sales-order-detail-listing
@@ -949,11 +949,11 @@ Total: 1034 route registrations across 137 files.
 - L314  POST   /save
 
 ## backend/src/routes/assrFormIntake.ts  (5)
-- L71  POST   /
-- L164  POST   /attachments
-- L242  POST   /attachments-by-so
-- L405  GET    /status-export
-- L523  POST   /delivery-dates
+- L72  POST   /
+- L165  POST   /attachments
+- L243  POST   /attachments-by-so
+- L403  GET    /status-export
+- L521  POST   /delivery-dates
 
 ## backend/src/routes/branding.ts  (5)
 - L56  GET    /
@@ -970,18 +970,18 @@ Total: 1034 route registrations across 137 files.
 - L211  DELETE /special/:id
 
 ## backend/src/scm/routes/delivery-planning.ts  (5)
-- L386  GET    /
-- L1547  GET    /geo
-- L1850  GET    /:docNo/lines
-- L1954  PATCH  /:type/:id/fields
-- L2259  PATCH  /:type/:id/schedule
+- L1509  GET    /
+- L1538  GET    /geo
+- L1839  GET    /:docNo/lines
+- L1943  PATCH  /:type/:id/fields
+- L2247  PATCH  /:type/:id/schedule
 
 ## backend/src/scm/routes/dp-orders.ts  (5)
-- L256  POST   /
-- L318  GET    /
-- L373  PATCH  /:id
-- L413  POST   /:id/cancel
-- L480  POST   /:id/schedule
+- L257  POST   /
+- L319  GET    /
+- L374  PATCH  /:id
+- L417  POST   /:id/cancel
+- L484  POST   /:id/schedule
 
 ## backend/src/scm/routes/maintenance-config.ts  (5)
 - L194  GET    /resolved
@@ -1008,8 +1008,8 @@ Total: 1034 route registrations across 137 files.
 - L57  GET    /
 - L117  GET    /:id
 - L258  POST   /
-- L410  PATCH  /:id/cancel
-- L504  PATCH  /:id/post
+- L429  PATCH  /:id/cancel
+- L523  PATCH  /:id/post
 
 ## backend/src/scm/routes/threepl-companies.ts  (5)
 - L85  GET    /
@@ -1185,12 +1185,12 @@ Total: 1034 route registrations across 137 files.
 - L596  POST   /:id/requeue
 
 ## backend/src/scm/routes/delivery-messages.ts  (2)
-- L53  POST   /send
-- L164  POST   /statuses
+- L54  POST   /send
+- L165  POST   /statuses
 
 ## backend/src/scm/routes/document-flow.ts  (2)
-- L438  GET    /candidate-pos/:soDocNo
-- L479  GET    /:type/:id
+- L446  GET    /candidate-pos/:soDocNo
+- L493  GET    /:type/:id
 
 ## backend/src/scm/routes/fabric-library.ts  (2)
 - L32  GET    /
@@ -1233,7 +1233,7 @@ Total: 1034 route registrations across 137 files.
 - L39  PATCH  /:key
 
 ## backend/src/routes/assr_print.ts  (1)
-- L163  GET    /:id
+- L134  GET    /:id
 
 ## backend/src/routes/audit.ts  (1)
 - L19  GET    /
@@ -1257,7 +1257,7 @@ Total: 1034 route registrations across 137 files.
 - L56  GET    /
 
 ## backend/src/routes/projects_print.ts  (1)
-- L336  GET    /:id
+- L304  GET    /:id
 
 ## backend/src/routes/search.ts  (1)
 - L268  GET    /
@@ -1287,13 +1287,13 @@ Total: 1034 route registrations across 137 files.
 - L49  POST   /
 
 ## backend/src/scm/routes/mrp.ts  (1)
-- L1529  GET    /
+- L1583  GET    /
 
 ## backend/src/scm/routes/payment-audit-log.ts  (1)
 - L195  GET    /
 
 ## backend/src/scm/routes/po-so-coverage.ts  (1)
-- L466  GET    /:type/:id
+- L469  GET    /:type/:id
 
 ## backend/src/scm/routes/scan-lorry-invoice.ts  (1)
 - L259  POST   /extract

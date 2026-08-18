@@ -30,6 +30,7 @@ import { Upload, X, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { Button } from "./Button";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
+import { DateField } from "../vendor/scm/components/DateField";
 
 const FIELD = "w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink focus:border-primary focus:outline-none";
 const LABEL = "mb-1 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted";
@@ -414,7 +415,7 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
         </div>
         <div>
           <label className={LABEL}>Document date</label>
-          <input type="date" className={FIELD} value={docDate} onChange={(e) => setDocDate(e.target.value)} />
+          <DateField fullWidth className={FIELD} value={docDate} onChange={(iso) => setDocDate(iso)}/>
         </div>
         <div>
           <label className={LABEL}>Advisor</label>

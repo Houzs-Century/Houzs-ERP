@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
+  collectProceedGateProblems,
   collectProcessingGateProblems,
+  proceedGateUnmetBody,
   validationFailedBody,
   type SaveProblem,
 } from './so-save-problems';
-import { meetsDepositGate } from './order-rules';
+import { meetsDepositGate, meetsProceedGate } from './order-rules';
 
 const codes = (ps: SaveProblem[]) => ps.map((p) => p.code);
 
@@ -109,9 +111,10 @@ describe('collectProcessingGateProblems', () => {
     expect(ps).toEqual([]);
   });
 
-  /* Colour-KIV gate (owner rule 2026-07-24, after SO-2607-016 reached
-     production planning with two KIV sofa lines): a Processing Date may not be
-     set or changed while any non-cancelled line's fabric colour is still KIV. */
+  /* Colour-KIV gate (owner rule 2026-07-24, after an SO was released for
+     ordering with two KIV sofa lines and purchasing had nothing to buy against):
+     a Processing Date may not be set or changed while any non-cancelled line's
+     fabric colour is still KIV. */
   describe('fabric_colour_kiv', () => {
     it('KIV line + a Processing Date being set -> rejected, naming the line + series', () => {
       const ps = collectProcessingGateProblems({
@@ -379,5 +382,139 @@ describe('unified Processing-Date gate: completeness', () => {
       completeness: { hasCustomerName: true, hasAddress: false, hasPostcode: true },
     });
     expect(all.map((p) => p.code).sort()).toEqual(['processing_date_incomplete', 'processing_date_unpaid']);
+  });
+});
+
+/* ── THE PROCEED REFUSAL ────────────────────────────────────────────────────
+   A refusal must name the condition that failed. The proceed gate returned ONE
+   sentence naming ALL FIVE conditions whenever ANY ONE of them failed, and on
+   2026-08-17 that cost the owner a day: a ZERO-TOTAL order missing its postcode
+   was refused with a sentence containing the word "deposit", and he read it as
+   the system demanding 50% of nothing. It was not — meetsDepositGate is
+   vacuously true at total <= 0, so the deposit term PASSED. The refusal simply
+   could not tell him which of the five had failed. */
+describe('collectProceedGateProblems', () => {
+  const complete = {
+    hasCustomerName: true,
+    hasAddress: true,
+    hasPostcode: true,
+    hasDeliveryDate: true,
+    paidCenti: 300_00,
+    totalCenti: 1000_00,
+    companyCode: 'HOUZS' as const,
+  };
+
+  it("THE OWNER'S CASE: zero total, nothing paid, no postcode — names the POSTCODE and never the deposit", () => {
+    const ps = collectProceedGateProblems({
+      ...complete, hasPostcode: false, paidCenti: 0, totalCenti: 0,
+    });
+    expect(ps).toHaveLength(1);
+    expect(ps[0]!.field).toBe('Postcode');
+    expect(ps[0]!.message).toContain('postcode');
+    /* The word that sent him down the wrong path for a day. It must not be in
+       the response AT ALL — not in a message, not in a field, not in a code. */
+    expect(JSON.stringify(ps).toLowerCase()).not.toContain('deposit');
+  });
+
+  it('a free order NEVER carries a deposit line, however incomplete it is', () => {
+    for (const totalCenti of [0, -1, -50_00]) {
+      const ps = collectProceedGateProblems({
+        ...complete,
+        hasCustomerName: false, hasAddress: false, hasPostcode: false, hasDeliveryDate: false,
+        paidCenti: 0, totalCenti,
+      });
+      expect(ps.map((p) => p.code)).not.toContain('processing_date_unpaid');
+      expect(ps).toHaveLength(4);
+    }
+  });
+
+  it('reports EVERY failing condition at once, not the first (owner 2026-07-18)', () => {
+    const ps = collectProceedGateProblems({
+      ...complete,
+      hasCustomerName: false, hasAddress: false, hasPostcode: false, hasDeliveryDate: false,
+      paidCenti: 0, totalCenti: 1000_00,
+    });
+    expect(ps).toHaveLength(5);
+    expect(ps.map((p) => p.field)).toEqual(['Customer', 'Address', 'Postcode', 'Delivery date', 'Deposit']);
+  });
+
+  it('names ONLY what failed — a missing delivery date says nothing about money or address', () => {
+    const ps = collectProceedGateProblems({ ...complete, hasDeliveryDate: false });
+    expect(ps).toHaveLength(1);
+    expect(ps[0]!.field).toBe('Delivery date');
+    const said = JSON.stringify(ps).toLowerCase();
+    expect(said).not.toContain('deposit');
+    expect(said).not.toContain('postcode');
+    expect(said).not.toContain('customer name');
+  });
+
+  it('the deposit line states the real shortfall: what is paid, what is needed, and the company %', () => {
+    const [p] = collectProceedGateProblems({ ...complete, paidCenti: 0, totalCenti: 1000_00, companyCode: '2990' });
+    expect(p).toBeDefined();
+    expect(p!.field).toBe('Deposit');
+    expect(p!.message).toContain('50%');     // 2990's rule, not the Houzs 30%
+    expect(p!.message).toContain('RM 500');  // half of RM 1,000
+    expect(p!.message).toContain('RM 0');    // what is actually paid
+  });
+
+  it('returns [] when the gate is met', () => {
+    expect(collectProceedGateProblems(complete)).toEqual([]);
+  });
+});
+
+/* THE OUTCOMES MAY NOT MOVE. Only the words change: an order that could proceed
+   before must still proceed, and one that could not must still not. The list
+   being empty IS the gate — same predicate, one expression. */
+describe('collectProceedGateProblems agrees with meetsProceedGate on every input', () => {
+  it('empty list <=> gate met, across the full matrix', () => {
+    let checked = 0;
+    for (const hasCustomerName of [true, false])
+      for (const hasAddress of [true, false])
+        for (const hasPostcode of [true, false])
+          for (const hasDeliveryDate of [true, false])
+            for (const companyCode of ['HOUZS', '2990', null, 'FUTURE-CO'])
+              for (const [paidCenti, totalCenti] of [
+                [0, 0], [0, -100], [0, 1000_00], [299_99, 1000_00], [300_00, 1000_00],
+                [499_99, 1000_00], [500_00, 1000_00], [1000_00, 1000_00], [0, 1],
+              ] as Array<[number, number]>) {
+                const f = {
+                  hasCustomerName, hasAddress, hasPostcode, hasDeliveryDate,
+                  paidCenti, totalCenti, companyCode,
+                };
+                /* The pre-change predicate, written out literally so this
+                   compares against the RULE and not against a refactor of it. */
+                const legacy =
+                  hasCustomerName && hasAddress && hasPostcode && hasDeliveryDate &&
+                  meetsDepositGate(paidCenti, totalCenti, companyCode);
+                expect(collectProceedGateProblems(f).length === 0).toBe(legacy);
+                expect(meetsProceedGate({
+                  hasCustomerName, hasAddress, hasPostcode, hasDeliveryDate,
+                  paid: paidCenti, total: totalCenti, companyCode,
+                })).toBe(legacy);
+                checked += 1;
+              }
+    expect(checked).toBe(2 * 2 * 2 * 2 * 4 * 9);
+  });
+});
+
+describe('proceedGateUnmetBody', () => {
+  it('keeps the error code clients match on, and adds the detail beside it', () => {
+    const body = proceedGateUnmetBody([
+      { code: 'processing_date_incomplete', message: 'Delivery postcode is required before this order can be proceeded', field: 'Postcode' },
+    ]);
+    expect(body.error).toBe('proceed_gate_unmet');
+    expect(body.problems).toHaveLength(1);
+    /* One problem -> `reason` IS that problem, so a surface that only reads
+       `reason` (mobile line, PDF, an un-migrated client) still learns which
+       condition failed instead of hearing about all five. */
+    expect(body.reason).toBe('Delivery postcode is required before this order can be proceeded');
+  });
+
+  it('carries every reason in `reason` too, for surfaces that read only that key', () => {
+    const body = proceedGateUnmetBody([
+      { code: 'processing_date_incomplete', message: 'A', field: 'Postcode' },
+      { code: 'processing_date_unpaid', message: 'B', field: 'Deposit' },
+    ]);
+    expect(body.reason).toBe('A; B');
   });
 });

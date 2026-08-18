@@ -74,7 +74,7 @@ import {
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
 import { convertToLink, transferToLabel } from "../../lib/convertScope";
-import { buildVariantSummary, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useAuth } from "../../auth/AuthContext";
 import { canOperateDeliveryOrders } from "../../auth/salesAccess";
@@ -172,14 +172,6 @@ type DoItem = {
 };
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
 
 // The DO document is quantity-only for customers. The centi money formatter
 // (fmtMoneyCenti) that fed the finance-gated Totals·Margin card is gone with

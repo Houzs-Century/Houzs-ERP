@@ -3,7 +3,7 @@
 // Received value + qty landed, tinted green once posted.
 
 import { lazy, useCallback, useMemo, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { LazySlot } from "../../components/LazySlot";
@@ -38,7 +38,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { convertToLink, transferToLabel } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { EntityHistoryPanel } from "./EntityHistoryPanel";
 import { GRN_AUDIT_LABELS } from "./entity-audit-labels";
 import { resolveFxRate } from "./fx-rate";
@@ -111,14 +111,6 @@ type GrnItem = {
 const ALLOC_LABEL: Record<string, string> = { QTY: 'By quantity', VALUE: 'By value', CBM: 'By volume (CBM)' };
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneyCenti(centi, currency);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
 
 const supplierNameOf = (h: GrnHeader): string => h.supplier?.name || "—";
 const supplierCodeOf = (h: GrnHeader): string => h.supplier?.code || "—";
@@ -578,7 +570,7 @@ function GoodsReceivedDetailV2ReadOnly() {
                 {poOf(grn) !== "—" && (
                   <>
                     <Divider />
-                    <span>From PO <span className="font-mono font-semibold text-ink-secondary">{poOf(grn)}</span></span>
+                    <span>{transferFromColumnLabel('po')} <span className="font-mono font-semibold text-ink-secondary">{poOf(grn)}</span></span>
                   </>
                 )}
                 {grn.delivery_note_ref && (
@@ -629,7 +621,7 @@ function GoodsReceivedDetailV2ReadOnly() {
             <Section title="Receipt info">
               <div className="grid grid-cols-1 gap-x-5 gap-y-4 sm:grid-cols-4">
                 <Field label="Received at" value={fmtDate(grn.received_at)} />
-                <Field label="From PO" value={poOf(grn)} mono={poOf(grn) !== "—"} muted={poOf(grn) === "—"} />
+                <Field label={transferFromColumnLabel('po')} value={poOf(grn)} mono={poOf(grn) !== "—"} muted={poOf(grn) === "—"} />
                 <Field label="Delivery note" value={grn.delivery_note_ref || "—"} muted={!grn.delivery_note_ref} mono={!!grn.delivery_note_ref} />
                 <Field label="Warehouse" value={grn.warehouse_code || "—"} muted={!grn.warehouse_code} mono={!!grn.warehouse_code} />
                 <Field label="Currency" value={grn.currency} />

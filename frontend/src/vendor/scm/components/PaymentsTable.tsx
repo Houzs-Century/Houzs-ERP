@@ -1217,6 +1217,7 @@ const PaymentsTableInner = (props: PaymentsTableProps) => {
                     <span className={paymentsStyles.unsavedPill}>Unsaved</span>
                   )}
                   <DateField
+                    fullWidth
                     className={paymentsStyles.inlineInput}
                     value={d.paidAt ?? ''}
                     disabled={locked}

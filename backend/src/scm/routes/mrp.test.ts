@@ -519,6 +519,41 @@ describe('computeMrp — includeUndated is visibility, not a demand filter (audi
     expect(res.skus).toHaveLength(0);
     expect(res.totals.skuCount).toBe(0);
   });
+
+  /* THE INVARIANT THE 2026-08-18 DEFAULT FLIP RESTS ON.
+     Showing undated demand by default is only safe because an undated line can
+     never take supply from a dated one: byDateAsc (mrp.ts) returns 1 for null,
+     so nulls sort after every real date and reach the PO queue last. If that
+     order ever inverted, the flip would stop being a display change and start
+     re-routing goods — an undated line would jump a promised one. So it is
+     pinned here, from the OUTPUT, under both flag values and with the scarce
+     row fed in FIRST so insertion order cannot be what produces the answer. */
+  test('a dated line wins the scarce bucket over an undated one — under either flag, whatever the row order', async () => {
+    // PO-RED supplies 6. Both lines want 5 of the same variant bucket.
+    const scarce = () => ({
+      ...BASE_TABLES,
+      mfg_sales_order_items: [undated, dated],      // undated deliberately FIRST
+      purchase_order_items: [poLine('PO-RED', 6, { fabricCode: 'RED' }, '2026-11-01')],
+    });
+
+    for (const includeUndated of [true, false]) {
+      const res = await computeMrp(fakeSb(scarce()) as any, { ...opts, includeUndated });
+      const datedLine = res.skus[0]!.lines.find((l) => l.soItemId === 'si-red')!;
+
+      // The dated line is whole in both runs: it reached the queue first.
+      expect([includeUndated, datedLine.source]).toEqual([includeUndated, 'po']);
+      expect([includeUndated, datedLine.poNumber]).toEqual([includeUndated, 'PO-RED']);
+      expect([includeUndated, datedLine.shortageQty]).toEqual([includeUndated, 0]);
+      expect([includeUndated, datedLine.qty]).toEqual([includeUndated, 5]);
+
+      /* The undated line eats the 1 leftover unit and carries the shortage —
+         counted whether or not it was RENDERED, which is the whole point of
+         tallying before the visibility `continue`. */
+      expect([includeUndated, res.undated.lines]).toEqual([includeUndated, 1]);
+      expect([includeUndated, res.undated.shortageUnits]).toEqual([includeUndated, 4]);
+      expect([includeUndated, res.undated.hidden]).toEqual([includeUndated, !includeUndated]);
+    }
+  });
 });
 
 /* ── The hidden half is REPORTED, and hiding still changes nothing (2026-08-16)
@@ -664,8 +699,33 @@ describe('parseIncludeUndated — a truthy-looking value must never be silently 
     }
   });
 
-  test('omitted is the documented default (false)', () => {
+  test('omitted is the documented default — FALSE, undated demand is hidden', () => {
+    /* Owner, 2026-08-18, ruling on a build that had flipped this to true:
+       "这个应该是要把没有日期的藏起来的,不过我点 show no date 它才会出来."
+
+       The measurement that started the work stands — the default view held 82 of
+       163 live 2990 SO-item ids and 8 of 68 short sofa sets — but the inference
+       drawn from it did not. What the owner could not see was never the ROWS; it
+       was that rows were being withheld at all, because the page said nothing.
+       Hiding is legitimate here: this is the ordering worklist and an undated
+       line is not orderable. Hiding SILENTLY is what was broken, and the banner
+       is what fixes it — mrpUndatedBanner.test.tsx pins that the count is on
+       screen in BOTH directions, so a future flip cannot restore the silence.
+
+       Requiring a delivery date was considered and rejected for a separate
+       reason that still holds: a forced date gets a FAKE one typed into it, and
+       a fake date outranks a real one in an allocation sorted BY date.
+
+       This is VISIBILITY only; the allocation-order pin below is what makes that
+       claim checkable rather than asserted. */
     expect(parseIncludeUndated(undefined)).toBe(false);
+  });
+
+  test('an explicit "false" still hides — the toggle did not become decorative', () => {
+    // The page sends the flag in BOTH directions now (mrp-queries.ts). If this
+    // ever collapsed to true, unticking "Show no-date" would silently no-op.
+    expect(parseIncludeUndated('false')).toBe(false);
+    expect(parseIncludeUndated('0')).toBe(false);
   });
 
   test('anything else THROWS rather than collapsing onto false', () => {
@@ -954,5 +1014,116 @@ describe('computeMrp — the read wave overlaps, stays bounded, and cannot chang
       unhandledHost!.off('unhandledRejection', onUnhandled);
     }
     expect(seen).toEqual([]);
+  });
+});
+
+/* ── MRP ALLOCATES ON THE DATE THE CUSTOMER IS ACTUALLY WAITING FOR ──────────
+ *
+ * MRP hands pooled supply out greedily, earliest delivery first. It ranked on
+ * `line_delivery_date ?? so.customer_delivery_date` — the customer's ORIGINAL
+ * promise, plus a per-line MIRROR of it — while the delivery board and PO
+ * coverage had always ranked on `amended_delivery_date ?? customer_delivery_
+ * date`. A customer who rescheduled therefore moved on the board and did NOT
+ * move here, in the queue that decides who gets the scarce stock and what is
+ * ordered first. Owner 2026-08-18: there is no production in this business,
+ * only the delivery date, and every screen plans on the same one.
+ *
+ * THE MIRROR IS THE HALF THAT MATTERS, and it is why these fixtures carry a
+ * `line_delivery_date` at all. `line_delivery_date_overridden = false` means the
+ * line date is a copy of the header date (mig 0172's apply_so_header_followers
+ * writes the pair). A reschedule writes the HEADER only, so the mirror keeps
+ * serving the pre-amendment date — on production 2026-08-18 all 5 live lines on
+ * the 3 rescheduled orders were exactly this shape. A fix that consulted the
+ * amended date only AFTER the line date would move none of them, and would pass
+ * a test whose fixtures left `line_delivery_date` null.
+ */
+const demandFor = (docNo: string, dates: Row): Row => ({
+  id: `si-${docNo}`, doc_no: docNo, item_code: 'BF-100', description: 'Baron Bedframe',
+  item_group: 'bedframe', variants: { fabricCode: 'RED' }, qty: 1,
+  warehouse_id: 'W1', line_no: 1, created_at: '2026-07-01T00:00:00Z', cancelled: false,
+  // The mirror: a copy of the header's original date, flag false.
+  line_delivery_date: dates['customer_delivery_date'],
+  line_delivery_date_overridden: false,
+  so: {
+    debtor_name: 'Acme', status: 'CONFIRMED', so_date: '2026-07-01',
+    amended_delivery_date: null, processing_date: null, customer_state: null,
+    ...dates,
+  },
+});
+
+/* EXACTLY ONE unit against two orders of one each — scarcity is the experiment.
+   With two units both are covered and the ranking is unobservable. */
+const oneUnitWorld = (a: Row, b: Row) => fakeSb({
+  ...BASE_TABLES,
+  mfg_sales_order_items: [a, b],
+  inventory_balances: [{ product_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 1 }],
+  warehouses: [{ id: 'W1', code: 'W1', name: 'Main', is_active: true }],
+  mfg_products: [{ id: 'p1', code: 'BF-100', name: 'Baron Bedframe', category: 'BEDFRAME' }],
+});
+
+const sourceByDoc = (res: Awaited<ReturnType<typeof computeMrp>>) =>
+  Object.fromEntries(res.skus[0]!.lines.map((l) => [l.soDocNo, l.source]));
+
+describe('computeMrp — allocation ranks on the EFFECTIVE delivery date', () => {
+  test('an order rescheduled EARLIER takes the stock from one whose original was earlier', async () => {
+    // SO-1 promised 2026-11-01, never moved. SO-2 sold for 2026-12-01 and pulled
+    // forward to 2026-10-01 — the date the board has shown all along.
+    // Old ranking: SO-1 (11-01) vs SO-2 (12-01, from its stale mirror) → SO-1.
+    const sb = oneUnitWorld(
+      demandFor('SO-1', { customer_delivery_date: '2026-11-01' }),
+      demandFor('SO-2', { customer_delivery_date: '2026-12-01', amended_delivery_date: '2026-10-01' }),
+    );
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(res.skus).toHaveLength(1);
+    expect(res.skus[0]!.stock).toBe(1);              // non-vacuity: there IS one unit to fight over
+    expect(sourceByDoc(res)).toEqual({ 'SO-2': 'stock', 'SO-1': 'shortage' });
+    // …and the date the page shows for the rescheduled line is the amended one,
+    // not the mirror it used to print.
+    expect(res.skus[0]!.lines.find((l) => l.soDocNo === 'SO-2')!.deliveryDate).toBe('2026-10-01');
+  });
+
+  test('an order rescheduled LATER loses the stock to one whose original was later', async () => {
+    // The mirror image — the direction a one-sided fix silently drops.
+    const sb = oneUnitWorld(
+      demandFor('SO-1', { customer_delivery_date: '2026-11-01', amended_delivery_date: '2027-01-01' }),
+      demandFor('SO-2', { customer_delivery_date: '2026-12-01' }),
+    );
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(res.skus[0]!.stock).toBe(1);
+    expect(sourceByDoc(res)).toEqual({ 'SO-2': 'stock', 'SO-1': 'shortage' });
+  });
+
+  test('CONTROL — with no amendment the earlier original still wins', async () => {
+    // A fix that read the wrong column, or inverted the comparator, passes both
+    // tests above and fails this one.
+    const sb = oneUnitWorld(
+      demandFor('SO-1', { customer_delivery_date: '2026-11-01' }),
+      demandFor('SO-2', { customer_delivery_date: '2026-12-01' }),
+    );
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    expect(sourceByDoc(res)).toEqual({ 'SO-1': 'stock', 'SO-2': 'shortage' });
+  });
+
+  test('the order-by date follows the amendment too — it is derived from the delivery date', async () => {
+    /* orderByDate = effective delivery date − category lead days, and it is what
+       the page SORTS the to-order list by. With no lead-time config the lead is
+       zero, so it must equal the amended date exactly — pinning that the
+       amendment reaches the "when to order" answer and not just the display. */
+    const sb = oneUnitWorld(
+      demandFor('SO-1', { customer_delivery_date: '2026-12-01', amended_delivery_date: '2026-10-01' }),
+      demandFor('SO-2', { customer_delivery_date: '2026-12-05' }),
+    );
+
+    const res = await computeMrp(asSb(sb), opts);
+
+    const l1 = res.skus[0]!.lines.find((l) => l.soDocNo === 'SO-1')!;
+    expect(l1.deliveryDate).toBe('2026-10-01');
+    expect(l1.orderByDate).toBe('2026-10-01');
   });
 });

@@ -81,10 +81,6 @@
       "reads": 1,
       "catches": 0
     },
-    "backend/src/scm/lib/do-line-remaining.ts": {
-      "reads": 8,
-      "catches": 0
-    },
     "backend/src/scm/lib/doc-no.ts": {
       "reads": 2,
       "catches": 0
@@ -262,7 +258,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/delivery-returns.ts": {
-      "reads": 20,
+      "reads": 19,
       "catches": 0
     },
     "backend/src/scm/routes/delivery-zones.ts": {
@@ -386,7 +382,7 @@
       "catches": 0
     },
     "backend/src/scm/routes/sales-invoices.ts": {
-      "reads": 29,
+      "reads": 27,
       "catches": 0
     },
     "backend/src/scm/routes/scan-payment.ts": {
