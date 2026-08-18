@@ -5,8 +5,9 @@ import type { Context } from 'hono';
 import { supabaseAuth } from '../middleware/auth';
 import type { Env, Variables } from '../env';
 import { qtyCapRefusal } from '../lib/qty-cap';
-import { buildVariantSummary } from '../shared';
-import { normalizeAllocationMethod } from '../lib/landed-allocation';
+import { buildVariantSummary, isServiceLine } from '../shared';
+import { allocateLandedCharges, normalizeAllocationMethod } from '../lib/landed-allocation';
+import { coerceEmptyDates, dateOrNull } from '../lib/date-coerce';
 import {
   orderSofaModuleRowsWithinBuilds,
   sortSoLinesByGroupRank,
@@ -21,6 +22,7 @@ import { escapeForOr } from '../lib/postgrest-search';
 import {
   findUnlinkedPiLines, unlinkedInvoiceResponse, unlinkedCheckFailedResponse,
 } from '../lib/return-unlinked-lines';
+import { readStatusCounts } from '../lib/status-counts';
 import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
@@ -52,6 +54,8 @@ async function queueAcPiEdit(c: any, id: string, retire: AcRetiredLine[] = []): 
 
 export const purchaseInvoices = new Hono<{ Bindings: Env; Variables: Variables }>();
 purchaseInvoices.use('*', supabaseAuth);
+
+/* CREATE joined the post/payment/cancel/header pass late; recorded the same way. */
 
 const HEADER =
   'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_centi, tax_centi, total_centi, paid_centi, status, notes, posted_at, created_at, created_by, updated_at';
@@ -438,14 +442,10 @@ purchaseInvoices.get('/', async (c) => {
     countBase().in('status', PI_STATUS_BUCKETS.paid),
     countBase().in('status', PI_STATUS_BUCKETS.cancelled),
   ]);
-  const statusCounts = {
-    all: allC.count ?? 0,
-    draft: draftC.count ?? 0,
-    posted: postedC.count ?? 0,
-    partial: partialC.count ?? 0,
-    paid: paidC.count ?? 0,
-    cancelled: cancelledC.count ?? 0,
-  };
+  // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
+  const counted = readStatusCounts({ all: allC, draft: draftC, posted: postedC, partial: partialC, paid: paidC, cancelled: cancelledC });
+  if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
+  const statusCounts = counted.counts;
 
   const purchaseInvoices = await attachPiAssignedSos(sb, c, (data ?? []) as Array<{ id: string; grn_id?: string | null }>);
   return c.json({ purchaseInvoices, total, page, pageSize, statusCounts });
@@ -912,8 +912,8 @@ purchaseInvoices.post('/', async (c) => {
     supplier_id: body.supplierId,
     purchase_order_id: (body.purchaseOrderId as string) ?? null,
     grn_id: (body.grnId as string) ?? null,
-    invoice_date: (body.invoiceDate as string) ?? todayMyt(),
-    due_date: (body.dueDate as string) ?? null,
+    invoice_date: dateOrNull(body.invoiceDate) ?? todayMyt(),
+    due_date: dateOrNull(body.dueDate),
     currency: piCurrency,
     exchange_rate: piExchangeRate,
     subtotal_centi: subtotal,
@@ -1572,7 +1572,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
   const firstNext = await mintMonthlyDocNo(sb, 'purchase_invoices', 'invoice_number', `${cp}PI-${yymm}`);
   let counter = parseInt(firstNext.slice(`${cp}PI-${yymm}-`.length), 10) - 1;
 
-  const invoiceDate = body.invoiceDate ?? todayMyt();
+  const invoiceDate = dateOrNull(body.invoiceDate) ?? todayMyt();
   const created: Array<{ id: string; invoiceNumber: string; supplierId: string; grnCount: number; lineCount: number }> = [];
 
   /* PI discount unification (audit 2026-06-11 M3) — ONE rule on every PI line
@@ -1598,7 +1598,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       // grn_item_id is the authoritative linkage.
       grn_id: bucket.grnIds[0]!,
       invoice_date: invoiceDate,
-      due_date: body.dueDate ?? null,
+      due_date: dateOrNull(body.dueDate),
       currency: bucket.currency,
       exchange_rate: bucket.exchangeRate,
       subtotal_centi: subtotal,
@@ -1931,8 +1931,7 @@ purchaseInvoices.patch('/:id', async (c) => {
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
   /* exchangeRate is in PI_AUDIT_FIELDS but NOT written here — it is derived from
-     the currency below, so this loop skips it and the derived value is folded
-     into the audit patch after. */
+     the currency below, so the loop skips it and the audit patch folds it in. */
   for (const [from, to] of PI_AUDIT_FIELDS) {
     if (from === 'exchangeRate') continue;
     if (body[from] !== undefined) updates[to] = body[from];
@@ -1981,7 +1980,8 @@ purchaseInvoices.patch('/:id', async (c) => {
       piRateChanged = true;
     }
   }
-  const { data, error } = await sb.from('purchase_invoices').update(updates).eq('id', id).select(HEADER).single();
+  /* "" -> NULL: an unfilled date input would otherwise fail this whole UPDATE. */
+  const { data, error } = await sb.from('purchase_invoices').update(coerceEmptyDates(updates)).eq('id', id).select(HEADER).single();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
 
   /* Diff the NORMALISED values actually written, not the raw body: currency is

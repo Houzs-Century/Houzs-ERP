@@ -91,7 +91,7 @@ Mounted at `/api/scm/payment-vouchers`, behind
 | GET | `/` | area guard | `limit(500)`, company-scoped, `?status=` |
 | GET | `/:id` | area guard | header + lines + allocations (joined PI number / total / paid) |
 | POST | `/` | `scm.payment_voucher.create` | creates **DRAFT**; allocations persisted but settle nothing yet |
-| PATCH | `/:id` | `scm.payment_voucher.write` | **DRAFT only** (409 `not_editable`) |
+| PATCH | `/:id` | `scm.payment_voucher.write` | **DRAFT only** (409 `not_editable`); a cleared Voucher Date is refused 400 `voucher_date_required` — §7 |
 | POST | `/:id/post` | `scm.payment_voucher.post` | writes the GL entry, DRAFT → POSTED, settles PIs, **adopts the FX rate** |
 | POST | `/:id/cancel` | `scm.payment_voucher.cancel` | reverses the GL entry, unwinds settlement, **retains the FX rate** |
 
@@ -297,6 +297,38 @@ the rate is retained and inventory is not re-costed back.
 ---
 
 ## 7. The write-path guards this depends on
+
+### `voucher_date` is REQUIRED on edit, and defaulted on create (2026-08-18)
+
+`PATCH /:id` refuses a blank Voucher Date with **400 `voucher_date_required`**
+(`backend/src/scm/routes/payment-vouchers.ts`), alongside the `payee_name` and
+`credit_account_code` refusals it already carried. That is a field which starts
+being required on edit, so it belongs here rather than being re-derived by the next
+reader.
+
+Why a refusal and not a coercion to NULL. `scm.payment_vouchers.voucher_date` is
+`date NOT NULL DEFAULT current_date`
+(`backend/src/db/migrations-pg/0081_scm_payment_vouchers.sql`). The handler used to
+assign `updates.voucher_date = body.voucherDate` straight through, and
+`PaymentVoucherDetail` sends `voucherDate` on every save while its date field emits
+`""` once cleared — so Postgres received a blank and answered 500
+`invalid input syntax for type date: ""`, losing the whole save. NULL is not the fix
+either: the column is NOT NULL, so it would trade an invalid-syntax 500 for a
+not-null 500. A named 400 is the only answer that reaches the operator.
+
+**Create and edit deliberately disagree.** `POST /` still accepts a missing or blank
+`voucherDate` and defaults to today, which is exactly what the column's own
+`DEFAULT current_date` says a new voucher with no date typed means. An edit that
+CLEARS the field is a different request: a date is already stored, the user is asking
+to remove it, and the column cannot hold "no date". So create defaults and edit
+refuses; do not "harmonise" them without changing the column.
+
+Proved by `backend/src/scm/routes/pvBlankVoucherDate.test.ts` (the real PATCH driven
+through the router), and held for the whole class by
+`backend/tests/dateWriteCoercion.test.ts`, which fails on any request-supplied value
+reaching a date/timestamptz column uncoerced anywhere in `backend/src`.
+
+### Foreign-rate guards
 
 `backend/src/scm/lib/fx-guard.ts` stops NEW documents entering the state §6 exists to
 heal. It is not a PV surface, but the PV's 422 message points at it and the two must
