@@ -254,9 +254,7 @@ const ReconcileTab = () => {
             columns as the upload summary, for the same reason: a file name is
             not a transaction (owner: 显示 transaction detail 和 sales order
             detail, 而不是 document 罢了). */}
-        {open.map((b) => (
-          <BatchLines key={b.id} batch={b} openOnly onOpen={setBatchId} />
-        ))}
+        {open.length > 0 && <LinesTable batches={open} openOnly onOpen={setBatchId} />}
         {/* Done, and therefore not on this screen's list — but say so, and say
             where they went, so "it disappeared" never has to be a question. */}
         {cleared.length > 0 && (
@@ -417,12 +415,38 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
           reconciling transactions, and a file name is not one (owner: 我希望他是
           显示 transaction detail 和 sales order detail, 而不是 document 罢了).
           Each row is the merchant's line beside the sale it matched. */}
-      {mine.map((b) => <BatchLines key={b.id} batch={b} onOpen={onOpen} />)}
+      <LinesTable batches={mine} onOpen={onOpen} />
     </div>
   );
 };
 
-const BatchLines = ({ batch, onOpen, openOnly }: {
+/* ── Every line, in ONE table ──────────────────────────────────────────────────
+   The owner, looking at four reports each with its own repeated header: "这个可
+   以做成一个table吗？就是有header的". One header, one table; each report is a
+   tbody, and its name spans its own lines instead of being restated on each.
+
+   `openOnly` is the difference between the two places this appears: the work
+   list shows what is still to do, the upload summary shows everything that
+   upload read. */
+
+const LinesTable = ({ batches, onOpen, openOnly }: {
+  batches: SettlementBatch[]; onOpen: (id: number) => void; openOnly?: boolean;
+}) => (
+  <table style={table}>
+    <thead>
+      <tr style={headRow}>
+        <th style={cell}>Report</th>
+        <th style={cell}>The merchant&rsquo;s line</th>
+        <th style={num}>Gross</th><th style={num}>Fee</th><th style={num}>Net</th>
+        <th style={cell}>The sale it matched</th>
+        <th style={cell}>Status</th>
+      </tr>
+    </thead>
+    {batches.map((b) => <BatchRows key={b.id} batch={b} onOpen={onOpen} openOnly={openOnly} />)}
+  </table>
+);
+
+const BatchRows = ({ batch, onOpen, openOnly }: {
   batch: SettlementBatch; onOpen: (id: number) => void; openOnly?: boolean;
 }) => {
   const q = useSettlementBatch(batch.id);
@@ -431,90 +455,92 @@ const BatchLines = ({ batch, onOpen, openOnly }: {
      work. On the upload summary, everything the file contained. */
   const rows = openOnly ? all.filter((r) => !r.confirmed_at && r.bucket !== 'IGNORED') : all;
 
-  return (
-    <section className="space-y-2">
-      <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'baseline', flexWrap: 'wrap' }}>
+  /* The report names itself once, down the side of its own lines. */
+  const reportCell = (span: number) => (
+    <td style={{ ...cell, borderTop: '2px solid var(--c-line, rgba(34,31,32,0.12))', minWidth: 230 }} rowSpan={span}>
+      <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <span className={styles.codeChip}>{batch.acquirer_code}</span>
-        <b>{batch.file_name}</b>
-        <span style={softText}>
-          {batch.period_from} → {batch.period_to} · {batch.row_count} line(s) · net {fmt(batch.net_sen)}
-        </span>
-        <span style={{ flex: 1 }} />
-        <button type="button" style={btn(openOnly === true)} onClick={() => onOpen(batch.id)}>
-          {openOnly ? 'Reconcile' : 'Open'}
-        </button>
+        <b style={{ wordBreak: 'break-all' }}>{batch.file_name}</b>
       </div>
+      <div style={softText}>{batch.period_from} → {batch.period_to} · net {fmt(batch.net_sen)}</div>
+      <button type="button" style={{ ...btn(openOnly === true), marginTop: 6 }} onClick={() => onOpen(batch.id)}>
+        {openOnly ? 'Reconcile' : 'Open'}
+      </button>
+    </td>
+  );
 
-      {q.isLoading && <div style={softText}>Reading its lines…</div>}
+  if (rows.length === 0) {
+    return (
+      <tbody>
+        <tr>
+          {reportCell(1)}
+          <td style={{ ...cell, borderTop: '2px solid var(--c-line, rgba(34,31,32,0.12))' }} colSpan={6}>
+            <span style={softText}>{q.isLoading ? 'Reading its lines…' : 'Nothing left on this report.'}</span>
+          </td>
+        </tr>
+      </tbody>
+    );
+  }
 
-      {rows.length > 0 && (
-        <table style={table}>
-          <thead>
-            <tr style={headRow}>
-              <th style={cell}>The merchant&rsquo;s line</th>
-              <th style={num}>Gross</th><th style={num}>Fee</th><th style={num}>Net</th>
-              <th style={cell}>The sale it matched</th>
-              <th style={cell}>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((r) => {
-              /* Linked = it claimed a payment. Suggested = the system's answer,
-                 pre-ticked but not taken. Neither = a human's job. */
-              const sale = r.linked.length > 0 ? r.linked : null;
-              const guess = (r.suggested ?? []);
-              return (
-                <tr key={r.id} style={rowLine}>
-                  <td style={cell}>
-                    <div>{r.txn_date}{r.ref ? <> · ref <b>{r.ref}</b></> : null}</div>
-                    <div style={softText}>line {r.line_no}</div>
-                  </td>
-                  <td style={num}>{fmt(r.gross_sen)}</td>
-                  <td style={num}>{fmt(r.fee_sen)}</td>
-                  <td style={num}>{fmt(r.net_sen)}</td>
-                  <td style={cell}>
-                    {sale && sale.map((l) => (
-                      <div key={l.payment_id}>
-                        <b>{l.doc_no ?? l.payment_id}</b>
-                        {l.customer_name ? ` · ${l.customer_name}` : ''}
-                        <div style={softText}>
-                          {[l.paid_on ? `paid ${l.paid_on}` : null,
-                            l.approval_code ? `code ${l.approval_code}` : null,
-                            fmt(l.amount_sen)].filter(Boolean).join(' · ')}
-                        </div>
-                      </div>
-                    ))}
-                    {!sale && guess.length > 0 && guess.map((p) => (
-                      <div key={p.id}>
-                        <b>{p.docNo}</b>{p.customerName ? ` · ${p.customerName}` : ''}
-                        <div style={softText}>
-                          {[`paid ${p.paidOn}`, p.approvalCode ? `code ${p.approvalCode}` : null, fmt(p.amountSen)]
-                            .filter(Boolean).join(' · ')}
-                        </div>
-                      </div>
-                    ))}
-                    {!sale && guess.length === 0 && (
-                      <span style={softText}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
-                    )}
-                  </td>
-                  <td style={cell}>
-                    {r.confirmed_at
-                      ? <span style={{ color: good }}>done{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>
-                      : sale
-                        ? <span style={{ color: good }}>matched by reference</span>
-                        : guess.length > 0
-                          ? <span>the system&rsquo;s guess — check it</span>
-                          : r.bucket === 'UNMATCHED'
-                            ? <span style={{ color: danger }}>no sale in the ERP</span>
-                            : <span>you choose</span>}
-                  </td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      )}
-    </section>
+  const top = { borderTop: '2px solid var(--c-line, rgba(34,31,32,0.12))' };
+  return (
+    <tbody>
+      {rows.map((r, i) => {
+        /* Linked = it claimed a payment. Suggested = the system's answer,
+           pre-ticked but not taken. Neither = a human's job. */
+        const sale = r.linked.length > 0 ? r.linked : null;
+        const guess = r.suggested ?? [];
+        const edge = i === 0 ? top : undefined;
+        return (
+          <tr key={r.id} style={rowLine}>
+            {i === 0 && reportCell(rows.length)}
+            <td style={{ ...cell, ...edge }}>
+              <div>{r.txn_date}{r.ref ? <> · ref <b>{r.ref}</b></> : null}</div>
+              <div style={softText}>line {r.line_no}</div>
+            </td>
+            <td style={{ ...num, ...edge }}>{fmt(r.gross_sen)}</td>
+            <td style={{ ...num, ...edge }}>{fmt(r.fee_sen)}</td>
+            <td style={{ ...num, ...edge }}>{fmt(r.net_sen)}</td>
+            <td style={{ ...cell, ...edge }}>
+              {sale && sale.map((l) => (
+                <div key={l.payment_id}>
+                  <b>{l.doc_no ?? l.payment_id}</b>
+                  {l.customer_name ? ` · ${l.customer_name}` : ''}
+                  <div style={softText}>
+                    {[l.paid_on ? `paid ${l.paid_on}` : null,
+                      l.approval_code ? `code ${l.approval_code}` : null,
+                      fmt(l.amount_sen)].filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+              ))}
+              {!sale && guess.length > 0 && guess.map((p) => (
+                <div key={p.id}>
+                  <b>{p.docNo}</b>{p.customerName ? ` · ${p.customerName}` : ''}
+                  <div style={softText}>
+                    {[`paid ${p.paidOn}`, p.approvalCode ? `code ${p.approvalCode}` : null, fmt(p.amountSen)]
+                      .filter(Boolean).join(' · ')}
+                  </div>
+                </div>
+              ))}
+              {!sale && guess.length === 0 && (
+                <span style={softText}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
+              )}
+            </td>
+            <td style={{ ...cell, ...edge }}>
+              {r.confirmed_at
+                ? <span style={{ color: good }}>done{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>
+                : sale
+                  ? <span style={{ color: good }}>matched by reference</span>
+                  : guess.length > 0
+                    ? <span>the system&rsquo;s guess — check it</span>
+                    : r.bucket === 'UNMATCHED'
+                      ? <span style={{ color: danger }}>no sale in the ERP</span>
+                      : <span>you choose</span>}
+            </td>
+          </tr>
+        );
+      })}
+    </tbody>
   );
 };
 
