@@ -216,7 +216,7 @@ import {
   classifySourceRef,
   classifyIdRestamp,
   parseFromSosTokens,
-  rewriteFromSosNote,
+  rewriteFromSosNote, provenanceNoteSqlPattern,
 } from "./lib/doc-ref-repair-core.mjs";
 import {
   classifyGrnInboundGap,
@@ -235,7 +235,6 @@ import {
 import { docLineMultisetKey, dateGapDays } from "./lib/duplicate-docs-core.mjs";
 import { variantKeyMirror } from "./lib/ledger-repair-core.mjs";
 import { execIdRestamp, printIdRestampExec, execDedupe } from "./lib/id-restamp-exec.mjs";
-import { provenanceNoteSqlPattern } from "./lib/transfer-vocabulary.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const PART = (process.env.PART || "all").trim().toLowerCase();

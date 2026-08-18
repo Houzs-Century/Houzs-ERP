@@ -1,4 +1,7 @@
-import { parseProvenanceNote, provenanceNoteRe } from "./transfer-vocabulary.mjs";
+import { parseProvenanceNote, provenanceNoteRe, provenanceNoteSqlPattern } from "./transfer-vocabulary.mjs";
+// Re-exported so repair-2990-doc-refs.mjs reaches the SQL predicate through the
+// one lib it already imports for this note, rather than two doors onto the same rule.
+export { provenanceNoteSqlPattern };
 
 // PURE core of the 2990 doc-reference repair. No database, no I/O — so the rule
 // that decides whether a reference may be rewritten is unit-testable, and the
