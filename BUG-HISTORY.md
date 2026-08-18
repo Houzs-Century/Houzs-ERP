@@ -1,6 +1,6 @@
 ## The allocation gate quotes the owner's Processing-Date rule and then reads a different column [high]
 
-<!-- area: SCM sales order — stock allocation, Processing Date -->
+<!-- area: Sales orders + pricing -->
 
 **Symptom.** An order shows a Processing Date on screen, is locked for editing,
 sits on the Delivery Planning board and has been pushed to AutoCount as `PDate` —
