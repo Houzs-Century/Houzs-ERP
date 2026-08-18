@@ -181,7 +181,13 @@ import {
 import { findColourKivLines, findIncompleteVariantLines, type ColourKivOffender, type VariantOffender } from '../lib/so-variant-check';
 /* Aggregate ALL Processing-Date/save gate failures into one response instead of
    returning on the first (owner 2026-07-18). Pure — no I/O. */
-import { collectProcessingGateProblems, validationFailedBody, type SaveProblem } from '../shared/so-save-problems';
+import {
+  collectProceedGateProblems,
+  collectProcessingGateProblems,
+  proceedGateUnmetBody,
+  validationFailedBody,
+  type SaveProblem,
+} from '../shared/so-save-problems';
 import {
   SO_PROCESSING_DATE_COLUMN,
   readSoProcessingDateFromBody,
@@ -529,12 +535,6 @@ async function soEditLocked(
 }
 
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
-const SO_PROCEED_GATE_RESPONSE = {
-  error: 'proceed_gate_unmet',
-  reason: 'A Processing Date can only be set once the order has a customer name, a full delivery address (line 1 and postcode), a delivery date, and the deposit its company requires (Houzs 30%, 2990 50%).',
-} as const;
-
-/* See "THE PAIR RULE" in shared/so-processing-date.ts. */
 async function soDepositFacts(
   sb: any,
   docNo: string,
@@ -563,18 +563,32 @@ async function soProceedGateBlocked(
   /* Picks the deposit fraction (Houzs 30% / 2990 50%). Absent falls back to the
      looser 30% — see processingDateThresholdFor for why never the stricter. */
   companyCode?: string | null,
-): Promise<typeof SO_PROCEED_GATE_RESPONSE | null> {
+): Promise<ReturnType<typeof proceedGateUnmetBody> | null> {
   const { paidCenti, totalCenti } = await soDepositFacts(sb, docNo);
-  const ok = meetsProceedGate({
+  /* NAMES WHICH CONDITIONS FAILED, and only those. This used to return one
+     stored sentence reciting all five (customer name, address line 1, postcode,
+     delivery date, deposit) no matter which one was actually unmet. On
+     2026-08-17 the owner hit it on a ZERO-TOTAL order, read the word "deposit"
+     and chased a money bug for a day — the deposit term had PASSED
+     (meetsDepositGate is vacuously true at total <= 0), and the order was
+     missing its postcode. `problems` is the aggregated contract the frontend
+     already renders (parseSaveProblems, owner 2026-07-18); `error` is
+     unchanged, so nothing matching on the code notices. */
+  const problems = collectProceedGateProblems({
     hasCustomerName: !!eff.customerName?.trim(),
     hasAddress: !!eff.address1?.trim(),
     hasPostcode: !!eff.postcode?.trim(),
     hasDeliveryDate: !!eff.deliveryDate?.trim(),
-    paid: paidCenti,
-    total: totalCenti,
+    /* soDepositFacts reads the centi ledger, which is the unit these amounts
+       are PRINTED in — see ProceedGateFacts on why the field names carry it. */
+    paidCenti,
+    totalCenti,
     companyCode,
   });
-  return ok ? null : SO_PROCEED_GATE_RESPONSE;
+  /* Identical verdict to the old `meetsProceedGate(...)` call: that predicate is
+     itself defined as "this list is empty" (order-rules.ts proceedGateFailures),
+     so no order's outcome moves — only the words do. */
+  return problems.length === 0 ? null : proceedGateUnmetBody(problems);
 }
 
 /* See "THE PAIR RULE" in shared/so-processing-date.ts. */
@@ -4892,6 +4906,14 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   const procDateOnCreate = readSoProcessingDateFromBody(body as Record<string, unknown>);
   const depositTotalCenti = posPaymentsTotalCenti
     ?? Math.max(0, typeof body.depositCenti === 'number' ? body.depositCenti : 0);
+  /* THE ONE meetsProceedGate CALLER THAT CARRIES NO PROBLEM LIST, and that is
+     the honest answer rather than an oversight. This site REFUSES NOTHING: a
+     handover that misses the gate is simply created un-proceeded, in Order
+     Placed, for the salesperson to complete and proceed manually — there is no
+     refusal here to name a condition in. (The create path's Processing-Date
+     refusal is a different gate, further down, and it already ships the
+     aggregated `problems` list.) The two paths that DO refuse a proceed both go
+     through soProceedGateBlocked → collectProceedGateProblems. */
   const autoProceed = !!procDateOnCreate && meetsProceedGate({
     hasCustomerName: !!customerName?.trim(),
     hasAddress: typeof body.address1 === 'string' && !!body.address1.trim(),

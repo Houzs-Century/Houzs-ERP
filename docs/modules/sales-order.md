@@ -1272,14 +1272,51 @@ that is not what the code does:
 
 | path | enforced by |
 |---|---|
-| create-time auto-stamp of `proceeded_at`, and both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`) | `meetsProceedGate` (`order-rules.ts:71`), called at `mfg-sales-orders.ts:624` and `:5110` — its ONLY two call sites |
-| setting the processing date | `so-save-problems.ts` — the four completeness checks written out INLINE, plus `meetsDepositGate` for the money (imported at `:20`, called at `:187`). It contains **zero** references to `meetsProceedGate` |
+| create-time auto-stamp of `proceeded_at`, and both manual proceed paths (`PATCH /:docNo/status` → IN_PRODUCTION and `PATCH /:docNo` `proceededAt`) | `meetsProceedGate` (`order-rules.ts`). The create site reads it directly; both manual proceed paths reach it through `soProceedGateBlocked` → `collectProceedGateProblems` (`so-save-problems.ts`) |
+| setting the processing date | `so-save-problems.ts` `collectProcessingGateProblems` — the four completeness conditions plus `meetsDepositGate` for the money. It contains **zero** references to `meetsProceedGate` |
 
 Both sites read the same per-company threshold through the shared
 `processingDateThresholdFor` and demand the same four facts, so the rule is one
-rule TODAY. It is one rule by agreement, not by construction — edit either and
-re-check the other. Believing the two shared a function is how a rule change
-would land on half the system.
+rule TODAY. The two PREDICATES are still one rule by agreement, not by
+construction — edit either and re-check the other. Believing the two shared a
+function is how a rule change would land on half the system.
+
+Their WORDING, since 2026-08-18, is one table by construction: both render every
+condition through `completenessProblem` / `depositProblem` in `so-save-problems.ts`,
+which differ only in a trailing clause ("before a Processing Date can be set" vs
+"before this order can be proceeded"). `tests/soProceedRefusalWiring.test.ts`
+fails if either grows its own sentence.
+
+**A REFUSAL NAMES THE CONDITION THAT FAILED (2026-08-18).** The proceed paths
+used to refuse with ONE stored sentence naming all five conditions whenever any
+single one was unmet. On 2026-08-17 that cost the owner a day: he read the word
+"deposit" on a ZERO-TOTAL order and chased a money bug that did not exist — the
+deposit term is vacuously met at `total <= 0` (`meetsDepositGate`), and the order
+was missing its postcode. The 422 body now is:
+
+```json
+{
+  "error": "proceed_gate_unmet",
+  "reason": "Delivery postcode is required before this order can be proceeded",
+  "problems": [
+    { "code": "processing_date_incomplete",
+      "message": "Delivery postcode is required before this order can be proceeded",
+      "field": "Postcode" }
+  ]
+}
+```
+
+`error` is unchanged — clients match on it, and this is additive. `problems` is
+the SAME aggregated key the save gate uses (`validationFailedBody`), so the
+surfaces that already render every reason at once (`parseSaveProblems`, owner
+2026-07-18) picked it up with no client change. The deposit line states the real
+shortfall (paid, needed, company %) and **never appears for a zero-or-negative
+total** — `depositProblem` asks `meetsDepositGate` rather than testing the total
+itself, so it cannot drift back.
+
+`meetsProceedGate` is now DEFINED as `proceedGateFailures(i).length === 0`. The
+verdict and the list of reasons are one expression, not two readings of one rule
+— which is the only shape in which they cannot disagree about an input.
 
 > A note on the money predicate, because the name is a trap: there is no
 > `meetsProcessingDatePaymentGate` any more. `order-rules.ts:82-87` records it
