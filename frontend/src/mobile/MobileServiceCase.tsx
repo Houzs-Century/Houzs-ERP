@@ -275,11 +275,8 @@ const RESOLUTION_LABELS: Record<string, string> = {
   return_visit: "2nd Services",
 };
 const resolutionLabel = (v: string) => RESOLUTION_LABELS[v] ?? cap(v.replace(/_/g, " "));
-/* The `voided` literal that used to sit on line 1 of this function is gone —
-   it existed because the ordered stepper (STAGES) legitimately has no row for a
-   terminal alt-outcome, so mobile had to carry the word itself. The words now
-   come from the shared table, which answers for every stage the column can
-   hold, funnel step or not. STAGES still answers the ORDER question. */
+/* The `voided` literal is gone: STAGES has no row for a terminal alt-outcome so
+   mobile carried the word itself. STAGES still answers the ORDER question. */
 const prettyStage = (stage: string) =>
   ASSR_STAGE_LABEL[stage] ?? (cap(stage.replace(/_/g, " ")) || "—");
 // Numeric DD/MM/YYYY (+ HH:mm) via the shared formatter — house rule, and it
@@ -1013,11 +1010,8 @@ function CaseDetail({ id, onBack }: { id: number; onBack: () => void }) {
   const transitionTo = async (target: string, withConfirm = true) => {
     if (!target || target === stageOf(c)) return;
     if (withConfirm) {
-      /* prettyStage, not the ordered stepper. This read the stepper by index
-         (`ASSR_STAGE_INDEX`), which has no row for a terminal alt-outcome, so
-         the confirm box asked "Move to voided?" — the same missing-row hole as
-         the portal's, in the file that had already patched around it once. Any
-         stage the column can hold is a legal target. */
+      /* prettyStage, not the stepper-by-index it used to read: that has no row
+         for a terminal alt-outcome, so this asked "Move to voided?". */
       const label = prettyStage(target);
       if (!(await confirm({ title: `Move to ${label}?`, confirmLabel: "Change stage" }))) return;
     }
