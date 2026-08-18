@@ -244,6 +244,12 @@ jobs:
       # on its CERTAIN half only; the advisory half (line numbers, key-shaped
       # prose) is printed and never fails a PR.
       - run: node scripts/check-docs-drift.mjs --strict
+
+      # One word per concept. The registry drives the guard AND the glossary, so
+      # a concept is registered once instead of needing a fourth hand-written
+      # directory-walking test (owner 2026-08-18: 「名词的统一」).
+      - run: npm run audit:vocabulary
+      - run: npm run audit:glossary
       # The fifth: a document conversion never crosses a company. Eleven
       # conversions existed and SEVEN were unguarded, because the rule was
       # written three different ways under three different names and nothing

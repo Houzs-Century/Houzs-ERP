@@ -1508,6 +1508,11 @@ export const SalesOrderDetail = () => {
       uom:            d.uom,
       qty:            d.qty,
       unitPriceCenti: d.unitPriceCenti,
+      /* A 0 typed HERE is a real price, not "the client could not resolve one".
+         The backend cannot tell those apart on the wire, so say which it is —
+         only this statement lets a 0 survive the recompute (TrustSelling
+         'operator-zero'). Sent only at 0; a priced line needs no claim. */
+      ...(d.unitPriceCenti === 0 ? { zeroPriceIntended: true } : {}),
       discountCenti:  d.discountCenti,
       unitCostCenti:  d.unitCostCenti,
       variants:       d.variants,

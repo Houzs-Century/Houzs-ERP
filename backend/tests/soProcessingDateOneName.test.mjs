@@ -37,6 +37,19 @@ const SCRIPTS = path.join(here, "..", "scripts");
  *  rest import. Relative to backend/scripts. */
 const DECLARATION = path.join("lib", "so-processing-date.mjs");
 
+/* The SECOND file entitled to spell the retired name, added 2026-08-18.
+   `lib/vocabulary.mjs` is the registry that drives check-vocabulary.mjs and the
+   generated glossary; declaring a retired spelling is literally what it is for,
+   so it has the same standing as DECLARATION above.
+
+   This test still earns its keep beside the generic guard: it is the one that
+   knows the SPECIFIC story — 0286, the eleven scripts, and 42703 failing the
+   whole statement rather than one column. Deleting it in favour of the generic
+   one would trade a message that teaches for a message that only forbids. */
+const REGISTRY = path.join("lib", "vocabulary.mjs");
+const CATALOGUE = path.join("lib", "drift-catalogue.mjs");
+const MAY_DECLARE = new Set([DECLARATION, REGISTRY, CATALOGUE]);
+
 /* Source with comments removed, character-identical to the helper
  *  tests/soDatePairWiring.test.ts uses for the same job. A name that appears
  *  only in a comment is a note about history, not a query. Trailing `//`
@@ -77,7 +90,7 @@ for (const legacy of SO_PROCESSING_DATE_LEGACY_COLUMNS) {
   const named = new RegExp(`\\b${legacy}\\b`);
 
   test(`no script names ${legacy} outside a comment`, () => {
-    const offenders = FILES.filter((f) => f !== DECLARATION && named.test(code(read(f))));
+    const offenders = FILES.filter((f) => !MAY_DECLARE.has(f) && named.test(code(read(f))));
     assert.deepEqual(
       offenders,
       [],
