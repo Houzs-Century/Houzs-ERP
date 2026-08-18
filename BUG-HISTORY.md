@@ -1,3 +1,211 @@
+## The photographs came OUT of AutoCount at the cutover and nothing sent them back [medium]
+
+**Symptom.** A sales-order line that carries reference photographs in the ERP
+shows nothing in AutoCount. The pictures were pulled out of AutoCount's own
+`FurtherDescription` field during the cutover and uploaded to R2; the owner's
+rule for the write-back is that whatever the cutover extracted must go back, and
+this half never did.
+
+**Root cause.** Not a defect — an unbuilt half, and worth logging because the
+OTHER half looked finished. `AcSyncService` has taken `Photos: [{ Jpeg,
+Caption? }]` per line on `/edit` since 2026-08-15 and it was proven against the
+live book that day (scratch order `ERP-FDPROBE-1`: rendered on the entry screen
+and in the printed preview, read back `truncated=False`, `wmetafile8=1`, bytes
+unchanged). `grep FurtherDescription backend/src` returned nothing: neither
+`autocount-writeback.ts` nor `autocount-outbox.ts` had ever mentioned it.
+
+**Fix.** `composeSoState` reads `photo_urls` off the SO line rows and the edit
+payload carries `photos: [{ dtlKey, keys }]`. `dispatchOne` fetches each key
+from the `SO_ITEM_PHOTOS` bucket and attaches `Photos` as base64.
+
+**KEYS in the payload, bytes at send time.** `scm.autocount_outbox` is
+append-only, so storing base64 would write tens of KB per save of every
+photographed order for ever. The snapshot records what the save MEANT and the
+drain materialises it — the division `fromDoc` already runs under.
+
+**A picture the bucket cannot answer sends NO `Photos` key.** Not a short list:
+the service REPLACES `FurtherDescription` with what it is given, so three of five
+pictures would delete two from a live account book. And it never fails the edit —
+a photograph must not cost a price change its trip to the ledger.
+
+**Tests.** Two: an edit carries the photographs as base64, fetched at send time;
+a missing object sends no key and the edit still goes. The first proven red
+against `if (false && row.op === 'edit' …)`. Both assert on the LAST request of
+the dispatch, not the first — an edit pre-flights `/ensure-masters`, and the
+first version of the test read that payload and failed on `Lines` being
+undefined.
+
+**Ref.** 2026-08-18, `fix/ac-sync-close-gaps`. AutoCount half: #2254.
+
+## "Is the host running a build new enough" was UNKNOWN at every point it mattered [medium]
+
+**Symptom.** Not a wrong answer — a missing one, repeatedly, and always at the
+moment a decision depended on it. Does the office host have the creditor-name
+comparison? `FromDocNos`? The per-line quantity? Every answer was "check
+`/health`", and `/health` is a terminal that scrolls away.
+
+**Root cause.** `/health` has answered `builtAt` (the exe's own file timestamp)
+and `mvid` (unique per COMPILATION) for a while. **Nothing stored either.** So
+the state of the host lived only in whoever last ran the probe, and the failure
+mode is the one this repo keeps paying for: a feature the host does not have is
+byte-for-byte indistinguishable from a feature that ran and found nothing.
+`docs/generated/autocount-coverage.md` says so in as many words about the
+creditor mismatch report — `mismatches` is empty when the host is too old to
+compare, and empty is exactly what agreement looks like.
+
+**Fix.** Migration 0304 adds `host_built_at` / `host_mvid` to
+`scm.autocount_outbox`. The drain reads `/health` once per sweep — and only when
+there is a row to send, so an empty five-minute tick does not knock on the office
+host — and stamps it on every row it dispatches.
+
+**On the ROW, not one current-state key**, because it answers two questions and
+the second is the one asked during an incident: the newest non-null row says what
+the host runs now; a row's own columns say what answered THAT row a year ago.
+`docs/autocount-sync-reasons.md` §5 proposed exactly this shape.
+
+Not stamped on `waiting`: nothing was sent for that row, and recording a build
+against it would assert a conversation that did not happen. NULL is a real answer
+— dispatched before the columns existed, or `/health` unreadable that sweep —
+and it is **not backfillable**, which the migration says out loud. A `/health`
+that fails costs nothing: a diagnostic must never stop a document reaching the
+account book.
+
+**Tests.** Three: the stamp lands on a sent row; a `waiting` row is not stamped;
+a null build still sends. The first proven red against `const stamp = {}`.
+
+**Ref.** 2026-08-18, `fix/ac-sync-close-gaps`.
+
+## A delivery of 2 out of 5 booked 5 in the account book, and answered ok [high]
+
+**Symptom.** Nothing visible. A delivery order that ships part of a sales-order
+line — 2 of a 5-unit line — produced an AutoCount delivery order of **5** on that
+line. The outbox row read `sent`, the service logged success, and the ERP and the
+account book disagreed about how much stock had moved. The only way to notice was
+to compare the two documents by hand.
+
+**Root cause (read on both sides).** `enqueueConvert` composed
+`{ DocNo, DocDate?, Ref?, DtlKeys? }` and `readConvertSourceKeys` resolved line
+IDENTITY only — its own comment said so, and called partial quantity "NOT
+COVERED, and deliberately so", on the grounds that `AddPartialTransferDetail`
+takes line keys and not quantities. That was true of the primitive and stopped
+being true of the SERVICE: `PlanTransfer` reads `Details:[{ DtlKey, Qty }]` and
+`RunTransfer` uses the documented `PartialTransfer` overloads for it, **refusing**
+rather than falling back — because the fallback moves each named line's whole
+outstanding quantity. The C# half had been waiting for a payload the ERP never
+composed.
+
+**Fix.** `readConvertSourceKeys` sums what this document took of each source line
+(summed, because a sofa build's compartments are several target lines against one
+source row), compares it to the source line's own quantity, and returns
+`details: [{ DtlKey, Qty }]` when any line is taken in part. `enqueueConvert`
+sends it as `Details`. `AcDownstreamSpec` gained `itemQtyCol` / `sourceQtyCol`
+because the four chains disagree — a GRN line's quantity is `qty_accepted`, what
+entered stock, and everything else is `qty`. Both are REQUIRED fields, and the
+compiler duly caught the one spec that was missed.
+
+**Only when it really is partial.** A quantity commits the whole document to the
+documented overloads, which the service refuses to fall back from, while the plain
+`DtlKeys` shape is the one proven against this book on every conversion type.
+Measured on the live book (`ac-fidelity-so-lines.json.gz`, 2026-08-11): **10 of
+60,939** sales-order lines were ever partly transferred; 6 of 10,351 moved sales
+orders carried one. Sending quantities on every conversion would put all six
+document types onto an unproven call path to fix a 0.02% case.
+
+All-or-nothing per document, because `PlanTransfer` throws on a key named with no
+`Qty` while another carries one. Where a quantity cannot be read, nothing is sent
+and the old shape applies.
+
+**Tests.** Three in `autocount-convert-lines.test.ts`: 2-of-5 carries
+`Details:[{DtlKey,Qty:2}]`; a whole-line shipment carries **no** `Details`; one
+partial line makes every named line carry a quantity. The first and third were
+proven red against `if (false && partialQty …)` — the pre-fix behaviour of never
+sending a quantity. The second stays green under that mutation on purpose: it
+pins the behaviour that did NOT change.
+
+**Ref.** 2026-08-18, `fix/ac-sync-close-gaps`. Service half: #2259.
+
+## A merged conversion never reached AutoCount — the ERP kept refusing a shape the service had already learned [high]
+
+**Symptom.** A delivery order shipping two sales orders, a GRN receiving four
+purchase orders, an invoice covering several DOs — every one of them landed in
+`scm.autocount_outbox` as `skipped`, reason *"AutoCount transfers from ONE source
+document, so this DO has no AutoCount counterpart"*, and the document existed in
+the ERP and nowhere else.
+
+> **HOW COMMON, MEASURED 2026-08-18 — and the first version of this entry got it
+> wrong.** It said *"merging is the daily shape on the delivery board and the GRN
+> picker, so this was not an edge: it was a standing stream"*. Nobody had counted.
+> `ac-fidelity-do-lines.json.gz` (47,329 rows, `AED_HOUZS` live read 2026-08-11)
+> grouped by `DocNo` -> distinct `FromDocNo`: **1 merged delivery order out of
+> 11,134** — `DO-005907` from `SO-006615` + `SO-007830`. 0.0%.
+>
+> The honest caveat, which does not rescue the original claim: that is how the
+> business shipped WHILE IT RAN ON AUTOCOUNT, where merging was awkward, and the
+> ERP added `/from-sos` deliberately. The right denominator is `scm.delivery_orders`
+> and it was not read either. **Neither denominator was measured when the claim was
+> written**, which is the defect worth recording here.
+>
+> The fix stands on its own merits — it deletes a refusal that was never true of
+> AutoCount's target, and it uncovered the `conversionIsPartial` defect below,
+> which is real regardless of how many merges exist. It is not the emergency the
+> first version implied.
+
+**Root cause (read on both sides, not inferred).** The sentence was true of ONE
+SDK method and was applied to the whole integration. `AddPartialTransferDetail`
+refuses a key array drawn from two source documents —
+`InvalidTransferItemException`, measured on the live book 2026-08-16 — but the
+TARGET never had that limit. `PlanTransfer` in `AcSyncService.cs` reads
+`FromDocNos`, the documented `FullTransfer` takes an ARRAY of document numbers,
+and the by-line shape groups the keys by the document they belong to and invokes
+the primitive once per group. The service side shipped on 2026-08-16 (#2259) and
+the ERP side was left as an owner decision, recorded in
+`docs/autocount-sync-reasons.md` §5.1. Six call sites kept writing the refusal:
+`delivery-orders-mfg.ts`, `grns.ts` ×2, `sales-invoices.ts`,
+`purchase-invoices.ts` and `scm/lib/si-autocount-source.ts` — each one a
+`docNos.length === 1` beside a `recordConvertSkipped`.
+
+**The second defect, which the first was hiding.** `conversionIsPartial` decides
+whether an un-nameable subset may safely degrade to "transfer everything
+outstanding". It read the parent of `takenSourceIds[0]` and compared THAT
+document's line count against the total taken from ALL of them. Correct while
+only single-source conversions could enqueue; with a merge, two sales orders of
+two lines each and three shipped gives `2 > 3 === false` — "whole document", no
+`DtlKeys` sent, and AutoCount moves every outstanding line on both orders
+including the one still in the warehouse. That is D14, one level up, and it
+would have shipped WITH the merge rather than being found after it.
+
+**Fix.** `enqueueConvert` takes `AcDocRef | AcDocRef[]`. One source still writes
+`payload.fromDoc`, so a payload composed today is byte-identical to one composed
+last week and the contract test over `AcSyncService.cs` still finds `FromDocNo`
+where it expects it; several write `payload.fromDocs`, and `dispatchOne`
+resolves each through its `linked_ac_docno` into `FromDocNos`. **A merge whose
+sources are not all in the book yet WAITS** and does not burn an attempt —
+sending the subset would put a delivery order in a licensed account book
+carrying one sales order's lines out of two, marked `sent`, which nothing would
+ever look at again. `conversionIsPartial` counts leftovers per parent.
+
+`scm.autocount_outbox` is append-only and `last_error` is never rewritten, so the
+`no-autocount-shape` needle STAYS — every row recorded before this carries those
+words and a removed needle reclassifies them as `unrecognised` with no remedy at
+all. What changed is the remedy and the page copy: the class is history, nothing
+new lands in it, and those documents were never composed so **Send again cannot
+help them**. They are a one-off backlog to raise by hand.
+
+**Tests.** `autocount-outbox.test.ts` gains three: a merge carries `FromDocNos`
+one entry per source and no `FromDocNo`; a merge whose second source has no
+counterpart returns `waiting`, sends nothing and burns no attempt; and an
+un-nameable subset across two parents is REFUSED. Each was proven red first —
+the drain pair against `if (false && payload.fromDocs?.length)`, the third
+against the old `count > takenSourceIds.length` comparison, where it queued a
+blind `pending` row exactly as described above. The first version of that third
+test passed against the mutation, because with every line keyed it never reached
+`conversionIsPartial` at all; it was rewritten until the mutation killed it.
+`autocountWritebackWiring` and `salesInvoiceAutoCountSource` pinned the old
+refusal and now pin the new contract.
+
+**Ref.** 2026-08-18, `fix/ac-sync-close-gaps`. Owner's instruction: *"不能 sync
+的所有，你就解决掉、统一掉"*. Service half: #2259.
+
 ## A generated file in git made every pair of concurrent PRs conflict, by construction [medium]
 
 **Symptom.** Merge conflicts on nearly every PR, always in

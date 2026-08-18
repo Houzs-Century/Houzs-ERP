@@ -1459,6 +1459,12 @@ export const AC_ROUTE = {
   cancel: '/cancel',
   edit: '/edit',
   ensure_masters: '/ensure-masters',
+  /* NOT a document operation, and the only route here that reads. It is in this
+     map so the drain can reach it through `callAcService` — same URL, same key,
+     same error classification — rather than growing a second HTTP client for
+     one call. The service answers it on GET or POST (the branch sits above the
+     POST-only check) and it is the ONLY thing that says which BUILD is running. */
+  health: '/health',
 } as const;
 
 export type AcOp = keyof typeof AC_ROUTE;
@@ -1508,6 +1514,13 @@ export interface AcCallResult {
    * answered. Absent reads as "not reported", never as "compared and agreed".
    */
   mismatches: AcMasterMismatch[];
+  /**
+   * The parsed response object, for the one caller that needs a field this
+   * interface does not name: `/health` answers `builtAt` and `mvid`, and
+   * promoting those to first-class fields would put a diagnostic's shape into
+   * the type every document operation returns. Null when the body was not JSON.
+   */
+  body: Record<string, unknown> | null;
   /** False for a refusal a retry cannot fix (a 4xx, or AutoCount saying no). */
   retryable: boolean;
 }
@@ -1587,7 +1600,7 @@ export async function callAcService(
   const cfg = acServiceConfig(env);
   if (!cfg) {
     return {
-      ok: false, status: 0, docNo: null, lines: [], mismatches: [],
+      ok: false, status: 0, docNo: null, lines: [], mismatches: [], body: null,
       error: 'AC_SYNC_URL is not configured', retryable: false,
     };
   }
@@ -1609,6 +1622,7 @@ export async function callAcService(
       docNo: null,
       lines: [],
       mismatches: [],
+      body: null,
       error: e instanceof Error ? e.message : String(e),
       retryable: true,
     };
@@ -1625,6 +1639,7 @@ export async function callAcService(
       docNo: body.docNo ?? null,
       lines: parseCreatedLines(body.lines),
       mismatches: parseAcMismatches(body.mismatched),
+      body: body as Record<string, unknown>,
       error: null,
       retryable: false,
     };
@@ -1639,6 +1654,7 @@ export async function callAcService(
        nine of them agree, one of them disagree, and fail on an unrelated ITEM —
        dropping the finding because the call failed would lose it for good. */
     mismatches: parseAcMismatches(body.mismatched),
+    body: (body ?? null) as Record<string, unknown> | null,
     error,
     /* 4xx is configuration or a bad payload — a retry cannot fix either, so
        fail it now with the message intact. 5xx is ambiguous by construction:

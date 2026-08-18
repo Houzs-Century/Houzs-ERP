@@ -66,8 +66,14 @@ describe('the six flows are hooked at the point the document becomes permanent',
   test('3. SO -> DO — both the converter and an SO-linked manual DO', () => {
     const converter = between(doSource, 'Converted from Sales Order', 'return c.json({');
     expect(converter).toContain("op: 'so_to_do'");
-    // A DO merged from several SOs has no AutoCount shape; it must be RECORDED.
-    expect(converter).toContain('recordConvertSkipped');
+    /* A DO merged from several SOs is SENT, naming every one of them. It used
+       to be recorded as skipped, on a service limitation that ended 2026-08-16
+       when AcSyncService learned FromDocNos. The assertion is the map over the
+       source documents, because that is the thing a regression would drop —
+       reverting to `docNos[0]` would ship a delivery order into the account book
+       carrying one sales order's lines out of several. */
+    expect(converter).toContain('docNos.map(');
+    expect(converter).not.toContain('recordConvertSkipped');
 
     const manual = between(doSource, 'await recordDoCreate(sb,', '/* A DO = goods shipped on creation');
     expect(manual).toContain("op: 'so_to_do'");
@@ -76,16 +82,23 @@ describe('the six flows are hooked at the point the document becomes permanent',
   test('4. PO -> GRN — the whole-PO receive and the per-line receive', () => {
     const wholePo = between(grnSource, 'Batch-converted from', 'const movementErrors = postRes.ok');
     expect(wholePo).toContain("op: 'po_to_gr'");
-    expect(wholePo).toContain('recordConvertSkipped');
+    // Every purchase order the GRN received against, not just the first.
+    expect(wholePo).toContain('poList.map(');
+    expect(wholePo).not.toContain('recordConvertSkipped');
 
     const perLine = between(grnSource, 'Received from ${[...bucket.poNumbers]', 'const postFailReason');
     expect(perLine).toContain("op: 'po_to_gr'");
+    /* The bucket's own PO IDS, not `primaryPoId`. A bucket can hold several
+       purchase orders and `primaryPoId` is whichever one opened it. */
+    expect(perLine).toContain('bucketPoIds.map(');
   });
 
   test('5. DO -> Sales Invoice', () => {
     const conv = between(siSource, 'Converted from ${distinctDoNumbers.length > 1', '/* LEAK GUARD (DRAFT)');
     expect(conv).toContain("op: 'do_to_iv'");
-    expect(conv).toContain('recordConvertSkipped');
+    // Every delivery order the invoice bills.
+    expect(conv).toContain('doIds.map(');
+    expect(conv).not.toContain('recordConvertSkipped');
   });
 
   test('6. GRN -> Purchase Invoice — the whole-GRN and the per-line paths', () => {
@@ -94,7 +107,9 @@ describe('the six flows are hooked at the point the document becomes permanent',
 
     const perLine = between(piSource, 'Converted from Goods Receipt ${bucket.grnNumbers', '// Consume the GRN lines');
     expect(perLine).toContain("op: 'gr_to_pi'");
-    expect(perLine).toContain('recordConvertSkipped');
+    // Every goods receipt the bucket bills; the bucket is already one supplier.
+    expect(perLine).toContain('bucket.grnIds.map(');
+    expect(perLine).not.toContain('recordConvertSkipped');
   });
 });
 
