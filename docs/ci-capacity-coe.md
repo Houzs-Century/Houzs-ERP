@@ -136,7 +136,7 @@ costs ~80s.
 
 | Change | Effect | Ref |
 | --- | --- | --- |
-| Path filtering in `ci.yml` (`changes` job) + `scale-postgres-contract` and `frontend-perf` moved to `postsubmit.yml` | Frees ~180 runner-seconds on **every** PR unconditionally. On top of that, replaying the classifier over the last 60 merged PRs: 21 skip the frontend half, 3 skip the backend half, 2 skip both — **26 of 60 (43%)** save at least one half, against the 20-slot ceiling. (A naive path-prefix count claims 58%; it miscounts PRs that also touch a root file or `scripts/`, which correctly run both. 43% is what the rule delivers.) | PR_REF |
+| Path filtering in `ci.yml` (`changes` job) + `scale-postgres-contract` and `frontend-perf` moved to `postsubmit.yml` | Frees ~180 runner-seconds on **every** PR unconditionally. On top of that, replaying the classifier over the last 60 merged PRs: 21 skip the frontend half, 3 skip the backend half, 2 skip both — **26 of 60 (43%)** save at least one half, against the 20-slot ceiling. (A naive path-prefix count claims 58%; it miscounts PRs that also touch a root file or `scripts/`, which correctly run both. 43% is what the rule delivers.) | #2412 |
 | `tests/setup.ts` applies a pre-collapsed schema snapshot instead of replaying 147 migrations per file | Suite total ~10% faster; the `tests` phase itself 7.6s → 1.1s per 20 files | #2131 |
 | `PRAGMA foreign_keys = ON` when building that snapshot | **Correctness, not speed** — see below | #2131 |
 | `npm run audit:test-schema` wired into `backend-typecheck` | A migration merged without regenerating the snapshot now fails CI instead of silently giving the suite a schema production does not have | #2131 |
