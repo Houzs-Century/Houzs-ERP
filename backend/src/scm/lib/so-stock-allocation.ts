@@ -45,6 +45,7 @@ import { recordSoAudit } from './so-audit';
 import { advanceSoGeneration } from './so-generation';
 import { enqueueStockAllocationRecompute } from './stock-allocation-queue';
 import { SO_TERMINAL_STATES_PGREST } from '../shared/so-terminal-states';
+import { SO_PROCESSING_DATE_COLUMN } from '../shared/so-processing-date';
 
 export type AllocationResult = {
   ok: boolean;
@@ -185,9 +186,9 @@ async function runSoStockAllocation(
             b) created_at ASC  — tiebreaker so order is deterministic */
     // Page through — PostgREST's default 1000-row cap would truncate the active
     // SO set, silently DROPPING orders from allocation (their lines never flip).
-    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; company_id: number | null; proceeded_at: string | null }>((from, to) => sb
+    const { data: orderRows, error: orderError } = await paginateAll<{ doc_no: string; status: string; created_at: string; customer_delivery_date: string | null; company_id: number | null; processing_date: string | null }>((from, to) => sb
       .from('mfg_sales_orders')
-      .select('doc_no, status, created_at, customer_delivery_date, company_id, proceeded_at')
+      .select(`doc_no, status, created_at, customer_delivery_date, company_id, ${SO_PROCESSING_DATE_COLUMN}`)
       /* The live-SO lens. ONE declaration, in shared/so-terminal-states.ts —
          eight audit scripts and mrp.ts used to re-type this same six-status
          set under four different names, each promising in a comment to track
@@ -201,22 +202,44 @@ async function runSoStockAllocation(
     const orders = (orderRows ?? []) as Array<{
       doc_no: string; status: string; created_at: string;
       customer_delivery_date: string | null; company_id: number | null;
-      proceeded_at: string | null;
+      processing_date: string | null;
     }>;
     if (orders.length === 0) return { ok: true, linesFlipped: 0, ordersAdvanced: 0, ordersRegressed: 0 };
     const orderByDoc = new Map(orders.map((o) => [o.doc_no, o]));
     /* Processing-date allocation gate (owner 2026-08-10, go-live): nothing is
-       prepared before the order is proceeded, so an SO with NO Processing Date
-       must not claim stock nor show READY TO SHIP ("它明明都没有 Processing
-       Date, 干嘛分配呢" … "2990 跟整套系统都是这样子的:有 processing date 才来
-       分配"). Shipped company-1-only first; flipped GLOBAL after measuring the
-       blast radius (check-cutover-metrics 2026-08-10: company 1: 15, company 2:
-       5 READY_TO_SHIP-without-processing-date — both regress to CONFIRMED on
-       the next recompute, which is the owner's intent). Gated lines still walk
-       (so an already-READY line regresses on this same run) but are forced
-       PENDING and never consume a bucket or a sofa batch. */
+       prepared before the order is released for ordering, so an SO with NO
+       Processing Date must not claim stock nor show READY TO SHIP ("它明明都没有
+       Processing Date, 干嘛分配呢" … "2990 跟整套系统都是这样子的:有 processing
+       date 才来分配"). Gated lines still walk (so an already-READY line regresses
+       on this same run) but are forced PENDING and never consume a bucket or a
+       sofa batch.
+
+       THE RULE WAS RIGHT; THE COLUMN WAS NOT. This filtered on `proceeded_at`
+       until 2026-08-18, and NO shipped client writes that column when an
+       operator sets a Processing Date: CREATE persists the date to
+       `processing_date` (mfg-sales-orders.ts, `processing_date:
+       dateOrNull(body.processingDate)`) and stamps `proceeded_at` ONLY when the
+       order additionally clears the proceed gate (`autoProceed`); the header
+       PATCH writes the date and never stamps a proceed at all; and no frontend
+       sends `proceededAt` anywhere (zero occurrences in frontend/src). So an
+       order given a Processing Date on the detail screen locked, appeared on the
+       delivery board and pushed to AutoCount as PDate while EVERY line was
+       forced PENDING — never consuming a bucket, never claiming a sofa batch,
+       never reaching READY_TO_SHIP — with the goods physically in the warehouse,
+       and with no error, no log and nothing on screen.
+
+       ONE COLUMN, deliberately. Reading both "to be safe" would give the rule a
+       second home, which is how it acquired a wrong one. `proceeded_at` is the
+       same fact in the wrong shape (see SO_PROCESSING_DATE_COLUMN's docstring);
+       this is its stop-reading step, and its last reachable decision — the
+       remaining mentions are `soProcessingLocked`'s status-absent fallback,
+       which only runs after `processing_date` has already decided. The data was
+       consolidated into this column on 2026-08-13 (mig 0286 header: 519
+       company-1 orders moved out of `proceeded_at`, both companies verified at
+       zero split), and no live path can reopen the split: `autoProceed` requires
+       a date, and the IN_PRODUCTION transition refuses without one. */
     const allocGated = new Set(
-      orders.filter((o) => !o.proceeded_at).map((o) => o.doc_no),
+      orders.filter((o) => !o[SO_PROCESSING_DATE_COLUMN]).map((o) => o.doc_no),
     );
 
     // 2. Non-cancelled lines on those SOs. Pull qty + variant fields so we

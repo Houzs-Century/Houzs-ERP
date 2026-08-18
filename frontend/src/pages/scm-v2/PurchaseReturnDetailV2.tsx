@@ -4,7 +4,7 @@
 // Credit expected (synced/green because it's money coming back).
 
 import { useMemo, type ReactNode } from "react";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
@@ -89,14 +89,6 @@ type PrItem = {
 };
 
 const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneyCenti(centi, currency);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
 
 const supplierNameOf = (h: PrHeader): string => h.supplier?.name || "—";
 const supplierCodeOf = (h: PrHeader): string => h.supplier?.code || "—";

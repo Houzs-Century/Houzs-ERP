@@ -34,6 +34,7 @@ import {
   useHrCommission, useHrPayoutPeriods, useCloseHrPayout, useReopenHrPayout,
   type HrCommissionRow,
 } from '../../vendor/scm/lib/hr-queries';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -230,11 +231,11 @@ export const HrCommission = () => {
       <div className="flex flex-wrap items-end gap-3">
         <label className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">From</span>
-          <input type="date" className={INPUT_CLASS} value={from} onChange={(e) => setFrom(e.target.value)} />
+          <DateField fullWidth className={INPUT_CLASS} value={from} onChange={(iso) => setFrom(iso)}/>
         </label>
         <label className="flex flex-col gap-1">
           <span className="text-[10px] font-semibold uppercase tracking-wider text-ink-muted">To</span>
-          <input type="date" className={INPUT_CLASS} value={to} onChange={(e) => setTo(e.target.value)} />
+          <DateField fullWidth className={INPUT_CLASS} value={to} onChange={(iso) => setTo(iso)}/>
         </label>
         <Button
           variant="primary"

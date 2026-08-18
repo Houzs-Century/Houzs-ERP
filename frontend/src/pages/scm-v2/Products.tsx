@@ -51,21 +51,7 @@ import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
 import { useDebouncedValue } from '../../vendor/scm/lib/hooks';
 import { SearchableSelect } from '../../vendor/scm/components/SearchableSelect';
-import {
-  SOFA_MODULES,
-  resolveSofaQuickPresets,
-  normalizeSofaTier,
-  maintValues,
-  maintActiveValues,
-  maintEntryValue,
-  maintEntryActive,
-  maintEntryWithValue,
-  maintEntryWithActive,
-  type MaintPoolEntry,
-  type SofaQuickPreset,
-  fmtCenti,
-  fmtDate,
-} from '@2990s/shared';
+import { fmtCenti, fmtDate, fmtDateTime, maintActiveValues, maintEntryActive, maintEntryValue, maintEntryWithActive, maintEntryWithValue, maintValues, normalizeSofaTier, resolveSofaQuickPresets, SOFA_MODULES, type MaintPoolEntry, type SofaQuickPreset } from '@2990s/shared';
 import {
   useMfgProducts,
   useUpdateMfgProductPrices,
@@ -122,6 +108,7 @@ import { useBrandingPool } from '../../vendor/scm/lib/product-models-queries';
 import { useQueryClient } from '@tanstack/react-query';
 import { parseMoneyToSen } from '../../lib/money';
 import styles from './Products.module.css';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON_PROPS = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -4051,13 +4038,6 @@ const Field = ({
    (used by default on POs) is starred and pinned to the top.
    ════════════════════════════════════════════════════════════════════════ */
 
-const fmtDateTime = (iso: string): string => {
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  const date = fmtDate(d);
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} ${time}`;
-};
 
 const fmtRmCenti = (centi: number): string => fmtCenti(centi);
 
@@ -4142,12 +4122,7 @@ const ProductPriceTimeline = ({ row }: { row: MfgProductRow }) => {
       <div style={{ display: 'flex', gap: 'var(--space-3)', alignItems: 'flex-end', flexWrap: 'wrap', marginBottom: 'var(--space-3)' }}>
         <div>
           <label style={fieldLabel}>Effective from</label>
-          <input
-            type="date"
-            value={effDate}
-            onChange={(e) => setEffDate(e.target.value)}
-            style={{ ...inputBox, fontFamily: 'var(--font-mono)' }}
-          />
+          <DateField value={effDate} onChange={(iso) => setEffDate(iso)} style={{ ...inputBox, fontFamily: 'var(--font-mono)' }}/>
         </div>
         <div>
           <label style={fieldLabel}>New price</label>

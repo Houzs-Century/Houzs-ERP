@@ -4,7 +4,7 @@
 // customer. Outstanding here is what WE owe, not what customers owe us.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
   Plus,
@@ -114,12 +114,6 @@ type StatusTab = "all" | "draft" | "posted" | "partial" | "paid" | "cancelled";
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
 const fmtRm = (centi: number): string => fmtCenti(centi);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
 
 const supplierNameOf = (r: PiRow): string => r.supplier?.name || "—";
 const supplierCodeOf = (r: PiRow): string => r.supplier?.code || "—";

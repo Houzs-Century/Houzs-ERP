@@ -45,6 +45,7 @@ import type { Warehouse } from '../lib/inventory-queries';
 import { MoneyInput } from './MoneyInput';
 import { SearchableSelect } from './SearchableSelect';
 import styles from '../../../pages/scm-v2/SalesOrderDetail.module.css';
+import { DateField } from "./DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -596,11 +597,11 @@ export const PoLineCard = ({
         {!hidePoFields && (
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Delivery Date</span>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={l.deliveryDate ?? ''}
             disabled={disabled}
-            onChange={(e) => onChange({ deliveryDate: e.target.value })}
+            onChange={(iso) => onChange({ deliveryDate: iso })}
             className={styles.fieldInput}
           />
         </label>
@@ -630,31 +631,31 @@ export const PoLineCard = ({
       <div className={styles.formGrid4} style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Supplier Date 2</span>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={l.supplierDeliveryDate2 ?? ''}
             disabled={disabled}
-            onChange={(e) => onChange({ supplierDeliveryDate2: e.target.value })}
+            onChange={(iso) => onChange({ supplierDeliveryDate2: iso })}
             className={styles.fieldInput}
           />
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Supplier Date 3</span>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={l.supplierDeliveryDate3 ?? ''}
             disabled={disabled}
-            onChange={(e) => onChange({ supplierDeliveryDate3: e.target.value })}
+            onChange={(iso) => onChange({ supplierDeliveryDate3: iso })}
             className={styles.fieldInput}
           />
         </label>
         <label className={styles.field}>
           <span className={styles.fieldLabel}>Supplier Date 4</span>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={l.supplierDeliveryDate4 ?? ''}
             disabled={disabled}
-            onChange={(e) => onChange({ supplierDeliveryDate4: e.target.value })}
+            onChange={(iso) => onChange({ supplierDeliveryDate4: iso })}
             className={styles.fieldInput}
           />
         </label>

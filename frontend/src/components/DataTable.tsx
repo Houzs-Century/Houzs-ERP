@@ -60,7 +60,7 @@ import {
   type StoredLayout,
 } from "../lib/tableLayouts";
 import { useUdf, type UseUdfResult } from "../hooks/useUdf";
-import { downloadCSV, toCSV, type CSVColumn } from "../lib/csv";
+import { downloadCSV, isoForExport, toCSV, type CSVColumn } from "../lib/csv";
 import { SearchScopeHint } from "./SearchScopeHint";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
 
@@ -1733,7 +1733,7 @@ function DataTableInner<T>({
       .map((c) => ({
         key: c.key,
         label: c.label || c.key,
-        getValue: c.getValue!,
+        getValue: (r: T) => isoForExport(c.getValue!(r) as string | number | null),
       }));
     if (csvCols.length === 0) return;
     const date = new Date().toISOString().slice(0, 10);

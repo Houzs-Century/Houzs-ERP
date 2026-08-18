@@ -15,6 +15,7 @@ import { canSeeProject } from "../services/projectAcl";
 import { getPmsAccess, isFinanceViewer } from "../services/pmsAccess";
 import { scopeSalesReportsForUser } from "../services/orgScope";
 import { hasPermission } from "../services/permissions";
+import { fmtDate, fmtDateTime } from "../scm/shared/format";
 
 /**
  * Post-event summary — A4 printable sheet.
@@ -41,46 +42,13 @@ function esc(s: unknown): string {
 // printed instants 8 hours behind the office clock (Nick 2026-07-14:
 // the printed "Generated" stamp read 8h early). Date-only strings (YYYY-MM-DD)
 // parse as UTC midnight, so the +8h shift never moves their calendar day.
-const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
 
-function fmtDate(s: string | null | undefined): string {
-  if (!s) return "—";
-  const d = new Date(s);
-  if (isNaN(d.getTime())) {
-    const parts = s.slice(0, 10).split("-");
-    if (parts.length === 3 && parts[0].length === 4) return `${parts[2]}/${parts[1]}/${parts[0]}`;
-    return s.slice(0, 10);
-  }
-  const shifted = new Date(d.getTime() + MYT_OFFSET_MS);
-  const dd = String(shifted.getUTCDate()).padStart(2, "0");
-  const mm = String(shifted.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = shifted.getUTCFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-}
-
-function fmtDateTime(s: string | null | undefined): string {
-  if (!s) return "—";
-  // Setup / dismantle times come from a <input type="datetime-local"> and are
-  // stored as naive MYT wall clock ("2026-07-30T11:00") — no zone marker. Those
-  // must print exactly as typed; the +8h shift below is only for true instants
-  // (created_at & friends, which carry Z / an offset). Before this, an 11:00
-  // crew call printed as 19:00 (owner 2026-08-12).
-  const naive = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}/.test(s) && !/(Z|[+-]\d{2}:?\d{2})$/.test(s.trim());
-  if (naive) {
-    const [datePart, timePart] = s.trim().replace("T", " ").split(" ");
-    const [yy, mm, dd] = datePart.split("-");
-    return `${dd}/${mm}/${yy} ${(timePart || "").slice(0, 5)}`.trim();
-  }
-  const parsed = new Date(s);
-  if (isNaN(parsed.getTime())) return s.slice(0, 16).replace("T", " ");
-  const d = new Date(parsed.getTime() + MYT_OFFSET_MS);
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = d.getUTCFullYear();
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const min = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
+// fmtDate / fmtDateTime come from scm/shared/format — the one date rule. The
+// hand-rolled +8h copies that used to live here produced the same DD/MM/YYYY,
+// which is exactly why they survived: agreeing today is not the same as being
+// one rule, and the ASSR copy of fmtDateTime had ALREADY drifted (it lacked the
+// naive-wall-clock branch the Projects copy grew on 2026-08-12, so a crew time
+// typed as 11:00 printed as 19:00).
 
 const MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
