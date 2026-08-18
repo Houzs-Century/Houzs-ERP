@@ -16,10 +16,10 @@
 // about when triaging a return.
 
 import { useMemo, useState, type ReactNode } from "react";
-import { transferFromLabel } from '../../lib/convertScope';
+import { transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { canViewScmCosting } from "../../auth/salesAccess";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   Plus,
@@ -131,12 +131,6 @@ const fmtRm = (centi: number): string => fmtCenti(centi);
 // margin_pct_basis is basis points (margin/total x 10000) → percent string.
 const fmtPctBasis = (basis: number | null | undefined): string =>
   basis == null ? "—" : `${(basis / 100).toFixed(1)}%`;
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
 
 // Customer's PO / Ref. Same fallback chain as SO / DO V2.
 const refOf = (r: DrRow): string => r.customer_so_no || r.ref || "—";
@@ -336,7 +330,7 @@ function CardsGrid({ rows, onOpen }: { rows: DrRow[]; onOpen: (r: DrRow) => void
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div className="min-w-0">
                 <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">
-                  From DO
+                  {transferFromColumnLabel('do')}
                 </div>
                 <div className="mt-0.5 truncate font-mono text-[12px] font-semibold text-ink-secondary">
                   {doOf(r)}
@@ -470,7 +464,7 @@ function DetailDrawer({
               )}
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From DO" v={doOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('do')} v={doOf(row)} mono />
                 <MetaItem k="Customer ref" v={refOf(row)} mono />
                 <MetaItem k="Location" v={row.sales_location || "—"} />
                 <MetaItem k="Salesperson" v={salespersonName} />
@@ -1073,7 +1067,7 @@ export function DeliveryReturnsListV2() {
     },
     {
       key: "do_doc_no",
-      label: "From DO",
+      label: transferFromColumnLabel('do'),
       width: "128px",
       getValue: (r) => r.do_doc_no ?? "",
       render: (r) => (
@@ -1084,7 +1078,7 @@ export function DeliveryReturnsListV2() {
       /* Convert-from relation (audit R8): the Sales Order behind this return's
          DO. Server-resolved (so_doc_no); mirrors the DO/SI lists' "From SO". */
       key: "so_doc_no",
-      label: "From SO",
+      label: transferFromColumnLabel('so'),
       width: "128px",
       disableSort: true,
       getValue: (r) => r.so_doc_no ?? "",

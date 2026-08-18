@@ -23,6 +23,7 @@ import {
 import { DataTable, type Column } from '../../components/DataTable';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const MODULES: { value: OutstandingModule; label: string; icon: React.ReactNode; route: (row: Record<string, unknown>) => string }[] = [
   // HOUZS VENDOR — "Open →" deep-links repointed onto Houzs's /scm/* routes
@@ -62,11 +63,11 @@ export const Outstanding = () => {
           <div className={styles.actionsRow}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
               <span style={{ color: 'var(--fg-muted)' }}>From</span>
-              <input type="date" className={styles.searchInput} value={from} onChange={(e) => setFrom(e.target.value)} style={{ width: 150 }} />
+              <DateField fullWidth className={styles.searchInput} value={from} onChange={(iso) => setFrom(iso)} style={{ width: 150 }}/>
             </label>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
               <span style={{ color: 'var(--fg-muted)' }}>To</span>
-              <input type="date" className={styles.searchInput} value={to} onChange={(e) => setTo(e.target.value)} style={{ width: 150 }} />
+              <DateField fullWidth className={styles.searchInput} value={to} onChange={(iso) => setTo(iso)} style={{ width: 150 }}/>
             </label>
             <div className={styles.statusChips}>
               <FilterChip label="Outstanding" active={mode === 'outstanding'} onClick={() => setMode('outstanding')} />

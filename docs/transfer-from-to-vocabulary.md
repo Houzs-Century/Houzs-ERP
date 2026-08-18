@@ -125,7 +125,7 @@ is what the operator reads.
 
 | target | direction | HEADER column | LINE column | API field | UI label(s) |
 | --- | --- | --- | --- | --- | --- |
-| Purchase Order | ← Sales Order | **none** (a free-text `"From SOs: …"` note) | `purchase_order_items.so_item_id`, and `purchase_order_item_allocations.so_item_id` | `soItemId` | "From Sales Order" (button) |
+| Purchase Order | ← Sales Order | **none** (a free-text `"Transfer from Sales Order: …"` provenance note — a STORED DATA CONTRACT with 8 readers, document-conversion.md §10) | `purchase_order_items.so_item_id`, and `purchase_order_item_allocations.so_item_id` | `soItemId` | "From Sales Order" (button) |
 | GRN | ← Purchase Order | `grns.purchase_order_id` (NOT NULL) | `grn_items.purchase_order_item_id` | `purchaseOrderId` / `poId`, `purchaseOrderItemId` / `poItemId` | **"From PO"** |
 | Purchase Invoice | ← GRN | `purchase_invoices.grn_id` | `purchase_invoice_items.grn_item_id` | `grnId`, `grnItemId` | **"Source"** |
 | Purchase Invoice | ← PO (skip-level) | `purchase_invoices.purchase_order_id` | — | `purchaseOrderId` | — |
@@ -187,7 +187,7 @@ read:
 
 | UI | derived from |
 | --- | --- |
-| SO list "PO No." (`converted_po_nos`) | reverse scan of `purchase_order_items.so_item_id` + the `"From SOs:"` note |
+| SO list "PO No." (`converted_po_nos`) | reverse scan of `purchase_order_items.so_item_id` + the provenance note |
 | SO list "DO No." (`do_nos`) | reverse scan of `delivery_orders.so_doc_no` |
 | PO list "GRN No" (`transfer_to_grns`) | reverse scan of `grns.purchase_order_id` |
 | DO list "Invoiced to" (`invoiced_si_nos`) | reverse scan of `sales_invoice_items.do_item_id` |

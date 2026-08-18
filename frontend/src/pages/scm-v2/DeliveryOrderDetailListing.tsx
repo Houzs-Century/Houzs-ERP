@@ -5,11 +5,12 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback } from 'react';
-import { fmtDateOrDash } from '@2990s/shared';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useDeliveryOrderDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import type { DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import styles from './SalesOrderDetailListing.module.css';
+import { transferFromColumnLabel } from "../../lib/convertScope";
 
 type DoRow = DetailListingRow & {
   do_number?: string;
@@ -62,7 +63,7 @@ export const DeliveryOrderDetailListing = () => {
       filterType: 'date', dateValue: (r) => (r.do_date ?? r.line_date) as string | null,
     },
     {
-      key: 'so_doc_no', label: 'Transfer From (SO)', width: 110, sortable: true, groupable: true,
+      key: 'so_doc_no', label: transferFromColumnLabel('so'), width: 110, sortable: true, groupable: true,
       accessor: (r) => r.so_doc_no ?? '—',
       searchValue: (r) => r.so_doc_no ?? '',
     },

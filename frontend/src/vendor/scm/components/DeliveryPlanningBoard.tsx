@@ -21,7 +21,7 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
-import { fmtCenti, fmtDateOrDash, fmtDateTime, buildVariantSummary } from '@2990s/shared';
+import { buildVariantSummary, fmtCenti, fmtDate, fmtDateOrDash, fmtDateTime } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import { DataGrid, type DataGridColumn } from './DataGrid';
 import { useConfirm } from './ConfirmDialog';
@@ -46,6 +46,7 @@ import {
 import { type DriverRow } from '../lib/drivers-queries';
 import { type LorryRow } from '../lib/lorries-queries';
 import styles from './DeliveryPlanningBoard.module.css';
+import { DateField } from "./DateField";
 
 /* HC "Remark 4" delivery sub-status → a small pill class (reuse the cream
    palette; unknown/blank → muted). Default-shown column. */
@@ -823,7 +824,7 @@ export function DeliveryPlanningBoard({
         if (!s) return '—';
         return (
           <span style={{ fontWeight: 600, color: s.success ? '#2e7d32' : '#b3261e' }}>
-            {s.success ? `Sent ${String(s.created_at).slice(5, 10)}` : 'Failed'}
+            {s.success ? `Sent ${fmtDate(s.created_at)}` : 'Failed'}
           </span>
         );
       },
@@ -1277,12 +1278,12 @@ export function DeliveryPlanningBoard({
             </select>
           )}
           {bulkField === 'DATE' && (
-            <input
-              type="date"
+            <DateField
+              fullWidth
               className={styles.bulkControl}
               value={bulkValue}
               disabled={bulkBusy}
-              onChange={(e) => setBulkValue(e.target.value)}
+              onChange={(iso) => setBulkValue(iso)}
               aria-label="New delivery date"
             />
           )}

@@ -19,7 +19,7 @@
 import { Hono } from 'hono';
 import {
   buildVariantSummary, pickComboMatch, spreadComboTotal,
-  splitSofaCode, sofaHeightKey,
+  splitSofaCode, sofaHeightKey, effectiveSoDelivery,
   type SofaComboRow, type SofaPriceTier,
 } from '../shared';
 import {
@@ -83,6 +83,7 @@ import { PO_LINE_AUDIT_FIELDS, PO_LINE_AUDIT_SELECT } from '../lib/entity-audit-
 import { computeMrp } from './mrp';
 import { eager } from '../lib/concurrency';
 import { resolvePoSoCoverageForPos, resolveDeliveredDosForPos } from './po-so-coverage';
+import { provenanceNote } from '../shared/transfer-vocabulary';
 import type { Env, Variables } from '../env';
 
 /* ── Supplier sofa-combo auto-pricing (Commander 2026-05-29) ─────────────────
@@ -795,7 +796,7 @@ mfgPurchaseOrders.get('/so-line-candidates', async (c) => {
       debtorName: r.so?.debtor_name ?? null,
       soStatus: r.so?.status ?? null,
       qty: r.qty,
-      deliveryDate: r.so?.amended_delivery_date ?? r.so?.customer_delivery_date ?? null,
+      deliveryDate: r.so ? effectiveSoDelivery(r.so) : null,
     }));
   return c.json({ items });
 });
@@ -2376,10 +2377,9 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
       subtotal_centi: subtotal,
       tax_centi: 0,
       total_centi: subtotal,
-      notes: `From SOs: ${[...bucket.soDocNos].join(', ')}`,
+      notes: provenanceNote('so', [...bucket.soDocNos]), // a STORED CONTRACT, 8 readers: transfer-vocabulary.ts
       created_by: user.id,
-      /* Commander 2026-05-28 — derived from the source SO lines, not asked. */
-      expected_at: headerExpectedAt,
+      expected_at: headerExpectedAt, // Commander 2026-05-28 — derived from the source SO lines, not asked.
       purchase_location_id: headerPurchaseLocationId,
     };
     /* Audit (ported from 2990) — the PO suffix is an in-memory counter off a

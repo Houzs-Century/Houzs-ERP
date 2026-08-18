@@ -106,11 +106,11 @@ export function foldRedundantSpecials(list: string[]): string[] {
  * axis aliases in so-variant-rule plus the summary's colourLabel/fallbacks).
  *
  * A KIV line may SAVE freely — KIV is a legitimate sale-time state. What it
- * must NOT do is enter production: the Processing-Date gate
+ * must NOT do is be RELEASED FOR ORDERING: the Processing-Date gate
  * (so-save-problems `fabric_colour_kiv`) blocks setting processing_date
- * while any non-cancelled line is still KIV (owner rule 2026-07-24 after
- * SO-2607-016 reached production planning with two KIV sofa lines and the
- * factory could not proceed).
+ * while any non-cancelled line is still KIV (owner rule 2026-07-24, after an SO
+ * was released with two KIV sofa lines and purchasing had nothing to order
+ * against — a fabric series with no colour is not a thing anyone can buy).
  */
 export function isColourKiv(
   variants: Record<string, unknown> | null | undefined,

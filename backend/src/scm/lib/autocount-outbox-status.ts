@@ -183,9 +183,18 @@ export const AC_SKIP_KINDS: readonly AcSkipKind[] = [
        feature shipped. A needle taken from the comment beside the writer
        instead of from the writer is the same mistake in a different key as
        matching a shared prefix. */
+    /* THE NEEDLE STAYS, THE REMEDY CHANGED, 2026-08-18. No writer produces this
+       sentence any more: the service took `FromDocNos` from 2026-08-16 and the
+       five ERP writers were rewired to name every source instead of refusing
+       (enqueueConvert takes an array). The needle has to stay because
+       scm.autocount_outbox is APPEND-ONLY and `last_error` is never rewritten —
+       every merged conversion recorded before that day still carries these
+       words, and a needle removed is a row reclassified `unrecognised` with no
+       remedy at all. What changed is what an operator should DO about one. */
     kind: 'no-autocount-shape',
     needle: 'AutoCount transfers from ONE source document',
-    remedy: 'merged conversion (several sources -> one document) — must be worked by hand in AutoCount',
+    remedy:
+      'recorded before merged conversions could be sent (2026-08-18) — nothing was composed, so Send again has nothing to send; raise it in AutoCount by hand. Documents raised since then sync merged',
   },
   {
     /* ADDED 2026-08-17 with the fix to POST /sales-invoices. The ERP lets an

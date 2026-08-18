@@ -20,6 +20,7 @@ import { SearchProgress } from "../components/SearchProgress";
 import { EmptyState } from "../components/EmptyState";
 import { Pagination } from "../components/Pagination";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../hooks/useServerSearch";
+import { DateField } from "../vendor/scm/components/DateField";
 
 const SALES_FILTER_KEYS = ["status", "search", "date_from", "date_to", "view"] as const;
 
@@ -546,18 +547,18 @@ export function Sales() {
             <option value="void">Void</option>
           </select>
         )}
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={dateFrom}
-          onChange={(e) => patchParams({ date_from: e.target.value })}
+          onChange={(iso) => patchParams({ date_from: iso })}
           title="From"
           className="h-8 rounded-md border border-border bg-surface px-2 text-[11px]"
         />
         <span className="text-[10px] text-ink-muted">→</span>
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={dateTo}
-          onChange={(e) => patchParams({ date_to: e.target.value })}
+          onChange={(iso) => patchParams({ date_to: iso })}
           title="To"
           className="h-8 rounded-md border border-border bg-surface px-2 text-[11px]"
         />
@@ -1153,13 +1154,13 @@ export function EntryPanel({
         {/* Left column */}
         <div className="space-y-3">
           <Field label="Order Date">
-            <input type="date" value={orderDate} onChange={(e) => setOrderDate(e.target.value)} className={inputCls} />
+            <DateField fullWidth value={orderDate} onChange={(iso) => setOrderDate(iso)} className={inputCls}/>
           </Field>
           <Field label="Processing Date">
-            <input type="date" value={processingDate} onChange={(e) => setProcessingDate(e.target.value)} className={inputCls} />
+            <DateField fullWidth value={processingDate} onChange={(iso) => setProcessingDate(iso)} className={inputCls}/>
           </Field>
           <Field label="Delivery Date">
-            <input type="date" value={deliveryDate} onChange={(e) => setDeliveryDate(e.target.value)} className={inputCls} placeholder="—" />
+            <DateField fullWidth value={deliveryDate} onChange={(iso) => setDeliveryDate(iso)} className={inputCls} placeholder="—"/>
           </Field>
           <Field label="Status">
             <input value={status1} onChange={(e) => setStatus1(e.target.value)} placeholder="—" className={inputCls} />
@@ -1454,10 +1455,10 @@ export function EntryPanel({
               {payments.map((p, idx) => (
                 <tr key={idx}>
                   <td className="px-2 py-1.5">
-                    <input
-                      type="date"
+                    <DateField
+                      fullWidth
                       value={p.paid_at}
-                      onChange={(e) => updatePayment(idx, { paid_at: e.target.value })}
+                      onChange={(iso) => updatePayment(idx, { paid_at: iso })}
                       className="h-7 rounded border border-border bg-surface px-2 text-[11.5px]"
                     />
                   </td>
@@ -1663,10 +1664,10 @@ function DynamicField({
         />
       )}
       {field.type === "date" && (
-        <input
-          type="date"
+        <DateField
+          fullWidth
           value={value}
-          onChange={(e) => onChange(e.target.value)}
+          onChange={(iso) => onChange(iso)}
           className="h-10 w-full rounded-md border border-border bg-surface px-3 text-[13px]"
         />
       )}

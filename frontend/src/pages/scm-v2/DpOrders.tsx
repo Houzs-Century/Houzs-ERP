@@ -19,7 +19,7 @@ import { CalendarClock, Plus, XCircle } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDate } from '@2990s/shared';
+import { fmtDate } from '../../vendor/shared/format';
 import {
   useDpOrders,
   useCancelDpOrder,

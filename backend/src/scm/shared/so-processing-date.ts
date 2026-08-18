@@ -2,17 +2,68 @@
 // so-processing-date — THE name of the SO's Processing Date, in one place, plus
 // the names OTHER SYSTEMS still say for it.
 //
-// WHY THIS FILE EXISTS (owner, 2026-08-13, after saying it more than three
-// times): "internal expected date、processing date 和 process date ... 这三个
-// date 其实都是指向同一个东西." One concept, three names, so every discussion
-// about it produced a new bug. The DATA was unified on 2026-08-13 (#2077 /
-// #2079 moved 519 company-1 orders out of proceeded_at); what is left is the
-// naming, and the naming is what this file is for.
+// ─── WHAT THE DATE MEANS (owner, 2026-08-18, correcting this repo) ──────────
 //
-// THIS IS NOT A FOURTH NAME. Nothing here invents a word. The constants below
-// are the ONE column and the ONE payload key, exported so that a future rename
-// is a single edit rather than a hunt through 344 string occurrences — and so
-// that the places which read the name from a STRING (a PostgREST select list, a
+//   "因为我们有时候开单，未必是要直接 Processing 这张单的。所以 Processing Date
+//    就代表这张单可以安排订货了，然后过了一天我们才会落下来，然后采购才会去订货"
+//
+// THE PROCESSING DATE IS THE DATE THIS ORDER IS RELEASED FOR PURCHASING TO
+// ORDER GOODS. Raising an order is not the same as acting on it: an order can
+// sit with no Processing Date indefinitely. Setting one is the RELEASE signal;
+// roughly a day later the order drops through and purchasing places the order.
+//
+// AND THERE IS NO PRODUCTION SCHEDULING IN THIS BUSINESS. Owner, same message:
+// "我们都没有排产的，我们都不是 Production，我们应该只是送货的日期而已". Houzs
+// does not schedule a factory. Comments across this repo used to call this a
+// "go-to-production" date and reason about a "factory queue"; every one of them
+// was describing a business that does not exist, and they are being rewritten
+// as they are found. If you meet another, it is stale — fix it, do not copy it.
+//
+// NOTE WHAT IS *NOT* IMPLEMENTED: the ~1 day lag the owner describes exists in
+// the business, not in this code. Nothing here defers anything by a day, and
+// MRP does not read this date to decide when to order at all — it derives
+// `orderByDate = delivery date − category lead days` (routes/mrp.ts) and only
+// DISPLAYS the Processing Date. Do not write a comment claiming otherwise; the
+// comment at routes/mrp.ts:193 claimed exactly that for months while the code
+// ignored the field.
+//
+// ─── WHY THIS FILE EXISTS ───────────────────────────────────────────────────
+//
+// Owner, 2026-08-13, after saying it more than three times: "internal expected
+// date、processing date 和 process date ... 这三个 date 其实都是指向同一个东西."
+// One concept, many names, so every discussion about it produced a new bug. The
+// DATA was unified on 2026-08-13 (#2077 / #2079 moved 519 company-1 orders out
+// of proceeded_at); what is left is the naming, and the naming is what this
+// file is for. Owner again 2026-08-18: "全部你都是要统一掉的，不要那么多个".
+//
+// ─── THE NAMES, AND WHAT HAPPENS TO EACH ────────────────────────────────────
+//
+//   processing_date       THE column.       KEEP — SO_PROCESSING_DATE_COLUMN
+//   processingDate        THE payload key.  KEEP — SO_PROCESSING_DATE_PAYLOAD_KEY
+//   proceeded_at          a second live column for the same fact. DYING — its
+//                         last reachable decision stopped reading it in #2396;
+//                         the column drop is on `feat/processing-date-has-one-
+//                         storage`, which measures the split before flipping.
+//                         Nothing here re-reads it.
+//   internal_expected_dd  INBOUND alias only, for the 2990 mirror. Cannot be
+//                         removed yet — precondition on
+//                         SO_PROCESSING_DATE_LEGACY_COLUMNS below.
+//   internalExpectedDd    STORED-jsonb alias only, for amendments queued before
+//                         the rename. Precondition on
+//                         SO_HEADER_LEGACY_PAYLOAD_KEYS below.
+//   target_date           LIVE, and the surprise of this sweep. A POS-era
+//                         "Target Date" stamp that #140 replaced — dead by every
+//                         signal INSIDE this repo, and still written by the POS
+//                         today (46 SOs, all born in 90 days, measured on prod).
+//                         The sweep removed it and put it back. See
+//                         SO_TARGET_DATE_RETIREMENT_BLOCKED.
+//   PDate                 EXTERNAL — AutoCount's OWN UDF name, not ours. It can
+//                         never be "unified"; see SO_PROCESSING_DATE_AC_UDF.
+//
+// THIS IS NOT A NEW NAME. Nothing here invents a word. The constants below are
+// the ONE column and the ONE payload key, exported so that a future rename is a
+// single edit rather than a hunt through 344 string occurrences — and so that
+// the places which read the name from a STRING (a PostgREST select list, a
 // `Record<string, unknown>` lookup, an inbound mirror payload, a stored jsonb)
 // move WITH the rename instead of quietly returning undefined.
 //
@@ -25,9 +76,12 @@
 //
 // SCOPE. Only the SO header's Processing Date. The delivery-planning board's
 // synthetic ASSR / DP / project rows do NOT have one (they carry a job leg date
-// — `job_date`), and neither does the accounting `sales.processing_date` column
-// in frontend/src/pages/Sales.tsx, which is a different table and a different
-// fact. Do not widen this file to cover either.
+// — `job_date`). The legacy native Sales module's `sales_entries.processing_date`
+// (frontend/src/pages/Sales.tsx, backend/src/routes/sales.ts) is the SAME
+// CONCEPT by the owner's 2026-08-18 ruling — "全部我们只有一个 Processing Date"
+// — but a DIFFERENT ROW on a different table with none of the machinery below;
+// read the SO_FORM_TEXT_FIELDS comment in backend/src/routes/sales.ts for what
+// unifying it costs and how far that has got.
 // ----------------------------------------------------------------------------
 
 /**
@@ -39,6 +93,99 @@
  * is the one storage.
  */
 export const SO_PROCESSING_DATE_COLUMN = 'processing_date' as const;
+
+/* ─── RETIRING THE SECOND STORAGE ────────────────────────────────────────────
+ *
+ * THE RULING. Owner 2026-07-31, 2026-08-13 and again 2026-08-18, the last time
+ * naming the scope himself: one Processing Date across FRONTEND, BACKEND and
+ * DATABASE. `scm.mfg_sales_orders.proceeded_at` was the second storage.
+ *
+ * DONE, 2026-08-18. NO CODE anywhere reads or writes it:
+ *   · the STOCK ALLOCATOR gate moved to `processing_date` (#2396) — the one
+ *     reachable decision that had been answering a Processing-Date question out
+ *     of the other column.
+ *   · every LOCK decides on `processing_date` + `status` alone —
+ *     soProcessingLocked / soEditLocked, the amendment door, delivery-planning's
+ *     board guard, and the frontend's procLockActive. `status` became a REQUIRED
+ *     key on both predicates, and THAT is what replaced the status-blind
+ *     `proceeded_at` fallback: a caller without one fails to compile instead of
+ *     silently deciding out of a second fact.
+ *   · every PAYLOAD stopped carrying it: SO list, detail, POS board, dashboard
+ *     summary, /status response. Nothing consumed any of them — the desktop
+ *     Proceed Date field was deleted 2026-06-05 and useMfgSalesOrdersSummary has
+ *     zero callers in frontend/src, native/ or e2e/.
+ *   · every WRITE went with the reader, and had to go WITH it and not before:
+ *     the create INSERT's stamp (and `autoProceed`, which existed only to decide
+ *     it), the /status IN_PRODUCTION stamp, the ['proceededAt','proceeded_at']
+ *     PATCH-map entry and the stamp-once filter hanging off it. Stopping the
+ *     writes while the allocator still read the column would have landed every
+ *     NEW order with a NULL stamp and gated it out of allocation forever.
+ *   · the FRONTEND carries no `proceeded_at` at all: no type, no query select
+ *     list, no component field.
+ *
+ * WHAT THAT DELETED BESIDES THE COLUMN'S USES. `soProceedGateBlocked` lost both
+ * call sites and went with them. The RULE it enforced did not move: every path
+ * that sets a Processing Date — after unification, every path that proceeds an
+ * order — runs collectProcessingGateProblems (shared/so-save-problems.ts), which
+ * checks the same four completeness facts INLINE and the money through
+ * meetsDepositGate. The /status branch it guarded fired only when the order
+ * ALREADY had a date, i.e. re-gated a state that had passed — and
+ * inconsistently, since an order that also carried a stamp was not re-gated.
+ *
+ * TWO LOOSE ENDS THIS CREATES, named rather than tidied away. #2383 landed hours
+ * earlier and lifted the proceed gate into lib/so-proceed-gate.ts with a
+ * per-condition refusal; removing the last two call sites leaves BOTH
+ * `soProceedGateBlocked` (that module's export) and `meetsProceedGate`
+ * (order-rules) with no caller in routes, lib or the frontend. Neither is
+ * deleted here — deleting a freshly-shipped export to tidy a merge is how work
+ * gets silently undone, and if a future proceed path needs to refuse, that is
+ * what it should call. docs/modules/sales-order.md has warned since 2026-08-13
+ * that this rule had TWO enforcement sites held in step "by agreement, not by
+ * construction": there is one live site now (collectProcessingGateProblems) and
+ * two orphans. The full note is at soProceedGateBlocked in that module.
+ *
+ * THE ONE STEP LEFT: DROP THE COLUMN, and NOT in this release.
+ * deploy.yml runs `node scripts/pg-migrate.mjs` BEFORE `wrangler deploy`, so for
+ * about a minute the OLD Worker is live against the NEW schema. The currently
+ * deployed code still SELECTs `proceeded_at` in LIST_COLS, the detail read, the
+ * POS board and the dashboard summary — a drop shipped alongside the code that
+ * stops selecting it is therefore a 42703 on every SO read for the length of the
+ * deploy. That is exactly what blocked prod for hours in #1191/0189. Once THIS
+ * commit is live, nothing reads it and the follow-up is 0284's shape:
+ *
+ *   -- Pre-flight, as 0284 does: name any object that still projects the column
+ *   -- rather than failing with a bare catalog error.
+ *   -- scm.mfg_sales_orders_with_payment_totals DOES project it (`SELECT so.*`),
+ *   -- so this WILL fire. DO NOT drop and recreate that view: a recreated view is
+ *   -- a NEW object whose ACL and owner do not survive, and prod died twice with
+ *   -- "permission denied for view" before 0191 copied the grant set back off a
+ *   -- never-dropped sibling. Prefer CREATE OR REPLACE VIEW with the column
+ *   -- omitted (same object, ACL intact); if REPLACE is refused because the
+ *   -- column list changes, copy the grants the way 0191 did and say so.
+ *   ALTER TABLE scm.mfg_sales_orders DROP COLUMN IF EXISTS proceeded_at;
+ *   NOTIFY pgrst, 'reload schema';
+ *
+ * THE 2990 MIRROR needs no change and earlier audits missed it entirely:
+ * routes/so-mirror.ts upserts `applyMap(body.header, …)`, which keeps every
+ * inbound key that exists on the Houzs table, so a `proceeded_at` arriving from
+ * 2990 (a separate repo on its own deploy schedule) was written straight
+ * through. applyMap filters against information_schema, so the drop above ends
+ * that silently and correctly.
+ *
+ * WHAT THE DATA LOOKED LIKE WHEN THE READ MOVED (probe-proceed-split, prod,
+ * 2026-08-18, run 32093080121 — #2396 shipped saying this was UNKNOWN):
+ *   company 1, 2724 live: 519 both set, 2205 neither, ZERO disagreeing. No-op.
+ *   company 2, 77 live: 5 CONFIRMED gained allocation (the bug #2396 fixed);
+ *     16 lost it — 12 CONFIRMED and 4 READY_TO_SHIP carrying a stamp with no
+ *     date. Those 4 visibly drop back to CONFIRMED on the next recompute. By the
+ *     owner's rule they are not proceeded, so that is the rule applied
+ *     correctly; the repair is a human supplying the date, never a script
+ *     inventing one (PROCEED_NEEDS_DATE in order-rules.ts).
+ *
+ * THE AUDIT FACT. "When did someone press Proceed" has no consumer and needs no
+ * column: nothing ever read the value AS a timestamp, and a change to the field
+ * already lands in scm.mfg_so_audit_log.field_changes, which nothing gates on.
+ * ─────────────────────────────────────────────────────────────────────────── */
 
 /** The camelCase key the header PATCH and amendment payloads carry it under. */
 export const SO_PROCESSING_DATE_PAYLOAD_KEY = 'processingDate' as const;
@@ -66,6 +213,27 @@ export const SO_PROCESSING_DATE_PAYLOAD_KEY = 'processingDate' as const;
  * against information_schema, the upsert returns 200, and the date silently
  * never arrives. Remove an entry only once the sending repo is confirmed off
  * that name.
+ *
+ * ─── STATUS 2026-08-18: STAYS. The unification sweep that retired `target_date`
+ * looked at this one and left it, deliberately. The owner's "全部你都是要统一掉
+ * 的" is about OUR names; this is the name ANOTHER repository still says, and
+ * removing it here does not stop 2990 saying it — it only makes the value
+ * vanish, for one company, with a 200 and no log.
+ *
+ * THE PRECONDITION, EXACTLY, so the next person does not have to re-derive it.
+ * BOTH must hold, and both are questions about PRODUCTION, not about source:
+ *
+ *   1. a company-2 SO mirrored AFTER 2990's own deploy shows a Processing Date
+ *      that arrived under `processing_date` — i.e. 2990 stopped sending the old
+ *      key. Read the mirrored row; do not read 2990's repository.
+ *   2. one FULL mirror re-delivery has drained since that deploy. 2990's outbox
+ *      drains on pg_cron, so a row queued before the deploy still carries the
+ *      old key however new the deploy is.
+ *
+ * Section F of `backend/scripts/probe-rename-preconditions.mjs` measures (1) —
+ * it counts company-2 SOs whose Processing Date arrived recently, which is zero
+ * only if nothing is mirroring at all. It cannot measure (2); that is a fact
+ * about 2990's queue and has to be confirmed on 2990's side.
  */
 export const SO_PROCESSING_DATE_LEGACY_COLUMNS: readonly string[] = [
   'internal_expected_dd',
@@ -90,10 +258,96 @@ export const SO_PROCESSING_DATE_LEGACY_COLUMNS: readonly string[] = [
  *
  *   SELECT count(*) FROM scm.so_amendments
  *    WHERE header_changes ? '<old key>' AND status NOT IN ('SENT','REJECTED');
+ *
+ * ─── STATUS 2026-08-18: STAYS, for the same reason as the column alias above.
+ * That count is the whole precondition and it is a question about production
+ * rows, not about source; section F of
+ * `backend/scripts/probe-rename-preconditions.mjs` runs exactly that statement.
+ * Retire the entry when the probe reports 0 — and note that 0 today does not
+ * stay 0, because a client still holding the old spelling can queue a new one
+ * at any time. Confirm no client sends it BEFORE reading the count, not after.
  */
 export const SO_HEADER_LEGACY_PAYLOAD_KEYS: Readonly<Record<string, string>> = {
   internalExpectedDd: SO_PROCESSING_DATE_PAYLOAD_KEY,
 };
+
+/**
+ * AutoCount's OWN name for this date. **EXTERNAL. NEVER UNIFY IT.**
+ *
+ * `PDate` is a user-defined field on AutoCount's sales-order document
+ * (`SO.UDF_PDate`). It is not a name this repo chose and not a name this repo
+ * may change: renaming it does not rename anything in AutoCount, it just stops
+ * the value arriving there. The write sites are
+ * `services/autocount-writeback.ts` (create) and `lib/so-edit-header.ts`
+ * (edit), and both carry a pointer back to this constant.
+ *
+ * The owner asked, on 2026-08-18, whether one of the seven names for this date
+ * was the AutoCount write. It is this one, and it is the single name in the set
+ * that is allowed to survive the unification — because it belongs to the other
+ * system.
+ *
+ * The failure a "unifying" sweep would cause is the usual silent one. AutoCount
+ * matches UDFs by NAME; an unknown key is dropped by the connector and the
+ * document posts fine without it, so the ERP would keep reporting success while
+ * every Processing Date stopped reaching the account book.
+ */
+export const SO_PROCESSING_DATE_AC_UDF = 'PDate' as const;
+
+/**
+ * `target_date` — THE NAME THAT WAS NOT RETIRED, and the measurement that
+ * stopped it. **It is live. Do not sweep it.**
+ *
+ * WHAT THE SOURCE LOOKS LIKE, and why it reads as dead. PR #140 dropped the
+ * field from the SO form ("targetDate → replaced by Processing + Delivery Date",
+ * SalesOrderDetail.tsx). `grep -rn targetDate frontend/src native e2e` returns
+ * ZERO — no client in THIS repository sends the key. It is nevertheless accepted
+ * at SO create, SO header PATCH, CO create and CO header PATCH, selected into
+ * three read shapes and typed on two frontend rows. Every signal inside the repo
+ * says dead field, delete it.
+ *
+ * WHAT PRODUCTION SAYS (probe-rename-preconditions.mjs section F, prod,
+ * 2026-08-18): **46 of 2826 SO rows carry a `target_date`, and ALL 46 were
+ * CREATED inside the last 90 days** — newest 6.75 days old, oldest 67.88. A row
+ * BORN with the value was given it at create; the ERP has not written it at
+ * create since #140; therefore **the POS handover is still sending it, today**.
+ * And it is still READ: `routes/reports.ts` selects it into the sales-report
+ * export.
+ *
+ * WHAT HAPPENED. The 2026-08-18 unification sweep removed the name from all
+ * eight sites and put every one of them back the same day, once the probe
+ * answered. Shipping the removal would have been the exact defect this whole
+ * file exists to prevent: the POS keeps POSTing `targetDate`, the create returns
+ * **201**, and the value is dropped in silence.
+ *
+ * THE LESSON, which is why this comment is long. "No writer in this repo" is not
+ * "no writer" — the census that called this field dead read the source, and the
+ * source was complete and honest and did not contain the producer. A name that
+ * crosses a system boundary can only be retired against a measurement.
+ *
+ * TO RETIRE IT LATER, in this order: (1) re-run section F and see ZERO rows
+ * BORN with one; (2) confirm with the POS that it has stopped sending
+ * `targetDate`; (3) then the accept paths, then the reads, then the column.
+ */
+export const SO_TARGET_DATE_RETIREMENT_BLOCKED = true as const;
+
+/**
+ * Framings of this date that have been RETIRED from the source tree and must not
+ * come back — the "go-to-production" / "factory queue" vocabulary.
+ *
+ * NOT COSMETIC, which is why it is a guarded list and not a style note. The
+ * owner does not schedule a factory ("我们都没有排产的"), so a comment reasoning
+ * about a factory queue is not merely old wording: it is a false model, and it
+ * is what a reader reaches for when deciding what this date should gate. The
+ * MRP comment claiming this field "drives when to order" survived for months
+ * beside code that ignored the field, and it survived because it agreed with
+ * the story everything around it told.
+ *
+ * The patterns live in `so-processing-date-names.test.ts` beside the file list
+ * they are checked against. This constant is the statement of intent the test
+ * refers back to.
+ */
+export const SO_PROCESSING_DATE_MEANING =
+  'the date this order is RELEASED FOR PURCHASING TO ORDER GOODS' as const;
 
 /**
  * Rewrite a STORED header_changes object's legacy payload keys onto the keys the
@@ -133,9 +387,10 @@ export function canonicaliseSoHeaderChanges<T>(
 // THE PAIR RULE — "both dates or neither", in ONE predicate.
 //
 // Owner, restated 2026-08-13 after saying it before: "processing date 和
-// delivery date 必须同时有或者同时没有". A Processing Date is the go-to-
-// production signal and the Delivery Date is what it is promised against; half
-// a pair is a half-stated schedule, and production queues on it.
+// delivery date 必须同时有或者同时没有". A Processing Date RELEASES the order to
+// purchasing and the Delivery Date is what it is promised against; half a pair
+// is purchasing told to buy with no date to buy against, or a promise nobody
+// has been released to fulfil.
 //
 // WHY IT MOVED HERE. The rule was written FIVE times, by hand, in five files —
 // the SO create path, the SO header PATCH, the CO create path, the amendment
@@ -305,8 +560,8 @@ export function readSoProcessingDateFromBody(
  * collectProcessingGateProblems — and that half is gated on
  * `facts.completeness`, which that call does not pass. So a Consignment Order
  * could take a Processing Date with no Delivery Date through a plain PATCH:
- * production's go-ahead with nothing to promise it against. The owner's rule is
- * 同时有或者同时没有 — both or neither.
+ * purchasing released to order goods with no date the goods are promised for.
+ * The owner's rule is 同时有或者同时没有 — both or neither.
  *
  * CLEARING ONE CLEARS BOTH, in the one direction that is safe: clearing the
  * Processing Date takes the Delivery Date with it, never the reverse. The CO
@@ -349,15 +604,26 @@ export function readSoProcessingDateFromBody(
  *
  * Owner 2026-07-16 — the lock fires once the processing day has passed on a
  *      CONFIRMED-or-later order. A Processing Date can only be SET on a ≥30%-paid
- *      order and IS production's "ready to build" signal, so once it elapses the
+ *      order and IS the signal that RELEASES it to purchasing (owner 2026-08-18:
+ *      "Processing Date 就代表这张单可以安排订货了"), so once it elapses the
  *      order is committed regardless of whether the explicit Proceed (IN_PRODUCTION)
  *      toggle was ever pressed. The prior rule ALSO required `proceeded_at` — but
  *      that is stamped only at the IN_PRODUCTION transition, so a CONFIRMED SO whose
  *      processing date had passed stayed directly editable (a salesperson could
  *      change a line's colour after we had already PO'd it). DRAFT (not yet
- *      confirmed) and CANCELLED stay editable. When the caller's header select omits
- *      `status` we fall back to the `proceeded_at` marker so a status-blind read can
- *      never OVER-lock a row.
+ *      confirmed) and CANCELLED stay editable.
+ *
+ *      THE STATUS-BLIND FALLBACK IS GONE (2026-08-18). soProcessingLocked used to
+ *      end `return Boolean(header.proceeded_at)`, reached only when the caller's
+ *      select omitted `status`, "so a status-blind read can never OVER-lock a
+ *      row". The protection is kept and the second column is not: `status` is now
+ *      a REQUIRED key on the predicate's parameter type, so a caller without one
+ *      fails to compile instead of quietly deciding out of a different fact, and
+ *      an empty status at runtime answers "not locked" — the same side the marker
+ *      was chosen to protect. It was never a live second opinion: every caller's
+ *      select already named status, and the 2026-08-18 prod census
+ *      (probe-proceed-split, run 32093080121) found no NULL-status row in either
+ *      company across 2826 orders.
  *
  * Shared route guard — fetches the two date columns and returns the 409 body
  *    when locked, null when free. Callers that already hold the header row use
@@ -373,8 +639,8 @@ export function readSoProcessingDateFromBody(
  * ── SO Proceed gate (FIX 2, 2026-07-16) ────────────────────────────────────
  *    meetsProceedGate (shared order-rules) was only consulted at CREATE
  *    auto-proceed. The two MANUAL proceed paths — PATCH /:docNo/status →
- *    IN_PRODUCTION (stamps proceeded_at) and PATCH /:docNo proceededAt — stamped
- *    proceeded_at with NO ≥50%-paid / full-address check, so mobile / API could
+ *    IN_PRODUCTION and PATCH /:docNo proceededAt — proceeded
+ *    with NO ≥50%-paid / full-address check, so mobile / API could
  *    proceed an under-paid or address-less SO (desktop blocked it). Reuse the SAME
  *    shared gate on both manual paths so create + manual + client can't drift.
  *    `paid` mirrors the sibling processing-date gate in this file: Σ payment rows vs
@@ -393,8 +659,8 @@ export function readSoProcessingDateFromBody(
  *    It exists because proceeding now WRITES the date (owner: a Processing Date is
  *    what "proceeded" means). That write has to clear exactly what a date set on the
  *    header clears — variants, colour-KIV, deposit, completeness, the date rules —
- *    or the proceed route becomes the way around the gate that guards the shop
- *    floor.
+ *    or the proceed route becomes the way around the gate that guards what
+ *    purchasing is allowed to go and buy.
  *
  * Owner 2026-06-12 + Loo 2026-06-13 — after the processing date passes the SO is
  *    what we PO to the supplier, so the columns that feed the supplier PO freeze on

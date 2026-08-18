@@ -34,7 +34,10 @@ import {
   type CollapsedLine,
   type SofaRefusal,
 } from './autocount-sofa-collapse';
-import { SO_PROCESSING_DATE_COLUMN } from '../scm/shared/so-processing-date';
+import {
+  SO_PROCESSING_DATE_AC_UDF,
+  SO_PROCESSING_DATE_COLUMN,
+} from '../scm/shared/so-processing-date';
 import { buildVariantSummary } from '../scm/shared/variant-summary';
 
 /** Fixed AutoCount debtor account; the customer's real name is written over it. */
@@ -1180,7 +1183,16 @@ export function composeCreateSo(
       BRANDING: bookSpellingOrOwn(soBranding(header.branding, lines), BRANDING_MAP),
       VENUE: bookSpellingOrOwn(header.venue, VENUE_MAP),
       ToPONo: soCustomerRef(header),
-      PDate: acUdfDate(header.processing_date),
+      /* `PDate` IS AUTOCOUNT'S OWN NAME, NOT OURS — DO NOT "UNIFY" IT.
+         The ERP calls this date `processing_date` everywhere it owns; this key
+         is the UDF spelling on AutoCount's sales-order document
+         (`SO.UDF_PDate`), and it is the one name in the set that a naming
+         sweep must leave alone (owner asked 2026-08-18 which of the names was
+         the AutoCount write — this one). Renaming it renames nothing in
+         AutoCount: the connector drops an unknown UDF, the document posts 200
+         without it, and every Processing Date silently stops reaching the
+         account book. See SO_PROCESSING_DATE_AC_UDF. */
+      [SO_PROCESSING_DATE_AC_UDF]: acUdfDate(header.processing_date),
       BALANCE: acUdfMoney(outstandingCenti),
       /* The misspelling is AutoCount's own — the field is UDF_PAYEMENT in the
          book, and the cutover read it (import-ac-outstanding-so.mjs). */
@@ -1447,6 +1459,12 @@ export const AC_ROUTE = {
   cancel: '/cancel',
   edit: '/edit',
   ensure_masters: '/ensure-masters',
+  /* NOT a document operation, and the only route here that reads. It is in this
+     map so the drain can reach it through `callAcService` — same URL, same key,
+     same error classification — rather than growing a second HTTP client for
+     one call. The service answers it on GET or POST (the branch sits above the
+     POST-only check) and it is the ONLY thing that says which BUILD is running. */
+  health: '/health',
 } as const;
 
 export type AcOp = keyof typeof AC_ROUTE;
@@ -1496,6 +1514,13 @@ export interface AcCallResult {
    * answered. Absent reads as "not reported", never as "compared and agreed".
    */
   mismatches: AcMasterMismatch[];
+  /**
+   * The parsed response object, for the one caller that needs a field this
+   * interface does not name: `/health` answers `builtAt` and `mvid`, and
+   * promoting those to first-class fields would put a diagnostic's shape into
+   * the type every document operation returns. Null when the body was not JSON.
+   */
+  body: Record<string, unknown> | null;
   /** False for a refusal a retry cannot fix (a 4xx, or AutoCount saying no). */
   retryable: boolean;
 }
@@ -1575,7 +1600,7 @@ export async function callAcService(
   const cfg = acServiceConfig(env);
   if (!cfg) {
     return {
-      ok: false, status: 0, docNo: null, lines: [], mismatches: [],
+      ok: false, status: 0, docNo: null, lines: [], mismatches: [], body: null,
       error: 'AC_SYNC_URL is not configured', retryable: false,
     };
   }
@@ -1597,6 +1622,7 @@ export async function callAcService(
       docNo: null,
       lines: [],
       mismatches: [],
+      body: null,
       error: e instanceof Error ? e.message : String(e),
       retryable: true,
     };
@@ -1613,6 +1639,7 @@ export async function callAcService(
       docNo: body.docNo ?? null,
       lines: parseCreatedLines(body.lines),
       mismatches: parseAcMismatches(body.mismatched),
+      body: body as Record<string, unknown>,
       error: null,
       retryable: false,
     };
@@ -1627,6 +1654,7 @@ export async function callAcService(
        nine of them agree, one of them disagree, and fail on an unrelated ITEM —
        dropping the finding because the call failed would lose it for good. */
     mismatches: parseAcMismatches(body.mismatched),
+    body: (body ?? null) as Record<string, unknown> | null,
     error,
     /* 4xx is configuration or a bad payload — a retry cannot fix either, so
        fail it now with the message intact. 5xx is ambiguous by construction:
@@ -1687,9 +1715,15 @@ export const SO_ADDRESS_FIELDS: readonly string[] = [
   'address1', 'address2', 'address3', 'address4', 'city', 'postcode', 'customer_state',
 ];
 
-/** `processing_date` is the owner's 账目日期; it leaves as the `PDate` UDF. */
+/** `processing_date` is the owner's 账目日期; it leaves as the `PDate` UDF.
+ *
+ *  EXTERNAL NAME ON THE RIGHT-HAND SIDE. The key is OUR column and follows our
+ *  unification; the value is AUTOCOUNT'S UDF and must never be renamed to match
+ *  it. This map is exactly where the two vocabularies meet, which is why both
+ *  sides are pinned to constants — `SO_PROCESSING_DATE_COLUMN` moves with a
+ *  rename, `SO_PROCESSING_DATE_AC_UDF` deliberately does not. */
 export const CLEARABLE_SO_UDF_FIELDS: Readonly<Record<string, string>> = {
-  processing_date: 'PDate',
+  [SO_PROCESSING_DATE_COLUMN]: SO_PROCESSING_DATE_AC_UDF,
 };
 
 /** Header dates with no foreign key behind them, so a cleared one may travel. */

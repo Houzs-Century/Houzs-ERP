@@ -88,8 +88,8 @@ describe('resolveProceedProcessingDate', () => {
   });
 
   it('refuses rather than guessing today', () => {
-    // The whole point: a guessed start date is a real order sitting in the real
-    // factory queue on the wrong day, and nothing would ever show it was guessed.
+    // The whole point: a guessed date releases a real order to purchasing on the
+    // wrong day, and nothing would ever show that the date was guessed.
     const r = resolveProceedProcessingDate({ supplied: '   ', stored: '' });
     expect(r.ok).toBe(false);
   });
@@ -125,8 +125,8 @@ describe('resolveProceedProcessingDate', () => {
   });
 
   it('falls through an unreadable STORED value to the supplied date', () => {
-    // A row we cannot read a day out of is not a date the factory can queue by,
-    // so it must not silently stand in for one.
+    // A row we cannot read a day out of is not a date anyone can be released
+    // against, so it must not silently stand in for one.
     expect(resolveProceedProcessingDate({ supplied: '2026-09-01', stored: 'unknown' }))
       .toEqual({ ok: true, date: '2026-09-01', write: true });
   });
