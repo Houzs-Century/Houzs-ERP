@@ -132,8 +132,6 @@ type SoRow = {
      `processing_date` this row type used to ALSO carry (never written by
      anything) went with it. */
   processing_date: string | null;
-  /* PR #46 — POS handover target_date (Marketing-side "Target Date" stamp). */
-  target_date: string | null;
   /* PR #143 — Header-level payment method (cash | transfer | merchant) +
      installment plan / merchant provider. Populated when the SO carries a
      single-shot deposit; per-payment ledger lives in mfg_sales_order_payments. */

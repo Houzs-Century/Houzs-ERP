@@ -154,8 +154,8 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
   }
 
   // 1c. Customer + delivery completeness. Unified with the Proceed gate (owner
-  //     2026-07-31) — the Processing Date IS the go-to-production signal, so the
-  //     same facts must be present for either. Only when a date is being SET;
+  //     2026-07-31) — the Processing Date IS the signal that releases the order
+  //     to purchasing, so the same facts must be present for either. Only when a date is being SET;
   //     clearing it, or editing something else on a dated order, never blocks.
   if (facts.procDate && facts.completeness) {
     const { hasCustomerName, hasAddress, hasPostcode } = facts.completeness;
@@ -173,8 +173,8 @@ export function collectProcessingGateProblems(facts: ProcessingGateFacts): SaveP
     }
   }
 
-  // 2. Deposit — a Processing Date is production's "ready to build" signal,
-  //    so it can't be set until >=30% is collected. Reported with the concrete
+  // 2. Deposit — a Processing Date releases the order to purchasing to go and
+  //    order the goods, so it can't be set until >=30% is collected. Reported with the concrete
   //    amount + threshold. The SAME predicate the Proceed gate weighs
   //    (meetsDepositGate) — one deposit rule, since setting the date IS
   //    proceeding. Only fires when a date is actually being set.

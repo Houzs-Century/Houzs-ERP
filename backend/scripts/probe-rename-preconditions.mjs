@@ -1,6 +1,12 @@
 #!/usr/bin/env node
-/* Pre-flight for migration 0284_scm_processing_date_one_name.sql, read against
-   the LIVE catalog. Writes nothing (the whole run is one READ ONLY transaction).
+/* Pre-flight for the Processing Date's name unification, read against the LIVE
+   catalog. Writes nothing (the whole run is one READ ONLY transaction).
+
+   SECTIONS A-E are migration 0284's pre-conditions and are what the MATCHES /
+   DIFFERS verdict scores. SECTION F was added 2026-08-18 by the sweep that
+   collapsed the remaining names, and asks the questions the NEXT removals need
+   answered — target_date's live writers, the two surviving aliases' queues. F is
+   printed and never scored, so a red run still means exactly one thing.
 
    WHY THIS EXISTS. 0284 renames scm.mfg_sales_orders.internal_expected_dd ->
    processing_date, the same on the consignment twin, sweeps every dependent
@@ -747,6 +753,94 @@ async function main() {
         l.nonarr_old === 0,
       );
     }
+    say("");
+
+    // ── F. THE NEXT RETIREMENTS — not 0284's pre-conditions ─────────────────
+    /* Added 2026-08-18 with the sweep that collapsed the Processing Date's
+       seven names to one. 0284 is history; these are the questions the NEXT
+       removal has to answer, and they are questions about PRODUCTION ROWS that
+       no amount of reading source can settle.
+
+       DELIBERATELY `info()`, NEVER `check()`. The MATCHES / DIFFERS verdict is a
+       statement about what migration 0284 assumed, and folding a different
+       migration's pre-conditions into it would make a red run mean two things.
+       Read these numbers; do not read the verdict for them. */
+    say(`--- F. pre-conditions for the NEXT name retirements -------------------------`);
+
+    /* F1. target_date — the ERP source stopped naming it on 2026-08-18. The
+       COLUMN is still there, and the question the drop needs answered is
+       whether anything OUTSIDE this repository (the POS) still writes it. A
+       recent write is the only evidence that would exist: no ERP path has
+       written the column since PR #140 dropped the field from the form. */
+    for (const t of BASE_TABLES) {
+      if (!tableExists(t)) { info(`scm.${t}: table absent — nothing to say about target_date`); continue; }
+      const [td] = await q`
+        SELECT count(*)::int AS has_col
+        FROM pg_attribute a
+        JOIN pg_class c ON c.oid = a.attrelid
+        JOIN pg_namespace n ON n.oid = c.relnamespace
+        WHERE n.nspname = 'scm' AND c.relname = ${t}
+          AND a.attname = 'target_date' AND a.attnum > 0 AND NOT a.attisdropped`;
+      if (!td.has_col) { info(`scm.${t}.target_date: ALREADY GONE from the catalog`); continue; }
+      const [r] = await q.unsafe(`
+        SELECT count(*)::int AS rows_total,
+               count(target_date)::int AS set_ever,
+               count(*) FILTER (WHERE target_date IS NOT NULL
+                                  AND coalesce(updated_at, created_at) > now() - interval '90 days')::int AS set_90d,
+               coalesce(extract(epoch FROM (now() - max(coalesce(updated_at, created_at))
+                       FILTER (WHERE target_date IS NOT NULL))) / 86400.0, -1)::numeric(10,2) AS newest_age_days
+        FROM scm.${t}`);
+      info(`scm.${t}.target_date: ${r.set_ever} of ${r.rows_total} rows set ever; ${r.set_90d} touched in the last 90 days`);
+      info(`  newest touched row carrying one: ${Number(r.newest_age_days) < 0 ? "n/a (none)" : r.newest_age_days + " days old"}`);
+      info(
+        Number(r.set_90d) > 0
+          ? `  >> SOMETHING OUTSIDE THIS REPO STILL WRITES IT. The column DROP must WAIT; the NAME retirement in the ERP source is unaffected (the ERP never read the value).`
+          : `  >> no writer in 90 days. The column drop has no live producer to break — still a separate migration, on its own evidence.`,
+      );
+    }
+
+    /* F2. internalExpectedDd — the stored-jsonb alias in
+       SO_HEADER_LEGACY_PAYLOAD_KEYS. This is the EXACT statement quoted in that
+       constant's doc comment, run rather than described. */
+    const amendCls = await q`SELECT to_regclass('scm.so_amendments') IS NOT NULL AS present`;
+    if (amendCls[0].present) {
+      const [a] = await q`
+        SELECT count(*)::int AS pending_total,
+               count(*) FILTER (WHERE header_changes ? ${OLD_KEY})::int AS pending_old_key
+        FROM scm.so_amendments
+        WHERE status NOT IN ('SENT', 'REJECTED')`;
+      info(`scm.so_amendments non-terminal rows: ${a.pending_total}, of which ${a.pending_old_key} still carry '${OLD_KEY}'`);
+      info(
+        Number(a.pending_old_key) > 0
+          ? `  >> KEEP the '${OLD_KEY}' alias. Removing it makes those approvals write no date, silently.`
+          : `  >> 0 today — but a client still sending the old spelling can queue a new one at any time. Confirm no deployed client sends it BEFORE trusting this number.`,
+      );
+    } else {
+      info("scm.so_amendments absent on this database");
+    }
+
+    /* F3. internal_expected_dd — the INBOUND alias for the 2990 mirror. This can
+       only show that company 2 is still delivering dates at all; whether 2990
+       has redeployed off the old KEY is a fact about 2990's repository and its
+       outbox, and cannot be read from here. Printed so the next person knows
+       which half they still owe. */
+    if (tableExists("mfg_sales_orders")) {
+      const [m] = await q.unsafe(`
+        SELECT count(*) FILTER (WHERE company_id = 2)::int AS co2_rows,
+               count(*) FILTER (WHERE company_id = 2 AND ${NEW_COL} IS NOT NULL)::int AS co2_dated,
+               count(*) FILTER (WHERE company_id = 2 AND ${NEW_COL} IS NOT NULL
+                                  AND coalesce(updated_at, created_at) > now() - interval '30 days')::int AS co2_dated_30d
+        FROM scm.mfg_sales_orders`);
+      info(`company 2 SOs: ${m.co2_rows} rows, ${m.co2_dated} carry a Processing Date, ${m.co2_dated_30d} of those touched in the last 30 days`);
+      info(`  >> this measures HALF the precondition. The other half — 2990 deployed off '${OLD_COL}' AND one full mirror re-delivery drained — lives in 2990's repo and its pg_cron outbox, and must be confirmed there.`);
+    }
+
+    /* F4. The legacy native Sales module's queued change requests live in D1
+       (SQLite), not in this database, so this probe cannot reach them. Named
+       rather than omitted: a pre-flight that silently skips a pre-condition is
+       how a retirement ships on three answers out of four. */
+    info(`sales_entry_change_requests: NOT MEASURABLE HERE — it is a D1/SQLite table, not Postgres.`);
+    info(`  >> stage 2 of the native Sales module unification needs it; see SO_FORM_TEXT_FIELDS in backend/src/routes/sales.ts for the statement to run.`);
     say("");
   });
 

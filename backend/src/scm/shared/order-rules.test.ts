@@ -88,8 +88,8 @@ describe('resolveProceedProcessingDate', () => {
   });
 
   it('refuses rather than guessing today', () => {
-    // The whole point: a guessed start date is a real order sitting in the real
-    // factory queue on the wrong day, and nothing would ever show it was guessed.
+    // The whole point: a guessed date releases a real order to purchasing on the
+    // wrong day, and nothing would ever show that the date was guessed.
     const r = resolveProceedProcessingDate({ supplied: '   ', stored: '' });
     expect(r.ok).toBe(false);
   });

@@ -998,7 +998,7 @@ const HEADER =
   'ship_to_address, bill_to_address, install_to_address, subtotal_sen, overdue, ' +
   /* PR #46 — POS handover */
   'email, customer_type, salesperson_id, city, postcode, building_type, ' +
-  'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, target_date, ' +
+  'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, ' +
   /* PR #143 + #150 + #157 — Payment (migrations 0068 + 0069 + 0070) */
   'payment_method, installment_months, merchant_provider, approval_code, payment_date, deposit_centi, paid_centi, ' +
   /* Delivery fee snapshot (migration 0133) — folded into local_total/revenue/margin. */
@@ -3258,9 +3258,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     if (createPairRefusal) return c.json(createPairRefusal, 400);
     /* Aggregate the remaining Processing-Date gates into ONE response instead of
        returning on the first (owner 2026-07-18): the category-mandatory variants
-       (Commander 2026-05-29 — a Processing Date means "ready to build", so every
-       line must carry its variants; the CREATE path once skipped this, letting a
-       direct POST slip through), the past-date rule (Malaysia UTC+8 "today" so an
+       (Commander 2026-05-29 — a Processing Date means purchasing is released to
+       ORDER these goods, so every line must carry the variants that say WHAT to
+       order; the CREATE path once skipped this, letting a direct POST slip
+       through), the past-date rule (Malaysia UTC+8 "today" so an
        early-UTC request near midnight isn't wrongly rejected), and
        processing-≤-delivery (Owner 2026-06-03). The 30% deposit gate can't join
        here — the order total isn't priced until later — so it emits the SAME
@@ -4896,10 +4897,10 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     companyCode: c.get('companyCode') ?? null,
   });
 
-  /* Processing-Date payment gate (Loo 2026-06-30) — a Processing Date is
-     production's "ready to build" signal: once set, the backend orders materials
-     / starts the build when the date arrives. So it must NOT be set until the
-     company's deposit is collected (processingDateThresholdFor — Houzs 30%,
+  /* Processing-Date payment gate (Loo 2026-06-30) — a Processing Date RELEASES
+     the order to purchasing (owner 2026-08-18: "Processing Date 就代表这张单可以
+     安排订货了，然后过了一天我们才会落下来，然后采购才会去订货"). So it must NOT
+     be set until the company's deposit is collected (processingDateThresholdFor — Houzs 30%,
      2990 50%). The SAME deposit rule autoProceed weighs above, because they are
      the same act. depositTotalCenti = the POS deposit on this create;
      grandTotal = order total — both in scope from the autoProceed block. */
@@ -5058,7 +5059,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       ? (normalizePhone(body.emergencyContactPhone) ?? body.emergencyContactPhone)
       : null,
     emergency_contact_relationship: (body.emergencyContactRelationship as string) ?? null,
-    target_date: dateOrNull(body.targetDate),
     customer_id: orderCustomerId,
     /* Mig 0175 — canonicalize MY state at write so 'PENANG' / 'Kl' / 'W.P.
        Kuala Lumpur' land as the exact my_localities spelling. Foreign state
@@ -5770,8 +5770,8 @@ export const patchMfgSalesOrderStatusHandler = async (c: any) => {
     /* PROCEED IS THE DATE (owner, pinned 2026-08-13: *"只要有 Processing Date,
        就代表他 Proceed 了。Proceed 的日期是他填入 Processing Date 的日期。"*).
        This route used to stamp proceeded_at with the click time and write NO
-       date, so an order could sit IN_PRODUCTION with no start date — production
-       queues by that date, so those orders were in the factory queue nowhere.
+       date, so an order could sit IN_PRODUCTION with no release date at all —
+       nothing ever told purchasing it was theirs to order.
        The date the proceed proceeds WITH is either already on the order or comes
        in on this request; there is no third source, and today is a guess. */
     const resolved = resolveProceedProcessingDate({
@@ -6599,7 +6599,6 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['emergencyContactName', 'emergency_contact_name'],
     ['emergencyContactPhone', 'emergency_contact_phone'],
     ['emergencyContactRelationship', 'emergency_contact_relationship'],
-    ['targetDate', 'target_date'],
     /* PR #143 + #150 — Payment fields */
     ['paymentMethod', 'payment_method'],
     ['installmentMonths', 'installment_months'],
@@ -7004,8 +7003,8 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
 
   /* Processing-Date payment gate (Loo 2026-06-30) — the same ≥30%-collected rule
      the CREATE path enforces, applied when a header PATCH SETS or CHANGES the
-     Processing Date to a non-null value. The date is production's "ready to build"
-     signal, so it can't go in until ≥30% of the money is in. Fires ONLY on a genuine
+     Processing Date to a non-null value. The date RELEASES the order to
+     purchasing, so it can't go in until ≥30% of the money is in. Fires ONLY on a genuine
      change (clearing it, or an unchanged re-save, passes — so an unrelated edit on
      an already-dated, since-refunded SO isn't blocked). Money-only — customer-info
      / address are deliberately not gated (they resolve later in Proceed). `paid` =
@@ -7727,7 +7726,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
      POST/PATCH already blocks setting a Processing Date while any line has
      blank category-mandatory variants (findIncompleteVariantLines), but a line
      ADDED to an already processing-dated SO skipped that check — so a fabric
-     could be blanked on a build that's already "ready to build". Re-run the
+     could be blanked on an order purchasing was already released to buy. Re-run the
      shared guard on this added line when the SO carries a Processing Date
      (processing_date). Same 409 shape the header path returns. */
   if ((header as { processing_date?: string | null }).processing_date) {
@@ -8375,7 +8374,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
        SO already carries a Processing Date (processing_date) the header
        guard (findIncompleteVariantLines) has already vouched every line is
        complete; a later line edit must not be able to blank a category-mandatory
-       variant (e.g. clear a fabric) on that "ready to build" order. Only checked
+       variant (e.g. clear a fabric) on an order already released for ordering.
+       Only checked
        when the caller actually CHANGED variants / item code (same grandfather as
        the allowed-options gate above) so an untouched re-save is never rejected. */
     const { data: soHdr } = await sb.from('mfg_sales_orders')

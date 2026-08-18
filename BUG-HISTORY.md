@@ -1,3 +1,121 @@
+## Seven names for one date, and the one that is not ours — the Processing Date is a purchasing release, not a production date [med]
+
+<!-- area: Sales orders + pricing -->
+
+**Symptom.** Owner, 2026-08-18: *"全部你都是要统一掉的，不要那么多个"*. One fact —
+the SO's Processing Date — answered to **seven** names across the tree, and every
+discussion about it had produced a new bug for months. In the same message he
+corrected what the date MEANS, and the correction contradicts what most of the
+comments in this repo said about it.
+
+**What the date actually is.** *"因为我们有时候开单，未必是要直接 Processing 这张
+单的。所以 Processing Date 就代表这张单可以安排订货了，然后过了一天我们才会落下来，
+然后采购才会去订货"* — **the date this order is RELEASED FOR PURCHASING TO ORDER
+GOODS**. Raising an order is not acting on it. And: *"我们都没有排产的，我们都不是
+Production"* — **there is no production scheduling in this business**. Every
+comment calling this a "go-to-production" date or reasoning about a "factory
+queue" was describing a company that does not exist. Fourteen of them, across
+nine files plus two doc sections, now say what he said. Two were user-facing
+refusal strings (*"Set the date the factory starts"*, *"a wrong start date is a
+wrong factory queue"*) — an operator was being told to schedule a factory.
+
+**The ~1 day lag is NOT implemented, and is now recorded as not implemented.**
+MRP does not read this date to decide when to order at all: it derives
+`orderByDate = delivery date − category lead days` and only DISPLAYS the
+Processing Date. `routes/mrp.ts:193` has commented the field as *"(drives when to
+order)"* the whole time — a comment agreeing with the owner while the code below
+it ignored the field. Adjacent evidence is not evidence.
+
+**The seven names, and what happened to each.**
+
+| name | verdict |
+|---|---|
+| `processing_date` | **KEEP** — the column, via `SO_PROCESSING_DATE_COLUMN` |
+| `processingDate` | **KEEP** — the payload key |
+| `proceeded_at` | dying; #2396 took its last reachable reader, the drop is on `feat/processing-date-has-one-storage` |
+| `target_date` | **RETIRED FROM THE SOURCE** — this PR |
+| `internal_expected_dd` | **STAYS**, with the precondition written down |
+| `internalExpectedDd` | **STAYS**, with the precondition written down |
+| `PDate` | **STAYS — it is AutoCount's name, not ours** |
+
+**`target_date` was a live second date field that nothing wrote.** PR #140
+dropped it from the SO form — `SalesOrderDetail.tsx`: *"targetDate → replaced by
+Processing + Delivery Date"* — and no client has sent the key since. It was still
+accepted on **four** write paths (SO create, SO header PATCH, CO create, CO header
+PATCH), selected into **three** read shapes and typed on **two** frontend rows.
+That is worse than a dead column: it is a second date an operator or an
+integration could start filling, one keystroke from the real one, with no deposit
+gate, no pair rule, no lock and no stock allocation behind it. The NAME is gone
+from all eight files. **The COLUMN is not dropped here** — that needs its own
+migration on its own evidence, and section F of `probe-rename-preconditions.mjs`
+now counts live writers in production before anyone tries.
+
+**`PDate` is the one name that must SURVIVE the unification, and the owner asked
+which one it was.** It is AutoCount's own UDF (`SO.UDF_PDate`) on AutoCount's
+document. AutoCount matches UDFs by NAME: rename it and the connector drops an
+unknown key, the document posts **200 without it**, and every Processing Date
+silently stops reaching the account book. Both write sites
+(`services/autocount-writeback.ts`, `scm/lib/so-edit-header.ts`) now carry the
+warning and read the name from `SO_PROCESSING_DATE_AC_UDF`, and the guard test
+fails if either loses it.
+
+**The two aliases that STAY, and why leaving them is the finding.** Both are
+names a **queue outside this deploy** still carries, so removing them does not
+stop anything saying them — it only makes the value vanish, quietly:
+
+- `internal_expected_dd` is the inbound alias for the 2990 mirror. 2990 is a
+  separate repository on its own deploy schedule; `applyMap` filters an inbound
+  row against the destination table's columns and DROPS what it does not
+  recognise — no error, upsert returns **200**, company 2's date simply stops
+  arriving.
+- `internalExpectedDd` is frozen inside `so_amendments.header_changes` jsonb
+  written days before it is replayed. `applySoAmendment` `continue`s past an
+  unknown key, so the amendment approves, audits, marks SO_APPROVED — and never
+  writes the date.
+
+Each constant now carries the EXACT precondition instead of a general warning,
+and section F of the probe runs the two statements rather than describing them.
+
+**The legacy native Sales module: same concept, staged unification.** The owner
+ruled *"全部我们只有一个 Processing Date"*, overruling an earlier census that
+recommended keeping `sales_entries.processing_date` separate. What differs is the
+ROW, not the concept. The rename trap is real and is respected: `applyEntryPatch`
+builds `SET ${k} = ?` from an allowlist, and one of its callers replays a payload
+parked days earlier, so a dropped key is silently ignored on approve.
+**Stage 1 shipped** — `canonicaliseSalesEntryBody` folds the canonical
+`processingDate` onto the stored key on all four roads in (create, direct PATCH,
+change-request QUEUE so newly parked payloads are already canonical, and the
+approve replay), reusing the SCM seam so the two modules cannot drift on "the
+body carries both spellings". Nothing was removed. **Stage 2 is not shipped**,
+and its precondition is written where the next person will hit it.
+
+**The guard, and the proof it is not vacuous.**
+`backend/src/scm/shared/so-processing-date-names.test.ts` reads the real source
+via `?raw` and fails BOTH ways: if a retired name reappears in any of the eight
+files it was swept from, **and** if a "unify the names" sweep deletes `PDate` or
+either alias. Four regressions were planted and measured:
+
+| planted | `tsc` | the guard |
+|---|---|---|
+| `['targetDate', 'target_date']` back in an accept-map | **exit 0** | FAILS |
+| `udf.processingDate = pdate` replacing the AutoCount UDF | **exit 0** | FAILS |
+| `SO_PROCESSING_DATE_LEGACY_COLUMNS` emptied | **exit 0** | FAILS |
+| a `"ready to build"` comment re-added | **exit 0** | FAILS |
+
+The compiler is blind to all four, which is the entire reason the test reads
+text: every failure in this family is a name inside a string. Each case asserts a
+non-vacuous ANCHOR before asserting the absence, so a file that moves or is
+gutted fails loudly instead of passing by containing nothing.
+
+**Deferred, named, not silently skipped.** The `target_date` COLUMN drop (needs
+its own migration and the production count section F takes). Both alias
+retirements (each blocked on a queue outside this deploy). Stage 2 of the native
+Sales module (blocked on a D1 count this Postgres probe cannot reach — said so
+rather than skipping it). And the rescheduling split the owner raised in the same
+message — the board and PO coverage plan on the AMENDED delivery date while MRP
+ranks against the ORIGINAL — which is a different fact from the naming and is not
+touched here.
+
 ## A Sales Order with a Processing Date was refused stock forever — the mfg-sales allocation gate read a field no client writes [high]
 
 **Symptom.** A Sales Order given a Processing Date locked, appeared on the

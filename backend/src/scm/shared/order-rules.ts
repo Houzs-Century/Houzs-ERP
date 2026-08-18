@@ -100,19 +100,20 @@ export const meetsDepositGate = (
  *  more than three times: *"只要有 Processing Date，就代表他 Proceed 了。没有
  *  processing date 就代表没有 proceed。"* Proceed is therefore not an event with a
  *  click time — it is the state of having a date — so a proceed with no date is
- *  not an order we can start: the factory queue is ordered BY that date.
+ *  not an order anyone has been released to act on. Owner 2026-08-18:
+ *  *"Processing Date 就代表这张单可以安排订货了"* — the date IS the release.
  *
- *  Refusing beats defaulting to today. A guessed start date is a real order in
- *  the real queue on the wrong day, and nobody would ever see that it was
- *  guessed. A refusal costs the operator one field. */
+ *  Refusing beats defaulting to today. A guessed date releases a real order to
+ *  purchasing on the wrong day, and nobody would ever see that it was guessed.
+ *  A refusal costs the operator one field. */
 export const PROCEED_NEEDS_DATE = {
   error: 'proceed_needs_processing_date',
-  reason: 'Proceeding an order means setting its Processing Date, and this order has none. Set the date the factory starts, then proceed.',
+  reason: 'Proceeding an order means setting its Processing Date, and this order has none. Set the date this order is released for ordering, then proceed.',
 } as const;
 
 export const PROCEED_DATE_UNREADABLE = {
   error: 'proceed_needs_processing_date',
-  reason: 'The Processing Date sent with this proceed is not a calendar date (expected YYYY-MM-DD). A wrong start date is a wrong factory queue, so nothing was changed.',
+  reason: 'The Processing Date sent with this proceed is not a calendar date (expected YYYY-MM-DD). A wrong date releases the order for ordering on the wrong day, so nothing was changed.',
 } as const;
 
 export type ProceedDateInput = {
