@@ -383,10 +383,24 @@ if (checkOnly) {
   }
   /* A verdict computed over a suspiciously small corpus is worth naming too:
      the ledger only grows, so a sudden collapse is a parser regression rather
-     than a tidy-up. Reported, not gated — the floor would need maintaining, and
-     an unmaintained floor is the next stale number. */
+     than a tidy-up.
+
+     REPORTED by default, FAILABLE with `--strict` — and that is deliberately the
+     same shape the drift check used to have. `derivedDocsDoNotDeadlock.test.mjs`
+     requires every derived-doc generator to keep a `--strict` escalation, so that
+     a soft signal can be made hard by anyone who wants it in a job of their own,
+     without being hard for every author by default. Untracking the index removed
+     the DRIFT signal; it did not remove the reason that rule exists, so the flag
+     now guards the signal that is left. Do not delete it to tidy up: the guard
+     test reads this source and will refuse. */
   if (entries.length < 100) {
-    console.warn(`BUG INDEX: only ${entries.length} entries parsed. This ledger has held 300+ since 2026-08; check the parser before trusting that.`);
+    const thin =
+      `BUG INDEX: only ${entries.length} entries parsed. This ledger has held 300+ since 2026-08, ` +
+      `so a collapse is a parser regression rather than a tidy-up — check the parser before trusting it.\n` +
+      `NOT failing the run: the ledger's size is not this author's to answer for, and a floor here would ` +
+      `need maintaining, which is how the next stale number gets written. Pass --strict to fail on it.`;
+    if (process.argv.includes("--strict")) { console.error(thin); process.exit(1); }
+    console.warn(thin);
   }
 } else {
   fs.mkdirSync(path.dirname(OUT), { recursive: true });
