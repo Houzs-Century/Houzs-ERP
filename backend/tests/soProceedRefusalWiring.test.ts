@@ -15,6 +15,7 @@
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
 import soRoutes from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import proceedGate from '../src/scm/lib/so-proceed-gate.ts?raw';
 import orderRules from '../src/scm/shared/order-rules.ts?raw';
 import saveProblems from '../src/scm/shared/so-save-problems.ts?raw';
 
@@ -25,6 +26,7 @@ const code = (s: string): string =>
   s.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
 
 const SO = code(soRoutes);
+const GATE = code(proceedGate);
 const RULES = code(orderRules);
 const PROBLEMS = code(saveProblems);
 
@@ -89,7 +91,7 @@ describe('the wording is one table, not two lists that look alike', () => {
        something they did not write is worse than no gate. */
     const CONDITION_WORDS = ['customer name', 'address', 'postcode', 'delivery date', 'deposit'];
     const offenders: string[] = [];
-    for (const src of [SO, PROBLEMS, RULES]) {
+    for (const src of [SO, GATE, PROBLEMS, RULES]) {
       for (const m of src.matchAll(/\b(?:message|reason):\s*(['`])((?:[^\\`'])*?)\1/g)) {
         const lit = m[2]!.toLowerCase();
         if (CONDITION_WORDS.filter((w) => lit.includes(w)).length > 1) offenders.push(m[2]!);
@@ -103,6 +105,7 @@ describe('the wording is one table, not two lists that look alike', () => {
 describe('every proceed refusal path carries the detail', () => {
   test('the routes never mint a proceed_gate_unmet body of their own', () => {
     expect(countOf(SO, 'proceed_gate_unmet')).toBe(0);
+    expect(countOf(GATE, 'proceed_gate_unmet')).toBe(0);
     /* One builder, in the shared module, and the routes reach it by calling it. */
     expect(PROBLEMS).toContain(
       "return { error: 'proceed_gate_unmet', reason: proceedGateReason(problems), problems };",
@@ -111,7 +114,7 @@ describe('every proceed refusal path carries the detail', () => {
   });
 
   test('soProceedGateBlocked is the one gate, and it returns the aggregated body', () => {
-    const helper = between(SO, 'async function soProceedGateBlocked', '\nasync function soProcessingDateProblemsForDoc');
+    const helper = between(GATE, 'export async function soProceedGateBlocked', '\nexport async function soProcessingDateProblemsForDoc');
     expect(helper).toContain('collectProceedGateProblems({');
     expect(helper).toContain('proceedGateUnmetBody(problems)');
     /* Both amounts are handed over under their centi names — these numbers are
@@ -124,6 +127,8 @@ describe('every proceed refusal path carries the detail', () => {
     /* /status -> IN_PRODUCTION (the first Proceed), and the header PATCH that
        sets proceededAt directly (mobile / API). Neither may re-word it. */
     expect(countOf(SO, 'await soProceedGateBlocked(sb, docNo, {')).toBe(2);
+    /* And there is exactly ONE of them to call. */
+    expect(countOf(GATE, 'export async function soProceedGateBlocked')).toBe(1);
     expect(countOf(SO, 'if (gate) return c.json(gate, 422);')).toBe(2);
   });
 

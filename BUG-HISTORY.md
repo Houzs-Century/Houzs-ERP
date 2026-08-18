@@ -58,6 +58,14 @@ description true".
   `totalCenti > 0` itself. A free order therefore CANNOT raise a deposit line —
   structurally, not by a guard that reads the same today and drifts tomorrow.
 
+- `soDepositFacts`, `soProceedGateBlocked` and `soProcessingDateProblemsForDoc`
+  moved out of `mfg-sales-orders.ts` into
+  `backend/src/scm/lib/so-proceed-gate.ts`. Not tidying: that router sits under
+  a file-size ceiling that may only FALL, and the detail the refusal now carries
+  pushed it over. They were already one unit — docNo in, gate FACTS out, judged
+  by the shared pure rules — so the ceiling picked the split, it did not invent
+  it. The router lost 96 lines and is back under its ceiling.
+
 **Outcomes did not move, and that is tested, not asserted.**
 `so-save-problems.test.ts` runs a 576-input matrix (4 completeness booleans x 4
 company codes x 9 paid/total pairs) and requires
