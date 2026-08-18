@@ -23,6 +23,7 @@
 // Linked must answer when it is clicked. Nodes with a real document navigate to
 // it; the ones that cannot (see below) say why in-app instead of doing nothing.
 
+import { customerRefOf } from '../../lib/customer-ref';
 import { useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../../auth/AuthContext';
@@ -154,12 +155,7 @@ export function useSoRelationshipMap(salesOrder: SoRelationshipHeader | null): {
   const canOpenPo = can('scm.access') || pageAccess('scm.procurement.po') !== 'none';
   const canOpenPi = can('scm.access') || pageAccess('scm.procurement.pi') !== 'none';
 
-  const poRef = (
-    salesOrder?.po_doc_no ||
-    salesOrder?.customer_so_no ||
-    salesOrder?.ref ||
-    ''
-  ).trim();
+  const poRef = customerRefOf(salesOrder);
 
   const nodes: ChainNode[] = useMemo(() => {
     if (!salesOrder) return [];
