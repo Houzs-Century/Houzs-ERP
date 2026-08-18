@@ -29,6 +29,7 @@ import { useLorries } from '../lib/lorries-queries';
 import { useTrips } from '../lib/trips-queries';
 import { useNotify } from './NotifyDialog';
 import styles from '../../../pages/scm-v2/Suppliers.module.css';
+import { DateField } from "./DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -142,8 +143,13 @@ export const ScheduleDpOrderDrawer = ({ dpRow, onClose }: { dpRow: ScheduleDpOrd
 
           <label style={fieldRow}>
             <div className={styles.eyebrow} style={{ marginBottom: 'var(--space-1)' }}>Trip date</div>
-            <input type="date" className={styles.searchInput} style={inputStyle}
-              value={tripDate} onChange={(e) => { setTripDate(e.target.value); setTripId(''); }} />
+            <DateField
+              fullWidth
+              className={styles.searchInput}
+              style={inputStyle}
+              value={tripDate}
+              onChange={(iso) => { setTripDate(iso); setTripId(''); }}
+            />
           </label>
 
           <label style={fieldRow}>

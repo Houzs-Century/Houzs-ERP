@@ -4,7 +4,7 @@
 // outstanding/owed.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtCenti, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -107,19 +107,22 @@ type StatusTab = "all" | "draft" | "posted" | "cancelled";
 
 const fmtRm = (centi: number): string => fmtCenti(centi);
 
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  return iso.replace(/T.*$/, "").replace(/-/g, "/");
-};
-
 const supplierNameOf = (r: GrnRow): string => r.supplier?.name || "—";
 const supplierCodeOf = (r: GrnRow): string => r.supplier?.code || "—";
 const poOf = (r: GrnRow): string => r.purchase_order?.po_number || "—";
 const totalOf = (r: GrnRow): number => r.total_centi ?? 0;
 
+// grns.status → filter bucket. Must match GRN_STATUS_BUCKETS server-side
+// (backend/src/scm/routes/grns.ts), which is what the tab COUNTS are computed
+// from — a row bucketed differently here is shown in one tab and counted in
+// another. CLOSED is spelled out rather than left to the fallback below: it is
+// a real enum member (grn_status = DRAFT / POSTED / CLOSED / CANCELLED) and it
+// files under `posted` because its stock IN stands — only CANCELLED had its
+// receipt reversed.
 const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }> = {
   DRAFT:     { tone: "warning", label: "Draft",     bucket: "draft" },
   POSTED:    { tone: "success", label: "Posted",    bucket: "posted" },
+  CLOSED:    { tone: "neutral", label: "Closed",    bucket: "posted" },
   CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
 };
 

@@ -1,4 +1,4 @@
-import { lazy, Suspense } from "react";
+import { lazy } from "react";
 import {
   Megaphone,
   AlertTriangle,
@@ -10,6 +10,7 @@ import {
   BellOff,
   ArrowRight,
 } from "lucide-react";
+import { LazySlot } from "./LazySlot";
 import { cn } from "../lib/utils";
 import {
   bannerSecondaryKind,
@@ -17,6 +18,7 @@ import {
   type AnnouncementCategory,
   type BannerAnnouncement as Announcement,
 } from "./useAnnouncementBanner";
+import { fmtDate } from "../vendor/shared/format";
 
 // Lazy so the media gallery (+ MediaLightbox + its icons) stays OUT of the
 // initial bundle — the banner mounts at the app root, but most notices are
@@ -125,7 +127,7 @@ function relativeTime(iso: string): string {
   if (h < 24) return `${h}h ago`;
   const d = Math.floor(h / 24);
   if (d < 7) return `${d}d ago`;
-  return new Date(t).toLocaleDateString("en-MY");
+  return fmtDate(t);
 }
 
 export function AnnouncementBanner() {
@@ -246,15 +248,21 @@ export function AnnouncementBanner() {
               {current.body}
             </p>
           )}
+          {/* Scoped, not bare: App.tsx renders <AnnouncementBanner /> TEN lines
+              ABOVE the RouteCrashBoundary that wraps the route table, so a
+              failed media chunk here had no boundary between it and main.tsx's
+              unkeyed top-level one — it took the whole app down over whatever
+              form the operator had open. Keyed on the notice id: acknowledging
+              or skipping to the next notice clears it. */}
           {current.attachments && current.attachments.length > 0 && (
-            <Suspense fallback={null}>
+            <LazySlot resetKey={`ann-media:${current.id}`} fallback={null}>
               <AnnouncementMedia
                 annId={current.id}
                 attachments={current.attachments}
                 layout={current.mediaLayout ?? null}
                 className="mt-3"
               />
-            </Suspense>
+            </LazySlot>
           )}
           <div className="mt-4 flex items-center justify-end gap-2">
             {/* After the second skip only the acknowledge action remains — the

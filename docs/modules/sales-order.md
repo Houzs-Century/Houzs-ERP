@@ -136,12 +136,37 @@ never bare `isMainReady`** — see §0.5 for why that distinction exists.
 
 Two things gate it that are easy to miss:
 
-- **No Processing Date, no allocation.** An SO with `proceeded_at` NULL is in
+- **No Processing Date, no allocation.** An SO with `processing_date` NULL is in
   `allocGated`: its lines still walk, but they are FORCED to `PENDING`, never
   consume a stock bucket and never claim a sofa batch. Owner's rule, 2026-08-10:
-  *"有 processing date 才来分配"*. So an order with stock physically available
-  will sit at PENDING / CONFIRMED until it is proceeded. This is intended, and it
-  is the single most common "why is my order not READY".
+  *"有 processing date 才来分配"*. So an order that genuinely has no Processing
+  Date will sit at PENDING / CONFIRMED however much stock is on the shelf. That
+  much is intended.
+
+  > **CORRECTION (2026-08-18) — the previous version of this bullet described a
+  > BUG and called it intended, which is why the bug survived.**
+  >
+  > It read: *"An SO with `proceeded_at` NULL is in `allocGated` … This is
+  > intended, and it is the single most common 'why is my order not READY'."*
+  >
+  > The gate really did read `proceeded_at`, and that was the defect, not the
+  > design. No shipped client writes `proceeded_at` when an operator sets a
+  > Processing Date: CREATE persists the date to `processing_date` and stamps
+  > `proceeded_at` only when the order *also* clears the proceed gate
+  > (`autoProceed`); the header PATCH writes the date and never stamps a proceed;
+  > and no frontend sends `proceededAt` at all. So an order given a Processing
+  > Date on the detail screen locked, showed on the delivery board and pushed to
+  > AutoCount as PDate while **every line was forced PENDING** — never consuming
+  > a bucket, never claiming a sofa batch, never reaching READY_TO_SHIP — with
+  > the goods physically in the warehouse, and with no error, no log and nothing
+  > on screen. The frequency the old text observed was real; the explanation was
+  > not. Anyone who read this page went looking for a missing proceed instead of
+  > a gate on the wrong column.
+  >
+  > The gate now reads `processing_date`, the one column every write path
+  > actually sets. It reads that column ALONE and deliberately does not also
+  > consult `proceeded_at`: a second home for the rule is how it acquired a wrong
+  > one. See BUG-HISTORY 2026-08-18.
 - **A human editing the order defers the header, not the lines.** If the SO's
   edit lease is held, the line-level flip commits and the header transition is
   recorded in `deferredDocNos` for a later sweep. A deferral is not an error.
@@ -662,6 +687,20 @@ blanks), so the buckets always sum to `all`. It is computed by ONE grouped
 PostgREST aggregate over the base table (JS-reduce fallback if aggregates are
 disabled). `?status=OTHER` filters to exactly that catch-all bucket; every real
 status stays an exact match.
+
+> **FIXED 2026-08-18: a `statusCounts` that could not be READ was served as
+> zeros.** The aggregate's error was inspected, the FALLBACK's was not:
+> `paginateAll` answers `{ data: null, error }` on failure and the handler did
+> `for (const r of (fb.data ?? []))`, so both reads failing produced
+> `{ all: 0, draft: 0, … other: 0 }` beside a fully populated `salesOrders`
+> page — every tab reading zero with rows on screen, and `all` (the SUM of the
+> buckets) understating with them. It is now
+> `500 { error: 'status_counts_failed' }` naming both failures, held in a
+> variable so the LIST read's own error still reports first. Same guard as the
+> PO / PI / SI / GRN / DO lists (`backend/src/scm/lib/status-counts.ts`); this
+> list keeps its own reader because it counts by grouped aggregate rather than
+> one head-query per bucket. A legitimately empty result is still 0 — that is a
+> successful read of zero rows, not an absent answer.
 
 ### Per-line source-PO trace on the detail payload (owner rule 2026-08-01)
 

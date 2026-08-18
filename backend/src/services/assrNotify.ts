@@ -25,6 +25,7 @@
 import type { Env } from "../types";
 import { uplineUserIds } from "./orgScope";
 import { postPersonalNotice } from "./personalNotice";
+import { fmtDateTime } from "../scm/shared/format";
 
 /** users.id rows whose display name matches `name` (lowercased, trimmed). */
 async function resolveUserIdsByName(env: Env, name: string): Promise<number[]> {
@@ -59,19 +60,10 @@ async function resolveUserNamesByIds(env: Env, ids: number[]): Promise<string[]>
   return clean.map((id) => byId.get(id)).filter((s): s is string => !!s);
 }
 
-// The notice is posted from a UTC Worker; this stamps the reassignment moment in
-// Malaysia time (UTC+8, no DST) so the body reads at the wall-clock the office
-// saw. Same +8h shift assr_print.ts's fmtDateTime uses.
-const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
-function fmtMytDateTime(d: Date): string {
-  const s = new Date(d.getTime() + MYT_OFFSET_MS);
-  const dd = String(s.getUTCDate()).padStart(2, "0");
-  const mm = String(s.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = s.getUTCFullYear();
-  const hh = String(s.getUTCHours()).padStart(2, "0");
-  const min = String(s.getUTCMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
+// The notice is posted from a UTC Worker; fmtDateTime stamps the reassignment
+// moment in Malaysia time (UTC+8, no DST) so the body reads at the wall-clock
+// the office saw. This used to be a fifth hand-rolled copy of that shift.
+const fmtMytDateTime = fmtDateTime;
 
 export async function notifyServiceCaseResponsible(
   env: Env,

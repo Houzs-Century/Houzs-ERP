@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
 import { cn } from "../lib/utils";
+import { DateField } from "../vendor/scm/components/DateField";
 
 type Status = "idle" | "saving" | "ok" | "error";
 
@@ -96,6 +97,9 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
           onBlur={() => commit()}
         />
       ) : (
+        type === "date" ? (
+          <DateField className={inputClass} value={draft} placeholder={placeholder} onChange={setDraft} onBlur={() => commit()} fullWidth/>
+        ) : (
         <input
           type={type}
           className={inputClass}
@@ -104,6 +108,7 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => commit()}
         />
+        )
       )}
       {error && <div className="mt-1 text-[11px] text-err">{error}</div>}
     </div>

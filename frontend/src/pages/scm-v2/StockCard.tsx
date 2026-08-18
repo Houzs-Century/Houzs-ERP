@@ -30,7 +30,7 @@ import {
   type InventoryMovement,
   type InventoryLot,
 } from '../../vendor/scm/lib/inventory-queries';
-import { adjustmentReasonLabel, fmtCenti, fmtDate as fmtDateShared, fmtQty } from '@2990s/shared';
+import { adjustmentReasonLabel, fmtCenti, fmtDate, fmtDateTime, fmtQty } from '@2990s/shared';
 import { DataTable, type Column } from '../../components/DataTable';
 import styles from './Inventory.module.css';
 import chrome from './SalesOrderDetail.module.css';
@@ -38,22 +38,6 @@ import chrome from './SalesOrderDetail.module.css';
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const fmtRm = (sen: number | null | undefined): string => fmtCenti(sen);
-
-const fmtDateTime = (iso: string | null | undefined): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  const date = fmtDateShared(d);
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} ${time}`;
-};
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  return fmtDateShared(d);
-};
 
 /** Best-effort route for a source doc on the ledger row. Inventory writes
  *  carry source_doc_id (the UUID of the originating GRN/DO/etc) — when
