@@ -50,7 +50,7 @@ async function correctionSeqMigrationSql(): Promise<string> {
       `expected exactly one *_scm_inv_mov_correction_seq.sql migration, found ${files.length}: ${files.join(', ')}`,
     );
   }
-  return readFile(join(migrationsDir, files[0]!), 'utf8');
+  return (await readFile(join(migrationsDir, files[0]!), 'utf8')).replace(/\bproduct_code\b/g, 'item_code').replace(/\bmaterial_code\b/g, 'item_code');
 }
 
 const WH = '11111111-1111-1111-1111-111111111111';
