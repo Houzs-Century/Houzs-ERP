@@ -37,7 +37,7 @@ import {
 } from 'react';
 import { Search, Columns3, RotateCcw, Filter, Download, GripVertical, X, ChevronsUpDown, ArrowUp, ArrowDown } from 'lucide-react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import { isoForExport } from '@2990s/shared'; // a date cell exports as ISO, never as displayed
+import { isoForExport } from '../../shared/format'; // a date cell exports as ISO, never as displayed
 import { useDebouncedValue } from '../lib/hooks';
 import { SkeletonRows } from './Skeleton';
 import { DateField } from './DateField';

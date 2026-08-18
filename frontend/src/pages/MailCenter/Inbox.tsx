@@ -128,7 +128,7 @@ import {
   PanelRight,
   Square,
 } from "lucide-react";
-import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "@2990s/shared";
+import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../../vendor/shared/format";
 
 type MailThreadRow = {
   id: string;

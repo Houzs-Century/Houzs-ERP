@@ -28,7 +28,7 @@ import {
 } from "../../vendor/scm/lib/stock-queries";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { fmtDate } from "@2990s/shared";
+import { fmtDate } from "../../vendor/shared/format";
 
 type StatusTab = "all" | "posted" | "cancelled";
 

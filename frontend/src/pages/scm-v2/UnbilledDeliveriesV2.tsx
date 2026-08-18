@@ -39,7 +39,7 @@ import { cn } from "../../lib/utils";
 import { fmtCenti } from "../../vendor/shared/format";
 import { formatPhone } from "../../vendor/shared/phone";
 import { retryUnlessClientError } from '../../lib/retryPolicy';
-import { fmtDate } from "@2990s/shared";
+import { fmtDate } from "../../vendor/shared/format";
 
 // ─── Types — mirrors the endpoint's Row / buckets / totals ──────────────────
 

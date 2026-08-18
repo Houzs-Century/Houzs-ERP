@@ -68,7 +68,7 @@ import { useStaffLookup, UUID_RE } from "../../hooks/useStaffLookup";
 import { useStateWarehouseMappings } from "../../vendor/scm/lib/state-warehouse-queries";
 import { splitE164, combineE164 } from "../../vendor/shared/phone";
 import { DateField } from "../../vendor/scm/components/DateField";
-import { fmtDate } from "@2990s/shared";
+import { fmtDate } from "../../vendor/shared/format";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 

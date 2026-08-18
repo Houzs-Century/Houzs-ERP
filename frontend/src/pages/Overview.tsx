@@ -7,7 +7,7 @@ import { useAuth } from "../auth/AuthContext";
 import { Button } from "../components/Button";
 import { Badge } from "../components/Badge";
 import { cn } from "../lib/utils";
-import { fmtDate } from "@2990s/shared";
+import { fmtDate } from "../vendor/shared/format";
 
 // ── Types for the data this page aggregates ──────────────────
 interface InboxItem {

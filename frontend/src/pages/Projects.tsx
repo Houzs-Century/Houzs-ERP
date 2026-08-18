@@ -121,7 +121,7 @@ import { MediaLightbox } from "../components/MediaLightbox";
 import { ResetFiltersButton } from "../components/ResetFiltersButton";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
 import { formatDate, formatDateTime, formatTimestamp, formatCurrency, cn, relativeTime, todayInAppTz } from "../lib/utils";
-import { fmtDate } from "@2990s/shared";
+import { fmtDate } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 
 // ── Types (module-local) ─────────────────────────────────────

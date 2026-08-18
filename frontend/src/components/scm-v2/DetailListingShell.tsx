@@ -40,7 +40,7 @@ import type { UseQueryResult } from '@tanstack/react-query';
 import type { DetailListingFilters, DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import styles from '../../pages/scm-v2/SalesOrderDetailListing.module.css';
 import { PrintPreviewModal, usePrintPreview } from './PrintPreviewModal';
-import { fmtDate, fmtDateTime } from '@2990s/shared';
+import { fmtDate, fmtDateTime } from '../../vendor/shared/format';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { DateField } from "../../vendor/scm/components/DateField";
 

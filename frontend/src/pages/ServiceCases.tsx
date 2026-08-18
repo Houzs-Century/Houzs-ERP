@@ -121,7 +121,7 @@ import type {
   AssrStage,
   PurchaseOrder,
 } from "../types";
-import { fmtDate } from "@2990s/shared";
+import { fmtDate } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 
 type StageFilter = "ALL" | AssrStage;

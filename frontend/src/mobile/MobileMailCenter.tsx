@@ -8,7 +8,7 @@ import { useDebouncedValue } from "../vendor/scm/lib/hooks";
 import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import "./mobile.css";
-import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "@2990s/shared";
+import { fmtDate, fmtDateTime, fmtTime as fmtClock } from "../vendor/shared/format";
 
 // Mobile Mail Center — the email client, wired to /api/mail-center. Kept at
 // desktop feature parity (MailCenter/Inbox.tsx + Thread.tsx) minus the desktop-

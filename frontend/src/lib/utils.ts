@@ -1,4 +1,7 @@
-import { fmtDate, fmtDateTime, fmtTimestamp } from "@2990s/shared";
+// The module, NOT the `@2990s/shared` barrel: the barrel star-exports 15
+// modules and this file is in the app shell, so the barrel would pull all of
+// them into the initial chunk (+7.9 KB gzip, measured).
+import { fmtDate, fmtDateTime, fmtTimestamp } from "../vendor/shared/format";
 
 export function cn(...classes: Array<string | false | null | undefined>): string {
   return classes.filter(Boolean).join(" ");

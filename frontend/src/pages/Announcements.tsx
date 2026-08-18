@@ -40,7 +40,7 @@ import {
   type VideoLayout,
   type AnnMediaLayout,
 } from "../components/AnnouncementMedia";
-import { fmtDateTime } from "@2990s/shared";
+import { fmtDateTime } from "../vendor/shared/format";
 
 // ────────────────────────────────────────────────────────────────────────────
 // Domain types — mirrors backend/src/routes/announcements.ts public shape.

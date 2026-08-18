@@ -10,7 +10,7 @@ import { RepairDocumentImport } from "../components/RepairDocumentImport";
 import { useQuery } from "../hooks/useQuery";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
-import { fmtDate, fmtDateTime } from "@2990s/shared";
+import { fmtDate, fmtDateTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 
 // ---------------------------------------------------------------------------

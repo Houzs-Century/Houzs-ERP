@@ -15,7 +15,7 @@ import { ArrowLeft, Bot, History, Paperclip, Plus, Send, Trash2, User, X } from 
 import { Badge } from "./Badge";
 import { cn } from "../lib/utils";
 import { useAssistantChat, ASSISTANT_SUGGESTIONS, ASSISTANT_ACCEPT } from "./useAssistantChat";
-import { fmtDateTime } from "@2990s/shared";
+import { fmtDateTime } from "../vendor/shared/format";
 
 export type { AgentRef, Msg } from "./useAssistantChat";
 

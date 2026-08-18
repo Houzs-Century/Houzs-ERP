@@ -69,7 +69,7 @@ import {
   Plus,
   Paperclip,
 } from "lucide-react";
-import { fmtDateTime } from "@2990s/shared";
+import { fmtDateTime } from "../../vendor/shared/format";
 
 type UserOption = {
   id: number;

@@ -26,7 +26,7 @@ import { useEffect, useMemo, useState } from "react";
 import { CalendarClock, MapPinned, ExternalLink, GripVertical, AlertTriangle } from "lucide-react";
 import { ResizableDrawer } from "../../../components/ResizableDrawer";
 import { Button } from "../../../components/Button";
-import { fmtDateOrDash } from "@2990s/shared";
+import { fmtDateOrDash } from "../../shared/format";
 import { useDrivers } from "../lib/drivers-queries";
 import { useLorries } from "../lib/lorries-queries";
 import { useWarehouses } from "../lib/inventory-queries";

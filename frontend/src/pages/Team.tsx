@@ -41,7 +41,7 @@ import { PositionsTab } from "./Positions";
 import { MailboxesTab } from "./MailboxesTab";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
-import { fmtDate } from "@2990s/shared";
+import { fmtDate } from "../vendor/shared/format";
 
 type TeamTabValue =
   | "hub"

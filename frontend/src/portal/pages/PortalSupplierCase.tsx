@@ -28,7 +28,7 @@ import { Skeleton } from "../../components/Skeleton";
 import { useDialog } from "../../hooks/useDialog";
 import { PrintPreviewModal, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PortalStatusColor } from "../types";
-import { fmtDate } from "@2990s/shared";
+import { fmtDate } from "../../vendor/shared/format";
 
 const ALLOWED_EXT = ["jpg", "jpeg", "png", "webp"];
 const MAX_SIZE = 10 * 1024 * 1024;

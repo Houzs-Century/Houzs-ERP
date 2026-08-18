@@ -18,7 +18,7 @@ import {
   type AnnouncementCategory,
   type BannerAnnouncement as Announcement,
 } from "./useAnnouncementBanner";
-import { fmtDate } from "@2990s/shared";
+import { fmtDate } from "../vendor/shared/format";
 
 // Lazy so the media gallery (+ MediaLightbox + its icons) stays OUT of the
 // initial bundle — the banner mounts at the app root, but most notices are

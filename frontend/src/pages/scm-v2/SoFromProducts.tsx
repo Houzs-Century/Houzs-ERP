@@ -28,7 +28,7 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, Sparkles, CheckSquare, Square, PlayCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash } from '@2990s/shared';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import { useMfgProducts, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { useCreateMfgSalesOrder } from '../../vendor/scm/lib/sales-order-queries';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';

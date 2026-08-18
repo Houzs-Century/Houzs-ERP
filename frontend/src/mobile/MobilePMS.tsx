@@ -19,7 +19,7 @@ import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { formatCurrency, formatDate, todayInAppTz } from "../lib/utils";
 import { pmsStageLabel, pmsStageVariant, type PmsStageVariant } from "../vendor/scm/lib/pms-status";
 import "./mobile.css";
-import { fmtTime } from "@2990s/shared";
+import { fmtTime } from "../vendor/shared/format";
 import { DateField } from "../vendor/scm/components/DateField";
 
 /* ------------------------------------------------------------------ *

@@ -16,7 +16,7 @@ import { createPortal } from "react-dom";
 import { useAuth } from "../auth/AuthContext";
 import { canUseAssistant } from "../auth/assistantAccess";
 import { useAssistantChat, ASSISTANT_SUGGESTIONS, ASSISTANT_ACCEPT } from "../components/useAssistantChat";
-import { fmtDateTime } from "@2990s/shared";
+import { fmtDateTime } from "../vendor/shared/format";
 
 const PETROL = "#1e8071";
 
