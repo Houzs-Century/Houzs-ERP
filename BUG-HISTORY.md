@@ -32,7 +32,7 @@ backfilling** and every figure corrects itself the moment the migration lands.
 Traced from the schema and the migration history — not observed against
 production data, which this session had no credential for.
 
-**Fix.** `0305_gl_views_join_on_company.sql` adds the second half of the
+**Fix.** `0306_gl_views_join_on_company.sql` adds the second half of the
 composite key to both joins (`a.company_id = j.company_id`, and
 `l.company_id = a.company_id` — `journal_entry_lines.company_id` has been
 NOT NULL since 0083, so no detour through `journal_entries` is needed).

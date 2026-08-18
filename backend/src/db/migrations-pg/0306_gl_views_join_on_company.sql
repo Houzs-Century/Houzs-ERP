@@ -1,4 +1,4 @@
--- 0305 — the trial balance and the GL export were summing BOTH companies.
+-- 0306 — the trial balance and the GL export were summing BOTH companies.
 --
 -- REVERSAL: re-run 0290's CREATE OR REPLACE block for scm.v_gl_entries and
 -- 0106's for scm.v_account_balances. Both are preserved verbatim in those files
