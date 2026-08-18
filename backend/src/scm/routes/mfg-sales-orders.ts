@@ -2560,7 +2560,7 @@ mfgSalesOrders.get('/:docNo', async (c) => {
      response so the page can show "Customer has RM X available" without a
      second round-trip. 0 when no debtor / no credit history. */
   const debtorCode = (h.data as { debtor_code?: string | null }).debtor_code ?? null;
-  const customerCreditCenti = debtorCode ? await getCustomerCreditBalance(sb, debtorCode) : 0;
+  const customerCreditCenti = debtorCode ? await getCustomerCreditBalance(sb, debtorCode, activeCompanyId(c) ?? null) : 0;
   /* Live paid rollup — same rule as the LIST route (lines ~678): sum the
      payments ledger, and add the header deposit ONLY for legacy SOs whose
      deposit never reached the ledger (is_deposit marker distinguishes them).
@@ -2998,7 +2998,7 @@ mfgSalesOrders.get('/:docNo/items', async (c) => {
 mfgSalesOrders.get('/customer-credit/:debtorCode', async (c) => {
   const sb = c.get('supabase');
   const debtorCode = c.req.param('debtorCode');
-  const balance = await getCustomerCreditBalance(sb, debtorCode);
+  const balance = await getCustomerCreditBalance(sb, debtorCode, activeCompanyId(c) ?? null);
   return c.json({ debtorCode, balanceCenti: balance });
 });
 
