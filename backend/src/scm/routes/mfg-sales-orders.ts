@@ -2147,10 +2147,13 @@ function mimeFromKey(key: string): SlipMime {
 mfgSalesOrders.get('/:docNo/slip-url', async (c) => {
   const sb = c.get('supabase');
   const docNo = c.req.param('docNo');
-  const { data: row, error } = await sb
+  /* This route does not return a row, it streams the R2 OBJECT the row points
+     at — so an unscoped lookup hands over the other company's payment slip
+     itself, not a field of it. */
+  const { data: row, error } = await scopeToCompany(sb
     .from('mfg_sales_orders')
     .select('slip_key')
-    .eq('doc_no', docNo)
+    .eq('doc_no', docNo), c)
     .maybeSingle();
   if (error) return c.json({ error: 'db_fetch_failed', detail: error.message }, 500);
   if (!row) return c.json({ error: 'not_found' }, 404);
@@ -2184,15 +2187,20 @@ type CrossCatEligibility = {
 };
 
 async function checkCrossCategorySource(
+  c: any,
   sb: any,
   docNo: string,
   newPhoneRaw: string | null,
   newCustomerId: string | null = null,
 ): Promise<CrossCatEligibility> {
-  const { data: srcRow, error: srcErr } = await sb
+  /* Both reads below are keyed on a caller-supplied doc_no. Unscoped, the
+     eligibility probe answered for the OTHER company's order and handed back
+     its debtor_name — a customer identity, from a GET that needs only a doc
+     number. `c` is threaded in for exactly this. */
+  const { data: srcRow, error: srcErr } = await scopeToCompany(sb
     .from('mfg_sales_orders')
     .select('doc_no, status, phone, debtor_name, customer_id')
-    .eq('doc_no', docNo)
+    .eq('doc_no', docNo), c)
     .maybeSingle();
   /* Loo 2026-06-06 (SO-2606-025 incident) — a FAILED query is not a missing
      order. This used to swallow the error and report "Order was not found"
@@ -2216,10 +2224,10 @@ async function checkCrossCategorySource(
     const srcPhone = src.phone ? (normalizePhone(src.phone) ?? src.phone) : null;
     if (newPhone && srcPhone && newPhone !== srcPhone) return { eligible: false, reason: 'different_customer' };
   }
-  const { count, error: countErr } = await sb
+  const { count, error: countErr } = await scopeToCompany(sb
     .from('mfg_sales_orders')
     .select('doc_no', { count: 'exact', head: true })
-    .eq('cross_category_source_doc_no', docNo);
+    .eq('cross_category_source_doc_no', docNo), c);
   // Same honesty rule as above — a failed count must not silently pass the
   // already-used gate (fail-open) nor masquerade as another reason.
   if (countErr) {
@@ -2247,7 +2255,7 @@ mfgSalesOrders.get('/cross-category-eligibility', async (c) => {
   const docNo = (c.req.query('docNo') ?? '').trim();
   const phone = (c.req.query('phone') ?? '').trim();
   if (!docNo) return c.json({ eligible: false });
-  const result = await checkCrossCategorySource(sb, docNo, phone || null);
+  const result = await checkCrossCategorySource(c, sb, docNo, phone || null);
   return c.json({
     eligible:  result.eligible,
     debtorName: result.debtorName ?? null,
@@ -4531,7 +4539,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const rawLink = String((body.crossCategorySourceDocNo as string | undefined) ?? '').trim();
     if (rawLink) {
       const elig = await checkCrossCategorySource(
-        sb, rawLink, typeof body.phone === 'string' ? body.phone : null, orderCustomerId,
+        c, sb, rawLink, typeof body.phone === 'string' ? body.phone : null, orderCustomerId,
       );
       if (!elig.eligible) {
         await rollbackPwpClaims();  // don't burn a voucher on a rejected order
@@ -6095,9 +6103,13 @@ mfgSalesOrders.delete('/:docNo', async (c) => {
 //                  field_changes, status_snapshot, source, note, created_at }] }
 mfgSalesOrders.get('/:docNo/audit-log', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const { data, error } = await sb.from('mfg_so_audit_log')
+  /* so_doc_no is the ONLY key here and doc numbers are unique per company by
+     PREFIX, not by constraint — so a 2990 number pasted into the Houzs URL used
+     to return 2990's history. Same predicate the /:docNo/revisions read below
+     already carries; mfg_so_audit_log took company_id in mig 0083. */
+  const { data, error } = await scopeToCompany(sb.from('mfg_so_audit_log')
     .select('id, so_doc_no, action, actor_id, actor_name_snapshot, field_changes, status_snapshot, source, note, created_at')
-    .eq('so_doc_no', docNo)
+    .eq('so_doc_no', docNo), c)
     .order('created_at', { ascending: false });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   /* The audit HISTORY is a finance read too — this route's own line PATCH does
@@ -6113,9 +6125,9 @@ mfgSalesOrders.get('/:docNo/audit-log', async (c) => {
 // GET — list status change history for the SO detail timeline.
 mfgSalesOrders.get('/:docNo/status-changes', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const { data, error } = await sb.from('mfg_so_status_changes')
+  const { data, error } = await scopeToCompany(sb.from('mfg_so_status_changes')
     .select('id, doc_no, from_status, to_status, changed_by, notes, auto_actions, created_at')
-    .eq('doc_no', docNo)
+    .eq('doc_no', docNo), c)
     .order('created_at', { ascending: false });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ statusChanges: data ?? [] });
@@ -6140,9 +6152,9 @@ mfgSalesOrders.get('/:docNo/revisions', async (c) => {
 // GET — list line price overrides for the audit panel.
 mfgSalesOrders.get('/:docNo/price-overrides', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const { data, error } = await sb.from('mfg_so_price_overrides')
+  const { data, error } = await scopeToCompany(sb.from('mfg_so_price_overrides')
     .select('id, doc_no, item_id, item_code, original_price_sen, override_price_sen, reason, approved_by, created_at')
-    .eq('doc_no', docNo)
+    .eq('doc_no', docNo), c)
     .order('created_at', { ascending: false });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ overrides: data ?? [] });
@@ -10662,10 +10674,10 @@ mfgSalesOrders.delete('/:docNo/items/:itemId/photos/:photoKey', async (c) => {
 // Legacy single-row payment fields on mfg_sales_orders (payment_method,
 mfgSalesOrders.get('/:docNo/payments', async (c) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo');
-  const { data, error } = await sb
+  const { data, error } = await scopeToCompany(sb
     .from('mfg_sales_order_payments')
     .select(`${PAYMENT_COLS}, staff:collected_by ( name )`)
-    .eq('so_doc_no', docNo)
+    .eq('so_doc_no', docNo), c)
     .order('paid_at', { ascending: false })
     .order('created_at', { ascending: false });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);

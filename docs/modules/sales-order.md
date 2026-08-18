@@ -691,6 +691,41 @@ main router, so its static path resolves ahead of `/:docNo`. It shares the
 `user.id` is the caller's **scm.staff UUID** (bridge-pinned); use `houzsUser.id` for
 the public bigint or you get a 500 (uuid-in-int column).
 
+### The doc number is NOT a tenant key — every `/:docNo/*` read must say so
+
+Document numbers are unique per company by **PREFIX convention** (`HC-`/bare =
+HOUZS, `2990-` = 2990) and by nothing else. There is no constraint behind it, so
+a `.eq('doc_no', docNo)` on its own resolves whichever company's row happens to
+carry that string. The frontend fires the detail panels straight off the URL
+(`enabled: Boolean(docNo)`), so a pasted or emailed `2990-` link is enough — no
+deliberate act is needed.
+
+Six child reads were keyed that way until 2026-08-18 and served the other
+company's Sales Order panels: `/:docNo/audit-log`, `/:docNo/status-changes`,
+`/:docNo/price-overrides`, `/:docNo/payments`, `/:docNo/slip-url`, and
+`/cross-category-eligibility` via `checkCrossCategorySource`. Two of those are
+worse than a row leak — `/slip-url` streams the R2 **object** (the payment slip
+image itself), and the eligibility probe returns `debtor_name`, a customer
+identity, from a GET needing only a document number. See BUG-HISTORY, 2026-08-18.
+
+**The rule for anything new under `/:docNo/`:**
+
+- a child-table read gets `scopeToCompany(builder, c)` — the same predicate
+  `/:docNo/revisions` has always carried;
+- a route that also needs the salesperson tier calls `selfScopedSalesBlocked(c, docNo)`,
+  whose **step 1** is a `scopeToCompany` read of `mfg_sales_orders`. That is why
+  the `/:docNo/payments/:id/*` routes were already safe and were left untouched;
+- a helper that cannot express scoping — `checkCrossCategorySource` took only
+  `sb` — takes `c` instead of being worked around at the call site.
+
+**Do not expect the gate to catch a miss.** `scripts/check-company-scope.mjs`
+screens routes on `ID_PREDICATE` (`.eq('id')` / `.eq('*_id')`), so a `doc_no` key
+is invisible to it; its natural-key pass understands `doc_no` but walks
+`LIB_DIRS` and screens on `LIB_WRITE`, so it sees neither routes nor reads.
+`backend/scripts/probe-natural-key-reads.mjs` reports the surface that falls
+between the two passes — and its header explains why that count is an upper
+bound on exposure rather than a defect list.
+
 ### Who owns the order — `salesperson_id` (owner 2026-08-17)
 
 Two changes to the header PATCH, both because a resigning rep's orders have to
