@@ -344,6 +344,9 @@ type SoHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
+  /* POS handover "Target Date" — still WRITTEN by the POS (46 SOs in the last
+     90 days, measured on prod 2026-08-18) and still read by the sales-report
+     export. Not rendered here; do not delete it as dead. */
   target_date: string | null;
   /* P1 (migration 0142) — POS handover customer signature (data URL). Read-only
      here; rendered as an image so the coordinator can see the signed proof. */
@@ -2854,7 +2857,9 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
      branding + ref + venue dropped per commander 2026-05-26. */
   // PR #140 — Commander 2026-05-26 drop list:
   //   - poDocNo (Customer PO #)   → "customer PO 不需要"
-  //   - targetDate                → replaced by Processing + Delivery Date
+  //   - the POS-era "Target Date" → replaced by Processing + Delivery Date.
+  //     The NAME went with it on 2026-08-18: the server no longer selects,
+  //     accepts or maps it anywhere (owner: "全部你都是要统一掉的，不要那么多个").
   // PR #140 — add list:
   //   - processingDate
   //   - customerDeliveryDate
@@ -2943,7 +2948,11 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     /* Processing Date persists to the processing_date column — the same word
        on the form, in this payload and in Postgres since mig 0284 (commander
        2026-05-26: "internal expected date 是 Hookka 用的"; #140 changed the
-       label, 0284 changed the name underneath it). targetDate field dropped. */
+       label, 0284 changed the name underneath it).
+
+       WHAT IT MEANS (owner 2026-08-18): the date this order is RELEASED for
+       purchasing to order goods — "Processing Date 就代表这张单可以安排订货了".
+       Not a production date; this business does not schedule a factory. */
     processingDate: f.processingDate || null,
     customerDeliveryDate: f.customerDeliveryDate || null,
     note: f.note,

@@ -61,6 +61,7 @@ import { readFileSync } from "node:fs";
 import postgres from "postgres";
 import { pairPoLinesToSoLines, pairPoLinesAcrossSos } from "./lib/po-so-line-pairing.mjs";
 import { parseFromSosTokens } from "./lib/doc-ref-repair-core.mjs";
+import { provenanceNoteSqlPattern } from "./lib/transfer-vocabulary.mjs";
 
 const APPLY = process.env.APPLY === "1";
 const TIER = (process.env.TIER || "all").trim().toLowerCase();
@@ -233,7 +234,7 @@ try {
     const noted = await pg`
       SELECT id, po_number, company_id, notes
         FROM scm.purchase_orders
-       WHERE notes IS NOT NULL AND notes ~* 'From SOs?:'
+       WHERE notes IS NOT NULL AND notes ~* ${provenanceNoteSqlPattern()}
        ORDER BY po_number`;
     // Validate every token against a REAL, company-owned Sales Order. An
     // unresolvable token is not an SO — it is exactly what Tier 0 repairs, and
