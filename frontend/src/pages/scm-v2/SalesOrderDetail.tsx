@@ -323,11 +323,6 @@ type SoHeader = {
   hub_name: string | null;
   customer_delivery_date: string | null;
   processing_date: string | null;
-  /* POS "Proceed" timestamp (migration 0110). Auto-stamped server-side when the
-     SO first enters IN_PRODUCTION (the POS "Proceed" action). Read-only here —
-     surfaced as "Proceed Date" in the Order Info card so the coordinator can
-     see WHEN the salesperson proceeded the order. */
-  proceeded_at: string | null;
   linked_do_doc_no: string | null;
   ship_to_address: string | null;
   bill_to_address: string | null;
@@ -1605,9 +1600,9 @@ export const SalesOrderDetail = () => {
      it re-enables can never open an order the server would refuse to save. */
   const canAttributeOther = can('scm.so.attribute_other');
 
-  /* Owner 2026-07-05 — SO PROCESS lock: once the SO has been PROCEEDED
-     (proceeded_at stamped) AND its processing day has passed, we PO to the
-     supplier, so the LINE ITEMS freeze (State + Postcode freeze in the customer
+  /* Owner 2026-07-05 — SO PROCESS lock: once the SO has a Processing Date
+     (which IS what being proceeded means — owner, pinned 2026-08-13) AND that
+     day has passed, we PO to the supplier, so the LINE ITEMS freeze (State + Postcode freeze in the customer
      card below). Payment + the rest of the customer data stay editable. This is
      independent of `isLocked` (status/downstream) — it applies while the SO is
      still in an otherwise-editable status. Shared gate uses todayMyt() (Malaysia
@@ -3140,9 +3135,9 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
     originalProcessing !== '' && originalProcessing < today && !amendmentMode &&
     !canRemoveProcessingDate;
 
-  /* Owner 2026-07-05 — the SO PROCESS lock fires only once the SO has been
-     PROCEEDED (proceeded_at stamped) AND its processing day has passed. That is
-     the moment we PO to the supplier, so from then on the LINE ITEMS and the
+  /* Owner 2026-07-05 — the SO PROCESS lock fires only once the SO has a
+     Processing Date (which IS what being proceeded means) AND that day has
+     passed. That is the moment we PO to the supplier, so from then on the LINE ITEMS and the
      customer STATE + POSTCODE (which drive the line warehouse + the PO delivery
      location) freeze. PAYMENT and every other customer field stay editable.
      This is stricter than `processingLocked` (which grandfather-locks the past
@@ -3476,8 +3471,10 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
                 style={datesXor && !form.customerDeliveryDate ? { borderColor: 'var(--c-festive-b, #B8331F)' } : undefined}
               />
             </label>
-            {/* Proceed Date field removed per request 2026-06-05 — the POS still
-                stamps proceeded_at server-side; it's just no longer surfaced here. */}
+            {/* Proceed Date field removed per request 2026-06-05. It showed a
+                separate server-stamped Proceed timestamp; the owner has since
+                ruled (three times, last 2026-08-18) that the Processing Date IS
+                the Proceed, so there is no second date to surface. */}
             <label className={`${styles.field}`} style={{ gridColumn: 'span 4' }}>
               <span className={styles.fieldLabel}>Note</span>
               <input className={styles.fieldInput} value={form.note}

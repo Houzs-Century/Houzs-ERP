@@ -1,0 +1,56 @@
+# Read-only. Measures the disagreement between the two Processing-Date storages
+# (scm.mfg_sales_orders.processing_date vs .proceeded_at) per company, BY
+# STATUS, before anything flips the one decision that still reads the second
+# column (so-stock-allocation.ts). Writes NOTHING — every statement is a SELECT.
+# Prints counts and statuses only: no doc numbers, no customer identity, no
+# amounts, no dates (public repo, public logs).
+name: probe-proceed-split
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Which DB"
+        required: true
+        default: "prod"
+        type: choice
+        options: [staging, prod]
+      company:
+        description: "company ids, comma separated (2 = 2990, 1 = HOUZS)"
+        required: false
+        default: "2,1"
+        type: string
+
+concurrency:
+  group: probe-proceed-split
+  cancel-in-progress: false
+
+jobs:
+  run-staging:
+    if: ${{ inputs.target == 'staging' }}
+    runs-on: ubuntu-latest
+    environment: Staging
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-proceed-split.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.STAGING_DATABASE_URL }}
+
+  run-prod:
+    if: ${{ inputs.target == 'prod' }}
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with: { node-version: 22 }
+      - run: npm ci
+      - run: node scripts/probe-proceed-split.mjs
+        env:
+          COMPANY: ${{ inputs.company }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}

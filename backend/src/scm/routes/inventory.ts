@@ -40,7 +40,7 @@ import { enrichVariantKeyRowsWithFabricSupplierCode } from '../lib/fabric-suppli
 import {
   isConsignmentLotSource, isMakeToOrderCategory, distributeAssignedToLots,
 } from '../lib/inventory-movements';
-import { computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
+import { computeVariantKey, effectiveDelivery, effectiveSoDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
@@ -1545,7 +1545,7 @@ inventory.get('/reservations', async (c) => {
   const byBucket = new Map<string, Claim[]>();  // key: `${warehouse_id}|${item_code}|${variant_key}`
   for (const r of readyRows) {
     const so = Array.isArray(r.so) ? r.so[0] : r.so;
-    const deliveryDate = (so?.amended_delivery_date ?? so?.customer_delivery_date) ?? null;
+    const deliveryDate = so ? effectiveSoDelivery(so) : null;
     const bn = r.allocated_batch_no ?? null;
     const claim: Claim = { docNo: r.doc_no, soCreatedAt: so?.created_at ?? null, qtyReady: Number(r.stock_qty_ready ?? 0), deliveryDate, viaBatch: Boolean(bn) };
     if (bn) {
