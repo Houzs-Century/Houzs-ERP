@@ -27,9 +27,23 @@
 // re-deriving the answer by hand and nothing errored when it drifted. Four
 // surfaces ask "what may this DO do next?" (desktop detail header, that same
 // page's phone action bar, the list quick-view drawer, and the native mobile
-// shell). Before this module they answered it four times, and they disagreed:
-// on DISPATCHED the desktop said "Mark signed" and the phone said "Mark In
-// Transit". They now all import from here.
+// shell), and before this module they answered it four times.
+//
+// WHAT IS SHARED, AND WHAT DELIBERATELY IS NOT — stated precisely, because a
+// header that overstates its own reach is how the next reader comes to trust a
+// thing that is not true:
+//
+//   · The SALES-INVOICE question (siTransferBlockReason) is shared by all four.
+//     That is the one the owner hit, and the one that was silently missing.
+//   · The ADVANCE question (doAdvanceStep) is shared by the three desktop-side
+//     surfaces. The native mobile shell keeps its own finer ladder ON PURPOSE:
+//     it offers DISPATCHED → IN_TRANSIT ("Mark In Transit"), a rung the desktop
+//     skips, and IN_TRANSIT is the departure marker MobileDeliveryPlanning
+//     writes for "On the way" (MobileDeliveryPlanning.tsx:1280). Collapsing the
+//     phone onto the desktop's single jump would have DELETED a step drivers
+//     use. So on DISPATCHED the desktop still says "Mark signed" and the phone
+//     still says "Mark In Transit" — that difference is now a recorded decision
+//     with a reason, rather than two hand-written copies that had drifted.
 //
 // ── THE VOCABULARY (measured, not assumed) ──────────────────────────────────
 // The eight legal delivery_orders.status values are declared once, server-side,

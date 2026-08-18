@@ -23,8 +23,12 @@ nothing here starts advertising actions to people who may never take them.
 **Two modules now own the sentences.** `vendor/scm/lib/do-next-step.ts` (DO) and
 `vendor/scm/lib/po-next-step.ts` (PO). Four surfaces read the DO one — desktop
 detail header, that same page's phone bar, the list quick-view drawer, the native
-mobile shell — where before each re-derived the answer and they disagreed: on
-DISPATCHED the desktop said "Mark signed" and the phone said "Mark In Transit".
+mobile shell — where before each re-derived the answer. Precisely: the
+SALES-INVOICE question is shared by all four; the ADVANCE question is shared by
+the three desktop-side surfaces, and the mobile shell keeps its finer driver
+ladder on purpose (see below), so on DISPATCHED the desktop still says "Mark
+signed" and the phone still says "Mark In Transit" — now a recorded decision
+with a reason rather than two hand-written copies that had drifted.
 An unrecognised status gets a generic sentence, never a guess; the COMPLETED
 story in `shared/do-shipped-states.ts` is what that rule is for.
 
