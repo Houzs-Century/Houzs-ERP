@@ -110,3 +110,26 @@ export async function attachPiAssignedSos(
     return rows.map((r) => ({ ...r, assigned_sos: [], assigned_so_linked: false, assigned_so_provenance: [], delivered_dos: [] }));
   }
 }
+
+/* The MRP-DERIVED PI-list row fields. attachPiAssignedSos runs a company-wide
+   computeMrp (via resolvePoSoCoveragePerSkuForPos) to fill exactly these, which
+   is why the PI list used to pay the full MRP cost on its critical path. The
+   list no longer computes them inline; the deferred endpoint
+   (routes/purchase-invoices-list-enrichment.ts) heals them a beat after render.
+   C16 TWIN: frontend/src/lib/piListEnrichment.ts's PI_MRP_DERIVED_LIST_FIELDS
+   pins the SAME set, and a parity test fails if a new MRP-derived list field is
+   added on only one side. */
+export const PI_LIST_MRP_ENRICHMENT_KEYS = [
+  'assigned_sos',
+  'assigned_so_linked',
+  'assigned_so_provenance',
+  'delivered_dos',
+] as const;
+
+/** Project just the MRP-derived enrichment fields out of an attachPiAssignedSos
+    row, for the deferred-enrichment endpoint's per-PI payload. */
+export function pickPiListMrpEnrichment(row: Record<string, unknown>): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  for (const k of PI_LIST_MRP_ENRICHMENT_KEYS) out[k] = row[k];
+  return out;
+}
