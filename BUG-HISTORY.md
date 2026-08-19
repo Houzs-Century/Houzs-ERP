@@ -1,6 +1,6 @@
 ## Four dead customer-PO columns + an orphaned trigram index carried on every SO header [low]
 
-<!-- area: SCM, sales orders -->
+<!-- area: Sales orders + pricing -->
 
 **Symptom.** `scm.mfg_sales_orders` carried `po_doc_no`, `customer_po`, `customer_po_id`, `customer_po_date` — four columns no surface has written since PR #140 dropped the Customer PO card (owner ruling #2429 made `ref` the canonical customer reference). A GIN/trgm search index `trgm_mfg_so_po_doc_no` was still maintained on the always-empty `po_doc_no`, and `/api/search` still ran an ILIKE against it, on every SO search.
 
