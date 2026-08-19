@@ -8,7 +8,7 @@
 //     returns nothing while the route is serving live tablet traffic.
 //
 //     Deleted as dead code on 2026-08-18 (#2422); the POS 404'd in production.
-//     Restored 2026-08-19 (#2451). Before removing it again, grep the POS repo.
+//     Restored 2026-08-19 (#2459). Before removing it again, grep the POS repo.
 //     POS call sites: apps/pos/src/lib/personal-quick-picks.ts:43,61,73
 // ============================================================================
 // ----------------------------------------------------------------------------
