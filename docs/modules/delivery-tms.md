@@ -615,7 +615,22 @@ Nothing on the board reads it for those rows: the
 "Internal Est." column was removed in the owner's 2026-08-04 column pass, the HC
 fields drawer (whose `procLockActive` reads it) is offered on `so` rows only,
 and the mobile run-sheet's `effDateOf` reaches `effective_delivery_date` first,
-which every synthetic row sets to the same leg date.
+which every synthetic row sets to the same leg date. A **"Processing Date"
+column returned on 2026-08-19** (owner request, with Salesperson / Venue /
+Total Amount — see below) but it keeps this rule: it renders `processing_date`
+on `so` rows ONLY and an n/a dash on the three synthetic kinds, so the leg-date
+mirror is never dressed up as a processing date.
+
+**Owner column additions, 2026-08-19** (`DeliveryPlanningBoard.tsx`, all
+default-VISIBLE): **Salesperson** (`agent` / `salesperson_id`, resolved to a
+name through `useStaffLookup` exactly like the SO list — never a raw UUID;
+SO rows only), **Venue** (`mfg_sales_orders.venue`, the sales venue; PMS
+project rows show their event venue), **Processing Date** (SO rows only, above)
+and **Total Amount** (`local_total_sen`, the SO list's Amount figure; n/a on
+job rows whose total is a structural 0 — unlike the default-hidden Balance
+beside it, which renders on every row). The `/delivery-planning` SO read now
+selects `agent, salesperson_id, venue` and stamps them on SO rows (null on
+ASSR / DP rows; project rows fill `venue`).
 
 Then: row scope (§6) → region filter → counts → state filter →
 `{ orders, counts, regions }` (`:1345-1371`). Counts are computed over the

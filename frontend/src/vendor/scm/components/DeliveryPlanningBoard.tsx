@@ -45,6 +45,7 @@ import {
 } from '../lib/delivery-planning-queries';
 import { type DriverRow } from '../lib/drivers-queries';
 import { type LorryRow } from '../lib/lorries-queries';
+import { useStaffLookup } from '../../../hooks/useStaffLookup';
 import styles from './DeliveryPlanningBoard.module.css';
 import { DateField } from "./DateField";
 
@@ -601,6 +602,9 @@ export function DeliveryPlanningBoard({
 }: DeliveryPlanningBoardProps) {
   const askConfirm = useConfirm();
   const notify = useNotify();
+  /* Salesperson column — agent text / salesperson_id resolved against the staff
+     roster, same helper as the SO list (never renders a raw UUID). */
+  const { nameOf: salespersonNameOf } = useStaffLookup();
 
   /* EM/SG nicety: when the active region is EM or SG, the cross-border columns
      (shipout date, port ref, customer-delivered date) default-SHOW; elsewhere
@@ -729,18 +733,20 @@ export function DeliveryPlanningBoard({
          that pass — Days Left, Delivered Date, Property, Possession, Referral,
          Internal Est. — and the address moved INTO the default view, because
          where the lorry is going is a planning question. */
-      // What is this row, and who is it for
-      'row_type', 'so_doc_no', 'company_code', 'debtor_name', 'phone', 'wa_message',
+      // What is this row, and who is it for (owner 2026-08-19: + who sold it
+      // and at which venue — Salesperson / Venue joined the default view)
+      'row_type', 'so_doc_no', 'company_code', 'debtor_name', 'salesperson', 'venue', 'phone', 'wa_message',
       // Where it is going
       'region', 'address', 'postcode',
       // Where it stands
       'delivery_state', 'stock_remark',
-      // When
-      'customer_delivery_date', 'amended_delivery_date',
+      // When (owner 2026-08-19: + Processing Date, the internal expected
+      // delivery date — same field the SO list shows under that name)
+      'processing_date', 'customer_delivery_date', 'amended_delivery_date',
       // Who takes it
       'driver', 'lorry',
-      // What proves it
-      'do',
+      // What proves it, and what it's worth (owner 2026-08-19: + Total Amount)
+      'do', 'total_amount',
       // Cross-border, shown ONLY on the EM / SG region tabs (defaultHidden:
       // !isEmSg) — noise on the other four, essential on those two.
       'shipout_date', 'eta_arriving_port', 'arrives_em_warehouse_date',
@@ -808,6 +814,25 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => `${o.debtor_name ?? ''} ${o.debtor_code ?? ''}`.trim(),
       groupValue: (o) => o.debtor_name ?? o.debtor_code ?? '(none)',
       sortFn: (a, b) => (a.debtor_name ?? '').localeCompare(b.debtor_name ?? ''),
+    },
+    {
+      /* Who SOLD the order (owner 2026-08-19) — same roster-resolved name the
+         SO list shows (never a raw UUID). SO rows only; n/a on job rows. */
+      key: 'salesperson', label: 'Salesperson', width: 150, sortable: true, groupable: true,
+      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : salespersonNameOf(o.agent, o.salesperson_id, '—')),
+      searchValue: (o) => (o.row_type !== 'so' ? '' : salespersonNameOf(o.agent, o.salesperson_id, '')),
+      groupValue: (o) => (o.row_type !== 'so' ? '(n/a)' : salespersonNameOf(o.agent, o.salesperson_id, '(none)')),
+      exportValue: (o) => (o.row_type !== 'so' ? '' : salespersonNameOf(o.agent, o.salesperson_id, '')),
+      sortFn: (a, b) => salespersonNameOf(a.agent, a.salesperson_id, '').localeCompare(salespersonNameOf(b.agent, b.salesperson_id, '')),
+    },
+    {
+      /* Where it was SOLD (owner 2026-08-19) — the SO's sales venue; PMS
+         project rows carry their event venue. */
+      key: 'venue', label: 'Venue', width: 160, groupable: true,
+      accessor: (o) => o.venue?.trim() || '—',
+      searchValue: (o) => o.venue ?? '',
+      groupValue: (o) => o.venue?.trim() || '(none)',
+      exportValue: (o) => o.venue ?? '',
     },
     {
       key: 'phone', label: 'Phone', width: 150,
@@ -896,6 +921,27 @@ export function DeliveryPlanningBoard({
       searchValue: (o) => o.so_date ?? '',
       sortFn: (a, b) => String(a.so_date ?? '').localeCompare(String(b.so_date ?? '')),
       filterType: 'date', dateValue: (o) => o.so_date,
+    },
+    {
+      /* Processing Date (owner 2026-08-19) — the internal expected delivery
+         date (mfg_sales_orders.processing_date), the SAME field + name the SO
+         list shows. Was on this board as "Internal Est." until the 2026-08-04
+         column pass removed it; back by request. SO rows ONLY: the synthetic
+         job rows mirror their leg date into the payload field for the
+         effective-date fallback, but a job has no processing date, so the
+         column must not dress that mirror up as one (delivery-tms.md §"
+         processing_date is the SALES ORDER's Processing Date and nothing
+         else"). */
+      key: 'processing_date', label: 'Processing Date', width: 140, sortable: true,
+      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : (
+        <span style={{ fontVariantNumeric: 'tabular-nums' }}>
+          {fmtDateOrDash(o.processing_date)}
+        </span>
+      )),
+      searchValue: (o) => (o.row_type !== 'so' ? '' : (o.processing_date ?? '')),
+      exportValue: (o) => (o.row_type !== 'so' ? '' : (o.processing_date ?? '')),
+      sortFn: (a, b) => String(a.row_type === 'so' ? a.processing_date ?? '' : '').localeCompare(String(b.row_type === 'so' ? b.processing_date ?? '' : '')),
+      filterType: 'date', dateValue: (o) => (o.row_type !== 'so' ? null : o.processing_date),
     },
     {
       key: 'customer_delivery_date', label: 'Delivery Date', width: 130, sortable: true,
@@ -1089,6 +1135,23 @@ export function DeliveryPlanningBoard({
       exportValue: (o) => o.crew?.lorry_plate ?? '',
     },
     {
+      /* Total Amount (owner 2026-08-19) — the SO's grand total (local_total_sen),
+         same figure as the SO list's Amount column. Default-VISIBLE, unlike the
+         Balance beside it: the outstanding balance is a finance lookup, but the
+         order's value is a planning fact. n/a on job rows (their total is a
+         structural 0, and RM 0.00 would read as a paid-up order). */
+      key: 'total_amount', label: 'Total Amount', width: 140, align: 'right', sortable: true,
+      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : (
+        <span style={{ fontFamily: 'var(--font-mark)', fontWeight: 700, color: '#0c3f39' }}>
+          {fmtSen(o.local_total_sen)}
+        </span>
+      )),
+      searchValue: (o) => (o.row_type !== 'so' ? '' : String(o.local_total_sen)),
+      exportValue: (o) => (o.row_type !== 'so' ? '' : o.local_total_sen / 100),
+      sortFn: (a, b) => a.local_total_sen - b.local_total_sen,
+      numberValue: (o) => (o.row_type !== 'so' ? null : o.local_total_sen / 100),
+    },
+    {
       /* Default-HIDDEN since the 2026-08-04 tidy-up. The release gate — which is
          what a dispatcher actually needs from the money side — already rides on
          the row; the raw balance is a finance figure, and it is 0 on every ASSR /
@@ -1134,8 +1197,9 @@ export function DeliveryPlanningBoard({
   // The EM/SG cross-border default-show (isEmSg) depends on activeRegion →
   // recompute the columns on region change. The editable Status/Date/Driver/Lorry
   // accessors close over `sched` + the driver/lorry option lists, so they join the
-  // deps (a new driver/lorry list must re-render the pickers).
-  }, [isEmSg, sched, drivers, lorries, msgStatuses]); // eslint-disable-line react-hooks/exhaustive-deps
+  // deps (a new driver/lorry list must re-render the pickers); ditto the
+  // Salesperson cells over the staff-roster lookup.
+  }, [isEmSg, sched, drivers, lorries, msgStatuses, salespersonNameOf]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* Map-open column narrowing: everything NOT in the override hides at render
      time (DataGrid overlayHidden). The user's persisted layout is untouched —

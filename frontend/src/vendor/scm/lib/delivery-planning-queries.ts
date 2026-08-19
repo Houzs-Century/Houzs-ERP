@@ -64,6 +64,14 @@ export type PlanningOrder = {
   debtor_code: string | null;
   debtor_name: string | null;
   phone: string | null;
+  /* Sales context (owner 2026-08-19) — who sold it + the sales venue. `agent`
+     is free text (sometimes a raw UUID); resolve to a display name via
+     useStaffLookup(agent, salesperson_id), never render either raw. null on
+     ASSR / DP rows; project rows fill `venue` with the PMS event venue.
+     Optional (`?`) so a cached pre-upgrade payload still typechecks. */
+  agent?: string | null;
+  salesperson_id?: string | null;
+  venue?: string | null;
   branding: string | null;
   status: string;
   delivery_state: DeliveryState;

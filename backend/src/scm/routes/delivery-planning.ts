@@ -429,6 +429,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     // multi-company: which company this SO belongs to (shared queue tags rows).
     company_id: number | null;
     phone: string | null; branding: string | null; status: string | null; delivery_state: string | null;
+    agent: string | null; salesperson_id: string | null; salespersonId?: string | null; venue: string | null;
     customer_state: string | null; customer_country: string | null;
     customer_delivery_date: string | null; processing_date: string | null;
     so_date: string | null; address1: string | null; address2: string | null;
@@ -443,8 +444,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
     // HC SO-context raw-data fields. dual-read camelCase below.
     possession_date: string | null; house_type: string | null;
     replacement_disposal: string | null; referral: string | null;
-    possessionDate?: string | null; houseType?: string | null;
-    replacementDisposal?: string | null;
+    possessionDate?: string | null; houseType?: string | null; replacementDisposal?: string | null;
   };
   /* CROSS-COMPANY = the caller's GRANTED companies; unscoped, this read took every tenant's. */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
@@ -453,7 +453,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         /* NO `id` column here: scm.mfg_sales_orders is keyed by doc_no (TEXT PK) and
            has no `id` column: selecting it makes PostgREST reject the whole query and
            the board 500s. Identity here is doc_no; every join below keys on it. */
-        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral')
+        .select('doc_no, company_id, debtor_code, debtor_name, phone, branding, status, delivery_state, agent, salesperson_id, venue, customer_state, customer_country, customer_delivery_date, amend_date_from_customer, amended_delivery_date, amend_reason, processing_date, so_date, address1, address2, postcode, building_type, local_total_sen, balance_sen, possession_date, house_type, replacement_disposal, referral')
         .neq('status', 'DRAFT')
         .neq('status', 'CANCELLED')
         .order('customer_delivery_date', { ascending: true, nullsFirst: false }),
@@ -901,6 +901,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
       debtor_code: r.debtor_code ?? null,
       debtor_name: r.debtor_name ?? null,
       phone: r.phone ?? null,
+      agent: r.agent ?? null, salesperson_id: r.salespersonId ?? r.salesperson_id ?? null, venue: r.venue ?? null,
       /* SO rows always carry a real label now; `| null` is union parity for the
          three non-SO BoardRow kinds (ASSR / DP / project) that pass null. */
       branding: branding as string | null,
@@ -1095,7 +1096,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           so_doc_no: rowKey,
           debtor_code: null,
           debtor_name: a.customer_name ?? null,
-          phone: a.phone ?? null,
+          phone: a.phone ?? null, agent: null, salesperson_id: null, venue: null,
           branding: null,
           status: a.status ?? '',
           // A set date but not yet delivered → Pending Delivery (owner: a dated
@@ -1268,7 +1269,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
         so_doc_no: `DP:${String(d.id)}`,
         debtor_code: null,
         debtor_name: (d.party_name as string | null) ?? null,
-        phone: (d.contact_phone as string | null) ?? null,
+        phone: (d.contact_phone as string | null) ?? null, agent: null, salesperson_id: null, venue: null,
         branding: null,
         status: String(d.status ?? ''),
         delivery_state: scheduled ? 'PENDING_DELIVERY' : 'PENDING_SCHEDULE',
@@ -1402,7 +1403,7 @@ export const deliveryPlanningBoardHandler = async (c: Context<{ Bindings: Env; V
           so_doc_no: rowKey,
           debtor_code: null,
           debtor_name: partyName,
-          phone: null,
+          phone: null, agent: null, salesperson_id: null, venue: p.venue ?? null, // a project's venue is real
           branding: null,
           status: 'PROJECT',
           // Read-only mirror: a project window is already crewed in PMS → it's a
