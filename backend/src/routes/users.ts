@@ -44,6 +44,7 @@ async function activeCompanyEmailIdentity(
 import { getDb } from "../db/client";
 import { resolveDatabaseUrl } from "../db/pg";
 import { allowedCompanyIds } from "../scm/lib/companyScope";
+import { targetWithinActorCompanies } from "./lib/actor-company-gate";
 import {
   departments,
   invitations,
@@ -2077,37 +2078,6 @@ app.delete("/invitations/:id", requirePermission("users.manage"), async (c) => {
  * holders — impersonation is strictly the owner's review tool. Every use is
  * audited with the target identity.
  */
-/* Owner decision 2026-08-19: the ACTOR's granted set is the boundary, never the
-   active company. Full reasoning and the two deliberate edge cases:
-   docs/modules/team-members.md, "Taking over an account". */
-async function targetWithinActorCompanies(
-  c: Context<{ Bindings: Env }>,
-  targetUserId: number,
-): Promise<{ ok: true } | { ok: false; body: { error: string; message: string } }> {
-  const mine = allowedCompanyIds(c);
-  if (mine === undefined) return { ok: true };
-  const r = await c.env.DB.prepare(
-    `SELECT company_id FROM user_companies WHERE user_id = ?`,
-  )
-    .bind(targetUserId)
-    .all<{ company_id: number | string }>();
-  const theirs = (r.results ?? [])
-    .map((x) => Number(x.company_id))
-    .filter((n) => Number.isFinite(n) && n > 0);
-  // A target with NO grants is the WIDEST reach, not the safest — see the guide.
-  const held = new Set(mine);
-  const outside = theirs.length === 0 ? [-1] : theirs.filter((cid) => !held.has(cid));
-  if (outside.length === 0) return { ok: true };
-  return {
-    ok: false,
-    body: {
-      error: "not_in_your_companies",
-      message:
-        "That account belongs to a company you are not assigned to. Ask someone who holds it, or have your own access extended first.",
-    },
-  };
-}
-
 app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
   const me = c.get("user");
   const granted = me?.permissions_set ?? me?.permissions ?? [];

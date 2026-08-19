@@ -263,15 +263,8 @@ function useSoSearch(q: string): { results: SoHit[]; loading: boolean; error: st
     queryFn: ({ signal }) =>
       api.get<{ results?: SoHit[] }>(`/api/assr/search-so?q=${encodeURIComponent(needle)}`, { signal }),
   });
-  /* THE ERROR USED TO BE DROPPED, and a REFUSAL then rendered as "No matching
-     sales orders." — identical to an honest empty result. GET /assr/search-so
-     403s without `service_cases.read`, and a person can hold the permission that
-     OPENS this form without holding that one, so the picker silently found
-     nothing and the Create button stayed grey with no reason given.
-
-     Cost, 2026-08-19: a salesperson reported "I cannot submit", and the first two
-     hypotheses (his company grants, an AutoCount sync gap) were both guesses
-     because the screen could not tell a refusal from an empty answer. */
+  // The error used to be DROPPED, so a 403 from requireServiceCaseAccess read as
+  // 'No matching sales orders'. BUG-HISTORY 2026-08-19.
   return {
     results: data?.results ?? [],
     loading: isFetching,
