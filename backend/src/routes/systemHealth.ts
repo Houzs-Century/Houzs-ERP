@@ -408,6 +408,34 @@ app.post("/autocount/po-pull", requirePermission("*"), async (c) => {
   }
 });
 
+/* Refresh the SALES-ORDER mirror. The PO twin above has existed for a while; this
+   one did not, and its absence is why a stale mirror could only be fixed by
+   waiting.
+
+   `?mode=all` is the point. The incremental path asks AutoCount getSince(
+   pull_checkpoint), so an order whose LAST MODIFIED date precedes the mirror's
+   earliest checkpoint is never offered and never arrives — no amount of waiting
+   collects it. `all` goes through getAll and, per services/pull.ts:29, does NOT
+   touch the checkpoint, so a backfill cannot disturb the incremental pull that
+   is working. Default stays `filtered` so a mis-click is the cheap one.
+
+   Proved necessary 2026-08-19: SO-005263 exists in AutoCount, a salesperson
+   could not raise a Service Case against it, and the mirror held 3281 rows with
+   no trace of that number or its digits while the checkpoint was CURRENT.
+
+   Idempotent: the INSERT is ON CONFLICT(doc_no) DO UPDATE, so re-running
+   refreshes rows rather than duplicating them. */
+app.post("/autocount/so-pull", requirePermission("*"), async (c) => {
+  const mode = c.req.query("mode") === "all" ? "all" : "filtered";
+  try {
+    const { runPull } = await import("../services/pull");
+    const result = await runPull(c.env, "MANUAL", mode);
+    return c.json({ mode, result });
+  } catch {
+    return c.json({ error: "Couldn't reach AutoCount to refresh sales orders. Try again shortly." }, 502);
+  }
+});
+
 // Rebuild the unfiltered staging snapshot. Writes only ac_snapshot_*, so this
 // is the safe one to re-run whenever a fresh denominator is wanted.
 app.post("/autocount/snapshot", requirePermission("*"), async (c) => {
