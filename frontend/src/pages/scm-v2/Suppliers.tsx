@@ -2,7 +2,7 @@
 // Suppliers — master + supplier_material_bindings management.
 //
 // Two-code mapping (the HOOKKA pattern):
-//   OUR `material_code` (mfg_products.code / fabrics.code)
+//   OUR `item_code` (mfg_products.code / fabrics.code)
 //     ↔ THEIR `supplier_sku` (whatever the supplier calls it)
 //
 // UI: design-system reskin (2026-07-16) — full-bleed on the app background,

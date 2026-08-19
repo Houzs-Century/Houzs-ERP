@@ -36,7 +36,7 @@ const norm = (s) => (s || "").trim().toUpperCase().replace(/\s+/g, " ");
  * (or that row's sofa placeholder). Otherwise the row is left blank and the
  * caller reports it for the owner to adjudicate.
  *
- * @param poCode       the PO row's material_code (for a sofa, the compartment)
+ * @param poCode       the PO row's item_code (for a sofa, the compartment)
  * @param soBase       ERP code of the SO line's AutoCount ItemCode, "" if unmapped
  * @param placeholder  sofa placeholder derived from THIS PO line's own AutoCount
  *                     item (`<model>-1S`), or null — same product by construction

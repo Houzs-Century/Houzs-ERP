@@ -149,7 +149,7 @@ type LineDraft = {
 
 type GrnItemRow = Record<string, unknown> & {
   id: string;
-  material_code: string;
+  item_code: string;
   material_name: string;
   /* Supplier-facing dual-code rule (Commander) — grn_items snapshots the
      supplier's own SKU at receive time; surfaced read-only on the line card. */
@@ -672,7 +672,7 @@ export const GoodsReceivedDetail = () => {
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Item Code (Internal)</span>
                       <input
-                        type="text" readOnly value={it.material_code}
+                        type="text" readOnly value={it.item_code}
                         className={styles.fieldInput}
                         style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />

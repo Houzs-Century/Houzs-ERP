@@ -53,13 +53,13 @@ async function main() {
   const byAc = new Map();
   for (const ln of csv) { const f = parseCsvLine(ln); if (f[0]) byAc.set(norm(f[0]), (f[1] || "").trim()); }
 
-  const items = await sql`SELECT i.id, i.material_code, i.photo_urls, p.po_number, p.linked_ac_docno
+  const items = await sql`SELECT i.id, i.item_code, i.photo_urls, p.po_number, p.linked_ac_docno
     FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
     WHERE p.company_id = 1 AND p.linked_ac_docno IS NOT NULL ORDER BY i.id`;
   const byDocCode = new Map();
   const byDocModel = new Map();
   for (const it of items) {
-    const code = norm(it.material_code);
+    const code = norm(it.item_code);
     const k = `${it.linked_ac_docno}|${code}`;
     if (!byDocCode.has(k)) byDocCode.set(k, []);
     byDocCode.get(k).push(it);

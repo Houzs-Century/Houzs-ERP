@@ -281,7 +281,7 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
   const cancelled = status === 'CANCELLED';
 
   // 1. TARGET net IN per bucket = sum of current lines (empty if cancelled).
-  type Bucket = { warehouse_id: string; product_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null };
+  type Bucket = { warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null };
   const targetByBucket = new Map<string, Bucket>();
   if (!cancelled) {
     const { data: items } = await sb.from('consignment_delivery_return_items')
@@ -313,20 +313,20 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
       const k = `${wh}::${it.item_code}::${vk}::${batch ?? ''}`;
       const cur = targetByBucket.get(k);
       if (cur) cur.qty += qty;
-      else targetByBucket.set(k, { warehouse_id: wh, product_code: it.item_code, variant_key: vk, product_name: it.description, qty, unit_cost_sen: unitCost, batch_no: batch });
+      else targetByBucket.set(k, { warehouse_id: wh, item_code: it.item_code, variant_key: vk, product_name: it.description, qty, unit_cost_sen: unitCost, batch_no: batch });
     }
   }
 
   // 2. CURRENT net IN per bucket from ALL this return's movements (CS_DR IN +
   //    any prior STOCK_TRANSFER resync/cancel deltas).
   const { data: movs } = await sb.from('inventory_movements')
-    .select('movement_type, warehouse_id, product_code, variant_key, batch_no, qty, total_cost_sen, product_name')
+    .select('movement_type, warehouse_id, item_code, variant_key, batch_no, qty, total_cost_sen, product_name')
     .eq('source_doc_id', returnId)
     .in('source_doc_type', ['CS_DR', 'STOCK_TRANSFER']);
   type Agg = { in_qty: number; out_qty: number; in_total_cost: number; product_name: string | null };
   const aggByBucket = new Map<string, Agg>();
-  for (const m of (movs ?? []) as Array<{ movement_type: string; warehouse_id: string; product_code: string; variant_key: string | null; batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null }>) {
-    const k = `${m.warehouse_id}::${m.product_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
+  for (const m of (movs ?? []) as Array<{ movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number; total_cost_sen: number | null; product_name: string | null }>) {
+    const k = `${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
     let a = aggByBucket.get(k);
     if (!a) { a = { in_qty: 0, out_qty: 0, in_total_cost: 0, product_name: m.product_name }; aggByBucket.set(k, a); }
     if (m.movement_type === 'IN') { a.in_qty += Number(m.qty ?? 0); a.in_total_cost += Number(m.total_cost_sen ?? 0); }
@@ -353,7 +353,7 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
       const useCsDr = neverMoved && !csDrEmitted.has(`${pc}::${vk}`);
       if (useCsDr) csDrEmitted.add(`${pc}::${vk}`);
       writes.push({
-        movement_type: 'IN', warehouse_id: wh ?? '', product_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
+        movement_type: 'IN', warehouse_id: wh ?? '', item_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
         qty: delta, unit_cost_sen: t?.unit_cost_sen ?? 0,
         source_doc_type: useCsDr ? 'CS_DR' : 'STOCK_TRANSFER',
         source_doc_id: returnId, source_doc_no: returnNo,
@@ -363,7 +363,7 @@ async function resyncReturnInventory(sb: any, returnId: string, performedBy: str
       });
     } else {
       writes.push({
-        movement_type: 'OUT', warehouse_id: wh ?? '', product_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
+        movement_type: 'OUT', warehouse_id: wh ?? '', item_code: pc ?? '', variant_key: vk ?? '', product_name: pname,
         qty: -delta,
         source_doc_type: 'STOCK_TRANSFER',
         source_doc_id: returnId, source_doc_no: cancelled ? `${returnNo}-CANCEL` : returnNo,

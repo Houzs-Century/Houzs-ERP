@@ -116,7 +116,7 @@ export async function reallocatePiCharges(
     const [headRes, itemsRes] = await Promise.all([
       sb.from('purchase_invoices').select('exchange_rate').eq('id', piId).maybeSingle(),
       sb.from('purchase_invoice_items')
-        .select('id, grn_item_id, material_code, item_group, qty, unit_price_sen, line_total_sen, allocated_charge_sen')
+        .select('id, grn_item_id, item_code, item_group, qty, unit_price_sen, line_total_sen, allocated_charge_sen')
         .eq('purchase_invoice_id', piId),
     ]);
     /* `?? 1` means "already MYR", so a failed read on an RMB/USD PI allocates the
@@ -134,7 +134,7 @@ export async function reallocatePiCharges(
     }
     const piRate = (headRes.data as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
     const items = (itemsRes.data ?? []) as Array<{
-      id: string; grn_item_id: string | null; material_code: string; item_group: string | null;
+      id: string; grn_item_id: string | null; item_code: string; item_group: string | null;
       qty: number | null; unit_price_sen: number | null; line_total_sen: number | null;
       allocated_charge_sen: number | null;
     }>;
@@ -145,12 +145,12 @@ export async function reallocatePiCharges(
        capitalised. They are not goods either, so removing them leaves the goods
        basis untouched. */
     const visible = items.filter((it) =>
-      !(it.grn_item_id && isServiceLine({ itemGroup: it.item_group, itemCode: it.material_code })));
+      !(it.grn_item_id && isServiceLine({ itemGroup: it.item_group, itemCode: it.item_code })));
 
     // CBM basis needs each goods line's product volume; one round trip, default 0
     // (the allocator falls back to QTY when the CBM Σ is 0).
     const m3ByCode = new Map<string, number>();
-    const codes = [...new Set(visible.map((it) => it.material_code).filter(Boolean))];
+    const codes = [...new Set(visible.map((it) => it.item_code).filter(Boolean))];
     if (codes.length > 0) {
       // Company-scoped: `code` is shared, and the other company's volume would
       // shift every goods line's share of the landed charge.
@@ -175,12 +175,12 @@ export async function reallocatePiCharges(
       visible.map((it) => ({
         id: it.id,
         itemGroup: it.item_group ?? null,
-        materialCode: it.material_code,
+        itemCode: it.item_code,
         qty: Number(it.qty ?? 0),
         // Pool by the SERVICE line's line total; allocate ONTO the goods lines.
         amountSen: Number(it.line_total_sen ?? 0),
         unitPriceSen: Number(it.unit_price_sen ?? 0),
-        unitM3Milli: m3ByCode.get(it.material_code) ?? 0,
+        unitM3Milli: m3ByCode.get(it.item_code) ?? 0,
       })),
       method,
       piRate,

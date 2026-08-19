@@ -103,7 +103,7 @@ type PoHeader = {
 };
 
 type PoItem = {
-  material_code: string;
+  item_code: string;
   material_name: string;
   supplier_sku:  string | null;
   qty:           number;
@@ -143,7 +143,7 @@ const fmtAmount = (centi: number): string =>
 
 /* A sofa is split into per-MODULE PO lines. Each line's `variants` carries that
    ONE module's spatial slot at the TOP LEVEL (x / y / rot + cellIndex), its module
-   code lives in `material_code` ("{MODEL}-2A(RHF)"), and a shared `summary` string
+   code lives in `item_code` ("{MODEL}-2A(RHF)"), and a shared `summary` string
    describes the whole sofa. So we build ONE cell per line and the caller groups
    lines by `summary` into the full layout. (The earlier `variants.cells`-array
    assumption was wrong — real lines store the slot flat, so nothing ever drew.)
@@ -151,7 +151,7 @@ const fmtAmount = (centi: number): string =>
 const SOFA_MODULE_IDS_BY_LEN = SOFA_MODULES.map((m) => m.id).sort((a, b) => b.length - a.length);
 function sofaCellFromLine(
   variants: Record<string, unknown> | null | undefined,
-  materialCode: string | null | undefined,
+  itemCode: string | null | undefined,
 ): { cell: Cell; depth: Depth; groupKey: string; idx: number } | null {
   if (!variants || typeof variants !== 'object') return null;
   const v = variants as Record<string, unknown>;
@@ -159,9 +159,9 @@ function sofaCellFromLine(
   const y = v.y;
   if (typeof x !== 'number' || !Number.isFinite(x)) return null;
   if (typeof y !== 'number' || !Number.isFinite(y)) return null;
-  // Module id = the SOFA_MODULES id the material_code ENDS with (longest match):
+  // Module id = the SOFA_MODULES id the item_code ENDS with (longest match):
   // "XAMMAR-2A(RHF)" → "2A(RHF)".
-  const code = (materialCode ?? '').trim();
+  const code = (itemCode ?? '').trim();
   const moduleId = SOFA_MODULE_IDS_BY_LEN.find((id) => code.endsWith(id)) ?? null;
   if (!moduleId || !findModule(moduleId)) return null;
   const rot: 0 | 90 | 180 | 270 = v.rot === 90 || v.rot === 180 || v.rot === 270 ? v.rot : 0;
@@ -184,11 +184,11 @@ function sofaCellFromLine(
    caller can skip them. Never throws. */
 const SOFA_MODULE_TOKEN_RE = /([A-Za-z0-9]+(?:\([A-Za-z]+\))+|CNR|Console|STOOL|1NA|2NA|1S|2S|3S)\s*$/;
 function sofaModuleFromLine(
-  materialCode: string | null | undefined,
+  itemCode: string | null | undefined,
   fallbackText: string | null | undefined,
 ): { moduleId: string; baseModel: string } | null {
   // Preferred: the SKU code's longest known-module suffix.
-  const code = (materialCode ?? '').trim();
+  const code = (itemCode ?? '').trim();
   if (code) {
     const suffix = SOFA_MODULE_IDS_BY_LEN.find((id) => code.endsWith(id));
     if (suffix && findModule(suffix)) {
@@ -382,11 +382,11 @@ async function renderPurchaseOrderInto(
   //   UOM | Qty | U/Price | Disc | Total
   /* Canonical SKU/build order (sofa modules LHF→NA→RHF, mains→accessories→
      services) — mirror the sales side. The shared helper keys on `item_code`,
-     but PO lines expose `material_code`; sort a shimmed view that carries the
+     but PO lines expose `item_code`; sort a shimmed view that carries the
      original row back unchanged (render-time only, no persistence touched). */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      items.map((it) => ({ ...it, item_code: it.material_code, __row: it })),
+      items.map((it) => ({ ...it, item_code: it.item_code, __row: it })),
       (r) => r.item_group as string | null | undefined,
     ),
   ).map((r) => r.__row);
@@ -544,7 +544,7 @@ async function renderPurchaseOrderInto(
 
   for (const it of items) {
     const soNo = (it.so_doc_no ?? '').trim();
-    const part = sofaCellFromLine(it.variants, it.material_code);
+    const part = sofaCellFromLine(it.variants, it.item_code);
     if (part) {
       // ── Stored-geometry path (POS-configured sofas) — UNCHANGED. ──
       const gk = `${soNo}|${part.groupKey}`;
@@ -554,26 +554,26 @@ async function renderPurchaseOrderInto(
         // to the first '·'), else the per-line model name.
         const model = (part.groupKey ? (part.groupKey.split('·')[0] ?? '').trim() : '')
           || (it.material_name ?? '').trim()
-          || (it.material_code ?? '').trim();
+          || (it.item_code ?? '').trim();
         g = { parts: [], depth: part.depth, model, soNo };
         sofaGroups.set(gk, g);
       }
       g.parts.push({ cell: part.cell, idx: part.idx });
       // Record the base model so a reconstructed group can't double-draw it.
-      const bm = sofaModuleFromLine(it.material_code, it.material_name ?? it.description);
+      const bm = sofaModuleFromLine(it.item_code, it.material_name ?? it.description);
       if (bm) geometryKeys.add(baseModelKey(soNo, bm.baseModel));
       continue;
     }
     // ── Reconstruction path (geometry-less BACKEND / old sofas). ──
     if ((it.item_group ?? '').toLowerCase() !== 'sofa') continue;
-    const mod = sofaModuleFromLine(it.material_code, it.material_name ?? it.description);
+    const mod = sofaModuleFromLine(it.item_code, it.material_name ?? it.description);
     if (!mod) continue;
     const depthRaw = (it.variants as { depth?: unknown } | null)?.depth;
     const depth: Depth = typeof depthRaw === 'string' && depthRaw.trim() ? depthRaw : '24';
     const fk = baseModelKey(soNo, mod.baseModel);
     let fg = fallbackGroups.get(fk);
     if (!fg) {
-      const model = (it.material_name ?? '').trim() || (it.material_code ?? '').trim();
+      const model = (it.material_name ?? '').trim() || (it.item_code ?? '').trim();
       fg = { modules: [], depth, model, soNo };
       fallbackGroups.set(fk, fg);
     }

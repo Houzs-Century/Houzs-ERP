@@ -1,3 +1,100 @@
+## Sales Orders list stayed EMPTY after the money-rename deploy — hosted PostgREST kept serving the recreated views stale [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 8 月 18 号那批把钱的栏位改名的改动上线后，销售订单列表整天都是空的，HOUZS
+明明有 2,726 张单。查清楚了：单子、数据、数据库那张 view 全都好好的 —— 是「对外的那层
+读取服务」（PostgREST）在改名之后一直用旧的状态在跑，没有跟着刷新。要人手叫它重新刷新才
+会好；单靠改代码不会好。
+
+**Symptom.** `GET /api/scm/mfg-sales-orders?page=1&pageSize=50` (NO status param)
+returns HTTP 500 `{error:'load_failed', reason:'Requested range not satisfiable'}`
+LIVE, and did not self-heal across the day. The grid masks it as "No sales orders
+yet".
+
+**Root cause (traced with two read-only probes; app-layer confirmed by
+elimination).** The SCM routes read through HOSTED Supabase PostgREST
+(`getSupabaseService` = supabase-js -> `SUPABASE_URL`, `db.schema='scm'`,
+service_role), NOT direct pg. `backend/scripts/check-so-list-empty.mjs` proved,
+against prod: direct pg returns 2726 for `company_id=1` through
+`scm.mfg_sales_orders_with_payment_totals` (view faithful, base=2726/view=2726),
+`service_role` reads all 2726 through it, grants/RLS fine. So the 0 is emitted by
+the PostgREST layer, the only thing between pg (2726) and the app (0). The batch's
+`0305` DROP/CREATE'd 11 views + a matview (applied 2026-08-18 16:27:59Z). The
+`pgrst_ddl_watch`/`pgrst_drop_watch` event triggers exist and are ENABLED, so
+PostgREST's schema MODEL was told to reload — yet PostgREST 14.5's `authenticator`
+connection pool is 44 days old (oldest `backend_start` 2026-07-05), long predating
+0305, and it kept serving the recreated views from stale state a model-reload does
+not clear. The exact PostgREST count-0 micro-mechanism is UNKNOWN — hosted
+PostgREST is not reachable from CI (no `SUPABASE_SERVICE_ROLE_KEY` in any Actions
+scope), so it must be confirmed by the live app.
+
+**Fix.** Immediate restore: force PostgREST to refresh —
+`backend/scripts/reload-postgrest-schema.mjs` + `reload-postgrest-schema.yml`
+(gated; default plan). `NOTIFY pgrst 'reload schema'`+'reload config'; escalation
+`recycle=true` terminates PostgREST's stale connections so it reconnects fresh.
+Code hardening that keeps ANY count-0 from surfacing as a masked 500 shipped
+separately (fix/so-list-empty: `effectiveStatusFilter` + `isRangeNotSatisfiable`).
+Durable prevention is an owner decision (see below) — a view-recreate that leaves
+PostgREST stale must trigger a reload/recycle in the deploy, or avoid DROP/CREATE
+of exposed views.
+
+**Ref.** fix/so-list-restore-pgrest, 2026-08-19.
+
+## Tenant scope: eight helpers left `companyId` optional, so a future caller could leak across companies [medium]
+
+**Symptom.** No live leak — every current caller passes the company. But eight
+scope-deciding helpers typed `companyId` as OPTIONAL (`companyId?: number`), and
+each "degrades open" (`if (companyId != null) q = q.eq('company_id', companyId)`).
+A future caller that simply forgot the argument would read/write the OTHER
+company's rows in the merged DB, with no compile error and no runtime signal —
+the exact `optional-param-noop` class at the top of this file (the same shape the
+`replaceItems`/`replacePayments` fix closed on 2026-08-18).
+
+**Root cause (traced).** `companyId?: T` means every caller that says nothing keeps
+the permissive default. Found by the recurring-class hunt: `resolveDoSofaBatchMap`
++ two others in `delivery-orders-mfg.ts`, `reallocateGrnCharges` /
+`computeAndStoreGrnAllocation` (`grns.ts`, landed-cost money), `mfg-products.ts`
+`syncAnchorBindingFromProduct`, `customer-credits.ts`, `fabric-tracking.ts`,
+`mfg-purchase-orders.ts`. All current call sites were verified to pass
+`activeCompanyId(c)` / the doc's company, so nothing leaks today.
+
+**Fix.** Flip all eight signatures to REQUIRED `companyId: number | null`, so the
+compiler enumerates every call site. Three `resolveDoSofaBatchMap` calls that
+passed nothing now pass the DO header's `company_id` (a correct tightening); the
+rest pass `activeCompanyId(c) ?? null` (behaviour-preserving); the deliberate
+UNRESOLVED sentinel in `procurement-execute.ts` moves `undefined` -> `null` (the
+consumers gate on `!= null`, which is identical for both). Backend typecheck 0.
+
+**Ref.** fix/company-scope-optional-params, 2026-08-19.
+
+## The money-rename migration missed a materialized view and failed the deploy [medium]
+
+**Symptom.** The deploy of `0305_money_centi_to_sen.sql` (the one-shot `_centi` ->
+`_sen` money rename) failed: `cannot drop view scm.v_pi_outstanding because other
+objects depend on it`. The backend job went `failure`, so `main` was green but the
+backend did not ship until the fix landed.
+
+**Root cause (traced, not guessed).** The census that generated 0305 enumerated
+views from `information_schema.views`, which does **not** list MATERIALIZED views.
+`scm.mv_ar_aging` is a materialized view that reads five of the outstanding views
+(`v_pi_/v_po_/v_pr_/v_si_/v_so_outstanding`), so those views could not be dropped
+while it existed. Proven by `pg_depend`: `mv_ar_aging (relkind 'm')` depended on
+all five. Production was never half-renamed — 0305 runs inside `BEGIN/COMMIT` and
+rolled back atomically, so the schema stayed `_centi` until the corrected file ran.
+
+**Fix.** 0305 now `DROP MATERIALIZED VIEW scm.mv_ar_aging` before the plain views
+and recreates it (with its unique index `mv_ar_aging_company_module_uidx`) after,
+its body carrying the same `_centi`->`_sen` rename; it also recreates the two
+functions whose bodies referenced the columns (`settle_pi_paid_centi` ->
+`settle_pi_paid_sen`, `rebuild_mfg_so_delivery_lines`). Verified against prod after
+deploy: `_centi` columns = 0, `mv_ar_aging` + index rebuilt, `settle_pi_paid_sen`
+present. **Lesson:** a column-rename census that touches views must enumerate
+dependents via `pg_depend` across BOTH relkind `'v'` AND `'m'`, plus `pg_proc`
+bodies and CHECK constraints — `information_schema.views` alone is a blind spot.
+
+**Ref.** PR #2441 (fix), #2438 (the rename), 2026-08-18/19.
+
 ## Adding a line to a Sales Invoice never checked whose invoice it was [high]
 
 **Symptom.** `POST /api/scm/sales-invoices/:id/items` — the manual "add a line"

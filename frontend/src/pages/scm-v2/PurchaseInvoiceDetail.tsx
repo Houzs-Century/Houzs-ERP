@@ -98,7 +98,7 @@ type HeaderDraft = {
 
 type PiItemRow = Record<string, unknown> & {
   id: string;
-  material_code: string;
+  item_code: string;
   material_name: string;
   qty: number;
   unit_price_sen: number;
@@ -137,7 +137,7 @@ const draftFromItem = (it: PiItemRow): EditLine => ({
   grnLinked:      Boolean(it.grn_item_id),
   bindingId:      it.binding_id ?? undefined,
   materialKind:   (it.material_kind as PoLineDraft['materialKind']) ?? 'mfg_product',
-  materialCode:   it.material_code,
+  itemCode:   it.item_code,
   materialName:   it.material_name,
   supplierSku:    it.supplier_sku ?? undefined,
   qty:            it.qty,
@@ -264,7 +264,7 @@ export const PurchaseInvoiceDetail = () => {
   const recomputeLineCost = (line: EditLine): number => {
     const binding = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
-      : bindings.find((b) => b.material_code === line.materialCode);
+      : bindings.find((b) => b.item_code === line.itemCode);
     if (!binding) return line.unitPriceSen;
     const category = (line.category?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
@@ -374,11 +374,11 @@ export const PurchaseInvoiceDetail = () => {
     patchLine(rid, {
       bindingId:      b.id,
       materialKind:   b.material_kind,
-      materialCode:   b.material_code,
+      itemCode:   b.item_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku,
       unitPriceSen: b.unit_price_sen,
-      category:       categoryForCode(b.material_code),
+      category:       categoryForCode(b.item_code),
       priceTouched:   false,
     });
 
@@ -434,7 +434,7 @@ export const PurchaseInvoiceDetail = () => {
   };
 
   /* Single Save (T12) — whole-line diff. For each draft:
-       · no itemId → ADD (full payload incl. variants / materialCode)
+       · no itemId → ADD (full payload incl. variants / itemCode)
        · itemId + changed any field → UPDATE (full payload)
      Deletes already fired server-side in removeLine. Then commit the header (if
      touched) and drop back to View. The server 409s over-invoicing a GRN-linked
@@ -442,7 +442,7 @@ export const PurchaseInvoiceDetail = () => {
   const handleSave = async () => {
     if (savingDraft) return;
     // Guard: every line must reference a product before Save.
-    const blankLine = editLines.find((d) => !d.materialCode.trim());
+    const blankLine = editLines.find((d) => !d.itemCode.trim());
     if (blankLine) {
       notify({ title: 'Every line needs a product', body: 'Pick a product for each line, or remove the empty one before saving.', tone: 'error' });
       return;
@@ -459,8 +459,8 @@ export const PurchaseInvoiceDetail = () => {
           await addItem.mutateAsync({
             id: pi.id,
             materialKind:   d.materialKind,
-            materialCode:   d.materialCode,
-            materialName:   d.materialName || d.materialCode,
+            itemCode:   d.itemCode,
+            materialName:   d.materialName || d.itemCode,
             qty:            d.qty,
             unitPriceSen: d.unitPriceSen,
             discountSen:  d.discountSen ?? 0,
@@ -473,8 +473,8 @@ export const PurchaseInvoiceDetail = () => {
         const it = byId.get(d.itemId);
         if (!it) continue;
         const changed =
-          d.materialCode !== it.material_code ||
-          (d.materialName || d.materialCode) !== it.material_name ||
+          d.itemCode !== it.item_code ||
+          (d.materialName || d.itemCode) !== it.material_name ||
           (d.category ?? '') !== (it.item_group ?? '') ||
           d.qty !== it.qty ||
           d.unitPriceSen !== it.unit_price_sen ||
@@ -483,8 +483,8 @@ export const PurchaseInvoiceDetail = () => {
         if (!changed) continue;
         await updateItem.mutateAsync({
           id: pi.id, itemId: d.itemId,
-          materialCode:   d.materialCode,
-          materialName:   d.materialName || d.materialCode,
+          itemCode:   d.itemCode,
+          materialName:   d.materialName || d.itemCode,
           qty:            d.qty,
           unitPriceSen: d.unitPriceSen,
           discountSen:  d.discountSen ?? 0,
@@ -700,7 +700,7 @@ export const PurchaseInvoiceDetail = () => {
               {visibleItems.map((it) => (
                 <tr key={it.id}>
                   <td>
-                    <div className={styles.codeCell}>{it.material_code}</div>
+                    <div className={styles.codeCell}>{it.item_code}</div>
                     {(() => {
                       const summary = buildVariantSummary(it.item_group ?? null, it.variants as Record<string, unknown> | null)
                         || it.description

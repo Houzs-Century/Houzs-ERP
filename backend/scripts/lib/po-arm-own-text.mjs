@@ -131,7 +131,7 @@ export function parseAcToErpCsv(text) {
 /**
  * Classify ONE purchase-order line.
  *
- * @param row  {id, po_number, ac, material_code, d2, dtl, variants, status}
+ * @param row  {id, po_number, ac, item_code, d2, dtl, variants, status}
  *             `ac` is the header's linked_ac_docno, `dtl` its linked_ac_dtlkey.
  * @param ctx  {byDtl, collided, findColour}
  * @returns a verdict object. `verdict` is one of:
@@ -146,7 +146,7 @@ export function parseAcToErpCsv(text) {
  * line's text rather than from a human choice.
  */
 export function classifyPoLine(row, { byDtl, collided, findColour }) {
-  const bug = collided.get(`${row.ac}|${(row.material_code || "").toUpperCase()}`) || null;
+  const bug = collided.get(`${row.ac}|${(row.item_code || "").toUpperCase()}`) || null;
   const covered = bug != null;                    // the buggy key HIT this line
   const ex = row.dtl != null ? byDtl.get(Number(row.dtl)) || null : null;
 
@@ -159,7 +159,7 @@ export function classifyPoLine(row, { byDtl, collided, findColour }) {
   else if (norm2(row.d2) === norm2(ex.Desc2)) provenance = "CORROBORATED";
   else provenance = "CONTRADICTED";
 
-  const base = { id: row.id, po: row.po_number, ac: row.ac, code: row.material_code,
+  const base = { id: row.id, po: row.po_number, ac: row.ac, code: row.item_code,
                  dtl: row.dtl, status: row.status, covered, provenance,
                  d2: row.d2, collidedText: bug ? norm2(bug.Desc2) : null };
 
@@ -207,7 +207,7 @@ export function tally(verdicts) {
 /* The SQL both the check and the repair read. One string, so the repair can
    never act on a different population than the check measured. */
 export const PO_LINE_SQL = `
-  SELECT i.id::text AS id, i.material_code, i.description2 AS d2, i.variants,
+  SELECT i.id::text AS id, i.item_code, i.description2 AS d2, i.variants,
          i.linked_ac_dtlkey AS dtl, h.po_number, h.linked_ac_docno AS ac,
          UPPER(COALESCE(h.status::text, '')) AS status
     FROM scm.purchase_order_items i

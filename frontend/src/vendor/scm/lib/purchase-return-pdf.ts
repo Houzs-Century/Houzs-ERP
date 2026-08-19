@@ -26,7 +26,7 @@ type PrHeader = {
   grn?: { id: string; grn_number: string };
 };
 type PrItem = {
-  material_code: string; material_name: string;
+  item_code: string; material_name: string;
   qty_returned: number; unit_price_sen: number; line_refund_sen: number;
   reason: string | null;
   /* Dual-code extras — optional so older call sites keep compiling. */
@@ -118,11 +118,11 @@ export async function renderPurchaseReturnInto(
 
   /* Canonical SKU/build order (sofa modules LHF→NA→RHF, mains→accessories→
      services) — mirror the sales side. The shared helper keys on `item_code`;
-     PR lines expose `material_code`, so sort a shimmed view that carries the
+     PR lines expose `item_code`, so sort a shimmed view that carries the
      original row back unchanged (render-time only, no persistence touched). */
   const orderedItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      items.map((it) => ({ ...it, item_code: it.material_code, __row: it })),
+      items.map((it) => ({ ...it, item_code: it.item_code, __row: it })),
       (r) => r.item_group as string | null | undefined,
     ),
   ).map((r) => r.__row);
@@ -133,7 +133,7 @@ export async function renderPurchaseReturnInto(
     return [
       String(idx + 1),
       supplierCodeFor(it, skuMap),
-      it.material_code,
+      it.item_code,
       specs ? `${desc}\n${specs}` : desc,
       String(it.qty_returned),
       fmtRm(it.unit_price_sen),

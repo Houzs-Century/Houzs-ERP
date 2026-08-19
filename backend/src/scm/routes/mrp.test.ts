@@ -99,7 +99,7 @@ const demandRed = (qty: number): Row => ({
 
 // A PO supply line for BF-100 → W1. `variant` null builds the legacy '' key.
 const poLine = (poNumber: string, qty: number, variant: Row | null, eta: string): Row => ({
-  material_code: 'BF-100', item_group: 'bedframe', variants: variant ?? {}, qty, received_qty: 0,
+  item_code: 'BF-100', item_group: 'bedframe', variants: variant ?? {}, qty, received_qty: 0,
   delivery_date: eta, supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
   warehouse_id: 'W1', so_item_id: null,
   po: {
@@ -215,7 +215,7 @@ describe('computeMrp — supply must match demand on the FULL variant key', () =
       item_group: 'mattress', variants: { fabricCode: 'RED' },
     };
     const matPo: Row = {
-      ...poLine('PO-MAT', 3, null, '2026-10-01'), material_code: 'MAT-100', item_group: 'mattress',
+      ...poLine('PO-MAT', 3, null, '2026-10-01'), item_code: 'MAT-100', item_group: 'mattress',
     };
     const sb = fakeSb({
       ...BASE_TABLES,
@@ -282,7 +282,7 @@ describe('computeMrp — supply must match demand on the FULL variant key', () =
 
 // A stock balance row for BF-100 → W1 with the RED variant key.
 const stockRed = (qty: number): Row => ({
-  product_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty,
+  item_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty,
 });
 
 describe('mrpStockAssignment — assigned-vs-free split (owner 2026-07-25, dead-stock view)', () => {
@@ -395,7 +395,7 @@ const sofaDemand = (id: string, docNo: string, qty: number, delivery: string | n
 
 // A sofa PO supply line for SF-100 → W1. `variant` null builds the legacy '' key.
 const sofaPoLine = (poNumber: string, qty: number, variant: Row | null, eta: string): Row => ({
-  material_code: 'SF-100', item_group: 'sofa', variants: variant ?? {}, qty, received_qty: 0,
+  item_code: 'SF-100', item_group: 'sofa', variants: variant ?? {}, qty, received_qty: 0,
   delivery_date: eta, supplier_delivery_date_2: null, supplier_delivery_date_3: null, supplier_delivery_date_4: null,
   warehouse_id: 'W1', so_item_id: null,
   po: {
@@ -822,9 +822,9 @@ describe('computeMrp — every multi-row read is paged past PostgREST\'s 1000-ro
     // it fell outside the 1,000-row response and MRP planned a purchase for goods
     // already sitting in the warehouse (prod holds 1,065 balance rows).
     const balances: Row[] = Array.from({ length: 1199 }, (_, i) => ({
-      product_code: `OTHER-${String(i).padStart(5, '0')}`, warehouse_id: 'W1', variant_key: '', qty: 1,
+      item_code: `OTHER-${String(i).padStart(5, '0')}`, warehouse_id: 'W1', variant_key: '', qty: 1,
     }));
-    balances.push({ product_code: 'ZZ-LAST', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 7 });
+    balances.push({ item_code: 'ZZ-LAST', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 7 });
     const sb = fakeSb({
       ...BASE_TABLES,
       mfg_sales_order_items: [{ ...demandRed(7), item_code: 'ZZ-LAST' }],
@@ -849,7 +849,7 @@ describe('computeMrp — every multi-row read is paged past PostgREST\'s 1000-ro
         ...demandRed(1), id: `si-${String(i).padStart(5, '0')}`, doc_no: `SO-${i}`, item_code: code,
       })),
       supplier_material_bindings: codes.map((code, i) => ({
-        material_code: code, material_kind: 'mfg_product', is_main_supplier: true,
+        item_code: code, material_kind: 'mfg_product', is_main_supplier: true,
         supplier_id: `sup-${i}`, supplier: { code: `S${i}`, name: `Supplier ${i}` },
       })),
     });
@@ -966,7 +966,7 @@ describe('computeMrp — the read wave overlaps, stays bounded, and cannot chang
       ...BASE_TABLES,
       mfg_sales_order_items: [demandRed(10)],
       purchase_order_items: [poLine('PO-1', 4, { fabricCode: 'RED' }, '2026-11-01')],
-      inventory_balances: [{ product_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 3 }],
+      inventory_balances: [{ item_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 3 }],
       warehouses: [{ id: 'W1', code: 'W1', name: 'Main', is_active: true }],
       mfg_products: [{ id: 'p1', code: 'BF-100', name: 'Baron Bedframe', category: 'BEDFRAME' }],
     };
@@ -1056,7 +1056,7 @@ const demandFor = (docNo: string, dates: Row): Row => ({
 const oneUnitWorld = (a: Row, b: Row) => fakeSb({
   ...BASE_TABLES,
   mfg_sales_order_items: [a, b],
-  inventory_balances: [{ product_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 1 }],
+  inventory_balances: [{ item_code: 'BF-100', warehouse_id: 'W1', variant_key: 'fabriccode=red', qty: 1 }],
   warehouses: [{ id: 'W1', code: 'W1', name: 'Main', is_active: true }],
   mfg_products: [{ id: 'p1', code: 'BF-100', name: 'Baron Bedframe', category: 'BEDFRAME' }],
 });

@@ -53,7 +53,7 @@ try {
      from the ledger itself — no hardcoded ids, so this re-runs cleanly after
      any repair and reports whatever remains. */
   const lots = await pg`
-    SELECT l.id, l.product_code, COALESCE(l.variant_key,'') AS variant_key,
+    SELECT l.id, l.item_code, COALESCE(l.variant_key,'') AS variant_key,
            l.batch_no, l.qty_received, l.qty_remaining, l.unit_cost_sen,
            COALESCE(c.consumed, 0) AS consumed
       FROM scm.inventory_lots l
@@ -63,7 +63,7 @@ try {
          WHERE lot_id = l.id
       ) c ON TRUE
      WHERE COALESCE(c.consumed, 0) > l.qty_received
-     ORDER BY l.product_code`;
+     ORDER BY l.item_code`;
 
   if (lots.length === 0) {
     notice("No over-consumed lot anywhere (consumed <= received on every lot). Nothing to attribute.");
@@ -75,7 +75,7 @@ try {
   for (const lot of lots) {
     console.log("=".repeat(78));
     console.log(
-      `${lot.product_code}  lot ${lot.id}\n` +
+      `${lot.item_code}  lot ${lot.id}\n` +
         `  key="${lot.variant_key}" batch=${lot.batch_no ?? "-"} ` +
         `received=${lot.qty_received} consumed=${lot.consumed} remaining=${lot.qty_remaining}`,
     );
@@ -119,9 +119,9 @@ try {
         SELECT COALESCE(SUM(i.qty), 0) AS qty
           FROM scm.delivery_order_items i
           JOIN scm.delivery_orders d ON d.id = i.delivery_order_id
-         WHERE d.do_number = ${doNo} AND i.item_code = ${lot.product_code}`;
+         WHERE d.do_number = ${doNo} AND i.item_code = ${lot.item_code}`;
       console.log(
-        `  ${rpad(doNo, 22)} document line qty for ${lot.product_code}: ${line.qty}` +
+        `  ${rpad(doNo, 22)} document line qty for ${lot.item_code}: ${line.qty}` +
           (Number(line.qty) === 0 ? "   <- NO LINE: this consumption's shipment is undocumented" : ""),
       );
     }

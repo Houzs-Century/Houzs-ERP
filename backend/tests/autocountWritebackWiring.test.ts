@@ -194,7 +194,7 @@ describe('cancel and edit are hooked, and only where the downstream lock has alr
     expect(soSource).toBeTruthy();
     expect(between(poSource, 'header date cascade failed', 'return c.json({ purchaseOrder: data });'))
       .toContain('queueAcPoEdit(c, id)');
-    expect(between(poSource, 'Line added: ${String(it.materialCode', 'return c.json({ item: data }, 201);'))
+    expect(between(poSource, 'Line added: ${String(it.itemCode', 'return c.json({ item: data }, 201);'))
       .toContain('queueAcPoEdit(c, poId)');
     expect(between(poSource, "catch { /* don't fail the edit on a counter recount */ }", 'return c.json({ ok: true });'))
       .toContain('queueAcPoEdit(c, poId)');

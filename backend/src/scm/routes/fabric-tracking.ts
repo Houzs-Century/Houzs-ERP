@@ -124,7 +124,7 @@ async function syncFabricToSellingLibrary(
   /* Multi-company (mig 0089): stamp the active company on the mirrored selling
      rows. null/undefined (unresolved) inserts without the column — same no-op
      rule as companyScope. */
-  companyId?: number | null,
+  companyId: number | null,
 ): Promise<string | null> {
   const code = fabricCode.trim();
   if (!code) return null;
@@ -202,7 +202,7 @@ fabricTracking.post('/', async (c) => {
   // new fabric is immediately pickable on POS. The procurement row above is
   // already saved; surface any library failure as a warning so the operator can
   // retry without losing the fabric.
-  const libraryWarning = await syncFabricToSellingLibrary(sb, fabricCode, (body.fabricDescription as string) ?? null, activeCompanyId(c));
+  const libraryWarning = await syncFabricToSellingLibrary(sb, fabricCode, (body.fabricDescription as string) ?? null, activeCompanyId(c) ?? null);
 
   return c.json({ fabric: data, fabricSeries: seriesOf(fabricCode), libraryWarning }, 201);
 });

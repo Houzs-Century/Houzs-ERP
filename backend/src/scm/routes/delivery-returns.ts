@@ -183,7 +183,7 @@ async function recomputeTotals(sb: any, deliveryReturnId: string) {
 
    This is the MIRROR IMAGE of delivery-orders-mfg.ts deductInventoryForDo: it
    writes IN movements (the FIFO trigger from migration 0053/0095 creates a lot
-   per IN row), one row per (product_code, variant_key) bucket. The lot's unit
+   per IN row), one row per (item_code, variant_key) bucket. The lot's unit
    cost is seeded from the line's unit_cost_sen (sen) so returned stock
    re-enters at its original cost rather than zero. */
 /* ── resolveDrLineWarehouses (Agent D 2026-05-31, TASK #32) ───────────────────
@@ -341,7 +341,7 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
   // Sofa batch per DR line — returned modules re-enter the batch they shipped from.
   const lineBatch = await resolveDrLineBatches(sb, items as Array<{ id: string; do_item_id?: string | null }>);
 
-  /* Collapse identical (warehouse_id, product_code, variant_key, batch_no) lines
+  /* Collapse identical (warehouse_id, item_code, variant_key, batch_no) lines
      into one IN row. A DR can list the same product across two lines AND across
      two warehouses (multi-DO merge); bucketing by warehouse keeps each
      warehouse's increase correct + idempotency-safe. batch_no joins the key so a
@@ -349,7 +349,7 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
      cost carried from the first line in the bucket (returned stock re-enters at
      its original per-unit cost). */
   const byKey = new Map<string, {
-    warehouse_id: string; product_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null;
+    warehouse_id: string; item_code: string; variant_key: string; product_name: string | null; qty: number; unit_cost_sen: number; batch_no: string | null;
   }>();
   for (const it of (items as Array<{ id: string; item_code: string; description: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null; unit_cost_sen?: number | null }>)) {
     /* P1 SO-SKU spec §4.6 — depth guard: a SERVICE line must never write stock
@@ -367,7 +367,7 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
     if (cur) { cur.qty += qty; }
     else byKey.set(k, {
       warehouse_id: warehouseId,
-      product_code: it.item_code,
+      item_code: it.item_code,
       variant_key: variantKey,
       product_name: it.description,
       qty,
@@ -378,7 +378,7 @@ async function increaseInventoryForReturn(sb: any, deliveryReturnId: string, per
   const movements = [...byKey.values()].map((m) => ({
     movement_type: 'IN' as const,
     warehouse_id: m.warehouse_id,
-    product_code: m.product_code,
+    item_code: m.item_code,
     variant_key: m.variant_key,
     product_name: m.product_name,
     qty: m.qty,
@@ -455,7 +455,7 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
   //    the DR's CURRENT lines (mirror of increaseInventoryForReturn's bucketing,
   //    batch_no included so a sofa line targets its OWN dye-lot). A CANCELLED DR
   //    has a target of zero — every bucket must drain back out.
-  type Bucket = { warehouse_id: string; product_code: string; variant_key: string; batch_no: string | null; product_name: string | null; qty: number; unit_cost_sen: number };
+  type Bucket = { warehouse_id: string; item_code: string; variant_key: string; batch_no: string | null; product_name: string | null; qty: number; unit_cost_sen: number };
   const targetByBucket = new Map<string, Bucket>();
   if (drStatus !== 'CANCELLED') {
     const { data: items } = await sb.from('delivery_return_items')
@@ -483,7 +483,7 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
       const k = `${warehouseId}::${it.item_code}::${variant_key}::${batch_no ?? ''}`;
       const cur = targetByBucket.get(k);
       if (cur) { cur.qty += qty; }
-      else targetByBucket.set(k, { warehouse_id: warehouseId, product_code: it.item_code, variant_key, batch_no, product_name: it.description, qty, unit_cost_sen: Number(it.unit_cost_sen ?? 0) });
+      else targetByBucket.set(k, { warehouse_id: warehouseId, item_code: it.item_code, variant_key, batch_no, product_name: it.description, qty, unit_cost_sen: Number(it.unit_cost_sen ?? 0) });
     }
   }
 
@@ -494,8 +494,8 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
   //    the batch_no column doesn't exist → retry without it (every batch '').
   type Agg = { net_in: number; product_name: string | null };
   const aggByBucket = new Map<string, Agg>();
-  const addMov = (m: { movement_type: string; warehouse_id: string; product_code: string; variant_key: string | null; batch_no?: string | null; qty: number; product_name: string | null }) => {
-    const k = `${m.warehouse_id}::${m.product_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
+  const addMov = (m: { movement_type: string; warehouse_id: string; item_code: string; variant_key: string | null; batch_no?: string | null; qty: number; product_name: string | null }) => {
+    const k = `${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}::${m.batch_no ?? ''}`;
     let agg = aggByBucket.get(k);
     if (!agg) { agg = { net_in: 0, product_name: m.product_name }; aggByBucket.set(k, agg); }
     const q = Number(m.qty ?? 0);
@@ -505,12 +505,12 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
     if (!agg.product_name) agg.product_name = m.product_name;
   };
   const readDrMovs = async (sourceType: string) => {
-    const sel = 'movement_type, warehouse_id, product_code, variant_key, batch_no, qty, product_name';
+    const sel = 'movement_type, warehouse_id, item_code, variant_key, batch_no, qty, product_name';
     let res = await sb.from('inventory_movements').select(sel)
       .eq('source_doc_type', sourceType).eq('source_doc_id', deliveryReturnId);
     if (res.error && (res.error.message ?? '').includes('batch_no')) {
       res = await sb.from('inventory_movements')
-        .select('movement_type, warehouse_id, product_code, variant_key, qty, product_name')
+        .select('movement_type, warehouse_id, item_code, variant_key, qty, product_name')
         .eq('source_doc_type', sourceType).eq('source_doc_id', deliveryReturnId);
     }
     return (res.data ?? []) as any[];
@@ -540,7 +540,7 @@ async function resyncInventoryForReturn(sb: any, deliveryReturnId: string, perfo
       : `Delivery return ${drNo} line edited — resyncing returned stock`;
     const base = {
       warehouse_id: parts[0] ?? '',
-      product_code: parts[1] ?? '',
+      item_code: parts[1] ?? '',
       variant_key: parts[2] ?? '',
       product_name: t?.product_name ?? a.product_name ?? null,
       source_doc_type: 'ADJUSTMENT' as const,
@@ -1791,7 +1791,7 @@ export const patchDeliveryReturnStatusHandler = async (c: any) => {
   // resyncInventoryForReturn (target net 0). It writes a FIFO-neutral signed
   // ADJUSTMENT (unindexed by the DR source key, carrying variant_key) — we CANNOT
   // reuse reverseMovements: its balancing OUT reuses the DR's (source_doc_type,
-  // source_doc_id, product_code, variant_key) key, which the partial UNIQUE index
+  // source_doc_id, item_code, variant_key) key, which the partial UNIQUE index
   // uq_inv_mov_dr_source (migration 0102, keyed WITHOUT movement_type) rejects →
   // the insert silently fails and the returned stock stays added.
   // Hoisted: the response below is OUTSIDE this block, so a block-scoped

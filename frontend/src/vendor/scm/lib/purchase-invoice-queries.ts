@@ -167,7 +167,7 @@ export const useDeletePurchaseInvoiceItem = () => {
 
 /* T12 — free-add a NEW line to an existing PI (PI is free-entry, grnId:null is
    first-class). POST /purchase-invoices/:id/items already accepts the full line
-   payload (materialCode/materialName/itemGroup/variants + qty/price) and
+   payload (itemCode/materialName/itemGroup/variants + qty/price) and
    server-recomputes description2. Mirrors useAddGrnItem; invalidates the same
    keys usePurchaseInvoiceDetail + usePurchaseInvoices read. */
 export const useAddPurchaseInvoiceItem = () => {

@@ -13,7 +13,7 @@ import { allocateLandedCharges, normalizeAllocationMethod, type AllocLine } from
 const goods = (id: string, qty: number, unitPriceSen: number, unitM3Milli = 0): AllocLine => ({
   id,
   itemGroup: 'stock',
-  materialCode: `MAT-${id}`,
+  itemCode: `MAT-${id}`,
   qty,
   amountSen: qty * unitPriceSen,
   unitPriceSen,
@@ -23,7 +23,7 @@ const goods = (id: string, qty: number, unitPriceSen: number, unitM3Milli = 0): 
 const freight = (amountSen: number): AllocLine => ({
   id: 'svc',
   itemGroup: 'service',
-  materialCode: 'TRANSPORTATION',
+  itemCode: 'TRANSPORTATION',
   qty: 1,
   amountSen,
   unitPriceSen: amountSen,

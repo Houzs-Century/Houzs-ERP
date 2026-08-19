@@ -150,7 +150,7 @@ CREATE TABLE IF NOT EXISTS purchase_consignment_order_items (
                             REFERENCES purchase_consignment_orders(id) ON DELETE CASCADE,
   binding_id              UUID REFERENCES supplier_material_bindings(id) ON DELETE SET NULL,
   material_kind           material_kind NOT NULL,
-  material_code           TEXT NOT NULL,
+  item_code           TEXT NOT NULL,
   material_name           TEXT NOT NULL,
   supplier_sku            TEXT,
   qty                     INTEGER NOT NULL,
@@ -225,7 +225,7 @@ CREATE TABLE IF NOT EXISTS purchase_consignment_receive_items (
   pc_order_item_id        UUID
                             REFERENCES purchase_consignment_order_items(id) ON DELETE SET NULL,
   material_kind           material_kind NOT NULL,
-  material_code           TEXT NOT NULL,
+  item_code           TEXT NOT NULL,
   material_name           TEXT NOT NULL,
   qty_received            INTEGER NOT NULL,
   qty_accepted            INTEGER NOT NULL,
@@ -300,7 +300,7 @@ CREATE TABLE IF NOT EXISTS purchase_consignment_return_items (
   pc_receive_item_id      UUID
                             REFERENCES purchase_consignment_receive_items(id) ON DELETE SET NULL,
   material_kind           material_kind NOT NULL,
-  material_code           TEXT NOT NULL,
+  item_code           TEXT NOT NULL,
   material_name           TEXT NOT NULL,
   qty_returned            INTEGER NOT NULL,
   unit_price_sen        INTEGER NOT NULL DEFAULT 0,

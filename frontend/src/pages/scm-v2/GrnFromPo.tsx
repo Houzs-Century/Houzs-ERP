@@ -473,7 +473,7 @@ export const GrnFromPo = () => {
           await addGrnItem.mutateAsync({
             grnId:               appendToGrn,
             purchaseOrderItemId: r.poItemId,
-            materialCode:        r.itemCode,
+            itemCode:        r.itemCode,
             supplierSku:         r.supplierSku ?? undefined,
             materialName:        r.description ?? r.itemCode,
             itemGroup:           r.itemGroup || undefined,

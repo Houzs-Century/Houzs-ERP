@@ -308,12 +308,12 @@ async function main() {
     const stock = await sql`
       SELECT COALESCE(SUM(qty), 0) AS qty
       FROM scm.inventory_balances
-      WHERE product_code = ${l.item_code} AND company_id = ${COMPANY_ID}`;
+      WHERE item_code = ${l.item_code} AND company_id = ${COMPANY_ID}`;
     const openPo = await sql`
       SELECT COALESCE(SUM(poi.qty - COALESCE(poi.received_qty, 0)), 0) AS qty
       FROM scm.purchase_order_items poi
       JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
-      WHERE poi.material_code = ${l.item_code}
+      WHERE poi.item_code = ${l.item_code}
         AND po.company_id = ${COMPANY_ID}
         AND po.status::text NOT IN ('DRAFT', 'CANCELLED', 'CLOSED')`;
     const picked = await sql`

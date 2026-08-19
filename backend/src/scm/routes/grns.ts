@@ -288,7 +288,7 @@ async function resolveGrnFx(
    movements. Pure-on-empty: chargePool === 0 ⇒ allocation 0 everywhere ⇒ no
    writes ⇒ byte-for-byte no-op for a GRN with no service lines. */
 type AllocItemRow = {
-  id: string; qty_accepted: number; material_code: string;
+  id: string; qty_accepted: number; item_code: string;
   unit_price_sen: number | null; line_total_sen?: number | null;
   item_group?: string | null;
 };
@@ -297,13 +297,13 @@ async function computeAndStoreGrnAllocation(
   items: AllocItemRow[],
   grnRate: unknown,
   method: ReturnType<typeof normalizeAllocationMethod>,
-  companyId?: number | null,
+  companyId: number | null,
 ) {
   // CBM basis needs each goods line's product volume (unit_m3_milli). Resolve
-  // per material_code in one round trip; default 0 (the allocator falls back to
+  // per item_code in one round trip; default 0 (the allocator falls back to
   // QTY when the CBM Σ is 0, so a missing volume never divides by zero).
   const m3ByCode = new Map<string, number>();
-  const codes = [...new Set(items.map((it) => it.material_code).filter(Boolean))];
+  const codes = [...new Set(items.map((it) => it.item_code).filter(Boolean))];
   if (codes.length > 0) {
     // Company-scoped: `code` is shared, and the other company's volume would
     // shift every goods line's share of the landed charge.
@@ -318,12 +318,12 @@ async function computeAndStoreGrnAllocation(
     items.map((it) => ({
       id: it.id,
       itemGroup: it.item_group ?? null,
-      materialCode: it.material_code,
+      itemCode: it.item_code,
       qty: Number(it.qty_accepted ?? 0),
       // Pool by the SERVICE line's line total; allocate ONTO goods unit price.
       amountSen: Number(it.line_total_sen ?? 0),
       unitPriceSen: Number(it.unit_price_sen ?? 0),
-      unitM3Milli: m3ByCode.get(it.material_code) ?? 0,
+      unitM3Milli: m3ByCode.get(it.item_code) ?? 0,
     })),
     method,
     grnRate,
@@ -344,13 +344,13 @@ async function computeAndStoreGrnAllocation(
 /* Recompute + persist a GRN's landed allocation from its CURRENT lines + header
    (used after the allocation_method / rate is changed on PATCH, before recost).
    Reads everything off the DB so it's self-contained. Best-effort. */
-async function reallocateGrnCharges(sb: any, grnId: string, companyId?: number | null): Promise<void> {
+async function reallocateGrnCharges(sb: any, grnId: string, companyId: number | null): Promise<void> {
   const { data: head } = await sb.from('grns')
     .select('exchange_rate, allocation_method').eq('id', grnId).maybeSingle();
   const grnRate = (head as { exchange_rate?: string | number | null } | null)?.exchange_rate ?? 1;
   const method = normalizeAllocationMethod((head as { allocation_method?: string | null } | null)?.allocation_method);
   const { data: items } = await sb.from('grn_items')
-    .select('id, qty_accepted, material_code, unit_price_sen, line_total_sen, item_group, allocated_charge_sen')
+    .select('id, qty_accepted, item_code, unit_price_sen, line_total_sen, item_group, allocated_charge_sen')
     .eq('grn_id', grnId);
   await computeAndStoreGrnAllocation(sb, (items ?? []) as AllocItemRow[], grnRate, method, companyId);
 }
@@ -368,7 +368,7 @@ async function reallocateGrnCharges(sb: any, grnId: string, companyId?: number |
    skipped rather than risk refusing a receipt that was in fact costed. */
 export type ZeroCostRefusal = NonNullable<Awaited<ReturnType<typeof checkReceiptCosts>>>;
 type GrnCostGateRow = {
-  id: string; qty_accepted: number; material_code: string;
+  id: string; qty_accepted: number; item_code: string;
   unit_price_sen: number | null; line_total_sen?: number | null;
   item_group?: string | null; zero_cost_ack?: boolean | null;
 };
@@ -380,12 +380,12 @@ async function checkGrnZeroCost(
   if (items.length === 0) return null;
   const rate = grnHeader?.exchange_rate ?? 1;
   const chargePool = items
-    .filter((it) => isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
+    .filter((it) => isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code }))
     .reduce((sum, it) => sum + Math.abs(Number(it.line_total_sen ?? 0)), 0);
   if (chargePool > 0) return null;
   const lines: ReceiptCostLine[] = items.map((it) => ({
     id: it.id,
-    materialCode: it.material_code,
+    itemCode: it.item_code,
     qtyAccepted: Number(it.qty_accepted ?? 0),
     unitCostSen: toMyrSen(Number(it.unit_price_sen ?? 0), rate),
     itemGroup: it.item_group ?? null,
@@ -407,7 +407,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
     .select('grn_number, warehouse_id, company_id, exchange_rate, allocation_method')
     .eq('id', grnId), companyId).maybeSingle();
   const { data: items } = await sb.from('grn_items')
-    .select('id, purchase_order_item_id, qty_accepted, material_code, material_name, unit_price_sen, line_total_sen, item_group, variants, zero_cost_ack')
+    .select('id, purchase_order_item_id, qty_accepted, item_code, material_name, unit_price_sen, line_total_sen, item_group, variants, zero_cost_ack')
     .eq('grn_id', grnId);
 
   /* ZERO-COST GATE — the last honest moment. Runs BEFORE the CAS flip so a
@@ -553,7 +553,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
      allocated_charge_sen. chargePool === 0 (no service lines) ⇒ allocation 0
      everywhere ⇒ byte-for-byte identical to the plain-goods path. */
   const method = normalizeAllocationMethod((grnHeader as { allocation_method?: string | null } | null)?.allocation_method);
-  const itemRows = (items ?? []) as Array<{ id: string; purchase_order_item_id: string | null; qty_accepted: number; material_code: string; material_name: string | null; unit_price_sen: number | null; line_total_sen?: number | null; item_group?: string | null; variants?: VariantAttrs | null }>;
+  const itemRows = (items ?? []) as Array<{ id: string; purchase_order_item_id: string | null; qty_accepted: number; item_code: string; material_name: string | null; unit_price_sen: number | null; line_total_sen?: number | null; item_group?: string | null; variants?: VariantAttrs | null }>;
   const alloc = await computeAndStoreGrnAllocation(sb, itemRows, grnRate, method, companyId);
   const allocByItemId = new Map(alloc.goods.map((g) => [g.id, g]));
   if (warehouseId && items) {
@@ -565,12 +565,12 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
     const movements = itemRows
       // SERVICE lines (freight) never enter inventory — skip them here. Their
       // amount has already been allocated INTO the goods lines' lot cost above.
-      .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
+      .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code }))
       .filter((it) => it.qty_accepted > 0)
       .map((it) => ({
         movement_type: 'IN' as const,
         warehouse_id: warehouseId,
-        product_code: it.material_code,
+        item_code: it.item_code,
         // Bucket received stock by its attribute composition (migration 0095).
         variant_key: computeVariantKey(it.item_group, it.variants ?? null),
         product_name: it.material_name,
@@ -625,7 +625,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
         sb,
         movements.map((m) => ({
           warehouse_id: m.warehouse_id,
-          product_code: m.product_code,
+          item_code: m.item_code,
           variant_key: m.variant_key,
           batch_no: m.batch_no ?? null,
         })),
@@ -657,7 +657,7 @@ async function postGrnAndRollup(sb: any, grnId: string, userId: string, companyI
         sb,
         movements.map((m) => ({
           warehouse_id: m.warehouse_id,
-          product_code: m.product_code,
+          item_code: m.item_code,
           variant_key: m.variant_key,
         })),
         receiptCutoffTs,
@@ -701,7 +701,7 @@ const HEADER =
   'currency, exchange_rate, allocation_method, subtotal_sen, tax_sen, total_sen, ' +
   'posted_at, created_at, created_by, updated_at';
 const ITEM =
-  'id, grn_id, purchase_order_item_id, material_kind, material_code, material_name, supplier_sku, ' +
+  'id, grn_id, purchase_order_item_id, material_kind, item_code, material_name, supplier_sku, ' +
   'qty_received, qty_accepted, qty_rejected, rejection_reason, unit_price_sen, notes, ' +
   /* PR #42 — variant fields (migration 0057) */
   'item_group, description, description2, uom, discount_sen, variants, ' +
@@ -994,11 +994,11 @@ export async function recomputePoReceived(
 async function grnReverseWouldGoNegative(
   sb: any,
   warehouseId: string | null,
-  lines: Array<{ qty_accepted: number; material_code: string; item_group?: string | null; variants?: VariantAttrs | null }>,
+  lines: Array<{ qty_accepted: number; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }>,
 ): Promise<{ error: string; message: string } | null> {
   if (!warehouseId) return null;
-  // Sum the qty we'd reverse OUT per (product_code, variant_key) bucket.
-  const needByBucket = new Map<string, { product_code: string; variant_key: string; need: number }>();
+  // Sum the qty we'd reverse OUT per (item_code, variant_key) bucket.
+  const needByBucket = new Map<string, { item_code: string; variant_key: string; need: number }>();
   for (const l of lines) {
     /* SERVICE lines never entered inventory, so they cannot be reversed out of
        it. The POST path skips them and this guard did not, which made a
@@ -1007,27 +1007,27 @@ async function grnReverseWouldGoNegative(
        naming a cause that does not exist. It also blocked the warehouse relocate
        and the line's own deletion. Counting it as stock is a live hazard too:
        the movement build below would write an OUT for a non-stock SKU. */
-    if (isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.material_code })) continue;
+    if (isServiceLine({ itemGroup: l.item_group ?? null, itemCode: l.item_code })) continue;
     const qty = Number(l.qty_accepted ?? 0);
     if (qty <= 0) continue;
     const variant_key = computeVariantKey(l.item_group, l.variants ?? null);
-    const k = `${l.material_code}::${variant_key}`;
-    const cur = needByBucket.get(k) ?? { product_code: l.material_code, variant_key, need: 0 };
+    const k = `${l.item_code}::${variant_key}`;
+    const cur = needByBucket.get(k) ?? { item_code: l.item_code, variant_key, need: 0 };
     cur.need += qty;
     needByBucket.set(k, cur);
   }
   if (needByBucket.size === 0) return null;
 
-  const productCodes = [...new Set([...needByBucket.values()].map((b) => b.product_code))];
+  const itemCodes = [...new Set([...needByBucket.values()].map((b) => b.item_code))];
   const { data: balRows, error } = await sb
     .from('inventory_balances')
-    .select('product_code, variant_key, qty')
+    .select('item_code, variant_key, qty')
     .eq('warehouse_id', warehouseId)
-    .in('product_code', productCodes);
+    .in('item_code', itemCodes);
   if (error) return null; // best-effort: don't block on a balance read failure
   const onHand = new Map<string, number>();
-  for (const r of (balRows ?? []) as Array<{ product_code: string; variant_key: string | null; qty: number }>) {
-    onHand.set(`${r.product_code}::${r.variant_key ?? ''}`, Number(r.qty ?? 0));
+  for (const r of (balRows ?? []) as Array<{ item_code: string; variant_key: string | null; qty: number }>) {
+    onHand.set(`${r.item_code}::${r.variant_key ?? ''}`, Number(r.qty ?? 0));
   }
   for (const [k, b] of needByBucket) {
     const have = onHand.get(k) ?? 0;
@@ -1172,19 +1172,19 @@ grns.get('/', async (c) => {
      received. */
   const codesByGrn = new Map<string, Set<string>>();
   if (ids.length > 0) {
-    const { data: lineRows, error: lineErr } = await paginateAll<{ id: string; grn_id: string; material_code: string | null; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>((from, to) => sb
+    const { data: lineRows, error: lineErr } = await paginateAll<{ id: string; grn_id: string; item_code: string | null; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>((from, to) => sb
       .from('grn_items')
-      .select('id, grn_id, material_code, qty_accepted, invoiced_qty, returned_qty')
+      .select('id, grn_id, item_code, qty_accepted, invoiced_qty, returned_qty')
       .in('grn_id', ids)
       .order('id')
       .range(from, to));
     if (lineErr) return c.json({ error: 'load_failed', reason: lineErr.message }, 500);
-    for (const li of (lineRows ?? []) as Array<{ id: string; grn_id: string; material_code: string | null; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>) {
+    for (const li of (lineRows ?? []) as Array<{ id: string; grn_id: string; item_code: string | null; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>) {
       const arr = linesByGrn.get(li.grn_id) ?? [];
       arr.push({ qty_accepted: li.qty_accepted, invoiced_qty: li.invoiced_qty, returned_qty: li.returned_qty });
       linesByGrn.set(li.grn_id, arr);
       if (li.id) grnByItem.set(li.id, li.grn_id);
-      const code = (li.material_code ?? '').trim();
+      const code = (li.item_code ?? '').trim();
       if (code) {
         const set = codesByGrn.get(li.grn_id) ?? new Set<string>();
         set.add(code);
@@ -1214,7 +1214,7 @@ grns.get('/', async (c) => {
      per-SKU precedence engine the drill-down uses — computeMrp runs once —
      then rolled up over THIS GRN'S OWN line codes only (header ≡ ∪(drill
      lines), 2026-08-02): the drill matches assignments into the GRN's lines by
-     material_code, so a partial-receipt GRN's header must not show parent-PO
+     item_code, so a partial-receipt GRN's header must not show parent-PO
      assignments its lines cannot explain. */
   /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped the goods —
      per CODE, filtered the same way. One wave, same poIds (issued above). */
@@ -1403,14 +1403,14 @@ grns.get('/:id', async (c) => {
      a per-line column without a separate column on grn_items. */
   /* Canonical SKU/build order at READ (sofa modules LHF→NA→RHF, mains→
      accessories→services), mirroring the SO detail GET. The shared helper keys
-     on `item_code`; GRN lines expose `material_code`, so sort a shimmed view
+     on `item_code`; GRN lines expose `item_code`, so sort a shimmed view
      that carries the original row back unchanged. `.order('created_at')` above
      stays as the stable tiebreaker — pure ordering, no persistence touched. */
-  type GrnLineRow = Record<string, unknown> & { id: string; purchase_order_item_id: string | null; material_code: string; item_code: string };
+  type GrnLineRow = Record<string, unknown> & { id: string; purchase_order_item_id: string | null; item_code: string };
   const lineItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      ((i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; purchase_order_item_id: string | null; material_code: string }>)
-        .map((it): GrnLineRow => ({ ...it, item_code: it.material_code })),
+      ((i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; purchase_order_item_id: string | null; item_code: string }>)
+        .map((it): GrnLineRow => ({ ...it, item_code: it.item_code })),
       (r) => r.item_group as string | null | undefined,
     ),
   );
@@ -1620,7 +1620,7 @@ grns.post('/', async (c) => {
       null,
       items.map((it, idx) => ({
         lineRef: String(idx),
-        itemCode: String(it.materialCode ?? ''),
+        itemCode: String(it.itemCode ?? ''),
         qty: Number(it.qtyAccepted ?? it.qtyReceived ?? 0),
         soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
       })),
@@ -1703,7 +1703,7 @@ grns.post('/', async (c) => {
       grn_id: h.id,
       purchase_order_item_id: (it.purchaseOrderItemId as string | undefined) ?? null,
       material_kind: it.materialKind,
-      material_code: it.materialCode,
+      item_code: it.itemCode,
       material_name: it.materialName,
       supplier_sku: (it.supplierSku as string | undefined) ?? null,
       qty_received: qtyReceived,
@@ -1852,7 +1852,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
   // the LINE-level half of the same source document. Redundant after the scoped
   // header read, and kept: an id-keyed read is its own entry point.
   const { data: items, error: itemsErr } = await scopeToCompany(sb.from('purchase_order_items')
-    .select('id, purchase_order_id, material_kind, material_code, material_name, qty, received_qty, unit_price_sen, ' +
+    .select('id, purchase_order_id, material_kind, item_code, material_name, qty, received_qty, unit_price_sen, ' +
       'item_group, description, description2, uom, variants, gap_inches, divan_height_inches, divan_price_sen, ' +
       'leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_sen, unit_cost_sen, delivery_date, ' +
       // Migration 0180 — revised dates so the GRN line carries the EFFECTIVE date.
@@ -1860,7 +1860,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
     .in('purchase_order_id', poIds), c);
   if (itemsErr) return refuseWithoutWriting(c, { error: 'lookup_failed', reason: itemsErr.message }, 500);
   const itemList = ((items ?? []) as unknown as Array<{
-    id: string; purchase_order_id: string; material_kind: string; material_code: string;
+    id: string; purchase_order_id: string; material_kind: string; item_code: string;
     material_name: string; qty: number; received_qty: number; unit_price_sen: number;
     item_group?: string | null; description?: string | null; description2?: string | null;
     uom?: string; variants?: unknown; gap_inches?: number | null;
@@ -1946,7 +1946,7 @@ export const createGrnFromPosHandler = async (c: Context<{ Bindings: Env; Variab
       grn_id: h.id,
       purchase_order_item_id: it.id,
       material_kind: it.material_kind,
-      material_code: it.material_code,
+      item_code: it.item_code,
       material_name: it.material_name,
       qty_received: qtyReceived,
       qty_accepted: qtyReceived,
@@ -2173,7 +2173,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   const { data: itemsData, error: itemsErr } = await scopeToCompany(sb
     .from('purchase_order_items')
     .select(`
-      id, purchase_order_id, material_kind, material_code, material_name,
+      id, purchase_order_id, material_kind, item_code, material_name,
       item_group, description, description2, uom, qty, received_qty,
       unit_price_sen, variants, gap_inches, divan_height_inches, divan_price_sen,
       leg_height_inches, leg_price_sen, custom_specials, line_suffix,
@@ -2185,7 +2185,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
   if (itemsErr) return refuseWithoutWriting(c, { error: 'load_failed', reason: itemsErr.message }, 500);
 
   type ItemRow = {
-    id: string; purchase_order_id: string; material_kind: string; material_code: string;
+    id: string; purchase_order_id: string; material_kind: string; item_code: string;
     material_name: string; item_group: string | null; description: string | null;
     description2: string | null; uom: string | null;
     qty: number; received_qty: number; unit_price_sen: number;
@@ -2317,7 +2317,7 @@ export const createGrnsFromPoItemsHandler = async (c: Context<{ Bindings: Env; V
         grn_id: h.id,
         purchase_order_item_id: row.id,
         material_kind: row.material_kind,
-        material_code: row.material_code,
+        item_code: row.item_code,
         material_name: row.material_name,
         qty_received: qty,
         qty_accepted: qty,
@@ -2531,11 +2531,11 @@ grns.patch('/:id/cancel', async (c) => {
   // Load the GRN lines once — needed by the downstream-consumption guard BELOW
   // and by both reversals further down.
   const { data: lines } = await sb.from('grn_items')
-    .select('purchase_order_item_id, qty_accepted, material_code, material_name, unit_price_sen, item_group, variants')
+    .select('purchase_order_item_id, qty_accepted, item_code, material_name, unit_price_sen, item_group, variants')
     .eq('grn_id', id);
   const lineList = (lines ?? []) as Array<{
     purchase_order_item_id: string | null; qty_accepted: number;
-    material_code: string; material_name: string | null; unit_price_sen: number | null;
+    item_code: string; material_name: string | null; unit_price_sen: number | null;
     item_group?: string | null; variants?: VariantAttrs | null;
   }>;
 
@@ -2595,7 +2595,7 @@ grns.patch('/:id/cancel', async (c) => {
         /* Mirrors the POST filter. Without it the cancel writes an OUT for a
            freight line that never had an IN — a permanent negative on-hand for a
            non-stock SKU. */
-        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
+        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code }))
         .filter((it) => (it.qty_accepted ?? 0) > 0)
         .map((it) => {
           const variant_key = computeVariantKey(it.item_group, it.variants ?? null);
@@ -2603,7 +2603,7 @@ grns.patch('/:id/cancel', async (c) => {
           return {
             movement_type: 'OUT' as const,
             warehouse_id: warehouseId,
-            product_code: it.material_code,
+            item_code: it.item_code,
             variant_key,
             product_name: it.material_name,
             qty: it.qty_accepted,
@@ -2748,11 +2748,11 @@ grns.patch('/:id', async (c) => {
     const newWh = (body.warehouseId as string | null) ?? null;
     if (c0 && (c0.status ?? '').toUpperCase() === 'POSTED' && newWh && oldWh && newWh !== oldWh) {
       const { data: lines } = await sb.from('grn_items')
-        .select('purchase_order_item_id, qty_accepted, material_code, material_name, unit_price_sen, item_group, variants')
+        .select('purchase_order_item_id, qty_accepted, item_code, material_name, unit_price_sen, item_group, variants')
         .eq('grn_id', id);
       const lineList = (lines ?? []) as Array<{
         purchase_order_item_id: string | null; qty_accepted: number;
-        material_code: string; material_name: string | null; unit_price_sen: number | null;
+        item_code: string; material_name: string | null; unit_price_sen: number | null;
         item_group?: string | null; variants?: VariantAttrs | null;
       }>;
       // Guard: can't relocate stock that's already gone from the old warehouse.
@@ -2769,25 +2769,25 @@ grns.patch('/:id', async (c) => {
          recomputing the allocation: it is the basis those units actually entered
          at, and it survives a change to the allocation rule. */
       const { data: priorIns, error: priorInsErr } = await sb.from('inventory_movements')
-        .select('product_code, variant_key, unit_cost_sen')
+        .select('item_code, variant_key, unit_cost_sen')
         .eq('source_doc_type', 'GRN')
         .eq('source_doc_id', id)
         .eq('movement_type', 'IN');
       if (priorInsErr) return refuseWithoutWriting(c, { error: 'lookup_failed', reason: priorInsErr.message }, 500);
       const landedByBucket = new Map<string, number>();
-      for (const m of ((priorIns ?? []) as Array<{ product_code: string; variant_key: string | null; unit_cost_sen: number | null }>)) {
+      for (const m of ((priorIns ?? []) as Array<{ item_code: string; variant_key: string | null; unit_cost_sen: number | null }>)) {
         const cost = Number(m.unit_cost_sen ?? 0);
-        if (cost > 0) landedByBucket.set(`${m.product_code}::${m.variant_key ?? ''}`, cost);
+        if (cost > 0) landedByBucket.set(`${m.item_code}::${m.variant_key ?? ''}`, cost);
       }
 
       const movements = lineList
-        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.material_code }))
+        .filter((it) => !isServiceLine({ itemGroup: it.item_group ?? null, itemCode: it.item_code }))
         .filter((it) => (it.qty_accepted ?? 0) > 0)
         .flatMap((it) => {
           const variant_key = computeVariantKey(it.item_group, it.variants ?? null);
           const batch_no = it.purchase_order_item_id ? (batchByItem.get(it.purchase_order_item_id) ?? null) : null;
           const base = {
-            product_code: it.material_code, variant_key, product_name: it.material_name,
+            item_code: it.item_code, variant_key, product_name: it.material_name,
             qty: it.qty_accepted, source_doc_type: 'GRN' as const, source_doc_id: id,
             source_doc_no: c0.grn_number, batch_no, performed_by: user?.id,
           };
@@ -2799,7 +2799,7 @@ grns.patch('/:id', async (c) => {
               warehouse_id: newWh,
               // Landed cost from the original IN; base only when there is no
               // prior movement to read (a pre-0154 GRN, or a zero-cost line).
-              unit_cost_sen: landedByBucket.get(`${it.material_code}::${variant_key}`)
+              unit_cost_sen: landedByBucket.get(`${it.item_code}::${variant_key}`)
                 ?? toMyrSen(Number(it.unit_price_sen ?? 0), c0?.exchange_rate ?? 1),
               notes: 'GRN warehouse changed — into new warehouse',
             },
@@ -2910,7 +2910,7 @@ grns.patch('/:id', async (c) => {
      method. Best-effort; a no-op for an MYR GRN with no service lines. */
   if (rateChanged || methodChanged) {
     try {
-      await reallocateGrnCharges(sb, id, activeCompanyId(c));
+      await reallocateGrnCharges(sb, id, activeCompanyId(c) ?? null);
       await recostFromGrn(sb, id);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-patch] re-alloc/recost failed:', id, e); }
   }
@@ -2923,7 +2923,7 @@ grns.post('/:id/items', async (c) => {
   const grnId = c.req.param('id');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return refuseWithoutWriting(c, { error: 'invalid_json' }, 400); }
-  if (!it.materialCode) return refuseWithoutWriting(c, { error: 'material_code_required' }, 400);
+  if (!it.itemCode) return refuseWithoutWriting(c, { error: 'item_code_required' }, 400);
   if (!it.materialName) return refuseWithoutWriting(c, { error: 'material_name_required' }, 400);
 
   const sb = c.get('supabase');
@@ -2972,7 +2972,7 @@ grns.post('/:id/items', async (c) => {
       null,
       [{
         lineRef: 'add',
-        itemCode: String(it.materialCode ?? ''),
+        itemCode: String(it.itemCode ?? ''),
         qty: Number(it.qtyAccepted ?? it.qtyReceived ?? it.qty ?? 0),
         soItemId: (it.purchaseOrderItemId as string | undefined) ?? null,
       }],
@@ -3014,7 +3014,7 @@ grns.post('/:id/items', async (c) => {
     grn_id: grnId,
     purchase_order_item_id: (it.purchaseOrderItemId as string) ?? null,
     material_kind: (it.materialKind as string) ?? 'mfg_product',
-    material_code: it.materialCode,
+    item_code: it.itemCode,
     material_name: it.materialName,
     supplier_sku: (it.supplierSku as string) ?? null,
     // GRN line money meaning: qty = qty_received; accepted mirrors received.
@@ -3100,7 +3100,7 @@ grns.post('/:id/items', async (c) => {
       actor: c.get('houzsUser'),
       companyId: meta.companyId ?? activeCompanyId(c),
       statusSnapshot: meta.status,
-      note: `Line added: ${String(it.materialCode ?? '')}`,
+      note: `Line added: ${String(it.itemCode ?? '')}`,
       fieldChanges: compactChanges(
         GRN_LINE_AUDIT_FIELDS.map(([camel, snake]) => fieldChange(camel, null, added[snake] ?? null)),
       ),
@@ -3135,7 +3135,7 @@ grns.post('/:id/items', async (c) => {
         await writeMovements(sb, [{
           movement_type: 'IN' as const,
           warehouse_id: warehouseId,
-          product_code: String(it.materialCode),
+          item_code: String(it.itemCode),
           variant_key: computeVariantKey((it.itemGroup as string) ?? null, (it.variants as VariantAttrs | null) ?? null),
           product_name: String(it.materialName),
           qty: qtyReceived,
@@ -3153,7 +3153,7 @@ grns.post('/:id/items', async (c) => {
         await reconcileUncostedAfterIn(sb, [{
           movement_type: 'IN',
           warehouse_id: warehouseId,
-          product_code: String(it.materialCode),
+          item_code: String(it.itemCode),
           variant_key: computeVariantKey((it.itemGroup as string) ?? null, (it.variants as VariantAttrs | null) ?? null),
           qty: qtyReceived,
         }], user.id);
@@ -3259,8 +3259,8 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const repoint = await unlinkedEditRefusal(sb, 'grn', {
     parentId: (grnGate as { purchase_order_id?: string | null } | null)?.purchase_order_id ?? null,
     storedLink: (prev as { purchase_order_item_id: string | null }).purchase_order_item_id,
-    storedCode: (prev as { material_code: string | null }).material_code,
-    patchCode: it.materialCode,
+    storedCode: (prev as { item_code: string | null }).item_code,
+    patchCode: it.itemCode,
   });
   if (repoint) return refuseWithoutWriting(c, repoint, 409);
 
@@ -3277,7 +3277,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
     line_total_sen: lineTotal,
   };
   for (const [from, to] of [
-    ['materialCode', 'material_code'], ['materialName', 'material_name'],
+    ['itemCode', 'item_code'], ['materialName', 'material_name'],
     ['supplierSku', 'supplier_sku'], ['itemGroup', 'item_group'],
     ['description', 'description'], ['uom', 'uom'],
     ['unitCostSen', 'unit_cost_sen'], ['notes', 'notes'],
@@ -3324,7 +3324,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
   const effVariants = (updates.variants !== undefined ? (updates.variants as VariantAttrs | null) : oldVariants);
   const oldKey = computeVariantKey(oldGroup, oldVariants);
   const newKey = computeVariantKey(effGroup, effVariants);
-  const matCode = (updates.material_code as string | undefined) ?? (prev as { material_code: string }).material_code;
+  const matCode = (updates.item_code as string | undefined) ?? (prev as { item_code: string }).item_code;
   const matName = (updates.material_name as string | undefined) ?? (prev as { material_name: string | null }).material_name;
   const bucketChanged = oldKey !== newKey;
   const qtyChanged = newAccepted !== prevAccepted;
@@ -3349,11 +3349,11 @@ grns.patch('/:id/items/:itemId', async (c) => {
 
     // GUARD (bug #2) — pre-check any OUT against current on-hand BEFORE writing.
     if (editWarehouseId) {
-      const guardLines: Array<{ qty_accepted: number; material_code: string; item_group?: string | null; variants?: VariantAttrs | null }> = [];
+      const guardLines: Array<{ qty_accepted: number; item_code: string; item_group?: string | null; variants?: VariantAttrs | null }> = [];
       if (bucketChanged) {
-        if (prevAccepted > 0) guardLines.push({ qty_accepted: prevAccepted, material_code: matCode, item_group: oldGroup, variants: oldVariants });
+        if (prevAccepted > 0) guardLines.push({ qty_accepted: prevAccepted, item_code: matCode, item_group: oldGroup, variants: oldVariants });
       } else if (newAccepted < prevAccepted) {
-        guardLines.push({ qty_accepted: prevAccepted - newAccepted, material_code: matCode, item_group: effGroup, variants: effVariants });
+        guardLines.push({ qty_accepted: prevAccepted - newAccepted, item_code: matCode, item_group: effGroup, variants: effVariants });
       }
       const consumedLock = await grnReverseWouldGoNegative(sb, editWarehouseId, guardLines);
       if (consumedLock) return refuseWithoutWriting(c, consumedLock, 409); // row untouched — safe
@@ -3387,7 +3387,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
         actor: c.get('houzsUser'),
         companyId: meta.companyId ?? activeCompanyId(c),
         statusSnapshot: meta.status,
-        note: `Line edited: ${String((prev as unknown as { material_code?: string | null }).material_code ?? itemId)}`,
+        note: `Line edited: ${String((prev as unknown as { item_code?: string | null }).item_code ?? itemId)}`,
         fieldChanges: lineChanges,
       });
     }
@@ -3407,13 +3407,13 @@ grns.patch('/:id/items/:itemId', async (c) => {
     const movements: Array<Parameters<typeof writeMovements>[1][number]> = [];
     if (bucketChanged) {
       if (prevAccepted > 0) movements.push({
-        movement_type: 'OUT', warehouse_id: warehouseId, product_code: matCode,
+        movement_type: 'OUT', warehouse_id: warehouseId, item_code: matCode,
         variant_key: oldKey, product_name: matName, qty: prevAccepted,
         source_doc_type: 'GRN', source_doc_id: grnId, source_doc_no: editGrnNo,
         performed_by: user.id, notes: 'GRN line edited — variant changed, reversing old bucket', ...batchTag,
       });
       if (newAccepted > 0) movements.push({
-        movement_type: 'IN', warehouse_id: warehouseId, product_code: matCode,
+        movement_type: 'IN', warehouse_id: warehouseId, item_code: matCode,
         variant_key: newKey, product_name: matName, qty: newAccepted, unit_cost_sen: toMyrSen(unit, editRate),
         source_doc_type: 'GRN', source_doc_id: grnId, source_doc_no: editGrnNo,
         performed_by: user.id, notes: 'GRN line edited — variant changed, re-adding new bucket', ...batchTag,
@@ -3421,13 +3421,13 @@ grns.patch('/:id/items/:itemId', async (c) => {
     } else {
       const delta = newAccepted - prevAccepted;
       if (delta > 0) movements.push({
-        movement_type: 'IN', warehouse_id: warehouseId, product_code: matCode,
+        movement_type: 'IN', warehouse_id: warehouseId, item_code: matCode,
         variant_key: newKey, product_name: matName, qty: delta, unit_cost_sen: toMyrSen(unit, editRate),
         source_doc_type: 'GRN', source_doc_id: grnId, source_doc_no: editGrnNo,
         performed_by: user.id, notes: 'GRN line qty edited — receiving delta', ...batchTag,
       });
       else if (delta < 0) movements.push({
-        movement_type: 'OUT', warehouse_id: warehouseId, product_code: matCode,
+        movement_type: 'OUT', warehouse_id: warehouseId, item_code: matCode,
         variant_key: newKey, product_name: matName, qty: -delta,
         source_doc_type: 'GRN', source_doc_id: grnId, source_doc_no: editGrnNo,
         performed_by: user.id, notes: 'GRN line qty edited — reversing delta', ...batchTag,
@@ -3527,7 +3527,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
   // warehouse the same way the reversal below does.
   if (line && !isDraftGrn) {
     const lg = line as {
-      qty_accepted: number; material_code: string;
+      qty_accepted: number; item_code: string;
       item_group?: string | null; variants?: VariantAttrs | null;
     };
     if ((lg.qty_accepted ?? 0) > 0) {
@@ -3566,7 +3566,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
       actor: c.get('houzsUser'),
       companyId: meta.companyId ?? activeCompanyId(c),
       statusSnapshot: meta.status,
-      note: `Line removed: ${String(doomed.material_code ?? itemId)}`,
+      note: `Line removed: ${String(doomed.item_code ?? itemId)}`,
       fieldChanges: compactChanges(
         GRN_LINE_AUDIT_FIELDS.map(([camel, snake]) => fieldChange(camel, doomed[snake] ?? null, null)),
       ),
@@ -3579,7 +3579,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
   if (line && !isDraftGrn) {
     const l = line as {
       qty_accepted: number; purchase_order_item_id: string | null;
-      material_code: string; material_name: string | null; unit_price_sen: number | null;
+      item_code: string; material_name: string | null; unit_price_sen: number | null;
       item_group?: string | null; variants?: VariantAttrs | null;
     };
     // (a) Recount the PO receipt for the removed line's source (best-effort).
@@ -3611,7 +3611,7 @@ grns.delete('/:id/items/:itemId', async (c) => {
           await writeMovements(sb, [{
             movement_type: 'OUT' as const,
             warehouse_id: warehouseId,
-            product_code: l.material_code,
+            item_code: l.item_code,
             variant_key: variantKey,
             product_name: l.material_name,
             qty: l.qty_accepted,

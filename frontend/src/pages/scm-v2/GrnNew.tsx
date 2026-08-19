@@ -104,7 +104,7 @@ type DraftLine = {
   rid:               string;
   purchaseOrderItemId: string | null;
   materialKind:      string;
-  materialCode:      string;
+  itemCode:      string;
   materialName:      string;
   /* Owner 2026-07-27 — the SUPPLIER's own code for this SKU: the PO line's
      snapshot (single-PO / picks paths) or the binding's at pick time (manual
@@ -317,7 +317,7 @@ export const GrnNew = () => {
         rid:                 `p${p.poItemId}`,
         purchaseOrderItemId: p.poItemId,
         materialKind:        'mfg_product',
-        materialCode:        p.itemCode,
+        itemCode:        p.itemCode,
         supplierSku:         p.supplierSku ?? null,
         materialName:        p.description ?? p.itemCode,
         itemGroup:           p.itemGroup || null,
@@ -357,7 +357,7 @@ export const GrnNew = () => {
         rid:                 `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         purchaseOrderItemId: null,
         materialKind:        'mfg_product',
-        materialCode:        '',
+        itemCode:        '',
         materialName:        '',
         supplierSku:         null,
         itemGroup:           null,
@@ -380,7 +380,7 @@ export const GrnNew = () => {
           rid:               `r${it.id}`,
           purchaseOrderItemId: it.id,
           materialKind:      it.material_kind,
-          materialCode:      it.material_code,
+          itemCode:      it.item_code,
           materialName:      it.material_name,
           supplierSku:       (it.supplier_sku as string | null) ?? null,
           itemGroup:         it.item_group ?? null,
@@ -428,10 +428,10 @@ export const GrnNew = () => {
      the chosen basis (QTY / VALUE / CBM). All in the GRN currency for display
      (the server stores MYR via the exchange rate). Keyed by rid. */
   const allocPreview = useMemo(() => {
-    const isSvc = (l: DraftLine) => isServiceLine({ itemGroup: l.itemGroup, itemCode: l.materialCode });
-    const goods = lines.filter((l) => l.materialCode.trim() && !isSvc(l));
+    const isSvc = (l: DraftLine) => isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode });
+    const goods = lines.filter((l) => l.itemCode.trim() && !isSvc(l));
     const chargePool = lines
-      .filter((l) => l.materialCode.trim() && isSvc(l))
+      .filter((l) => l.itemCode.trim() && isSvc(l))
       .reduce((s, l) => s + l.qtyReceived * l.unitPriceSen, 0);
     const basisOf = (l: DraftLine): number => {
       if (allocationMethod === 'VALUE') return l.qtyReceived * l.unitPriceSen;
@@ -495,7 +495,7 @@ export const GrnNew = () => {
 
   // Commander 2026-05-29 — make the MANUAL item picker supplier-binding-aware,
   // exactly like New PO. Once a supplier is chosen the per-line Item Code
-  // datalist lists THAT supplier's bound SKUs (material_code + name + price);
+  // datalist lists THAT supplier's bound SKUs (item_code + name + price);
   // picking one fills name + unit price + itemGroup from the binding. When no
   // supplier is set yet we fall back to the free useMfgProducts search below.
   const supplierDetailQ = useSupplierDetail(supplierId);
@@ -508,7 +508,7 @@ export const GrnNew = () => {
   const skuByMaterialCode = useMemo(() => skuMapFromBindings(bindings), [bindings]);
   const supplierSkuOf = (l: DraftLine): string | null => {
     const code = supplierCodeFor(
-      { material_code: l.materialCode, supplier_sku: l.supplierSku },
+      { item_code: l.itemCode, supplier_sku: l.supplierSku },
       skuByMaterialCode,
     );
     return code === '—' ? null : code;
@@ -578,7 +578,7 @@ export const GrnNew = () => {
       rid:                 `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       purchaseOrderItemId: null,
       materialKind:        'mfg_product',
-      materialCode:        '',
+      itemCode:        '',
       materialName:        '',
       supplierSku:         null,
       itemGroup:           null,
@@ -598,7 +598,7 @@ export const GrnNew = () => {
   const pickItemForLine = (rid: string, code: string) => {
     const sku = (productsQ.data ?? []).find((p) => p.code === code);
     setLine(rid, {
-      materialCode: code,
+      itemCode: code,
       materialName: sku?.name ?? code,
       // Catalogue pick carries no supplier code — clear any stale one; the
       // render/payload fall back to the live binding for this supplier+code.
@@ -614,11 +614,11 @@ export const GrnNew = () => {
   // catalogue (categoryForCode) since bindings carry no category.
   const pickBindingForLine = (rid: string, b: typeof bindings[number]) => {
     setLine(rid, {
-      materialCode:   b.material_code,
+      itemCode:   b.item_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku ?? null,
       unitPriceSen: b.unit_price_sen,
-      itemGroup:      categoryForCode(b.material_code) ?? null,
+      itemGroup:      categoryForCode(b.item_code) ?? null,
     });
   };
 
@@ -636,7 +636,7 @@ export const GrnNew = () => {
       return;
     }
     // Drop the blank starter line(s) — only real items (with a code) are saved.
-    const realLines = lines.filter((l) => l.materialCode.trim());
+    const realLines = lines.filter((l) => l.itemCode.trim());
     if (realLines.length === 0) {
       setDialog({ title: 'Add at least one item', body: 'Pick at least one SKU to receive.' });
       return;
@@ -671,7 +671,7 @@ export const GrnNew = () => {
         items: realLines.map((l) => ({
           purchaseOrderItemId: l.purchaseOrderItemId,
           materialKind:        l.materialKind,
-          materialCode:        l.materialCode,
+          itemCode:        l.itemCode,
           materialName:        l.materialName,
           // Owner 2026-07-27 — persist the supplier's own code exactly as the
           // form showed it (snapshot-first, else live binding) so the GRN line
@@ -887,7 +887,7 @@ export const GrnNew = () => {
               </span>
               {allocPreview.chargePool > 0 && (
                 <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
-                  {fmtRm(allocPreview.chargePool, currency)} freight spread across {lines.filter((l) => l.materialCode.trim() && !isServiceLine({ itemGroup: l.itemGroup, itemCode: l.materialCode })).length} goods line(s)
+                  {fmtRm(allocPreview.chargePool, currency)} freight spread across {lines.filter((l) => l.itemCode.trim() && !isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode })).length} goods line(s)
                 </span>
               )}
             </label>
@@ -975,7 +975,7 @@ export const GrnNew = () => {
               /* Landed-cost allocation (Phase 1-A) — this goods line's share of the
                  freight pool + its landed unit cost (base + per-unit freight),
                  shown only when there's a charge to spread. Service lines get 0. */
-              const lineIsSvc = isServiceLine({ itemGroup: l.itemGroup, itemCode: l.materialCode });
+              const lineIsSvc = isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode });
               const lineAllocSen = allocPreview.allocByRid.get(l.rid) ?? 0;
               const landedUnitSen = l.unitPriceSen + (l.qtyReceived > 0 ? Math.round(lineAllocSen / l.qtyReceived) : 0);
               // Manual lines have no outstanding cap — qty inputs go uncapped.
@@ -1075,7 +1075,7 @@ export const GrnNew = () => {
                           <input
                             type="text"
                             list={`grn-products-${l.rid}`}
-                            value={l.materialCode}
+                            value={l.itemCode}
                             onChange={(e) => {
                               const code = e.target.value;
                               setProductQuery(code);
@@ -1084,7 +1084,7 @@ export const GrnNew = () => {
                               // and the code matches one of its bindings, fill
                               // name + unit price + itemGroup from the binding.
                               const bound = supplierId
-                                ? bindings.find((b) => b.material_code === code)
+                                ? bindings.find((b) => b.item_code === code)
                                 : undefined;
                               if (bound) { pickBindingForLine(l.rid, bound); return; }
                               // No supplier (or no binding for this code) → fall
@@ -1094,7 +1094,7 @@ export const GrnNew = () => {
                               // Free typing — keep what's typed so the field
                               // stays editable; a stale supplier code must not
                               // outlive the pick it belonged to.
-                              setLine(l.rid, { materialCode: code, supplierSku: null });
+                              setLine(l.rid, { itemCode: code, supplierSku: null });
                             }}
                             placeholder={supplierId && bindings.length > 0
                               ? 'Pick one of this supplier’s bound SKUs…'
@@ -1108,7 +1108,7 @@ export const GrnNew = () => {
                                 back to the gated full-catalogue search. */}
                             {supplierId && bindings.length > 0
                               ? sortByText(bindings).map((b) => (
-                                  <option key={b.id} value={b.material_code}>
+                                  <option key={b.id} value={b.item_code}>
                                     {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                                   </option>
                                 ))
@@ -1121,7 +1121,7 @@ export const GrnNew = () => {
                         <input
                           type="text"
                           readOnly
-                          value={l.materialCode}
+                          value={l.itemCode}
                           className={styles.fieldInput}
                           style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />

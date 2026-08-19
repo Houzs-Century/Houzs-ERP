@@ -194,23 +194,23 @@ describe('reconcileUncostedOuts — orchestration', () => {
     const sb = fakeSb({
       rpc: () => 4, // each bucket reconciles 4
       outMovements: [
-        { movement_type: 'OUT', source_doc_type: 'DO', source_doc_id: 'do-1', product_code: 'P1', warehouse_id: WH, variant_key: '', created_at: '2026-07-10T00:00:00.000Z' },
-        { movement_type: 'OUT', source_doc_type: 'DO', source_doc_id: 'do-2', product_code: 'P1', warehouse_id: WH, variant_key: '', created_at: '2026-07-16T00:00:00.000Z' }, // AFTER cutoff -> excluded
-        { movement_type: 'OUT', source_doc_type: 'CONSIGNMENT_NOTE', source_doc_id: 'cn-1', product_code: 'P1', warehouse_id: WH, variant_key: '', created_at: '2026-07-10T00:00:00.000Z' }, // not a DO -> excluded
-        { movement_type: 'OUT', source_doc_type: 'DO', source_doc_id: 'do-3', product_code: 'P1', warehouse_id: 'wh-OTHER', variant_key: '', created_at: '2026-07-10T00:00:00.000Z' }, // other bucket -> excluded
+        { movement_type: 'OUT', source_doc_type: 'DO', source_doc_id: 'do-1', item_code: 'P1', warehouse_id: WH, variant_key: '', created_at: '2026-07-10T00:00:00.000Z' },
+        { movement_type: 'OUT', source_doc_type: 'DO', source_doc_id: 'do-2', item_code: 'P1', warehouse_id: WH, variant_key: '', created_at: '2026-07-16T00:00:00.000Z' }, // AFTER cutoff -> excluded
+        { movement_type: 'OUT', source_doc_type: 'CONSIGNMENT_NOTE', source_doc_id: 'cn-1', item_code: 'P1', warehouse_id: WH, variant_key: '', created_at: '2026-07-10T00:00:00.000Z' }, // not a DO -> excluded
+        { movement_type: 'OUT', source_doc_type: 'DO', source_doc_id: 'do-3', item_code: 'P1', warehouse_id: 'wh-OTHER', variant_key: '', created_at: '2026-07-10T00:00:00.000Z' }, // other bucket -> excluded
       ],
     });
     const res = await reconcileUncostedOuts(
       sb,
       [
-        { warehouse_id: WH, product_code: 'P1', variant_key: '' },
-        { warehouse_id: WH, product_code: 'P1', variant_key: '' }, // dup -> one RPC call
+        { warehouse_id: WH, item_code: 'P1', variant_key: '' },
+        { warehouse_id: WH, item_code: 'P1', variant_key: '' }, // dup -> one RPC call
       ],
       CUTOFF,
       'user-1',
     );
     expect(sb.calls.filter((c) => c.name === 'fn_reconcile_uncosted_out')).toHaveLength(1);
-    expect(sb.calls[0].args).toMatchObject({ p_warehouse_id: WH, p_product_code: 'P1', p_variant_key: '', p_before_ts: CUTOFF, p_created_by: 'user-1' });
+    expect(sb.calls[0].args).toMatchObject({ p_warehouse_id: WH, p_item_code: 'P1', p_variant_key: '', p_before_ts: CUTOFF, p_created_by: 'user-1' });
     expect(res.reconciled).toBe(4);
     expect(res.affectedDoIds).toEqual(['do-1']); // do-2 (later), cn-1 (not DO), do-3 (other bucket) all excluded
   });
@@ -225,9 +225,9 @@ describe('reconcileUncostedOuts — orchestration', () => {
   test('zero reconciled -> skips the affected-DO lookup entirely', async () => {
     const sb = fakeSb({
       rpc: () => 0,
-      outMovements: [{ source_doc_type: 'DO', source_doc_id: 'do-1', product_code: 'P1', warehouse_id: WH, variant_key: '', created_at: '2026-07-10T00:00:00.000Z' }],
+      outMovements: [{ source_doc_type: 'DO', source_doc_id: 'do-1', item_code: 'P1', warehouse_id: WH, variant_key: '', created_at: '2026-07-10T00:00:00.000Z' }],
     });
-    const res = await reconcileUncostedOuts(sb, [{ warehouse_id: WH, product_code: 'P1', variant_key: '' }], CUTOFF, 'user-1');
+    const res = await reconcileUncostedOuts(sb, [{ warehouse_id: WH, item_code: 'P1', variant_key: '' }], CUTOFF, 'user-1');
     expect(res.reconciled).toBe(0);
     expect(res.affectedDoIds).toEqual([]); // lookup not run because nothing was reconciled
   });
@@ -242,15 +242,15 @@ describe('reconcileUncostedAfterIn — lot-opening filter + failure containment'
   const WH = 'wh-1';
   const bucketsOf = (sb: { calls: Array<{ name: string; args: Record<string, unknown> }> }) =>
     sb.calls.filter((c) => c.name === 'fn_reconcile_uncosted_out')
-      .map((c) => `${c.args.p_warehouse_id}::${c.args.p_product_code}::${c.args.p_variant_key}`);
+      .map((c) => `${c.args.p_warehouse_id}::${c.args.p_item_code}::${c.args.p_variant_key}`);
 
   test('reconciles IN and POSITIVE ADJUSTMENT rows; ignores OUT and NEGATIVE ADJUSTMENT', async () => {
     const sb = fakeSb({ rpc: () => 0, outMovements: [] });
     await reconcileUncostedAfterIn(sb, [
-      { movement_type: 'IN', warehouse_id: WH, product_code: 'P-IN', variant_key: '', qty: 2 },
-      { movement_type: 'ADJUSTMENT', warehouse_id: WH, product_code: 'P-PLUS', variant_key: '', qty: 3 },
-      { movement_type: 'ADJUSTMENT', warehouse_id: WH, product_code: 'P-MINUS', variant_key: '', qty: -3 },
-      { movement_type: 'OUT', warehouse_id: WH, product_code: 'P-OUT', variant_key: '', qty: 5 },
+      { movement_type: 'IN', warehouse_id: WH, item_code: 'P-IN', variant_key: '', qty: 2 },
+      { movement_type: 'ADJUSTMENT', warehouse_id: WH, item_code: 'P-PLUS', variant_key: '', qty: 3 },
+      { movement_type: 'ADJUSTMENT', warehouse_id: WH, item_code: 'P-MINUS', variant_key: '', qty: -3 },
+      { movement_type: 'OUT', warehouse_id: WH, item_code: 'P-OUT', variant_key: '', qty: 5 },
     ], 'user-1');
     expect(bucketsOf(sb)).toEqual([`${WH}::P-IN::`, `${WH}::P-PLUS::`]);
   });
@@ -258,7 +258,7 @@ describe('reconcileUncostedAfterIn — lot-opening filter + failure containment'
   test('an OUT-only batch (a resync that only removed stock) calls nothing', async () => {
     const sb = fakeSb({ rpc: () => 0, outMovements: [] });
     const res = await reconcileUncostedAfterIn(sb, [
-      { movement_type: 'OUT', warehouse_id: WH, product_code: 'P1', variant_key: '', qty: 1 },
+      { movement_type: 'OUT', warehouse_id: WH, item_code: 'P1', variant_key: '', qty: 1 },
     ], 'user-1');
     expect(sb.calls).toHaveLength(0);
     expect(res).toEqual({ reconciled: 0, affectedDoIds: [] });
@@ -267,9 +267,9 @@ describe('reconcileUncostedAfterIn — lot-opening filter + failure containment'
   test('rows missing a warehouse or product are dropped rather than reconciled as an empty bucket', async () => {
     const sb = fakeSb({ rpc: () => 0, outMovements: [] });
     await reconcileUncostedAfterIn(sb, [
-      { movement_type: 'IN', warehouse_id: '', product_code: 'P1', variant_key: '', qty: 1 },
-      { movement_type: 'IN', warehouse_id: WH, product_code: '', variant_key: '', qty: 1 },
-      { movement_type: 'IN', warehouse_id: WH, product_code: 'P1', qty: 1 }, // variant_key absent -> ''
+      { movement_type: 'IN', warehouse_id: '', item_code: 'P1', variant_key: '', qty: 1 },
+      { movement_type: 'IN', warehouse_id: WH, item_code: '', variant_key: '', qty: 1 },
+      { movement_type: 'IN', warehouse_id: WH, item_code: 'P1', qty: 1 }, // variant_key absent -> ''
     ], 'user-1');
     expect(bucketsOf(sb)).toEqual([`${WH}::P1::`]);
   });
@@ -280,7 +280,7 @@ describe('reconcileUncostedAfterIn — lot-opening filter + failure containment'
       from() { throw new Error('connection reset'); },
     };
     await expect(reconcileUncostedAfterIn(exploding, [
-      { movement_type: 'IN', warehouse_id: WH, product_code: 'P1', variant_key: '', qty: 1 },
+      { movement_type: 'IN', warehouse_id: WH, item_code: 'P1', variant_key: '', qty: 1 },
     ], 'user-1')).resolves.toEqual({ reconciled: 0, affectedDoIds: [] });
   });
 

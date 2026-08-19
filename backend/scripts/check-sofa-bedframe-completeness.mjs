@@ -170,7 +170,7 @@ async function main() {
 
   const poRows = (await sql`
     SELECT i.id, p.po_number AS doc, p.linked_ac_docno AS ac, p.status AS po_status,
-           i.material_code AS code, i.item_group AS grp, i.description2 AS d2, i.variants,
+           i.item_code AS code, i.item_group AS grp, i.description2 AS d2, i.variants,
            i.custom_specials, i.notes AS remark, i.qty, i.so_item_id
       FROM scm.purchase_order_items i
       JOIN scm.purchase_orders p ON p.id = i.purchase_order_id

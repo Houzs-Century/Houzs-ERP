@@ -161,7 +161,7 @@ async function main() {
     // ---- E. gap 2 — supplier-side orphan reconciliation ---------------------
     const ids = lines.map((l) => l.id);
     const poLinks = ids.length
-      ? await sql`SELECT pi.id::text AS id, pi.so_item_id::text AS so_item_id, pi.material_code,
+      ? await sql`SELECT pi.id::text AS id, pi.so_item_id::text AS so_item_id, pi.item_code,
                          po.po_number, UPPER(COALESCE(po.status::text, '')) AS po_status
                     FROM scm.purchase_order_items pi
                     LEFT JOIN scm.purchase_orders po ON po.id = pi.purchase_order_id
@@ -171,7 +171,7 @@ async function main() {
     const cancelledIds = new Set(lines.filter((l) => l.cancelled).map((l) => l.id));
     for (const p of poLinks) {
       const onCancelled = cancelledIds.has(p.so_item_id);
-      log(`     PO ${p.po_number} (${p.po_status}) line ${p.id.slice(0, 8)} ${p.material_code} -> so_item ${p.so_item_id.slice(0, 8)}${onCancelled ? "  <<< POINTS AT A CANCELLED SO LINE" : ""}`);
+      log(`     PO ${p.po_number} (${p.po_status}) line ${p.id.slice(0, 8)} ${p.item_code} -> so_item ${p.so_item_id.slice(0, 8)}${onCancelled ? "  <<< POINTS AT A CANCELLED SO LINE" : ""}`);
     }
     const poOnCancelled = poLinks.filter((p) => cancelledIds.has(p.so_item_id));
     log(`     ${poOnCancelled.length === 0

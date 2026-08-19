@@ -55,12 +55,12 @@ async function main() {
     soGrp.get(k).push(it);
   }
   // ERP PO lines grouped likewise
-  const poItems = await sql`SELECT i.id, i.material_code, i.so_item_id, h.linked_ac_docno ac
+  const poItems = await sql`SELECT i.id, i.item_code, i.so_item_id, h.linked_ac_docno ac
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = 1 AND h.linked_ac_docno IS NOT NULL ORDER BY i.id`;
   const poGrp = new Map();
   for (const it of poItems) {
-    const k = `${it.ac}|${norm(it.material_code)}`;
+    const k = `${it.ac}|${norm(it.item_code)}`;
     if (!poGrp.has(k)) poGrp.set(k, []);
     poGrp.get(k).push(it);
   }

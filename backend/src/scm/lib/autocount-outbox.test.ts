@@ -178,7 +178,7 @@ describe('the six flows each queue their operation', () => {
     const sb = withFlag('1', {
       purchase_orders: [{ ...po }],
       suppliers: [{ ...supplier }],
-      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, description: 'D', qty: 3, unit_price_sen: 5000, warehouse_id: 'wh-1' }],
+      purchase_order_items: [{ purchase_order_id: 'po-1', item_code: ERP_A, description: 'D', qty: 3, unit_price_sen: 5000, warehouse_id: 'wh-1' }],
       warehouses: [{ id: 'wh-1', code: 'KL', name: 'KL WAREHOUSE' }],
     }, {
       /* The four columns the composer used to ask purchase_orders for and that
@@ -204,7 +204,7 @@ describe('the six flows each queue their operation', () => {
     const sb = withFlag('1', {
       purchase_orders: [{ ...po, linked_ac_docno: 'PO-000042' }],
       suppliers: [{ ...supplier }],
-      purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, description: 'D', qty: 3, unit_price_sen: 5000, linked_ac_dtlkey: 7001 }],
+      purchase_order_items: [{ purchase_order_id: 'po-1', item_code: ERP_A, description: 'D', qty: 3, unit_price_sen: 5000, linked_ac_dtlkey: 7001 }],
     }, { purchase_orders: ['creditor_code', 'creditor_name', 'agent', 'ref'] });
     expect(await enqueueEdit(sb as never, { companyId: 1, docType: 'PO', docId: 'po-1' })).toBe(true);
     const [row] = outbox(sb);
@@ -280,7 +280,7 @@ describe('the six flows each queue their operation', () => {
     test('PO create: a header read that fails queues nothing', async () => {
       const sb = withFlag('1', {
         purchase_orders: [{ ...po }], suppliers: [{ ...supplier }],
-        purchase_order_items: [{ purchase_order_id: 'po-1', material_code: ERP_A, qty: 1, unit_price_sen: 1 }],
+        purchase_order_items: [{ purchase_order_id: 'po-1', item_code: ERP_A, qty: 1, unit_price_sen: 1 }],
       }, { purchase_orders: ['po_number'] });
       expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' })).toBe(false);
       const rows = outbox(sb);
@@ -1042,7 +1042,7 @@ describe('a sofa resolves through the binding recorded for its model', () => {
          bindingsFor queried the raw codes — so the two never met and the
          override could not fire for any sofa. */
       supplier_material_bindings: [{
-        company_id: 1, material_code: '9028-1A(LHF)', material_kind: 'mfg_product',
+        company_id: 1, item_code: '9028-1A(LHF)', material_kind: 'mfg_product',
         supplier_id: 'sup-amn', supplier_sku: 'AMN-SF9028 SOFA', is_main_supplier: true,
       }],
     });
@@ -1542,7 +1542,7 @@ describe('the three fields the extract carries and the write-back did not send',
         }],
         suppliers: [{ id: 'sup-1', code: '400-H004', name: 'Supplier' }],
         purchase_order_items: [{
-          purchase_order_id: 'po-b', material_code: ERP_A, description: 'M',
+          purchase_order_id: 'po-b', item_code: ERP_A, description: 'M',
           qty: 1, unit_price_sen: 100, warehouse_id: 'wh-kl', delivery_date: '2026-10-02',
         }],
         warehouses: [{ id: 'wh-kl', code: 'KL', name: 'KL WAREHOUSE' }],
@@ -1618,7 +1618,7 @@ describe('every purchase order names a purchase agent (FK_PO_PurchaseAgent)', ()
       supplier_id: 'sup-1', notes: null, linked_ac_docno: null,
     }],
     purchase_order_items: [{
-      id: 'poi-1', purchase_order_id: 'po-1', material_code: ERP_A, description: 'M',
+      id: 'poi-1', purchase_order_id: 'po-1', item_code: ERP_A, description: 'M',
       qty: 1, unit_price_sen: 100, warehouse_id: 'wh-kl',
     }],
     warehouses: [{ id: 'wh-kl', code: 'KL', name: 'KL WAREHOUSE' }],

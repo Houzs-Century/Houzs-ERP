@@ -25,7 +25,7 @@ import { listInventoryHandler } from '../src/scm/routes/inventory';
    header). What this test pins is the ROUTE contract: showAll now applies the
    `.eq('company_id', <active>)` predicate, so a fixture that tags each row with a
    company_id can only ever come back with the active company's rows — including
-   the crucial COLLIDING-CODE case (a product_code that exists in both companies),
+   the crucial COLLIDING-CODE case (a item_code that exists in both companies),
    which is exactly what a cross-company qty leak looks like.
    ──────────────────────────────────────────────────────────────────────────── */
 
@@ -61,10 +61,10 @@ function fakeSupabase(data: DataSet) {
 function fixture(): DataSet {
   return {
     v_inventory_all_skus: [
-      { product_code: 'H-SOFA-1', product_name: 'Houzs Sofa', warehouse_id: 'wh1', warehouse_code: 'KL', warehouse_name: 'KL Warehouse', category: 'SOFA', size_label: null, qty: 5, last_movement_at: '2026-07-01', value_sen: 5000, main_supplier_code: 'HS1', main_supplier_name: 'Houzs Supplier', company_id: 1 },
-      { product_code: 'SHARED-(K)', product_name: 'Houzs Shared King', warehouse_id: 'wh1', warehouse_code: 'KL', warehouse_name: 'KL Warehouse', category: 'BEDFRAME', size_label: 'K', qty: 3, last_movement_at: '2026-07-02', value_sen: 3000, main_supplier_code: 'HS1', main_supplier_name: 'Houzs Supplier', company_id: 1 },
-      { product_code: 'X-BED-1', product_name: '2990 Bed', warehouse_id: 'wh2', warehouse_code: 'PJ', warehouse_name: 'PJ Warehouse', category: 'BEDFRAME', size_label: null, qty: 7, last_movement_at: '2026-07-03', value_sen: 7000, main_supplier_code: 'XS1', main_supplier_name: '2990 Supplier', company_id: 2 },
-      { product_code: 'SHARED-(K)', product_name: '2990 Shared King', warehouse_id: 'wh2', warehouse_code: 'PJ', warehouse_name: 'PJ Warehouse', category: 'BEDFRAME', size_label: 'K', qty: 9, last_movement_at: '2026-07-04', value_sen: 9000, main_supplier_code: 'XS1', main_supplier_name: '2990 Supplier', company_id: 2 },
+      { item_code: 'H-SOFA-1', product_name: 'Houzs Sofa', warehouse_id: 'wh1', warehouse_code: 'KL', warehouse_name: 'KL Warehouse', category: 'SOFA', size_label: null, qty: 5, last_movement_at: '2026-07-01', value_sen: 5000, main_supplier_code: 'HS1', main_supplier_name: 'Houzs Supplier', company_id: 1 },
+      { item_code: 'SHARED-(K)', product_name: 'Houzs Shared King', warehouse_id: 'wh1', warehouse_code: 'KL', warehouse_name: 'KL Warehouse', category: 'BEDFRAME', size_label: 'K', qty: 3, last_movement_at: '2026-07-02', value_sen: 3000, main_supplier_code: 'HS1', main_supplier_name: 'Houzs Supplier', company_id: 1 },
+      { item_code: 'X-BED-1', product_name: '2990 Bed', warehouse_id: 'wh2', warehouse_code: 'PJ', warehouse_name: 'PJ Warehouse', category: 'BEDFRAME', size_label: null, qty: 7, last_movement_at: '2026-07-03', value_sen: 7000, main_supplier_code: 'XS1', main_supplier_name: '2990 Supplier', company_id: 2 },
+      { item_code: 'SHARED-(K)', product_name: '2990 Shared King', warehouse_id: 'wh2', warehouse_code: 'PJ', warehouse_name: 'PJ Warehouse', category: 'BEDFRAME', size_label: 'K', qty: 9, last_movement_at: '2026-07-04', value_sen: 9000, main_supplier_code: 'XS1', main_supplier_name: '2990 Supplier', company_id: 2 },
     ],
     warehouses: [
       { id: 'wh1', code: 'KL', name: 'KL Warehouse', is_consignment: false },
@@ -74,7 +74,7 @@ function fixture(): DataSet {
 }
 
 type Balance = {
-  product_code: string; product_name: string; qty: number;
+  item_code: string; product_name: string; qty: number;
   warehouse_id: string; value_sen: number; company_id: number;
 };
 
@@ -102,14 +102,14 @@ async function showAll(companyId: number | null): Promise<Balance[]> {
   return body.balances;
 }
 
-const codesOf = (rows: Balance[]) => rows.map((r) => r.product_code).sort();
+const codesOf = (rows: Balance[]) => rows.map((r) => r.item_code).sort();
 
 describe('GET /inventory?showAll=true — the all-SKUs rollup isolates by active company (A3)', () => {
   test('Houzs (company 1) sees ONLY its own SKUs — not 2990 products, warehouses or stock', async () => {
     const rows = await showAll(1);
     expect(codesOf(rows)).toEqual(['H-SOFA-1', 'SHARED-(K)']);
     // No 2990-only product.
-    expect(rows.some((r) => r.product_code === 'X-BED-1')).toBe(false);
+    expect(rows.some((r) => r.item_code === 'X-BED-1')).toBe(false);
     // No 2990 warehouse anywhere in the result.
     expect(rows.every((r) => r.warehouse_id === 'wh1')).toBe(true);
     expect(rows.every((r) => r.company_id === 1)).toBe(true);
@@ -118,14 +118,14 @@ describe('GET /inventory?showAll=true — the all-SKUs rollup isolates by active
   test('2990 (company 2) sees ONLY its own SKUs — the other direction', async () => {
     const rows = await showAll(2);
     expect(codesOf(rows)).toEqual(['SHARED-(K)', 'X-BED-1']);
-    expect(rows.some((r) => r.product_code === 'H-SOFA-1')).toBe(false);
+    expect(rows.some((r) => r.item_code === 'H-SOFA-1')).toBe(false);
     expect(rows.every((r) => r.warehouse_id === 'wh2')).toBe(true);
     expect(rows.every((r) => r.company_id === 2)).toBe(true);
   });
 
-  test('a COLLIDING product_code (SHARED-(K)) returns each company its OWN qty, never the sum', async () => {
-    const h = (await showAll(1)).find((r) => r.product_code === 'SHARED-(K)')!;
-    const x = (await showAll(2)).find((r) => r.product_code === 'SHARED-(K)')!;
+  test('a COLLIDING item_code (SHARED-(K)) returns each company its OWN qty, never the sum', async () => {
+    const h = (await showAll(1)).find((r) => r.item_code === 'SHARED-(K)')!;
+    const x = (await showAll(2)).find((r) => r.item_code === 'SHARED-(K)')!;
     // Houzs sees 3 (its own), 2990 sees 9 (its own) — never 12, and never each
     // other's product name.
     expect(h.qty).toBe(3);

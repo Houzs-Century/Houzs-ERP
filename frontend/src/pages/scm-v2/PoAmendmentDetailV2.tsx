@@ -92,7 +92,7 @@ const asStr = (v: unknown): string | null => {
 
 /* Read the old_snapshot blob a PO amendment line records. */
 type PoOldSnapshot = {
-  material_code?: string | null;
+  item_code?: string | null;
   material_name?: string | null;
   qty?: number | null;
   unit_price_sen?: number | null;
@@ -274,12 +274,12 @@ function DiffCard({ line }: { line: PoAmendmentLine }) {
   const isAdd = line.change_type === "ADD";
   const isRemove = line.change_type === "REMOVE";
 
-  const oldCode = old.material_code ?? null;
+  const oldCode = old.item_code ?? null;
   const oldName = old.material_name ?? null;
-  const newCode = line.new_material_code ?? oldCode;
+  const newCode = line.new_item_code ?? oldCode;
   const newName = line.new_material_name ?? oldName;
 
-  const codeChanged = !isAdd && !isRemove && line.new_material_code != null && line.new_material_code !== oldCode;
+  const codeChanged = !isAdd && !isRemove && line.new_item_code != null && line.new_item_code !== oldCode;
   const qtyChanged = !isAdd && !isRemove && line.new_qty != null && line.new_qty !== (old.qty ?? null);
   const priceChanged = !isAdd && !isRemove && line.new_unit_price_sen != null && line.new_unit_price_sen !== (old.unit_price_sen ?? null);
   const deliveryChanged = !isAdd && !isRemove && line.new_delivery_date != null && line.new_delivery_date !== (old.delivery_date ?? null);
@@ -542,7 +542,7 @@ export function PoAmendmentDetailV2() {
       notify({
         title: "Amendment rejected",
         body: released.length > 0
-          ? `Supplier keeps the original spec — released to STOCK: ${released.map((x) => `${x.materialCode} ×${x.qty}`).join(", ")}. MRP will re-show the corrected spec as shortage.`
+          ? `Supplier keeps the original spec — released to STOCK: ${released.map((x) => `${x.itemCode} ×${x.qty}`).join(", ")}. MRP will re-show the corrected spec as shortage.`
           : "The person who raised it can see your reason and raise a corrected request.",
       });
     } catch (e) {

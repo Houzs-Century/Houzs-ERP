@@ -143,7 +143,7 @@ describe('POST /mfg-products/:id/price-changes — append', () => {
     const hist = t.mfg_product_price_history;
     expect(hist.length).toBe(1);
     expect(hist[0]).toMatchObject({
-      company_id: CO_A, product_code: 'SKU-A', sell_price_sen: 12000, effective_from: TODAY,
+      company_id: CO_A, item_code: 'SKU-A', sell_price_sen: 12000, effective_from: TODAY,
     });
     // Attribution records the REAL caller (name), not the pinned system uuid.
     expect(hist[0].created_by).toBe('Tester');
@@ -190,7 +190,7 @@ describe('POST /mfg-products/:id/price-changes — auto-baseline', () => {
     const t = {
       mfg_products: products(),
       mfg_product_price_history: [
-        { id: 'h0', company_id: CO_A, product_code: 'SKU-A', sell_price_sen: 10000, effective_from: TODAY },
+        { id: 'h0', company_id: CO_A, item_code: 'SKU-A', sell_price_sen: 10000, effective_from: TODAY },
       ] as Row[],
     };
     const res = await postChange(harness(t, CO_A).app, 'p-a', { effectiveFrom: FUTURE, sellPriceSen: 25000 });
@@ -234,8 +234,8 @@ describe('GET /mfg-products/:id/price-changes — timeline', () => {
     const t = {
       mfg_products: products(),
       mfg_product_price_history: [
-        { id: 'h1', company_id: CO_A, product_code: 'SKU-A', sell_price_sen: 10000, effective_from: TODAY, created_at: '2020-01-01T00:00:00Z' },
-        { id: 'h2', company_id: CO_A, product_code: 'SKU-A', sell_price_sen: 20000, effective_from: FUTURE, created_at: '2020-01-02T00:00:00Z' },
+        { id: 'h1', company_id: CO_A, item_code: 'SKU-A', sell_price_sen: 10000, effective_from: TODAY, created_at: '2020-01-01T00:00:00Z' },
+        { id: 'h2', company_id: CO_A, item_code: 'SKU-A', sell_price_sen: 20000, effective_from: FUTURE, created_at: '2020-01-02T00:00:00Z' },
       ] as Row[],
     };
     const res = await harness(t, CO_A).app.request('/mfg-products/p-a/price-changes');
@@ -250,7 +250,7 @@ describe('GET /mfg-products/:id/price-changes — timeline', () => {
     const t = {
       mfg_products: products(),
       mfg_product_price_history: [
-        { id: 'hb', company_id: CO_B, product_code: 'SKU-B', sell_price_sen: 30000, effective_from: TODAY },
+        { id: 'hb', company_id: CO_B, item_code: 'SKU-B', sell_price_sen: 30000, effective_from: TODAY },
       ] as Row[],
     };
     const res = await harness(t, CO_A).app.request('/mfg-products/p-b/price-changes');

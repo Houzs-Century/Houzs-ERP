@@ -90,8 +90,8 @@ describe('findUnlinkedPiLines — the invoicing side of the receiving chain', ()
             calls.push({ table, col, val });
             if (opts.error) return Promise.resolve({ data: null, error: opts.error });
             const ids = val as string[];
-            const rows = ids.flatMap((id) => (receipts[id]?.codes ?? []).map((material_code) => ({
-              material_code, grn_id: id, grn: { grn_number: receipts[id]!.no },
+            const rows = ids.flatMap((id) => (receipts[id]?.codes ?? []).map((item_code) => ({
+              item_code, grn_id: id, grn: { grn_number: receipts[id]!.no },
             })));
             return Promise.resolve({ data: rows, error: null });
           },
@@ -289,7 +289,7 @@ describe('the invoice guard is wired into ALL THREE paths that can reach the sha
     expect(add).toContain('unlinkedCheckFailedResponse');
   });
 
-  /* THE THIRD DOOR. This handler rewrites an existing line's material_code and
+  /* THE THIRD DOOR. This handler rewrites an existing line's item_code and
      leaves grn_item_id alone, so the refused shape could be assembled in two legal
      steps: add a line the receipt does not contain (allowed), then edit its
      product to one the receipt DOES contain. The qty cap and the invoiced-qty
@@ -300,7 +300,7 @@ describe('the invoice guard is wired into ALL THREE paths that can reach the sha
     expect(patch).toContain('unlinkedInvoiceResponse');
     expect(patch).toContain('unlinkedCheckFailedResponse');
     // It checks the EFFECTIVE post-patch code, not the stored one.
-    expect(patch).toContain('it.materialCode ?? prev.material_code');
+    expect(patch).toContain('it.itemCode ?? prev.item_code');
   });
 
   it('every path derives the receipt set from the LINES, not the header ref alone', () => {

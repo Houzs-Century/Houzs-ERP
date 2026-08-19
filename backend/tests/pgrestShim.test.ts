@@ -54,7 +54,7 @@ describe("pgrest-shim — SQL translation for the exact chains the canonical fun
     const { sql, calls } = fakeSql([]);
     const sb = pgrestShim(sql as never);
     await sb.from("inventory_movements")
-      .select("movement_type, warehouse_id, product_code, variant_key, batch_no, qty, total_cost_sen")
+      .select("movement_type, warehouse_id, item_code, variant_key, batch_no, qty, total_cost_sen")
       .eq("source_doc_type", "DO").eq("source_doc_id", "do-1");
     expect(calls[0].text).toContain('WHERE "source_doc_type" = $1 AND "source_doc_id" = $2');
   });

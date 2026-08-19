@@ -28,15 +28,15 @@ async function main() {
       COALESCE(SUM(qty_remaining), 0) qty, COALESCE(SUM(qty_remaining) FILTER (WHERE unit_cost_sen = 0 OR unit_cost_sen IS NULL), 0) zero_qty
     FROM scm.inventory_lots WHERE company_id = ${CO} AND qty_remaining > 0`;
   log(`open FIFO lots: ${lots.lots} (${lots.zero} at zero cost); units on hand: ${lots.qty} (zero-cost: ${lots.zero_qty})`);
-  const zeroTop = await sql`SELECT product_code, SUM(qty_remaining)::int q FROM scm.inventory_lots
+  const zeroTop = await sql`SELECT item_code, SUM(qty_remaining)::int q FROM scm.inventory_lots
     WHERE company_id = ${CO} AND qty_remaining > 0 AND (unit_cost_sen = 0 OR unit_cost_sen IS NULL)
-    GROUP BY product_code ORDER BY q DESC LIMIT 12`;
-  for (const r of zeroTop) log(`   zero-cost: ${r.product_code} x${r.q}`);
+    GROUP BY item_code ORDER BY q DESC LIMIT 12`;
+  for (const r of zeroTop) log(`   zero-cost: ${r.item_code} x${r.q}`);
 
-  const neg = await sql`SELECT product_code, warehouse_id, variant_key, qty FROM scm.inventory_balances
+  const neg = await sql`SELECT item_code, warehouse_id, variant_key, qty FROM scm.inventory_balances
     WHERE company_id = ${CO} AND qty < 0 ORDER BY qty LIMIT 15`;
   log(`NEGATIVE (understocked) buckets: ${neg.length}${neg.length ? "" : " — none"}`);
-  for (const r of neg) log(`   ${r.product_code} [${r.variant_key || "(no variant)"}] qty ${r.qty}`);
+  for (const r of neg) log(`   ${r.item_code} [${r.variant_key || "(no variant)"}] qty ${r.qty}`);
 
   const [mv] = await sql`SELECT COUNT(*) n, COUNT(*) FILTER (WHERE movement_type = 'OUT' AND (total_cost_sen IS NULL OR total_cost_sen = 0)) out_uncosted
     FROM scm.inventory_movements WHERE company_id = ${CO}`;
@@ -47,10 +47,10 @@ async function main() {
   // category is an ENUM — cast before defaulting, or Postgres tries to coerce
   // the literal into scm.mfg_product_category and rejects it.
   const grp = await sql`SELECT COALESCE(p.category::text, '(unmapped)') grp,
-      COUNT(DISTINCT b.product_code)::int skus, SUM(b.qty)::int units,
+      COUNT(DISTINCT b.item_code)::int skus, SUM(b.qty)::int units,
       COUNT(*) FILTER (WHERE COALESCE(b.variant_key, '') = '')::int no_variant_rows
     FROM scm.inventory_balances b
-    LEFT JOIN scm.mfg_products p ON p.code = b.product_code AND p.company_id = ${CO}
+    LEFT JOIN scm.mfg_products p ON p.code = b.item_code AND p.company_id = ${CO}
     WHERE b.company_id = ${CO} AND b.qty <> 0 GROUP BY 1 ORDER BY units DESC`;
   for (const r of grp) log(`   ${r.grp}: ${r.skus} SKUs / ${r.units} units (rows with NO variant: ${r.no_variant_rows})`);
 
@@ -83,7 +83,7 @@ async function main() {
            COALESCE(i.variants->>'colourId', '') colour,
            po.po_number, poi.qty po_qty, poi.received_qty,
            (SELECT COALESCE(SUM(b.qty), 0) FROM scm.inventory_balances b
-              WHERE b.company_id = ${CO} AND b.product_code = i.item_code) onhand_any_variant
+              WHERE b.company_id = ${CO} AND b.item_code = i.item_code) onhand_any_variant
     FROM scm.mfg_sales_order_items i
     JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     JOIN scm.purchase_order_items poi ON poi.so_item_id = i.id
@@ -115,11 +115,11 @@ async function main() {
     )
     SELECT n.item_code, n.lines, n.need,
       COALESCE((SELECT SUM(b.qty) FROM scm.inventory_balances b
-                WHERE b.company_id = ${CO} AND b.product_code = n.item_code AND COALESCE(b.variant_key,'') = ''), 0)::int blank_variant_stock,
+                WHERE b.company_id = ${CO} AND b.item_code = n.item_code AND COALESCE(b.variant_key,'') = ''), 0)::int blank_variant_stock,
       COALESCE((SELECT SUM(b.qty) FROM scm.inventory_balances b
-                WHERE b.company_id = ${CO} AND b.product_code = n.item_code AND COALESCE(b.variant_key,'') <> ''), 0)::int variant_stock
+                WHERE b.company_id = ${CO} AND b.item_code = n.item_code AND COALESCE(b.variant_key,'') <> ''), 0)::int variant_stock
     FROM bf_need n WHERE EXISTS (SELECT 1 FROM scm.inventory_balances b
-       WHERE b.company_id = ${CO} AND b.product_code = n.item_code AND b.qty > 0)
+       WHERE b.company_id = ${CO} AND b.item_code = n.item_code AND b.qty > 0)
     ORDER BY n.need DESC LIMIT 25`;
   log(`bedframe SKUs wanted by not-ready lines that DO have stock on hand: ${bfMismatch.length}`);
   for (const r of bfMismatch) {

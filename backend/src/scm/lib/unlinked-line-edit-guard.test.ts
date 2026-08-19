@@ -29,7 +29,7 @@ const DO_ID = 'do-1';
 const poWith = (materials: string[]) =>
   fakeSb({
     purchase_order_items: materials.map((m, i) => ({
-      id: `poi-${i}`, purchase_order_id: PO_ID, material_code: m,
+      id: `poi-${i}`, purchase_order_id: PO_ID, item_code: m,
     })),
   });
 
@@ -37,7 +37,7 @@ const poWith = (materials: string[]) =>
 const grnWith = (materials: string[]) =>
   fakeSb({
     grn_items: materials.map((m, i) => ({
-      id: `gi-${i}`, grn_id: GRN_ID, material_code: m,
+      id: `gi-${i}`, grn_id: GRN_ID, item_code: m,
     })),
   });
 
@@ -203,7 +203,7 @@ describe('unlinkedEditRefusal — what must still pass', () => {
     // another receipt; nothing here counts conversions. A LINKED line on a PO
     // that has already been received twice is still allowed through.
     const sb = fakeSb({
-      purchase_order_items: [{ id: 'poi-0', purchase_order_id: PO_ID, material_code: 'FOAM-40D', qty: 100, received_qty: 60 }],
+      purchase_order_items: [{ id: 'poi-0', purchase_order_id: PO_ID, item_code: 'FOAM-40D', qty: 100, received_qty: 60 }],
     });
     const out = await unlinkedEditRefusal(sb, 'grn', {
       parentId: PO_ID, storedLink: 'poi-0', storedCode: 'FOAM-40D', patchCode: 'FOAM-40D',
@@ -221,8 +221,8 @@ describe('unlinkedEditRefusal — a guard that cannot read the parent must refus
     // set, an empty set into "no offenders", and "no offenders" into ALLOWED —
     // disabling the guard on exactly the write it exists to refuse.
     const sb = fakeSb(
-      { purchase_order_items: [{ id: 'poi-0', purchase_order_id: PO_ID, material_code: 'FOAM-40D' }] },
-      { purchase_order_items: ['material_code'] },
+      { purchase_order_items: [{ id: 'poi-0', purchase_order_id: PO_ID, item_code: 'FOAM-40D' }] },
+      { purchase_order_items: ['item_code'] },
     );
     const out = await unlinkedEditRefusal(sb, 'grn', {
       parentId: PO_ID, storedLink: null, storedCode: 'SAMPLE', patchCode: 'FOAM-40D',

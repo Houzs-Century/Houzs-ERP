@@ -61,7 +61,7 @@ async function main() {
              COALESCE(b.variant_key,'') AS variant_key, b.qty
         FROM scm.inventory_balances b
         LEFT JOIN scm.warehouses w ON w.id = b.warehouse_id
-       WHERE b.product_code = ${l.item_code}::text
+       WHERE b.item_code = ${l.item_code}::text
        ORDER BY b.qty DESC`;
     note(`  on-hand rows for ${l.item_code}: ${bal.length}`);
     let onHandSameBucket = 0;
@@ -109,16 +109,16 @@ async function main() {
   console.log('='.repeat(78));
   note('=== when did the stock arrive vs when was the line last touched ===');
   const lots = await sql`
-    SELECT l.product_code, l.batch_no, l.qty_remaining,
+    SELECT l.item_code, l.batch_no, l.qty_remaining,
            l.received_at::text AS received_at, l.source_doc_type,
            w.name AS wh_name
       FROM scm.inventory_lots l
       LEFT JOIN scm.warehouses w ON w.id = l.warehouse_id
-     WHERE l.product_code = ANY (${mine.map((m) => m.item_code)}::text[])
+     WHERE l.item_code = ANY (${mine.map((m) => m.item_code)}::text[])
        AND l.qty_remaining > 0
      ORDER BY l.received_at ASC`;
   for (const lo of lots) {
-    note(`  ${pad(lo.product_code, 26)} lot batch=${pad(lo.batch_no, 18)} rem=${lo.qty_remaining} recv=${lo.received_at} src=${lo.source_doc_type} wh=${lo.wh_name}`);
+    note(`  ${pad(lo.item_code, 26)} lot batch=${pad(lo.batch_no, 18)} rem=${lo.qty_remaining} recv=${lo.received_at} src=${lo.source_doc_type} wh=${lo.wh_name}`);
   }
 
   const upd = await sql`

@@ -84,7 +84,7 @@ type DraftLine = {
   rid:            string;
   grnItemId:      string | null;
   materialKind:   string;
-  materialCode:   string;
+  itemCode:   string;
   materialName:   string;
   itemGroup:      string | null;
   variants:       Record<string, unknown> | null;
@@ -98,7 +98,7 @@ const newLine = (): DraftLine => ({
   rid:            `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   grnItemId:      null,
   materialKind:   'mfg_product',
-  materialCode:   '',
+  itemCode:   '',
   materialName:   '',
   itemGroup:      null,
   variants:       null,
@@ -157,7 +157,7 @@ export const PurchaseConsignmentReturnNew = () => {
     if (!fromPicks || picksLoaded) return;
     type Stash = {
       receiveItemId: string; pcReceiveId: string; supplierId: string | null;
-      materialKind: string; materialCode: string; materialName: string;
+      materialKind: string; itemCode: string; materialName: string;
       itemGroup: string | null; description: string | null; uom: string | null;
       qty: number; unitPriceSen: number; variants: unknown;
     };
@@ -168,7 +168,7 @@ export const PurchaseConsignmentReturnNew = () => {
       rid:            `p${s.receiveItemId}`,
       grnItemId:      s.receiveItemId,
       materialKind:   s.materialKind,
-      materialCode:   s.materialCode,
+      itemCode:   s.itemCode,
       materialName:   s.materialName,
       itemGroup:      s.itemGroup,
       variants:       (s.variants as Record<string, unknown> | null) ?? null,
@@ -195,7 +195,7 @@ export const PurchaseConsignmentReturnNew = () => {
         rid:            `r${it.id}`,
         grnItemId:      it.id,
         materialKind:   it.material_kind,
-        materialCode:   it.material_code,
+        itemCode:   it.item_code,
         materialName:   it.material_name,
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
@@ -217,7 +217,7 @@ export const PurchaseConsignmentReturnNew = () => {
       rid:            `r${it.id}`,
       grnItemId:      null,
       materialKind:   it.material_kind,
-      materialCode:   it.material_code,
+      itemCode:   it.item_code,
       materialName:   it.material_name,
       itemGroup:      it.item_group ?? null,
       variants:       (it.variants as Record<string, unknown> | null) ?? null,
@@ -252,7 +252,7 @@ export const PurchaseConsignmentReturnNew = () => {
   const pickItemForLine = (rid: string, code: string) => {
     const sku = (productsQ.data ?? []).find((p) => p.code === code);
     setLine(rid, {
-      materialCode: code,
+      itemCode: code,
       materialName: sku?.name ?? code,
       itemGroup:    sku?.category ? sku.category.toLowerCase() : null,
     });
@@ -273,7 +273,7 @@ export const PurchaseConsignmentReturnNew = () => {
     return s ? `${s.code} · ${s.name}` : '';
   }, [grn, po, suppliersQ.data, supplierId]);
 
-  const validLines = lines.filter((l) => l.materialCode.trim() && l.qtyReturned > 0);
+  const validLines = lines.filter((l) => l.itemCode.trim() && l.qtyReturned > 0);
   const canSave = !!supplierId && validLines.length > 0;
 
   const onSave = async () => {
@@ -291,7 +291,7 @@ export const PurchaseConsignmentReturnNew = () => {
           grnItemId:      l.grnItemId,
           pcReceiveItemId: l.grnItemId,
           materialKind:   l.materialKind,
-          materialCode:   l.materialCode,
+          itemCode:   l.itemCode,
           materialName:   l.materialName,
           qtyReturned:    l.qtyReturned,
           unitPriceSen: l.unitPriceSen,
@@ -471,13 +471,13 @@ export const PurchaseConsignmentReturnNew = () => {
                           <input
                             type="text"
                             list={`pct-products-${l.rid}`}
-                            value={l.materialCode}
+                            value={l.itemCode}
                             onChange={(e) => {
                               const code = e.target.value;
                               setProductQuery(code);
                               const match = (productsQ.data ?? []).find((p) => p.code === code);
                               if (match) { pickItemForLine(l.rid, code); return; }
-                              setLine(l.rid, { materialCode: code });
+                              setLine(l.rid, { itemCode: code });
                             }}
                             placeholder="Type ≥2 chars to search SKUs by code or name…"
                             className={styles.fieldInput}
@@ -493,7 +493,7 @@ export const PurchaseConsignmentReturnNew = () => {
                         <input
                           type="text"
                           readOnly
-                          value={l.materialCode}
+                          value={l.itemCode}
                           className={styles.fieldInput}
                           style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
@@ -531,7 +531,7 @@ export const PurchaseConsignmentReturnNew = () => {
                       }}>{l.itemGroup} Variants</div>
                       <PcVariantEditor
                         category={l.itemGroup ?? ''}
-                        itemCode={l.materialCode}
+                        itemCode={l.itemCode}
                         variants={(l.variants ?? {}) as Record<string, unknown>}
                         onChange={setVariant}
                         fabrics={fabrics}

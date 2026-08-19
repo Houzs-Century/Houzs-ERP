@@ -76,7 +76,7 @@ describe("checkStockAvailability company scope", () => {
         // offer WH-B so the short bucket gets a hint.
         const isAlt = call.chain.some(([m]) => m === "neq");
         return isAlt
-          ? [{ warehouse_id: "WH-B", product_code: "AKEMI", variant_key: "", qty: 3 }]
+          ? [{ warehouse_id: "WH-B", item_code: "AKEMI", variant_key: "", qty: 3 }]
           : [];
       };
       const builder: any = new Proxy(

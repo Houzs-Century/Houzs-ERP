@@ -32,7 +32,7 @@ async function main() {
       SELECT count(DISTINCT p.code)::int n
       FROM scm.mfg_products p
       JOIN scm.supplier_material_bindings b
-        ON b.material_code = p.code AND b.company_id = p.company_id
+        ON b.item_code = p.code AND b.company_id = p.company_id
        AND b.material_kind = 'mfg_product'
        AND b.supplier_sku IS NOT NULL AND btrim(b.supplier_sku) <> ''
       WHERE p.company_id=${cid}`;
@@ -45,7 +45,7 @@ async function main() {
       WHERE p.company_id=${cid}
         AND NOT EXISTS (
           SELECT 1 FROM scm.supplier_material_bindings b
-          WHERE b.material_code=p.code AND b.company_id=p.company_id
+          WHERE b.item_code=p.code AND b.company_id=p.company_id
             AND b.material_kind='mfg_product'
             AND b.supplier_sku IS NOT NULL AND btrim(b.supplier_sku) <> '')
       ORDER BY p.code LIMIT 25`;

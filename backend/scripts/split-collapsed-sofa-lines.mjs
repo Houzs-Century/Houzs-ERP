@@ -75,7 +75,7 @@ async function main() {
     const isPo = p.doc.startsWith("HC-PO-");
     let grnLines = [];
     const rows = isPo
-      ? await sql`SELECT i.id, i.material_code code, i.qty, i.unit_price_sen price, i.received_qty, i.purchase_order_id pid
+      ? await sql`SELECT i.id, i.item_code code, i.qty, i.unit_price_sen price, i.received_qty, i.purchase_order_id pid
                     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
                    WHERE h.po_number = ${p.doc} AND i.item_group = 'sofa'`
       : await sql`SELECT i.id, i.item_code code, i.qty, i.unit_price_sen price, i.doc_no, i.line_no
@@ -122,18 +122,18 @@ async function main() {
       const [first, ...rest] = p.pieces;
       if (p.isPo) {
         const r = await tx`UPDATE scm.purchase_order_items
-             SET material_code = ${first},
+             SET item_code = ${first},
                  variants = COALESCE(variants,'{}'::jsonb) || ${tx.json({ seatHeight: p.seat })}
            WHERE id = ${p.row.id} AND jsonb_typeof(COALESCE(variants,'{}'::jsonb)) = 'object'
            RETURNING id`;
         recoded += r.length;
         for (const g of p.grnLines) {
-          await tx`UPDATE scm.grn_items SET material_code = ${first},
+          await tx`UPDATE scm.grn_items SET item_code = ${first},
                      variants = COALESCE(variants,'{}'::jsonb) || ${tx.json({ seatHeight: p.seat })}
                    WHERE id = ${g.id} AND jsonb_typeof(COALESCE(variants,'{}'::jsonb)) = 'object'`;
           for (const code of rest) {
             const gi = await tx`INSERT INTO scm.grn_items
-              (grn_id, purchase_order_item_id, material_kind, material_code, material_name, item_group,
+              (grn_id, purchase_order_item_id, material_kind, item_code, material_name, item_group,
                qty_received, qty_accepted, qty_rejected, uom, unit_price_sen, line_total_sen,
                description, description2, variants, company_id, linked_ac_dtlkey)
               SELECT x.grn_id, x.purchase_order_item_id, x.material_kind, ${code}, x.material_name, x.item_group,
@@ -148,7 +148,7 @@ async function main() {
         }
         for (const code of rest) {
           const c2 = await tx`INSERT INTO scm.purchase_order_items
-            (purchase_order_id, material_kind, material_code, material_name, item_group, qty, uom,
+            (purchase_order_id, material_kind, item_code, material_name, item_group, qty, uom,
              unit_price_sen, line_total_sen, description, description2, variants, company_id,
              so_item_id, warehouse_id, linked_ac_dtlkey)
             SELECT i.purchase_order_id, i.material_kind, ${code}, i.material_name, i.item_group, 1, i.uom,

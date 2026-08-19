@@ -372,14 +372,14 @@ async function sectionA(state) {
   // AutoCount side has no variant dimension, so the comparison can only be made
   // at product granularity. inventory_balances is a VIEW over the movement
   // ledger, i.e. exactly what the ERP believes it holds.
-  const erpRows = await sql`SELECT warehouse_id, product_code, SUM(qty)::bigint AS qty
+  const erpRows = await sql`SELECT warehouse_id, item_code, SUM(qty)::bigint AS qty
                               FROM scm.inventory_balances
                              WHERE company_id = ${COMPANY}
-                             GROUP BY warehouse_id, product_code`;
+                             GROUP BY warehouse_id, item_code`;
   const erpBy = new Map();
   let erpSofaCells = 0, erpSofaUnits = 0, erpNonStockCells = 0, erpNonStockUnits = 0;
   for (const r of erpRows) {
-    const code = norm(r.product_code);
+    const code = norm(r.item_code);
     const qty = n(r.qty);
     if (erpSofa.has(code)) { if (qty !== 0) { erpSofaCells++; erpSofaUnits += qty; } continue; }
     if (nonStockErpCodes.has(code)) { if (qty !== 0) { erpNonStockCells++; erpNonStockUnits += qty; } continue; }
@@ -625,7 +625,7 @@ async function sectionB(state) {
      taken; if the two ever disagree, one of them is lying about how much stock
      is left and every downstream valuation inherits it. */
   const b1 = await sql.unsafe(`
-    SELECT l.id, l.product_code, l.variant_key, l.batch_no, l.source_doc_type, l.source_doc_no,
+    SELECT l.id, l.item_code, l.variant_key, l.batch_no, l.source_doc_type, l.source_doc_no,
            l.qty_received, l.qty_remaining, COALESCE(c.consumed, 0)::bigint AS consumed,
            (l.qty_remaining - (l.qty_received - COALESCE(c.consumed, 0)))::bigint AS drift
       FROM ${lotSchema}.inventory_lots l
@@ -640,7 +640,7 @@ async function sectionB(state) {
   notice("");
   notice(`  B1 remaining = received - consumed : ${b1.length === 0 ? "OK — every layer reconciles" : `BROKEN on ${b1.length} layers`}   (layers checked: ${n(b1Total[0].lots)})`);
   for (const r of b1.slice(0, SAMPLE))
-    notice(`     drift ${r.drift}  ${r.product_code} [${r.variant_key || "-"}] batch=${r.batch_no ?? "-"} received=${r.qty_received} remaining=${r.qty_remaining} consumed=${r.consumed}  src=${r.source_doc_type ?? "-"} ${r.source_doc_no ?? ""}`);
+    notice(`     drift ${r.drift}  ${r.item_code} [${r.variant_key || "-"}] batch=${r.batch_no ?? "-"} received=${r.qty_received} remaining=${r.qty_remaining} consumed=${r.consumed}  src=${r.source_doc_type ?? "-"} ${r.source_doc_no ?? ""}`);
 
   /* B2 — impossible layers. A negative remaining means FIFO consumed past the
      end of a layer; remaining > received means something added back into a
@@ -701,29 +701,29 @@ async function sectionB(state) {
      reports only whether the invariant holds today. */
   const b4 = await sql.unsafe(`
     WITH mv AS (
-      SELECT warehouse_id, product_code, variant_key,
+      SELECT warehouse_id, item_code, variant_key,
              SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
                                     WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty ELSE 0 END)::bigint AS qty
         FROM ${movSchema}.inventory_movements
        ${hasCo ? `WHERE company_id = ${COMPANY}` : ""}
        GROUP BY 1,2,3),
     lt AS (
-      SELECT l.warehouse_id, l.product_code, l.variant_key, SUM(l.qty_remaining)::bigint AS qty
+      SELECT l.warehouse_id, l.item_code, l.variant_key, SUM(l.qty_remaining)::bigint AS qty
         FROM ${lotSchema}.inventory_lots l ${coFilter}
        GROUP BY 1,2,3)
     SELECT COALESCE(mv.warehouse_id, lt.warehouse_id) AS warehouse_id,
-           COALESCE(mv.product_code, lt.product_code) AS product_code,
+           COALESCE(mv.item_code, lt.item_code) AS item_code,
            COALESCE(mv.variant_key, lt.variant_key) AS variant_key,
            COALESCE(mv.qty,0) AS mv_qty, COALESCE(lt.qty,0) AS lot_qty,
            (COALESCE(mv.qty,0) - COALESCE(lt.qty,0)) AS delta
       FROM mv FULL OUTER JOIN lt
-        ON mv.warehouse_id = lt.warehouse_id AND mv.product_code = lt.product_code AND mv.variant_key = lt.variant_key
+        ON mv.warehouse_id = lt.warehouse_id AND mv.item_code = lt.item_code AND mv.variant_key = lt.variant_key
      WHERE COALESCE(mv.qty,0) <> COALESCE(lt.qty,0)
      ORDER BY ABS(COALESCE(mv.qty,0) - COALESCE(lt.qty,0)) DESC`);
   const b4Units = b4.reduce((s, r) => s + Math.abs(n(r.delta)), 0);
   notice(`  B4 layers reconcile to movements   : ${b4.length === 0 ? "OK" : `${b4.length} buckets diverge, ${b4Units} units absolute`}   (detail: check-inventory-integrity.mjs)`);
   for (const r of b4.slice(0, SAMPLE))
-    notice(`     delta ${pad(n(r.delta), 6)} ${pad(r.product_code, 34)} [${r.variant_key || "-"}] movements=${n(r.mv_qty)} layers=${n(r.lot_qty)}`);
+    notice(`     delta ${pad(n(r.delta), 6)} ${pad(r.item_code, 34)} [${r.variant_key || "-"}] movements=${n(r.mv_qty)} layers=${n(r.lot_qty)}`);
 
   /* B5 — total inventory value equals the sum of the layers. The reported value
      comes from scm.v_inventory_all_skus, which the Inventory screen reads; that
