@@ -30,10 +30,28 @@ describe('sales-stats — targeting another salesperson', () => {
     expect(POS).toMatch(/c\.req\.query\("salesperson"\)/);
   });
 
-  test('targeting is GATED on canViewAllSales, server-side', () => {
+  test('targeting is GATED server-side — flat key OR director position, off the REAL user', () => {
     /* The whole security argument. Without this the endpoint hands any
-       authenticated salesperson a colleague's month. */
-    expect(POS).toMatch(/mayTarget[\s\S]{0,120}canViewAllSales\(c\)/);
+       authenticated salesperson a colleague's month.
+
+       NOT canViewAllSales(c): its director arm reads `houzsUser`, which only
+       scm/middleware/auth.ts stashes — on /api/pos it is never set, so a Sales
+       Director (the person the picker exists FOR) always failed the gate and
+       the tile silently fell back to the caller. Here `user` IS the real Houzs
+       caller, so both arms run directly off it. */
+    expect(POS).toMatch(/mayTarget[\s\S]{0,220}hasPermission\(caller as never, "scm\.so\.view_all"\)/);
+    expect(POS).toMatch(/isDirectorUser\(caller as never\)/);
+  });
+
+  test('the lookup matches what the picker SENDS — the staff id — with the uuid guard', () => {
+    /* The POS picker sends `<option value={s.id}>`. The first version matched
+       staff.name, so every lookup missed and fell back to the caller: the label
+       changed, the numbers did not. Guarded by shape because a malformed value
+       on a uuid column is a 22P02 500, not a miss. Name stays as the non-uuid
+       arm for hand-typed use. */
+    expect(POS).toMatch(/UUID_RX\.test\(wantSalesperson\)/);
+    expect(POS).toMatch(/WHERE id = \? LIMIT 1/);
+    expect(POS).toMatch(/WHERE name = \? LIMIT 1/);
   });
 
   test('the gate is not satisfiable by the empty or "all" value', () => {
@@ -54,11 +72,11 @@ describe('sales-stats — targeting another salesperson', () => {
     expect(POS).toMatch(/staffName: target\?\.name \?\? me\.name/);
   });
 
-  test('canViewAllSales is actually imported, not shadowed by a local truthy', () => {
+  test('the gate helpers are actually imported, not shadowed by a local truthy', () => {
     /* RAW source, not the comment-stripped copy: `code()` also removes the
-       import block (a `/*` inside an earlier import's trailing comment swallows
-       it), and an import can never be inside a comment anyway. */
-    expect(posSrc).toMatch(/import \{ canViewAllSales \} from/);
+       import block, and an import can never be inside a comment anyway. */
+    expect(posSrc).toMatch(/import \{ hasPermission \} from "\.\.\/services\/permissions"/);
+    expect(posSrc).toMatch(/import \{ isDirectorUser \} from "\.\.\/services\/pmsAccess"/);
   });
 });
 
