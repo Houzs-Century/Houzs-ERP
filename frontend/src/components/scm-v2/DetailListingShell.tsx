@@ -331,7 +331,7 @@ export function DetailListingShell<R extends DetailListingRow>({
                     onChange={(e) => setDocNo(e.target.value)} placeholder={docNoPlaceholder} />
                 </div>
                 <div className={styles.field}>
-                  <label className={styles.fieldLabel}>Debtor Code</label>
+                  <label className={styles.fieldLabel}>Customer</label>
                   <input type="text" className={styles.fieldInput} value={debtorCode}
                     onChange={(e) => setDebtorCode(e.target.value)} />
                 </div>
@@ -426,7 +426,7 @@ export function DetailListingShell<R extends DetailListingRow>({
             <div>{docNo || '—'}</div>
           </div>
           <div>
-            <div className={styles.criteriaKey}>Debtor Code</div>
+            <div className={styles.criteriaKey}>Customer</div>
             <div>{debtorCode || '—'}</div>
           </div>
           <div>
