@@ -318,6 +318,76 @@ phantom column silences an entire flow (see `BUG-HISTORY.md`, 2026-08-10).
 
 ---
 
+## 6b. The refusal reaches the OPERATOR, not only the queue
+
+Owner, 2026-08-19: *"开单的时候就挡住 AutoCount 一定会拒绝的形状,不要等到五分钟后
+在队列里默默失败"* — refuse the shapes AutoCount will certainly reject while the
+document is being written, not five minutes later in a queue.
+
+**The shape being fixed is SILENCE, not permissiveness.** Every one of the eight
+refusals in §7 is computed INSIDE the operator's own request: `enqueueSoCreate`
+composes the whole payload and is awaited three lines before
+`c.json({ docNo }, 201)`; `enqueuePoCreate` likewise on all three PO anchors in
+the table above. The refusal was caught, filed as a `skipped` row, and the
+operator was handed a 201. That row is the right record for an engineer — it is
+durable and it names the foreign key — but it lives behind `scm.autocount.read`
+(`scm/index.ts`), which no salesperson or buyer holds. So the person who raised
+the document believed it was in the accounts, and nothing ever told them
+otherwise.
+
+`scm/lib/ac-preflight.ts` is the ONE place that turns a refusal into a sentence
+an operator can act on, and the one place that decides whether the ERP may stop
+the save for it. It re-derives nothing: the verdict is the composer's own
+`resolveAcAgent`, or the composer's own thrown refusal class.
+
+### Block or warn, per cause
+
+The owner's standing rule is that a gate may only fail someone for something
+they could have caused. A block on a document the operator cannot fix is worse
+than silence — it stops the shop floor AND blames the wrong person.
+
+| Cause | Where it is asked | Verdict | Why |
+|---|---|---|---|
+| No sales agent the book will accept | confirm gate, BEFORE the insert | **BLOCK** (422) | The fix is the Salesperson picker on the same screen. Not a new gate — `salesperson_required` has refused this since the owner's 2026-08-08 ruling on HC-SO-2607-008; it simply asked a laxer question than the composer and let that order's own value `"Unassigned"` through |
+| PO line ambiguous under this creditor (`ItemCodeError`) | after the save, on the create response | **WARN** | The remedy is master data: retire the duplicate AutoCount item, or record what this supplier calls it in `supplier_material_bindings`. A buyer owns neither |
+| Supplier has no creditor code (`MissingCreditorError`) | after the save | **WARN** | `scm.suppliers.code` is issued by accounts |
+| No stock location, Desc2 over the ceiling, a sofa that cannot fold, a keyless line, an unreadable document | after the save | **WARN** | Already blocked earlier where a gate can name the fix (§7's stock location, `so-location-gate.ts`), or needs data the operator does not own |
+
+**The severity is expressed by the call site, not by a flag.** `acNotSentProblems`
+is only ever handed a refusal the enqueue has already thrown, after the document
+is committed — it cannot refuse a save because there is no save left to refuse.
+A 422 there would be a lie: the order exists.
+
+### The one live cause, measured
+
+Of the five refusal causes recorded against production between 2026-08-13 and
+2026-08-17, four are closed by earlier work (§7's stock location, the sales
+agent stamp, the conversion's `DebtorCode`, the transfer's `CreditorCode`). One
+is still reachable by a document raised today, and it is on the PURCHASE side
+only: with a creditor that owns none of an ERP code's candidates,
+`resolveAcItemCode` still answers `ok:false, reason:'ambiguous'`. Measured
+against the compiled cutover map — **117** ambiguous ERP codes, **117** refuse
+under a foreign creditor, **0** refuse when no supplier is named. A sales order
+names no supplier, so the sales path is clear; a purchase order always names
+one.
+
+### The response key
+
+The create responses carry `acNotSent: SaveProblem[]`, absent when the document
+composed cleanly. `frontend/src/vendor/scm/lib/ac-not-sent.ts` reads it and owns
+the title; the SENTENCES travel verbatim from `ac-preflight.ts`, because the
+thing that decides a document is unsendable is the composer and the wording has
+to follow the reason. `backend/tests/acNotSentWiring.test.ts` is the referee
+across the two packages — nothing else makes the backend's key and the
+frontend's key the same string.
+
+Wired on the desktop SO create and all three PO anchors. NOT yet on the mobile
+SO wizard, the POS handover, or the DRAFT -> live transition (which returns a
+response object built inside its command) — those still refuse in silence and
+are recorded as such rather than counted as done.
+
+---
+
 ## 7. What the ERP can express and AutoCount cannot
 
 `AddPartialTransferDetail(fromDocType, fromDocKeys)` takes **ONE source

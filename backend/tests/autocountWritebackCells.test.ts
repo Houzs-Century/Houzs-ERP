@@ -199,7 +199,7 @@ describe('the create-side holes', () => {
     /* Gated on the status LITERAL that was inserted, not on `asDraft` — a bucket
        whose SO line resolved no warehouse is forced to DRAFT by a second rule
        that `asDraft` does not describe. */
-    expect(tail).toContain("if (headerPayload.status !== 'DRAFT')");
+    expect(tail).toContain("headerPayload.status === 'DRAFT' ? [] :");
   });
 
   test('a document AutoCount cannot hold is RECORDED, not dropped', () => {

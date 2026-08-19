@@ -1409,15 +1409,16 @@ mfgPurchaseOrders.post('/', async (c) => {
      flag is off, which is how it ships. NOT for a DRAFT PO — it is
      reference-only until confirmed (the same reason recomputeSoPicked skips
      it above); PATCH /:id/confirm queues it. */
-  if (!asDraft) {
-    await enqueuePoCreate(supabase, {
-      companyId: activeCompanyId(c),
-      poId: header.id,
-      createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  }
+  /* AND IT SAYS SO WHEN THE ACCOUNTS WILL NOT TAKE IT. The compose runs HERE,
+     in this request; it used to end in a skipped row and a bare 201. Never a
+     422 — lib/ac-preflight.ts holds the block-or-warn ruling and its reason. */
+  const acNotSent = asDraft ? [] : (await enqueuePoCreate(supabase, {
+    companyId: activeCompanyId(c),
+    poId: header.id,
+    createdBy: c.get('houzsUser')?.id ?? null,
+  })).problems;
 
-  return c.json({ id: header.id, poNumber: header.po_number }, 201);
+  return c.json({ id: header.id, poNumber: header.po_number, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
 });
 
 // ── POST /from-sos ────────────────────────────────────────────────────
@@ -2457,18 +2458,17 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        to become a draft that `asDraft` does not describe: a bucket whose SO line
        resolved no warehouse is forced to DRAFT above (owner 2026-08-02).
        Re-deriving the condition would have queued exactly those. */
-    if (headerPayload.status !== 'DRAFT') {
-      await enqueuePoCreate(supabase, {
-        companyId: activeCompanyId(c),
-        poId: header.id,
-        /* The HOUZS user, not `user` — `user` is the one pinned system uuid the
-           SCM bridge gives every caller, and created_by here is a bigint staff
-           id. Undefined on the headless MRP-agent path, which degrades to an
-           unattributed row exactly as recordPoCreate does. */
-        createdBy: c.get('houzsUser')?.id ?? null,
-      });
-    }
-    created.push({ id: header.id, poNumber: header.po_number, supplierId, lineCount: bucket.lines.length });
+    const acNotSent = headerPayload.status === 'DRAFT' ? [] : (await enqueuePoCreate(supabase, {
+      companyId: activeCompanyId(c),
+      poId: header.id,
+      /* The HOUZS user, not `user` — `user` is the one pinned system uuid the
+         SCM bridge gives every caller, and created_by here is a bigint staff
+         id. Undefined on the headless MRP-agent path, which degrades to an
+         unattributed row exactly as recordPoCreate does. */
+      createdBy: c.get('houzsUser')?.id ?? null,
+    })).problems;
+    /* PER PO: this route raises several, and WHICH one is refused is the point. */
+    created.push({ id: header.id, poNumber: header.po_number, supplierId, lineCount: bucket.lines.length, ...(acNotSent.length ? { acNotSent } : {}) });
   }
 
   // Recount po_qty_picked from the live PO lines for every SO line we picked,
@@ -4128,13 +4128,13 @@ export const confirmMfgPurchaseOrderHandler = async (c: any) => {
   /* The draft just became a real order — this is the moment it belongs in
      AutoCount. enqueuePoCreate refuses a PO that already has an AutoCount
      counterpart, so a re-entered confirm cannot duplicate it. */
-  await enqueuePoCreate(supabase, {
+  const { problems: acNotSent } = await enqueuePoCreate(supabase, {
     companyId: co.companyId,
     poId: id,
     createdBy: c.get('houzsUser')?.id ?? null,
   });
 
-  return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' } });
+  return c.json({ purchaseOrder: after ?? { id, status: 'SUBMITTED' }, ...(acNotSent.length ? { acNotSent } : {}) });
 };
 mfgPurchaseOrders.patch('/:id/confirm', confirmMfgPurchaseOrderHandler);
 
