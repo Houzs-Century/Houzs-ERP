@@ -1526,10 +1526,10 @@ Which ERP column, therefore, matters more than usual, and the trap is live:
 
 | candidate | verdict |
 |---|---|
-| `scm.mfg_sales_orders.balance_centi` | **NO.** `recomputeTotals` writes `balance_centi = local_total_centi = total_revenue_centi = grandTotal` on every edit, so it never reflects a payment. It looks right because the cutover's own `UDF_BALANCE` landed in it (`check-migration-fidelity.mjs:95`) — and the first edit of any order overwrote that with the gross total |
-| the view's `balance_centi_live` | close — `local_total - SUM(payments)`, what the SO list, the mobile list and delivery planning render. It MISSES the legacy header deposit that never reached the ledger. **Since mig 0301 (2026-08-16) it is SIGNED** — the `GREATEST(…, 0)` floor was removed so an over-collected order shows red instead of a comfortable RM 0.00 |
+| `scm.mfg_sales_orders.balance_sen` | **NO.** `recomputeTotals` writes `balance_sen = local_total_sen = total_revenue_sen = grandTotal` on every edit, so it never reflects a payment. It looks right because the cutover's own `UDF_BALANCE` landed in it (`check-migration-fidelity.mjs:95`) — and the first edit of any order overwrote that with the gross total |
+| the view's `balance_sen_live` | close — `local_total - SUM(payments)`, what the SO list, the mobile list and delivery planning render. It MISSES the legacy header deposit that never reached the ledger. **Since mig 0301 (2026-08-16) it is SIGNED** — the `GREATEST(…, 0)` floor was removed so an over-collected order shows red instead of a comfortable RM 0.00 |
 | **`soOutstandingCenti`** (`scm/shared/so-outstanding.ts`) | **YES — this is the one the write-back sends.** Clamped at 0 on purpose: AutoCount is a licensed ledger and the ERP must not push a negative into it. `autocount-read.ts:79` calls THIS |
-| `soBalanceCenti` (same module) | **NOT for the write-back.** The SIGNED figure, for humans: the SO detail page, the list's Balance column and the PDF, which paint a negative red (owner 2026-08-16: 「需要可以超收 negative 边红色」). It answers 0 whenever `total_revenue_centi` is 0, because that column is unset on 2,687 of production's 2,824 live orders and a bare subtraction would paint RM 9.26m of false over-collection |
+| `soBalanceCenti` (same module) | **NOT for the write-back.** The SIGNED figure, for humans: the SO detail page, the list's Balance column and the PDF, which paint a negative red (owner 2026-08-16: 「需要可以超收 negative 边红色」). It answers 0 whenever `total_revenue_sen` is 0, because that column is unset on 2,687 of production's 2,824 live orders and a bare subtraction would paint RM 9.26m of false over-collection |
 
 > **The two names are the point.** `soOutstandingCenti` (floored) is what SUMS
 > and what leaves the building; `soBalanceCenti` (signed) is what a person
@@ -1540,10 +1540,10 @@ Which ERP column, therefore, matters more than usual, and the trap is live:
 > the observed workaround was to re-price a line upward until the payment fit
 > (HC-SO-2608-002: an RM 250 line edit 76 seconds before the payment).
 
-Paid is the payments ledger PLUS the header `deposit_centi` **only when no
+Paid is the payments ledger PLUS the header `deposit_sen` **only when no
 `is_deposit` ledger row exists** — modern orders write the deposit as a ledger
 row, so adding the column on top would double count, and legacy orders would be
-under-counted without it. `paid_centi` is deprecated and read by nothing.
+under-counted without it. `paid_sen` is deprecated and read by nothing.
 
 Three rules the composer keeps:
 
@@ -1551,7 +1551,7 @@ Three rules the composer keeps:
   the string `"0.00"` (`acUdfMoney`). Dropping the key would leave a paid order
   showing a debt in the account book forever.
 - **No total means NO KEY.** `readSoOutstandingCenti` answers `null` when
-  `total_revenue_centi` is absent, because zero would declare a real debt settled
+  `total_revenue_sen` is absent, because zero would declare a real debt settled
   in a licensed ledger. The SO detail page reads the same absence as `0` — it is
   drawing a screen, this is writing a ledger.
 - **Negative is not expressible.** The book holds a negative `UDF_BALANCE` on 47
@@ -2845,7 +2845,7 @@ never be mistaken for a cancel divergence.
 | File | Covers |
 |---|---|
 | `src/scm/lib/downstream-lock.test.ts` | The owner's rule: one live child locks; a cancelled child does not; another document's children do not |
-| `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, the salesperson fallback of §7n end to end (including that `/ensure-masters` is then asked to open that agent), and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document. Also **§7o end to end**, which is where it has to be tested: most of that defect was in the SELECT LIST, and a column list is only exercised by a read. Per field: the value reaches the payload, `mastersOf` is asked to open the master it names, and an edit does not blank what the book holds. **§7q the same way** — the BALANCE off the payments ledger and NOT off the `balance_centi` the fixture deliberately seeds to the gross total, the legacy-deposit rule both ways, `"0.00"` on a settled order, no key at all when the order has no total, `DeliverPhone1` off `emergency_contact_phone` while `Phone` keeps the customer's, and the line delivery date present-and-null on a create against omitted-when-absent on an edit |
+| `src/scm/lib/autocount-outbox.test.ts` | The toggle (off / absent / per-company / `all`), each of the six flows, cancel-and-edit against a still-queued create, the drain's sent / retry / give-up / refusal / waiting paths, the salesperson fallback of §7n end to end (including that `/ensure-masters` is then asked to open that agent), and — over a fake PostgREST that answers 42703 for a column the table does not have — that a failed read is never composed into an empty document. Also **§7o end to end**, which is where it has to be tested: most of that defect was in the SELECT LIST, and a column list is only exercised by a read. Per field: the value reaches the payload, `mastersOf` is asked to open the master it names, and an edit does not blank what the book holds. **§7q the same way** — the BALANCE off the payments ledger and NOT off the `balance_sen` the fixture deliberately seeds to the gross total, the legacy-deposit rule both ways, `"0.00"` on a settled order, no key at all when the order has no total, `DeliverPhone1` off `emergency_contact_phone` while `Phone` keeps the customer's, and the line delivery date present-and-null on a create against omitted-when-absent on an edit |
 | `src/scm/lib/autocount-requeue.test.ts` | Re-queueing a refusal: a document whose cause is unfixed stays refused (and APPLY adds no second `skipped` row), a fixed one queues a FRESHLY COMPOSED create carrying the location the operator just set, one already in AutoCount is never re-queued, and running twice does not double-queue — with 0277's pending-dedupe index enforced by the fake so the backstop is proved and not asserted. **And the by-id path**: a `sent` row is refused with nothing written, refused BEFORE the document is read (so a deleted order cannot change the answer) and refused with the switch off too; another company's row answers `row-not-found` while the same row in the caller's own company goes through; a `failed` row's replacement starts at zero attempts while the dead row keeps its six. **And the transfer path**: a `failed` conversion is queued again with the recorded payload byte for byte (same `DtlKeys`, same parent, same dedupe key) and the old row annotated; each of the three unrecoverable shapes — parentless, merged, DtlKey subset — is refused through BOTH entry points, on the row's status and not on its wording; a `skipped` transfer carrying a real payload is still refused, and a `failed` one with an empty payload is too; and `already-sent` is asserted against the LADDER for all seven ops, which is the only way to reach that rung |
 | `tests/autocountSyncReasonsCatalogue.test.ts` | `docs/autocount-sync-reasons.md` against the code, both directions — every re-queue outcome and every skip kind has a row, and the file describes no outcome the code can no longer return. Also that the `Invalid transfer item.` entry sends the reader to rebuild the AutoCount service rather than to press the button again |
 | `src/scm/shared/so-outstanding.test.ts` | **§7q.** The outstanding-balance rule the SO detail page and the BALANCE UDF now share: the ledger is the paid amount, a legacy header deposit counts once and only when the ledger has no `is_deposit` row, and an overpayment is 0 rather than negative |

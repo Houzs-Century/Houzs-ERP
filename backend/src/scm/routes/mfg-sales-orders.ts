@@ -104,6 +104,7 @@ import {
 } from '../lib/companyScope';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
+import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 import { soConvertedPoNumbers } from '../lib/so-converted-po';
@@ -1208,7 +1209,7 @@ mfgSalesOrders.get('/', async (c) => {
     let q = sb.from('mfg_sales_orders_with_payment_totals').select(LIST_COLS).order('so_date', { ascending: false }).limit(500);
     if (scopeIds) q = q.in('salesperson_id', scopeIds);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
-    const status = c.req.query('status'); if (status) q = q.eq('status', status);
+    const status = effectiveStatusFilter(c.req.query('status')); if (status) q = q.eq('status', status);
     const debtor = c.req.query('debtor'); if (debtor) q = q.ilike('debtor_name', `%${debtor}%`);
     const res = await q;
     data = res.data;
@@ -1234,7 +1235,7 @@ mfgSalesOrders.get('/', async (c) => {
        spellings / blanks). It exists so the list's "Other" pill — shown only
        when such rows exist — can actually be opened; every real status stays
        the exact-match it always was. */
-    const status = c.req.query('status');
+    const status = effectiveStatusFilter(c.req.query('status'));
     const otherStatusOr = `status.is.null,status.not.in.(${[...SO_STATUSES].join(',')})`;
     if (status) q = status === 'OTHER' ? q.or(otherStatusOr) : q.eq('status', status);
     /* free-text search replaces the legacy `debtor` param in this branch.
@@ -1328,6 +1329,18 @@ mfgSalesOrders.get('/', async (c) => {
     data = res.data;
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
+    /* A page whose offset is at/beyond the row count is an EMPTY PAGE, not a
+       failure. PostgREST answers it PGRST103 / 416 "Requested range not
+       satisfiable" instead of an empty 200, and this handler turned that into a
+       500 — which the grid masked as "No sales orders yet" (the 2026-08-18
+       incident: `?status=all` matched zero rows, so page 1 exceeded the count).
+       Empty status tab, no-match search, last page + 1 all land here; `res.count`
+       still carries the true total via PostgREST's `Content-Range` header. */
+    if (error && isRangeNotSatisfiable(error)) {
+      data = [];
+      total = res.count ?? 0;
+      error = null;
+    }
     /* Every status in the vocabulary gets a bucket (lowercase keys, the wire
        shape the tabs read), plus `other` for anything OUTSIDE it (legacy
        spellings, blanks) — so the visible buckets ALWAYS sum to `all` and no
