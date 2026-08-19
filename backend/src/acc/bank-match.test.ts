@@ -12,6 +12,7 @@
 //     outcome says what a person has to look at, with BOTH numbers when they
 //     disagree (§2.14).
 
+import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import {
   groupBankMovements, recogniseAcquirer, matchBankMovements,
@@ -229,5 +230,63 @@ describe('matching a credit to the statement it settles', () => {
     const d = decide({ amountSen: -728448 }, [batch()]);
     expect(d.kind).toBe('OTHER');
     expect(d.batchId).toBeNull();
+  });
+});
+
+/* ── The seeded rules must match the REAL statements ─────────────────────────
+   The four rules ship in migration 0305, written from the owner's own files.
+   A pattern that stops matching is silent — the money simply reads as
+   "not a card payout" forever, which is the exact 系统3 disease the brief names.
+   So the seed is read out of the migration and run against the real strings. */
+
+describe('the recognition rules shipped in migration 0305', () => {
+  const sql = readFileSync(
+    new URL('../db/migrations-pg/0305_acc_bank_reconciliation.sql', import.meta.url),
+    'utf8',
+  );
+
+  /* Pull the VALUES rows out of the seed: ('CODE', 'pattern', 'field', date, merchant, ord, */
+  const seeded: BankRecognitionRule[] = [...sql.matchAll(
+    /\n\s{2}\('([A-Z]+)',\s*'([^']*)',\s*'(description|reference|both)',\s*(NULL|'[^']*'),\s*(NULL|'[^']*')/g,
+  )].map((m) => ({
+    acquirerCode: m[1]!,
+    pattern: m[2]!,
+    field: m[3] as BankRecognitionRule['field'],
+    tradingDatePattern: m[4] === 'NULL' ? null : m[4]!.slice(1, -1),
+    merchantPattern: m[5] === 'NULL' ? null : m[5]!.slice(1, -1),
+  }));
+
+  it('seeds one rule for each acquirer whose money the real files carry', () => {
+    expect(seeded.map((r) => r.acquirerCode)).toEqual(['MBB', 'PBB', 'AEON', 'HLB']);
+  });
+
+  /* Every string below is copied out of a real statement, character for
+     character — Maybank's from ACCOUNTACTIVITYREPORT_564418610346.csv, Hong
+     Leong's from account 23600602788. */
+  const REAL: Array<{ desc: string; ref: string | null; who: string; day?: string; merchant?: string }> = [
+    { desc: 'CR/CARD SALES MN 32410011 DATED 31072026', ref: '00113107', who: 'MBB', day: '2026-07-31', merchant: '32410011' },
+    { desc: 'DR/CARD SALES M/N 2259020 DATED 08082026', ref: 'D90200808', who: 'MBB', day: '2026-08-08', merchant: '2259020' },
+    { desc: '9205920432 CR/CARD SALES DATED 04082026', ref: '04320408', who: 'MBB', day: '2026-08-04' },
+    { desc: '03999061714 PBB-PBCS AC 3', ref: '20260803000145', who: 'PBB' },
+    { desc: 'Book Transfer Third AEON CREDIT SERVICE', ref: 'MA458030287507', who: 'AEON' },
+    { desc: 'CA Credit Advice', ref: '00005992235  MERCHANT 20260616', who: 'HLB', day: '2026-06-16', merchant: '00005992235' },
+  ];
+
+  for (const c of REAL) {
+    it(`recognises ${c.who} from "${c.desc.slice(0, 34)}"`, () => {
+      const seen = recogniseAcquirer(seeded, { description: c.desc, reference: c.ref });
+      expect(seen?.acquirerCode).toBe(c.who);
+      if (c.day) expect(seen?.tradingDate).toBe(c.day);
+      if (c.merchant) expect(seen?.merchantNo).toBe(c.merchant);
+    });
+  }
+
+  /* And the money that is NOT a card payout stays not a card payout — a rule
+     broad enough to swallow a customer transfer would reconcile it against a
+     merchant statement and hide a real difference. */
+  it('claims none of the ordinary banking around them', () => {
+    for (const desc of ['CDM CASH DEPOSIT', 'MBB TO HLBB BANK', 'LAU LEE YEN *', 'MBB CT- HO KAI YIN *', 'HV-PV-202607-0178 HOUZS VENTURE HO']) {
+      expect(recogniseAcquirer(seeded, { description: desc, reference: 'Fund Transfer' })).toBeNull();
+    }
   });
 });
