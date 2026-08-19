@@ -905,3 +905,41 @@ jobs:
       # discovers every spec so a broken smoke contract cannot merge silently.
       - run: npm run typecheck
       - run: npm run test:list
+
+  # ── Company-scope RATCHET ─────────────────────────────────────────────────
+  # Locks the repo's most repeated defect class: a route handler that touches a
+  # row by id with NO company predicate. The SCM/Houzs supabase client is the
+  # SERVICE ROLE and bypasses RLS, so the hand-written company_id predicate is
+  # the ENTIRE tenant boundary (CLAUDE.md, "Company scope: the predicate is the
+  # only isolation").
+  #
+  # Grandfather baseline: backend/scripts/company-scope-baseline.json, keyed by
+  # file + route identity (never a line number), may only SHRINK. A NEW unscoped
+  # handler is not in it, so `--check` fails and names it; `--ratchet-against`
+  # closes the bypass of editing the JSON to add the new key in the same PR. The
+  # script is dependency-free (node:fs / node:path / node:child_process), so no
+  # `npm ci` — it runs before any install.
+  #
+  # NOT a required status check YET. It reports red but does not block a merge
+  # until the owner adds `company-scope-ratchet` to the main-protection ruleset
+  # (the one owner step is in the PR body). The sibling WRITE invariant
+  # (`check-company-scope --strict`, WRITE findings must stay 0) already runs
+  # inside the required `backend-typecheck` job.
+  company-scope-ratchet:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # `--ratchet-against origin/main` needs history to reach a merge base.
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+      # actions/checkout leaves no remote-tracking ref for main on a PR run;
+      # the growth guard resolves its base as origin/main, so create it.
+      - name: Make origin/main resolvable
+        run: git fetch --no-tags origin +refs/heads/main:refs/remotes/origin/main
+      # Primary gate: the current unscoped set must be a SUBSET of the baseline.
+      - run: node backend/scripts/check-company-scope.mjs --check
+      # No-growth guard: the baseline file itself may not gain an entry vs main.
+      - run: node backend/scripts/check-company-scope.mjs --check --ratchet-against origin/main

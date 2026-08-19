@@ -111,7 +111,7 @@ try {
      arrival rate still says nothing about whether the HISTORY is present: the
      incremental pull asks getSince(checkpoint), so an order last modified before
      the mirror's earliest checkpoint was never offered and never will be. That
-     is a backlog only `all` mode can collect. */
+     is a backlog only a windowed `?since=` backfill can collect. */
   console.log(`   doc_no range ${rate[0].oldest_doc ?? "-"} .. ${rate[0].newest_doc ?? "-"}`);
 
   console.log("");
@@ -120,9 +120,19 @@ try {
   if (Number(rate[0].d7) === 0 && Number(rate[0].d30) === 0) {
     console.log("   NOT MOVING. The mirror has taken nothing in 30 days. The pull may");
     console.log("   still be reporting successful runs — it counts per-row failures and");
-    console.log("   carries on. Run the pull in 'all' mode: pull.ts:29 says that path");
-    console.log("   uses /getAll and does NOT touch the checkpoint, so it is the clean");
-    console.log("   way to collect a backlog without unfreezing anything by hand.");
+    console.log("   carries on. Collect the backlog in WINDOWS:");
+    console.log("     POST /api/admin/health/autocount/so-pull?since=YYYY-MM-DD");
+    console.log("   a month at a time, working backwards, until a window fetches 0.");
+    /* NOT `mode=all`, which is what this verdict used to say. That advice was
+       written from reading pull.ts — getAll() is called and the checkpoint is
+       not touched, both true — and never executed. Dispatched against
+       production 2026-08-19: 39 seconds, then HTTP 503 `Worker exceeded
+       resource limits`. ~13,000 orders do not fit in one Worker request.
+
+       The correction landed in docs/modules/system-health.md the same day and
+       MISSED this file, so the retracted sentence kept printing here to anyone
+       who ran the check. One claim, two homes, one of them forgotten — which is
+       why scripts/lib/working-agreement.mjs rule 4 now scans check-*.mjs too. */
   } else if (behind !== null && behind > 2) {
     console.log("   PARTIALLY MOVING: rows are arriving but the checkpoint is stale, so");
     console.log("   some run is still failing at least one row. Find that row first —");

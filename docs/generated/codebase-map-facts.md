@@ -11,7 +11,7 @@ FOR, which trees are dead, what must be changed in pairs — lives in
 
 ## 1. Backend route inventory
 
-135 route modules (40 in `backend/src/routes`, 95 in `backend/src/scm/routes`), 1048 endpoint registrations.
+137 route modules (41 in `backend/src/routes`, 96 in `backend/src/scm/routes`), 1050 endpoint registrations.
 
 An endpoint is a `router.<method>("/…")` registration. For the per-route authorization
 boundary see the sibling artifact `docs/generated/route-capability-matrix.csv`, which
@@ -35,16 +35,17 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/finance.ts` | 2 | 444 |
 | `backend/src/routes/fleet.ts` | 1 | 37 |
 | `backend/src/routes/inbox.ts` | 1 | 545 |
+| `backend/src/routes/lib/actor-company-gate.ts` | 0 | 41 |
 | `backend/src/routes/logs.ts` | 1 | 66 |
 | `backend/src/routes/mail-center.ts` | 21 | 2284 |
 | `backend/src/routes/mail-inbound.ts` | 1 | 59 |
-| `backend/src/routes/notifications.ts` | 1 | 241 |
+| `backend/src/routes/notifications.ts` | 1 | 218 |
 | `backend/src/routes/portal.ts` | 6 | 329 |
-| `backend/src/routes/pos.ts` | 8 | 347 |
+| `backend/src/routes/pos.ts` | 8 | 378 |
 | `backend/src/routes/positions.ts` | 9 | 571 |
-| `backend/src/routes/presence.ts` | 2 | 178 |
-| `backend/src/routes/projects.ts` | 109 | 5131 |
-| `backend/src/routes/projects_print.ts` | 1 | 1332 |
+| `backend/src/routes/presence.ts` | 2 | 201 |
+| `backend/src/routes/projects.ts` | 109 | 4945 |
+| `backend/src/routes/projects_print.ts` | 1 | 1320 |
 | `backend/src/routes/push.ts` | 2 | 71 |
 | `backend/src/routes/roles.ts` | 8 | 371 |
 | `backend/src/routes/sales.ts` | 13 | 1302 |
@@ -53,7 +54,7 @@ resolves full mounted paths and their gates.
 | `backend/src/routes/stockItems.ts` | 1 | 28 |
 | `backend/src/routes/supplierPortal.ts` | 9 | 417 |
 | `backend/src/routes/survey.ts` | 2 | 146 |
-| `backend/src/routes/systemHealth.ts` | 6 | 425 |
+| `backend/src/routes/systemHealth.ts` | 7 | 463 |
 | `backend/src/routes/tableLayouts.ts` | 11 | 636 |
 | `backend/src/routes/totp.ts` | 4 | 161 |
 | `backend/src/routes/track.ts` | 1 | 44 |
@@ -80,7 +81,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/delivery-returns.ts` | 11 | 1821 |
 | `backend/src/scm/routes/delivery-zones.ts` | 9 | 789 |
 | `backend/src/scm/routes/document-flow.ts` | 2 | 1036 |
-| `backend/src/scm/routes/dp-orders.ts` | 5 | 605 |
+| `backend/src/scm/routes/dp-orders.ts` | 5 | 641 |
 | `backend/src/scm/routes/driver-leave.ts` | 3 | 156 |
 | `backend/src/scm/routes/drivers.ts` | 3 | 198 |
 | `backend/src/scm/routes/entity-audit-log.ts` | 1 | 101 |
@@ -103,7 +104,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/mfg-products.ts` | 11 | 1226 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 24 | 4587 |
 | `backend/src/scm/routes/mfg-sales-orders-list-enrichment.ts` | 1 | 195 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11947 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 42 | 11944 |
 | `backend/src/scm/routes/model-free-gifts.ts` | 3 | 147 |
 | `backend/src/scm/routes/mrp-lead-times.ts` | 2 | 95 |
 | `backend/src/scm/routes/mrp.ts` | 1 | 1615 |
@@ -120,6 +121,7 @@ resolves full mounted paths and their gates.
 | `backend/src/scm/routes/purchase-consignment-orders.ts` | 10 | 725 |
 | `backend/src/scm/routes/purchase-consignment-receives.ts` | 13 | 1336 |
 | `backend/src/scm/routes/purchase-consignment-returns.ts` | 14 | 1131 |
+| `backend/src/scm/routes/purchase-invoices-list-enrichment.ts` | 1 | 73 |
 | `backend/src/scm/routes/purchase-invoices.ts` | 14 | 2447 |
 | `backend/src/scm/routes/purchase-returns.ts` | 13 | 1668 |
 | `backend/src/scm/routes/pwp-codes.ts` | 5 | 500 |
@@ -164,36 +166,36 @@ scripts, never assumed: each runner declares its own directory, and
 | tree | runner | *.sql | highest | applied to PRODUCTION by deploy.yml | read by backend vitest |
 |---|---|---|---|---|---|
 | `backend/src/db/migrations` | `backend/scripts/migrate.mjs` | 148 | `149_assr_sched_dates.sql` (149) | no | yes |
-| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 305 | `0307_item_code_unify.sql` (0307) | YES | no |
+| `backend/src/db/migrations-pg` | `backend/scripts/pg-migrate.mjs` | 306 | `0308_po_amendment_lines_item_code.sql` (0308) | YES | no |
 
 Numbered non-`.sql` files in `backend/src/db/migrations-pg` (each still OWNS its number): `0136_capture_compat_views_trips_lorries.sql.TEMPLATE`
 
 ## 3. Largest source files
 
-Top 20 by line count across `backend/src` and `frontend/src` (1487 files, 586234 lines total).
+Top 20 by line count across `backend/src` and `frontend/src` (1492 files, 586598 lines total).
 Read these by line range, never whole — see the CODEBASE-MAP section of the same name.
 
 | file | lines |
 |---|---|
-| `frontend/src/pages/Projects.tsx` | 15136 |
-| `backend/src/scm/routes/mfg-sales-orders.ts` | 11947 |
+| `frontend/src/pages/Projects.tsx` | 15126 |
+| `backend/src/scm/routes/mfg-sales-orders.ts` | 11944 |
 | `frontend/src/pages/ServiceCases.tsx` | 8844 |
 | `backend/src/services/autocount-sofa-corpus.ts` | 7933 |
-| `frontend/src/pages/Team.tsx` | 5790 |
 | `backend/src/scm/routes/delivery-orders-mfg.ts` | 5628 |
+| `frontend/src/pages/Team.tsx` | 5607 |
 | `frontend/src/pages/scm-v2/Products.tsx` | 5425 |
-| `backend/src/routes/projects.ts` | 5131 |
+| `backend/src/routes/projects.ts` | 4945 |
 | `backend/src/scm/routes/scan-so.ts` | 4865 |
 | `backend/src/scm/routes/mfg-purchase-orders.ts` | 4587 |
 | `frontend/src/mobile/MobilePMS.tsx` | 4489 |
 | `frontend/src/pages/scm-v2/SupplierDetail.tsx` | 4326 |
-| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4204 |
+| `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` | 4205 |
 | `frontend/src/mobile/MobileNewSO.tsx` | 3727 |
 | `backend/src/scm/routes/grns.ts` | 3638 |
 | `frontend/src/components/DataTable.tsx` | 3545 |
 | `frontend/src/mobile/MobileServiceCase.tsx` | 3381 |
 | `backend/src/routes/assr.ts` | 3314 |
-| `backend/src/services/projects.ts` | 3137 |
+| `backend/src/services/projects.ts` | 3085 |
 | `frontend/src/pages/MailCenter/Inbox.tsx` | 3012 |
 
 ## 4. Frontend desktop routes
