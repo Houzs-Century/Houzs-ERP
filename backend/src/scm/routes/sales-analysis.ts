@@ -94,7 +94,10 @@ type ModelOut = Omit<ModelRank, 'demographics' | 'variants' | 'marginSen'>
  * this route never re-prices, so the combo price merge is cosmetic here but
  * kept faithful to the billing path.
  */
-async function loadCompanyActiveSofaCombos(sb: any, c: any): Promise<SofaComboRow[]> {
+async function loadCompanyActiveSofaCombos(
+  sb: any,
+  c: any,
+): Promise<{ combos: SofaComboRow[]; error: { message?: string } | null }> {
   let q = sb
     .from('sofa_combo_pricing')
     .select('id, base_model, modules, tier, customer_id, prices_by_height, selling_prices_by_height, pwp_prices_by_height, label, effective_from, created_at, deleted_at, default_free_gifts')
@@ -102,8 +105,12 @@ async function loadCompanyActiveSofaCombos(sb: any, c: any): Promise<SofaComboRo
     .is('customer_id', null)
     .is('supplier_id', null);
   q = scopeToCompany(q, c);
-  const { data } = await q;
-  return ((data ?? []) as Array<{
+  /* Bind the error and hand it back. supabase-js does not throw, so a discarded
+     `error` makes a failed query indistinguishable from "this company has no
+     combos" — and a build that IS a combo would then be ranked as a custom
+     build. The caller turns this into load_failed like every other read here. */
+  const { data, error } = await q;
+  const combos = ((data ?? []) as Array<{
     id: string; base_model: string; modules: string[][]; tier: SofaPriceTier | null;
     customer_id: string | null; prices_by_height: Record<string, number | null>;
     selling_prices_by_height: Record<string, number | null>;
@@ -118,6 +125,7 @@ async function loadCompanyActiveSofaCombos(sb: any, c: any): Promise<SofaComboRo
     label: r.label, effectiveFrom: r.effective_from, createdAt: r.created_at, deletedAt: r.deleted_at,
     defaultFreeGifts: r.default_free_gifts ?? [],
   }));
+  return { combos, error: error ?? null };
 }
 
 /* ── Finance gate — MARGIN rides canViewScmFinance, not the access gate ───────
@@ -307,7 +315,11 @@ salesAnalysis.get('/', async (c) => {
   // Target profile — one row per company (keyed by company_id).
   let tq = sb.from('analysis_customer_targets').select('*');
   tq = scopeToCompany(tq, c);
-  const { data: tRow } = await tq.maybeSingle();
+  /* maybeSingle: NO row is legitimate (this company has set no targets yet).
+     A failed query is not, and without the error bound the two are the same
+     shape — the page would quietly show "no targets set". */
+  const { data: tRow, error: tErr } = await tq.maybeSingle();
+  if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
   const targets: TargetProfile = {
     ageRangeMin: tRow?.age_range_min ?? null,
     ageRangeMax: tRow?.age_range_max ?? null,
@@ -389,7 +401,8 @@ salesAnalysis.get('/', async (c) => {
     }
 
     // Sofa combos (company scope) + fabric-tier config for upgrade detection.
-    const combos = await loadCompanyActiveSofaCombos(sb, c);
+    const { combos, error: comboErr } = await loadCompanyActiveSofaCombos(sb, c);
+    if (comboErr) return c.json({ error: 'load_failed', reason: comboErr.message }, 500);
     const fabricIds = [...new Set(rawLines.map((r) => ((r.variants ?? {}) as Record<string, unknown>).fabricId).filter(Boolean).map(String))];
     const [fabricTiersById, addonConfig, modelOverrides, compartmentOverrides] = await Promise.all([
       loadFabricSellingTiersByIds(sb, fabricIds),
