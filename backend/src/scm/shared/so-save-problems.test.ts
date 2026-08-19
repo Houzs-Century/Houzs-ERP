@@ -165,7 +165,7 @@ describe('collectProcessingGateProblems', () => {
         kivOffenders: [{ itemCode: 'SOFA-XAMMAR-L', fabricLabel: 'EZ' }],
       });
       expect(codes(ps)).toEqual(['variants_incomplete', 'fabric_colour_kiv']);
-      expect(ps[0]!.field).toBe('Seat Height'); // the bare fabricCode axis is suppressed, not the others
+      expect(ps[0]!.field).toBe('Seat Size'); // the bare fabricCode axis is suppressed, not the others
     });
 
     it('a series-less KIV offender still reads as a sentence', () => {
