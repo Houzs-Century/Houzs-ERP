@@ -33,6 +33,135 @@ this entry proved by failing the very test it describes). Self-test 42/42.
 
 **Ref.** fix/cn-prescription-vain-run, 2026-08-19. Unblocks every open PR.
 
+## Cross-company holes on the sales-pricing side: PWP voucher burn, consignment price-override, sofa-combo edit [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 三个跨公司的漏洞，都因为我们的数据库连线是「服务角色」——它会绕过数据库
+自己的公司隔离，所以每一条写入必须自己带上「哪一间公司」这个条件，否则就会写到另一
+间公司的资料上。(1) 开销售单用换购券(PWP)时，认券/烧券/回滚都只认券号，不认公司；
+换购券的券号在两间公司之间可能撞号，于是可能烧掉、或写坏另一间公司的券。(2) 寄卖单
+(Consignment)改单价这个「会动钱」的动作，只挡了业务员范围，却没检查「改价权限」
+(`scm.so.price_override`)——只有看单权限的人也能改价；销售单那边本来就有挡。(3) 沙发
+套装价(Sofa Combo)用 id 改价时，先读来源那一行没有带公司条件，可能把另一间公司的
+套装价复制成本公司的新价。
+
+**Symptom.** Three service-role writes on the sales/pricing side carried no
+`company_id` predicate, so a caller in company A could reach company B's rows.
+Found by a targeted cross-tenant audit (2026-08-19), all traced on `origin/main`.
+
+**Root cause (traced, PROVEN by reading the handlers).** The SCM supabase client
+is service-role and bypasses RLS (mig 0061 enabled RLS with no policies), so the
+hand-written `company_id` predicate IS the entire tenant boundary.
+- **PWP burn** (`mfg-sales-orders.ts`, SO create loop ~L3675/L3808/L3838): mig 0188
+  re-keyed `pwp_codes` on `(company_id, code)`, but the prefetch `.in('code', …)`,
+  the atomic `.update({status:'USED'}).eq('code', code)` and the rollback
+  `.update(patch).eq('code', code).eq('status','USED')` all keyed on the
+  caller-supplied `code` alone. Two swap-line reads (~L9146/L9713) read
+  `pwp_codes` by `.eq('code', …)` unscoped too. The already-safe siblings are
+  `pwp-claim-single.ts` (scopes by company_id) and the add-line path (~L3828,
+  refuses on unresolved company).
+- **Consignment price override** (`consignment-orders.ts`, POST
+  `/:docNo/items/:itemId/override`): re-prices a line ("WRITES MONEY") but only
+  checked `selfScopedConsignmentBlocked`; never `scm.so.price_override`, while the
+  SO twin (`mfg-sales-orders.ts:6205`, `isPriceOverrideCaller`) does.
+- **Sofa combo edit** (`sofa-combos.ts`, PUT `/:id`): the edit-by-id alias read the
+  source combo `.eq('id', id)` on per-company `sofa_combo_pricing` (company_id NOT
+  NULL since mig 0083) with no scope, then inserted a new effective row for the
+  active company — cloning another company's price. The sibling DELETE `/:id` was
+  scoped 2026-08-13.
+
+**Fix.** PWP: resolve `pwpCompanyId = activeCompanyId(c)` once, refuse
+`company_unresolved` (409) when null while codes are present, and add
+`.eq('company_id', pwpCompanyId)` to the prefetch, the burn and the rollback; the
+two swap reads now go through `scopeToCompany(...)`. Consignment override: add the
+`scm.so.price_override` gate (403 `price_override_admin_only`) before the self-scope
+and row reads. Sofa combo PUT: wrap the source read in `scopeToCompany(...)` so a
+foreign id resolves to nothing (404). Handlers exported for the test. Coverage in
+`tests/crossTenantUncoveredLeaks.test.ts` (both directions; proven red before fix).
+
+**Ref.** this PR, 2026-08-19.
+
+## Cross-company holes on the procurement side: PO SO-link, rack create, supplier binding [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 三个跨公司漏洞，同一个根因(服务角色连线绕过隔离，写入必须自带公司条件)。
+(1) 建采购单(PO)时，「新建 PO 带销售单来源」这条路读取来源销售单行(soItemId)没带
+公司条件，然后把它连上本公司的 PO、复制它的照片、还回写它的「已下单数量」——等于把另一
+间公司的销售单行认成自己的。(2) 建货架(Rack)时，只对「全部仓库」那条分支做了公司过
+滤；直接传仓库 id 的分支没验证仓库属不属于本公司，于是会把货架建到另一间公司的仓库上
+(货架盖本公司公司章，仓库却是别家的)。(3) 给供应商加绑定(binding)时，绑定盖上本公司
+公司章，却没检查这个供应商本身属不属于本公司。
+
+**Symptom.** Three service-role writes on the procurement side accepted a
+caller-supplied id (SO line / warehouse / supplier) from another company and
+wrote against it. Found by the same 2026-08-19 cross-tenant audit, traced on
+`origin/main`.
+
+**Root cause (traced, PROVEN by reading the handlers).** Same boundary as above —
+the `company_id` predicate is the only isolation.
+- **PO create** (`mfg-purchase-orders.ts`, POST `/` ~L1166): the bare-create path
+  (desktop "New PO from SO" / MRP convert) read `mfg_sales_order_items .in('id',
+  soItemIds)` with no company predicate, then linked `so_item_id` (~L1282), copied
+  `photo_urls` (~L1369) and rolled `po_qty_picked` forward via `recomputeSoPicked`
+  (`.eq('id', soItemId)`, ~L2902). A foreign `soItemId` re-parented another
+  company's SO line. The add-line path already gated it via `soLinkTargetRefusal`.
+- **Rack create** (`warehouse.ts`, POST `/racks`): `resolveRackTargets` scoped only
+  the `allWarehouses` branch; the `warehouseId` / `warehouseIds` branches trusted
+  the caller-supplied uuid, and the racks stamp `company_id = active` while pointing
+  `warehouse_id` at a foreign warehouse.
+- **Supplier binding** (`suppliers.ts`, POST `/:id/bindings` + `/bindings/batch`):
+  the binding row stamped `company_id = active` but never verified the `:id`
+  supplier belonged to the active company — unlike the scoped scorecard/edit/delete
+  paths.
+
+**Fix.** PO create: scope the SO-item read with `scopeToCompany(...)` and refuse
+any `soItemId` not in the caller's company (404 `so_line_not_found`) before it is
+linked; the photo read is scoped too. Rack create: `resolveRackTargets` now
+intersects the requested warehouse ids with the company's own warehouses (foreign
+uuid resolves to nothing). Supplier binding: verify the supplier belongs to the
+active company (`scopeToCompany` + `detailMissResponse` 404) before inserting, on
+both the single and batch paths. Handlers exported for the test. Coverage in
+`tests/crossTenantUncoveredLeaks.test.ts` (both directions; proven red before fix).
+
+**Ref.** this PR, 2026-08-19.
+
+## A Sales Invoice needed the DO "marked signed" first, though the server never required it [medium]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 开销售发票(Sales Invoice)之前,系统逼你先把交货单(DO)按一下「Mark
+signed」—— 但后台其实从来没有这个要求。老板 2026-08-19 指出这一步多余,拿掉。现在
+只要是已确认的交货单(不是草稿、不是已取消)就能直接开发票,而且两间公司看到的一样。
+「Mark signed」按钮保留,当作可选的「已签收」记录,不再是硬门槛。
+
+**Symptom.** In the DO quick-view, a DISPATCHED / IN_TRANSIT delivery order showed
+"Transfer to Sales Invoice" DISABLED with "Mark this delivery order signed first —
+a Sales Invoice can only be raised once it is signed or delivered." Owner
+2026-08-19, on a 2990 DO: this DO does not need mark-signed — remove it.
+
+**Root cause (traced, PROVEN by reading both sides).** The signed/delivered
+requirement was FRONTEND-ONLY. `siTransferBlockReason`
+(`frontend/src/vendor/scm/lib/do-next-step.ts`) blocked `loaded` / `dispatched` /
+`in_transit`. The server that actually creates the SI from a DO
+(`backend/src/scm/routes/sales-invoices.ts:1483`) refuses ONLY a CANCELLED source
+(`do_cancelled`, 409) — it never checked signed/delivered. So the gate had no
+backend rule behind it, and the goods' stock was already deducted at dispatch.
+Removing the front-end gate exposes an action the server always permitted; it
+changes no stock or money logic.
+
+**Fix.** `SI_TRANSFERABLE_DO_STATUSES` = `loaded, dispatched, in_transit, signed,
+delivered` (every confirmed DO). `siTransferBlockReason` returns null for those;
+DRAFT still needs Confirm (no committed lines/stock yet); CANCELLED still blocked;
+INVOICED / unrecognised → the generic sentence. Because `siTransferBlockReason` is
+the ONE shared function all four surfaces use (desktop detail, desktop phone view,
+list quick-view drawer, native mobile shell — `MobileModuleDetail.tsx:1362`), the
+change reaches desktop and mobile together. "Mark signed" (`doAdvanceStep`) is
+untouched and stays as an OPTIONAL delivery-tracking step. `do-next-step.test.ts`
+updated to pin the new rule (12 pass).
+
+**Ref.** this PR, 2026-08-19.
 ## Opening Purchase Orders and Goods Received each ran a full company-wide MRP [high]
 
 <!-- area: Purchase orders + GRN + PI -->
