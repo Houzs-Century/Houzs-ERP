@@ -343,9 +343,15 @@ dpOrders.get('/', async (c) => {
       .filter((x): x is string => !!x))];
     const soByDoc = new Map<string, Record<string, unknown>>();
     if (docNos.length > 0) {
-      const { data: soRows } = await sb.from('mfg_sales_orders')
+      const { data: soRows, error: soErr } = await sb.from('mfg_sales_orders')
         .select('doc_no, agent, salesperson_id, venue, processing_date, local_total_sen')
         .in('doc_no', docNos);
+      if (soErr) {
+        // Decoration only — the registry must not 500 over its garnish. With
+        // the error NAMED and logged, "every so_* renders a dash" is a decision
+        // the log can explain, not a failure dressed up as no-SO rows.
+        console.error('[dp-orders] sales-context SO read failed; so_* fields degrade to null:', soErr.message);
+      }
       for (const s of (soRows ?? []) as Array<Record<string, unknown>>) {
         const doc = String(s.docNo ?? s.doc_no ?? '');
         if (doc) soByDoc.set(doc, s);
