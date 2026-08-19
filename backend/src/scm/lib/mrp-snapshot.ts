@@ -16,9 +16,19 @@
 // ----------------------------------------------------------------------------
 
 /* eslint-disable @typescript-eslint/no-explicit-any -- the untyped supabase-js client this SCM tree passes around (see companyScope.ts header). */
+import type { Env } from '../../types';
+import { getSupabaseService } from '../../db/supabase';
+import { loadLeadBuffers } from '../../services/agents/procurement-learning';
 import { computeMrp, type MrpResult } from '../routes/mrp';
 
 type Sb = any;
+
+/* The live companies whose MRP snapshot the scheduled job refreshes: Houzs
+   Century (1) + 2990's Home (2), the two tenants (the canonical pair, e.g.
+   companyScope.test.ts). A company NOT listed still gets a correct plan — the
+   MRP page falls back to live compute and Regenerate populates it on demand — so
+   an unlisted tenant degrades to "slow but right", never to a wrong plan. */
+export const MRP_REFRESH_COMPANY_IDS: readonly number[] = [1, 2];
 
 /** The lead-buffer input computeMrp takes — same shape the Worker loads from
     c.env.DB and the refresh job loads from its own connection. */
@@ -72,4 +82,27 @@ export async function refreshMrpSnapshot(
   );
   if (error) throw new Error(`mrp_snapshot upsert failed: ${error.message}`);
   return { result, computedAt: nowIso };
+}
+
+/**
+ * Refresh every live company's stored MRP snapshot — the scheduled (~15 min)
+ * job, run from the Worker's `scheduled()` handler where env.DB + the SCM client
+ * are already to hand (so no pgrest-shim / lead-buffer plumbing). Best-effort per
+ * company: one company's failure is logged and never blocks another's, and the
+ * whole job is fire-and-forget (`ctx.waitUntil`) so a slow run never stalls the
+ * cron slot. `nowIso` is injected by the caller.
+ */
+export async function refreshAllMrpSnapshots(env: Env, nowIso: string): Promise<void> {
+  const sb = getSupabaseService(env);
+  const leadBuffers = await loadLeadBuffers((env as { DB: unknown }).DB as Parameters<typeof loadLeadBuffers>[0]);
+  for (const companyId of MRP_REFRESH_COMPANY_IDS) {
+    try {
+      const { computedAt } = await refreshMrpSnapshot(sb, companyId, leadBuffers, nowIso);
+      // eslint-disable-next-line no-console
+      console.log(`[cron mrp-snapshot] company=${companyId} computedAt=${computedAt}`);
+    } catch (e) {
+      // eslint-disable-next-line no-console
+      console.error(`[cron mrp-snapshot] company=${companyId}`, e);
+    }
+  }
 }

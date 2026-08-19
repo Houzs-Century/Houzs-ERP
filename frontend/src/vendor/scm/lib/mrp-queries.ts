@@ -10,7 +10,7 @@
 
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
-import { writeFailed } from './mutation-error';
+import { writeFailed, writeFailedAs } from './mutation-error';
 
 export type MrpAllocSource = 'stock' | 'po' | 'shortage';
 
@@ -125,6 +125,14 @@ export type MrpResponse = {
     sofaSetCount: number;
     sofaSetShortageCount: number;
   };
+  /* Stored-planning-snapshot metadata (backend option B, 2026-08-19). `stored`
+     is true when this response came from the saved snapshot (the default view),
+     false when it was computed live (a filtered/undated view, or before the
+     company's first snapshot). `computedAt` is when the plan was calculated, so
+     the page can show "as of <time>". Optional so a response from a backend that
+     predates the snapshot still parses. */
+  computedAt?: string;
+  stored?: boolean;
 };
 
 /** Stock Status Report / MRP — recomputed server-side on every call. */
@@ -154,6 +162,19 @@ export function useMrp(params: { category: string; warehouseId: string; includeU
       return authedFetch<MrpResponse>(`/mrp${qs ? `?${qs}` : ''}`);
     },
     staleTime: 30_000,
+  });
+}
+
+/* Manual "Regenerate" — recompute the stored MRP snapshot server-side and
+   refresh every MRP view. POSTs /mrp/regenerate (option B, 2026-08-19); on
+   success the whole 'mrp' query family is invalidated so the page re-reads the
+   fresh snapshot. */
+export function useRegenerateMrp() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () => authedFetch<MrpResponse>(`/mrp/regenerate`, { method: 'POST' }),
+    onSuccess: () => { void qc.invalidateQueries({ queryKey: ['mrp'] }); },
+    onError: writeFailedAs('Could not regenerate the MRP plan'),
   });
 }
 

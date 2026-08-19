@@ -469,3 +469,31 @@ Frontend pair (one logic layer): desktop `pages/scm-v2/Inventory.tsx`
   `tests/soTerminalStatesMirror.test.ts`), so there is no longer a sibling copy
   to grep for — which is the point: "grep for its siblings" is advice that only
   works on the days someone remembers to follow it.
+
+## 9. Stored planning snapshot — MRP is a "planning run" (option B, owner 2026-08-19)
+
+`GET /mrp` used to run the whole `computeMrp` engine live on every open (~4s).
+Owner decision 2026-08-19: MRP becomes a **stored planning run** — the industry
+norm (SAP / Oracle / NetSuite run MRP on a schedule / on demand and the screen
+reads the stored result), refreshed on a schedule + a manual **Regenerate**, with
+the page showing "as of &lt;time&gt;".
+
+- **Table** `scm.mrp_snapshots(company_id, result jsonb, computed_at, updated_at)`
+  — one row per company, migration `0309`. A **cache, not a book of record**:
+  when a company has no row, `GET /mrp` falls back to live compute (so the feature
+  is inert until first populated, and `DROP TABLE` reverses it).
+- **Served ONLY for the DEFAULT view** (no category/warehouse filter, undated
+  hidden — `isDefaultMrpView`). `catFilter`/`whFilter` change the ALLOCATION
+  inputs (mrp.ts `549` / `863` / `991` / `1203`), not just the output rows, so a
+  stored full result cannot be safely post-filtered; a filtered or undated view,
+  or an unpopulated company, computes **live** exactly as before. The response
+  carries `stored` + `computedAt` for the "as of" indicator.
+- **Regenerate:** `POST /mrp/regenerate` recomputes the default view + upserts,
+  returns it fresh (gated `edit` on `scm.procurement.mrp` by the area guard).
+- **Auto-refresh:** the Worker `scheduled()` handler's new `*/15` cron calls
+  `refreshAllMrpSnapshots(env, nowIso)` for `MRP_REFRESH_COMPANY_IDS = [1, 2]`.
+- Files: `scm/lib/mrp-snapshot.ts` (`readMrpSnapshot` / `refreshMrpSnapshot` /
+  `refreshAllMrpSnapshots` / `isDefaultMrpView`), `mrp.ts` (`GET /` snapshot read
+  + `POST /regenerate`), `src/index.ts` (cron branch), `wrangler.toml` (cron),
+  `frontend/src/vendor/scm/lib/mrp-queries.ts` (`useRegenerateMrp` + `stored` /
+  `computedAt`), `frontend/src/pages/scm-v2/Mrp.tsx` (Regenerate button + "as of").
