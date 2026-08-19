@@ -632,6 +632,19 @@ beside it, which renders on every row). The `/delivery-planning` SO read now
 selects `agent, salesperson_id, venue` and stamps them on SO rows (null on
 ASSR / DP rows; project rows fill `venue`).
 
+**Funnels and tabs persist, 2026-08-19** (owner: "漏斗和页签被清掉,也做成和
+service case 一样"). Opening a record REPLACES the workspace tab, so returning
+to the board is always a fresh mount — and its working view used to die with
+it. Two mechanisms, both house-standard: (1) every vendored **DataGrid** now
+persists its funnel filters (value sets / date presets / number ranges / custom
+date ranges) per grid under `dg-filters:<idKey>` — `dataGridFilterStorage.ts`,
+the twin of DataTable's 2026-07-29 `dt:filters:*`; the idKey is the layout
+blob's, so the shared boards share filters unscoped while per-tenant grids stay
+per-company. Filters are a working view, NOT synced to the account layout
+store. (2) `DeliveryPlanning.tsx` swaps `useSearchParams` for
+`useStickyFilters('delivery-planning', ['state','region'])` — URL wins,
+localStorage restores the last state/region pair when the URL carries none.
+
 Then: row scope (§6) → region filter → counts → state filter →
 `{ orders, counts, regions }` (`:1345-1371`). Counts are computed over the
 **region-filtered** set BEFORE the state filter, so switching state tabs does
