@@ -374,7 +374,7 @@ one.
 ### The response key
 
 The create responses carry `acNotSent: SaveProblem[]`, absent when the document
-composed cleanly. `frontend/src/vendor/scm/lib/ac-not-sent.ts` reads it and owns
+composed cleanly. `frontend/src/vendor/scm/lib/ac-not-sent.tsx` reads it and owns
 the title; the SENTENCES travel verbatim from `ac-preflight.ts`, because the
 thing that decides a document is unsendable is the composer and the wording has
 to follow the reason. `backend/tests/acNotSentWiring.test.ts` is the referee
