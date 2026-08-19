@@ -1056,6 +1056,10 @@ export const SalesOrderDetail = () => {
      amendment then flows through the supplier-confirm / approve gates before it
      re-derives the SO — direct line writes on a PO'd SO would break the supplier
      copy, which is exactly what this workflow prevents. */
+  /* A 0 typed here is a price, not an unresolved one — the wire cannot tell them
+     apart, so say which (see erpLineTrust). Both the PATCH and a staged ADD. */
+  const zeroPriceClaim = (sen: number) => (sen === 0 ? { zeroPriceIntended: true } : {});
+
   const buildAmendmentLines = (): CreateAmendmentLine[] => {
     const out: CreateAmendmentLine[] = [];
     // Existing lines — SPEC / QTY. An item still in editingDrafts whose AMENDABLE
@@ -1508,11 +1512,7 @@ export const SalesOrderDetail = () => {
       uom:            d.uom,
       qty:            d.qty,
       unitPriceSen: d.unitPriceSen,
-      /* A 0 typed HERE is a real price, not "the client could not resolve one".
-         The backend cannot tell those apart on the wire, so say which it is —
-         only this statement lets a 0 survive the recompute (TrustSelling
-         'operator-zero'). Sent only at 0; a priced line needs no claim. */
-      ...(d.unitPriceSen === 0 ? { zeroPriceIntended: true } : {}),
+      ...zeroPriceClaim(d.unitPriceSen),
       discountSen:  d.discountSen,
       unitCostSen:  d.unitCostSen,
       variants:       d.variants,
@@ -1537,6 +1537,7 @@ export const SalesOrderDetail = () => {
       uom:            d.uom,
       qty:            d.qty,
       unitPriceSen: d.unitPriceSen,
+      ...zeroPriceClaim(d.unitPriceSen),
       discountSen:  d.discountSen,
       unitCostSen:  d.unitCostSen,
       variants:       d.variants,

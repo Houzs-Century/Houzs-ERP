@@ -18,6 +18,8 @@
 // ----------------------------------------------------------------------------
 import { describe, expect, test } from 'vitest';
 import soRoutes from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import recomputeSrc from '../src/scm/lib/mfg-pricing-recompute.ts?raw';
+const RECOMPUTE_SRC = recomputeSrc;
 
 /** Source with comments stripped — the comments below deliberately name the
  *  very string this file asserts is absent from the code. */
@@ -39,7 +41,13 @@ describe('SO total floor removed', () => {
   });
 
   test('trustOperatorSelling is still withheld from a POS session', () => {
-    expect(SO).toMatch(/!posTablet/);
+    /* 2026-08-19 — the route no longer spells `!posTablet` inline: both line
+       writes ask `erpLineTrust`, which owns the negation (mfg-pricing-recompute).
+       The invariant is unchanged and the assertion follows it to its new home —
+       every call must still HAND it the POS flag, or the withholding is gone. */
+    const calls = SO.match(/erpLineTrust\([A-Za-z]*[Pp]osTablet\b/g) ?? [];
+    expect(calls.length, 'a line write stopped passing the POS flag').toBe(2);
+    expect(RECOMPUTE_SRC).toMatch(/!posTablet/);
   });
 
   /* isPosTabletCaller must survive as the one hinge. If a later edit deletes it
