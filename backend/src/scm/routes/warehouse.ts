@@ -200,8 +200,9 @@ async function resolveRackTargets(
     requested = one ? [one] : [];
   }
   if (requested.length === 0) return [];
-  const { data } = await scopeToCompany(sb.from('warehouses').select('id'), c)
+  const { data, error } = await scopeToCompany(sb.from('warehouses').select('id'), c)
     .in('id', requested);
+  if (error) return []; // read failed -> no VERIFIED target -> caller 400s (fail closed, never trust an unverified warehouse)
   const inCompany = new Set(((data ?? []) as Array<{ id: string }>).map((w) => w.id));
   return requested.filter((id) => inCompany.has(id));
 }

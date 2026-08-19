@@ -555,10 +555,11 @@ export const createSupplierBindingHandler = async (c: any) => {
      service-role (RLS bypassed), so an unchecked :id from another company would
      mint this company's binding against a foreign supplier. Mirror the scorecard
      guard (~L862) and the scoped edit/delete paths below. */
-  const { data: ownerRow } = await scopeToCompany(
+  const { data: ownerRow, error: ownerErr } = await scopeToCompany(
     supabase.from('suppliers').select('id').eq('id', supplierId),
     c,
   ).maybeSingle();
+  if (ownerErr) return c.json({ error: 'load_failed', reason: ownerErr.message }, 500);
   if (!ownerRow) {
     return c.json(await detailMissResponse(c, supabase.from('suppliers').select('company_id').eq('id', supplierId), 'supplier'), 404);
   }
@@ -630,10 +631,11 @@ export const createSupplierBindingsBatchHandler = async (c: any) => {
   /* Multi-company: verify the supplier belongs to the active company before
      minting bindings stamped with company_id = active (service-role bypasses
      RLS). Same guard as the single POST above. */
-  const { data: ownerRow } = await scopeToCompany(
+  const { data: ownerRow, error: ownerErr } = await scopeToCompany(
     supabase.from('suppliers').select('id').eq('id', supplierId),
     c,
   ).maybeSingle();
+  if (ownerErr) return c.json({ error: 'load_failed', reason: ownerErr.message }, 500);
   if (!ownerRow) {
     return c.json(await detailMissResponse(c, supabase.from('suppliers').select('company_id').eq('id', supplierId), 'supplier'), 404);
   }
