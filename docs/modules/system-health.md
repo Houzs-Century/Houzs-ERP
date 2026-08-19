@@ -37,16 +37,28 @@ mirror's earliest checkpoint is never in that answer, so the five-minute pull ca
 run forever and that row will never arrive. Waiting is not a remedy for this
 class — it is the thing that makes it look permanent.
 
-**`all` goes through `getAll`, and per `services/pull.ts:29` it does NOT touch the
-checkpoint.** That is what makes a backfill safe: it cannot disturb an incremental
-pull that is working correctly. Re-running is safe too — the INSERT is
-`ON CONFLICT(doc_no) DO UPDATE`, so rows refresh rather than duplicate.
+**`all` DOES NOT WORK on this book, and that was measured rather than reasoned.**
+Dispatched against production 2026-08-19: 39 seconds, then HTTP 503
+`Worker exceeded resource limits`. `getAll()` over ~13,000 orders cannot fetch and
+upsert inside one Cloudflare Worker request. The same route with `filtered`
+returned 200 in the same session, so the route, the auth and the AutoCount
+connection are all fine — only the full refresh is impossible.
+
+**`?since=YYYY-MM-DD` is the backfill that works.** It asks
+`getSince(<that date>)` instead of `getSince(checkpoint)`, so the backlog is
+collected in WINDOWS small enough to finish. On that path the checkpoint is
+neither read nor advanced — deliberately: a backfill reaches BACKWARDS, and
+writing its window forward would skip everything between. Re-running is safe: the
+INSERT is `ON CONFLICT(doc_no) DO UPDATE`, so rows refresh rather than duplicate.
+
+Work backwards a month at a time from the oldest `doc_no` the health check
+reports, and stop when a window returns `fetched: 0`.
 
 **Worked example, 2026-08-19.** A salesperson could not raise a Service Case
 against `SO-005263`. The order exists in AutoCount. The read-only check reported
 `pull_checkpoint` CURRENT, 3281 rows in the mirror, newest `SO-013275` — and zero
 rows for that number *or* its bare digits. Nothing was broken. That order had
-simply never been collected, and only `mode=all` could bring it in.
+simply never been collected, and a windowed `?since=` backfill is what brings it in.
 
 ---
 
