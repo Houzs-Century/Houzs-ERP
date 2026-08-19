@@ -122,6 +122,12 @@ half is not hypothetical either: the `mode=all` correction was written into
 `backend/scripts/check-autocount-pull-health.mjs`, which went on printing the
 retracted advice to anyone who ran the check.
 
+**It reads Chinese too**, because the owner writes in Chinese and the first
+version of this rule was English-only — 「跑这个就能补回来」, 「重跑一次 sync 就会好
+了」, 「执行 mode=all 就可以把历史补齐」 were all silently missed. Chinese has no
+word boundaries, so every pattern is a multi-character phrase: a bare 跑 would
+fire on 「一直在跑」, which narrates rather than prescribes.
+
 **What the gate cannot do, said plainly:** it cannot verify the pasted output is
 real. A production dispatch is not reproducible in CI the way an enumeration is.
 It catches the claim written from reading — the author who never ran it and has
