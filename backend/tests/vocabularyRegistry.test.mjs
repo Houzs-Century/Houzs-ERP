@@ -83,6 +83,34 @@ test("the declaration file may spell what it declares", () => {
   assert.deepEqual(findRetired(`export const X = "${decl.retired[0]}";`, `backend/${allowed}`), []);
 });
 
+test("batch-3 concepts are registered with the canonical the owner agreed", () => {
+  /* These three were DOCUMENTED-only in the drift catalogue until they were
+     registered here. Each is STAGED — nothing retired yet (the physical renames
+     need a backfill or a view-guarded drop) — so the assertion is on the
+     canonical word and the pointer, which are what the glossary prints and what
+     new code is told to use. If a concept is dropped or its canonical is
+     changed, this fails on purpose. */
+  const byConcept = (needle) =>
+    VOCABULARY.find((e) => e.concept.toLowerCase().includes(needle));
+
+  const salesperson = byConcept("salesperson");
+  assert.ok(salesperson, "Salesperson concept is registered");
+  assert.equal(salesperson.canonical, "salesperson_id");
+  assert.deepEqual(salesperson.retired, [], "salesperson retires nothing yet — agent is kept by design");
+  assert.equal(salesperson.declaredIn, "backend/src/scm/lib/so-agent.ts");
+
+  const warehouse = byConcept("warehouse");
+  assert.ok(warehouse, "Warehouse concept is registered");
+  assert.equal(warehouse.canonical, "warehouse_id");
+  assert.deepEqual(warehouse.retired, [], "warehouse retires nothing yet — sales_location drop needs a backfill");
+
+  const customerRef = byConcept("customer reference");
+  assert.ok(customerRef, "Customer-reference concept is registered");
+  /* Owner ruling 2026-08-18 (#2429): `ref` leads, NOT customer_so_no. */
+  assert.equal(customerRef.canonical, "ref");
+  assert.deepEqual(customerRef.retired, [], "customer-ref retires nothing yet — po_doc_no drop is the 0189 view-grant hazard");
+});
+
 test("stripComments keeps line numbers usable", () => {
   const src = "const a = 1;\n// internal_expected_dd\nconst b = 2;";
   assert.equal(stripComments(src).split("\n").length, src.split("\n").length);
