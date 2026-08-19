@@ -8,6 +8,7 @@
  * NO SHEBANG — see the header of working-agreement.mjs.
  */
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { test } from "node:test";
 
 import {
@@ -16,6 +17,8 @@ import {
   detectFixIntent,
   detectSurfaceChanges,
   evaluate,
+  findObservation,
+  findRemedyClaims,
   isCodePath,
   isSurfacePath,
   mapPathToGuides,
@@ -312,4 +315,151 @@ test("rule 2 ignores a file no guide quotes, so the gate cannot spread on its ow
   ]);
   const res = evaluate({ ...base, files: parseUnifiedDiff(undocumented) });
   assert.equal(res.findings.some((f) => f.level === "fail" && f.rule === "module-guide"), false);
+});
+
+// --------------------------------------------------------------------------
+// Rule 4 — a remedy claim needs the run that proved it
+// --------------------------------------------------------------------------
+
+/* The two strings below are QUOTED FROM THE REPO, not invented for the test.
+   The first is the sentence that cost a salesperson a working day; the second
+   is the correction that replaced it. A gate whose fixtures are written by the
+   same person who wrote the regex proves only that the regex is self-consistent,
+   so these are the real ones and they are checked in both directions. */
+const THE_CLAIM_THAT_SHIPPED = [
+  '    console.log("   still be reporting successful runs — it counts per-row failures and");',
+  '    console.log("   carries on. Run the pull in \'all\' mode: pull.ts:29 says that path");',
+  '    console.log("   uses /getAll and does NOT touch the checkpoint, so it is the clean");',
+  '    console.log("   way to collect a backlog without unfreezing anything by hand.");',
+].join("\n");
+
+const THE_CORRECTION = [
+  "**`all` DOES NOT WORK on this book, and that was measured rather than reasoned.**",
+  "Dispatched against production 2026-08-19: 39 seconds, then HTTP 503",
+  "`Worker exceeded resource limits`. `getAll()` over ~13,000 orders cannot fetch and",
+  "upsert inside one Cloudflare Worker request.",
+].join("\n");
+
+test("rule 4 fires on the real sentence that shipped, and stays silent on its correction", () => {
+  const claims = findRemedyClaims(THE_CLAIM_THAT_SHIPPED);
+  assert.equal(claims.length, 1, "the claim that cost a day must be detected");
+  assert.match(claims[0].text, /Run the pull in 'all' mode/);
+
+  assert.deepEqual(findRemedyClaims(THE_CORRECTION), [], "a correction must not read as a claim");
+});
+
+test("rule 4 does not fire on a mention of an operation that prescribes nothing", () => {
+  /* The first draft of this detector fired here — `\brun\b` matched the noun.
+     A gate that flags narration is a gate that gets routed around. */
+  assert.deepEqual(
+    findRemedyClaims("the job kept reporting a normal-looking run. The INSERT is fixed now."),
+    [],
+  );
+  assert.deepEqual(findRemedyClaims("Running the migration is what BROKE it."), []);
+  assert.deepEqual(findRemedyClaims("Should I run the backfill to fix this?"), [], "a question asserts nothing");
+});
+
+test("rule 4 reads a claim split across lines, because that is how it was written", () => {
+  /* Same-line matching missed the real defect: the instruction and the promise
+     were four console.log lines apart. */
+  const split = "Re-run the sync.\nThat collects everything the checkpoint skipped.";
+  assert.equal(findRemedyClaims(split).length, 1);
+});
+
+test("rule 4 ignores fenced blocks — the evidence is not the claim", () => {
+  const withFence = ["```", "Run the pull in all mode; it collects the backlog", "```"].join("\n");
+  assert.deepEqual(findRemedyClaims(withFence), []);
+});
+
+test("rule 4 fails a body that prescribes a remedy with no sign it was run", () => {
+  const body = "`?mode=all` is the clean way to collect a backlog — just run it against production.";
+  const res = evaluate({ ...base, body, files: [] });
+  assert.equal(res.ok, false);
+  assert.equal(res.findings.filter((f) => f.level === "fail" && f.rule === "remedy-claim").length, 1);
+});
+
+test("rule 4 passes when the author pasted what they observed", () => {
+  const body = [
+    "`?mode=all` is the clean way to collect a backlog — just run it against production.",
+    "",
+    "Observed: dispatched 2026-08-19, 39s then HTTP 503 Worker exceeded resource limits.",
+  ].join("\n");
+  const res = evaluate({ ...base, body, files: [] });
+  assert.equal(res.findings.some((f) => f.level === "fail" && f.rule === "remedy-claim"), false);
+  assert.equal(res.findings.some((f) => f.level === "pass" && f.rule === "remedy-claim"), true);
+});
+
+test("an observation must show something LOOKED AT, not a restatement", () => {
+  assert.equal(findObservation("Observed: it works fine"), null, "no outcome token, and too short");
+  assert.equal(findObservation("Observed: <fill this in>"), null, "a placeholder is not evidence");
+  assert.ok(findObservation("Observed: returned 200 with 362 rows fetched"));
+  assert.ok(findObservation("Measured: took 39s then errored out"));
+});
+
+test("rule 4 escapes are on the record, never silent", () => {
+  const claim = "Just re-run the importer and it recovers the missing rows.";
+  const byLabel = evaluate({ ...base, body: claim, labels: ["remedy-untested"], files: [] });
+  assert.equal(byLabel.ok, true);
+  const esc = byLabel.findings.find((f) => f.level === "escape" && f.rule === "remedy-claim");
+  assert.ok(esc, "the label must produce an ESCAPE finding, not silence");
+  assert.match(esc.message, /re-run the importer/, "the waived claim is printed verbatim");
+
+  const inline = evaluate({ ...base, body: `${claim} (UNTESTED)`, files: [] });
+  assert.equal(inline.ok, true);
+  assert.ok(inline.findings.some((f) => f.level === "escape" && f.rule === "remedy-claim"));
+});
+
+test("rule 4 WARNS, never fails, on a guide or check script — and never on other files", () => {
+  /* Warn, for the same reason rule 2 warns on an unmapped guide: a gate that
+     fails on prose gets deleted. The claim still lands in the log, which is
+     what the module guide correction missed when it left the identical
+     sentence printing in the check script's own verdict. */
+  const guide = diff("docs/modules/system-health.md", [
+    "Run it in `all` mode and it collects the whole backlog.",
+  ]);
+  const res = evaluate({ ...base, files: parseUnifiedDiff(guide) });
+  assert.equal(res.ok, true, "a doc claim must not block");
+  assert.equal(res.findings.filter((f) => f.level === "warn" && f.rule === "remedy-claim").length, 1);
+
+  const script = diff("backend/scripts/check-autocount-pull-health.mjs", [
+    '  console.log("Run the pull in all mode; it collects the backlog.");',
+  ]);
+  assert.equal(
+    evaluate({ ...base, files: parseUnifiedDiff(script) })
+      .findings.filter((f) => f.level === "warn" && f.rule === "remedy-claim").length,
+    1,
+  );
+
+  /* Ordinary source is NOT scanned. Prose lives in guides and in the read-only
+     checks whose output is advice to a human; everywhere else this would be
+     noise on every PR. */
+  const src = diff("backend/src/services/pull.ts", [
+    "  // Run it in all mode and it collects the backlog.",
+  ]);
+  assert.equal(
+    evaluate({ ...base, files: parseUnifiedDiff(src) })
+      .findings.some((f) => f.rule === "remedy-claim" && f.level === "warn"),
+    false,
+  );
+});
+
+test("the PR template itself can never trip rule 4", () => {
+  /* The failure this prevents is not hypothetical in this file: the template's
+     own word "fix" once made detectFixIntent report EVERY pull request as a
+     fix. A prescriptive sentence in the template would do the same to rule 4,
+     and "every PR is red" is how a gate gets deleted. Read from the real file
+     on disk, so editing the template re-runs this check. */
+  const template = readFileSync(new URL("../../.github/pull_request_template.md", import.meta.url), "utf8");
+  assert.deepEqual(findRemedyClaims(template), [], "the template must contain no remedy claim");
+
+  const untouched = evaluate({
+    title: "chore: x",
+    branch: "chore/x",
+    body: template,
+    labels: [],
+    templateBody: template,
+    files: [],
+    guides,
+  });
+  assert.equal(untouched.findings.some((f) => f.rule === "remedy-claim" && f.level === "fail"), false);
 });

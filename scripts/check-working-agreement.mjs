@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * Gate: the three MANDATORY owner rules in CLAUDE.md, enforced on a pull request.
+ * Gate: the four MANDATORY owner rules in CLAUDE.md, enforced on a pull request.
  *
  *   1. A PR that reads as a FIX and changes code must add a BUG-HISTORY.md entry.
  *   2. A PR that changes a module SURFACE must update that module's guide.
  *   3. A PR that touches backend/src/db/migrations-pg must state, in its body,
  *      how the migration is REVERSED and what it was VERIFIED AGAINST.
+ *   4. A PR that says running something will FIX/RECOVER something must show
+ *      what happened when it was run, or mark the claim UNTESTED.
  *
  * Escapes are labels, and a label does not make the gate quiet: it prints the
  * violation it is waiving, at ESCAPE level, so the exception lands in the log
@@ -146,7 +148,7 @@ const say = (line) => {
 };
 
 say("");
-say("Working agreement gate — CLAUDE.md's three MANDATORY owner rules");
+say("Working agreement gate — CLAUDE.md's four MANDATORY owner rules");
 say(`  source           ${source}`);
 say(`  title            ${title}`);
 say(`  branch           ${branch || "(unknown)"}`);
@@ -157,7 +159,19 @@ say(`  surface changes  ${result.summary.surfaces.length} file(s)`);
 say(`  migrations-pg    ${result.summary.migrations} file(s)`);
 say("");
 
-for (const rule of ["bug-history", "module-guide", "migration-notes"]) {
+/* The order is fixed for readable output, but the list is NOT the source of
+   truth for what gets printed — anything the evaluator emitted under a rule
+   this file has not heard of is appended rather than dropped.
+
+   That is not defensive styling. Adding rule 4 to the evaluator while this
+   array still read ["bug-history", "module-guide", "migration-notes"] produced
+   a gate that counted "1 violation(s)", exited 1, and printed NOT ONE WORD
+   about what the violation was. CLAUDE.md calls this shape "the check that is
+   not running": a finding nobody renders is a finding nobody has. */
+const RULE_ORDER = ["bug-history", "module-guide", "migration-notes", "remedy-claim"];
+const seen = new Set(RULE_ORDER);
+const rules = [...RULE_ORDER, ...result.findings.map((f) => f.rule).filter((r) => !seen.has(r) && !seen.add(r))];
+for (const rule of rules) {
   for (const f of result.findings.filter((x) => x.rule === rule)) {
     say(`${ICON[f.level]} [${f.rule}] ${f.message}`);
     if (f.detail) say(`    ${f.detail}`);
