@@ -45,7 +45,7 @@ import {
   DEFAULT_DATA_GRID_LAYOUT,
   type DataGridLayout, isSharedDataGridStorageKey,
   materializeDataGridLayout,
-  readDataGridLayout,
+  useCompanyScopedDataGridLayout,
   writeDataGridLayout,
 } from './dataGridLayoutStorage';
 import { readDataGridFilters, writeDataGridFilters } from './dataGridFilterStorage';
@@ -395,27 +395,7 @@ function DataGridInner<T>({
   const sharedAcrossCompanies = isSharedDataGridStorageKey(storageKey);
   const scopedStorageKey = !sharedAcrossCompanies && activeCompany != null ? `${storageKey}::c${activeCompany}` : storageKey;
   const legacyStorageKey = activeCompany != null ? (sharedAcrossCompanies ? `${storageKey}::c${activeCompany}` : storageKey) : undefined;
-  const [storedLayout, setLayoutRaw] = useState<Layout>(() => readDataGridLayout(scopedStorageKey, legacyStorageKey));
-  /* RE-READ WHEN THE KEY MOVES, because it moves AFTER this state is seeded.
-     `useState`'s initialiser runs once, at mount, with whatever
-     `scopedStorageKey` was at first paint. The active company is not always
-     known then: `adoptActiveCompanyForUser` runs after /auth/me and, on a tab
-     with no `?company=` seed, flips it from null to the user's durable pick and
-     emits. So the grid READ `dg-<key>` (unscoped, usually empty) while every
-     later WRITE went to `dg-<key>::c<company>` — the saved layout was there the
-     whole time under a key nothing read back. Owner 2026-08-19: 'Delivery
-     Planning 一直会自动 reset layout', on the page where it shows most because
-     it lists both tenants.
-
-     Guarded by the key it was last read for, so this fires only when the key
-     genuinely changes (company resolving, or a switch) and never re-reads over
-     an edit the user just made under the same key. */
-  const layoutKeyRef = useRef(scopedStorageKey);
-  useEffect(() => {
-    if (layoutKeyRef.current === scopedStorageKey) return;
-    layoutKeyRef.current = scopedStorageKey;
-    setLayoutRaw(readDataGridLayout(scopedStorageKey, legacyStorageKey));
-  }, [scopedStorageKey, legacyStorageKey]);
+  const [storedLayout, setLayoutRaw] = useCompanyScopedDataGridLayout(scopedStorageKey, legacyStorageKey);
 
   /* ── Account-level layouts (lib/tableLayouts.ts) ──────────────────────────
      The same store the DataTable lists use, so this grid gets the same two
