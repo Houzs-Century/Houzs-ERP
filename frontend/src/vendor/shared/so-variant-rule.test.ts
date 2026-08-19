@@ -36,7 +36,7 @@ describe('missingConfirmVariantAxes', () => {
 
   it('KIV only excuses the fabric axis — other gaps still report', () => {
     expect(labels(missingConfirmVariantAxes('sofa', { fabricId: 'f-1', fabricLabel: 'EZ' }, null)))
-      .toEqual(['Seat Height']);
+      .toEqual(['Seat Size']);
   });
 
   it('the POS vocabulary satisfies the sofa axes (depth == seatHeight)', () => {

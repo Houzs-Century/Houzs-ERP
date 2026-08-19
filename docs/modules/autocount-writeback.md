@@ -2336,6 +2336,28 @@ umbrella `/api/scm/*` already applies, and it has to be, because this endpoint
 quotes what the licensed account book said about every document the company
 pushed. Same reasoning as `/hr`.
 
+> **2026-08-19 — three neighbours rejoined that list, and they have no user to
+> read an error.** `/pos-cart`, `/personal-quick-picks` and `/sales-analysis`
+> were removed from `SCM_UNGUARDED_PREFIXES` on 2026-08-18 (#2422) together with
+> their mounts, on the finding that no screen in this repo calls them. The
+> finding was right; the conclusion was not. Their screen is the **2990 POS**
+> (`pos.2990shome.com`, repo `wenwei4046/2990s`), which has built against this
+> API since the 2026-07-21 cutover — a repo-wide "find usages" here cannot see
+> it, because neither repo compiles against the other. Restored in #2459, and
+> each route file now opens with an `EXTERNAL CLIENT` banner naming that repo
+> and its call sites.
+>
+> **Why it matters to THIS guide:** an unguarded prefix has no L2 area key, so
+> `areaForPath` returns null and the freeze treats it as *stays frozen* — a
+> staged per-module lift can never name it. That is the intended behaviour and
+> is unchanged. But unlike the AutoCount page above, these three answer a
+> **tablet in a showroom** with no operator able to read a 503 and no way to ask
+> for an exception. If a company is frozen while its POS is live, that is the
+> surface that goes quiet first. Five other POS routers (`/pos-pools`,
+> `/delivery-fees`, `/fabric-tier-addon`, `/sofa-quick-picks`,
+> `/model-free-gifts`) were restored in the same PR but DO carry area guards
+> (`scm.procurement.products`), so those can be lifted per module.
+
 It answers the owner's question in his order: a one-line verdict, then the two
 filter strips (which carry the counts), then the list, with every row's reason on
 the row itself.

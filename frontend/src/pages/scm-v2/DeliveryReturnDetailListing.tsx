@@ -55,7 +55,7 @@ export const DeliveryReturnDetailListing = () => {
       filterType: 'date', dateValue: (r) => (r.return_date ?? r.line_date) as string | null,
     },
     {
-      key: 'debtor_code', label: 'Debtor Code', width: 110, sortable: true, groupable: true,
+      key: 'debtor_code', label: 'Customer', width: 110, sortable: true, groupable: true,
       accessor: (r) => r.debtor_code ?? '—',
       searchValue: (r) => r.debtor_code ?? '',
     },
