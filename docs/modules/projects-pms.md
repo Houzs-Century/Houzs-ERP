@@ -1,6 +1,6 @@
 > ## Corrections — 2026-08-12 code-read sweep
 >
-> 1. PIC_GRACE_DAYS is 30, not 4 (projectAcl.ts:90, widened 2026-07-31).
+> 1. ~~PIC_GRACE_DAYS is 30~~ — OBSOLETE 2026-08-19: the PIC/brand row-level ACL (`projectAcl.ts` [gone]), including the grace window, was removed. See Axis 2.
 > 2. isFinanceViewer admits projects.finance.view holders before the director test (pmsAccess.ts:335-344); financeHiddenForUser inherits that.
 > 3. stock_transfer.approve/agreement.approve are NOT dead: pmsAccess.ts:260-261 grants WF_SENSITIVE visibility; permissions.ts:216-232 EXPLICIT_APPROVAL_KEYS gate checklist tick/status/review (projects.ts:3815,:3845,:3878).
 > 4. The catalogue also carries stock_in.approve and projects.finance.view (permissions.ts:34-49).
@@ -257,17 +257,11 @@ here, and it is highly regular:**
 | Unguarded by middleware | — | small public lookups (`/states` `:858`, `/payment-statuses` `:859`, `/brands` `:204`, `/event-types` `:104`, `/finance/categories` `:1987`), the attachment stream `:3690`, and the **phase-photo** routes `:2427`, `:2472`, `:2507`, `:2539`, which carry an inline permission-OR-crew check instead |
 
 **`PATCH /:id/finance` resolves the project in the ACTIVE COMPANY for every
-caller (2026-08-14).** The `activeCompanySql` predicate used to sit inside the
-`isScopedProjectUser` branch, with a comment recording the rest as "deferred,
-tracked separately" — which meant that for the majority of `projects.write`
-holders (anyone not scope-to-PIC) no company predicate was evaluated anywhere on
-the path, and `patchFinance`'s `UPDATE project_finance … WHERE project_id = ?`
-reached the other company. `patchFinance` also CREATES the row when it is
-missing, so a cross-company id with no snapshot got one written rather than
-falling through to "No changes", and `recomputeAutoCostLines` then ran on it.
-The project is now loaded scoped first, for everyone, and the PIC rule is applied
-to the row that load returned; out of company answers `404 Not found`, the same
-as a nonexistent id.
+caller (2026-08-14).** The project is loaded with the `activeCompanySql`
+predicate first, so a cross-company id answers `404 Not found` before
+`patchFinance` (which CREATES the snapshot row when missing) can run. The former
+PIC gate on this write was removed 2026-08-19 (Axis 2); company scope + the
+`projects.write` / finance gates remain.
 
 **The P&L drill-down applies the same filters as its total (2026-08-14).**
 `backend/src/routes/finance.ts` builds one `FROM … WHERE` fragment per source
@@ -399,9 +393,10 @@ is a read gated by a ROLE permission (`projects.read`), and `POST /:id/read` is 
 write gated by a page-access level. See §5.
 
 Related routes elsewhere:
-- `backend/src/routes/projects_print.ts:124` `GET /:id` — **no middleware gate**;
-  the ACL is inline at `:146` (`canSeeProject` OR attendee). The comment at
-  `:133-137` records that this path previously bypassed the ACL entirely.
+- `backend/src/routes/projects_print.ts` `GET /:id` — **no middleware gate**;
+  the row-level gate is the company-scoped `getProjectDetail` load (a
+  cross-company id prints "Not found"). The former `canSeeProject` PIC/brand
+  gate was removed 2026-08-19 (Axis 2).
 - `backend/src/routes/finance.ts:220`, `:390` — `GET /api/finance/pnl` and
   `/pnl/bucket`, gated on `projects.read`. `finance.ts:10` flags that
   `projects.read` alone gates a route that reads `project_finance_lines` cost.
@@ -411,10 +406,11 @@ Related routes elsewhere:
   `archived_at IS NULL`: archiving a project does NOT archive its finance lines, so
   without the join a removed project reports forever (RM 6.29M of RM 69.25M when
   measured 2026-07-29, PR #1401).
-- `backend/src/routes/notifications.ts:56` `GET /` — **no permission gate at
-  all**, deliberately (`:45-55`: a Sales user who lacks the `projects.read`
-  matrix permission still needs a bell). Scoped by `getProjectScope` at `:63`
-  with an early empty return at `:64-71`.
+- `backend/src/routes/notifications.ts` `GET /` — **no permission gate at
+  all**, deliberately (a Sales user who lacks the `projects.read` matrix
+  permission still needs a bell). Scoped by COMPANY only
+  (`allowedCompanyIds`); the former `getProjectScope` PIC/brand filter was
+  removed 2026-08-19 (Axis 2).
 - `backend/src/routes/events.ts` — **deleted on main** (`45d73689`: no frontend,
   ungrantable permissions, PMS covers it). It was the manual setup/dismantle
   calendar gated on `trips.read.all` / `trips.manage`, and was never the PMS
@@ -427,11 +423,11 @@ Related routes elsewhere:
 
 ### The list handler
 
-`backend/src/routes/projects.ts:722` → `listProjects` in
-`backend/src/services/projects.ts`. It resolves `getProjectScope(user)` (`:727`),
-maps ~25 query params, and passes the scope down as `pic_scope` / `brand_scope` /
-`attendee_user_id` (`:820-823`). `per_page` defaults to 50, capped at 200
-(`services/projects.ts:1628`).
+`backend/src/routes/projects.ts` `GET /` → `listProjects` in
+`backend/src/services/projects.ts`. It maps ~25 query params and passes
+`company_id` (active company) + crew `assigned_user_id` down. The former
+`pic_scope` / `brand_scope` / `attendee_user_id` ACL params were removed
+2026-08-19 (see Axis 2). `per_page` defaults to 50, capped at 200.
 
 Two things happen here that are easy to miss:
 
@@ -538,34 +534,25 @@ helper still matches the `assigned_to_me` / calendar `setup_crew` name arm.
 
 ### The calendar handler
 
-`:3756`. `seeAll` is the whole rule (`:3795-3798`):
+Since the PIC/brand ACL removal (2026-08-19) the rule is simply:
 
 ```
-const seeAll =
-  !!user && !crewScoped &&
-  (isAdmin || getPmsRole(user, { pic_id: null }) === "DIRECTOR" || scope === null);
+const seeAll = !!user && !crewScoped;
 ```
 
-- `isAdmin` = holds `*`.
-- **DIRECTOR** sees the whole calendar — owner ruling 2026-07-05, reusing the PMS
-  role classification so it stays position-driven rather than a hardcoded string
-  here (`:3779-3784`).
-- `scope === null` (an unscoped non-admin: logistics, ops, purchasing) also sees
-  everything — owner ruling 2026-07-06, restoring behaviour that the
-  2026-07-05 assignment-scoping had removed (`:3785-3790`).
+- Every authenticated **non-crew** caller sees the whole company calendar
+  (the SQL still carries the active-company predicate `activeCompanySql(c,
+  "p.company_id")`).
 - `crewScoped` (helpers, storekeepers, storekeeper supervisors — **and drivers**,
   owner 2026-07-23, on THIS route only: `crewScoped = isCrewScopedUser(user) ||
-  isScopedDriver`, `:4880-4886`) **drops out of the see-all lane** and gets
-  a crew-assignment arm instead — owner ruling 2026-07-21 (`:3791-3793`).
+  isScopedDriver`) **drops out of the see-all lane** and gets a crew-assignment
+  arm instead — owner ruling 2026-07-21.
 
-Non-see-all callers get OR'd arms: crew (6 FK columns plus a
-`setup_crew`/`dismantle_crew` JSON name match, `:3805-3817`), scoped PIC + brand
-(`:3822-3828`), unscoped-non-admin PIC-self (`:3832`), and the attendee arm
-(`project_sales_attendees → sales_reps.user_id`, `:3836-3841`). With no arms it
-fails closed on ` AND 1 = 0` (`:3849`).
-
-> Divergence worth knowing: the **calendar's scoped arm has no grace-window
-> predicate**, while the list's does. See `PIC_GRACE_DAYS` below.
+Crew-scoped callers get OR'd arms: the crew arm (6 FK columns plus a
+`setup_crew`/`dismantle_crew` JSON name match) and the attendee arm
+(`project_sales_attendees → sales_reps.user_id`). With no arms it fails closed
+on ` AND 1 = 0`. The former scoped-PIC+brand arm and unscoped PIC-self arm were
+removed with the ACL.
 
 ---
 
@@ -617,37 +604,43 @@ only by `requirePageAccess("projects.list")`. So
 `projects.list = edit` lets you read, and nothing more. (There is no permission
 key spelled `projects:edit`; the colon form is a page-access *level*, not a key.)
 
-### Axis 2 — row visibility: org fields + a role flag + brands, NOT the matrix
+### Axis 2 — row visibility: COMPANY only (PIC/brand ACL removed 2026-08-19)
 
-`backend/src/services/projectAcl.ts` is the single source, and every read-ACL
-below keys off the same predicate.
+**REMOVED — owner decision 2026-08-19.** There used to be a two-dimensional
+row-level ACL here (PIC one-hop + brand allow-list + a 30-day grace window),
+implemented in `services/projectAcl.ts` [gone] (`getProjectScope` /
+`canSeeProject` / `projectAccessLevel` / `isScopedProjectUser` /
+`scopeNotExpiredSql`). It scoped a Sales rep to projects where they (or their
+manager) were the PIC AND whose brand sat in their `user_brands` list.
 
-`isScopedProjectUser(user)` (`:30-34`) — two ways to be scoped:
-1. the role carries `scope_to_pic`;
-2. `isSalesUser(user) && !isDirectorUser(user)` — added 2026-07-15 because some
-   Sales positions have roles *without* `scope_to_pic`, so `getProjectScope`
-   returned `null` and the list applied no ACL at all, **fail-OPENing a non-PIC,
-   non-director rep to every project** (`:21-28`).
+That whole file and every predicate that keyed off it are **gone**
+(`backend/src/services/projectAcl.ts` [gone]). Within a company, **any user
+with the projects page permission now sees EVERY one of that company's
+projects**, regardless of PIC or brand. Row visibility is governed only by:
 
-`getProjectScope(user)` (`:56-63`) returns `{ pic_ids, brands }` or `null`.
-`null` means **unfiltered** — admins, ops and finance run unscoped queries
-(`:49-51`). `pic_ids` is `[user.id, user.manager_id]` (the one-hop PIC rule);
-`brands` is `user.brand_scope`, the union of the user's own and their manager's
-`user_brands` rows (`services/auth.ts:280-298`).
+1. **the projects page-access gate** (Axis 1 — `requirePageAccess`), and
+2. **company scope** — the `company_id` / `activeCompanySql` predicate every
+   project read carries. This widened visibility WITHIN a company; it did not
+   touch the company boundary (a 2990 user still cannot see a HOUZS project).
 
-`canSeeProject` (`:122-146`) is the hard gate, and it fails closed five ways:
-outside the grace window (`:133`), null effective PIC (`:135`), PIC outside the
-one-hop line (`:137`), **empty brand list** (`:143`), **project with no brand**
-(`:144`). The last two are deliberate: a scoped user whose department has no
-brands sees nothing, which forces admins to configure department brands
-explicitly.
+The write side moved with it: the create/patch PIC restriction, the
+`canPicProjectBrand` brand-on-PIC gate, and the `PATCH /:id/finance` PIC gate
+were all removed. A `projects.write` holder may now edit any project in their
+active company; the company predicate + the `projects.write` / `projects.finances`
+gates remain.
 
-`PIC_GRACE_DAYS = 30` (`projectAcl.ts:80`) — widened from 4 on 2026-07-31 ("karjiun cannot see project"): the defect-upload and purchaser loop run well past four days, and the PIC must stay on the event while they do. A scoped PIC keeps a project until 30 days after it
-ends, then it drops out of their list and detail. The predicate is
-`scopeNotExpiredSql` (`:91`); unscoped roles are unaffected.
+`AuthUser.brand_scope` is now always `null` (vestigial — the signed-session
+claims contract in `session-pass.ts` was left unchanged rather than reshaped in
+the same change). **Crew scoping is a SEPARATE axis and is unaffected:**
+helpers / storekeepers / drivers still see only the events they are crewed on
+(`isCrewScopedUser`).
 
-`effectivePicId` (`:78-81`) falls back to `created_by`, so projects created
-before migration 039 stay visible to their creator's team without a backfill.
+> `user_brands` and `GET/PUT /api/users/:id/brands` were **kept** — they still
+> feed the DIRECTOR approval-lane brand split (`approverBrandBlocked` in
+> `services/projectGates.ts`, owner 2026-08-10), which is a different axis from
+> project visibility. Note the per-user brand-assignment UI (`UserBrandsPanel`
+> in `frontend/src/pages/Team.tsx`) was removed, so those approval-split brands
+> no longer have an edit surface; existing rows persist.
 
 ### Axis 3 — write authority: the ROLE permission matrix
 
@@ -937,25 +930,26 @@ indexes only.
 
 ## 8. Who can see / do what — summary
 
+Since 2026-08-19 (PIC/brand ACL removed) the top three rows collapse: any
+non-crew user with projects page access sees the whole company set.
+
 | Actor | Projects list & detail | Calendar | Finances | Writes |
 |---|---|---|---|---|
 | `*` (owner / IT) | everything | whole calendar | yes | everything |
-| DIRECTOR positions (`Super Admin`, `Sales Director`, `Finance Manager`) | **every** project's full detail (`projectAcl.ts:5-11`) | whole calendar (`projects.ts:3779-3784`) | yes, if `projects.finances` level allows | per their role permissions |
-| Unscoped non-admin staff (logistics, ops, purchasing) | unfiltered | whole calendar (`:3785-3790`) | per page level | per role |
-| Scoped Sales rep | PIC one-hop **AND** department brand **AND** within `PIC_GRACE_DAYS` of the end date, OR on the Sales Attending list | their assigned venues/projects only — **no grace predicate here** | money columns are blanked server-side (`projects.ts:845-853`) | per role |
-| Crew (Helper, Storekeeper, Storekeeper Supervisor) | forced to `assigned_to_me` (`CREW_SCOPED_POSITIONS`, `:3720`) | only events they are crewed on (`:3791-3793`) | `projects.finances: none` | phase photos on their assigned phase; checklist ticks |
-| Driver | **not** forced on the LIST — drivers are crew-scoped on the CALENDAR only (`:4880-4886`) | only events they are crewed on, calendar | `projects.finances: none` | phase photos on their assigned phase; checklist ticks |
-| Anyone holding `projects.write` | escapes crew scoping entirely (`:2820`) | | | |
+| Any non-crew user with `projects.list` | **all projects in their active company** (no PIC/brand filter) | whole company calendar | per page level | per role |
+| Crew (Helper, Storekeeper, Storekeeper Supervisor) | forced to `assigned_to_me` (`CREW_SCOPED_POSITIONS`) | only events they are crewed on | `projects.finances: none` | phase photos on their assigned phase; checklist ticks |
+| Driver | **not** forced on the LIST — drivers are crew-scoped on the CALENDAR only | only events they are crewed on, calendar | `projects.finances: none` | phase photos on their assigned phase; checklist ticks |
+| Anyone holding `projects.write` | escapes crew scoping entirely | | | |
 
 Enforcement points, in one place:
 
 - **Page entry** — `requirePageAccess(...)` on every read route
-  (`middleware/auth.ts:414-437`), resolved from POSITION by
-  `services/positionPolicy.ts` via `services/auth.ts:328-344`. Frontend mirror:
-  `PageGuard` (`frontend/src/auth/PageGuard.tsx:35-75`).
-- **Row visibility** — `services/projectAcl.ts`: `getProjectScope` (list,
-  calendar, notifications), `canSeeProject` (detail, print),
-  `projectAccessLevel` (render tier).
+  (`middleware/auth.ts`), resolved from POSITION by
+  `services/positionPolicy.ts` via `services/auth.ts`. Frontend mirror:
+  `PageGuard` (`frontend/src/auth/PageGuard.tsx`).
+- **Row visibility** — COMPANY scope only (`company_id` / `activeCompanySql`).
+  The former PIC/brand ACL (`services/projectAcl.ts` [gone]) was removed
+  2026-08-19 — see Axis 2.
 - **Within-project sections** — `services/pmsAccess.ts` `getPmsAccess`.
 - **Writes** — `requirePermission` / `requireAnyPermission` against
   `roles.permissions`.
