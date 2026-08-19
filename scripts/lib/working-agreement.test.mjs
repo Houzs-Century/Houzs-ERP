@@ -485,3 +485,69 @@ test("renderOrder appends a rule the list has not heard of", () => {
   );
   for (const r of emitted) assert.ok(RULE_ORDER.includes(r), `${r} is missing from RULE_ORDER`);
 });
+
+// --------------------------------------------------------------------------
+// Rule 4, Chinese — the owner writes in Chinese
+// --------------------------------------------------------------------------
+
+test("rule 4 reads a remedy claim written in Chinese", () => {
+  /* Measured before this was written: the English-only detector missed ALL
+     FIVE of these, which is the half of this repo's PR bodies most likely to
+     carry an unproved promise. They are the owner's own phrasings. */
+  for (const claim of [
+    "跑这个就能补回来",
+    "重跑一次 sync 就会好了",
+    "执行 mode=all 就可以把历史补齐",
+    "dispatch 一次这个 workflow 就能修复",
+    "跑 all 模式是补历史的干净做法",
+  ]) {
+    assert.equal(findRemedyClaims(claim).length, 1, `must detect: ${claim}`);
+  }
+});
+
+test("Chinese narration and denial stay silent", () => {
+  for (const quiet of [
+    "跑了 all 模式，但是补不回来",      // denies the remedy
+    "这个 job 一直在跑，但一笔都没有搬", // narration; 跑 is not a prescription
+    "跑这个能不能补回来？",              // a question asserts nothing
+    "我们跑了很多测试",                  // no promise at all
+    "这个 bug 已经修好了",               // reports a past fix, prescribes nothing
+    "不要跑 all 模式，它修不好",          // tells you NOT to
+  ]) {
+    assert.deepEqual(findRemedyClaims(quiet), [], `must stay silent: ${quiet}`);
+  }
+});
+
+test("a single common Chinese character cannot carry a match", () => {
+  /* Chinese has no word boundaries, so `\b` does nothing and a bare 跑 or 好
+     would fire on ordinary prose. Every pattern is a multi-character phrase;
+     the one exception is 跑 + a LATIN token ("跑 all 模式"), which names a
+     command and cannot collide with 跑了 / 跑步 because those continue in CJK. */
+  assert.deepEqual(findRemedyClaims("他跑步的时候想到一个好办法"), []);
+  assert.deepEqual(findRemedyClaims("好像是这样，我们再看看"), []);
+});
+
+test("mixed English and Chinese in one sentence is still one claim", () => {
+  const mixed = "Re-run the sync — 就能把历史补齐。";
+  assert.equal(findRemedyClaims(mixed).length, 1);
+  assert.equal(findRemedyClaims(`${mixed} (UNTESTED)`)[0].untested, true, "UNTESTED still applies");
+});
+
+test("the Chinese patterns add NO noise to the existing corpus", () => {
+  /* The isolation measurement, kept as a test so a later pattern edit cannot
+     quietly make the gate chatty. BUG-HISTORY.md scored 12 before the Chinese
+     support was added and 12 after — every hit is pre-existing ENGLISH prose,
+     and BUG-HISTORY is not in the prescriptive scan set anyway. What matters is
+     that the number did not move. */
+  const bugHistory = readFileSync(new URL("../../BUG-HISTORY.md", import.meta.url), "utf8");
+  const chineseChars = (bugHistory.match(/[一-鿿]/g) || []).length;
+  assert.ok(chineseChars > 1000, `expected substantial Chinese prose, saw ${chineseChars} chars`);
+
+  const claims = findRemedyClaims(bugHistory);
+  const chineseTriggered = claims.filter((c) => /[一-鿿]/.test(c.text));
+  assert.deepEqual(
+    chineseTriggered.map((c) => `${c.line}: ${c.text.slice(0, 60)}`),
+    [],
+    "no claim in BUG-HISTORY.md may be triggered by its Chinese passages",
+  );
+});
