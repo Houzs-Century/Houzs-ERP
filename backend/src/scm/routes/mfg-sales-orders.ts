@@ -887,7 +887,7 @@ function extractSofaComboLookupArgs(
    the detail SELECT (see slip_image_key/receipt_image_key at the
    `/:docNo` handler), NOT here. 2990 hit this 2026-06-26 (their mig 0200). */
 const HEADER =
-  'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, po_doc_no, venue, venue_id, ' +
+  'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, venue, venue_id, ' +
   'address1, address2, address3, address4, phone, ' +
   'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, service_sen, local_total_sen, balance_sen, ' +
   /* Task #114 — per-category cost columns (migration 0079). Mirrors the
@@ -897,7 +897,7 @@ const HEADER =
   'total_cost_sen, total_revenue_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   'currency, status, remark2, remark3, remark4, note, sales_exemption_expiry, ' +
   /* PR #35 + #46 — extended PO + POS handover fields */
-  'customer_id, customer_po, customer_po_id, customer_po_date, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
+  'customer_id, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
   /* Task #121 — customer_country snapshot auto-derived from customer_state
      via my_localities lookup on POST/PATCH (migration 0082). */
   'customer_state, customer_country, customer_delivery_date, processing_date, linked_do_doc_no, ' +
@@ -4990,7 +4990,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     agent: agentToStamp,
     sales_location: derivedSalesLocation ?? null,
     ref: (body.ref as string) ?? null,
-    po_doc_no: (body.poDocNo as string) ?? null,
     /* SO-SKU spec P5 — the resolved venue NAME (explicit body.venue wins,
        else looked up from the stamped venue_id) so the column finally lights. */
     venue: resolvedVenueName,
@@ -5113,7 +5112,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     amend_reason: (body.amendReason as string) ?? null,
     // PR #121 — POS-aligned Order Details fields
     customer_so_no: (body.customerSoNo as string) ?? null,
-    customer_po: (body.customerPo as string) ?? null,
     hub_id: (body.hubId as string) ?? null,
     hub_name: (body.hubName as string) ?? null,
     /* P1 (Owner 2026-06-03) — billing address from the POS handover, sent only
@@ -5527,7 +5525,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   captureIfSet('depositSen', body.depositSen);
   captureIfSet('processingDate', body.processingDate);
   captureIfSet('customerSoNo', body.customerSoNo);
-  captureIfSet('customerPo', body.customerPo);
   await recordSoAudit(sb, {
     docNo,
     action: 'CREATE',
@@ -6600,7 +6597,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
 
   const map: Array<[string, string]> = [
     ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
-    ['salesLocation', 'sales_location'], ['ref', 'ref'], ['poDocNo', 'po_doc_no'],
+    ['salesLocation', 'sales_location'], ['ref', 'ref'],
     ['venue', 'venue'], ['venueId', 'venue_id'], ['branding', 'branding'], ['transferTo', 'transfer_to'],
     ['address1', 'address1'], ['address2', 'address2'], ['address3', 'address3'],
     ['address4', 'address4'], ['phone', 'phone'], ['note', 'note'],
@@ -6608,8 +6605,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['soDate', 'so_date'], ['currency', 'currency'],
     // PR #35 — new header fields
     ['customerId', 'customer_id'], ['customerState', 'customer_state'],
-    ['customerPo', 'customer_po'], ['customerPoId', 'customer_po_id'],
-    ['customerPoDate', 'customer_po_date'], ['customerPoImageB64', 'customer_po_image_b64'],
+    ['customerPoImageB64', 'customer_po_image_b64'],
     // PR #121 — customer's own SO number (their ERP ref)
     ['customerSoNo', 'customer_so_no'],
     ['hubId', 'hub_id'], ['hubName', 'hub_name'],
