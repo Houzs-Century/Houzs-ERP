@@ -357,18 +357,30 @@ need a delimiter setting; layer 3 does not, so it is noted, not built.
 | Cash deposits | `CDM CASH DEPOSIT` | — |
 | Own-bank transfers | `MBB TO HLBB BANK`, ref `MPV-…` | — |
 
-Two of these need the owner's answer before layer 4:
+Both of these were open questions before layer 4. **The owner answered them on
+2026-08-19**, and both answers make the design SMALLER than the questions
+assumed — neither needs a new fee shape:
 
-- **MBB debit card does not net its fee.** RM 875.00 arrives as a credit and
-  RM 3.94 leaves as a separate `BCHARGE` debit on the same reference. An
-  acquirer whose fee is charged separately rather than deducted is a fourth fee
-  shape, and the current `fee_method` list has no name for it. Whether Maybank's
-  own merchant statement presents it netted is unknown until that file arrives.
-- **AEON CREDIT SERVICE is a money stream nobody has mentioned.** Instalment
-  financing paying in by book transfer, dozens of credits in two weeks. Does the
-  ERP record those sales as payments at all? If it does, they need reconciling
-  like any acquirer; if it does not, that money reaches the bank with nothing
-  behind it in the books.
+- **MBB's split credit is the BANK's presentation, not a different acquirer.**
+  Owner: 据我所知 mbb merchant 偶尔会在 bank statement 显示进全额然后扣. So it is
+  the same merchant on the same `fee_method`; Maybank simply pays some batches
+  as one net credit and others as a gross credit with the fee taken back as its
+  own debit. The merchant statement stays the authority on gross and fee, and
+  the bank ends up the same either way — RM 875.00 − RM 3.94 is the RM 871.06
+  that a single net credit would have carried.
+
+  → **What layer 4 must do about it:** group bank lines that share a reference
+  before matching a payout, and match the GROUP's net. In the real file the two
+  legs share `D90200808` exactly, which is what makes the grouping safe. A
+  matcher that looked at lines one at a time would see RM 875.00 arrive against
+  a batch expecting RM 871.06 and refuse a payout that is perfectly correct.
+
+- **AEON pays net, like any other acquirer.** Owner: AEON 的他不理顾客是不是分
+  期，他会进扣了手续费的钱给我. The instalment arrangement is between AEON and the
+  customer and never reaches these books; what reaches them is a card payment
+  recorded at the till against acquirer AEON, then a book transfer of the net.
+  So the 28 credits totalling RM 282,836.52 are ordinary acquirer payouts and
+  need no separate treatment — only the recognition rule below.
 
 **The loop closes on real money.** The PBB settlement file for 2990 HOME lists 4
 card transactions on 17/06 netting **RM 11,814.44**; the Hong Leong account

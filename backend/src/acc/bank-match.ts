@@ -1,0 +1,303 @@
+// ----------------------------------------------------------------------------
+// acc/bank-match — deciding what a line on the BANK statement is.
+//
+// Layer 4, phase 4. The bank prints one flat list; this turns it into answers:
+// which lines are an acquirer paying out a statement we have already
+// reconciled, which acquirer, which trading day, and which of our batches it
+// settles. Everything else is handed on untouched — a bank statement is full of
+// money that has nothing to do with cards.
+//
+// Two things here are load-bearing and neither is obvious.
+//
+// ── 1. A payout can arrive as TWO lines, and only one shape of pair is safe
+//       to join. ──
+// Owner, 2026-08-19: 据我所知 mbb merchant 偶尔会在 bank statement 显示进全额然后
+// 扣. In the real Maybank export that is:
+//     2026-08-09  +875.00  DR/CARD SALES M/N 2259020 …   ref D90200808
+//     2026-08-09    -3.94  DR/CARD SALES M/N 2259020 …   ref D90200808
+// One payout of RM 871.06, written as a credit and its charge.
+//
+// The tempting rule — "join lines sharing a reference" — is WRONG, and the same
+// file proves it: three separate AEON payouts of RM 3,262.46, RM 6,619.48 and
+// RM 10,114.61 all carry `MA458030163361` on 2026-08-03, and half the retail
+// credits use the literal reference "Fund Transfer". Joining those would invent
+// a RM 19,996.55 payout that never happened.
+//
+// So the rule is narrow on purpose: a group is ONE credit and the DEBITS that
+// share its reference and its date. Two credits are never joined, whatever they
+// share. That is exactly the gross-and-fee shape and nothing else.
+//
+// ── 2. Which acquirer a line belongs to is CONFIG, not code. ──
+// The brief is explicit that every acquirer's "how do I recognise this money on
+// the bank statement" rule must exist the moment the acquirer does — 系统3 had
+// four acquirers and two rules, so two acquirers' money read as 永远收不到
+// forever. The rules live in a table; this file only applies them. The real
+// shapes they encode are recorded in docs/acquirer-statement-formats.md:
+//
+//   MBB   CR/CARD SALES MN <merchant> DATED <DDMMYYYY>   (net credited)
+//         DR/CARD SALES M/N <merchant> DATED <DDMMYYYY>  (gross, fee separate)
+//   PBB   03999061714  PBB-PBCS AC 3
+//   AEON  Book Transfer Third AEON CREDIT SERVICE
+//   HLB   blank sender, CA Credit Advice, ref …MERCHANT <YYYYMMDD>
+// ----------------------------------------------------------------------------
+
+import type { BankLine } from './bank-parse';
+import { toIsoDate } from './settlement-parse';
+
+/* ── What the bank actually moved ─────────────────────────────────────────── */
+
+export type BankMovement = {
+  /** The line(s) it is made of: one, or a credit and the charge(s) taken back
+      against it. Kept, because a reconciliation has to be able to point at the
+      rows on the statement the operator is holding. */
+  lines: BankLine[];
+  bookedOn: string;
+  description: string;
+  reference: string | null;
+  /** The NET of its lines — what the account moved by. Positive is money in. */
+  amountSen: number;
+  /** What was taken back out of a credit, when the bank split it. 0 otherwise,
+      so "was this split?" is a number nobody has to infer from the line count. */
+  chargeSen: number;
+};
+
+/**
+ * Join a credit with the charge(s) the bank took back against it.
+ *
+ * Only that shape. See the header: two credits sharing a reference are two
+ * payouts, and the real file contains both traps.
+ */
+export function groupBankMovements(lines: BankLine[]): BankMovement[] {
+  const single = (l: BankLine): BankMovement => ({
+    lines: [l], bookedOn: l.bookedOn, description: l.description,
+    reference: l.reference, amountSen: l.amountSen, chargeSen: 0,
+  });
+
+  /* Index by reference+date, but only where there IS a reference — a blank one
+     is not a thing two lines can have in common. */
+  const buckets = new Map<string, BankLine[]>();
+  for (const l of lines) {
+    if (!l.reference) continue;
+    const key = `${l.reference}|${l.bookedOn}`;
+    const at = buckets.get(key);
+    if (at) at.push(l); else buckets.set(key, [l]);
+  }
+
+  const joined = new Set<BankLine>();
+  const out: BankMovement[] = [];
+  for (const group of buckets.values()) {
+    const credits = group.filter((l) => l.amountSen > 0);
+    const debits = group.filter((l) => l.amountSen < 0);
+    /* Exactly one credit, at least one debit. Two credits could not be told
+       apart — which charge belongs to which? — so they are left alone and each
+       stands as its own movement. */
+    if (credits.length !== 1 || debits.length === 0) continue;
+    const credit = credits[0]!;
+    const chargeSen = debits.reduce((s, d) => s + -d.amountSen, 0);
+    /* A "charge" bigger than the credit is not a charge; something else is
+       going on and a human should look at it, not this function. */
+    if (chargeSen >= credit.amountSen) continue;
+    for (const l of group) joined.add(l);
+    out.push({
+      lines: [credit, ...debits],
+      bookedOn: credit.bookedOn,
+      description: credit.description,
+      reference: credit.reference,
+      amountSen: credit.amountSen - chargeSen,
+      chargeSen,
+    });
+  }
+
+  for (const l of lines) if (!joined.has(l)) out.push(single(l));
+  /* Statement order, so the screen reads down the page the operator is holding. */
+  return out.sort((a, b) => (a.lines[0]!.lineNo - b.lines[0]!.lineNo));
+}
+
+/* ── Which acquirer, from config ──────────────────────────────────────────── */
+
+export type BankRecognitionRule = {
+  acquirerCode: string;
+  /** Regex source. From the config table — never a literal in this file. */
+  pattern: string;
+  /** Where to look. Default searches the description and the reference. */
+  field?: 'description' | 'reference' | 'both' | null;
+  /** Regex whose FIRST capture group is the trading day being settled, e.g.
+      `DATED\s*(\d{8})` for Maybank or `MERCHANT\s+(\d{8})` for Hong Leong.
+      The trading day, not the payout day: they differ by design. */
+  tradingDatePattern?: string | null;
+  /** Regex whose first capture group is the merchant/terminal number. */
+  merchantPattern?: string | null;
+};
+
+export type Recognised = {
+  acquirerCode: string;
+  /** YYYY-MM-DD, or null when the rule does not carry one. */
+  tradingDate: string | null;
+  merchantNo: string | null;
+};
+
+/** A rule with a broken regex must name ITSELF, not throw somewhere downstream
+    with a stack trace the operator cannot act on (§2.14). */
+const compile = (src: string, who: string): RegExp => {
+  try {
+    return new RegExp(src, 'i');
+  } catch {
+    throw new Error(`The bank recognition rule for ${who} is not a valid pattern: ${src}`);
+  }
+};
+
+export function recogniseAcquirer(
+  rules: BankRecognitionRule[],
+  movement: { description: string; reference: string | null },
+): Recognised | null {
+  for (const rule of rules) {
+    const where = rule.field ?? 'both';
+    const hay = where === 'description' ? movement.description
+      : where === 'reference' ? (movement.reference ?? '')
+        : `${movement.description} ${movement.reference ?? ''}`;
+    if (!compile(rule.pattern, rule.acquirerCode).test(hay)) continue;
+
+    let tradingDate: string | null = null;
+    if (rule.tradingDatePattern) {
+      const m = compile(rule.tradingDatePattern, rule.acquirerCode).exec(hay);
+      /* toIsoDate already tells 17062026 from 20260617 by asking whether the
+         leading four digits can be a year — the same reader the acquirer side
+         uses, so the two sides can never disagree about a date. */
+      if (m?.[1]) tradingDate = toIsoDate(m[1]);
+    }
+    let merchantNo: string | null = null;
+    if (rule.merchantPattern) {
+      const m = compile(rule.merchantPattern, rule.acquirerCode).exec(hay);
+      if (m?.[1]) merchantNo = m[1];
+    }
+    return { acquirerCode: rule.acquirerCode, tradingDate, merchantNo };
+  }
+  return null;
+}
+
+/* ── Which of our statements it settles ───────────────────────────────────── */
+
+/** A reconciled merchant statement, waiting for its money. */
+export type PayableBatch = {
+  id: number;
+  acquirerCode: string;
+  fileName?: string;
+  periodFrom: string;
+  periodTo: string;
+  /** What the statement should pay in total. */
+  payableSen: number;
+  /** What is still to come — a statement can be paid in several credits. */
+  outstandingSen: number;
+};
+
+export type BankMatchKind =
+  /** One statement, exactly this amount. A button. */
+  | 'PAYOUT'
+  /** Recognised as a payout, but which statement is a judgement. */
+  | 'PAYOUT_UNSURE'
+  /** Recognised as a payout, and no reconciled statement expects it. */
+  | 'PAYOUT_NO_BATCH'
+  /** Not an acquirer's money at all — a supplier, a salary, a deposit. */
+  | 'OTHER';
+
+export type BankDecision = {
+  movement: BankMovement;
+  kind: BankMatchKind;
+  acquirerCode: string | null;
+  tradingDate: string | null;
+  merchantNo: string | null;
+  /** Set only for PAYOUT: the one statement this settles. */
+  batchId: number | null;
+  /** What a person would have to choose between. */
+  candidates: PayableBatch[];
+  /** One sentence saying why, in the operator's terms. Never a stack trace. */
+  clue: string | null;
+};
+
+const rm = (sen: number) =>
+  `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const covers = (b: PayableBatch, day: string) => day >= b.periodFrom && day <= b.periodTo;
+
+/**
+ * Decide every movement.
+ *
+ * The order of the tests is the point: a statement is claimed only when ONE
+ * candidate can be, and every other outcome says what a person has to look at
+ * rather than picking the nearest number. Money is not matched by proximity.
+ */
+export function matchBankMovements(input: {
+  movements: BankMovement[];
+  rules: BankRecognitionRule[];
+  batches: PayableBatch[];
+}): BankDecision[] {
+  const { movements, rules, batches } = input;
+
+  return movements.map((movement): BankDecision => {
+    const base = {
+      movement, batchId: null, candidates: [] as PayableBatch[],
+      acquirerCode: null, tradingDate: null, merchantNo: null, clue: null,
+    };
+
+    /* Money going OUT is never an acquirer paying us. Said here rather than
+       relied upon: an acquirer's own charge line reads exactly like its payout
+       to a pattern, and only the sign tells them apart. */
+    if (movement.amountSen <= 0) return { ...base, kind: 'OTHER' };
+
+    const seen = recogniseAcquirer(rules, movement);
+    if (!seen) return { ...base, kind: 'OTHER' };
+
+    const mine = batches.filter((b) => b.acquirerCode === seen.acquirerCode && b.outstandingSen !== 0);
+    const named = { ...base, acquirerCode: seen.acquirerCode, tradingDate: seen.tradingDate, merchantNo: seen.merchantNo };
+
+    if (mine.length === 0) {
+      return {
+        ...named, kind: 'PAYOUT_NO_BATCH', candidates: [],
+        clue: `${seen.acquirerCode} paid ${rm(movement.amountSen)}`
+          + (seen.tradingDate ? ` for ${seen.tradingDate}` : '')
+          + ', and no reconciled report of theirs is waiting for money. Reconcile the merchant report first.',
+      };
+    }
+
+    /* The trading day the bank names is the strongest evidence there is — it
+       comes off the statement itself, not from a resemblance between amounts. */
+    const onDay = seen.tradingDate ? mine.filter((b) => covers(b, seen.tradingDate!)) : [];
+    const pool = onDay.length > 0 ? onDay : mine;
+    const exact = pool.filter((b) => b.outstandingSen === movement.amountSen);
+
+    if (exact.length === 1) {
+      const b = exact[0]!;
+      return {
+        ...named, kind: 'PAYOUT', batchId: b.id, candidates: [b],
+        clue: `${rm(movement.amountSen)} is exactly what ${b.fileName ?? `report ${b.id}`} is still owed`
+          + (seen.tradingDate && covers(b, seen.tradingDate) ? `, and the bank names ${seen.tradingDate}.` : '.'),
+      };
+    }
+
+    if (exact.length > 1) {
+      return {
+        ...named, kind: 'PAYOUT_UNSURE', candidates: exact,
+        clue: `${exact.length} of ${seen.acquirerCode}'s reports are owed exactly ${rm(movement.amountSen)}. Pick the one this credit is for.`,
+      };
+    }
+
+    if (onDay.length === 1) {
+      const b = onDay[0]!;
+      return {
+        ...named, kind: 'PAYOUT_UNSURE', candidates: [b],
+        /* Both numbers, always. A difference the operator can see is a
+           difference he can explain — a chargeback, a second credit still to
+           come — and one he cannot see is one he approves blind. */
+        clue: `The bank names ${seen.tradingDate}, which is ${b.fileName ?? `report ${b.id}`}`
+          + `, but that report is owed ${rm(b.outstandingSen)} and this credit is ${rm(movement.amountSen)}. Check before recording it.`,
+      };
+    }
+
+    return {
+      ...named, kind: 'PAYOUT_UNSURE', candidates: pool,
+      clue: `${seen.acquirerCode} paid ${rm(movement.amountSen)}`
+        + (seen.tradingDate ? ` for ${seen.tradingDate}` : '')
+        + `, and no single report of theirs is owed that. ${pool.length} are still waiting — choose, or record it against more than one.`,
+    };
+  });
+}
