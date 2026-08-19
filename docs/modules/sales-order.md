@@ -754,7 +754,20 @@ plus `other` (rows whose status is outside the vocabulary — legacy spellings,
 blanks), so the buckets always sum to `all`. It is computed by ONE grouped
 PostgREST aggregate over the base table (JS-reduce fallback if aggregates are
 disabled). `?status=OTHER` filters to exactly that catch-all bucket; every real
-status stays an exact match.
+status stays an exact match. `?status=all` / `ALL` / empty means the **All** tab
+— NO status filter (normalised by `effectiveStatusFilter`,
+`scm/lib/so-list-filters.ts`); the raw param is never applied as
+`eq('status', …)`, because no order carries the literal status `all`.
+
+> **FIXED 2026-08-18: the list showed "no orders" for a company with 2,726 of
+> them.** Two defects zeroed the paginated read (proven with the read-only probe
+> `backend/scripts/check-so-list-empty.mjs`: HOUZS base=2726 / view=2726,
+> `service_role` reads all 2,726 through the view — the money-rename view recreate
+> was NOT the cause). (1) `?status=all` was applied as `eq('status','all')` →
+> 0 rows; now normalised to no filter. (2) A page whose offset is at/beyond the
+> count makes PostgREST answer `416 "Requested range not satisfiable"`, which the
+> handler returned as a 500 and the grid masked as "No sales orders yet"; it now
+> returns an EMPTY PAGE with the true count (`isRangeNotSatisfiable`, same lib).
 
 > **FIXED 2026-08-18: a `statusCounts` that could not be READ was served as
 > zeros.** The aggregate's error was inspected, the FALLBACK's was not:
