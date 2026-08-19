@@ -1,6 +1,6 @@
 ## Opening Purchase Invoices ran a full company-wide MRP on every load [high]
 
-<!-- area: Purchase invoices -->
+<!-- area: Purchase orders + GRN + PI -->
 
 **白话.** 打开「采购发票」列表要等大概 4 秒。原因是列表为了显示「关联销售单」和
 「已交货」这两栏，每次打开都把整套 MRP 引擎跑一遍 —— 而 MRP 是全公司最重的计算，
