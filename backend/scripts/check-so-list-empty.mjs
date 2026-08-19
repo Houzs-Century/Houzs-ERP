@@ -282,6 +282,67 @@ try {
   }
   notice("If authenticator connections started BEFORE the 0305 applied_at, they hold prepared plans compiled against the pre-rename view — a schema reload does NOT clear those; recycling the connections (or PostgREST restart) does.");
 
+
+  // 12) ROLE / RLS / VIEW-SECURITY reproduction (the full-restart survived, so
+  //     it is NOT a cache — it is a persistent access-path/security difference).
+  //     KEY: SET ROLE on a VIEW reflects the VIEW OWNER's context (a definer view
+  //     runs as its owner), not the invoker's RLS. So test the BASE TABLE too,
+  //     and enumerate owner + security_invoker for ALL 11 recreated views vs
+  //     controls, because 0305 DROP/CREATE'd them (new owner) while 0306 used
+  //     CREATE OR REPLACE (owner preserved).
+  const [ident] = await pg`
+    SELECT current_user AS cu, session_user AS su,
+           (SELECT rolsuper FROM pg_roles WHERE rolname = current_user) AS super,
+           (SELECT rolbypassrls FROM pg_roles WHERE rolname = current_user) AS bypassrls`;
+  notice(`---- reproduction: connection identity ----`);
+  notice(`current_user=${ident.cu} session_user=${ident.su} super=${ident.super} bypassrls=${ident.bypassrls}`);
+
+  const roles = await pg`
+    SELECT rolname, rolsuper, rolbypassrls FROM pg_roles
+     WHERE rolname IN ('postgres','authenticator','anon','authenticated','service_role','supabase_admin','supabase_storage_admin')
+     ORDER BY rolname`;
+  for (const r of roles) notice(`role ${r.rolname}: super=${r.rolsuper} bypassrls=${r.rolbypassrls}`);
+
+  const rlsState = await pg`
+    SELECT relname, relrowsecurity AS rls, relforcerowsecurity AS forced, pg_get_userbyid(relowner) AS owner, relkind
+      FROM pg_class WHERE relnamespace = 'scm'::regnamespace
+       AND relname IN ('mfg_sales_orders','mfg_sales_orders_with_payment_totals')`;
+  for (const r of rlsState) notice(`${r.relname} (relkind=${r.relkind}): rls_enabled=${r.rls} forced=${r.forced} owner=${r.owner}`);
+
+  const RECREATED = new Set(['mfg_sales_orders_with_payment_totals','v_ap_aging','v_ar_aging','v_customer_credit_balances','v_inventory_all_skus','v_inventory_product_totals','v_pi_outstanding','v_po_outstanding','v_pr_outstanding','v_si_outstanding','v_so_outstanding']);
+  const viewMeta = await pg`
+    SELECT c.relname, pg_get_userbyid(c.relowner) AS owner,
+           (SELECT option_value FROM pg_options_to_table(c.reloptions) WHERE option_name = 'security_invoker') AS sec_invoker
+      FROM pg_class c
+     WHERE c.relnamespace = 'scm'::regnamespace AND c.relkind = 'v'
+     ORDER BY c.relname`;
+  notice("---- owner + security_invoker per view (RECREATED by 0305 vs control) ----");
+  for (const v of viewMeta) {
+    const tag = RECREATED.has(v.relname) ? "[0305-RECREATED]" : "[control]";
+    notice(`${tag} ${v.relname}: owner=${v.owner} security_invoker=${v.sec_invoker ?? '(unset->definer)'}`);
+  }
+
+  const grants = await pg`
+    SELECT grantee, privilege_type FROM information_schema.role_table_grants
+     WHERE table_schema = 'scm' AND table_name = 'mfg_sales_orders_with_payment_totals'
+     ORDER BY grantee, privilege_type`;
+  notice("grants on mfg_sales_orders_with_payment_totals: " + (grants.map((g) => `${g.grantee}:${g.privilege_type}`).join(", ") || "(NONE)"));
+
+  notice("---- SET ROLE count WHERE company_id=1, on the VIEW and the BASE table (base exposes the invoker's RLS) ----");
+  for (const role of ["service_role", "authenticated", "anon"]) {
+    for (const [obj, label] of [["scm.mfg_sales_orders_with_payment_totals", "view"], ["scm.mfg_sales_orders", "base"]]) {
+      try {
+        await pg.unsafe(`SET ROLE ${role}`);
+        const r = await pg.unsafe(`SELECT count(*)::int AS n FROM ${obj} WHERE company_id = 1`);
+        notice(`AS ${role} ${label}: ${r[0].n}`);
+      } catch (e) {
+        notice(`AS ${role} ${label}: ERROR ${e.code ?? ""} ${e.message}`);
+      } finally {
+        await pg.unsafe("RESET ROLE");
+      }
+    }
+  }
+
 } finally {
   await pg.end({ timeout: 5 });
 }
