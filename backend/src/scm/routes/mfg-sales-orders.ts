@@ -680,7 +680,6 @@ async function isPriceOverrideCaller(c: any): Promise<boolean> {
    returns TRUE (fail closed). */
 /* Row-scope guard for the 18 /:docNo handlers that hang off a sales order.
 
-<<<<<<< Updated upstream
    TWO dimensions. The salesperson one answers "is this MY order" and returns
    false immediately for a view-all tier - correct for its own question, and
    useless for tenancy, since a view-all caller holding the other company's
@@ -702,34 +701,6 @@ async function selfScopedSalesBlocked(c: any, docNo: string): Promise<boolean> {
   if (ownedErr || !owned) return true;
 
   // 2. Salesperson - only for the self-scoped tier.
-=======
-   TWO dimensions, and the company one was missing until 2026-08-13. The
-   salesperson dimension answers "is this MY order" and returns false straight
-   away for a view-all tier (director / office / *). That is correct for its own
-   question and useless for tenancy: a view-all user in company A holding a
-   company B doc_no sailed through every caller of this guard — including all
-   four SO payment verbs, which WRITE money. The doc_no lookups below were also
-   unscoped, so `.eq('doc_no', docNo)` matched the other company's order.
-
-   Company is now checked FIRST and for everyone, view-all included. Fixing it
-   here rather than in each handler is deliberate: 18 callers share this, and a
-   19th written next month gets the guard for free — the per-handler patching is
-   what let this class survive four separate audits. */
-async function selfScopedSalesBlocked(c: any, docNo: string): Promise<boolean> {
-  const sb = c.get('supabase');
-
-  // 1. Tenancy — applies to every tier. An order outside the active company is
-  //    'not there' as far as this request is concerned.
-  const co = requireActiveCompanyId(c);
-  if (!co.ok) return true; // unresolved company fails closed
-  const { data: owned } = await scopeToCompanyId(
-    sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo),
-    co.companyId,
-  ).maybeSingle();
-  if (!owned) return true;
-
-  // 2. Salesperson — only for the self-scoped tier.
->>>>>>> Stashed changes
   if (canViewAllSales(c)) return false; // view-all tier (director / office / *)
   const { data, error } = await sb
     .from('mfg_sales_orders')
