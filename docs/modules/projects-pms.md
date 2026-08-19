@@ -607,16 +607,17 @@ key spelled `projects:edit`; the colon form is a page-access *level*, not a key.
 ### Axis 2 — row visibility: COMPANY only (PIC/brand ACL removed 2026-08-19)
 
 **REMOVED — owner decision 2026-08-19.** There used to be a two-dimensional
-row-level ACL here (PIC one-hop + brand allow-list + a 30-day grace window),
-implemented in `services/projectAcl.ts` [gone] (`getProjectScope` /
-`canSeeProject` / `projectAccessLevel` / `isScopedProjectUser` /
-`scopeNotExpiredSql`). It scoped a Sales rep to projects where they (or their
-manager) were the PIC AND whose brand sat in their `user_brands` list.
+row-level ACL here (PIC one-hop + brand allow-list + a 30-day grace window).
+The service that implemented it — `services/projectAcl.ts`, which was **deleted**
+in this change — exported `getProjectScope` / `canSeeProject` /
+`projectAccessLevel` / `isScopedProjectUser` / `scopeNotExpiredSql`. It scoped a
+Sales rep to projects where they (or their manager) were the PIC AND whose brand
+sat in their `user_brands` list.
 
-That whole file and every predicate that keyed off it are **gone**
-(`backend/src/services/projectAcl.ts` [gone]). Within a company, **any user
-with the projects page permission now sees EVERY one of that company's
-projects**, regardless of PIC or brand. Row visibility is governed only by:
+That whole file (`backend/src/services/projectAcl.ts`) and every predicate that
+keyed off it were **deleted / removed**. Within a company, **any user with the
+projects page permission now sees EVERY one of that company's projects**,
+regardless of PIC or brand. Row visibility is governed only by:
 
 1. **the projects page-access gate** (Axis 1 — `requirePageAccess`), and
 2. **company scope** — the `company_id` / `activeCompanySql` predicate every
