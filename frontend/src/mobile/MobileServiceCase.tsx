@@ -263,13 +263,9 @@ function useSoSearch(q: string): { results: SoHit[]; loading: boolean; error: st
     queryFn: ({ signal }) =>
       api.get<{ results?: SoHit[] }>(`/api/assr/search-so?q=${encodeURIComponent(needle)}`, { signal }),
   });
-  // The error used to be DROPPED, so a 403 from requireServiceCaseAccess read as
-  // 'No matching sales orders'. BUG-HISTORY 2026-08-19.
-  return {
-    results: data?.results ?? [],
-    loading: isFetching,
-    error: error ? ((error as Error)?.message || "Could not search sales orders — try again.") : null,
-  };
+  // Error used to be DROPPED: a 403 read as 'No matching sales orders'. BUG-HISTORY 2026-08-19.
+  const msg = error ? ((error as Error)?.message || "Could not search sales orders — try again.") : null;
+  return { results: data?.results ?? [], loading: isFetching, error: msg };
 }
 
 const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
@@ -2259,8 +2255,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
                     {soQuery.trim().length >= 2 && (
                       <div style={{ marginTop: 5, border: `1px solid ${DIM}`, borderRadius: 10, overflow: "hidden", maxHeight: 190, overflowY: "auto" }} className="hz-scroll">
                         {soLoading && <div style={{ fontSize: 11, color: GREY, padding: "9px 11px" }}>Searching…</div>}
-                        {!soLoading && soError && <div style={{ fontSize: 11, color: "#b42318", padding: "9px 11px" }}>{soError}</div>}
-                        {!soLoading && !soError && !soResults.length && <div style={{ fontSize: 11, color: GREY, padding: "9px 11px" }}>No matching sales orders.</div>}
+                        {!soLoading && (soError || !soResults.length) && <div style={{ fontSize: 11, color: soError ? "#b42318" : GREY, padding: "9px 11px" }}>{soError ?? "No matching sales orders."}</div>}
                         {soResults.map((hit, i) => (
                           <button
                             key={String(get(hit, "docNo", "doc_no")) + i}

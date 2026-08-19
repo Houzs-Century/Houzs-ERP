@@ -44,7 +44,7 @@ async function activeCompanyEmailIdentity(
 import { getDb } from "../db/client";
 import { resolveDatabaseUrl } from "../db/pg";
 import { allowedCompanyIds } from "../scm/lib/companyScope";
-import { targetWithinActorCompanies } from "./lib/actor-company-gate";
+import { targetWithinActorCompanies } from "./lib/actor-company-gate";  // owner 2026-08-19
 import {
   departments,
   invitations,
@@ -2094,8 +2094,7 @@ app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
     .where(eq(users.id, id))
     .limit(1);
   if (rows.length === 0) return c.json({ error: "User not found" }, 404);
-  const scope = await targetWithinActorCompanies(c, id);
-  if (!scope.ok) return c.json(scope.body, 403);
+  const scope = await targetWithinActorCompanies(c, id); if (!scope.ok) return c.json(scope.body, 403);
   if (rows[0].status !== "active") {
     return c.json({ error: "User is not active — only active members can be viewed as" }, 400);
   }
@@ -2139,8 +2138,7 @@ app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
  */
 app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
-  const scope = await targetWithinActorCompanies(c, id);
-  if (!scope.ok) return c.json(scope.body, 403);
+  const scope = await targetWithinActorCompanies(c, id); if (!scope.ok) return c.json(scope.body, 403);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
   const me = c.get("user");
 
@@ -2252,8 +2250,7 @@ app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => 
  */
 app.post("/:id/totp/disable", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
-  const scope = await targetWithinActorCompanies(c, id);
-  if (!scope.ok) return c.json(scope.body, 403);
+  const scope = await targetWithinActorCompanies(c, id); if (!scope.ok) return c.json(scope.body, 403);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
 
   const db = getDb(c.env);
