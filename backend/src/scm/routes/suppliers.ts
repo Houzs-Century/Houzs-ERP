@@ -542,7 +542,8 @@ suppliers.get('/:id/bindings', async (c) => {
   return c.json({ bindings: data ?? [] });
 });
 
-suppliers.post('/:id/bindings', async (c) => {
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+export const createSupplierBindingHandler = async (c: any) => {
   const supplierId = c.req.param('id');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch {
@@ -558,6 +559,20 @@ suppliers.post('/:id/bindings', async (c) => {
   if (!CURRENCIES.has(currency)) return c.json({ error: 'invalid_currency' }, 400);
 
   const supabase = c.get('supabase');
+
+  /* Multi-company: verify the supplier belongs to the active company before
+     creating a binding stamped with company_id = active. The SCM client is
+     service-role (RLS bypassed), so an unchecked :id from another company would
+     mint this company's binding against a foreign supplier. Mirror the scorecard
+     guard (~L862) and the scoped edit/delete paths below. */
+  const { data: ownerRow, error: ownerErr } = await scopeToCompany(
+    supabase.from('suppliers').select('id').eq('id', supplierId),
+    c,
+  ).maybeSingle();
+  if (ownerErr) return c.json({ error: 'load_failed', reason: ownerErr.message }, 500);
+  if (!ownerRow) {
+    return c.json(await detailMissResponse(c, supabase.from('suppliers').select('company_id').eq('id', supplierId), 'supplier'), 404);
+  }
 
   // PR — Commander 2026-05-27: validate per-category price_matrix shape
   // against the SKU's mfg_products.category.
@@ -607,12 +622,14 @@ suppliers.post('/:id/bindings', async (c) => {
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   return c.json({ binding: data }, 201);
-});
+};
+suppliers.post('/:id/bindings', createSupplierBindingHandler);
 
 // Batch-create bindings — multi-select from Products app maps to N bindings
 // in a single POST. Each row may have its own supplier_sku/price/lead/moq.
 // Skips materials already bound for this supplier (returns count skipped).
-suppliers.post('/:id/bindings/batch', async (c) => {
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+export const createSupplierBindingsBatchHandler = async (c: any) => {
   const supplierId = c.req.param('id');
   let body: { bindings?: Array<Record<string, unknown>> };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -620,6 +637,18 @@ suppliers.post('/:id/bindings/batch', async (c) => {
   if (!Array.isArray(list) || list.length === 0) return c.json({ error: 'bindings_required' }, 400);
 
   const supabase = c.get('supabase');
+
+  /* Multi-company: verify the supplier belongs to the active company before
+     minting bindings stamped with company_id = active (service-role bypasses
+     RLS). Same guard as the single POST above. */
+  const { data: ownerRow, error: ownerErr } = await scopeToCompany(
+    supabase.from('suppliers').select('id').eq('id', supplierId),
+    c,
+  ).maybeSingle();
+  if (ownerErr) return c.json({ error: 'load_failed', reason: ownerErr.message }, 500);
+  if (!ownerRow) {
+    return c.json(await detailMissResponse(c, supabase.from('suppliers').select('company_id').eq('id', supplierId), 'supplier'), 404);
+  }
 
   // Pre-check: drop rows already bound for this supplier (avoid 23505).
   const codes = list.map((b) => String(b.itemCode ?? '')).filter(Boolean);
@@ -686,7 +715,8 @@ suppliers.post('/:id/bindings/batch', async (c) => {
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   return c.json({ inserted: (data ?? []).length, skipped, bindings: data ?? [] }, 201);
-});
+};
+suppliers.post('/:id/bindings/batch', createSupplierBindingsBatchHandler);
 
 suppliers.patch('/:id/bindings/:bindingId', async (c) => {
   const bindingId = c.req.param('bindingId');

@@ -3669,13 +3669,16 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       .map((it) => String((it?.variants as { pwpCode?: string | null } | null)?.pwpCode ?? '').trim())
       .filter(Boolean),
   ));
+  // mig 0188 re-keyed pwp_codes on (company_id, code): a caller-supplied `code` alone matches whichever company's row comes back first, so the prefetch/burn/rollback below all carry pwpCompanyId (matches add-line ~L3828). BUG-HISTORY 2026-08-19.
+  const pwpCompanyId = activeCompanyId(c);
+  if (allPwpCodes.length > 0 && pwpCompanyId == null) return c.json({ error: 'company_unresolved', message: 'Cannot tell which company this order belongs to right now. Reload and try again.' }, 409);
   const pwpRowByCode = new Map<string, Record<string, any>>();
   let pwpPrefetchFailed = false;
   if (allPwpCodes.length > 0) {
     const { data: codeRows, error: codeReadErr } = await sb
       .from('pwp_codes')
       .select('code, status, owner_staff_id, reward_category, eligible_reward_model_ids, reward_combo_ids, reward_size_codes, reward_compartments, customer_id, source_doc_no, redeemed_doc_no, type')
-      .in('code', allPwpCodes);
+      .in('code', allPwpCodes).eq('company_id', pwpCompanyId);
     if (codeReadErr) {
       // A failed read is NOT "code not found" (same honesty rule as the
       // cross-category lookup) — reject as retryable, burn nothing.
@@ -3805,7 +3808,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         redeemed_item_code: product.code,
         updated_at:         new Date().toISOString(),
       })
-      .eq('code', code);
+      .eq('code', code).eq('company_id', pwpCompanyId);
     // Orphaned-USED re-claim must match the orphan row exactly (USED + the same
     // dead doc_no) so a parallel legitimate redemption can't be hijacked.
     claimQ = orphanedUsed
@@ -3835,7 +3838,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         updated_at: new Date().toISOString(),
       };
       if (prevStatus === 'RESERVED') patch.source_doc_no = null;  // we stamped it on claim
-      await sb.from('pwp_codes').update(patch).eq('code', code).eq('status', 'USED');
+      await sb.from('pwp_codes').update(patch).eq('code', code).eq('status', 'USED').eq('company_id', pwpCompanyId);
     }
   };
 
@@ -9143,9 +9146,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     if (!rewardPwpCode) {
       return c.json({ error: 'pwp_line_locked', reason: 'This PWP reward carries no voucher code — ask the coordinator to exchange it.' }, 409);
     }
-    const { data: codeRow } = await sb.from('pwp_codes')
-      .select('code, reward_category, eligible_reward_model_ids, reward_size_codes, reward_compartments, type')
-      .eq('code', rewardPwpCode).maybeSingle();
+    const { data: codeRow } = await scopeToCompany(sb.from('pwp_codes').select('code, reward_category, eligible_reward_model_ids, reward_size_codes, reward_compartments, type').eq('code', rewardPwpCode), c).maybeSingle();
     const codeTyped = codeRow as { code: string; reward_category: string; eligible_reward_model_ids: string[] | null; reward_size_codes: string[] | null; reward_compartments: string[] | null; type: string } | null;
     if (!codeTyped) {
       return c.json({ error: 'pwp_line_locked', reason: 'This PWP voucher could not be found — ask the coordinator to exchange it.' }, 409);
@@ -9710,9 +9711,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     if (!codeStr) {
       return c.json({ error: 'pwp_line_locked', reason: 'This PWP reward carries no voucher code — ask the coordinator to exchange it.' }, 409);
     }
-    const { data: codeRow } = await sb.from('pwp_codes')
-      .select('code, reward_combo_ids, type, redeemed_doc_no')
-      .eq('code', codeStr).maybeSingle();
+    const { data: codeRow } = await scopeToCompany(sb.from('pwp_codes').select('code, reward_combo_ids, type, redeemed_doc_no').eq('code', codeStr), c).maybeSingle();
     const ct = codeRow as { code: string; reward_combo_ids: string[] | null; type: string | null; redeemed_doc_no: string | null } | null;
     if (!ct) {
       return c.json({ error: 'pwp_line_locked', reason: 'This PWP voucher could not be found — ask the coordinator to exchange it.' }, 409);
