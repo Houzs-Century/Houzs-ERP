@@ -8,7 +8,7 @@
  * NO SHEBANG — see the header of working-agreement.mjs.
  */
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { test } from "node:test";
 
 import {
@@ -533,23 +533,41 @@ test("mixed English and Chinese in one sentence is still one claim", () => {
   assert.equal(findRemedyClaims(`${mixed} (UNTESTED)`)[0].untested, true, "UNTESTED still applies");
 });
 
-test("the Chinese patterns add NO noise to the existing corpus", () => {
+test("the Chinese patterns add NO noise to the surface the gate actually scans", () => {
   /* The isolation measurement, kept as a test so a later pattern edit cannot
-     quietly make the gate chatty. BUG-HISTORY.md scored 12 before the Chinese
-     support was added and 12 after — every hit is pre-existing ENGLISH prose,
-     and BUG-HISTORY is not in the prescriptive scan set anyway. What matters is
-     that the number did not move. */
-  const bugHistory = readFileSync(new URL("../../BUG-HISTORY.md", import.meta.url), "utf8");
-  const chineseChars = (bugHistory.match(/[一-鿿]/g) || []).length;
-  assert.ok(chineseChars > 1000, `expected substantial Chinese prose, saw ${chineseChars} chars`);
+     quietly make the gate chatty.
 
-  const claims = findRemedyClaims(bugHistory);
-  const chineseTriggered = claims.filter((c) => /[一-鿿]/.test(c.text));
-  assert.deepEqual(
-    chineseTriggered.map((c) => `${c.line}: ${c.text.slice(0, 60)}`),
-    [],
-    "no claim in BUG-HISTORY.md may be triggered by its Chinese passages",
-  );
+     IT USED TO MEASURE BUG-HISTORY.md, AND THAT WAS THE WRONG CORPUS — proved
+     within a day, by this very test failing on the entry written to document the
+     narration-vs-prescription fix. That entry QUOTES 「跑这个就能补回来」 as an
+     example of a real claim, and the detector dutifully found it. It was right
+     to. A file whose job is to record what claims look like cannot be the noise
+     baseline for a claim detector; every worked example in it is a true positive
+     by construction.
+
+     So this measures docs/modules/, which is the surface rule 4 actually scans,
+     and asserts the count does not GROW. Zero is not the bar there either — the
+     three pre-existing English hits predate rule 4 — but growth is. */
+  const dir = new URL("../../docs/modules/", import.meta.url);
+  const files = readdirSync(dir).filter((f) => f.endsWith(".md"));
+  assert.ok(files.length > 20, `expected the module guides, saw ${files.length} file(s)`);
+
+  let claims = 0;
+  let chinese = 0;
+  const chineseTriggered = [];
+  for (const f of files) {
+    const text = readFileSync(new URL(f, dir), "utf8");
+    chinese += (text.match(/[一-鿿]/g) || []).length;
+    for (const c of findRemedyClaims(text)) {
+      claims++;
+      if (/[一-鿿]/.test(c.text)) chineseTriggered.push(`${f}:${c.line} ${c.text.slice(0, 60)}`);
+    }
+  }
+
+  /* Measured 2026-08-19 across 32 guides / 19,784 lines. Pinned so the number
+     cannot drift upward unnoticed; lowering it is always welcome. */
+  assert.ok(claims <= 3, `module-guide claims grew to ${claims} (was 3) — the detector got chattier`);
+  assert.deepEqual(chineseTriggered, [], "no module-guide claim may be triggered by a Chinese passage");
 });
 
 test("the promise must FOLLOW the instruction, not merely share a window", () => {
