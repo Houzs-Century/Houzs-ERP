@@ -447,7 +447,15 @@ purchaseInvoices.get('/', async (c) => {
   if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
   const statusCounts = counted.counts;
 
-  const purchaseInvoices = await attachPiAssignedSos(sb, c, (data ?? []) as Array<{ id: string; grn_id?: string | null }>);
+  /* MRP-DERIVED columns (assigned_sos / assigned_so_linked / assigned_so_provenance
+     / delivered_dos) are OMITTED here — not blanked (C16). Resolving them ran a
+     company-wide computeMrp on this critical path (attachPiAssignedSos ->
+     resolvePoSoCoveragePerSkuForPos), the list's dominant cost (~4s). The client
+     heals them a beat after render via GET /purchase-invoices/list-mrp-enrichment
+     (routes/purchase-invoices-list-enrichment.ts + lib/piListEnrichment.ts). The
+     rows go out with the columns ABSENT so the FE can tell "not computed yet" from
+     "computed empty". */
+  const purchaseInvoices = (data ?? []) as Array<Record<string, unknown>>;
   return c.json({ purchaseInvoices, total, page, pageSize, statusCounts });
 });
 
