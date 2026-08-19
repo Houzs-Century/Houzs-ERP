@@ -40,6 +40,12 @@
 //      taken from check-autocount-pull-health.mjs (`behind > 2`) rather than
 //      invented here, so the two files cannot drift into disagreeing.
 //
+//      The stored timestamp is NAIVE — no offset, no Z — so the comparison
+//      carries up to 14h of slop and the 2-day limit really fires somewhere
+//      between ~1.4 and ~2.6 days. Against a five-minute pull that is noise.
+//      A value reading AHEAD of now by more than any real offset explains is
+//      its own alarm, not something to clamp away. See TZ_SLOP_HOURS.
+//
 //   B. NOTHING ARRIVED in 30 days. This is the shape that actually hid: a
 //      checkpoint can look healthy while the mirror takes nothing. For a live
 //      ERP mirror, 30 days of zero writes is not a quiet month.
@@ -68,7 +74,7 @@
 import { readFileSync } from "node:fs";
 import postgres from "postgres";
 
-import { ALARM, CANNOT_ANSWER, OK, decide } from "./lib/autocount-pull-rules.mjs";
+import { ALARM, CANNOT_ANSWER, OK, decide, normaliseBehind } from "./lib/autocount-pull-rules.mjs";
 
 function resolveUrl() {
   if (process.env.SENTINEL_HOUZS_DB_URL) return process.env.SENTINEL_HOUZS_DB_URL;
@@ -88,10 +94,18 @@ if (!url) {
 
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
-/** Days between an ISO-ish string and now, or null if it will not parse. */
+/**
+ * Days between a naive timestamp and now — FRACTIONAL, not floored.
+ *
+ * The floor that used to be here is why the first live dispatch printed
+ * `-1d behind`: the stored value read 7.5 hours ahead of UTC (it is MYT), and
+ * `Math.floor(-0.31)` is -1, which turns a third of a day of timezone offset
+ * into a whole day. `decide` absorbs sub-timezone offsets, and it can only do
+ * that if it is handed the real number.
+ */
 const daysSince = (iso) => {
   const t = Date.parse(String(iso).replace(" ", "T") + "Z");
-  return Number.isFinite(t) ? Math.floor((Date.now() - t) / 86400000) : null;
+  return Number.isFinite(t) ? (Date.now() - t) / 86400000 : null;
 };
 
 const notes = [];
@@ -101,7 +115,17 @@ try {
   const cp = await pg`SELECT value FROM system_settings WHERE key = 'pull_checkpoint'`;
   const checkpoint = cp[0]?.value ?? null;
   const behind = checkpoint ? daysSince(checkpoint) : null;
-  notes.push(`pull_checkpoint = ${checkpoint ?? "(not set)"} (${behind === null ? "UNPARSEABLE" : behind + "d behind"})`);
+  /* Report the NORMALISED staleness, never the raw signed number. Somebody
+     reading an alarm at 3am should not have to work out why a checkpoint is
+     "-1 days behind"; the raw hours are shown beside it only when the value
+     reads ahead of now, which is the case that needs explaining. */
+  const staleness = normaliseBehind(behind);
+  const ahead = behind !== null && behind < 0 ? ` — stored value reads ${(-behind * 24).toFixed(1)}h ahead of UTC; the column carries no timezone` : "";
+  const shown =
+    behind === null ? "UNPARSEABLE"
+    : staleness === null ? "AHEAD OF NOW"
+    : `${staleness.toFixed(2)}d behind`;
+  notes.push(`pull_checkpoint = ${checkpoint ?? "(not set)"} (${shown}${ahead})`);
 
   /* `updated_at` is TEXT on this table, not a timestamp — the pull writes
      datetime('now') straight through from the D1 era. Comparing it to now()
