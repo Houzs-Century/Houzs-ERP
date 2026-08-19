@@ -36,7 +36,7 @@ import { createMixRefusal, lineMixRefusal } from '../lib/main-mix';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { resolveSalesScopeIds, salesDocOutOfScope, resolveCallerStaffId } from '../lib/salesScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
-import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
+import { canViewAllSales, canViewScmFinance, hasHouzsPerm } from '../lib/houzs-perms';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
 import { recordSoAudit, diffFields, type FieldChange } from '../lib/so-audit';
@@ -1023,11 +1023,23 @@ consignmentOrders.get('/:docNo/audit-log', async (c) => {
 });
 
 // POST — override the price on a single line item.
-consignmentOrders.post('/:docNo/items/:itemId/override', async (c) => {
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+export const consignmentOverridePriceHandler = async (c: any) => {
   const sb = c.get('supabase'); const docNo = c.req.param('docNo'); const itemId = c.req.param('itemId');
   const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
+  /* This verb WRITES MONEY — the SELLING price is locked to the SKU Master and
+     only an admin-level caller may hand-override it, exactly as the SO twin's
+     /override gates on isPriceOverrideCaller (mfg-sales-orders.ts:6205). Without
+     this a caller holding only scm.so.view_all could re-price a consignment line.
+     Gate BEFORE the self-scope / row reads. */
+  if (!hasHouzsPerm(c, 'scm.so.price_override')) {
+    return c.json({
+      error: 'price_override_admin_only',
+      message: 'Unit prices follow the SKU Master sell price. Only an admin can override a line price.',
+    }, 403);
+  }
   // Self-scoped sales may only re-price a line on their OWN CO. This verb WRITES MONEY.
   if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let body: { overridePriceSen?: number; reason?: string };
@@ -1074,7 +1086,8 @@ consignmentOrders.post('/:docNo/items/:itemId/override', async (c) => {
   });
 
   return c.json({ ok: true, itemId, newPrice });
-});
+};
+consignmentOrders.post('/:docNo/items/:itemId/override', consignmentOverridePriceHandler);
 
 // ── PATCH header — edit debtor info, addresses, note, etc. ───────────
 consignmentOrders.patch('/:docNo', async (c) => {

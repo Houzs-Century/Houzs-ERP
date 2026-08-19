@@ -390,6 +390,14 @@ it, but a hand-typed line never could.
   active company**, must not be cancelled, and its `item_code` must equal the PO
   line's `material_code`. Otherwise `404 so_line_not_found`,
   `409 so_line_cancelled` or `409 so_link_material_mismatch`.
+- **`POST /` (bare create) is company-scoped too (2026-08-19).** The desktop
+  "New PO from SO" / MRP-convert path feeds SO-sourced lines through this generic
+  create. It now reads each line's `soItemId` **scoped to the active company** and
+  refuses any that resolves to nothing — `404 so_line_not_found` — before the line
+  is linked (`so_item_id`), its `photo_urls` copied, or `recomputeSoPicked` rolls
+  `po_qty_picked` forward. Previously the read carried no company predicate (the
+  service-role client bypasses RLS), so a foreign `soItemId` re-parented another
+  company's SO line onto this company's PO. `BUG-HISTORY.md` 2026-08-19.
 - **And through `soLineOverConvertRefusal` (2026-08-11)** — `soLinkTargetRefusal`
   proves a bind POINTS somewhere legitimate; it says nothing about HOW MUCH. Both
   line paths take an operator-supplied qty, and until this landed neither capped
