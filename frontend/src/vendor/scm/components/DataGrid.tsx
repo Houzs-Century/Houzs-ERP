@@ -43,7 +43,7 @@ import { SkeletonRows } from './Skeleton';
 import { DateField } from './DateField';
 import {
   DEFAULT_DATA_GRID_LAYOUT,
-  type DataGridLayout,
+  type DataGridLayout, isSharedDataGridStorageKey,
   materializeDataGridLayout,
   readDataGridLayout,
   writeDataGridLayout,
@@ -389,10 +389,10 @@ function DataGridInner<T>({
     getActiveCompanySnapshot,
     getActiveCompanySnapshot,
   );
-  const scopedStorageKey = activeCompany != null ? `${storageKey}::c${activeCompany}` : storageKey;
-  // Pre-scoping (unscoped) key — read-only fallback so existing columns carry
-  // over on first load; scoped key owns writes, ending the cross-company bleed.
-  const legacyStorageKey = activeCompany != null ? storageKey : undefined;
+  // EXCEPTION: shared cross-company queue boards stay UNscoped — per-company slots forked ONE board's layout (owner 2026-08-19 "keeps resetting"; doctrine on SHARED_DATA_GRID_STORAGE_KEYS). Their read-only seed is the CURRENT company's slot (reverse migration); a scoped grid's is the pre-scoping key. Primary owns writes.
+  const sharedAcrossCompanies = isSharedDataGridStorageKey(storageKey);
+  const scopedStorageKey = !sharedAcrossCompanies && activeCompany != null ? `${storageKey}::c${activeCompany}` : storageKey;
+  const legacyStorageKey = activeCompany != null ? (sharedAcrossCompanies ? `${storageKey}::c${activeCompany}` : storageKey) : undefined;
   const [storedLayout, setLayoutRaw] = useState<Layout>(() => readDataGridLayout(scopedStorageKey, legacyStorageKey));
 
   /* ── Account-level layouts (lib/tableLayouts.ts) ──────────────────────────

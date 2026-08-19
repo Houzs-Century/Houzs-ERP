@@ -196,6 +196,71 @@ describe("table layouts", () => {
     expect(inHouzs.mine[TABLE]).toBeUndefined();
   });
 
+  /* ── Cross-company SHARED boards (owner 2026-08-19) ────────────────────────
+     The Delivery/TMS queue boards render ONE queue for every company, so their
+     live arrangement must not fork per company: saves pin to the caller's
+     lowest visible company, GET serves the newest row from ANY company, and a
+     save collapses the rows the old scoping left behind. */
+  const SHARED = "dg:dg-delivery-planning";
+
+  test("a shared board's layout follows the user across company windows, pinned to one row", async () => {
+    const user = await seedActor(["sales_orders.read"]);
+
+    // Saved from a 2990 window …
+    expect(
+      (await req(user, `/${SHARED}`, { method: "PUT", companyId: 2, body: { layout: layout({ order: ["board"] }) } }))
+        .status,
+    ).toBe(200);
+
+    // … and read back identically from a HOUZS window.
+    const inHouzs = await (await req(user, "", { companyId: 1 })).json<{
+      mine: Record<string, { layout: { order: string[] } }>;
+    }>();
+    expect(inHouzs.mine[SHARED]?.layout.order).toEqual(["board"]);
+
+    // The row is pinned to the lowest visible company, not the window's.
+    const row = await env.DB.prepare(
+      `SELECT company_id FROM table_layouts WHERE table_key = ? AND user_id = ?`,
+    )
+      .bind(SHARED, user.id)
+      .first<{ company_id: number }>();
+    expect(Number(row?.company_id)).toBe(1);
+  });
+
+  test("a shared board serves the NEWEST forked row, and the next save collapses the fork", async () => {
+    const user = await seedActor(["sales_orders.read"]);
+
+    // The fork the old per-company scoping left behind: an old Houzs row and a
+    // newer 2990 row for the same shared key.
+    await env.DB.prepare(
+      `INSERT INTO table_layouts (company_id, user_id, table_key, layout, updated_at, updated_by) VALUES
+         (1, ?, ?, ?, '2026-08-01T00:00:00Z', ?),
+         (2, ?, ?, ?, '2026-08-18T00:00:00Z', ?)`,
+    )
+      .bind(
+        user.id, SHARED, JSON.stringify(layout({ order: ["old_houzs"] })), user.id,
+        user.id, SHARED, JSON.stringify(layout({ order: ["new_2990"] })), user.id,
+      )
+      .run();
+
+    // Whichever window asks, the newest arrangement answers.
+    for (const companyId of [1, 2]) {
+      const body = await (await req(user, "", { companyId })).json<{
+        mine: Record<string, { layout: { order: string[] } }>;
+      }>();
+      expect(body.mine[SHARED]?.layout.order).toEqual(["new_2990"]);
+    }
+
+    // One save later the fork is gone: a single row, on the pinned company.
+    await req(user, `/${SHARED}`, { method: "PUT", companyId: 2, body: { layout: layout({ order: ["merged"] }) } });
+    const rows = await env.DB.prepare(
+      `SELECT company_id FROM table_layouts WHERE table_key = ? AND user_id = ?`,
+    )
+      .bind(SHARED, user.id)
+      .all<{ company_id: number }>();
+    expect((rows.results ?? []).map((r) => Number(r.company_id))).toEqual([1]);
+  });
+
   test("a browser's junk is normalised rather than stored or echoed", async () => {
     const user = await seedActor(["sales_orders.read"]);
     await req(user, `/${TABLE}`, {
