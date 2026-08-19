@@ -84,6 +84,69 @@ and no row content reaches the payload. Proven not vacuous by mutation — forci
 verdict to `CORRECT`, treating inconclusive rungs as evidence, and dropping the gate
 each turn exactly one case red.
 
+## The working-agreement gate's rule 4 read narration as a prescription, and turned `main` red [medium]
+
+**Symptom.** Hours after the Chinese patterns landed, every PR failed
+`working-agreement` on its own noise-isolation test. The offending line was
+ordinary repo prose in `BUG-HISTORY.md`:
+
+    ...独立轻接口补上。功能不变。至此「列表白跑 MRP」这个病的四处...
+
+**Root cause (traced, not guessed).** 「跑 MRP」 matches the 跑 + latin-token
+pattern (added so 「跑 all 模式」 would be caught) and 「补上」 matches the promise
+vocabulary. The detector searched the whole window for a promise, so it did not
+notice that **补上 sits BEFORE 跑 MRP**, in a different clause. The sentence
+describes a disease already cured; it prescribes nothing.
+
+**Fix.** The rule that was missing holds in both languages: a remedy claim reads
+**instruction, then promise** — "Run X and it collects Y", 「跑这个就能补回来」. The
+promise is now sought only in the text AFTER the instruction ends, so
+`prescribes()` returns the match rather than a boolean.
+
+**What makes this entry worth reading later:** the gate was NOT caught by review.
+It was caught by the noise-isolation test shipped in the same PR as the Chinese
+patterns, whose only job was to stop them getting chatty — and which failed on
+real repo prose within hours of the corpus growing. The `BUG-HISTORY` sentence is
+now pinned verbatim as a fixture alongside the two orderings that must STILL read
+as claims, so the gate cannot later be "fixed" by quietly switching it off.
+
+**Ref.** `fix/remedy-claim-promise-must-follow`, 2026-08-19.
+## The pull sentinel reported a NEGATIVE staleness on its first live run [low]
+
+**Symptom.** The AutoCount pull sentinel's first production dispatch
+(2026-08-19, run 32255847872) printed:
+
+    pull_checkpoint = 2026-08-19T20:35:34.723 (-1d behind)
+
+A checkpoint cannot be minus one day behind.
+
+**Root cause.** `system_settings.pull_checkpoint` is a NAIVE timestamp — no
+offset, no `Z`. The sentinel appended `"Z"` and read it as UTC. It is MYT
+(UTC+8): 20:35 local is 12:35 UTC, and UTC then was 13:03, so the value is half
+an hour old — but read as UTC it looks **7.5 hours in the future**, and
+`Math.floor(-0.31)` is `-1`. A third of a day of timezone offset became a whole
+negative day.
+
+**Why it mattered little, and why it was still fixed.** The alarm was correct
+either way (`-1 > 2` is false, so no false alarm), but the threshold silently
+gained 8 hours of slop, and "-1d behind" is exactly the sort of output that
+costs somebody twenty minutes at 3am.
+
+**Fix.** The zone is NOT hardcoded — one observation is not a timezone. Instead
+`normaliseBehind()` absorbs any offset in the real range (-12..+14): a value
+reading up to 14h ahead cannot be stale and clamps to zero; further ahead than
+that is its OWN alarm, because the next `getSince()` would ask for a window
+starting in the future and skip everything before it. `daysSince` no longer
+floors, since the floor is what turned a fraction into a day. The cost is stated
+in the code and the guide: staleness carries up to 14h of slop, so the 2-day
+limit really fires between ~1.4 and ~2.6 days — noise against a five-minute pull.
+
+**How it was found.** By dispatching the workflow once against production, per
+the CLAUDE.md rule that a `workflow_dispatch` workflow is not shipped until it
+has run once and reported success. Reading the code would not have shown it; the
+data had to.
+
+**Ref.** `fix/sentinel-checkpoint-timezone`, 2026-08-19.
 ## Zero-grant multi-company user was handed EVERY company — fail-open tenant default flipped to fail-closed [medium]
 
 <!-- area: Auth, permissions, sessions -->
