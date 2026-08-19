@@ -6,6 +6,7 @@ import {
   configCacheMatch,
   configCachePut,
 } from "../services/configCache";
+import { allowedCompanyIds, usersInCompaniesSql } from "../scm/lib/companyScope";
 
 const app = new Hono<{ Bindings: Env }>();
 
@@ -81,10 +82,30 @@ app.get("/", async (c) => {
   const activeCutoff = cutoffAt(ACTIVE_WINDOW_SECONDS);
   const awayCutoff = cutoffAt(AWAY_WINDOW_SECONDS);
 
-  // SHARED cache on the EDGE tier (caches.default), NOT KV. The away-window row
-  // set is IDENTICAL for every caller — the query reads nothing from `me`;
-  // is_self is derived per request from the rows below. presence is polled from
-  // every open tab of every user on a 60s cadence, so uncached this was one
+  // Company scope: presence is the who's-online roster, and the roster a caller
+  // may see is their OWN granted companies (allowedCompanyIds), not the active
+  // one — an owner granted both switches organisation and still expects to see
+  // both (owner 2026-08-19, docs/TENANT-ISOLATION-ROOT-FIX.md §6.3). Mirrors the
+  // three-way allowedCompaniesSql semantics, over the users population:
+  //   • UNRESOLVED (undefined) -> "" no filter (legacy / companies-master blip);
+  //   • RESTRICTED TO NOTHING ([]) -> match nothing, same fail-closed as the rest
+  //     of the system for a caller whose grants all point at inactive companies;
+  //   • granted a set -> users in that set (usersInCompaniesSql also keeps
+  //     zero-grant users visible, exactly as companyContext hands them every
+  //     company — so this does NOT decide the §6.1 zero-grant question).
+  const rawAllowed = allowedCompanyIds(c);
+  const scopeIds = (rawAllowed ?? []).map(Number).filter((n) => Number.isInteger(n) && n > 0).sort((a, b) => a - b);
+  const companyFilter =
+    rawAllowed === undefined ? "" : scopeIds.length === 0 ? " AND 1=0" : usersInCompaniesSql(scopeIds, "u");
+  // The cache entry MUST be keyed on that company set — the row set is no longer
+  // identical for every caller. A single shared `scope=all` key would serve one
+  // company's roster to the other straight off the edge cache, which is the leak
+  // this scoping exists to close.
+  const scopeTag = rawAllowed === undefined ? "co=all" : scopeIds.length === 0 ? "co=none" : `co=${scopeIds.join("-")}`;
+
+  // SHARED cache on the EDGE tier (caches.default), NOT KV — shared WITHIN a
+  // company scope (scopeTag above), not across. presence is polled from every
+  // open tab of every user on a 60s cadence, so uncached this was one
   // users-JOIN-roles query per user per minute, all competing for the Hyperdrive
   // connection pool; under pressure some turned into the GET /api/presence 500s
   // the client-error check surfaced.
@@ -105,7 +126,7 @@ app.get("/", async (c) => {
   const cacheKeyUrl = configCacheKeyUrl(
     new URL(c.req.url).origin,
     "presence",
-    "scope=all",
+    scopeTag,
     1, // no version bump: the 15s TTL is the only freshness lever presence needs
   );
 
@@ -125,7 +146,7 @@ app.get("/", async (c) => {
        JOIN roles r ON r.id = u.role_id
        WHERE u.last_seen_at IS NOT NULL
          AND u.last_seen_at >= ?
-         AND u.status = 'active'
+         AND u.status = 'active'${companyFilter}
        ORDER BY u.last_seen_at DESC`
     )
       .bind(awayCutoff)

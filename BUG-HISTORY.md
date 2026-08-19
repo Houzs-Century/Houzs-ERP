@@ -1,3 +1,42 @@
+## "Who's online" showed both companies' staff, and the shared cache served one company's list to the other [low]
+
+<!-- area: Auth, permissions, sessions -->
+
+**白话.** 右上角「谁在线」的名单,以前把两家公司(Houzs 和 2990)正在线的人**全部**
+显示给每个人看 —— 一家公司的员工能看到另一家公司谁在线。现在改成:只看得到**你自己
+被授权的公司**的人(只在一家就只看一家;两家都管的人两家都看得到,跟切换公司一致)。
+另外那份「在线名单」的快取以前是**所有人共用一份**,就算按公司过滤了,也会把 A 公司的
+名单从快取里端给 B 公司 —— 现在快取按公司分开存,不会再串台。这是资料外泄里比较轻的
+一种(只是同事的在线状态,不涉及钱或库存)。
+
+**Symptom.** `GET /api/presence` (the who's-online popover) returned every active
+user across BOTH companies to every caller, regardless of the caller's company
+grants. The row set was also cached under a single shared edge key (`scope=all`),
+so even a per-company query would have been served the other company's roster
+straight from the cache.
+
+**Root cause (traced).** The presence query
+(`backend/src/routes/presence.ts`) read `users JOIN roles` with NO company
+predicate — presence predated the multi-company work and was never scoped. The
+cache key was the literal `"scope=all"`, one entry shared by every caller. Read
+the code on origin/main and confirmed with a real-D1 test: a caller granted only
+company A received company B's users.
+
+**Fix.** The roster is scoped to the caller's OWN granted companies
+(`allowedCompanyIds`, not the active company — an owner granted both switches
+organisation and still expects both, per `docs/TENANT-ISOLATION-ROOT-FIX.md`
+§6.3), and the cache key now carries that company set. The users-via-grant-table
+fragment is shared with the announcement roster as one helper,
+`usersInCompaniesSql` (`scm/lib/companyScope.ts`) — announcements'
+`rosterCompaniesSql` now delegates to it, so there is one copy, not two. Three-way
+semantics mirror `allowedCompaniesSql`: unresolved → no filter (legacy /
+master-blip degrade); `[]` restricted-to-nothing → match nothing (fail closed);
+a granted set → users in it, with zero-grant users still visible exactly as
+`companyContext` hands them every company — so this does NOT decide the open §6.1
+zero-grant question. Proven by `backend/tests/presenceCompanyScope.test.ts`
+(content isolation both directions + the cache never cross-serving).
+
+**Ref.** PR (branch `fix/presence-company-scope`), 2026-08-19.
 ## `mode=all` cannot backfill the AutoCount mirror — it kills the Worker [high]
 
 **Symptom.** `SO-005263` exists in AutoCount and is absent from the mirror, so a

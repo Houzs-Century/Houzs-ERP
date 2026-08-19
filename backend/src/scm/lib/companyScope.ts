@@ -187,6 +187,30 @@ export function allowedCompaniesSql(c: CompanyScopeCtx, col = "company_id"): str
 }
 
 /**
+ * POPULATION-OF-USERS flavour: filter a `users` query to those whose
+ * `user_companies` (mig 0085) grants intersect `companyIds`, with the SAME
+ * FAIL-OPEN rule as companyContext — a user with NO grant row belongs to every
+ * company, so is always included. Empty / no valid ids returns "" (no filter),
+ * because for the two callers this serves an empty set means "all companies":
+ * an announcement targeting every company, and — via presence handling the
+ * unresolved case itself — a legacy single-company install. Unlike
+ * `allowedCompaniesSql` this fragment gates the users table through the grant
+ * table rather than a `company_id` column, so callers that need the fail-CLOSED
+ * "restricted to nothing" shape must handle the empty case before calling here.
+ * Ids come from OUR companies master, re-validated as positive integers, so
+ * inlining them (no binds) is safe.
+ */
+export function usersInCompaniesSql(companyIds: number[], alias = "users"): string {
+  const ids = companyIds
+    .map(Number)
+    .filter((n) => Number.isInteger(n) && n > 0);
+  if (ids.length === 0) return "";
+  const inList = ids.join(",");
+  return ` AND (NOT EXISTS (SELECT 1 FROM user_companies uc WHERE uc.user_id = ${alias}.id)
+             OR EXISTS (SELECT 1 FROM user_companies uc WHERE uc.user_id = ${alias}.id AND uc.company_id IN (${inList})))`;
+}
+
+/**
  * PER-COMPANY, raw env.DB SQL flavour of scopeToCompany. Returns a
  * ready-to-interpolate ` AND <col> = <active>` fragment, or "" when the active
  * company is unresolved (pre-migration / D1 test mirror / cold-start) so

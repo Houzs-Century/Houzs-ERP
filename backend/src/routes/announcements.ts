@@ -22,7 +22,7 @@ import { hasPermission } from "../services/permissions";
 import { baseKeyOf, isThumbKey, THUMB_MAX_BYTES, thumbKeyFor } from "../services/photoThumbs";
 import { isSalesDirectorUser } from "../services/pmsAccess";
 import type { AuthUser } from "../services/auth";
-import { activeCompanyId, allowedCompanyIds } from "../scm/lib/companyScope";
+import { activeCompanyId, allowedCompanyIds, usersInCompaniesSql } from "../scm/lib/companyScope";
 import {
   CONFIG_CACHE_TTL_SECONDS,
   bannerCacheKey,
@@ -336,17 +336,11 @@ async function getScopedAnnouncement(
  * targeted company — with the same FAIL-OPEN rule as companyContext: a user
  * with NO grant rows belongs to every company. When the notice targets ALL
  * companies (empty list) OR no valid ids are given, returns "" (no filter) so
- * the whole active roster counts. Ids come from OUR companies master and are
- * re-validated as positive integers, so inlining them (no binds) is safe.
+ * the whole active roster counts. Shares the one grant-table fragment with the
+ * presence roster — `usersInCompaniesSql` in scm/lib/companyScope.
  */
 function rosterCompaniesSql(companyIds: number[], alias = "users"): string {
-  const ids = (companyIds ?? [])
-    .map(Number)
-    .filter((n) => Number.isInteger(n) && n > 0);
-  if (ids.length === 0) return "";
-  const inList = ids.join(",");
-  return ` AND (NOT EXISTS (SELECT 1 FROM user_companies uc WHERE uc.user_id = ${alias}.id)
-             OR EXISTS (SELECT 1 FROM user_companies uc WHERE uc.user_id = ${alias}.id AND uc.company_id IN (${inList})))`;
+  return usersInCompaniesSql(companyIds, alias);
 }
 
 // The announcement's targeted company ids (JSON array), dual-keyed for the pg
