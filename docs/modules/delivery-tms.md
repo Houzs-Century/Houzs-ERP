@@ -645,6 +645,24 @@ store. (2) `DeliveryPlanning.tsx` swaps `useSearchParams` for
 `useStickyFilters('delivery-planning', ['state','region'])` — URL wins,
 localStorage restores the last state/region pair when the URL carries none.
 
+**SO-list design parity, 2026-08-19** (owner: "要和 sales order design 设计,
+字体,颜色一样" + "一样的button和位置和design"). The DataGrid chrome and the
+board's cells now speak the DataTable lists' design language — this applies to
+EVERY DataGrid list, not just the board. Table: 13px body / ~34px rows /
+`border-subtle` row rules. Cells (`DeliveryPlanningBoard.tsx` type ramp): doc
+numbers = Plex Mono 12.5 semibold ink (`DOCNO_STYLE`), Customer = 13 semibold
+ink (`strong`), detail text (salesperson / venue / phone / dates / state) =
+12.5 ink-secondary (`detail`), money = 13 semibold ink (`MONEY_STYLE`; Balance
+keeps its over-collection red / settled grey). Toolbar: the SHARED
+`ResetFiltersButton` sits after the search labelled "Reset layout" (clears
+funnels + search, hides while inactive — it REPLACED the right-side "Clear
+filters" pill AND the footer column-layout reset; column-layout resets live in
+the Columns drawer, like the SO list), then the rows·cols caption; right side
+is "Export" + the SHARED `ColumnsButton` ("Columns · N"). Region chips wear the
+`FilterPills` slab (white track, squared uppercase pills, solid-primary
+active; SG keeps its dashed cross-border outline). The filter-chips bar lost
+its burnt-orange wash for a neutral grey.
+
 Then: row scope (§6) → region filter → counts → state filter →
 `{ orders, counts, regions }` (`:1345-1371`). Counts are computed over the
 **region-filtered** set BEFORE the state filter, so switching state tabs does
