@@ -513,7 +513,22 @@ jobs:
   # below are what make the gate real. For a matrix dependency, `.result` is
   # 'success' only when every leg succeeded.
   backend:
-    needs: [backend-typecheck, backend-tests]
+    # `lint` is here since 2026-08-19, and that is the whole point of this job:
+    # a required context is the ONLY thing that blocks a merge, and a job missing
+    # from this list is a job that cannot. The linter shipped 2026-08-13 as its
+    # own job so a finding reports in ~1 minute instead of behind 334s of tests
+    # it does not depend on — a good reason that carried a side effect nobody
+    # wrote down, and the ratchet in eslint-ratchet.json has been held by
+    # nothing but goodwill ever since. The identical omission is documented two
+    # jobs down, where frontend-typecheck WAS added to the frontend roll-up for
+    # exactly this reason.
+    #
+    # `lint` is a MATRIX, so needs.lint.result is the verdict of BOTH legs
+    # together — GitHub cannot express a dependency on one leg. In practice only
+    # the frontend leg can fail today: the backend leg runs `-- --advisory` and
+    # exits 0 while its 16 over-ceiling pairs are paid down. When that flag comes
+    # off, the backend leg starts blocking here with no further change.
+    needs: [backend-typecheck, backend-tests, lint]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -530,8 +545,10 @@ jobs:
           }
           echo "backend-typecheck: ${{ needs.backend-typecheck.result }}"
           echo "backend-tests:     ${{ needs.backend-tests.result }}"
+          echo "lint:              ${{ needs.lint.result }}"
           ok backend-typecheck "${{ needs.backend-typecheck.result }}"
           ok backend-tests "${{ needs.backend-tests.result }}"
+          ok lint "${{ needs.lint.result }}"
 
   # ── Lint ──────────────────────────────────────────────────────────────────
   # This repo had NO linter until 2026-08-13: no .eslintrc, no eslint.config.*,
@@ -861,7 +878,7 @@ jobs:
   # `if: always()` plus explicit result assertions, for the reason spelled out
   # on the `backend` roll-up: a skipped check is not a failed check.
   frontend:
-    needs: [frontend-checks, frontend-typecheck, frontend-build]
+    needs: [frontend-checks, frontend-typecheck, frontend-build, lint]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -887,6 +904,9 @@ jobs:
           ok frontend-checks "${{ needs.frontend-checks.result }}"
           ok frontend-typecheck "${{ needs.frontend-typecheck.result }}"
           ok frontend-build "${{ needs.frontend-build.result }}"
+          # See the note on the `backend` roll-up: `lint` had no required context
+          # covering it at all, so the eslint ratchet could not block a merge.
+          ok lint "${{ needs.lint.result }}"
 
   e2e-contract:
     runs-on: ubuntu-latest
