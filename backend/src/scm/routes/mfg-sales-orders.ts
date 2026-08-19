@@ -883,7 +883,11 @@ function extractSofaComboLookupArgs(
    ("Failed to load") in prod. For a field only the detail needs, append it on
    the detail SELECT (see slip_image_key/receipt_image_key at the
    `/:docNo` handler), NOT here. 2990 hit this 2026-06-26 (their mig 0200). */
-const HEADER =
+/* Exported (diag/so-list-probe, 2026-08) so the TEMPORARY SO-list probe route
+   (routes/so-list-probe-diag.ts) can rebuild LIST_COLS byte-identically and
+   reproduce the exact select the list handler runs. Remove the `export` when
+   that diagnostic route is reverted; the const itself is unchanged. */
+export const HEADER =
   'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, po_doc_no, venue, venue_id, ' +
   'address1, address2, address3, address4, phone, ' +
   'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, service_sen, local_total_sen, balance_sen, ' +

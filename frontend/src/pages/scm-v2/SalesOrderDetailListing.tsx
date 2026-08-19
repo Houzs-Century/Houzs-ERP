@@ -486,7 +486,7 @@ const buildColumns = (canFinance: boolean): DataGridColumn<SoDetailListingRow>[]
     },
     /* ── Default-hidden long tail (10 columns) ────────────────────────── */
     {
-      key: 'debtor_code', label: 'Debtor Code', width: 110, sortable: true,
+      key: 'debtor_code', label: 'Customer', width: 110, sortable: true,
       defaultHidden: true,
       accessor: (r) => r.debtor_code ?? '',
       searchValue: (r) => r.debtor_code ?? '',
