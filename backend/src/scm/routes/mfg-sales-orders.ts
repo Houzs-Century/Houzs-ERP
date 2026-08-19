@@ -73,6 +73,7 @@ import {
 import {
   buildDeliveryFeeServiceLines,
   computeAddonServiceLines,
+  recoverOperatorDeliveryState,
   type AddonSelectionInput,
   type ServiceLineSpec,
 } from '../shared/service-lines';
@@ -6352,33 +6353,8 @@ async function recomputeDeliveryFeeCore(
       .map((l) => (typeof l.line_no === 'number' ? l.line_no : -1)),
   );
 
-  /* Operator free-form fee — preserved across the recompute. Recovered from the
-     GROSS side (unit × qty, falling back to total for pre-discount rows): with
-     discounts now surviving below, total_sen is NET, and recovering the net as
-     the next gross would shrink the fee by the discount on every rebuild. */
-  const additionalSen = deliveryLines
-    .filter((l) => l.item_code === SVC_DELIVERY_ADD)
-    .reduce((s, l) => s + (l.unit_price_sen != null
-      ? Number(l.unit_price_sen) * Math.max(1, Number(l.qty ?? 1))
-      : Number(l.total_sen ?? 0)), 0);
-
-  /* Operator discounts on the fee lines — ALSO preserved (2026-08-19). The line
-     PATCH accepts a bounded discount on any line (0..qty×unit, `discountSen must
-     be between…`), and a delivery line was no exception — but this rebuild wrote
-     `discount_sen: 0`, so the one sanctioned way to REDUCE a delivery fee was
-     silently undone by the very next derivation. 250 → 125 typed as a price was
-     never going to hold (the fee is derived — one truth, owner 2026-08-07); as a
-     DISCOUNT it is exactly how every other price reduction on an SO is
-     expressed, it prints as unit 250 / discount 125 / total 125, and it must
-     survive. Keyed per item_code and clamped to the rebuilt line's own total, so
-     a discount can never exceed the fee it reduces, and a component that
-     disappears on rebuild (base swapping to CROSS) conservatively drops its
-     discount rather than migrating it to money it never named. */
-  const discountByCode = new Map<string, number>();
-  for (const l of deliveryLines) {
-    const d = Math.max(0, Number(l.discount_sen ?? 0));
-    if (d > 0) discountByCode.set(l.item_code, (discountByCode.get(l.item_code) ?? 0) + d);
-  }
+  // Operator-owned state (free-form fee + discounts) — see recoverOperatorDeliveryState.
+  const { additionalSen, discountByCode } = recoverOperatorDeliveryState(deliveryLines);
 
   // Deliverable categories (sofa / mattress / bedframe) + their special-model fees.
   const DELIVERABLE = new Set(['sofa', 'mattress', 'bedframe']);
@@ -6467,10 +6443,9 @@ async function recomputeDeliveryFeeCore(
      leaves exactly one consistent set. */
   {
     const lineDateToday = todayMyt();
+    // disc = preserved operator discount, clamped to THIS rebuilt line's own total.
     const rows = specs.map((spec, i) => {
-      /* Preserved operator discount, clamped to THIS rebuilt line's own total. */
-      const disc = Math.min(discountByCode.get(spec.itemCode) ?? 0, spec.totalSen);
-      const net = spec.totalSen - disc;
+      const disc = Math.min(discountByCode.get(spec.itemCode) ?? 0, spec.totalSen), net = spec.totalSen - disc;
       return {
       doc_no: docNo,                                    // ⚠️ NOT NULL — omitting it silently dropped the line (the bug)
       line_no: keptMaxLineNo >= 0 ? keptMaxLineNo + 1 + i : null,
@@ -6502,13 +6477,10 @@ async function recomputeDeliveryFeeCore(
       branding: null,
       venue: h.venue ?? null,
       stock_status: 'READY',
-      };
-    });
+      }; });
     /* company_id is NOT passed: the RPC reads it off the SO header, so a rebuilt
        line can never land in another company (mig 0083 made it NOT NULL). */
-    /* The header is a dual-write MIRROR of the lines (owner 2026-08-07), so it
-       carries what the lines carry: the NET after preserved discounts. */
-    const netFeeSen = rows.reduce((s, r) => s + Number(r.total_sen ?? 0), 0);
+    const netFeeSen = rows.reduce((s, r) => s + Number(r.total_sen ?? 0), 0); // header mirrors the LINES: net after discounts (owner 2026-08-07)
     const { error: rebuildErr } = await sb.rpc('rebuild_mfg_so_delivery_lines', {
       p_doc_no: docNo,
       p_source_doc_no: sourceDocNo,
