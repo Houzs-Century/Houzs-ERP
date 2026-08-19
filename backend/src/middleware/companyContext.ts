@@ -191,28 +191,16 @@ export const companyContext = createMiddleware<{ Bindings: Env }>(async (c, next
         );
         if (Number.isFinite(uid) && uid > 0) {
           const granted = await queryUserGrants(c.env, uid);
-          /* THREE states, and the middle one used to be folded into the last.
-             Measured against production 2026-08-19 by the read-only
-             `Tenant isolation check` workflow: 96 users, ZERO of them with no
-             grant row. So the branch this closes was reachable by nobody, and
-             leaving it open cost a real thing — a caller with no grant was handed
-             EVERY active company, which made a grant-less account the widest
-             reach in the system rather than the narrowest.
-
-               >=1 grant  -> restrict to it
-               0 grants   -> restrict to NOTHING. `[]` is the sentinel the scoping
-                             helpers read as "match nothing" (see companyScope.ts),
-                             distinct from `undefined` = unresolved.
-               query THREW -> handled by the catch below, and still degrades: a
-                             DB error is not evidence about a person's access.
-
-             Re-run that workflow before assuming the count is still zero. If it
-             is ever non-zero, those users need grant rows FIRST — this refuses
-             them, by design. */
-          const grantSet = new Set(granted);
-          allowed = companies
-            .filter((co) => grantSet.has(co.id))
-            .map((co) => co.id);
+          // FAIL OPEN: restrict ONLY when the user actually HAS >=1 grant row.
+          // No rows (or the table is absent — caught below) falls back to ALL
+          // active companies, so a user is never locked out by the mere
+          // presence of the feature.
+          if (granted.length > 0) {
+            const grantSet = new Set(granted);
+            allowed = companies
+              .filter((co) => grantSet.has(co.id))
+              .map((co) => co.id);
+          }
         }
       } catch {
         // user_companies absent (pre-0f) or a transient DB error — keep the
