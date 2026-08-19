@@ -13,8 +13,23 @@ import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, ret
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
    the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
-async function queueAcGrnEdit(c: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
-  await enqueueEdit(c.get('supabase'), {
+/* The client is REQUIRED and comes second, deliberately.
+   
+   This used to read `enqueueEdit(c.get('supabase'), ...)` — it reached past its
+   caller for the ordinary PostgREST client. That is invisible and harmless
+   today, because every caller is an ordinary route body using the same client.
+   It stops being harmless the moment a caller runs inside `runScmPgCommand`:
+   the GRN row would be deleted inside the transaction while the AutoCount
+   outbox row committed OUTSIDE it, so a rollback would leave AutoCount told to
+   edit a line that still exists. The two must land together or not at all.
+
+   Required rather than optional, per CLAUDE.md: "a parameter that DECIDES
+   something is required, never optional". This one decides WHICH TRANSACTION
+   the outbox row belongs to — an optional parameter would let a future
+   transactional caller silently keep the old, wrong client with no compile
+   error. See docs/ALLOCATION-DURABILITY-PLAN.md, trap 3. */
+async function queueAcGrnEdit(c: any, sb: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
+  await enqueueEdit(sb, {
     companyId: activeCompanyId(c),
     docType: 'GR',
     docId: id,
@@ -2871,7 +2886,7 @@ grns.patch('/:id', async (c) => {
       await recostFromGrn(sb, id);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[grn-patch] re-alloc/recost failed:', id, e); }
   }
-  await queueAcGrnEdit(c, id);
+  await queueAcGrnEdit(c, sb, id);
   return c.json({ grn: data });
 });
 
@@ -3123,7 +3138,7 @@ grns.post('/:id/items', async (c) => {
     } catch { /* best-effort */ }
   }
   } // end non-DRAFT line-add rollup/movement guard
-  await queueAcGrnEdit(c, grnId);
+  await queueAcGrnEdit(c, sb, grnId);
   return c.json({ item: data }, 201);
 });
 
@@ -3421,7 +3436,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
     const priceChanged = Number(unit) !== Number(prevUnit);
     if (priceChanged || bucketChanged) await recostFromGrn(sb, grnId);
   }
-  await queueAcGrnEdit(c, grnId);
+  await queueAcGrnEdit(c, sb, grnId);
   return c.json({ ok: true });
 });
 
@@ -3590,6 +3605,6 @@ grns.delete('/:id/items/:itemId', async (c) => {
   }
 
   await recomputeGrnTotals(sb, grnId);
-  await queueAcGrnEdit(c, grnId, retire);
+  await queueAcGrnEdit(c, sb, grnId, retire);
   return c.body(null, 204);
 });
