@@ -183,13 +183,28 @@ async function resolveRackTargets(
     const ids = ((data ?? []) as Array<{ id: string }>).map((w) => w.id);
     return [...new Set(ids)];
   }
+  /* Explicit warehouse ids — VALIDATE against the active company. The SCM client
+     is service-role (RLS bypassed), so a caller-supplied warehouse uuid was
+     trusted verbatim: the racks below stamp company_id = active, but pointed
+     warehouse_id at ANOTHER company's warehouse. Intersect the requested ids
+     with the company's own warehouses so a foreign uuid resolves to nothing
+     (same "foreign uuid resolves to nothing" rule as the by-id reads elsewhere).
+     Legitimate in-company ids in a mixed request still create. */
+  let requested: string[];
   if (Array.isArray(body.warehouseIds)) {
-    return [...new Set(
+    requested = [...new Set(
       (body.warehouseIds as unknown[]).map((x) => String(x ?? '').trim()).filter(Boolean),
     )];
+  } else {
+    const one = String(body.warehouseId ?? '').trim();
+    requested = one ? [one] : [];
   }
-  const one = String(body.warehouseId ?? '').trim();
-  return one ? [one] : [];
+  if (requested.length === 0) return [];
+  const { data, error } = await scopeToCompany(sb.from('warehouses').select('id'), c)
+    .in('id', requested);
+  if (error) return []; // read failed -> no VERIFIED target -> caller 400s (fail closed, never trust an unverified warehouse)
+  const inCompany = new Set(((data ?? []) as Array<{ id: string }>).map((w) => w.id));
+  return requested.filter((id) => inCompany.has(id));
 }
 
 // ── POST /warehouse/racks — create one rack, or seed `count` racks ─────────
@@ -197,7 +212,8 @@ async function resolveRackTargets(
 // or every warehouse (allWarehouses). Fan-out inserts the label into each
 // target, skipping any warehouse where it already exists so one collision never
 // aborts the whole batch (the unique (warehouse_id, rack) still guards dupes).
-warehouse.post('/racks', async (c) => {
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+export const createWarehouseRacksHandler = async (c: any) => {
   const sb = c.get('supabase');
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
@@ -263,7 +279,8 @@ warehouse.post('/racks', async (c) => {
   // Back-compat: a single-warehouse single-rack create still returns { rack }.
   if (!multi) return c.json({ rack: (data ?? [])[0] ?? null }, 201);
   return c.json({ racks: data ?? [], created: data?.length ?? 0 }, 201);
-});
+};
+warehouse.post('/racks', createWarehouseRacksHandler);
 
 // ── PATCH /warehouse/racks/:id — toggle reserved / edit label/notes ────────
 warehouse.patch('/racks/:id', async (c) => {

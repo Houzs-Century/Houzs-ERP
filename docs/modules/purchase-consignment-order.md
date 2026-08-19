@@ -168,7 +168,7 @@ first (itself cancel-only — it has no delete either), then the PC Order.
 | Table | Role |
 |---|---|
 | `scm.purchase_consignment_orders` | Header (mig 0154) — uuid `id` PK, `pc_number TEXT UNIQUE`, `status`, `supplier_id`, `purchase_location_id`, `po_date`, `expected_at`, `currency`, `subtotal_sen` / `tax_sen` / `total_sen`, `submitted_at`, `received_at`, `cancelled_at`, `company_id` |
-| `scm.purchase_consignment_order_items` | Lines — `binding_id`, `material_kind` (`mfg_product` / `fabric` / `raw`), `material_code`, `supplier_sku`, `qty`, `unit_price_sen`, `line_total_sen`, `received_qty` |
+| `scm.purchase_consignment_order_items` | Lines — `binding_id`, `material_kind` (`mfg_product` / `fabric` / `raw`), `item_code`, `supplier_sku`, `qty`, `unit_price_sen`, `line_total_sen`, `received_qty` |
 
 Numbering: `PCO-YYMM-NNN`, minted by `mintMonthlyDocNo` +
 `insertWithDocNoRetry` — a unique-violation (23505) on `pc_number` re-derives the

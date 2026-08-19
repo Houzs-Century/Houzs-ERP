@@ -19,7 +19,8 @@ import { Hono, type Context } from "hono";
 import type { Env } from "../types";
 import { auth, requirePermission } from "../middleware/auth";
 import { companyContext } from "../middleware/companyContext";
-import { canViewAllSales } from "../scm/lib/houzs-perms";
+import { hasPermission } from "../services/permissions";
+import { isDirectorUser } from "../services/pmsAccess";
 import {
   createSession,
   verifyPassword,
@@ -228,6 +229,27 @@ pos.post("/verify-pin", auth, async (c) => {
 // WITHOUT one (director / owner / coordinator) get the whole company. Both used
 // to render under the word "SHOWROOM", so a director saw company-wide figures
 // under a showroom heading and no two people's tiles agreed.
+/** May this caller point the Personal KPI tile at ANOTHER salesperson?
+ *
+ *  EXPORTED AND PURE so the test EXECUTES it. Its two predecessors both died
+ *  in ways a source-text pin cannot see: canViewAllSales(c) was called with a
+ *  context whose houzsUser is never set on this route (gate permanently
+ *  closed), and then hasPermission was handed the USER where it takes the
+ *  PERMISSIONS — `user.has is not a function`, a 500 on every sales-stats read,
+ *  both tiles "Couldn't load" (2026-08-20, reported with a screenshot both
+ *  times). An `as never` cast silenced the compiler on the second one. The
+ *  test now calls this function with real shapes instead of matching its
+ *  spelling. */
+export function canTargetSalesperson(
+  caller: { position_name?: string | null; permissions_set?: ReadonlySet<string>; permissions?: ReadonlyArray<string> } | null | undefined,
+  wantSalesperson: string,
+): boolean {
+  if (wantSalesperson === "" || wantSalesperson === "all") return false;
+  const perms = caller?.permissions_set ?? caller?.permissions ?? [];
+  return hasPermission(perms, "scm.so.view_all")
+    || isDirectorUser({ position_name: caller?.position_name ?? null, permissions_set: caller?.permissions_set } as never);
+}
+
 const KPI_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 pos.get("/sales-stats", auth, companyContext, async (c) => {
   const DB = c.env.DB;
@@ -237,15 +259,35 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   ).bind(uid).first<{ id: string; name: string; showroom_id: string | null }>();
   const companyId = (c.get("companyId") as number | undefined) ?? null;
 
-  /* Whose Personal card. Defaults to the caller; a canViewAllSales caller may
-     name someone else. Matched on the same `name` the POS shows in its picker,
-     scoped to the active company so one company cannot enumerate the other's
-     staff. A miss falls back to the caller rather than erroring — the card is a
+  /* Whose Personal card. Defaults to the caller; a view-all caller may name
+     someone else. TWO corrections against the first version (2026-08-19, found
+     by the reporter within hours):
+     · the gate read canViewAllSales(c), whose director arm needs `houzsUser` —
+       which only scm/middleware/auth.ts stashes. On /api/pos it is never set,
+       so a Sales Director (the exact person the picker is FOR) always failed
+       the gate. Here `user` IS the real Houzs caller, so the check runs
+       directly off it: the flat key, or the director org position.
+     · the lookup matched staff.name; the POS picker sends staff.id
+       (`<option value={s.id}>`). Every lookup missed and fell back to the
+       caller — the label changed, the numbers did not. Matched by id when the
+       param is uuid-shaped (guarded: a malformed value on a uuid column 500s
+       with 22P02 — see the pin-login note above), by name otherwise.
+     A miss still falls back to the caller rather than erroring — the card is a
      dashboard tile, and a 500 here would blank the whole page. */
   const wantSalesperson = (c.req.query("salesperson") || "").trim();
-  const mayTarget = wantSalesperson !== "" && wantSalesperson !== "all" && canViewAllSales(c);
+  /* Vars types `user` as { id } only; the runtime object is the full session
+     user (services/auth.ts getUserBySession — permissions_set: Set<string>,
+     position_name). Widening cast, not `as never`: the parameter type still
+     checks every property we read. */
+  const mayTarget = canTargetSalesperson(
+    c.get("user") as Parameters<typeof canTargetSalesperson>[0],
+    wantSalesperson,
+  );
+  const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const target = mayTarget
-    ? await DB.prepare(`SELECT id, name FROM scm.staff WHERE name = ? LIMIT 1`)
+    ? await DB.prepare(UUID_RX.test(wantSalesperson)
+        ? `SELECT id, name FROM scm.staff WHERE id = ? LIMIT 1`
+        : `SELECT id, name FROM scm.staff WHERE name = ? LIMIT 1`)
         .bind(wantSalesperson).first<{ id: string; name: string }>()
     : null;
 
