@@ -9,34 +9,11 @@ import { writeMovements, defaultWarehouseId, reconcileDropshipBatches } from '..
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { grnHasDownstream } from '../lib/downstream-lock';
 import { qtyCapRefusal } from '../lib/qty-cap';
-import { enqueueConvert, recordParentlessCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, recordParentlessCreate, enqueueCancel, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { queueAcGrnEdit } from '../lib/ac-grn-outbox';
 
 /* ERP -> AutoCount GRN edit. See queueAcDoEdit in delivery-orders-mfg.ts for
    the shape and why it never throws. AcSyncService.cs:445 is `case "GR"`. */
-/* The client is REQUIRED and comes second, deliberately.
-   
-   This used to read `enqueueEdit(c.get('supabase'), ...)` — it reached past its
-   caller for the ordinary PostgREST client. That is invisible and harmless
-   today, because every caller is an ordinary route body using the same client.
-   It stops being harmless the moment a caller runs inside `runScmPgCommand`:
-   the GRN row would be deleted inside the transaction while the AutoCount
-   outbox row committed OUTSIDE it, so a rollback would leave AutoCount told to
-   edit a line that still exists. The two must land together or not at all.
-
-   Required rather than optional, per CLAUDE.md: "a parameter that DECIDES
-   something is required, never optional". This one decides WHICH TRANSACTION
-   the outbox row belongs to — an optional parameter would let a future
-   transactional caller silently keep the old, wrong client with no compile
-   error. See docs/ALLOCATION-DURABILITY-PLAN.md, trap 3. */
-async function queueAcGrnEdit(c: any, sb: any, id: string, retire: AcRetiredLine[] = []): Promise<void> {
-  await enqueueEdit(sb, {
-    companyId: activeCompanyId(c),
-    docType: 'GR',
-    docId: id,
-    retire,
-    createdBy: c.get('houzsUser')?.id ?? null,
-  });
-}
 import { reconcileUncostedOuts, reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
 import { buildVariantSummary, computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import {
