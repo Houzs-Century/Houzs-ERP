@@ -427,10 +427,20 @@ app.post("/autocount/po-pull", requirePermission("*"), async (c) => {
    refreshes rows rather than duplicating them. */
 app.post("/autocount/so-pull", requirePermission("*"), async (c) => {
   const mode = c.req.query("mode") === "all" ? "all" : "filtered";
+  /* `?since=YYYY-MM-DD` is the BACKFILL, and it is the one that works. `mode=all`
+     calls getAll() and against ~13,000 orders it killed the Worker outright —
+     measured 2026-08-19: 39 seconds, then `Worker exceeded resource limits`. So a
+     backlog is collected in WINDOWS, and `since` neither reads nor advances the
+     checkpoint, which is what makes it safe to run beside the live pull. */
+  const sinceRaw = (c.req.query("since") ?? "").trim();
+  if (sinceRaw && !/^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}:\d{2})?$/.test(sinceRaw)) {
+    return c.json({ error: "since must look like 2026-01-31 or 2026-01-31 00:00:00" }, 400);
+  }
+  const since = sinceRaw || null;
   try {
     const { runPull } = await import("../services/pull");
-    const result = await runPull(c.env, "MANUAL", mode);
-    return c.json({ mode, result });
+    const result = await runPull(c.env, "MANUAL", mode, since);
+    return c.json({ mode, since, result });
   } catch {
     return c.json({ error: "Couldn't reach AutoCount to refresh sales orders. Try again shortly." }, 502);
   }
