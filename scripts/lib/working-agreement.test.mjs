@@ -533,6 +533,19 @@ test("mixed English and Chinese in one sentence is still one claim", () => {
   assert.equal(findRemedyClaims(`${mixed} (UNTESTED)`)[0].untested, true, "UNTESTED still applies");
 });
 
+test("a vain run is narration, not a prescription — 白跑 MRP walks past the Latin-token exception", () => {
+  /* The collision that put main's own corpus test red on 2026-08-19, hours
+     after the Chinese support shipped: 「跑 + Latin」 reads as a command being
+     named, but 白跑/空跑 say a run achieved NOTHING — narration about waste,
+     from the left side the original comment did not consider. The sentence is
+     lifted from the real #2488 entry that tripped it. */
+  const vain = "至此「列表白跑 MRP」这个病的四处全部关掉,过一拍再由独立轻接口补上。";
+  assert.equal(findRemedyClaims(vain).length, 0, "白跑 + 补上 is not a remedy claim");
+  assert.equal(findRemedyClaims("空跑 mode=all 也补不回来。").length, 0, "空跑 likewise");
+  // and the genuine command shape the exception exists for still fires
+  assert.equal(findRemedyClaims("跑 mode=all 就可以把历史补齐。").length, 1, "a real 跑-command still claims");
+});
+
 test("the Chinese patterns add NO noise to the surface the gate actually scans", () => {
   /* The isolation measurement, kept as a test so a later pattern edit cannot
      quietly make the gate chatty.

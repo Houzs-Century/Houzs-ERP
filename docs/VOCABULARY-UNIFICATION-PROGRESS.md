@@ -51,7 +51,35 @@ Two screening layers, because **names lie**:
 ## Open for owner (structural, not renames)
 
 - **Customer normalisation** — `customer_id` is 3% populated; the business runs on one walk-in `debtor_code` + free-text names. Real master or leave as-is?
-- **Salesperson** — unify to `salesperson_id` (uuid), keep the text `agent` for display only?
+- **Salesperson** — RESOLVED: canonical is `salesperson_id` (uuid), text `agent` kept for display only. Registered in the guard 2026-08-19 (batch 3, `feat/unify-naming-batch3`); nothing to rename (the column already exists).
+
+## Batch 3 — three concepts REGISTERED, two renames STAGED (2026-08-19)
+
+Worktree `unify-naming`, branch `feat/unify-naming-batch3`. Registered three
+concepts in `vocabulary.mjs` (they graduate from documented-only in the drift
+catalogue to declared canonical in the glossary's enforced table). No spelling is
+retired in the guard yet for any of them, because each retire needs a migration
+that is NOT safe to ship blind against money/stock tables:
+
+| Concept | Canonical | Shipped now | Staged (reviewed follow-up) |
+| --- | --- | --- | --- |
+| **Salesperson** | `salesperson_id` (uuid); `agent` text kept for display | registry entry, declaredIn `so-agent.ts` | nothing — column already canonical |
+| **Warehouse** | `warehouse_id` (uuid, per-line); header snapshot `sales_location` | registry entry, declaredIn `warehouse-label.ts` | migration: derive+backfill header `warehouse_id` from free-text `sales_location`, then retire `sales_location`. Touches `scm.mfg_sales_orders` (money/stock-adjacent) and its `mfg_sales_orders_with_payment_totals` view — the 0189 grant hazard |
+| **Customer ref** | `ref` (owner ruling #2429) | registry entry, declaredIn `customer-ref.ts` | migration: DROP dead `po_doc_no` / `customer_po` / `customer_po_id` / `customer_po_date` from `scm.mfg_sales_orders`. They are 0%-filled but projected by `mfg_sales_orders_with_payment_totals` — the recreate MUST restore its `service_role` + `hyperdrive_staging` grants (0190/0191 precedent). Also stop selecting them in the backend router first |
+
+**Correction carried into the registry:** an earlier line in this doc named
+`customer_so_no` canonical for the customer reference. #2429's owner ruling
+(2026-08-18, audited against production: `ref` filled on 2717 orders,
+`customer_so_no` a near-duplicate) supersedes that — **`ref` leads**. The registry
+and glossary now say `ref`.
+
+**Why no camelCase alignment shipped:** the screening's remaining salesperson /
+warehouse / customer-ref spellings (`salesRep`, `sales_agent`/`SalesAgent`,
+`sales_reps`, `purchase_location_id`, `po_doc_no`, `poRef`) are genuinely
+DIFFERENT identifiers reconciled at runtime, not casing twins of the canonical —
+the true camel twins (`salespersonId`, `salesLocation`, `warehouseId`) are already
+correct. Mass-renaming the distinct identifiers is not behaviour-preserving, so
+none was touched.
 
 ---
 

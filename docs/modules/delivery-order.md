@@ -210,7 +210,7 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 | `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, **`ship_cost_sen`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads). |
 | `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_sen`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
-| `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, product_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
+| `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, item_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
 | `scm.mfg_sales_order_items` | Upstream: `warehouse_id` is the **authoritative** ship-from warehouse per line. |
 
 **Status vocabulary — read `backend/src/scm/shared/do-shipped-states.ts`, not
@@ -370,7 +370,7 @@ stay uncapped, exactly as at create.
 `deductInventoryForDo` (`:831`) is idempotent by two mechanisms: a pre-insert
 existence check on `(source_doc_type='DO', source_doc_id, movement_type='OUT')`
 (`:832-839`), and a partial UNIQUE index as the hard backstop against a race. It
-collapses identical `(warehouse_id, product_code, variant_key, batch_no)` lines
+collapses identical `(warehouse_id, item_code, variant_key, batch_no)` lines
 into one OUT row (`:881-905`).
 
 **The index, verbatim.** Until migration **0279** this was prod-only DDL that
@@ -380,7 +380,7 @@ appeared in no file in the repo — read live from `pg_indexes` on 2026-08-11
 ```sql
 CREATE UNIQUE INDEX uq_inv_mov_do_source
   ON scm.inventory_movements
-  USING btree (source_doc_type, source_doc_id, product_code, variant_key)
+  USING btree (source_doc_type, source_doc_id, item_code, variant_key)
   WHERE (source_doc_type = 'DO'::text)
 ```
 
@@ -394,7 +394,7 @@ no-op against production) so the schema can be read from the repo again.
 ```sql
 CREATE UNIQUE INDEX uq_inv_mov_do_source_v2
   ON scm.inventory_movements
-  USING btree (source_doc_type, source_doc_id, product_code, variant_key,
+  USING btree (source_doc_type, source_doc_id, item_code, variant_key,
                COALESCE(correction_seq, 0))
   WHERE (source_doc_type = 'DO'::text)
 ```

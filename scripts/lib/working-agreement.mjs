@@ -497,9 +497,17 @@ const PRESCRIPTION_RX = new RegExp(
    好 on 「好像」. The one exception is 跑 followed by a LATIN token — 「跑 all
    模式」, 「跑 mode=all」 — which is a command being named, and cannot collide
    with 跑了 / 跑得 / 跑步 because those continue in CJK.
+
+   …from the RIGHT. The collision this missed comes from the LEFT (found
+   2026-08-19, the day this shipped): 「列表白跑 MRP」 — the list ran MRP FOR
+   NOTHING — is narration about waste, and 白跑 + a Latin token walked straight
+   through the exception. Paired with a 补上 twenty characters later in the
+   SAME entry's 白话, the gate's own corpus test went red on main for every PR.
+   So the exception now refuses a vain-run prefix: 白跑/空跑 are statements that
+   a run achieved nothing, which is as far from prescribing one as Chinese gets.
    --------------------------------------------------------------------------- */
 const CN_PRESCRIPTION =
-  /(重新?跑|再跑一?次?|跑一次|跑这个|跑那个|去跑|手动跑|执行|触发|派发|dispatch\s*[一-鿿]|跑\s*[A-Za-z0-9`'"-])/;
+  /(重新?跑|再跑一?次?|跑一次|跑这个|跑那个|去跑|手动跑|执行|触发|派发|dispatch\s*[一-鿿]|(?<![白空])跑\s*[A-Za-z0-9`'"-])/;
 
 const CN_OUTCOME =
   /(修好|修复|补回|补齐|补上|补完|补起来|恢复|救回|解决掉|解决了|就会好|就能好|就没事|干净做法|正确做法|唯一办法|最好的做法)/;
