@@ -50,8 +50,7 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
-import { SaveProblemsList } from '../../vendor/scm/components/SaveProblemsList';
-import { acNotSentProblemsOf, acNotSentTitle, AC_NOT_SENT_TONE } from '../../vendor/scm/lib/ac-not-sent';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { DateField } from "../../vendor/scm/components/DateField";
@@ -661,20 +660,13 @@ export const PurchaseOrderNew = () => {
         confirmOverConvert ? { ...basePayload, confirmOverConvert } : basePayload,
         {
           onSuccess: async (res) => {
-            /* THE ACCOUNTS MAY HAVE REFUSED IT, and until 2026-08-19 nothing
-               said so: the create returned 201 and the reason went into a queue
-               behind a permission key buyers do not hold. Shown BEFORE the
-               navigation, so it cannot be lost to the page change. Never blocks
-               — the order exists and the remedy is master data (a creditor
-               code, a duplicate item to retire) this buyer does not own. */
-            const notSent = acNotSentProblemsOf(res);
-            if (notSent.length > 0) {
-              await notify({
-                title: acNotSentTitle('Purchase order'),
-                body: <SaveProblemsList problems={notSent} />,
-                tone: AC_NOT_SENT_TONE,
-              });
-            }
+            /* THE ACCOUNTS MAY HAVE REFUSED IT, and nothing said so before
+               2026-08-19: the reason went into a queue behind a permission key
+               buyers do not hold. BEFORE the navigation, so the page change
+               cannot swallow it. Never blocks — the order exists and the remedy
+               (a creditor code, a duplicate item to retire) is master data this
+               buyer does not own. */
+            await notifyAcNotSent(notify, res, 'Purchase order');
             navigate(`/scm/purchase-orders/${res.id}`);
           },
           onError: async (err) => {

@@ -14,7 +14,7 @@ import soRouteRaw from '../src/scm/routes/mfg-sales-orders.ts?raw';
 import poRouteRaw from '../src/scm/routes/mfg-purchase-orders.ts?raw';
 import outboxRaw from '../src/scm/lib/autocount-outbox.ts?raw';
 import gateRaw from '../src/scm/lib/so-confirm-gate.ts?raw';
-import feModuleRaw from '../../frontend/src/vendor/scm/lib/ac-not-sent.ts?raw';
+import feModuleRaw from '../../frontend/src/vendor/scm/lib/ac-not-sent.tsx?raw';
 import feSoRaw from '../../frontend/src/pages/scm-v2/SalesOrderNew.tsx?raw';
 import fePoRaw from '../../frontend/src/pages/scm-v2/PurchaseOrderNew.tsx?raw';
 
@@ -79,12 +79,14 @@ describe('the two packages agree on the key', () => {
 
   test('both desktop create surfaces render it, through the one module', () => {
     for (const [name, src] of [['SalesOrderNew', feSo], ['PurchaseOrderNew', fePo]] as const) {
-      expect(src, `${name} must read the response through ac-not-sent.ts`)
-        .toContain('acNotSentProblemsOf(res)');
-      expect(src, `${name} must use the shared title, not one of its own`)
-        .toContain('acNotSentTitle(');
-      expect(src, `${name} must not colour a successful save as an error`)
-        .toContain('AC_NOT_SENT_TONE');
+      /* The WHOLE behaviour goes through the one module — not just the
+         wording. A surface that read the key itself would be free to pick its
+         own title, its own tone, and its own answer to "show anything on an
+         empty list", which is the drift do-next-step.ts records. */
+      expect(src, `${name} must show it through ac-not-sent.tsx, not by hand`)
+        .toContain("notifyAcNotSent(notify, res, '");
+      expect(src, `${name} must not build the dialog itself`)
+        .not.toContain('acNotSentTitle(');
     }
   });
 
@@ -96,7 +98,7 @@ describe('the two packages agree on the key', () => {
      deferred, not as done; this test asserts the count so that "all four" can
      never be claimed by accident. */
   test('the wired surfaces are exactly the two named ones', () => {
-    expect(feSo).toContain('acNotSentProblemsOf');
-    expect(fePo).toContain('acNotSentProblemsOf');
+    expect(feSo).toContain('notifyAcNotSent');
+    expect(fePo).toContain('notifyAcNotSent');
   });
 });

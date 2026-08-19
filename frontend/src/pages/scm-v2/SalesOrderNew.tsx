@@ -48,7 +48,7 @@ import {
 } from '../../vendor/scm/lib/sales-order-queries';
 import { authedFetch, humanApiError, parseSaveProblems } from '../../vendor/scm/lib/authed-fetch';
 import { SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
-import { acNotSentProblemsOf, acNotSentTitle, AC_NOT_SENT_TONE } from '../../vendor/scm/lib/ac-not-sent';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
@@ -1664,20 +1664,9 @@ export const SalesOrderNew = () => {
       },
       {
         onSuccess: async (res: { docNo: string }) => {
-          /* THE ACCOUNTS MAY HAVE REFUSED IT. Same shape as the payment /
-             photo warnings below and for the same reason — the order exists,
-             something downstream of it did not happen, and the operator has to
-             hear it while they are still here. Before 2026-08-19 this one alone
-             was silent: the reason went into a queue behind a permission key no
-             salesperson holds. Never blocks; the order is already saved. */
-          const notSent = acNotSentProblemsOf(res);
-          if (notSent.length > 0) {
-            await notify({
-              title: acNotSentTitle('Sales order'),
-              body: <SaveProblemsList problems={notSent} />,
-              tone: AC_NOT_SENT_TONE,
-            });
-          }
+          /* THE ACCOUNTS MAY HAVE REFUSED IT, and until 2026-08-19 only a queue
+             behind a permission key knew. Never blocks — the order is saved. */
+          await notifyAcNotSent(notify, res, 'Sales order');
           /* Task #105 — Fire the queued payment drafts as follow-up POSTs.
              We don't gate navigation on success — if a payment fails the
              SO still exists, so we navigate to the Detail page where

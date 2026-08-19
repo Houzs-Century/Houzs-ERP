@@ -24,7 +24,9 @@
 // follow the reason. This module contributes only the frame around them, so
 // there is no second vocabulary to drift.
 // ----------------------------------------------------------------------------
+import type { ReactNode } from 'react';
 import type { SaveProblem } from './authed-fetch';
+import { SaveProblemsList } from '../components/SaveProblemsList';
 
 /** The key the backend attaches to a create response. Never present when the
  *  document composed cleanly — a warning nobody needed is how an operator
@@ -71,3 +73,34 @@ export function acNotSentTitle(docLabel: string): string {
  * NotifyDialog, made once, not a colour picked per surface.
  */
 export const AC_NOT_SENT_TONE = 'info' as const;
+
+/**
+ * Show it, once, the same way everywhere.
+ *
+ * THE WHOLE BEHAVIOUR LIVES HERE, not just the words. Four surfaces raise these
+ * documents and every one of them would otherwise decide for itself whether to
+ * show a dialog, which list component to use, which tone, and — the one that
+ * matters — whether to show anything at all on an empty list. do-next-step.ts
+ * records what that costs: a rule re-derived per surface reaches some of them
+ * and drifts on the rest, with nothing erroring when it does.
+ *
+ * AWAITED, and the caller must await it too. Every call site navigates away
+ * immediately afterwards; a fire-and-forget dialog is torn down by the route
+ * change and the operator sees a flicker instead of a reason.
+ *
+ * SILENT ON THE ORDINARY SAVE. Returns without touching the UI when the
+ * response carries nothing — the success path must stay a success path.
+ */
+export async function notifyAcNotSent(
+  notify: (opts: { title: string; body?: ReactNode; tone?: 'info' | 'error' }) => Promise<void>,
+  res: unknown,
+  docLabel: string,
+): Promise<void> {
+  const problems = acNotSentProblemsOf(res);
+  if (problems.length === 0) return;
+  await notify({
+    title: acNotSentTitle(docLabel),
+    body: <SaveProblemsList problems={problems} />,
+    tone: AC_NOT_SENT_TONE,
+  });
+}
