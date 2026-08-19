@@ -382,6 +382,7 @@ GET,/api/sales/entries/change-requests,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,
 POST,/api/sales/entries/change-requests/:reqId/approve,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""sales"", ""full"")",,YES,DECLARED_GATE,backend/src/routes/sales.ts
 POST,/api/sales/entries/change-requests/:reqId/reject,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""sales"", ""full"")",,YES,DECLARED_GATE,backend/src/routes/sales.ts
 GET,/api/sales/entries/export,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""sales"")",,NO,DECLARED_GATE,backend/src/routes/sales.ts
+GET,/api/scm/_diag/so-list-probe,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth + requireScmAccess,supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/so-list-probe-diag.ts
 GET,/api/scm/accounting/accounts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,NO,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 POST,/api/scm/accounting/accounts,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
 PATCH,/api/scm/accounting/accounts/:code,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,"auth + requireScmAccess + scmAreaGuard(""scm.finance.accounting"")",supabaseAuth,,,YES,DECLARED_GATE,backend/src/scm/routes/accounting.ts
