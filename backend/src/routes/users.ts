@@ -2077,6 +2077,53 @@ app.delete("/invitations/:id", requirePermission("users.manage"), async (c) => {
  * holders — impersonation is strictly the owner's review tool. Every use is
  * audited with the target identity.
  */
+/* THE ACTOR'S GRANTS ARE THE BOUNDARY — owner decision 2026-08-19.
+   His words: "我们的 team 那边是有得选这一个人是负责什么公司的… 如果他只是在同
+   一间公司，肯定就是限制；如果他是两间公司…他是没有限制。以 RBAC 这样子去做限制的"
+
+   So the predicate is the ACTOR's `allowedCompanyIds`, never the ACTIVE company:
+   switching organisation is something a two-company admin is already entitled to
+   do, and gating on the switcher would break that for no gain.
+
+   The rule is the one PUT /:id/companies already enforces twenty lines up — a
+   grantor can only ever pass on what they hold. Taking over an account HANDS the
+   actor that account's reach, so the target's companies must be a SUBSET of the
+   actor's. Holding {1} and taking over someone in {1,2} would be a promotion.
+
+   Degrades exactly like `allowedCompanyIds` does: `undefined` means the company
+   context could not be read at all (pre-migration, cold start), and refusing
+   there would lock every admin out of a routine action, so it falls through. `[]`
+   is different — it means the caller is granted NOTHING, and that refuses. */
+async function targetWithinActorCompanies(
+  c: Context<{ Bindings: Env }>,
+  targetUserId: number,
+): Promise<{ ok: true } | { ok: false; body: { error: string; message: string } }> {
+  const mine = allowedCompanyIds(c);
+  if (mine === undefined) return { ok: true };
+  const r = await c.env.DB.prepare(
+    `SELECT company_id FROM user_companies WHERE user_id = ?`,
+  )
+    .bind(targetUserId)
+    .all<{ company_id: number | string }>();
+  const theirs = (r.results ?? [])
+    .map((x) => Number(x.company_id))
+    .filter((n) => Number.isFinite(n) && n > 0);
+  /* A target with NO grants is not "safe by default" — companyContext currently
+     hands such a user every active company, so taking them over is the widest
+     reach there is. Refuse unless the actor holds everything themselves. */
+  const held = new Set(mine);
+  const outside = theirs.length === 0 ? [-1] : theirs.filter((cid) => !held.has(cid));
+  if (outside.length === 0) return { ok: true };
+  return {
+    ok: false,
+    body: {
+      error: "not_in_your_companies",
+      message:
+        "That account belongs to a company you are not assigned to. Ask someone who holds it, or have your own access extended first.",
+    },
+  };
+}
+
 app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
   const me = c.get("user");
   const granted = me?.permissions_set ?? me?.permissions ?? [];
@@ -2093,6 +2140,8 @@ app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
     .where(eq(users.id, id))
     .limit(1);
   if (rows.length === 0) return c.json({ error: "User not found" }, 404);
+  const scope = await targetWithinActorCompanies(c, id);
+  if (!scope.ok) return c.json(scope.body, 403);
   if (rows[0].status !== "active") {
     return c.json({ error: "User is not active — only active members can be viewed as" }, 400);
   }
@@ -2136,6 +2185,8 @@ app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
  */
 app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
+  const scope = await targetWithinActorCompanies(c, id);
+  if (!scope.ok) return c.json(scope.body, 403);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
   const me = c.get("user");
 
@@ -2247,6 +2298,8 @@ app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => 
  */
 app.post("/:id/totp/disable", requirePermission("users.manage"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
+  const scope = await targetWithinActorCompanies(c, id);
+  if (!scope.ok) return c.json(scope.body, 403);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
 
   const db = getDb(c.env);
