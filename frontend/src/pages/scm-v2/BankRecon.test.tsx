@@ -63,9 +63,21 @@ vi.mock('./settlement-queries', () => ({
   ] }, isLoading: false }),
 }));
 
+/* Layer 4 owns the first tab now; this file is about the other two, so the
+   bank-statement screen is stubbed rather than exercised here. Its own contract
+   is BankStatementTab.test.tsx. */
+vi.mock('./BankStatementTab', () => ({ BankStatementTab: () => <div>bank statement tab</div> }));
+
 import { BankRecon } from './BankRecon';
 
-const draw = () => render(<MemoryRouter><BankRecon /></MemoryRouter>);
+/* The page opens on the bank statement now (owner: upload 然后你也自动核对).
+   Every test below is about the money views, so each one starts by asking for
+   the tab it is testing. */
+const draw = () => {
+  const r = render(<MemoryRouter><BankRecon /></MemoryRouter>);
+  fireEvent.click(screen.getByText('Money to come in'));
+  return r;
+};
 
 describe('the statements waiting for money', () => {
   test('lists what is still owed, and hides the settled ones until asked', () => {

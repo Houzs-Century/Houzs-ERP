@@ -108,6 +108,7 @@ const SAMPLES = [
   { name: 'AEON-Aug.csv', label: 'AEON（xlsx 那种，还有一笔报表自己的收费）' },
   { name: 'PBB-2990HOME-Jun.csv', label: 'PBB（2990 的，收钱银行跟 Houzs 不同）' },
   { name: 'wrong-file.csv', label: '传错的档案（应该被指名拒绝）' },
+  { name: 'BANK-MBB-Aug.csv', label: '银行月结单（第二页 Bank statement 用；MBB 真实格式）' },
 ];
 
 const Harness = () => {
