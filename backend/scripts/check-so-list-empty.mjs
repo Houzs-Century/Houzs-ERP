@@ -408,6 +408,27 @@ try {
     }
   } catch (e) { notice(`lim lookup ERROR ${e.code ?? ""} ${e.message}`); }
 
+
+  // 15) NAMING COLLISION across exposed schemas. authenticator exposes
+  //     db_schemas = public, graphql_public, scm (public FIRST). If a relation
+  //     with the SAME name exists in public (or elsewhere), and the app's
+  //     Accept-Profile did not pin scm, PostgREST would read the wrong (empty)
+  //     one — which would look exactly like this (pg sees scm=2726, PostgREST
+  //     sees 0), survive a restart, and be specific to this view.
+  const collide = await pg`
+    SELECT n.nspname AS schema, c.relkind,
+           pg_get_userbyid(c.relowner) AS owner
+      FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
+     WHERE c.relname = 'mfg_sales_orders_with_payment_totals'
+     ORDER BY n.nspname`;
+  notice("---- relations named mfg_sales_orders_with_payment_totals, ALL schemas ----");
+  for (const r of collide) {
+    let cnt = null;
+    try { const x = await pg.unsafe(`SELECT count(*)::int AS n FROM ${r.schema}.mfg_sales_orders_with_payment_totals WHERE company_id = 1`); cnt = x[0].n; } catch (e) { cnt = `ERR ${e.code}`; }
+    notice(`  ${r.schema}.mfg_sales_orders_with_payment_totals (relkind=${r.relkind}, owner=${r.owner}) company_id=1 -> ${cnt}`);
+  }
+  notice(`total relations with that name: ${collide.length}${collide.length > 1 ? " — COLLISION" : " — none (single object in scm)"}`);
+
 } finally {
   await pg.end({ timeout: 5 });
 }
