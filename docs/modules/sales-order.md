@@ -5,6 +5,17 @@
 
 # Module: Sales Order (SCM)
 
+> **Naming (vocabulary registry).** Three SO-header concepts are now declared in
+> `backend/scripts/lib/vocabulary.mjs` (glossary: `docs/generated/GLOSSARY.md`):
+> the salesperson is `salesperson_id` (uuid; the legacy `agent` text is kept for
+> the AutoCount book, see "stamped TWICE" below), the ship-from warehouse is
+> `warehouse_id` (the header's free-text `sales_location` snapshot is being
+> unified onto it by a staged backfill migration), and the customer's own
+> reference is `ref` (owner ruling #2429; `customer_so_no` is a transitional
+> fallback and `po_doc_no`/`customer_po*` are dead columns pending a staged drop).
+> No column was renamed in this registration — the two renames are reviewed
+> follow-ups because they need a backfill / a view-guarded drop.
+
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at
 > `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
 > every `:NNN` in this directory stale while the paths, methods and permission
