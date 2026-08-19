@@ -46,8 +46,8 @@ import {
   useUploadSoItemPhoto, useMfgSalesOrderDetail,
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/sales-order-queries';
-import { authedFetch, humanApiError, parseSaveProblems } from '../../vendor/scm/lib/authed-fetch';
-import { SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
+import { authedFetch, humanApiError } from '../../vendor/scm/lib/authed-fetch';
+import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
 import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
@@ -1710,16 +1710,10 @@ export const SalesOrderNew = () => {
             { state: failed > 0 ? paymentRetryNavigationState('so', res.docNo, failedDrafts) : undefined },
           );
         },
-        onError:   (err) => {
-          /* Aggregated save-gate failure → list every reason (owner 2026-07-18),
-             same popup as the SO Detail + mobile paths. */
-          const problems = parseSaveProblems((err as { body?: string } | undefined)?.body);
-          if (problems && problems.length > 0) {
-            void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
-          } else {
-            void notify({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
-          }
-        },
+        /* Aggregated save-gate failure → every reason at once (owner
+           2026-07-18); anything else keeps this page's own "Save failed" popup. */
+        onError: (err) => { void notifySaveProblems(notify, err,
+          (m) => { void notify({ title: 'Save failed', body: m, tone: 'error' }); }); },
       },
     );
   };
