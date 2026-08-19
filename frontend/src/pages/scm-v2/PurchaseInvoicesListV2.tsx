@@ -47,6 +47,7 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import {
   usePurchaseInvoicesPaged,
+  useEnrichedPiListRows,
   usePurchaseInvoiceDetail,
   useCancelPurchaseInvoice,
   useRecordPiPayment,
@@ -635,8 +636,12 @@ export function PurchaseInvoicesListV2() {
   const cancelPi = useCancelPurchaseInvoice();
   const recordPayment = useRecordPiPayment();
 
-  // Server already filtered + sorted this page — render verbatim.
-  const rows = (data?.purchaseInvoices ?? []) as PiRow[];
+  // Server already filtered + sorted this page — render verbatim. The four
+  // MRP-derived columns (Assigned SO / Delivered) arrive from the deferred
+  // enrichment endpoint a beat later and are merged in here, so opening the list
+  // no longer waits on a company-wide computeMrp (perf/pi-list-mrp-off-load).
+  const serverRows = (data?.purchaseInvoices ?? []) as PiRow[];
+  const rows = useEnrichedPiListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? {
     all: 0,
