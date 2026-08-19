@@ -46,5 +46,15 @@ jobs:
       - run: node scripts/check-tenant-isolation.mjs
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          NODE_OPTIONS: --dns-result-order=ipv4first
+      # The follow-up the first run earned: it proved neither FIFO function
+      # mentions company_id, which is a finding and not yet a verdict. This one
+      # answers the question that decides it — is lot selection bounded by
+      # warehouse_id? A warehouse belongs to one company, so YES means the
+      # missing company_id costs nothing and NO means one company can consume
+      # the other's stock.
+      - run: node scripts/check-fifo-lot-selection.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
           # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
           NODE_OPTIONS: --dns-result-order=ipv4first
