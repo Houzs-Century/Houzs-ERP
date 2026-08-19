@@ -125,14 +125,66 @@ No database and no credentials needed — there is a rig:
    every entry that posted.
 5. Only after he approves: PR + merge.
 
-## NEXT UP after layer 3 merges
+## LAYER 4 IS ON THE SAME BRANCH (2026-08-19) — also unmerged
 
-Phase 3 (approvals) then phase 4 (openings + bank reconciliation, layer 4).
-Layer 4 must, from day one: support MANY bank accounts (系统3 hardwired one
-Hong Leong account), add the "which acquirer is this bank line" rule for every
-acquirer AT THE SAME TIME as the acquirer itself, and keep 系统3's gate that
-blocks bank reconciliation while any settlement line is still unmatched — the
-`/settlement/watchlist` endpoint's `clean` flag already answers that question.
+The owner asked for it in the middle of testing layer 3, looking at a screen
+that wanted the date and amount of every payout typed in by hand:
+
+> 我不是应该upload bank statement 或 daily transaction report 然后你也自动核对吗
+
+and, asked how far it should go: **整张月结单全部对.** So layer 4 is the whole
+statement, not only the card credits.
+
+| File | What |
+|---|---|
+| `backend/src/acc/bank-parse.ts` | Reads a bank's own export. Three amount shapes (one signed column; one unsigned plus a CR/DR column; separate debit and credit), pipe or comma, decimal or zero-padded integer sen. Proven against the real `ACCOUNTACTIVITYREPORT_564418610346.csv`: 225 transactions, RM 1,393,935.59 in, RM 1,298,413.88 out. |
+| `backend/src/acc/bank-match.ts` | What a line IS. Joins a credit to the charge taken back against it; recognises the acquirer from CONFIG. |
+| `backend/src/acc/bank-reconcile.ts` | The reconciliation statement, and the identity it CHECKS (see below). |
+| `backend/src/acc/bank.ts` | Readers, and nothing that decides. |
+| `backend/src/scm/routes/accounting-bank.ts` | Eight handlers, registered one path each in `accounting.ts`. |
+| Migration **0305** | 5 tables + the four recognition rules SEEDED from the owner's own statements. |
+| `frontend/src/pages/scm-v2/BankStatementTab.tsx` | The screen — the FIRST tab of Bank Recon now; typing a credit by hand is the fallback. |
+
+**The three things worth knowing before touching it.**
+
+1. **The reconciliation is falsifiable.** It rests on one identity —
+   `closing(statement) − closing(ledger) = (bank has, books do not) − (books
+   have, bank does not) + brought forward` — computed four different ways and
+   then CHECKED. Numbers that fail it are reported as inconsistent and the
+   difference is withheld. A reconciliation that publishes a gap it cannot
+   account for is worse than none: it looks like work has been done.
+
+2. **Do NOT join bank lines by shared reference.** The owner's own file
+   disproves it seventeen times: three separate AEON payouts of RM 3,262.46,
+   RM 6,619.48 and RM 10,114.61 all carry `MA458030163361` on 2026-08-03, and
+   half the retail credits use the literal reference "Fund Transfer". Only ONE
+   credit plus the debits sharing its reference and date are joined — which is
+   exactly the Maybank debit-card shape (gross credited, fee taken back) and
+   nothing else.
+
+3. **One notion of "the acquirer paid us."** Booking a credit calls layer 3's
+   `postBatchReceipt`; this module has no writer of its own. Migration 0304's
+   header said so before this code existed.
+
+Two owner answers on 2026-08-19 shaped it, and both made it smaller — recorded
+in `docs/acquirer-statement-formats.md`: MBB's split credit is the BANK's
+presentation, not a fourth fee shape (偶尔会在 bank statement 显示进全额然后扣),
+and AEON pays net like any acquirer (他不理顾客是不是分期，他会进扣了手续费的钱给我).
+
+**Still to do on layer 4:** the PDF path (Hong Leong sends `acs_*.pdf`;
+`acc/settlement-pdf.ts` already decrypts and de-obfuscates Maybank's PDFs and
+is the machinery to reuse), and a maintenance screen for
+`acc_bank_statement_config` — today a bank account is configured by inserting a
+row.
+
+## NEXT UP after this branch merges
+
+Phase 3 (approvals) and phase 4's remaining half (opening balances).
+Layer 4 already does what the note here used to demand of it: MANY bank
+accounts (系统3 hardwired one Hong Leong account), a recognition rule for every
+acquirer at the same time as the acquirer, and the gate that keeps a merchant
+statement out of bank reconciliation until its lines are all decided —
+`loadPayableBatches` refuses to offer one with an open line.
 
 ## Waiting on the owner (asked, not yet delivered)
 
