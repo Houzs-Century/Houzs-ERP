@@ -2049,6 +2049,23 @@ already existing; deleting a derived fee line is therefore a no-op — the way
 to change the fee is to change what drives it (the items, the rate config, or
 the `SVC-DELIVERY-ADD` operator line).
 
+**Reducing the fee on ONE order (2026-08-19): use the line's DISCOUNT, and it
+survives.** Typing a lower unit price on a fee line was never going to hold —
+the rebuild derives the price, one truth — and until this date the discount
+road was silently dead too: the line PATCH accepted a bounded discount on a
+delivery line, and the very next rebuild wrote `discount_sen: 0` over it. An
+operator who typed 250 → 125 watched the line "nuke to 0 and disappear"
+(the rebuild deletes and re-inserts the `SVC-DELIVERY*` set). Now the rebuild
+recovers each fee line's discount by `item_code`, clamps it to the rebuilt
+line's own total (a fee line can never go negative), and re-applies it — so
+the SO prints unit 250 / discount 125 / total 125, which is how every other
+price reduction on an SO is expressed. The header mirror carries the NET, so
+Σ(lines) === header still holds. The `SVC-DELIVERY-ADD` gross is recovered
+from unit × qty rather than `total_sen`, or a discounted ADD line would
+compound the reduction on every save. A component that disappears on rebuild
+(the base swapping to CROSS on a follow-up change) drops its discount rather
+than migrating it to money it never named.
+
 **The legacy fallback.** `recomputeTotals` still reads the header fee back for
 a line-less SO — that exists ONLY for legacy (pre-P2 / mirror-imported) rows
 and may not be deleted until Loo retires the column (SO-SKU spec §5 P6).

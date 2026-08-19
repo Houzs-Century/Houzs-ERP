@@ -164,3 +164,81 @@ describe('rederiveDeliveryFee — no header back door', () => {
     expect(rpcCalls[0]!.args.p_delivery_fee_sen).toBe(25000);
   });
 });
+
+/* ── 3. Operator discounts on the fee lines SURVIVE the rebuild (2026-08-19) ──
+   The line PATCH accepts a bounded discount on any line, delivery included —
+   but this rebuild wrote discount_sen: 0, so the one sanctioned way to REDUCE
+   a delivery fee was undone by the very next derivation. An operator typed
+   250 → 125 as a price and watched the line "nuke to 0 and disappear": the
+   price edit was discarded (the fee is derived — one truth), and the discount
+   road was silently a dead end too. The fee stays derived; the DISCOUNT is the
+   operator's, and it persists. */
+describe('rederiveDeliveryFee — a discount on a fee line survives the rebuild', () => {
+  const discountedBase = {
+    item_code: 'SVC-DELIVERY', item_group: 'service',
+    unit_price_sen: 25000, discount_sen: 12500, total_sen: 12500,
+    line_no: 2, variants: null,
+  };
+
+  test('unit 250 / discount 125 rebuilds as unit 250 / discount 125 / total 125', async () => {
+    const { sb, rpcCalls } = makeSb(resolverFor({ headerFeeSen: 12500, feeLines: [discountedBase] }));
+    await rederiveDeliveryFee(sb, '2990-SO-DISC-1', ctx);
+
+    expect(rpcCalls).toHaveLength(1);
+    const rows = rpcCalls[0]!.args.p_rows as Array<Record<string, unknown>>;
+    expect(rows).toHaveLength(1);
+    // the fee itself is still the DERIVED 250 — the discount never rewrites it
+    expect(rows[0]!.unit_price_sen).toBe(25000);
+    expect(rows[0]!.discount_sen).toBe(12500);
+    expect(rows[0]!.total_sen).toBe(12500);
+    // the header mirrors the LINES, so it carries the net
+    expect(rpcCalls[0]!.args.p_delivery_fee_sen).toBe(12500);
+  });
+
+  test('a discount larger than the derived fee clamps to it — a fee line can never go negative', async () => {
+    const { sb, rpcCalls } = makeSb(resolverFor({
+      headerFeeSen: 0,
+      feeLines: [{ ...discountedBase, discount_sen: 99999, total_sen: 0 }],
+    }));
+    await rederiveDeliveryFee(sb, '2990-SO-DISC-2', ctx);
+
+    const rows = rpcCalls[0]!.args.p_rows as Array<Record<string, unknown>>;
+    expect(rows[0]!.discount_sen).toBe(25000);
+    expect(rows[0]!.total_sen).toBe(0);
+    expect(rpcCalls[0]!.args.p_delivery_fee_sen).toBe(0);
+  });
+
+  test('a discounted ADD line does not compound: the gross is recovered, not the net', async () => {
+    /* The free-form fee is recovered from unit × qty. Recovering total_sen —
+       the NET once discounts survive — would shrink the fee by the discount on
+       every rebuild: 50 → 30 → 10 → 0 across three saves. */
+    const { sb, rpcCalls } = makeSb(resolverFor({
+      headerFeeSen: 28000,
+      feeLines: [
+        { item_code: 'SVC-DELIVERY', item_group: 'service', unit_price_sen: 25000, discount_sen: 0, total_sen: 25000, line_no: 2, variants: null },
+        { item_code: 'SVC-DELIVERY-ADD', item_group: 'service', unit_price_sen: 5000, discount_sen: 2000, total_sen: 3000, line_no: 3, variants: null },
+      ],
+    }));
+    await rederiveDeliveryFee(sb, '2990-SO-DISC-3', ctx);
+
+    const rows = rpcCalls[0]!.args.p_rows as Array<Record<string, unknown>>;
+    const add = rows.find((r) => r.item_code === 'SVC-DELIVERY-ADD')!;
+    expect(add.unit_price_sen).toBe(5000);   // gross preserved — no compounding
+    expect(add.discount_sen).toBe(2000);
+    expect(add.total_sen).toBe(3000);
+    expect(rpcCalls[0]!.args.p_delivery_fee_sen).toBe(28000);
+  });
+
+  test('no discount → byte-identical behaviour to before (regression pin)', async () => {
+    const { sb, rpcCalls } = makeSb(resolverFor({
+      headerFeeSen: 25000,
+      feeLines: [{ item_code: 'SVC-DELIVERY', item_group: 'service', unit_price_sen: 25000, discount_sen: 0, total_sen: 25000, line_no: 2, variants: null }],
+    }));
+    await rederiveDeliveryFee(sb, '2990-SO-DISC-4', ctx);
+
+    const rows = rpcCalls[0]!.args.p_rows as Array<Record<string, unknown>>;
+    expect(rows[0]!.discount_sen).toBe(0);
+    expect(rows[0]!.total_sen).toBe(25000);
+    expect(rpcCalls[0]!.args.p_delivery_fee_sen).toBe(25000);
+  });
+});

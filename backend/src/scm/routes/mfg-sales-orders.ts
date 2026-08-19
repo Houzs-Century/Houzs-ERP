@@ -6312,9 +6312,9 @@ async function recomputeDeliveryFeeCore(
   sb: any, docNo: string, sourceDocNo: string | null, c: any,
 ): Promise<{ isFollowup: boolean; sourceDocNo: string | null; total: number } | null> {
   const { data: lineRows } = await sb.from('mfg_sales_order_items')
-    .select('item_code, item_group, total_sen, line_no, variants')
+    .select('item_code, item_group, total_sen, unit_price_sen, discount_sen, qty, line_no, variants')
     .eq('doc_no', docNo).eq('cancelled', false);
-  const lines = (lineRows ?? []) as Array<{ item_code: string; item_group: string | null; total_sen: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
+  const lines = (lineRows ?? []) as Array<{ item_code: string; item_group: string | null; total_sen: number | null; unit_price_sen: number | null; discount_sen: number | null; qty: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
   const deliveryLines = lines.filter((l) => isDeliveryFeeServiceCode(l.item_code));
   /* Owner ruling 2026-08-07 ("全部都会有 SKU 的 … 怎么可以走后门呢?"): every
      ringgit on a Sales Order is a LINE. The header delivery_fee_sen is a
@@ -6352,10 +6352,33 @@ async function recomputeDeliveryFeeCore(
       .map((l) => (typeof l.line_no === 'number' ? l.line_no : -1)),
   );
 
-  // Operator free-form fee — preserved across the recompute.
+  /* Operator free-form fee — preserved across the recompute. Recovered from the
+     GROSS side (unit × qty, falling back to total for pre-discount rows): with
+     discounts now surviving below, total_sen is NET, and recovering the net as
+     the next gross would shrink the fee by the discount on every rebuild. */
   const additionalSen = deliveryLines
     .filter((l) => l.item_code === SVC_DELIVERY_ADD)
-    .reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
+    .reduce((s, l) => s + (l.unit_price_sen != null
+      ? Number(l.unit_price_sen) * Math.max(1, Number(l.qty ?? 1))
+      : Number(l.total_sen ?? 0)), 0);
+
+  /* Operator discounts on the fee lines — ALSO preserved (2026-08-19). The line
+     PATCH accepts a bounded discount on any line (0..qty×unit, `discountSen must
+     be between…`), and a delivery line was no exception — but this rebuild wrote
+     `discount_sen: 0`, so the one sanctioned way to REDUCE a delivery fee was
+     silently undone by the very next derivation. 250 → 125 typed as a price was
+     never going to hold (the fee is derived — one truth, owner 2026-08-07); as a
+     DISCOUNT it is exactly how every other price reduction on an SO is
+     expressed, it prints as unit 250 / discount 125 / total 125, and it must
+     survive. Keyed per item_code and clamped to the rebuilt line's own total, so
+     a discount can never exceed the fee it reduces, and a component that
+     disappears on rebuild (base swapping to CROSS) conservatively drops its
+     discount rather than migrating it to money it never named. */
+  const discountByCode = new Map<string, number>();
+  for (const l of deliveryLines) {
+    const d = Math.max(0, Number(l.discount_sen ?? 0));
+    if (d > 0) discountByCode.set(l.item_code, (discountByCode.get(l.item_code) ?? 0) + d);
+  }
 
   // Deliverable categories (sofa / mattress / bedframe) + their special-model fees.
   const DELIVERABLE = new Set(['sofa', 'mattress', 'bedframe']);
@@ -6444,7 +6467,11 @@ async function recomputeDeliveryFeeCore(
      leaves exactly one consistent set. */
   {
     const lineDateToday = todayMyt();
-    const rows = specs.map((spec, i) => ({
+    const rows = specs.map((spec, i) => {
+      /* Preserved operator discount, clamped to THIS rebuilt line's own total. */
+      const disc = Math.min(discountByCode.get(spec.itemCode) ?? 0, spec.totalSen);
+      const net = spec.totalSen - disc;
+      return {
       doc_no: docNo,                                    // ⚠️ NOT NULL — omitting it silently dropped the line (the bug)
       line_no: keptMaxLineNo >= 0 ? keptMaxLineNo + 1 + i : null,
       line_date: lineDateToday,
@@ -6457,14 +6484,14 @@ async function recomputeDeliveryFeeCore(
       uom: 'UNIT',
       qty: spec.qty,
       unit_price_sen: spec.unitPriceSen,
-      discount_sen: 0,
-      total_sen: spec.totalSen,
-      total_inc_sen: spec.totalSen,
-      balance_sen: spec.totalSen,
+      discount_sen: disc,
+      total_sen: net,
+      total_inc_sen: net,
+      balance_sen: net,
       variants: null,
       unit_cost_sen: 0,
       line_cost_sen: 0,
-      line_margin_sen: spec.totalSen,
+      line_margin_sen: net,
       divan_price_sen: 0,
       leg_price_sen: 0,
       special_order_price_sen: 0,
@@ -6475,13 +6502,17 @@ async function recomputeDeliveryFeeCore(
       branding: null,
       venue: h.venue ?? null,
       stock_status: 'READY',
-    }));
+      };
+    });
     /* company_id is NOT passed: the RPC reads it off the SO header, so a rebuilt
        line can never land in another company (mig 0083 made it NOT NULL). */
+    /* The header is a dual-write MIRROR of the lines (owner 2026-08-07), so it
+       carries what the lines carry: the NET after preserved discounts. */
+    const netFeeSen = rows.reduce((s, r) => s + Number(r.total_sen ?? 0), 0);
     const { error: rebuildErr } = await sb.rpc('rebuild_mfg_so_delivery_lines', {
       p_doc_no: docNo,
       p_source_doc_no: sourceDocNo,
-      p_delivery_fee_sen: fee.total,
+      p_delivery_fee_sen: netFeeSen,
       p_rows: rows,
     });
     if (rebuildErr) {
@@ -6501,15 +6532,15 @@ async function recomputeDeliveryFeeCore(
          line edit and would otherwise flood the timeline). Best-effort by
          recordSoAudit's design; the fee is already committed either way. */
       const priorFeeSen = deliveryLines.reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
-      if (priorFeeSen !== fee.total) {
+      if (priorFeeSen !== netFeeSen) {
         await recordSoAudit(sb, {
           docNo,
-          action: priorFeeSen === 0 ? 'ADD_LINE' : (fee.total === 0 ? 'DELETE_LINE' : 'UPDATE_LINE'),
+          action: priorFeeSen === 0 ? 'ADD_LINE' : (netFeeSen === 0 ? 'DELETE_LINE' : 'UPDATE_LINE'),
           source: 'automation',
           note: 'Auto: delivery fee lines re-derived',
           fieldChanges: [
             { field: 'itemCode', to: 'SVC-DELIVERY' },
-            { field: 'deliveryFeeSen', from: priorFeeSen, to: fee.total },
+            { field: 'deliveryFeeSen', from: priorFeeSen, to: netFeeSen },
           ],
         });
       }
