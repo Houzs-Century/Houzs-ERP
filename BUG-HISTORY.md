@@ -39,6 +39,15 @@ Durable prevention is an owner decision (see below) — a view-recreate that lea
 PostgREST stale must trigger a reload/recycle in the deploy, or avoid DROP/CREATE
 of exposed views.
 
+**Duration, corrected 2026-08-19.** This entry read *整天 / "all day"* and
+"did not self-heal across the day". The deploy timestamps bound it to **2h37m**,
+00:28-03:05 MYT: `0305` applied at 16:27:59Z and the restore deployed at 19:05:37Z,
+and the list cannot have been empty earlier because `0305` is what recreated the
+views and its two prior attempts failed and rolled back. The whole window fell
+between midnight and 3am, so whether any staff hit it is UNKNOWN and LIKELY not -
+a materially different business reading from "down all day". Full write-up:
+`docs/so-list-empty-postgrest-stale-coe.md`.
+
 **Ref.** fix/so-list-restore-pgrest, 2026-08-19.
 
 ## Tenant scope: eight helpers left `companyId` optional, so a future caller could leak across companies [medium]
