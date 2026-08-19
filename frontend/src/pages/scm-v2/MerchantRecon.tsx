@@ -85,6 +85,7 @@ const ReconcileTab = () => {
   const batches = useSettlementBatches();
   const watchlist = useSettlementWatchlist();
   const upload = useUploadStatement();
+  const bulk = useConfirmAcross();
   const [batchId, setBatchId] = useState<number | null>(null);
   /* The batches the last upload created — the summary screen it lands on. */
   const [justUploaded, setJustUploaded] = useState<number[] | null>(null);
@@ -185,6 +186,10 @@ const ReconcileTab = () => {
   const all = batches.data?.batches ?? [];
   const open = all.filter((b) => (b.open_count ?? 0) > 0);
   const cleared = all.filter((b) => (b.open_count ?? 0) === 0);
+  /* Two different jobs, and the button may only claim the first: a line that
+     matched by reference is a press, a line without one is a decision. */
+  const readyToConfirm = open.reduce((s, b) => s + (b.to_confirm_count ?? 0), 0);
+  const stillToDecide = open.reduce((s, b) => s + (b.to_choose_count ?? 0) + (b.no_record_count ?? 0), 0);
   /* Card money the sales team recorded that no statement has reported. Held
      back until the watchlist has answered, so an empty list never reads as
      "nothing outstanding" when it means "not loaded". */
@@ -251,6 +256,24 @@ const ReconcileTab = () => {
             Nothing to reconcile — every merchant report you have uploaded is done.
           </div>
         )}
+        {/* The same one press as the upload summary, because the list outlives
+            that screen: reload the page, come back tomorrow, and the reports
+            are still here wanting the identical decision. Only the lines that
+            matched by reference — the ones needing a person are untouched and
+            still counted below. */}
+        {readyToConfirm > 0 && (
+          <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+            <button type="button" style={btn(true, bulk.busy)} disabled={bulk.busy}
+              onClick={() => bulk.run(open)}>
+              <CheckCheck {...ICON} /> {bulk.busy ? 'Posting…' : `Confirm all ${readyToConfirm} matched`}
+            </button>
+            <span style={softText}>
+              Across {open.length} report{open.length === 1 ? '' : 's'}. Books each line&rsquo;s fee;
+              {stillToDecide > 0 ? ` the ${stillToDecide} line(s) needing you are left alone.` : ' nothing else is touched.'}
+            </span>
+          </div>
+        )}
+        {bulk.posted && <PostedNote posted={bulk.posted} />}
         {/* Every line still to do, with the sale it matched — the same two
             columns as the upload summary, for the same reason: a file name is
             not a transaction (owner: 显示 transaction detail 和 sales order
@@ -340,6 +363,48 @@ const ReconcileTab = () => {
      to check by hand     — candidates found, a person must choose;
      no sale in the ERP   — the merchant reported money nobody recorded. */
 
+/* ── Confirm a whole pile of reports with one press ───────────────────────────
+   The owner, on a list of four reports each carrying its own Reconcile button:
+   "但是当我upload 很多时我要一个一个按confirm?". No — a line matched by its
+   approval code needs no judgement, and a month of statements is a lot of
+   identical presses.
+
+   Posted one report at a time, deliberately: the server confirms a batch at a
+   time, so a refusal names ITS OWN file instead of failing the pile, and what
+   went through stays through. Sequential, not parallel, for the same reason
+   the upload is — each confirmation must see the payments the previous one
+   already claimed. */
+
+const useConfirmAcross = () => {
+  const confirmAll = useConfirmMatched();
+  const [busy, setBusy] = useState(false);
+  const [posted, setPosted] = useState<{ confirmed: number; failed: number } | null>(null);
+
+  const run = (batches: SettlementBatch[]) => {
+    setBusy(true);
+    setPosted(null);
+    let confirmed = 0;
+    let failed = 0;
+    const next = (i: number) => {
+      if (i >= batches.length) { setBusy(false); setPosted({ confirmed, failed }); return; }
+      confirmAll.mutate(batches[i].id, {
+        onSuccess: (r) => { confirmed += r.confirmed; failed += r.failed.length; next(i + 1); },
+        onError: () => { failed += 1; next(i + 1); },
+      });
+    };
+    next(0);
+  };
+
+  return { run, busy, posted };
+};
+
+const PostedNote = ({ posted }: { posted: { confirmed: number; failed: number } }) => (
+  <div style={{ fontSize: 'var(--fs-13)', color: posted.failed ? danger : good }}>
+    Posted {posted.confirmed}.
+    {posted.failed > 0 ? ` ${posted.failed} could not be — open the report to see why.` : ''}
+  </div>
+);
+
 const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
   batchIds: number[];
   refusals: Array<{ name: string; text: string }>;
@@ -347,9 +412,7 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
   onDone: () => void;
 }) => {
   const batches = useSettlementBatches();
-  const confirmAll = useConfirmMatched();
-  const [busy, setBusy] = useState(false);
-  const [posted, setPosted] = useState<{ confirmed: number; failed: number } | null>(null);
+  const bulk = useConfirmAcross();
 
   const mine = (batches.data?.batches ?? []).filter((b) => batchIds.includes(b.id));
   const sum = (pick: (b: SettlementBatch) => number) => mine.reduce((s, b) => s + pick(b), 0);
@@ -358,23 +421,7 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
   const toCheck = sum((b) => b.to_choose_count ?? 0);
   const noRecord = sum((b) => b.no_record_count ?? 0);
   const done = sum((b) => b.confirmed_count ?? 0);
-
-  /* One button for the whole upload: every report's reference matches, posted
-     one report at a time so a refusal names its own file instead of failing
-     the lot. */
-  const confirmEverything = () => {
-    setBusy(true);
-    let confirmed = 0;
-    let failed = 0;
-    const next = (i: number) => {
-      if (i >= mine.length) { setBusy(false); setPosted({ confirmed, failed }); return; }
-      confirmAll.mutate(mine[i].id, {
-        onSuccess: (r) => { confirmed += r.confirmed; failed += r.failed.length; next(i + 1); },
-        onError: () => { failed += 1; next(i + 1); },
-      });
-    };
-    next(0);
-  };
+  const { busy, posted } = bulk;
 
   return (
     <div className="space-y-4">
@@ -392,17 +439,13 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
 
       {toConfirm > 0 && (
         <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <button type="button" style={btn(true, busy)} disabled={busy} onClick={confirmEverything}>
+          <button type="button" style={btn(true, busy)} disabled={busy} onClick={() => bulk.run(mine)}>
             <CheckCheck {...ICON} /> {busy ? 'Posting…' : `Confirm all ${toConfirm} matched`}
           </button>
           <span style={softText}>Books each line&rsquo;s fee. The money itself is the next screen.</span>
         </div>
       )}
-      {posted && (
-        <div style={{ fontSize: 'var(--fs-13)', color: posted.failed ? danger : good }}>
-          Posted {posted.confirmed}.{posted.failed > 0 ? ` ${posted.failed} could not be — open the report to see why.` : ''}
-        </div>
-      )}
+      {posted && <PostedNote posted={posted} />}
       {done > 0 && !posted && <div style={softText}>{done} line(s) were already confirmed.</div>}
 
       {/* A file the server refused never became a report — it has no row below,

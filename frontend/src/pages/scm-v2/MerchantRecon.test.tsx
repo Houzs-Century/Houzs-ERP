@@ -61,6 +61,7 @@ const SUGGESTED_ROW: SettlementRow = {
 };
 
 const confirmMutate = vi.fn();
+const confirmMatchedMutate = vi.fn();
 const uploadMutateAsync = vi.fn();
 const saveMutate = vi.fn();
 
@@ -84,7 +85,7 @@ vi.mock('./settlement-queries', () => ({
   }),
   useUploadStatement: () => ({ mutateAsync: uploadMutateAsync, isPending: false }),
   useConfirmSettlementRow: () => ({ mutate: confirmMutate, isPending: false, isError: false, error: null }),
-  useConfirmMatched: () => ({ mutate: vi.fn(), isPending: false, data: null }),
+  useConfirmMatched: () => ({ mutate: confirmMatchedMutate, isPending: false, data: null }),
   useIgnoreSettlementRow: () => ({ mutate: vi.fn(), isPending: false }),
   useSettlementWatchlist: () => ({ data: { from: '2026-05-18', to: '2026-08-16', clean: false, arrivedNotRecorded: [], recordedNotArrived: [
     { source: 'SOPAY', id: 'w1', acquirerCode: 'MBB', docNo: 'SO-2607-088', paidOn: '2026-07-18', amountSen: 35000, approvalCode: 'A0900', ageDays: 29 },
@@ -276,5 +277,35 @@ describe('the reconcile tab', () => {
         expect.objectContaining({ id: 'p2', amountSen: 40000 }),
       ],
     }));
+  });
+});
+
+/* 但是当我upload 很多时我要一个一个按confirm? — no. The reports waiting on the
+   work list take ONE press for every line that matched by its approval code,
+   and that press must not touch the lines that need a person. */
+describe('confirming a pile of reports', () => {
+  test('the work list offers one press for every matched line, and says what it leaves alone', () => {
+    confirmMatchedMutate.mockClear();
+    draw();
+
+    /* The mocked batch: 1 matched by reference, 1 to choose, 1 with no sale. */
+    const button = screen.getByText('Confirm all 1 matched');
+    expect(screen.getByText(/the 2 line\(s\) needing you are left alone/)).toBeTruthy();
+
+    fireEvent.click(button);
+    expect(confirmMatchedMutate).toHaveBeenCalledTimes(1);
+    expect(confirmMatchedMutate.mock.calls[0]![0]).toBe(1);
+  });
+
+  test('it reports what got through, per report, rather than failing the pile', () => {
+    confirmMatchedMutate.mockImplementation((_id, opts) => {
+      opts.onSuccess({ confirmed: 4, failed: [{ rowId: 9, reason: 'no_account' }] });
+    });
+    draw();
+
+    fireEvent.click(screen.getByText('Confirm all 1 matched'));
+    expect(screen.getByText(/Posted 4\./)).toBeTruthy();
+    expect(screen.getByText(/1 could not be/)).toBeTruthy();
+    confirmMatchedMutate.mockReset();
   });
 });
