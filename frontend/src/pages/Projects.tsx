@@ -4586,12 +4586,8 @@ const PROJECTS_CALENDAR_FILTER_KEYS = [
   // tasklist sections are the new stages). `stage` stays in the keys
   // list so old bookmarks parse without throwing.
   "section",
-  // 2026-07-20 — free-text search (matches venue / organizer / brand /
-  // project code / event title). Owner: "where is search button on calender?".
+  // 2026-07-20 — free-text search (venue/organizer/brand/code/title).
   "q",
-  // Also removed the 'Tasks' toggle button from the toolbar the same day
-  // — the personal pref key `projects:cal:showTasks` in localStorage is
-  // untouched so a re-add would just re-render the existing chips.
 ] as const;
 
 // Per-day task-count chip in calendar cells. Neutral by default; an
@@ -5434,14 +5430,8 @@ function ProjectsCalendarView() {
                           ? composeDefaultProjectName({
                               state: seg.project.state,
                               brand: seg.project.brand,
-                              // CALENDAR bars always say SOLO for solo events
-                              // (owner 2026-08-19: "on calender supposed appear
-                              // solo instead kl chen kai hao"). The organizer
-                              // stays in the organizer field, lists and the
-                              // stored project name — passing it blank here
-                              // only changes the bar label, so the 08-17 rule
-                              // (a picked organizer fills the slot in stored /
-                              // created names, e.g. MALL MGMT) is untouched.
+                              // Bars always say SOLO (owner 2026-08-19); organizer
+                              // stays in the field / lists / stored names (08-17 rule).
                               organizer: null,
                               venue: seg.project.venue,
                               event_type_slug: "solo",
