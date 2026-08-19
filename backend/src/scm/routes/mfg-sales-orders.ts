@@ -73,6 +73,7 @@ import {
 import {
   buildDeliveryFeeServiceLines,
   computeAddonServiceLines,
+  recoverOperatorDeliveryState,
   type AddonSelectionInput,
   type ServiceLineSpec,
 } from '../shared/service-lines';
@@ -3669,13 +3670,16 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       .map((it) => String((it?.variants as { pwpCode?: string | null } | null)?.pwpCode ?? '').trim())
       .filter(Boolean),
   ));
+  // mig 0188 re-keyed pwp_codes on (company_id, code): a caller-supplied `code` alone matches whichever company's row comes back first, so the prefetch/burn/rollback below all carry pwpCompanyId (matches add-line ~L3828). BUG-HISTORY 2026-08-19.
+  const pwpCompanyId = activeCompanyId(c);
+  if (allPwpCodes.length > 0 && pwpCompanyId == null) return c.json({ error: 'company_unresolved', message: 'Cannot tell which company this order belongs to right now. Reload and try again.' }, 409);
   const pwpRowByCode = new Map<string, Record<string, any>>();
   let pwpPrefetchFailed = false;
   if (allPwpCodes.length > 0) {
     const { data: codeRows, error: codeReadErr } = await sb
       .from('pwp_codes')
       .select('code, status, owner_staff_id, reward_category, eligible_reward_model_ids, reward_combo_ids, reward_size_codes, reward_compartments, customer_id, source_doc_no, redeemed_doc_no, type')
-      .in('code', allPwpCodes);
+      .in('code', allPwpCodes).eq('company_id', pwpCompanyId);
     if (codeReadErr) {
       // A failed read is NOT "code not found" (same honesty rule as the
       // cross-category lookup) — reject as retryable, burn nothing.
@@ -3805,7 +3809,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         redeemed_item_code: product.code,
         updated_at:         new Date().toISOString(),
       })
-      .eq('code', code);
+      .eq('code', code).eq('company_id', pwpCompanyId);
     // Orphaned-USED re-claim must match the orphan row exactly (USED + the same
     // dead doc_no) so a parallel legitimate redemption can't be hijacked.
     claimQ = orphanedUsed
@@ -3835,7 +3839,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
         updated_at: new Date().toISOString(),
       };
       if (prevStatus === 'RESERVED') patch.source_doc_no = null;  // we stamped it on claim
-      await sb.from('pwp_codes').update(patch).eq('code', code).eq('status', 'USED');
+      await sb.from('pwp_codes').update(patch).eq('code', code).eq('status', 'USED').eq('company_id', pwpCompanyId);
     }
   };
 
@@ -6312,9 +6316,9 @@ async function recomputeDeliveryFeeCore(
   sb: any, docNo: string, sourceDocNo: string | null, c: any,
 ): Promise<{ isFollowup: boolean; sourceDocNo: string | null; total: number } | null> {
   const { data: lineRows } = await sb.from('mfg_sales_order_items')
-    .select('item_code, item_group, total_sen, line_no, variants')
+    .select('item_code, item_group, total_sen, unit_price_sen, discount_sen, qty, line_no, variants')
     .eq('doc_no', docNo).eq('cancelled', false);
-  const lines = (lineRows ?? []) as Array<{ item_code: string; item_group: string | null; total_sen: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
+  const lines = (lineRows ?? []) as Array<{ item_code: string; item_group: string | null; total_sen: number | null; unit_price_sen: number | null; discount_sen: number | null; qty: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
   const deliveryLines = lines.filter((l) => isDeliveryFeeServiceCode(l.item_code));
   /* Owner ruling 2026-08-07 ("全部都会有 SKU 的 … 怎么可以走后门呢?"): every
      ringgit on a Sales Order is a LINE. The header delivery_fee_sen is a
@@ -6352,10 +6356,8 @@ async function recomputeDeliveryFeeCore(
       .map((l) => (typeof l.line_no === 'number' ? l.line_no : -1)),
   );
 
-  // Operator free-form fee — preserved across the recompute.
-  const additionalSen = deliveryLines
-    .filter((l) => l.item_code === SVC_DELIVERY_ADD)
-    .reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
+  // Operator-owned state (free-form fee + discounts) — see recoverOperatorDeliveryState.
+  const { additionalSen, discountByCode } = recoverOperatorDeliveryState(deliveryLines);
 
   // Deliverable categories (sofa / mattress / bedframe) + their special-model fees.
   const DELIVERABLE = new Set(['sofa', 'mattress', 'bedframe']);
@@ -6444,7 +6446,10 @@ async function recomputeDeliveryFeeCore(
      leaves exactly one consistent set. */
   {
     const lineDateToday = todayMyt();
-    const rows = specs.map((spec, i) => ({
+    // disc = preserved operator discount, clamped to THIS rebuilt line's own total.
+    const rows = specs.map((spec, i) => {
+      const disc = Math.min(discountByCode.get(spec.itemCode) ?? 0, spec.totalSen), net = spec.totalSen - disc;
+      return {
       doc_no: docNo,                                    // ⚠️ NOT NULL — omitting it silently dropped the line (the bug)
       line_no: keptMaxLineNo >= 0 ? keptMaxLineNo + 1 + i : null,
       line_date: lineDateToday,
@@ -6457,14 +6462,14 @@ async function recomputeDeliveryFeeCore(
       uom: 'UNIT',
       qty: spec.qty,
       unit_price_sen: spec.unitPriceSen,
-      discount_sen: 0,
-      total_sen: spec.totalSen,
-      total_inc_sen: spec.totalSen,
-      balance_sen: spec.totalSen,
+      discount_sen: disc,
+      total_sen: net,
+      total_inc_sen: net,
+      balance_sen: net,
       variants: null,
       unit_cost_sen: 0,
       line_cost_sen: 0,
-      line_margin_sen: spec.totalSen,
+      line_margin_sen: net,
       divan_price_sen: 0,
       leg_price_sen: 0,
       special_order_price_sen: 0,
@@ -6475,13 +6480,14 @@ async function recomputeDeliveryFeeCore(
       branding: null,
       venue: h.venue ?? null,
       stock_status: 'READY',
-    }));
+      }; });
     /* company_id is NOT passed: the RPC reads it off the SO header, so a rebuilt
        line can never land in another company (mig 0083 made it NOT NULL). */
+    const netFeeSen = rows.reduce((s, r) => s + Number(r.total_sen ?? 0), 0); // header mirrors the LINES: net after discounts (owner 2026-08-07)
     const { error: rebuildErr } = await sb.rpc('rebuild_mfg_so_delivery_lines', {
       p_doc_no: docNo,
       p_source_doc_no: sourceDocNo,
-      p_delivery_fee_sen: fee.total,
+      p_delivery_fee_sen: netFeeSen,
       p_rows: rows,
     });
     if (rebuildErr) {
@@ -6501,15 +6507,15 @@ async function recomputeDeliveryFeeCore(
          line edit and would otherwise flood the timeline). Best-effort by
          recordSoAudit's design; the fee is already committed either way. */
       const priorFeeSen = deliveryLines.reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
-      if (priorFeeSen !== fee.total) {
+      if (priorFeeSen !== netFeeSen) {
         await recordSoAudit(sb, {
           docNo,
-          action: priorFeeSen === 0 ? 'ADD_LINE' : (fee.total === 0 ? 'DELETE_LINE' : 'UPDATE_LINE'),
+          action: priorFeeSen === 0 ? 'ADD_LINE' : (netFeeSen === 0 ? 'DELETE_LINE' : 'UPDATE_LINE'),
           source: 'automation',
           note: 'Auto: delivery fee lines re-derived',
           fieldChanges: [
             { field: 'itemCode', to: 'SVC-DELIVERY' },
-            { field: 'deliveryFeeSen', from: priorFeeSen, to: fee.total },
+            { field: 'deliveryFeeSen', from: priorFeeSen, to: netFeeSen },
           ],
         });
       }
@@ -9143,9 +9149,7 @@ export async function tbcSwapCommandHandler(c: any, sb: any): Promise<Response> 
     if (!rewardPwpCode) {
       return c.json({ error: 'pwp_line_locked', reason: 'This PWP reward carries no voucher code — ask the coordinator to exchange it.' }, 409);
     }
-    const { data: codeRow } = await sb.from('pwp_codes')
-      .select('code, reward_category, eligible_reward_model_ids, reward_size_codes, reward_compartments, type')
-      .eq('code', rewardPwpCode).maybeSingle();
+    const { data: codeRow } = await scopeToCompany(sb.from('pwp_codes').select('code, reward_category, eligible_reward_model_ids, reward_size_codes, reward_compartments, type').eq('code', rewardPwpCode), c).maybeSingle();
     const codeTyped = codeRow as { code: string; reward_category: string; eligible_reward_model_ids: string[] | null; reward_size_codes: string[] | null; reward_compartments: string[] | null; type: string } | null;
     if (!codeTyped) {
       return c.json({ error: 'pwp_line_locked', reason: 'This PWP voucher could not be found — ask the coordinator to exchange it.' }, 409);
@@ -9710,9 +9714,7 @@ export async function tbcSwapSofaCommandHandler(c: any, sb: any): Promise<Respon
     if (!codeStr) {
       return c.json({ error: 'pwp_line_locked', reason: 'This PWP reward carries no voucher code — ask the coordinator to exchange it.' }, 409);
     }
-    const { data: codeRow } = await sb.from('pwp_codes')
-      .select('code, reward_combo_ids, type, redeemed_doc_no')
-      .eq('code', codeStr).maybeSingle();
+    const { data: codeRow } = await scopeToCompany(sb.from('pwp_codes').select('code, reward_combo_ids, type, redeemed_doc_no').eq('code', codeStr), c).maybeSingle();
     const ct = codeRow as { code: string; reward_combo_ids: string[] | null; type: string | null; redeemed_doc_no: string | null } | null;
     if (!ct) {
       return c.json({ error: 'pwp_line_locked', reason: 'This PWP voucher could not be found — ask the coordinator to exchange it.' }, 409);

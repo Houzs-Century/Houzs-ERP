@@ -286,7 +286,7 @@ works and is multi-select at line level — but only for a line that is
 ### The list handler — `mfgPurchaseOrders.get('/')` (`:374-520`)
 
 1. **Select** (`:387`) — one PostgREST query with three embeds:
-   `supplier:suppliers(...)`, `items:purchase_order_items(material_code, material_name, qty)`
+   `supplier:suppliers(...)`, `items:purchase_order_items(item_code, material_name, qty)`
    (the per-row item summary), and `purchase_location:warehouses!purchase_location_id(...)`.
 2. **Two paths, chosen by the presence of `page`** (`:394-395`).
    - Legacy (`:404-419`): `order po_date desc, created_at desc`, `.limit(500)`,
@@ -388,8 +388,16 @@ it, but a hand-typed line never could.
   re-counted so quota moves with the link.
 - Both writes go through `soLinkTargetRefusal` — the SO line must exist **in the
   active company**, must not be cancelled, and its `item_code` must equal the PO
-  line's `material_code`. Otherwise `404 so_line_not_found`,
+  line's `item_code`. Otherwise `404 so_line_not_found`,
   `409 so_line_cancelled` or `409 so_link_material_mismatch`.
+- **`POST /` (bare create) is company-scoped too (2026-08-19).** The desktop
+  "New PO from SO" / MRP-convert path feeds SO-sourced lines through this generic
+  create. It now reads each line's `soItemId` **scoped to the active company** and
+  refuses any that resolves to nothing — `404 so_line_not_found` — before the line
+  is linked (`so_item_id`), its `photo_urls` copied, or `recomputeSoPicked` rolls
+  `po_qty_picked` forward. Previously the read carried no company predicate (the
+  service-role client bypasses RLS), so a foreign `soItemId` re-parented another
+  company's SO line onto this company's PO. `BUG-HISTORY.md` 2026-08-19.
 - **And through `soLineOverConvertRefusal` (2026-08-11)** — `soLinkTargetRefusal`
   proves a bind POINTS somewhere legitimate; it says nothing about HOW MUCH. Both
   line paths take an operator-supplied qty, and until this landed neither capped
@@ -433,7 +441,7 @@ revisions included):
   (`line_qty_below_allocated`).
 - an SO target passes the SAME `soLinkTargetRefusal` gate as the line-level
   bind (company-owned, not cancelled, `item_code` = the line's
-  `material_code`).
+  `item_code`).
 - `seq` is auto-assigned dense 1..n; DELETE resequences survivors (ascending,
   so the UNIQUE `(item, seq)` can never collide mid-move).
 
@@ -612,7 +620,7 @@ those are what the route actually selects.
 | Table | Role |
 |-------|------|
 | `scm.purchase_orders` | PO header. `po_number` (UNIQUE), `supplier_id`, `status`, `po_date`, `expected_at`, `purchase_location_id` (FK → `warehouses.id`), `currency`, `subtotal_sen` / `tax_sen` / `total_sen`, `submitted_at` / `received_at` / `cancelled_at`, `revision`, `supplier_delivery_date_2..4`, `company_id`. |
-| `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `material_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below), `linked_ac_dtlkey` (mig 0273 — AutoCount `PODTL.DtlKey`; indexed, NOT unique — one AutoCount sofa line becomes one ERP line per compartment and every one carries the same key). |
+| `scm.purchase_order_items` | PO lines. `binding_id`, `material_kind` / `item_code` / `material_name`, `supplier_sku`, `qty`, `received_qty`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, variant columns (`item_group`, `variants`, `gap_inches`, `divan_*`, `leg_*`, `custom_specials`, `line_suffix`, `special_order_price_sen`), `delivery_date`, `warehouse_id`, `supplier_delivery_date_2..4`, `so_item_id`, `from_mrp`, `photo_urls` (mig 0274 — see *Line photos* below), `linked_ac_dtlkey` (mig 0273 — AutoCount `PODTL.DtlKey`; indexed, NOT unique — one AutoCount sofa line becomes one ERP line per compartment and every one carries the same key). |
 | `scm.purchase_order_items`.`variants` ownership | The jsonb has several writers and no schema. The AutoCount re-parse sweep (`refresh-po-variants.mjs`) owns only `OWNED_VARIANT_KEYS` (`backend/scripts/lib/variant-merge.mjs`) — fabric/colour + gap/divan/leg/total + size — and MERGES them (`variants = variants \|\| patch`); it must never rebuild the object, which deletes every key it has not heard of. `specials` (and the HOOKKA singular `special`) belong to `backfill-specials-into-variants.mjs`, the only writer with the money guard. `custom_specials` on a PO line is neither derived nor script-free: `POST /:id/items` and `PATCH /:id/items` store `it.customSpecials` VERBATIM from the request body with no recompute (`:3044`, `:3176` — unlike the SO / consignment routes), and three repair scripts write the column directly on `scm.purchase_order_items` (`backfill-sofa-special-orders.mjs`, `census-custom-specials-arrays.mjs`, `repair-custom-specials-double-encoded.mjs`). It has no single owner. |
 | `variants` — the reviewed hand-patch escape hatch | `apply-variant-patch.mjs` is the only writer allowed keys outside `OWNED_VARIANT_KEYS`, because its patch is a human-reviewed artifact submitted per batch through a workflow input (it exists to set things like `seatHeight` that no parser derives). It writes through `mergeReviewedVariantPatch` (`lib/variant-merge.mjs`): merged in the DATABASE, guarded on `jsonb_typeof(...) = 'object'`, counted from `RETURNING`, and re-read on a fresh connection. Geometry uses `COALESCE`, so a patch silent about `gap` leaves `gap_inches` alone — unlike the sweep, which is entitled to restamp all three from the text it just parsed. |
 | `scm.purchase_order_item_allocations` | mig 0235 — sub-line slices of ONE PO line across customers + stock: `company_id` (NOT NULL), `purchase_order_item_id` FK CASCADE, `seq` (1-based dense, UNIQUE per line), `qty` (>0, SUM <= line qty via triggers), `so_item_id` FK SET NULL (NULL = stock), `created_by`, `created_at`. Attribution only — no stock/money/quota. |
