@@ -16,7 +16,9 @@ import {
   NO_ARRIVALS_DAYS,
   OK,
   STALE_CHECKPOINT_DAYS,
+  TZ_SLOP_HOURS,
   decide,
+  normaliseBehind,
 } from "./autocount-pull-rules.mjs";
 
 /** A working day: checkpoint fresh, rows arriving. */
@@ -82,4 +84,46 @@ test("the three exit codes are distinct, because the workflow depends on it", ()
   assert.notEqual(OK, ALARM);
   assert.notEqual(ALARM, CANNOT_ANSWER);
   assert.equal(OK, 0, "0 must mean healthy — anything else and a green run is meaningless");
+});
+
+// --------------------------------------------------------------------------
+// The naive-timestamp offset, found by the first live dispatch
+// --------------------------------------------------------------------------
+
+test("a checkpoint that reads AHEAD by a timezone's worth is not stale", () => {
+  /* THE REAL OBSERVATION, 2026-08-19. The first production dispatch printed
+     "-1d behind": the stored value was 2026-08-19T20:35:34 while UTC was
+     13:03 — 7.5 hours "ahead", which is MYT for a checkpoint half an hour old.
+     The runner appended "Z" and floored, turning a third of a day of offset
+     into a whole negative day. */
+  const aheadBy7h30 = -(7.5 / 24);
+  assert.equal(normaliseBehind(aheadBy7h30), 0, "a timezone offset is not staleness");
+
+  const r = decide({ ...healthy, behind: aheadBy7h30 });
+  assert.equal(r.code, OK);
+  assert.deepEqual(r.alarms, [], "the real production reading must be silent");
+});
+
+test("every inhabited UTC offset is absorbed, and beyond that is a finding", () => {
+  /* -12..+14 is the full range of real offsets, so 14h is the boundary. Past
+     it, a checkpoint really is in the future — and that is its own alarm, not
+     something to clamp away: the next getSince() would ask for a window
+     starting in the future and skip everything before it. */
+  assert.equal(normaliseBehind(-(TZ_SLOP_HOURS / 24)), 0, "exactly at the boundary is tolerated");
+  assert.equal(normaliseBehind(-(15 / 24)), null, "past it is not a timezone");
+
+  const far = decide({ ...healthy, behind: -(72 / 24) });
+  assert.equal(far.code, ALARM);
+  assert.match(far.alarms[0], /72\.0 hours AHEAD/);
+});
+
+test("a genuinely stale checkpoint still alarms, offset or not", () => {
+  /* The regression that would matter: absorbing the offset must not blunt the
+     alarm this sentinel exists for. */
+  const r = decide({ ...healthy, behind: 110 });
+  assert.equal(r.code, ALARM);
+  assert.match(r.alarms[0], /110 days behind/);
+
+  assert.equal(decide({ ...healthy, behind: 2.0 }).code, OK, "at the limit is fine");
+  assert.equal(decide({ ...healthy, behind: 2.6 }).code, ALARM, "past it is not");
 });
