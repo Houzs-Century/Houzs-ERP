@@ -19,6 +19,9 @@ fails when one appears in CODE.
 | **Branding** | `branding` | — | `backend/src/scm/shared/so-branding-label.ts` |
 | **Item code (SKU reference)** | `item_code` | ~~`material_code`~~<br>~~`product_code`~~ | `backend/src/scm/routes/mfg-products.ts` |
 | **Money (minor unit)** | `_sen` | ~~`_centi`~~ | `frontend/src/lib/money.ts` |
+| **Salesperson (order attribution)** | `salesperson_id` / `salespersonId` | — | `backend/src/scm/lib/so-agent.ts` |
+| **Warehouse (which building ships)** | `warehouse_id` / `warehouseId` | — | `backend/src/scm/lib/warehouse-label.ts` |
+| **Customer reference (their own PO / order number)** | `ref` | — | `frontend/src/lib/customer-ref.ts` |
 
 ## What each one means
 
@@ -47,6 +50,18 @@ Entitled to spell a retired name in code: `scripts/lib/vocabulary.mjs`, `scripts
 Money is stored as an INTEGER count of sen (the Malaysian subunit AutoCount speaks; 100 sen = RM 1) and displayed as RM at the edge. The column/field suffix is `_sen` / `Sen`; `_centi` was the drift (291 columns across 70 tables, renamed by migration 0305 on 2026-08-18). Storing decimals is what money.ts exists to prevent — the retirement is of the NAME, not the integer type. Bare `centi` local helpers in one-off scripts are not `_centi` and are not retired.
 
 Entitled to spell a retired name in code: `scripts/lib/vocabulary.mjs`, `scripts/lib/drift-catalogue.mjs`, `src/scm/lib/mirror-map.ts`.
+
+### Salesperson (order attribution)
+
+Who the ERP records as having sold a Sales Order. The canonical identity is `salesperson_id` (a uuid into scm.staff) — scope, commission, the Fair Report and the SO PDF all read it, and its camelCase twin is `salespersonId`. `agent` is a SEPARATE legacy free-text column kept on purpose: it is the single field the AutoCount book is given, and `so-agent.ts` fills it from the stamped salesperson's `scm.staff.name` unless a caller supplies one (an FK_SO_SalesAgent refusal on go-live day is why). It is NOT a retired spelling of salesperson_id. The screening spellings `sales_reps`/`rep_id`, `sales_agent`/`SalesAgent`, `salesRep`, `salespeople` are genuinely different identifiers (a legacy integer roster and the AutoCount mirror), still reconciled at runtime, and are out of scope for a rename.
+
+### Warehouse (which building ships)
+
+The building an order ships from. The canonical binding is `warehouse_id` (uuid -> scm.warehouses), per LINE, which MRP/allocation/costing read; its camelCase twin is `warehouseId` and its display label is one rule in `warehouse-label.ts` (code first, then name). The SO header additionally stores a free-text snapshot `sales_location` (what the SO says, written by warehouseLabel()); unifying that onto `warehouse_id` needs a data BACKFILL and lands on a money/stock-adjacent table, so it is STAGED as a reviewed migration rather than enforced here. `sales_location` stays live until that migration. `purchase_location_id` (PO header) and `showroom_warehouse_id` are separate columns, not drift.
+
+### Customer reference (their own PO / order number)
+
+The customer's own reference (their PO / order number) on a sales document. Owner ruling 2026-08-18 (#2429): the canonical field is `ref`, resolved on every relationship map by the ONE shared helper `customerRefOf` = ref || customer_so_no || po_doc_no. `customer_so_no` is a near-duplicate kept as a transitional fallback; `po_doc_no` and `customer_po`/`customer_po_id`/`customer_po_date` are 0%-filled DEAD columns still SELECTed by the backend router and projected by a view. Dropping the dead columns is a STAGED migration (the 0189 view-grant hazard: the recreate must restore the view's grants), so none of these spellings is retired in the guard yet — the retirement waits for that drop.
 
 ## Concepts still carrying several spellings — the unification worklist
 
