@@ -53,6 +53,299 @@ source, and the no-discount case pins byte-identical behaviour to before.
 **Ref.** fix/delivery-fee-discount-survives, 2026-08-19. Same family as the
 2026-08-07 back-door ruling; the operator-side answer to it.
 
+## Opening Purchase Orders and Goods Received each ran a full company-wide MRP [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 打开「采购单」和「收货单」两个列表,每次都要等约 4 秒。原因和上次采购发票
+那次一模一样:列表为了显示「关联销售单」和「已交货」两栏,每次打开都把整套全公司 MRP
+引擎跑一遍 —— 而列表根本不需要现算它。现在照采购发票那套改法:列表先秒开(那两栏先
+空着),过一拍再由独立轻接口补上。功能不变。至此「列表白跑 MRP」这个病的四处(销售单、
+采购发票、采购单、收货单)全部修完。
+
+**Symptom.** Opening the Purchase Orders list (`GET /api/scm/mfg-purchase-orders?page=…`)
+and the Goods Received list (`GET /api/scm/grns?page=…`) each took ~4s — the same
+shape the SO and PI lists had, measured before at ~4.2s.
+
+**Root cause (traced, PROVEN by reading origin/main).** Both list handlers filled
+four columns (`assigned_sos`, `assigned_so_linked`, `assigned_so_provenance`,
+`delivered_dos`) inline: PO via `resolvePoSoCoverageForPos` and GRN via
+`resolvePoSoCoveragePerSkuForPos` (`routes/po-so-coverage.ts`), each of which runs
+`computeMrp` — the global company-wide MRP engine — once per list load. So neither
+list could be faster than the MRP page (~4s), regardless of its own cheap query.
+Same class as the SO-list deferral (#2433) and the PI-list deferral shipped just
+before this.
+
+**Fix.** Defer the four MRP-derived columns off each list's critical path,
+mirroring the PI list. Each list now OMITS them (not blanks — C16) and the client
+heals them a beat after render via a new thin endpoint —
+`GET /mfg-purchase-orders/list-mrp-enrichment?poIds=…`
+(`routes/mfg-purchase-orders-list-enrichment.ts`) and
+`GET /grns/list-mrp-enrichment?grnIds=…` (`routes/grns-list-enrichment.ts`) —
+each re-reading its ids under the SAME company scope and running the SAME
+resolvers, so the healed values are byte-identical, only deferred. The GRN
+endpoint reproduces the list's per-GRN-line-code roll-up exactly (header ==
+union(drill lines)). One shared FE overlay `applyListMrpEnrichment`
+(`frontend/src/lib/listMrpEnrichment.ts`) + `useEnrichedPoListRows` /
+`useEnrichedGrnListRows` merge the healed rows; the enrichment fetch is BATCHED
+per page (chunk 100), and an aborted fetch is silent (react-query cancellation),
+not a false "failed" — the Hookka P8 trap. C16 parity pinned both ways:
+`LIST_MRP_ENRICHMENT_KEYS` (`scm/lib/list-mrp-enrichment-keys.ts`, re-exported by
+both routes) == `LIST_MRP_DERIVED_FIELDS` (frontend), asserted by
+`backend/tests/listMrpEnrichmentKeys.test.ts` + `frontend/src/lib/listMrpEnrichment.test.ts`.
+The legacy non-paginated PO path (no `page`) is unchanged. No mobile PO/GRN list
+consumes these columns (checked), and no read was removed, widened or re-ordered.
+
+**Ref.** this PR, 2026-08-19. Completes the "list runs computeMrp on load" class:
+SO (#2433), PI, PO, GRN all deferred.
+
+## The pull-health check told you to run the one mode that cannot work [medium]
+
+**Symptom.** `backend/scripts/check-autocount-pull-health.mjs` ends in a VERDICT
+written for a person who has just learned the AutoCount mirror is dead. When it
+found "NOT MOVING", it printed: *"Run the pull in 'all' mode: pull.ts:29 says
+that path uses /getAll and does NOT touch the checkpoint, so it is the clean way
+to collect a backlog."* That instruction 503s.
+
+**Root cause.** The sentence was written from READING `services/pull.ts:29`.
+Both halves of its reasoning are true — `getAll()` is called, the checkpoint is
+not touched — and the operation was never once executed. Dispatched against
+production 2026-08-19: **39 seconds, then HTTP 503 `Worker exceeded resource
+limits`.** ~13,000 orders cannot be fetched and upserted inside one Cloudflare
+Worker request. The remedy that works is `?since=YYYY-MM-DD` windows.
+
+**Why it survived the correction.** The same claim lived in TWO places. The
+retraction was written into `docs/modules/system-health.md` the same day and
+missed this file, so the check went on printing the withdrawn advice to anyone
+who ran it — for a reader whose whole reason for running it is that they do not
+know what to do next. One claim, two homes, one of them forgotten.
+
+**Fix.** The verdict now prints the windowed `?since=` call, and the comment at
+the arrival-rate query no longer says the backlog is *"only `all` mode can
+collect"*.
+
+**And the class, not just the instance.** `scripts/lib/working-agreement.mjs`
+gained rule 4: a PR that tells a reader an operation will fix/recover/collect
+something must carry an `Observed:` line — a status, a count, a duration, an
+error, a run URL — or mark the claim `UNTESTED`. It also WARNS (never fails) when
+such a sentence is added to a module guide or a `check-*.mjs`, which is exactly
+the surface that stayed wrong here. Nothing else could have caught this: the code
+was correct, so types, lint, tests and review were all right to pass. The only
+wrong artifact was the claim, and every gate in this repo read code.
+
+Measured before shipping: 3 hits across 19,784 lines of existing module-guide
+prose, and only ADDED lines are scanned.
+
+**Ref.** `chore/remedy-claim-gate`, 2026-08-19.
+
+## Project visibility no longer filtered by PIC or brand — only by company [medium]
+
+<!-- area: Projects + PMS + fair report -->
+
+白话：以前一个销售只看得到「自己是负责人 (PIC)」而且「品牌在自己名单里」的项目，别人的
+活动 / 展会他看不到。老板 2026-08-19 决定：**同一间公司里，只要有项目权限的人，就能看到
+这间公司的所有项目** —— 不再按负责人、不再按品牌来挡。跨公司还是挡住的（2990 看不到
+HOUZS，反之亦然），这一点没变。
+
+**What changed.** The project row-level ACL (`getProjectScope` / `canSeeProject` /
+`projectAccessLevel` / `isScopedProjectUser`, all in the now-deleted
+`backend/src/services/projectAcl.ts`) filtered a scoped Sales rep to projects on
+their one-hop PIC line whose brand was in their `user_brands` allow-list, plus a
+30-day grace window. Every read that keyed off it now returns the whole
+company-scoped set instead.
+
+**Root cause (this is a deliberate change, not a defect).** The two-dimensional
+PIC + brand model (migs 048/049) was more restriction than the business wanted:
+staff routinely needed to see events they were not the PIC of. Owner decision
+2026-08-19: visibility is governed only by (a) the projects page-access gate and
+(b) company scope.
+
+**Fix.** Removed the PIC/brand predicate at every read site — project list
+(`services/projects.ts`), detail GET + printable debrief, the calendar (its
+scoped-PIC and PIC-self arms; crew + attendee arms kept), notifications, and the
+two finance reads (`/finance/by-project`, `/finance/lines`, money math
+untouched). Removed the matching write gates (create/patch PIC restriction, the
+`canPicProjectBrand` brand-on-PIC gate, and the finance-write PIC gate); the
+company predicate + `projects.write`/`projects.finances` gates stay. Deleted
+`projectAcl.ts`. `AuthUser.brand_scope` is now always `null` (vestigial; the
+signed-session claims contract was left unchanged). Frontend: removed the
+per-user brand-assignment panel (`UserBrandsPanel`) and its triggers from
+`Team.tsx`.
+
+**Kept on purpose (not dead):** `user_brands` and the backend
+`GET/PUT /api/users/:id/brands` routes stay — `user_brands` still powers the
+DIRECTOR APPROVAL-LANE brand split (Kris/Peter stock-out approvals, owner
+2026-08-10) via `approverBrandBlocked` (`projectGates.ts`) and the My-Pending
+approver query. That is a separate axis from project visibility and is
+unaffected. NOTE: with the visibility-oriented `UserBrandsPanel` gone, there is
+no longer an admin UI to EDIT those approval-split brands; existing rows persist.
+
+**Crew scoping is a separate axis and is untouched:** helpers / storekeepers /
+drivers still see only the events they are crewed on.
+
+**Ref.** `chore/remove-project-row-acl`, 2026-08-19.
+
+## Opening Purchase Invoices ran a full company-wide MRP on every load [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 打开「采购发票」列表要等大概 4 秒。原因是列表为了显示「关联销售单」和
+「已交货」这两栏，每次打开都把整套 MRP 引擎跑一遍 —— 而 MRP 是全公司最重的计算，
+采购发票列表其实根本不需要现算它。现在改成跟 8 月销售单列表一样的做法：列表先秒开
+（那两栏先空着），过一拍再由一个独立的轻接口把这两栏补上。功能不变，只是不再让整张
+列表卡在 MRP 上。
+
+**Symptom.** In the ERP, opening the Purchase Invoices list (the paginated
+`GET /api/scm/purchase-invoices?page=…`) took ~4.2s — measured from the browser
+against prod with a real session, **~4237 ms** — while the rows themselves are a
+light paginated query with cheap status counts. The exact disease the Sales
+Orders list had before it was deferred.
+
+**Root cause (traced).** PROVEN by reading the call chain on `origin/main`. The
+paginated list handler called `attachPiAssignedSos`
+(`backend/src/scm/lib/pi-assigned-sos.ts`) to fill four columns — `assigned_sos`,
+`assigned_so_linked`, `assigned_so_provenance`, `delivered_dos`. That calls
+`resolvePoSoCoveragePerSkuForPos` (`routes/po-so-coverage.ts`), which runs
+`computeMrp` — the global, company-wide MRP engine — **once per list load**. So
+the PI list could never be faster than the MRP page (~4s), no matter how light
+its own query was. The list query + the six status counts were never the cost;
+the MRP run was. (The 4.2s number is PROVEN by the earlier live browser sweep;
+the after-number is measured post-deploy — the list query is the same one the SO
+list runs in well under a second.)
+
+**Fix.** Defer the four MRP-derived columns off the list's critical path,
+mirroring the Sales Orders list. The paginated list now OMITS them — not blanks
+them (C16: absent means "not computed yet", `[]` would mean "computed empty") —
+and the client heals them a beat after render via a new thin endpoint
+`GET /purchase-invoices/list-mrp-enrichment?piIds=…`
+(`backend/src/scm/routes/purchase-invoices-list-enrichment.ts`), which re-reads
+each PI's `(id, grn_id)` under the SAME company scope the list applies and runs
+the SAME `attachPiAssignedSos`, so the healed values are byte-identical, only
+deferred. The FE overlay `applyPiListMrpEnrichment`
+(`frontend/src/lib/piListEnrichment.ts`) merges them into the shown rows. C16
+parity is pinned both ways: `PI_LIST_MRP_ENRICHMENT_KEYS` (backend) and
+`PI_MRP_DERIVED_LIST_FIELDS` (frontend) are asserted equal by
+`backend/tests/piListEnrichmentKeys.test.ts` +
+`frontend/src/lib/piListEnrichment.test.ts`. The legacy non-paginated path (no
+`page`) is unchanged — byte-identical historical behavior. No read was removed,
+widened, narrowed or re-ordered; only the moment the MRP columns are computed.
+
+**Ref.** this PR, 2026-08-19. Same class as the Sales Orders list MRP-off-load
+deferral (`GET /mfg-sales-orders/list-mrp-enrichment`).
+## "Create Service Case" stayed grey, and the screen could not say why [high]
+
+**Symptom.** 2026-08-19, a salesperson on mobile: the SO field held `SO-005263`,
+the line under it read **"No matching sales orders."**, and the *Create Service
+Case* button stayed disabled. Reported as "I cannot submit" — the submit is fine,
+the form refuses to submit without a linked order.
+
+**Root cause (traced, not guessed).** `useSoSearch` in
+`frontend/src/mobile/MobileServiceCase.tsx` destructured only `{ data,
+isFetching }` from its `useQuery` and returned `data?.results ?? []`. **The error
+was dropped**, so a REFUSAL rendered byte-identical to an honest empty answer.
+
+That matters here because `GET /api/assr/search-so` is gated by
+`requireServiceCaseAccess()`, which **403s without `service_cases.read`** — and a
+person can hold the permission that OPENS the Service Case form without holding
+that one. Their every search then returns nothing, with no reason given, forever.
+
+**What it actually cost.** Two hypotheses were raised and both were guesses,
+because the screen carries no information to separate them: (a) the person is not
+granted HOUZS, so `assr.ts:1256` skips the AutoCount mirror where a bare
+`SO-XXXXXX` lives; (b) the order never synced. The owner refuted (a) by hand.
+Neither could be settled from the report.
+
+**Fix.** The hook returns `error`, and the picker renders it in red INSTEAD of
+"No matching sales orders" — a refusal now reads as a refusal. This is the bug
+class `CLAUDE.md` names as *"a failure that reaches nobody is worse than a
+crash"*, and the reason `check-silent-mutations` exists; that gate covers
+`useMutation`, not `useQuery`, which is how this one survived.
+
+**Also shipped, so the next report is not a guess either:**
+`backend/scripts/check-so-visible-to-user.mjs` + a `workflow_dispatch` that takes
+the SO number and the person's name and prints WHICH cause it is — not in the
+mirror, in the mirror but spelled differently (it re-searches on digits alone),
+or present-and-visible so the answer lies in that person's grants.
+
+**Ref.** `fix/impersonate-presence-rbac-scoped`, 2026-08-19.
+
+## Who is online, and what page they are on, was visible across companies [medium]
+
+**Symptom.** `GET /api/presence` listed every active user in the group — name,
+email, role — plus `last_path`, the page each one is currently looking at. A HOUZS
+user could see 2990's staff and which document they had open.
+
+**Root cause (traced, not guessed).** The query had no company term at all:
+`WHERE last_seen_at >= ? AND status = 'active'`, nothing more. `users` is a shared
+`public` table, so the absence was invisible unless you asked what bounded it.
+
+**The part that would have defeated a naive fix.** The response is CACHED, and the
+key was the literal string `"scope=all"` — ONE entry shared by every caller. Adding
+a predicate to the query alone would still have served the other company's list out
+of cache to whoever asked second. The key now carries the granted set, sorted so
+`{1,2}` and `{2,1}` are one entry rather than two.
+
+**Owner decision 2026-08-19:** *"同样是根据公司可以看得到的那一个东西去做"* — the
+same rule as impersonation, i.e. the caller's `allowedCompanyIds`, not their active
+company.
+
+**Fix.** An `EXISTS` over `user_companies` against the caller's granted set, and the
+cache key carries that set. Integers interpolated from the SESSION, never from the
+request. An empty grant set matches nobody, which is correct — a caller granted no
+company has no colleagues to see. `undefined` (company context unreadable) degrades
+to the old behaviour rather than emptying the page.
+
+**Deliberately NOT changed:** `GET /users` still lists the whole group, annotated
+with each person's `company_ids`. That reads as intentional — it is the screen that
+ASSIGNS those grants, and its write path is already constrained to what the actor
+holds. Presence is different in kind: it is not "who works here", it is "what is
+this person looking at right now".
+
+**Ref.** `fix/impersonate-presence-rbac-scoped`, 2026-08-19. Found during the
+cross-company isolation audit.
+
+## Taking over another company's account was one permission check away [high]
+
+**Symptom.** An admin holding `users.manage` could `POST /api/users/:id/impersonate`
+against a user of the OTHER company. Impersonation issues that user's session, so
+from that moment the actor IS them — the other company's books, fully open. The
+same by-id-only shape sat on `POST /:id/reset-password` and
+`POST /:id/totp/disable`.
+
+**Root cause (traced, not guessed).** All three resolved the target with
+`.where(eq(users.id, id))` and nothing else. `users.manage` is a flat permission
+string with no company dimension, so holding it anywhere held it everywhere.
+
+**The asymmetry that made it a defect rather than a design.** `PUT /:id/companies`
+in the SAME file already constrains the write to `allowedCompanyIds`, with the
+comment *"A grantor can only ever pass on what they hold"*. Taking over an account
+HANDS the actor that account's reach, which is the same act by another route, and
+it was ungated.
+
+**Owner decision 2026-08-19, and it is RBAC, not the switcher.** *"我们的 team 那
+边是有得选这一个人是负责什么公司的… 如果他只是在同一间公司，肯定就是限制；如果他是
+两间公司…他是没有限制。以 RBAC 这样子去做限制的"* — so the predicate is the ACTOR's
+granted set, never the ACTIVE company. Gating on the switcher would break a
+two-company admin doing something they are already entitled to do.
+
+**Fix.** `targetWithinActorCompanies(c, targetUserId)` — the target's companies
+must be a SUBSET of the actor's. Holding {1} and taking over someone in {1,2}
+would be a promotion, so it refuses with 403 `not_in_your_companies`.
+
+Two edges are deliberate. `allowedCompanyIds` returning `undefined` means the
+company context could not be READ (pre-migration, cold start) and falls through —
+refusing there would lock every admin out of a routine action. A target with NO
+grants REFUSES, because `companyContext` currently hands such a user every active
+company, which makes taking them over the widest reach available rather than the
+safest.
+
+**Also found:** `/:id/impersonate` is registered TWICE (the second is dead — Hono
+keeps the first, and the file's own comment at that line says so). The gate went
+on the live one; the dead registration is left for a separate cleanup rather than
+removed in a security fix.
+
+**Ref.** `fix/impersonate-presence-rbac-scoped`, 2026-08-19. Found during the
+cross-company isolation audit.
 ## `mode=all` cannot backfill the AutoCount mirror — it kills the Worker [high]
 
 **Symptom.** `SO-005263` exists in AutoCount and is absent from the mirror, so a

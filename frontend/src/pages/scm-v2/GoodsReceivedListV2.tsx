@@ -48,6 +48,7 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import {
   useGrnsPaged,
+  useEnrichedGrnListRows,
   useGrnDetail,
   usePostGrn,
   useCancelGrn,
@@ -536,8 +537,12 @@ export function GoodsReceivedListV2() {
   const postGrn = usePostGrn();
   const cancelGrn = useCancelGrn();
 
-  // Server already filtered + sorted this page — render verbatim.
-  const rows = (data?.grns ?? []) as GrnRow[];
+  // Server already filtered + sorted this page — render verbatim. The MRP-derived
+  // columns (Assigned SO / Delivered) arrive from the deferred enrichment endpoint
+  // a beat later and are merged in here, so opening the list no longer waits on a
+  // company-wide computeMrp (perf/po-grn-list-mrp-off-load).
+  const serverRows = (data?.grns ?? []) as GrnRow[];
+  const rows = useEnrichedGrnListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? { all: 0, draft: 0, posted: 0, cancelled: 0 };
 

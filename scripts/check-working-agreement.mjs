@@ -1,11 +1,13 @@
 #!/usr/bin/env node
 /**
- * Gate: the three MANDATORY owner rules in CLAUDE.md, enforced on a pull request.
+ * Gate: the four MANDATORY owner rules in CLAUDE.md, enforced on a pull request.
  *
  *   1. A PR that reads as a FIX and changes code must add a BUG-HISTORY.md entry.
  *   2. A PR that changes a module SURFACE must update that module's guide.
  *   3. A PR that touches backend/src/db/migrations-pg must state, in its body,
  *      how the migration is REVERSED and what it was VERIFIED AGAINST.
+ *   4. A PR that says running something will FIX/RECOVER something must show
+ *      what happened when it was run, or mark the claim UNTESTED.
  *
  * Escapes are labels, and a label does not make the gate quiet: it prints the
  * violation it is waiving, at ESCAPE level, so the exception lands in the log
@@ -29,6 +31,7 @@ import {
   buildModuleIndex,
   evaluate,
   parseUnifiedDiff,
+  renderOrder,
 } from "./lib/working-agreement.mjs";
 
 const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -146,7 +149,7 @@ const say = (line) => {
 };
 
 say("");
-say("Working agreement gate — CLAUDE.md's three MANDATORY owner rules");
+say("Working agreement gate — CLAUDE.md's four MANDATORY owner rules");
 say(`  source           ${source}`);
 say(`  title            ${title}`);
 say(`  branch           ${branch || "(unknown)"}`);
@@ -157,7 +160,13 @@ say(`  surface changes  ${result.summary.surfaces.length} file(s)`);
 say(`  migrations-pg    ${result.summary.migrations} file(s)`);
 say("");
 
-for (const rule of ["bug-history", "module-guide", "migration-notes"]) {
+/* renderOrder lives in scripts/lib/, tested, because the two versions of this
+   loop that lived HERE were both wrong in the silent direction: a hardcoded
+   three-rule array dropped rule 4 entirely (1 violation counted, exit 1, not
+   one word about what it was), and its replacement appended nothing at all
+   because `!seen.add(r)` is always false. Untested rendering is how a finding
+   becomes a finding nobody has. */
+for (const rule of renderOrder(result.findings)) {
   for (const f of result.findings.filter((x) => x.rule === rule)) {
     say(`${ICON[f.level]} [${f.rule}] ${f.message}`);
     if (f.detail) say(`    ${f.detail}`);

@@ -79,6 +79,48 @@ a backfill would paper over it rather than fix it — find the failing row first
 
 ---
 
+## The sentinel — the half that does not wait to be asked
+
+`.github/workflows/autocount-pull-sentinel.yml` -> **AutoCount pull sentinel
+(read-only)**, every six hours. It reads the same three numbers as the health
+check and then, unlike the health check, it **exits non-zero on an alarm** so the
+job fails and the standard failed-workflow email goes out. That email is the only
+notifier this repo has, and it is the same channel `do-link-sentinel.yml` and
+`mirror-sentinel.yml` use.
+
+**Why both exist.** The health check above is a DIAGNOSTIC: manual dispatch,
+always exit 0, answering a question somebody already thought to ask. The cutover
+failure was invisible precisely because nobody knew to ask — the pull ran every
+five minutes for months, reported healthy runs, and moved nothing. A diagnostic
+cannot find that. A sentinel can.
+
+| exit | meaning |
+| --- | --- |
+| 0 | checkpoint current, rows arriving |
+| 1 | ALARM — checkpoint stale past 2 days, or nothing arrived in 30 days, or the checkpoint is missing/unparseable |
+| 2 | CANNOT ANSWER — no database, the query failed, or the mirror holds no timestamped rows at all |
+
+**Exit 2 fails the job on purpose.** A sentinel that cannot see must not report
+green; that is the `audit:map`-crashing-for-three-weeks shape. And an EMPTY
+mirror is refused rather than answered: zero rows makes "nothing arrived in 30
+days" trivially true, and reporting that as a stalled pull would send the next
+reader at the wrong system.
+
+The thresholds live in `backend/scripts/lib/autocount-pull-rules.mjs` as a pure
+function with `backend/scripts/lib/autocount-pull-rules.test.mjs` beside it, and
+the workflow runs that test before the sentinel. The 2-day staleness limit is
+taken from the health check rather than invented, so the two cannot drift apart.
+The 30-day arrival limit is deliberately far looser than any plausible quiet
+period and has NOT been calibrated against this book's live arrival distribution
+— the query to calibrate it is in the script's header.
+
+**What the sentinel cannot see:** whether the HISTORY is complete. The
+incremental pull asks `getSince(checkpoint)`, so an order last modified before
+the mirror's earliest checkpoint was never offered. That gap is invisible to
+every alarm here and is what the `?since=` windows above are for.
+
+---
+
 ## The trap this module was built around
 
 At the Postgres cutover the INSERT in `services/pull.ts` named seven columns the

@@ -6,8 +6,10 @@
 // (auth now lives entirely in authed-fetch via localStorage). Everything else
 // is verbatim.
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { authedFetch } from './authed-fetch';
+import { applyListMrpEnrichment, type EnrichableMrpRow, type ListMrpEnrichment } from '../../../lib/listMrpEnrichment';
 import { writeFailed, writeFailedAs } from './mutation-error';
 import { idempotentInit } from '../../../lib/idempotency';
 import { invalidateSoLists } from './sales-order-queries';
@@ -614,6 +616,73 @@ export function usePurchaseOrdersPaged(params: { page: number; pageSize: number;
     retry: retryUnlessClientError,
     retryDelay: 800,
   });
+}
+
+/* Deferred PO-list enrichment — the MRP-derived columns (Assigned SO /
+   Delivered) the list no longer computes on its critical path (see
+   listMrpEnrichment.ts). Fired AFTER the list renders, for the POs it just
+   showed, merged in by applyListMrpEnrichment. The ids are chunked at 100 so the
+   request stays bounded; each chunk is cached independently. The backend runs
+   ONE company-wide computeMrp per request regardless of chunk size. */
+const PO_ENRICH_CHUNK = 100;
+
+export function usePoListMrpEnrichmentMap(
+  poIds: string[],
+  enabled: boolean,
+): { byId: Map<string, ListMrpEnrichment>; isFetching: boolean } {
+  const chunks = useMemo(() => {
+    const uniq = [...new Set(poIds.filter(Boolean))].sort();
+    const out: string[][] = [];
+    for (let i = 0; i < uniq.length; i += PO_ENRICH_CHUNK) out.push(uniq.slice(i, i + PO_ENRICH_CHUNK));
+    return out;
+  }, [poIds]);
+
+  const results = useQueries({
+    queries: chunks.map((chunk) => ({
+      enabled: enabled && chunk.length > 0,
+      queryKey: ['mfg-purchase-orders-list-mrp-enrichment', chunk.join(',')],
+      queryFn: ({ signal }: { signal?: AbortSignal }) =>
+        authedFetch<{ enrichment: Record<string, ListMrpEnrichment> }>(
+          `/mfg-purchase-orders/list-mrp-enrichment?poIds=${encodeURIComponent(chunk.join(','))}`,
+          { signal },
+        ),
+      staleTime: 30_000,
+      retry: retryUnlessClientError,
+      retryDelay: 800,
+    })),
+  });
+
+  const sig = results.map((r) => r.dataUpdatedAt).join('|');
+  const isFetching = results.some((r) => r.isFetching);
+  const byId = useMemo(() => {
+    const map = new Map<string, ListMrpEnrichment>();
+    for (const r of results) {
+      const e = r.data?.enrichment;
+      if (e) for (const [k, v] of Object.entries(e)) map.set(k, v);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `results` is read through its `sig` (per-chunk dataUpdatedAt); depending on the array itself would rebuild every render.
+  }, [sig]);
+
+  return { byId, isFetching };
+}
+
+/* The overlay the PO list applies: take the rows the list endpoint returned
+   (without the MRP-derived columns), fetch the deferred enrichment for their
+   ids, and return the healed rows. */
+export function useEnrichedPoListRows<T extends EnrichableMrpRow>(
+  rows: T[],
+  enabled: boolean,
+): T[] {
+  const poIds = useMemo(
+    () => rows.map((r) => r.id).filter((x): x is string => !!x),
+    [rows],
+  );
+  const { byId } = usePoListMrpEnrichmentMap(poIds, enabled);
+  return useMemo(
+    () => rows.map((r) => applyListMrpEnrichment(r, r.id ? byId.get(r.id) : undefined)),
+    [rows, byId],
+  );
 }
 
 export function usePurchaseOrderDetail(id: string | null) {

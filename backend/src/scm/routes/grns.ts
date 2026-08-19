@@ -72,7 +72,6 @@ import { readStatusCounts } from '../lib/status-counts';
 import { recordEntityAudit, assertAuditWritable, auditUnavailableBody, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { GRN_LINE_AUDIT_FIELDS, GRN_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
-import { resolvePoSoCoveragePerSkuForPos, resolveDeliveredByCodeForPos, summarizeOrigins, type DeliveredDo } from './po-so-coverage';
 import { eager } from '../lib/concurrency';
 
 export const grns = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -1155,41 +1154,28 @@ grns.get('/', async (c) => {
   // fully_returned).
   const rows = (data ?? []) as Array<{ id: string } & Record<string, unknown>>;
   const ids = rows.map((g) => g.id);
-  /* PERF: takes only `rows`, known two waves earlier; discarded if grn_items fails. */
-  const poIdsForPage = rows.map((g) => (g as { purchase_order_id?: string | null }).purchase_order_id);
-  const coverageProm = eager(Promise.all([
-    resolvePoSoCoveragePerSkuForPos(sb, c, poIdsForPage),
-    resolveDeliveredByCodeForPos(sb, c, poIdsForPage),
-  ]));
   // Migration 0106 — collect each GRN's lines for the lock/convert flags.
   const linesByGrn = new Map<string, Array<{ qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>>();
   // Owner 2026-07-02 — "Transfer To" list column: map each grn_item → its GRN so
   // the per-line downstream (PI/PR) can be rolled up to a per-GRN doc-number set.
   const grnByItem = new Map<string, string>();
-  /* Each GRN's OWN line codes — the Assigned-SO / Delivered header cells below
-     roll up ONLY these SKUs (header ≡ ∪(drill lines), 2026-08-02): a partial-
-     receipt GRN must not inherit its parent PO's assignments for SKUs it never
-     received. */
-  const codesByGrn = new Map<string, Set<string>>();
+  /* The per-GRN line-code roll-up (Assigned-SO / Delivered) moved to the deferred
+     enrichment endpoint (grns-list-enrichment.ts), which rebuilds codesByGrn
+     itself — so this read no longer fetches item_code. It still feeds linesByGrn
+     (lock/convert flags) and grnByItem (downstream PI/PR roll-up). */
   if (ids.length > 0) {
-    const { data: lineRows, error: lineErr } = await paginateAll<{ id: string; grn_id: string; item_code: string | null; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>((from, to) => sb
+    const { data: lineRows, error: lineErr } = await paginateAll<{ id: string; grn_id: string; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>((from, to) => sb
       .from('grn_items')
-      .select('id, grn_id, item_code, qty_accepted, invoiced_qty, returned_qty')
+      .select('id, grn_id, qty_accepted, invoiced_qty, returned_qty')
       .in('grn_id', ids)
       .order('id')
       .range(from, to));
     if (lineErr) return c.json({ error: 'load_failed', reason: lineErr.message }, 500);
-    for (const li of (lineRows ?? []) as Array<{ id: string; grn_id: string; item_code: string | null; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>) {
+    for (const li of (lineRows ?? []) as Array<{ id: string; grn_id: string; qty_accepted: number | null; invoiced_qty: number | null; returned_qty: number | null }>) {
       const arr = linesByGrn.get(li.grn_id) ?? [];
       arr.push({ qty_accepted: li.qty_accepted, invoiced_qty: li.invoiced_qty, returned_qty: li.returned_qty });
       linesByGrn.set(li.grn_id, arr);
       if (li.id) grnByItem.set(li.id, li.grn_id);
-      const code = (li.item_code ?? '').trim();
-      if (code) {
-        const set = codesByGrn.get(li.grn_id) ?? new Set<string>();
-        set.add(code);
-        codesByGrn.set(li.grn_id, set);
-      }
     }
   }
   // Per-GRN downstream: aggregate the per-line PI/PR breakdown into one deduped
@@ -1210,50 +1196,21 @@ grns.get('/', async (c) => {
       downstreamByGrn.set(grnId, acc);
     }
   }
-  /* Collapsed "Assigned SO" column (owner 2026-07-31): resolved from the SAME
-     per-SKU precedence engine the drill-down uses — computeMrp runs once —
-     then rolled up over THIS GRN'S OWN line codes only (header ≡ ∪(drill
-     lines), 2026-08-02): the drill matches assignments into the GRN's lines by
-     item_code, so a partial-receipt GRN's header must not show parent-PO
-     assignments its lines cannot explain. */
-  /* "Delivered" column (owner 2026-07-31): the DO(s) that shipped the goods —
-     per CODE, filtered the same way. One wave, same poIds (issued above). */
-  const [originsByPo, deliveredByPoCode] = (await coverageProm)();
-  const grns = rows.map((g) => {
-    const poId = (g as { purchase_order_id?: string | null }).purchase_order_id ?? null;
-    const grnCodes = codesByGrn.get(g.id) ?? new Set<string>();
-    const origins = (poId ? originsByPo.get(poId) ?? [] : [])
-      .filter((o) => grnCodes.has(o.itemCode));
-    const summary = summarizeOrigins(origins);
-    // Delivered: distinct DOs across the GRN's own codes (qty summed per DO).
-    const doAgg = new Map<string, DeliveredDo>();
-    if (poId) {
-      const byCode = deliveredByPoCode.get(poId);
-      if (byCode) {
-        for (const code of grnCodes) {
-          for (const d of byCode.get(code) ?? []) {
-            const prev = doAgg.get(d.doNo);
-            if (prev) prev.qty += d.qty;
-            else doAgg.set(d.doNo, { ...d });
-          }
-        }
-      }
-    }
-    return {
-      ...g,
-      // Stored header total (= Σ qty*unit − discount). Falls back to 0 if unset.
-      total_sen: (g.total_sen as number | null | undefined) ?? 0,
-      downstream: [...(downstreamByGrn.get(g.id)?.values() ?? [])],
-      ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
-      assigned_sos: summary.assignedSos,
-      assigned_so_linked: summary.sourceLinked,
-      /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s) —
-         rolled up over the SAME code-filtered origins, so header ≡ ∪(lines)
-         holds for the provenance slot too. */
-      assigned_so_provenance: summary.provenanceSos,
-      delivered_dos: [...doAgg.values()].sort((a, b) => a.doNo.localeCompare(b.doNo, undefined, { numeric: true })),
-    };
-  });
+  /* Assigned SO / Delivered columns (owner 2026-07-31) are MRP-DERIVED and now
+     OMITTED here — not blanked (C16). Resolving them ran a company-wide
+     computeMrp on this critical path (resolvePoSoCoveragePerSkuForPos), the
+     list's dominant cost (~4s). The client heals them a beat after render via
+     GET /grns/list-mrp-enrichment (routes/grns-list-enrichment.ts +
+     lib/listMrpEnrichment.ts), rolling up over each GRN's own line codes exactly
+     as this handler did. downstream + the lock/convert flags stay inline (cheap,
+     non-MRP). */
+  const grns = rows.map((g) => ({
+    ...g,
+    // Stored header total (= Σ qty*unit − discount). Falls back to 0 if unset.
+    total_sen: (g.total_sen as number | null | undefined) ?? 0,
+    downstream: [...(downstreamByGrn.get(g.id)?.values() ?? [])],
+    ...computeGrnFlags(linesByGrn.get(g.id) ?? []),
+  }));
   if (paginate) return c.json({ grns, total, page, pageSize, statusCounts });
   return c.json({ grns });
 });

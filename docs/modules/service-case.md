@@ -161,6 +161,42 @@ to collide on.
 The desktop comment at `ServiceCases.tsx` saying *"server still accepts a null
 category"* is **stale** — the server `hasCategory` guard is the authority now.
 
+### The SO picker: a refusal used to render as "no results"
+
+*Create Service Case* stays disabled until a Sales Order is linked, so **the SO
+picker is the gate on the whole form**. When it finds nothing, the button is grey
+and the person is stuck — and until 2026-08-19 the screen could not say why.
+
+`useSoSearch` destructured only `{ data, isFetching }` from its `useQuery` and
+returned `data?.results ?? []`. **The error was dropped**, so a refusal rendered
+byte-identical to an honest empty answer. That matters because `GET
+/api/assr/search-so` can come back empty for three unrelated reasons:
+
+| | cause | fix |
+| --- | --- | --- |
+| 1 | `requireServiceCaseAccess()` 403s the caller | see the gate note below |
+| 2 | the caller does not hold HOUZS, so `assr.ts:1256` skips the AutoCount mirror where a bare `SO-XXXXXX` lives | grant it on the Team screen |
+| 3 | the order is not in the mirror, or its `doc_no` is spelled differently | `?since=` backfill — see `docs/modules/system-health.md` |
+
+The hook now returns `error` and the picker renders it **instead of** the
+not-found line. `check-silent-mutations` enforces this for `useMutation`, not
+`useQuery`, which is how it survived.
+
+**The gate is TEXT, and that is the part nobody thinks to check.**
+`canAccessServiceCases` (`assr.ts:98-106`) admits the `service_cases.read` holder
+**or** `isSalesUser` **or** `isDirectorUser`, and `isSalesUser`
+(`services/pmsAccess.ts:146-152`) tests `position_name` against `/^sales/i` and
+`department_name` for the substring "sales". So a real salesperson whose position
+or department field is blank, or spelled another way ("Executive Sales" fails
+`/^sales/i`), is refused — and their permission list looks perfectly fine.
+
+**Worked example, 2026-08-19.** A salesperson could not raise a case against
+`SO-005263`. Two hypotheses were raised and both were guesses, because the screen
+carried nothing that separated them. The read-only diagnostic
+(`Actions -> Why can this person not find this SO`) settled it: he held HOUZS,
+his position read "Sales Executive" and his department "Sales Department", so the
+gate admitted him — the order was simply never collected into the mirror. Cause 3.
+
 ### Complaint date is automatic and locked
 
 - Server stamps it: `createAssrCase` accepts an explicit `complained_date`
