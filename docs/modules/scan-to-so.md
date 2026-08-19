@@ -411,7 +411,7 @@ carried across untouched and contributes **no diff**. The list is in code as
 | `processingDate` | a DRAFT never carries a Processing Date (owner 2026-08-08, 2990-SO-2608-007 — supersedes the 2026-07-04 pin-to-today rule): scan drafts land with BOTH dates null, and the operator keys the pair at review against the slip photo |
 | `slipDate` (the SLIP'S OWN date — **not** the SO's Processing Date; see §2b) | the SO has no column for it, and the SO's Processing Date is a **different fact**. A DRAFT never carries a Processing Date at all (owner 2026-08-08, 2990-SO-2608-007 — supersedes the 2026-07-04 pin-to-today rule): scan drafts land with BOTH dates null, and the operator keys the pair at review against the slip photo. Inverting the SO's factory-start date back into `slipDate` would teach the model to read it off the slip's date line |
 
-| `priceRmGuess` | the create core **reprices** every goods line — `unit_price_centi` is the catalog's figure, not a correction |
+| `priceRmGuess` | the create core **reprices** every goods line — `unit_price_sen` is the catalog's figure, not a correction |
 | `installmentPlanMatch` | the header stores an integer month count; the pool's label spelling is unrecoverable, and inventing one breaks the never-invent rule |
 | `onlineTypeMatch` | there is no `online_type` column on the SO header (it lives on the payment ledger row) |
 | `totalRm`, `salesRep`, `paymentMethod`, `images`, `payments` | no SO column is the slip's written total / the rep's signature / the raw payment words / extraction metadata |

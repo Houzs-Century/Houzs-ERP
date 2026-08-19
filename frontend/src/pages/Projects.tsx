@@ -4586,12 +4586,8 @@ const PROJECTS_CALENDAR_FILTER_KEYS = [
   // tasklist sections are the new stages). `stage` stays in the keys
   // list so old bookmarks parse without throwing.
   "section",
-  // 2026-07-20 — free-text search (matches venue / organizer / brand /
-  // project code / event title). Owner: "where is search button on calender?".
+  // 2026-07-20 — free-text search (venue/organizer/brand/code/title).
   "q",
-  // Also removed the 'Tasks' toggle button from the toolbar the same day
-  // — the personal pref key `projects:cal:showTasks` in localStorage is
-  // untouched so a re-add would just re-render the existing chips.
 ] as const;
 
 // Per-day task-count chip in calendar cells. Neutral by default; an
@@ -5434,7 +5430,9 @@ function ProjectsCalendarView() {
                           ? composeDefaultProjectName({
                               state: seg.project.state,
                               brand: seg.project.brand,
-                              organizer: seg.project.organizer,
+                              // Bars always say SOLO (owner 2026-08-19); organizer
+                              // stays in the field / lists / stored names (08-17 rule).
+                              organizer: null,
                               venue: seg.project.venue,
                               event_type_slug: "solo",
                             })

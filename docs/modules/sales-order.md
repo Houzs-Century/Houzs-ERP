@@ -516,7 +516,7 @@ It is wired to the real backend on the **unchanged** contract:
 | VENUE (derived) | `GET /mfg-sales-orders/active-venue` |
 
 The backend recomputes honest pricing and mints the `doc_no` server-side, so the
-client never sends a `doc_no`, and money crosses the wire as `*_centi` integers.
+client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
 
 **CATEGORY-AWARE LINE VARIANTS — wired to the SAME real hooks the desktop
 `SoLineCard` uses, never hardcoded arrays:**
@@ -793,7 +793,20 @@ plus `other` (rows whose status is outside the vocabulary — legacy spellings,
 blanks), so the buckets always sum to `all`. It is computed by ONE grouped
 PostgREST aggregate over the base table (JS-reduce fallback if aggregates are
 disabled). `?status=OTHER` filters to exactly that catch-all bucket; every real
-status stays an exact match.
+status stays an exact match. `?status=all` / `ALL` / empty means the **All** tab
+— NO status filter (normalised by `effectiveStatusFilter`,
+`scm/lib/so-list-filters.ts`); the raw param is never applied as
+`eq('status', …)`, because no order carries the literal status `all`.
+
+> **FIXED 2026-08-18: the list showed "no orders" for a company with 2,726 of
+> them.** Two defects zeroed the paginated read (proven with the read-only probe
+> `backend/scripts/check-so-list-empty.mjs`: HOUZS base=2726 / view=2726,
+> `service_role` reads all 2,726 through the view — the money-rename view recreate
+> was NOT the cause). (1) `?status=all` was applied as `eq('status','all')` →
+> 0 rows; now normalised to no filter. (2) A page whose offset is at/beyond the
+> count makes PostgREST answer `416 "Requested range not satisfiable"`, which the
+> handler returned as a 500 and the grid masked as "No sales orders yet"; it now
+> returns an EMPTY PAGE with the true count (`isRangeNotSatisfiable`, same lib).
 
 > **FIXED 2026-08-18: a `statusCounts` that could not be READ was served as
 > zeros.** The aggregate's error was inspected, the FALLBACK's was not:
@@ -1637,7 +1650,7 @@ it, and the removal condition for each legacy alias is written there.
 | `lib/autocount-outbox.soEditHeader` | Reads its header off a bare `Record`, so NOT type-checked. A stale literal reads `undefined` → `acUdfDate` null → the omit-when-absent rule fires → `UDF.PDate` is never sent and the AutoCount book keeps the old date. | keyed on the constant |
 | `services/autocount-writeback.AcSoHeader` / `composeCreateSo` | The header is passed `as never` at the call site, so only the field name inside the type is checking anything. | computed property key from the constant |
 | `scm.so_amendments.header_changes` (jsonb) | The heaviest one. Written at REQUEST time, read at APPROVE time — days later, across deploys. `applySoAmendment` `continue`s on a key the allow-list lacks, and `routes/so-amendments.ts` gates on the same literal. A pending amendment would approve cleanly, audit cleanly, skip the deposit gate, and write nothing. | `canonicaliseSoHeaderChanges` on both read sites |
-| `backend/scripts/scale-pg-real-schema.mjs` + `tests/scaleRouteDrift.test.mjs` | A hard-coded column list `deepEqual`'d against the route's `HEADER`. **Loud** — it is the tripwire, and it is meant to fail. Note it also appends `, proceeded_at, paid_total_centi, balance_centi_live` as its own literal, so retiring `proceeded_at` needs an edit here too. | left loud on purpose |
+| `backend/scripts/scale-pg-real-schema.mjs` + `tests/scaleRouteDrift.test.mjs` | A hard-coded column list `deepEqual`'d against the route's `HEADER`. **Loud** — it is the tripwire, and it is meant to fail. Note it also appends `, proceeded_at, paid_total_sen, balance_sen_live` as its own literal, so retiring `proceeded_at` needs an edit here too. | left loud on purpose |
 | The `.mjs` audits under `backend/scripts` — the cutover / go-live / reconciliation / completeness family, plus `backfill-so-dates.mjs` and `probe-rename-preconditions.mjs` | Raw SQL, so 42703 kills the WHOLE statement: the audit does not narrow, it stops. Twelve of them were still naming `internal_expected_dd` after 0286 — see BUG-HISTORY 2026-08-14. `backfill-so-dates.mjs` is the one that WRITES: its "a person touched this date, refuse" scan matches audit-log TEXT, so it needs the retired spellings AND the current ones. | `SO_PROCESSING_DATE_COLUMN` from `backend/scripts/lib/so-processing-date.mjs` — the .mjs mirror, since a script cannot import the `.ts`. `tests/soProcessingDateMirror.test.ts` pins the two together; `tests/soProcessingDateOneName.test.mjs` walks the directory and fails on any non-comment mention of the retired name |
 | `frontend/src/vendor/scm/lib/so-field-policy.test.ts` | Parses the backend policy table out of the file by regex on **quoted literals**. Loud (row-for-row equality), but it constrains HOW a rename may be written: the policy rows must keep string literals, so do not replace them with a constant. | n/a — a constraint, not a fix |
 | `so_processing_date` (derived API field) | Stamped onto SI / DO list rows by `routes/sales-invoices.ts:688` and `routes/delivery-orders-mfg.ts:2889`, then read as a string by three frontends (`SalesInvoicesListV2:99`, `MfgDeliveryOrdersListV2:88`, and `MobileModuleList:1147,1198`'s `pick(r, "soProcessingDate", "so_processing_date")`). A backend-only rename blanks a "Processing" column with no error. Rename BOTH ends or neither. | not bound — see BUG-HISTORY 2026-08-13. **Corrected 2026-08-14:** this row said `so_internal_expected_dd` / `soInternalExpectedDd` until today; both ends moved to `so_processing_date` with the rename and the register did not. |
@@ -1849,8 +1862,8 @@ created by `seed-hydraulic-special-addon.mjs` (run **31454564942**) at
 connection. The stamp ran through `backfill-specials-into-variants.mjs` with
 `SKIP_PRICED=1` (run **31454747001**): **SO 41 + PO 8 = 49 lines**, with **27
 unrelated lines held back** for carrying a priced code. Every money column was
-summed inside the transaction before and after — `unit_price_centi`,
-`total_centi`, `unit_cost_centi`, `line_cost_centi`, `special_order_price_sen`,
+summed inside the transaction before and after — `unit_price_sen`,
+`total_sen`, `unit_cost_sen`, `line_cost_sen`, `special_order_price_sen`,
 `divan_price_sen`, `leg_price_sen` — all **IDENTICAL**, and the transaction
 would have rolled back on any difference. A fresh read-only re-run
 (**31454827796**) shows every one of the 49 now carrying the code, no line still
@@ -2062,7 +2075,7 @@ lock, delete → insert → header stamp in one call — the duplicate-fee race 
 
 **The bail rule (the 2990-SO-2608-006 fix).** `recomputeDeliveryFeeCore` bails
 (derives nothing) only when the SO has **no `SVC-DELIVERY*` lines AND no header
-`delivery_fee_centi`** — the dormant-fee rule: backend-authored SOs never grow
+`delivery_fee_sen`** — the dormant-fee rule: backend-authored SOs never grow
 a fee. It used to bail on "no fee lines" alone, which was half of a back door
 AND a heal-blocker: deleting/cancelling the fee line orphaned the header
 snapshot, the derivation turned itself off forever (a fee-line-less SO could
@@ -2214,7 +2227,7 @@ Schema: `scm` (vendored 2990 clone, 108 tables). Key tables:
 | `scm.mfg_sales_orders` | SO header (doc_no PK-ish, status, salesperson_id, totals in sen, so_date, delivery_state, amended_delivery_date, company_id) |
 | `scm.mfg_sales_order_items` | SO lines (item_group, stock_status, variants, warehouse_id) |
 | `scm.mfg_sales_order_payments` | payments ledger (so_doc_no FK, method, online_type) |
-| VIEW `scm.mfg_sales_orders_with_payment_totals` | header + `paid_total_centi` + `balance_centi_live` (Σ over payments) — the list reads this |
+| VIEW `scm.mfg_sales_orders_with_payment_totals` | header + `paid_total_sen` + `balance_sen_live` (Σ over payments) — the list reads this |
 
 Indexes that matter here:
 - `idx_msop_doc` on `mfg_sales_order_payments(so_doc_no)` — the payment-totals view's
@@ -2393,7 +2406,7 @@ and since that date it CARRIES the money. It did not before, and the paragraph
 that used to sit here described the old behaviour as deliberate:
 
 > Approving an amendment re-runs the honest-pricing recompute on every changed
-> line … **authoritative by default**: it rewrites `unit_price_centi` to
+> line … **authoritative by default**: it rewrites `unit_price_sen` to
 > `mfg_products.sell_price_sen`… That is deliberate for a NATIVE order.
 
 That was true of the code and wrong about the product. An operator typed RM 50,
@@ -2408,8 +2421,45 @@ it passes is derived from the APPROVAL, not from the payload:
 
 | what the apply is given | native order | migrated order |
 | --- | --- | --- |
-| `approval` (the approve-so gate's receipt) | the requested price persists (`trustOperatorSelling: true`) | stored / requested price persists (`'including-zero'`) |
+| `approval` (the approve-so gate's receipt) | the requested price persists, **RM 0 included** (`trustOperatorSelling: 'operator-zero'`) | stored / requested price persists (`'including-zero'`) |
+| `approval`, but the line is an **ADD** | requested price persists, except a **0**, which reads as "not provided" and takes the catalogue figure (plain `true`) | same |
 | `null` (any other caller) | catalogue, exactly as before | stored price kept |
+
+**RM 0 (2026-08-19).** Until this date the native row above passed plain `true`,
+which reads `manualUnitSelling > 0` — so zero was the one amount an approved
+amendment could not carry, and an approver who signed RM 0 got the catalogue
+price instead, silently. That matched the unlocked road when it was written; on
+2026-08-18 the unlocked road gained an operator-authored zero
+(`zeroPriceIntended` -> `'operator-zero'`, #2425), and this path did not follow,
+so the two disagreed on one value. Editing an existing line now uses
+`'operator-zero'` and the two agree again. It also stops a pure QUANTITY
+amendment re-pricing a line that sits at 0 — a free gift or PWP reward — which
+the editor triggers because it sends `newUnitPriceSen` on every changed line.
+
+**Add and Edit differ on 0 IN AN AMENDMENT, deliberately.** An amendment's ADD
+line names a SKU and nothing else about it is established, so a 0 there is
+likelier an unfilled field than an intended giveaway; an EDIT moves a price the
+line already carries. Both behaviours are pinned in
+`so-revision.amendmentPrice.test.ts`. Changing either means changing that test in
+the same PR — and asking the owner first.
+
+**On an UNLOCKED SO both accept 0, and the difference is the claim, not the
+operation** (2026-08-19). The direct line writes — `PATCH /:docNo/items/:itemId`
+and `POST /:docNo/items` — both ask one helper, `erpLineTrust`
+(mfg-pricing-recompute.ts):
+
+| the line write is given | trust |
+| --- | --- |
+| a POS session | `false` — the POS cannot state intent; its 0 is the documented "not provided" case |
+| price 0 **with** `zeroPriceIntended: true` | `'operator-zero'` — the 0 persists |
+| price 0 **without** the claim | `true` — reads as "not provided", takes the catalogue figure |
+| any non-zero price | `true` — a non-POS author prices freely |
+
+Until 2026-08-19 only the PATCH had this wired, so an office user could set a
+line to RM 0 by editing it but not by adding it at 0 — the same amount accepted
+on one click and silently replaced on another. The amendment path has no
+`zeroPriceIntended` to read (only `new_unit_price_sen`), which is why it keeps
+the split above rather than joining this table.
 
 `SoAmendmentApproval` is a **required** parameter of `applySoAmendment` with no
 default, constructed only inside `approveSoCommandHandler` after
@@ -2432,7 +2482,7 @@ direct SO write path already passes `trustOperatorSelling = !(isPosTabletCaller)
   unlocked edit path uses; `'including-zero'` is reserved for a MIGRATED line,
   where 0 is a real AutoCount figure. An ADD line never gets `'including-zero'`
   on any order type — it is being authored now, so it has no AutoCount history.
-- **`discount_centi` still has no amendment channel.** `scm.so_amendment_lines`
+- **`discount_sen` still has no amendment channel.** `scm.so_amendment_lines`
   has no discount column (mig 0080 + 0281: `new_item_code`, `new_variants`,
   `new_qty`, `new_unit_price_sen`, `new_remark`, `old_snapshot`), so a discount
   cannot be requested, approved or applied. The apply carries the line's existing

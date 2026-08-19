@@ -26,8 +26,8 @@ records cash-out, and since 2026-07-30 it is also **the document that decides a
 foreign purchase invoice's exchange rate**, which makes it a costing document as
 well as a cash one. Read §6 before changing anything in it.
 
-> Convention: money is **integer sen / centi** end-to-end (`total_centi`,
-> `amount_centi`, `applied_centi`). `exchange_rate` is `numeric(14,6)` = **MYR per 1
+> Convention: money is **integer sen / centi** end-to-end (`total_sen`,
+> `amount_sen`, `applied_sen`). `exchange_rate` is `numeric(14,6)` = **MYR per 1
 > unit of the document's currency**; MYR is always 1, a byte-for-byte no-op. Dates
 > stored UTC, displayed DD/MM/YYYY. All reads/writes through `/api/scm/*`.
 
@@ -142,7 +142,7 @@ leans on:
 | Lib | Role |
 |---|---|
 | `lib/pv-rate-adoption.ts` | **PURE.** The FX-rate decision table (§6) and the cancel-path retention predicate. No database. |
-| `lib/pi-settlement.ts` | `settlePiPaidCenti` + the pure `computePiSettlement`. The clamp that stops two vouchers over-paying one invoice lives in PL/pgSQL (`scm.settle_pi_paid_centi`, mig 0147) with a legacy optimistic fallback. |
+| `lib/pi-settlement.ts` | `settlePiPaidCenti` + the pure `computePiSettlement`. The clamp that stops two vouchers over-paying one invoice lives in PL/pgSQL (`scm.settle_pi_paid_sen`, mig 0147) with a legacy optimistic fallback. |
 | `lib/recost.ts` | `recostFromGrn` — the costing cascade the rate adoption triggers. |
 | `lib/fx.ts` | `normalizeCurrency` / `normalizeExchangeRate` / `safeRate` / `toMyrSen` / `masterRateForCurrency`. |
 | `lib/entity-audit.ts` | `recordEntityAudit` + the `assertAuditWritable` pre-flight. |
@@ -151,7 +151,7 @@ leans on:
 ### The GL entry (source_type `PV`)
 Dynamic legs, unlike the PI's fixed Dr 1200 / Cr 2000:
 ```
-Dr each line.debit_account_code   round(amount_centi * exchange_rate)   -- MYR
+Dr each line.debit_account_code   round(amount_sen * exchange_rate)   -- MYR
 Cr header.credit_account_code     = Σ of those rounded Dr legs          -- MYR
 ```
 The credit leg is the **sum of the rounded debit legs**, so the JE balances
@@ -170,13 +170,13 @@ JE for the same `pv_number`; a cancel's contra is keyed on the original JE's
 | Table | Notes |
 |---|---|
 | `scm.payment_vouchers` | header. `currency` + `exchange_rate numeric(14,6)` since mig **0081**; `purpose` since **0202**. |
-| `scm.payment_voucher_lines` | description + `debit_account_code` + `amount_centi`. |
-| `scm.pv_allocations` | mig **0202**. `pv_id`, `pi_id`, `amount_centi` (requested), `applied_centi` (what actually landed). **No `po_id`, and there is no deposit / prepayment concept anywhere in `backend/src`** — a PV settles invoices, never orders. |
-| `scm.purchase_invoices` | `paid_centi` / `status` moved by the settle; `exchange_rate` written by the rate adoption (§6). |
+| `scm.payment_voucher_lines` | description + `debit_account_code` + `amount_sen`. |
+| `scm.pv_allocations` | mig **0202**. `pv_id`, `pi_id`, `amount_sen` (requested), `applied_sen` (what actually landed). **No `po_id`, and there is no deposit / prepayment concept anywhere in `backend/src`** — a PV settles invoices, never orders. |
+| `scm.purchase_invoices` | `paid_sen` / `status` moved by the settle; `exchange_rate` written by the rate adoption (§6). |
 | `scm.journal_entries` / `_lines` | `source_type` `PV` and `PV_REVERSAL`. |
 | `scm.entity_audit_log` | `PAYMENT_VOUCHER` and — for the rate adoption — `PURCHASE_INVOICE` rows. |
 
-`applied_centi` is the one to respect: **record what the database applied, never what
+`applied_sen` is the one to respect: **record what the database applied, never what
 the allocation asked for.** A cancel reverses that exact figure, so storing the
 request after a clamp shrank it would un-apply money that never moved.
 
@@ -190,17 +190,17 @@ post the GL and touch no invoice — and therefore never adopt a rate.
 
 For each `pv_allocations` row on a POSTED `SUPPLIER_PAYMENT` voucher:
 
-1. `settlePiPaidCenti(sb, pi_id, amount_centi)` — the **database** evaluates the clamp
+1. `settlePiPaidCenti(sb, pi_id, amount_sen)` — the **database** evaluates the clamp
    (`GREATEST(paid, LEAST(total, paid + delta))`) under a row lock, at write time.
    It returns `appliedCenti` and `clampedCenti`.
-2. `pv_allocations.applied_centi` is set to `appliedCenti`.
+2. `pv_allocations.applied_sen` is set to `appliedCenti`.
 3. A non-zero `clampedCenti` is logged and pushed onto `overAllocated`. The voucher
    stays POSTED — the GL entry is correct and the money did leave; what is in question
    is only how much of it this invoice absorbed.
 4. **The FX rate step, §6.**
 
-Cancel walks the same allocations and settles `-applied_centi`, clearing
-`applied_centi` only when the reversal actually landed.
+Cancel walks the same allocations and settles `-applied_sen`, clearing
+`applied_sen` only when the reversal actually landed.
 
 Do NOT re-introduce a caller-side cap. The pre-0147 code read the PI, computed
 `outstanding = total - paid`, capped the allocation and then wrote — a cap that was
@@ -362,7 +362,7 @@ because all-MYR is the overwhelming majority of documents in this system.
 |---|---|
 | `backend/src/scm/lib/pv-rate-adoption.test.ts` | the §6 decision table, exhaustively, with no DB (47 cases) |
 | `backend/tests/pvRateFromPayment.test.ts` | the route: the rate is written, the **real** `recostFromGrn` moves the FIFO lot off its 1:1 basis, the audit rows land, a costing failure cannot fail the payment, all-MYR is inert, cancel retains (13 cases) |
-| `backend/tests-pg/pvRateAdoption.pg.test.ts` | real Postgres: the PL/pgSQL `settle_pi_paid_centi` clamp composed with the decision, and the `numeric(14,6)` round-trip. Runs in CI's `backend-postgres` job; SKIPS with no local PG |
+| `backend/tests-pg/pvRateAdoption.pg.test.ts` | real Postgres: the PL/pgSQL `settle_pi_paid_sen` clamp composed with the decision, and the `numeric(14,6)` round-trip. Runs in CI's `backend-postgres` job; SKIPS with no local PG |
 | `backend/src/scm/lib/fx-guard.test.ts` | both write-path guards (41 cases) |
 | `backend/tests/fulfillmentCosting.test.ts` | `parseAmountCenti` / `buildLines` / `buildAllocations` — negative and fractional amounts are REFUSED, not clamped to 0 |
 | `backend/tests/companyScopeHardening.test.ts` | the cancel cannot reverse another company's GL entry |
@@ -378,7 +378,7 @@ not that the adopted rate reached the inventory basis.
 
 ## 9. Traps
 
-- **`applied_centi`, not `amount_centi`, is what a cancel reverses.** Getting this
+- **`applied_sen`, not `amount_sen`, is what a cancel reverses.** Getting this
   backwards swaps an over-payment for an under-payment.
 - **Never cap an allocation in the caller** (§5).
 - **Never overwrite a PI rate that is not 1** (§6 row 7).

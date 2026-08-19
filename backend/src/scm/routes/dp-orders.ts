@@ -331,6 +331,42 @@ dpOrders.get('/', async (c) => {
   // is returned untouched (fail-open — see the module header).
   const scope = await resolveDeliveryScope(sb, c.get('houzsUser'));
   const rows = (data ?? []) as Array<Record<string, unknown> & DpRowLike>;
+
+  /* Sales context off the source SO (owner 2026-08-19, parity with the planning
+     board's Salesperson / Venue / Processing Date / Total Amount columns): an
+     SO-sourced job answers them from its SO, batch-read once by doc_no (TEXT PK,
+     ≤500 rows so one .in() is bounded). Manual / supplier / project / case rows
+     have no SO → the so_* fields stay null and the list renders a dash. A failed
+     SO read degrades to null rather than 500ing the registry. */
+  {
+    const docNos = [...new Set(rows
+      .map((r) => ((r.soDocNo ?? r.so_doc_no) as string | null) ?? null)
+      .filter((x): x is string => !!x))];
+    const soByDoc = new Map<string, Record<string, unknown>>();
+    if (docNos.length > 0) {
+      const { data: soRows, error: soErr } = await sb.from('mfg_sales_orders')
+        .select('doc_no, agent, salesperson_id, venue, processing_date, local_total_sen')
+        .in('doc_no', docNos);
+      if (soErr) {
+        // Decoration only — the registry must not 500 over its garnish. With
+        // the error NAMED and logged, "every so_* renders a dash" is a decision
+        // the log can explain, not a failure dressed up as no-SO rows.
+        console.error('[dp-orders] sales-context SO read failed; so_* fields degrade to null:', soErr.message);
+      }
+      for (const s of (soRows ?? []) as Array<Record<string, unknown>>) {
+        const doc = String(s.docNo ?? s.doc_no ?? '');
+        if (doc) soByDoc.set(doc, s);
+      }
+    }
+    for (const r of rows) {
+      const s = soByDoc.get(String((r.soDocNo ?? r.so_doc_no) ?? ''));
+      r.so_agent = (s?.agent as string | null) ?? null;
+      r.so_salesperson_id = ((s?.salespersonId ?? s?.salesperson_id) as string | null) ?? null;
+      r.so_venue = (s?.venue as string | null) ?? null;
+      r.so_processing_date = ((s?.processingDate ?? s?.processing_date) as string | null) ?? null;
+      r.so_total_sen = s ? Number((s.localTotalSen ?? s.local_total_sen) ?? 0) : null;
+    }
+  }
   if (scope.mode === 'all') return c.json({ dpOrders: rows });
   const tripCrew = await tripCrewByIds(sb, rows.map((r) => (r.trip_id ?? r.tripId) ?? null));
   return c.json({ dpOrders: filterDpOrdersByScope(scope, rows, tripCrew) });

@@ -391,15 +391,59 @@ export async function applySoAmendment(
      The ceiling is deliberate: an approved amendment now grants exactly the
      authority the operator would have had on the SAME order before it locked —
      the direct SO write path already passes `trustOperatorSelling =
-     !(isPosTabletCaller)` (mfg-sales-orders.ts) — and not one unit more. Plain
-     `true`, never 'including-zero', on a native order: a 0 there means "no price
-     was entered", exactly as it does on the unlocked road. */
-  const amendTrust: TrustSelling = soIsMigrated ? 'including-zero' : (approval !== null);
+     !(isPosTabletCaller)` (mfg-sales-orders.ts) — and not one unit more.
+     Never 'including-zero' on a native order: that flag ALSO suppresses the
+     selling surcharges and is a statement about a price AutoCount already
+     recorded, which is not what an operator authoring now is doing.
+
+     2026-08-19 — 'operator-zero', not plain `true`, and the reason is that the
+     unlocked road MOVED. This line read `(approval !== null)` from 2026-08-16,
+     and the sentence above it — "exactly the authority the operator would have
+     had on the SAME order before it locked" — was true when written, because on
+     that date NOBODY could author RM 0 anywhere: plain `true` reads a 0 as "not
+     provided" and hands back the catalogue figure. #2425 (2026-08-18) then gave
+     the UNLOCKED road exactly that power via 'operator-zero'. From that moment
+     the two roads disagreed on one value, so the stated invariant was broken by
+     the newer change, not by this code — an approver holding
+     scm.amendment.approve_* could sign RM 0 and the catalogue price landed,
+     silently, the same shape as the RM 50 defect this whole path was written to
+     close.
+
+     'operator-zero' is the SANCTIONED mode for an authored zero (see the
+     docblock in mfg-pricing-recompute). On the unlocked road the ERP line editor
+     states the operator typed it (`zeroPriceIntended`); here the statement is
+     stronger — a human holding the approve permission signed the diff, and
+     `clientUnit` below already refuses to read the requested price at all
+     without one. So the ceiling is unchanged in kind: still exactly the unlocked
+     road's authority, now including the one value it gained.
+
+     It also closes a second hole of the same shape. The editor sends
+     `newUnitPriceSen` on EVERY changed line, not only when the price moved (see
+     the QTY-only test), so approving a pure QUANTITY change on a line that sits
+     at 0 — a free gift, a PWP reward — used to hand it the catalogue price and
+     bill the customer for something given away. That is the RM 80 → RM 100
+     defect the QTY-only test pins, at the one value the test did not cover. */
+  const amendTrust: TrustSelling = soIsMigrated
+    ? 'including-zero'
+    : (approval !== null ? 'operator-zero' : false);
 
   /* An ADD line is authored NOW, so 'including-zero' must never reach it even on
      a migrated order — that flag is a statement about a price AutoCount already
      recorded, and a line typed today has no such history (mfg-pricing-recompute's
-     own note on the flag says so). Same approval gate, plain trust. */
+     own note on the flag says so). Same approval gate.
+
+     DELIBERATELY NOT 'operator-zero', unlike amendTrust above (2026-08-19). An
+     ADD line still reads 0 as "not provided" and takes the catalogue figure.
+     so-revision.amendmentPrice.test.ts pins that for a migrated order in as many
+     words, and it is a real protection rather than an accident of the old flag:
+     an ADD line names a SKU and nothing else about it is established yet, so a 0
+     there is far likelier to be an unfilled field than an intended giveaway.
+     Editing an EXISTING line is the opposite case — the line already carries a
+     price, and moving it to 0 is a deliberate act on a known amount.
+
+     So Add and Edit differ on 0, on purpose. A gift that genuinely belongs on a
+     locked order goes through the free-item path, not a hand-typed 0. Revisit
+     only with the owner, and update that test in the same breath. */
   const addLineTrust: TrustSelling = approval !== null;
 
   // Config loaded ONCE and threaded into every per-line recompute (the create

@@ -64,6 +64,14 @@ export type PlanningOrder = {
   debtor_code: string | null;
   debtor_name: string | null;
   phone: string | null;
+  /* Sales context (owner 2026-08-19) — who sold it + the sales venue. `agent`
+     is free text (sometimes a raw UUID); resolve to a display name via
+     useStaffLookup(agent, salesperson_id), never render either raw. null on
+     ASSR / DP rows; project rows fill `venue` with the PMS event venue.
+     Optional (`?`) so a cached pre-upgrade payload still typechecks. */
+  agent?: string | null;
+  salesperson_id?: string | null;
+  venue?: string | null;
   branding: string | null;
   status: string;
   delivery_state: DeliveryState;
@@ -572,6 +580,16 @@ export type DpOrderRow = {
   remark: string | null;
   created_at: string;
   updated_at: string;
+  /* Sales context off the SOURCE SO (owner 2026-08-19) — stamped server-side on
+     SO-sourced jobs only; null on manual / supplier / project / case rows.
+     Resolve so_agent / so_salesperson_id to a name via useStaffLookup, never
+     render either raw. Optional (`?`) so a cached pre-upgrade payload still
+     typechecks. */
+  so_agent?: string | null;
+  so_salesperson_id?: string | null;
+  so_venue?: string | null;
+  so_processing_date?: string | null;
+  so_total_sen?: number | null;
 };
 export function useDpOrders() {
   return useQuery({
