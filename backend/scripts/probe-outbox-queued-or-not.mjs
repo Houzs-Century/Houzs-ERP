@@ -212,7 +212,7 @@ async function dumpCoverage(spec, since) {
     const isCutover = !chain.length && !!d.linked_ac_docno;
     if (isCutover) { cutover += 1; continue; }
     const v = verdictOf(chain);
-    bump(`${d.status ?? '(n/a)'} ${v} ${rows.length && !chain.length ? 'other-ops-only' : ''}`);
+    bump(`${d.status ?? '(n/a)'} ${v} ${rows.length && !chain.length ? 'other-ops-only' : ''}`);
     if (v === 'NO-ROW') naked.push(d);
   }
 
@@ -221,7 +221,7 @@ async function dumpCoverage(spec, since) {
   notice(`  ${cutover} carry a linked_ac_docno and no chain row -> cutover-imported, correctly never queued`);
   console.log(`${pad('DOC STATUS', 16)} ${pad('CHAIN ROW', 10)} ${pad('OTHER OPS', 15)} N`);
   for (const [k, n] of [...grid.entries()].sort()) {
-    const [st, v, other] = k.split(' ');
+    const [st, v, other] = k.split(' ');
     console.log(`${pad(st, 16)} ${pad(v, 10)} ${pad(other || '-', 15)} ${n}`);
   }
   return { spec, docs, naked, byNo, byId };
@@ -293,13 +293,13 @@ async function dumpSoShape(coverage, cols) {
       `zeroTotal=${yn(zeroByDoc.get(String(d.doc_no)) === true)}`,
       `allLinesZeroPrice=${yn(!!lf && lf.n_lines > 0 && lf.n_priced === 0)}`,
       verdictOf(chain),
-    ].join(' ');
+    ].join(' ');
     grid.set(key, (grid.get(key) ?? 0) + 1);
   }
   console.log('');
   console.log(`${pad('DOC STATUS', 16)} ${pad('ZERO TOTAL', 16)} ${pad('ALL LINES RM0', 24)} ${pad('create_so', 10)} N`);
   for (const [k, n] of [...grid.entries()].sort()) {
-    const [st, zt, az, v] = k.split(' ');
+    const [st, zt, az, v] = k.split(' ');
     console.log(`${pad(st, 16)} ${pad(zt, 16)} ${pad(az, 24)} ${pad(v, 10)} ${n}`);
   }
   return { byDoc, zeroByDoc };
