@@ -48,6 +48,7 @@ import {
   readDataGridLayout,
   writeDataGridLayout,
 } from './dataGridLayoutStorage';
+import { readDataGridFilters, writeDataGridFilters } from './dataGridFilterStorage';
 import { subscribeActiveCompany, getActiveCompanySnapshot } from '../../../lib/activeCompany';
 import {
   EMPTY_LAYOUT,
@@ -503,17 +504,16 @@ function DataGridInner<T>({
      writes, so the drawer and the header are two views of one order. */
   const [columnsMenuDragKey, setColumnsMenuDragKey] = useState<string | null>(null);
   const [columnsMenuOverKey, setColumnsMenuOverKey] = useState<string | null>(null);
-  /* Per-column value filter (Commander 2026-05-29 — "没有 drop-down 菜单让我
-     去做选择"). filters[colKey] = the set of allowed values; absent / empty =
-     no filter on that column. filterMenu anchors the open dropdown. */
-  const [filters, setFilters] = useState<Record<string, string[]>>({});
-  // Date-preset filters for `filterType: 'date'` columns (colKey → preset).
-  const [dateFilters, setDateFilters] = useState<Record<string, DatePreset>>({});
-  // Number range filters (`filterType: 'number'`): colKey → {min?, max?}.
-  const [numberFilters, setNumberFilters] = useState<Record<string, { min?: number; max?: number }>>({});
-  // Custom date range (`filterType: 'date'`): colKey → {from?, to?} ISO. Sits
-  // alongside the preset (if both set, they AND together).
-  const [dateRangeFilters, setDateRangeFilters] = useState<Record<string, { from?: string; to?: string }>>({});
+  /* Per-column filters (Commander 2026-05-29): value sets, date presets,
+     number ranges, custom date ranges; filterMenu anchors the open dropdown.
+     PERSISTED per grid since 2026-08-19 (dataGridFilterStorage, keyed like the
+     layout blob) — DataTable's funnels have been a saved view since 2026-07-29,
+     while these cleared whenever opening a record replaced the workspace tab. */
+  const [filters, setFilters] = useState<Record<string, string[]>>(() => readDataGridFilters(scopedStorageKey).values);
+  const [dateFilters, setDateFilters] = useState<Record<string, DatePreset>>(() => readDataGridFilters(scopedStorageKey).dates as Record<string, DatePreset>);
+  const [numberFilters, setNumberFilters] = useState<Record<string, { min?: number; max?: number }>>(() => readDataGridFilters(scopedStorageKey).numbers);
+  const [dateRangeFilters, setDateRangeFilters] = useState<Record<string, { from?: string; to?: string }>>(() => readDataGridFilters(scopedStorageKey).dateRanges);
+  useEffect(() => { writeDataGridFilters(scopedStorageKey, { values: filters, dates: dateFilters, numbers: numberFilters, dateRanges: dateRangeFilters }); }, [scopedStorageKey, filters, dateFilters, numberFilters, dateRangeFilters]);
   const [filterMenu, setFilterMenu] = useState<{ colKey: string; x: number; y: number } | null>(null);
   // Type-to-find text for `filterType: 'numbering'` (filters the value list).
   const [filterSearch, setFilterSearch] = useState('');

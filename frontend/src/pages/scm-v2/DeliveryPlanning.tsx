@@ -29,7 +29,8 @@
 // ----------------------------------------------------------------------------
 
 import { useMemo, useState } from 'react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
+import { useStickyFilters } from '../../hooks/useStickyFilters';
 import { MapPinned, Truck, Plus, MessageSquare, CalendarClock } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { PageHeader } from '../../components/Layout';
@@ -74,7 +75,12 @@ export const DeliveryPlanning = () => {
      board is reachable on scm.transportation.*, so the convert actions carried no
      DO gate of their own — same ONE helper as every other DO control. */
   const canConvertToDo = canOperateDeliveryOrders(user, can, pageAccess);
-  const [params, setParams] = useSearchParams();
+  /* Sticky state/region tabs (owner 2026-08-19 "页签被清掉"): same layered
+     rule the Projects / Sales lists use — the URL stays authoritative (links
+     and refresh unchanged), and with NO param in the URL the last-used pair is
+     restored, so opening an SO (which replaces this workspace tab) and coming
+     back through the sidebar lands on the tabs the operator left. */
+  const [params, setParams] = useStickyFilters('delivery-planning', ['state', 'region']);
   const activeState = (params.get('state') ?? 'ALL').toUpperCase();
   const activeRegion = (params.get('region') ?? 'ALL').toUpperCase();
 
