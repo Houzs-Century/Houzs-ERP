@@ -3700,10 +3700,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     const pwpCompanyId: number = companyId;
     if (seenPwpCodes.has(code)) { reject('code is already applied to another line on this order'); continue; }
     seenPwpCodes.add(code);
-    /* One code = one redemption = ONE unit (Loo 2026-06-12, POS line-quantity).
-       A reward line with qty > 1 would price every unit at the PWP grant off a
-       single voucher. The POS stepper + cart store pin reward lines to 1; this
-       is the authority. */
+    /* One code = one redemption = ONE unit (Loo 2026-06-12); qty>1 would price every unit off one voucher. POS pins reward lines to 1. */
     if (Number(it?.qty ?? 1) !== 1) { reject('a PWP reward line must be quantity 1'); continue; }
     const product = lineProducts[idx];
     if (!product) { reject('unknown item code'); continue; }
@@ -3815,18 +3812,13 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
       })
       // HAZARD 2 (see the guide) — both halves of the key
       .eq('code', code).eq('company_id', pwpCompanyId);
-    // Orphaned-USED re-claim must match the orphan row exactly (USED + the same
-    // dead doc_no) so a parallel legitimate redemption can't be hijacked.
+    // Orphaned-USED re-claim matches the orphan row exactly (USED + same dead doc_no) so a live redemption can't be hijacked.
     claimQ = orphanedUsed
       ? claimQ.eq('status', 'USED').eq('redeemed_doc_no', cRow.redeemed_doc_no)
       : claimQ.in('status', ['RESERVED', 'AVAILABLE']);
     const { data: claimed } = await claimQ.select('code').maybeSingle();
     if (!claimed) { reject('code was just claimed by another order — try again'); continue; }
-    /* prevStatus drives the rollback restore. For an orphan re-claim the true
-       pre-incident status is unknown (the dead attempt never rolled back), so
-       restore to the most plausible redeemable state — RESERVED when the code
-       has an owner (same-cart voucher), else AVAILABLE — never back to the
-       bricked USED. */
+    /* prevStatus drives the rollback restore. An orphan re-claim's true prior status is unknown, so restore the plausible redeemable state — RESERVED when owned, else AVAILABLE — never the bricked USED. */
     const prevStatus = orphanedUsed
       ? (cRow.owner_staff_id ? 'RESERVED' : 'AVAILABLE')
       : cRow.status;
@@ -3834,9 +3826,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     if (grantSofaComboIds) pwpSofaByIdx.set(idx, grantSofaComboIds);
     else pwpBaseByIdx.set(idx, grantPwpPrice);
   }
-  /* Restore claimed codes to their prior state when the request is rejected
-     after the claim (drift 400 / insert failure) so a failed order never
-     silently burns a voucher. */
+  /* Restore claimed codes to their prior state on a post-claim rejection (drift 400 / insert failure) so a failed order never burns a voucher. */
   const rollbackPwpClaims = async () => {
     for (const { code, prevStatus } of claimedPwpCodes) {
       const patch: Record<string, unknown> = {
@@ -3849,10 +3839,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     }
   };
 
-  /* Explicit 409 when ANY carried code was refused (Loo 2026-06-05). Without
-     this the refused line silently repriced at full price and the order died
-     later as a bare pricing_drift — undebuggable from the tablet. Codes that
-     DID claim for other lines are rolled back so nothing burns. */
+  /* Explicit 409 when ANY carried code was refused (Loo 2026-06-05); otherwise the line silently repriced full and died later as a bare pricing_drift. Claimed codes are rolled back so nothing burns. */
   if (pwpRejections.length > 0) {
     await rollbackPwpClaims();
     return c.json({
