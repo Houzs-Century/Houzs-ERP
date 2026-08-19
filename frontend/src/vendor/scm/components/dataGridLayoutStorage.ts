@@ -122,6 +122,27 @@ export function decodeDataGridLayout(raw: string): DecodedDataGridLayout {
   }
 }
 
+/**
+ * DataGrid storage keys whose layout is SHARED ACROSS COMPANIES — the four
+ * Delivery/TMS queue boards, which render ONE cross-company queue (owner
+ * 2026-08-19: "去看了 sales order 之后倒回去就会 reset"). Per-company scoping
+ * (owner 2026-07-24) is right for the per-tenant lists, but on a shared queue
+ * it forked the SAME board into one layout slot per company: whichever company
+ * the window happened to be on picked the slot, so flipping windows read the
+ * OTHER slot's (stale) arrangement — experienced as the board "resetting".
+ * These keys store ONE unscoped local entry, and the server pins their row to
+ * one canonical company (backend routes/tableLayouts.ts, the same key list).
+ */
+export const SHARED_DATA_GRID_STORAGE_KEYS: ReadonlySet<string> = new Set([
+  "dg-delivery-planning",
+  "dg-date-arrangement-v2",
+  "dg-trips-time-arrangement-v2",
+  "dg-last-mile",
+]);
+
+export const isSharedDataGridStorageKey = (storageKey: string): boolean =>
+  SHARED_DATA_GRID_STORAGE_KEYS.has(storageKey);
+
 export function readDataGridLayout(key: string, legacyKey?: string): DataGridLayout {
   if (typeof window === "undefined") return { ...DEFAULT_DATA_GRID_LAYOUT };
   try {
