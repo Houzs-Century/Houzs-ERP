@@ -30,7 +30,7 @@ number at merge — it was the next free above `0206` at branch time).
 > Conventions: everything here lives in the **`scm`** schema and is served under
 > `/api/scm/delivery-rate-cards` behind `scmAreaGuard('scm.transportation.drivers')`
 > — the same Transportation area as the rest of the fleet. Money is integer sen
-> (`*_centi`). It is **cost verification + COGS attribution, NOT customer billing**,
+> (`*_sen`). It is **cost verification + COGS attribution, NOT customer billing**,
 > and it does **NOT** touch the FIFO lot / consumption money-path triggers.
 
 ---
@@ -55,11 +55,11 @@ Two additive tables, scoped per company.
 | `carrier_lorry_id` uuid null | FK `scm.lorries` — legacy per-lorry key / own-fleet lorry. Kept for back-compat |
 | **`carrier_company_id` uuid null (mig 0211, WS4b)** | FK `scm.threepl_companies` — the card is now priced PER 3PL COMPANY; every lorry under it inherits. The create/edit "carrier" dropdown lists companies (from `GET /meta`'s `companies[]`). Reconcile resolves `trip.lorry_id -> lorries.threepl_company_id -> carrier_company_id` (falls back to `carrier_lorry_id`) |
 | `carrier_label` text null | free-text carrier when not modelled as a lorry |
-| `min_charge_centi` | still stored, but the **form no longer exposes it** (owner dropped min-charge, WS4b); the calculator honours it if a legacy row has one |
+| `min_charge_sen` | still stored, but the **form no longer exposes it** (owner dropped min-charge, WS4b); the calculator honours it if a legacy row has one |
 | `is_own_fleet` bool | **DERIVED, never sent by a client** — `carrier_company_id IS NULL`, enforced by a CHECK (mig 0246). The routes write it beside the carrier and the create/patch schemas do not accept it |
 | `basis` text | `ITEM` \| `SET` (set = frame+mattress) — what the positional tiers count |
 | `aggregation` text | `UNIT` \| `DROP` \| `CUSTOMER` \| `TRIP` (mig 0244) — the unit the tier ladder COUNTS. Default `UNIT` |
-| `min_charge_centi` / `cap_centi` bigint null | optional envelope |
+| `min_charge_sen` / `cap_sen` bigint null | optional envelope |
 | `rounding` text | `NONE` \| `NEAREST_10C` \| `NEAREST_RM` |
 | `is_active` bool, `notes` text | |
 
@@ -76,7 +76,7 @@ One row per priced rule; `rule_type` selects the dimension.
 | `DISPOSE` / `SETUP` / `DISMANTLE` | — | occurrence charge (rate × count) |
 | `SERVICE` / `PICKUP` / `INSPECTION` / `TRANSFER` | — | the owner's order-type charges, own rate each |
 
-`amount_centi` is the price; `params` jsonb is an additive escape hatch the
+`amount_sen` is the price; `params` jsonb is an additive escape hatch the
 calculator ignores if unknown.
 
 ## 3. The pure calculator — `backend/src/scm/lib/delivery-rate-card.ts`
@@ -117,7 +117,7 @@ mirrors trips `/day`).
 ## 5. Reconciliation — `GET /reconcile`
 
 Lists OUTSOURCE trips (`is_outsourced=true`) that carry a captured billed cost
-(`scm.trips.three_pl_cost_centi`, set in Fleet A3), matches each to its carrier's
+(`scm.trips.three_pl_cost_sen`, set in Fleet A3), matches each to its carrier's
 rate card, derives the trip's facts from its stops, computes the EXPECTED cost,
 and flags the delta (`billed - expected`). Example: billed RM620 vs expected
 RM560 → **+RM60 flagged**.

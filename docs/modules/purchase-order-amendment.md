@@ -38,7 +38,7 @@ UX is being reduced to the same Requested / Approved / All set.)
 ## 1. What an amendment can change
 
 Per line: **SPEC** (material code / name / variants), **QTY**, **PRICE**
-(`unit_price_centi` — the supplier cost the purchaser negotiated; it is written
+(`unit_price_sen` — the supplier cost the purchaser negotiated; it is written
 through as given, there is **no** honest-pricing recompute like the SO side),
 **DELIVERY** (per-line `delivery_date`), **ADD** a line, **REMOVE** a line.
 
@@ -119,10 +119,10 @@ On approve, for the one PO the amendment targets:
    next revision number.
 3. **Header diffs** applied (`supplier_id` / `expected_at` / `notes`).
 4. **Line diffs** applied to `purchase_order_items`: SPEC/QTY/PRICE/DELIVERY
-   mutate in place (`line_total_centi = max(0, qty*unit - discount)`); ADD inserts;
+   mutate in place (`line_total_sen = max(0, qty*unit - discount)`); ADD inserts;
    REMOVE deletes — **except** an already-received line, which is **preserved and
    warned**, never silently dropped.
-5. **Roll up** `subtotal_centi` / `total_centi` (= subtotal + `tax_centi`) and
+5. **Roll up** `subtotal_sen` / `total_sen` (= subtotal + `tax_sen`) and
    `expected_at` (earliest line delivery date, unless the header set it) from the
    live line set, then bump `purchase_orders.revision` to the snapshot's next
    number.
@@ -163,7 +163,7 @@ New: enum `scm.po_amendment_status ('REQUESTED','APPROVED','REJECTED')`, tables
   `apply_lease_token` + `apply_lease_expires_at` (concurrency), `company_id`.
 - `po_amendment_lines`: `amendment_id` (FK, CASCADE), `purchase_order_item_id`,
   `change_type`, `new_material_code` / `new_material_name` / `new_variants` /
-  `new_qty` / `new_unit_price_centi` / `new_delivery_date`, `old_snapshot`.
+  `new_qty` / `new_unit_price_sen` / `new_delivery_date`, `old_snapshot`.
 - `uq_po_amendment_open` — partial unique on `(po_id) WHERE status = 'REQUESTED'`:
   one open amendment per PO.
 
@@ -287,7 +287,7 @@ and cannot drift from the row.
 | `VARIANT` | colour / fabric / variants | Processing | Production / Design |
 | `QTY` | quantity | Processing | Production / Design |
 | `LINE` | add / remove a line | Processing | Production / Design |
-| `PRICE` | unit cost (`unit_price_centi`) | Delivery / Commercial | Finance |
+| `PRICE` | unit cost (`unit_price_sen`) | Delivery / Commercial | Finance |
 | `DELIVERY` | delivery date (line or header `expected_at`) | Delivery / Commercial | Logistics |
 | `SUPPLIER` | header `supplier_id` | Delivery / Commercial | Purchasing |
 
