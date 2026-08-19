@@ -254,16 +254,29 @@ function useAssignableUsers(): PicUser[] {
 // returns { results: [{ doc_no, ref, debtor_name, phone, doc_date,
 // sales_agent }] } (min 2 chars server-side). Debounced client-side.
 type SoHit = Any;
-function useSoSearch(q: string): { results: SoHit[]; loading: boolean } {
+function useSoSearch(q: string): { results: SoHit[]; loading: boolean; error: string | null } {
   const needle = q.trim();
-  const { data, isFetching } = useQuery({
+  const { data, isFetching, error } = useQuery({
     queryKey: ["mobile-assr-so-search", needle],
     enabled: needle.length >= 2,
     staleTime: 30_000,
     queryFn: ({ signal }) =>
       api.get<{ results?: SoHit[] }>(`/api/assr/search-so?q=${encodeURIComponent(needle)}`, { signal }),
   });
-  return { results: data?.results ?? [], loading: isFetching };
+  /* THE ERROR USED TO BE DROPPED, and a REFUSAL then rendered as "No matching
+     sales orders." — identical to an honest empty result. GET /assr/search-so
+     403s without `service_cases.read`, and a person can hold the permission that
+     OPENS this form without holding that one, so the picker silently found
+     nothing and the Create button stayed grey with no reason given.
+
+     Cost, 2026-08-19: a salesperson reported "I cannot submit", and the first two
+     hypotheses (his company grants, an AutoCount sync gap) were both guesses
+     because the screen could not tell a refusal from an empty answer. */
+  return {
+    results: data?.results ?? [],
+    loading: isFetching,
+    error: error ? ((error as Error)?.message || "Could not search sales orders — try again.") : null,
+  };
 }
 
 const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
@@ -1998,7 +2011,7 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
   // chosen SO. `soPicked` guards the dropdown so it hides after selection.
   const [soQuery, setSoQuery] = useState("");
   const [soPicked, setSoPicked] = useState<SoHit | null>(null);
-  const { results: soResults, loading: soLoading } = useSoSearch(soPicked ? "" : soQuery);
+  const { results: soResults, loading: soLoading, error: soError } = useSoSearch(soPicked ? "" : soQuery);
   // Affected products — MULTISELECT with per-product qty (owner 2026-07:
   // sometimes 1 product, sometimes several). The backend create endpoint
   // already accepts an `items` array of { item_code, item_description, qty }
@@ -2253,7 +2266,8 @@ function NewCaseSheet({ onClose, onOpen }: { onClose: () => void; onOpen: (id: n
                     {soQuery.trim().length >= 2 && (
                       <div style={{ marginTop: 5, border: `1px solid ${DIM}`, borderRadius: 10, overflow: "hidden", maxHeight: 190, overflowY: "auto" }} className="hz-scroll">
                         {soLoading && <div style={{ fontSize: 11, color: GREY, padding: "9px 11px" }}>Searching…</div>}
-                        {!soLoading && !soResults.length && <div style={{ fontSize: 11, color: GREY, padding: "9px 11px" }}>No matching sales orders.</div>}
+                        {!soLoading && soError && <div style={{ fontSize: 11, color: "#b42318", padding: "9px 11px" }}>{soError}</div>}
+                        {!soLoading && !soError && !soResults.length && <div style={{ fontSize: 11, color: GREY, padding: "9px 11px" }}>No matching sales orders.</div>}
                         {soResults.map((hit, i) => (
                           <button
                             key={String(get(hit, "docNo", "doc_no")) + i}
