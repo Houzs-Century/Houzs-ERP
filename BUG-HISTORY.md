@@ -1,3 +1,117 @@
+## "Create Service Case" stayed grey, and the screen could not say why [high]
+
+**Symptom.** 2026-08-19, a salesperson on mobile: the SO field held `SO-005263`,
+the line under it read **"No matching sales orders."**, and the *Create Service
+Case* button stayed disabled. Reported as "I cannot submit" — the submit is fine,
+the form refuses to submit without a linked order.
+
+**Root cause (traced, not guessed).** `useSoSearch` in
+`frontend/src/mobile/MobileServiceCase.tsx` destructured only `{ data,
+isFetching }` from its `useQuery` and returned `data?.results ?? []`. **The error
+was dropped**, so a REFUSAL rendered byte-identical to an honest empty answer.
+
+That matters here because `GET /api/assr/search-so` is gated by
+`requireServiceCaseAccess()`, which **403s without `service_cases.read`** — and a
+person can hold the permission that OPENS the Service Case form without holding
+that one. Their every search then returns nothing, with no reason given, forever.
+
+**What it actually cost.** Two hypotheses were raised and both were guesses,
+because the screen carries no information to separate them: (a) the person is not
+granted HOUZS, so `assr.ts:1256` skips the AutoCount mirror where a bare
+`SO-XXXXXX` lives; (b) the order never synced. The owner refuted (a) by hand.
+Neither could be settled from the report.
+
+**Fix.** The hook returns `error`, and the picker renders it in red INSTEAD of
+"No matching sales orders" — a refusal now reads as a refusal. This is the bug
+class `CLAUDE.md` names as *"a failure that reaches nobody is worse than a
+crash"*, and the reason `check-silent-mutations` exists; that gate covers
+`useMutation`, not `useQuery`, which is how this one survived.
+
+**Also shipped, so the next report is not a guess either:**
+`backend/scripts/check-so-visible-to-user.mjs` + a `workflow_dispatch` that takes
+the SO number and the person's name and prints WHICH cause it is — not in the
+mirror, in the mirror but spelled differently (it re-searches on digits alone),
+or present-and-visible so the answer lies in that person's grants.
+
+**Ref.** `fix/impersonate-presence-rbac-scoped`, 2026-08-19.
+
+## Who is online, and what page they are on, was visible across companies [medium]
+
+**Symptom.** `GET /api/presence` listed every active user in the group — name,
+email, role — plus `last_path`, the page each one is currently looking at. A HOUZS
+user could see 2990's staff and which document they had open.
+
+**Root cause (traced, not guessed).** The query had no company term at all:
+`WHERE last_seen_at >= ? AND status = 'active'`, nothing more. `users` is a shared
+`public` table, so the absence was invisible unless you asked what bounded it.
+
+**The part that would have defeated a naive fix.** The response is CACHED, and the
+key was the literal string `"scope=all"` — ONE entry shared by every caller. Adding
+a predicate to the query alone would still have served the other company's list out
+of cache to whoever asked second. The key now carries the granted set, sorted so
+`{1,2}` and `{2,1}` are one entry rather than two.
+
+**Owner decision 2026-08-19:** *"同样是根据公司可以看得到的那一个东西去做"* — the
+same rule as impersonation, i.e. the caller's `allowedCompanyIds`, not their active
+company.
+
+**Fix.** An `EXISTS` over `user_companies` against the caller's granted set, and the
+cache key carries that set. Integers interpolated from the SESSION, never from the
+request. An empty grant set matches nobody, which is correct — a caller granted no
+company has no colleagues to see. `undefined` (company context unreadable) degrades
+to the old behaviour rather than emptying the page.
+
+**Deliberately NOT changed:** `GET /users` still lists the whole group, annotated
+with each person's `company_ids`. That reads as intentional — it is the screen that
+ASSIGNS those grants, and its write path is already constrained to what the actor
+holds. Presence is different in kind: it is not "who works here", it is "what is
+this person looking at right now".
+
+**Ref.** `fix/impersonate-presence-rbac-scoped`, 2026-08-19. Found during the
+cross-company isolation audit.
+
+## Taking over another company's account was one permission check away [high]
+
+**Symptom.** An admin holding `users.manage` could `POST /api/users/:id/impersonate`
+against a user of the OTHER company. Impersonation issues that user's session, so
+from that moment the actor IS them — the other company's books, fully open. The
+same by-id-only shape sat on `POST /:id/reset-password` and
+`POST /:id/totp/disable`.
+
+**Root cause (traced, not guessed).** All three resolved the target with
+`.where(eq(users.id, id))` and nothing else. `users.manage` is a flat permission
+string with no company dimension, so holding it anywhere held it everywhere.
+
+**The asymmetry that made it a defect rather than a design.** `PUT /:id/companies`
+in the SAME file already constrains the write to `allowedCompanyIds`, with the
+comment *"A grantor can only ever pass on what they hold"*. Taking over an account
+HANDS the actor that account's reach, which is the same act by another route, and
+it was ungated.
+
+**Owner decision 2026-08-19, and it is RBAC, not the switcher.** *"我们的 team 那
+边是有得选这一个人是负责什么公司的… 如果他只是在同一间公司，肯定就是限制；如果他是
+两间公司…他是没有限制。以 RBAC 这样子去做限制的"* — so the predicate is the ACTOR's
+granted set, never the ACTIVE company. Gating on the switcher would break a
+two-company admin doing something they are already entitled to do.
+
+**Fix.** `targetWithinActorCompanies(c, targetUserId)` — the target's companies
+must be a SUBSET of the actor's. Holding {1} and taking over someone in {1,2}
+would be a promotion, so it refuses with 403 `not_in_your_companies`.
+
+Two edges are deliberate. `allowedCompanyIds` returning `undefined` means the
+company context could not be READ (pre-migration, cold start) and falls through —
+refusing there would lock every admin out of a routine action. A target with NO
+grants REFUSES, because `companyContext` currently hands such a user every active
+company, which makes taking them over the widest reach available rather than the
+safest.
+
+**Also found:** `/:id/impersonate` is registered TWICE (the second is dead — Hono
+keeps the first, and the file's own comment at that line says so). The gate went
+on the live one; the dead registration is left for a separate cleanup rather than
+removed in a security fix.
+
+**Ref.** `fix/impersonate-presence-rbac-scoped`, 2026-08-19. Found during the
+cross-company isolation audit.
 ## `mode=all` cannot backfill the AutoCount mirror — it kills the Worker [high]
 
 **Symptom.** `SO-005263` exists in AutoCount and is absent from the mirror, so a

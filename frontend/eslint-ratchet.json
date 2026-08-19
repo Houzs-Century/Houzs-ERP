@@ -4,7 +4,7 @@
     "@typescript-eslint/no-explicit-any": 538,
     "@typescript-eslint/no-floating-promises": 786,
     "@typescript-eslint/no-unnecessary-condition": 1792,
-    "no-restricted-syntax": 140
+    "no-restricted-syntax": 133
   },
   "files": {
     "src/api/client.ts": {
@@ -177,7 +177,7 @@
       "@typescript-eslint/no-unnecessary-condition": 2
     },
     "src/lib/columnGroups.test.ts": {
-      "no-restricted-syntax": 2
+      "no-restricted-syntax": 1
     },
     "src/lib/globalSearch.ts": {
       "@typescript-eslint/no-unnecessary-condition": 2
@@ -300,7 +300,7 @@
     },
     "src/mobile/MobileSODetail.tsx": {
       "@typescript-eslint/no-unnecessary-condition": 17,
-      "no-restricted-syntax": 7
+      "no-restricted-syntax": 5
     },
     "src/mobile/MobileSalesOrders.tsx": {
       "@typescript-eslint/no-unnecessary-condition": 1
@@ -501,7 +501,7 @@
     "src/pages/scm-v2/ConsignmentOrders.tsx": {
       "@typescript-eslint/no-floating-promises": 4,
       "@typescript-eslint/no-unnecessary-condition": 35,
-      "no-restricted-syntax": 7
+      "no-restricted-syntax": 5
     },
     "src/pages/scm-v2/ConsignmentReturnDetail.tsx": {
       "@typescript-eslint/no-unnecessary-condition": 10,
@@ -881,9 +881,6 @@
     },
     "src/pages/scm-v2/products/VariantsTab.tsx": {
       "@typescript-eslint/no-unnecessary-condition": 1
-    },
-    "src/pages/scm-v2/so-audit-labels.ts": {
-      "no-restricted-syntax": 2
     },
     "src/pages/team/MemberOrgPerformance.tsx": {
       "@typescript-eslint/no-unnecessary-condition": 2
