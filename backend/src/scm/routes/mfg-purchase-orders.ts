@@ -35,6 +35,7 @@ import {
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
+import { readMfgProductBindings } from '../lib/supplier-bindings';
 import { poHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
@@ -634,17 +635,27 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
      grid can show it (and the user sees which lines are even convertible — an
      unbound SKU can't be PO'd). One batched query over the distinct codes;
      prefer is_main_supplier, else first binding. */
-  const skuCodes = [...new Set(((items ?? []) as unknown as Row[]).map((r) => r.item_code).filter(Boolean))];
+  const skuCodes = [...new Set(((items ?? []) as unknown as Row[]).map((r) => r.item_code).filter(Boolean))] as string[];
   const mainSupplierByCode = new Map<string, { code: string; name: string }>();
   if (skuCodes.length > 0) {
-    const { data: binds } = await supabase
-      .from('supplier_material_bindings')
-      .select('item_code, is_main_supplier, supplier:suppliers(code, name)')
-      .eq('material_kind', 'mfg_product')
-      .in('item_code', skuCodes)
-      .eq('company_id', activeCompanyId(c))
-      .order('is_main_supplier', { ascending: false });
-    for (const b of (binds ?? []) as Array<{ item_code: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null }>) {
+    /* CHUNKED + PAGED via the shared reader (lib/supplier-bindings.ts). This was
+       the un-fixed twin of routes/mrp.ts section 5: ONE un-chunked IN-list over
+       every code in the picker, and no paging at all, against PostgREST's
+       1,000-row response cap and 2,660 binding rows in production. A binding
+       that fell past the cap left `mainSupplierByCode` without an entry, and
+       this column then rendered "— none —" for a SKU that IS bound — with no
+       error anywhere, and with WHICH SKUs lost it decided by the arbitrary
+       order of `is_main_supplier DESC` ties, so two identically-bound modules
+       of the same sofa could disagree. */
+    const { data: binds } = await readMfgProductBindings<{
+      item_code: string;
+      supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null;
+    }>(supabase, {
+      codes: skuCodes,
+      companyId: activeCompanyId(c),
+      select: 'item_code, is_main_supplier, supplier:suppliers(code, name)',
+    });
+    for (const b of binds) {
       if (mainSupplierByCode.has(b.item_code)) continue;
       const s = Array.isArray(b.supplier) ? b.supplier[0] : b.supplier;
       if (s) mainSupplierByCode.set(b.item_code, { code: s.code, name: s.name });
@@ -1827,13 +1838,21 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   // Phase 3 (2026-05-29) — also load price_matrix so the PO line cost can
   // auto-price from the supplier's own per-category price table.
   const codes = [...new Set(soItems.map((it) => it.itemCode))];
-  const { data: bindings } = await supabase
-    .from('supplier_material_bindings')
-    .select('item_code, supplier_id, supplier_sku, unit_price_sen, currency, price_matrix')
-    .in('item_code', codes)
-    .eq('material_kind', 'mfg_product')
-    .eq('company_id', activeCompanyId(c))
-    .order('is_main_supplier', { ascending: false });
+  /* CHUNKED + PAGED via the shared reader (lib/supplier-bindings.ts), and the
+     stakes here are higher than a blank cell. A binding that does not arrive
+     leaves the SKU with no resolvable supplier, and the convert answers 400
+     `missing_bindings` naming it — so the operator is told a bound SKU "isn't
+     bound to a supplier yet" and cannot raise the PO at all. Un-chunked and
+     un-paged, that outcome depended on where PostgREST's 1,000-row cap happened
+     to cut a list ordered only by `is_main_supplier DESC`. */
+  const { data: bindings } = await readMfgProductBindings<{
+    item_code: string; supplier_id: string; supplier_sku: string;
+    unit_price_sen: number; currency: string; price_matrix: Record<string, unknown> | null;
+  }>(supabase, {
+    codes,
+    companyId: activeCompanyId(c),
+    select: 'item_code, supplier_id, supplier_sku, unit_price_sen, currency, price_matrix, is_main_supplier',
+  });
 
   /* Commander 2026-05-29 — drop ORPHANED bindings (supplier was deleted but the
      binding row survived, e.g. after a supplier reset). An orphan would slip a
@@ -3872,13 +3891,15 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
   };
   const bindByCode = new Map<string, BindLite>();
   if (codesToPrice.length > 0) {
-    const { data: binds } = await sb
-      .from('supplier_material_bindings')
-      .select('item_code, supplier_sku, unit_price_sen, price_matrix')
-      .eq('supplier_id', po.supplier_id)
-      .eq('material_kind', 'mfg_product')
-      .in('item_code', codesToPrice);
-    for (const b of (binds ?? []) as BindLite[]) {
+    // Same shared reader as the two above — one supplier's bindings, but the
+    // code list is still the whole append batch, so it chunks and pages too.
+    const { data: binds } = await readMfgProductBindings<BindLite>(sb, {
+      codes: codesToPrice as string[],
+      companyId: activeCompanyId(c),
+      select: 'item_code, supplier_sku, unit_price_sen, price_matrix, is_main_supplier',
+      supplierId: po.supplier_id as string,
+    });
+    for (const b of binds) {
       if (!bindByCode.has(b.item_code)) bindByCode.set(b.item_code, b);
     }
   }

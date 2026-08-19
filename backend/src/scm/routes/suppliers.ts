@@ -27,6 +27,7 @@ import { effectiveDelivery } from '../shared/effective-delivery';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr } from '../lib/postgrest-search';
 import { bindingToProductPatch } from '../lib/cost-anchor-sync';
+import { paginateAll } from '../lib/paginate-all';
 import { scopeToCompany, activeCompanyId, stampCompany,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   detailMissResponse } from '../lib/companyScope';
@@ -356,7 +357,16 @@ suppliers.get('/:id', async (c) => {
 
   const [supplierRes, bindingsRes] = await Promise.all([
     scopeToCompany(supabase.from('suppliers').select(SUPPLIER_COLS).eq('id', id), c).maybeSingle(),
-    scopeToCompany(supabase.from('supplier_material_bindings').select(BINDING_COLS).eq('supplier_id', id), c).order('item_code'),
+    /* PAGED. This is the supplier's WHOLE binding list and it had no `.range()`
+       at all, so PostgREST's 1,000-row response cap silently truncated it —
+       production carries 2,660 bindings across 43 suppliers, so a large
+       supplier's detail page could show a subset of its own SKUs and report
+       nothing. `.order('id')` after item_code makes the order total, which is
+       what makes `.range()` windows coherent (item_code is not unique per
+       supplier — one SKU may carry several rows). */
+    paginateAll((from, to) =>
+      scopeToCompany(supabase.from('supplier_material_bindings').select(BINDING_COLS).eq('supplier_id', id), c)
+        .order('item_code').order('id').range(from, to)),
   ]);
 
   if (supplierRes.error) return c.json({ error: 'load_failed', reason: supplierRes.error.message }, 500);
