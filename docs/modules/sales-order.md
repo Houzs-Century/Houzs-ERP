@@ -718,6 +718,16 @@ identity, from a GET needing only a document number. See BUG-HISTORY, 2026-08-18
 - a helper that cannot express scoping — `checkCrossCategorySource` took only
   `sb` — takes `c` instead of being worked around at the call site.
 
+**`pwp_codes.code` is a natural key too (2026-08-19).** Mig 0188 re-keyed
+`pwp_codes` on `(company_id, code)`, but the voucher `code` is caller-supplied, so
+a `.eq('code', X)` on its own resolves whichever company's row carries that string
+— the same trap as `doc_no`. On SO create the PWP loop now resolves
+`pwpCompanyId = activeCompanyId(c)` (refusing `409 company_unresolved` when unset
+while codes are present) and carries `.eq('company_id', pwpCompanyId)` on the
+prefetch, the atomic burn and the rollback; the two swap-line reads go through
+`scopeToCompany`. The already-safe siblings are `lib/pwp-claim-single.ts` and the
+add-line path. See BUG-HISTORY, 2026-08-19.
+
 **Do not expect the gate to catch a miss.** `scripts/check-company-scope.mjs`
 screens routes on `ID_PREDICATE` (`.eq('id')` / `.eq('*_id')`), so a `doc_no` key
 is invisible to it; its natural-key pass understands `doc_no` but walks
