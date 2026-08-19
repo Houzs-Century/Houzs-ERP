@@ -592,6 +592,40 @@ export function findObservation(body) {
 }
 
 // ---------------------------------------------------------------------------
+// Rendering order
+// ---------------------------------------------------------------------------
+
+/** The rules this repo has, in the order they read best. */
+export const RULE_ORDER = ["bug-history", "module-guide", "migration-notes", "remedy-claim"];
+
+/**
+ * Every rule present in `findings`, known ones first in RULE_ORDER, unknown
+ * ones appended in first-seen order.
+ *
+ * This lives here, tested, because the runner's inline version was WRONG and
+ * wrong in the silent direction. Adding rule 4 while the runner still iterated
+ * a hardcoded three-element list produced a gate that counted "1 violation(s)",
+ * exited 1, and said nothing about what the violation was. The replacement —
+ *
+ *     ...findings.map((f) => f.rule).filter((r) => !seen.has(r) && !seen.add(r))
+ *
+ * — reads as a de-dup idiom and appends NOTHING, ever: `Set.prototype.add`
+ * returns the Set, which is truthy, so `!seen.add(r)` is always false. It was
+ * shipped with a commit message asserting it "appends any rule the list has not
+ * heard of", written from reading it and never run. Same failure as the
+ * `mode=all` claim this PR exists for, inside the fix for that claim.
+ *
+ * Hence: a pure function, in the file the tests import.
+ */
+export function renderOrder(findings) {
+  const order = [...RULE_ORDER];
+  for (const f of findings || []) {
+    if (f && f.rule && !order.includes(f.rule)) order.push(f.rule);
+  }
+  return order;
+}
+
+// ---------------------------------------------------------------------------
 // The gate
 // ---------------------------------------------------------------------------
 

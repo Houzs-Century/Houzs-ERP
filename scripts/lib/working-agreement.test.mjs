@@ -23,6 +23,8 @@ import {
   isSurfacePath,
   mapPathToGuides,
   parseUnifiedDiff,
+  RULE_ORDER,
+  renderOrder,
   stripTemplateLines,
 } from "./working-agreement.mjs";
 
@@ -462,4 +464,24 @@ test("the PR template itself can never trip rule 4", () => {
     guides,
   });
   assert.equal(untouched.findings.some((f) => f.rule === "remedy-claim" && f.level === "fail"), false);
+});
+
+test("renderOrder appends a rule the list has not heard of", () => {
+  /* The regression this exists for shipped INSIDE the PR that added rule 4:
+       ...filter((r) => !seen.has(r) && !seen.add(r))
+     Set.prototype.add returns the Set, which is truthy, so the filter is always
+     false and nothing is ever appended. It read like a de-dup idiom, it was
+     described in a commit message as working, and it was never run. */
+  assert.deepEqual(renderOrder([]), RULE_ORDER);
+
+  const withNew = renderOrder([{ rule: "remedy-claim" }, { rule: "rule-5" }, { rule: "rule-5" }]);
+  assert.ok(withNew.includes("rule-5"), "an unknown rule must still be rendered");
+  assert.equal(withNew.filter((r) => r === "rule-5").length, 1, "and only once");
+  assert.deepEqual(withNew.slice(0, RULE_ORDER.length), RULE_ORDER, "known rules keep their order");
+
+  // Every rule the evaluator can emit must be renderable, or a finding goes unsaid.
+  const emitted = new Set(
+    evaluate({ ...base, files: [] }).findings.map((f) => f.rule),
+  );
+  for (const r of emitted) assert.ok(RULE_ORDER.includes(r), `${r} is missing from RULE_ORDER`);
 });
