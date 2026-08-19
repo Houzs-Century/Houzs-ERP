@@ -5434,7 +5434,15 @@ function ProjectsCalendarView() {
                           ? composeDefaultProjectName({
                               state: seg.project.state,
                               brand: seg.project.brand,
-                              organizer: seg.project.organizer,
+                              // CALENDAR bars always say SOLO for solo events
+                              // (owner 2026-08-19: "on calender supposed appear
+                              // solo instead kl chen kai hao"). The organizer
+                              // stays in the organizer field, lists and the
+                              // stored project name — passing it blank here
+                              // only changes the bar label, so the 08-17 rule
+                              // (a picked organizer fills the slot in stored /
+                              // created names, e.g. MALL MGMT) is untouched.
+                              organizer: null,
                               venue: seg.project.venue,
                               event_type_slug: "solo",
                             })
