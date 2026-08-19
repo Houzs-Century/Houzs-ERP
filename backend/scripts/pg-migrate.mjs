@@ -319,5 +319,20 @@ for (const file of pending) {
     process.exit(1);
   }
 }
+// A DROP/CREATE VIEW in a migration (money 0305, item-code 0307) leaves the
+// hosted PostgREST schema cache STALE — it keeps serving the old view shape, so
+// endpoints reading the recreated view return empty / HTTP 416 until someone
+// reloads it by hand. That was the "Sales Orders list shows ZERO" incident
+// (#2450) and the same latent hazard on the inventory views after 0307. Signal
+// a reload on EVERY successful deploy so a view recreate self-heals. Best-effort
+// and last: the migrations are already committed, and a failed NOTIFY (or a
+// PostgREST that ignores it) must never fail the deploy. See BUG-HISTORY.
+try {
+  await pg.unsafe("NOTIFY pgrst, 'reload schema'");
+  await pg.unsafe("NOTIFY pgrst, 'reload config'");
+  console.log("PostgREST schema-cache reload signalled");
+} catch (err) {
+  console.warn(`PostgREST reload NOTIFY failed (non-fatal): ${err?.message ?? err}`);
+}
 console.log("done");
 await pg.end();

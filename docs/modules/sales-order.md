@@ -516,7 +516,7 @@ It is wired to the real backend on the **unchanged** contract:
 | VENUE (derived) | `GET /mfg-sales-orders/active-venue` |
 
 The backend recomputes honest pricing and mints the `doc_no` server-side, so the
-client never sends a `doc_no`, and money crosses the wire as `*_centi` integers.
+client never sends a `doc_no`, and money crosses the wire as `*_sen` integers.
 
 **CATEGORY-AWARE LINE VARIANTS — wired to the SAME real hooks the desktop
 `SoLineCard` uses, never hardcoded arrays:**
@@ -1598,7 +1598,7 @@ it, and the removal condition for each legacy alias is written there.
 | `lib/autocount-outbox.soEditHeader` | Reads its header off a bare `Record`, so NOT type-checked. A stale literal reads `undefined` → `acUdfDate` null → the omit-when-absent rule fires → `UDF.PDate` is never sent and the AutoCount book keeps the old date. | keyed on the constant |
 | `services/autocount-writeback.AcSoHeader` / `composeCreateSo` | The header is passed `as never` at the call site, so only the field name inside the type is checking anything. | computed property key from the constant |
 | `scm.so_amendments.header_changes` (jsonb) | The heaviest one. Written at REQUEST time, read at APPROVE time — days later, across deploys. `applySoAmendment` `continue`s on a key the allow-list lacks, and `routes/so-amendments.ts` gates on the same literal. A pending amendment would approve cleanly, audit cleanly, skip the deposit gate, and write nothing. | `canonicaliseSoHeaderChanges` on both read sites |
-| `backend/scripts/scale-pg-real-schema.mjs` + `tests/scaleRouteDrift.test.mjs` | A hard-coded column list `deepEqual`'d against the route's `HEADER`. **Loud** — it is the tripwire, and it is meant to fail. Note it also appends `, proceeded_at, paid_total_centi, balance_centi_live` as its own literal, so retiring `proceeded_at` needs an edit here too. | left loud on purpose |
+| `backend/scripts/scale-pg-real-schema.mjs` + `tests/scaleRouteDrift.test.mjs` | A hard-coded column list `deepEqual`'d against the route's `HEADER`. **Loud** — it is the tripwire, and it is meant to fail. Note it also appends `, proceeded_at, paid_total_sen, balance_sen_live` as its own literal, so retiring `proceeded_at` needs an edit here too. | left loud on purpose |
 | The `.mjs` audits under `backend/scripts` — the cutover / go-live / reconciliation / completeness family, plus `backfill-so-dates.mjs` and `probe-rename-preconditions.mjs` | Raw SQL, so 42703 kills the WHOLE statement: the audit does not narrow, it stops. Twelve of them were still naming `internal_expected_dd` after 0286 — see BUG-HISTORY 2026-08-14. `backfill-so-dates.mjs` is the one that WRITES: its "a person touched this date, refuse" scan matches audit-log TEXT, so it needs the retired spellings AND the current ones. | `SO_PROCESSING_DATE_COLUMN` from `backend/scripts/lib/so-processing-date.mjs` — the .mjs mirror, since a script cannot import the `.ts`. `tests/soProcessingDateMirror.test.ts` pins the two together; `tests/soProcessingDateOneName.test.mjs` walks the directory and fails on any non-comment mention of the retired name |
 | `frontend/src/vendor/scm/lib/so-field-policy.test.ts` | Parses the backend policy table out of the file by regex on **quoted literals**. Loud (row-for-row equality), but it constrains HOW a rename may be written: the policy rows must keep string literals, so do not replace them with a constant. | n/a — a constraint, not a fix |
 | `so_processing_date` (derived API field) | Stamped onto SI / DO list rows by `routes/sales-invoices.ts:688` and `routes/delivery-orders-mfg.ts:2889`, then read as a string by three frontends (`SalesInvoicesListV2:99`, `MfgDeliveryOrdersListV2:88`, and `MobileModuleList:1147,1198`'s `pick(r, "soProcessingDate", "so_processing_date")`). A backend-only rename blanks a "Processing" column with no error. Rename BOTH ends or neither. | not bound — see BUG-HISTORY 2026-08-13. **Corrected 2026-08-14:** this row said `so_internal_expected_dd` / `soInternalExpectedDd` until today; both ends moved to `so_processing_date` with the rename and the register did not. |
@@ -1810,8 +1810,8 @@ created by `seed-hydraulic-special-addon.mjs` (run **31454564942**) at
 connection. The stamp ran through `backfill-specials-into-variants.mjs` with
 `SKIP_PRICED=1` (run **31454747001**): **SO 41 + PO 8 = 49 lines**, with **27
 unrelated lines held back** for carrying a priced code. Every money column was
-summed inside the transaction before and after — `unit_price_centi`,
-`total_centi`, `unit_cost_centi`, `line_cost_centi`, `special_order_price_sen`,
+summed inside the transaction before and after — `unit_price_sen`,
+`total_sen`, `unit_cost_sen`, `line_cost_sen`, `special_order_price_sen`,
 `divan_price_sen`, `leg_price_sen` — all **IDENTICAL**, and the transaction
 would have rolled back on any difference. A fresh read-only re-run
 (**31454827796**) shows every one of the 49 now carrying the code, no line still
@@ -2023,7 +2023,7 @@ lock, delete → insert → header stamp in one call — the duplicate-fee race 
 
 **The bail rule (the 2990-SO-2608-006 fix).** `recomputeDeliveryFeeCore` bails
 (derives nothing) only when the SO has **no `SVC-DELIVERY*` lines AND no header
-`delivery_fee_centi`** — the dormant-fee rule: backend-authored SOs never grow
+`delivery_fee_sen`** — the dormant-fee rule: backend-authored SOs never grow
 a fee. It used to bail on "no fee lines" alone, which was half of a back door
 AND a heal-blocker: deleting/cancelling the fee line orphaned the header
 snapshot, the derivation turned itself off forever (a fee-line-less SO could
@@ -2175,7 +2175,7 @@ Schema: `scm` (vendored 2990 clone, 108 tables). Key tables:
 | `scm.mfg_sales_orders` | SO header (doc_no PK-ish, status, salesperson_id, totals in sen, so_date, delivery_state, amended_delivery_date, company_id) |
 | `scm.mfg_sales_order_items` | SO lines (item_group, stock_status, variants, warehouse_id) |
 | `scm.mfg_sales_order_payments` | payments ledger (so_doc_no FK, method, online_type) |
-| VIEW `scm.mfg_sales_orders_with_payment_totals` | header + `paid_total_centi` + `balance_centi_live` (Σ over payments) — the list reads this |
+| VIEW `scm.mfg_sales_orders_with_payment_totals` | header + `paid_total_sen` + `balance_sen_live` (Σ over payments) — the list reads this |
 
 Indexes that matter here:
 - `idx_msop_doc` on `mfg_sales_order_payments(so_doc_no)` — the payment-totals view's
@@ -2354,7 +2354,7 @@ and since that date it CARRIES the money. It did not before, and the paragraph
 that used to sit here described the old behaviour as deliberate:
 
 > Approving an amendment re-runs the honest-pricing recompute on every changed
-> line … **authoritative by default**: it rewrites `unit_price_centi` to
+> line … **authoritative by default**: it rewrites `unit_price_sen` to
 > `mfg_products.sell_price_sen`… That is deliberate for a NATIVE order.
 
 That was true of the code and wrong about the product. An operator typed RM 50,
@@ -2393,7 +2393,7 @@ direct SO write path already passes `trustOperatorSelling = !(isPosTabletCaller)
   unlocked edit path uses; `'including-zero'` is reserved for a MIGRATED line,
   where 0 is a real AutoCount figure. An ADD line never gets `'including-zero'`
   on any order type — it is being authored now, so it has no AutoCount history.
-- **`discount_centi` still has no amendment channel.** `scm.so_amendment_lines`
+- **`discount_sen` still has no amendment channel.** `scm.so_amendment_lines`
   has no discount column (mig 0080 + 0281: `new_item_code`, `new_variants`,
   `new_qty`, `new_unit_price_sen`, `new_remark`, `old_snapshot`), so a discount
   cannot be requested, approved or applied. The apply carries the line's existing

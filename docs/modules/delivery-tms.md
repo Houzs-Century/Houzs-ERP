@@ -1026,7 +1026,7 @@ request (§3).
 | `scm.geocode_cache` | `0197`. Phase 3 GEOCODE CACHE: `normalized_address` (UNIQUE) → `lat`/`lng` (+ `formatted_address`, `location_type`). NOT company-scoped (an address is one point on Earth). `geocodeAddressCached` reads it before any Google call, so a given address geocodes once ever |
 | `scm.trip_locations` | `0199`. Phase 4 LIVE GPS ping log — APPEND-ONLY (one row per report, never updated). `company_id` (scoped like the rest of scm), `trip_id` FK ON DELETE CASCADE, `driver_id` (the trip's driver snapshot, nullable), `user_id` (BIGINT — the public.users id of the posting phone), `lat`/`lng`, `accuracy_m`, `recorded_at` (DEVICE clock), `received_at` (SERVER clock — "last seen" is measured from here). Index `(trip_id, recorded_at DESC)` answers "latest ping for this trip" in one seek; `(company_id, recorded_at DESC)` serves the board-level read. `RE-CHECK NUMBER AT MERGE` — 0199 was the next free number above 0198 at branch time |
 | `scm.delivery_zone_postcodes` | `0205` (Fleet A1). Company-editable postcode-prefix -> area-zone map. `zone` (TEXT, one of the 14 zones), `prefix_start`/`prefix_end` (SMALLINT 0-99, the first two digits of a postcode), `label`, `is_active`, audit + `company_id`. UNIQUE `(company_id, zone, prefix_start, prefix_end)`. Ships EMPTY — the DEFAULT Malaysian map is data in `backend/src/scm/lib/zone-classify.ts` (`DEFAULT_ZONE_PREFIX_MAP`), installed by `backend/scripts/seed-delivery-zones.mjs` (idempotent, DRY-RUN default); `zoneForAddress` falls back to that default until the owner customises |
-| `scm.lorries` capacity cols | `0205` (Fleet A1). `max_sets` INT NULL, `max_revenue_centi` BIGINT NULL, `capacity_layer` TEXT NOT NULL DEFAULT 'SETS' CHECK (SETS\|REVENUE\|BOTH). NULL max_* => packer uses the config default; no backfill needed |
+| `scm.lorries` capacity cols | `0205` (Fleet A1). `max_sets` INT NULL, `max_revenue_sen` BIGINT NULL, `capacity_layer` TEXT NOT NULL DEFAULT 'SETS' CHECK (SETS\|REVENUE\|BOTH). NULL max_* => packer uses the config default; no backfill needed |
 | `scm.delivery_day_locks` | `0205` (Fleet A1). A REVERSIBLE freeze on a `(company_id, warehouse_id, delivery_date)`. Presence = locked; unlock = DELETE. UNIQUE `(company_id, warehouse_id, delivery_date)` |
 | `scm.delivery_legs` | `0053:123`. The removed multi-hop feature; table still present, unused |
 
@@ -1293,7 +1293,7 @@ cover a day's demand the spill is assigned to a 3PL carrier at a captured cost.
   name unchanged; the UI relabels the page "Crew Leave". `driver-availability.ts`
   now also loads helper ranges (`isHelperOnLeave`, `helperRanges`, `excludedHelpers`)
   and `fleet-assign.ts` skips an on-leave helper the same way it skips a driver.
-- `scm.trips.three_pl_cost_centi BIGINT NULL` — the CAPTURED cost of a 3PL trip
+- `scm.trips.three_pl_cost_sen BIGINT NULL` — the CAPTURED cost of a 3PL trip
   (integer sen). NULL on an own-fleet trip. **The seam Module C's rate-card will
   compute against.** A 3PL trip already models as a trip whose `lorry_id` is an
   OUTSOURCE lorry (`scm.trips.is_outsourced` already derives from
@@ -1324,7 +1324,7 @@ carriers (active `scm.lorries` with `is_internal=false`, depot-scoped or
 warehouse-null). Response adds `excludedDrivers[]`, `overflow[]`, `carriers[]`.
 
 **Schedule-path extension (additive).** `scheduleSchema` + `scheduleOntoTrip`
-now accept `threePlCostCenti?`, written to `scm.trips.three_pl_cost_centi` on a
+now accept `threePlCostCenti?`, written to `scm.trips.three_pl_cost_sen` on a
 trip CREATE — and ONLY when the lorry is outsourced (guarded by the derived
 `is_outsourced`, so the seam column never carries a cost against internal
 capacity). Omitted on an own-fleet schedule -> NULL, behaviour unchanged.

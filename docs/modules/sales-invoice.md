@@ -118,7 +118,7 @@ posting.
    - Legacy (`:665-675`): `order invoice_date desc`, `.limit(500)`, scope, raw
      `status`, `scopeToCompany`.
    - Paginated (`:677-744`): sort whitelist
-     `invoice_date | invoice_number | debtor_name | status | total_centi` (`:682`)
+     `invoice_date | invoice_number | debtor_name | status | total_sen` (`:682`)
      with `invoice_number` as tiebreaker; bucket resolution via
      `SI_STATUS_BUCKETS` (`:542-547`); `q` ilikes over `invoice_number,
      so_doc_no, debtor_name, debtor_code, ref, branding, sales_location` plus
@@ -238,7 +238,7 @@ check.
 
 Fails **closed**: a failed payments read or header read aborts with a log rather
 than writing `paid = 0` (`:1738-1752`). The comment records why — folding a
-transient blip into 0 does not merely understate `paid_centi`, it drives the
+transient blip into 0 does not merely understate `paid_sen`, it drives the
 status ladder, so a fully PAID invoice silently reverted to SENT and re-entered
 the AR chase. DRAFT and CANCELLED are frozen out of the ladder entirely
 (`:1760`).
@@ -301,11 +301,11 @@ The authoritative in-code column lists are `HEADER` (`sales-invoices.ts:187-198`
 
 | Table | Role |
 |-------|------|
-| `scm.sales_invoices` | SI header. `invoice_number`, `so_doc_no`, **`delivery_order_id`** (the DO link), `debtor_code/name`, `invoice_date`, `due_date`, `currency`, `subtotal_centi`, `discount_centi`, `tax_centi`, `total_centi`, **`paid_centi`**, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_centi`, `total_cost_centi`, `total_margin_centi`, `line_count`, `status`, `sent_at` / `paid_at` / `confirmed_at`, `company_id`. |
-| `scm.sales_invoice_items` | SI lines. `so_item_id`, **`do_item_id`** (what the remaining-pool maths joins on), `item_code`, `item_group`, `qty`, `unit_price_centi`, `discount_centi`, `tax_centi`, `line_total_centi`, `unit_cost_centi`, `line_cost_centi`, `line_margin_centi`, `variants`. |
-| `scm.sales_invoice_payments` | Payments ledger. Same method vocabulary as the DO ledger. `recomputePaid` sums `amount_centi` over this table. |
+| `scm.sales_invoices` | SI header. `invoice_number`, `so_doc_no`, **`delivery_order_id`** (the DO link), `debtor_code/name`, `invoice_date`, `due_date`, `currency`, `subtotal_sen`, `discount_sen`, `tax_sen`, `total_sen`, **`paid_sen`**, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `status`, `sent_at` / `paid_at` / `confirmed_at`, `company_id`. |
+| `scm.sales_invoice_items` | SI lines. `so_item_id`, **`do_item_id`** (what the remaining-pool maths joins on), `item_code`, `item_group`, `qty`, `unit_price_sen`, `discount_sen`, `tax_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, `variants`. |
+| `scm.sales_invoice_payments` | Payments ledger. Same method vocabulary as the DO ledger. `recomputePaid` sums `amount_sen` over this table. |
 | `scm.customer_credits` | Overpay / cancelled-invoice credit. Written by `applyCustomerCreditToSi`, `creditFromCancelledSi`, `reverseCancelledSiCredit`, `reconcileSiOverpay` (`backend/src/scm/lib/customer-credits.ts`). |
-| `journal_entries` + `journal_entry_lines` | GL. Dr **1100** (AR) / Cr **4000** (Sales Revenue) = `total_centi`, keyed on `(source_type='SI', source_doc_no=invoice_number)` so it can never double-post (`sales-invoices.ts:10-14`). |
+| `journal_entries` + `journal_entry_lines` | GL. Dr **1100** (AR) / Cr **4000** (Sales Revenue) = `total_sen`, keyed on `(source_type='SI', source_doc_no=invoice_number)` so it can never double-post (`sales-invoices.ts:10-14`). |
 | `scm.delivery_orders` / `scm.delivery_order_items` | Upstream. The DO's `has_children` lock counts non-cancelled SIs. |
 
 Status vocabulary: canonical set at `SI_STATUS_CANON`. Filter buckets
@@ -345,7 +345,7 @@ What the SI moves instead is **money and the ledger**:
 
 | Event | What is written |
 |-------|-----------------|
-| Create (non-draft) or DRAFT→SENT confirm | `postSiRevenue` → Dr 1100 / Cr 4000 for `total_centi` (`:946`, `:1978`) |
+| Create (non-draft) or DRAFT→SENT confirm | `postSiRevenue` → Dr 1100 / Cr 4000 for `total_sen` (`:946`, `:1978`) |
 | Line or total change on a live invoice | `resyncSiRevenue` → void + repost (`:1510`, `:1627`, `:1679`) |
 | Cancel | `reverseSiRevenue` (`:2095`) + `creditFromCancelledSi` (`:2122`) |
 | Reopen | `postSiRevenue` (`:2139`) + `reverseCancelledSiCredit` (`:2162`) |
@@ -442,12 +442,12 @@ Everything is integer sen.
 
 | Column | Where | Frozen or live |
 |--------|-------|----------------|
-| `unit_price_centi`, `discount_centi`, `tax_centi`, `line_total_centi` | line | Live **only while DRAFT**. Frozen the moment the invoice is issued (§6). |
-| `unit_cost_centi`, `line_cost_centi`, `line_margin_centi` | line | **Live — overwritten in place** by `restampSiFromDo` (`backend/src/scm/lib/recost.ts:113`), which the GRN/PI recost cascade calls whenever a supplier invoice lands. This is the ③ "landed cost" leg of the three-way comparison; it is deliberately allowed to move after issue because it is internal cost, not the customer-facing price. |
-| `subtotal_centi`, `discount_centi`, `tax_centi`, `total_centi` | header | Derived by `recomputeTotals` (`:264`); `total_centi` is what the GL posts. |
-| `paid_centi` | header | Derived by `recomputePaid` (`:1730`) from `sales_invoice_payments`. Never hand-set on the route paths — with ONE legacy exception: when the `apply_customer_credit_to_si` RPC is absent, `applyCustomerCreditToSiLegacy` (`customer-credits.ts:248-257`) hand-writes it in an optimistic-concurrency loop; callers then run `recomputePaid` so it converges. |
-| per-category `*_centi` / `*_cost_centi`, `total_cost_centi`, `total_margin_centi`, `margin_pct_basis` | header | Derived; **finance-gated** (`SI_FINANCE_KEYS`, `:205-209`). `total_centi`, `local_total_centi` and `paid_centi` are NOT gated — everyone sees what is owed. |
-| `amount_centi` | `sales_invoice_payments` | The ledger rows `paid_centi` sums. |
+| `unit_price_sen`, `discount_sen`, `tax_sen`, `line_total_sen` | line | Live **only while DRAFT**. Frozen the moment the invoice is issued (§6). |
+| `unit_cost_sen`, `line_cost_sen`, `line_margin_sen` | line | **Live — overwritten in place** by `restampSiFromDo` (`backend/src/scm/lib/recost.ts:113`), which the GRN/PI recost cascade calls whenever a supplier invoice lands. This is the ③ "landed cost" leg of the three-way comparison; it is deliberately allowed to move after issue because it is internal cost, not the customer-facing price. |
+| `subtotal_sen`, `discount_sen`, `tax_sen`, `total_sen` | header | Derived by `recomputeTotals` (`:264`); `total_sen` is what the GL posts. |
+| `paid_sen` | header | Derived by `recomputePaid` (`:1730`) from `sales_invoice_payments`. Never hand-set on the route paths — with ONE legacy exception: when the `apply_customer_credit_to_si` RPC is absent, `applyCustomerCreditToSiLegacy` (`customer-credits.ts:248-257`) hand-writes it in an optimistic-concurrency loop; callers then run `recomputePaid` so it converges. |
+| per-category `*_sen` / `*_cost_sen`, `total_cost_sen`, `total_margin_sen`, `margin_pct_basis` | header | Derived; **finance-gated** (`SI_FINANCE_KEYS`, `:205-209`). `total_sen`, `local_total_sen` and `paid_sen` are NOT gated — everyone sees what is owed. |
+| `amount_sen` | `sales_invoice_payments` | The ledger rows `paid_sen` sums. |
 
 `recomputeTotals` (`:264`) **fails closed and never throws** (`:254-263`): a read
 it cannot vouch for must not become a written total, and it aborts by logging

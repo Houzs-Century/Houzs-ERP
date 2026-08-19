@@ -123,6 +123,9 @@ export const SCM_AREA_MOUNTS: ReadonlyArray<readonly [string, string]> = [
    test that pins SCM_AREA_MOUNTS pins this list. */
 export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   "/categories",
+  "/pos-cart",
+  "/personal-quick-picks",
+  "/sales-analysis",
   "/state-warehouse-mappings",
   "/entity-audit-log",
   "/autocount-outbox",
@@ -138,6 +141,8 @@ export const SCM_UNGUARDED_PREFIXES: readonly string[] = [
   // unguarded set from the SAME source scan, so gating a router without removing
   // it here fails the mirror in two places at once. It did.
   "/reports",
+  // TEMP (diag/so-list-probe): read-only, admin-gated diagnostic router — remove with the route.
+  "/_diag",
 ] as const;
 
 /** Every area key that can appear in a freeze exception. */
