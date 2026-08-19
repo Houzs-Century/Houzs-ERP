@@ -459,7 +459,7 @@ export async function postBatchReceipt(
   batchId: number,
   input: ReceiptInput,
 ): Promise<
-  | { ok: true; status: 'posted'; jeNo?: string; amountSen: number; receivedSen: number; payableSen: number; outstandingSen: number }
+  | { ok: true; status: 'posted'; receiptId: number; jeNo?: string; amountSen: number; receivedSen: number; payableSen: number; outstandingSen: number }
   | { ok: false; status: string; reason: string }
 > {
   const receivedOn = String(input.receivedOn ?? '');
@@ -574,6 +574,12 @@ export async function postBatchReceipt(
   return {
     ok: true,
     status: 'posted',
+    /* The row this wrote. Layer 4 books a credit off the BANK statement and
+       has to be able to point its own line at the receipt that resulted —
+       without it, undoing from the bank screen would have to find the receipt
+       again by date and amount, which is exactly the guess this module exists
+       to avoid. */
+    receiptId,
     jeNo: posted.jeNo,
     amountSen,
     receivedSen,

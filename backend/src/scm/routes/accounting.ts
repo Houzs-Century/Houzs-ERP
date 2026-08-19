@@ -39,6 +39,10 @@ import {
   settlementBatchReceived, settlementReceiptUndo,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from './accounting-settlement';
+import {
+  bankSetup, bankUpload, bankStatements, bankStatementDetail,
+  bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
+} from './accounting-bank';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
    `hasHouzsPerm` calls, including four that WRITE to the ledger: a hand-written
@@ -92,6 +96,19 @@ accounting.post('/settlement/rows/:id/confirm', settlementConfirmRow);
 accounting.post('/settlement/rows/:id/ignore', settlementIgnoreRow);
 accounting.get('/settlement/watchlist', settlementWatchlist);
 accounting.get('/settlement/in-transit', settlementInTransit);
+
+/* Layer 4 — reconciling the BANK's own statement (brief §3.5). Registered the
+   same way and for the same reason: one path each, every one in the matrix.
+   Owner, 2026-08-19: 我不是应该upload bank statement…然后你也自动核对吗 —
+   整张月结单全部对. */
+accounting.get('/bank/setup', bankSetup);
+accounting.post('/bank/statements', bankUpload);
+accounting.get('/bank/statements', bankStatements);
+accounting.get('/bank/statements/:id', bankStatementDetail);
+accounting.post('/bank/lines/:id/receipt', bankLineReceipt);
+accounting.post('/bank/lines/:id/match', bankLineMatch);
+accounting.post('/bank/lines/:id/ignore', bankLineIgnore);
+accounting.post('/bank/lines/:id/undo', bankLineUndo);
 
 /* ════════════════════════════════════════════════════════════════════════
    Helpers

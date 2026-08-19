@@ -1,0 +1,491 @@
+// ----------------------------------------------------------------------------
+// /accounting/bank — reconciling the BANK's own statement (brief §3.5 layer 4).
+//
+// The handlers live here and routes/accounting.ts registers each one, for the
+// same reason accounting-settlement.ts does it: the route-capability audit
+// (scripts/generate-route-capability-matrix.mjs) follows `app.route` and
+// `scm.route` only, so a sub-router would take these endpoints OUT of the
+// matrix that lists every route and its gate.
+//
+// Owner, 2026-08-19: 我不是应该upload bank statement 或 daily transaction report
+// 然后你也自动核对吗 — and, asked how far it should go, 整张月结单全部对. So this
+// reads the whole statement, not only the card credits: the acquirer payouts it
+// can post, and everything else it presents against the ledger so a person can
+// see what is unreconciled and why.
+//
+// Permission: the same key and the same both-ends rule as layer 3
+// (权限：前后端各检查一次).
+// ----------------------------------------------------------------------------
+
+import type { Context } from 'hono';
+import type { Env, Variables } from '../env';
+import { hasHouzsPerm } from '../lib/houzs-perms';
+import { requireActiveCompanyId } from '../lib/companyScope';
+import { parseBankStatement } from '../../acc/bank-parse';
+import { groupBankMovements, matchBankMovements } from '../../acc/bank-match';
+import { reconcileBankStatement, type StatementMovement } from '../../acc/bank-reconcile';
+import {
+  loadBankConfigs, loadBankConfig, parseConfigFrom,
+  loadRecognitionRules, loadPayableBatches, loadAccountLedger,
+} from '../../acc/bank';
+import { postBatchReceipt, undoBatchReceipt } from '../../acc/settlement';
+
+type Ctx = Context<{ Bindings: Env; Variables: Variables }>;
+
+const guard = (handler: (c: Ctx) => Promise<Response>) => async (c: Ctx): Promise<Response> => {
+  if (!hasHouzsPerm(c, 'scm.payment_voucher.post')) {
+    return c.json({ error: "You don't have permission to reconcile bank statements." }, 403);
+  }
+  return handler(c);
+};
+
+/** The same fingerprint layer 3 uses: one file is one statement, and a second
+    upload of it loses to the UNIQUE rather than doubling the movements. */
+async function sha256Hex(text: string): Promise<string> {
+  const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
+  return [...new Uint8Array(digest)].map((b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const userName = (c: Ctx) => (c.get('houzsUser') as { name?: string } | undefined)?.name ?? null;
+
+/* ── GET /bank/setup — which accounts can take a statement ────────────────── */
+
+export const bankSetup = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+
+  const [cfgs, rules] = await Promise.all([loadBankConfigs(sb, co.companyId), loadRecognitionRules(sb)]);
+  if (!cfgs.ok) return c.json({ error: 'load_failed', reason: cfgs.reason }, 500);
+  if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
+
+  return c.json({
+    accounts: cfgs.configs.map((cfg) => ({
+      account_code: cfg.account_code,
+      bank_code: cfg.bank_code,
+      account_no: cfg.account_no,
+      statement_format: cfg.statement_format,
+      is_active: cfg.is_active,
+      /* A config with no date/description mapping cannot read anything, and
+         saying so HERE means the operator learns it before he uploads. */
+      ready: Boolean(cfg.column_map?.date && cfg.column_map?.description
+        && (cfg.column_map?.amount || (cfg.column_map?.debit && cfg.column_map?.credit))),
+    })),
+    /* Which acquirers this system can recognise on a statement at all. An
+       acquirer missing here is one whose money will read as "not a card
+       payout" for ever, so the screen has to be able to say so. */
+    recognises: [...new Set(rules.rules.map((r) => r.acquirerCode))],
+  });
+});
+
+/* ── POST /bank/statements — upload one ───────────────────────────────────── */
+
+export const bankUpload = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+
+  const accountCode = String(body.accountCode ?? '').trim();
+  const fileName = String(body.fileName ?? '').trim() || 'statement.csv';
+  const content = String(body.content ?? '');
+  if (!accountCode) return c.json({ error: 'no_account', message: 'Choose which bank account this statement is for.' }, 400);
+  if (!content.trim()) return c.json({ error: 'empty_file', message: 'The file is empty.' }, 400);
+
+  const sb = c.get('supabase');
+  const cfg = await loadBankConfig(sb, co.companyId, accountCode);
+  if (!cfg.ok) return c.json({ error: 'account_unavailable', message: cfg.reason }, 400);
+  if (!cfg.config.is_active) {
+    return c.json({ error: 'account_inactive', message: `${accountCode} is switched off for this company.` }, 400);
+  }
+
+  /* THE ONE MISTAKE HERE THAT PRODUCES A CLEAN-LOOKING WRONG ANSWER is
+     reconciling a statement against the wrong account: every number computes,
+     every total balances, and the answer is about somebody else's money. So if
+     the config knows the account number and the file names a different one, it
+     is refused by name. */
+  const expectNo = (cfg.config.account_no ?? '').replace(/\D/g, '');
+  if (expectNo) {
+    const digits = content.slice(0, 20000).replace(/\D/g, '');
+    if (!digits.includes(expectNo)) {
+      return c.json({
+        error: 'wrong_account',
+        message: `This file does not mention account ${cfg.config.account_no}, which is the ${cfg.config.bank_code} account you chose. Check you picked the right account, or the right file.`,
+      }, 400);
+    }
+  }
+
+  const parsed = parseBankStatement(
+    parseConfigFrom(cfg.config, /^\d{4}-\d{2}$/.test(String(body.statementMonth ?? '')) ? String(body.statementMonth) : null),
+    content,
+  );
+  if (!parsed.ok) return c.json({ error: 'unreadable_statement', message: parsed.reason }, 400);
+
+  const [rules, batches] = await Promise.all([loadRecognitionRules(sb), loadPayableBatches(sb, co.companyId)]);
+  if (!rules.ok) return c.json({ error: 'load_failed', reason: rules.reason }, 500);
+  if (!batches.ok) return c.json({ error: 'load_failed', reason: batches.reason }, 500);
+
+  const movements = groupBankMovements(parsed.lines);
+  const decisions = matchBankMovements({ movements, rules: rules.rules, batches: batches.batches });
+
+  const fileHash = await sha256Hex(content);
+  const { data: stmtRow, error: stmtErr } = await sb.from('acc_bank_statements').insert({
+    company_id: co.companyId,
+    account_code: accountCode,
+    file_name: fileName,
+    file_hash: fileHash,
+    period_from: parsed.periodFrom,
+    period_to: parsed.periodTo,
+    line_count: movements.length,
+    skipped_lines: parsed.skippedLines,
+    in_sen: parsed.inSen,
+    out_sen: parsed.outSen,
+    opening_balance_sen: parsed.openingBalanceSen,
+    closing_balance_sen: parsed.closingBalanceSen,
+    uploaded_by: userName(c),
+  }).select('id').single();
+  if (stmtErr) {
+    const twice = String(stmtErr.code ?? '') === '23505' || /duplicate key/i.test(String(stmtErr.message ?? ''));
+    return c.json({
+      error: twice ? 'already_uploaded' : 'save_failed',
+      message: twice
+        ? 'This exact file has already been uploaded. Open the existing statement instead of loading it twice.'
+        : stmtErr.message,
+    }, twice ? 409 : 500);
+  }
+  const statementId = (stmtRow as { id: number }).id;
+
+  const { error: linesErr } = await sb.from('acc_bank_statement_lines').insert(
+    decisions.map((d) => ({
+      statement_id: statementId,
+      company_id: co.companyId,
+      line_no: d.movement.lines[0]!.lineNo,
+      booked_on: d.movement.bookedOn,
+      description: d.movement.description,
+      reference: d.movement.reference,
+      amount_sen: d.movement.amountSen,
+      charge_sen: d.movement.chargeSen,
+      kind: d.kind,
+      /* Stated, not left to the column default. Every read in this module asks
+         what state a line is in, and a row whose state depends on a default
+         declared in another file is a row that can come back without one. */
+      state: 'OPEN',
+      acquirer_code: d.acquirerCode,
+      trading_date: d.tradingDate,
+      merchant_no: d.merchantNo,
+      note: d.clue,
+    })),
+  );
+  if (linesErr) return c.json({ error: 'save_failed', reason: linesErr.message }, 500);
+
+  const counts = decisions.reduce<Record<string, number>>((acc, d) => {
+    acc[d.kind] = (acc[d.kind] ?? 0) + 1;
+    return acc;
+  }, {});
+
+  return c.json({
+    ok: true,
+    statementId,
+    lines: movements.length,
+    joinedPairs: parsed.lines.length - movements.length,
+    skippedLines: parsed.skippedLines,
+    periodFrom: parsed.periodFrom,
+    periodTo: parsed.periodTo,
+    inSen: parsed.inSen,
+    outSen: parsed.outSen,
+    openingBalanceSen: parsed.openingBalanceSen,
+    closingBalanceSen: parsed.closingBalanceSen,
+    kinds: counts,
+  });
+});
+
+/* ── GET /bank/statements — the list ──────────────────────────────────────── */
+
+export const bankStatements = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const sb = c.get('supabase');
+
+  const { data: stmtRaw, error } = await sb.from('acc_bank_statements')
+    .select('id, account_code, file_name, period_from, period_to, line_count, skipped_lines, in_sen, out_sen, opening_balance_sen, closing_balance_sen, status, uploaded_by, created_at')
+    .eq('company_id', co.companyId)
+    .order('period_from', { ascending: false });
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  const statements = (stmtRaw ?? []) as Array<Record<string, any>>;
+  if (statements.length === 0) return c.json({ statements: [] });
+
+  const { data: lineRaw, error: lErr } = await sb.from('acc_bank_statement_lines')
+    .select('statement_id, state, kind, amount_sen').eq('company_id', co.companyId);
+  if (lErr) return c.json({ error: 'load_failed', reason: lErr.message }, 500);
+
+  /* Derived, never stored: how much of each statement is still undecided is a
+     live question, and a column would answer yesterday's. */
+  const openBy = new Map<number, { count: number; sen: number; payouts: number }>();
+  for (const l of (lineRaw ?? []) as Array<Record<string, any>>) {
+    if (String(l.state) !== 'OPEN') continue;
+    const id = Number(l.statement_id);
+    const at = openBy.get(id) ?? { count: 0, sen: 0, payouts: 0 };
+    at.count += 1;
+    at.sen += Number(l.amount_sen ?? 0);
+    if (String(l.kind).startsWith('PAYOUT')) at.payouts += 1;
+    openBy.set(id, at);
+  }
+
+  return c.json({
+    statements: statements.map((s) => {
+      const open = openBy.get(Number(s.id)) ?? { count: 0, sen: 0, payouts: 0 };
+      return { ...s, open_count: open.count, open_sen: open.sen, open_payout_count: open.payouts };
+    }),
+  });
+});
+
+/* ── GET /bank/statements/:id — one, with its reconciliation ──────────────── */
+
+export const bankStatementDetail = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const id = Number(c.req.param('id'));
+  if (!Number.isInteger(id)) return c.json({ error: 'bad_id' }, 400);
+  const sb = c.get('supabase');
+
+  const { data: stmt, error } = await sb.from('acc_bank_statements')
+    .select('*').eq('id', id).eq('company_id', co.companyId).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!stmt) return c.json({ error: 'not_found' }, 404);
+  const statement = stmt as Record<string, any>;
+
+  const [linesRes, matchRes, ledger, batches] = await Promise.all([
+    sb.from('acc_bank_statement_lines').select('*').eq('statement_id', id).eq('company_id', co.companyId).order('line_no'),
+    sb.from('acc_bank_statement_matches').select('bank_line_id, je_no, amount_sen, match_reason').eq('company_id', co.companyId),
+    loadAccountLedger(sb, co.companyId, String(statement.account_code), String(statement.period_to)),
+    loadPayableBatches(sb, co.companyId),
+  ]);
+  if (linesRes.error) return c.json({ error: 'load_failed', reason: linesRes.error.message }, 500);
+  if (matchRes.error) return c.json({ error: 'load_failed', reason: matchRes.error.message }, 500);
+  if (!ledger.ok) return c.json({ error: 'load_failed', reason: ledger.reason }, 500);
+  if (!batches.ok) return c.json({ error: 'load_failed', reason: batches.reason }, 500);
+
+  const lines = (linesRes.data ?? []) as Array<Record<string, any>>;
+  const matchesByLine = new Map<number, Array<Record<string, any>>>();
+  for (const m of (matchRes.data ?? []) as Array<Record<string, any>>) {
+    const key = Number(m.bank_line_id);
+    const at = matchesByLine.get(key);
+    if (at) at.push(m); else matchesByLine.set(key, [m]);
+  }
+
+  const movements: StatementMovement[] = lines.map((l) => ({
+    id: Number(l.id),
+    bookedOn: String(l.booked_on).slice(0, 10),
+    description: String(l.description ?? ''),
+    reference: l.reference ?? null,
+    amountSen: Number(l.amount_sen ?? 0),
+    state: String(l.state) as StatementMovement['state'],
+    jeNo: l.posted_je_no ?? matchesByLine.get(Number(l.id))?.[0]?.je_no ?? null,
+  }));
+
+  const reconciliation = reconcileBankStatement({
+    periodFrom: String(statement.period_from),
+    periodTo: String(statement.period_to),
+    statementOpeningSen: statement.opening_balance_sen == null ? null : Number(statement.opening_balance_sen),
+    statementClosingSen: statement.closing_balance_sen == null ? null : Number(statement.closing_balance_sen),
+    movements,
+    ledger: ledger.movements,
+  });
+
+  /* The ledger entries nothing on this statement claims, named — a count is not
+     something anybody can chase. */
+  const claimed = new Set(movements.map((m) => m.jeNo).filter(Boolean));
+  const unmatchedEntries = ledger.movements
+    .filter((l) => l.entryDate >= String(statement.period_from) && l.entryDate <= String(statement.period_to))
+    .filter((l) => !claimed.has(l.jeNo));
+
+  return c.json({
+    statement,
+    reconciliation,
+    lines: lines.map((l) => ({
+      ...l,
+      matches: matchesByLine.get(Number(l.id)) ?? [],
+      /* Which statements this line COULD settle, recomputed live: a batch that
+         was paid since the upload must not still be offered. */
+      candidates: String(l.kind).startsWith('PAYOUT')
+        ? batches.batches.filter((b) => b.acquirerCode === l.acquirer_code)
+        : [],
+    })),
+    unmatchedEntries,
+  });
+});
+
+/* ── POST /bank/lines/:id/receipt — this credit paid that statement ───────── */
+
+export const bankLineReceipt = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const lineId = Number(c.req.param('id'));
+  if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
+  let body: any;
+  try { body = await c.req.json(); } catch { body = {}; }
+  const sb = c.get('supabase');
+
+  const { data: lineRaw, error } = await sb.from('acc_bank_statement_lines')
+    .select('id, booked_on, amount_sen, state, kind, acquirer_code, reference')
+    .eq('id', lineId).eq('company_id', co.companyId).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!lineRaw) return c.json({ error: 'not_found' }, 404);
+  const line = lineRaw as Record<string, any>;
+
+  if (String(line.state) !== 'OPEN') {
+    return c.json({
+      error: 'not_open',
+      message: `This movement is already ${String(line.state).toLowerCase()}. Undo it first if it went to the wrong statement.`,
+    }, 409);
+  }
+  if (Number(line.amount_sen) <= 0) {
+    return c.json({ error: 'not_a_receipt', message: 'This movement takes money OUT of the account — it is not a payout.' }, 400);
+  }
+
+  const batchId = Number(body.batchId ?? 0);
+  if (!Number.isInteger(batchId) || batchId <= 0) {
+    return c.json({ error: 'no_batch', message: 'Say which merchant statement this credit pays.' }, 400);
+  }
+
+  /* The DATE and the AMOUNT come off the bank statement, not off the request:
+     they are what the bank says, and the whole point of uploading the file is
+     that nobody has to retype them. */
+  const posted = await postBatchReceipt(sb, co.companyId, batchId, {
+    receivedOn: String(line.booked_on).slice(0, 10),
+    amountSen: Number(line.amount_sen),
+    bankRef: line.reference ?? null,
+    userName: userName(c),
+  });
+  if (!posted.ok) return c.json({ error: posted.status, message: posted.reason }, 409);
+
+  const { error: upErr } = await sb.from('acc_bank_statement_lines').update({
+    state: 'POSTED',
+    receipt_id: posted.receiptId ?? null,
+    posted_je_no: posted.jeNo ?? null,
+    updated_at: new Date().toISOString(),
+  }).eq('id', lineId).eq('company_id', co.companyId);
+  if (upErr) {
+    return c.json({
+      error: 'save_failed',
+      reason: `${upErr.message} (the receipt WAS posted as ${posted.jeNo ?? 'an entry'} — the statement line did not record it)`,
+    }, 500);
+  }
+
+  return c.json({ ok: true, status: posted.status, jeNo: posted.jeNo, outstandingSen: posted.outstandingSen });
+});
+
+/* ── POST /bank/lines/:id/undo — take it back ─────────────────────────────── */
+
+export const bankLineUndo = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const lineId = Number(c.req.param('id'));
+  if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
+  const sb = c.get('supabase');
+
+  const { data: lineRaw, error } = await sb.from('acc_bank_statement_lines')
+    .select('id, state, receipt_id').eq('id', lineId).eq('company_id', co.companyId).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!lineRaw) return c.json({ error: 'not_found' }, 404);
+  const line = lineRaw as Record<string, any>;
+
+  /* An IGNORED line has no entry to reverse — putting it back is just a state
+     change, and saying so is cheaper than a refusal the operator has to
+     interpret. */
+  if (String(line.state) === 'OPEN') return c.json({ ok: true, status: 'already_open' });
+
+  if (line.receipt_id) {
+    const undone = await undoBatchReceipt(sb, co.companyId, Number(line.receipt_id));
+    if (!undone.ok) return c.json({ error: undone.status, message: undone.reason }, 409);
+  }
+
+  const { error: upErr } = await sb.from('acc_bank_statement_lines').update({
+    state: 'OPEN', receipt_id: null, posted_je_no: null, posted_je_id: null,
+    updated_at: new Date().toISOString(),
+  }).eq('id', lineId).eq('company_id', co.companyId);
+  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+
+  return c.json({ ok: true, status: 'undone' });
+});
+
+/* ── POST /bank/lines/:id/ignore — none of our business ───────────────────── */
+
+export const bankLineIgnore = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const lineId = Number(c.req.param('id'));
+  if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
+  let body: any;
+  try { body = await c.req.json(); } catch { body = {}; }
+  const note = String(body.note ?? '').trim();
+  const sb = c.get('supabase');
+
+  const { data: lineRaw, error } = await sb.from('acc_bank_statement_lines')
+    .select('id, state').eq('id', lineId).eq('company_id', co.companyId).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!lineRaw) return c.json({ error: 'not_found' }, 404);
+  if (String((lineRaw as Record<string, any>).state) === 'POSTED') {
+    return c.json({
+      error: 'already_posted',
+      message: 'This movement has an entry behind it. Undo that first — ignoring it would leave the entry with nothing explaining it.',
+    }, 409);
+  }
+  /* A reason, required. An ignored line leaves the reconciliation for ever and
+     the next person to look has only this sentence to go on. */
+  if (!note) {
+    return c.json({ error: 'no_reason', message: 'Say why this movement is not ours to reconcile — it leaves the difference permanently.' }, 400);
+  }
+
+  const { error: upErr } = await sb.from('acc_bank_statement_lines')
+    .update({ state: 'IGNORED', note, updated_at: new Date().toISOString() })
+    .eq('id', lineId).eq('company_id', co.companyId);
+  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+  return c.json({ ok: true, status: 'ignored' });
+});
+
+/* ── POST /bank/lines/:id/match — this movement is that entry ─────────────── */
+
+export const bankLineMatch = guard(async (c) => {
+  const co = requireActiveCompanyId(c);
+  if (!co.ok) return c.json(co.refusal, 409);
+  const lineId = Number(c.req.param('id'));
+  if (!Number.isInteger(lineId)) return c.json({ error: 'bad_id' }, 400);
+  let body: any;
+  try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
+  const jeNo = String(body.jeNo ?? '').trim();
+  if (!jeNo) return c.json({ error: 'no_entry', message: 'Say which journal entry this movement is.' }, 400);
+  const sb = c.get('supabase');
+
+  const { data: lineRaw, error } = await sb.from('acc_bank_statement_lines')
+    .select('id, amount_sen, state').eq('id', lineId).eq('company_id', co.companyId).maybeSingle();
+  if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
+  if (!lineRaw) return c.json({ error: 'not_found' }, 404);
+  const line = lineRaw as Record<string, any>;
+
+  const { error: insErr } = await sb.from('acc_bank_statement_matches').insert({
+    bank_line_id: lineId,
+    company_id: co.companyId,
+    je_no: jeNo,
+    amount_sen: Number(line.amount_sen ?? 0),
+    match_reason: 'manual',
+  });
+  if (insErr) {
+    /* The database's own guarantee, surfaced as a sentence: one entry cannot
+       account for two bank movements, and the second one to claim it loses. */
+    const twice = String(insErr.code ?? '') === '23505' || /duplicate key/i.test(String(insErr.message ?? ''));
+    return c.json({
+      error: twice ? 'already_matched' : 'save_failed',
+      message: twice
+        ? `${jeNo} is already reconciled against another movement on a bank statement. One entry cannot account for two.`
+        : insErr.message,
+    }, twice ? 409 : 500);
+  }
+
+  const { error: upErr } = await sb.from('acc_bank_statement_lines')
+    .update({ state: 'POSTED', posted_je_no: jeNo, updated_at: new Date().toISOString() })
+    .eq('id', lineId).eq('company_id', co.companyId);
+  if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);
+
+  return c.json({ ok: true, status: 'matched', jeNo });
+});
