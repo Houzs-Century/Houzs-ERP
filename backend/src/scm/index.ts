@@ -98,10 +98,6 @@ import { hr } from "./routes/hr";
 import { scmAreaGuard } from "./middleware/area-guard";
 import { scmWriteFreeze } from "./lib/write-freeze";
 import { writeFreezeStatus } from "./routes/write-freeze-status";
-// TEMPORARY diagnostic (diag/so-list-probe) — read-only, admin-gated probe of
-// what hosted PostgREST returns for the SO list. REMOVE with its route file once
-// the empty-SO-list incident is understood. See routes/so-list-probe-diag.ts.
-import { soListProbeDiag } from "./routes/so-list-probe-diag";
 
 export const scm = new Hono<{ Bindings: Env }>();
 
@@ -122,14 +118,6 @@ scm.use('/*', scmWriteFreeze());
    GET, so the freeze never blocks it, and no area guard because it is not an
    SCM data surface. Gated inside to the bypass cohort. */
 scm.route("/write-freeze", writeFreezeStatus);
-
-/* TEMPORARY read-only diagnostic — GET /api/scm/_diag/so-list-probe. No area
-   guard (it is not an SCM data surface); gated INSIDE to canViewAllSales, and it
-   returns no row data. Mounted here beside write-freeze, above the L2 area
-   guards, so it stays reachable for the admin making the go/no-go call. REMOVE
-   this mount, its import, and routes/so-list-probe-diag.ts together once the
-   empty-SO-list incident is understood. */
-scm.route("/_diag", soListProbeDiag);
 
 // ── L2 per-area WRITE authorization (ADDITIVE on top of requireScmAccess) ────
 // Each sub-router is preceded by `scm.use('/<prefix>/*', scmAreaGuard('<area>'))`

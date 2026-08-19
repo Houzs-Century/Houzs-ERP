@@ -322,11 +322,10 @@ for (const file of pending) {
 // A DROP/CREATE VIEW in a migration (money 0305, item-code 0307) leaves the
 // hosted PostgREST schema cache STALE — it keeps serving the old view shape, so
 // endpoints reading the recreated view return empty / HTTP 416 until someone
-// reloads it by hand. That was the "Sales Orders list shows ZERO" incident
-// (#2450) and the same latent hazard on the inventory views after 0307. Signal
-// a reload on EVERY successful deploy so a view recreate self-heals. Best-effort
-// and last: the migrations are already committed, and a failed NOTIFY (or a
-// PostgREST that ignores it) must never fail the deploy. See BUG-HISTORY.
+// reloads it by hand. Signal a reload on EVERY successful deploy so the COMMON
+// case — a NEW column/view that PostgREST has simply not noticed — self-heals.
+// Best-effort and last: the migrations are already committed, and a failed
+// NOTIFY (or a PostgREST that ignores it) must never fail the deploy.
 try {
   await pg.unsafe("NOTIFY pgrst, 'reload schema'");
   await pg.unsafe("NOTIFY pgrst, 'reload config'");
@@ -334,5 +333,34 @@ try {
 } catch (err) {
   console.warn(`PostgREST reload NOTIFY failed (non-fatal): ${err?.message ?? err}`);
 }
+
+// BUT `NOTIFY reload schema` reloads PostgREST's schema MODEL, and that is NOT
+// the whole failure. In the 2026-08-18 "Sales Orders list shows ZERO" incident
+// (#2450, docs/so-list-postgrest-stale-coe.md) 0305 DROP+CREATE'd 11 views; the
+// pgrst_ddl_watch trigger DID fire and the model DID reload, yet PostgREST kept
+// serving the recreated `mfg_sales_orders_with_payment_totals` as 0 rows from a
+// 44-day-old authenticator connection pool. A model reload does not clear that
+// pool — only a connection RECYCLE (reload-postgrest-schema.yml with
+// recycle=true) or a Supabase project restart did, and it was invisible for a
+// day because it deployed off-hours. So when THIS deploy's applied batch
+// DROP/CREATE'd a view, do not let the NOTIFY above pose as the all-clear:
+// name the views and the escalation, loudly, so the operator verifies the live
+// list rather than assuming it healed. This is a WARNING only — no recycle is
+// forced into the deploy, because a blanket pg_terminate_backend of PostgREST's
+// pool on every release is its own risk (see the COE's durable-prevention
+// options). Detection over source only; a false positive costs one manual look.
+const VIEW_DDL = /\b(?:CREATE(?:\s+OR\s+REPLACE)?|DROP)\s+(?:MATERIALIZED\s+)?VIEW\b/i;
+const viewMigrations = pending.filter((f) => VIEW_DDL.test(f.sql));
+if (viewMigrations.length > 0) {
+  const names = viewMigrations.map((f) => f.filename).join(", ");
+  const msg =
+    `This deploy applied ${viewMigrations.length} migration(s) that CREATE/DROP a view (${names}). ` +
+    "A schema-cache reload was signalled, but a DROP+CREATE can still be served STALE from " +
+    "PostgREST's existing connection pool (the #2450 SO-list-ZERO class). VERIFY the affected " +
+    "endpoints return rows; if any is empty, run the 'Reload PostgREST schema' workflow with " +
+    "mode=apply, confirm=RELOAD-PGRST, recycle=true (or restart the Supabase project).";
+  console.warn(process.env.GITHUB_ACTIONS ? `::warning title=View recreate — verify PostgREST::${msg}` : `WARNING: ${msg}`);
+}
+
 console.log("done");
 await pg.end();
