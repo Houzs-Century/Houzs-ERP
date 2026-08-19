@@ -1106,7 +1106,7 @@ mfgPurchaseOrders.get('/:id/revisions', async (c) => {
 //   supplierId, currency?, expectedAt?, notes?,
 //   items: [{ materialKind, itemCode, materialName, supplierSku?, qty, unitPriceSen, bindingId? }]
 // }
-mfgPurchaseOrders.post('/', async (c) => {
+export const createMfgPurchaseOrderHandler = async (c: any) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch {
     return c.json({ error: 'invalid_json' }, 400);
@@ -1163,13 +1163,15 @@ mfgPurchaseOrders.post('/', async (c) => {
       .map((it) => it.soItemId as string | undefined)
       .filter((x): x is string => !!x);
     if (lineSoItemIds.length > 0) {
-      const { data: lineSoRows } = await supabase
-        .from('mfg_sales_order_items')
-        .select('id, doc_no, qty, po_qty_picked')
-        .in('id', lineSoItemIds);
+      // Company scope (2026-08-19) — service-role bypasses RLS: scope the SO-item read and refuse a foreign soItemId BEFORE it is linked / photo-copied / po_qty_picked-rolled (mirrors soLinkTargetRefusal).
+      const { data: lineSoRows } = await scopeToCompany(supabase.from('mfg_sales_order_items').select('id, doc_no, qty, po_qty_picked'), c).in('id', lineSoItemIds);
       const soRows = (lineSoRows ?? []) as Array<{
         id: string; doc_no: string | null; qty: number; po_qty_picked: number;
       }>;
+      const foreignSoItemId = lineSoItemIds.find((id) => !new Set(soRows.map((r) => r.id)).has(id));
+      if (foreignSoItemId) {
+        return c.json({ error: 'so_line_not_found', reason: 'That Sales Order line does not exist on this company.', soItemId: foreignSoItemId }, 404);
+      }
       const offender = await firstUnorderableSo(
         supabase,
         soRows.map((r) => r.doc_no),
@@ -1365,10 +1367,7 @@ mfgPurchaseOrders.post('/', async (c) => {
     )];
     const photosBySoItem = new Map<string, string[]>();
     if (photoSoItemIds.length > 0) {
-      const { data: photoRows } = await supabase
-        .from('mfg_sales_order_items')
-        .select('id, photo_urls')
-        .in('id', photoSoItemIds);
+      const { data: photoRows } = await scopeToCompany(supabase.from('mfg_sales_order_items').select('id, photo_urls'), c).in('id', photoSoItemIds);
       for (const r of (photoRows ?? []) as Array<{ id: string; photo_urls: string[] | null }>) {
         photosBySoItem.set(r.id, r.photo_urls ?? []);
       }
@@ -1419,7 +1418,8 @@ mfgPurchaseOrders.post('/', async (c) => {
   })).problems;
 
   return c.json({ id: header.id, poNumber: header.po_number, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
-});
+};
+mfgPurchaseOrders.post('/', createMfgPurchaseOrderHandler);
 
 // ── POST /from-sos ────────────────────────────────────────────────────
 // Create POs from selected Sales Order items. For each SO item, looks up
