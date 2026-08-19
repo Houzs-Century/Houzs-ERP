@@ -551,3 +551,18 @@ test("the Chinese patterns add NO noise to the existing corpus", () => {
     "no claim in BUG-HISTORY.md may be triggered by its Chinese passages",
   );
 });
+
+test("the promise must FOLLOW the instruction, not merely share a window", () => {
+  /* Quoted from BUG-HISTORY.md, which broke this gate on main the moment the
+     corpus grew. 「跑 MRP」 matches the 跑 + latin-token pattern and 「补上」
+     matches the promise vocabulary — but 补上 sits BEFORE 跑 MRP, in a different
+     clause. The text describes a disease already cured; it prescribes nothing.
+     Searching the whole window could not tell those apart. */
+  const narration =
+    "空着),过一拍再由独立轻接口补上。功能不变。至此「列表白跑 MRP」这个病的四处(销售单、 采购发票、采购单、收货单)全";
+  assert.deepEqual(findRemedyClaims(narration), [], "narration is not a prescription");
+
+  // The ordering that DOES read as a claim still does, in both languages.
+  assert.equal(findRemedyClaims("跑 MRP 就能把这些补上").length, 1);
+  assert.equal(findRemedyClaims("Run the pull in all mode and it collects the backlog").length, 1);
+});
