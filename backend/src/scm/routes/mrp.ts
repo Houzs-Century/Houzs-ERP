@@ -86,6 +86,7 @@ import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { mapBounded, eager } from '../lib/concurrency';
 import type { Env, Variables } from '../env';
 import { SO_TERMINAL_STATES } from '../shared/so-terminal-states';
+import { isDefaultMrpView, readMrpSnapshot, refreshMrpSnapshot } from '../lib/mrp-snapshot';
 
 export const mrp = new Hono<{ Bindings: Env; Variables: Variables }>();
 mrp.use('*', supabaseAuth);
@@ -1606,10 +1607,36 @@ mrp.get('/', async (c) => {
     // reads the default plan as the whole plan.
     return c.json({ error: 'bad_request', reason: e instanceof Error ? e.message : String(e) }, 400);
   }
+  const companyId = activeCompanyId(c);
   try {
-    const result = await computeMrp(sb, { catFilter, whFilter, includeUndated, companyId: activeCompanyId(c), leadBuffers: await loadLeadBuffers(c.env.DB) });
-    return c.json(result);
+    /* DEFAULT view (no filters, undated hidden) -> serve the stored planning
+       snapshot instantly if the company has one. Any filtered/undated view, or a
+       company not yet populated, computes live exactly as before. `stored` +
+       `computedAt` let the page show "as of <time>". */
+    if (isDefaultMrpView(catFilter, whFilter, includeUndated)) {
+      const snap = await readMrpSnapshot(sb, companyId);
+      if (snap) return c.json({ ...snap.result, computedAt: snap.computedAt, stored: true });
+    }
+    const result = await computeMrp(sb, { catFilter, whFilter, includeUndated, companyId, leadBuffers: await loadLeadBuffers(c.env.DB) });
+    return c.json({ ...result, computedAt: new Date().toISOString(), stored: false });
   } catch (e) {
     return c.json({ error: 'load_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
+  }
+});
+
+/* Manual "Regenerate" — recompute the default-view MRP for the active company
+   and store it, then return it fresh. POST is gated 'edit' on scm.procurement.mrp
+   by the area guard in scm/index.ts (same as any other MRP write). */
+mrp.post('/regenerate', async (c) => {
+  const sb = c.get('supabase');
+  const companyId = activeCompanyId(c);
+  if (companyId == null) return c.json({ error: 'no_company' }, 400);
+  try {
+    const { result, computedAt } = await refreshMrpSnapshot(
+      sb, companyId, await loadLeadBuffers(c.env.DB), new Date().toISOString(),
+    );
+    return c.json({ ...result, computedAt, stored: true });
+  } catch (e) {
+    return c.json({ error: 'regenerate_failed', reason: e instanceof Error ? e.message : String(e) }, 500);
   }
 });
