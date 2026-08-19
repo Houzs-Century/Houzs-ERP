@@ -276,6 +276,93 @@ describe('applySoAmendment — an APPROVED amendment carries the approved unit p
    the amendment into a second unguarded way to do that: the trust is a REQUIRED
    argument naming the approval gate the caller passed, so a caller with no
    approval gets the authoritative catalogue price exactly as before. */
+/* ── RM 0, the value the suite above stops one short of ─────────────────────
+   Every case above signs for a NON-ZERO price, and each one passes under plain
+   `trustOperatorSelling: true`, because that flag reads `manualUnitSelling > 0`.
+   Zero is the one amount it cannot carry: `true` reads a 0 as "no price was
+   entered" and fills the catalogue figure back in.
+
+   That was correct until 2026-08-18. #2425 gave the UNLOCKED road an authored
+   RM 0 via 'operator-zero', so from then on a salesperson could set a line to
+   RM 0 on an open SO but NOT through the sanctioned road for a locked one —
+   an approver signed RM 0 and RM 100 landed, silently. These pin the value. */
+describe('applySoAmendment — an approved RM 0 is a price, not a missing price', () => {
+  it('a line an approver signed down to RM 0 stays at 0', async () => {
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({ new_unit_price_sen: 0 })];
+
+    await apply(store);
+
+    const line = lineOf(store);
+    expect(line.unit_price_sen).toBe(0);      // NOT the RM100 catalogue price
+    expect(line.total_sen).toBe(0);
+    expect(line.balance_sen).toBe(0);
+  });
+
+  it('a QTY-only amendment leaves a line already at 0 alone', async () => {
+    /* A free gift / PWP reward sits at 0. The editor sends newUnitPriceSen on
+       EVERY changed line, so approving a pure quantity change used to hand that
+       line the catalogue price and bill the customer for the giveaway — the
+       same defect as the RM 80 -> RM 100 case above, at the value that case
+       did not cover. */
+    const store = baseStore();
+    store.mfg_sales_order_items = [soLine({ unit_price_sen: 0, total_sen: 0, balance_sen: 0 })];
+    store.so_amendment_lines = [specLine({
+      change_type: 'QTY', new_qty: 4, new_unit_price_sen: 0,
+      old_snapshot: { item_code: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: 0 },
+    })];
+
+    await apply(store);
+
+    expect(lineOf(store).unit_price_sen).toBe(0);
+    expect(lineOf(store).total_sen).toBe(0);
+  });
+
+  it('an amendment that requests NO price still takes the catalogue figure', async () => {
+    /* The guard that keeps 'operator-zero' honest. `new_unit_price_sen: null`
+       is "not requested", NOT "requested zero" — it must not be read as an
+       authored 0, or every QTY change on a normally-priced line would zero it.
+       specLine's default is null, so this is the untouched-price case. */
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({ new_qty: 2 })];
+
+    await apply(store);
+
+    expect(lineOf(store).unit_price_sen).toBe(CATALOGUE_SEN);
+  });
+
+  it('an ADDED line at 0 still takes the catalogue price — Add and Edit differ here on purpose', async () => {
+    /* addLineTrust stays plain `true` while amendTrust became 'operator-zero'.
+       An ADD line names a SKU and nothing else about it is established, so a 0
+       reads as an unfilled field; editing an EXISTING line moves a price that
+       is already known, which is a deliberate act. The migrated-order sibling
+       of this assertion (below) predates 'operator-zero' and is the protection
+       this one keeps honest — if either moves, both must. */
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({
+      id: 'al-add', sales_order_item_id: null, change_type: 'ADD',
+      new_item_code: 'ACC-1', new_qty: 1, new_unit_price_sen: 0, old_snapshot: null,
+    })];
+
+    await apply(store);
+
+    const added = store.mfg_sales_order_items.find((r) => r.id !== 'L1')!;
+    expect(added.unit_price_sen).toBe(CATALOGUE_SEN);
+  });
+
+  it('RM 0 WITHOUT the approval authority is still refused', async () => {
+    /* The ceiling. 'operator-zero' rides on `approval`, which only the
+       approve-so gate constructs — so an unapproved apply cannot author a 0
+       any more than it could author RM 50. */
+    const store = baseStore();
+    store.so_amendment_lines = [specLine({ new_unit_price_sen: 0 })];
+
+    await apply(store, null);
+
+    expect(lineOf(store).unit_price_sen).toBe(CATALOGUE_SEN);
+  });
+});
+
 describe('applySoAmendment — no approval, no authored price', () => {
   it('an apply run WITHOUT the approval authority re-prices to the catalogue', async () => {
     const store = baseStore();
