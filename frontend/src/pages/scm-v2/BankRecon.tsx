@@ -30,16 +30,23 @@ import {
   ICON, fmt, btn, cell, num, table, headRow, rowLine, softText, danger, good, panel,
   refusalText, payableOf,
 } from './settlement-ui';
+import { BankStatementTab } from './BankStatementTab';
 import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 
+/* Three views of the same money, and the FILE comes first now (layer 4).
+   Owner, 2026-08-19: 我不是应该upload bank statement 或 daily transaction report
+   然后你也自动核对吗 — so the default way in is the statement itself, and typing
+   a credit by hand is the fallback for the day there is no file, not the job. */
+
 export const BankRecon = () => {
-  const [tab, setTab] = useState<'money' | 'transit'>('money');
+  const [tab, setTab] = useState<'statement' | 'money' | 'transit'>('statement');
   return (
     <div className="space-y-4">
       <PageHeader eyebrow="Finance · step 2 of 2" title="Bank statement reconciliation" />
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
+        <button type="button" style={btn(tab === 'statement')} onClick={() => setTab('statement')}>Bank statement</button>
         <button type="button" style={btn(tab === 'money')} onClick={() => setTab('money')}>Money to come in</button>
         <button type="button" style={btn(tab === 'transit')} onClick={() => setTab('transit')}>Still with the merchants</button>
         <span style={{ flex: 1 }} />
@@ -47,6 +54,7 @@ export const BankRecon = () => {
           <ArrowLeft {...ICON} /> Merchant reconciliation
         </Link>
       </div>
+      {tab === 'statement' && <BankStatementTab />}
       {tab === 'money' && <WaitingForMoney />}
       {tab === 'transit' && <InTransitTab />}
     </div>

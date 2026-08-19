@@ -214,6 +214,13 @@ CREATE TABLE scm.acc_bank_statement_lines (
   -- The trading day the bank names, which is not the day it paid.
   trading_date    DATE,
   merchant_no     TEXT,
+  -- WHICH merchant statement the matcher decided this credit settles, when it
+  -- could decide. Kept, because the alternative is to throw the decision away
+  -- and make the screen guess it back from a list of candidates — which is a
+  -- different answer: the first statement of that acquirer, not the one whose
+  -- trading day and amount actually agreed. A suggestion, still confirmed by a
+  -- person; nothing is booked off this column alone.
+  matched_batch_id BIGINT REFERENCES scm.acc_settlement_batches (id) ON DELETE SET NULL,
   -- OPEN until somebody decides; POSTED once its entry exists; IGNORED for a
   -- line that is genuinely none of our business.
   state           TEXT    NOT NULL DEFAULT 'OPEN',

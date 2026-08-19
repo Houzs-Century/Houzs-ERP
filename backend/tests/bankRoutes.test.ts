@@ -345,3 +345,45 @@ describe('the setup the screen reads before an upload', () => {
     expect(body.accounts[0].ready).toBe(false);
   });
 });
+
+/* The defect the local rig caught before any screen existed: the matcher works
+   out WHICH statement a credit settles, and the route threw that away. The
+   screen then had only a candidate list, picked the first of the acquirer, and
+   booked the second credit against a statement that was already paid in full —
+   confidently, and wrongly. The decision is stored now. */
+describe('the matcher decision survives the round trip', () => {
+  const TWO_BATCHES = {
+    acc_settlement_batches: [
+      BATCH,
+      { ...BATCH, id: 2, file_name: 'mbb-0808.csv', period_from: '2026-08-08', period_to: '2026-08-08', net_sen: 87106 },
+    ],
+    acc_settlement_rows: [
+      CONFIRMED_ROW,
+      { ...CONFIRMED_ROW, id: 2, batch_id: 2, txn_date: '2026-08-08', net_sen: 87106 },
+    ],
+  };
+
+  test('each credit carries the statement whose day and amount agreed, not the first of the acquirer', async () => {
+    const { app } = harness(TWO_BATCHES);
+    const up = await (await upload(app)).json() as any;
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+
+    const byRef = (ref: string) => detail.lines.find((l: any) => l.reference === ref);
+    /* Two candidates for both, and they must NOT get the same answer. */
+    expect(byRef('00113107').candidates.length).toBe(2);
+    expect(byRef('00113107').matched_batch_id).toBe(1);
+    expect(byRef('D90200808').matched_batch_id).toBe(2);
+  });
+
+  test('booking each against its own statement pays both off', async () => {
+    const { app } = harness(TWO_BATCHES);
+    const up = await (await upload(app)).json() as any;
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+
+    for (const l of detail.lines.filter((x: any) => x.kind === 'PAYOUT')) {
+      const res = await post(app, `/bank/lines/${l.id}/receipt`, { batchId: l.matched_batch_id });
+      expect(res.status, `line ${l.line_no}`).toBe(200);
+      expect((await res.json() as any).outstandingSen).toBe(0);
+    }
+  });
+});

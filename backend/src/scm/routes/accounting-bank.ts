@@ -173,6 +173,11 @@ export const bankUpload = guard(async (c) => {
       acquirer_code: d.acquirerCode,
       trading_date: d.tradingDate,
       merchant_no: d.merchantNo,
+      /* The decision itself, not just the reasoning. Without it the screen has
+         to pick a statement back out of the candidate list, and "the first one
+         of that acquirer" is a different answer from "the one whose trading day
+         and amount agreed". */
+      matched_batch_id: d.batchId,
       note: d.clue,
     })),
   );

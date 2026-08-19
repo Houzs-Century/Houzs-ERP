@@ -25,6 +25,10 @@ import {
   settlementBatchReceived, settlementReceiptUndo,
   settlementMaintenance, settlementMaintenanceMerchant, settlementMaintenanceBank,
 } from '../src/scm/routes/accounting-settlement';
+import {
+  bankSetup, bankUpload, bankStatements, bankStatementDetail,
+  bankLineReceipt, bankLineMatch, bankLineIgnore, bankLineUndo,
+} from '../src/scm/routes/accounting-bank';
 
 const PORT = Number(process.env.DEMO_PORT ?? 8788);
 const CO = 1;
@@ -145,6 +149,39 @@ const soPay = (id: string, docNo: string, paidAt: string, sen: number, approval:
   method: 'merchant', merchant_provider: provider, company_id: CO,
 });
 
+/* ── Layer 4: the bank accounts and how to read their statements ──────────── */
+
+const BANK_ACCOUNTS: Row[] = [
+  {
+    id: 1, company_id: CO, account_code: '330-0000', bank_code: 'MBB',
+    account_no: '0000564418610346', statement_format: 'CSV', delimiter: '|',
+    amount_format: 'integer-sen', credit_indicator: 'CR', is_active: true,
+    column_map: {
+      date: 'EFFECT DATE', description: 'TRX DESCRIPTION', reference: 'TRX REFERENCE',
+      amount: 'AMOUNT', indicator: 'AMOUNT IND',
+    },
+  },
+  {
+    id: 2, company_id: CO, account_code: '331-0000', bank_code: 'HLB',
+    account_no: '23600602788', statement_format: 'CSV', delimiter: null,
+    amount_format: 'decimal', credit_indicator: 'CR', is_active: true,
+    column_map: {
+      date: 'Date', description: 'Description', reference: 'Reference',
+      debit: 'Debit', credit: 'Credit', balance: 'Balance',
+    },
+  },
+];
+
+/* The same four rules migration 0305 seeds, written from the real statements.
+   Kept in step with the migration by tests/bankRecognitionSeed.test.mjs, which
+   reads the SQL rather than this list. */
+const BANK_RULES: Row[] = [
+  { id: 1, acquirer_code: 'MBB', pattern: 'CARD SALES', match_field: 'both', trading_date_pattern: 'DATED\\s*(\\d{8})', merchant_pattern: 'M/?N\\s*(\\d+)', sort_order: 10, is_active: true },
+  { id: 2, acquirer_code: 'PBB', pattern: 'PBB-PBCS', match_field: 'both', trading_date_pattern: null, merchant_pattern: null, sort_order: 20, is_active: true },
+  { id: 3, acquirer_code: 'AEON', pattern: 'AEON CREDIT SERVICE', match_field: 'both', trading_date_pattern: null, merchant_pattern: null, sort_order: 30, is_active: true },
+  { id: 4, acquirer_code: 'HLB', pattern: 'CA Credit Advice', match_field: 'both', trading_date_pattern: 'MERCHANT\\s+(\\d{8})', merchant_pattern: '(\\d{9,})\\s+MERCHANT', sort_order: 40, is_active: true },
+];
+
 const seed = () => ({
   /* The chart is unified (migration 0297: one AutoCount-style chart for every
      company), so company 2 carries the same accounts. Its acquirer links are
@@ -158,6 +195,16 @@ const seed = () => ({
   acc_acquirer_config: ACQUIRER_CONFIG.map((r) => ({ ...r })),
   acc_company_acquirers: COMPANY_LINKS.map((r) => ({ ...r })),
   acc_acquirers: acquirerView(),
+  /* Layer 4. The Maybank current account exactly as its real export is shaped
+     — pipe delimited, dates 20260801, amounts as zero-padded integer sen, CR/DR
+     in a column of its own — so the rig reads the owner's own file. Hong Leong
+     is here too, in the ordinary decimal/debit-credit shape, to prove the
+     config genuinely carries the difference. */
+  acc_bank_statement_config: BANK_ACCOUNTS.map((r) => ({ ...r })),
+  acc_bank_recognition_rules: BANK_RULES.map((r) => ({ ...r })),
+  acc_bank_statements: [] as Row[],
+  acc_bank_statement_lines: [] as Row[],
+  acc_bank_statement_matches: [] as Row[],
   acc_settlement_batches: [] as Row[],
   acc_settlement_rows: [] as Row[],
   acc_settlement_matches: [] as Row[],
@@ -241,8 +288,11 @@ const client = () => fakeSb(
   [
     { table: 'acc_settlement_matches', column: 'payment_id', name: 'acc_settlement_payment_once' },
     { table: 'acc_settlement_batches', column: 'file_hash', name: 'acc_settlement_batch_once' },
+    { table: 'acc_bank_statements', column: 'file_hash', name: 'acc_bank_stmt_once' },
+    { table: 'acc_bank_statement_matches', column: 'je_no', name: 'acc_bank_je_once' },
   ],
-  ['acc_settlement_batches', 'acc_settlement_rows', 'acc_settlement_matches', 'acc_settlement_receipts'],
+  ['acc_settlement_batches', 'acc_settlement_rows', 'acc_settlement_matches', 'acc_settlement_receipts',
+    'acc_bank_statements', 'acc_bank_statement_lines', 'acc_bank_statement_matches'],
 );
 
 /* PATCH /setup writes to the two real tables; the view is derived, so refresh
@@ -306,6 +356,17 @@ app.post(`${R}/rows/:id/confirm`, settlementConfirmRow as never);
 app.post(`${R}/rows/:id/ignore`, settlementIgnoreRow as never);
 app.get(`${R}/watchlist`, settlementWatchlist as never);
 app.get(`${R}/in-transit`, settlementInTransit as never);
+
+/* Layer 4 — the bank's own statement, on the same real handlers. */
+const B = '/api/scm/accounting/bank';
+app.get(`${B}/setup`, bankSetup as never);
+app.post(`${B}/statements`, bankUpload as never);
+app.get(`${B}/statements`, bankStatements as never);
+app.get(`${B}/statements/:id`, bankStatementDetail as never);
+app.post(`${B}/lines/:id/receipt`, bankLineReceipt as never);
+app.post(`${B}/lines/:id/match`, bankLineMatch as never);
+app.post(`${B}/lines/:id/ignore`, bankLineIgnore as never);
+app.post(`${B}/lines/:id/undo`, bankLineUndo as never);
 
 /* Demo-only: show what actually reached the ledger, and start over. */
 app.get('/api/scm/demo/ledger', (c) => c.json({
