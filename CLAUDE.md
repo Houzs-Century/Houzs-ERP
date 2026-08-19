@@ -65,10 +65,12 @@ had already produced a confident wrong answer:
 is the finding — do not insert it to make a gate pass. If a matcher misses, fix
 the library, do not loosen the guard the matcher exists to enforce.
 
-### Two rules that make the above executable
+### Three rules that make the above executable
 
-A rule is text; text does not run. These two are actions, and both were bought
-the same day this section was written, by breaking it within hours.
+A rule is text; text does not run. These three are actions. The first two were
+bought the same day this section was written, by breaking it within hours; the
+third was bought a week later, by breaking it seven times in one day while
+quoting it.
 
 **1. RE-RUN, never recall.** Any date, count, run id or causal claim that is
 going into a document must come from a command executed *at the moment of
@@ -88,6 +90,43 @@ evidenced. The urge to produce a complete, coherent answer is the single largest
 source of wrong answers here — completeness is not a quality bar, and "these two
 facts disagree and I have not resolved it" is a better answer than a seamless
 one.
+
+**3. A REMEDY CLAIM needs the run that proved it — ENFORCED.** The moment you
+tell anyone that *running* something will fix, recover, collect or restore
+something, you have made a claim about an operation, and reading the source is
+not evidence for it. Paste what you observed when you ran it — a status, a
+count, a duration, an error, a run URL — or write **UNTESTED** in the sentence
+itself. Both are honest. Saying nothing is what is not.
+
+On 2026-08-19 `?mode=all` shipped on the AutoCount pull described as *"the clean
+way to collect a backlog"*. That sentence came from reading `services/pull.ts:29`
+— `getAll()` is called, the checkpoint is not touched, both true — and the
+operation was never once executed. Dispatched against production: **39 seconds,
+then HTTP 503 `Worker exceeded resource limits`.** ~13,000 orders do not fit in
+one Worker request. The remedy that actually works is `?since=YYYY-MM-DD`
+windows.
+
+Nothing else would have caught it, and that is the point. The code was correct;
+types, lint, tests and review all passed, because none of them was wrong. The
+only wrong artifact was the CLAIM, and every gate this repo had read code.
+`completeness-claim` gates a claim about a POPULATION; rule 3 above gates a
+migration's `Reversal:`/`Verified against:`. A claim about an OPERATION belonged
+to neither, so it went into a PR body and was believed.
+
+It is now rule 4 of `scripts/check-working-agreement.mjs`, so it fails a PR
+instead of relying on anyone remembering this paragraph. The gate also warns —
+never fails — when the sentence is added to a module guide or a `check-*.mjs`
+verdict, because a reader of those files cannot ask you whether you ran it. That
+half is not hypothetical either: the `mode=all` correction was written into
+`docs/modules/system-health.md` and missed the identical sentence in
+`backend/scripts/check-autocount-pull-health.mjs`, which went on printing the
+retracted advice to anyone who ran the check.
+
+**What the gate cannot do, said plainly:** it cannot verify the pasted output is
+real. A production dispatch is not reproducible in CI the way an enumeration is.
+It catches the claim written from reading — the author who never ran it and has
+nothing to paste. Forgetting and forging are different acts; this one is aimed
+at forgetting, which is the one that keeps happening.
 
 ## ⚠️ 用白话文跟老板讲 — MANDATORY (owner rule, 2026-08-18)
 
