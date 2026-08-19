@@ -2382,8 +2382,26 @@ it passes is derived from the APPROVAL, not from the payload:
 
 | what the apply is given | native order | migrated order |
 | --- | --- | --- |
-| `approval` (the approve-so gate's receipt) | the requested price persists (`trustOperatorSelling: true`) | stored / requested price persists (`'including-zero'`) |
+| `approval` (the approve-so gate's receipt) | the requested price persists, **RM 0 included** (`trustOperatorSelling: 'operator-zero'`) | stored / requested price persists (`'including-zero'`) |
+| `approval`, but the line is an **ADD** | requested price persists, except a **0**, which reads as "not provided" and takes the catalogue figure (plain `true`) | same |
 | `null` (any other caller) | catalogue, exactly as before | stored price kept |
+
+**RM 0 (2026-08-19).** Until this date the native row above passed plain `true`,
+which reads `manualUnitSelling > 0` — so zero was the one amount an approved
+amendment could not carry, and an approver who signed RM 0 got the catalogue
+price instead, silently. That matched the unlocked road when it was written; on
+2026-08-18 the unlocked road gained an operator-authored zero
+(`zeroPriceIntended` -> `'operator-zero'`, #2425), and this path did not follow,
+so the two disagreed on one value. Editing an existing line now uses
+`'operator-zero'` and the two agree again. It also stops a pure QUANTITY
+amendment re-pricing a line that sits at 0 — a free gift or PWP reward — which
+the editor triggers because it sends `newUnitPriceSen` on every changed line.
+
+**Add and Edit differ on 0, deliberately.** An ADD line names a SKU and nothing
+else about it is established, so a 0 there is likelier an unfilled field than an
+intended giveaway; an EDIT moves a price the line already carries. Both
+behaviours are pinned in `so-revision.amendmentPrice.test.ts`. Changing either
+means changing that test in the same PR — and asking the owner first.
 
 `SoAmendmentApproval` is a **required** parameter of `applySoAmendment` with no
 default, constructed only inside `approveSoCommandHandler` after
