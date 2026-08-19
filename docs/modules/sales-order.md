@@ -5,6 +5,17 @@
 
 # Module: Sales Order (SCM)
 
+> **Naming (vocabulary registry).** Three SO-header concepts are now declared in
+> `backend/scripts/lib/vocabulary.mjs` (glossary: `docs/generated/GLOSSARY.md`):
+> the salesperson is `salesperson_id` (uuid; the legacy `agent` text is kept for
+> the AutoCount book, see "stamped TWICE" below), the ship-from warehouse is
+> `warehouse_id` (the header's free-text `sales_location` snapshot is being
+> unified onto it by a staged backfill migration), and the customer's own
+> reference is `ref` (owner ruling #2429; `customer_so_no` is a transitional
+> fallback and `po_doc_no`/`customer_po*` are dead columns pending a staged drop).
+> No column was renamed in this registration — the two renames are reviewed
+> follow-ups because they need a backfill / a view-guarded drop.
+
 > **Line numbers here are INDICATIVE, not authoritative.** They were correct at
 > `main` @ `c523a02f` and drift with every merge — an audit on 2026-08-13 found
 > every `:NNN` in this directory stale while the paths, methods and permission
@@ -756,6 +767,16 @@ identity, from a GET needing only a document number. See BUG-HISTORY, 2026-08-18
   the `/:docNo/payments/:id/*` routes were already safe and were left untouched;
 - a helper that cannot express scoping — `checkCrossCategorySource` took only
   `sb` — takes `c` instead of being worked around at the call site.
+
+**`pwp_codes.code` is a natural key too (2026-08-19).** Mig 0188 re-keyed
+`pwp_codes` on `(company_id, code)`, but the voucher `code` is caller-supplied, so
+a `.eq('code', X)` on its own resolves whichever company's row carries that string
+— the same trap as `doc_no`. On SO create the PWP loop now resolves
+`pwpCompanyId = activeCompanyId(c)` (refusing `409 company_unresolved` when unset
+while codes are present) and carries `.eq('company_id', pwpCompanyId)` on the
+prefetch, the atomic burn and the rollback; the two swap-line reads go through
+`scopeToCompany`. The already-safe siblings are `lib/pwp-claim-single.ts` and the
+add-line path. See BUG-HISTORY, 2026-08-19.
 
 **Do not expect the gate to catch a miss.** `scripts/check-company-scope.mjs`
 screens routes on `ID_PREDICATE` (`.eq('id')` / `.eq('*_id')`), so a `doc_no` key
@@ -2087,6 +2108,23 @@ derivation** on the next edit — the recompute no longer depends on a fee line
 already existing; deleting a derived fee line is therefore a no-op — the way
 to change the fee is to change what drives it (the items, the rate config, or
 the `SVC-DELIVERY-ADD` operator line).
+
+**Reducing the fee on ONE order (2026-08-19): use the line's DISCOUNT, and it
+survives.** Typing a lower unit price on a fee line was never going to hold —
+the rebuild derives the price, one truth — and until this date the discount
+road was silently dead too: the line PATCH accepted a bounded discount on a
+delivery line, and the very next rebuild wrote `discount_sen: 0` over it. An
+operator who typed 250 → 125 watched the line "nuke to 0 and disappear"
+(the rebuild deletes and re-inserts the `SVC-DELIVERY*` set). Now the rebuild
+recovers each fee line's discount by `item_code`, clamps it to the rebuilt
+line's own total (a fee line can never go negative), and re-applies it — so
+the SO prints unit 250 / discount 125 / total 125, which is how every other
+price reduction on an SO is expressed. The header mirror carries the NET, so
+Σ(lines) === header still holds. The `SVC-DELIVERY-ADD` gross is recovered
+from unit × qty rather than `total_sen`, or a discounted ADD line would
+compound the reduction on every save. A component that disappears on rebuild
+(the base swapping to CROSS on a follow-up change) drops its discount rather
+than migrating it to money it never named.
 
 **The legacy fallback.** `recomputeTotals` still reads the header fee back for
 a line-less SO — that exists ONLY for legacy (pre-P2 / mirror-imported) rows

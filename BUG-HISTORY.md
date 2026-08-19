@@ -137,6 +137,625 @@ the flush; the exit STATUS is unchanged, and
 purpose so it cannot come back.
 
 Ref: fix/cross-tenant-leaks-round2, 2026-08-18.
+## Zero-grant multi-company user was handed EVERY company — fail-open tenant default flipped to fail-closed [medium]
+
+<!-- area: Auth, permissions, sessions -->
+
+**白话.** 多公司启用后，如果有一个用户在权限表 (`user_companies`) 里一间公司都没有
+被授权，系统本来是「保险起见给他看全部公司」—— 反而是最不安全的做法：一个没被授权
+任何公司的人，看到了两间公司的全部资料。现在改成「没授权就什么都看不到」(fail-closed)。
+今天是安全的：查过生产资料，**0 个零授权用户**，没有人会因此被锁在外面；这只是为将来
+补上的安全默认值。
+
+**Symptom.** In `backend/src/middleware/companyContext.ts`, when multi-company is
+active (`companies.length > 1`), a resolved user with ZERO `user_companies` grant
+rows had `allowedCompanyIds` default to EVERY active company (`companies.map(co =>
+co.id)`). The narrowing to the user's grants ran only inside `if (granted.length >
+0)`, so a zero-grant user fell through with the full company list — the least-safe
+outcome for the least-privileged account. The SCM client is service-role (RLS
+bypassed), so that app-layer list IS the tenant boundary.
+
+**Root cause (traced).** The Phase-0e default was fail-OPEN by construction: `let
+allowed = companies.map(...)` then narrow only when `granted.length > 0`. The
+branch for a *confirmed-empty* grant read was never written, so "user has no
+grants" and "grant table absent / DB blip" collapsed into the same all-companies
+fallback. Under RLS (`docs/TENANT-ISOLATION-ROOT-FIX.md`), `app.company_id` must be
+a single value; a user granted "all" has none — so the fail-open default also
+blocked the root fix.
+
+**Fix.** Add the missing `else`: a resolved multi-company user whose grant read
+succeeds and returns ZERO rows now gets `allowed = []` — the RESTRICTED-TO-NOTHING
+sentinel the scoping helpers already honour (`isRestrictedToNoCompany`, the `1=0` /
+empty-`.in` MATCH_NOTHING paths in `backend/src/scm/lib/companyScope.ts`), so a
+zero-grant user sees no company rather than all. Every other branch is preserved
+exactly: a grant-read error / absent table still throws to the `catch` and keeps
+the ALL-companies default (a transient blip must not lock everyone out), an
+unresolvable uid skips the block, single-company / pre-activation never narrows,
+and the cold-start branch (companies master unreadable) is untouched. Owner
+decision, `docs/TENANT-ISOLATION-ROOT-FIX.md` §6.1. **Safe today because a live
+audit found 0 users with zero grants** — nobody is locked out; this is a safety
+default for the future. Pinned by `backend/tests/companyContextZeroGrantFailClosed.test.ts`
+(zero-grant → `[]`; one grant → that company; single-company unchanged;
+cold-start unchanged) and the updated last-known-good case in
+`backend/tests/companyScopeFailClosed.test.ts`.
+
+**Ref:** #<PR>. `fix/zero-grant-fail-closed` 2026-08-20.
+
+## Cancelled duplicate DO never gave its stock back — reversal was best-effort and silently lost [high]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 一张销售单 (2990-SO-2606-019, 客户 Andrew khoo) 出了两次货：一张真的
+(2990-DO-2607-017)，一张重复的 (2990-DO-2607-005)。重复那张后来取消了，但它出掉的
+库存没有还回来 —— 仓库里那 1 张床垫、2 个枕头、1 张沙发 (KETTA 1 / NTYR 2 /
+TRION 1) 明明还在货架上，系统却当作出货了，库存少算。修法：用系统自己的取消还货
+函数，只针对这一张单还货；真的那张单一根手指都不碰。这是一次性资料修复，PLAN 是默认，
+要 apply 得打确认句。
+
+**Symptom.** On sales order 2990-SO-2606-019, the duplicate delivery order
+2990-DO-2607-005 is status=CANCELLED, yet its three stock-OUT
+`inventory_movements` at warehouse `41d544bc-cb3b-424a-8629-e3e27e14df5f`
+(2990 KETTA-FIRM MATT (K) qty 1, NTYR MEMORY CONTOUR PILLOW qty 2, TRION-(K)
+qty 1) were never reversed — stock is still double-deducted against
+2990-DO-2607-017 (DISPATCHED), which is the genuine delivery. Verified live
+2026-08-19 via the SO-DO drill (`.github/workflows/so-do-drill.yml`,
+`backend/scripts/check-so-do-drill.mjs`).
+
+**Root cause (traced).** Two failures compounded. (1) When DO-005 was cancelled,
+`reverseInventoryForDo`'s return value was discarded by the cancel path's
+best-effort `try/catch`, so a movement-write failure left the shipped stock
+deducted while the request returned a clean 200 — the exact defect the current
+`reverseInventoryForDo` contract comment now warns about
+(`backend/src/scm/routes/delivery-orders-mfg.ts:1891-1895`). (2) The
+over-delivery invariant R1 was blind to the double-ship: DO-005's lines carry
+`so_item_id = NULL` (UNLINKED), and R1 sums delivered qty per `so_item_id`, so an
+unlinked duplicate DO deducts stock without ever counting against the ordered qty
+(`check-so-do-drill.mjs` header records the same finding).
+
+**Fix.** A gated one-shot repair,
+`backend/scripts/reverse-cancelled-do-005-movements.mjs` +
+`.github/workflows/reverse-do-005.yml`, replays the system's OWN cancel-path
+reversal for this ONE document: it calls the canonical
+`scm.fn_reverse_do_out(do_id, NULL, false)` (migration 0198, recreated with
+`item_code` in 0307) — scoped by `source_doc_id = DO-005`, so it restores each
+OUT's original lots at original cost, deletes the cancelled sale's lot
+consumptions, zeroes the OUT cost stamps, and writes one balancing `+net_out`
+ADJUSTMENT per bucket. No ad-hoc rows are hand-crafted, and 2990-DO-2607-017
+(a different id) is untouched by construction. PLAN by default; APPLY needs
+`MODE=apply` + `CONFIRM="REVERSE DO-2607-005 OUT MOVEMENTS"`, then re-reads on a
+fresh connection and asserts the per-item stock deltas are exactly +1 / +2 / +1,
+the three ADJUSTMENT rows exist, and the genuine DO's movements are unchanged.
+Idempotent (the fn and the script both no-op once an ADJUSTMENT tags the DO).
+This does NOT change any module surface — no new route, permission, status or
+required field — so no module-guide update. **Not yet applied to prod** — the
+workflow is dispatched by the owner; this entry records the repair, not a run.
+
+**Ref.** fix/reverse-cancelled-do-005-movements, 2026-08-20.
+
+## The picker-tile fix's fix took down BOTH KPI tiles — the gate handed the user where the permissions go [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 昨晚修「选销售、卡片数字不跟」的第二版,今早一开就两张卡片一起「加载失败」。
+原因:权限检查的函数要的是**权限清单**,我塞给它的是**整个用户**。它拿到用户就调用
+清单才有的方法,当场炸掉,整个接口 500,两张卡片共用这一个请求,所以一起红。编译器
+本来会拦住这个错 —— 是我自己用 `as never` 把它的嘴捂住的。这次把检查抽成一个可以
+**真正跑起来**的函数,测试直接用真实的用户形状调用它;前两版都是"检查源代码里有没有
+这行字"的测试,字都在,功能都是死的。
+
+**Symptom.** After #2501's deploy, GET /pos/sales-stats 500s whenever a
+salesperson is picked; ONE query feeds both KPI tiles, so Showroom and Personal
+both render "Couldn't load". Reported with a screenshot within the hour — the
+second same-day report against this tile.
+
+**Root cause (traced).** `hasPermission(granted, required)` takes a permissions
+COLLECTION (array or Set). #2501 passed it the session USER:
+`hasPermission(caller as never, …)` → `(user as ReadonlySet).has(…)` →
+`user.has is not a function`, thrown before any response. The `as never` cast
+is what let it compile — it silenced precisely the type error that was
+describing the bug. And the wiring test pinned the SOURCE TEXT of the call, so
+it stayed green while the endpoint threw: the second consecutive version of
+this gate to die in a way a textual pin cannot see (#2501's own entry records
+the first).
+
+**Fix.** The gate is now `canTargetSalesperson(caller, wantSalesperson)` —
+EXPORTED and PURE, reading `caller.permissions_set ?? caller.permissions ?? []`
+and feeding isDirectorUser only the two fields it declares. The route calls it
+with one widening cast that still checks every property read (no `as never`
+anywhere). The test EXECUTES it: director / flat key / `*` / plain-sales /
+no-session / '' / 'all', plus a must-not-throw on the exact shape that 500'd.
+The remaining textual pins only keep the guard clauses from being edited out.
+
+**Ref.** fix/sales-stats-gate-perms, 2026-08-20. Corrects #2501, which corrected
+#2477. Same reporter all three times.
+
+## Service-token compared with `===`, and invite/reset emails interpolated names raw [medium]
+
+<!-- area: Auth, permissions, sessions -->
+
+**白话.** 两处安全加固，没有已观察到的事故，是查代码时发现的。(1) 后台服务口令
+（DASHBOARD_API_KEY / CONNECT_SERVICE_TOKEN，权限是全星号 `*`）以前用普通的 `===`
+比对，比对快慢会泄漏猜对了几个字符。(2) 邀请信 / 重置密码信里，把对方自己填的名字、
+角色名直接塞进 HTML —— 有人把名字设成一段网页代码，收信人打开信就会被执行。现在
+口令走定时安全比对，邮件里所有用户可控字段都做转义。
+
+**Symptom.** None observed; found by reading the code. Two hardening gaps.
+
+**Root cause (traced).**
+1. `backend/src/middleware/auth.ts` and `backend/src/routes/auth.ts` (`GET
+   /me`) authenticated the service tier with `token === c.env.DASHBOARD_API_KEY`
+   / `=== c.env.CONNECT_SERVICE_TOKEN`. `===` on strings short-circuits at the
+   first differing byte, so its timing leaks how many leading characters matched
+   — a side channel on the full-`*` service credentials. The repo already had
+   the constant-time `timingSafeEqualStr` (`backend/src/services/auth.ts`), used
+   in `assrFormIntake.ts` and `scm/lib/mirror-map.ts`, but not here.
+2. `backend/src/services/email.ts` — `inviteEmailHtml` interpolated
+   `${p.inviterName}`, `${p.roleName}`, `${p.link}` and `resetEmailHtml`
+   interpolated `${p.name}`, `${p.requestedBy}` raw into the HTML body. A user
+   who sets their own display name to markup gets it rendered in the recipient's
+   email (HTML injection). The same file's `escapeHtml` already wraps every
+   field in the document-email path; the two account emails were the gap.
+
+**Fix.** (1) Both service-token comparisons now use `timingSafeEqualStr(token,
+key)`, keeping the existing `&&` empty/undefined-key guard so an unset key never
+authenticates. (2) Every user-controlled field in the invite and reset templates
+is wrapped in `escapeHtml`; the server-built link href is escaped too, matching
+`documentEmailHtml`'s existing `href="${escapeHtml(...)}"` pattern. No surface
+change (no new route/permission/status), so no module-guide update.
+
+**Also in this PR — doc drift, not a code bug.** Migration 0307
+(`0307_item_code_unify.sql`, 2026-08-19) renamed 18 scm columns
+`material_code`/`product_code` → `item_code`, but six hand-written module guides
+still showed the old names, so an engineer copying a query or index DDL from them
+would hit a non-existent column. Updated the current-column references in
+`docs/modules/{purchase-order,grn,delivery-order,purchase-consignment-order,document-conversion,document-traceability}.md`
+to `item_code` (source of truth: `docs/generated/GLOSSARY.md`). Historical /
+migration-narrative mentions and `stock-take.md` (owned by another open PR) were
+left untouched.
+
+**Ref.** fix/small-security-doc-cleanup, 2026-08-19. Found by inspection; no
+observed exploit.
+## The salesperson picker's tile fix shipped double-broken — wrong gate context, wrong lookup key [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 昨天修「选了销售、上面的卡片不跟着换」，修完当天就被报告:名字换了,数字
+还是自己的。查出来两个错叠在一起。第一,权限检查用的是 SCM 那边的助手,它认「总监」
+要靠一个只有 SCM 中间件才会放好的东西,这条 /api/pos 路上根本没有 —— 所以**销售总监**
+(这个选择器就是给他用的人)永远过不了检查。第二,查人用的是**名字**,而平板送来的
+是**编号** —— 就算过了检查也永远查不到人,回落到自己。两个错的表现一模一样:静静地
+回落,不报错。现在检查直接用本路上真实的用户,查人按编号来(带格式护栏),名字留作
+手打的后备。
+
+**Symptom.** Picking a salesperson on the My-orders board changes the Personal
+tile's NAME but not its numbers — still the caller's own figures. Exactly the
+defect the first fix (#2477) claimed to close, reported again within hours of
+its deploy, with a screenshot.
+
+**Root cause (traced).** Two independent faults, same silent fallback:
+
+1. **The gate never opened for the person it exists for.** `canViewAllSales(c)`
+   grants via the flat key OR the director position — but the director arm reads
+   `houzsUser`, which only `scm/middleware/auth.ts` stashes. `/api/pos` runs the
+   main `auth` middleware, which never sets it, so for a Sales Director the arm
+   was dead on this route. `mayTarget` false → fallback to caller.
+2. **Even an open gate looked up the wrong key.** The POS picker sends the staff
+   **id** (`<option value={s.id}>`); the lookup matched `staff.name`. Every
+   lookup missed → `target` null → fallback to caller.
+
+Both faults produce the identical symptom — the deliberate fail-safe fallback —
+which is also why one fix hid the other. And the wiring test pinned the gate's
+NAME (`canViewAllSales`), not what it resolves against on THIS route's context;
+it passed while the gate was dead.
+
+**Fix.** On `/api/pos` the `user` context IS the real Houzs caller, so the gate
+runs directly off it: `hasPermission(user, 'scm.so.view_all') ||
+isDirectorUser(user)`. The lookup matches by **id** when the param is
+uuid-shaped — guarded, because a malformed value on a uuid column is a 22P02
+500, not a miss (the pin-login note in this file says so) — with name kept as
+the non-uuid arm for hand-typed use. Unknown / unauthorised still falls back to
+the caller, never to "no filter". The source pins now assert the gate's inputs
+and the lookup key, not just a helper's name.
+
+**Ref.** fix/sales-stats-target-by-id, 2026-08-19. Corrects #2477, found by YH.
+
+## Reducing a delivery fee "nuked the line to 0" — the rebuild discarded the operator's discount [medium]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 想把运费从 250 改成 125，结果那一行直接变成 0，整行还不见了。原因分两层：
+运费这一行是系统**算出来**的，不是存起来的 —— 你改单价，系统下一秒就把整组运费行删掉
+重算，你打的数字根本没被读过（行「消失」是真的：删了重插）。而正路 —— 在那一行打
+**折扣** —— 系统也收下了，却在同一次重算里把折扣写回 0。等于降运费没有任何一条路走得
+通。现在折扣会保留：单价还是算出来的 250，折扣 125，合计 125，跟单上其他降价一个写法。
+
+**Symptom.** Editing a `SVC-DELIVERY` line's unit price 250 → 125 on the ERP SO
+editor "saves", then the line reads 0 / vanishes. Reducing a PRODUCT line works
+fine — this is delivery-fee-only, which is what made it look random.
+
+**Root cause (traced).** Two layers, both by design and jointly a dead end:
+
+1. The fee lines are DERIVED. Any line edit on an SO carrying a fee calls
+   `rederiveDeliveryFee` → `recomputeDeliveryFeeCore`, which deletes the
+   `SVC-DELIVERY*` set and rebuilds it from `computeSoDeliveryFee` (the 0214
+   RPC). A typed unit price is never read; the edited row is genuinely deleted
+   and replaced. One truth — owner 2026-08-07, "every ringgit is a LINE".
+2. The sanctioned reduction — a line DISCOUNT, which the PATCH accepts bounded
+   0..qty×unit on any line — was written back to `discount_sen: 0` by that same
+   rebuild. So the discount saved, then the derivation it triggered erased it.
+
+The only surviving lever, `SVC-DELIVERY-ADD`, is clamped
+`Math.max(0, additionalFee)` — fees could go up but never down.
+
+**Why not the other two designs.** A negative additional fee is a discount in
+disguise on the printed SO and needs the non-positive-line guard loosened. A
+per-order override field is header money without a line — the exact back door
+the owner ruled out and 2990-SO-2608-006 already burned (mirror outliving its
+lines).
+
+**Fix.** `recomputeDeliveryFeeCore` now recovers each fee line's `discount_sen`
+by `item_code` before the rebuild, clamps it to the rebuilt line's own total,
+and re-applies it. The fee stays derived (unit 250); the reduction is the
+operator's discount (125); total 125 — expressed exactly like every other price
+reduction on an SO. The header mirror stamps the NET so Σ(lines) === header
+still holds, and the audit row compares nets so an unchanged rebuild still
+logs nothing.
+
+Two guards worth naming: the `SVC-DELIVERY-ADD` gross is now recovered from
+unit × qty instead of `total_sen` — with discounts surviving, `total_sen` is
+net, and recovering the net as the next gross would compound the reduction on
+every save (50 → 30 → 10 across three edits). And a component that disappears
+on rebuild (base swapping to `SVC-DELIVERY-CROSS`) DROPS its discount rather
+than migrating it to a line it never named.
+
+Four cases in `soDeliveryFeeLineIntegrity.test.ts`; three fail on the unfixed
+source, and the no-discount case pins byte-identical behaviour to before.
+
+**Ref.** fix/delivery-fee-discount-survives, 2026-08-19. Same family as the
+2026-08-07 back-door ruling; the operator-side answer to it.
+## Rule 4's Chinese support broke main within hours — 白跑 read as a command [medium]
+
+<!-- area: Repo tooling: tests, ratchets, generators -->
+
+**白话.** 下午刚教会检查器看中文的「跑一下就能修好」这类空头承诺，晚上它自己就红了。
+原因:同一天另一条修复记录里写了「列表**白跑** MRP」—— 意思是列表**白白地**跑了一次
+MRP,纯粹在描述浪费 —— 但检查器看到「跑 + 英文词」就当成是在叫人跑命令,再配上同段
+后面的「补上」,就凑成了一条「承诺」。它自己的「中文模式不能带来杂音」测试当场失败,
+主干上每一个 PR 的 working-agreement 检查从此全红。修法是一个字:跑 前面是 白 或 空
+的,不算命令。
+
+**Symptom.** Every PR's `working-agreement` check fails on main with
+`not ok — the Chinese patterns add NO noise to the existing corpus`, pointing at
+a line of #2488's entry. Nothing any PR author did causes or can avoid it.
+
+**Root cause (traced).** Two same-day merges interacting. #2489 taught rule 4 to
+read Chinese remedy claims; its `跑 + Latin-token` exception ("a command being
+named") documents why the RIGHT side cannot collide — 跑了/跑得/跑步 continue in
+CJK. #2488's entry then collided from the LEFT: 「列表白跑 MRP」 — the list ran
+MRP *for nothing* — is narration about waste, and 白跑 + `MRP` matched the
+exception. With 「补上」 later in the same 白话 passage, the pair read as
+prescription + outcome, i.e. a claim. The corpus test — kept precisely so "a
+later pattern edit cannot quietly make the gate chatty" — did its job and went
+red; it just went red for the author's own next entry, on every PR after it.
+
+**Fix.** The exception refuses a vain-run prefix: `(?<![白空])跑\s*[A-Za-z…]`.
+白跑/空跑 state that a run achieved nothing, which is as far from prescribing
+one as Chinese gets. Three-case regression pin beside the corpus test: the real
+#2488 sentence is not a claim, 空跑 likewise, and a genuine run-this-mode
+command still fires (the quoted shapes live in the TEST, deliberately — writing
+one out verbatim HERE would itself be corpus noise, which the first draft of
+this entry proved by failing the very test it describes). Self-test 42/42.
+
+**Ref.** fix/cn-prescription-vain-run, 2026-08-19. Unblocks every open PR.
+
+## Cross-company holes on the sales-pricing side: PWP voucher burn, consignment price-override, sofa-combo edit [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 三个跨公司的漏洞，都因为我们的数据库连线是「服务角色」——它会绕过数据库
+自己的公司隔离，所以每一条写入必须自己带上「哪一间公司」这个条件，否则就会写到另一
+间公司的资料上。(1) 开销售单用换购券(PWP)时，认券/烧券/回滚都只认券号，不认公司；
+换购券的券号在两间公司之间可能撞号，于是可能烧掉、或写坏另一间公司的券。(2) 寄卖单
+(Consignment)改单价这个「会动钱」的动作，只挡了业务员范围，却没检查「改价权限」
+(`scm.so.price_override`)——只有看单权限的人也能改价；销售单那边本来就有挡。(3) 沙发
+套装价(Sofa Combo)用 id 改价时，先读来源那一行没有带公司条件，可能把另一间公司的
+套装价复制成本公司的新价。
+
+**Symptom.** Three service-role writes on the sales/pricing side carried no
+`company_id` predicate, so a caller in company A could reach company B's rows.
+Found by a targeted cross-tenant audit (2026-08-19), all traced on `origin/main`.
+
+**Root cause (traced, PROVEN by reading the handlers).** The SCM supabase client
+is service-role and bypasses RLS (mig 0061 enabled RLS with no policies), so the
+hand-written `company_id` predicate IS the entire tenant boundary.
+- **PWP burn** (`mfg-sales-orders.ts`, SO create loop ~L3675/L3808/L3838): mig 0188
+  re-keyed `pwp_codes` on `(company_id, code)`, but the prefetch `.in('code', …)`,
+  the atomic `.update({status:'USED'}).eq('code', code)` and the rollback
+  `.update(patch).eq('code', code).eq('status','USED')` all keyed on the
+  caller-supplied `code` alone. Two swap-line reads (~L9146/L9713) read
+  `pwp_codes` by `.eq('code', …)` unscoped too. The already-safe siblings are
+  `pwp-claim-single.ts` (scopes by company_id) and the add-line path (~L3828,
+  refuses on unresolved company).
+- **Consignment price override** (`consignment-orders.ts`, POST
+  `/:docNo/items/:itemId/override`): re-prices a line ("WRITES MONEY") but only
+  checked `selfScopedConsignmentBlocked`; never `scm.so.price_override`, while the
+  SO twin (`mfg-sales-orders.ts:6205`, `isPriceOverrideCaller`) does.
+- **Sofa combo edit** (`sofa-combos.ts`, PUT `/:id`): the edit-by-id alias read the
+  source combo `.eq('id', id)` on per-company `sofa_combo_pricing` (company_id NOT
+  NULL since mig 0083) with no scope, then inserted a new effective row for the
+  active company — cloning another company's price. The sibling DELETE `/:id` was
+  scoped 2026-08-13.
+
+**Fix.** PWP: resolve `pwpCompanyId = activeCompanyId(c)` once, refuse
+`company_unresolved` (409) when null while codes are present, and add
+`.eq('company_id', pwpCompanyId)` to the prefetch, the burn and the rollback; the
+two swap reads now go through `scopeToCompany(...)`. Consignment override: add the
+`scm.so.price_override` gate (403 `price_override_admin_only`) before the self-scope
+and row reads. Sofa combo PUT: wrap the source read in `scopeToCompany(...)` so a
+foreign id resolves to nothing (404). Handlers exported for the test. Coverage in
+`tests/crossTenantUncoveredLeaks.test.ts` (both directions; proven red before fix).
+
+**Ref.** this PR, 2026-08-19.
+
+## Cross-company holes on the procurement side: PO SO-link, rack create, supplier binding [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 三个跨公司漏洞，同一个根因(服务角色连线绕过隔离，写入必须自带公司条件)。
+(1) 建采购单(PO)时，「新建 PO 带销售单来源」这条路读取来源销售单行(soItemId)没带
+公司条件，然后把它连上本公司的 PO、复制它的照片、还回写它的「已下单数量」——等于把另一
+间公司的销售单行认成自己的。(2) 建货架(Rack)时，只对「全部仓库」那条分支做了公司过
+滤；直接传仓库 id 的分支没验证仓库属不属于本公司，于是会把货架建到另一间公司的仓库上
+(货架盖本公司公司章，仓库却是别家的)。(3) 给供应商加绑定(binding)时，绑定盖上本公司
+公司章，却没检查这个供应商本身属不属于本公司。
+
+**Symptom.** Three service-role writes on the procurement side accepted a
+caller-supplied id (SO line / warehouse / supplier) from another company and
+wrote against it. Found by the same 2026-08-19 cross-tenant audit, traced on
+`origin/main`.
+
+**Root cause (traced, PROVEN by reading the handlers).** Same boundary as above —
+the `company_id` predicate is the only isolation.
+- **PO create** (`mfg-purchase-orders.ts`, POST `/` ~L1166): the bare-create path
+  (desktop "New PO from SO" / MRP convert) read `mfg_sales_order_items .in('id',
+  soItemIds)` with no company predicate, then linked `so_item_id` (~L1282), copied
+  `photo_urls` (~L1369) and rolled `po_qty_picked` forward via `recomputeSoPicked`
+  (`.eq('id', soItemId)`, ~L2902). A foreign `soItemId` re-parented another
+  company's SO line. The add-line path already gated it via `soLinkTargetRefusal`.
+- **Rack create** (`warehouse.ts`, POST `/racks`): `resolveRackTargets` scoped only
+  the `allWarehouses` branch; the `warehouseId` / `warehouseIds` branches trusted
+  the caller-supplied uuid, and the racks stamp `company_id = active` while pointing
+  `warehouse_id` at a foreign warehouse.
+- **Supplier binding** (`suppliers.ts`, POST `/:id/bindings` + `/bindings/batch`):
+  the binding row stamped `company_id = active` but never verified the `:id`
+  supplier belonged to the active company — unlike the scoped scorecard/edit/delete
+  paths.
+
+**Fix.** PO create: scope the SO-item read with `scopeToCompany(...)` and refuse
+any `soItemId` not in the caller's company (404 `so_line_not_found`) before it is
+linked; the photo read is scoped too. Rack create: `resolveRackTargets` now
+intersects the requested warehouse ids with the company's own warehouses (foreign
+uuid resolves to nothing). Supplier binding: verify the supplier belongs to the
+active company (`scopeToCompany` + `detailMissResponse` 404) before inserting, on
+both the single and batch paths. Handlers exported for the test. Coverage in
+`tests/crossTenantUncoveredLeaks.test.ts` (both directions; proven red before fix).
+
+**Ref.** this PR, 2026-08-19.
+
+## A Sales Invoice needed the DO "marked signed" first, though the server never required it [medium]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 开销售发票(Sales Invoice)之前,系统逼你先把交货单(DO)按一下「Mark
+signed」—— 但后台其实从来没有这个要求。老板 2026-08-19 指出这一步多余,拿掉。现在
+只要是已确认的交货单(不是草稿、不是已取消)就能直接开发票,而且两间公司看到的一样。
+「Mark signed」按钮保留,当作可选的「已签收」记录,不再是硬门槛。
+
+**Symptom.** In the DO quick-view, a DISPATCHED / IN_TRANSIT delivery order showed
+"Transfer to Sales Invoice" DISABLED with "Mark this delivery order signed first —
+a Sales Invoice can only be raised once it is signed or delivered." Owner
+2026-08-19, on a 2990 DO: this DO does not need mark-signed — remove it.
+
+**Root cause (traced, PROVEN by reading both sides).** The signed/delivered
+requirement was FRONTEND-ONLY. `siTransferBlockReason`
+(`frontend/src/vendor/scm/lib/do-next-step.ts`) blocked `loaded` / `dispatched` /
+`in_transit`. The server that actually creates the SI from a DO
+(`backend/src/scm/routes/sales-invoices.ts:1483`) refuses ONLY a CANCELLED source
+(`do_cancelled`, 409) — it never checked signed/delivered. So the gate had no
+backend rule behind it, and the goods' stock was already deducted at dispatch.
+Removing the front-end gate exposes an action the server always permitted; it
+changes no stock or money logic.
+
+**Fix.** `SI_TRANSFERABLE_DO_STATUSES` = `loaded, dispatched, in_transit, signed,
+delivered` (every confirmed DO). `siTransferBlockReason` returns null for those;
+DRAFT still needs Confirm (no committed lines/stock yet); CANCELLED still blocked;
+INVOICED / unrecognised → the generic sentence. Because `siTransferBlockReason` is
+the ONE shared function all four surfaces use (desktop detail, desktop phone view,
+list quick-view drawer, native mobile shell — `MobileModuleDetail.tsx:1362`), the
+change reaches desktop and mobile together. "Mark signed" (`doAdvanceStep`) is
+untouched and stays as an OPTIONAL delivery-tracking step. `do-next-step.test.ts`
+updated to pin the new rule (12 pass).
+
+**Ref.** this PR, 2026-08-19.
+## Opening Purchase Orders and Goods Received each ran a full company-wide MRP [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 打开「采购单」和「收货单」两个列表,每次都要等约 4 秒。原因和上次采购发票
+那次一模一样:列表为了显示「关联销售单」和「已交货」两栏,每次打开都把整套全公司 MRP
+引擎跑一遍 —— 而列表根本不需要现算它。现在照采购发票那套改法:列表先秒开(那两栏先
+空着),过一拍再由独立轻接口补上。功能不变。至此「列表白跑 MRP」这个病的四处(销售单、
+采购发票、采购单、收货单)全部修完。
+
+**Symptom.** Opening the Purchase Orders list (`GET /api/scm/mfg-purchase-orders?page=…`)
+and the Goods Received list (`GET /api/scm/grns?page=…`) each took ~4s — the same
+shape the SO and PI lists had, measured before at ~4.2s.
+
+**Root cause (traced, PROVEN by reading origin/main).** Both list handlers filled
+four columns (`assigned_sos`, `assigned_so_linked`, `assigned_so_provenance`,
+`delivered_dos`) inline: PO via `resolvePoSoCoverageForPos` and GRN via
+`resolvePoSoCoveragePerSkuForPos` (`routes/po-so-coverage.ts`), each of which runs
+`computeMrp` — the global company-wide MRP engine — once per list load. So neither
+list could be faster than the MRP page (~4s), regardless of its own cheap query.
+Same class as the SO-list deferral (#2433) and the PI-list deferral shipped just
+before this.
+
+**Fix.** Defer the four MRP-derived columns off each list's critical path,
+mirroring the PI list. Each list now OMITS them (not blanks — C16) and the client
+heals them a beat after render via a new thin endpoint —
+`GET /mfg-purchase-orders/list-mrp-enrichment?poIds=…`
+(`routes/mfg-purchase-orders-list-enrichment.ts`) and
+`GET /grns/list-mrp-enrichment?grnIds=…` (`routes/grns-list-enrichment.ts`) —
+each re-reading its ids under the SAME company scope and running the SAME
+resolvers, so the healed values are byte-identical, only deferred. The GRN
+endpoint reproduces the list's per-GRN-line-code roll-up exactly (header ==
+union(drill lines)). One shared FE overlay `applyListMrpEnrichment`
+(`frontend/src/lib/listMrpEnrichment.ts`) + `useEnrichedPoListRows` /
+`useEnrichedGrnListRows` merge the healed rows; the enrichment fetch is BATCHED
+per page (chunk 100), and an aborted fetch is silent (react-query cancellation),
+not a false "failed" — the Hookka P8 trap. C16 parity pinned both ways:
+`LIST_MRP_ENRICHMENT_KEYS` (`scm/lib/list-mrp-enrichment-keys.ts`, re-exported by
+both routes) == `LIST_MRP_DERIVED_FIELDS` (frontend), asserted by
+`backend/tests/listMrpEnrichmentKeys.test.ts` + `frontend/src/lib/listMrpEnrichment.test.ts`.
+The legacy non-paginated PO path (no `page`) is unchanged. No mobile PO/GRN list
+consumes these columns (checked), and no read was removed, widened or re-ordered.
+
+**Ref.** this PR, 2026-08-19. Completes the "list runs computeMrp on load" class:
+SO (#2433), PI, PO, GRN all deferred.
+
+## The pull-health check told you to run the one mode that cannot work [medium]
+
+**Symptom.** `backend/scripts/check-autocount-pull-health.mjs` ends in a VERDICT
+written for a person who has just learned the AutoCount mirror is dead. When it
+found "NOT MOVING", it printed: *"Run the pull in 'all' mode: pull.ts:29 says
+that path uses /getAll and does NOT touch the checkpoint, so it is the clean way
+to collect a backlog."* That instruction 503s.
+
+**Root cause.** The sentence was written from READING `services/pull.ts:29`.
+Both halves of its reasoning are true — `getAll()` is called, the checkpoint is
+not touched — and the operation was never once executed. Dispatched against
+production 2026-08-19: **39 seconds, then HTTP 503 `Worker exceeded resource
+limits`.** ~13,000 orders cannot be fetched and upserted inside one Cloudflare
+Worker request. The remedy that works is `?since=YYYY-MM-DD` windows.
+
+**Why it survived the correction.** The same claim lived in TWO places. The
+retraction was written into `docs/modules/system-health.md` the same day and
+missed this file, so the check went on printing the withdrawn advice to anyone
+who ran it — for a reader whose whole reason for running it is that they do not
+know what to do next. One claim, two homes, one of them forgotten.
+
+**Fix.** The verdict now prints the windowed `?since=` call, and the comment at
+the arrival-rate query no longer says the backlog is *"only `all` mode can
+collect"*.
+
+**And the class, not just the instance.** `scripts/lib/working-agreement.mjs`
+gained rule 4: a PR that tells a reader an operation will fix/recover/collect
+something must carry an `Observed:` line — a status, a count, a duration, an
+error, a run URL — or mark the claim `UNTESTED`. It also WARNS (never fails) when
+such a sentence is added to a module guide or a `check-*.mjs`, which is exactly
+the surface that stayed wrong here. Nothing else could have caught this: the code
+was correct, so types, lint, tests and review were all right to pass. The only
+wrong artifact was the claim, and every gate in this repo read code.
+
+Measured before shipping: 3 hits across 19,784 lines of existing module-guide
+prose, and only ADDED lines are scanned.
+
+**Ref.** `chore/remedy-claim-gate`, 2026-08-19.
+
+## Project visibility no longer filtered by PIC or brand — only by company [medium]
+
+<!-- area: Projects + PMS + fair report -->
+
+白话：以前一个销售只看得到「自己是负责人 (PIC)」而且「品牌在自己名单里」的项目，别人的
+活动 / 展会他看不到。老板 2026-08-19 决定：**同一间公司里，只要有项目权限的人，就能看到
+这间公司的所有项目** —— 不再按负责人、不再按品牌来挡。跨公司还是挡住的（2990 看不到
+HOUZS，反之亦然），这一点没变。
+
+**What changed.** The project row-level ACL (`getProjectScope` / `canSeeProject` /
+`projectAccessLevel` / `isScopedProjectUser`, all in the now-deleted
+`backend/src/services/projectAcl.ts`) filtered a scoped Sales rep to projects on
+their one-hop PIC line whose brand was in their `user_brands` allow-list, plus a
+30-day grace window. Every read that keyed off it now returns the whole
+company-scoped set instead.
+
+**Root cause (this is a deliberate change, not a defect).** The two-dimensional
+PIC + brand model (migs 048/049) was more restriction than the business wanted:
+staff routinely needed to see events they were not the PIC of. Owner decision
+2026-08-19: visibility is governed only by (a) the projects page-access gate and
+(b) company scope.
+
+**Fix.** Removed the PIC/brand predicate at every read site — project list
+(`services/projects.ts`), detail GET + printable debrief, the calendar (its
+scoped-PIC and PIC-self arms; crew + attendee arms kept), notifications, and the
+two finance reads (`/finance/by-project`, `/finance/lines`, money math
+untouched). Removed the matching write gates (create/patch PIC restriction, the
+`canPicProjectBrand` brand-on-PIC gate, and the finance-write PIC gate); the
+company predicate + `projects.write`/`projects.finances` gates stay. Deleted
+`projectAcl.ts`. `AuthUser.brand_scope` is now always `null` (vestigial; the
+signed-session claims contract was left unchanged). Frontend: removed the
+per-user brand-assignment panel (`UserBrandsPanel`) and its triggers from
+`Team.tsx`.
+
+**Kept on purpose (not dead):** `user_brands` and the backend
+`GET/PUT /api/users/:id/brands` routes stay — `user_brands` still powers the
+DIRECTOR APPROVAL-LANE brand split (Kris/Peter stock-out approvals, owner
+2026-08-10) via `approverBrandBlocked` (`projectGates.ts`) and the My-Pending
+approver query. That is a separate axis from project visibility and is
+unaffected. NOTE: with the visibility-oriented `UserBrandsPanel` gone, there is
+no longer an admin UI to EDIT those approval-split brands; existing rows persist.
+
+**Crew scoping is a separate axis and is untouched:** helpers / storekeepers /
+drivers still see only the events they are crewed on.
+
+**Ref.** `chore/remove-project-row-acl`, 2026-08-19.
+
+## Opening Purchase Invoices ran a full company-wide MRP on every load [high]
+
+<!-- area: Purchase orders + GRN + PI -->
+
+**白话.** 打开「采购发票」列表要等大概 4 秒。原因是列表为了显示「关联销售单」和
+「已交货」这两栏，每次打开都把整套 MRP 引擎跑一遍 —— 而 MRP 是全公司最重的计算，
+采购发票列表其实根本不需要现算它。现在改成跟 8 月销售单列表一样的做法：列表先秒开
+（那两栏先空着），过一拍再由一个独立的轻接口把这两栏补上。功能不变，只是不再让整张
+列表卡在 MRP 上。
+
+**Symptom.** In the ERP, opening the Purchase Invoices list (the paginated
+`GET /api/scm/purchase-invoices?page=…`) took ~4.2s — measured from the browser
+against prod with a real session, **~4237 ms** — while the rows themselves are a
+light paginated query with cheap status counts. The exact disease the Sales
+Orders list had before it was deferred.
+
+**Root cause (traced).** PROVEN by reading the call chain on `origin/main`. The
+paginated list handler called `attachPiAssignedSos`
+(`backend/src/scm/lib/pi-assigned-sos.ts`) to fill four columns — `assigned_sos`,
+`assigned_so_linked`, `assigned_so_provenance`, `delivered_dos`. That calls
+`resolvePoSoCoveragePerSkuForPos` (`routes/po-so-coverage.ts`), which runs
+`computeMrp` — the global, company-wide MRP engine — **once per list load**. So
+the PI list could never be faster than the MRP page (~4s), no matter how light
+its own query was. The list query + the six status counts were never the cost;
+the MRP run was. (The 4.2s number is PROVEN by the earlier live browser sweep;
+the after-number is measured post-deploy — the list query is the same one the SO
+list runs in well under a second.)
+
+**Fix.** Defer the four MRP-derived columns off the list's critical path,
+mirroring the Sales Orders list. The paginated list now OMITS them — not blanks
+them (C16: absent means "not computed yet", `[]` would mean "computed empty") —
+and the client heals them a beat after render via a new thin endpoint
+`GET /purchase-invoices/list-mrp-enrichment?piIds=…`
+(`backend/src/scm/routes/purchase-invoices-list-enrichment.ts`), which re-reads
+each PI's `(id, grn_id)` under the SAME company scope the list applies and runs
+the SAME `attachPiAssignedSos`, so the healed values are byte-identical, only
+deferred. The FE overlay `applyPiListMrpEnrichment`
+(`frontend/src/lib/piListEnrichment.ts`) merges them into the shown rows. C16
+parity is pinned both ways: `PI_LIST_MRP_ENRICHMENT_KEYS` (backend) and
+`PI_MRP_DERIVED_LIST_FIELDS` (frontend) are asserted equal by
+`backend/tests/piListEnrichmentKeys.test.ts` +
+`frontend/src/lib/piListEnrichment.test.ts`. The legacy non-paginated path (no
+`page`) is unchanged — byte-identical historical behavior. No read was removed,
+widened, narrowed or re-ordered; only the moment the MRP columns are computed.
+
+**Ref.** this PR, 2026-08-19. Same class as the Sales Orders list MRP-off-load
+deferral (`GET /mfg-sales-orders/list-mrp-enrichment`).
 ## "Create Service Case" stayed grey, and the screen could not say why [high]
 
 **Symptom.** 2026-08-19, a salesperson on mobile: the SO field held `SO-005263`,

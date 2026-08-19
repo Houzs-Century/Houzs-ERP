@@ -207,7 +207,7 @@ the money version of this shape, and it is closed on all three write paths — s
 `docs/unlinked-line-duplicate-coe.md` §5a.
 
 **3. On this side of the chain the same edit-path door is still open.**
-`PATCH /grns/:id/items/:itemId` rewrites a line's `material_code` and never calls
+`PATCH /grns/:id/items/:itemId` rewrites a line's `item_code` and never calls
 `findUnlinkedPoLines`, so a receipt line added for a material the PO does not carry
 (correctly allowed) can afterwards be retyped onto one it does — the refused shape,
 assembled in two legal steps, with `purchase_order_item_id` still null so
@@ -349,7 +349,7 @@ authoritative in-code lists are `HEADER` (`grns.ts:529-534`) and `ITEM` (`:535-5
 |-------|------|
 | `scm.grns` | GRN header. `grn_number` (UNIQUE), `purchase_order_id`, `supplier_id`, **`warehouse_id`** (where the IN lands), `received_at`, `delivery_note_ref`, `status`, `currency`, **`exchange_rate`**, **`allocation_method`**, `subtotal_sen` / `tax_sen` / `total_sen`, `posted_at`, `company_id`. |
 | `scm.grn_items` | GRN lines. `purchase_order_item_id` (the PO link that drives `received_qty`, the batch and the receiving warehouse), `material_kind/code/name`, `supplier_sku`, `qty_received`, **`qty_accepted`** (the qty that actually becomes stock), `qty_rejected`, `rejection_reason`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, **`allocated_charge_sen`**, **`invoiced_qty`** / **`returned_qty`** (downstream consumption), `delivery_date`, `rack_id`, variant columns. |
-| `scm.inventory_movements` | Where the IN lands: `movement_type='IN'`, `source_doc_type='GRN'`, `source_doc_id`, `source_doc_no`, `warehouse_id`, `product_code`, `variant_key`, `unit_cost_sen`, **`batch_no`** (= the source PO number). |
+| `scm.inventory_movements` | Where the IN lands: `movement_type='IN'`, `source_doc_type='GRN'`, `source_doc_id`, `source_doc_no`, `warehouse_id`, `item_code`, `variant_key`, `unit_cost_sen`, **`batch_no`** (= the source PO number). |
 | `scm.inventory_balances` | Read by `grnReverseWouldGoNegative` (`:788-792`) to decide whether a reversal is safe. |
 | `scm.purchase_order_items` | Upstream: `received_qty` is written by this module (`recomputePoReceived`, `:672`). |
 | `scm.purchase_invoice_items` / `scm.purchase_return_items` | Downstream: they draw on `grn_item_id`, which is what moves `invoiced_qty` / `returned_qty`. |

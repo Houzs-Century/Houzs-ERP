@@ -53,13 +53,7 @@ import {
   stripSensitiveChecklist,
   stripSetupDismantle,
 } from "../services/projects";
-import {
-  getProjectScope,
-  projectAccessLevel,
-  canSeeProject,
-  isScopedProjectUser,
-} from "../services/projectAcl";
-import { getPmsAccess, getPmsRole, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
+import { getPmsAccess, financeHiddenForUser, isFinanceViewer, isSalesUser } from "../services/pmsAccess";
 import { scopeSalesReportsForUser } from "../services/orgScope";
 import { audit } from "../services/audit";
 import { hasPermission, holdsChecklistApproval } from "../services/permissions";
@@ -1012,7 +1006,6 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
   const fromParam = c.req.query("from");
   const toParam = c.req.query("to");
   const user = c.get("user");
-  const scope = getProjectScope(user);
   // "My pending tasks" filter — map the caller's role to the task scope
   // they own. Owner / IT Admin / unmapped roles -> no filter (full list).
   let pendingLabel: string | undefined;
@@ -1160,13 +1153,6 @@ app.get("/", requirePageAccess("projects.list"), async (c) => {
     include_archived: c.req.query("include_archived") === "1",
     sort_by: c.req.query("sort_by") || undefined,
     sort_dir: (c.req.query("sort_dir") || "").toLowerCase() === "asc" ? "asc" : "desc",
-    pic_scope: scope?.pic_ids,
-    brand_scope: scope?.brands,
-    // Attendee arm — only for a scoped rep (scope != null). OR-in projects
-    // where they're on the Sales Attending list, mirroring /calendar/events
-    // so the list and the calendar agree. Admins/directors/unscoped roles
-    // have scope === null and never carry this (they see all, unchanged).
-    attendee_user_id: scope ? user?.id : undefined,
     // "Assigned to me" (owner 2026-07-16): drivers/helpers can pull just the
     // events they're crewed on (FK cols or crew JSON name match).
     // Owner 2026-07-21: for helpers/storekeepers this is FORCED — they only
@@ -2254,43 +2240,27 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
   // from a nonexistent id). Predicate skipped when the context is unresolved.
   const detail = await getProjectDetail(c.env, id, activeCompanyId(c));
   if (!detail) return c.json({ error: "Not found" }, 404);
-  // Row-level ACL. canSeeProject covers the PIC line + brand + grace (the same
-  // predicate as the list's PIC arm). A scoped rep on the project's Sales
-  // Attending list also has visibility — the list's attendee arm surfaces the
-  // row, so opening it must not 404. Mirror that arm here using the already-
-  // loaded sales_attendees (rep_user_id; pg driver camelCases → dual-read).
-  // Attendee access is read-only: the write gate (PATCH below) still uses
-  // canSeeProject alone, so attendees can view but not edit a project.
-  const isDetailAttendee =
-    !!user?.id &&
-    (detail.sales_attendees ?? []).some(
-      (a: any) => (a.rep_user_id ?? a.repUserId) === user.id
-    );
-  if (!canSeeProject(user, detail.project) && !isDetailAttendee) {
-    return c.json({ error: "Not found" }, 404);
-  }
+  // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19): any
+  // user with projects page access sees any project in their active company
+  // (the getProjectDetail load above is company-scoped). Crew scoping below is
+  // a separate axis and stays.
   // Owner 2026-07-21: helpers/storekeepers open ONLY events they're crewed on
   // (same 404-shape as the other row-ACL misses so ids aren't probeable).
   if (isCrewScopedUser(user)) {
     const phases = await getUserPhasesOnProject(c.env, id, user?.id ?? 0, user?.name);
     if (phases.length === 0) return c.json({ error: "Not found" }, 404);
   }
-  // Tell the frontend which panels to hide for this user/project.
-  // `level` keeps the legacy 'full' | 'limited' vocabulary for current
-  // callsites; `level_v2` emits the new 'full' | 'partial' vocabulary
-  // used by the page-access model (mig 073). Both reflect the same
-  // row-level decision — PIC vs non-PIC for this specific project.
-  // Phase 2 (Projects migration) drops the legacy `level` field.
-  const rowLevel = projectAccessLevel(user, detail.project);
-  // Section-level (PMS) access for this user × project. Drives which detail
-  // panels render AND lets us strip the financial snapshot server-side so it
-  // never leaves the Worker for a role that shouldn't see money.
+  // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19):
+  // every viewer now gets the full row-level view of the project. `level` /
+  // `level_v2` / `scoped` are kept for frontend compatibility but are now
+  // constant. Section-level (PMS) access below still strips money / sensitive
+  // panels by position — a separate, finer axis that is unaffected.
   const pms = getPmsAccess(user, detail.project);
   const access = {
-    level: rowLevel,
-    level_v2: rowLevel === "limited" ? "partial" : rowLevel,
+    level: "full" as const,
+    level_v2: "full" as const,
     is_pic: detail.project.pic_id === user.id,
-    scoped: isScopedProjectUser(user),
+    scoped: false,
     pms,
   };
   // Defense in depth: hide finance (rental / cost / profit / ledger lines /
@@ -2373,48 +2343,6 @@ app.get("/:id", requirePageAccess("projects.list"), async (c) => {
   return c.json({ ...payload, _access: access });
 });
 
-/**
- * Brand-on-person gate for PIC assignment. Returns true when the
- * picked user has the project's brand in their user_brands row set
- * (mig 049, replaces the prior dept-level join in mig 048).
- *
- * Brand-relaxed for Sales (owner: Option A). Any member of the Sales
- * department may be assigned PIC regardless of brand coverage — the
- * PIC picker lists all Sales-dept members ignoring brand, so the save
- * gate must accept them too. Non-Sales users still need a matching
- * user_brands row.
- *
- * A project with no brand can never have a PIC assigned: there's no
- * brand to match against, and unbranded projects are deliberately
- * invisible to scoped users anyway.
- */
-async function canPicProjectBrand(
-  env: Env,
-  picUserId: number,
-  brand: string | null | undefined
-): Promise<boolean> {
-  if (!brand) return false;
-  // env.DB (not getDb): this gate must also work on the D1 fallback used by
-  // the test suite and the rollback path, where no DATABASE_URL is bound.
-  // Brand-relaxed: a Sales-department member is always an eligible PIC.
-  const sales = await env.DB.prepare(
-    `SELECT 1 AS one
-       FROM users u
-       JOIN departments d ON d.id = u.department_id
-      WHERE u.id = ? AND LOWER(d.name) LIKE '%sales%'
-      LIMIT 1`
-  )
-    .bind(picUserId)
-    .first();
-  if (sales !== null) return true;
-  const row = await env.DB.prepare(
-    `SELECT 1 AS one FROM user_brands WHERE user_id = ? AND brand = ? LIMIT 1`
-  )
-    .bind(picUserId, brand)
-    .first();
-  return row !== null;
-}
-
 // ── Create ────────────────────────────────────────────────────
 
 // Event (project) creation is restricted to BD staff, the Owner account, and
@@ -2451,37 +2379,11 @@ app.post("/", requirePermission("projects.write"), async (c) => {
   if (!body.name || !body.name.trim()) {
     return c.json({ error: "name is required" }, 400);
   }
-  // Owner 2026-07-20: reversed the 2026-07-18 block — a Sales Director may now
-  // assign the project PIC at create (as well as PATCH + Sales Attending below),
-  // like everyone else holding projects.write. The scope + brand gates below
-  // still apply to the picked user.
-  // Scoped users (sales reps) can only create projects where they or
-  // their manager is the PIC. Ignore any other pic_id they submit.
-  let picId = body.pic_id ?? null;
-  // isScopedProjectUser (not the raw scope_to_pic flag): a non-director Sales
-  // user whose role lacks scope_to_pic is still row-scoped (owner 2026-07-15),
-  // so they can only PIC themselves / their manager here too.
-  if (isScopedProjectUser(user)) {
-    const allowed = [user.id, user.manager_id].filter(Boolean);
-    if (picId == null || !allowed.includes(picId)) {
-      picId = user.id;
-    }
-  }
-  // Brand gate: when assigning a PIC at create time, the picked user's
-  // department must cover the project's brand. Skip when picId is null
-  // (unassigned project — admin will pic it later).
-  if (picId != null) {
-    const ok = await canPicProjectBrand(c.env, picId, body.brand ?? null);
-    if (!ok) {
-      return c.json(
-        {
-          error:
-            "Picked user's department does not cover this brand. Assign a brand first or pick a user whose department includes it.",
-        },
-        403
-      );
-    }
-  }
+  // Project creation is gated by projects.write + canCreateEvent (BD / owner)
+  // above. The PIC/brand row-level ACL was removed (owner decision 2026-08-19),
+  // so any submitted pic_id is honoured and there is no per-brand PIC gate — the
+  // picker offers whoever it offers.
+  const picId = body.pic_id ?? null;
   // `deriveProjectCode` throws when state/venue/brand are missing —
   // surface that as a clean 400 so the toast says exactly which field
   // is missing instead of "Internal server error".
@@ -2520,19 +2422,14 @@ app.patch("/:id", requirePermission("projects.write"), async (c) => {
   const user = c.get("user");
   const body = await c.req.json<Record<string, any>>();
 
-  // Always need brand + pic_id + created_by for the brand gate below
-  // (and for the scoped-user can-see check).
   // Multi-company: the pre-patch fetch is company-scoped, so a cross-company
-  // id 404s before any write.
+  // id 404s before any write. This is the only remaining row-level gate on the
+  // patch (the PIC/brand ACL was removed 2026-08-19).
   const existing = await c.env.DB.prepare(
-    `SELECT pic_id, created_by, brand FROM projects WHERE id = ?${activeCompanySql(c)}`
+    `SELECT id FROM projects WHERE id = ?${activeCompanySql(c)}`
   )
     .bind(id)
-    .first<{
-      pic_id: number | null;
-      created_by: number | null;
-      brand: string | null;
-    }>();
+    .first<{ id: number }>();
   if (!existing) return c.json({ error: "Not found" }, 404);
 
   // Logistics crew is READ-ONLY for Sales (owner 2026-07): a Sales user — incl.
@@ -2548,41 +2445,10 @@ app.patch("/:id", requirePermission("projects.write"), async (c) => {
     delete body.service_crew;
   }
 
-  // Gate: scoped users can only patch projects they can see. And
-  // they cannot reassign pic_id away from themselves/their manager.
-  // isScopedProjectUser covers the code-keyed Sales cohort (owner 2026-07-15),
-  // not just roles carrying the scope_to_pic flag.
-  if (isScopedProjectUser(user)) {
-    if (!canSeeProject(user, existing)) return c.json({ error: "Not found" }, 404);
-    if ("pic_id" in body) {
-      const allowed = [user.id, user.manager_id].filter(Boolean);
-      if (body.pic_id != null && !allowed.includes(body.pic_id)) {
-        delete body.pic_id;
-      }
-    }
-  }
-
-  // Owner 2026-07-20: reversed the 2026-07-18 block — a Sales Director may now
-  // (re)assign the PIC in this PATCH, like everyone else holding projects.write.
-  // The brand gate below still validates the picked user.
-
-  // Brand gate for any PIC assignment (admin or scoped). Validates
-  // against the post-patch brand, so changing brand + pic together is
-  // checked atomically.
-  if ("pic_id" in body && body.pic_id != null) {
-    const effectiveBrand =
-      "brand" in body ? (body.brand as string | null) : existing.brand;
-    const ok = await canPicProjectBrand(c.env, body.pic_id, effectiveBrand);
-    if (!ok) {
-      return c.json(
-        {
-          error:
-            "Picked user's department does not cover this brand.",
-        },
-        403
-      );
-    }
-  }
+  // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19): a
+  // projects.write holder may patch any project in their active company (the
+  // pre-patch fetch above is company-scoped and 404s a cross-company id) and may
+  // (re)assign the PIC to anyone, with no per-brand PIC gate.
 
   const result = await patchProject(c.env, id, body, user?.id ?? 0);
   if (!result.ok) return c.json({ error: "No changes" }, 400);
@@ -2723,27 +2589,16 @@ app.patch("/:id/finance", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const user = c.get("user");
-  // Only the PIC (or an unscoped role) can write finance for a project.
-  // isScopedProjectUser also covers non-director Sales users whose role lacks
-  // the scope_to_pic flag (owner 2026-07-15).
-  //
-  // Company scope (owner audit 2026-07-22): the PIC check + patchFinance
-  // both loaded by id alone, so a user granted BOTH companies could — while
-  // active on A — be PIC on a B project and edit B's finance from within A.
-  //
-  // 2026-08-14: this load used to sit INSIDE the isScopedProjectUser branch, so
-  // for a caller who is NOT scope-to-PIC no company predicate was evaluated at
-  // all — and patchFinance CREATES the row when missing, so a cross-company id
-  // got a snapshot written and recomputeAutoCostLines ran on it. Resolved in the
-  // active company FIRST, for everyone; the PIC rule applies to THAT row.
+  // Company scope (owner audit 2026-07-22): the project is resolved in the
+  // ACTIVE company FIRST, so a cross-company id 404s before patchFinance (which
+  // CREATES the snapshot row when missing) can run. The PIC/brand row-level ACL
+  // that used to further restrict finance writes was removed (owner decision
+  // 2026-08-19); company scope + the projects.write + finance gates remain.
   {
     const row = await c.env.DB.prepare(
-      `SELECT pic_id, created_by FROM projects WHERE id = ?${activeCompanySql(c)}`
-    ).bind(id).first<{ pic_id: number | null; created_by: number | null }>();
+      `SELECT id FROM projects WHERE id = ?${activeCompanySql(c)}`
+    ).bind(id).first<{ id: number }>();
     if (!row) return c.json({ error: "Not found" }, 404);
-    if (isScopedProjectUser(user) && (row.pic_id ?? row.created_by ?? null) !== user.id) {
-      return c.json({ error: "You don't have permission to view this project's financial information." }, 403);
-    }
   }
   const body = await c.req.json<Record<string, any>>();
   const ok = await patchFinance(c.env, id, body, user?.id ?? 0);
@@ -2782,14 +2637,9 @@ app.get("/finance/categories", (c) => {
 // filter the project itself.
 app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
-  const user = c.get("user");
-  // Finance tab is PIC-only. Scoped reps (who aren't themselves a PIC
-  // on any project) get zero rows — finance is in the "limited view"
-  // restricted panel list.
-  const picScope = user?.scope_to_pic ? [user.id].filter(Boolean) : null;
-  if (picScope && picScope.length === 0) {
-    return c.json({ data: [], total: 0, totals: { total_income: 0, total_cost: 0 } });
-  }
+  // PIC/brand row-level ACL removed (owner decision 2026-08-19): the Finance
+  // tab is gated by the projects.finances page-access + the denyFinance role
+  // check above, and scoped to the active company below. No per-PIC row filter.
   const dateFrom = c.req.query("date_from") || "";
   const dateTo = c.req.query("date_to") || "";
   const brand = c.req.query("brand") || "";
@@ -2835,11 +2685,6 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
     const like = `%${search}%`;
     projConds.push(
       sql`(p.code ILIKE ${like} OR p.name ILIKE ${like} OR p.venue ILIKE ${like} OR p.organizer ILIKE ${like})`
-    );
-  }
-  if (picScope) {
-    projConds.push(
-      sql`COALESCE(p.pic_id, p.created_by) IN (${sql.join(picScope.map((id) => sql`${id}`), sql`, `)})`
     );
   }
   const whereClause = projConds.length
@@ -3002,12 +2847,9 @@ app.get("/finance/by-project", requirePageAccess("projects.finances"), async (c)
 // as /finance/by-project plus kind + category.
 app.get("/finance/lines", requirePageAccess("projects.finances"), async (c) => {
   const denied = denyFinance(c); if (denied) return denied;
-  const user = c.get("user");
-  // PIC-only panel — scoped reps see no finance lines.
-  const finPicScope = user?.scope_to_pic ? [user.id].filter(Boolean) : null;
-  if (finPicScope && finPicScope.length === 0) {
-    return c.json({ data: [], total: 0, page: 1, per_page: 50 });
-  }
+  // PIC/brand row-level ACL removed (owner decision 2026-08-19): finance lines
+  // are gated by projects.finances + denyFinance and scoped to the active
+  // company below; no per-PIC row filter.
   const dateFrom = c.req.query("date_from") || "";
   const dateTo = c.req.query("date_to") || "";
   const kindParam = (c.req.query("kind") || "all").toLowerCase();
@@ -3044,11 +2886,6 @@ app.get("/finance/lines", requirePageAccess("projects.finances"), async (c) => {
     const like = `%${search}%`;
     conds.push(
       sql`(l.description ILIKE ${like} OR l.notes ILIKE ${like} OR p.code ILIKE ${like} OR p.name ILIKE ${like})`
-    );
-  }
-  if (finPicScope) {
-    conds.push(
-      sql`COALESCE(p.pic_id, p.created_by) IN (${sql.join(finPicScope.map((id) => sql`${id}`), sql`, `)})`
     );
   }
 
@@ -4838,19 +4675,10 @@ app.get("/calendar/events", requirePageAccess("projects.calendar"), async (c) =>
      venue events; that lane is now assignment-scoped too. */
   const granted = user?.permissions_set ?? user?.permissions ?? [];
   const isAdmin = !!user && hasPermission(granted, "*");
-  /* Owner 2026-07-05 — a DIRECTOR-level user (Owner/IT via `*`, Super Admin,
-     Sales Director, Finance Manager — see pmsAccess getPmsRole) sees the WHOLE
-     calendar, not just their assigned venues. Reuses the existing PMS role
-     classification so it stays position-driven (toggle via the position name /
-     `*`), not a hardcoded string here. The DIRECTOR branch of getPmsRole is
-     project-independent, so a throwaway project shape is fine. */
-  const scope = getProjectScope(user);
-  /* Owner 2026-07-06 — unscoped non-admin staff (logistics, drivers, ops,
-     purchasing, etc.) see the WHOLE event calendar again, as they did before
-     the 2026-07-05 assignment-scoping. `scope === null` means the role isn't
-     scope_to_pic, so getProjectScope already treats them as unfiltered
-     everywhere else; the calendar now matches. Only scope_to_pic roles
-     (sales reps) stay filtered to their own assigned events. */
+  /* PIC/brand row-level visibility ACL removed (owner decision 2026-08-19):
+     every non-crew caller now sees the WHOLE (company-scoped) calendar. The
+     only remaining scoped lane is CREW (helpers / storekeepers / drivers), who
+     still see just the events they are crewed on. */
   /* Owner 2026-07-21: helpers/storekeepers are crew-scoped — their calendar
      shows only events they're crewed on, so they drop out of the unscoped
      see-all lane and get a crew-assignment arm instead. */
@@ -4866,10 +4694,10 @@ app.get("/calendar/events", requirePageAccess("projects.calendar"), async (c) =>
     ((user.position_name ?? "").trim().toLowerCase() === "driver" ||
       /^drivers?$/i.test(((user as { role_name?: string | null }).role_name ?? "").trim()));
   const crewScoped = isCrewScopedUser(user) || isScopedDriver;
-  const seeAll =
-    !!user &&
-    !crewScoped &&
-    (isAdmin || getPmsRole(user, { pic_id: null }) === "DIRECTOR" || scope === null);
+  // Every authenticated non-crew caller sees the whole company calendar now
+  // (PIC/brand ACL removed 2026-08-19). Only crew stay scoped, to the events
+  // they are crewed on (OR their sales-attendee arm).
+  const seeAll = !!user && !crewScoped;
   const assignArms: string[] = [];
   const scopeBinds: any[] = [];
   if (!seeAll) {
@@ -4889,24 +4717,10 @@ app.get("/calendar/events", requirePageAccess("projects.calendar"), async (c) =>
         scopeBinds.push(`%"${nm}"%`, `%"${nm}"%`);
       }
       assignArms.push(`(${arm})`);
-    } else if (scope) {
-      // Existing scoped-role behavior, verbatim (one-hop PIC + brand gate) —
-      // just OR-extended with the attendee arm below so an attending rep
-      // also sees venues where they aren't the PIC.
-      if (scope.pic_ids.length > 0 && scope.brands.length > 0) {
-        assignArms.push(
-          `(COALESCE(p.pic_id, p.created_by) IN (${scope.pic_ids.map(() => "?").join(",")})` +
-          ` AND p.brand IS NOT NULL AND p.brand IN (${scope.brands.map(() => "?").join(",")}))`
-        );
-        scopeBinds.push(...scope.pic_ids, ...scope.brands);
-      }
-    } else if (user?.id) {
-      // Non-scoped non-admin (NEW lane): PIC-self only, no brand gate —
-      // being the project's PIC is already an explicit assignment.
-      assignArms.push(`COALESCE(p.pic_id, p.created_by) = ?`);
-      scopeBinds.push(user.id);
     }
     if (user?.id) {
+      // A crew member who is also on a project's Sales Attending list still
+      // sees that event (attendee arm, mig 087).
       assignArms.push(
         `EXISTS (SELECT 1 FROM project_sales_attendees psa` +
         ` JOIN sales_reps sr ON sr.id = psa.sales_rep_id` +

@@ -448,7 +448,7 @@ purchaseInvoices.get('/', async (c) => {
   if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
   const statusCounts = counted.counts;
 
-  const purchaseInvoices = await attachPiAssignedSos(sb, c, (data ?? []) as Array<{ id: string; grn_id?: string | null }>);
+  const purchaseInvoices = (data ?? []) as Array<Record<string, unknown>>; // MRP columns OMITTED (C16); healed by GET /list-mrp-enrichment — see BUG-HISTORY
   return c.json({ purchaseInvoices, total, page, pageSize, statusCounts });
 });
 

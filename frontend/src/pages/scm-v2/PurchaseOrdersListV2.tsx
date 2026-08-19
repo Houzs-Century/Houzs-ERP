@@ -54,6 +54,7 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import {
   usePurchaseOrdersPaged,
+  useEnrichedPoListRows,
   usePurchaseOrderDetail,
   useCancelPurchaseOrder,
   fetchPurchaseOrderDetail,
@@ -759,8 +760,12 @@ export function PurchaseOrdersListV2() {
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const cancelPo = useCancelPurchaseOrder();
 
-  // Server already filtered + sorted this page — render verbatim.
-  const rows = (data?.purchaseOrders ?? []) as PoHeaderRow[];
+  // Server already filtered + sorted this page — render verbatim. The MRP-derived
+  // columns (Assigned SO / Delivered) arrive from the deferred enrichment endpoint
+  // a beat later and are merged in here, so opening the list no longer waits on a
+  // company-wide computeMrp (perf/po-grn-list-mrp-off-load).
+  const serverRows = (data?.purchaseOrders ?? []) as PoHeaderRow[];
+  const rows = useEnrichedPoListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? {
     all: 0,
