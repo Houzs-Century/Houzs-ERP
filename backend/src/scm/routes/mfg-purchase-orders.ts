@@ -638,21 +638,11 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
   const skuCodes = [...new Set(((items ?? []) as unknown as Row[]).map((r) => r.item_code).filter(Boolean))] as string[];
   const mainSupplierByCode = new Map<string, { code: string; name: string }>();
   if (skuCodes.length > 0) {
-    /* CHUNKED + PAGED via the shared reader (lib/supplier-bindings.ts). This was
-       the un-fixed twin of routes/mrp.ts section 5: ONE un-chunked IN-list over
-       every code in the picker, and no paging at all, against PostgREST's
-       1,000-row response cap and 2,660 binding rows in production. A binding
-       that fell past the cap left `mainSupplierByCode` without an entry, and
-       this column then rendered "— none —" for a SKU that IS bound — with no
-       error anywhere, and with WHICH SKUs lost it decided by the arbitrary
-       order of `is_main_supplier DESC` ties, so two identically-bound modules
-       of the same sofa could disagree. */
-    const { data: binds } = await readMfgProductBindings<{
-      item_code: string;
-      supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null;
-    }>(supabase, {
-      codes: skuCodes,
-      companyId: activeCompanyId(c),
+    /* CHUNKED + PAGED — lib/supplier-bindings.ts. Un-chunked over every code in the
+       picker, a binding past the 1,000-row cap showed "— none —" for a bound SKU. */
+    type PickerBind = { item_code: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null };
+    const { data: binds } = await readMfgProductBindings<PickerBind>(supabase, {
+      codes: skuCodes, companyId: activeCompanyId(c),
       select: 'item_code, is_main_supplier, supplier:suppliers(code, name)',
     });
     for (const b of binds) {
@@ -1838,22 +1828,17 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   // Phase 3 (2026-05-29) — also load price_matrix so the PO line cost can
   // auto-price from the supplier's own per-category price table.
   const codes = [...new Set(soItems.map((it) => it.itemCode))];
-  /* CHUNKED + PAGED via the shared reader (lib/supplier-bindings.ts), and the
-     stakes here are higher than a blank cell. A binding that does not arrive
-     leaves the SKU with no resolvable supplier, and the convert answers 400
-     `missing_bindings` naming it — so the operator is told a bound SKU "isn't
-     bound to a supplier yet" and cannot raise the PO at all. Un-chunked and
-     un-paged, that outcome depended on where PostgREST's 1,000-row cap happened
-     to cut a list ordered only by `is_main_supplier DESC`. */
-  const { data: bindings } = await readMfgProductBindings<{
+  type MainBindingRow = {
     item_code: string; supplier_id: string; supplier_sku: string;
     unit_price_sen: number; currency: string; price_matrix: Record<string, unknown> | null;
-  }>(supabase, {
-    codes,
-    companyId: activeCompanyId(c),
+  };
+  /* CHUNKED + PAGED — lib/supplier-bindings.ts. `is_main_supplier DESC` kept the
+     MAINS in page one, so an un-paged read lost the ALTERNATES — what the MRP
+     dropdown sends — and the PO went to the main supplier, at its price, silently. */
+  const { data: bindings } = await readMfgProductBindings<MainBindingRow>(supabase, {
+    codes, companyId: activeCompanyId(c),
     select: 'item_code, supplier_id, supplier_sku, unit_price_sen, currency, price_matrix, is_main_supplier',
   });
-
   /* Commander 2026-05-29 — drop ORPHANED bindings (supplier was deleted but the
      binding row survived, e.g. after a supplier reset). An orphan would slip a
      dead supplier_id into the PO insert → FK violation → silent 0-PO "success".
@@ -1901,11 +1886,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
      BY). Orphaned bindings (deleted supplier) are skipped.
      Phase 3 (2026-05-29) — the binding also carries price_matrix so the PO line
      cost can auto-price from the supplier's own per-category price table. */
-  type MainBinding = {
-    item_code: string; supplier_id: string; supplier_sku: string;
-    unit_price_sen: number; currency: string;
-    price_matrix: Record<string, unknown> | null;
-  };
+
   /* Commander 2026-05-31 — per-pick supplier support. A single SKU can now be
      split across suppliers within one convert (MRP per-line supplierId), so a
      single "main binding per code" is no longer enough to cost / group a line.
@@ -1915,9 +1896,9 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
        • bindingByCodeSupplier (`code|supplierId`) — every live binding, so a
          line bound to a specific effective supplier can resolve ITS binding
          (sku, price_matrix, currency) for costing + grouping. */
-  const mainByCode = new Map<string, MainBinding>();
-  const bindingByCodeSupplier = new Map<string, MainBinding>();
-  for (const b of (bindings ?? []) as MainBinding[]) {
+  const mainByCode = new Map<string, MainBindingRow>();
+  const bindingByCodeSupplier = new Map<string, MainBindingRow>();
+  for (const b of bindings) {
     if (!liveSupplierIds.has(b.supplier_id)) continue; // orphaned binding — skip
     bindingByCodeSupplier.set(`${b.item_code}|${b.supplier_id}`, b);
     const override = supplierByCode[b.item_code];
@@ -1939,7 +1920,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
      missing_bindings). If a per-pick/override supplier is named but has no live
      binding for this SKU, fall back to main so the convert still produces a PO
      against a valid supplier rather than silently dropping the line. */
-  const effectiveBindingFor = (it: { itemCode: string; pickSupplierId: string | null }): MainBinding | null => {
+  const effectiveBindingFor = (it: { itemCode: string; pickSupplierId: string | null }): MainBindingRow | null => {
     const chosen = it.pickSupplierId ?? supplierByCode[it.itemCode] ?? null;
     if (chosen) {
       const exact = bindingByCodeSupplier.get(`${it.itemCode}|${chosen}`);
@@ -3891,9 +3872,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
   };
   const bindByCode = new Map<string, BindLite>();
   if (codesToPrice.length > 0) {
-    // Same shared reader as the two above — one supplier's bindings, but the
-    // code list is still the whole append batch, so it chunks and pages too.
-    const { data: binds } = await readMfgProductBindings<BindLite>(sb, {
+    const { data: binds } = await readMfgProductBindings<BindLite>(sb, {   // same reader
       codes: codesToPrice as string[],
       companyId: activeCompanyId(c),
       select: 'item_code, supplier_sku, unit_price_sen, price_matrix, is_main_supplier',
