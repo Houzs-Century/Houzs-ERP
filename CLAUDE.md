@@ -1195,10 +1195,19 @@ were pruned in one pass, with a name+SHA manifest kept so every one stays
 restorable.
 
 **The durable fix is a repo setting, not a habit** — habits are what produced
-the 1,406. Settings -> General -> **Automatically delete head branches**. It was
-`false` as of 2026-08-12 and needs repo ADMIN to flip, so only the owner can:
-the API answers `404` to everyone else. Once on, GitHub deletes the head branch
-on every merge and nothing here needs doing by hand.
+the 1,406. Settings -> General -> **Automatically delete head branches**.
+
+**IT IS ON. Verified 2026-08-19** — `gh api repos/Houzs-Century/Houzs-ERP --jq
+.delete_branch_on_merge` returns `true`, and the branches of #2483 and #2487
+were both already gone the moment their merges landed: `git push origin --delete`
+answered `remote ref does not exist`. So the manual delete after a merge is no
+longer yours, and a session that still does it by hand is doing nothing.
+
+This paragraph said `false` as of 2026-08-12 and asked the owner to flip it, for
+a week after somebody flipped it. That is the shape this file warns about in its
+own words — an auto-loaded stale fact is worse than no fact, because every
+session believes it. Re-run the command above rather than trusting this
+paragraph either.
 
 Deliberately NOT solved with a workflow. A GitHub Action could delete the branch
 on merge without admin, but this repo has just paid for a workflow that died
