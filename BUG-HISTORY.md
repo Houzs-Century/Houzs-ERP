@@ -1,4 +1,4 @@
-## The remedy-claim gate read narration as a prescription, and turned `main` red [medium]
+## The working-agreement gate's rule 4 read narration as a prescription, and turned `main` red [medium]
 
 **Symptom.** Hours after the Chinese patterns landed, every PR failed
 `working-agreement` on its own noise-isolation test. The offending line was
