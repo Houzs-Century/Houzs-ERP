@@ -10,6 +10,7 @@ import {
   getUserBySession,
   generateToken,
   isoIn,
+  timingSafeEqualStr,
 } from "../services/auth";
 import { bustUserSessions } from "../services/sessionCache";
 import { isFinanceViewer, isProductCostViewer } from "../services/pmsAccess";
@@ -585,7 +586,7 @@ app.get("/me", async (c) => {
   if (!token) return c.json({ error: "Unauthorized" }, 401);
 
   // Legacy shared key — service identity, no DB lookup.
-  if (c.env.DASHBOARD_API_KEY && token === c.env.DASHBOARD_API_KEY) {
+  if (c.env.DASHBOARD_API_KEY && timingSafeEqualStr(token, c.env.DASHBOARD_API_KEY)) {
     return c.json({
       user: {
         id: 0,

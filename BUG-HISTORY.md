@@ -1,3 +1,181 @@
+## Zero-grant multi-company user was handed EVERY company — fail-open tenant default flipped to fail-closed [medium]
+
+<!-- area: Auth, permissions, sessions -->
+
+**白话.** 多公司启用后，如果有一个用户在权限表 (`user_companies`) 里一间公司都没有
+被授权，系统本来是「保险起见给他看全部公司」—— 反而是最不安全的做法：一个没被授权
+任何公司的人，看到了两间公司的全部资料。现在改成「没授权就什么都看不到」(fail-closed)。
+今天是安全的：查过生产资料，**0 个零授权用户**，没有人会因此被锁在外面；这只是为将来
+补上的安全默认值。
+
+**Symptom.** In `backend/src/middleware/companyContext.ts`, when multi-company is
+active (`companies.length > 1`), a resolved user with ZERO `user_companies` grant
+rows had `allowedCompanyIds` default to EVERY active company (`companies.map(co =>
+co.id)`). The narrowing to the user's grants ran only inside `if (granted.length >
+0)`, so a zero-grant user fell through with the full company list — the least-safe
+outcome for the least-privileged account. The SCM client is service-role (RLS
+bypassed), so that app-layer list IS the tenant boundary.
+
+**Root cause (traced).** The Phase-0e default was fail-OPEN by construction: `let
+allowed = companies.map(...)` then narrow only when `granted.length > 0`. The
+branch for a *confirmed-empty* grant read was never written, so "user has no
+grants" and "grant table absent / DB blip" collapsed into the same all-companies
+fallback. Under RLS (`docs/TENANT-ISOLATION-ROOT-FIX.md`), `app.company_id` must be
+a single value; a user granted "all" has none — so the fail-open default also
+blocked the root fix.
+
+**Fix.** Add the missing `else`: a resolved multi-company user whose grant read
+succeeds and returns ZERO rows now gets `allowed = []` — the RESTRICTED-TO-NOTHING
+sentinel the scoping helpers already honour (`isRestrictedToNoCompany`, the `1=0` /
+empty-`.in` MATCH_NOTHING paths in `backend/src/scm/lib/companyScope.ts`), so a
+zero-grant user sees no company rather than all. Every other branch is preserved
+exactly: a grant-read error / absent table still throws to the `catch` and keeps
+the ALL-companies default (a transient blip must not lock everyone out), an
+unresolvable uid skips the block, single-company / pre-activation never narrows,
+and the cold-start branch (companies master unreadable) is untouched. Owner
+decision, `docs/TENANT-ISOLATION-ROOT-FIX.md` §6.1. **Safe today because a live
+audit found 0 users with zero grants** — nobody is locked out; this is a safety
+default for the future. Pinned by `backend/tests/companyContextZeroGrantFailClosed.test.ts`
+(zero-grant → `[]`; one grant → that company; single-company unchanged;
+cold-start unchanged) and the updated last-known-good case in
+`backend/tests/companyScopeFailClosed.test.ts`.
+
+**Ref:** #<PR>. `fix/zero-grant-fail-closed` 2026-08-20.
+
+## Cancelled duplicate DO never gave its stock back — reversal was best-effort and silently lost [high]
+
+<!-- area: Delivery, DO, returns -->
+
+**白话.** 一张销售单 (2990-SO-2606-019, 客户 Andrew khoo) 出了两次货：一张真的
+(2990-DO-2607-017)，一张重复的 (2990-DO-2607-005)。重复那张后来取消了，但它出掉的
+库存没有还回来 —— 仓库里那 1 张床垫、2 个枕头、1 张沙发 (KETTA 1 / NTYR 2 /
+TRION 1) 明明还在货架上，系统却当作出货了，库存少算。修法：用系统自己的取消还货
+函数，只针对这一张单还货；真的那张单一根手指都不碰。这是一次性资料修复，PLAN 是默认，
+要 apply 得打确认句。
+
+**Symptom.** On sales order 2990-SO-2606-019, the duplicate delivery order
+2990-DO-2607-005 is status=CANCELLED, yet its three stock-OUT
+`inventory_movements` at warehouse `41d544bc-cb3b-424a-8629-e3e27e14df5f`
+(2990 KETTA-FIRM MATT (K) qty 1, NTYR MEMORY CONTOUR PILLOW qty 2, TRION-(K)
+qty 1) were never reversed — stock is still double-deducted against
+2990-DO-2607-017 (DISPATCHED), which is the genuine delivery. Verified live
+2026-08-19 via the SO-DO drill (`.github/workflows/so-do-drill.yml`,
+`backend/scripts/check-so-do-drill.mjs`).
+
+**Root cause (traced).** Two failures compounded. (1) When DO-005 was cancelled,
+`reverseInventoryForDo`'s return value was discarded by the cancel path's
+best-effort `try/catch`, so a movement-write failure left the shipped stock
+deducted while the request returned a clean 200 — the exact defect the current
+`reverseInventoryForDo` contract comment now warns about
+(`backend/src/scm/routes/delivery-orders-mfg.ts:1891-1895`). (2) The
+over-delivery invariant R1 was blind to the double-ship: DO-005's lines carry
+`so_item_id = NULL` (UNLINKED), and R1 sums delivered qty per `so_item_id`, so an
+unlinked duplicate DO deducts stock without ever counting against the ordered qty
+(`check-so-do-drill.mjs` header records the same finding).
+
+**Fix.** A gated one-shot repair,
+`backend/scripts/reverse-cancelled-do-005-movements.mjs` +
+`.github/workflows/reverse-do-005.yml`, replays the system's OWN cancel-path
+reversal for this ONE document: it calls the canonical
+`scm.fn_reverse_do_out(do_id, NULL, false)` (migration 0198, recreated with
+`item_code` in 0307) — scoped by `source_doc_id = DO-005`, so it restores each
+OUT's original lots at original cost, deletes the cancelled sale's lot
+consumptions, zeroes the OUT cost stamps, and writes one balancing `+net_out`
+ADJUSTMENT per bucket. No ad-hoc rows are hand-crafted, and 2990-DO-2607-017
+(a different id) is untouched by construction. PLAN by default; APPLY needs
+`MODE=apply` + `CONFIRM="REVERSE DO-2607-005 OUT MOVEMENTS"`, then re-reads on a
+fresh connection and asserts the per-item stock deltas are exactly +1 / +2 / +1,
+the three ADJUSTMENT rows exist, and the genuine DO's movements are unchanged.
+Idempotent (the fn and the script both no-op once an ADJUSTMENT tags the DO).
+This does NOT change any module surface — no new route, permission, status or
+required field — so no module-guide update. **Not yet applied to prod** — the
+workflow is dispatched by the owner; this entry records the repair, not a run.
+
+**Ref.** fix/reverse-cancelled-do-005-movements, 2026-08-20.
+
+## The picker-tile fix's fix took down BOTH KPI tiles — the gate handed the user where the permissions go [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 昨晚修「选销售、卡片数字不跟」的第二版,今早一开就两张卡片一起「加载失败」。
+原因:权限检查的函数要的是**权限清单**,我塞给它的是**整个用户**。它拿到用户就调用
+清单才有的方法,当场炸掉,整个接口 500,两张卡片共用这一个请求,所以一起红。编译器
+本来会拦住这个错 —— 是我自己用 `as never` 把它的嘴捂住的。这次把检查抽成一个可以
+**真正跑起来**的函数,测试直接用真实的用户形状调用它;前两版都是"检查源代码里有没有
+这行字"的测试,字都在,功能都是死的。
+
+**Symptom.** After #2501's deploy, GET /pos/sales-stats 500s whenever a
+salesperson is picked; ONE query feeds both KPI tiles, so Showroom and Personal
+both render "Couldn't load". Reported with a screenshot within the hour — the
+second same-day report against this tile.
+
+**Root cause (traced).** `hasPermission(granted, required)` takes a permissions
+COLLECTION (array or Set). #2501 passed it the session USER:
+`hasPermission(caller as never, …)` → `(user as ReadonlySet).has(…)` →
+`user.has is not a function`, thrown before any response. The `as never` cast
+is what let it compile — it silenced precisely the type error that was
+describing the bug. And the wiring test pinned the SOURCE TEXT of the call, so
+it stayed green while the endpoint threw: the second consecutive version of
+this gate to die in a way a textual pin cannot see (#2501's own entry records
+the first).
+
+**Fix.** The gate is now `canTargetSalesperson(caller, wantSalesperson)` —
+EXPORTED and PURE, reading `caller.permissions_set ?? caller.permissions ?? []`
+and feeding isDirectorUser only the two fields it declares. The route calls it
+with one widening cast that still checks every property read (no `as never`
+anywhere). The test EXECUTES it: director / flat key / `*` / plain-sales /
+no-session / '' / 'all', plus a must-not-throw on the exact shape that 500'd.
+The remaining textual pins only keep the guard clauses from being edited out.
+
+**Ref.** fix/sales-stats-gate-perms, 2026-08-20. Corrects #2501, which corrected
+#2477. Same reporter all three times.
+
+## Service-token compared with `===`, and invite/reset emails interpolated names raw [medium]
+
+<!-- area: Auth, permissions, sessions -->
+
+**白话.** 两处安全加固，没有已观察到的事故，是查代码时发现的。(1) 后台服务口令
+（DASHBOARD_API_KEY / CONNECT_SERVICE_TOKEN，权限是全星号 `*`）以前用普通的 `===`
+比对，比对快慢会泄漏猜对了几个字符。(2) 邀请信 / 重置密码信里，把对方自己填的名字、
+角色名直接塞进 HTML —— 有人把名字设成一段网页代码，收信人打开信就会被执行。现在
+口令走定时安全比对，邮件里所有用户可控字段都做转义。
+
+**Symptom.** None observed; found by reading the code. Two hardening gaps.
+
+**Root cause (traced).**
+1. `backend/src/middleware/auth.ts` and `backend/src/routes/auth.ts` (`GET
+   /me`) authenticated the service tier with `token === c.env.DASHBOARD_API_KEY`
+   / `=== c.env.CONNECT_SERVICE_TOKEN`. `===` on strings short-circuits at the
+   first differing byte, so its timing leaks how many leading characters matched
+   — a side channel on the full-`*` service credentials. The repo already had
+   the constant-time `timingSafeEqualStr` (`backend/src/services/auth.ts`), used
+   in `assrFormIntake.ts` and `scm/lib/mirror-map.ts`, but not here.
+2. `backend/src/services/email.ts` — `inviteEmailHtml` interpolated
+   `${p.inviterName}`, `${p.roleName}`, `${p.link}` and `resetEmailHtml`
+   interpolated `${p.name}`, `${p.requestedBy}` raw into the HTML body. A user
+   who sets their own display name to markup gets it rendered in the recipient's
+   email (HTML injection). The same file's `escapeHtml` already wraps every
+   field in the document-email path; the two account emails were the gap.
+
+**Fix.** (1) Both service-token comparisons now use `timingSafeEqualStr(token,
+key)`, keeping the existing `&&` empty/undefined-key guard so an unset key never
+authenticates. (2) Every user-controlled field in the invite and reset templates
+is wrapped in `escapeHtml`; the server-built link href is escaped too, matching
+`documentEmailHtml`'s existing `href="${escapeHtml(...)}"` pattern. No surface
+change (no new route/permission/status), so no module-guide update.
+
+**Also in this PR — doc drift, not a code bug.** Migration 0307
+(`0307_item_code_unify.sql`, 2026-08-19) renamed 18 scm columns
+`material_code`/`product_code` → `item_code`, but six hand-written module guides
+still showed the old names, so an engineer copying a query or index DDL from them
+would hit a non-existent column. Updated the current-column references in
+`docs/modules/{purchase-order,grn,delivery-order,purchase-consignment-order,document-conversion,document-traceability}.md`
+to `item_code` (source of truth: `docs/generated/GLOSSARY.md`). Historical /
+migration-narrative mentions and `stock-take.md` (owned by another open PR) were
+left untouched.
+
+**Ref.** fix/small-security-doc-cleanup, 2026-08-19. Found by inspection; no
+observed exploit.
 ## The salesperson picker's tile fix shipped double-broken — wrong gate context, wrong lookup key [medium]
 
 <!-- area: Sales orders + pricing -->
