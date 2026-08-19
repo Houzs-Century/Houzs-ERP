@@ -97,10 +97,16 @@ const LedgerPanel = () => {
   );
 };
 
+/* Must match what is actually in demo-statements/ — this list names the files
+   the operator is told to try, so a name that no longer exists sends him
+   looking for a file that is not there. */
 const SAMPLES = [
-  { name: 'MBB-Aug.csv', label: 'MBB 报表（有唯一编号 → 会自动配对）' },
-  { name: 'MBB-Aug-combo.csv', label: 'MBB 一笔刷卡两张单' },
+  { name: 'MBB-credit-Aug.csv', label: 'MBB 信用卡（有唯一编号 → 会自动配对）' },
+  { name: 'MBB-instalment-Aug.csv', label: 'MBB 分期（fee 比较重）' },
   { name: 'GHL-Aug.csv', label: 'GHL 报表（没编号 → 一律要人确认）' },
+  { name: 'HLB-Aug.csv', label: 'HLB（日期没有年份 → 会问你是哪个月）' },
+  { name: 'AEON-Aug.csv', label: 'AEON（xlsx 那种，还有一笔报表自己的收费）' },
+  { name: 'PBB-2990HOME-Jun.csv', label: 'PBB（2990 的，收钱银行跟 Houzs 不同）' },
   { name: 'wrong-file.csv', label: '传错的档案（应该被指名拒绝）' },
 ];
 
@@ -115,7 +121,12 @@ const Harness = () => {
           background: 'rgba(255,196,0,0.12)', border: '1px solid rgba(160,120,0,0.35)',
         }}>
           <b>本地测试台</b> —— 真的页面、真的解析、真的配对、真的过账引擎；只有资料库是记忆体里的假资料，
-          不碰任何正式帐本。测试档案在 <code>demo-statements/</code>：{SAMPLES.map((s) => s.name).join('、')}。
+          不碰任何正式帐本。测试档案在 <code>demo-statements/</code>：
+          <ul style={{ margin: '6px 0 0 0', paddingLeft: 18 }}>
+            {SAMPLES.map((s) => (
+              <li key={s.name}><code>{s.name}</code> —— {s.label}</li>
+            ))}
+          </ul>
           <button
             type="button"
             style={{ marginLeft: 10, padding: '4px 10px', cursor: 'pointer' }}
