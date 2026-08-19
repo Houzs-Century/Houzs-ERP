@@ -65,10 +65,24 @@ const confirmMatchedMutate = vi.fn();
 const uploadMutateAsync = vi.fn();
 const saveMutate = vi.fn();
 
+/* The batch list, swappable: the screen draws a different conclusion from
+   "3 lines still open" than from "every line decided", and both have to be
+   provable. Reset by each test that changes it. */
+const BATCH = {
+  id: 1, acquirer_code: 'MBB', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-03',
+  row_count: 2, gross_sen: 177700, fee_sen: 2600, net_sen: 175100, stated_net_sen: null,
+  adjustment_sen: 0, adjustment_je_no: null, received_on: null, received_sen: 0,
+  outstanding_sen: 175100, receipt_count: 0, confirmed_count: 1, open_count: 3,
+  to_confirm_count: 1, to_choose_count: 1, no_record_count: 1,
+  status: 'OPEN', uploaded_by: null, created_at: '',
+};
+let batchList: Array<Record<string, unknown>> = [BATCH];
+const setBatchList = (b: Array<Record<string, unknown>>) => { batchList = b; };
+
 vi.mock('./settlement-queries', () => ({
   useAcquirerSetup: () => ({ data: { acquirers: [MBB, GHL], bankAccounts: [{ account_code: '330-0000', account_name: 'Bank — Maybank Current' }] }, isLoading: false }),
   useSaveAcquirerSetup: () => ({ mutate: saveMutate, isPending: false }),
-  useSettlementBatches: () => ({ data: { batches: [{ id: 1, acquirer_code: 'MBB', file_name: 'aug.csv', period_from: '2026-08-01', period_to: '2026-08-03', row_count: 2, gross_sen: 177700, fee_sen: 2600, net_sen: 175100, stated_net_sen: null, adjustment_sen: 0, adjustment_je_no: null, received_on: null, received_sen: 0, outstanding_sen: 175100, receipt_count: 0, confirmed_count: 1, open_count: 3, to_confirm_count: 1, to_choose_count: 1, no_record_count: 1, status: 'OPEN', uploaded_by: null, created_at: '' }] }, isLoading: false }),
+  useSettlementBatches: () => ({ data: { batches: batchList }, isLoading: false }),
   useSettlementBatch: () => ({
     data: {
       batch: {
@@ -307,5 +321,57 @@ describe('confirming a pile of reports', () => {
     expect(screen.getByText(/Posted 4\./)).toBeTruthy();
     expect(screen.getByText(/1 could not be/)).toBeTruthy();
     confirmMatchedMutate.mockReset();
+  });
+});
+
+/* posted all 了就应该核对完了，剩下要核对bank statement 罢了 — so a screen with
+   nothing left to decide must stop offering the decision. The bug it fixes was
+   visible: four lines stamped done · JE-2608-0013 under a live "Confirm all 4
+   matched" and a tally still reading "4 ready to confirm". */
+describe('when every line is decided', () => {
+  const uploadOneFile = async () => {
+    uploadMutateAsync.mockResolvedValue({
+      batchId: 1, rows: 2, skippedLines: 0, statedNetSen: null, adjustmentSen: 0,
+      grossSen: 177700, feeSen: 2600, netSen: 175100,
+      periodFrom: '2026-08-01', periodTo: '2026-08-03',
+      buckets: { MATCHED: 1, NEEDS_CONFIRM: 0, UNMATCHED: 0, IGNORED: 0 },
+    });
+    draw();
+    fireEvent.change(screen.getByLabelText('Acquirer'), { target: { value: 'MBB' } });
+    const file = new File(['Txn Date,Gross'], 'aug.csv', { type: 'text/csv' });
+    Object.defineProperty(file, 'text', { value: () => Promise.resolve('Txn Date,Gross') });
+    fireEvent.change(screen.getByLabelText('Statement files'), { target: { files: [file] } });
+    await waitFor(() => expect((screen.getByText(/^Upload merchant report/) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByText(/^Upload merchant report/));
+    await waitFor(() => expect(screen.getByText(/report read/)).toBeTruthy());
+  };
+
+  test('the upload summary hands over to the bank instead of offering more work', async () => {
+    setBatchList([{ ...BATCH, open_count: 0, confirmed_count: 4, to_confirm_count: 0, to_choose_count: 0, no_record_count: 0 }]);
+    await uploadOneFile();
+
+    expect(screen.getByText(/Merchant reconciliation done/)).toBeTruthy();
+    expect(screen.getByText(/4 lines across 1 report, every one matched and booked/)).toBeTruthy();
+    /* The offer of work is GONE — button and tallies both. */
+    expect(screen.queryByText(/Confirm all/)).toBeNull();
+    expect(screen.queryByText('ready to confirm')).toBeNull();
+    /* And it points at the money, naming what is still owed. Scoped to the
+       panel — the page header carries its own link to the same screen. */
+    const panel = screen.getByText(/Merchant reconciliation done/).parentElement as HTMLElement;
+    expect(within(panel).getByText(/Still to come: RM 1,751\.00 from MBB/)).toBeTruthy();
+    expect(within(panel).getByText(/Bank statement reconciliation/).closest('a')?.getAttribute('href'))
+      .toBe('/scm/bank-recon');
+
+    setBatchList([BATCH]);
+  });
+
+  test('with the payout already banked it says so, and offers nothing further', async () => {
+    setBatchList([{ ...BATCH, open_count: 0, confirmed_count: 4, to_confirm_count: 0, to_choose_count: 0, no_record_count: 0, received_sen: 175100, outstanding_sen: 0 }]);
+    await uploadOneFile();
+
+    expect(screen.getByText(/The payouts are in the bank too/)).toBeTruthy();
+    expect(screen.queryByText(/Still to come/)).toBeNull();
+
+    setBatchList([BATCH]);
   });
 });

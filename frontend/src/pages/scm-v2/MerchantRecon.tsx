@@ -398,6 +398,45 @@ const useConfirmAcross = () => {
   return { run, busy, posted };
 };
 
+/* ── The merchant side is finished ────────────────────────────────────────────
+   Every line of every report decided, so step 1 of 2 is over and the only
+   thing left is the money — 剩下要核对bank statement 罢了. It says what the
+   merchants still owe, because that is the number the next screen is about,
+   and it names the ones already paid rather than counting them silently. */
+
+const UploadDone = ({ batches }: { batches: SettlementBatch[] }) => {
+  const lines = batches.reduce((s, b) => s + (b.confirmed_count ?? 0), 0);
+  const owed = batches.reduce((s, b) => s + (b.outstanding_sen ?? payableOf(b) - (b.received_sen ?? 0)), 0);
+  const waitingOn = batches.filter((b) => (b.outstanding_sen ?? payableOf(b) - (b.received_sen ?? 0)) !== 0);
+
+  return (
+    <div style={{ ...panel(owed === 0 ? 'good' : 'plain'), display: 'grid', gap: 'var(--space-2)' }}>
+      <b>
+        {`Merchant reconciliation done — ${lines} line${lines === 1 ? '' : 's'} across `
+          + `${batches.length} report${batches.length === 1 ? '' : 's'}, every one matched and booked.`}
+      </b>
+      {owed === 0 ? (
+        <span style={softText}>The payouts are in the bank too. Nothing is outstanding.</span>
+      ) : (
+        <>
+          {/* Says the amount and who owes it, once. The screen it goes to is
+              named by the button below and nowhere else. */}
+          <span style={softText}>
+            {`Still to come: ${fmt(owed)} from `}
+            {[...new Set(waitingOn.map((b) => b.acquirer_code))].join(', ')}
+            {' — match it against the bank next.'}
+          </span>
+          <div>
+            <Link to="/scm/bank-recon" style={{ ...btn(true), textDecoration: 'none' }}>
+              Bank statement reconciliation <ArrowRight {...ICON} />
+            </Link>
+          </div>
+        </>
+      )}
+    </div>
+  );
+};
+
 const PostedNote = ({ posted }: { posted: { confirmed: number; failed: number } }) => (
   <div style={{ fontSize: 'var(--fs-13)', color: posted.failed ? danger : good }}>
     Posted {posted.confirmed}.
@@ -422,6 +461,10 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
   const noRecord = sum((b) => b.no_record_count ?? 0);
   const done = sum((b) => b.confirmed_count ?? 0);
   const { busy, posted } = bulk;
+  /* Read off the batches themselves, not off what this screen just posted:
+     the same conclusion has to hold when he comes back to it tomorrow. Held
+     back until the list has answered, so "loading" never reads as "done". */
+  const allDone = mine.length > 0 && sum((b) => b.open_count ?? 0) === 0;
 
   return (
     <div className="space-y-4">
@@ -430,23 +473,34 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
         <b>{`${mine.length} report${mine.length === 1 ? '' : 's'} read · ${lines} line${lines === 1 ? '' : 's'}`}</b>
       </div>
 
-      {/* The three numbers, largest first — each one a different job. */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 'var(--space-3)' }}>
-        <Tally n={toConfirm} label="matched by reference" note="ready to confirm" tone="good" />
-        <Tally n={toCheck} label="to check by hand" note="candidates found — you choose" tone="plain" />
-        <Tally n={noRecord} label="no sale in the ERP" note="the merchant reported it, nobody recorded it" tone="danger" />
-      </div>
+      {/* Nothing left to decide = this job is OVER, and the screen has to say
+          so instead of going on offering work. The owner, looking at four
+          lines stamped done · JE-2608-0013 under a live "Confirm all 4
+          matched": posted all 了就应该核对完了，剩下要核对bank statement 罢了.
+          So the three piles and the button are what is STILL to do, and they
+          leave when there is nothing. */}
+      {!allDone && (
+        <>
+          {/* The three numbers, largest first — each one a different job. */}
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 'var(--space-3)' }}>
+            <Tally n={toConfirm} label="matched by reference" note="ready to confirm" tone="good" />
+            <Tally n={toCheck} label="to check by hand" note="candidates found — you choose" tone="plain" />
+            <Tally n={noRecord} label="no sale in the ERP" note="the merchant reported it, nobody recorded it" tone="danger" />
+          </div>
 
-      {toConfirm > 0 && (
-        <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
-          <button type="button" style={btn(true, busy)} disabled={busy} onClick={() => bulk.run(mine)}>
-            <CheckCheck {...ICON} /> {busy ? 'Posting…' : `Confirm all ${toConfirm} matched`}
-          </button>
-          <span style={softText}>Books each line&rsquo;s fee. The money itself is the next screen.</span>
-        </div>
+          {toConfirm > 0 && (
+            <div style={{ display: 'flex', gap: 'var(--space-2)', alignItems: 'center', flexWrap: 'wrap' }}>
+              <button type="button" style={btn(true, busy)} disabled={busy} onClick={() => bulk.run(mine)}>
+                <CheckCheck {...ICON} /> {busy ? 'Posting…' : `Confirm all ${toConfirm} matched`}
+              </button>
+              <span style={softText}>Books each line&rsquo;s fee. The money itself is the next screen.</span>
+            </div>
+          )}
+          {posted && <PostedNote posted={posted} />}
+          {done > 0 && !posted && <div style={softText}>{done} line(s) were already confirmed.</div>}
+        </>
       )}
-      {posted && <PostedNote posted={posted} />}
-      {done > 0 && !posted && <div style={softText}>{done} line(s) were already confirmed.</div>}
+      {allDone && <UploadDone batches={mine} />}
 
       {/* A file the server refused never became a report — it has no row below,
           so it says its own reason here or it says nothing anywhere. */}

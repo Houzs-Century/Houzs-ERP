@@ -295,6 +295,11 @@ export const useUploadStatement = () => {
 
 const invalidateAfterPosting = (qc: ReturnType<typeof useQueryClient>) => {
   void qc.invalidateQueries({ queryKey: ['settlement-batch'] });
+  /* The LIST too, not just the open report. Its rows carry the counts every
+     screen reads — how many are ready to confirm, how many are still open —
+     and leaving them stale is what left "Confirm all 4 matched" on screen
+     beside four lines already stamped done · JE-2608-0013. */
+  void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
   void qc.invalidateQueries({ queryKey: ['settlement-watchlist'] });
   void qc.invalidateQueries({ queryKey: ['account-balances'] });
   void qc.invalidateQueries({ queryKey: ['control-check'] });
@@ -337,10 +342,7 @@ export const useMarkBatchReceived = () => {
         `/accounting/settlement/batches/${batchId}/received`,
         { method: 'POST', body: JSON.stringify({ receivedOn, amountSen }) },
       ),
-    onSuccess: () => {
-      invalidateAfterPosting(qc);
-      void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
-    },
+    onSuccess: () => invalidateAfterPosting(qc),
   });
 };
 
@@ -353,10 +355,7 @@ export const useUndoReceipt = () => {
       authedFetch<{ ok: boolean; status: string; jeNo?: string }>(
         `/accounting/settlement/receipts/${receiptId}/undo`, { method: 'POST', body: '{}' },
       ),
-    onSuccess: () => {
-      invalidateAfterPosting(qc);
-      void qc.invalidateQueries({ queryKey: ['settlement-batches'] });
-    },
+    onSuccess: () => invalidateAfterPosting(qc),
     onError: writeFailedAs('Credit not removed'),
   });
 };
