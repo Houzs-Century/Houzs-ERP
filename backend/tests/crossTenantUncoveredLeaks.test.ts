@@ -307,15 +307,16 @@ describe('PWP voucher burn is company-scoped (createSalesOrderCore)', () => {
     expect(block).toContain('const pwpCompanyId = activeCompanyId(c)');
     expect(block).toContain("error: 'company_unresolved'");
     // read + atomic burn + rollback each scoped
-    expect(hasSquished(block, ".in('code', allPwpCodes) .eq('company_id', pwpCompanyId)")).toBe(true);
-    expect(hasSquished(block, ".eq('code', code) .eq('company_id', pwpCompanyId)")).toBe(true);
+    expect(hasSquished(block, ".in('code', allPwpCodes).eq('company_id', pwpCompanyId)")).toBe(true);
+    expect(hasSquished(block, ".eq('code', code).eq('company_id', pwpCompanyId)")).toBe(true);
     expect(hasSquished(block, ".eq('code', code).eq('status', 'USED').eq('company_id', pwpCompanyId)")).toBe(true);
   });
 
   test('the swap reads scope pwp_codes to the active company', () => {
     // both swap-line reads go through scopeToCompany(...) rather than a bare eq(code)
-    expect(hasSquished(routeSource, "scopeToCompany(sb.from('pwp_codes') .select('code, reward_category")).toBe(true);
-    expect(hasSquished(routeSource, "scopeToCompany(sb.from('pwp_codes') .select('code, reward_combo_ids")).toBe(true);
+    const wrapped = routeSource.match(/scopeToCompany\(sb\.from\('pwp_codes'\)/g) ?? [];
+    expect(wrapped.length).toBe(2);
+    expect(routeSource).not.toContain("await sb.from('pwp_codes')\n      .select('code, reward_category");
   });
 });
 

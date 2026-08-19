@@ -1029,17 +1029,8 @@ export const consignmentOverridePriceHandler = async (c: any) => {
   const user = c.get('user');
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
-  /* This verb WRITES MONEY — the SELLING price is locked to the SKU Master and
-     only an admin-level caller may hand-override it, exactly as the SO twin's
-     /override gates on isPriceOverrideCaller (mfg-sales-orders.ts:6205). Without
-     this a caller holding only scm.so.view_all could re-price a consignment line.
-     Gate BEFORE the self-scope / row reads. */
-  if (!hasHouzsPerm(c, 'scm.so.price_override')) {
-    return c.json({
-      error: 'price_override_admin_only',
-      message: 'Unit prices follow the SKU Master sell price. Only an admin can override a line price.',
-    }, 403);
-  }
+  // WRITES MONEY — only an admin-level caller may override the SKU-Master price, as the SO twin's /override does (isPriceOverrideCaller, mfg-sales-orders.ts:6205). Without this a scm.so.view_all-only caller could re-price. Gate before the self-scope / row reads. BUG-HISTORY 2026-08-19.
+  if (!hasHouzsPerm(c, 'scm.so.price_override')) return c.json({ error: 'price_override_admin_only', message: 'Unit prices follow the SKU Master sell price. Only an admin can override a line price.' }, 403);
   // Self-scoped sales may only re-price a line on their OWN CO. This verb WRITES MONEY.
   if (await selfScopedConsignmentBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
   let body: { overridePriceSen?: number; reason?: string };

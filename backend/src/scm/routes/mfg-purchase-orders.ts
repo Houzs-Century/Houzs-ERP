@@ -1106,8 +1106,6 @@ mfgPurchaseOrders.get('/:id/revisions', async (c) => {
 //   supplierId, currency?, expectedAt?, notes?,
 //   items: [{ materialKind, itemCode, materialName, supplierSku?, qty, unitPriceSen, bindingId? }]
 // }
-// Exported so a cross-tenant test can drive the create path without the
-// supabaseAuth bridge.
 export const createMfgPurchaseOrderHandler = async (c: any) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch {
@@ -1165,32 +1163,14 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
       .map((it) => it.soItemId as string | undefined)
       .filter((x): x is string => !!x);
     if (lineSoItemIds.length > 0) {
-      /* Company scope (2026-08-19) — the SERVICE-ROLE client bypasses RLS, so the
-         `company_id` predicate is the whole tenant boundary. This bare-create path
-         (desktop "New PO from SO" / MRP convert) read the caller-supplied soItemIds
-         with NO company predicate, then LINKED them (so_item_id, ~L1282), copied
-         their photo_urls (~L1369) and rolled po_qty_picked forward on them
-         (recomputeSoPicked, ~L2902). A soItemId in ANOTHER company therefore
-         re-parented a foreign SO line onto this company's PO. Scope the read and
-         REFUSE any line whose SO item is not this company's — mirrors the add-line
-         path's soLinkTargetRefusal (~L2937). */
-      const { data: lineSoRows } = await scopeToCompany(
-        supabase
-          .from('mfg_sales_order_items')
-          .select('id, doc_no, qty, po_qty_picked'),
-        c,
-      ).in('id', lineSoItemIds);
+      // Company scope (2026-08-19) — service-role bypasses RLS: scope the SO-item read and refuse a foreign soItemId BEFORE it is linked / photo-copied / po_qty_picked-rolled (mirrors soLinkTargetRefusal).
+      const { data: lineSoRows } = await scopeToCompany(supabase.from('mfg_sales_order_items').select('id, doc_no, qty, po_qty_picked'), c).in('id', lineSoItemIds);
       const soRows = (lineSoRows ?? []) as Array<{
         id: string; doc_no: string | null; qty: number; po_qty_picked: number;
       }>;
-      const foundSoItemIds = new Set(soRows.map((r) => r.id));
-      const foreignSoItemId = lineSoItemIds.find((id) => !foundSoItemIds.has(id));
+      const foreignSoItemId = lineSoItemIds.find((id) => !new Set(soRows.map((r) => r.id)).has(id));
       if (foreignSoItemId) {
-        return c.json({
-          error: 'so_line_not_found',
-          reason: 'That Sales Order line does not exist on this company.',
-          soItemId: foreignSoItemId,
-        }, 404);
+        return c.json({ error: 'so_line_not_found', reason: 'That Sales Order line does not exist on this company.', soItemId: foreignSoItemId }, 404);
       }
       const offender = await firstUnorderableSo(
         supabase,
@@ -1387,15 +1367,7 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
     )];
     const photosBySoItem = new Map<string, string[]>();
     if (photoSoItemIds.length > 0) {
-      // Company-scoped: the create-gate above already refused any foreign
-      // soItemId, but keep the read scoped so a photo_urls copy can never
-      // resolve across companies.
-      const { data: photoRows } = await scopeToCompany(
-        supabase
-          .from('mfg_sales_order_items')
-          .select('id, photo_urls'),
-        c,
-      ).in('id', photoSoItemIds);
+      const { data: photoRows } = await scopeToCompany(supabase.from('mfg_sales_order_items').select('id, photo_urls'), c).in('id', photoSoItemIds);
       for (const r of (photoRows ?? []) as Array<{ id: string; photo_urls: string[] | null }>) {
         photosBySoItem.set(r.id, r.photo_urls ?? []);
       }
