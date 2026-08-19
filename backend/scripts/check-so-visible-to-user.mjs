@@ -115,16 +115,30 @@ try {
   if (who) {
     const users = await pg`
       SELECT u.id, u.email, u.name, u.status,
+             p.name AS position_name, d.name AS department_name,
              (SELECT string_agg(c.code, ',' ORDER BY c.code)
                 FROM user_companies uc JOIN companies c ON c.id = uc.company_id
                WHERE uc.user_id = u.id) AS companies
         FROM users u
+        LEFT JOIN positions p ON p.id = u.position_id
+        LEFT JOIN departments d ON d.id = u.department_id
        WHERE u.email ILIKE ${"%" + who + "%"} OR u.name ILIKE ${"%" + who + "%"}
        LIMIT 5`;
     console.log("");
     console.log(`-- 4. matching users                         : ${users.length} row(s)`);
     for (const u of users) {
       console.log(`     #${u.id}  ${u.name ?? "-"}  <${u.email ?? "-"}>  ${u.status}  companies=[${u.companies ?? "NONE"}]`);
+      /* THE GATE IS TEXT, not a permission. canAccessServiceCases admits the
+         service_cases.read holder OR isSalesUser OR isDirectorUser, and
+         isSalesUser (services/pmsAccess.ts:146) tests `position_name` against a
+         regex and `department_name` for the substring "sales". So a real
+         salesperson whose POSITION or DEPARTMENT field is blank, or spelled some
+         other way, is refused with a 403 that the picker used to render as
+         "No matching sales orders". Printed here because it is the one RBAC
+         input nobody would think to look at. */
+      console.log(`          position="${u.position_name ?? ""}"  department="${u.department_name ?? ""}"`);
+      const salesish = /sales/i.test(String(u.position_name ?? "")) || /sales/i.test(String(u.department_name ?? ""));
+      console.log(`          reads as SALES to the gate: ${salesish}`);
     }
     const noHouzs = users.filter((u) => !String(u.companies ?? "").split(",").includes("HOUZS"));
     if (users.length && noHouzs.length === users.length) {
