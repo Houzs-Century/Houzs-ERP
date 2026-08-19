@@ -104,6 +104,7 @@ import {
 } from '../lib/companyScope';
 import { supabaseAuth } from '../middleware/auth';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
+import { effectiveStatusFilter, isRangeNotSatisfiable } from '../lib/so-list-filters';
 import { chunkIn, paginateAll } from '../lib/paginate-all';
 import { tallyStatusRows, type StatusTally } from '../lib/status-counts';
 import { soConvertedPoNumbers } from '../lib/so-converted-po';
@@ -154,6 +155,7 @@ import {
   loadMaintenanceConfig,
   loadSpecialAddons,
   recomputeFromSnapshot,
+  erpLineTrust,
   loadProductByCode,
   loadProductsByCodes,
   loadFabricByCode,
@@ -1208,7 +1210,7 @@ mfgSalesOrders.get('/', async (c) => {
     let q = sb.from('mfg_sales_orders_with_payment_totals').select(LIST_COLS).order('so_date', { ascending: false }).limit(500);
     if (scopeIds) q = q.in('salesperson_id', scopeIds);
     q = scopeToCompany(q, c); // multi-company: isolate to the active company
-    const status = c.req.query('status'); if (status) q = q.eq('status', status);
+    const status = effectiveStatusFilter(c.req.query('status')); if (status) q = q.eq('status', status);
     const debtor = c.req.query('debtor'); if (debtor) q = q.ilike('debtor_name', `%${debtor}%`);
     const res = await q;
     data = res.data;
@@ -1234,7 +1236,7 @@ mfgSalesOrders.get('/', async (c) => {
        spellings / blanks). It exists so the list's "Other" pill — shown only
        when such rows exist — can actually be opened; every real status stays
        the exact-match it always was. */
-    const status = c.req.query('status');
+    const status = effectiveStatusFilter(c.req.query('status'));
     const otherStatusOr = `status.is.null,status.not.in.(${[...SO_STATUSES].join(',')})`;
     if (status) q = status === 'OTHER' ? q.or(otherStatusOr) : q.eq('status', status);
     /* free-text search replaces the legacy `debtor` param in this branch.
@@ -1328,6 +1330,18 @@ mfgSalesOrders.get('/', async (c) => {
     data = res.data;
     error = res.error;
     total = res.count ?? (res.data?.length ?? 0);
+    /* A page whose offset is at/beyond the row count is an EMPTY PAGE, not a
+       failure. PostgREST answers it PGRST103 / 416 "Requested range not
+       satisfiable" instead of an empty 200, and this handler turned that into a
+       500 — which the grid masked as "No sales orders yet" (the 2026-08-18
+       incident: `?status=all` matched zero rows, so page 1 exceeded the count).
+       Empty status tab, no-match search, last page + 1 all land here; `res.count`
+       still carries the true total via PostgREST's `Content-Range` header. */
+    if (error && isRangeNotSatisfiable(error)) {
+      data = [];
+      total = res.count ?? 0;
+      error = null;
+    }
     /* Every status in the vocabulary gets a bucket (lowercase keys, the wire
        shape the tabs read), plus `other` for anything OUTSIDE it (legacy
        spellings, blanks) — so the visible buckets ALWAYS sum to `all` and no
@@ -7881,6 +7895,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     addLineFreeItem = { campaignId: addLineChosen.id, campaignName: addLineChosen.name };
   }
 
+  const addLinePosTablet = await isPosTabletCaller(c);
   const recomputed = recomputeFromSnapshot(
     {
       itemCode:       itemCodeStr,
@@ -7902,7 +7917,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     sofaModuleCostRowsLite,
     modelOverridesLite,      // migration 0175 — per-Model Δ
     compartmentOverridesLite, // migration 0025 — per-compartment Δ
-    !(await isPosTabletCaller(c)), // owner ruling — non-POS author prices freely
+    // owner ruling — non-POS author prices freely; see erpLineTrust.
+    erpLineTrust(addLinePosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended),
   );
   /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). POS tablet
      roles are drift-rejected + take the server price; Backend / office authors
@@ -8437,14 +8453,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       sofaModuleCostRowsPatch,
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
-      /* owner ruling — non-POS author prices freely. 'operator-zero' when the
-         ERP editor states this 0 was TYPED, not unresolved (owner 2026-08-18;
-         see TrustSelling). Strict `=== true`, and only at 0, so every other
-         caller's 0 still means "not provided" and takes the catalogue fill. A
-         POS session never reaches it: posTablet short-circuits both arms. */
-      !posTablet && clientUnit === 0 && it.zeroPriceIntended === true
-        ? 'operator-zero'
-        : !posTablet,
+      // owner ruling — non-POS author prices freely; see erpLineTrust.
+      erpLineTrust(posTablet, clientUnit, it.zeroPriceIntended),
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even

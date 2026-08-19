@@ -19,6 +19,7 @@ import { Hono, type Context } from "hono";
 import type { Env } from "../types";
 import { auth, requirePermission } from "../middleware/auth";
 import { companyContext } from "../middleware/companyContext";
+import { canViewAllSales } from "../scm/lib/houzs-perms";
 import {
   createSession,
   verifyPassword,
@@ -213,8 +214,20 @@ pos.post("/verify-pin", auth, async (c) => {
 // commission machinery, which has no Houzs home yet (#19) — so KPI is 0 and
 // Products = goods here, which is EXACTLY 2990's own value when no item-KPI flag
 // is active. status::text guards the enum (excludes CANCELLED/ON_HOLD safely).
-// ?salesperson (owner-tier targeting) is not yet honoured — the personal card
-// always follows the caller (TODO with the HR work).
+// ?salesperson targets the Personal card at ANOTHER salesperson. Honoured since
+// 2026-08-19, and gated on canViewAllSales HERE, not on the POS: the board was
+// already filtering by it while this card silently kept answering for the
+// caller, so a director reading "SCARLETT · RM 2,990 · 2 orders" was reading his
+// OWN two orders under her name. A client-side gate is not a permission — the
+// param arrives from a browser, so an ungated read would hand any salesperson a
+// colleague's month. Unknown/unauthorised name => the caller's own figures, the
+// behaviour every caller had before.
+//
+// `showroomScope` says WHICH scope the Showroom card used, because the two are
+// not the same question: staff WITH a showroom get their showroom mates, staff
+// WITHOUT one (director / owner / coordinator) get the whole company. Both used
+// to render under the word "SHOWROOM", so a director saw company-wide figures
+// under a showroom heading and no two people's tiles agreed.
 const KPI_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 pos.get("/sales-stats", auth, companyContext, async (c) => {
   const DB = c.env.DB;
@@ -223,6 +236,18 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
     `SELECT id, name, showroom_id FROM scm.staff WHERE user_id = ?`,
   ).bind(uid).first<{ id: string; name: string; showroom_id: string | null }>();
   const companyId = (c.get("companyId") as number | undefined) ?? null;
+
+  /* Whose Personal card. Defaults to the caller; a canViewAllSales caller may
+     name someone else. Matched on the same `name` the POS shows in its picker,
+     scoped to the active company so one company cannot enumerate the other's
+     staff. A miss falls back to the caller rather than erroring — the card is a
+     dashboard tile, and a 500 here would blank the whole page. */
+  const wantSalesperson = (c.req.query("salesperson") || "").trim();
+  const mayTarget = wantSalesperson !== "" && wantSalesperson !== "all" && canViewAllSales(c);
+  const target = mayTarget
+    ? await DB.prepare(`SELECT id, name FROM scm.staff WHERE name = ? LIMIT 1`)
+        .bind(wantSalesperson).first<{ id: string; name: string }>()
+    : null;
 
   // Period (Asia/Kuala_Lumpur = UTC+8). so_date is a DATE → range compares are tz-free.
   const fromYmd = c.req.query("from") || null;
@@ -237,6 +262,7 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
 
   const empty = {
     monthLabel, monthStart, monthEnd, staffName: me?.name ?? "",
+    showroomScope: me?.showroom_id ? "showroom" : "company",
     showroomTotal: 0, showroomCount: 0, showroomProducts: 0, showroomService: 0, showroomKpi: 0,
     personalTotal: 0, personalCount: 0, personalProducts: 0, personalService: 0, personalKpi: 0,
   };
@@ -277,7 +303,8 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
 
   type Agg = { cnt: number; total_sen: number; goods_sen: number };
   const showroomRow = await DB.prepare(aggSql(showroomWhere)).bind(...binds, ...showroomBinds).first<Agg>();
-  const personalRow = await DB.prepare(aggSql("salesperson_id = ?")).bind(...binds, me.id).first<Agg>();
+  const personalRow = await DB.prepare(aggSql("salesperson_id = ?"))
+    .bind(...binds, target?.id ?? me.id).first<Agg>();
 
   const toMyr = (centi: number) => Math.round(Number(centi) / 100);
   const card = (r: Agg | null) => {
@@ -295,7 +322,11 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
   const p = card(personalRow);
 
   return c.json({
-    monthLabel, monthStart, monthEnd, staffName: me.name,
+    monthLabel, monthStart, monthEnd,
+    /* WHOSE Personal card this is. The POS labels the tile from this, so the
+       name and the number can no longer disagree. */
+    staffName: target?.name ?? me.name,
+    showroomScope: me.showroom_id ? "showroom" : "company",
     showroomTotal: s.total, showroomCount: s.count,
     showroomProducts: s.products, showroomService: s.service, showroomKpi: s.kpi,
     personalTotal: p.total, personalCount: p.count,

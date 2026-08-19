@@ -156,6 +156,26 @@ PGlite replica of the base table + view + both grantee roles:
   `backend/scripts/probe-rename-preconditions.mjs`, read-only, one MATCHES /
   DIFFERS line at the end.
 
+**P-7 — A `DROP + CREATE` of a PostgREST-exposed view can be served STALE by
+hosted PostgREST until a connection RECYCLE — a `NOTIFY reload schema` is not
+enough.** This is a DIFFERENT failure from P-1..P-6: there the view is missing a
+column; here the view is correct and hosted PostgREST simply keeps answering
+from a stale connection pool. It took the SO list to 0 rows for a full day on
+2026-08-18 after 0305's money rename DROP+CREATE'd 11 views
+(`docs/so-list-postgrest-stale-coe.md`). Two rules follow:
+
+* **Prefer `CREATE OR REPLACE VIEW` whenever the change is ADDITIVE** (a new
+  column exposed via the view). It keeps the relation OID + grants and is not
+  served stale. Only a column RENAME/REMOVAL/reorder forces DROP+CREATE — that is
+  what 0305 was. `0306_gl_views_join_on_company.sql` is the additive
+  counter-example (3 × `CREATE OR REPLACE`, 0 × `DROP`).
+* **When DROP+CREATE is unavoidable, treat the deploy's `NOTIFY reload schema`
+  as insufficient.** `pg-migrate.mjs` now emits a deploy WARNING naming the
+  view-recreating migrations. After the deploy, VERIFY the affected list
+  endpoints return rows; if any is empty, run **Actions → "Reload PostgREST
+  schema" → mode=apply, confirm=RELOAD-PGRST, recycle=true** (the connection
+  recycle, not just the model reload), or restart the Supabase project.
+
 ---
 
 ## 5. Houzs checklist for any change that touches the shared `HEADER`
@@ -178,6 +198,11 @@ PGlite replica of the base table + view + both grantee roles:
       its owner and grants, and every other object on the column — rather than
       trusting a replica built from this repo?
       (`probe-rename-preconditions` workflow; it must end in MATCHES.)
+- [ ] If my change forced a `DROP + CREATE` of a PostgREST-exposed view (a column
+      rename/removal, not an additive `CREATE OR REPLACE`), did I VERIFY the
+      affected list endpoints return rows AFTER the deploy, and recycle PostgREST
+      (`reload-postgrest-schema.yml` recycle=true, or a project restart) if any
+      was empty? A `NOTIFY reload schema` is not enough — P-7.
 
 ---
 
