@@ -120,7 +120,16 @@ export const VOCABULARY = [
     alsoCanonical: [],
     retired: ["_centi"],
     declaredIn: "frontend/src/lib/money.ts",
-    allow: ["scripts/lib/vocabulary.mjs", "scripts/lib/drift-catalogue.mjs"],
+    allow: [
+      "scripts/lib/vocabulary.mjs",
+      "scripts/lib/drift-catalogue.mjs",
+      /* The mirror receiver's alias derivation must spell the RETIRED suffix:
+         its whole job is translating 2990's still-`_centi` payloads onto the
+         `_sen` columns (2990 is a separate repo on its own deploy schedule —
+         the 2026-08-19 outbox breakage in BUG-HISTORY is what happens without
+         it). The one place the old name is load-bearing. */
+      "src/scm/lib/mirror-map.ts",
+    ],
     note:
       "Money is stored as an INTEGER count of sen (the Malaysian subunit AutoCount " +
       "speaks; 100 sen = RM 1) and displayed as RM at the edge. The column/field " +

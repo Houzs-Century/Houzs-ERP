@@ -91,15 +91,28 @@ try {
   }
 
   // 3. arrival rate — the number that says "moving" or "not"
+  /* `updated_at` is TEXT on this table, not a timestamp — the pull writes
+     datetime('now') straight through from the D1 era. Comparing it to now()
+     raises 42883 (`text >= timestamp with time zone`), which is how the first
+     run of this check died AFTER printing two useful sections. Cast rather than
+     assume the column type from its name. */
   const rate = await pg`
     SELECT
-      count(*) FILTER (WHERE updated_at >= now() - interval '7 days')  AS d7,
-      count(*) FILTER (WHERE updated_at >= now() - interval '30 days') AS d30
-    FROM sales_orders`;
+      count(*) FILTER (WHERE updated_at::timestamptz >= now() - interval '7 days')  AS d7,
+      count(*) FILTER (WHERE updated_at::timestamptz >= now() - interval '30 days') AS d30,
+      min(doc_no) AS oldest_doc, max(doc_no) AS newest_doc
+    FROM sales_orders
+   WHERE updated_at IS NOT NULL AND updated_at <> ''`;
   console.log("");
   console.log("-- 3. rows touched by the pull ---------------------------------");
   console.log(`   last 7 days  ${rate[0].d7}`);
   console.log(`   last 30 days ${rate[0].d30}`);
+  /* The RANGE matters as much as the rate. A current checkpoint with a healthy
+     arrival rate still says nothing about whether the HISTORY is present: the
+     incremental pull asks getSince(checkpoint), so an order last modified before
+     the mirror's earliest checkpoint was never offered and never will be. That
+     is a backlog only `all` mode can collect. */
+  console.log(`   doc_no range ${rate[0].oldest_doc ?? "-"} .. ${rate[0].newest_doc ?? "-"}`);
 
   console.log("");
   console.log("-- VERDICT ------------------------------------------------------");

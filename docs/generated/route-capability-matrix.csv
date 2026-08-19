@@ -3,6 +3,7 @@ GET,/api/admin/health/audit-feed,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,
 POST,/api/admin/health/autocount/po-pull,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,YES,DECLARED_GATE,backend/src/routes/systemHealth.ts
 GET,/api/admin/health/autocount/reconcile,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,NO,DECLARED_GATE,backend/src/routes/systemHealth.ts
 POST,/api/admin/health/autocount/snapshot,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,YES,DECLARED_GATE,backend/src/routes/systemHealth.ts
+POST,/api/admin/health/autocount/so-pull,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,YES,DECLARED_GATE,backend/src/routes/systemHealth.ts
 GET,/api/admin/health/ledger,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePermission(""*"")",,NO,DECLARED_GATE,backend/src/routes/systemHealth.ts
 GET,/api/admin/health/live,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,,"requirePageAccess(""system_health"")",,NO,DECLARED_GATE,backend/src/routes/systemHealth.ts
 GET,/api/agents/collection/brief,AUTHENTICATED_MIDDLEWARE,COMPANY_CONTEXT,auth,"requirePermission(""*"")",,,NO,DECLARED_GATE,backend/src/routes/agent-console.ts
