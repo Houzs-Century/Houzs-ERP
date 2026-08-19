@@ -34,49 +34,64 @@
    are :root-global and stay as var().
    ==================================================================== */
 
-/* ── Region chip row ──────────────────────────────────────────────────────── */
+/* ── Region chip row ──────────────────────────────────────────────────────────
+   Restyled 2026-08-19 to the SO list's FilterPills slab (owner: "要和 sales
+   order design 设计,字体,颜色一样"): ONE bordered white track holding squared
+   pills — 11px semibold UPPERCASE tracking-wider, active = solid primary,
+   inactive = ink-secondary with the primary-soft hover. Values mirror
+   components/FilterPills.tsx (rounded-md border bg-surface p-1 / px-3.5
+   py-1.5 text-[11px] uppercase tracking-wider). */
 .regionChips {
-  display: flex;
-  gap: 6px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid #d6d9d2;
+  border-radius: 6px;
+  background: #ffffff;
   flex-wrap: wrap;
 }
 
 .regionChip {
-  height: 28px;
-  padding: 0 12px;
-  border-radius: var(--radius-pill);
+  padding: 6px 14px;
+  border: 0;
+  border-radius: 4px;
   cursor: pointer;
   font-family: var(--font-button);
   font-size: 11px;
   font-weight: 600;
-  border: 1px solid #d6d9d2;
-  background: #fff;
-  color: #767b6e;
-  transition: background 0.15s, color 0.15s, border-color 0.15s;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  background: transparent;
+  color: #414539;
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
 }
 
 .regionChip:hover {
   background: #e1efed;
-  color: #11140f;
-  border-color: #bcdcd6;
+  color: #16695f;
 }
 
 .regionChipActive {
-  border-color: #16695f;
+  background: #16695f;
+  color: #fff;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.12);
+}
+.regionChipActive:hover {
   background: #16695f;
   color: #fff;
 }
 
-/* Singapore region visually distinct (no MY warehouse — cross-border). A teal
-   tint + dashed border sets it apart from the MY warehouse regions. */
+/* Singapore region visually distinct (no MY warehouse — cross-border). Keeps
+   its dashed teal outline INSIDE the slab so the cue survives the restyle. */
 .regionChipSg {
-  border-style: dashed;
-  border-color: #2f5d4f;
+  border: 1px dashed #2f5d4f;
+  padding: 5px 13px; /* border eats 1px — keep the pill height level */
   color: #2f5d4f;
 }
 .regionChipSg:hover {
   background: rgba(47, 93, 79, 0.08);
-  border-color: #2f5d4f;
   color: #2f5d4f;
 }
 .regionChipSg.regionChipActive {

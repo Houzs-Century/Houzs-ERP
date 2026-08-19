@@ -20,7 +20,7 @@
 // it reuses useScheduleDelivery / useDeliveryPlanningLines exactly as before.
 // ----------------------------------------------------------------------------
 
-import { useMemo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { useMemo, useState, type CSSProperties, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
 import { buildVariantSummary, fmtSen, fmtDate, fmtDateOrDash, fmtDateTime } from '@2990s/shared';
 import { formatPhone } from '@2990s/shared/phone';
 import { DataGrid, type DataGridColumn } from './DataGrid';
@@ -162,6 +162,21 @@ function TypeChip({ order }: { order: PlanningOrder }) {
 /* A muted em-dash cell — the shared "not applicable" render for columns that
    don't apply to an ASSR row (stock, driver, lorry). */
 const NotApplicable = () => <span style={{ color: '#767b6e' }}>—</span>;
+
+/* ── SO-list type ramp (owner 2026-08-19: "要和 sales order design 设计,字体,
+   颜色一样") — the three cell voices the DataTable lists speak, mirrored here:
+   doc numbers = Plex Mono 12.5 semibold ink (`font-docno`), primary names =
+   13 semibold ink, detail text = 12.5 ink-secondary. Hexes written out for the
+   usual vendor-cascade reason (several --c-* tokens resolve differently here). */
+const DOCNO_STYLE: CSSProperties = {
+  fontFamily: "'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace",
+  fontSize: 12.5, fontWeight: 600, color: '#11140f',
+};
+const MONEY_STYLE: CSSProperties = { fontSize: 13, fontWeight: 600, color: '#11140f' };
+const strong = (v: ReactNode) => <span style={{ fontSize: 13, fontWeight: 600, color: '#11140f' }}>{v}</span>;
+const detail = (v: ReactNode) => (
+  <span style={{ fontSize: 12.5, color: '#414539', fontVariantNumeric: 'tabular-nums' }}>{v}</span>
+);
 
 /* Region chips — CONFIG-DRIVEN buckets (migration 0053) classified by customer
    STATE. The bucket list comes from the API's `regions` master (owner-
@@ -790,7 +805,7 @@ export function DeliveryPlanningBoard({
       /* SO No. for SO rows; the ASSR ref (assr_no) for service-case rows. */
       key: 'so_doc_no', label: 'SO No.', width: 150, sortable: true,
       accessor: (o) => (
-        <span style={{ display: 'inline-flex', alignItems: 'center', fontWeight: 700, color: '#0c3f39', fontVariantNumeric: 'tabular-nums' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', ...DOCNO_STYLE }}>
           {isDp(o) ? (o.dp_no ?? '— not scheduled') : isAssr(o) ? (o.ref ?? '—') : o.so_doc_no}
         </span>
       ),
@@ -810,7 +825,7 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'debtor_name', label: 'Customer', width: 200, sortable: true, groupable: true,
-      accessor: (o) => o.debtor_name ?? o.debtor_code ?? '—',
+      accessor: (o) => strong(o.debtor_name ?? o.debtor_code ?? '—'),
       searchValue: (o) => `${o.debtor_name ?? ''} ${o.debtor_code ?? ''}`.trim(),
       groupValue: (o) => o.debtor_name ?? o.debtor_code ?? '(none)',
       sortFn: (a, b) => (a.debtor_name ?? '').localeCompare(b.debtor_name ?? ''),
@@ -819,7 +834,7 @@ export function DeliveryPlanningBoard({
       /* Who SOLD the order (owner 2026-08-19) — same roster-resolved name the
          SO list shows (never a raw UUID). SO rows only; n/a on job rows. */
       key: 'salesperson', label: 'Salesperson', width: 150, sortable: true, groupable: true,
-      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : salespersonNameOf(o.agent, o.salesperson_id, '—')),
+      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : detail(salespersonNameOf(o.agent, o.salesperson_id, '—'))),
       searchValue: (o) => (o.row_type !== 'so' ? '' : salespersonNameOf(o.agent, o.salesperson_id, '')),
       groupValue: (o) => (o.row_type !== 'so' ? '(n/a)' : salespersonNameOf(o.agent, o.salesperson_id, '(none)')),
       exportValue: (o) => (o.row_type !== 'so' ? '' : salespersonNameOf(o.agent, o.salesperson_id, '')),
@@ -829,14 +844,14 @@ export function DeliveryPlanningBoard({
       /* Where it was SOLD (owner 2026-08-19) — the SO's sales venue; PMS
          project rows carry their event venue. */
       key: 'venue', label: 'Venue', width: 160, groupable: true,
-      accessor: (o) => o.venue?.trim() || '—',
+      accessor: (o) => detail(o.venue?.trim() || '—'),
       searchValue: (o) => o.venue ?? '',
       groupValue: (o) => o.venue?.trim() || '(none)',
       exportValue: (o) => o.venue ?? '',
     },
     {
       key: 'phone', label: 'Phone', width: 150,
-      accessor: (o) => formatPhone(o.phone) || '—',
+      accessor: (o) => detail(formatPhone(o.phone) || '—'),
       searchValue: (o) => o.phone ?? '',
     },
     {
@@ -863,7 +878,7 @@ export function DeliveryPlanningBoard({
       /* Default-hidden since the 2026-07-22 header tidy — product brand rarely
          drives scheduling; re-show it from the Columns drawer when needed. */
       key: 'branding', label: 'Branding', width: 130, groupable: true, defaultHidden: true,
-      accessor: (o) => o.branding ?? '—',
+      accessor: (o) => detail(o.branding ?? '—'),
       searchValue: (o) => o.branding ?? '',
       groupValue: (o) => o.branding ?? '(none)',
     },
@@ -871,12 +886,12 @@ export function DeliveryPlanningBoard({
        where the lorry is going is a planning question, not a detail lookup. */
     {
       key: 'address', label: 'Address', width: 220,
-      accessor: (o) => o.address ?? '—',
+      accessor: (o) => detail(o.address ?? '—'),
       searchValue: (o) => o.address ?? '',
     },
     {
       key: 'postcode', label: 'Postcode', width: 100,
-      accessor: (o) => o.postcode ?? '—',
+      accessor: (o) => detail(o.postcode ?? '—'),
       searchValue: (o) => o.postcode ?? '',
     },
     /* `building_type` ("Property") was REMOVED in the owner's 2026-08-04 column
@@ -903,7 +918,7 @@ export function DeliveryPlanningBoard({
          BUCKET. The bucket is the tab row above; which states roll up into which
          bucket is owner-maintained in Delivery Regions. */
       key: 'region', label: 'State', width: 140, sortable: true, groupable: true,
-      accessor: (o) => o.customer_state?.trim() || '—',
+      accessor: (o) => detail(o.customer_state?.trim() || '—'),
       searchValue: (o) => o.customer_state ?? '',
       groupValue: (o) => o.customer_state?.trim() || '(none)',
       exportValue: (o) => o.customer_state ?? '',
@@ -917,7 +932,7 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'so_date', label: 'SO Date', width: 120, sortable: true, defaultHidden: true,
-      accessor: (o) => fmtDateOrDash(o.so_date),
+      accessor: (o) => detail(fmtDateOrDash(o.so_date)),
       searchValue: (o) => o.so_date ?? '',
       sortFn: (a, b) => String(a.so_date ?? '').localeCompare(String(b.so_date ?? '')),
       filterType: 'date', dateValue: (o) => o.so_date,
@@ -933,11 +948,7 @@ export function DeliveryPlanningBoard({
          processing_date is the SALES ORDER's Processing Date and nothing
          else"). */
       key: 'processing_date', label: 'Processing Date', width: 140, sortable: true,
-      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : (
-        <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-          {fmtDateOrDash(o.processing_date)}
-        </span>
-      )),
+      accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : detail(fmtDateOrDash(o.processing_date))),
       searchValue: (o) => (o.row_type !== 'so' ? '' : (o.processing_date ?? '')),
       exportValue: (o) => (o.row_type !== 'so' ? '' : (o.processing_date ?? '')),
       sortFn: (a, b) => String(a.row_type === 'so' ? a.processing_date ?? '' : '').localeCompare(String(b.row_type === 'so' ? b.processing_date ?? '' : '')),
@@ -945,11 +956,7 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'customer_delivery_date', label: 'Delivery Date', width: 130, sortable: true,
-      accessor: (o) => (
-        <span style={{ fontVariantNumeric: 'tabular-nums' }}>
-          {fmtDateOrDash(o.customer_delivery_date)}
-        </span>
-      ),
+      accessor: (o) => detail(fmtDateOrDash(o.customer_delivery_date)),
       searchValue: (o) => o.customer_delivery_date ?? '',
       sortFn: (a, b) => String(a.customer_delivery_date ?? '').localeCompare(String(b.customer_delivery_date ?? '')),
       filterType: 'date', dateValue: (o) => o.customer_delivery_date,
@@ -960,14 +967,14 @@ export function DeliveryPlanningBoard({
        ORIGINAL "Delivery Date" column above is unchanged. */
     {
       key: 'amended_delivery_date', label: 'Est. New Delivery Date', width: 130, sortable: true,
-      accessor: (o) => fmtDateOrDash(o.amended_delivery_date),
+      accessor: (o) => detail(fmtDateOrDash(o.amended_delivery_date)),
       searchValue: (o) => o.amended_delivery_date ?? '',
       sortFn: (a, b) => String(a.amended_delivery_date ?? '').localeCompare(String(b.amended_delivery_date ?? '')),
       filterType: 'date', dateValue: (o) => o.amended_delivery_date,
     },
     {
       key: 'amend_date_from_customer', label: 'Customer Request Date', width: 140, sortable: true, defaultHidden: true,
-      accessor: (o) => fmtDateOrDash(o.amend_date_from_customer),
+      accessor: (o) => detail(fmtDateOrDash(o.amend_date_from_customer)),
       searchValue: (o) => o.amend_date_from_customer ?? '',
       sortFn: (a, b) => String(a.amend_date_from_customer ?? '').localeCompare(String(b.amend_date_from_customer ?? '')),
       filterType: 'date', dateValue: (o) => o.amend_date_from_customer,
@@ -1072,7 +1079,7 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'shipout_date', label: 'Ship-out Date', width: 120, sortable: true, defaultHidden: !isEmSg,
-      accessor: (o) => fmtDateOrDash(o.shipout_date),
+      accessor: (o) => detail(fmtDateOrDash(o.shipout_date)),
       searchValue: (o) => o.shipout_date ?? '',
       sortFn: (a, b) => String(a.shipout_date ?? '').localeCompare(String(b.shipout_date ?? '')),
       filterType: 'date', dateValue: (o) => o.shipout_date,
@@ -1087,7 +1094,7 @@ export function DeliveryPlanningBoard({
        (these cross-border columns only matter for the EM trip). */
     {
       key: 'arrives_em_warehouse_date', label: 'Arrives EM Warehouse', width: 150, sortable: true, defaultHidden: !isEmSg,
-      accessor: (o) => fmtDateOrDash(o.arrives_em_warehouse_date),
+      accessor: (o) => detail(fmtDateOrDash(o.arrives_em_warehouse_date)),
       searchValue: (o) => o.arrives_em_warehouse_date ?? '',
       sortFn: (a, b) => String(a.arrives_em_warehouse_date ?? '').localeCompare(String(b.arrives_em_warehouse_date ?? '')),
       filterType: 'date', dateValue: (o) => o.arrives_em_warehouse_date,
@@ -1142,9 +1149,7 @@ export function DeliveryPlanningBoard({
          structural 0, and RM 0.00 would read as a paid-up order). */
       key: 'total_amount', label: 'Total Amount', width: 140, align: 'right', sortable: true,
       accessor: (o) => (o.row_type !== 'so' ? <NotApplicable /> : (
-        <span style={{ fontFamily: 'var(--font-mark)', fontWeight: 700, color: '#0c3f39' }}>
-          {fmtSen(o.local_total_sen)}
-        </span>
+        <span style={MONEY_STYLE}>{fmtSen(o.local_total_sen)}</span>
       )),
       searchValue: (o) => (o.row_type !== 'so' ? '' : String(o.local_total_sen)),
       exportValue: (o) => (o.row_type !== 'so' ? '' : o.local_total_sen / 100),
@@ -1158,12 +1163,12 @@ export function DeliveryPlanningBoard({
          DP / project row by construction. */
       key: 'balance_sen', label: 'Balance', width: 130, align: 'right', sortable: true, defaultHidden: true,
       /* Below zero is an OVER-COLLECTION, not a settled row — it must not share
-         the muted grey that means "nothing owed" (owner 2026-08-16). */
+         the muted grey that means "nothing owed" (owner 2026-08-16); a live
+         balance reads in the SO list's ink since the 2026-08-19 restyle. */
       accessor: (o) => (
         <span style={{
-          fontFamily: 'var(--font-mark)',
-          fontWeight: 700,
-          color: liveBalance(o) < 0 ? 'var(--c-festive-b, #B8331F)' : liveBalance(o) > 0 ? '#0c3f39' : '#767b6e',
+          ...MONEY_STYLE,
+          color: liveBalance(o) < 0 ? 'var(--c-festive-b, #B8331F)' : liveBalance(o) > 0 ? '#11140f' : '#767b6e',
         }}>
           {fmtSen(liveBalance(o))}
         </span>
@@ -1175,7 +1180,9 @@ export function DeliveryPlanningBoard({
     },
     {
       key: 'do', label: 'DO No.', width: 130, groupable: true,
-      accessor: (o) => (o.delivery_orders.length > 0 ? o.delivery_orders.map((d) => d.do_number).join(', ') : '—'),
+      accessor: (o) => (o.delivery_orders.length > 0
+        ? <span style={DOCNO_STYLE}>{o.delivery_orders.map((d) => d.do_number).join(', ')}</span>
+        : '—'),
       searchValue: (o) => o.delivery_orders.map((d) => d.do_number).join(' '),
     },
     /* DO Date — the latest DO's OWN document date (delivery_orders.do_date), from
@@ -1185,7 +1192,7 @@ export function DeliveryPlanningBoard({
        it is blank on every ASSR / DP / project row. */
     {
       key: 'do_date', label: 'DO Date', width: 120, sortable: true, defaultHidden: true,
-      accessor: (o) => fmtDateOrDash(o.do_date),
+      accessor: (o) => detail(fmtDateOrDash(o.do_date)),
       searchValue: (o) => o.do_date ?? '',
       sortFn: (a, b) => String(a.do_date ?? '').localeCompare(String(b.do_date ?? '')),
       filterType: 'date', dateValue: (o) => o.do_date,
