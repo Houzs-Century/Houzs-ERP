@@ -374,6 +374,50 @@ try {
   } catch (e) { notice(`AS service_role reproduction ERROR: ${e.code ?? ""} ${e.message}`); }
   finally { await pg.unsafe("RESET ROLE"); }
 
+
+  // 14) Is the residual 0 the SALES SCOPE for the signed-in user (Lim)?
+  //     resolveSalesScopeIds: view-all (Super Admin / Sales Director / Finance
+  //     Manager position, or scm.so.view_all / '*') -> NULL (sees all). Else
+  //     self + manager_id downline -> staff uuids -> .in('salesperson_id', ...).
+  //     Empty/failed lookup -> [MATCH_NOTHING] -> 0 rows. Resolve it from data.
+  const ucols = (await pg`
+    SELECT column_name FROM information_schema.columns
+     WHERE table_schema='public' AND table_name='users' ORDER BY ordinal_position`).map((c) => c.column_name);
+  notice("public.users columns: " + ucols.join(", "));
+  const lims = await pg`
+    SELECT to_jsonb(u) AS u FROM public.users u
+     WHERE u.name ILIKE '%lim%' OR u.email ILIKE '%lim%' ORDER BY u.id LIMIT 12`;
+  notice(`users matching 'lim': ${lims.length}`);
+  for (const row of lims) {
+    const u = row.u;
+    notice(`user id=${u.id} name=${JSON.stringify(u.name ?? u.full_name ?? null)} position=${JSON.stringify(u.position_name ?? u.position ?? null)} manager_id=${u.manager_id ?? "null"} disabled=${u.disabled ?? u.is_disabled ?? u.status ?? "?"}`);
+    // self + downline (manager_id tree), cycle-guarded, matches services/orgScope.ts
+    const subtree = await pg`
+      WITH RECURSIVE t(id) AS (
+        SELECT ${u.id}::int
+        UNION
+        SELECT us.id FROM public.users us JOIN t ON us.manager_id = t.id
+      ) SELECT array_agg(DISTINCT id) AS ids FROM t`;
+    const ids = subtree[0].ids ?? [];
+    const staff = await pg`SELECT array_agg(id) AS sids FROM scm.staff WHERE user_id = ANY(${ids})`;
+    const sids = staff[0].sids ?? [];
+    let inScope1 = null;
+    if (sids.length > 0) {
+      const c = await pg`SELECT count(*)::int AS n FROM scm.mfg_sales_orders_with_payment_totals WHERE company_id = 1 AND salesperson_id = ANY(${sids})`;
+      inScope1 = c[0].n;
+    }
+    notice(`  -> subtree users=${ids.length}, staff uuids=${sids.length}, SO rows(company 1) IN scope=${inScope1 === null ? "0 (no staff uuid -> MATCH_NOTHING)" : inScope1}`);
+  }
+  // How many of the 2726 HOUZS orders even HAVE a salesperson that maps to a user?
+  const orphan = await pg`
+    SELECT count(*)::int AS total,
+           count(*) FILTER (WHERE s.user_id IS NULL)::int AS staff_no_user,
+           count(*) FILTER (WHERE so.salesperson_id IS NULL)::int AS no_salesperson
+      FROM scm.mfg_sales_orders_with_payment_totals so
+      LEFT JOIN scm.staff s ON s.id = so.salesperson_id
+     WHERE so.company_id = 1`;
+  notice(`HOUZS orders: total=${orphan[0].total} with NULL salesperson=${orphan[0].no_salesperson} whose staff has no linked user=${orphan[0].staff_no_user}`);
+
 } finally {
   await pg.end({ timeout: 5 });
 }
