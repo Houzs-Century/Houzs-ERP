@@ -2077,23 +2077,9 @@ app.delete("/invitations/:id", requirePermission("users.manage"), async (c) => {
  * holders — impersonation is strictly the owner's review tool. Every use is
  * audited with the target identity.
  */
-/* THE ACTOR'S GRANTS ARE THE BOUNDARY — owner decision 2026-08-19.
-   His words: "我们的 team 那边是有得选这一个人是负责什么公司的… 如果他只是在同
-   一间公司，肯定就是限制；如果他是两间公司…他是没有限制。以 RBAC 这样子去做限制的"
-
-   So the predicate is the ACTOR's `allowedCompanyIds`, never the ACTIVE company:
-   switching organisation is something a two-company admin is already entitled to
-   do, and gating on the switcher would break that for no gain.
-
-   The rule is the one PUT /:id/companies already enforces twenty lines up — a
-   grantor can only ever pass on what they hold. Taking over an account HANDS the
-   actor that account's reach, so the target's companies must be a SUBSET of the
-   actor's. Holding {1} and taking over someone in {1,2} would be a promotion.
-
-   Degrades exactly like `allowedCompanyIds` does: `undefined` means the company
-   context could not be read at all (pre-migration, cold start), and refusing
-   there would lock every admin out of a routine action, so it falls through. `[]`
-   is different — it means the caller is granted NOTHING, and that refuses. */
+/* Owner decision 2026-08-19: the ACTOR's granted set is the boundary, never the
+   active company. Full reasoning and the two deliberate edge cases:
+   docs/modules/team-members.md, "Taking over an account". */
 async function targetWithinActorCompanies(
   c: Context<{ Bindings: Env }>,
   targetUserId: number,
@@ -2108,9 +2094,7 @@ async function targetWithinActorCompanies(
   const theirs = (r.results ?? [])
     .map((x) => Number(x.company_id))
     .filter((n) => Number.isFinite(n) && n > 0);
-  /* A target with NO grants is not "safe by default" — companyContext currently
-     hands such a user every active company, so taking them over is the widest
-     reach there is. Refuse unless the actor holds everything themselves. */
+  // A target with NO grants is the WIDEST reach, not the safest — see the guide.
   const held = new Set(mine);
   const outside = theirs.length === 0 ? [-1] : theirs.filter((cid) => !held.has(cid));
   if (outside.length === 0) return { ok: true };
