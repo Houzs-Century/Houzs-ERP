@@ -40,6 +40,7 @@ import {
 } from './settlement-ui';
 import { downloadCSV, toCSV } from '../../lib/csv';
 import styles from './Suppliers.module.css';
+import grid from './MerchantRecon.module.css';
 import { PageHeader } from '../../components/Layout';
 
 /* The server sends the four piles as a plain tally; a bucket with nothing in it
@@ -300,22 +301,24 @@ const ReconcileTab = () => {
           </div>
         )}
         {waiting.length > 0 && (
-          <table style={table}>
+          <table className={grid.grid}>
             <thead>
-              <tr style={headRow}>
-                <th style={cell}>Merchant</th><th style={cell}>Document</th><th style={cell}>Customer paid on</th>
-                <th style={num}>Days</th><th style={num}>Amount</th><th style={cell}>Approval</th>
+              <tr>
+                <th>Merchant</th><th>Document</th><th>Customer paid on</th>
+                <th className={grid.num}>Days</th><th className={grid.num}>Amount</th><th>Approval</th>
               </tr>
             </thead>
             <tbody>
               {waiting.map((p) => (
-                <tr key={`${p.source}:${p.id}`} style={rowLine}>
-                  <td style={cell}><span className={styles.codeChip}>{p.acquirerCode}</span></td>
-                  <td style={cell}>{p.docNo}</td>
-                  <td style={cell}>{p.paidOn}</td>
-                  <td style={{ ...num, color: p.ageDays > 14 ? danger : undefined, fontWeight: p.ageDays > 14 ? 700 : undefined }}>{p.ageDays}</td>
-                  <td style={num}>{fmt(p.amountSen)}</td>
-                  <td style={cell}>{p.approvalCode ?? '—'}</td>
+                <tr key={`${p.source}:${p.id}`}>
+                  <td><span className={styles.codeChip}>{p.acquirerCode}</span></td>
+                  <td>{p.docNo}</td>
+                  <td>{p.paidOn}</td>
+                  <td className={grid.num} style={{ color: p.ageDays > 14 ? danger : undefined, fontWeight: p.ageDays > 14 ? 700 : undefined }}>
+                    {p.ageDays}
+                  </td>
+                  <td className={grid.num}>{fmt(p.amountSen)}</td>
+                  <td>{p.approvalCode ?? '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -432,14 +435,16 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
 const LinesTable = ({ batches, onOpen, openOnly }: {
   batches: SettlementBatch[]; onOpen: (id: number) => void; openOnly?: boolean;
 }) => (
-  <table style={table}>
+  <table className={grid.grid}>
     <thead>
-      <tr style={headRow}>
-        <th style={cell}>Report</th>
-        <th style={cell}>The merchant&rsquo;s line</th>
-        <th style={num}>Gross</th><th style={num}>Fee</th><th style={num}>Net</th>
-        <th style={cell}>The sale it matched</th>
-        <th style={cell}>Status</th>
+      <tr>
+        <th>Report</th>
+        <th>The merchant&rsquo;s line</th>
+        <th className={grid.num}>Gross</th>
+        <th className={grid.num}>Fee</th>
+        <th className={grid.num}>Net</th>
+        <th>The sale it matched</th>
+        <th>Status</th>
       </tr>
     </thead>
     {batches.map((b) => <BatchRows key={b.id} batch={b} onOpen={onOpen} openOnly={openOnly} />)}
@@ -457,12 +462,12 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
 
   /* The report names itself once, down the side of its own lines. */
   const reportCell = (span: number) => (
-    <td style={{ ...cell, borderTop: '2px solid var(--c-line, rgba(34,31,32,0.12))', minWidth: 230 }} rowSpan={span}>
+    <td className={grid.report} rowSpan={span}>
       <div style={{ display: 'flex', gap: 6, alignItems: 'baseline', flexWrap: 'wrap' }}>
         <span className={styles.codeChip}>{batch.acquirer_code}</span>
         <b style={{ wordBreak: 'break-all' }}>{batch.file_name}</b>
       </div>
-      <div style={softText}>{batch.period_from} → {batch.period_to} · net {fmt(batch.net_sen)}</div>
+      <div className={grid.sub}>{batch.period_from} → {batch.period_to} · net {fmt(batch.net_sen)}</div>
       <button type="button" style={{ ...btn(openOnly === true), marginTop: 6 }} onClick={() => onOpen(batch.id)}>
         {openOnly ? 'Reconcile' : 'Open'}
       </button>
@@ -474,15 +479,14 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
       <tbody>
         <tr>
           {reportCell(1)}
-          <td style={{ ...cell, borderTop: '2px solid var(--c-line, rgba(34,31,32,0.12))' }} colSpan={6}>
-            <span style={softText}>{q.isLoading ? 'Reading its lines…' : 'Nothing left on this report.'}</span>
+          <td colSpan={6}>
+            <span className={grid.sub}>{q.isLoading ? 'Reading its lines…' : 'Nothing left on this report.'}</span>
           </td>
         </tr>
       </tbody>
     );
   }
 
-  const top = { borderTop: '2px solid var(--c-line, rgba(34,31,32,0.12))' };
   return (
     <tbody>
       {rows.map((r, i) => {
@@ -490,23 +494,22 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
            pre-ticked but not taken. Neither = a human's job. */
         const sale = r.linked.length > 0 ? r.linked : null;
         const guess = r.suggested ?? [];
-        const edge = i === 0 ? top : undefined;
         return (
-          <tr key={r.id} style={rowLine}>
+          <tr key={r.id}>
             {i === 0 && reportCell(rows.length)}
-            <td style={{ ...cell, ...edge }}>
+            <td>
               <div>{r.txn_date}{r.ref ? <> · ref <b>{r.ref}</b></> : null}</div>
-              <div style={softText}>line {r.line_no}</div>
+              <div className={grid.sub}>line {r.line_no}</div>
             </td>
-            <td style={{ ...num, ...edge }}>{fmt(r.gross_sen)}</td>
-            <td style={{ ...num, ...edge }}>{fmt(r.fee_sen)}</td>
-            <td style={{ ...num, ...edge }}>{fmt(r.net_sen)}</td>
-            <td style={{ ...cell, ...edge }}>
+            <td className={grid.num}>{fmt(r.gross_sen)}</td>
+            <td className={grid.num}>{fmt(r.fee_sen)}</td>
+            <td className={grid.num}>{fmt(r.net_sen)}</td>
+            <td>
               {sale && sale.map((l) => (
                 <div key={l.payment_id}>
                   <b>{l.doc_no ?? l.payment_id}</b>
                   {l.customer_name ? ` · ${l.customer_name}` : ''}
-                  <div style={softText}>
+                  <div className={grid.sub}>
                     {[l.paid_on ? `paid ${l.paid_on}` : null,
                       l.approval_code ? `code ${l.approval_code}` : null,
                       fmt(l.amount_sen)].filter(Boolean).join(' · ')}
@@ -516,25 +519,25 @@ const BatchRows = ({ batch, onOpen, openOnly }: {
               {!sale && guess.length > 0 && guess.map((p) => (
                 <div key={p.id}>
                   <b>{p.docNo}</b>{p.customerName ? ` · ${p.customerName}` : ''}
-                  <div style={softText}>
+                  <div className={grid.sub}>
                     {[`paid ${p.paidOn}`, p.approvalCode ? `code ${p.approvalCode}` : null, fmt(p.amountSen)]
                       .filter(Boolean).join(' · ')}
                   </div>
                 </div>
               ))}
               {!sale && guess.length === 0 && (
-                <span style={softText}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
+                <span className={grid.sub}>{r.candidates.length > 0 ? `${r.candidates.length} possible` : '—'}</span>
               )}
             </td>
-            <td style={{ ...cell, ...edge }}>
+            <td>
               {r.confirmed_at
-                ? <span style={{ color: good }}>done{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>
+                ? <span className={grid.good}>done{r.posted_je_no ? ` · ${r.posted_je_no}` : ''}</span>
                 : sale
-                  ? <span style={{ color: good }}>matched by reference</span>
+                  ? <span className={grid.good}>matched by reference</span>
                   : guess.length > 0
                     ? <span>the system&rsquo;s guess — check it</span>
                     : r.bucket === 'UNMATCHED'
-                      ? <span style={{ color: danger }}>no sale in the ERP</span>
+                      ? <span className={grid.bad}>no sale in the ERP</span>
                       : <span>you choose</span>}
             </td>
           </tr>
