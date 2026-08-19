@@ -580,6 +580,16 @@ export type DpOrderRow = {
   remark: string | null;
   created_at: string;
   updated_at: string;
+  /* Sales context off the SOURCE SO (owner 2026-08-19) — stamped server-side on
+     SO-sourced jobs only; null on manual / supplier / project / case rows.
+     Resolve so_agent / so_salesperson_id to a name via useStaffLookup, never
+     render either raw. Optional (`?`) so a cached pre-upgrade payload still
+     typechecks. */
+  so_agent?: string | null;
+  so_salesperson_id?: string | null;
+  so_venue?: string | null;
+  so_processing_date?: string | null;
+  so_total_sen?: number | null;
 };
 export function useDpOrders() {
   return useQuery({
