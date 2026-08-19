@@ -355,6 +355,14 @@ describe('when every line is decided', () => {
     /* The offer of work is GONE — button and tallies both. */
     expect(screen.queryByText(/Confirm all/)).toBeNull();
     expect(screen.queryByText('ready to confirm')).toBeNull();
+    /* And so are the lines: 他confirm 了下面就不应该显示了，就应该显示在 bank
+       statement reconciliation 那个区域. */
+    expect(screen.queryByText('The sale it matched')).toBeNull();
+    expect(screen.queryByText('SO-2608-043')).toBeNull();
+    /* Hidden, not lost — the journal numbers are one press away. */
+    fireEvent.click(screen.getByText('Show what was posted'));
+    expect(screen.getByText('SO-2608-043')).toBeTruthy();
+    expect(screen.getByText(/JE-2608-0011/)).toBeTruthy();
     /* And it points at the money, naming what is still owed. Scoped to the
        panel — the page header carries its own link to the same screen. */
     const panel = screen.getByText(/Merchant reconciliation done/).parentElement as HTMLElement;

@@ -452,6 +452,7 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
 }) => {
   const batches = useSettlementBatches();
   const bulk = useConfirmAcross();
+  const [showPosted, setShowPosted] = useState(false);
 
   const mine = (batches.data?.batches ?? []).filter((b) => batchIds.includes(b.id));
   const sum = (pick: (b: SettlementBatch) => number) => mine.reduce((s, b) => s + pick(b), 0);
@@ -501,6 +502,17 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
         </>
       )}
       {allDone && <UploadDone batches={mine} />}
+      {/* Hidden, not thrown away: the lines are off the screen because they are
+          off this job, but the journal numbers they posted are the first thing
+          anybody asks for afterwards. */}
+      {allDone && (
+        <div>
+          <button type="button" style={{ ...btn(), padding: '2px 8px' }} onClick={() => setShowPosted(!showPosted)}>
+            {showPosted ? 'Hide' : 'Show'} what was posted
+          </button>
+        </div>
+      )}
+      {allDone && showPosted && <LinesTable batches={mine} onOpen={onOpen} />}
 
       {/* A file the server refused never became a report — it has no row below,
           so it says its own reason here or it says nothing anywhere. */}
@@ -511,11 +523,17 @@ const UploadSummary = ({ batchIds, refusals, onOpen, onDone }: {
         </div>
       ))}
 
-      {/* EVERY LINE the upload read, not a count per file — the operator is
+      {/* Every line STILL TO DO, not a count per file — the operator is
           reconciling transactions, and a file name is not one (owner: 我希望他是
           显示 transaction detail 和 sales order detail, 而不是 document 罢了).
-          Each row is the merchant's line beside the sale it matched. */}
-      <LinesTable batches={mine} onOpen={onOpen} />
+          Each row is the merchant's line beside the sale it matched.
+
+          Still to do, because a confirmed line has left this job: 他confirm 了
+          下面就不应该显示了，就应该显示在 bank statement reconciliation 那个区域.
+          Straight after an upload nothing is confirmed yet, so this is still
+          every line the files contained; confirm them and they empty out of
+          here and into the panel's next screen. */}
+      {!allDone && <LinesTable batches={mine} onOpen={onOpen} openOnly />}
     </div>
   );
 };
