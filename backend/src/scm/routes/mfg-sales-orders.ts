@@ -155,6 +155,7 @@ import {
   loadMaintenanceConfig,
   loadSpecialAddons,
   recomputeFromSnapshot,
+  erpLineTrust,
   loadProductByCode,
   loadProductsByCodes,
   loadFabricByCode,
@@ -7894,6 +7895,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     addLineFreeItem = { campaignId: addLineChosen.id, campaignName: addLineChosen.name };
   }
 
+  const addLinePosTablet = await isPosTabletCaller(c);
   const recomputed = recomputeFromSnapshot(
     {
       itemCode:       itemCodeStr,
@@ -7915,7 +7917,8 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
     sofaModuleCostRowsLite,
     modelOverridesLite,      // migration 0175 — per-Model Δ
     compartmentOverridesLite, // migration 0025 — per-compartment Δ
-    !(await isPosTabletCaller(c)), // owner ruling — non-POS author prices freely
+    // owner ruling — non-POS author prices freely; see erpLineTrust.
+    erpLineTrust(addLinePosTablet, Number(it.unitPriceSen ?? 0), it.zeroPriceIntended),
   );
   /* Pricing trust boundary (Owner 2026-05-31, see isPosTabletCaller). POS tablet
      roles are drift-rejected + take the server price; Backend / office authors
@@ -8450,14 +8453,8 @@ mfgSalesOrders.patch('/:docNo/items/:itemId', async (c) => {
       sofaModuleCostRowsPatch,
       modelOverridesPatch, // migration 0175 — per-Model Δ
       compartmentOverridesPatch, // migration 0025 — per-compartment Δ
-      /* owner ruling — non-POS author prices freely. 'operator-zero' when the
-         ERP editor states this 0 was TYPED, not unresolved (owner 2026-08-18;
-         see TrustSelling). Strict `=== true`, and only at 0, so every other
-         caller's 0 still means "not provided" and takes the catalogue fill. A
-         POS session never reaches it: posTablet short-circuits both arms. */
-      !posTablet && clientUnit === 0 && it.zeroPriceIntended === true
-        ? 'operator-zero'
-        : !posTablet,
+      // owner ruling — non-POS author prices freely; see erpLineTrust.
+      erpLineTrust(posTablet, clientUnit, it.zeroPriceIntended),
     );
     /* Task 6 — grandfathering: a line already carrying variants.freeItem was
        made free at create time and must STAY at RM 0 on edit recompute, even

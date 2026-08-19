@@ -262,6 +262,23 @@ const driftThresholdExceeded = (clientSen: number, serverSen: number): boolean =
  */
 export type TrustSelling = boolean | 'including-zero' | 'operator-zero';
 
+/** The trust an ERP line write earns. ONE home, because it is now asked in two
+ *  places (line PATCH and line ADD) and they must not drift: editing a line to
+ *  RM 0 while adding one at RM 0 took the catalogue price is exactly the defect
+ *  this closes.
+ *
+ *  `'operator-zero'` ONLY when the editor states the 0 was typed rather than
+ *  unresolved — strict `=== true`, and only at 0, so every other caller's 0
+ *  still means "not provided" and takes the catalogue fill. A POS session never
+ *  reaches it: `posTablet` short-circuits both arms, because the POS cannot make
+ *  that statement and its 0 is the documented "not provided" case. */
+export const erpLineTrust = (
+  posTablet: boolean,
+  unitPriceSen: number,
+  zeroPriceIntended: unknown,
+): TrustSelling =>
+  !posTablet && unitPriceSen === 0 && zeroPriceIntended === true ? 'operator-zero' : !posTablet;
+
 /** Pure mapper from a (product, fabric, variants) snapshot to the
  *  breakdown + DB column values. Used by tests + the route helpers below
  *  so the math path is verifiable without Supabase. */
