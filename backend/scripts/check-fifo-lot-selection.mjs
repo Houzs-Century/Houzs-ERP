@@ -14,7 +14,7 @@
 //             oldest lot AT THIS WAREHOUSE" cannot reach the other company's
 //             stock. The absent company_id costs nothing, and calling it a leak
 //             would be a false alarm on the stock ledger.
-//   IF NO   — lots are picked by (product_code, variant_key) across the whole
+//   IF NO   — lots are picked by item + variant across the whole
 //             table, and 2990's stock can be consumed to satisfy a HOUZS
 //             movement. That is a money-and-stock defect that outranks
 //             everything else currently open.
@@ -46,11 +46,7 @@ if (!url) {
   process.exit(1);
 }
 
-/* The whole verdict rests on this matcher, so it is asserted before anything is
-   reported. Its first draft could not match AT ALL — one backslash too many
-   inside a template literal — and a matcher that never fires reports "keys on
-   NEITHER", which is to say it invents a money-and-stock emergency. The repo's
-   rule: a verdict computed over nothing must never read as an answer. */
+/* Asserted before anything is reported — see the note inside. */
 function nearLots(body, col) {
   // NO REGEX, deliberately. Three attempts to write this as one died on escaping
   // — a template literal ate a backslash each time and produced `[sS]`, which
@@ -67,8 +63,8 @@ function nearLots(body, col) {
 }
 {
   const yes = "from scm.inventory_lots l where l.warehouse_id = p_wh and qty_remaining > 0";
-  const no = "from scm.inventory_lots l where l.product_code = p_code and variant_key = p_v";
-  const far = "from scm.inventory_lots l where product_code = p" + " x".repeat(400) + " company_id = 1";
+  const no = "from scm.inventory_lots l where l.variant_key = p_v and qty_remaining > 0";
+  const far = "from scm.inventory_lots l where variant_key = p" + " x".repeat(400) + " company_id = 1";
   if (!nearLots(yes, "warehouse_id") || nearLots(no, "warehouse_id")
       || nearLots(yes, "company_id") || nearLots(far, "company_id")) {
     console.error("check-fifo-lot-selection: SELF-TEST FAILED — not reporting.");
