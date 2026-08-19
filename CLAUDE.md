@@ -1149,19 +1149,17 @@ Not generic narrative.
   mig 047: `projects.chat`, `projects.checklist.tick` — use
   `requireAnyPermission([...])` to gate routes that accept either a
   narrow verb or `projects.write`.
-- **Row-level scope is two-dimensional now.** PIC one-hop +
-  brand allow-list (mig 049). Use `getProjectScope(user)` from
-  `backend/src/services/projectAcl.ts` — returns
-  `{ pic_ids, brands }`. The SQL fragment
-  `COALESCE(p.pic_id, p.created_by) IN (...) AND p.brand IN (...)`
-  is still hand-written at FIVE statements across four callsites —
-  project list (`services/projects.ts:1889`), calendar
-  (`routes/projects.ts:4916` + `:4924`, two arms of one handler),
-  notifications (`routes/notifications.ts:96`, written in Drizzle
-  template form so a raw-string grep MISSES it), and the two finance
-  endpoints `GET /finance/by-project` (`:2752`) and `GET /finance/lines`
-  (`:2961`). `projectScopeWhere(user)` does not exist yet; centralising
-  into it is on the Roadmap.
+- **Project row-level visibility is COMPANY-ONLY (owner decision 2026-08-19).**
+  The old two-dimensional PIC one-hop + brand allow-list ACL (migs 048/049,
+  `services/projectAcl.ts` [gone]) was REMOVED: within a company, any user with
+  the projects page permission sees every one of that company's projects.
+  Visibility = the `requirePageAccess` gate + the `company_id` /
+  `activeCompanySql` predicate. Crew scoping (helpers/storekeepers/drivers →
+  their crewed events) is a separate axis and stays. `user_brands` and
+  `GET/PUT /api/users/:id/brands` were kept because they still drive the
+  DIRECTOR approval-lane brand split (`approverBrandBlocked` in
+  `services/projectGates.ts`), NOT project visibility. See
+  `docs/modules/projects-pms.md` Axis 2.
 - **Section + attachment data on tasks** (mig 050). Project tasklist
   groups by `project_checklist_sections`; per-task attachments live
   in `project_checklist_attachments`. The project-level

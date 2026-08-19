@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Plus, Copy, Trash2, UserX, UserCheck, X, KeyRound, Pencil, Check, Tag, RefreshCw, Search, ArrowUp, ArrowDown, ChevronsUpDown, ChevronRight, ChevronDown, Printer, LayoutGrid, List, Phone, Mail, AtSign, ArrowLeft, SlidersHorizontal, Eye, EyeOff, Users, ShieldCheck, Network, Building2, LogIn, type LucideIcon } from "lucide-react";
+import { Plus, Copy, Trash2, UserX, UserCheck, X, KeyRound, Pencil, Check, RefreshCw, Search, ArrowUp, ArrowDown, ChevronsUpDown, ChevronRight, ChevronDown, Printer, LayoutGrid, List, Phone, Mail, AtSign, ArrowLeft, SlidersHorizontal, Eye, EyeOff, Users, ShieldCheck, Network, Building2, LogIn, type LucideIcon } from "lucide-react";
 import { PageHeader } from "../components/Layout";
 import { TabStrip, type TabOption } from "../components/TabStrip";
 import { Button } from "../components/Button";
@@ -709,7 +709,6 @@ function MembersTab({
   );
 
   // Per-user brand picker — opens a small modal scoped to one member.
-  const [brandsFor, setBrandsFor] = useState<TeamMember | null>(null);
   // Member being edited in the side panel (name/email/phone/org + actions).
   const [editing, setEditing] = useState<TeamMember | null>(null);
   // Member whose full-screen detail is open. Stored by id so it re-reads
@@ -1846,7 +1845,6 @@ function MembersTab({
             await removeUser(viewing);
             setViewingId(null);
           }}
-          onEditBrands={() => setBrandsFor(viewing)}
         />
       ) : (
       <>
@@ -2419,24 +2417,8 @@ function MembersTab({
             await removeUser(u);
             setEditing(null);
           }}
-          onEditBrands={(u) => {
-            setEditing(null);
-            setBrandsFor(u);
-          }}
           multiCompany={multiCompany}
           companies={companyOpts}
-        />
-      )}
-
-      {brandsFor && (
-        <UserBrandsPanel
-          user={brandsFor}
-          onClose={() => setBrandsFor(null)}
-          onSaved={() => {
-            setBrandsFor(null);
-            // No need to reload members — brand list lives in its own
-            // endpoint and isn't in /api/users payload.
-          }}
         />
       )}
 
@@ -2504,7 +2486,6 @@ function MemberDetail({
   onResendInvite,
   onToggleStatus,
   onRemove,
-  onEditBrands,
 }: {
   user: TeamMember;
   members: TeamMember[];
@@ -2521,7 +2502,6 @@ function MemberDetail({
   onResendInvite: () => void;
   onToggleStatus: () => void | Promise<void>;
   onRemove: () => void | Promise<void>;
-  onEditBrands: () => void;
 }) {
   const reports = members
     .filter((m) => m.manager_id === user.id)
@@ -2581,8 +2561,7 @@ function MemberDetail({
 
   /* Tab state · ?view=overview (default) | ?view=org-performance. URL-state
      so a deep-link or refresh lands on the right tab; the existing default
-     (no query string) still lands on Overview. Brands & Commission stays on
-     the side-drawer (onEditBrands) — not promoted to a tab. */
+     (no query string) still lands on Overview. */
   const [searchParams, setSearchParams] = useSearchParams();
   const view: "overview" | "org-performance" =
     searchParams.get("view") === "org-performance" ? "org-performance" : "overview";
@@ -2725,11 +2704,6 @@ function MemberDetail({
               <Button variant="brass" className="w-full" icon={<Pencil size={13} />} onClick={onEdit}>
                 Edit member
               </Button>
-              {canManage && (
-                <button type="button" onClick={onEditBrands} className={actionCls}>
-                  <Tag size={13} /> Brand access…
-                </button>
-              )}
               {canManage && user.status !== "invited" && (
                 <button type="button" onClick={onSendReset} className={actionCls}>
                   <KeyRound size={13} /> Reset password
@@ -2864,22 +2838,6 @@ function MemberDetail({
                 ))}
               </div>
             )}
-            <div className="border-t border-border-subtle pt-2.5">
-              <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-wide text-ink-muted">
-                Brand access
-              </span>
-              {user.brands.length === 0 ? (
-                <span className="text-[12px] text-ink-muted">No brand restriction</span>
-              ) : (
-                <div className="flex flex-wrap gap-1">
-                  {user.brands.map((b) => (
-                    <Badge key={b} tone="neutral" size="xs" caseless>
-                      {b}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </div>
           </DetailCol>
 
           <DetailCol title="Timeline">
@@ -3034,7 +2992,6 @@ function EditMemberPanel({
   onResendInvite,
   onToggleStatus,
   onRemove,
-  onEditBrands,
   multiCompany,
   companies,
 }: {
@@ -3050,7 +3007,6 @@ function EditMemberPanel({
   onResendInvite: (u: TeamMember) => void;
   onToggleStatus: (u: TeamMember) => void | Promise<void>;
   onRemove: (u: TeamMember) => void | Promise<void>;
-  onEditBrands: (u: TeamMember) => void;
   multiCompany: boolean;
   companies: CompanyOpt[];
 }) {
@@ -3625,9 +3581,6 @@ function EditMemberPanel({
       </div>
 
       <PanelSection title="Account">
-        <button type="button" onClick={() => onEditBrands(user)} className={actionCls}>
-          <Tag size={13} /> Brand access…
-        </button>
         {user.status !== "invited" && (
           <button type="button" onClick={() => onSendReset(user)} className={actionCls}>
             <KeyRound size={13} /> Send password reset link
@@ -3649,142 +3602,6 @@ function EditMemberPanel({
         >
           <Trash2 size={13} /> Delete permanently
         </button>
-      </PanelSection>
-    </Panel>
-  );
-}
-
-/**
- * Per-user brand allow-list editor (mig 049). Drives whether scoped
- * sales users see a project (intersected with their PIC scope).
- * Rendered as a side panel; reuses the chip-toggle UX from Roles.
- */
-function UserBrandsPanel({
-  user,
-  onClose,
-  onSaved,
-}: {
-  user: TeamMember;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  const [brands, setBrands] = useState<string[] | null>(null);
-
-  // Canonical brand list from the project_brands lookup.
-  const brandOpts = useQuery<{ data: string[] }>("/api/projects/brands?names_only=1", () =>
-    api.get("/api/projects/brands?names_only=1")
-  );
-  // Current allow-list for this user.
-  const current = useQuery<{ brands: string[] }>("/api/users/:/brands",
-    () => api.get(`/api/users/${user.id}/brands`),
-    [user.id]
-  );
-
-  // Hydrate local state once the fetch lands.
-  if (brands === null && current.data) {
-    setBrands(current.data.brands);
-  }
-
-  const allBrands = brandOpts.data?.data ?? [];
-  const selected = brands ?? [];
-
-  function toggle(b: string) {
-    setBrands((prev) => {
-      const cur = prev ?? [];
-      return cur.includes(b) ? cur.filter((x) => x !== b) : [...cur, b];
-    });
-  }
-
-  async function save() {
-    setBusy(true);
-    try {
-      await api.put(`/api/users/${user.id}/brands`, { brands: selected });
-      toast.success(
-        selected.length === 0
-          ? `Cleared ${user.name || user.email}'s brand list`
-          : `Updated ${user.name || user.email}'s brands`
-      );
-      onSaved();
-    } catch (e: any) {
-      toast.error(e?.message || "Save failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Panel
-      open
-      onClose={onClose}
-      title={user.name || user.email}
-      subtitle="Brand allow-list"
-      width={420}
-      footer={
-        <div className="flex items-center justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="rounded-md border border-border bg-surface px-3 py-2 text-[12px] text-ink-secondary"
-          >
-            Cancel
-          </button>
-          <Button
-            variant="primary"
-            onClick={save}
-            disabled={busy || current.loading}
-          >
-            {busy ? "Saving…" : "Save"}
-          </Button>
-        </div>
-      }
-    >
-      <PanelSection title="Brands">
-        <div className="text-[11px] leading-snug text-ink-muted">
-          When this user's role is sales-scoped, they only see projects
-          whose brand is on this list (AND-ed with the PIC one-hop rule).
-          Their direct reports inherit the same scope through{" "}
-          <span className="font-mono">manager_id</span>.
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {current.loading && (
-            <div className="flex flex-wrap gap-1.5">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-5 w-16" />
-              ))}
-            </div>
-          )}
-          {!current.loading && allBrands.length === 0 && (
-            <div className="text-[11px] text-ink-muted">
-              No brands defined yet. Add some under Project Maintenance →
-              Brands.
-            </div>
-          )}
-          {!current.loading &&
-            allBrands.map((b) => {
-              const on = selected.includes(b);
-              return (
-                <button
-                  key={b}
-                  type="button"
-                  onClick={() => toggle(b)}
-                  className={cn(
-                    "rounded-full border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-wider transition-colors",
-                    on
-                      ? "border-accent bg-accent text-white"
-                      : "border-border bg-surface text-ink-secondary hover:border-accent/40 hover:text-accent"
-                  )}
-                >
-                  {b}
-                </button>
-              );
-            })}
-        </div>
-        <div className="mt-1 text-[10px] text-ink-muted">
-          {selected.length === 0
-            ? "Empty list — this user sees no projects when sales-scoped."
-            : `${selected.length} brand${selected.length === 1 ? "" : "s"} selected.`}
-        </div>
       </PanelSection>
     </Panel>
   );
