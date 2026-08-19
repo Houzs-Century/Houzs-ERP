@@ -4997,6 +4997,7 @@ app.get("/calendar/events", requirePageAccess("projects.calendar"), async (c) =>
 // Unknown columns are ignored. Missing name → row skipped.
 
 app.post("/import/csv", requirePermission("projects.manage"), async (c) => {
+  // company-scope: the two UPDATEs at :5066 and :5081 key on result.id, and result comes from createProject at :5038 — services/projects.ts INSERTs only (no upsert, no ON CONFLICT), so that row was created BY THIS REQUEST and stamped with activeCompanyId at :5050. A row you just minted needs no predicate to prove it is yours. Verified 2026-08-19.
   const user = c.get("user");
   const text = await c.req.text();
   const parsed = parseCsv(text);

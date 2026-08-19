@@ -593,6 +593,7 @@ function normSheetDate(raw: unknown): string | null {
 }
 
 app.post("/delivery-dates", async (c) => {
+  // company-scope: scoped, but by string-built SQL the checker cannot see. :620 builds `AND company_id = <resolved>` and refuses with company_unresolved when it cannot; :639 applies it to the READ; :654 writes on the id that scoped read returned. Verified 2026-08-19.
   const keyCompanyCode = intakeKeyCompanyCode(c);
   if (!keyCompanyCode) {
     const limited = await checkRateLimit(c, "intake_badkey", clientIp(c), 10, 900);

@@ -1106,6 +1106,7 @@ app.post("/bulk/unarchive", requirePermission("service_cases.manage"), async (c)
 });
 
 app.post("/bulk/assign", requirePermission("service_cases.manage"), async (c) => {
+  // company-scope: scoped by string-built SQL the checker cannot see — :1116 takes assrCompanySql (allowedCompaniesSql, the caller's granted companies) and :1119 applies it to the UPDATE itself. Out of scope moves no row, and :1123 stops rather than log an assignment that did not happen. Verified 2026-08-19.
   const userId = (c as any).get?.("userId") ?? null;
   const body = await c.req.json<{ ids?: number[]; assigned_to?: number | null }>();
   // De-dupe: a repeated id would assign + notify the SAME case twice, posting
@@ -2663,6 +2664,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
 // ── Auto-generate service PO number ───────────────────────────
 
 app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c) => {
+  // company-scope: the READ at :2683 carries assrCompanySql and :2691 returns 404 when it misses, so the unscoped UPDATE at :2699 can only ever reach an id this company owns. Verified 2026-08-19.
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const userId = (c as any).get?.("userId") ?? 0;
