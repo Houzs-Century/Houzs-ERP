@@ -124,7 +124,7 @@ async function main() {
     const lines = await sql`
       SELECT * FROM scm.purchase_order_items
       WHERE purchase_order_id = ${po.id}
-      ORDER BY material_code, id`;
+      ORDER BY item_code, id`;
 
     console.log('');
     notice(`B — ${lines.length} line(s) on this purchase order`);
@@ -132,7 +132,7 @@ async function main() {
       + `${pad('BAL', 6)} ${pad('UNIT_SEN', 11)} ${pad('WAREHOUSE_ID', 38)} ${pad('ID', 38)}`);
     for (const l of lines) {
       const bal = Number(l.qty ?? 0) - Number(l.received_qty ?? 0);
-      console.log(`${pad(l.material_code, 18)} ${pad(l.company_id ?? 'NULL', 5)} ${pad(l.qty, 6)} `
+      console.log(`${pad(l.item_code, 18)} ${pad(l.company_id ?? 'NULL', 5)} ${pad(l.qty, 6)} `
         + `${pad(l.received_qty ?? 0, 6)} ${pad(bal, 6)} ${pad(l.unit_price_sen, 11)} `
         + `${pad(l.warehouse_id ?? '(NULL)', 38)} ${pad(l.id, 38)}`);
     }
@@ -149,7 +149,7 @@ async function main() {
     for (const l of lines) {
       const eff = l.warehouse_id ?? po.purchase_location_id ?? null;
       const w = eff ? whById.get(eff) : null;
-      notice(`  ${l.material_code}: effective warehouse = ${eff ?? '(none)'}`
+      notice(`  ${l.item_code}: effective warehouse = ${eff ?? '(none)'}`
         + `${w ? ` -> ${w.code} / ${w.name} (company_id ${w.company_id ?? '(NULL)'})` : ''}`);
     }
 
@@ -197,7 +197,7 @@ async function main() {
       if (!(bal > 0)) {
         drops.push(`GATE 6 REMAINING QTY — qty ${l.qty} - received ${l.received_qty ?? 0} = ${bal}, not > 0`);
       }
-      notice(`  ${l.material_code}: ${drops.length ? `DROPPED BY ${drops.join(' ; ALSO ')}` : 'PASSES EVERY LIVE GATE — the picker returns this line'}`);
+      notice(`  ${l.item_code}: ${drops.length ? `DROPPED BY ${drops.join(' ; ALSO ')}` : 'PASSES EVERY LIVE GATE — the picker returns this line'}`);
     }
 
     /* ── B3 — the gate that USED to fire here, kept as history ────────────── */
@@ -305,7 +305,7 @@ async function main() {
     console.log('');
     notice('F — LIVE: what the CURRENT read returns for this document');
     const visible = await sql`
-      SELECT poi.id, poi.material_code
+      SELECT poi.id, poi.item_code
       FROM scm.purchase_order_items poi
       JOIN scm.purchase_orders p ON p.id = poi.purchase_order_id
       WHERE poi.company_id = ${ACTIVE}
@@ -314,7 +314,7 @@ async function main() {
         AND poi.purchase_order_id = ${po.id}::uuid
       ORDER BY poi.purchase_order_id DESC, poi.id`;
     notice(`  lines of ${po.po_number} the picker now returns: ${visible.length} of ${lines.length}`);
-    for (const v of visible) notice(`    ${v.material_code} (${v.id})`);
+    for (const v of visible) notice(`    ${v.item_code} (${v.id})`);
     const [{ n: allVisible }] = await sql`
       SELECT count(*)::int AS n
       FROM scm.purchase_order_items poi

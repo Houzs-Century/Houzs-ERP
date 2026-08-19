@@ -23,7 +23,7 @@
 
 export type SofaSetLine = { itemCode: string; variantKey: string; need: number };
 
-/** key = `${warehouseId}|${batchNo}|${productCode}|${variantKey}` → qty_remaining */
+/** key = `${warehouseId}|${batchNo}|${itemCode}|${variantKey}` → qty_remaining */
 export type SofaBatchStock = {
   /** mutable remaining-by-key (callers decrement as sets claim batches) */
   remaining: Map<string, number>;
@@ -36,10 +36,10 @@ export type SofaBatchStock = {
 export function sofaStockKey(
   warehouseId: string,
   batchNo: string,
-  productCode: string,
+  itemCode: string,
   variantKey: string,
 ): string {
-  return `${warehouseId}|${batchNo}|${productCode}|${variantKey}`;
+  return `${warehouseId}|${batchNo}|${itemCode}|${variantKey}`;
 }
 
 /** Load open-lot stock for `codes`, grouped per (warehouse, batch, code, variant).
@@ -56,23 +56,23 @@ export async function loadSofaBatchStock(
   if (wanted.size === 0) return { remaining, receivedAt, batches };
 
   // Only sofa lots carry a batch_no, so "batched + open" is already the small
-  // sofa-only slice. We deliberately do NOT filter product_code via .in() here:
+  // sofa-only slice. We deliberately do NOT filter item_code via .in() here:
   // sofa codes contain parentheses (e.g. BOOQIT-1A(LHF)) which break PostgREST's
   // in.(...) list syntax and silently return zero rows. Filter codes in JS.
   const { data: lots, error } = await sb
     .from('v_inventory_lots_open')
-    .select('warehouse_id, product_code, variant_key, batch_no, qty_remaining, received_at')
+    .select('warehouse_id, item_code, variant_key, batch_no, qty_remaining, received_at')
     .not('batch_no', 'is', null)
     .gt('qty_remaining', 0);
   if (error) throw new Error(`sofa batch stock load failed: ${error.message}`);
 
   for (const r of (lots ?? []) as Array<{
-    warehouse_id: string; product_code: string; variant_key: string | null;
+    warehouse_id: string; item_code: string; variant_key: string | null;
     batch_no: string; qty_remaining: number; received_at: string | null;
   }>) {
-    if (!wanted.has(r.product_code)) continue;
+    if (!wanted.has(r.item_code)) continue;
     const v = r.variant_key ?? '';
-    const k = sofaStockKey(r.warehouse_id, r.batch_no, r.product_code, v);
+    const k = sofaStockKey(r.warehouse_id, r.batch_no, r.item_code, v);
     remaining.set(k, (remaining.get(k) ?? 0) + Number(r.qty_remaining ?? 0));
     batches.add(r.batch_no);
     /* received_at is typed string and is one under PostgREST, but a repair

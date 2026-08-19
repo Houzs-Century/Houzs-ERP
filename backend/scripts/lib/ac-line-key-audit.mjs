@@ -82,12 +82,12 @@ export function codeMatchGapReason({
      the fix look like "add rows to the CSV", which cannot work: there is no
      AutoCount item to map a compartment to. */
   if (skuBeyondItemCode) {
-    return "the ERP row is a COMPARTMENT of a decomposed line — supplier_sku is the AutoCount ItemCode plus a compartment, and material_code is the compartment SKU, so no mapping row can ever name it";
+    return "the ERP row is a COMPARTMENT of a decomposed line — supplier_sku is the AutoCount ItemCode plus a compartment, and item_code is the compartment SKU, so no mapping row can ever name it";
   }
   if (!acItemMapped) {
     return "the AutoCount ItemCode has no row in autocount-erp-mapping-1561.csv, so the code match can never fire for it";
   }
-  return "the document is in the export and the item is mapped, but no AutoCount line on it maps to this row's material_code";
+  return "the document is in the export and the item is mapped, but no AutoCount line on it maps to this row's item_code";
 }
 
 /**

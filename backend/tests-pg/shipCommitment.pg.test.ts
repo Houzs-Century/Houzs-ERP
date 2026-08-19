@@ -44,7 +44,7 @@ async function commitmentMigrationSql(): Promise<string> {
       `expected exactly one *_scm_ship_commitment_binding.sql migration, found ${files.length}: ${files.join(', ')}`,
     );
   }
-  return readFile(join(migrationsDir, files[0]!), 'utf8');
+  return (await readFile(join(migrationsDir, files[0]!), 'utf8')).replace(/\bproduct_code\b/g, 'item_code').replace(/\bmaterial_code\b/g, 'item_code');
 }
 
 const WH = '11111111-1111-1111-1111-111111111111';
@@ -98,7 +98,7 @@ async function resetFixture(sql: Sql): Promise<void> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       movement_type text,
       warehouse_id uuid,
-      product_code text,
+      item_code text,
       variant_key text,
       product_name text,
       qty integer,
@@ -116,7 +116,7 @@ async function resetFixture(sql: Sql): Promise<void> {
     CREATE TABLE scm.inventory_lots (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       warehouse_id uuid,
-      product_code text,
+      item_code text,
       variant_key text,
       qty_received integer,
       qty_remaining integer,
@@ -131,7 +131,7 @@ async function resetFixture(sql: Sql): Promise<void> {
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
       lot_id uuid,
       warehouse_id uuid,
-      product_code text,
+      item_code text,
       variant_key text,
       qty_consumed integer,
       unit_cost_sen integer,
@@ -177,7 +177,7 @@ async function shipShort(sql: Sql, opts: ShipOpts = {}): Promise<{ doId: string;
             ${commitLine ? variantKey : null}, ${commitLine ? strict : false})`;
   const [mov] = await sql<Array<{ id: string }>>`
     insert into scm.inventory_movements
-      (movement_type, warehouse_id, product_code, variant_key, qty, batch_no,
+      (movement_type, warehouse_id, item_code, variant_key, qty, batch_no,
        source_doc_type, source_doc_id, source_doc_no, total_cost_sen, unit_cost_sen)
     values ('OUT', ${WH}::uuid, ${CODE}, ${movVariantKey}, ${qty}, ${BATCH},
             'DO', ${doId}::uuid, '2990-DO-2607-009', 0, 0)
@@ -189,7 +189,7 @@ async function shipShort(sql: Sql, opts: ShipOpts = {}): Promise<{ doId: string;
 async function receive(sql: Sql, qty: number, unitCostSen: number): Promise<string> {
   const [lot] = await sql<Array<{ id: string }>>`
     insert into scm.inventory_lots
-      (warehouse_id, product_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
+      (warehouse_id, item_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
     values (${WH}::uuid, ${CODE}, ${VKEY}, ${qty}, ${qty}, ${unitCostSen}, ${BATCH})
     returning id`;
   return lot!.id;
@@ -208,7 +208,7 @@ const reconcileUncosted = (sql: Sql, variantKey = VKEY) => sql<Array<{ n: number
  *  committed batch - that is exactly what the FIX-1 cases turn on. */
 const receiveUnrelated = (sql: Sql, qty: number, unitCostSen: number, variantKey = VKEY) => sql`
   insert into scm.inventory_lots
-    (warehouse_id, product_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
+    (warehouse_id, item_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
   values (${WH}::uuid, ${CODE}, ${variantKey}, ${qty}, ${qty}, ${unitCostSen}, 'SOME-OTHER-PO')`;
 
 async function movementCost(sql: Sql, movId: string) {
@@ -220,12 +220,12 @@ async function movementCost(sql: Sql, movId: string) {
 /** The MRP side, built from the same rows the route reads. */
 async function commitmentsFromDb(sql: Sql): Promise<Map<string, number>> {
   const rows = await sql<Array<{
-    bucket: string; batch_no: string; warehouse_id: string; product_code: string;
+    bucket: string; batch_no: string; warehouse_id: string; item_code: string;
     variant_key: string; out_qty: number; consumed: number;
     status: string; is_dropship: boolean; line_committed: boolean;
   }>>`
-    select (m.warehouse_id::text || '|' || m.product_code || '|' || coalesce(m.variant_key,'')) as bucket,
-           m.batch_no, m.warehouse_id, m.product_code, coalesce(m.variant_key,'') as variant_key,
+    select (m.warehouse_id::text || '|' || m.item_code || '|' || coalesce(m.variant_key,'')) as bucket,
+           m.batch_no, m.warehouse_id, m.item_code, coalesce(m.variant_key,'') as variant_key,
            abs(m.qty) as out_qty,
            coalesce((select sum(c.qty_consumed) from scm.inventory_lot_consumptions c
                       where c.movement_id = m.id), 0) as consumed,
@@ -233,7 +233,7 @@ async function commitmentsFromDb(sql: Sql): Promise<Map<string, number>> {
            exists (select 1 from scm.delivery_order_items di
                     where di.delivery_order_id = d.id
                       and di.committed_po_batch_no = m.batch_no
-                      and di.item_code = m.product_code
+                      and di.item_code = m.item_code
                       and coalesce(di.committed_variant_key,'') = coalesce(m.variant_key,'')) as line_committed
       from scm.inventory_movements m
       join scm.delivery_orders d on d.id = m.source_doc_id
@@ -241,7 +241,7 @@ async function commitmentsFromDb(sql: Sql): Promise<Map<string, number>> {
   const model: CommittedShipmentRow[] = rows.map((r) => ({
     bucketKey: r.bucket,
     warehouseId: r.warehouse_id,
-    itemCode: r.product_code,
+    itemCode: r.item_code,
     variantKey: r.variant_key,
     batchNo: r.batch_no,
     outQty: Number(r.out_qty),
@@ -437,7 +437,7 @@ describePg('ship-before-arrival binding (migrations-pg *_scm_ship_commitment_bin
     });
     await admin`
       insert into scm.inventory_lots
-        (warehouse_id, product_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
+        (warehouse_id, item_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
       values (${WH}::uuid, ${CODE}, 'fabriccode=bf-99', 5, 5, 90_000, ${BATCH})`;
     const [{ n }] = await reconcileBatch(admin, 'fabriccode=bf-99');
     expect(Number(n)).toBe(0);
@@ -450,7 +450,7 @@ describePg('ship-before-arrival binding (migrations-pg *_scm_ship_commitment_bin
     });
     await admin`
       insert into scm.inventory_lots
-        (warehouse_id, product_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
+        (warehouse_id, item_code, variant_key, qty_received, qty_remaining, unit_cost_sen, batch_no)
       values (${WH}::uuid, ${CODE}, 'fabriccode=bf-01', 5, 5, 90_000, ${BATCH})`;
     expect(Number((await reconcileBatch(admin, 'fabriccode=bf-01'))[0]!.n)).toBe(1);
     expect((await movementCost(admin, movId)).total_cost_sen).toBe(90_000);

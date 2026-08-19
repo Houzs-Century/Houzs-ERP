@@ -41,7 +41,7 @@ export type UsageVerdict =
 const CHECKS: Array<{ table: string; col: string; label: string; docCol: string | null }> = [
   { table: 'mfg_sales_order_items', col: 'item_code',    label: 'a sales order',    docCol: 'doc_no' },
   { table: 'purchase_order_items',  col: 'item_code',    label: 'a purchase order', docCol: null },
-  { table: 'inventory_movements',   col: 'product_code', label: 'a stock movement', docCol: 'source_doc_no' },
+  { table: 'inventory_movements',   col: 'item_code', label: 'a stock movement', docCol: 'source_doc_no' },
 ];
 
 /**

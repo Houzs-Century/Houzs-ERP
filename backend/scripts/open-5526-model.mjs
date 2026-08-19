@@ -32,7 +32,7 @@
 // allowed-options-check in the UI; skip the pool and nobody can ever tick the
 // code again.
 //
-// THE MONEY DOES NOT MOVE. Only material_code / item_code and the display name
+// THE MONEY DOES NOT MOVE. Only item_code / item_code and the display name
 // change. No price, qty or total column is written, and the per-document sofa
 // total is printed before and after as evidence.
 //
@@ -244,7 +244,7 @@ async function main() {
         if (hit.po_number !== doc) note(`  ${doc}: found as ${hit.po_number} via linked_ac_docno`);
       }
       const all = e.kind === "po"
-        ? await tx`SELECT i.id, i.material_code AS code, i.description2, i.line_total_sen AS total
+        ? await tx`SELECT i.id, i.item_code AS code, i.description2, i.line_total_sen AS total
                      FROM scm.purchase_order_items i
                     WHERE i.purchase_order_id = ${poId} AND i.item_group = 'sofa' ORDER BY i.id`
         : await tx`SELECT i.id, i.item_code AS code, i.description2, i.total_sen AS total, i.line_no
@@ -297,7 +297,7 @@ async function main() {
         const name = prodByCode.get(K(p.to)).name;
         if (APPLY) {
           if (e.kind === "po") await tx`UPDATE scm.purchase_order_items
-            SET material_code = ${p.to}, material_name = ${name} WHERE id = ${p.row.id}`;
+            SET item_code = ${p.to}, material_name = ${name} WHERE id = ${p.row.id}`;
           else await tx`UPDATE scm.mfg_sales_order_items
             SET item_code = ${p.to}, description = ${name} WHERE id = ${p.row.id}`;
         }
@@ -309,7 +309,7 @@ async function main() {
          so the parent alone would leave them stating 8038. These rows carry
          migrated_no_stock: this is paperwork, no movement is written. */
       const grnFollow = async (poItemId, code) => (APPLY
-        ? tx`UPDATE scm.grn_items SET material_code = ${code} WHERE purchase_order_item_id = ${poItemId} RETURNING id`
+        ? tx`UPDATE scm.grn_items SET item_code = ${code} WHERE purchase_order_item_id = ${poItemId} RETURNING id`
         : tx`SELECT id FROM scm.grn_items WHERE purchase_order_item_id = ${poItemId}`);
       for (const t of touched) {
         if (e.kind === "po") {
@@ -317,7 +317,7 @@ async function main() {
           if (g.length) { nGr += g.length; note(`      -> ${g.length} GRN line(s) follow ${compOf(t.code)}`); }
         } else {
           const po = APPLY
-            ? await tx`UPDATE scm.purchase_order_items SET material_code = ${t.code} WHERE so_item_id = ${t.id} RETURNING id`
+            ? await tx`UPDATE scm.purchase_order_items SET item_code = ${t.code} WHERE so_item_id = ${t.id} RETURNING id`
             : await tx`SELECT id FROM scm.purchase_order_items WHERE so_item_id = ${t.id}`;
           if (po.length) {
             nPo += po.length;

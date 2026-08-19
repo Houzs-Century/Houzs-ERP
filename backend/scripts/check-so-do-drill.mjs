@@ -96,18 +96,18 @@ try {
         notice(`        ${it.item_code}  qty=${it.qty}  [${link}]`);
       }
       const moves = await pg`
-        SELECT movement_type, product_code, variant_key, qty,
+        SELECT movement_type, item_code, variant_key, qty,
                warehouse_id::text AS warehouse_id, batch_no
           FROM scm.inventory_movements
          WHERE source_doc_type = 'DO' AND source_doc_id = ${d.id}::uuid
-         ORDER BY product_code`;
+         ORDER BY item_code`;
       if (moves.length) {
         notice(`        movements (${moves.length}):`);
         for (const m of moves) {
-          notice(`          ${m.movement_type}  ${m.product_code}  qty=${m.qty}  wh=${m.warehouse_id ?? "?"}  batch=${m.batch_no ?? "-"}`);
+          notice(`          ${m.movement_type}  ${m.item_code}  qty=${m.qty}  wh=${m.warehouse_id ?? "?"}  batch=${m.batch_no ?? "-"}`);
           if (live) {
             const bucket = String(m.movement_type).toUpperCase() === "OUT" ? outByCode : inByCode;
-            bucket.set(m.product_code, num(bucket.get(m.product_code)) + Math.abs(num(m.qty)));
+            bucket.set(m.item_code, num(bucket.get(m.item_code)) + Math.abs(num(m.qty)));
           }
         }
       }
@@ -137,7 +137,7 @@ try {
       const onHandRow = await pg`
         SELECT COALESCE(SUM(qty_remaining),0)::int AS n
           FROM scm.inventory_lots
-         WHERE company_id = ${hdr[0].company_id} AND product_code = ${code} AND qty_remaining > 0`;
+         WHERE company_id = ${hdr[0].company_id} AND item_code = ${code} AND qty_remaining > 0`;
       const flag = net > ordered ? `  ** NET STOCK-OUT ${net} > ORDERED ${ordered} — DOUBLE-DEDUCTED ${net - ordered} **` : "";
       notice(`    ${code}  ordered=${ordered}  OUT=${out}  IN=${inn}  NET_OUT=${net}  on_hand_now=${onHandRow[0].n}${flag}`);
     }

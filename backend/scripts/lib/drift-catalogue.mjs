@@ -52,8 +52,8 @@ export const DRIFT_CATALOGUE = [
     concept: "Product / item / material code (SKU)",
     canonical: "item_code",
     severity: "high",
-    seen: ["item_code (SO/DO/SI/IV lines)", "material_code (PO/GR/PI lines)", "product_code (inventory_movements/lots)", "code", "sku"],
-    note: "One SKU under three table-family names. LINE_CODE_COL and DocumentLinesExpansion exist solely to bridge them (code = material_code||item_code||product_code). itemCode/materialCode casing twins are not the drift.",
+    seen: ["item_code (SO/DO/SI/IV lines)", "item_code (PO/GR/PI lines)", "item_code (inventory_movements/lots)", "code", "sku"],
+    note: "One SKU under three table-family names. LINE_CODE_COL and DocumentLinesExpansion exist solely to bridge them (code = item_code||item_code||item_code). itemCode/itemCode casing twins are not the drift.",
   },
   {
     concept: "Warehouse / location an order ships from",

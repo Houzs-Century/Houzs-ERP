@@ -155,7 +155,7 @@ async function main() {
   const retById = new Map(returned.map((r) => [r.so_item_id, Number(r.q)]));
 
   // 3b. Live on-hand, per the allocator's bucket key and per looser lenses.
-  const balances = await sql`SELECT warehouse_id::text warehouse_id, product_code,
+  const balances = await sql`SELECT warehouse_id::text warehouse_id, item_code,
       COALESCE(variant_key,'') variant_key, SUM(qty)::numeric qty
     FROM scm.inventory_balances WHERE company_id = ${CO}
     GROUP BY 1,2,3`;
@@ -165,19 +165,19 @@ async function main() {
   const variantsSeen = new Map();  // wh::code -> Set(variant_key with qty>0)
   for (const b of balances) {
     const q = Number(b.qty ?? 0);
-    onHandExact.set(`${b.warehouse_id}::${b.product_code}::${b.variant_key}`,
-      (onHandExact.get(`${b.warehouse_id}::${b.product_code}::${b.variant_key}`) ?? 0) + q);
-    onHandWh.set(`${b.warehouse_id}::${b.product_code}`, (onHandWh.get(`${b.warehouse_id}::${b.product_code}`) ?? 0) + q);
-    onHandCode.set(b.product_code, (onHandCode.get(b.product_code) ?? 0) + q);
+    onHandExact.set(`${b.warehouse_id}::${b.item_code}::${b.variant_key}`,
+      (onHandExact.get(`${b.warehouse_id}::${b.item_code}::${b.variant_key}`) ?? 0) + q);
+    onHandWh.set(`${b.warehouse_id}::${b.item_code}`, (onHandWh.get(`${b.warehouse_id}::${b.item_code}`) ?? 0) + q);
+    onHandCode.set(b.item_code, (onHandCode.get(b.item_code) ?? 0) + q);
     if (q > 0) {
-      const k = `${b.warehouse_id}::${b.product_code}`;
+      const k = `${b.warehouse_id}::${b.item_code}`;
       if (!variantsSeen.has(k)) variantsSeen.set(k, new Set());
       variantsSeen.get(k).add(b.variant_key);
     }
   }
 
   // 3c. Open BATCHED lots — what the sofa set-coverage path actually reads.
-  const sofaLots = await sql`SELECT warehouse_id::text warehouse_id, product_code,
+  const sofaLots = await sql`SELECT warehouse_id::text warehouse_id, item_code,
       COALESCE(variant_key,'') variant_key, batch_no, SUM(qty_remaining)::numeric qty
     FROM scm.inventory_lots
     WHERE company_id = ${CO} AND batch_no IS NOT NULL AND qty_remaining > 0
@@ -186,12 +186,12 @@ async function main() {
   const lotsByCode = new Map();    // code -> total open batched qty
   const anyLotByCode = new Map();  // code -> total open qty incl. un-batched
   for (const l of sofaLots) {
-    batchStock.set(`${l.warehouse_id}|${l.batch_no}|${l.product_code}|${l.variant_key}`, Number(l.qty));
-    lotsByCode.set(l.product_code, (lotsByCode.get(l.product_code) ?? 0) + Number(l.qty));
+    batchStock.set(`${l.warehouse_id}|${l.batch_no}|${l.item_code}|${l.variant_key}`, Number(l.qty));
+    lotsByCode.set(l.item_code, (lotsByCode.get(l.item_code) ?? 0) + Number(l.qty));
   }
-  const allLots = await sql`SELECT product_code, SUM(qty_remaining)::numeric qty
+  const allLots = await sql`SELECT item_code, SUM(qty_remaining)::numeric qty
     FROM scm.inventory_lots WHERE company_id = ${CO} AND qty_remaining > 0 GROUP BY 1`;
-  for (const l of allLots) anyLotByCode.set(l.product_code, Number(l.qty));
+  for (const l of allLots) anyLotByCode.set(l.item_code, Number(l.qty));
 
   // 3d. BOUND mode: each blocking line's own dedicated PO (so_item_id) receipt.
   const blockIds = blocking.map((b) => b.id);

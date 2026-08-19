@@ -67,7 +67,7 @@ export function doItemCodesOf(
 }
 
 /**
- * Every material_code on a SET of receipts, WITH THE ERROR BOUND, and each code
+ * Every item_code on a SET of receipts, WITH THE ERROR BOUND, and each code
  * mapped to the receipt number that carries it.
  *
  * Two things this shape buys, both of which the single-GRN version could not:
@@ -101,11 +101,11 @@ export async function readGrnMaterialCodes(
      over-invoice guard, so it is not a new shape. */
   const { data, error } = await sb
     .from('grn_items')
-    .select('material_code, grn_id, grn:grns!inner ( grn_number )')
+    .select('item_code, grn_id, grn:grns!inner ( grn_number )')
     .in('grn_id', ids);
   if (error) return { codeToReceipt, error: String(error.message ?? error) };
   type Row = {
-    material_code: string | null; grn_id: string | null;
+    item_code: string | null; grn_id: string | null;
     grn?: { grn_number?: string | null } | Array<{ grn_number?: string | null }> | null;
   };
   /* Sorted by receipt number so a code carried by two of the covered notes always
@@ -117,7 +117,7 @@ export async function readGrnMaterialCodes(
     return String(na).localeCompare(String(nb));
   });
   for (const r of rows) {
-    const k = itemCodeKey(r.material_code);
+    const k = itemCodeKey(r.item_code);
     if (!k || codeToReceipt.has(k)) continue;
     const parent = Array.isArray(r.grn) ? r.grn[0] : r.grn;
     codeToReceipt.set(k, String(parent?.grn_number ?? r.grn_id ?? '').trim() || String(r.grn_id ?? ''));
@@ -125,7 +125,7 @@ export async function readGrnMaterialCodes(
   return { codeToReceipt, error: null };
 }
 
-/** Every material_code on the source GRN's lines — the single-receipt view.
+/** Every item_code on the source GRN's lines — the single-receipt view.
  *
  *  It used to be the error-DROPPING one, and the note here said so: the stock
  *  chains "behave exactly this way today and changing them is a separate
@@ -143,8 +143,8 @@ export function grnMaterialCodesOf(
 ): Promise<ParentCodes> {
   return readParentCodes(sb, {
     table: 'grn_items',
-    select: 'material_code',
-    codeColumn: 'material_code',
+    select: 'item_code',
+    codeColumn: 'item_code',
     parentColumn: 'grn_id',
     parentId: grnId,
   });

@@ -460,7 +460,7 @@ function DetailDrawer({
   const detailQ = useMfgSalesOrderDetail(row?.doc_no ?? null);
   // API (GET /mfg-sales-orders/:docNo) returns raw item columns: description,
   // item_code, qty, unit_price_sen, discount_sen, total_sen. Read those
-  // exact names (matches SalesOrderDetailV2). The old product_name/product_code/
+  // exact names (matches SalesOrderDetailV2). The old product_name/item_code/
   // amount_sen names never existed → "—" for every SO, and for mirrored 2990
   // POS lines (money in total_sen, unit_price_sen≈0) the qty×unit fallback
   // rendered RM 0.00. Prefer the authoritative total_sen.

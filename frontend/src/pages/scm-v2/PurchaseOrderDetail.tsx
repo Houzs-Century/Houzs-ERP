@@ -169,7 +169,7 @@ const draftFromItem = (it: PoItemRow): EditLine => ({
   itemId:         it.id,
   bindingId:      it.binding_id ?? undefined,
   materialKind:   it.material_kind,
-  materialCode:   it.material_code,
+  itemCode:   it.item_code,
   materialName:   it.material_name,
   supplierSku:    it.supplier_sku ?? undefined,
   qty:            it.qty,
@@ -340,7 +340,7 @@ export const PurchaseOrderDetail = () => {
   const recomputeLineCost = (line: EditLine): number => {
     const binding = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
-      : bindings.find((b) => b.material_code === line.materialCode);
+      : bindings.find((b) => b.item_code === line.itemCode);
     if (!binding) return line.unitPriceSen;
     const category = (line.category?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
@@ -456,7 +456,7 @@ export const PurchaseOrderDetail = () => {
      shortage view — otherwise a controlled select would fall back to the
      placeholder and the operator would read a real binding as "none". */
   const soLinkOptionsFor = (l: EditLine): Array<{ value: string; label: string }> => {
-    const code = l.materialCode.trim().toUpperCase();
+    const code = l.itemCode.trim().toUpperCase();
     const opts: Array<{ value: string; label: string }> = [];
     if (code) {
       for (const s of outstandingSoQ.data ?? []) {
@@ -562,11 +562,11 @@ export const PurchaseOrderDetail = () => {
     patchLine(rid, {
       bindingId:      b.id,
       materialKind:   b.material_kind,
-      materialCode:   b.material_code,
+      itemCode:   b.item_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku,
       unitPriceSen: b.unit_price_sen,
-      category:       categoryForCode(b.material_code),
+      category:       categoryForCode(b.item_code),
       priceTouched:   false,
     });
 
@@ -628,14 +628,14 @@ export const PurchaseOrderDetail = () => {
   };
 
   /* Single Save (owner 2026-06-19) — whole-line diff. For each draft:
-       · no itemId → ADD (full payload incl. variants / materialCode / SKU)
+       · no itemId → ADD (full payload incl. variants / itemCode / SKU)
        · itemId + changed any field → UPDATE (full payload)
      Deletes already fired server-side in removeLine. Then commit the header (if
      touched) and drop back to View. */
   const handleSave = async () => {
     if (savingDraft) return;
     // Guard: every line must reference a product before Save.
-    const blankLine = editLines.find((d) => !d.materialCode.trim());
+    const blankLine = editLines.find((d) => !d.itemCode.trim());
     if (blankLine) {
       notify({ title: 'Every line needs a product', body: 'Pick a product for each line, or remove the empty one before saving.', tone: 'error' });
       return;
@@ -662,8 +662,8 @@ export const PurchaseOrderDetail = () => {
           await addItem.mutateAsync({
             poId: po.id,
             materialKind:   d.materialKind,
-            materialCode:   d.materialCode,
-            materialName:   d.materialName || d.materialCode,
+            itemCode:   d.itemCode,
+            materialName:   d.materialName || d.itemCode,
             supplierSku:    d.supplierSku,
             qty:            d.qty,
             unitPriceSen: d.unitPriceSen,
@@ -684,8 +684,8 @@ export const PurchaseOrderDetail = () => {
         const it = byId.get(d.itemId);
         if (!it) continue;
         const changed =
-          d.materialCode !== it.material_code ||
-          (d.materialName || d.materialCode) !== it.material_name ||
+          d.itemCode !== it.item_code ||
+          (d.materialName || d.itemCode) !== it.material_name ||
           (d.supplierSku ?? '') !== (it.supplier_sku ?? '') ||
           (d.category ?? '') !== (it.item_group ?? '') ||
           d.qty !== it.qty ||
@@ -701,8 +701,8 @@ export const PurchaseOrderDetail = () => {
         if (!changed) continue;
         await updateItem.mutateAsync({
           poId: po.id, itemId: d.itemId,
-          materialCode:   d.materialCode,
-          materialName:   d.materialName || d.materialCode,
+          itemCode:   d.itemCode,
+          materialName:   d.materialName || d.itemCode,
           supplierSku:    d.supplierSku,
           qty:            d.qty,
           unitPriceSen: d.unitPriceSen,
@@ -766,7 +766,7 @@ export const PurchaseOrderDetail = () => {
                somehow isn't among them, say "One PO line" rather than print
                the id. */
             const hit = items.find((it) => it.id === String(body.poItemId ?? ''));
-            const lineName = (hit?.material_name || hit?.material_code || '').trim();
+            const lineName = (hit?.material_name || hit?.item_code || '').trim();
             const revised = Number(body.revisedQty ?? 0);
             const received = Number(body.receivedQty ?? 0);
             notify({
@@ -1316,7 +1316,7 @@ export const PurchaseOrderDetail = () => {
                   <td>
                     {/* Commander 2026-05-29 — show the item CODE only; the
                         variant summary stays (that's WHAT was ordered). */}
-                    <div className={styles.codeCell}>{it.material_code}</div>
+                    <div className={styles.codeCell}>{it.item_code}</div>
                     {(() => {
                       const summary = buildVariantSummary(it.item_group, it.variants as Record<string, unknown> | null)
                         || it.description
@@ -1762,7 +1762,7 @@ const PoRevisionSnapshot = ({ snapshot, currency }: { snapshot: unknown; currenc
               return (
                 <tr key={i}>
                   <td>
-                    <div>{str(l.material_code ?? l.materialCode ?? l.item_code ?? l.itemCode)}</div>
+                    <div>{str(l.item_code ?? l.itemCode ?? l.item_code ?? l.itemCode)}</div>
                     {spec && (
                       <div style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
                         {spec}

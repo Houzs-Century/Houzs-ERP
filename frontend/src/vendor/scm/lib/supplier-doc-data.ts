@@ -9,7 +9,7 @@
 //
 // Data sources (REUSED, no new backend routes):
 //   • supplier_material_bindings — via GET /suppliers/:id (the SupplierDetail
-//     page endpoint, returns { supplier, bindings }) → material_code →
+//     page endpoint, returns { supplier, bindings }) → item_code →
 //     supplier_sku for material_kind='mfg_product'. Main binding wins.
 //   • fabric_trackings — via GET /fabric-tracking (the FabricTracking page
 //     endpoint) → fabric_code (internal) → supplier_code.
@@ -24,7 +24,7 @@ import { authedFetch } from './authed-fetch';
 
 /** Minimal line shape the PDF generators share. Extra fields welcome. */
 export type SupplierDocLine = {
-  material_code: string;
+  item_code: string;
   supplier_sku?: string | null;
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
@@ -145,13 +145,13 @@ export async function loadFabricDescriptionMap(fabricCodes: string[]): Promise<M
 /** The binding shape both the SKU map and its callers care about. */
 export type SupplierBinding = {
   material_kind: string;
-  material_code: string;
+  item_code: string;
   supplier_sku: string | null;
   is_main_supplier: boolean;
 };
 
 /**
- * material_code → supplier_sku out of ONE supplier's bindings. Filters to
+ * item_code → supplier_sku out of ONE supplier's bindings. Filters to
  * material_kind='mfg_product' and (when `codes` is given) the requested codes;
  * when the same code is bound twice the main binding (is_main_supplier) wins.
  *
@@ -169,19 +169,19 @@ export function skuMapFromBindings(
   const wanted = codes && new Set(codes.map((c) => c.trim()).filter(Boolean));
   const candidates = (bindings ?? [])
     .filter((b) => b.material_kind === 'mfg_product'
-      && (!wanted || wanted.has(b.material_code))
+      && (!wanted || wanted.has(b.item_code))
       && (b.supplier_sku ?? '').trim() !== '')
     // Main binding first; first writer wins below.
     .sort((a, b) => Number(b.is_main_supplier) - Number(a.is_main_supplier));
   const map = new Map<string, string>();
   for (const b of candidates) {
-    if (!map.has(b.material_code)) map.set(b.material_code, (b.supplier_sku ?? '').trim());
+    if (!map.has(b.item_code)) map.set(b.item_code, (b.supplier_sku ?? '').trim());
   }
   return map;
 }
 
 /**
- * material_code → supplier_sku for ONE supplier, via the SupplierDetail page's
+ * item_code → supplier_sku for ONE supplier, via the SupplierDetail page's
  * GET /suppliers/:id (returns every binding for that supplier).
  */
 export async function loadSupplierSkuMap(
@@ -245,7 +245,7 @@ export async function loadSupplierDocData(
   // (PI/PR lines have no supplier_sku column at all → all of them).
   const missing = items
     .filter((it) => !(it.supplier_sku ?? '').trim())
-    .map((it) => it.material_code);
+    .map((it) => it.item_code);
   const fabricCodes = collectFabricCodes(items);
   const [skuMap, fabricMap, fabricDescMap, supplier] = await Promise.all([
     loadSupplierSkuMap(supplierId, missing),
@@ -261,7 +261,7 @@ export async function loadSupplierDocData(
  * then the live binding lookup, else '—' (our code has its own column).
  */
 export function supplierCodeFor(it: SupplierDocLine, skuMap: Map<string, string>): string {
-  return (it.supplier_sku ?? '').trim() || skuMap.get(it.material_code) || '—';
+  return (it.supplier_sku ?? '').trim() || skuMap.get(it.item_code) || '—';
 }
 
 /* ── Unified document variant line (Commander 2026-06-16; owner 2026-07-24) ──

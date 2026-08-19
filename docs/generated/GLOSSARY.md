@@ -17,6 +17,7 @@ fails when one appears in CODE.
 | **Processing Date** | `processing_date` / `processingDate` | ~~`internal_expected_dd`~~ | `backend/scripts/lib/so-processing-date.mjs` |
 | **Transfer (document conversion)** | `Transfer to / Transfer from` | — | `backend/src/scm/shared/transfer-vocabulary.ts` |
 | **Branding** | `branding` | — | `backend/src/scm/shared/so-branding-label.ts` |
+| **Item code (SKU reference)** | `item_code` | ~~`material_code`~~<br>~~`product_code`~~ | `backend/src/scm/routes/mfg-products.ts` |
 | **Money (minor unit)** | `_sen` | ~~`_centi`~~ | `frontend/src/lib/money.ts` |
 
 ## What each one means
@@ -34,6 +35,12 @@ One rule generates every transfer label. "Transfer to" names the DOCUMENT a docu
 ### Branding
 
 The label rule: SOFA is the company's house brand (ZANOTTI / 2990s Sofa) and does not read the line; MATTRESS is the SKU's branding, falling back to the category noun. The VALUES are maintained by the owner in PMS -> Project Maintenance -> BRANDS (`project_brands`, per company) and checked by `audit:branding-vocabulary`.
+
+### Item code (SKU reference)
+
+The SKU reference on a line item. AutoCount (the system of record) calls it ItemCode, so item_code is canonical; material_code (purchasing) and product_code (inventory) were the drift, renamed on 18 columns by migration 0307 (2026-08-19). The master table mfg_products keys the SKU as `code`; item_code is the reference. The dead `public`-schema copies still carry the old names and are out of scope.
+
+Entitled to spell a retired name in code: `scripts/lib/vocabulary.mjs`, `scripts/lib/drift-catalogue.mjs`.
 
 ### Money (minor unit)
 
@@ -54,7 +61,7 @@ Until then, prefer the **Target** spelling in new code.
 | high | Delivery date (customer promise / per-line / effective) | `customer_delivery_date (header) / line_delivery_date (line)` | `customer_delivery_date` `line_delivery_date` `amended_delivery_date` `expected_at` `supplier_delivery_date_2/3/4` |
 | high | Processing date (release-to-purchasing signal) | `processing_date` | `internal_expected_dd` `proceeded_at` `PDate` `target_date` `so_processing_date` |
 | high | Customer's own reference / their PO number | `customer_so_no` | `po_doc_no` `customer_po` `ToPONo` `ref` `poRef` |
-| high | Product / item / material code (SKU) | `item_code` | `material_code` `product_code` `code` `sku` |
+| high | Product / item / material code (SKU) | `item_code` | `code` `sku` |
 | high | Warehouse / location an order ships from | `warehouse_id` | `sales_location` `purchase_location_id` `Location` `'stock` `primaryWh` |
 | high | Customer / debtor | `debtor_code / debtor_name` | `debtor_code` `customer_id` `DebtorName` `hasCustomerName` `recipientName` |
 | high | Supplier / creditor | `creditor_code / creditor_name` | `creditor_code` `supplier` `main_supplier` `payee_name` `company_name` |

@@ -4,7 +4,7 @@
 //
 // Before a DO writes its OUT movements (or extends them via line-add / qty-up
 // on a shipped DO), this helper aggregates the requested qty per
-// (product_code, variant_key) bucket and compares to the live qty on hand at
+// (item_code, variant_key) bucket and compares to the live qty on hand at
 // the target warehouse (inventory_balances). When short, it also looks up
 // alternative warehouses that DO have stock so the operator can decide whether
 // to ship anyway, switch warehouse, or stop.
@@ -73,7 +73,7 @@ export type StockShortage = {
 
 /**
  * Resolve which requested lines exceed available qty at the given warehouse.
- * Aggregates lines that share the same (product_code, variant_key) bucket so
+ * Aggregates lines that share the same (item_code, variant_key) bucket so
  * two lines of the same SKU don't each pass the check on full bucket qty.
  *
  * Returns [] when everything fits, or one shortage per under-stocked bucket
@@ -86,7 +86,7 @@ export async function checkStockAvailability(
   companyId: number | null | undefined,
 ): Promise<StockShortage[]> {
   // Aggregate requested per bucket. Drop zero-qty lines (not shipped).
-  type Bucket = { product_code: string; variant_key: string; product_name: string | null; needed: number };
+  type Bucket = { item_code: string; variant_key: string; product_name: string | null; needed: number };
   const byBucket = new Map<string, Bucket>();
   for (const l of lines) {
     const qty = Number(l.qty || 0);
@@ -95,7 +95,7 @@ export async function checkStockAvailability(
     const cur = byBucket.get(k);
     if (cur) { cur.needed += qty; }
     else byBucket.set(k, {
-      product_code: l.itemCode,
+      item_code: l.itemCode,
       variant_key: l.variantKey ?? '',
       product_name: l.productName ?? null,
       needed: qty,
@@ -105,20 +105,20 @@ export async function checkStockAvailability(
   if (buckets.length === 0) return [];
 
   // Pull live qty at THIS warehouse per requested bucket.
-  const productCodes = [...new Set(buckets.map((b) => b.product_code))];
+  const itemCodes = [...new Set(buckets.map((b) => b.item_code))];
   const { data: balRows } = await sb
     .from('inventory_balances')
-    .select('product_code, variant_key, qty')
+    .select('item_code, variant_key, qty')
     .eq('warehouse_id', warehouseId)
-    .in('product_code', productCodes);
+    .in('item_code', itemCodes);
   const balByBucket = new Map<string, number>();
-  for (const r of (balRows ?? []) as Array<{ product_code: string; variant_key: string | null; qty: number }>) {
-    balByBucket.set(`${r.product_code}::${r.variant_key ?? ''}`, Number(r.qty ?? 0));
+  for (const r of (balRows ?? []) as Array<{ item_code: string; variant_key: string | null; qty: number }>) {
+    balByBucket.set(`${r.item_code}::${r.variant_key ?? ''}`, Number(r.qty ?? 0));
   }
 
   const shortBuckets: Array<{ b: Bucket; available: number }> = [];
   for (const b of buckets) {
-    const available = balByBucket.get(`${b.product_code}::${b.variant_key}`) ?? 0;
+    const available = balByBucket.get(`${b.item_code}::${b.variant_key}`) ?? 0;
     if (available < b.needed) shortBuckets.push({ b, available });
   }
   if (shortBuckets.length === 0) return [];
@@ -139,20 +139,20 @@ export async function checkStockAvailability(
   // Cross-warehouse hint — qty available at OTHER warehouses for the short
   // buckets. A single inventory_balances scan filtered to the same product
   // codes + > 0 qty avoids the N+1.
-  const shortCodes = [...new Set(shortBuckets.map((s) => s.b.product_code))];
+  const shortCodes = [...new Set(shortBuckets.map((s) => s.b.item_code))];
   const altByBucket = new Map<string, WarehouseAlt[]>();
   if (shortCodes.length > 0) {
     let altQuery = sb
       .from('inventory_balances')
-      .select('warehouse_id, product_code, variant_key, qty')
+      .select('warehouse_id, item_code, variant_key, qty')
       .neq('warehouse_id', warehouseId)
-      .in('product_code', shortCodes)
+      .in('item_code', shortCodes)
       .gt('qty', 0);
     if (scoped) altQuery = altQuery.eq('company_id', companyId);
     const { data: altRows } = await altQuery;
-    for (const r of (altRows ?? []) as Array<{ warehouse_id: string; product_code: string; variant_key: string | null; qty: number }>) {
+    for (const r of (altRows ?? []) as Array<{ warehouse_id: string; item_code: string; variant_key: string | null; qty: number }>) {
       const wh = whById.get(r.warehouse_id);
-      const k = `${r.product_code}::${r.variant_key ?? ''}`;
+      const k = `${r.item_code}::${r.variant_key ?? ''}`;
       const arr = altByBucket.get(k) ?? [];
       arr.push({
         warehouseId: r.warehouse_id,
@@ -165,7 +165,7 @@ export async function checkStockAvailability(
   }
 
   return shortBuckets.map(({ b, available }) => ({
-    itemCode: b.product_code,
+    itemCode: b.item_code,
     productName: b.product_name,
     variantKey: b.variant_key,
     warehouseId,
@@ -173,7 +173,7 @@ export async function checkStockAvailability(
     needed: b.needed,
     available,
     short: b.needed - available,
-    alternatives: (altByBucket.get(`${b.product_code}::${b.variant_key}`) ?? [])
+    alternatives: (altByBucket.get(`${b.item_code}::${b.variant_key}`) ?? [])
       .sort((a, c) => c.available - a.available), // highest-qty alternative first
   }));
 }

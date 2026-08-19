@@ -111,7 +111,7 @@ function parseCsvLine(line) {
   out.push(cur); return out;
 }
 
-/** AutoCount ItemCode -> ERP material_code, the pair every cutover script uses. */
+/** AutoCount ItemCode -> ERP item_code, the pair every cutover script uses. */
 function loadCodeMap() {
   const csv = fs.readFileSync(path.join(here, "data", "autocount-erp-mapping-1561.csv"), "utf8")
     .replace(/^﻿/, "").split(/\r?\n/).filter(Boolean);
@@ -136,7 +136,7 @@ async function main() {
      has reached it, so both are read here and both are preferred over the
      mapping CSV. */
   const rows = await sql`
-    SELECT i.id, i.material_code, i.supplier_sku, i.description2, i.qty, i.received_qty,
+    SELECT i.id, i.item_code, i.supplier_sku, i.description2, i.qty, i.received_qty,
            i.unit_price_sen, i.linked_ac_dtlkey,
            h.linked_ac_docno AS ac_doc, h.po_number
       FROM scm.purchase_order_items i
@@ -154,7 +154,7 @@ async function main() {
   const units = plan.reduce((s, p) => s + p.qty, 0);
   const value = plan.reduce((s, p) => s + p.centi * p.qty, 0) / 100;
 
-  log(`AutoCount open lines considered: ${stats.acOpenLines}; matched to an ERP line by dtlkey ${stats.matchedByDtlKey}, by supplier_sku+Desc2 ${stats.matchedBySupplierSku}, by material_code+Desc2 ${stats.matchedByMaterialCode}; no ERP line ${stats.acLinesWithNoErpLine}; no defensible price ${stats.acLinesWithNoPrice}`);
+  log(`AutoCount open lines considered: ${stats.acOpenLines}; matched to an ERP line by dtlkey ${stats.matchedByDtlKey}, by supplier_sku+Desc2 ${stats.matchedBySupplierSku}, by item_code+Desc2 ${stats.matchedByMaterialCode}; no ERP line ${stats.acLinesWithNoErpLine}; no defensible price ${stats.acLinesWithNoPrice}`);
   for (const k of Object.keys(tiers).sort()) log(`priced by ${k}: ${tiers[k]} ERP lines`);
   log(`TO STAMP: ${plan.length} ERP PO lines, ${units} open units, RM ${value.toFixed(2)} of committed purchase value`);
   log(`LEFT AT ZERO: ${skipped.length} ERP PO lines, ${skipped.reduce((s, k) => s + (Number(k.row.qty) - Number(k.row.received_qty ?? 0)), 0)} open units`);
@@ -178,13 +178,13 @@ async function main() {
     const u = list.reduce((s, k) => s + (Number(k.row.qty) - Number(k.row.received_qty ?? 0)), 0);
     log(`   ${reason}: ${list.length} lines / ${u} units`);
     const worst = new Map();
-    for (const k of list) worst.set(k.row.material_code, (worst.get(k.row.material_code) ?? 0) + (Number(k.row.qty) - Number(k.row.received_qty ?? 0)));
+    for (const k of list) worst.set(k.row.item_code, (worst.get(k.row.item_code) ?? 0) + (Number(k.row.qty) - Number(k.row.received_qty ?? 0)));
     for (const [code, u2] of [...worst.entries()].sort((a, b) => b[1] - a[1]).slice(0, 15)) log(`      ${code} x${u2}`);
   }
   /* An ambiguous line is the one a reviewer must see in full: it is where two
      AutoCount lines wanted different money on the same ERP row. */
   for (const s of skipped.filter((k) => k.reason === SKIP.AMBIGUOUS)) {
-    log(`   AMBIGUOUS ${s.row.id} ${s.row.po_number} (${s.row.ac_doc}) ${s.row.material_code}: ${s.prices.map(rm).join(" vs ")} from ${s.from.map((f) => f.ItemCode).join(", ")} -- refused, left at zero`);
+    log(`   AMBIGUOUS ${s.row.id} ${s.row.po_number} (${s.row.ac_doc}) ${s.row.item_code}: ${s.prices.map(rm).join(" vs ")} from ${s.from.map((f) => f.ItemCode).join(", ")} -- refused, left at zero`);
   }
 
   if (!APPLY) { log("DRY-RUN -- set APPLY=1 to write."); await sql.end(); return; }

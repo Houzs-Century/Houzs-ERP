@@ -73,7 +73,6 @@ type PrHeader = {
 
 type PrItem = {
   id: string;
-  material_code?: string | null;
   item_code?: string | null;
   description?: string | null;
   description2?: string | null;
@@ -300,7 +299,7 @@ export function PurchaseReturnDetailV2() {
       key: "item",
       label: "Item",
       alwaysVisible: true,
-      getValue: (l) => l.material_code || l.item_code || "",
+      getValue: (l) => l.item_code || l.item_code || "",
       /* Item CODE first, then the variant subtitle; description dropped (owner 2026-07-24) — the shared order-line rule
          (vendor/shared/line-identity.ts). Swept on SHAPE, not vocabulary. The
          WAREHOUSE pill is not a duplicate and stays — its row is kept when only
@@ -308,7 +307,7 @@ export function PurchaseReturnDetailV2() {
          getValue above. */
       render: (l) => {
         const { primary, secondary } = orderLineIdentity({
-          code: l.material_code || l.item_code,
+          code: l.item_code || l.item_code,
           description: l.description,
           variant: buildVariantSummary(l.item_group ?? "others", l.variants) || (l.description2 ?? ""),
         });

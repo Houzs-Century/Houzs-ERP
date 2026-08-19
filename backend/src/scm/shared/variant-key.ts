@@ -1,7 +1,7 @@
 // ----------------------------------------------------------------------------
 // Inventory variant key — the canonical "attribute composition" identity.
 //
-// Stock is bucketed by (warehouse_id, product_code, variant_key). Two lines
+// Stock is bucketed by (warehouse_id, item_code, variant_key). Two lines
 // with identical physical attributes produce the SAME key, so they pool into
 // the same on-hand bucket; any difference produces a different key, so they
 // are tracked separately.

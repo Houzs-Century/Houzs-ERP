@@ -237,7 +237,7 @@ async function main() {
     WITH out_mov AS (
       SELECT ${coSel},
              m.warehouse_id::text AS warehouse_id,
-             m.product_code,
+             m.item_code,
              COALESCE(m.variant_key,'') AS variant_key,
              MAX(m.product_name) AS product_name,
              SUM(m.qty) AS out_qty,
@@ -248,14 +248,14 @@ async function main() {
             FROM ${C} GROUP BY movement_id
         ) c ON c.movement_id = m.id
        WHERE m.movement_type = 'OUT'
-       GROUP BY m.warehouse_id, m.product_code, COALESCE(m.variant_key,'')${byCompany ? ", m.company_id" : ""}
+       GROUP BY m.warehouse_id, m.item_code, COALESCE(m.variant_key,'')${byCompany ? ", m.company_id" : ""}
     )
-    SELECT company_id, warehouse_id, product_code, variant_key,
+    SELECT company_id, warehouse_id, item_code, variant_key,
            COALESCE(product_name,'') AS product_name,
            out_qty, costed_qty, (out_qty - costed_qty) AS uncosted_qty
       FROM out_mov
      WHERE out_qty <> costed_qty
-     ORDER BY (out_qty - costed_qty) DESC, product_code ASC`);
+     ORDER BY (out_qty - costed_qty) DESC, item_code ASC`);
 
   notice(`buckets with uncosted OUT units (Σ OUT qty ≠ Σ consumed): ${buckets.length}`);
   notice("");
@@ -277,23 +277,23 @@ async function main() {
                  WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
                  WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty ELSE 0 END),0)
          FROM ${M}, b
-        WHERE warehouse_id::text = b.wh AND product_code = b.pc
+        WHERE warehouse_id::text = b.wh AND item_code = b.pc
           AND COALESCE(variant_key,'') = b.vk${byCompany ? " AND company_id = b.co" : ""}) AS mov_qty,
       (SELECT COALESCE(SUM(qty_remaining),0) FROM ${L}, b
-        WHERE warehouse_id::text = b.wh AND product_code = b.pc
+        WHERE warehouse_id::text = b.wh AND item_code = b.pc
           AND COALESCE(variant_key,'') = b.vk${byCompany ? " AND company_id = b.co" : ""}) AS lot_qty,
       (SELECT COALESCE(SUM(qty),0) FROM ${M}, b
-        WHERE movement_type = 'OUT' AND warehouse_id::text = b.wh AND product_code = b.pc
+        WHERE movement_type = 'OUT' AND warehouse_id::text = b.wh AND item_code = b.pc
           AND COALESCE(variant_key,'') = b.vk${byCompany ? " AND company_id = b.co" : ""}) AS out_qty,
       (SELECT COALESCE(SUM(total_cost_sen),0) FROM ${M}, b
-        WHERE movement_type = 'OUT' AND warehouse_id::text = b.wh AND product_code = b.pc
+        WHERE movement_type = 'OUT' AND warehouse_id::text = b.wh AND item_code = b.pc
           AND COALESCE(variant_key,'') = b.vk${byCompany ? " AND company_id = b.co" : ""}) AS out_cost,
       (SELECT COALESCE(SUM(c.qty_consumed),0)
          FROM ${C} c JOIN ${M} m ON m.id = c.movement_id, b
-        WHERE m.movement_type = 'OUT' AND m.warehouse_id::text = b.wh AND m.product_code = b.pc
+        WHERE m.movement_type = 'OUT' AND m.warehouse_id::text = b.wh AND m.item_code = b.pc
           AND COALESCE(m.variant_key,'') = b.vk${byCompany ? " AND m.company_id = b.co" : ""}) AS consumed_qty`;
 
-  const params = (b) => (byCompany ? [b.warehouse_id, b.product_code, b.variant_key, b.company_id] : [b.warehouse_id, b.product_code, b.variant_key]);
+  const params = (b) => (byCompany ? [b.warehouse_id, b.item_code, b.variant_key, b.company_id] : [b.warehouse_id, b.item_code, b.variant_key]);
   const measure = async (sql, b) => (await sql.unsafe(measureSql, params(b)))[0];
 
   notice("================ PER-BUCKET REPAIR PLAN ================");
@@ -310,7 +310,7 @@ async function main() {
         const before = await measure(sql, b);
         const rec = await sql.unsafe(
           `SELECT "${fnSchema}".fn_reconcile_uncosted_out($1::uuid, $2::text, $3::text, $4::timestamptz, NULL::uuid) AS n`,
-          [b.warehouse_id, b.product_code, b.variant_key, BEFORE_TS],
+          [b.warehouse_id, b.item_code, b.variant_key, BEFORE_TS],
         );
         const reconciled = Number(rec[0]?.n ?? 0);
         const after = await measure(sql, b);
@@ -325,7 +325,7 @@ async function main() {
       if (e && e.__rollback) {
         recordAndPrint(b, e.before, e.after, e.reconciled);
       } else {
-        warn(`bucket ${short(b.product_code, 22)}/${short(b.variant_key, 10)} FAILED (rolled back, others unaffected): ${e?.message ?? e}`);
+        warn(`bucket ${short(b.item_code, 22)}/${short(b.variant_key, 10)} FAILED (rolled back, others unaffected): ${e?.message ?? e}`);
       }
     }
   }
@@ -347,7 +347,7 @@ async function main() {
       // covers them. Report for owner review; nothing was (or would be) changed.
       notRepairable.push({ b, uncostBefore, driftBefore });
     }
-    notice(`  ${pad(short(b.product_code, 22), 22)} ${pad(short(b.variant_key, 10), 10)} ${pad(b.company_id ?? "-", 3)} ${pad(reconciled, 7)} ${pad(rm(costBooked), 12)} ${pad(lotsDown, 7)} ${pad(`${driftBefore}→${driftAfter}`, 12)} ${pad(`${uncostBefore}→${uncostAfter}`, 12)} ${short(b.warehouse_id, 30)}`);
+    notice(`  ${pad(short(b.item_code, 22), 22)} ${pad(short(b.variant_key, 10), 10)} ${pad(b.company_id ?? "-", 3)} ${pad(reconciled, 7)} ${pad(rm(costBooked), 12)} ${pad(lotsDown, 7)} ${pad(`${driftBefore}→${driftAfter}`, 12)} ${pad(`${uncostBefore}→${uncostAfter}`, 12)} ${short(b.warehouse_id, 30)}`);
   }
 
   notice("");
@@ -361,7 +361,7 @@ async function main() {
   if (notRepairable.length) {
     notice(`  NOT auto-repairable by fn_reconcile_uncosted_out (0154 guards: DO-only, non-drop-ship, non-cancelled, needs open lots) — OWNER REVIEW: ${notRepairable.length}`);
     for (const nr of notRepairable.slice(0, 30)) {
-      notice(`    ${pad(short(nr.b.product_code, 22), 22)} ${pad(short(nr.b.variant_key, 10), 10)} co=${nr.b.company_id ?? "-"} uncosted=${nr.uncostBefore} drift=${nr.driftBefore} wh=${short(nr.b.warehouse_id, 30)}`);
+      notice(`    ${pad(short(nr.b.item_code, 22), 22)} ${pad(short(nr.b.variant_key, 10), 10)} co=${nr.b.company_id ?? "-"} uncosted=${nr.uncostBefore} drift=${nr.driftBefore} wh=${short(nr.b.warehouse_id, 30)}`);
     }
     if (notRepairable.length > 30) notice(`    ... and ${notRepairable.length - 30} more.`);
     notice("");
@@ -403,27 +403,27 @@ async function runRelabel() {
   // (1) The drifted buckets — the detector's quantity-drift lens, verbatim.
   const drift = await pg.unsafe(`
     WITH mov AS (
-      SELECT ${coSel}, warehouse_id::text AS warehouse_id, product_code,
+      SELECT ${coSel}, warehouse_id::text AS warehouse_id, item_code,
              COALESCE(variant_key,'') AS variant_key,
              SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
                                     WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty
                                     ELSE 0 END) AS mov_qty
-        FROM ${M} GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+        FROM ${M} GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')${coGrp}
     ), lot AS (
-      SELECT ${coSel}, warehouse_id::text AS warehouse_id, product_code,
+      SELECT ${coSel}, warehouse_id::text AS warehouse_id, item_code,
              COALESCE(variant_key,'') AS variant_key, SUM(qty_remaining) AS lot_qty
-        FROM ${L} GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+        FROM ${L} GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')${coGrp}
     )
     SELECT COALESCE(mov.company_id, lot.company_id) AS company_id,
            COALESCE(mov.warehouse_id, lot.warehouse_id) AS warehouse_id,
-           COALESCE(mov.product_code, lot.product_code) AS product_code,
+           COALESCE(mov.item_code, lot.item_code) AS item_code,
            COALESCE(mov.variant_key, lot.variant_key) AS variant_key,
            COALESCE(mov.mov_qty,0) AS mov_qty, COALESCE(lot.lot_qty,0) AS lot_qty
       FROM mov FULL OUTER JOIN lot
-        ON mov.warehouse_id = lot.warehouse_id AND mov.product_code = lot.product_code
+        ON mov.warehouse_id = lot.warehouse_id AND mov.item_code = lot.item_code
        AND mov.variant_key = lot.variant_key ${byCompany ? "AND mov.company_id = lot.company_id" : ""}
      WHERE COALESCE(mov.mov_qty,0) <> COALESCE(lot.lot_qty,0)
-     ORDER BY product_code, variant_key`);
+     ORDER BY item_code, variant_key`);
   notice(`buckets in drift (movement sum != lot remaining): ${drift.length}`);
   if (drift.length === 0) {
     notice("Nothing to relabel — no bucket drifts. (Detector section (1) is clean.)");
@@ -434,7 +434,7 @@ async function runRelabel() {
   // (2) Families = distinct (company, warehouse, product) of the drifted
   // buckets. Relabels move qty BETWEEN sibling keys of one family, so the
   // projection needs every sibling bucket's sums, drifted or not.
-  const famKey = (r) => `${r.company_id ?? ""}::${r.warehouse_id}::${r.product_code}`;
+  const famKey = (r) => `${r.company_id ?? ""}::${r.warehouse_id}::${r.item_code}`;
   const bKey = (r) => `${famKey(r)}::${r.variant_key}`;
   const driftedBucketKeys = new Set(drift.map(bKey));
   const families = [...new Map(drift.map((r) => [famKey(r), r])).values()];
@@ -447,17 +447,17 @@ async function runRelabel() {
                SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
                                       WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty
                                       ELSE 0 END) AS mov_qty
-          FROM ${M} WHERE warehouse_id::text = $1 AND product_code = $2${byCompany ? " AND company_id = $3" : ""}
+          FROM ${M} WHERE warehouse_id::text = $1 AND item_code = $2${byCompany ? " AND company_id = $3" : ""}
          GROUP BY COALESCE(variant_key,'')
       ), lot AS (
         SELECT COALESCE(variant_key,'') AS variant_key, SUM(qty_remaining) AS lot_qty
-          FROM ${L} WHERE warehouse_id::text = $1 AND product_code = $2${byCompany ? " AND company_id = $3" : ""}
+          FROM ${L} WHERE warehouse_id::text = $1 AND item_code = $2${byCompany ? " AND company_id = $3" : ""}
          GROUP BY COALESCE(variant_key,'')
       )
       SELECT COALESCE(mov.variant_key, lot.variant_key) AS variant_key,
              COALESCE(mov.mov_qty,0) AS mov_qty, COALESCE(lot.lot_qty,0) AS lot_qty
         FROM mov FULL OUTER JOIN lot ON mov.variant_key = lot.variant_key`,
-      byCompany ? [f.warehouse_id, f.product_code, f.company_id] : [f.warehouse_id, f.product_code]);
+      byCompany ? [f.warehouse_id, f.item_code, f.company_id] : [f.warehouse_id, f.item_code]);
     for (const r of rows) {
       buckets.set(`${famKey(f)}::${r.variant_key}`, { movQty: Number(r.mov_qty), lotQty: Number(r.lot_qty) });
     }
@@ -473,9 +473,9 @@ async function runRelabel() {
       SELECT id::text AS id, movement_type, qty, COALESCE(variant_key,'') AS variant_key,
              batch_no, total_cost_sen, source_doc_type, source_doc_no, created_at
         FROM ${M}
-       WHERE warehouse_id::text = $1 AND product_code = $2 AND COALESCE(variant_key,'') = $3${byCompany ? " AND company_id = $4" : ""}
+       WHERE warehouse_id::text = $1 AND item_code = $2 AND COALESCE(variant_key,'') = $3${byCompany ? " AND company_id = $4" : ""}
        ORDER BY created_at, id`,
-      byCompany ? [d.warehouse_id, d.product_code, d.variant_key, d.company_id] : [d.warehouse_id, d.product_code, d.variant_key]);
+      byCompany ? [d.warehouse_id, d.item_code, d.variant_key, d.company_id] : [d.warehouse_id, d.item_code, d.variant_key]);
     const movIds = movs.map((m) => m.id);
     if (movIds.length === 0) continue;
     const consRows = await pg.unsafe(`
@@ -540,7 +540,7 @@ async function runRelabel() {
   notice(`movements to relabel: ${relabels.length}`);
   for (const r of relabels) {
     notice(`  movement ${r.movementId}  ${r.m.movement_type} qty=${r.m.qty}  ${r.m.source_doc_type ?? "-"} ${r.m.source_doc_no ?? "-"}  co=${r.d.company_id ?? "-"} wh=${short(r.d.warehouse_id, 30)}`);
-    notice(`    ${r.d.product_code}: "${r.oldKey}"  ->  "${r.newKey}"   evidence: ${r.evidence}`);
+    notice(`    ${r.d.item_code}: "${r.oldKey}"  ->  "${r.newKey}"   evidence: ${r.evidence}`);
     if (r.consCount > 0) notice(`    ${r.consCount} consumption row(s) follow the movement (their variant_key is the movement's copy)`);
   }
   if (refusals.length) {
@@ -667,7 +667,7 @@ async function runBasisCost() {
   // The named DOs' OUT movements that still carry uncosted qty.
   const targets = await pg.unsafe(`
     SELECT m.id::text AS id, m.qty, m.company_id, m.warehouse_id::text AS warehouse_id,
-           m.product_code, m.product_name, COALESCE(m.variant_key,'') AS variant_key,
+           m.item_code, m.product_name, COALESCE(m.variant_key,'') AS variant_key,
            m.batch_no, m.unit_cost_sen, m.total_cost_sen, m.created_at,
            m.source_doc_id::text AS do_id, m.source_doc_no,
            COALESCE(c.cons, 0)::int AS consumed
@@ -680,7 +680,7 @@ async function runBasisCost() {
   notice(`OUT movements on the named DOs: ${targets.length}; still uncosted (shortfall > 0): ${shortTargets.length}`);
   for (const t of targets) {
     const shortfall = Math.abs(Number(t.qty)) - Number(t.consumed);
-    notice(`  movement ${t.id}  ${doById.get(t.do_id)?.do_number ?? t.source_doc_no}  ${t.product_code} "${t.variant_key}" qty=${t.qty} consumed=${t.consumed} shortfall=${shortfall}${shortfall === 0 ? "  (already fully costed — idempotent skip)" : ""}`);
+    notice(`  movement ${t.id}  ${doById.get(t.do_id)?.do_number ?? t.source_doc_no}  ${t.item_code} "${t.variant_key}" qty=${t.qty} consumed=${t.consumed} shortfall=${shortfall}${shortfall === 0 ? "  (already fully costed — idempotent skip)" : ""}`);
   }
   if (shortTargets.length === 0) {
     notice("Every OUT on the named DOs is already fully costed — nothing to do. (Idempotent.)");
@@ -691,10 +691,10 @@ async function runBasisCost() {
   // Group by SKU bucket; one seeded lot covers the bucket's named shortfall.
   const bucketsMap = new Map();
   for (const t of shortTargets) {
-    const key = `${t.company_id}::${t.warehouse_id}::${t.product_code}::${t.variant_key}`;
+    const key = `${t.company_id}::${t.warehouse_id}::${t.item_code}::${t.variant_key}`;
     const b = bucketsMap.get(key) ?? {
       companyId: Number(t.company_id), warehouseId: t.warehouse_id,
-      productCode: t.product_code, productName: t.product_name, variantKey: t.variant_key,
+      itemCode: t.item_code, productName: t.product_name, variantKey: t.variant_key,
       targets: [],
     };
     b.targets.push(t);
@@ -706,14 +706,14 @@ async function runBasisCost() {
   for (const b of bucketsMap.values()) {
     const shortfall = b.targets.reduce((a, t) => a + (Math.abs(Number(t.qty)) - Number(t.consumed)), 0);
     notice("");
-    notice(`----- bucket ${b.productCode} "${b.variantKey}" co=${b.companyId} wh=${b.warehouseId} — named shortfall ${shortfall} unit(s) -----`);
+    notice(`----- bucket ${b.itemCode} "${b.variantKey}" co=${b.companyId} wh=${b.warehouseId} — named shortfall ${shortfall} unit(s) -----`);
 
     // Refusal 1: real stock exists — the truer repair is MODE=retro-cost.
     const open = await pg.unsafe(`
       SELECT count(*)::int AS n, COALESCE(SUM(qty_remaining), 0)::int AS units FROM ${L}
-       WHERE warehouse_id::text = $1 AND product_code = $2 AND COALESCE(variant_key,'') = $3
+       WHERE warehouse_id::text = $1 AND item_code = $2 AND COALESCE(variant_key,'') = $3
          AND company_id = $4 AND qty_remaining > 0`,
-      [b.warehouseId, b.productCode, b.variantKey, b.companyId]);
+      [b.warehouseId, b.itemCode, b.variantKey, b.companyId]);
     if (Number(open[0].n) > 0) {
       notice(`  REFUSED — ${open[0].units} unit(s) already on hand in ${open[0].n} open lot(s). Run MODE=retro-cost: real lots at real cost beat a reference basis.`);
       refusedBuckets += 1;
@@ -730,10 +730,10 @@ async function runBasisCost() {
         LEFT JOIN (SELECT movement_id, SUM(qty_consumed) AS cons FROM ${C} GROUP BY movement_id) c
           ON c.movement_id = m.id
        WHERE m.movement_type = 'OUT' AND m.source_doc_type = 'DO'
-         AND m.warehouse_id::text = $1 AND m.product_code = $2 AND COALESCE(m.variant_key,'') = $3
+         AND m.warehouse_id::text = $1 AND m.item_code = $2 AND COALESCE(m.variant_key,'') = $3
          AND m.company_id = $4 AND NOT (m.id::text = ANY($5))
        ORDER BY m.created_at, m.id`,
-      [b.warehouseId, b.productCode, b.variantKey, b.companyId, b.targets.map((t) => t.id)]);
+      [b.warehouseId, b.itemCode, b.variantKey, b.companyId, b.targets.map((t) => t.id)]);
     const otherShort = others.filter((o) => Math.abs(Number(o.qty)) - Number(o.consumed) > 0);
     if (otherShort.length > 0) {
       notice(`  bucket also holds ${otherShort.length} OTHER uncosted DO OUT(s) — listed for the verification below:`);
@@ -745,9 +745,9 @@ async function runBasisCost() {
     const grnCands = await pg.unsafe(`
       SELECT unit_cost_sen, source_doc_no, created_at FROM ${M}
        WHERE movement_type = 'IN' AND source_doc_type = 'GRN' AND company_id = $1
-         AND product_code = $2 AND COALESCE(variant_key,'') = $3
+         AND item_code = $2 AND COALESCE(variant_key,'') = $3
        ORDER BY created_at DESC, id DESC LIMIT 20`,
-      [b.companyId, b.productCode, b.variantKey]);
+      [b.companyId, b.itemCode, b.variantKey]);
     const poCands = await pg`
       SELECT COALESCE(NULLIF(poi.unit_cost_sen, 0), poi.unit_price_sen) AS cost_sen,
              po.po_number,
@@ -755,14 +755,14 @@ async function runBasisCost() {
              poi.created_at
         FROM scm.purchase_order_items poi
         JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
-       WHERE po.company_id = ${b.companyId} AND poi.material_code = ${b.productCode}
+       WHERE po.company_id = ${b.companyId} AND poi.item_code = ${b.itemCode}
        ORDER BY poi.created_at DESC, poi.id DESC LIMIT 20`;
     const basis = pickCostBasis({
       grnCandidates: grnCands.map((g) => ({ unitCostSen: Number(g.unit_cost_sen ?? 0), docNo: g.source_doc_no })),
       poCandidates: poCands.map((p) => ({ unitCostSen: Number(p.cost_sen ?? 0), docNo: p.po_number, col: p.cost_col })),
     });
     if (basis.source == null) {
-      notice(`  REFUSED — no GRN movement and no PO line carries a nonzero cost for ${b.productCode} in company ${b.companyId} (skipped ${basis.skippedZeroCost} zero-cost candidate(s)). No honest basis exists; owner decision.`);
+      notice(`  REFUSED — no GRN movement and no PO line carries a nonzero cost for ${b.itemCode} in company ${b.companyId} (skipped ${basis.skippedZeroCost} zero-cost candidate(s)). No honest basis exists; owner decision.`);
       refusedBuckets += 1;
       continue;
     }
@@ -778,20 +778,20 @@ async function runBasisCost() {
       const out = await pg.begin(async (sql) => {
         const seeded = await sql.unsafe(`
           INSERT INTO ${L} (
-            warehouse_id, product_code, product_name, variant_key,
+            warehouse_id, item_code, product_name, variant_key,
             qty_received, qty_remaining, unit_cost_sen, received_at,
             source_doc_type, source_doc_id, source_doc_no, movement_id,
             created_by, batch_no, company_id, notes
           ) VALUES ($1::uuid, $2, $3, $4, $5, $5, $6, now(), NULL, NULL, NULL, NULL, NULL, NULL, $7, $8)
           RETURNING id::text AS id`,
-          [b.warehouseId, b.productCode, b.productName ?? b.productCode, b.variantKey,
+          [b.warehouseId, b.itemCode, b.productName ?? b.itemCode, b.variantKey,
             shortfall, basis.unitCostSen,
             b.companyId,
             `${BASIS_MARKER}: reference-cost lot for ${[...new Set(b.targets.map((t) => doById.get(t.do_id)?.do_number ?? t.source_doc_no))].join(" + ")} (basis ${basis.source} ${basis.docNo} @ ${basis.unitCostSen} sen/unit); consumed immediately by fn_reconcile_uncosted_out`]);
         const lotId = seeded[0].id;
         const rec = await sql.unsafe(
           `SELECT "${fnSchema}".fn_reconcile_uncosted_out($1::uuid, $2::text, $3::text, $4::timestamptz, NULL::uuid) AS n`,
-          [b.warehouseId, b.productCode, b.variantKey, new Date().toISOString()]);
+          [b.warehouseId, b.itemCode, b.variantKey, new Date().toISOString()]);
         const reconciled = Number(rec[0]?.n ?? 0);
 
         // VERIFY inside the transaction — anything unexpected rolls back:
@@ -917,7 +917,7 @@ async function runReconstruct() {
   const candidates = await pg.unsafe(`
     WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${C} GROUP BY lot_id)
     SELECT l.id::text AS lot_id, ${byCompany ? "l.company_id" : "NULL::int AS company_id"},
-           l.warehouse_id::text AS warehouse_id, l.product_code,
+           l.warehouse_id::text AS warehouse_id, l.item_code,
            COALESCE(l.variant_key,'') AS variant_key, l.batch_no,
            l.qty_received, l.qty_remaining, COALESCE(c.consumed,0) AS consumed,
            l.qty_received - COALESCE(c.consumed,0) - l.qty_remaining AS residual,
@@ -942,11 +942,11 @@ async function runReconstruct() {
   }
   notice(`by class: ${[...classCounts.entries()].map(([k, n]) => `${k}=${n}`).join("  ")}`);
 
-  const famKey = (r) => `${r.company_id ?? ""}::${r.warehouse_id}::${r.product_code}`;
+  const famKey = (r) => `${r.company_id ?? ""}::${r.warehouse_id}::${r.item_code}`;
   const families = new Map();
   for (const l of candidates) {
     const k = famKey(l);
-    const f = families.get(k) ?? { companyId: l.company_id, warehouseId: l.warehouse_id, productCode: l.product_code, lots: [] };
+    const f = families.get(k) ?? { companyId: l.company_id, warehouseId: l.warehouse_id, itemCode: l.item_code, lots: [] };
     f.lots.push(l);
     families.set(k, f);
   }
@@ -956,7 +956,7 @@ async function runReconstruct() {
   let surplusLotsN = 0, surplusUnits = 0, surplusValueSen = 0;
   for (const f of families.values()) {
     notice("");
-    notice(`----- family ${f.productCode} co=${f.companyId ?? "-"} wh=${f.warehouseId} -----`);
+    notice(`----- family ${f.itemCode} co=${f.companyId ?? "-"} wh=${f.warehouseId} -----`);
 
     // The audit's 10a conservation numbers for this family, reproduced from
     // the same tables (received == consumed + on hand per variant+batch), so
@@ -967,10 +967,10 @@ async function runReconstruct() {
              SUM(l.qty_received)::int AS received, SUM(l.qty_remaining)::int AS on_hand,
              SUM(COALESCE(c.consumed,0))::int AS consumed
         FROM ${L} l LEFT JOIN c ON c.lot_id = l.id
-       WHERE l.warehouse_id::text = $1 AND l.product_code = $2${byCompany ? " AND l.company_id = $3" : ""}
+       WHERE l.warehouse_id::text = $1 AND l.item_code = $2${byCompany ? " AND l.company_id = $3" : ""}
        GROUP BY COALESCE(l.variant_key,''), COALESCE(l.batch_no,'(no batch)')
       HAVING SUM(l.qty_received) <> SUM(COALESCE(c.consumed,0)) + SUM(l.qty_remaining)`,
-      byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+      byCompany ? [f.warehouseId, f.itemCode, f.companyId] : [f.warehouseId, f.itemCode]);
     notice(`  audit-10a unbalanced (variant, batch) groups in this family: ${tenA.length}`);
     for (const t of tenA) notice(`    key="${t.variant_key}" batch=${t.batch_no}: received=${t.received} consumed=${t.consumed} onHand=${t.on_hand} (received - consumed - onHand = ${t.received - t.consumed - t.on_hand})`);
 
@@ -998,7 +998,7 @@ async function runReconstruct() {
           LEFT JOIN (SELECT movement_id, SUM(qty_consumed)::int AS cons, COALESCE(SUM(total_cost_sen), 0)::bigint AS cons_cost FROM ${C} GROUP BY movement_id) c
             ON c.movement_id = m.id
          WHERE (m.movement_type = 'OUT' OR (m.movement_type = 'ADJUSTMENT' AND m.qty < 0))
-           AND m.warehouse_id::text = $1 AND m.product_code = $2${byCompany ? " AND m.company_id = $3" : ""}
+           AND m.warehouse_id::text = $1 AND m.item_code = $2${byCompany ? " AND m.company_id = $3" : ""}
            /* A CANCELLED DO's OUTs are NOT a shortfall to repair. The cancel
               path DELETES their consumptions and zeroes their cost stamps on
               purpose (fn_reverse_do_out steps a + b), and writes a balancing
@@ -1020,7 +1020,7 @@ async function runReconstruct() {
                 AND d.id = m.source_doc_id
                 AND UPPER(COALESCE(d.status::text,'')) = 'CANCELLED')
          ORDER BY m.created_at, m.id`,
-        byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+        byCompany ? [f.warehouseId, f.itemCode, f.companyId] : [f.warehouseId, f.itemCode]);
       deficitPlan = {
         movs,
         plan: planFamilyReconstruction({
@@ -1111,9 +1111,9 @@ async function runReconstruct() {
               LEFT JOIN (SELECT movement_id, SUM(qty_consumed)::int AS cons, COALESCE(SUM(total_cost_sen),0)::bigint AS cons_cost FROM ${C} GROUP BY movement_id) c
                 ON c.movement_id = m.id
              WHERE (m.movement_type = 'OUT' OR (m.movement_type = 'ADJUSTMENT' AND m.qty < 0))
-               AND m.warehouse_id::text = $1 AND m.product_code = $2${byCompany ? " AND m.company_id = $3" : ""}
+               AND m.warehouse_id::text = $1 AND m.item_code = $2${byCompany ? " AND m.company_id = $3" : ""}
              ORDER BY m.created_at, m.id`,
-            byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+            byCompany ? [f.warehouseId, f.itemCode, f.companyId] : [f.warehouseId, f.itemCode]);
           const fresh = planFamilyReconstruction({
             movements: freshMovs.map((m) => ({ movementId: m.id, qty: m.qty, alreadyConsumed: m.consumed, alreadyConsumedCostSen: Number(m.consumed_cost ?? 0), totalCostSen: m.total_cost_sen, createdAt: m.created_at?.toISOString?.() ?? String(m.created_at) })),
             lots: freshLots.map((l) => ({ lotId: l.lot_id, qtyReceived: l.qty_received, qtyRemaining: l.qty_remaining, consumed: l.consumed, unitCostSen: l.unit_cost_sen, receivedAt: l.received_at?.toISOString?.() ?? String(l.received_at) })),
@@ -1126,11 +1126,11 @@ async function runReconstruct() {
             const m = movById.get(pr.movementId);
             await sql.unsafe(`
               INSERT INTO ${C} (
-                lot_id, warehouse_id, product_code, variant_key,
+                lot_id, warehouse_id, item_code, variant_key,
                 qty_consumed, unit_cost_sen, total_cost_sen,
                 source_doc_type, source_doc_id, source_doc_no, movement_id, created_by, company_id
               ) VALUES ($1::uuid, $2::uuid, $3, $4, $5, $6, $7, $8, $9::uuid, $10, $11::uuid, NULL, $12)`,
-              [pr.lotId, f.warehouseId, f.productCode, m.variant_key,
+              [pr.lotId, f.warehouseId, f.itemCode, m.variant_key,
                 pr.qty, pr.unitCostSen, pr.qty * pr.unitCostSen,
                 m.source_doc_type, m.source_doc_id, m.source_doc_no, pr.movementId,
                 f.companyId]);
@@ -1153,12 +1153,12 @@ async function runReconstruct() {
         const after = await sql.unsafe(`
           WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${C} GROUP BY lot_id)
           SELECT count(*)::int AS n FROM ${L} l LEFT JOIN c ON c.lot_id = l.id
-           WHERE l.warehouse_id::text = $1 AND l.product_code = $2${byCompany ? " AND l.company_id = $3" : ""}
+           WHERE l.warehouse_id::text = $1 AND l.item_code = $2${byCompany ? " AND l.company_id = $3" : ""}
              AND (l.qty_received - COALESCE(c.consumed,0) <> l.qty_remaining
                OR l.qty_remaining < 0
                OR COALESCE(c.consumed,0) > l.qty_received
                OR l.qty_received < 0)`,
-          byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+          byCompany ? [f.warehouseId, f.itemCode, f.companyId] : [f.warehouseId, f.itemCode]);
         const residualLots = Number(after[0].n);
         const refusedCount = refusedLots.length
           + surplus.filter((l) => !surplusPlans.some((sp) => sp.lot.lot_id === l.lot_id)).length
@@ -1253,32 +1253,32 @@ async function runDocRelabel() {
   //    must not be able to disagree on the candidate set).
   const drift = await pg.unsafe(`
     WITH mov AS (
-      SELECT ${coSel}, warehouse_id::text AS warehouse_id, product_code,
+      SELECT ${coSel}, warehouse_id::text AS warehouse_id, item_code,
              COALESCE(variant_key,'') AS variant_key,
              SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
                                     WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty
                                     ELSE 0 END) AS mov_qty
-        FROM ${M} GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+        FROM ${M} GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')${coGrp}
     ), lot AS (
-      SELECT ${coSel}, warehouse_id::text AS warehouse_id, product_code,
+      SELECT ${coSel}, warehouse_id::text AS warehouse_id, item_code,
              COALESCE(variant_key,'') AS variant_key, SUM(qty_remaining) AS lot_qty
-        FROM ${L} GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')${coGrp}
+        FROM ${L} GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')${coGrp}
     )
     SELECT COALESCE(mov.company_id, lot.company_id) AS company_id,
            COALESCE(mov.warehouse_id, lot.warehouse_id) AS warehouse_id,
-           COALESCE(mov.product_code, lot.product_code) AS product_code,
+           COALESCE(mov.item_code, lot.item_code) AS item_code,
            COALESCE(mov.variant_key, lot.variant_key) AS variant_key,
            COALESCE(mov.mov_qty,0) AS mov_qty, COALESCE(lot.lot_qty,0) AS lot_qty
       FROM mov FULL OUTER JOIN lot
-        ON mov.warehouse_id = lot.warehouse_id AND mov.product_code = lot.product_code
+        ON mov.warehouse_id = lot.warehouse_id AND mov.item_code = lot.item_code
        AND mov.variant_key = lot.variant_key ${byCompany ? "AND mov.company_id = lot.company_id" : ""}
      WHERE COALESCE(mov.mov_qty,0) <> COALESCE(lot.lot_qty,0)
         OR COALESCE(mov.mov_qty,0) < 0
-     ORDER BY product_code, variant_key`);
+     ORDER BY item_code, variant_key`);
   const overLots = await pg.unsafe(`
     WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${C} GROUP BY lot_id)
     SELECT l.id::text AS lot_id, ${byCompany ? "l.company_id" : "NULL::int AS company_id"},
-           l.warehouse_id::text AS warehouse_id, l.product_code,
+           l.warehouse_id::text AS warehouse_id, l.item_code,
            COALESCE(l.variant_key,'') AS variant_key, l.batch_no,
            l.qty_received, l.qty_remaining, COALESCE(c.consumed,0) AS consumed,
            l.unit_cost_sen, l.received_at
@@ -1292,15 +1292,15 @@ async function runDocRelabel() {
     return;
   }
 
-  const famKey = (r) => `${r.company_id ?? ""}::${r.warehouse_id}::${r.product_code}`;
+  const famKey = (r) => `${r.company_id ?? ""}::${r.warehouse_id}::${r.item_code}`;
   const families = new Map();
   for (const r of drift) {
-    const f = families.get(famKey(r)) ?? { companyId: r.company_id, warehouseId: r.warehouse_id, productCode: r.product_code, driftBuckets: [], overLots: [] };
+    const f = families.get(famKey(r)) ?? { companyId: r.company_id, warehouseId: r.warehouse_id, itemCode: r.item_code, driftBuckets: [], overLots: [] };
     f.driftBuckets.push(r);
     families.set(famKey(r), f);
   }
   for (const l of overLots) {
-    const f = families.get(famKey(l)) ?? { companyId: l.company_id, warehouseId: l.warehouseId ?? l.warehouse_id, productCode: l.product_code, driftBuckets: [], overLots: [] };
+    const f = families.get(famKey(l)) ?? { companyId: l.company_id, warehouseId: l.warehouseId ?? l.warehouse_id, itemCode: l.item_code, driftBuckets: [], overLots: [] };
     f.warehouseId = f.warehouseId ?? l.warehouse_id;
     f.overLots.push(l);
     families.set(famKey(l), f);
@@ -1314,7 +1314,7 @@ async function runDocRelabel() {
 
   for (const f of families.values()) {
     notice("");
-    notice(`----- family ${f.productCode} co=${f.companyId ?? "-"} wh=${f.warehouseId} -----`);
+    notice(`----- family ${f.itemCode} co=${f.companyId ?? "-"} wh=${f.warehouseId} -----`);
     for (const b of f.driftBuckets) {
       notice(`  bucket key="${b.variant_key}": movQty=${b.mov_qty} lotQty=${b.lot_qty} drift=${Number(b.mov_qty) - Number(b.lot_qty)}${Number(b.mov_qty) < 0 ? "  (NEGATIVE on-hand — audit 2b)" : ""}`);
     }
@@ -1331,9 +1331,9 @@ async function runDocRelabel() {
         FROM ${M} m
         LEFT JOIN (SELECT movement_id, SUM(qty_consumed)::int AS cons, COALESCE(SUM(total_cost_sen),0)::bigint AS cons_cost FROM ${C} GROUP BY movement_id) c
           ON c.movement_id = m.id
-       WHERE m.warehouse_id::text = $1 AND m.product_code = $2${byCompany ? " AND m.company_id = $3" : ""}
+       WHERE m.warehouse_id::text = $1 AND m.item_code = $2${byCompany ? " AND m.company_id = $3" : ""}
        ORDER BY m.created_at, m.id`,
-      byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+      byCompany ? [f.warehouseId, f.itemCode, f.companyId] : [f.warehouseId, f.itemCode]);
     const lots = await pg.unsafe(`
       WITH c AS (SELECT lot_id, SUM(qty_consumed) AS consumed FROM ${C} GROUP BY lot_id)
       SELECT l.id::text AS id, COALESCE(l.variant_key,'') AS variant_key, l.batch_no,
@@ -1341,9 +1341,9 @@ async function runDocRelabel() {
              l.unit_cost_sen, l.received_at, l.movement_id::text AS movement_id, l.notes,
              l.source_doc_type, l.source_doc_id::text AS source_doc_id, l.source_doc_no
         FROM ${L} l LEFT JOIN c ON c.lot_id = l.id
-       WHERE l.warehouse_id::text = $1 AND l.product_code = $2${byCompany ? " AND l.company_id = $3" : ""}
+       WHERE l.warehouse_id::text = $1 AND l.item_code = $2${byCompany ? " AND l.company_id = $3" : ""}
        ORDER BY l.received_at, l.id`,
-      byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+      byCompany ? [f.warehouseId, f.itemCode, f.companyId] : [f.warehouseId, f.itemCode]);
     const movById = new Map(movs.map((m) => [m.id, m]));
 
     // A lot's GRN is its own source doc, else the source doc of the IN movement
@@ -1429,7 +1429,7 @@ async function runDocRelabel() {
           LEFT JOIN scm.mfg_sales_order_items si ON si.id = di.so_item_id
          WHERE di.delivery_order_id::text = ANY($1)
            AND UPPER(TRIM(di.item_code)) = UPPER(TRIM($2))
-         ORDER BY di.line_no NULLS LAST, di.created_at, di.id`, [ids, f.productCode]);
+         ORDER BY di.line_no NULLS LAST, di.created_at, di.id`, [ids, f.itemCode]);
       for (const r of rows) {
         const arr = doLinesByDoc.get(r.doc_id) ?? [];
         arr.push(r);
@@ -1441,15 +1441,15 @@ async function runDocRelabel() {
       const ids = [...new Set([...[...grnsById.values()], ...[...grnsByNo.values()]].map((g) => g.id))];
       const rows = await pg.unsafe(`
         SELECT gi.grn_id::text AS doc_id, gi.id::text AS line_id,
-               gi.material_code, gi.qty_accepted, COALESCE(gi.returned_qty,0)::int AS returned_qty,
+               gi.item_code, gi.qty_accepted, COALESCE(gi.returned_qty,0)::int AS returned_qty,
                gi.variants, gi.item_group, gi.purchase_order_item_id::text AS po_item_id,
                poi.variants AS po_variants, poi.item_group AS po_item_group, po.po_number
           FROM scm.grn_items gi
           LEFT JOIN scm.purchase_order_items poi ON poi.id = gi.purchase_order_item_id
           LEFT JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
          WHERE gi.grn_id::text = ANY($1)
-           AND UPPER(TRIM(gi.material_code)) = UPPER(TRIM($2))
-         ORDER BY gi.created_at, gi.id`, [ids, f.productCode]);
+           AND UPPER(TRIM(gi.item_code)) = UPPER(TRIM($2))
+         ORDER BY gi.created_at, gi.id`, [ids, f.itemCode]);
       for (const r of rows) {
         const arr = grnLinesByDoc.get(r.doc_id) ?? [];
         arr.push(r);
@@ -1770,8 +1770,8 @@ async function runDocRelabel() {
         const shipped = await pg.unsafe(`
           SELECT COALESCE(SUM(ABS(qty)),0)::int AS n FROM ${M}
            WHERE movement_type = 'OUT' AND source_doc_type = 'DO'
-             AND source_doc_id::text = $1 AND product_code = $2${byCompany ? " AND company_id = $3" : ""}`,
-          byCompany ? [doc.id, f.productCode, f.companyId] : [doc.id, f.productCode]);
+             AND source_doc_id::text = $1 AND item_code = $2${byCompany ? " AND company_id = $3" : ""}`,
+          byCompany ? [doc.id, f.itemCode, f.companyId] : [doc.id, f.itemCode]);
         movementInputs.push({
           movementId: m.id,
           absQty: Math.abs(Number(m.qty)),
@@ -1826,12 +1826,12 @@ async function runDocRelabel() {
     }
     for (const r of refusals) notice(`  REFUSED ${r.kind} ${r.id} (${r.verdict}): ${r.detail}`);
     for (const e of expected) notice(`  EXPECTED ${e.kind} ${e.id} (${e.verdict}): ${e.detail}`);
-    for (const e of expected) repairSeeded.push({ family: `${f.productCode} co=${f.companyId} wh=${f.warehouseId}`, ...e });
+    for (const e of expected) repairSeeded.push({ family: `${f.itemCode} co=${f.companyId} wh=${f.warehouseId}`, ...e });
 
     if (movPlans.length === 0 && lotPlans.length === 0 && repointPlans.length === 0) {
       notice(`  family: nothing provable from the documents — every candidate row is on the ${refusals.length ? "refusal" : "expected"} list above.`);
       famRefused += 1;
-      for (const r of refusals) stocktake.push({ family: `${f.productCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
+      for (const r of refusals) stocktake.push({ family: `${f.itemCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
       continue;
     }
 
@@ -1888,10 +1888,10 @@ async function runDocRelabel() {
             byRow.set(mv.consumptionId, arr);
           }
           const insertSlice = async (srcId, mv) => sql.unsafe(`
-              INSERT INTO ${C} (lot_id, warehouse_id, product_code, variant_key, qty_consumed,
+              INSERT INTO ${C} (lot_id, warehouse_id, item_code, variant_key, qty_consumed,
                                 unit_cost_sen, total_cost_sen, consumed_at,
                                 source_doc_type, source_doc_id, source_doc_no, movement_id, created_by${byCompany ? ", company_id" : ""})
-              SELECT $1::uuid, warehouse_id, product_code, variant_key, $2, $3, $4, consumed_at,
+              SELECT $1::uuid, warehouse_id, item_code, variant_key, $2, $3, $4, consumed_at,
                      source_doc_type, source_doc_id, source_doc_no, movement_id, NULL${byCompany ? ", company_id" : ""}
                 FROM ${C} WHERE id::text = $5`,
             [mv.toLotId, mv.qty, mv.newUnitCostSen, mv.qty * mv.newUnitCostSen, srcId]);
@@ -1944,17 +1944,17 @@ async function runDocRelabel() {
             SELECT COALESCE(variant_key,'') AS variant_key,
                    SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
                                           WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty ELSE 0 END) AS mov_qty
-              FROM ${M} WHERE warehouse_id::text = $1 AND product_code = $2${byCompany ? " AND company_id = $3" : ""}
+              FROM ${M} WHERE warehouse_id::text = $1 AND item_code = $2${byCompany ? " AND company_id = $3" : ""}
              GROUP BY COALESCE(variant_key,'')
           ), lot AS (
             SELECT COALESCE(variant_key,'') AS variant_key, SUM(qty_remaining) AS lot_qty
-              FROM ${L} WHERE warehouse_id::text = $1 AND product_code = $2${byCompany ? " AND company_id = $3" : ""}
+              FROM ${L} WHERE warehouse_id::text = $1 AND item_code = $2${byCompany ? " AND company_id = $3" : ""}
              GROUP BY COALESCE(variant_key,'')
           )
           SELECT COALESCE(mov.variant_key, lot.variant_key) AS variant_key,
                  COALESCE(mov.mov_qty,0) AS mov_qty, COALESCE(lot.lot_qty,0) AS lot_qty
             FROM mov FULL OUTER JOIN lot ON mov.variant_key = lot.variant_key`,
-          byCompany ? [f.warehouseId, f.productCode, f.companyId] : [f.warehouseId, f.productCode]);
+          byCompany ? [f.warehouseId, f.itemCode, f.companyId] : [f.warehouseId, f.itemCode]);
         for (const row of after) {
           const p = projected.get(String(row.variant_key)) ?? { movQty: 0, lotQty: 0 };
           if (Number(row.mov_qty) !== p.movQty || Number(row.lot_qty) !== p.lotQty) {
@@ -2000,7 +2000,7 @@ async function runDocRelabel() {
       repointMoves += repointPlans.reduce((a, rp) => a + rp.plan.moves.length, 0);
       repointUnits += repointPlans.reduce((a, rp) => a + rp.plan.excess, 0);
       rmDeltaTotal += repointPlans.reduce((a, rp) => a + rp.plan.rmDeltaSen, 0);
-      for (const r of refusals) stocktake.push({ family: `${f.productCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
+      for (const r of refusals) stocktake.push({ family: `${f.itemCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
     } catch (e) {
       if (e && e.__rollback) {
         notice("  DRY-RUN VERIFIED (then rolled back) — the apply would leave the family exactly on the projection above.");
@@ -2010,11 +2010,11 @@ async function runDocRelabel() {
         repointMoves += repointPlans.reduce((a, rp) => a + rp.plan.moves.length, 0);
         repointUnits += repointPlans.reduce((a, rp) => a + rp.plan.excess, 0);
         rmDeltaTotal += repointPlans.reduce((a, rp) => a + rp.plan.rmDeltaSen, 0);
-        for (const r of refusals) stocktake.push({ family: `${f.productCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
+        for (const r of refusals) stocktake.push({ family: `${f.itemCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
       } else {
         warn(`  family FAILED (rolled back, others unaffected): ${e?.message ?? e}`);
         famRefused += 1;
-        for (const r of refusals) stocktake.push({ family: `${f.productCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
+        for (const r of refusals) stocktake.push({ family: `${f.itemCode} co=${f.companyId} wh=${f.warehouseId}`, ...r });
       }
     }
   }

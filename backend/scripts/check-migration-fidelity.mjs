@@ -127,7 +127,7 @@ const FIELD_MAP = [
   ["PO header", "currency / revision / created_by / notes", "constant", "DECLARED", "not from AutoCount"],
   // ---- purchase order line ----
   ["PO line", "linked_ac_dtlkey", "PODTL.DtlKey", "COMPARED", ""],
-  ["PO line", "material_code", "PODTL.ItemCode via autocount-erp-mapping-1561.csv", "COMPARED", "sofa compared by model prefix only"],
+  ["PO line", "item_code", "PODTL.ItemCode via autocount-erp-mapping-1561.csv", "COMPARED", "sofa compared by model prefix only"],
   ["PO line", "supplier_sku", "PODTL.ItemCode", "COMPARED", "sofa: AutoCount code + compartment"],
   ["PO line", "qty", "round(PODTL.Qty)", "COMPARED", ""],
   ["PO line", "received_qty", "PODTL.TransferedQty", "COMPARED", "*** the field the cutover got wrong ***"],
@@ -286,7 +286,7 @@ async function main() {
       LEFT JOIN scm.suppliers s ON s.id = p.supplier_id
      WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL`;
   const erpPoL = await sql`
-    SELECT i.id, i.purchase_order_id, i.material_code, i.supplier_sku, i.description2,
+    SELECT i.id, i.purchase_order_id, i.item_code, i.supplier_sku, i.description2,
            i.qty, i.received_qty, i.unit_price_sen, i.line_total_sen, i.delivery_date::text AS delivery_date,
            i.item_group, i.linked_ac_dtlkey, p.linked_ac_docno AS ac
       FROM scm.purchase_order_items i
@@ -294,7 +294,7 @@ async function main() {
      WHERE p.company_id = ${CO} AND p.linked_ac_docno IS NOT NULL
      ORDER BY p.linked_ac_docno, i.id`;
   const erpGrnL = await sql`
-    SELECT g.grn_number, g.linked_ac_docno AS ac_po, gi.material_code, gi.qty_received, gi.qty_accepted,
+    SELECT g.grn_number, g.linked_ac_docno AS ac_po, gi.item_code, gi.qty_received, gi.qty_accepted,
            gi.purchase_order_item_id
       FROM scm.grns g
       JOIN scm.grn_items gi ON gi.grn_id = g.id
@@ -428,10 +428,10 @@ async function main() {
     modelOf: (e) => String(e.item_code || "").split("-")[0].toUpperCase() || null,
   });
   const poJoin = joinLines(erpPoL, acPoL, {
-    codeOf: (e) => e.material_code, docOf: (e) => e.ac, keyOf: (e) => e.linked_ac_dtlkey,
+    codeOf: (e) => e.item_code, docOf: (e) => e.ac, keyOf: (e) => e.linked_ac_dtlkey,
     desc2Of: (e) => e.description2,
     isSofaErp: (e) => e.item_group === "sofa",
-    modelOf: (e) => String(e.material_code || "").split("-")[0].toUpperCase() || null,
+    modelOf: (e) => String(e.item_code || "").split("-")[0].toUpperCase() || null,
   });
 
   // ═════════════════════ SO LINES ═════════════════════
@@ -521,11 +521,11 @@ async function main() {
     const k0 = `${a.DocNo}#${a.DtlKey}`;
     for (const e of p.erp) {
       poItemToAc.set(e.id, a);
-      const kk = `${k0} ${e.material_code}`;
+      const kk = `${k0} ${e.item_code}`;
       cmpNum("PO line", "qty", kk, e.qty, acQty, how);
       cmpNum("PO line", "received_qty", kk, e.received_qty, acRecv, how);
       if (Math.round(n0(e.received_qty)) > acRecv)
-        overReceipt.push({ po: a.DocNo, dtl: a.DtlKey, item: a.ItemCode, code: e.material_code, erp: Math.round(n0(e.received_qty)), ac: acRecv, qty: acQty, how });
+        overReceipt.push({ po: a.DocNo, dtl: a.DtlKey, item: a.ItemCode, code: e.item_code, erp: Math.round(n0(e.received_qty)), ac: acRecv, qty: acQty, how });
       cmpText("PO line", "description2", kk, e.description2, a.Desc2, how);
       cmpDate("PO line", "delivery_date", kk, e.delivery_date, a.DeliveryDate, how);
       const sku = txt(e.supplier_sku);
@@ -536,18 +536,18 @@ async function main() {
       cmpNum("PO line", "sofa build line_total_sen", k0, gTotal, acUp * acQty, how);
       const model = sofaModelOf(a.ItemCode);
       for (const e of p.erp) {
-        const pref = String(e.material_code || "").split("-")[0].toUpperCase();
-        if (model && pref !== model) F.add("PO line", "sofa model prefix", `${k0} ${e.material_code}`, pref, model, null, how);
+        const pref = String(e.item_code || "").split("-")[0].toUpperCase();
+        if (model && pref !== model) F.add("PO line", "sofa model prefix", `${k0} ${e.item_code}`, pref, model, null, how);
       }
     } else {
       const e = p.erp[0];
-      cmpNum("PO line", "unit_price_sen", `${k0} ${e.material_code}`, e.unit_price_sen, acUp, how);
-      cmpNum("PO line", "line_total_sen", `${k0} ${e.material_code}`, e.line_total_sen, acUp * acQty, how);
+      cmpNum("PO line", "unit_price_sen", `${k0} ${e.item_code}`, e.unit_price_sen, acUp, how);
+      cmpNum("PO line", "line_total_sen", `${k0} ${e.item_code}`, e.line_total_sen, acUp * acQty, how);
       const want = erpCodeOf(a.ItemCode);
-      if (want && norm(want) !== norm(e.material_code)) F.add("PO line", "material_code", k0, e.material_code, `${want} (from ${a.ItemCode})`, null, how);
+      if (want && norm(want) !== norm(e.item_code)) F.add("PO line", "item_code", k0, e.item_code, `${want} (from ${a.ItemCode})`, null, how);
     }
   }
-  for (const e of poJoin.danglingKeys) F.add("PO line", "linked_ac_dtlkey points at no AutoCount row", `${e.ac} ${e.material_code}`, e.linked_ac_dtlkey, "(no such DtlKey)");
+  for (const e of poJoin.danglingKeys) F.add("PO line", "linked_ac_dtlkey points at no AutoCount row", `${e.ac} ${e.item_code}`, e.linked_ac_dtlkey, "(no such DtlKey)");
 
   // ═════════════════════ PO HEADERS ═════════════════════
   const acLinesByPoDoc = new Map();
@@ -631,7 +631,7 @@ async function main() {
   for (const g of erpGrnL) {
     const a = poItemToAc.get(g.purchase_order_item_id);
     if (!a) { grnNoKey++; continue; }
-    const k = `${g.grn_number} ${g.material_code}`;
+    const k = `${g.grn_number} ${g.item_code}`;
     cmpNum("GRN line", "qty_received", k, g.qty_received, Math.round(n0(a.TransferedQty)));
     cmpNum("GRN line", "qty_accepted", k, g.qty_accepted, Math.round(n0(a.TransferedQty)));
   }
@@ -694,7 +694,7 @@ async function main() {
   }
   if (poJoin.unjoined.length) {
     log(`  UNJOINED purchase order lines (${poJoin.unjoined.length}), first ${Math.min(TOP, poJoin.unjoined.length)}:`);
-    for (const e of poJoin.unjoined.slice(0, TOP)) log(`     ${e.ac} ${e.material_code} [${e.item_group}] qty ${e.qty} recv ${e.received_qty}`);
+    for (const e of poJoin.unjoined.slice(0, TOP)) log(`     ${e.ac} ${e.item_code} [${e.item_group}] qty ${e.qty} recv ${e.received_qty}`);
   }
   log("");
 

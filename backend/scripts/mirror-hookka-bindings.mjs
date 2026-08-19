@@ -40,13 +40,13 @@ try {
 
   const src = await sql`SELECT * FROM scm.supplier_material_bindings
     WHERE company_id = ${cid} AND supplier_id = ${byCode[SRC].id} AND material_kind = 'mfg_product'
-    ORDER BY material_code`;
+    ORDER BY item_code`;
   note(`OHANA bindings to mirror: ${src.length}`);
 
-  const existing = await sql`SELECT supplier_id, material_code FROM scm.supplier_material_bindings
+  const existing = await sql`SELECT supplier_id, item_code FROM scm.supplier_material_bindings
     WHERE company_id = ${cid} AND material_kind = 'mfg_product'
       AND supplier_id IN (${byCode[MIRRORS[0]].id}, ${byCode[MIRRORS[1]].id})`;
-  const have = new Set(existing.map((e) => `${e.supplier_id}||${e.material_code}`));
+  const have = new Set(existing.map((e) => `${e.supplier_id}||${e.item_code}`));
 
   let toInsert = 0, mainFlips = 0;
   const now = new Date().toISOString();
@@ -55,14 +55,14 @@ try {
     for (const b of src) {
       for (const mc of MIRRORS) {
         const sid = byCode[mc].id;
-        if (have.has(`${sid}||${b.material_code}`)) continue;
+        if (have.has(`${sid}||${b.item_code}`)) continue;
         toInsert++;
         if (APPLY) {
           await tx`INSERT INTO scm.supplier_material_bindings
-            (supplier_id, material_kind, material_code, material_name, supplier_sku,
+            (supplier_id, material_kind, item_code, material_name, supplier_sku,
              unit_price_sen, currency, lead_time_days, moq, price_matrix,
              is_main_supplier, notes, company_id, created_at, updated_at)
-            VALUES (${sid}, 'mfg_product', ${b.material_code}, ${b.material_name}, ${b.supplier_sku},
+            VALUES (${sid}, 'mfg_product', ${b.item_code}, ${b.material_name}, ${b.supplier_sku},
                     ${b.unit_price_sen}, ${b.currency}, ${b.lead_time_days}, ${b.moq},
                     ${b.price_matrix === null ? null : tx.json(b.price_matrix)},
                     false, ${"mirrored from 400-O002 (owner 2026-08-09)"}, ${cid}, ${now}, ${now})`;
@@ -72,10 +72,10 @@ try {
       if (APPLY) {
         await tx`UPDATE scm.supplier_material_bindings SET is_main_supplier = false, updated_at = ${now}
           WHERE company_id = ${cid} AND material_kind = 'mfg_product'
-            AND material_code = ${b.material_code} AND is_main_supplier = true`;
+            AND item_code = ${b.item_code} AND is_main_supplier = true`;
         await tx`UPDATE scm.supplier_material_bindings SET is_main_supplier = true, updated_at = ${now}
           WHERE company_id = ${cid} AND material_kind = 'mfg_product'
-            AND material_code = ${b.material_code} AND supplier_id = ${byCode[MAIN_TO].id}`;
+            AND item_code = ${b.item_code} AND supplier_id = ${byCode[MAIN_TO].id}`;
       }
     }
     note(`${APPLY ? "APPLIED" : "DRY-RUN"}: insert ${toInsert} mirrored bindings (2 houses), main → ${MAIN_TO} on ${mainFlips} materials`);

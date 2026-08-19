@@ -133,7 +133,7 @@ async function main() {
       i.line_no, i.linked_ac_dtlkey, h.linked_ac_docno AS acdoc
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND i.item_group IN ('sofa','bedframe') AND h.linked_ac_docno IS NOT NULL`;
-  const poLines = await sql`SELECT i.id, h.po_number AS doc, i.material_code AS code, i.item_group AS grp,
+  const poLines = await sql`SELECT i.id, h.po_number AS doc, i.item_code AS code, i.item_group AS grp,
       i.description2 AS d2, i.variants, i.unit_price_sen AS unit_sen, i.line_total_sen AS tot_sen,
       NULL::int AS line_no, i.linked_ac_dtlkey, h.linked_ac_docno AS acdoc
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id

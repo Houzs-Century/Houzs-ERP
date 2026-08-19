@@ -70,7 +70,7 @@ async function main() {
   const soLines = await sql`SELECT i.id, i.item_code AS code, i.description2 AS d2, i.custom_specials
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL`;
-  const poLines = await sql`SELECT i.id, i.material_code AS code, i.description2 AS d2, i.custom_specials
+  const poLines = await sql`SELECT i.id, i.item_code AS code, i.description2 AS d2, i.custom_specials
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL`;
   log("");

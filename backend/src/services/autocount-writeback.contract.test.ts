@@ -568,7 +568,7 @@ const SUPPLIER = {
 
 const PO_ITEMS = [
   {
-    purchase_order_id: 'po-uuid-1', material_code: 'AKEMI-SOLITUDE-Q', item_group: 'mattress',
+    purchase_order_id: 'po-uuid-1', item_code: 'AKEMI-SOLITUDE-Q', item_group: 'mattress',
     description: 'AKEMI SOLITUDE MATTRESS QUEEN', qty: 2, unit_price_sen: 90_000,
     discount_sen: 0, variants: null, warehouse_id: 'wh-kl', delivery_date: '2026-09-20',
   },
@@ -718,7 +718,7 @@ export const DIVERGENCES: Divergence[] = [
   {
     id: 'D10', flow: 'create_so + create_po + edit', field: 'Details[].ItemCode',
     service: 'assigns ItemCode unconditionally on a create (AcSyncService.cs:181/208); an item code the book does not have fails the save.',
-    erp: 'sends the raw ERP item_code / material_code. makeItemCodeResolver exists and is never called by anything but its own unit test — every compose* call takes the default identityResolver, so no ERP code is ever mapped to an AutoCount one.',
+    erp: 'sends the raw ERP item_code / item_code. makeItemCodeResolver exists and is never called by anything but its own unit test — every compose* call takes the default identityResolver, so no ERP code is ever mapped to an AutoCount one.',
     severity: 'critical',
   },
   /* D11 (create_po + edit(PO): CreditorCode / CreditorName / Agent / Ref read

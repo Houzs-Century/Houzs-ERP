@@ -174,7 +174,7 @@ async function main() {
       for (const r of rows) {
         if (!r.po_item_id) { note('  (this PO has no line items at all)'); continue; }
         anyRemaining += Number(r.remaining) > 0 ? 1 : 0;
-        note(`  ${String(r.material_code).padEnd(24)} qty=${r.qty} received=${r.received_qty} `
+        note(`  ${String(r.item_code).padEnd(24)} qty=${r.qty} received=${r.received_qty} `
           + `remaining=${r.remaining}  grn lines bound to it=${r.grn_lines}`);
       }
       note(`\n  lines still outstanding: ${anyRemaining}`);

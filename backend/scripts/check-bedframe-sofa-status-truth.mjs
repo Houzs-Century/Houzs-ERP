@@ -158,14 +158,14 @@ async function main() {
 
   // BATCH: open batched lots, what sofa set-coverage reads
   const lots = await sql`
-    SELECT warehouse_id::text warehouse_id, product_code,
+    SELECT warehouse_id::text warehouse_id, item_code,
            COALESCE(variant_key,'') variant_key, batch_no,
            SUM(qty_remaining)::numeric qty
       FROM scm.inventory_lots
      WHERE company_id = ${CO} AND batch_no IS NOT NULL AND qty_remaining > 0
      GROUP BY 1,2,3,4`;
   const openBatchedByCode = new Map();
-  for (const l of lots) openBatchedByCode.set(l.product_code, (openBatchedByCode.get(l.product_code) ?? 0) + Number(l.qty));
+  for (const l of lots) openBatchedByCode.set(l.item_code, (openBatchedByCode.get(l.item_code) ?? 0) + Number(l.qty));
 
   /* ── 4. Classify every line ──────────────────────────────────────────────── */
   /* Precedence = "what would have to change FIRST for the two to agree". Every line lands

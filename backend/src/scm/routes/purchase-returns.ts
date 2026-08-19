@@ -53,7 +53,7 @@ const HEADER =
   'reason, status, posted_at, completed_at, credit_note_ref, refund_sen, ' +
   'notes, created_at, created_by, updated_at';
 const ITEM =
-  'id, purchase_return_id, grn_item_id, material_kind, material_code, ' +
+  'id, purchase_return_id, grn_item_id, material_kind, item_code, ' +
   'material_name, qty_returned, unit_price_sen, line_refund_sen, reason, notes, ' +
   /* item_group + variants drive the canonical SKU/build read-order sort (the
      sofa module walk + category rank); selected here so the PR detail + PDF
@@ -205,14 +205,14 @@ purchaseReturns.get('/:id', async (c) => {
      Display-only. */
   /* Canonical SKU/build order at READ (sofa modules LHF→NA→RHF, mains→
      accessories→services), mirroring the SO detail GET. The shared helper keys
-     on `item_code`; PR lines expose `material_code`, so sort a shimmed view
+     on `item_code`; PR lines expose `item_code`, so sort a shimmed view
      that carries the original row back unchanged. `.order('created_at')` above
      stays as the stable tiebreaker — pure ordering, no persistence touched. */
-  type PrItemRow = Record<string, unknown> & { id: string; grn_item_id?: string | null; material_code: string; item_code: string };
+  type PrItemRow = Record<string, unknown> & { id: string; grn_item_id?: string | null; item_code: string };
   const rawItems = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      ((i.data ?? []) as unknown as Array<{ id: string; grn_item_id?: string | null; material_code: string } & Record<string, unknown>>)
-        .map((it): PrItemRow => ({ ...it, item_code: it.material_code })),
+      ((i.data ?? []) as unknown as Array<{ id: string; grn_item_id?: string | null; item_code: string } & Record<string, unknown>>)
+        .map((it): PrItemRow => ({ ...it, item_code: it.item_code })),
       (r) => r.item_group as string | null | undefined,
     ),
   );
@@ -347,7 +347,7 @@ async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber:
     .select('company_id').eq('id', prId).maybeSingle();
   const prCompanyId = (prHeader as { company_id?: number | null } | null)?.company_id ?? null;
   const { data: items } = await sb.from('purchase_return_items')
-    .select('id, grn_item_id, material_code, material_name, qty_returned, item_group, variants')
+    .select('id, grn_item_id, item_code, material_name, qty_returned, item_group, variants')
     .eq('purchase_return_id', prId);
   if (!items) return [];
   // Per-line warehouse — each line draws OUT of its source GRN line's warehouse,
@@ -367,7 +367,7 @@ async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber:
      read those GRNs' IN movements, and match the bucket. Only sofa/batched lines
      resolve to a non-null batch; un-batched RM stays plain FIFO. Forward-compat:
      pre-0120 the column is absent → retry without it → every line un-batched. */
-  const itemList = (items ?? []) as Array<{ id: string; grn_item_id?: string | null; material_code: string; material_name: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null }>;
+  const itemList = (items ?? []) as Array<{ id: string; grn_item_id?: string | null; item_code: string; material_name: string | null; qty_returned: number; item_group?: string | null; variants?: VariantAttrs | null }>;
   // PR line id → source GRN id (its own GRN line's GRN, else the primary GRN).
   const lineGrnId = new Map<string, string | null>();
   {
@@ -387,14 +387,14 @@ async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber:
     const srcGrnIds = [...new Set([...lineGrnId.values()].filter((x): x is string => !!x))];
     if (srcGrnIds.length > 0) {
       let inRes = await sb.from('inventory_movements')
-        .select('source_doc_id, product_code, variant_key, warehouse_id, batch_no')
+        .select('source_doc_id, item_code, variant_key, warehouse_id, batch_no')
         .eq('source_doc_type', 'GRN').eq('movement_type', 'IN').in('source_doc_id', srcGrnIds);
       if (inRes.error && (inRes.error.message ?? '').includes('batch_no')) {
         inRes = { data: [], error: null } as typeof inRes;
       }
-      for (const m of (inRes.data ?? []) as Array<{ source_doc_id: string; product_code: string; variant_key: string | null; warehouse_id: string; batch_no?: string | null }>) {
+      for (const m of (inRes.data ?? []) as Array<{ source_doc_id: string; item_code: string; variant_key: string | null; warehouse_id: string; batch_no?: string | null }>) {
         if (m.batch_no == null) continue;
-        batchByBucket.set(`${m.source_doc_id}::${m.warehouse_id}::${m.product_code}::${m.variant_key ?? ''}`, m.batch_no);
+        batchByBucket.set(`${m.source_doc_id}::${m.warehouse_id}::${m.item_code}::${m.variant_key ?? ''}`, m.batch_no);
       }
     }
   }
@@ -406,11 +406,11 @@ async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber:
       if (!warehouseId) return null;
       const variantKey = computeVariantKey(it.item_group, it.variants ?? null);
       const srcGrn = lineGrnId.get(it.id) ?? null;
-      const batchNo = srcGrn ? (batchByBucket.get(`${srcGrn}::${warehouseId}::${it.material_code}::${variantKey}`) ?? null) : null;
+      const batchNo = srcGrn ? (batchByBucket.get(`${srcGrn}::${warehouseId}::${it.item_code}::${variantKey}`) ?? null) : null;
       return {
         movement_type: 'OUT' as const,
         warehouse_id: warehouseId,
-        product_code: it.material_code,
+        item_code: it.item_code,
         variant_key: variantKey,
         product_name: it.material_name,
         qty: it.qty_returned,
@@ -461,7 +461,7 @@ async function writePurchaseReturnMovements(sb: any, prId: string, returnNumber:
 async function checkPrStockAvailability(
   sb: any,
   lines: Array<{
-    id: string; grn_item_id?: string | null; material_code: string;
+    id: string; grn_item_id?: string | null; item_code: string;
     material_name?: string | null; item_group?: string | null;
     variants?: VariantAttrs | null; qty: number;
   }>,
@@ -479,7 +479,7 @@ async function checkPrStockAvailability(
     if (!wh) continue; // no warehouse resolved → the OUT skips this line too
     const arr = byWh.get(wh) ?? [];
     arr.push({
-      itemCode: l.material_code,
+      itemCode: l.item_code,
       productName: l.material_name ?? null,
       variantKey: computeVariantKey(l.item_group ?? null, l.variants ?? null),
       qty: Number(l.qty),
@@ -514,7 +514,7 @@ async function writePrLineDeltaMovement(
   args: {
     prId: string; returnNumber: string; headerGrnId: string | null; userId: string;
     companyId: number | undefined;
-    line: { id: string; grn_item_id?: string | null; material_code: string;
+    line: { id: string; grn_item_id?: string | null; item_code: string;
             material_name: string | null; item_group?: string | null; variants?: VariantAttrs | null };
     deltaQty: number;
   },
@@ -557,7 +557,7 @@ async function writePrLineDeltaMovement(
         .select('unit_cost_sen')
         .eq('source_doc_type', 'PURCHASE_RETURN').eq('source_doc_id', args.prId)
         .eq('movement_type', 'OUT').eq('warehouse_id', warehouseId)
-        .eq('product_code', args.line.material_code).eq('variant_key', variantKey)
+        .eq('item_code', args.line.item_code).eq('variant_key', variantKey)
         .limit(1);
       const row = ((inRes.data ?? []) as Array<{ unit_cost_sen?: number | null }>)[0];
       unitCostSen = Number(row?.unit_cost_sen ?? 0);
@@ -568,7 +568,7 @@ async function writePrLineDeltaMovement(
     const deltaRows: Parameters<typeof writeMovements>[1] = [{
       movement_type: isOut ? 'OUT' : 'IN',
       warehouse_id: warehouseId,
-      product_code: args.line.material_code,
+      item_code: args.line.item_code,
       variant_key: variantKey,
       product_name: args.line.material_name,
       qty: Math.abs(args.deltaQty),
@@ -682,7 +682,7 @@ purchaseReturns.post('/', async (c) => {
       (body.grnNumber as string | undefined) ?? null,
       items.map((it, idx) => ({
         lineRef: String(idx),
-        itemCode: String(it.materialCode ?? ''),
+        itemCode: String(it.itemCode ?? ''),
         qty: Number(it.qtyReturned ?? it.qty ?? 0),
         soItemId: (it.grnItemId as string | undefined) ?? null,
       })),
@@ -746,7 +746,7 @@ purchaseReturns.post('/', async (c) => {
     return {
       grn_item_id: grnItemId,
       material_kind: it.materialKind,
-      material_code: it.materialCode,
+      item_code: it.itemCode,
       material_name: it.materialName,
       qty_returned: qty,
       unit_price_sen: unit,
@@ -782,7 +782,7 @@ purchaseReturns.post('/', async (c) => {
       itemRows.map((r, idx) => ({
         id: `new-${idx}`,
         grn_item_id: r.grn_item_id,
-        material_code: String(r.material_code),
+        item_code: String(r.item_code),
         material_name: (r.material_name as string | null | undefined) ?? null,
         item_group: r.item_group,
         variants: r.variants as VariantAttrs | null,
@@ -887,14 +887,14 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
      `.in('grn_id', grnIds)` is itself an id-keyed read and that is the shape
      this sweep exists for. */
   const { data: items } = await scopeToCompany(sb.from('grn_items')
-    .select('id, grn_id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_sen, item_group, variants, description, description2, uom')
+    .select('id, grn_id, material_kind, item_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_sen, item_group, variants, description, description2, uom')
     .in('grn_id', grnIds)
     .gt('qty_rejected', 0), c);
   // Cap each line's return at its remaining (qty_accepted - returned_qty, 0106) —
   // a GRN line can be returned across multiple PRs. Drop lines already fully
   // returned. We return min(qty_rejected, remaining).
   const rejectedItems = ((items ?? []) as Array<{
-    id: string; grn_id: string; material_kind: string; material_code: string; material_name: string;
+    id: string; grn_id: string; material_kind: string; item_code: string; material_name: string;
     qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_sen: number;
     item_group: string | null; variants: Record<string, unknown> | null; description: string | null; description2: string | null; uom: string | null;
   }>)
@@ -930,7 +930,7 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
       rejectedItems.map((it, idx) => ({
         id: `new-${idx}`,
         grn_item_id: it.id,
-        material_code: it.material_code,
+        item_code: it.item_code,
         material_name: it.material_name,
         item_group: it.item_group,
         variants: (it.variants as VariantAttrs | null) ?? null,
@@ -970,7 +970,7 @@ export const createPurchaseReturnFromGrnsHandler = async (c: Context<{ Bindings:
     purchase_return_id: h.id,
     grn_item_id: it.id,
     material_kind: it.material_kind,
-    material_code: it.material_code,
+    item_code: it.item_code,
     material_name: it.material_name,
     qty_returned: it._qty,
     unit_price_sen: it.unit_price_sen,
@@ -1038,11 +1038,11 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
 
   // LINE-level half of the same source document, under the same predicate.
   const { data: items } = await scopeToCompany(sb.from('grn_items')
-    .select('id, material_kind, material_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_sen, item_group, variants, description, description2, uom')
+    .select('id, material_kind, item_code, material_name, qty_accepted, qty_rejected, returned_qty, rejection_reason, unit_price_sen, item_group, variants, description, description2, uom')
     .eq('grn_id', grnId)
     .gt('qty_accepted', 0), c);
   const allLines = ((items ?? []) as Array<{
-    id: string; material_kind: string; material_code: string; material_name: string;
+    id: string; material_kind: string; item_code: string; material_name: string;
     qty_accepted: number; qty_rejected: number; returned_qty: number; rejection_reason: string | null; unit_price_sen: number;
     item_group: string | null; variants: Record<string, unknown> | null; description: string | null; description2: string | null; uom: string | null;
   }>);
@@ -1064,7 +1064,7 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
       lines.map((it, idx) => ({
         id: `new-${idx}`,
         grn_item_id: it.id,
-        material_code: it.material_code,
+        item_code: it.item_code,
         material_name: it.material_name,
         item_group: it.item_group,
         variants: (it.variants as VariantAttrs | null) ?? null,
@@ -1105,7 +1105,7 @@ export const createPurchaseReturnFromGrnHandler = async (c: Context<{ Bindings: 
     purchase_return_id: h.id,
     grn_item_id: it.id,
     material_kind: it.material_kind,
-    material_code: it.material_code,
+    item_code: it.item_code,
     material_name: it.material_name,
     qty_returned: it._remaining,
     unit_price_sen: it.unit_price_sen,
@@ -1341,7 +1341,7 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
   const prId = c.req.param('id');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  if (!it.materialCode) return c.json({ error: 'material_code_required' }, 400);
+  if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
   if (!it.materialName) return c.json({ error: 'material_name_required' }, 400);
 
   const sb = c.get('supabase');
@@ -1363,7 +1363,7 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
       sb, (parent as { grn_id?: string | null } | null)?.grn_id ?? null, null,
       [{
         lineRef: 'add',
-        itemCode: String(it.materialCode ?? ''),
+        itemCode: String(it.itemCode ?? ''),
         qty: Number(it.qty ?? 1),
         soItemId: (it.grnItemId as string | undefined) ?? null,
       }],
@@ -1393,7 +1393,7 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
     purchase_return_id: prId,
     grn_item_id: grnItemId,
     material_kind: (it.materialKind as string) ?? 'mfg_product',
-    material_code: it.materialCode,
+    item_code: it.itemCode,
     material_name: it.materialName,
     // PR line money meaning: qty = qty_returned; total = qty * unit price.
     qty_returned: qtyReturned,
@@ -1475,7 +1475,7 @@ export const addPurchaseReturnItemHandler = async (c: any) => {
         line: {
           id: inserted.id,
           grn_item_id: grnItemId,
-          material_code: String(it.materialCode),
+          item_code: String(it.itemCode),
           material_name: (it.materialName as string | null) ?? null,
           item_group: (it.itemGroup as string | null) ?? null,
           variants: (it.variants as VariantAttrs | null) ?? null,
@@ -1507,7 +1507,7 @@ export const patchPurchaseReturnItemHandler = async (c: any) => {
      must 404, not edit another PR's line while the GRN release / stock
      movement / recompute run against this one. */
   const { data: prev } = await scopeToCompanyId(sb.from('purchase_return_items')
-    .select('qty_returned, unit_price_sen, item_group, variants, grn_item_id, material_code, material_name')
+    .select('qty_returned, unit_price_sen, item_group, variants, grn_item_id, item_code, material_name')
     .eq('id', itemId).eq('purchase_return_id', prId), co.companyId).maybeSingle();
   if (!prev) return c.json(NOT_THIS_COMPANY, 404);
 
@@ -1524,7 +1524,7 @@ export const patchPurchaseReturnItemHandler = async (c: any) => {
     line_refund_sen: lineRefund,
   };
   for (const [from, to] of [
-    ['materialCode', 'material_code'], ['materialName', 'material_name'],
+    ['itemCode', 'item_code'], ['materialName', 'material_name'],
     ['itemGroup', 'item_group'], ['description', 'description'], ['uom', 'uom'],
     ['reason', 'reason'], ['notes', 'notes'],
     ['gapInches', 'gap_inches'], ['divanHeightInches', 'divan_height_inches'],
@@ -1560,8 +1560,8 @@ export const patchPurchaseReturnItemHandler = async (c: any) => {
     const repoint = await unlinkedEditRefusal(sb, 'purchase-return', {
       parent: { table: 'purchase_returns', column: 'grn_id', id: prId, companyId: co.companyId },
       storedLink: grnItemId,
-      storedCode: (prev as { material_code: string | null }).material_code,
-      patchCode: it.materialCode,
+      storedCode: (prev as { item_code: string | null }).item_code,
+      patchCode: it.itemCode,
     });
     if (repoint) return c.json(repoint, 409);
   }
@@ -1592,7 +1592,7 @@ export const patchPurchaseReturnItemHandler = async (c: any) => {
         line: {
           id: itemId,
           grn_item_id: grnItemId,
-          material_code: String((it.materialCode ?? (prev as { material_code: string }).material_code)),
+          item_code: String((it.itemCode ?? (prev as { item_code: string }).item_code)),
           material_name: ((it.materialName ?? (prev as { material_name: string | null }).material_name) as string | null) ?? null,
           item_group: effGroup ?? null,
           variants: effVariants ?? null,
@@ -1621,14 +1621,14 @@ export const deletePurchaseReturnItemHandler = async (c: any) => {
   // not delete another PR's line while the GRN release / stock compensation
   // run against this one.
   const { data: line } = await scopeToCompanyId(sb.from('purchase_return_items')
-    .select('qty_returned, grn_item_id, material_code, material_name, item_group, variants')
+    .select('qty_returned, grn_item_id, item_code, material_name, item_group, variants')
     .eq('id', itemId).eq('purchase_return_id', prId), co.companyId).maybeSingle();
   if (!line) return c.json(NOT_THIS_COMPANY, 404);
   const { error } = await scopeToCompanyId(sb.from('purchase_return_items').delete().eq('id', itemId), co.companyId);
   if (error) return c.json({ error: 'delete_failed', reason: error.message }, 500);
   let movementErrors: string[] = [];
   if (line) {
-    const l = line as { qty_returned: number; grn_item_id: string | null; material_code: string; material_name: string | null; item_group: string | null; variants: VariantAttrs | null };
+    const l = line as { qty_returned: number; grn_item_id: string | null; item_code: string; material_name: string | null; item_group: string | null; variants: VariantAttrs | null };
     // Release: decrement returned_qty by the deleted line's qty (helper clamps ≥0).
     if (l.grn_item_id) await adjustGrnReturnedQty(sb, l.grn_item_id, -(l.qty_returned ?? 0));
 
@@ -1649,7 +1649,7 @@ export const deletePurchaseReturnItemHandler = async (c: any) => {
           line: {
             id: itemId,
             grn_item_id: l.grn_item_id,
-            material_code: l.material_code,
+            item_code: l.item_code,
             material_name: l.material_name,
             item_group: l.item_group,
             variants: l.variants,

@@ -1332,10 +1332,10 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
   },
 
   // inventory.get('/')?showAll=true → { balances, warehouses }; balances cols
-  // (v_inventory_all_skus): product_code, product_name, category, qty,
+  // (v_inventory_all_skus): item_code, product_name, category, qty,
   // warehouse_name, value_sen…
   // Design m-inventory: SKU/Warehouse/On hand/Reserved + stock-level pill. Real
-  // v_inventory_all_skus cols: product_code, product_name, warehouse_code/_name,
+  // v_inventory_all_skus cols: item_code, product_name, warehouse_code/_name,
   // qty, category. Reserved has NO column on this view → OMITTED. Level pill
   // (In stock / Low / Zero) is computed client-side from qty.
   inventory: {
@@ -1344,10 +1344,10 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     placeholder: "Search product · SKU",
     endpoint: "/inventory?showAll=true",
     listKey: "balances",
-    primary: (r) => lineIdentity({ code: r.product_code, description: r.product_name }).primary,
-    secondary: (r) => join(r.product_code, r.category, r.warehouse_code ?? r.warehouse_name),
+    primary: (r) => lineIdentity({ code: r.item_code, description: r.product_name }).primary,
+    secondary: (r) => join(r.item_code, r.category, r.warehouse_code ?? r.warehouse_name),
     right: (r) => (r.qty == null ? "" : `${r.qty}`),
-    search: (r) => join(r.product_name, r.product_code, r.category, r.warehouse_name),
+    search: (r) => join(r.product_name, r.item_code, r.category, r.warehouse_name),
     pill: (r) => stockLevel(pick(r, "qty")),
     // Spec #inventory: name + stock badge, "{{warehouse_name}}" sub-line, 3-KPI
     // footer (On hand / Reserved / Available). v_inventory_all_skus has only qty
@@ -1355,7 +1355,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
     // Description ONCE, code NOT displayed — the shared rule
     // (vendor/shared/line-identity.ts): the sub-line's "SKU {{sku}}" repeated the
     // identity `primary` already names. WAREHOUSE is not a duplicate and stays.
-    // The code still BINDS — `search` above still matches on product_code, so a
+    // The code still BINDS — `search` above still matches on item_code, so a
     // rep can still find a row by typing its SKU.
     variant: "inventory",
     subline: (r) => join(pick(r, "warehouseCode", "warehouse_code", "warehouseName", "warehouse_name")),
@@ -1364,7 +1364,7 @@ export const MODULE_CONFIGS: Record<string, ModuleConfig> = {
       return [["On hand", n == null ? "—" : String(n)], ["Reserved", "—"], ["Available", n == null ? "—" : String(n)]];
     },
     fields: [
-      [(r) => pick(r, "productCode", "product_code") ?? "—", "SKU"],
+      [(r) => pick(r, "itemCode", "item_code") ?? "—", "SKU"],
       [(r) => pick(r, "warehouseCode", "warehouse_code", "warehouseName", "warehouse_name") ?? "—", "Warehouse"],
       [(r) => { const n = pick(r, "qty"); return n == null ? "—" : String(n); }, "On hand"],
     ],

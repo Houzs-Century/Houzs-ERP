@@ -116,7 +116,7 @@ async function main() {
   const soLines = await sql`SELECT i.id, i.item_code AS code, i.description2 AS d2, i.variants
     FROM scm.mfg_sales_order_items i JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no
     WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL`;
-  const poLines = await sql`SELECT i.id, i.material_code AS code, i.description2 AS d2, i.variants
+  const poLines = await sql`SELECT i.id, i.item_code AS code, i.description2 AS d2, i.variants
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = ${CO} AND i.item_group = 'sofa' AND h.linked_ac_docno IS NOT NULL`;
   log(`migrated sofa lines: SO ${soLines.length}, PO ${poLines.length}`);
@@ -156,7 +156,7 @@ async function main() {
       pg_typeof(id)::text AS idtype, pg_typeof(variants)::text AS vtype,
       coalesce(variants::text,'<NULL>') AS v
     FROM scm.mfg_sales_order_items WHERE id = ANY(${soIds})`);
-  if (poIds.length) show("PO", await sql`SELECT id::text AS id, material_code AS code, xmin::text AS xmin,
+  if (poIds.length) show("PO", await sql`SELECT id::text AS id, item_code AS code, xmin::text AS xmin,
       pg_typeof(id)::text AS idtype, pg_typeof(variants)::text AS vtype,
       coalesce(variants::text,'<NULL>') AS v
     FROM scm.purchase_order_items WHERE id = ANY(${poIds})`);
@@ -221,17 +221,17 @@ async function main() {
     log(`  ${doc}: ${r.map((x) => x.c).join(" + ") || "(no sofa lines)"}  seat=${r[0]?.sh ?? "-"}`);
   }
   for (const po of ["HC-PO-008783", "HC-PO-000254"]) {
-    const r = await sql`SELECT i.material_code c, i.variants->>'seatHeight' sh
+    const r = await sql`SELECT i.item_code c, i.variants->>'seatHeight' sh
       FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
       WHERE h.po_number = ${po} AND i.item_group = 'sofa' ORDER BY i.id`;
     log(`  ${po}: ${r.map((x) => x.c).join(" + ") || "(not found / no sofa lines)"}  seat=${r[0]?.sh ?? "-"}`);
   }
   const [{ n: grnDrift }] = await sql`SELECT COUNT(*)::int n FROM scm.grn_items g
     JOIN scm.purchase_order_items p ON p.id = g.purchase_order_item_id
-    WHERE p.item_group = 'sofa' AND g.material_code IS DISTINCT FROM p.material_code`;
+    WHERE p.item_group = 'sofa' AND g.item_code IS DISTINCT FROM p.item_code`;
   const [{ n: poDrift }] = await sql`SELECT COUNT(*)::int n FROM scm.purchase_order_items p
     JOIN scm.mfg_sales_order_items s ON s.id = p.so_item_id
-    WHERE p.item_group = 'sofa' AND p.material_code IS DISTINCT FROM s.item_code`;
+    WHERE p.item_group = 'sofa' AND p.item_code IS DISTINCT FROM s.item_code`;
   const [{ n: doDrift }] = await sql`SELECT COUNT(*)::int n FROM scm.delivery_order_items d
     JOIN scm.mfg_sales_order_items s ON s.id = d.so_item_id
     WHERE s.item_group = 'sofa' AND d.item_code IS DISTINCT FROM s.item_code`;

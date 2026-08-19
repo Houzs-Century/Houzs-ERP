@@ -57,7 +57,7 @@ export type PcLineDraft = {
   rid: string;
   bindingId?: string;
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku?: string;
   qty: number;
@@ -72,7 +72,7 @@ export type PcLineDraft = {
   supplierDeliveryDate3?: string;
   supplierDeliveryDate4?: string;
   warehouseId?: string;
-  /* Set when materialCode matches an mfg_product — drives which variant editor
+  /* Set when itemCode matches an mfg_product — drives which variant editor
      renders (sofa / bedframe). Lowercase to match itemGroup. */
   category?: string;
   /** Variant payload (fabric / gap / divan / leg / seat / total height /
@@ -87,7 +87,7 @@ export type PcLineDraft = {
 export const emptyPcLine = (): PcLineDraft => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   materialKind: 'mfg_product',
-  materialCode: '',
+  itemCode: '',
   materialName: '',
   qty: 1,
   unitPriceSen: 0,
@@ -222,17 +222,17 @@ export const PcLineCard = ({
           <input
             type="text"
             list={`pc-bindings-${l.rid}`}
-            value={l.materialCode}
+            value={l.itemCode}
             disabled={identityLocked}
             onChange={(e) => {
               const code = e.target.value;
               const match = supplierId
-                ? bindings.find((b) => b.material_code === code)
+                ? bindings.find((b) => b.item_code === code)
                 : undefined;
               if (match) { onPickBinding(match); return; }
               const sku = allSkus.find((p) => p.code === code);
               onChange({
-                materialCode: code,
+                itemCode: code,
                 materialName: sku?.name ?? l.materialName,
                 bindingId: undefined,
                 category: sku?.category.toLowerCase() ?? l.category,
@@ -246,7 +246,7 @@ export const PcLineCard = ({
           <datalist id={`pc-bindings-${l.rid}`}>
             {supplierId && bindings.length > 0
               ? bindings.map((b) => (
-                  <option key={b.id} value={b.material_code}>
+                  <option key={b.id} value={b.item_code}>
                     {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                   </option>
                 ))
@@ -287,7 +287,7 @@ export const PcLineCard = ({
           <datalist id={`pc-supplier-skus-${l.rid}`}>
             {supplierId && bindings.map((b) => (
               <option key={b.id} value={b.supplier_sku || ''}>
-                {b.material_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
+                {b.item_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
               </option>
             ))}
           </datalist>

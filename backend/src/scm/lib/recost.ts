@@ -36,7 +36,7 @@
 // through to the GR price rather than zeroing a lot that cost real money.
 //
 // Costs resolve per GRN LINE and are then aggregated onto the lot that line
-// produced, identified by (product_code, variant_key, batch_no = source PO).
+// produced, identified by (item_code, variant_key, batch_no = source PO).
 // Lines that remain tied there are indistinguishable to FIFO too, so they
 // resolve to a qty-weighted average — Σ(qty × cost) is conserved exactly.
 //
@@ -217,12 +217,12 @@ export async function recostFromGrn(sb: any, grnId: string) {
     //    but an unordered select made two runs over identical data observably
     //    different (audit 2026-07-17) — pin it so a recost is reproducible.
     const { data: grnItems } = await sb.from('grn_items')
-      .select('id, material_code, item_group, variants, unit_price_sen, qty_accepted, allocated_charge_sen, purchase_order_item_id')
+      .select('id, item_code, item_group, variants, unit_price_sen, qty_accepted, allocated_charge_sen, purchase_order_item_id')
       .eq('grn_id', grnId)
       .order('id', { ascending: true });
     if (!grnItems || grnItems.length === 0) return;
     const giList = grnItems as Array<{
-      id: string; material_code: string; item_group: string | null;
+      id: string; item_code: string; item_group: string | null;
       variants: Record<string, unknown> | null; unit_price_sen: number | null;
       qty_accepted: number | null; allocated_charge_sen: number | null;
       purchase_order_item_id: string | null;
@@ -330,14 +330,14 @@ export async function recostFromGrn(sb: any, grnId: string) {
     /* 3. Authoritative landed cost PER LINE, then aggregated per LOT IDENTITY.
        WHY PER LINE (audit 2026-07-17): lots are one-per-GRN-line (the post writes
        one IN per line; the FIFO trigger opens one lot per IN). Keying cost by
-       (material_code, variant_key) alone put every same-SKU line in ONE bucket and
+       (item_code, variant_key) alone put every same-SKU line in ONE bucket and
        let the first-read line's price win for ALL of that SKU's lots — so a GRN
        spanning two POs (/from-po-items groups by SUPPLIER, lines keep their own
        purchase_order_item_id) booked the second PO's lot at the first PO's price.
 
        LOT IDENTITY: nothing links a lot back to its grn_item — inventory_movements
        carries no grn_item_id, only source_doc_id = the GRN. The finest identity the
-       schema actually holds is (product_code, variant_key, batch_no), batch_no being
+       schema actually holds is (item_code, variant_key, batch_no), batch_no being
        the source PO number (migration 0120). That separates the multi-PO case
        exactly. Lines still tied on all three are genuinely indistinguishable — FIFO
        itself consumes them in arbitrary order — so they resolve to a qty-weighted
@@ -404,15 +404,15 @@ export async function recostFromGrn(sb: any, grnId: string) {
          what it is. */
       const freightTotal = Number(g.allocated_charge_sen ?? 0) + (piFreightByGrnItem.get(g.id) ?? 0);
       const amt = qty * goods + freightTotal;
-      addTotal(byLotKey, `${g.material_code}::${vkey}::${batchByGrnItem.get(g.id) ?? ''}`, qty, amt);
-      addTotal(byCoarse, `${g.material_code}::${vkey}`, qty, amt);
+      addTotal(byLotKey, `${g.item_code}::${vkey}::${batchByGrnItem.get(g.id) ?? ''}`, qty, amt);
+      addTotal(byCoarse, `${g.item_code}::${vkey}`, qty, amt);
     }
     const resolve = (a: Agg | undefined): number | null =>
       a && a.qty > 0 ? Math.round(a.amt / a.qty) : null;
 
     // 4. Lots created by this GRN. Re-cost each, then cascade to its consumptions.
     const { data: lots } = await sb.from('inventory_lots')
-      .select('id, product_code, variant_key, batch_no, qty_received, movement_id, unit_cost_sen')
+      .select('id, item_code, variant_key, batch_no, qty_received, movement_id, unit_cost_sen')
       .eq('source_doc_type', 'GRN').eq('source_doc_id', grnId);
     if (!lots || lots.length === 0) return;
 
@@ -422,12 +422,12 @@ export async function recostFromGrn(sb: any, grnId: string) {
     // at cancel time; recosting it here would double-correct the GL.
     type ConsCand = { id: string; qty_consumed: number | null; movement_id: string | null; newCost: number };
     const consCandidates: ConsCand[] = [];
-    for (const lot of lots as Array<{ id: string; product_code: string; variant_key: string | null; batch_no: string | null; qty_received: number | null; movement_id: string | null; unit_cost_sen: number | null }>) {
+    for (const lot of lots as Array<{ id: string; item_code: string; variant_key: string | null; batch_no: string | null; qty_received: number | null; movement_id: string | null; unit_cost_sen: number | null }>) {
       const vkey = lot.variant_key ?? '';
       // The lot's own batch first; the pre-0120 (NULL-batch) fallback second.
       const newCost = resolve(
-        byLotKey.get(`${lot.product_code}::${vkey}::${lot.batch_no ?? ''}`)
-          ?? byCoarse.get(`${lot.product_code}::${vkey}`),
+        byLotKey.get(`${lot.item_code}::${vkey}::${lot.batch_no ?? ''}`)
+          ?? byCoarse.get(`${lot.item_code}::${vkey}`),
       );
       if (newCost === null) continue; // Pending — leave as-is
       if (Number(lot.unit_cost_sen ?? 0) === newCost) continue; // already correct

@@ -390,7 +390,7 @@ const HEADER_COLS =
   'supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4';
 
 const ITEM_COLS =
-  'id, purchase_order_id, binding_id, material_kind, material_code, material_name, ' +
+  'id, purchase_order_id, binding_id, material_kind, item_code, material_name, ' +
   'supplier_sku, qty, unit_price_sen, line_total_sen, received_qty, notes, created_at, ' +
   /* PR #41 — variant fields (migration 0056) */
   'item_group, description, description2, uom, discount_sen, unit_cost_sen, ' +
@@ -431,7 +431,7 @@ mfgPurchaseOrders.get('/', async (c) => {
   // never carried them).
   // supplier_sku rides the items embed (owner 2026-08-05) — the list's
   // "Supplier SKU" column / Excel export shows the supplier's own codes.
-  const SELECT = `${HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), items:purchase_order_items(material_code, material_name, qty, supplier_sku), purchase_location:warehouses!purchase_location_id(id, code, name)`;
+  const SELECT = `${HEADER_COLS}, supplier:suppliers(id, code, name, contact_person, phone, email, address), items:purchase_order_items(item_code, material_name, qty, supplier_sku), purchase_location:warehouses!purchase_location_id(id, code, name)`;
 
   /* Opt-in server-side pagination + search + sort + status-counts (mirrors the
      SO list in mfg-sales-orders.ts). The PRESENCE of `page` switches paging on;
@@ -653,15 +653,15 @@ mfgPurchaseOrders.get('/outstanding-so-items', async (c) => {
   if (skuCodes.length > 0) {
     const { data: binds } = await supabase
       .from('supplier_material_bindings')
-      .select('material_code, is_main_supplier, supplier:suppliers(code, name)')
+      .select('item_code, is_main_supplier, supplier:suppliers(code, name)')
       .eq('material_kind', 'mfg_product')
-      .in('material_code', skuCodes)
+      .in('item_code', skuCodes)
       .eq('company_id', activeCompanyId(c))
       .order('is_main_supplier', { ascending: false });
-    for (const b of (binds ?? []) as Array<{ material_code: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null }>) {
-      if (mainSupplierByCode.has(b.material_code)) continue;
+    for (const b of (binds ?? []) as Array<{ item_code: string; supplier: { code: string; name: string } | Array<{ code: string; name: string }> | null }>) {
+      if (mainSupplierByCode.has(b.item_code)) continue;
       const s = Array.isArray(b.supplier) ? b.supplier[0] : b.supplier;
-      if (s) mainSupplierByCode.set(b.material_code, { code: s.code, name: s.name });
+      if (s) mainSupplierByCode.set(b.item_code, { code: s.code, name: s.name });
     }
   }
 
@@ -922,14 +922,14 @@ mfgPurchaseOrders.get('/:id', async (c) => {
   /* Rule-order the rows at READ — canonical SKU/build order (sofa modules
      LHF→NA→RHF, mains→accessories→services), mirroring the SO detail GET
      (mfg-sales-orders.ts). The shared helper keys on `item_code`; PO lines
-     expose `material_code`, so sort a shimmed view that carries the original
+     expose `item_code`, so sort a shimmed view that carries the original
      row back unchanged. `.order('created_at')` above stays as the stable
      tiebreaker — pure ordering, no persistence touched. */
-  type PoItemRow = Record<string, unknown> & { id: string; material_code: string; item_code: string };
+  type PoItemRow = Record<string, unknown> & { id: string; item_code: string };
   const itemRows = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      ((itemsRes.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; material_code: string }>)
-        .map((it): PoItemRow => ({ ...it, item_code: it.material_code })),
+      ((itemsRes.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; item_code: string }>)
+        .map((it): PoItemRow => ({ ...it, item_code: it.item_code })),
       (r) => r.item_group as string | null | undefined,
     ),
   );
@@ -1030,7 +1030,7 @@ mfgPurchaseOrders.get('/:id', async (c) => {
     if (so) {
       const specPo = buildVariantSummary(String(it.item_group ?? ''), (it.variants as Record<string, unknown> | null) ?? null);
       const specSo = buildVariantSummary(String(so.item_group ?? ''), so.variants ?? null);
-      const itemPo = String(it.material_code ?? '');
+      const itemPo = String(it.item_code ?? '');
       const itemSo = String(so.item_code ?? '');
       const itemChanged = itemPo !== itemSo;
       const warehousePoId = (it.warehouse_id as string | null) ?? null;
@@ -1118,7 +1118,7 @@ mfgPurchaseOrders.get('/:id/revisions', async (c) => {
 // ── Create ────────────────────────────────────────────────────────────
 // body: {
 //   supplierId, currency?, expectedAt?, notes?,
-//   items: [{ materialKind, materialCode, materialName, supplierSku?, qty, unitPriceSen, bindingId? }]
+//   items: [{ materialKind, itemCode, materialName, supplierSku?, qty, unitPriceSen, bindingId? }]
 // }
 mfgPurchaseOrders.post('/', async (c) => {
   let body: Record<string, unknown>;
@@ -1251,7 +1251,7 @@ mfgPurchaseOrders.post('/', async (c) => {
   const itemRows = items.map((it) => {
     const kind = it.materialKind as string;
     if (!VALID_KINDS.has(kind)) throw new Error(`invalid material_kind: ${kind}`);
-    if (!it.materialCode || !it.materialName) throw new Error('material_code + material_name required per item');
+    if (!it.itemCode || !it.materialName) throw new Error('item_code + material_name required per item');
     const qty = Math.max(0, Number(it.qty ?? 0));
     // BUG 1 — tally per-SO-line picked qty (only for From-SO lines).
     const soItemId = (it.soItemId as string | undefined) ?? null;
@@ -1267,7 +1267,7 @@ mfgPurchaseOrders.post('/', async (c) => {
     return {
       binding_id: (it.bindingId as string | undefined) ?? null,
       material_kind: kind,
-      material_code: it.materialCode,
+      item_code: it.itemCode,
       material_name: it.materialName,
       supplier_sku: (it.supplierSku as string | undefined) ?? null,
       qty,
@@ -1843,8 +1843,8 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   const codes = [...new Set(soItems.map((it) => it.itemCode))];
   const { data: bindings } = await supabase
     .from('supplier_material_bindings')
-    .select('material_code, supplier_id, supplier_sku, unit_price_sen, currency, price_matrix')
-    .in('material_code', codes)
+    .select('item_code, supplier_id, supplier_sku, unit_price_sen, currency, price_matrix')
+    .in('item_code', codes)
     .eq('material_kind', 'mfg_product')
     .eq('company_id', activeCompanyId(c))
     .order('is_main_supplier', { ascending: false });
@@ -1890,14 +1890,14 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     }
   }
 
-  /* Group by material_code → the chosen supplier's binding. Commander
+  /* Group by item_code → the chosen supplier's binding. Commander
      2026-05-29: an explicit supplierByCode[itemCode] override (picked in the
      MRP) wins; otherwise the first LIVE row (is_main_supplier first via ORDER
      BY). Orphaned bindings (deleted supplier) are skipped.
      Phase 3 (2026-05-29) — the binding also carries price_matrix so the PO line
      cost can auto-price from the supplier's own per-category price table. */
   type MainBinding = {
-    material_code: string; supplier_id: string; supplier_sku: string;
+    item_code: string; supplier_id: string; supplier_sku: string;
     unit_price_sen: number; currency: string;
     price_matrix: Record<string, unknown> | null;
   };
@@ -1914,15 +1914,15 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
   const bindingByCodeSupplier = new Map<string, MainBinding>();
   for (const b of (bindings ?? []) as MainBinding[]) {
     if (!liveSupplierIds.has(b.supplier_id)) continue; // orphaned binding — skip
-    bindingByCodeSupplier.set(`${b.material_code}|${b.supplier_id}`, b);
-    const override = supplierByCode[b.material_code];
-    const existing = mainByCode.get(b.material_code);
+    bindingByCodeSupplier.set(`${b.item_code}|${b.supplier_id}`, b);
+    const override = supplierByCode[b.item_code];
+    const existing = mainByCode.get(b.item_code);
     if (override) {
       // Only accept the binding that matches the chosen supplier.
-      if (b.supplier_id === override) mainByCode.set(b.material_code, b);
+      if (b.supplier_id === override) mainByCode.set(b.item_code, b);
       continue;
     }
-    if (!existing) mainByCode.set(b.material_code, b);
+    if (!existing) mainByCode.set(b.item_code, b);
   }
 
   /* Commander 2026-05-31 — resolve the EFFECTIVE binding for a picked line.
@@ -1951,7 +1951,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     const fallback = chosen ?? targetPoSupplierId;
     if (fallback && liveSupplierIds.has(fallback)) {
       return {
-        material_code: it.itemCode, supplier_id: fallback, supplier_sku: '',
+        item_code: it.itemCode, supplier_id: fallback, supplier_sku: '',
         unit_price_sen: 0, currency: 'MYR', price_matrix: null,
       };
     }
@@ -2281,7 +2281,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     const rows = targetLines.map((l) => ({
       purchase_order_id: target.id,
       material_kind: 'mfg_product',
-      material_code: l.itemCode,
+      item_code: l.itemCode,
       material_name: l.itemName,
       supplier_sku: l.supplierSku,
       qty: l.qty,
@@ -2411,7 +2411,7 @@ export async function convertSosToPosCore(c: PoConvertContext): Promise<PoConver
     const rows = bucket.lines.map((l) => ({
       purchase_order_id: header.id,
       material_kind: 'mfg_product',
-      material_code: l.itemCode,
+      item_code: l.itemCode,
       material_name: l.itemName,
       supplier_sku: l.supplierSku,
       qty: l.qty,
@@ -2542,7 +2542,7 @@ export async function createDraftPosFromPicks(
     userId: string;
     /** The company the proposal was raised under. Undefined → unresolved, and
      *  the stamping no-ops exactly as it does pre-migration. */
-    companyId?: number | null;
+    companyId: number | null;
     allowedCompanyIds?: number[] | null;
     /** MUST be the company CODE string, never the company row. companyDocPrefix
      *  stringifies whatever it is handed: the scan job's rebuilt context passed
@@ -2933,7 +2933,7 @@ async function recomputeSoPicked(sb: any, soItemIds: Array<string | null | undef
      • the SO line exists and belongs to the ACTIVE COMPANY (a foreign uuid
        resolves to nothing, exactly like every other cross-company read here);
      • it is not cancelled — a cancelled line has no demand to fulfil;
-     • its item_code equals the PO line's material_code. Binding a PO line for
+     • its item_code equals the PO line's item_code. Binding a PO line for
        one SKU to an SO line for another makes every downstream reader lie.
 
    Returns null when the link is acceptable (including when there is none). */
@@ -2941,7 +2941,7 @@ async function soLinkTargetRefusal(
   sb: any,
   c: any,
   soItemId: string | null,
-  materialCode: string,
+  itemCode: string,
   /* The PO line's spec signature (specSignature of its item_group+variants).
      When provided, the SO line must match it, not just the item code. Null =
      spec gate skipped (the code check still applies). */
@@ -2968,14 +2968,14 @@ async function soLinkTargetRefusal(
     };
   }
   const soCode = String(row.item_code ?? '').trim().toUpperCase();
-  const poCode = String(materialCode ?? '').trim().toUpperCase();
+  const poCode = String(itemCode ?? '').trim().toUpperCase();
   if (!soCode || soCode !== poCode) {
     return {
       body: {
         error: 'so_link_material_mismatch',
-        reason: `This line orders ${materialCode}, but the picked Sales Order line is for ${row.item_code ?? '(no item)'}. Pick the matching line, or leave the source blank.`,
+        reason: `This line orders ${itemCode}, but the picked Sales Order line is for ${row.item_code ?? '(no item)'}. Pick the matching line, or leave the source blank.`,
         soItemCode: row.item_code,
-        materialCode,
+        itemCode,
       },
       status: 409,
     };
@@ -2992,7 +2992,7 @@ async function soLinkTargetRefusal(
           error: 'so_link_spec_mismatch',
           reason: `The picked Sales Order line is the same item code but a different spec. Pick a line whose fabric and options match, or leave the source blank.`,
           soItemCode: row.item_code,
-          materialCode,
+          itemCode,
         },
         status: 409,
       };
@@ -3042,7 +3042,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
   const poId = c.req.param('id');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  if (!it.materialCode) return c.json({ error: 'material_code_required' }, 400);
+  if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
   if (!it.materialName) return c.json({ error: 'material_name_required' }, 400);
 
   const sb = c.get('supabase');
@@ -3077,7 +3077,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
      keeps offering an already-covered line. Dual-read camelCase??snake_case. */
   const soItemId = (((it.soItemId ?? it.so_item_id) as string | null | undefined) || null);
   {
-    const refusal = await soLinkTargetRefusal(sb, c, soItemId, String(it.materialCode ?? ''));
+    const refusal = await soLinkTargetRefusal(sb, c, soItemId, String(it.itemCode ?? ''));
     if (refusal) return c.json(refusal.body, refusal.status);
   }
   /* Remaining-qty cap — a NEW line contributes nothing to po_qty_picked yet, so
@@ -3092,7 +3092,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
     so_item_id: soItemId,
     binding_id: (it.bindingId as string) ?? null,
     material_kind: (it.materialKind as string) ?? 'mfg_product',
-    material_code: it.materialCode,
+    item_code: it.itemCode,
     material_name: it.materialName,
     supplier_sku: (it.supplierSku as string) ?? null,
     qty,
@@ -3149,7 +3149,7 @@ mfgPurchaseOrders.post('/:id/items', async (c) => {
       actor: c.get('houzsUser'),
       companyId: meta.companyId ?? activeCompanyId(c),
       statusSnapshot: meta.status,
-      note: `Line added: ${String(it.materialCode ?? '')}`,
+      note: `Line added: ${String(it.itemCode ?? '')}`,
       fieldChanges: compactChanges(
         PO_LINE_AUDIT_FIELDS.map(([camel, snake]) => fieldChange(camel, null, added[snake] ?? null)),
       ),
@@ -3231,7 +3231,7 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
     qty, unit_price_sen: unit, discount_sen: discount, line_total_sen: lineTotal,
   };
   for (const [from, to] of [
-    ['materialCode', 'material_code'], ['materialName', 'material_name'],
+    ['itemCode', 'item_code'], ['materialName', 'material_name'],
     ['supplierSku', 'supplier_sku'], ['itemGroup', 'item_group'],
     ['description', 'description'], ['description2', 'description2'],
     ['uom', 'uom'], ['unitCostSen', 'unit_cost_sen'], ['notes', 'notes'],
@@ -3268,7 +3268,7 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
   const soItemKeySent = it.soItemId !== undefined || it.so_item_id !== undefined;
   if (soItemKeySent) {
     nextSoItemId = (((it.soItemId ?? it.so_item_id) as string | null | undefined) || null);
-    const effCode = String((it.materialCode ?? (prev as { material_code?: string }).material_code) ?? '');
+    const effCode = String((it.itemCode ?? (prev as { item_code?: string }).item_code) ?? '');
     const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, effCode);
     if (refusal) return c.json(refusal.body, refusal.status);
     updates['so_item_id'] = nextSoItemId;
@@ -3310,7 +3310,7 @@ mfgPurchaseOrders.patch('/:id/items/:itemId', async (c) => {
         actor: c.get('houzsUser'),
         companyId: meta.companyId ?? activeCompanyId(c),
         statusSnapshot: meta.status,
-        note: `Line edited: ${String(prev.material_code ?? itemId)}`,
+        note: `Line edited: ${String(prev.item_code ?? itemId)}`,
         fieldChanges: lineChanges,
       });
     }
@@ -3381,7 +3381,7 @@ mfgPurchaseOrders.delete('/:id/items/:itemId', async (c) => {
       actor: c.get('houzsUser'),
       companyId: meta.companyId ?? activeCompanyId(c),
       statusSnapshot: meta.status,
-      note: `Line removed: ${String(gone.material_code ?? itemId)}`,
+      note: `Line removed: ${String(gone.item_code ?? itemId)}`,
       fieldChanges: compactChanges(
         PO_LINE_AUDIT_FIELDS.map(([camel, snake]) => fieldChange(camel, gone[snake] ?? null, null)),
       ),
@@ -3433,7 +3433,7 @@ mfgPurchaseOrders.delete('/:id/items/:itemId', async (c) => {
    area guard), exactly like every other PO write here. */
 
 /* Shared parent resolution + company scope for the three allocation writes.
-   Returns the line row (id, qty, material_code) + PO meta, or the refusal. */
+   Returns the line row (id, qty, item_code) + PO meta, or the refusal. */
 async function resolveAllocationParent(
   sb: any,
   c: any,
@@ -3444,7 +3444,7 @@ async function resolveAllocationParent(
      predicate on their OWN statement rather than trusting this lookup to have
      covered them — the client is service-role, so nothing re-checks between the
      two round trips. */
-  | { ok: true; item: { id: string; qty: number; material_code: string; item_group: string | null; variants: Record<string, unknown> | null }; poNumber: string | null; companyId: number }
+  | { ok: true; item: { id: string; qty: number; item_code: string; item_group: string | null; variants: Record<string, unknown> | null }; poNumber: string | null; companyId: number }
   | { ok: false; body: Record<string, unknown>; status: 404 | 409 }
 > {
   const co = requireActiveCompanyId(c);
@@ -3462,14 +3462,14 @@ async function resolveAllocationParent(
     };
   }
   const { data: item } = await sb.from('purchase_order_items')
-    .select('id, qty, material_code, item_group, variants, purchase_order_id')
+    .select('id, qty, item_code, item_group, variants, purchase_order_id')
     .eq('id', itemId)
     .maybeSingle();
-  const itemRow = item as { id: string; qty: number; material_code: string; item_group: string | null; variants: Record<string, unknown> | null; purchase_order_id: string } | null;
+  const itemRow = item as { id: string; qty: number; item_code: string; item_group: string | null; variants: Record<string, unknown> | null; purchase_order_id: string } | null;
   if (!itemRow || itemRow.purchase_order_id !== poId) {
     return { ok: false, body: { error: 'line_not_found', message: 'That line is not on this purchase order.' }, status: 404 };
   }
-  return { ok: true, item: { id: itemRow.id, qty: itemRow.qty, material_code: itemRow.material_code, item_group: itemRow.item_group ?? null, variants: itemRow.variants ?? null }, poNumber: poRow.po_number, companyId: co.companyId };
+  return { ok: true, item: { id: itemRow.id, qty: itemRow.qty, item_code: itemRow.item_code, item_group: itemRow.item_group ?? null, variants: itemRow.variants ?? null }, poNumber: poRow.po_number, companyId: co.companyId };
 }
 
 /* The line's current allocations, seq-ordered — the base every write plans on. */
@@ -3528,7 +3528,7 @@ mfgPurchaseOrders.post('/:id/items/:itemId/allocations', async (c) => {
   const soItemId = (((body.soItemId ?? body.so_item_id) as string | null | undefined) || null);
   if (soItemId) {
     const poSpec = specSignature(parent.item.item_group, parent.item.variants);
-    const refusal = await soLinkTargetRefusal(sb, c, soItemId, parent.item.material_code, poSpec);
+    const refusal = await soLinkTargetRefusal(sb, c, soItemId, parent.item.item_code, poSpec);
     if (refusal) return c.json(refusal.body, refusal.status);
   }
   const existing = await currentAllocations(sb, itemId);
@@ -3558,7 +3558,7 @@ mfgPurchaseOrders.post('/:id/items/:itemId/allocations', async (c) => {
     return c.json({ error: 'insert_failed', reason: error.message }, 500);
   }
   const created = data as unknown as AllocationRow;
-  await recordAllocationAudit(sb, c, poId, `Line allocation added: ${parent.item.material_code} ${allocationSubNumber(parent.poNumber, created.seq)}`, [
+  await recordAllocationAudit(sb, c, poId, `Line allocation added: ${parent.item.item_code} ${allocationSubNumber(parent.poNumber, created.seq)}`, [
     { field: 'allocation', from: null, to: `${allocationSubNumber(parent.poNumber, created.seq)} qty ${created.qty}` },
     { field: 'allocationTarget', from: null, to: soItemId ?? 'STOCK' },
   ]);
@@ -3592,7 +3592,7 @@ mfgPurchaseOrders.patch('/:id/items/:itemId/allocations/:allocationId', async (c
     nextSoItemId = (((body.soItemId ?? body.so_item_id) as string | null | undefined) || null);
     if (nextSoItemId) {
       const poSpec = specSignature(parent.item.item_group, parent.item.variants);
-      const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, parent.item.material_code, poSpec);
+      const refusal = await soLinkTargetRefusal(sb, c, nextSoItemId, parent.item.item_code, poSpec);
       if (refusal) return c.json(refusal.body, refusal.status);
     }
     updates.so_item_id = nextSoItemId;
@@ -3611,7 +3611,7 @@ mfgPurchaseOrders.patch('/:id/items/:itemId/allocations/:allocationId', async (c
     changes.push({ field: 'allocationTarget', from: prev.so_item_id ?? 'STOCK', to: nextSoItemId ?? 'STOCK' });
   }
   if (changes.length > 0) {
-    await recordAllocationAudit(sb, c, poId, `Line allocation edited: ${parent.item.material_code} ${allocationSubNumber(parent.poNumber, prev.seq)}`, changes);
+    await recordAllocationAudit(sb, c, poId, `Line allocation edited: ${parent.item.item_code} ${allocationSubNumber(parent.poNumber, prev.seq)}`, changes);
   }
   const map = await loadAllocationsForItems(sb, [itemId]);
   return c.json({ ok: true, allocations: map.get(itemId) ?? [] });
@@ -3640,7 +3640,7 @@ mfgPurchaseOrders.delete('/:id/items/:itemId/allocations/:allocationId', async (
       .update({ seq: move.seq }).eq('id', move.id).eq('purchase_order_item_id', itemId), parent.companyId);
     if (seqErr) break; // leave a gap rather than fail the delete — display-only cosmetics
   }
-  await recordAllocationAudit(sb, c, poId, `Line allocation removed: ${parent.item.material_code} ${allocationSubNumber(parent.poNumber, doomed.seq)}`, [
+  await recordAllocationAudit(sb, c, poId, `Line allocation removed: ${parent.item.item_code} ${allocationSubNumber(parent.poNumber, doomed.seq)}`, [
     { field: 'allocation', from: `${allocationSubNumber(parent.poNumber, doomed.seq)} qty ${doomed.qty}`, to: null },
     { field: 'allocationTarget', from: doomed.so_item_id ?? 'STOCK', to: null },
   ]);
@@ -3848,10 +3848,10 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
   const codes = (wanted as Array<{ item_code: string }>).map((r) => r.item_code);
   const { data: existing } = await sb
     .from('purchase_order_items')
-    .select('material_code')
+    .select('item_code')
     .eq('purchase_order_id', poId)
-    .in('material_code', codes);
-  const existingSet = new Set((existing ?? []).map((r: { material_code: string }) => r.material_code));
+    .in('item_code', codes);
+  const existingSet = new Set((existing ?? []).map((r: { item_code: string }) => r.item_code));
 
   type SoItem = {
     id: string;
@@ -3881,19 +3881,19 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
      picker; this legacy append path prices per-module. */
   const codesToPrice = toInsert.map((r) => r.item_code);
   type BindLite = {
-    material_code: string; supplier_sku: string | null;
+    item_code: string; supplier_sku: string | null;
     unit_price_sen: number; price_matrix: Record<string, unknown> | null;
   };
   const bindByCode = new Map<string, BindLite>();
   if (codesToPrice.length > 0) {
     const { data: binds } = await sb
       .from('supplier_material_bindings')
-      .select('material_code, supplier_sku, unit_price_sen, price_matrix')
+      .select('item_code, supplier_sku, unit_price_sen, price_matrix')
       .eq('supplier_id', po.supplier_id)
       .eq('material_kind', 'mfg_product')
-      .in('material_code', codesToPrice);
+      .in('item_code', codesToPrice);
     for (const b of (binds ?? []) as BindLite[]) {
-      if (!bindByCode.has(b.material_code)) bindByCode.set(b.material_code, b);
+      if (!bindByCode.has(b.item_code)) bindByCode.set(b.item_code, b);
     }
   }
   const { config: maintCfg } = await resolveMaintenanceConfigForSupplier(sb, po.supplier_id as string);
@@ -3950,7 +3950,7 @@ mfgPurchaseOrders.post('/:id/convert-from-so', async (c) => {
     return {
       purchase_order_id: poId,
       material_kind:    'mfg_product',
-      material_code:    it.item_code,
+      item_code:    it.item_code,
       material_name:    it.description ?? it.item_code,
       supplier_sku:     supplierSku,
       qty:              remaining,
@@ -4032,11 +4032,11 @@ async function poWarehouseGap(
   const { data: hdr } = await sb.from('purchase_orders').select('purchase_location_id').eq('id', poId).maybeSingle();
   const headerWh = (hdr as { purchase_location_id: string | null } | null)?.purchase_location_id ?? null;
   if (headerWh) return { missing: false }; // header default covers every line
-  const { data: lines } = await sb.from('purchase_order_items').select('material_code, warehouse_id').eq('purchase_order_id', poId);
-  const bad = ((lines ?? []) as Array<{ material_code: string | null; warehouse_id: string | null }>)
+  const { data: lines } = await sb.from('purchase_order_items').select('item_code, warehouse_id').eq('purchase_order_id', poId);
+  const bad = ((lines ?? []) as Array<{ item_code: string | null; warehouse_id: string | null }>)
     .filter((l) => !l.warehouse_id);
   if (bad.length === 0) return { missing: false };
-  return { missing: true, codes: bad.map((l) => l.material_code ?? '?') };
+  return { missing: true, codes: bad.map((l) => l.item_code ?? '?') };
 }
 const PO_WAREHOUSE_REQUIRED = (codes: string[]) => ({
   error: 'purchase_location_id_required',

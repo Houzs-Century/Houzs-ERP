@@ -80,7 +80,6 @@ type GrnHeader = {
 
 type GrnItem = {
   id: string;
-  material_code?: string | null;
   item_code?: string | null;
   /* Supplier's own code, snapshotted per line at receipt (backend returns it). */
   supplier_sku?: string | null;
@@ -375,7 +374,7 @@ function GoodsReceivedDetailV2ReadOnly() {
       key: "item",
       label: "Item",
       alwaysVisible: true,
-      getValue: (l) => l.material_code || l.item_code || "",
+      getValue: (l) => l.item_code || l.item_code || "",
       /* Item CODE first, then the variant subtitle; description dropped (owner 2026-07-24) — the shared order-line rule
          (vendor/shared/line-identity.ts). Swept on SHAPE, not vocabulary: this
          was the pre-#647 SalesOrderDetailV2 cell exactly (bold description, then
@@ -384,7 +383,7 @@ function GoodsReceivedDetailV2ReadOnly() {
          variant is present. The code still BINDS via getValue above. */
       render: (l) => {
         const { primary, secondary } = orderLineIdentity({
-          code: l.material_code || l.item_code,
+          code: l.item_code || l.item_code,
           description: l.description,
           variant: buildVariantSummary(l.item_group ?? "others", l.variants) || (l.description2 ?? ""),
         });
@@ -413,14 +412,14 @@ function GoodsReceivedDetailV2ReadOnly() {
       width: "132px",
       getValue: (l) => {
         const code = supplierCodeFor(
-          { material_code: (l.material_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
+          { item_code: (l.item_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
           skuByMaterialCode
         );
         return code === "—" ? "" : code;
       },
       render: (l) => {
         const code = supplierCodeFor(
-          { material_code: (l.material_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
+          { item_code: (l.item_code || l.item_code) ?? "", supplier_sku: l.supplier_sku },
           skuByMaterialCode
         );
         if (code === "—") return <span className="text-ink-muted">—</span>;

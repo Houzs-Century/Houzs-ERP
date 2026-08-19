@@ -10,8 +10,8 @@ describe('poAmendmentToPdfInput', () => {
     const out = poAmendmentToPdfInput({
       amendment: { amendment_no: 'PO-2607-001/A1', status: 'REQUESTED', reason: 'Supplier raised cost', created_at: '2026-07-24', requested_by_name: 'Wei' },
       lines: [{
-        change_type: 'QTY', new_material_code: 'BF-1', new_material_name: 'Bed One',
-        new_qty: 5, new_unit_price_sen: 1200, old_snapshot: { qty: 2, unit_price_sen: 1000, material_code: 'BF-1' },
+        change_type: 'QTY', new_item_code: 'BF-1', new_material_name: 'Bed One',
+        new_qty: 5, new_unit_price_sen: 1200, old_snapshot: { qty: 2, unit_price_sen: 1000, item_code: 'BF-1' },
       }],
       purchaseOrder: { po_number: 'PO-2607-001', revision: 1 },
       supplierName: 'Acme Supplier',
@@ -45,8 +45,8 @@ describe('poAmendmentToPdfInput', () => {
     const out = poAmendmentToPdfInput({
       amendment: { amendment_no: 'PO-2/A1', status: 'REQUESTED', created_at: '2026-07-24' },
       lines: [{
-        change_type: 'DELIVERY', new_material_code: 'BF-3', new_delivery_date: '2026-08-10',
-        old_snapshot: { material_code: 'BF-3', qty: 1, delivery_date: '2026-08-01' },
+        change_type: 'DELIVERY', new_item_code: 'BF-3', new_delivery_date: '2026-08-10',
+        old_snapshot: { item_code: 'BF-3', qty: 1, delivery_date: '2026-08-01' },
       }],
       purchaseOrder: { po_number: 'PO-2', revision: 1 },
     });
@@ -61,7 +61,7 @@ describe('poAmendmentToPdfInput', () => {
     const out = poAmendmentToPdfInput({
       amendment: { amendment_no: 'PO-1/A2', status: 'APPROVED', created_at: '2026-07-24' },
       lines: [
-        { change_type: 'ADD', new_material_code: 'BF-9', new_material_name: 'Bed Nine', new_qty: 3, new_unit_price_sen: 1500 },
+        { change_type: 'ADD', new_item_code: 'BF-9', new_material_name: 'Bed Nine', new_qty: 3, new_unit_price_sen: 1500 },
         { change_type: 'REMOVE', old_snapshot: { material_name: 'Bed Two', qty: 1 } },
       ],
       purchaseOrder: { po_number: 'PO-1', revision: 2 },

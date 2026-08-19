@@ -67,20 +67,20 @@ try {
      must not be aggregated to the product. */
   const rows = await pg`
     WITH mv AS (
-      SELECT company_id, warehouse_id, product_code,
+      SELECT company_id, warehouse_id, item_code,
              COALESCE(variant_key, '') AS variant_key,
              SUM(qty)::numeric         AS qty
         FROM scm.inventory_balances
        GROUP BY 1, 2, 3, 4
     ), lot AS (
-      SELECT company_id, warehouse_id, product_code,
+      SELECT company_id, warehouse_id, item_code,
              COALESCE(variant_key, '')      AS variant_key,
              SUM(qty_remaining)::numeric    AS qty
         FROM scm.v_inventory_lots_open
        GROUP BY 1, 2, 3, 4
     )
     SELECT COALESCE(mv.company_id, lot.company_id)       AS company_id,
-           COALESCE(mv.product_code, lot.product_code)   AS product_code,
+           COALESCE(mv.item_code, lot.item_code)   AS item_code,
            COALESCE(mv.variant_key, lot.variant_key)     AS variant_key,
            COALESCE(mv.qty, 0)                           AS movement_qty,
            COALESCE(lot.qty, 0)                          AS lot_qty,
@@ -89,11 +89,11 @@ try {
       FULL OUTER JOIN lot
         ON  mv.company_id  = lot.company_id
         AND mv.warehouse_id = lot.warehouse_id
-        AND mv.product_code = lot.product_code
+        AND mv.item_code = lot.item_code
         AND mv.variant_key  = lot.variant_key
      WHERE COALESCE(mv.qty, 0) <> COALESCE(lot.qty, 0)
      ORDER BY ABS(COALESCE(mv.qty, 0) - COALESCE(lot.qty, 0)) DESC,
-              COALESCE(mv.product_code, lot.product_code)`;
+              COALESCE(mv.item_code, lot.item_code)`;
 
   if (rows.length === 0) {
     notice("The two ledgers agree on every bucket. Nothing to reconcile.");
@@ -109,7 +109,7 @@ try {
   );
   for (const r of rows) {
     console.log(
-      `  ${rpad(r.product_code, 34)}${rpad(r.variant_key || "(none)", 44)}` +
+      `  ${rpad(r.item_code, 34)}${rpad(r.variant_key || "(none)", 44)}` +
         `${lpad(r.movement_qty, 10)}${lpad(r.lot_qty, 8)}${lpad(r.diff, 8)}  ${r.company_id}`,
     );
   }

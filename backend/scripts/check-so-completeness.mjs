@@ -127,12 +127,12 @@ async function main() {
 
     // SKU split: same code has live demand in one wh-bucket and on-hand stock in another.
     const balances = await sql`
-      SELECT product_code, warehouse_id, COALESCE(variant_key,'') AS vkey, SUM(qty)::numeric AS qty
+      SELECT item_code, warehouse_id, COALESCE(variant_key,'') AS vkey, SUM(qty)::numeric AS qty
         FROM scm.inventory_balances WHERE company_id = ${companyId} GROUP BY 1,2,3 HAVING SUM(qty) > 0`;
     const stockWhByCode = new Map();
     for (const b of balances) {
-      const arr = stockWhByCode.get(b.product_code) ?? new Set();
-      arr.add(b.warehouse_id ?? "NONE"); stockWhByCode.set(b.product_code, arr);
+      const arr = stockWhByCode.get(b.item_code) ?? new Set();
+      arr.add(b.warehouse_id ?? "NONE"); stockWhByCode.set(b.item_code, arr);
     }
     const demandWhByCode = new Map();
     for (const l of physical) {
@@ -211,16 +211,16 @@ async function main() {
     notice("  Classify by WHY, per category:");
     // open lots by (code) with/without batch — to know if a READY line COULD name a PO
     const openLots = await sql`
-      SELECT product_code, warehouse_id, COALESCE(variant_key,'') AS vkey,
+      SELECT item_code, warehouse_id, COALESCE(variant_key,'') AS vkey,
              SUM(qty_remaining) FILTER (WHERE batch_no IS NOT NULL)::numeric AS batched,
              SUM(qty_remaining) FILTER (WHERE batch_no IS NULL)::numeric AS unbatched
         FROM scm.inventory_lots WHERE company_id = ${companyId} AND qty_remaining > 0
        GROUP BY 1,2,3`;
     const batchedStockByCode = new Map();
     for (const l of openLots) {
-      const cur = batchedStockByCode.get(l.product_code) ?? { batched: 0, unbatched: 0 };
+      const cur = batchedStockByCode.get(l.item_code) ?? { batched: 0, unbatched: 0 };
       cur.batched += num(l.batched); cur.unbatched += num(l.unbatched);
-      batchedStockByCode.set(l.product_code, cur);
+      batchedStockByCode.set(l.item_code, cur);
     }
     const cls = { confirmedPreAlloc: 0, readyBatchless: 0, readyBatchedButEmpty: 0, accessory: 0, shortageNoStock: 0, sofa: 0 };
     for (const l of physical) {

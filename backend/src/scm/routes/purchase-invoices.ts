@@ -61,7 +61,7 @@ purchaseInvoices.use('*', supabaseAuth);
 const HEADER =
   'id, invoice_number, supplier_invoice_ref, supplier_id, purchase_order_id, grn_id, invoice_date, due_date, currency, exchange_rate, subtotal_sen, tax_sen, total_sen, paid_sen, status, notes, posted_at, created_at, created_by, updated_at';
 const ITEM =
-  'id, purchase_invoice_id, grn_item_id, material_kind, material_code, material_name, qty, unit_price_sen, line_total_sen, notes, ' +
+  'id, purchase_invoice_id, grn_item_id, material_kind, item_code, material_name, qty, unit_price_sen, line_total_sen, notes, ' +
   /* PR #42 — variant fields (migration 0057) */
   'item_group, description, description2, uom, discount_sen, variants, ' +
   'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
@@ -498,7 +498,7 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
   const { data: items, error: iErr } = await sb
     .from('grn_items')
     .select(`
-      id, grn_id, material_kind, material_code, material_name, item_group,
+      id, grn_id, material_kind, item_code, material_name, item_group,
       description, qty_accepted, qty_rejected, invoiced_qty, returned_qty, unit_price_sen, variants
     `)
     .in('grn_id', grnIds);
@@ -506,7 +506,7 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
 
   const headerById = new Map(headers.map((h) => [h.id, h]));
   const out = ((items ?? []) as Array<{
-    id: string; grn_id: string; material_kind: string; material_code: string;
+    id: string; grn_id: string; material_kind: string; item_code: string;
     material_name: string; item_group: string | null; description: string | null;
     qty_accepted: number; qty_rejected: number; invoiced_qty: number; returned_qty: number;
     unit_price_sen: number; variants: unknown;
@@ -530,7 +530,7 @@ purchaseInvoices.get('/outstanding-grn-items', async (c) => {
         supplierName:   h.supplier?.name ?? '',
         purchaseOrderId: h.purchase_order_id,
         poDocNo:        h.purchase_order?.po_number ?? null,
-        itemCode:       r.material_code,
+        itemCode:       r.item_code,
         description:    r.description ?? r.material_name,
         itemGroup:      r.item_group ?? '',
         qtyAccepted:    r.qty_accepted,
@@ -573,14 +573,14 @@ purchaseInvoices.get('/:id', async (c) => {
   if (!h.data) return c.json({ error: 'not_found' }, 404);
   /* Canonical SKU/build order at READ (sofa modules LHF→NA→RHF, mains→
      accessories→services), mirroring the SO detail GET. The shared helper keys
-     on `item_code`; PI lines expose `material_code`, so sort a shimmed view
+     on `item_code`; PI lines expose `item_code`, so sort a shimmed view
      that carries the original row back unchanged. `.order('created_at')` above
      stays as the stable tiebreaker — pure ordering, no persistence touched. */
-  type PiItemRow = Record<string, unknown> & { id: string; material_code: string; item_code: string };
+  type PiItemRow = Record<string, unknown> & { id: string; item_code: string };
   const items = orderSofaModuleRowsWithinBuilds(
     sortSoLinesByGroupRank(
-      ((i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; material_code: string }>)
-        .map((it): PiItemRow => ({ ...it, item_code: it.material_code })),
+      ((i.data ?? []) as unknown as Array<Record<string, unknown> & { id: string; item_code: string }>)
+        .map((it): PiItemRow => ({ ...it, item_code: it.item_code })),
       (r) => r.item_group as string | null | undefined,
     ),
   );
@@ -778,7 +778,7 @@ purchaseInvoices.post('/', async (c) => {
       covered.ids,
       items.map((it, idx) => ({
         lineRef: String(idx),
-        itemCode: String(it.materialCode ?? ''),
+        itemCode: String(it.itemCode ?? ''),
         qty: Number(it.qty ?? 0),
         soItemId: (it.grnItemId as string | undefined) ?? null,
       })),
@@ -869,7 +869,7 @@ purchaseInvoices.post('/', async (c) => {
     const total = Math.max(0, qty * unit - discount); subtotal += total;
     return {
       material_kind: it.materialKind,
-      material_code: it.materialCode,
+      item_code: it.itemCode,
       material_name: it.materialName,
       qty, unit_price_sen: unit, discount_sen: discount, line_total_sen: total,
       grn_item_id: (it.grnItemId as string | undefined) ?? null,
@@ -1462,7 +1462,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
   const { data: itemsData, error: itemsErr } = await scopeToCompany(sb
     .from('grn_items')
     .select(`
-      id, grn_id, material_kind, material_code, material_name, item_group,
+      id, grn_id, material_kind, item_code, material_name, item_group,
       description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_sen,
       variants, gap_inches, divan_height_inches, divan_price_sen,
       leg_height_inches, leg_price_sen, custom_specials, line_suffix,
@@ -1473,7 +1473,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
   if (itemsErr) return c.json({ error: 'load_failed', reason: itemsErr.message }, 500);
 
   type ItemRow = {
-    id: string; grn_id: string; material_kind: string; material_code: string;
+    id: string; grn_id: string; material_kind: string; item_code: string;
     material_name: string; item_group: string | null; description: string | null;
     description2: string | null; uom: string | null;
     qty_accepted: number; invoiced_qty: number; returned_qty: number; unit_price_sen: number;
@@ -1636,7 +1636,7 @@ export const createPurchaseInvoicesFromGrnItemsHandler = async (c: Context<{ Bin
       purchase_invoice_id: h.id,
       grn_item_id: row.id,
       material_kind: row.material_kind,
-      material_code: row.material_code,
+      item_code: row.item_code,
       material_name: row.material_name,
       qty,
       unit_price_sen: row.unit_price_sen,
@@ -1761,12 +1761,12 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
 
   // LINE-level half of the same source document, under the same predicate.
   const { data: items, error: iErr } = await scopeToCompany(sb.from('grn_items')
-    .select('id, material_kind, material_code, material_name, item_group, description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_sen, variants, gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_sen')
+    .select('id, material_kind, item_code, material_name, item_group, description, description2, uom, qty_accepted, invoiced_qty, returned_qty, unit_price_sen, variants, gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, custom_specials, line_suffix, special_order_price_sen, discount_sen')
     .eq('grn_id', grnId)
     .gt('qty_accepted', 0), c);
   if (iErr) return c.json({ error: 'load_failed', reason: iErr.message }, 500);
   type GrnLine = {
-    id: string; material_kind: string; material_code: string; material_name: string;
+    id: string; material_kind: string; item_code: string; material_name: string;
     item_group: string | null; description: string | null; description2: string | null;
     uom: string | null; qty_accepted: number; invoiced_qty: number; returned_qty: number; unit_price_sen: number; variants: unknown;
     gap_inches: number | null; divan_height_inches: number | null; divan_price_sen: number;
@@ -1825,7 +1825,7 @@ export const createPurchaseInvoiceFromGrnHandler = async (c: any) => {
     purchase_invoice_id: h.id,
     grn_item_id: it.id,
     material_kind: it.material_kind,
-    material_code: it.material_code,
+    item_code: it.item_code,
     material_name: it.material_name,
     qty: it._remaining,
     unit_price_sen: it.unit_price_sen,
@@ -2018,7 +2018,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
   const piId = c.req.param('id');
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  if (!it.materialCode) return c.json({ error: 'material_code_required' }, 400);
+  if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
   if (!it.materialName) return c.json({ error: 'material_name_required' }, 400);
 
   const sb = c.get('supabase');
@@ -2052,7 +2052,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
     if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
     const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{
       lineRef: String(it.lineNumber ?? '0'),
-      itemCode: String(it.materialCode ?? ''),
+      itemCode: String(it.itemCode ?? ''),
       qty: Number(it.qty ?? 1),
       soItemId: (it.grnItemId as string | undefined) ?? null,
     }]);
@@ -2089,7 +2089,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
     purchase_invoice_id: piId,
     grn_item_id: (it.grnItemId as string) ?? null,
     material_kind: (it.materialKind as string) ?? 'mfg_product',
-    material_code: it.materialCode,
+    item_code: it.itemCode,
     material_name: it.materialName,
     qty,
     unit_price_sen: unitPriceSen,
@@ -2163,7 +2163,7 @@ purchaseInvoices.post('/:id/items', async (c) => {
       actor: c.get('houzsUser'),
       companyId: meta.companyId ?? activeCompanyId(c),
       statusSnapshot: meta.status,
-      note: `Line added: ${String(it.materialCode ?? '')}`,
+      note: `Line added: ${String(it.itemCode ?? '')}`,
       fieldChanges: compactChanges(
         PI_LINE_AUDIT_FIELDS.map(([camel, snake]) => fieldChange(camel, null, added[snake] ?? null)),
       ),
@@ -2190,7 +2190,7 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
      LINE to this PI, which proves the pair belongs together, never whose it is —
      both ids come from the caller. */
   /* `grn_id` rides along for the unlinked-line guard further down — this handler
-     can rewrite a line's material_code, which is the third way the refused shape
+     can rewrite a line's item_code, which is the third way the refused shape
      reaches the table, and without the parent ref there is nothing to check it
      against. */
   const { data: own, error: ownErr } = await scopeToCompany(c.get('supabase').from('purchase_invoices').select('id, grn_id').eq('id', piId), c).maybeSingle();
@@ -2249,7 +2249,7 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
     line_total_sen: lineTotal,
   };
   for (const [from, to] of [
-    ['materialCode', 'material_code'], ['materialName', 'material_name'],
+    ['itemCode', 'item_code'], ['materialName', 'material_name'],
     ['itemGroup', 'item_group'], ['description', 'description'], ['uom', 'uom'],
     ['unitCostSen', 'unit_cost_sen'], ['notes', 'notes'],
     ['gapInches', 'gap_inches'], ['divanHeightInches', 'divan_height_inches'],
@@ -2268,8 +2268,8 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
   }
 
   /* THE THIRD DOOR, and it was wide open. The two guards above sit on the paths
-     that CREATE a line; this one rewrites an existing line's `material_code` (the
-     rename map below carries `materialCode`), leaves `grn_item_id` untouched, and
+     that CREATE a line; this one rewrites an existing line's `item_code` (the
+     rename map below carries `itemCode`), leaves `grn_item_id` untouched, and
      therefore lets the refused shape be assembled in two legal steps: add
      PACKING-FILM by hand (allowed — the receipt does not contain it), then edit
      that line's product to a material the receipt DOES contain. Nothing else
@@ -2284,12 +2284,12 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
      line: a linked line's identity is read-only in the UI and its qty is capped,
      so the early-out means an ordinary qty or price edit pays for no extra read.
      FAILS CLOSED, like the other two. */
-  if (!grnItemId && it.materialCode !== undefined) {
+  if (!grnItemId && it.itemCode !== undefined) {
     const covered = await coveredGrnIds(sb, { headerGrnId: parentGrnId, piId });
     if (covered.error) return c.json(unlinkedCheckFailedResponse(covered.error), 500);
     const unlinked = await findUnlinkedPiLines(sb, covered.ids, [{
       lineRef: itemId,
-      itemCode: String(it.materialCode ?? prev.material_code ?? ''),
+      itemCode: String(it.itemCode ?? prev.item_code ?? ''),
       qty,
       soItemId: null,
     }]);
@@ -2333,7 +2333,7 @@ purchaseInvoices.patch('/:id/items/:itemId', async (c) => {
         actor: c.get('houzsUser'),
         companyId: meta.companyId ?? activeCompanyId(c),
         statusSnapshot: meta.status,
-        note: `Line edited: ${String(prev.material_code ?? itemId)}`,
+        note: `Line edited: ${String(prev.item_code ?? itemId)}`,
         fieldChanges: lineChanges,
       });
     }
@@ -2407,7 +2407,7 @@ purchaseInvoices.delete('/:id/items/:itemId', async (c) => {
       actor: c.get('houzsUser'),
       companyId: meta.companyId ?? activeCompanyId(c),
       statusSnapshot: meta.status,
-      note: `Line removed: ${String(line.material_code ?? itemId)}`,
+      note: `Line removed: ${String(line.item_code ?? itemId)}`,
       fieldChanges: compactChanges(
         PI_LINE_AUDIT_FIELDS.map(([camel, snake]) => fieldChange(camel, line[snake] ?? null, null)),
       ),
