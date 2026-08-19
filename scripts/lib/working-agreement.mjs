@@ -483,7 +483,59 @@ const PRESCRIPTION_RX = new RegExp(
   "i",
 );
 
-const prescribes = (line) => IMPERATIVE_RX.test(line) || PRESCRIPTION_RX.test(line);
+/* ---------------------------------------------------------------------------
+   CHINESE. The owner writes in Chinese, and the first version of this rule was
+   English-only — so the gate was blind to the half of this repo's PR bodies
+   most likely to carry an unproved promise. Measured before writing this:
+   「跑这个就能补回来」, 「重跑一次 sync 就会好了」, 「执行 mode=all 就可以把历史补
+   齐」, 「dispatch 一次这个 workflow 就能修复」 and 「跑 all 模式是补历史的干净做
+   法」 — five real claim shapes, all five silently missed.
+
+   Chinese has no word boundaries, so `\b` does nothing and a single common
+   character carries far too much. Every pattern below is therefore a
+   MULTI-CHARACTER phrase: bare 跑 would fire on 「一直在跑」 (narration) and bare
+   好 on 「好像」. The one exception is 跑 followed by a LATIN token — 「跑 all
+   模式」, 「跑 mode=all」 — which is a command being named, and cannot collide
+   with 跑了 / 跑得 / 跑步 because those continue in CJK.
+   --------------------------------------------------------------------------- */
+const CN_PRESCRIPTION =
+  /(重新?跑|再跑一?次?|跑一次|跑这个|跑那个|去跑|手动跑|执行|触发|派发|dispatch\s*[一-鿿]|跑\s*[A-Za-z0-9`'"-])/;
+
+const CN_OUTCOME =
+  /(修好|修复|补回|补齐|补上|补完|补起来|恢复|救回|解决掉|解决了|就会好|就能好|就没事|干净做法|正确做法|唯一办法|最好的做法)/;
+
+/* Negation, checked in the FOUR characters against the promise rather than
+   across the sentence — the same narrowing the English side needed. 「补不回来」
+   never matches CN_OUTCOME at all (不 sits inside the phrase), which is the
+   cheapest possible way to get 「跑了 all 模式，但是补不回来」 right. */
+const CN_NEGATED = /[不没无未别]/;
+
+const prescribesCn = (line) => CN_PRESCRIPTION.test(line);
+
+const prescribes = (line) =>
+  IMPERATIVE_RX.test(line) || PRESCRIPTION_RX.test(line) || prescribesCn(line);
+
+/**
+ * The first promise in `text` that is not denied right where it stands.
+ *
+ * Negation is checked in the `lookback` characters immediately BEFORE the
+ * promise, never across the whole window, and that narrowing was bought by
+ * testing against the real file. The stale verdict in
+ * backend/scripts/check-autocount-pull-health.mjs reads:
+ *
+ *   "...uses /getAll and does NOT touch the checkpoint, so it is the clean
+ *    way to collect a backlog..."
+ *
+ * A window-wide negation check sees "does NOT" and lets the exact sentence this
+ * gate was built from walk straight through. That "not" denies a side effect; it
+ * does not deny the remedy.
+ */
+function matchPromise(text, outcomeRx, negatedRx, lookback) {
+  const m = outcomeRx.exec(text);
+  if (!m) return null;
+  const around = text.slice(Math.max(0, m.index - lookback), m.index + m[0].length);
+  return negatedRx.test(around) ? null : m;
+}
 
 /** How far after the prescription the promise may sit. Four console.log lines. */
 const CLAIM_WINDOW = 3;
@@ -553,19 +605,16 @@ export function findRemedyClaims(text) {
       window.push(raw[j].trim());
     }
     const joined = window.join(" ");
-    const outcome = OUTCOME_RX.exec(joined);
-    if (!outcome) continue;
 
-    /* Negation is checked in the ~34 characters immediately before the promise,
-       NOT across the whole window, and that narrowing was bought by testing
-       against the real file. The stale verdict in
-       backend/scripts/check-autocount-pull-health.mjs reads:
-         "...uses /getAll and does NOT touch the checkpoint, so it is the clean
-          way to collect a backlog..."
-       A window-wide negation check sees "does NOT" and lets the exact sentence
-       this gate was built from walk straight through. That "not" denies a
-       side effect; it does not deny the remedy. */
-    if (NEGATED_RX.test(joined.slice(Math.max(0, outcome.index - 34), outcome.index + outcome[0].length))) continue;
+    /* Two languages, each with its own promise vocabulary AND its own lookback
+       distance. 34 characters is about a clause of English; Chinese says the
+       same thing in a fraction of that, so a 34-character Chinese lookback
+       would reach back into an unrelated sentence and suppress real claims.
+       A line may satisfy either side — mixed-language bodies are the norm here
+       ("dispatch 一次这个 workflow 就能修复"). */
+    const promise =
+      matchPromise(joined, OUTCOME_RX, NEGATED_RX, 34) ?? matchPromise(joined, CN_OUTCOME, CN_NEGATED, 4);
+    if (!promise) continue;
 
     claims.push({
       text: joined.length > 200 ? `${joined.slice(0, 197)}...` : joined,

@@ -82,7 +82,6 @@ import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChang
 import { PO_LINE_AUDIT_FIELDS, PO_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
 import { computeMrp } from './mrp';
 import { eager } from '../lib/concurrency';
-import { resolvePoSoCoverageForPos, resolveDeliveredDosForPos } from './po-so-coverage';
 import { provenanceNote } from '../shared/transfer-vocabulary';
 import type { Env, Variables } from '../env';
 
@@ -564,30 +563,17 @@ mfgPurchaseOrders.get('/', async (c) => {
       grnsByPo.set(g.purchase_order_id, arr);
     }
   }
-  /* Collapsed "Assigned SO" column (owner 2026-07-31): resolve each PO's
-     Assigned SO(s) for the whole page in ONE pass — computeMrp runs once, the
-     DO-lock + stored-origin reads are batched. Reuses the SAME precedence engine
-     the per-line drill-down does, so the row and its expansion never disagree. */
-  /* "Delivered" column (owner 2026-07-31): the DO(s) that have shipped this PO's
-     goods + qty per DO. Batched once for the page, same batch_no linkage the
-     Assigned SO reads, in the shipping direction. It takes the SAME row ids and
-     neither resolver consumes the other's result, so both go out as one wave. */
-  const poIdsForPage = rows.map((r) => r.id);
-  const [assignedByPo, deliveredByPo] = await Promise.all([
-    resolvePoSoCoverageForPos(supabase, c, poIdsForPage),
-    resolveDeliveredDosForPos(supabase, c, poIdsForPage),
-  ]);
+  /* Assigned SO / Delivered columns (owner 2026-07-31) are MRP-DERIVED and now
+     OMITTED here — not blanked (C16). Resolving them ran a company-wide
+     computeMrp on this critical path (resolvePoSoCoverageForPos +
+     resolveDeliveredDosForPos), the list's dominant cost (~4s). The client heals
+     them a beat after render via GET /mfg-purchase-orders/list-mrp-enrichment
+     (routes/mfg-purchase-orders-list-enrichment.ts + lib/listMrpEnrichment.ts).
+     has_children + transfer_to_grns stay inline (cheap, non-MRP). */
   const purchaseOrders = rows.map((r) => ({
     ...r,
     has_children: childIds.has(r.id),
     transfer_to_grns: grnsByPo.get(r.id) ?? [],
-    assigned_sos: assignedByPo.get(r.id)?.assignedSos ?? [],
-    assigned_so_linked: assignedByPo.get(r.id)?.sourceLinked ?? false,
-    /* PR-3 (2026-08-07, additive): the stored-origin "bought for" SO(s), the
-       parallel provenance slot rendered muted BESIDE the precedence chips.
-       assigned_sos is unchanged — an older frontend simply ignores this. */
-    assigned_so_provenance: assignedByPo.get(r.id)?.provenanceSos ?? [],
-    delivered_dos: deliveredByPo.get(r.id)?.deliveredDos ?? [],
   }));
   if (paginate) return c.json({ purchaseOrders, total, page, pageSize, statusCounts });
   return c.json({ purchaseOrders });

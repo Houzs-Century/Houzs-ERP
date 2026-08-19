@@ -28,7 +28,9 @@ import { sofaCombos } from "./routes/sofa-combos";
 import { fabricTracking } from "./routes/fabric-tracking";
 import { suppliers } from "./routes/suppliers";
 import { mfgPurchaseOrders } from "./routes/mfg-purchase-orders";
+import { mfgPurchaseOrdersListEnrichment } from "./routes/mfg-purchase-orders-list-enrichment";
 import { grns } from "./routes/grns";
+import { grnsListEnrichment } from "./routes/grns-list-enrichment";
 import { purchaseInvoices } from "./routes/purchase-invoices";
 import { purchaseInvoicesListEnrichment } from "./routes/purchase-invoices-list-enrichment";
 import { paymentVouchers } from "./routes/payment-vouchers";
@@ -265,6 +267,11 @@ scm.use("/suppliers/*", scmAreaGuard("scm.procurement.suppliers"));
 scm.route("/suppliers", suppliers);
 // ── Purchase Orders / GRN / PI (scm.procurement.*) ──────────────────────────
 scm.use("/mfg-purchase-orders/*", scmAreaGuard("scm.procurement.po"));
+// Deferred list enrichment — the MRP-derived PO-list columns (Assigned SO /
+// Delivered) the list no longer computes on its critical path. Mounted BEFORE
+// the main router so its static `/list-mrp-enrichment` path resolves ahead of
+// `/:id`. Shares the guard above via the path prefix.
+scm.route("/mfg-purchase-orders", mfgPurchaseOrdersListEnrichment);
 scm.route("/mfg-purchase-orders", mfgPurchaseOrders);
 // PO amendment / revision workflow — PO-centric, so it rides the same L2 area
 // guard as Purchase Orders (GET=view, PATCH=edit); the finer scm.po_amendment.*
@@ -272,6 +279,11 @@ scm.route("/mfg-purchase-orders", mfgPurchaseOrders);
 scm.use("/po-amendments/*", scmAreaGuard("scm.procurement.po"));
 scm.route("/po-amendments", poAmendments);
 scm.use("/grns/*", scmAreaGuard("scm.procurement.grn"));
+// Deferred list enrichment — the MRP-derived GRN-list columns (Assigned SO /
+// Delivered) the list no longer computes on its critical path. Mounted BEFORE
+// the main router so its static `/list-mrp-enrichment` path resolves ahead of
+// `/:id`. Shares the guard above via the path prefix.
+scm.route("/grns", grnsListEnrichment);
 scm.route("/grns", grns);
 scm.use("/purchase-invoices/*", scmAreaGuard("scm.procurement.pi"));
 // Deferred list enrichment — the MRP-derived PI-list columns (Assigned SO /
