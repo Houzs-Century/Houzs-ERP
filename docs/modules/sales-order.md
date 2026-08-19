@@ -2397,11 +2397,30 @@ so the two disagreed on one value. Editing an existing line now uses
 amendment re-pricing a line that sits at 0 — a free gift or PWP reward — which
 the editor triggers because it sends `newUnitPriceSen` on every changed line.
 
-**Add and Edit differ on 0, deliberately.** An ADD line names a SKU and nothing
-else about it is established, so a 0 there is likelier an unfilled field than an
-intended giveaway; an EDIT moves a price the line already carries. Both
-behaviours are pinned in `so-revision.amendmentPrice.test.ts`. Changing either
-means changing that test in the same PR — and asking the owner first.
+**Add and Edit differ on 0 IN AN AMENDMENT, deliberately.** An amendment's ADD
+line names a SKU and nothing else about it is established, so a 0 there is
+likelier an unfilled field than an intended giveaway; an EDIT moves a price the
+line already carries. Both behaviours are pinned in
+`so-revision.amendmentPrice.test.ts`. Changing either means changing that test in
+the same PR — and asking the owner first.
+
+**On an UNLOCKED SO both accept 0, and the difference is the claim, not the
+operation** (2026-08-19). The direct line writes — `PATCH /:docNo/items/:itemId`
+and `POST /:docNo/items` — both ask one helper, `erpLineTrust`
+(mfg-pricing-recompute.ts):
+
+| the line write is given | trust |
+| --- | --- |
+| a POS session | `false` — the POS cannot state intent; its 0 is the documented "not provided" case |
+| price 0 **with** `zeroPriceIntended: true` | `'operator-zero'` — the 0 persists |
+| price 0 **without** the claim | `true` — reads as "not provided", takes the catalogue figure |
+| any non-zero price | `true` — a non-POS author prices freely |
+
+Until 2026-08-19 only the PATCH had this wired, so an office user could set a
+line to RM 0 by editing it but not by adding it at 0 — the same amount accepted
+on one click and silently replaced on another. The amendment path has no
+`zeroPriceIntended` to read (only `new_unit_price_sen`), which is why it keeps
+the split above rather than joining this table.
 
 `SoAmendmentApproval` is a **required** parameter of `applySoAmendment` with no
 default, constructed only inside `approveSoCommandHandler` after
