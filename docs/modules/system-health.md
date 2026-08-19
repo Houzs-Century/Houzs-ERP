@@ -58,7 +58,7 @@ reports, and stop when a window returns `fetched: 0`.
 against `SO-005263`. The order exists in AutoCount. The read-only check reported
 `pull_checkpoint` CURRENT, 3281 rows in the mirror, newest `SO-013275` — and zero
 rows for that number *or* its bare digits. Nothing was broken. That order had
-simply never been collected, and only `mode=all` could bring it in.
+simply never been collected, and a windowed `?since=` backfill is what brings it in.
 
 ---
 
