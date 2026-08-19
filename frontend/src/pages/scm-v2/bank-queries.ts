@@ -40,7 +40,7 @@ export type BankStatement = {
 };
 
 /** What the matcher made of one movement. */
-export type BankLineKind = 'PAYOUT' | 'PAYOUT_UNSURE' | 'PAYOUT_NO_BATCH' | 'OTHER';
+export type BankLineKind = 'PAYOUT' | 'PAYOUT_SPLIT' | 'PAYOUT_UNSURE' | 'PAYOUT_NO_BATCH' | 'OTHER';
 
 export type BankCandidate = {
   id: number;
@@ -70,6 +70,9 @@ export type BankLine = {
       a person still confirms it — but the RIGHT suggestion, not the first
       candidate of that acquirer. */
   matched_batch_id: number | null;
+  /** When SEVERAL statements add up to it: what each one takes. Public Bank
+      pays three trading days with one advice, so this is ordinary. */
+  split: Array<{ batchId: number; amountSen: number }> | null;
   state: 'OPEN' | 'POSTED' | 'IGNORED';
   posted_je_no: string | null;
   note: string | null;
@@ -167,9 +170,14 @@ export const useUploadBankStatement = () => {
 export const useBookBankReceipt = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ lineId, batchId }: { lineId: number; batchId: number }) =>
-      authedFetch<{ ok: boolean; status: string; jeNo?: string; outstandingSen: number }>(
-        `/accounting/bank/lines/${lineId}/receipt`, { method: 'POST', body: JSON.stringify({ batchId }) },
+    mutationFn: ({ lineId, allocations }: {
+      lineId: number;
+      /** One entry for the ordinary payout, several when one credit pays
+          several statements. The shares must add up to the credit. */
+      allocations: Array<{ batchId: number; amountSen: number }>;
+    }) =>
+      authedFetch<{ ok: boolean; status: string; jeNo?: string; results: Array<{ batchId: number; jeNo: string | null; outstandingSen: number }> }>(
+        `/accounting/bank/lines/${lineId}/receipt`, { method: 'POST', body: JSON.stringify({ allocations }) },
       ),
     onSuccess: () => invalidateAfterBankPosting(qc),
   });

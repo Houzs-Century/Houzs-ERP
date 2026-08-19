@@ -139,3 +139,48 @@ describe('watchlist 1 — recorded, not arrived', () => {
     expect(list[0].ageDays).toBe(27);
   });
 });
+
+/* 顾客可能刷一次卡，但是还两个单 (owner, 2026-08-20). Two was always suggested;
+   three worked only if the operator found it himself, because the hint looked
+   for pairs and nothing else. Both are the same act. */
+describe('one swipe settling several orders', () => {
+  const pay = (id: string, sen: number): PaymentCandidate =>
+    ({ source: 'SOPAY', id, docNo: `SO-${id}`, paidOn: '2026-08-01', amountSen: sen, approvalCode: null });
+
+  const line = (grossSen: number) => matchStatement(
+    { code: 'GHL', has_unique_ref: false, date_tolerance_days: 3 },
+    [{ lineNo: 1, txnDate: '2026-08-01', ref: null, grossSen, feeSen: 0, netSen: grossSen }],
+    [pay('a', 60000), pay('b', 40000), pay('c', 25000), pay('d', 15000)],
+    new Set<string>(),
+  )[0]!;
+
+  it('points at the pair that adds up', () => {
+    expect(line(100000).comboHints).toContainEqual(['a', 'b']);
+  });
+
+  it('points at the THREE that add up, which used to be invisible', () => {
+    const d = line(125000);
+    expect(d.comboHints).toContainEqual(['a', 'b', 'c']);
+  });
+
+  it('takes four when four is the answer', () => {
+    expect(line(140000).comboHints).toContainEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('offers nothing at all when nothing adds up', () => {
+    expect(line(123456).comboHints).toEqual([]);
+  });
+
+  /* A screen offering more possibilities than a person can weigh is not
+     helping, so the list is capped rather than exhaustive. */
+  it('stops at five suggestions', () => {
+    const many = Array.from({ length: 10 }, (_, i) => pay(`p${i}`, 10000));
+    const d = matchStatement(
+      { code: 'GHL', has_unique_ref: false, date_tolerance_days: 3 },
+      [{ lineNo: 1, txnDate: '2026-08-01', ref: null, grossSen: 20000, feeSen: 0, netSen: 20000 }],
+      many, new Set<string>(),
+    )[0]!;
+    expect(d.comboHints.length).toBeLessThanOrEqual(5);
+    expect(d.comboHints.length).toBeGreaterThan(0);
+  });
+});

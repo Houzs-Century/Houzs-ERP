@@ -178,6 +178,9 @@ export const bankUpload = guard(async (c) => {
          of that acquirer" is a different answer from "the one whose trading day
          and amount agreed". */
       matched_batch_id: d.batchId,
+      /* And the SPLIT, when several statements add up to it — Public Bank pays
+         three trading days with one advice, so this is ordinary. */
+      split: d.split.length > 0 ? d.split : null,
       note: d.clue,
     })),
   );
@@ -348,36 +351,99 @@ export const bankLineReceipt = guard(async (c) => {
     return c.json({ error: 'not_a_receipt', message: 'This movement takes money OUT of the account — it is not a payout.' }, 400);
   }
 
-  const batchId = Number(body.batchId ?? 0);
-  if (!Number.isInteger(batchId) || batchId <= 0) {
-    return c.json({ error: 'no_batch', message: 'Say which merchant statement this credit pays.' }, 400);
+  /* ONE CREDIT CAN PAY SEVERAL STATEMENTS. Public Bank's advice of 10 Aug pays
+     for trading on the 7th, 8th and 9th — the ordinary case, not an edge one —
+     and the owner raised the same shape one level down: 顾客可能刷一次卡，但是还
+     两个单. `batchId` stays as the shorthand for the ordinary single payout. */
+  const raw: unknown = Array.isArray(body.allocations) && body.allocations.length > 0
+    ? body.allocations
+    : (body.batchId ? [{ batchId: body.batchId, amountSen: Number(line.amount_sen) }] : []);
+  const allocations = (raw as Array<Record<string, unknown>>).map((a) => ({
+    batchId: Number(a.batchId ?? 0),
+    amountSen: Math.round(Number(a.amountSen ?? 0)),
+  }));
+  if (allocations.length === 0 || allocations.some((a) => !Number.isInteger(a.batchId) || a.batchId <= 0)) {
+    return c.json({ error: 'no_batch', message: 'Say which merchant statement(s) this credit pays.' }, 400);
+  }
+  if (new Set(allocations.map((a) => a.batchId)).size !== allocations.length) {
+    return c.json({ error: 'duplicate_batch', message: 'The same merchant statement is listed twice. One share each.' }, 400);
+  }
+  if (allocations.some((a) => !Number.isFinite(a.amountSen) || a.amountSen === 0)) {
+    return c.json({ error: 'bad_amount', message: 'Every share must be an amount.' }, 400);
   }
 
-  /* The DATE and the AMOUNT come off the bank statement, not off the request:
-     they are what the bank says, and the whole point of uploading the file is
-     that nobody has to retype them. */
-  const posted = await postBatchReceipt(sb, co.companyId, batchId, {
-    receivedOn: String(line.booked_on).slice(0, 10),
-    amountSen: Number(line.amount_sen),
-    bankRef: line.reference ?? null,
-    userName: userName(c),
-  });
-  if (!posted.ok) return c.json({ error: posted.status, message: posted.reason }, 409);
+  /* The shares must add up to the credit, TO THE SEN — the same discipline the
+     merchant side applies to a swipe covering two orders. A leftover is a
+     difference, and a difference is the thing this module exists to surface,
+     never to absorb. */
+  const allocated = allocations.reduce((s, a) => s + a.amountSen, 0);
+  if (allocated !== Number(line.amount_sen)) {
+    const diff = (allocated - Number(line.amount_sen)) / 100;
+    return c.json({
+      error: 'amount_mismatch',
+      message: `The shares add up to ${(allocated / 100).toFixed(2)}, but this credit is ${(Number(line.amount_sen) / 100).toFixed(2)}`
+        + ` — a difference of ${diff.toFixed(2)}. Fix the split; do not book a difference you cannot explain.`,
+    }, 400);
+  }
+
+  /* The DATE comes off the bank statement, not off the request: it is what the
+     bank says, and the whole point of uploading the file is that nobody has to
+     retype it. */
+  const receivedOn = String(line.booked_on).slice(0, 10);
+  const bankRef = line.reference ?? null;
+  const posted: Array<{ batchId: number; receiptId: number; jeNo?: string; outstandingSen: number }> = [];
+
+  for (const a of allocations) {
+    const r = await postBatchReceipt(sb, co.companyId, a.batchId, {
+      receivedOn, amountSen: a.amountSen, bankRef, userName: userName(c),
+    });
+    if (!r.ok) {
+      /* A refusal partway through must not leave half a payout booked. Every
+         receipt already written is reversed — through the engine, so the
+         contra entries exist — before the refusal is returned. */
+      const undone: string[] = [];
+      for (const done of posted) {
+        const back = await undoBatchReceipt(sb, co.companyId, done.receiptId);
+        if (!back.ok) undone.push(`${done.jeNo ?? done.receiptId}: ${back.reason}`);
+      }
+      return c.json({
+        error: r.status,
+        message: r.reason
+          + (undone.length > 0
+            ? ` — AND ${undone.length} earlier share(s) could not be taken back: ${undone.join('; ')}. Check the ledger before retrying.`
+            : posted.length > 0 ? ` The other ${posted.length} share(s) were taken back, so nothing is half-booked.` : ''),
+      }, 409);
+    }
+    posted.push({ batchId: a.batchId, receiptId: r.receiptId, jeNo: r.jeNo, outstandingSen: r.outstandingSen });
+  }
+
+  /* Point every receipt back at the movement it was read from. */
+  for (const p of posted) {
+    await sb.from('acc_settlement_receipts').update({ bank_line_id: lineId }).eq('id', p.receiptId);
+  }
 
   const { error: upErr } = await sb.from('acc_bank_statement_lines').update({
     state: 'POSTED',
-    receipt_id: posted.receiptId ?? null,
-    posted_je_no: posted.jeNo ?? null,
+    /* One entry number when there is one, all of them when the credit was
+       split — the operator asks "which JE" and both answers are true. */
+    posted_je_no: posted.map((p) => p.jeNo).filter(Boolean).join(', ') || null,
     updated_at: new Date().toISOString(),
   }).eq('id', lineId).eq('company_id', co.companyId);
   if (upErr) {
     return c.json({
       error: 'save_failed',
-      reason: `${upErr.message} (the receipt WAS posted as ${posted.jeNo ?? 'an entry'} — the statement line did not record it)`,
+      reason: `${upErr.message} (the receipt(s) WERE posted — the statement line did not record it)`,
     }, 500);
   }
 
-  return c.json({ ok: true, status: posted.status, jeNo: posted.jeNo, outstandingSen: posted.outstandingSen });
+  return c.json({
+    ok: true,
+    status: 'posted',
+    jeNo: posted.map((p) => p.jeNo).filter(Boolean).join(', '),
+    /* Per statement, because a split has no single outstanding figure and the
+       operator wants to know which of them is now clear. */
+    results: posted.map((p) => ({ batchId: p.batchId, jeNo: p.jeNo ?? null, outstandingSen: p.outstandingSen })),
+  });
 });
 
 /* ── POST /bank/lines/:id/undo — take it back ─────────────────────────────── */
@@ -390,7 +456,7 @@ export const bankLineUndo = guard(async (c) => {
   const sb = c.get('supabase');
 
   const { data: lineRaw, error } = await sb.from('acc_bank_statement_lines')
-    .select('id, state, receipt_id').eq('id', lineId).eq('company_id', co.companyId).maybeSingle();
+    .select('id, state').eq('id', lineId).eq('company_id', co.companyId).maybeSingle();
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   if (!lineRaw) return c.json({ error: 'not_found' }, 404);
   const line = lineRaw as Record<string, any>;
@@ -400,13 +466,31 @@ export const bankLineUndo = guard(async (c) => {
      interpret. */
   if (String(line.state) === 'OPEN') return c.json({ ok: true, status: 'already_open' });
 
-  if (line.receipt_id) {
-    const undone = await undoBatchReceipt(sb, co.companyId, Number(line.receipt_id));
-    if (!undone.ok) return c.json({ error: undone.status, message: undone.reason }, 409);
+  /* ALL of them: a split payout wrote one receipt per statement, and undoing
+     the movement means undoing every one. Read from the receipt side, which is
+     where the link lives precisely because there can be several. */
+  const { data: mine, error: rErr } = await sb.from('acc_settlement_receipts')
+    .select('id').eq('bank_line_id', lineId).eq('company_id', co.companyId);
+  if (rErr) return c.json({ error: 'load_failed', reason: rErr.message }, 500);
+
+  const stuck: string[] = [];
+  for (const r of (mine ?? []) as Array<{ id: number }>) {
+    const undone = await undoBatchReceipt(sb, co.companyId, Number(r.id));
+    /* Keep going rather than stopping at the first refusal: leaving the rest
+       booked because one would not come back is the worse of the two states,
+       and every failure is named below. */
+    if (!undone.ok) stuck.push(`receipt ${r.id}: ${undone.reason}`);
+  }
+  if (stuck.length > 0) {
+    return c.json({
+      error: 'undo_incomplete',
+      message: `${stuck.length} of ${(mine ?? []).length} credit(s) could not be taken back — ${stuck.join('; ')}.`
+        + ' The rest were reversed; this movement is left as posted so nothing is hidden.',
+    }, 409);
   }
 
   const { error: upErr } = await sb.from('acc_bank_statement_lines').update({
-    state: 'OPEN', receipt_id: null, posted_je_no: null, posted_je_id: null,
+    state: 'OPEN', posted_je_no: null, posted_je_id: null,
     updated_at: new Date().toISOString(),
   }).eq('id', lineId).eq('company_id', co.companyId);
   if (upErr) return c.json({ error: 'save_failed', reason: upErr.message }, 500);

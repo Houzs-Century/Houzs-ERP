@@ -47,8 +47,9 @@ export type MatchDecision = {
   matched: PaymentCandidate[];
   /** What to offer the operator when the bucket is NEEDS_CONFIRM. */
   candidates: PaymentCandidate[];
-  /** Pairs of candidates whose amounts sum exactly to the gross. */
-  comboHints: Array<[string, string]>;
+  /** SETS of candidates whose amounts sum exactly to the gross — a customer can
+      settle two orders with one swipe, or three. */
+  comboHints: string[][];
   /**
    * The system's OWN best answer, when there is exactly one way to make this
    * line's amount out of the payments in range — pre-ticked on screen so the
@@ -82,16 +83,37 @@ const dayGap = (a: string, b: string): number =>
 /** Pairs (i<j) of candidates whose amounts sum exactly to the target. Bounded
     at 40 candidates: past that the window is too wide to be a useful hint, and
     the quadratic scan stops earning its keep. */
-function exactPairs(candidates: PaymentCandidate[], targetSen: number): Array<[string, string]> {
-  const pairs: Array<[string, string]> = [];
-  const pool = candidates.slice(0, 40);
-  for (let i = 0; i < pool.length; i += 1) {
-    for (let j = i + 1; j < pool.length; j += 1) {
-      if (pool[i].amountSen + pool[j].amountSen === targetSen) pairs.push([pool[i].id, pool[j].id]);
-      if (pairs.length >= 5) return pairs;
+function exactPairs(candidates: PaymentCandidate[], targetSen: number): string[][] {
+  /* Sets of payments that add up to the line EXACTLY.
+
+     Pairs were enough for the case the brief names (一笔刷卡对应两张订单), but
+     the owner put it more generally on 2026-08-20 — 顾客可能刷一次卡，但是还两
+     个单 — and a customer settling three outstanding orders with one swipe is
+     the same act. Three worked already, because the operator could tick three
+     and the sum check accepts them; it simply was not SUGGESTED, so he had to
+     find it himself.
+
+     Bounded like its opposite number on the bank side (acc/bank-match's
+     exactCombination): subsets of at most 4, and at most 5 answers, because a
+     screen offering more possibilities than that is not helping anybody. */
+  const MAX_PICK = 4;
+  const MAX_HINTS = 5;
+  const pool = candidates.slice(0, 24);
+  const hints: string[][] = [];
+
+  const walk = (from: number, picked: PaymentCandidate[], sum: number) => {
+    if (hints.length >= MAX_HINTS) return;
+    if (sum === targetSen && picked.length > 1) { hints.push(picked.map((p) => p.id)); return; }
+    if (picked.length >= MAX_PICK || from >= pool.length) return;
+    for (let i = from; i < pool.length; i += 1) {
+      picked.push(pool[i]!);
+      walk(i + 1, picked, sum + pool[i]!.amountSen);
+      picked.pop();
+      if (hints.length >= MAX_HINTS) return;
     }
-  }
-  return pairs;
+  };
+  walk(0, [], 0);
+  return hints;
 }
 
 /**
@@ -211,7 +233,7 @@ export function matchStatement(
         clue: onlyPair.length === 2
           ? `No single payment matches — ${onlyPair.map((p) => p.docNo).join(' + ')} add up to it exactly. Check them and confirm.`
           : hints.length
-            ? `No single payment matches; ${hints.length} pair(s) of payments add up to this amount`
+            ? `No single payment matches; ${hints.length} set(s) of payments add up to this amount`
             : `No payment matches this amount — ${inWindow.length} smaller payment(s) are within ${tolerance} day(s)`,
       });
       continue;

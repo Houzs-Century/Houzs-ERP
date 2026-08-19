@@ -183,7 +183,7 @@ const StatementView = ({ id, onBack }: { id: number; onBack: () => void }) => {
   /* Most consequential first: a card payout books money, a plain movement is
      bookkeeping. Within each, biggest first. */
   const ordered = [...open].sort((a, b) => {
-    const rank = (l: BankLine) => (l.kind === 'PAYOUT' ? 0 : l.kind === 'PAYOUT_UNSURE' ? 1 : l.kind === 'PAYOUT_NO_BATCH' ? 2 : 3);
+    const rank = (l: BankLine) => (l.kind === 'PAYOUT' ? 0 : l.kind === 'PAYOUT_SPLIT' ? 1 : l.kind === 'PAYOUT_UNSURE' ? 2 : l.kind === 'PAYOUT_NO_BATCH' ? 3 : 4);
     return rank(a) - rank(b) || Math.abs(b.amount_sen) - Math.abs(a.amount_sen);
   });
 
@@ -342,6 +342,7 @@ const ReconciliationPanel = ({ r }: { r: Reconciliation }) => {
 
 const KIND_LABEL: Record<BankLine['kind'], string> = {
   PAYOUT: 'a card payout, matched',
+  PAYOUT_SPLIT: 'one payout for several reports',
   PAYOUT_UNSURE: 'a card payout — check which',
   PAYOUT_NO_BATCH: 'a card payout with no report waiting',
   OTHER: 'not card money',
@@ -352,11 +353,25 @@ const OpenLine = ({ line }: { line: BankLine }) => {
   const ignore = useIgnoreBankLine();
   /* Seeded from what the MATCHER decided, never from "the first candidate" —
      the two are different answers, and the wrong one books money against the
-     wrong statement while looking exactly as confident. Only a PAYOUT is
-     pre-filled; anything less certain is left for a person to choose. */
-  const [batchId, setBatchId] = useState<number | null>(
-    line.kind === 'PAYOUT' ? line.matched_batch_id : null,
+     wrong statement while looking exactly as confident.
+     ONE CREDIT CAN PAY SEVERAL statements (owner, on the merchant side of the
+     same shape: 顾客可能刷一次卡，但是还两个单), so this is a set, and a split the
+     matcher worked out arrives pre-ticked. Anything less certain starts empty. */
+  const [picked, setPicked] = useState<number[]>(
+    line.kind === 'PAYOUT' && line.matched_batch_id != null ? [line.matched_batch_id]
+      : line.kind === 'PAYOUT_SPLIT' ? (line.split ?? []).map((s) => s.batchId)
+        : [],
   );
+  const toggle = (id: number) =>
+    setPicked((was) => (was.includes(id) ? was.filter((x) => x !== id) : [...was, id]));
+
+  /* Each statement takes what it is still owed. The shares must add up to the
+     credit to the sen — the same rule the merchant side applies to a swipe
+     covering two orders — so the button says the difference rather than
+     letting a leftover through. */
+  const chosen = line.candidates.filter((b) => picked.includes(b.id));
+  const allocatedSen = chosen.reduce((s, b) => s + b.outstandingSen, 0);
+  const shortSen = line.amount_sen - allocatedSen;
   const [note, setNote] = useState('');
   const [asking, setAsking] = useState(false);
   const failed = book.isError ? book.error : ignore.isError ? ignore.error : null;
@@ -390,20 +405,31 @@ const OpenLine = ({ line }: { line: BankLine }) => {
       <td>
         {line.amount_sen > 0 && line.candidates.length > 0 && (
           <div style={{ display: 'grid', gap: 4 }}>
-            <select value={batchId ?? ''} aria-label={`Merchant report for line ${line.line_no}`}
-              onChange={(e) => setBatchId(e.target.value ? Number(e.target.value) : null)}
-              style={{ padding: '4px 6px', fontSize: 'var(--fs-12)' }}>
-              <option value="">Which merchant report?</option>
-              {line.candidates.map((b) => (
-                <option key={b.id} value={b.id}>
-                  {b.fileName ?? `report ${b.id}`} · owed {fmt(b.outstandingSen)}
-                </option>
-              ))}
-            </select>
-            <button type="button" style={btn(true, batchId == null || book.isPending)}
-              disabled={batchId == null || book.isPending}
-              onClick={() => batchId != null && book.mutate({ lineId: line.id, batchId })}>
-              <Landmark {...ICON} /> {book.isPending ? 'Posting…' : 'Money received'}
+            {/* Tick boxes, not a dropdown: one credit can settle more than one
+                report, and a dropdown cannot say so. */}
+            {line.candidates.map((b) => (
+              <label key={b.id} style={{ display: 'flex', gap: 6, alignItems: 'baseline', fontSize: 'var(--fs-12)' }}>
+                <input type="checkbox" checked={picked.includes(b.id)} onChange={() => toggle(b.id)}
+                  aria-label={`Report ${b.fileName ?? b.id} for line ${line.line_no}`} />
+                <span>{b.fileName ?? `report ${b.id}`} · owed <b>{fmt(b.outstandingSen)}</b></span>
+              </label>
+            ))}
+            {/* Only when it does NOT add up — a running total nobody needs is
+                one more number in the way. */}
+            {picked.length > 0 && shortSen !== 0 && (
+              <span className={grid.sub}>
+                Selected {fmt(allocatedSen)} of {fmt(line.amount_sen)} —{' '}
+                <b className={grid.bad}>{fmt(Math.abs(shortSen))} {shortSen > 0 ? 'short' : 'too much'}</b>
+              </span>
+            )}
+            <button type="button" style={btn(true, picked.length === 0 || shortSen !== 0 || book.isPending)}
+              disabled={picked.length === 0 || shortSen !== 0 || book.isPending}
+              onClick={() => book.mutate({
+                lineId: line.id,
+                allocations: chosen.map((b) => ({ batchId: b.id, amountSen: b.outstandingSen })),
+              })}>
+              <Landmark {...ICON} />{' '}
+              {book.isPending ? 'Posting…' : picked.length > 1 ? `Money received — ${picked.length} reports` : 'Money received'}
             </button>
           </div>
         )}

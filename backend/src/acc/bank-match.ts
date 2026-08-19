@@ -193,6 +193,10 @@ export type PayableBatch = {
 export type BankMatchKind =
   /** One statement, exactly this amount. A button. */
   | 'PAYOUT'
+  /** SEVERAL statements that add up to it exactly, and only one way to do it.
+      Public Bank's real shape: one advice of 10 Aug paying for trading on the
+      7th, 8th and 9th. Still a button, because there is nothing to choose. */
+  | 'PAYOUT_SPLIT'
   /** Recognised as a payout, but which statement is a judgement. */
   | 'PAYOUT_UNSURE'
   /** Recognised as a payout, and no reconciled statement expects it. */
@@ -208,6 +212,9 @@ export type BankDecision = {
   merchantNo: string | null;
   /** Set only for PAYOUT: the one statement this settles. */
   batchId: number | null;
+  /** Set only for PAYOUT_SPLIT: the statements that add up to it, and what
+      each one takes. Ordered oldest first, the way an advice pays. */
+  split: Array<{ batchId: number; amountSen: number }>;
   /** What a person would have to choose between. */
   candidates: PayableBatch[];
   /** One sentence saying why, in the operator's terms. Never a stack trace. */
@@ -218,6 +225,54 @@ const rm = (sen: number) =>
   `RM ${(sen / 100).toLocaleString('en-MY', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
 const covers = (b: PayableBatch, day: string) => day >= b.periodFrom && day <= b.periodTo;
+
+/**
+ * The statements that add up to one credit, EXACTLY — and only when there is
+ * one way to do it.
+ *
+ * Public Bank's real shape: one advice of 10 Aug pays for trading on the 7th,
+ * 8th and 9th (migration 0304's header). Without this the operator is told his
+ * credit is too big for the statement he picked and given no way to do the
+ * right thing, which is what the rig showed.
+ *
+ * Two rules, and both are about NOT guessing:
+ *
+ *   • only an EXACT sum counts. A near-miss is a difference, and a difference
+ *     is the thing this module exists to surface, not to absorb;
+ *   • if two different sets of statements both add up, nothing is suggested.
+ *     "Some three of these five" is not an answer a person can check.
+ *
+ * Bounded on purpose — subsets of at most 4 from at most 12 statements is 794
+ * combinations, and a payout spanning more than four of them is rare enough to
+ * be worth a human's eye anyway.
+ */
+export function exactCombination(batches: PayableBatch[], targetSen: number): PayableBatch[] {
+  const MAX_POOL = 12;
+  const MAX_PICK = 4;
+  /* Oldest first: an advice pays the oldest trading days it covers, and the
+     order decides which single answer is reported when several are equal. */
+  const pool = [...batches].sort((a, b) => a.periodFrom.localeCompare(b.periodFrom)).slice(0, MAX_POOL);
+
+  const found: PayableBatch[][] = [];
+  const walk = (from: number, picked: PayableBatch[], sum: number) => {
+    if (found.length > 1) return;                 // already ambiguous, stop
+    if (sum === targetSen && picked.length > 1) { found.push([...picked]); return; }
+    if (picked.length >= MAX_PICK || from >= pool.length) return;
+    for (let i = from; i < pool.length; i += 1) {
+      const b = pool[i]!;
+      /* Outstanding amounts can be negative (an acquirer clawing a payout
+         back), so overshoot is not a safe reason to prune. Depth and pool size
+         are what bound this, not the arithmetic. */
+      picked.push(b);
+      walk(i + 1, picked, sum + b.outstandingSen);
+      picked.pop();
+      if (found.length > 1) return;
+    }
+  };
+  walk(0, [], 0);
+
+  return found.length === 1 ? found[0]! : [];
+}
 
 /**
  * Decide every movement.
@@ -235,7 +290,8 @@ export function matchBankMovements(input: {
 
   return movements.map((movement): BankDecision => {
     const base = {
-      movement, batchId: null, candidates: [] as PayableBatch[],
+      movement, batchId: null, split: [] as Array<{ batchId: number; amountSen: number }>,
+      candidates: [] as PayableBatch[],
       acquirerCode: null, tradingDate: null, merchantNo: null, clue: null,
     };
 
@@ -278,6 +334,24 @@ export function matchBankMovements(input: {
       return {
         ...named, kind: 'PAYOUT_UNSURE', candidates: exact,
         clue: `${exact.length} of ${seen.acquirerCode}'s reports are owed exactly ${rm(movement.amountSen)}. Pick the one this credit is for.`,
+      };
+    }
+
+    /* No single statement is owed this, so ask whether SEVERAL of them are —
+       one advice for three trading days is Public Bank's ordinary behaviour,
+       not an exception. Tried against every outstanding statement of the
+       acquirer rather than only those covering the named day, because an
+       advice's own date names one day and pays for several. */
+    const together = exactCombination(mine, movement.amountSen);
+    if (together.length > 0) {
+      return {
+        ...named,
+        kind: 'PAYOUT_SPLIT',
+        candidates: together,
+        split: together.map((b) => ({ batchId: b.id, amountSen: b.outstandingSen })),
+        clue: `${together.length} of ${seen.acquirerCode}'s reports add up to ${rm(movement.amountSen)} exactly`
+          + ` — ${together.map((b) => `${b.fileName ?? `report ${b.id}`} ${rm(b.outstandingSen)}`).join(' + ')}.`
+          + ' Check them and record it.',
       };
     }
 

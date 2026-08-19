@@ -15,7 +15,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  groupBankMovements, recogniseAcquirer, matchBankMovements,
+  groupBankMovements, recogniseAcquirer, matchBankMovements, exactCombination,
   type BankRecognitionRule, type PayableBatch,
 } from './bank-match';
 import type { BankLine } from './bank-parse';
@@ -233,3 +233,96 @@ describe('matching a credit to the statement it settles', () => {
   });
 });
 
+
+/* ── One credit, several statements ───────────────────────────────────────────
+   Public Bank's real shape (migration 0304's header): one advice of 10 Aug pays
+   for trading on the 7th, 8th and 9th. The owner raised the same shape one
+   level down — 顾客可能刷一次卡，但是还两个单 — and the merchant side has handled
+   it since layer 3; the bank side did not, and told the operator his credit was
+   too big with no way to do the right thing. */
+
+describe('a credit that pays more than one statement', () => {
+  const owed = (id: number, sen: number, day: string): PayableBatch => ({
+    id, acquirerCode: 'PBB', fileName: `pbb-${day}.csv`,
+    periodFrom: day, periodTo: day, payableSen: sen, outstandingSen: sen,
+  });
+
+  it('finds the one set of statements that adds up', () => {
+    const found = exactCombination(
+      [owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08'), owed(3, 400000, '2026-08-09')],
+      350000,
+    );
+    expect(found.map((b) => b.id)).toEqual([1, 2]);
+  });
+
+  it('takes three of them, which is what Public Bank actually pays', () => {
+    const found = exactCombination(
+      [owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08'), owed(3, 400000, '2026-08-09')],
+      750000,
+    );
+    expect(found.map((b) => b.id)).toEqual([1, 2, 3]);
+  });
+
+  /* "Some two of these four" is not an answer a person can check, so when more
+     than one set adds up, nothing is suggested. Four statements of 1,000 /
+     2,000 / 1,000 / 2,000 make 3,000 four different ways. */
+  it('suggests nothing when more than one set adds up', () => {
+    const found = exactCombination([
+      owed(1, 100000, '2026-08-07'), owed(2, 200000, '2026-08-08'),
+      owed(3, 100000, '2026-08-09'), owed(4, 200000, '2026-08-10'),
+    ], 300000);
+    expect(found).toEqual([]);
+  });
+
+  /* And the matcher turns that into a question rather than a silent nothing:
+     the money IS a payout, it just cannot be allocated without a person. */
+  it('leaves an ambiguous split to a person, still named as a payout', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([line({ amountSen: 300000, description: '03999061714 PBB-PBCS AC 3', reference: 'R' })]),
+      rules: RULES,
+      batches: [
+        owed(1, 100000, '2026-08-07'), owed(2, 200000, '2026-08-08'),
+        owed(3, 100000, '2026-08-09'), owed(4, 200000, '2026-08-10'),
+      ],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT_UNSURE');
+    expect(d.split).toEqual([]);
+    expect(d.candidates).toHaveLength(4);
+  });
+
+  it('will not take a near miss', () => {
+    expect(exactCombination([owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08')], 350001)).toEqual([]);
+  });
+
+  it('never answers with a single statement — that is the other branch', () => {
+    expect(exactCombination([owed(1, 350000, '2026-08-07')], 350000)).toEqual([]);
+  });
+
+  it('routes the whole thing through the matcher, with the sum named', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([line({
+        amountSen: 350000, description: '03999061714 PBB-PBCS AC 3', reference: '20260810000145',
+      })]),
+      rules: RULES,
+      batches: [owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08'), owed(3, 900000, '2026-08-09')],
+    })[0]!;
+
+    expect(d.kind).toBe('PAYOUT_SPLIT');
+    expect(d.split).toEqual([{ batchId: 1, amountSen: 100000 }, { batchId: 2, amountSen: 250000 }]);
+    expect(d.clue).toMatch(/2 of PBB's reports add up to RM 3,500\.00 exactly/);
+    expect(d.clue).toMatch(/pbb-2026-08-07\.csv RM 1,000\.00 \+ pbb-2026-08-08\.csv RM 2,500\.00/);
+  });
+
+  /* A single exact statement still wins: the cheapest true answer, not the
+     most elaborate one. */
+  it('prefers one statement owed exactly that over any combination', () => {
+    const d = matchBankMovements({
+      movements: groupBankMovements([line({ amountSen: 350000, description: '03999061714 PBB-PBCS AC 3', reference: 'R' })]),
+      rules: RULES,
+      batches: [owed(9, 350000, '2026-08-10'), owed(1, 100000, '2026-08-07'), owed(2, 250000, '2026-08-08')],
+    })[0]!;
+    expect(d.kind).toBe('PAYOUT');
+    expect(d.batchId).toBe(9);
+    expect(d.split).toEqual([]);
+  });
+});

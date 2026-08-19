@@ -1,4 +1,5 @@
 -- REVERSAL: additive only.
+--   ALTER TABLE scm.acc_settlement_receipts DROP COLUMN bank_line_id;
 --   DROP TABLE scm.acc_bank_statement_matches;
 --   DROP TABLE scm.acc_bank_statement_lines;
 --   DROP TABLE scm.acc_bank_statements;
@@ -221,11 +222,18 @@ CREATE TABLE scm.acc_bank_statement_lines (
   -- trading day and amount actually agreed. A suggestion, still confirmed by a
   -- person; nothing is booked off this column alone.
   matched_batch_id BIGINT REFERENCES scm.acc_settlement_batches (id) ON DELETE SET NULL,
+  -- And when SEVERAL statements add up to it: [{batchId, amountSen}], oldest
+  -- first. Public Bank pays three trading days with one advice, so a single
+  -- matched_batch_id could not describe its ordinary payout.
+  split            JSONB,
   -- OPEN until somebody decides; POSTED once its entry exists; IGNORED for a
   -- line that is genuinely none of our business.
   state           TEXT    NOT NULL DEFAULT 'OPEN',
-  -- Set when this movement paid a merchant statement: the receipt row it wrote.
-  receipt_id      BIGINT  REFERENCES scm.acc_settlement_receipts (id) ON DELETE SET NULL,
+  -- NOTE: no receipt_id column. One credit can pay SEVERAL merchant statements
+  -- — Public Bank's advice of 10 Aug pays for trading on the 7th, 8th and 9th —
+  -- so the link is on the receipt side (see the ALTER below) and a movement's
+  -- receipts are however many it wrote. A single column here would have made
+  -- the ordinary Public Bank payout unrecordable.
   posted_je_no    TEXT,
   posted_je_id    TEXT,
   note            TEXT,
@@ -239,6 +247,27 @@ CREATE TABLE scm.acc_bank_statement_lines (
 
 CREATE INDEX acc_bank_lines_stmt  ON scm.acc_bank_statement_lines (statement_id, line_no);
 CREATE INDEX acc_bank_lines_state ON scm.acc_bank_statement_lines (company_id, state, booked_on);
+
+-- 4b. Which bank movement wrote a settlement receipt.
+--
+-- On the RECEIPT, not on the line, because the relationship is one-to-MANY in
+-- that direction: one credit can pay several merchant statements, and each
+-- statement's share is its own receipt with its own journal entry. Public Bank
+-- pays exactly this way — one advice of 10 Aug for trading on the 7th, 8th and
+-- 9th (migration 0304's header) — so it is the ordinary case, not an edge one.
+--
+-- NULL for a receipt keyed in by hand on the money screen, which is still a
+-- legitimate way to record a payout on a day the file has not arrived.
+ALTER TABLE scm.acc_settlement_receipts
+  ADD COLUMN bank_line_id BIGINT REFERENCES scm.acc_bank_statement_lines (id) ON DELETE SET NULL;
+
+CREATE INDEX acc_settlement_receipts_bank_line
+  ON scm.acc_settlement_receipts (bank_line_id) WHERE bank_line_id IS NOT NULL;
+
+COMMENT ON COLUMN scm.acc_settlement_receipts.bank_line_id IS
+  'The bank movement this credit was read from, when it came off a statement '
+  'rather than being keyed in. Several receipts can share one movement: one '
+  'advice often pays several trading days at once.';
 
 -- 5. Which LEDGER entries a bank movement covers.
 --

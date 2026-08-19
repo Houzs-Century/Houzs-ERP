@@ -145,21 +145,55 @@ describe('the reconciliation panel', () => {
 });
 
 describe('a movement still to decide', () => {
-  test('offers the statement the MATCHER chose, not the first candidate', () => {
+  test('ticks the statement the MATCHER chose, not the first candidate', () => {
     openStatement();
-    const select = screen.getByLabelText('Merchant report for line 2') as HTMLSelectElement;
     /* Candidate 3 is listed first; 7 is the one whose day and amount agreed. */
-    expect(select.value).toBe('7');
+    expect((screen.getByLabelText('Report other.csv for line 2') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('Report mbb-credit.csv for line 2') as HTMLInputElement).checked).toBe(true);
 
     fireEvent.click(screen.getAllByText('Money received')[0]!);
-    expect(bookMutate).toHaveBeenCalledWith({ lineId: 1, batchId: 7 });
+    expect(bookMutate).toHaveBeenCalledWith({
+      lineId: 1, allocations: [{ batchId: 7, amountSen: 227700 }],
+    });
   });
 
   /* Anything less than certain is left blank: a pre-filled guess is a guess
      somebody will press. */
   test('leaves an unsure payout for a person to choose', () => {
     openStatement();
-    expect((screen.getByLabelText('Merchant report for line 7') as HTMLSelectElement).value).toBe('');
+    expect((screen.getByLabelText('Report other.csv for line 7') as HTMLInputElement).checked).toBe(false);
+    expect((screen.getByLabelText('Report mbb-credit.csv for line 7') as HTMLInputElement).checked).toBe(false);
+  });
+
+  /* ONE CREDIT, SEVERAL REPORTS — Public Bank's advice, and the shape the owner
+     named on the merchant side: 顾客可能刷一次卡，但是还两个单. */
+  test('pre-ticks every report of a split the matcher worked out', () => {
+    lines = [{ ...LINE, kind: 'PAYOUT_SPLIT', amount_sen: 602004, matched_batch_id: null,
+      split: [{ batchId: 3, amountSen: 374304 }, { batchId: 7, amountSen: 227700 }] }];
+    openStatement();
+    expect((screen.getByLabelText('Report other.csv for line 2') as HTMLInputElement).checked).toBe(true);
+    expect((screen.getByLabelText('Report mbb-credit.csv for line 2') as HTMLInputElement).checked).toBe(true);
+
+    fireEvent.click(screen.getByText('Money received — 2 reports'));
+    expect(bookMutate).toHaveBeenCalledWith({
+      lineId: 1,
+      allocations: [{ batchId: 3, amountSen: 374304 }, { batchId: 7, amountSen: 227700 }],
+    });
+    lines = [LINE, SPLIT, OTHER];
+  });
+
+  /* The same rule the merchant side applies to a swipe covering two orders: a
+     leftover is a difference, and a difference must not be booked. */
+  test('will not post a selection that does not add up, and says by how much', () => {
+    lines = [{ ...LINE, kind: 'PAYOUT_SPLIT', amount_sen: 602004, matched_batch_id: null,
+      split: [{ batchId: 3, amountSen: 374304 }, { batchId: 7, amountSen: 227700 }] }];
+    openStatement();
+
+    fireEvent.click(screen.getByLabelText('Report other.csv for line 2'));
+    expect(screen.getByText(/Selected RM 2,277\.00 of RM 6,020\.04/)).toBeTruthy();
+    expect(screen.getByText('RM 3,743.04 short')).toBeTruthy();
+    expect((screen.getByText('Money received').closest('button') as HTMLButtonElement).disabled).toBe(true);
+    lines = [LINE, SPLIT, OTHER];
   });
 
   test('shows the gross the bank actually credited when it split the payout', () => {

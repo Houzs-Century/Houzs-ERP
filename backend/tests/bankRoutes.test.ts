@@ -383,7 +383,114 @@ describe('the matcher decision survives the round trip', () => {
     for (const l of detail.lines.filter((x: any) => x.kind === 'PAYOUT')) {
       const res = await post(app, `/bank/lines/${l.id}/receipt`, { batchId: l.matched_batch_id });
       expect(res.status, `line ${l.line_no}`).toBe(200);
-      expect((await res.json() as any).outstandingSen).toBe(0);
+      expect((await res.json() as any).results[0].outstandingSen).toBe(0);
     }
+  });
+});
+
+/* One credit, several statements. Public Bank's ordinary payout — one advice
+   for three trading days — and the shape the owner named on the merchant side:
+   顾客可能刷一次卡，但是还两个单. Before this the operator was told his credit was
+   too big for the statement he picked, and given no way to do the right thing. */
+describe('splitting one credit across several statements', () => {
+  /* Two reconciled reports owed RM 7,284.48 and RM 871.06; one credit of
+     RM 8,155.54 pays both. */
+  const SPLIT_WORLD = {
+    acc_settlement_batches: [
+      BATCH,
+      { ...BATCH, id: 2, file_name: 'mbb-0808.csv', period_from: '2026-08-08', period_to: '2026-08-08', net_sen: 87106 },
+    ],
+    acc_settlement_rows: [
+      CONFIRMED_ROW,
+      { ...CONFIRMED_ROW, id: 2, batch_id: 2, txn_date: '2026-08-08', net_sen: 87106 },
+    ],
+  };
+  const ONE_CREDIT = [
+    HEAD,
+    row('20260815', '000000000815554', 'CR', 'CR/CARD SALES MN 32409997 DATED 15082026', 'ADVICE1'),
+  ].join('\n');
+
+  const openSplit = async () => {
+    const { app, sb } = harness(SPLIT_WORLD);
+    const up = await (await upload(app, { content: ONE_CREDIT })).json() as any;
+    const detail = await (await app.request(`/bank/statements/${up.statementId}`)).json() as any;
+    return { app, sb, line: detail.lines[0] };
+  };
+
+  test('the upload works out which statements add up, and says so', async () => {
+    const { line } = await openSplit();
+    expect(line.kind).toBe('PAYOUT_SPLIT');
+    expect(line.split).toEqual([{ batchId: 1, amountSen: 728448 }, { batchId: 2, amountSen: 87106 }]);
+    expect(line.note).toMatch(/2 of MBB's reports add up to RM 8,155\.54 exactly/);
+  });
+
+  test('booking it writes one receipt per statement, each with its own entry', async () => {
+    const { app, sb, line } = await openSplit();
+    const res = await post(app, `/bank/lines/${line.id}/receipt`, { allocations: line.split });
+    expect(res.status).toBe(200);
+    const body = await res.json() as any;
+    expect(body.results).toHaveLength(2);
+    expect(body.results.every((r: any) => r.outstandingSen === 0)).toBe(true);
+
+    const receipts = sb.tables.acc_settlement_receipts as Row[];
+    expect(receipts).toHaveLength(2);
+    /* Both carry the BANK's date and reference, and both point back at the one
+       movement they were read from. */
+    expect(receipts.every((r) => r.received_on === '2026-08-15')).toBe(true);
+    expect(receipts.every((r) => r.bank_ref === 'ADVICE1')).toBe(true);
+    expect(receipts.every((r) => Number(r.bank_line_id) === line.id)).toBe(true);
+  });
+
+  /* The same discipline the merchant side applies to a swipe covering two
+     orders: a leftover is a difference, and a difference is what this module
+     exists to surface. */
+  test('refuses a split that does not add up to the credit, naming both numbers', async () => {
+    const { app, sb, line } = await openSplit();
+    const res = await post(app, `/bank/lines/${line.id}/receipt`, {
+      allocations: [{ batchId: 1, amountSen: 728448 }],
+    });
+    expect(res.status).toBe(400);
+    const body = await res.json() as any;
+    expect(body.error).toBe('amount_mismatch');
+    expect(body.message).toMatch(/7284\.48/);
+    expect(body.message).toMatch(/8155\.54/);
+    /* And nothing was booked on the way to refusing. */
+    expect(sb.tables.acc_settlement_receipts).toHaveLength(0);
+  });
+
+  test('refuses the same statement listed twice', async () => {
+    const { app, line } = await openSplit();
+    const res = await post(app, `/bank/lines/${line.id}/receipt`, {
+      allocations: [{ batchId: 1, amountSen: 407777 }, { batchId: 1, amountSen: 407777 }],
+    });
+    expect(res.status).toBe(400);
+    expect((await res.json() as any).error).toBe('duplicate_batch');
+  });
+
+  /* Half a payout booked is worse than none: the second share failing must
+     take the first one back, through the engine, not by deleting it. */
+  test('a share that fails partway takes the earlier ones back', async () => {
+    const { app, sb, line } = await openSplit();
+    const res = await post(app, `/bank/lines/${line.id}/receipt`, {
+      /* Statement 1 can take 7,284.48; statement 2 is owed only 871.06 and is
+         handed 871.06 + 0.01 too much... so overshoot the second deliberately
+         while keeping the total right. */
+      allocations: [{ batchId: 1, amountSen: 728447 }, { batchId: 2, amountSen: 87107 }],
+    });
+    expect(res.status).toBe(409);
+    expect((await res.json() as any).message).toMatch(/taken back/);
+    /* Reversed through the ledger, so the contra exists and the row is gone. */
+    expect(sb.tables.acc_settlement_receipts).toHaveLength(0);
+    expect((sb.tables.journal_entries as Row[]).map((j) => j.source_type)).toContain('SETTLEBANK_REVERSAL');
+  });
+
+  test('undo takes back every receipt the split wrote', async () => {
+    const { app, sb, line } = await openSplit();
+    await post(app, `/bank/lines/${line.id}/receipt`, { allocations: line.split });
+    expect(sb.tables.acc_settlement_receipts).toHaveLength(2);
+
+    const res = await post(app, `/bank/lines/${line.id}/undo`);
+    expect(res.status).toBe(200);
+    expect(sb.tables.acc_settlement_receipts).toHaveLength(0);
   });
 });
