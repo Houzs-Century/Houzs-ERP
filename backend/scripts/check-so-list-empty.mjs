@@ -343,6 +343,37 @@ try {
     }
   }
 
+
+  // 13) The last DB-observable levers that can zero a service_role read without
+  //     any role/RLS involvement: (a) a PostgREST pre-request hook or a role
+  //     GUC (row_security / search_path / a SET) on the roles PostgREST uses;
+  //     (b) the app's OWN extra predicates — salesperson scope resolving to the
+  //     MATCH_NOTHING sentinel, or a company_id with no rows.
+  const rolcfg = await pg`
+    SELECT rolname, rolconfig FROM pg_roles
+     WHERE rolname IN ('authenticator','service_role','authenticated','anon')
+     ORDER BY rolname`;
+  notice("---- role GUCs (rolconfig) — a SET row_security / search_path / pre_request would show here ----");
+  for (const r of rolcfg) notice(`role ${r.rolname}: rolconfig=${r.rolconfig ? r.rolconfig.join(" | ") : "(none)"}`);
+  const [pre] = await pg`SELECT current_setting('pgrst.db_pre_request', true) AS f`;
+  notice(`pgrst.db_pre_request = ${pre.f ?? "(unset)"}`);
+  // exposed schemas PostgREST serves (db-schemas)
+  const [sch] = await pg`SELECT current_setting('pgrst.db_schemas', true) AS s`;
+  notice(`pgrst.db_schemas = ${sch.s ?? "(unset)"}`);
+
+  // Reproduce the app's OWN predicates as service_role.
+  notice("---- AS service_role, the app's own extra predicates ----");
+  try {
+    await pg.unsafe("SET ROLE service_role");
+    const perCo = await pg`SELECT company_id, count(*)::int AS n FROM scm.mfg_sales_orders_with_payment_totals GROUP BY company_id ORDER BY company_id`;
+    for (const r of perCo) notice(`AS service_role: company_id=${r.company_id} -> ${r.n}`);
+    const [mn] = await pg`SELECT count(*)::int AS n FROM scm.mfg_sales_orders_with_payment_totals WHERE company_id=1 AND salesperson_id = '00000000-0000-0000-0000-000000000000'::uuid`;
+    notice(`AS service_role: company_id=1 AND salesperson_id=MATCH_NOTHING -> ${mn.n}  (this is what a fail-closed sales scope produces)`);
+    const [ip] = await pg`SELECT count(*)::int AS n FROM scm.mfg_sales_orders_with_payment_totals WHERE company_id=1 AND salesperson_id IN ('00000000-0000-0000-0000-000000000000'::uuid)`;
+    notice(`AS service_role: company_id=1 AND salesperson_id IN (MATCH_NOTHING) -> ${ip.n}`);
+  } catch (e) { notice(`AS service_role reproduction ERROR: ${e.code ?? ""} ${e.message}`); }
+  finally { await pg.unsafe("RESET ROLE"); }
+
 } finally {
   await pg.end({ timeout: 5 });
 }
