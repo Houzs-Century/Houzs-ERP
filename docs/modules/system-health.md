@@ -97,7 +97,7 @@ cannot find that. A sentinel can.
 | exit | meaning |
 | --- | --- |
 | 0 | checkpoint current, rows arriving |
-| 1 | ALARM — checkpoint stale past 2 days, or nothing arrived in 30 days, or the checkpoint is missing/unparseable |
+| 1 | ALARM — checkpoint stale past 2 days, or nothing arrived in 30 days, or the checkpoint is missing/unparseable/in the future |
 | 2 | CANNOT ANSWER — no database, the query failed, or the mirror holds no timestamped rows at all |
 
 **Exit 2 fails the job on purpose.** A sentinel that cannot see must not report
@@ -113,6 +113,16 @@ taken from the health check rather than invented, so the two cannot drift apart.
 The 30-day arrival limit is deliberately far looser than any plausible quiet
 period and has NOT been calibrated against this book's live arrival distribution
 — the query to calibrate it is in the script's header.
+
+**`pull_checkpoint` carries no timezone**, and the first live dispatch is how
+that was learned: it printed `-1d behind`, because the stored
+`2026-08-19T20:35:34` was read as UTC while it is MYT — 7.5 hours "ahead" for a
+checkpoint half an hour old. The zone is NOT hardcoded from that one sample.
+Instead the comparison tolerates any real UTC offset (-12..+14), so up to 14h of
+slop rides on the 2-day limit, which really fires between ~1.4 and ~2.6 days. A
+checkpoint further ahead than any offset explains is a separate alarm, because
+the next `getSince()` would ask for a window starting in the future and skip
+everything before it.
 
 **What the sentinel cannot see:** whether the HISTORY is complete. The
 incremental pull asks `getSince(checkpoint)`, so an order last modified before
