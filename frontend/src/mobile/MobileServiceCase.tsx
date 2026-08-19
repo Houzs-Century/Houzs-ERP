@@ -263,9 +263,7 @@ function useSoSearch(q: string): { results: SoHit[]; loading: boolean; error: st
     queryFn: ({ signal }) =>
       api.get<{ results?: SoHit[] }>(`/api/assr/search-so?q=${encodeURIComponent(needle)}`, { signal }),
   });
-  // Error used to be DROPPED: a 403 read as 'No matching sales orders'. BUG-HISTORY 2026-08-19.
-  const msg = error ? ((error as Error)?.message || "Could not search sales orders — try again.") : null;
-  return { results: data?.results ?? [], loading: isFetching, error: msg };
+  return { results: data?.results ?? [], loading: isFetching, error: error ? ((error as Error)?.message || "Could not search sales orders — try again.") : null };
 }
 
 const cap = (s: string) => (s ? s.charAt(0).toUpperCase() + s.slice(1) : s);
