@@ -229,6 +229,27 @@ pos.post("/verify-pin", auth, async (c) => {
 // WITHOUT one (director / owner / coordinator) get the whole company. Both used
 // to render under the word "SHOWROOM", so a director saw company-wide figures
 // under a showroom heading and no two people's tiles agreed.
+/** May this caller point the Personal KPI tile at ANOTHER salesperson?
+ *
+ *  EXPORTED AND PURE so the test EXECUTES it. Its two predecessors both died
+ *  in ways a source-text pin cannot see: canViewAllSales(c) was called with a
+ *  context whose houzsUser is never set on this route (gate permanently
+ *  closed), and then hasPermission was handed the USER where it takes the
+ *  PERMISSIONS — `user.has is not a function`, a 500 on every sales-stats read,
+ *  both tiles "Couldn't load" (2026-08-20, reported with a screenshot both
+ *  times). An `as never` cast silenced the compiler on the second one. The
+ *  test now calls this function with real shapes instead of matching its
+ *  spelling. */
+export function canTargetSalesperson(
+  caller: { position_name?: string | null; permissions_set?: ReadonlySet<string>; permissions?: ReadonlyArray<string> } | null | undefined,
+  wantSalesperson: string,
+): boolean {
+  if (wantSalesperson === "" || wantSalesperson === "all") return false;
+  const perms = caller?.permissions_set ?? caller?.permissions ?? [];
+  return hasPermission(perms, "scm.so.view_all")
+    || isDirectorUser({ position_name: caller?.position_name ?? null, permissions_set: caller?.permissions_set } as never);
+}
+
 const KPI_MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
 pos.get("/sales-stats", auth, companyContext, async (c) => {
   const DB = c.env.DB;
@@ -254,9 +275,14 @@ pos.get("/sales-stats", auth, companyContext, async (c) => {
      A miss still falls back to the caller rather than erroring — the card is a
      dashboard tile, and a 500 here would blank the whole page. */
   const wantSalesperson = (c.req.query("salesperson") || "").trim();
-  const caller = c.get("user") as { position_name?: string | null; permissions_set?: unknown } | undefined;
-  const mayTarget = wantSalesperson !== "" && wantSalesperson !== "all"
-    && (hasPermission(caller as never, "scm.so.view_all") || isDirectorUser(caller as never));
+  /* Vars types `user` as { id } only; the runtime object is the full session
+     user (services/auth.ts getUserBySession — permissions_set: Set<string>,
+     position_name). Widening cast, not `as never`: the parameter type still
+     checks every property we read. */
+  const mayTarget = canTargetSalesperson(
+    c.get("user") as Parameters<typeof canTargetSalesperson>[0],
+    wantSalesperson,
+  );
   const UUID_RX = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const target = mayTarget
     ? await DB.prepare(UUID_RX.test(wantSalesperson)
