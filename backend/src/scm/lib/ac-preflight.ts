@@ -100,6 +100,7 @@ import {
   MissingSalesLocationError,
   MissingCreditorError,
   Desc2TooLongError,
+  AcSoToPoAlignmentError,
 } from '../../services/autocount-writeback';
 import { ItemCodeError } from '../../services/autocount-item-code';
 import { AcReadError } from './autocount-read';
@@ -304,6 +305,21 @@ export function acNotSentProblems(e: unknown, docKind: AcDocKind = 'document'): 
       `${saved}: the accounts hold a sofa build as ONE line, and this build cannot be folded into `
       + 'one without inventing text nobody chose. Ask for this build to be checked before it is '
       + 'billed.',
+      { field: 'Sofa build' },
+    );
+  }
+
+  if (e instanceof AcSoToPoAlignmentError) {
+    /* The operator's version of "DtlKeys and Details are matched by position".
+       They cannot act on index alignment, and they should not have to: what
+       they can act on is that this order was raised FROM a sales order whose
+       sofa build the accounts already hold folded, while the ERP's record of
+       that is only half there. */
+    return problem(
+      `${saved}: it was raised from a sales order, and one of its sofa builds does not line up `
+      + 'with how the accounts already hold that build — sending it would put the supplier cost '
+      + 'on the wrong line. Ask for this build\'s line keys to be checked, then re-raise the '
+      + 'order.',
       { field: 'Sofa build' },
     );
   }

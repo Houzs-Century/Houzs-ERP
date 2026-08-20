@@ -1238,6 +1238,19 @@ rows — `Mrp.tsx`'s `groupBySo` keys on `` `${warehouseId ?? WH_NONE}|${soDocNo
 — and the split was in the backend's own allocation, not only on screen.
 
 
+**A goods line written with NO warehouse now says so** (2026-08-20).
+`lib/null-warehouse-signal.ts::signalNullWarehouseRows` is called at all three
+SO-line write paths — create (`POST /`), the sofa-split add-line and the
+single-row add-line (both `PATCH /:docNo/items`) — and LOGS (never throws)
+under the greppable `[null-warehouse]` tag, naming the route, document and
+item. It exists because a null here is SILENT downstream: allocation buckets
+by (warehouse, item, variant), so the line sits at PENDING with no incoming
+PO while its goods sit received in the right bucket — 18 such lines from
+three different writers were found on 2026-08-18, none of which said anything.
+Service lines are excluded (they hold no stock; a guard that cries on every
+delivery-fee line is one somebody turns off). The hourly do-link sentinel
+counts the same shape, baseline 10 (the addressless orders below).
+
 Also relevant: `apply_so_header_cas` (mig 0173) rebinds `warehouse_id` on the
 order's **NULL lines only** when the header's warehouse changes, while the
 approved-amendment path (`so-revision.ts`) rebinds every non-cancelled line.

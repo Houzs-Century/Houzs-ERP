@@ -609,6 +609,30 @@ throughout — it logs and skips, because the primary write already committed.
 
 ---
 
+### The Main Supplier column, and the convert's `missing_bindings`
+
+Both read `supplier_material_bindings` for every code in the picker, and both
+now go through `readMfgProductBindings`
+(`backend/src/scm/lib/supplier-bindings.ts`) rather than their own query —
+`backend/src/scm/routes/mfg-purchase-orders.ts` at the SO->PO picker, the
+convert body and the append-to-PO pricing path, plus `reviseBoundPo` in
+`backend/src/scm/lib/so-revision.ts`.
+
+The two failures are not the same size. On the picker a binding that does not
+arrive is a blank **"— none —"** cell. In the convert body it is a **400**: the
+SKU comes back as `missing_bindings`, i.e. the operator is told a bound SKU
+"isn't bound to a supplier yet" and cannot raise the order at all. The shared
+reader chunks the IN-list by URL bytes, pages past PostgREST's 1,000-row
+response cap, and orders totally (`is_main_supplier DESC, item_code, id`) — the
+last of which is what decides which alternate wins when a code is bound to
+several suppliers.
+
+A supplier's own detail page (`suppliers.get('/:id')`,
+`backend/src/scm/routes/suppliers.ts`) had no `.range()` at all and is now paged
+by `paginateAll` for the same reason: production carries 2,660 bindings across
+43 suppliers, so a large supplier could show a subset of its own SKUs and report
+nothing.
+
 ## 4. Database
 
 Schema `scm`. Baseline DDL: `backend/scripts/scm-schema/2990s-full-schema.sql:1150`
@@ -914,15 +938,28 @@ is ABSENT when the order composed cleanly. `POST /from-sos` carries it per PO
 inside `created[]`, because that route raises several and which one was refused
 is the whole point.
 
-**It never refuses the save**, and that is a decision, not an omission. Both live
-causes on this side need master data a buyer does not own:
+**It never refuses the save**, and that is a decision, not an omission. Every live
+cause on this side needs master data a buyer does not own:
 
 | Cause | What the buyer is told to do |
 |---|---|
 | The ERP code maps to several AutoCount items and this order's supplier owns none of them | raise the order against the supplier the product is actually bought from, or ask for the duplicate AutoCount item to be retired |
 | `scm.suppliers.code` is empty — no AutoCount creditor | ask accounts to give the supplier its creditor code, then re-raise |
+| **Added 2026-08-20** — the order was raised FROM a sales order and one of its sofa builds does not line up with how the accounts already hold that build (`AcSoToPoAlignmentError`) | ask for that build's line keys to be checked, then re-raise |
 
-Blocking either would stop procurement over an accounting-map defect and blame
+That third cause has the same shape as the first two — master data a buyer does
+not own — and it is the only one whose refusal is about the SO-to-PO transfer
+rather than the order's own contents. `docs/modules/autocount-writeback.md`
+§7c3b-i has what "does not line up" means and which sofa build reaches it.
+
+**A refusal is surfaced TWICE and the two lists must agree**: `noteReadFailure`
+(the durable outbox row, for an engineer) and `acNotSentProblems` (the sentence,
+for the buyer) are two `instanceof` chains someone has to remember to extend, and
+both were short of the same class on the day it was added. They are now pinned
+against each other in `backend/src/scm/lib/ac-preflight.test.ts`, which reads the
+two sources and names whichever side is missing a class.
+
+Blocking any of them would stop procurement over an accounting-map defect and blame
 the person who cannot fix it. Measured against the compiled cutover map: 117
 ambiguous ERP codes, all 117 refused under a creditor that owns none of their
 candidates — this is the purchase side's problem alone, because a sales order

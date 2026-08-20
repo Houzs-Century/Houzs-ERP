@@ -48,6 +48,17 @@ import postgres from "postgres";
    this sentinel exists to report. */
 const BASELINE_ORPHANS = 1;
 
+/* BASELINE = goods lines that carry NO warehouse and therefore can never be
+   allocated stock (allocation buckets by warehouse+item+variant). Ten on
+   2026-08-18, every one on a 2990 order whose header has no state, no
+   sales_location and no city — nothing can derive a warehouse for them, so
+   they wait for a human to assign one. The other eight found that day were
+   repaired from their orders' own sibling warehouse.
+   Same rule as above: this is the count we have an ANSWER for, not a
+   tolerance. A new one means a write path is still dropping the field.
+   Related: lib/null-warehouse-signal.ts logs the path as it happens. */
+const BASELINE_NULL_WAREHOUSE = 10;
+
 const url = process.env.SENTINEL_HOUZS_DB_URL || process.env.DATABASE_URL;
 if (!url) {
   console.error("FAIL: no DATABASE_URL (or SENTINEL_HOUZS_DB_URL). This sentinel does not report health it did not measure.");
@@ -110,6 +121,21 @@ try {
         operation — but printed WITH the orphan count so the two can be
         correlated by eye in one place. If orphans rise and this stayed empty,
         the FK path is falsified and that theory can be retired. */
+  /* 3. Goods lines with no warehouse. A NULL-warehouse line matches no
+        allocation bucket, so it never leaves PENDING and never shows an
+        incoming PO — even when its goods have been received into the right
+        bucket in the right warehouse. Reported 2026-08-18 as "the system did
+        not capture the data"; three separate write paths had produced 18 of
+        them since June, and none of the three said anything at the time. */
+  const [{ nullWarehouse }] = await pg`
+    SELECT COUNT(*)::int AS "nullWarehouse"
+      FROM scm.mfg_sales_order_items s
+      JOIN scm.mfg_sales_orders h ON h.doc_no = s.doc_no
+     WHERE s.cancelled = false
+       AND s.warehouse_id IS NULL
+       AND s.item_group <> 'service'
+       AND h.status::text NOT IN ('CANCELLED','DRAFT')`;
+
   const recentDeletes = await pg`
     SELECT to_char(deleted_at, 'YYYY-MM-DD HH24:MI') AS at, doc_no, item_code,
            COALESCE(jwt_claims->>'email', jwt_claims->>'sub', db_user) AS who,
@@ -128,6 +154,7 @@ try {
   }
   console.log(`unattributable lines (no link, no so_doc_no, stock moved): ${invisible}`);
   console.log(`SO-line deletes in the last 25h: ${recentDeletes.length}`);
+  console.log(`goods lines with no warehouse: ${nullWarehouse} [baseline ${BASELINE_NULL_WAREHOUSE}]`);
   for (const d of recentDeletes) {
     console.log(`  ${d.at}  ${d.doc_no ?? "-"}  ${d.item_code ?? "-"}  by ${d.who ?? "?"}  (${d.application_name ?? "-"})`);
   }
@@ -137,6 +164,14 @@ try {
       `${orphans - BASELINE_ORPHANS} NEW orphaned delivery line(s) since the 2026-08-17 repair ` +
       `(${orphans} total vs baseline ${BASELINE_ORPHANS}). The mechanism that blanks so_item_id is live. ` +
       `Cross-check the SO-line deletes printed above: if none match, the ON DELETE SET NULL FK is NOT the cause.`,
+    );
+  }
+  if (nullWarehouse > BASELINE_NULL_WAREHOUSE) {
+    alarms.push(
+      `${nullWarehouse - BASELINE_NULL_WAREHOUSE} NEW goods line(s) written with no warehouse ` +
+      `(${nullWarehouse} total vs baseline ${BASELINE_NULL_WAREHOUSE}). They can never be allocated stock: ` +
+      `they will sit at PENDING with no incoming PO while their goods sit in the warehouse. ` +
+      `Grep the Worker log for [null-warehouse] — it names the write path, the document and the item.`,
     );
   }
   if (invisible > 0) {
