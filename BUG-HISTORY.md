@@ -1,6 +1,6 @@
 ## A delivery order marked "Loaded" could not be dispatched — it counted its own goods as already delivered [high]
 
-<!-- area: Delivery orders -->
+<!-- area: Delivery, DO, returns -->
 
 **白话.** 一张交货单一旦被标成「已装车 (Loaded)」，就再也按不出货了 —— 按下去只会跳
 错，说「这批货会送超过订单的数量」。其实超送的那一张，就是它自己：系统在算「这张订单
