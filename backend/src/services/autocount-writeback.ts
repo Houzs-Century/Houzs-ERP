@@ -246,6 +246,28 @@ export interface ErpPoHeader {
   agent: string | null;
   ref: string | null;
   notes: string | null;
+  /**
+   * The PURCHASE ORDER'S OWN ship-to warehouse, as a `dbo.Location` code.
+   *
+   * `readPoHeader` resolves it from `scm.purchase_orders.purchase_location_id`
+   * (migration PR #77) through `scm.warehouses.code`, the same id -> code hop
+   * `withLocations` does for the lines.
+   *
+   * IT IS A HEADER FIELD ON BOTH SIDES, which is what an earlier comment here
+   * denied. AutoCount's purchase documents carry `PurchaseLocation`, assigned in
+   * TWO places because the purchase side does not share one header function:
+   * `CreatePo` sets its own master (AcSyncService.cs:934-935) and
+   * `PurchaseHeader` (:2456-2457) is what /so-to-po and the four conversions
+   * apply. `PurchaseHeader`'s own comment records that the ERP "has never been
+   * sent" one, so the book has been defaulting it on every purchase order the
+   * ERP ever wrote. Owner 2026-08-19: 「它的 Purchase Location 也不对」.
+   *
+   * The ERP treats it as the DEFAULT for every line and a line's own
+   * `warehouse_id` OVERRIDES it (outstanding-po-lines.ts:382,
+   * `r.warehouse_id ?? r.po.purchase_location_id`), so `composeCreatePo` passes
+   * it as `defaultLocation` as well as sending it on the header.
+   */
+  purchase_location: string | null;
   linked_ac_docno?: string | null;
 }
 
@@ -378,6 +400,12 @@ export interface AcCreatePoPayload {
   Agent: string | null;
   Ref: string | null;
   Description: string | null;
+  /** See `ErpPoHeader.purchase_location`. OMITTED, never null: BOTH service
+   *  copies gate this one key on `ContainsKey` AND non-empty
+   *  (AcSyncService.cs:934 and :2456) precisely because a blank is its own
+   *  foreign key error, so `composeCreatePo` leaves the key off when the ERP
+   *  has none. */
+  PurchaseLocation?: string;
   UDF: Record<string, string>;
   Details: AcDetail[];
 }
@@ -632,6 +660,41 @@ export class MissingCreditorError extends Error {
       + 'then re-queue the order.',
     );
     this.name = 'MissingCreditorError';
+  }
+}
+
+/**
+ * A /so-to-po whose source keys and cost lines do not line up is REFUSED.
+ *
+ * `composeSoToPo` zips them by index — the Nth key gets the Nth cost — and the
+ * two lists are built by different code from different rows: `poTransferShape`
+ * counts ERP purchase-order lines, `composeDetails` COLLAPSES a sofa build into
+ * a single AutoCount line (divergence D9).
+ *
+ * THE CASE THAT REACHES IT IS THE MIXED ONE, and `collapseSofaLines` calls it
+ * "the dangerous one" itself. A build whose compartments carry NO DtlKeys is
+ * passed through and one whose keys are ALL DISTINCT is left separate — either
+ * way the counts match. MIXED keys mean the account book holds the build folded
+ * while the ERP's record of that is incomplete, so the compartments fold to one
+ * line while the transfer still names one source key per ERP row.
+ *
+ * Nothing downstream catches it. `SoToPo`'s own guard compares the lines it
+ * CREATED against `DtlKeys` (AcSyncService.cs:2382-2384), so a short `Details`
+ * passes it and simply leaves the tail lines carrying the CUSTOMER's price
+ * instead of the supplier's cost — a purchase order that saves, looks right,
+ * and pays the wrong number. Refusing composes nothing and writes a readable
+ * outbox row instead.
+ */
+export class AcSoToPoAlignmentError extends Error {
+  constructor(poNumber: string, keys: number, details: number) {
+    super(
+      `Purchase order ${poNumber} cannot be transferred from its sales order: it names ${keys} `
+      + `source line(s) but composes ${details} cost line(s), and the two are matched by position. `
+      + 'This is what a collapsed sofa build looks like from here — several ERP rows become one '
+      + 'AutoCount line while the transfer still names one key per row. The order can still be '
+      + 'sent as a plain create; nothing has been written to the account book.',
+    );
+    this.name = 'AcSoToPoAlignmentError';
   }
 }
 
@@ -1210,6 +1273,12 @@ export function composeCreatePo(
 ): AcCreatePoPayload {
   const creditorCode = tidy(header.creditor_code);
   if (!creditorCode) throw new MissingCreditorError(header.po_number);
+  /* Through the same map the LINE locations go through — the
+     `bookSpellingOrOwn(..., LOCATION_MAP)` in `composeDetails` below — so the
+     header and its lines cannot end up spelling one warehouse two ways. A line
+     number is deliberately not cited: it is the same file, and every edit to it
+     would move one. */
+  const purchaseLocation = bookSpellingOrOwn(header.purchase_location, LOCATION_MAP);
   return {
     DocNo: header.po_number,
     DocDate: header.po_date,
@@ -1225,16 +1294,44 @@ export function composeCreatePo(
     Agent: tidy(header.agent) ?? AC_PURCHASE_AGENT,
     Ref: header.ref,
     Description: header.notes,
+    /* THE HEADER SHIP-TO WAREHOUSE, and the comment that used to stand where
+       `defaultLocation` is resolved below said the opposite: "a purchase order
+       has no location of its own". Both sides say otherwise.
+
+       AUTOCOUNT: the purchase documents carry `PurchaseLocation`, and it is
+       assigned in TWO places because /create-po does not share a header
+       function with the rest — `CreatePo` sets its own master
+       (AcSyncService.cs:934-935), and `PurchaseHeader` (:2456-2457) is what
+       /so-to-po (:2359) and the four conversions apply. `PurchaseHeader`'s own
+       comment records that the ERP "has never been sent" one, so AutoCount has been
+       defaulting the purchase location on every ERP-written purchase order
+       since the cutover.
+
+       THE ERP: `scm.purchase_orders.purchase_location_id`, which /submit
+       REFUSES a purchase order without (mfg-purchase-orders.ts:1125,
+       `purchase_location_id_required`).
+
+       OMITTED WHEN THE ERP HAS NONE, never sent null: the service's guard is
+       ContainsKey AND non-empty, because a blank PurchaseLocation is a foreign
+       key error rather than an empty field — the same rule the line-level
+       `Location` key follows in composeDetails. */
+    ...(purchaseLocation ? { PurchaseLocation: purchaseLocation } : {}),
     UDF: {},
     /* The creditor is the D10 disambiguator, and a PO always has one. Defaulted
        from the header so no caller can forget it. */
     Details: composeDetails(live(lines), {
       supplierCode: opts.supplierCode ?? header.creditor_code ?? null,
       itemIndex: opts.itemIndex,
-      /* A purchase order has no location of its own — the ship-to warehouse is
-         per LINE (purchase_order_items.warehouse_id). There is nothing to
-         inherit, so a line without one is refused rather than guessed at. */
-      defaultLocation: opts.defaultLocation ?? null,
+      /* A LINE WITHOUT A WAREHOUSE INHERITS THE HEADER'S, which is the ERP's own
+         precedence read the only direction it runs: `warehouse_id ?? po.purchase_location_id`
+         (outstanding-po-lines.ts:382, and `poWarehouseGap` at
+         mfg-purchase-orders.ts:4019 treats a header warehouse as covering every
+         line). Before this, a purchase order the ERP considers complete — header
+         warehouse set, no per-line override — was refused with
+         MissingLocationError, and a line that DID reach the book carried a
+         location the header disagreed with. A line with neither is still
+         refused, because then no one has said where the goods go. */
+      defaultLocation: opts.defaultLocation ?? purchaseLocation,
       requireLocation: true,
     }).details,
   };
@@ -1768,38 +1865,68 @@ export function clearedAcKeys(
 }
 
 /**
- * The `/so-to-po` payload: which sales lines this purchase order buys, and what
- * the ERP agreed to pay for them.
+ * The `/so-to-po` payload: THE SAME MASTER A CREATE WOULD SEND, plus which
+ * sales lines this purchase order buys and what the ERP agreed to pay for them.
  *
- * The per-line values are applied by the service AFTER the transfer, because
- * `AddSOToPOTransferDetail` brings the SALES line across — price included — and
- * a purchase order owes the supplier's cost, not the customer's price.
+ * IT TAKES THE CREATE PAYLOAD, and that is the whole design. This function used
+ * to build a master of its own — `{ DocNo, DtlKeys, Details }` — and every field
+ * `composeCreatePo` grew that this one did not was a field that silently
+ * vanished the moment `poTransferShape` answered `transfer`. It cost two live
+ * failures, each found on a real document and each patched one field at a time:
  *
- * `DtlKeys` and `Details` are index-aligned by construction: both come from the
- * same decision, which refused unless every line mapped 1:1.
+ *   CreditorCode  host 2026-08-17 09:15  `CreditorCode required for /so-to-po`,
+ *                 which AutoCount reported as `FK_PO_DisplayTerm` — the PAYMENT
+ *                 TERM's foreign key, because the term is defaulted from the
+ *                 supplier and there was no supplier.
+ *   DocNo         host 2026-08-17 10:15  the first transfer that ever succeeded
+ *                 landed as `PO-009968` while the ERP calls it `HC-PO-2608-001`.
  *
- * THE ERP NUMBERS THIS DOCUMENT — divergence D5, closed here 2026-08-17 and the
- * last route it was open on. The first `/so-to-po` that ever succeeded landed as
- * `PO-009968` while the ERP calls the same purchase order `HC-PO-2608-001`
- * (host log, 2026-08-17 10:15), because this function returned `{ DtlKeys,
- * Details }` and nothing else. Every other type already carries its own number
- * into the book — `enqueueConvert` closed D5 for the four conversions and
- * `composeCreatePo` has always sent one — so the purchase order was the single
- * document in the chain whose two sides could not be reconciled by anyone.
+ * After both patches FIVE were still missing — DocDate, Agent, Ref, Description
+ * and UDF — and `Description` is `purchase_orders.notes`, which the owner
+ * reported wrong on 2026-08-19. `Agent` is the dangerous one: it carries
+ * `AC_PURCHASE_AGENT` behind `FK_PO_PurchaseAgent`, the same class of foreign
+ * key as the two above.
  *
- * `docNo` is REQUIRED and it is the FIRST parameter, not an option. It decides
- * the document's identity in the account book, and an optional one would mean
- * every caller that says nothing silently reverts to AutoCount's counter with no
- * compile error — which is exactly how this stayed open (CLAUDE.md, "a parameter
- * that DECIDES something is required, never optional").
+ * So the master is SPREAD, not re-listed. A field added to `composeCreatePo`
+ * reaches a transfer without anyone remembering this function exists, which is
+ * the only property that makes a third one-field patch impossible.
+ *
+ * WHAT A TRANSFER GENUINELY OVERRIDES, and the only thing it may:
+ *
+ *   `Details`. A create's detail NAMES the item being bought — ItemCode,
+ *     Description, Desc2, Qty, UnitPrice — because AutoCount holds no line yet.
+ *     A transfer's detail addresses a line AutoCount already made: the SDK's
+ *     `AddSOToPOTransferDetail` brought the sales line across, price and all
+ *     (AcSyncService.cs:2358), and phase two reopens the saved document and
+ *     applies the ERP's COST over the customer's price by `DtlKey`
+ *     (:2391-2411). Those four keys — UnitPrice, Qty, Location, DeliveryDate —
+ *     are the only ones phase two reads, so they are the only ones sent; a
+ *     fifth would be composed, stored, POSTed and dropped by the host, which is
+ *     the exact failure this function's history is made of.
+ *
+ * NOTHING ELSE IS EXCLUDED. `Ref` is carried even though a transfer's is null
+ * by construction (`readPoEnqueueShape` puts the source SO numbers in a
+ * CREATE's Ref because AutoCount has no DocTransfer link to carry them, and
+ * leaves a transfer's alone because it does) — carrying the key costs nothing
+ * and excluding it would be a rule someone has to remember.
+ *
+ * `DtlKeys` and `Details` are index-aligned by construction, and that is
+ * ASSERTED rather than assumed: both come from the same purchase order, but
+ * `composeDetails` COLLAPSES a sofa build into one AutoCount line (D9) while
+ * `poTransferShape` counts ERP rows, so the two can disagree without anything
+ * in between noticing. Misaligned, the Nth key would be given the (N+1)th cost.
+ * See `AcSoToPoAlignmentError` for which sofa build actually reaches it.
  */
 export function composeSoToPo(
-  docNo: string,
+  master: AcCreatePoPayload,
   dtlKeys: readonly number[],
   details: readonly AcDetail[],
-): { DocNo: string; DtlKeys: number[]; Details: Array<Record<string, unknown>> } {
+): Omit<AcCreatePoPayload, 'Details'> & { DtlKeys: number[]; Details: Array<Record<string, unknown>> } {
+  if (dtlKeys.length !== details.length) {
+    throw new AcSoToPoAlignmentError(master.DocNo, dtlKeys.length, details.length);
+  }
   return {
-    DocNo: docNo,
+    ...master,
     DtlKeys: [...dtlKeys],
     Details: details.map((d, i) => ({
       DtlKey: dtlKeys[i],
