@@ -1,14 +1,14 @@
-// READ-ONLY report: purchase invoices whose paid_centi exceeds total_centi.
+// READ-ONLY report: purchase invoices whose paid_sen exceeds total_sen.
 //
 // This script writes NOTHING. It runs SELECTs and prints.
 //
 // WHERE IT CAME FROM: this was scripts/scm-schema/apply-pi-settlement-atomic.mjs,
-// whose job was to hand-apply scm.settle_pi_paid_centi. That function now ships
-// as migration 0147_scm_settle_pi_paid_centi.sql and is applied automatically by
+// whose job was to hand-apply scm.settle_pi_paid_sen. That function now ships
+// as migration 0147_scm_settle_pi_paid_sen.sql and is applied automatically by
 // the deploy, so the apply half is gone. The reconciliation half is not
 // redundant and is kept here.
 //
-// WHY IT STILL MATTERS: the clamp in settle_pi_paid_centi stops NEW
+// WHY IT STILL MATTERS: the clamp in settle_pi_paid_sen stops NEW
 // over-payments. It deliberately does not and must not rewrite history — an
 // invoice already paid past its total is a real discrepancy with a real
 // supplier, and someone has to work out what happened to the money. The rows
@@ -17,7 +17,7 @@
 // flags it on its own.
 //
 // It also reports whether the RPC is actually present, because
-// settlePiPaidCenti silently falls back to the legacy read-then-write loop
+// settlePiPaidSen silently falls back to the legacy read-then-write loop
 // when it is absent — a green deploy is not evidence the function landed.
 //
 // Usage (DATABASE_URL from env, else .dev.vars):
@@ -50,9 +50,9 @@ try {
   const fns = await sql`
     select p.proname, pg_get_function_identity_arguments(p.oid) as args
     from pg_proc p join pg_namespace n on n.oid = p.pronamespace
-    where n.nspname = 'scm' and p.proname = 'settle_pi_paid_centi'`;
+    where n.nspname = 'scm' and p.proname = 'settle_pi_paid_sen'`;
   if (fns.length === 0) {
-    console.log("MISSING  scm.settle_pi_paid_centi — migration 0147 has not been applied to this database.");
+    console.log("MISSING  scm.settle_pi_paid_sen — migration 0147 has not been applied to this database.");
     console.log("         Settlements are running the legacy read-then-write path and can still over-pay.");
     process.exitCode = 3;
   } else {
@@ -60,11 +60,11 @@ try {
   }
 
   const over = await sql`
-    select id, invoice_number, total_centi, paid_centi
+    select id, invoice_number, total_sen, paid_sen
       from scm.purchase_invoices
-     where coalesce(paid_centi, 0) > coalesce(total_centi, 0)
+     where coalesce(paid_sen, 0) > coalesce(total_sen, 0)
        and upper(coalesce(status::text, '')) not in ('DRAFT', 'CANCELLED')
-     order by (paid_centi - total_centi) desc
+     order by (paid_sen - total_sen) desc
      limit 50`;
   if (over.length === 0) {
     console.log("\nNo already-over-paid purchase invoices found.");
@@ -72,7 +72,7 @@ try {
     console.log(`\nALREADY OVER-PAID — ${over.length} purchase invoice(s) need reconciling by hand:`);
     for (const r of over) {
       console.log(
-        `  ${r.invoice_number}  total ${r.total_centi}  paid ${r.paid_centi}  excess ${r.paid_centi - r.total_centi} sen`,
+        `  ${r.invoice_number}  total ${r.total_sen}  paid ${r.paid_sen}  excess ${r.paid_sen - r.total_sen} sen`,
       );
     }
     console.log("\nThese predate the clamp. The clamp does not unwind them — decide per invoice.");

@@ -452,7 +452,7 @@ const ProposalDayCard = ({ day, locked, onToggleLock, lockBusy }: {
       <strong style={{ fontSize: 'var(--fs-14)' }}>{day.date}</strong>
       <span style={{ fontSize: 'var(--fs-12)', padding: '2px 8px', borderRadius: 999, background: 'var(--bg, rgba(0,0,0,0.06))' }}>{groupLabel(day.group)}</span>
       <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-        {day.orders.length} order(s) · {day.sets} sets · {rm(day.revenueCenti)}
+        {day.orders.length} order(s) · {day.sets} sets · {rm(day.revenueSen)}
       </span>
       <div style={{ flex: 1 }} />
       <Button variant={locked ? 'primary' : 'ghost'} size="sm" onClick={onToggleLock} disabled={lockBusy}>

@@ -131,8 +131,8 @@ type HeaderDraft = {
 };
 type LineDraft = {
   qty: number;            // maps to qty_received
-  unitPriceCenti: number;
-  discountCenti: number;
+  unitPriceSen: number;
+  discountSen: number;
   deliveryDate: string | null;
   materialName: string;
   itemGroup: string | null;
@@ -149,15 +149,15 @@ type LineDraft = {
 
 type GrnItemRow = Record<string, unknown> & {
   id: string;
-  material_code: string;
+  item_code: string;
   material_name: string;
   /* Supplier-facing dual-code rule (Commander) — grn_items snapshots the
      supplier's own SKU at receive time; surfaced read-only on the line card. */
   supplier_sku?: string | null;
   qty_received: number;
-  unit_price_centi: number;
-  discount_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen: number;
+  discount_sen?: number;
+  line_total_sen?: number;
   delivery_date?: string | null;
   item_group?: string | null;
   material_kind?: string | null;
@@ -189,8 +189,8 @@ const headerSnapshot = (g: any): HeaderDraft => ({
 
 const lineSnapshot = (it: GrnItemRow): LineDraft => ({
   qty:            it.qty_received,
-  unitPriceCenti: it.unit_price_centi,
-  discountCenti:  it.discount_centi ?? 0,
+  unitPriceSen: it.unit_price_sen,
+  discountSen:  it.discount_sen ?? 0,
   deliveryDate:   it.delivery_date ?? null,
   materialName:   it.description ?? it.material_name ?? '',
   itemGroup:      it.item_group ?? null,
@@ -315,12 +315,12 @@ export const GoodsReceivedDetail = () => {
   const visibleItems = items;
   const lineOf = (it: GrnItemRow): LineDraft => lineDrafts[it.id] ?? lineSnapshot(it);
   const lineTotalOf = (it: GrnItemRow): number => {
-    if (!isEditing) return it.line_total_centi ?? (it.qty_received * it.unit_price_centi - (it.discount_centi ?? 0));
+    if (!isEditing) return it.line_total_sen ?? (it.qty_received * it.unit_price_sen - (it.discount_sen ?? 0));
     const d = lineOf(it);
-    return d.qty * d.unitPriceCenti - d.discountCenti;
+    return d.qty * d.unitPriceSen - d.discountSen;
   };
   const itemsSubtotal = visibleItems.reduce((s, it) => s + lineTotalOf(it), 0);
-  const grandTotal = itemsSubtotal + (grn.tax_centi ?? 0);
+  const grandTotal = itemsSubtotal + (grn.tax_sen ?? 0);
 
   const headerView = headerDraft ?? headerSnapshot(grn);
 
@@ -379,8 +379,8 @@ export const GoodsReceivedDetail = () => {
         const snap = lineSnapshot(it);
         const changed =
           d.qty !== it.qty_received ||
-          d.unitPriceCenti !== it.unit_price_centi ||
-          d.discountCenti !== (it.discount_centi ?? 0) ||
+          d.unitPriceSen !== it.unit_price_sen ||
+          d.discountSen !== (it.discount_sen ?? 0) ||
           (d.deliveryDate ?? null) !== (it.delivery_date ?? null) ||
           /* T12 — identity/variant edits participate in the dirty check. */
           d.materialName !== snap.materialName ||
@@ -394,8 +394,8 @@ export const GoodsReceivedDetail = () => {
         if (changed) {
           await updateItem.mutateAsync({
             grnId: grn.id, itemId: it.id,
-            qty: d.qty, unitPriceCenti: d.unitPriceCenti,
-            discountCenti: d.discountCenti, deliveryDate: d.deliveryDate,
+            qty: d.qty, unitPriceSen: d.unitPriceSen,
+            discountSen: d.discountSen, deliveryDate: d.deliveryDate,
             /* T12 — send the line's identity + variants; useUpdateGrnItem
                forwards them and the server re-buckets inventory + recomputes
                description2. materialName maps to both description + name. */
@@ -598,7 +598,7 @@ export const GoodsReceivedDetail = () => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
             {visibleItems.map((it, idx) => {
               const d = lineOf(it);
-              const lineValueCenti = lineTotalOf(it);
+              const lineValueSen = lineTotalOf(it);
               const variantSummary = buildVariantSummary(it.item_group ?? null, it.variants as Record<string, unknown> | null)
                 || it.description
                 || it.material_name;
@@ -630,7 +630,7 @@ export const GoodsReceivedDetail = () => {
                       {it.item_group && <ItemGroupPill group={it.item_group} />}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                      <span className={styles.previewPrice}>{fmtRm(lineValueCenti, grn.currency)}</span>
+                      <span className={styles.previewPrice}>{fmtRm(lineValueSen, grn.currency)}</span>
                       {/* Remove — Edit mode only. Commander 2026-06-15 — confirm
                           before delete (no more 裸奔). On confirm the line is
                           removed and the server releases the PO's received_qty back. */}
@@ -672,7 +672,7 @@ export const GoodsReceivedDetail = () => {
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Item Code (Internal)</span>
                       <input
-                        type="text" readOnly value={it.material_code}
+                        type="text" readOnly value={it.item_code}
                         className={styles.fieldInput}
                         style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />
@@ -705,8 +705,15 @@ export const GoodsReceivedDetail = () => {
 
                   {/* T12 — variants. View shows the read-only summary; Edit shows
                       the per-category editor (bedframe / sofa) for EXISTING lines,
-                      mirroring New GRN. The server re-buckets inventory on save. */}
-                  {isEditing && (d.itemGroup === 'bedframe' || d.itemGroup === 'sofa') && maint ? (
+                      mirroring New GRN. The server re-buckets inventory on save.
+
+                      Owner 2026-08-20: a line RECEIVED FROM A PO inherits its
+                      variant from that PO — it is what the supplier was told to
+                      make, so it is READ-ONLY here even in Edit (the backend
+                      refuses the change too). To change it, cancel this GRN and
+                      edit the PO. Only a MANUAL line (source_po_number null) keeps
+                      the editor. You always still SEE the variant summary. */}
+                  {isEditing && !it.source_po_number && (d.itemGroup === 'bedframe' || d.itemGroup === 'sofa') && maint ? (
                     <div style={{ background: 'var(--c-cream)', border: '1px solid var(--line)', borderRadius: 'var(--radius-md)', padding: 'var(--space-3)' }}>
                       <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-11)', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--fg-muted)', marginBottom: 'var(--space-2)' }}>{d.itemGroup} Variants</div>
                       {d.itemGroup === 'bedframe' ? (
@@ -749,8 +756,15 @@ export const GoodsReceivedDetail = () => {
                       </div>
                     </div>
                   ) : (
-                    variantSummary && (
-                      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>{variantSummary}</div>
+                    (variantSummary || (isEditing && it.source_po_number)) && (
+                      <div style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
+                        {variantSummary}
+                        {isEditing && it.source_po_number && (
+                          <span style={{ display: 'block', marginTop: 'var(--space-1)', fontSize: 'var(--fs-11)', fontStyle: 'italic' }}>
+                            Variant set on PO {it.source_po_number} — cancel this GRN and edit the PO to change it.
+                          </span>
+                        )}
+                      </div>
                     )
                   )}
 
@@ -807,11 +821,11 @@ export const GoodsReceivedDetail = () => {
                       <span className={styles.fieldLabel}>Unit Price ({grn.currency})</span>
                       {isEditing ? (
                         <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
-                          valueSen={d.unitPriceCenti} disabled={isLocked}
-                          onCommit={(sen) => setLine(it, { unitPriceCenti: sen ?? 0 })} />
+                          valueSen={d.unitPriceSen} disabled={isLocked}
+                          onCommit={(sen) => setLine(it, { unitPriceSen: sen ?? 0 })} />
                       ) : (
                         <input
-                          type="text" readOnly value={fmtRm(it.unit_price_centi, grn.currency)}
+                          type="text" readOnly value={fmtRm(it.unit_price_sen, grn.currency)}
                           className={styles.fieldInput}
                           style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
@@ -822,7 +836,7 @@ export const GoodsReceivedDetail = () => {
                         line the gate cannot fire, and a permanent "received
                         free" tick next to every line is exactly the kind of
                         control people learn to tick without reading. */}
-                    {(isEditing ? d.unitPriceCenti : it.unit_price_centi) === 0 && (
+                    {(isEditing ? d.unitPriceSen : it.unit_price_sen) === 0 && (
                       <label className={styles.field}>
                         <span className={styles.fieldLabel}>Received free</span>
                         {isEditing ? (
@@ -852,12 +866,12 @@ export const GoodsReceivedDetail = () => {
                       <span className={styles.fieldLabel}>Discount</span>
                       {isEditing ? (
                         <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
-                          valueSen={d.discountCenti} disabled={isLocked}
-                          onCommit={(sen) => setLine(it, { discountCenti: sen ?? 0 })} />
+                          valueSen={d.discountSen} disabled={isLocked}
+                          onCommit={(sen) => setLine(it, { discountSen: sen ?? 0 })} />
                       ) : (
                         <input
                           type="text" readOnly
-                          value={(it.discount_centi ?? 0) > 0 ? fmtRm(it.discount_centi, grn.currency) : '—'}
+                          value={(it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen, grn.currency) : '—'}
                           className={styles.fieldInput}
                           style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />

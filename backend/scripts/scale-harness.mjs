@@ -346,13 +346,13 @@ async function postgresHarness() {
       }
     }
     const paid = await sql.unsafe(`
-      SELECT company_id, doc_no, local_total_centi, paid_total_centi, balance_centi_live
+      SELECT company_id, doc_no, local_total_sen, paid_total_sen, balance_sen_live
         FROM scm.mfg_sales_orders_with_payment_totals
        WHERE doc_no IN ('C1-SO-2607-000004', 'C2-SO-2607-000004')
        ORDER BY company_id
     `);
     validateRows("correctness:payment-view", paid, 2, (rows) => {
-      if (rows.some((r) => Number(r.local_total_centi) !== 10_000 || Number(r.paid_total_centi) !== 1_000 || Number(r.balance_centi_live) !== 9_000)) {
+      if (rows.some((r) => Number(r.local_total_sen) !== 10_000 || Number(r.paid_total_sen) !== 1_000 || Number(r.balance_sen_live) !== 9_000)) {
         throw new Error("payment totals view produced incorrect values");
       }
     });

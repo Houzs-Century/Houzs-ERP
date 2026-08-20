@@ -207,7 +207,7 @@ the money version of this shape, and it is closed on all three write paths — s
 `docs/unlinked-line-duplicate-coe.md` §5a.
 
 **3. On this side of the chain the same edit-path door is still open.**
-`PATCH /grns/:id/items/:itemId` rewrites a line's `material_code` and never calls
+`PATCH /grns/:id/items/:itemId` rewrites a line's `item_code` and never calls
 `findUnlinkedPoLines`, so a receipt line added for a material the PO does not carry
 (correctly allowed) can afterwards be retyped onto one it does — the refused shape,
 assembled in two legal steps, with `purchase_order_item_id` still null so
@@ -246,7 +246,7 @@ The `asDraft` flag is the only way to create a draft: `POST /` with
    - Legacy (`:854-862`): `order received_at desc`, `.limit(500)`, optional
      `status` / `supplierId`, `scopeToCompany`.
    - Paginated (`:863-923`): sort whitelist
-     `received_at | grn_number | status | total_centi` (`:869`) + `grn_number`
+     `received_at | grn_number | status | total_sen` (`:869`) + `grn_number`
      tiebreaker; bucket resolution via `GRN_STATUS_BUCKETS` (`:827-831`); `q`
      ilikes over `grn_number, delivery_note_ref, notes` only (`:892` — supplier
      name and PO number are embedded resources); `from`/`to` on `received_at`.
@@ -261,9 +261,9 @@ The `asDraft` flag is the only way to create a draft: `POST /` with
    - `computeGrnFlags` (`:815-821`) turns the lines into `has_children`,
      `fully_invoiced`, `fully_returned`; the downstream map rolls up into a deduped
      per-GRN `downstream` doc-number list (`:959-973`).
-4. **Assemble** (`:974-980`) — `total_centi` is the **stored header value**, not a
+4. **Assemble** (`:974-980`) — `total_sen` is the **stored header value**, not a
    re-sum of the lines. The comment at `:926-933` explains why: the old per-line
-   `qty_accepted * unit_price` sum ignored `discount_centi`, so the list Total
+   `qty_accepted * unit_price` sum ignored `discount_sen`, so the list Total
    drifted from the detail Total. Each GRN also carries `assigned_sos` and
    **`delivered_dos`** — **since 2026-08-02 rolled up from the parent PO's
    PER-SKU data RESTRICTED to the GRN's OWN line codes**
@@ -290,7 +290,7 @@ Called by the confirm handler (`:1733`), by `POST /` on the non-draft path
    to the first warehouse (CHINA) and silently received PO-bound goods into the
    wrong one, so MRP for the real warehouse still showed a shortage.
 4. **FX** (`:393-400`). Line prices are in the GRN's own currency; the FIFO lot
-   must carry MYR, so `unit_cost_sen = toMyrSen(unit_price_centi, exchange_rate)`.
+   must carry MYR, so `unit_cost_sen = toMyrSen(unit_price_sen, exchange_rate)`.
    For an MYR GRN the rate is 1 and this is a byte-for-byte no-op.
    **R2 rate guard (audit `docs/inventory-costing-integrity-audit.md`).** Create
    now REJECTS a non-MYR GRN whose currency has no positive master rate and no
@@ -303,7 +303,7 @@ Called by the confirm handler (`:1733`), by `POST /` on the non-draft path
 5. **Landed-charge allocation** (`:401-411`). A `service` line (freight — no
    supplier, just description + amount) creates **no** inventory movement; its
    amount is pooled and spread across the goods lines by QTY / VALUE / CBM per the
-   header `allocation_method`, persisted as `allocated_charge_centi`.
+   header `allocation_method`, persisted as `allocated_charge_sen`.
 6. **The IN movements** (`:412-448`) — see §5.
 7. **Three post-receipt reconciles**, all best-effort, all after the IN:
    `reconcileDropshipBatches` (`:460`), `reconcileUncostedOuts` (`:492`, the
@@ -342,14 +342,14 @@ Called by the confirm handler (`:1733`), by `POST /` on the non-draft path
 Schema `scm`. Baseline DDL `backend/scripts/scm-schema/2990s-full-schema.sql:371`
 (`grns`) and `:335` (`grn_items`); the live tables carry columns added later
 (`warehouse_id`, `exchange_rate`, `allocation_method`, `company_id`,
-`invoiced_qty` / `returned_qty`, `rack_id`, `allocated_charge_centi`). The
+`invoiced_qty` / `returned_qty`, `rack_id`, `allocated_charge_sen`). The
 authoritative in-code lists are `HEADER` (`grns.ts:529-534`) and `ITEM` (`:535-549`).
 
 | Table | Role |
 |-------|------|
-| `scm.grns` | GRN header. `grn_number` (UNIQUE), `purchase_order_id`, `supplier_id`, **`warehouse_id`** (where the IN lands), `received_at`, `delivery_note_ref`, `status`, `currency`, **`exchange_rate`**, **`allocation_method`**, `subtotal_centi` / `tax_centi` / `total_centi`, `posted_at`, `company_id`. |
-| `scm.grn_items` | GRN lines. `purchase_order_item_id` (the PO link that drives `received_qty`, the batch and the receiving warehouse), `material_kind/code/name`, `supplier_sku`, `qty_received`, **`qty_accepted`** (the qty that actually becomes stock), `qty_rejected`, `rejection_reason`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, **`allocated_charge_centi`**, **`invoiced_qty`** / **`returned_qty`** (downstream consumption), `delivery_date`, `rack_id`, variant columns. |
-| `scm.inventory_movements` | Where the IN lands: `movement_type='IN'`, `source_doc_type='GRN'`, `source_doc_id`, `source_doc_no`, `warehouse_id`, `product_code`, `variant_key`, `unit_cost_sen`, **`batch_no`** (= the source PO number). |
+| `scm.grns` | GRN header. `grn_number` (UNIQUE), `purchase_order_id`, `supplier_id`, **`warehouse_id`** (where the IN lands), `received_at`, `delivery_note_ref`, `status`, `currency`, **`exchange_rate`**, **`allocation_method`**, `subtotal_sen` / `tax_sen` / `total_sen`, `posted_at`, `company_id`. |
+| `scm.grn_items` | GRN lines. `purchase_order_item_id` (the PO link that drives `received_qty`, the batch and the receiving warehouse), `material_kind/code/name`, `supplier_sku`, `qty_received`, **`qty_accepted`** (the qty that actually becomes stock), `qty_rejected`, `rejection_reason`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, **`allocated_charge_sen`**, **`invoiced_qty`** / **`returned_qty`** (downstream consumption), `delivery_date`, `rack_id`, variant columns. |
+| `scm.inventory_movements` | Where the IN lands: `movement_type='IN'`, `source_doc_type='GRN'`, `source_doc_id`, `source_doc_no`, `warehouse_id`, `item_code`, `variant_key`, `unit_cost_sen`, **`batch_no`** (= the source PO number). |
 | `scm.inventory_balances` | Read by `grnReverseWouldGoNegative` (`:788-792`) to decide whether a reversal is safe. |
 | `scm.purchase_order_items` | Upstream: `received_qty` is written by this module (`recomputePoReceived`, `:672`). |
 | `scm.purchase_invoice_items` / `scm.purchase_return_items` | Downstream: they draw on `grn_item_id`, which is what moves `invoiced_qty` / `returned_qty`. |
@@ -618,9 +618,9 @@ Everything is integer sen. The GRN is where a purchase's cost becomes the
 | `currency` | header | Copied from the source PO. |
 | **`exchange_rate`** | header | MYR per 1 unit of the GRN currency; 1 for MYR. Set at create (`resolveGrnFx`, `:241`), editable on the header PATCH — and changing it triggers `recostFromGrn` (`:2356`). **The PO carries no rate; the GRN is where FX enters the money chain.** A foreign GRN with no positive master rate and no operator rate is now REFUSED at create (`422 foreign_rate_unset`, R2 guard) rather than stored at 1. |
 | `allocation_method` | header | QTY / VALUE / CBM basis for spreading freight. `normalizeAllocationMethod` (`:408`). |
-| `unit_price_centi` | line | In the **GRN's own currency**, not MYR. Live while the GRN is editable. |
-| `discount_centi`, `line_total_centi` | line | Live; `recomputeGrnTotals` (`:566`) sums `line_total_centi` into `subtotal_centi` = `total_centi` (a GRN carries no tax). |
-| **`allocated_charge_centi`** | line | The freight share folded into this goods line. Written by `computeAndStoreGrnAllocation` (`:272`) at post, recomputed by `reallocateGrnCharges` (`:319`). |
+| `unit_price_sen` | line | In the **GRN's own currency**, not MYR. Live while the GRN is editable. |
+| `discount_sen`, `line_total_sen` | line | Live; `recomputeGrnTotals` (`:566`) sums `line_total_sen` into `subtotal_sen` = `total_sen` (a GRN carries no tax). |
+| **`allocated_charge_sen`** | line | The freight share folded into this goods line. Written by `computeAndStoreGrnAllocation` (`:272`) at post, recomputed by `reallocateGrnCharges` (`:319`). |
 | `unit_cost_sen` on the movement / FIFO lot | `inventory_movements` | **Snapshotted at post**: `landedUnitCostMyr` = FX-converted base + per-unit allocated freight (`:434-435`). This is the lot cost the whole downstream margin chain draws on. |
 | `qty_accepted` | line | The qty that becomes stock. `qty_received` and `qty_rejected` are record-keeping; only `qty_accepted` produces a movement (`:422`). |
 | `invoiced_qty`, `returned_qty` | line | Written by the downstream PI / PR. They are the lock (§6) and they net out of `received_qty` (`:684-704`). |
@@ -644,6 +644,76 @@ failed read leaves the header unchanged instead of zeroing it.
 
 ---
 
+## 7b. The AutoCount outbox helper — and why its client is explicit
+
+`queueAcGrnEdit` is the thin wrapper every GRN write uses to tell AutoCount the
+document changed. Four call sites: the header PATCH, line add, line edit, line
+delete.
+
+It lives in **`backend/src/scm/lib/ac-grn-outbox.ts`**, not in `grns.ts`. It was
+moved out on 2026-08-20 because the file-size ratchet refused the growth its
+explanatory comment added — and the gate's own message names moving new code
+into a module as the way out, which is the better answer anyway: the next GRN
+route to be converted imports the same helper instead of re-deriving the rule.
+
+**Its signature is `(c, sb, id, retire)` and the `sb` is REQUIRED.** It used to
+read `enqueueEdit(c.get('supabase'), …)` — it reached past its caller for the
+ordinary PostgREST client.
+
+That is invisible and harmless while every caller is an ordinary route body. It
+stops being harmless the moment a caller runs inside `runScmPgCommand`: the GRN
+row would be written INSIDE the transaction while the outbox row committed
+OUTSIDE it, so a rollback leaves AutoCount instructed to edit a line that still
+exists. The two must land together or not at all.
+
+Required rather than optional is deliberate, per `CLAUDE.md`: a parameter that
+DECIDES something is never optional. This one decides which transaction the row
+belongs to, and optional would let a future transactional caller silently keep
+the wrong client with no compile error — the `optional-param-noop` class at the
+top of `BUG-HISTORY.md`.
+
+Two checks watch this and both have already fired on it:
+`backend/tests/autocountWritebackCells.test.ts` pins the ARGUMENTS of all four
+call sites (a signature change cannot slip past), and `audit:ac-coverage`
+regenerates `docs/generated/autocount-coverage.md` from where the calls actually
+live.
+
+Background: `docs/ALLOCATION-DURABILITY-PLAN.md`.
+
+## 7c. Line DELETE runs in a TRANSACTION — the first GRN route that does
+
+`DELETE /:id/items/:itemId` is wrapped in `runScmPgCommand`, so everything it
+writes — the line delete, the reversing stock OUT, the entity audit, the
+AutoCount outbox row and the SO-allocation recompute request — **commits
+together or not at all**.
+
+**What that fixes.** The recompute used to be a best-effort call after the
+write: `recomputeSoStockAllocation(sb)` in a try/catch. A Worker that died
+between the stock reversal and that call left stock moved and SO lines still
+marked READY, with **no queue row and no retry** — wrong, silently, until an
+unrelated mutation happened to sweep. Now the queue row is written by
+`scheduleStockAllocationAfterCommand` inside the same transaction, so that state
+is unreachable.
+
+**What it costs.** `runScmPgCommand` answers **503 `scm_pg_command_required`**
+where `DATABASE_URL` is absent. Deliberate: refusing is the honest failure when
+the alternative is half-writing a stock reversal.
+
+**Where the body lives.** In `deleteGrnLineCommandHandler`, above the route,
+which is now one line. Two tests anchor on that function name rather than on the
+route — `autocountWritebackCells.test.ts` for the outbox row and the retired-key
+read.
+
+**Proof.** `backend/tests-pg/grnLineDeleteAtomicity.pg.test.ts` drives real
+Postgres: commit leaves the line gone AND the request queued; a throw after the
+enqueue leaves **neither**; a throw before it leaves the line intact; and the
+queue stays a singleton across two deletes.
+
+**The other five GRN routes are unchanged** and still best-effort — header
+PATCH, line add, line edit, and the two create paths, with `postGrnHandler`
+deliberately last because it is the largest handler in the file. One PR each.
+`docs/ALLOCATION-DURABILITY-PLAN.md`.
+
 ## 8. Desktop and mobile files that must change together
 
 | Concern | Desktop | Mobile |
@@ -663,7 +733,7 @@ Optimized:
 - Detail loads header + items in one `Promise.all` (`:1175-1178`).
 - The list's status counts are four `head:true` counts in one `Promise.all`
   (`:911-916`).
-- `total_centi` on the list is the stored header value, not a re-sum.
+- `total_sen` on the list is the stored header value, not a re-sum.
 - Desktop list is server-paginated (50/page) with server-side search, sort and
   status counts.
 
@@ -726,3 +796,26 @@ inventory: `docs/generated/`.
 How this document's lines relate to the SO / PO / GRN / DO it was copied from,
 which columns the migrated writer did and did not copy, and what a correction
 applied upstream does NOT reach: `docs/sofa-document-chain-map.md`.
+
+## The transfer says at SAVE time what it could not carry (2026-08-20)
+
+This document reaches AutoCount by **TRANSFER**, not by a create, and the
+transfer route applies a **strictly narrower** set of header fields than an edit
+does — `SalesHeader` / `PurchaseHeader` only, plus one extra assignment on each
+purchase arm. So the account book can hold this document and still be missing
+fields it has: until 2026-08-20 the conversion payload carried the ERP's number
+and the account and nothing else, so every one of these landed under the DRAIN's
+date with a blanked reference.
+
+The payload now derives from `AcDownstreamSpec.facts` — the ONE description of
+this document, projected onto the keys this route can apply — so a field added
+there reaches the transfer with no further edit. What it still cannot carry, or
+what the ERP has no value for, is **said on the save**: the create handler
+returns `acNotSent` on its 201 and the New screen calls `notifyAcNotSent` before
+navigating, exactly as the sales- and purchase-order creates do (#2499). The
+problems carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and their title says the
+document ARRIVED and part of it did not — the other wording would send someone
+to raise it a second time into a book that already holds it. It never blocks.
+
+Full reasoning, and the per-field table of what each conversion used to drop:
+`docs/modules/autocount-writeback.md` §7c5.

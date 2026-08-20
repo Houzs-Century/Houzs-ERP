@@ -207,14 +207,14 @@ async function scanGoodsReceipts() {
   const family = await pg`
     SELECT g.id, g.grn_number AS doc_number, g.status, g.received_at AS doc_date,
            po.po_number AS parent_no,
-           gi.material_code AS item_code, gi.qty_accepted AS qty,
+           gi.item_code AS item_code, gi.qty_accepted AS qty,
            gi.purchase_order_item_id AS link_id
       FROM scm.grns g
       JOIN scm.purchase_orders po ON po.id = g.purchase_order_id
       JOIN scm.grn_items gi       ON gi.grn_id = g.id
      WHERE po.po_number IN ${pg(poNos)}
        AND g.status IS DISTINCT FROM 'CANCELLED'
-     ORDER BY po.po_number, g.received_at, gi.material_code
+     ORDER BY po.po_number, g.received_at, gi.item_code
   `;
 
   report({

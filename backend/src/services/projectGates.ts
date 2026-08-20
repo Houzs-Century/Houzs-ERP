@@ -53,9 +53,10 @@ export function isDefectRegionState(state: string | null | undefined): boolean {
  *  null when the decision may proceed. An approver with NO `user_brands` rows
  *  (Peter, HQ, the owner) is unrestricted — so this narrows only the people it
  *  is explicitly configured for and can never lock out an existing approver.
- *  Reuses `user_brands`, the per-user brand allow-list the app already keeps;
- *  it does not affect what an unscoped director can SEE (getProjectScope only
- *  applies brand_scope to scope_to_pic reps). */
+ *  Reuses `user_brands`, the per-user brand allow-list the app already keeps.
+ *  This is the approval-lane brand split only — it narrows WHICH brands'
+ *  approvals a configured director sees; it does NOT affect project
+ *  visibility, which is no longer brand-scoped at all (ACL removed 2026-08-19). */
 export async function approverBrandBlocked(
   env: Env,
   userId: number | null | undefined,

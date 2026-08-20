@@ -170,7 +170,17 @@ export function DateField({
         value={value || ''}
         min={min}
         max={max}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          // A calendar pick is a COMPLETED entry, but it lands on this hidden
+          // input — the visible text box never focuses on this path, so it
+          // never blurs, and a blur-committing host (InlineEdit saves on blur)
+          // silently dropped the pick (2026-08-20: a Service-case Supplier
+          // Pickup Date chosen via the icon showed in the field, never saved).
+          // Fire the same completion signal, one tick later so the host sees
+          // this change's state flushed before it commits.
+          setTimeout(() => onBlur?.(), 0);
+        }}
       />
     </span>
   );

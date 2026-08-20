@@ -7,12 +7,12 @@
 // guide 7q) pushed that file back over the 2,000-line cap. It is the same kind
 // of seam `autocount-masters.ts` was: `readOrThrow` and `AcReadError` are one
 // self-contained idea that everything else in the outbox depends on, and
-// `readSoOutstandingCenti` is the only DB read in that module that is about
+// `readSoOutstandingSen` is the only DB read in that module that is about
 // MONEY — which is precisely the read worth being able to find.
 // ----------------------------------------------------------------------------
 import type { SupabaseClient } from '@supabase/supabase-js';
 import { poSourceRef, poTransferShape, type PoTransferShape } from '../shared/po-transfer-shape';
-import { soOutstandingCenti } from '../shared/so-outstanding';
+import { soOutstandingSen } from '../shared/so-outstanding';
 
 type Sb = SupabaseClient<any, any, any>;
 
@@ -55,33 +55,61 @@ export async function readOrThrow<T>(
  * ANSWERS `null`. Both guard the same trap from opposite sides: zero is not
  * "unknown", it is "this customer owes nothing", and writing it into a live
  * account book declares a real debt settled. `recomputeTotals` fills
- * `total_revenue_centi` on every write, so a row without one is a legacy or
+ * `total_revenue_sen` on every write, so a row without one is a legacy or
  * half-built order the ERP cannot speak for — the key is omitted and the book
  * keeps whatever it holds. The SO detail page reads the same absence as 0
  * because it is drawing a screen; this is writing a ledger.
  */
-export async function readSoOutstandingCenti(
+export async function readSoOutstandingSen(
   sb: Sb,
   h: Record<string, unknown>,
 ): Promise<number | null> {
-  const total = Number(h.total_revenue_centi);
-  if (h.total_revenue_centi == null || !Number.isFinite(total)) return null;
+  const total = Number(h.total_revenue_sen);
+  if (h.total_revenue_sen == null || !Number.isFinite(total)) return null;
   const rows = await readOrThrow('mfg_sales_order_payments',
     sb.from('mfg_sales_order_payments')
-      .select('amount_centi, is_deposit')
+      .select('amount_sen, is_deposit')
       .eq('so_doc_no', String(h.doc_no ?? '')));
-  let ledgerPaidCenti = 0;
+  let ledgerPaidSen = 0;
   let depositInLedger = false;
-  for (const p of (rows ?? []) as Array<{ amount_centi?: number | null; is_deposit?: boolean | null }>) {
-    ledgerPaidCenti += Number(p.amount_centi ?? 0);
+  for (const p of (rows ?? []) as Array<{ amount_sen?: number | null; is_deposit?: boolean | null }>) {
+    ledgerPaidSen += Number(p.amount_sen ?? 0);
     if (p.is_deposit) depositInLedger = true;
   }
-  return soOutstandingCenti({
-    totalRevenueCenti: total,
-    headerDepositCenti: Number(h.deposit_centi ?? 0),
-    ledgerPaidCenti,
+  return soOutstandingSen({
+    totalRevenueSen: total,
+    headerDepositSen: Number(h.deposit_sen ?? 0),
+    ledgerPaidSen,
     depositInLedger,
   });
+}
+
+/**
+ * One warehouse id -> the `dbo.Location` code AutoCount keys its stock by.
+ *
+ * The single-row twin of `withLocations` (autocount-outbox.ts), for a document's
+ * HEADER warehouse (`scm.purchase_orders.purchase_location_id`). Not folded into
+ * it because the two answer different questions: that one resolves a SET of line
+ * warehouses and tolerates a line with none, this one resolves the order's own
+ * default. It lives HERE for the reason this whole module exists — the outbox
+ * file is at its 2,000-line cap, and this is a READ.
+ *
+ * A FAILED READ THROWS, the rule the top of this file states: null here means
+ * "this purchase order has no ship-to warehouse", which `composeCreatePo` turns
+ * into a refusal naming a remedy, and an unreadable `scm.warehouses` must not be
+ * able to look like that.
+ */
+export async function readWarehouseCode(sb: Sb, warehouseId: unknown): Promise<string | null> {
+  const id = typeof warehouseId === 'string' ? warehouseId.trim() : '';
+  if (!id) return null;
+  const row = await readOrThrow('warehouses',
+    sb.from('warehouses').select('id, code, name').eq('id', id).maybeSingle());
+  const w = row as { code?: string | null; name?: string | null } | null;
+  /* `code` first, `name` as the fallback — exactly what `withLocations` does, so
+     a warehouse row with a blank code resolves the same way on a header as it
+     does on a line. */
+  const code = ((w?.code ?? w?.name ?? '') as string).trim();
+  return code || null;
 }
 
 /**

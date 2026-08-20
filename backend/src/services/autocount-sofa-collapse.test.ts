@@ -80,7 +80,7 @@ function erpRows(row: AcSofaCorpusRow, pieces: string[], ps: ReturnType<typeof p
     description: `SOFA ${row.model} ${comp}`,
     description2: row.desc2,
     qty: row.qty || 1,
-    unit_price_centi: i === 0 ? 123400 : 0,
+    unit_price_sen: i === 0 ? 123400 : 0,
     location: 'KL',
     variants: { seatHeight: ps.size, colourLabel: ps.color, specials: ps.specials },
   }));
@@ -157,7 +157,7 @@ describe('ECHO — the stored Desc2 is the faithful answer when the build is unc
       expect(res.lines[0].item_code).toBe(`${row.model}-1S`);
       expect(res.lines[0].sourceIndexes).toEqual(rows.map((_, i) => i));
       // the importer put the price on the FIRST compartment and zero on the rest
-      expect(res.lines[0].unit_price_centi).toBe(123400);
+      expect(res.lines[0].unit_price_sen).toBe(123400);
       expect(res.lines[0].qty).toBe(row.qty || 1);
     }
   });
@@ -362,7 +362,7 @@ describe('ECHO stops being the answer the moment the row disagrees with it', () 
          as a single line, which is the only shape that folds. */
       linked_ac_dtlkey: CORPUS_DTLKEY,
       item_code: code, item_group: 'sofa', description: `SOFA 9028 ${code}`,
-      description2: d2, qty: 1, unit_price_centi: i === 0 ? 500000 : 0,
+      description2: d2, qty: 1, unit_price_sen: i === 0 ? 500000 : 0,
       variants: { seatHeight: '28', colourLabel: 'BEIGE', specials: [] },
       ...over,
     }));
@@ -454,7 +454,7 @@ describe('REFUSAL is the designed outcome, never a plausible guess', () => {
          Desc2. Without it they are simply left alone. */
       linked_ac_dtlkey: CORPUS_DTLKEY,
       item_code: '9028-1S', item_group: 'sofa', description: 'SOFA 9028',
-      description2: '1 (28") / COL: BEIGE', qty: 1, unit_price_centi: 0, ...o,
+      description2: '1 (28") / COL: BEIGE', qty: 1, unit_price_sen: 0, ...o,
     }));
 
   it('refuses a build with no Desc2 at all, and emits no line for it', () => {
@@ -497,7 +497,7 @@ describe('REFUSAL is the designed outcome, never a plausible guess', () => {
 
   it('a refusal never leaks a partial line for the same build', () => {
     const res = collapseSofaLines([
-      { item_code: 'MATT-K', item_group: 'mattress', description: 'MATTRESS', description2: null, qty: 1, unit_price_centi: 500 },
+      { item_code: 'MATT-K', item_group: 'mattress', description: 'MATTRESS', description2: null, qty: 1, unit_price_sen: 500 },
       ...build([{ item_code: '9028-CNR', description2: '1 + 1 (28")' }]),
     ]);
     expect(res.refusals).toHaveLength(1);
@@ -510,8 +510,8 @@ describe('REFUSAL is the designed outcome, never a plausible guess', () => {
 describe('grouping — where one sofa ends and the next begins', () => {
   it('passes non-sofa lines through untouched and in order', () => {
     const lines: CollapsibleLine[] = [
-      { item_code: 'AKEMI-K', item_group: 'mattress', description: 'A', description2: null, qty: 2, unit_price_centi: 100 },
-      { item_code: 'TRANSPORTATION CHARGES', item_group: null, description: 'T', description2: null, qty: 1, unit_price_centi: 50 },
+      { item_code: 'AKEMI-K', item_group: 'mattress', description: 'A', description2: null, qty: 2, unit_price_sen: 100 },
+      { item_code: 'TRANSPORTATION CHARGES', item_group: null, description: 'T', description2: null, qty: 1, unit_price_sen: 50 },
     ];
     const res = collapseSofaLines(lines);
     expect(res.refusals).toEqual([]);
@@ -521,7 +521,7 @@ describe('grouping — where one sofa ends and the next begins', () => {
 
   it('never folds a non-sofa item that happens to be coded like a compartment', () => {
     const res = collapseSofaLines([
-      { item_code: 'X-2S', item_group: 'mattress', description: 'not a sofa', description2: null, qty: 1, unit_price_centi: 1 },
+      { item_code: 'X-2S', item_group: 'mattress', description: 'not a sofa', description2: null, qty: 1, unit_price_sen: 1 },
     ]);
     expect(res.lines).toHaveLength(1);
     expect(res.lines[0].via).toBe('passthrough');
@@ -533,15 +533,15 @@ describe('grouping — where one sofa ends and the next begins', () => {
     const res = collapseSofaLines([
       /* Two builds the book holds as two lines, so two keys — and each build's
          own pair shares one. */
-      { linked_ac_dtlkey: 11, item_code: '9028-1A(LHF)', item_group: 'sofa', description: 'S', description2: a, qty: 1, unit_price_centi: 100 },
-      { linked_ac_dtlkey: 11, item_code: '9028-1A(RHF)', item_group: 'sofa', description: 'S', description2: a, qty: 1, unit_price_centi: 0 },
-      { linked_ac_dtlkey: 22, item_code: '9028-2A(LHF)', item_group: 'sofa', description: 'S', description2: b, qty: 1, unit_price_centi: 200 },
-      { linked_ac_dtlkey: 22, item_code: '9028-2A(RHF)', item_group: 'sofa', description: 'S', description2: b, qty: 1, unit_price_centi: 0 },
+      { linked_ac_dtlkey: 11, item_code: '9028-1A(LHF)', item_group: 'sofa', description: 'S', description2: a, qty: 1, unit_price_sen: 100 },
+      { linked_ac_dtlkey: 11, item_code: '9028-1A(RHF)', item_group: 'sofa', description: 'S', description2: a, qty: 1, unit_price_sen: 0 },
+      { linked_ac_dtlkey: 22, item_code: '9028-2A(LHF)', item_group: 'sofa', description: 'S', description2: b, qty: 1, unit_price_sen: 200 },
+      { linked_ac_dtlkey: 22, item_code: '9028-2A(RHF)', item_group: 'sofa', description: 'S', description2: b, qty: 1, unit_price_sen: 0 },
     ]);
     expect(res.refusals).toEqual([]);
     expect(res.lines).toHaveLength(2);
     expect(res.lines.map((l) => l.description2)).toEqual([a, b]);
-    expect(res.lines.map((l) => l.unit_price_centi)).toEqual([100, 200]);
+    expect(res.lines.map((l) => l.unit_price_sen)).toEqual([100, 200]);
   });
 
   it('emits N identical lines for an EXACT repeat, and refuses a ragged run', () => {
@@ -550,7 +550,7 @@ describe('grouping — where one sofa ends and the next begins', () => {
     const mk = (code: string) => ({
       linked_ac_dtlkey: CORPUS_DTLKEY,
       item_code: code, item_group: 'sofa', description: 'S', description2: d2,
-      qty: 1, unit_price_centi: 0,
+      qty: 1, unit_price_sen: 0,
     });
     const twice = collapseSofaLines([
       mk('9028-1A(LHF)'), mk('9028-1A(RHF)'), mk('9028-1A(LHF)'), mk('9028-1A(RHF)'),
@@ -569,7 +569,7 @@ describe('grouping — where one sofa ends and the next begins', () => {
 describe('line identity — one AutoCount line has ONE DtlKey', () => {
   const mk = (code: string, key: number | null) => ({
     item_code: code, item_group: 'sofa', description: 'S', description2: '1 + 1 (28")',
-    qty: 1, unit_price_centi: 0, linked_ac_dtlkey: key,
+    qty: 1, unit_price_sen: 0, linked_ac_dtlkey: key,
   });
 
   it('carries the key when every compartment agrees on it', () => {
@@ -654,11 +654,11 @@ describe('splitSofaCode', () => {
 describe('folding follows the shape AutoCount already holds, not the item code', () => {
   const comp = (code: string, over: Partial<CollapsibleLine> = {}): CollapsibleLine => ({
     item_code: code, item_group: 'sofa', description: `SOFA 9028 ${code}`,
-    description2: '1A(LHF) + 2A(RHF) (28")', qty: 1, unit_price_centi: 0, ...over,
+    description2: '1A(LHF) + 2A(RHF) (28")', qty: 1, unit_price_sen: 0, ...over,
   });
 
   it('NO keys — a create — sends one line per ERP line', () => {
-    const res = collapseSofaLines([comp('9028-1A(LHF)', { unit_price_centi: 399000 }), comp('9028-2A(RHF)')]);
+    const res = collapseSofaLines([comp('9028-1A(LHF)', { unit_price_sen: 399000 }), comp('9028-2A(RHF)')]);
     expect(res.refusals).toEqual([]);
     expect(res.lines.map((l) => l.item_code)).toEqual(['9028-1A(LHF)', '9028-2A(RHF)']);
     expect(res.lines.every((l) => l.via === 'passthrough')).toBe(true);
@@ -666,7 +666,7 @@ describe('folding follows the shape AutoCount already holds, not the item code',
 
   it('ONE shared key — the book holds it folded — stays folded', () => {
     const res = collapseSofaLines([
-      comp('9028-1A(LHF)', { linked_ac_dtlkey: 77, unit_price_centi: 399000 }),
+      comp('9028-1A(LHF)', { linked_ac_dtlkey: 77, unit_price_sen: 399000 }),
       comp('9028-2A(RHF)', { linked_ac_dtlkey: 77 }),
     ]);
     expect(res.refusals).toEqual([]);
@@ -680,7 +680,7 @@ describe('folding follows the shape AutoCount already holds, not the item code',
        keys back from the create, so its very first edit must not fold two real
        book lines into one. */
     const res = collapseSofaLines([
-      comp('9028-1A(LHF)', { linked_ac_dtlkey: 81, unit_price_centi: 399000 }),
+      comp('9028-1A(LHF)', { linked_ac_dtlkey: 81, unit_price_sen: 399000 }),
       comp('9028-2A(RHF)', { linked_ac_dtlkey: 82 }),
     ]);
     expect(res.refusals).toEqual([]);
@@ -694,7 +694,7 @@ describe('folding follows the shape AutoCount already holds, not the item code',
        a line already in a licensed ledger, so this keeps the old treatment:
        fold, key resolves to null, the caller refuses and asks for a backfill. */
     const res = collapseSofaLines([
-      comp('9028-1A(LHF)', { linked_ac_dtlkey: 90, unit_price_centi: 399000 }),
+      comp('9028-1A(LHF)', { linked_ac_dtlkey: 90, unit_price_sen: 399000 }),
       comp('9028-2A(RHF)'),
     ]);
     expect(res.lines).toHaveLength(1);

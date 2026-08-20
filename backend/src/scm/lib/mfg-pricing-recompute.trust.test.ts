@@ -12,12 +12,12 @@ const product: ProductRowLite = {
   base_price_sen: 10000, price1_sen: null, cost_price_sen: 3000,
   seat_height_prices: null, base_model: null, sell_price_sen: 10000,
 };
-const item = (clientCenti: number): MfgItemForRecompute => ({
-  itemCode: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceCenti: clientCenti, variants: {},
+const item = (clientSen: number): MfgItemForRecompute => ({
+  itemCode: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: clientSen, variants: {},
 });
 // recomputeFromSnapshot(item, product, fabric, config, ...10 optional..., trustOperatorSelling)
-const trusted = (clientCenti: number) =>
-  recomputeFromSnapshot(item(clientCenti), product, null, null, null, null, null, null, null, null, null, null, null, null, true);
+const trusted = (clientSen: number) =>
+  recomputeFromSnapshot(item(clientSen), product, null, null, null, null, null, null, null, null, null, null, null, null, true);
 
 describe('recomputeFromSnapshot — trustOperatorSelling (owner ruling 2026-07)', () => {
   it('DEFAULT (POS / untrusted): a catalog line persists the AUTHORITATIVE price + flags drift', () => {
@@ -46,8 +46,8 @@ describe('recomputeFromSnapshot — trustOperatorSelling (owner ruling 2026-07)'
    line with 0 on its siblings. Plain `true` reads a stored 0 as "not provided"
    and hands the sibling a catalogue price anyway, so the set gets billed several
    times over. These are the two rows that separate the two modes. */
-const includingZero = (clientCenti: number) =>
-  recomputeFromSnapshot(item(clientCenti), product, null, null, null, null, null, null, null, null, null, null, null, null, 'including-zero');
+const includingZero = (clientSen: number) =>
+  recomputeFromSnapshot(item(clientSen), product, null, null, null, null, null, null, null, null, null, null, null, null, 'including-zero');
 
 describe("recomputeFromSnapshot — trustOperatorSelling 'including-zero' (migrated documents)", () => {
   it('a stored 0 is a REAL price and survives — the migrated sofa sibling case', () => {
@@ -105,7 +105,7 @@ function stubSb(rowsByTable: Record<string, StubRow | StubRow[]>) {
 
 describe('recomputeOneLine — forwards the trust option (guards the dropped-argument bug)', () => {
   const sb = stubSb({ mfg_products: { ...product, pwp_price_sen: null, model_id: null, size_code: null, branding: null, default_free_gifts: null } });
-  const line: MfgItemForRecompute = { itemCode: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceCenti: 5000, variants: {} };
+  const line: MfgItemForRecompute = { itemCode: 'ACC-1', itemGroup: 'accessory', qty: 1, unitPriceSen: 5000, variants: {} };
 
   it('NO option: the authoritative catalogue price wins (today\'s default, unchanged)', async () => {
     const r = await recomputeOneLine(sb, line, null, 1);
@@ -118,7 +118,7 @@ describe('recomputeOneLine — forwards the trust option (guards the dropped-arg
   });
 
   it("trustOperatorSelling: 'including-zero' reaches it too — a migrated 0 survives", async () => {
-    const r = await recomputeOneLine(sb, { ...line, unitPriceCenti: 0 }, null, 1, { trustOperatorSelling: 'including-zero' });
+    const r = await recomputeOneLine(sb, { ...line, unitPriceSen: 0 }, null, 1, { trustOperatorSelling: 'including-zero' });
     expect(r.unit_price_sen).toBe(0); // fails if the 15th argument is dropped again
   });
 });

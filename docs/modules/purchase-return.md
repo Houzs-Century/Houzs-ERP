@@ -152,6 +152,14 @@ lines (no grnItemId) stay uncapped."*
 `backend/src/scm/lib/return-unlinked-lines.ts` (`findUnlinkedPrLines`,
 `unlinkedReturnResponse`) applies the same narrow rule as the other three chains:
 
+> Lodger note (2026-08-20): this module also now exports `coveredGrnIds`, which
+> is **not** part of the purchase-return surface — it belongs to the sixth chain
+> (`findUnlinkedPiLines`, GRN → Purchase Invoice) and resolves the SET of
+> receipts one supplier invoice covers, because a PI is line-level multi-receipt
+> while a return is not. It moved here from `routes/purchase-invoices.ts` to sit
+> beside the guard that consumes it; all three of its call sites stayed in that
+> router, where `return-unlinked-lines.test.ts` proves them per handler.
+
 | situation | outcome |
 |---|---|
 | header names no GRN | allowed — nothing to bypass |

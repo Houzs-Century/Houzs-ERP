@@ -38,10 +38,10 @@
  *    no-sibling        — no IN movement exists to prove bucket or cost
  *    ambiguous-bucket  — >1 distinct (warehouse, variant, batch, company)
  *    ambiguous-cost    — sibling movements disagree on unit cost */
-export function classifyGrnInboundGap({ productCode, lineQty, buckets = [] }) {
+export function classifyGrnInboundGap({ itemCode, lineQty, buckets = [] }) {
   const movQty = buckets.reduce((a, b) => a + Number(b.movQty ?? 0), 0);
   const delta = Number(lineQty ?? 0) - movQty;
-  const base = { productCode, lineQty: Number(lineQty ?? 0), movQty, delta };
+  const base = { itemCode, lineQty: Number(lineQty ?? 0), movQty, delta };
   if (delta === 0) return { ...base, verdict: "balanced" };
   if (delta < 0) return { ...base, verdict: "over-posted" };
   if (buckets.length === 0) return { ...base, verdict: "no-sibling" };
@@ -65,7 +65,7 @@ export function classifyGrnInboundGap({ productCode, lineQty, buckets = [] }) {
 
 /** W2 fallback (live run 2026-08-01: the short line had NO sibling movement to
  *  copy from — `no-sibling`). The GRN line's OWN landed cost is the fallback
- *  basis: round(unit_price_centi x exchange_rate) — the exact `toMyrSen` path
+ *  basis: round(unit_price_sen x exchange_rate) — the exact `toMyrSen` path
  *  grns.ts uses for movements written outside the allocation (warehouse-change
  *  precedent, grns.ts:2463). MIRROR of lib/fx.ts `toMyrSen`/`safeRate`; the
  *  lockstep test pins the two together. */
@@ -126,7 +126,7 @@ export function variantKeyMirror(itemGroup, attrs) {
  *    - batch: the single batch the GRN's other movements share, else NULL
  *      (a plain unbatched lot — printed, not guessed)
  *    - variant: the line's own variants via the computeVariantKey mirror
- *    - cost: round(line unit_price_centi x GRN exchange_rate); refused at <= 0
+ *    - cost: round(line unit_price_sen x GRN exchange_rate); refused at <= 0
  *  Verdicts: line-insert | multi-line | no-warehouse | zero-cost */
 export function deriveGrnLineBasis({
   lines = [],
@@ -142,7 +142,7 @@ export function deriveGrnLineBasis({
   const whs = [...new Set(grnMovementWarehouses.filter(Boolean))];
   const warehouseId = whs.length === 1 ? whs[0] : headerWarehouseId;
   if (!warehouseId) return { verdict: "no-warehouse" };
-  const unitCostSen = toMyrSenMirror(Number(line.unit_price_centi ?? 0), exchangeRate);
+  const unitCostSen = toMyrSenMirror(Number(line.unit_price_sen ?? 0), exchangeRate);
   if (!(unitCostSen > 0)) return { verdict: "zero-cost", unitCostSen };
   const batches = [...new Set(grnMovementBatches.filter(Boolean))];
   return {
@@ -155,7 +155,7 @@ export function deriveGrnLineBasis({
       companyId,
       unitCostSen,
     },
-    costSource: `line unit_price_centi ${line.unit_price_centi} x rate ${exchangeRate}`,
+    costSource: `line unit_price_sen ${line.unit_price_sen} x rate ${exchangeRate}`,
   };
 }
 
@@ -236,7 +236,7 @@ export function classifyMovementRelabel({
  *  documented as keyed WITHOUT movement_type (and says nothing about qty), so
  *  a collision could pair two rows that describe DIFFERENT physical events.
  *  The owner's deletion rule requires a FULL-ROW twin: a real counterpart on
- *  the true doc id carrying the same (company, product_code, variant_key,
+ *  the true doc id carrying the same (company, item_code, variant_key,
  *  warehouse, movement_type, qty). Anything less is refused and reported.
  *    delete           exactly this twin exists (>= 1 counterpart matches all
  *                     six facts) — the row is a provable import duplicate
@@ -249,7 +249,7 @@ export function classifyDuplicateMovement({ duplicate, counterparts = [] }) {
   const same = (a, b) => String(a ?? "") === String(b ?? "");
   const matches = counterparts.filter((c) =>
     Number(c.companyId) === Number(duplicate.companyId)
-    && same(c.productCode, duplicate.productCode)
+    && same(c.itemCode, duplicate.itemCode)
     && same(c.variantKey ?? "", duplicate.variantKey ?? "")
     && same(c.warehouseId, duplicate.warehouseId)
     && same(String(c.movementType).toUpperCase(), String(duplicate.movementType).toUpperCase())
@@ -496,16 +496,16 @@ export function isServiceLineMirror({ itemGroup, itemCode, category } = {}) {
  *  Verdicts: reverse | not-found | not-service | consumed | lot-mismatch */
 export function planServiceLotReversal({ movement, lot, lotConsumptions = 0, movementConsumptions = 0 }) {
   if (!movement || !lot) return { verdict: "not-found", movementFound: Boolean(movement), lotFound: Boolean(lot) };
-  const svc = isServiceLineMirror({ itemCode: movement.productCode, itemGroup: movement.itemGroup ?? null });
+  const svc = isServiceLineMirror({ itemCode: movement.itemCode, itemGroup: movement.itemGroup ?? null });
   if (String(movement.movementType ?? "").toUpperCase() !== "IN" || !svc) {
-    return { verdict: "not-service", movementType: movement.movementType, productCode: movement.productCode };
+    return { verdict: "not-service", movementType: movement.movementType, itemCode: movement.itemCode };
   }
   if (
     String(lot.sourceDocType ?? "").toUpperCase() !== String(movement.sourceDocType ?? "").toUpperCase()
     || String(lot.sourceDocId ?? "") !== String(movement.sourceDocId ?? "")
-    || String(lot.productCode ?? "") !== String(movement.productCode ?? "")
+    || String(lot.itemCode ?? "") !== String(movement.itemCode ?? "")
   ) {
-    return { verdict: "lot-mismatch", lot: { sourceDocType: lot.sourceDocType, sourceDocId: lot.sourceDocId, productCode: lot.productCode } };
+    return { verdict: "lot-mismatch", lot: { sourceDocType: lot.sourceDocType, sourceDocId: lot.sourceDocId, itemCode: lot.itemCode } };
   }
   const received = Number(lot.qtyReceived ?? 0);
   const remaining = Number(lot.qtyRemaining ?? 0);
@@ -520,6 +520,6 @@ export function planServiceLotReversal({ movement, lot, lotConsumptions = 0, mov
   }
   return {
     verdict: "reverse",
-    print: `DELETE movement ${movement.id} (IN qty=${movement.qty} @ ${movement.unitCostSen} sen, ${movement.productCode}) + lot ${lot.id} (received=${received} remaining=${remaining}, never consumed)`,
+    print: `DELETE movement ${movement.id} (IN qty=${movement.qty} @ ${movement.unitCostSen} sen, ${movement.itemCode}) + lot ${lot.id} (received=${received} remaining=${remaining}, never consumed)`,
   };
 }

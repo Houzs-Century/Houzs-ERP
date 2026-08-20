@@ -243,7 +243,7 @@ const CAPABILITY_REQUIREMENTS: Record<string, (s: AssistantScope) => boolean> = 
  * list fails toward hiding. Where the two disagree, hiding a number the caller
  * could have seen is a complaint; showing one they could not is a leak.
  */
-const MARGIN_KEYS = /(margin|gross_?profit|grossProfit|profit|cost_?centi|costCenti|unit_?cost|unitCost|landed_?cost|markup)/i;
+const MARGIN_KEYS = /(margin|gross_?profit|grossProfit|profit|cost_?centi|costSen|unit_?cost|unitCost|landed_?cost|markup)/i;
 const COMMISSION_KEYS = /(commission|payout|incentive)/i;
 
 /** Value substituted for a redacted number — visible, not silently dropped, so an

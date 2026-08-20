@@ -20,9 +20,9 @@ const header = {
   po_date: '2026-07-27',
   expected_at: '2026-08-22',
   currency: 'MYR',
-  subtotal_centi: 207900,
-  tax_centi: 0,
-  total_centi: 207900,
+  subtotal_sen: 207900,
+  tax_sen: 0,
+  total_sen: 207900,
   notes: 'From SOs: 2990-SO-2607-016',
   your_ref_no: '2990-SO-2607-016',
   purchase_location_name: 'KL',
@@ -37,12 +37,12 @@ const header = {
    suffix ("XAMMAR-2A(LHF)"), item_group 'sofa', NO stored x/y geometry — the
    reconstruction path (buildDefaultSofaCells) must draw the default layout. */
 const sofaLine = (moduleId: string) => ({
-  material_code: `XAMMAR-${moduleId}`,
+  item_code: `XAMMAR-${moduleId}`,
   material_name: `SOFA XAMMAR ${moduleId}`,
   supplier_sku: `5531-${moduleId}`,
   qty: 1,
-  unit_price_centi: 103950,
-  line_total_centi: 103950,
+  unit_price_sen: 103950,
+  line_total_sen: 103950,
   uom: 'UNIT',
   item_group: 'sofa',
   so_doc_no: '2990-SO-2607-016',
@@ -71,12 +71,12 @@ describe('purchase-order-pdf sofa layout (reinstated 2026-07-27)', () => {
 
   it('draws nothing sofa-shaped for a non-sofa PO', async () => {
     const b64 = await purchaseOrderPdfBase64(header, [{
-      material_code: 'ANGGN-FIRM-K',
+      item_code: 'ANGGN-FIRM-K',
       material_name: '2990 ANGGN-FIRM MATTRESS (183X190X35CM)',
       supplier_sku: 'NF-ANGGN-K',
       qty: 1,
-      unit_price_centi: 127000,
-      line_total_centi: 127000,
+      unit_price_sen: 127000,
+      line_total_sen: 127000,
       uom: 'UNIT',
       item_group: 'mattress',
       so_doc_no: null,

@@ -39,7 +39,7 @@ for (const [doc, ls] of byDoc) if (ls.length && !ls.some((l) => n(l.Qty) > n(l.T
 
 async function main() {
   note(`MODE=${MODE}; fully-delivered orders in the export: ${delivered.size}`);
-  const heads = await sql`SELECT doc_no, linked_ac_docno, total_revenue_centi, status
+  const heads = await sql`SELECT doc_no, linked_ac_docno, total_revenue_sen, status
                           FROM scm.mfg_sales_orders
                           WHERE company_id = 1 AND linked_ac_docno = ANY(${[...delivered]})`;
   note(`present in the ERP: ${heads.length}`);
@@ -55,7 +55,7 @@ async function main() {
                                JOIN scm.mfg_sales_order_items i ON i.id = p.so_item_id
                                WHERE i.doc_no = ${h.doc_no} LIMIT 1`;
     if (direct) reasons.push("PO line linked 1:1");
-    const [pay] = await sql`SELECT count(*)::int AS c, coalesce(sum(amount_centi),0)::bigint AS amt
+    const [pay] = await sql`SELECT count(*)::int AS c, coalesce(sum(amount_sen),0)::bigint AS amt
                             FROM scm.mfg_sales_order_payments WHERE so_doc_no = ${h.doc_no}`;
     const [manual] = await sql`SELECT count(*)::int AS c
                                FROM scm.mfg_sales_order_payments
@@ -67,7 +67,7 @@ async function main() {
   }
 
   note(`DELETABLE (nothing downstream): ${del.length}`);
-  for (const d of del.slice(0, 100)) note(`   ${d.linked_ac_docno} -> ${d.doc_no}  RM${(Number(d.total_revenue_centi || 0) / 100).toFixed(2)}  ${d.status}${d._payInfo ? "  (" + d._payInfo + ")" : ""}`);
+  for (const d of del.slice(0, 100)) note(`   ${d.linked_ac_docno} -> ${d.doc_no}  RM${(Number(d.total_revenue_sen || 0) / 100).toFixed(2)}  ${d.status}${d._payInfo ? "  (" + d._payInfo + ")" : ""}`);
   note(`HELD BACK (has downstream refs — owner decides): ${keep.length}`);
   for (const k of keep.slice(0, 60)) note(`   ${k.linked_ac_docno} -> ${k.doc_no}  ${k.reasons.join(" + ")}`);
 

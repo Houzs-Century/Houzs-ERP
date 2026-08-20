@@ -114,7 +114,7 @@ async function main() {
       COALESCE(SUM(l.qty_remaining), 0)::int qty,
       COALESCE(SUM(l.qty_remaining) FILTER (WHERE l.batch_no IS NOT NULL), 0)::int qty_with_batch
     FROM scm.v_inventory_lots_open l
-    JOIN scm.mfg_products p ON p.code = l.product_code AND p.company_id = ${CO}
+    JOIN scm.mfg_products p ON p.code = l.item_code AND p.company_id = ${CO}
     WHERE p.category::text = 'SOFA' AND l.qty_remaining > 0`;
   log(`sofa open lots: ${sofaLots.lots} (${sofaLots.with_batch} carry a batch_no); units ${sofaLots.qty} (${sofaLots.qty_with_batch} batched)`);
   if (sofaLots.lots > 0 && sofaLots.with_batch === 0) {
@@ -131,9 +131,9 @@ async function main() {
     if (!erp) continue;
     acByErp.set(norm(erp), (acByErp.get(norm(erp)) ?? 0) + Number(b.BalQty));
   }
-  const erpBal = await sql`SELECT product_code, SUM(qty)::int qty FROM scm.inventory_balances
-    WHERE company_id = ${CO} GROUP BY product_code`;
-  const erpByCode = new Map(erpBal.map((r) => [norm(r.product_code), Number(r.qty)]));
+  const erpBal = await sql`SELECT item_code, SUM(qty)::int qty FROM scm.inventory_balances
+    WHERE company_id = ${CO} GROUP BY item_code`;
+  const erpByCode = new Map(erpBal.map((r) => [norm(r.item_code), Number(r.qty)]));
   let same = 0; const diffs = [];
   for (const [code, acQty] of acByErp) {
     const erpQty = erpByCode.get(code) ?? 0;

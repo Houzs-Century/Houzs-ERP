@@ -1106,6 +1106,7 @@ app.post("/bulk/unarchive", requirePermission("service_cases.manage"), async (c)
 });
 
 app.post("/bulk/assign", requirePermission("service_cases.manage"), async (c) => {
+  // company-scope: scoped by string-built SQL the checker cannot see — :1116 takes assrCompanySql (allowedCompaniesSql, the caller's granted companies) and :1119 applies it to the UPDATE itself. Out of scope moves no row, and :1123 stops rather than log an assignment that did not happen. Verified 2026-08-19.
   const userId = (c as any).get?.("userId") ?? null;
   const body = await c.req.json<{ ids?: number[]; assigned_to?: number | null }>();
   // De-dupe: a repeated id would assign + notify the SAME case twice, posting
@@ -1993,8 +1994,12 @@ app.post("/:id/sales-link", requirePermission("service_cases.write"), async (c) 
 app.delete("/:id/track-link", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  /* COMPANY SCOPE — this existence check is the ONLY gate on revokeCaseTokens
+     below, so unscoped it let one company kill the other company's customer
+     tracking links. Same fix and same discovery as POST /:id/approve. */
+  const revokeCoSql = assrCompanySql(c);
   const exists = await c.env.DB.prepare(
-    `SELECT id FROM assr_cases WHERE id = ?`
+    `SELECT id FROM assr_cases WHERE id = ?${revokeCoSql}`
   )
     .bind(id)
     .first();
@@ -2049,8 +2054,11 @@ app.post("/:id/supplier-link", requirePermission("service_cases.write"), async (
 app.delete("/:id/supplier-link", requirePermission("service_cases.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  /* COMPANY SCOPE — same shape as DELETE /:id/track-link above: this read is
+     the only gate on revokeSupplierTokensForCase. */
+  const revokeCoSql = assrCompanySql(c);
   const exists = await c.env.DB.prepare(
-    `SELECT id FROM assr_cases WHERE id = ?`
+    `SELECT id FROM assr_cases WHERE id = ?${revokeCoSql}`
   )
     .bind(id)
     .first();
@@ -2656,6 +2664,7 @@ app.get("/metrics/drill", requirePermission("service_cases.read"), async (c) => 
 // ── Auto-generate service PO number ───────────────────────────
 
 app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c) => {
+  // company-scope: the READ at :2683 carries assrCompanySql and :2691 returns 404 when it misses, so the unscoped UPDATE at :2699 can only ever reach an id this company owns. Verified 2026-08-19.
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
   const userId = (c as any).get?.("userId") ?? 0;
@@ -2664,11 +2673,16 @@ app.post("/:id/generate-po", requirePermission("service_cases.manage"), async (c
   // mirror. assr_cases has never had a `supplier` column, so the old SELECT
   // raised `column "supplier" does not exist` and 500'd every click. Same join
   // the case detail already uses (services/assr.ts:489).
+  /* COMPANY SCOPE — this read is the gate for the PO mint and the UPDATE that
+     follows, both keyed on the same id. Unscoped, one company could burn a
+     service-PO number onto the other company's case. Aliased column because the
+     statement joins. */
+  const poCoSql = assrCompanySql(c, "c.company_id");
   const existing = await c.env.DB.prepare(
     `SELECT c.po_no, c.creditor_code, cr.company_name AS creditor_name
        FROM assr_cases c
        LEFT JOIN creditors cr ON cr.creditor_code = c.creditor_code
-      WHERE c.id = ?`
+      WHERE c.id = ?${poCoSql}`
   )
     .bind(id)
     .first<{
@@ -2719,13 +2733,21 @@ app.post("/:id/approve", requirePermission("service_cases.approve"), async (c) =
   }>();
 
   const now = new Date().toISOString();
+  /* COMPANY SCOPE. Found 2026-08-18 by check-company-scope.mjs, which could not
+     see this statement until its raw-SQL table list learned about assr_cases:
+     this UPDATE keyed on id alone while every sibling writer in this file
+     (bulk/archive, bulk/unarchive, bulk/assign) carries assrCompanySql. So a
+     HOUZS approver could sign off the other company's case and stamp their own
+     NCR category on it — a quality record, written into books they cannot read
+     back. */
+  const approveCoSql = assrCompanySql(c);
   const r = await c.env.DB.prepare(
     `UPDATE assr_cases
         SET approved_by = ?, approved_at = ?,
             quality_review_passed = ?,
             ncr_category = COALESCE(?, ncr_category),
             updated_at = datetime('now')
-      WHERE id = ?`
+      WHERE id = ?${approveCoSql}`
   )
     .bind(
       userId || null,
@@ -3195,6 +3217,9 @@ app.get("/attachments/:key{.+}", requireServiceCaseAccess(), async (c) => {
   return new Response(obj.body as ReadableStream, {
     headers: {
       "Content-Type": obj.httpMetadata?.contentType || "application/octet-stream",
+      // Block MIME-sniffing the server-derived content-type back into
+      // html/svg (parity with mail-center.ts's INLINE_SAFE serve).
+      "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=86400",
     },
   });

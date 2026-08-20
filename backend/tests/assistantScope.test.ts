@@ -54,7 +54,7 @@ describe("capability gating", () => {
 describe("redactFacts — the numbers never reach the model", () => {
   const facts = {
     sales_intel: {
-      brief: { headline: "Q3 up", marginCenti: 123456, grossProfit: 9, revenue_centi: 5_000_00 },
+      brief: { headline: "Q3 up", marginSen: 123456, grossProfit: 9, revenue_sen: 5_000_00 },
       openItems: [
         { id: 1, note: "low margin order", unitCost: 700, commission: 250, customer: "Tan" },
         { id: 2, nested: { landed_cost: 42, quantity: 3 } },
@@ -64,7 +64,7 @@ describe("redactFacts — the numbers never reach the model", () => {
 
   test("THE ONE THAT MATTERS: margin/cost keys are replaced at every depth", () => {
     const r = redactFacts(facts, SALES_REP) as typeof facts;
-    expect(r.sales_intel.brief.marginCenti).toBe(REDACTED);
+    expect(r.sales_intel.brief.marginSen).toBe(REDACTED);
     expect(r.sales_intel.brief.grossProfit).toBe(REDACTED);
     expect(r.sales_intel.openItems[0].unitCost).toBe(REDACTED);
     expect((r.sales_intel.openItems[1] as { nested: { landed_cost: unknown } }).nested.landed_cost).toBe(REDACTED);
@@ -73,14 +73,14 @@ describe("redactFacts — the numbers never reach the model", () => {
   test("commission is gated on its OWN flag, not on margin", () => {
     const marginOnly: AssistantScope = { canSeeMargin: true, canSeeCommission: false, orderScope: "all" };
     const r = redactFacts(facts, marginOnly) as typeof facts;
-    expect(r.sales_intel.brief.marginCenti).toBe(123456);          // allowed
+    expect(r.sales_intel.brief.marginSen).toBe(123456);          // allowed
     expect(r.sales_intel.openItems[0].commission).toBe(REDACTED);  // still hidden
   });
 
   test("non-money data is untouched — redaction must not gut the answer", () => {
     const r = redactFacts(facts, SALES_REP) as typeof facts;
     expect(r.sales_intel.brief.headline).toBe("Q3 up");
-    expect(r.sales_intel.brief.revenue_centi).toBe(5_000_00);
+    expect(r.sales_intel.brief.revenue_sen).toBe(5_000_00);
     expect(r.sales_intel.openItems[0].customer).toBe("Tan");
     expect((r.sales_intel.openItems[1] as { nested: { quantity: number } }).nested.quantity).toBe(3);
   });
@@ -89,8 +89,8 @@ describe("redactFacts — the numbers never reach the model", () => {
     // A missing key lets the model reason as if the figure were nil, and a 0 is an
     // outright lie. The marker makes "I am not allowed to tell you" expressible.
     const r = redactFacts(facts, SALES_REP) as typeof facts;
-    expect("marginCenti" in r.sales_intel.brief).toBe(true);
-    expect(r.sales_intel.brief.marginCenti).not.toBe(0);
+    expect("marginSen" in r.sales_intel.brief).toBe(true);
+    expect(r.sales_intel.brief.marginSen).not.toBe(0);
   });
 
   test("the owner's payload is returned untouched", () => {

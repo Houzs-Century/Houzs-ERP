@@ -31,7 +31,7 @@ export async function placeGrnLinesOnRacks(
   sb: AnySb, grnId: string, grnNo: string, userId: string,
 ): Promise<void> {
   const { data: items } = await sb.from('grn_items')
-    .select('rack_id, material_code, material_name, qty_accepted, company_id')
+    .select('rack_id, item_code, material_name, qty_accepted, company_id')
     .eq('grn_id', grnId);
   const lines = (items ?? []).filter(
     (it: { rack_id: string | null; qty_accepted: number | null }) =>
@@ -53,10 +53,10 @@ export async function placeGrnLinesOnRacks(
   const rackMap = new Map((racks ?? []).map((r: { id: string }) => [r.id, r]));
   const today = todayMyt();
 
-  const itemRows = lines.map((l: { rack_id: string; material_code: string; material_name: string | null; qty_accepted: number }) => ({
+  const itemRows = lines.map((l: { rack_id: string; item_code: string; material_name: string | null; qty_accepted: number }) => ({
     ...companyCol,
     rack_id: l.rack_id,
-    product_code: l.material_code,
+    item_code: l.item_code,
     product_name: l.material_name,
     source_doc_no: grnNo,
     source_grn_id: grnId,
@@ -67,7 +67,7 @@ export async function placeGrnLinesOnRacks(
   const { error: insErr } = await sb.from('warehouse_rack_items').insert(itemRows);
   if (insErr) return; // best-effort
 
-  const moveRows = lines.map((l: { rack_id: string; material_code: string; material_name: string | null; qty_accepted: number }) => {
+  const moveRows = lines.map((l: { rack_id: string; item_code: string; material_name: string | null; qty_accepted: number }) => {
     const r = rackMap.get(l.rack_id) as { rack?: string; warehouse_id?: string } | undefined;
     return {
       ...companyCol,
@@ -75,7 +75,7 @@ export async function placeGrnLinesOnRacks(
       rack_id: l.rack_id,
       rack_label: r?.rack ?? null,
       warehouse_id: r?.warehouse_id ?? null,
-      product_code: l.material_code,
+      item_code: l.item_code,
       product_name: l.material_name,
       source_doc_no: grnNo,
       quantity: l.qty_accepted,
@@ -92,7 +92,7 @@ export async function reverseGrnRacks(
   sb: AnySb, grnId: string, grnNo: string, userId: string,
 ): Promise<void> {
   const { data: items } = await sb.from('warehouse_rack_items')
-    .select('id, rack_id, product_code, product_name, qty, company_id')
+    .select('id, rack_id, item_code, product_name, qty, company_id')
     .eq('source_grn_id', grnId);
   if (!items || items.length === 0) return;
   // Multi-company (mig 0061): STOCK_OUT movements inherit the placed items' company.
@@ -106,7 +106,7 @@ export async function reverseGrnRacks(
 
   await sb.from('warehouse_rack_items').delete().eq('source_grn_id', grnId);
 
-  const moveRows = items.map((i: { rack_id: string; product_code: string; product_name: string | null; qty: number }) => {
+  const moveRows = items.map((i: { rack_id: string; item_code: string; product_name: string | null; qty: number }) => {
     const r = rackMap.get(i.rack_id) as { rack?: string; warehouse_id?: string } | undefined;
     return {
       ...companyCol,
@@ -114,7 +114,7 @@ export async function reverseGrnRacks(
       rack_id: i.rack_id,
       rack_label: r?.rack ?? null,
       warehouse_id: r?.warehouse_id ?? null,
-      product_code: i.product_code,
+      item_code: i.item_code,
       product_name: i.product_name,
       source_doc_no: grnNo,
       quantity: i.qty,

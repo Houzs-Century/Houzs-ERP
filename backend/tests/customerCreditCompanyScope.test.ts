@@ -81,7 +81,7 @@ function fakeSb(tables: Record<string, Row[]>, log: string[], rpcPresent: boolea
       // is the path this test can actually observe.
       return Promise.resolve(
         rpcPresent
-          ? { data: [{ applied_centi: 0, reason: 'stub' }], error: null }
+          ? { data: [{ applied_sen: 0, reason: 'stub' }], error: null }
           : { data: null, error: { code: 'PGRST202', message: 'Could not find the function' } },
       );
     },
@@ -93,8 +93,8 @@ function fakeSb(tables: Record<string, Row[]>, log: string[], rpcPresent: boolea
 function ledger(): Record<string, Row[]> {
   return {
     customer_credits: [
-      { debtor_code: 'C-001', company_id: CO_A, amount_centi: 100 },
-      { debtor_code: 'C-001', company_id: CO_B, amount_centi: 9900 },
+      { debtor_code: 'C-001', company_id: CO_A, amount_sen: 100 },
+      { debtor_code: 'C-001', company_id: CO_B, amount_sen: 9900 },
     ],
     sales_invoices: [
       { id: 'si-a', company_id: CO_A, migrated_no_stock: false },
@@ -138,17 +138,17 @@ describe('applying credit cannot cross a company', () => {
       debtorCode: 'C-001',
       siId: 'si-a',
       siNumber: 'HC-SI-2608-001',
-      remainingDueCenti: 5000,
+      remainingDueSen: 5000,
     });
     expect(res.applied).toBe(100);
 
-    const debits = tables.customer_credits.filter((r) => r.amount_centi < 0);
+    const debits = tables.customer_credits.filter((r) => r.amount_sen < 0);
     expect(debits).toHaveLength(1);
     expect(debits[0].company_id).toBe(CO_A);
-    expect(debits[0].amount_centi).toBe(-100);
+    expect(debits[0].amount_sen).toBe(-100);
     // Company B's 9900 is untouched.
     expect(
-      tables.customer_credits.filter((r) => r.company_id === CO_B && r.amount_centi > 0),
+      tables.customer_credits.filter((r) => r.company_id === CO_B && r.amount_sen > 0),
     ).toHaveLength(1);
   });
 
@@ -159,10 +159,10 @@ describe('applying credit cannot cross a company', () => {
       debtorCode: 'C-001',
       siId: 'si-b',
       siNumber: '2990-SI-2608-001',
-      remainingDueCenti: 5000,
+      remainingDueSen: 5000,
     });
     expect(res.applied).toBe(5000);
-    const debits = tables.customer_credits.filter((r) => r.amount_centi < 0);
+    const debits = tables.customer_credits.filter((r) => r.amount_sen < 0);
     expect(debits).toHaveLength(1);
     expect(debits[0].company_id).toBe(CO_B);
   });

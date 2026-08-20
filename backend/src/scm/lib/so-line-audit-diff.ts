@@ -32,7 +32,7 @@ import { buildVariantSummary } from '../shared/variant-summary';
  *  redundant rows on the timeline for every price edit and bury the field that
  *  actually moved. */
 const DERIVED_FROM_REPORTED = new Set([
-  'total_centi', 'total_inc_centi', 'balance_centi', 'line_cost_centi', 'line_margin_centi',
+  'total_sen', 'total_inc_sen', 'balance_sen', 'line_cost_sen', 'line_margin_sen',
 ]);
 
 /** snake column → the camel label the timeline renderer already knows. LABELS
@@ -41,9 +41,9 @@ const DERIVED_FROM_REPORTED = new Set([
  *  have removed. */
 const LABEL: Record<string, string> = {
   qty: 'qty',
-  unit_price_centi: 'unitPriceCenti',
-  discount_centi: 'discountCenti',
-  unit_cost_centi: 'unitCostCenti',
+  unit_price_sen: 'unitPriceSen',
+  discount_sen: 'discountSen',
+  unit_cost_sen: 'unitCostSen',
   item_code: 'itemCode',
   item_group: 'itemGroup',
   description: 'description',

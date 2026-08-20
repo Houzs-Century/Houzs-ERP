@@ -22,7 +22,7 @@ import { docVariantLine, loadCustomerFabricMaps } from './supplier-doc-data';
 type DrHeader = {
   return_number: string; status: string; return_date: string;
   debtor_code: string | null; debtor_name: string;
-  reason: string | null; refund_centi: number; notes: string | null;
+  reason: string | null; refund_sen: number; notes: string | null;
   delivery_order_id: string | null; sales_invoice_id: string | null;
   /* Address / contact fields — the DR route (delivery-returns.ts HEADER) has
      always SELECTed these, but the PDF ignored them, so a return document
@@ -43,7 +43,7 @@ type DrHeader = {
 type DrItem = {
   item_code: string; description: string | null;
   qty_returned: number; condition: string | null;
-  unit_price_centi: number; refund_centi: number;
+  unit_price_sen: number; refund_sen: number;
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
 };
@@ -133,8 +133,8 @@ export async function renderDeliveryReturnInto(
     [it.description, docVariantLine(it, fabric.ext, fabric.desc)].filter(Boolean).join('\n') || '—',
     String(it.qty_returned),
     it.condition ?? '—',
-    fmtRm(it.unit_price_centi),
-    fmtRm(it.refund_centi),
+    fmtRm(it.unit_price_sen),
+    fmtRm(it.refund_sen),
   ]);
   autoTable(doc, {
     startY: y,
@@ -160,7 +160,7 @@ export async function renderDeliveryReturnInto(
   const totalsX = pageW - margin - 70;
   doc.setFont('helvetica', 'bold'); doc.setFontSize(11);
   doc.text(opts?.totalLabel ?? 'TOTAL REFUND', totalsX, lastY + 2);
-  doc.text(fmtRm(header.refund_centi), pageW - margin, lastY + 2, { align: 'right' });
+  doc.text(fmtRm(header.refund_sen), pageW - margin, lastY + 2, { align: 'right' });
 
   const ty = drawSignatureBoxes(doc, lastY + 12, 'Customer Confirms Return', `${COMPANY.name} Received By`);
 

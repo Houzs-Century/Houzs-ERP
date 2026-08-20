@@ -637,17 +637,23 @@ sofaCombos.post('/', async (c) => {
 // with the supplied effectiveFrom / prices / etc. The caller can also use
 // POST directly with the tuple — this just saves the round-trip when the
 // UI already has a row id.
-sofaCombos.put('/:id', async (c) => {
+// Exported so a cross-tenant test can drive it without the supabaseAuth bridge.
+export const sofaComboPutHandler = async (c: any) => {
   const gate = await requireWriteRole(c);
   if (!gate.ok) return gate.res;
 
   const id = c.req.param('id');
   const supabase = c.get('supabase');
 
-  const { data: orig, error: findErr } = await supabase
+  /* Company scope. sofa_combo_pricing carries company_id NOT NULL + FK since
+     migration 0083, and requireWriteRole above checks the scm_config_write
+     PERMISSION only — no tenancy. An unscoped read-by-id let this edit-by-id
+     alias clone ANOTHER company's combo price into a new row for the active
+     company. Mirror the scoped DELETE /:id below. */
+  const { data: orig, error: findErr } = await scopeToCompany(supabase
     .from('sofa_combo_pricing')
     .select('base_model, modules, tier, customer_id, supplier_id, selling_prices_by_height, pwp_prices_by_height, default_free_gifts')
-    .eq('id', id)
+    .eq('id', id), c)
     .maybeSingle();
   if (findErr) return c.json({ error: 'load_failed', reason: findErr.message }, 500);
   if (!orig) return c.json({ error: 'not_found' }, 404);
@@ -751,7 +757,8 @@ sofaCombos.put('/:id', async (c) => {
   const anchor = await loadComboAnchor(supabase, (orig as { base_model: string }).base_model, activeCompanyId(c));
   const mirrored = anchor ? await mirrorAnchoredCombo(supabase, savedRow, anchor, user.id, activeCompanyId(c)) : false;
   return c.json({ ...rowToWire(savedRow), mirrored }, 201);
-});
+};
+sofaCombos.put('/:id', sofaComboPutHandler);
 
 // ── DELETE /:id ────────────────────────────────────────────────────────
 // Soft-delete. The History drawer still shows the row; pricing lookup

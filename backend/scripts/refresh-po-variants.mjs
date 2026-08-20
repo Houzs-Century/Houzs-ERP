@@ -58,7 +58,7 @@ async function main() {
   const { findColour } = buildFabricColourIndex(fcRows);
   const validSpecials = new Set((await sql`SELECT code FROM scm.special_addons WHERE company_id = 1 AND 'BEDFRAME' = ANY(categories)`).map((r) => r.code));
 
-  const items = await sql`SELECT i.id, i.material_code AS item_code, i.variants, i.description2, i.linked_ac_dtlkey, h.linked_ac_docno
+  const items = await sql`SELECT i.id, i.item_code AS item_code, i.variants, i.description2, i.linked_ac_dtlkey, h.linked_ac_docno
     FROM scm.purchase_order_items i JOIN scm.purchase_orders h ON h.id = i.purchase_order_id
     WHERE h.company_id = 1 AND i.item_group = 'bedframe' AND h.linked_ac_docno IS NOT NULL`;
   log(`imported PO bedframe lines: ${items.length}`);

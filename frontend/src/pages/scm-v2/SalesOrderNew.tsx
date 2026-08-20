@@ -46,8 +46,9 @@ import {
   useUploadSoItemPhoto, useMfgSalesOrderDetail,
   type DebtorSuggestion,
 } from '../../vendor/scm/lib/sales-order-queries';
-import { authedFetch, humanApiError, parseSaveProblems } from '../../vendor/scm/lib/authed-fetch';
-import { SaveProblemsList, saveProblemsTitle } from '../../vendor/scm/components/SaveProblemsList';
+import { authedFetch, humanApiError } from '../../vendor/scm/lib/authed-fetch';
+import { notifySaveProblems } from '../../vendor/scm/components/SaveProblemsList';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { useIdempotencyKey } from '../../lib/idempotency';
 import { DebtorSuggestList } from '../../vendor/scm/components/DebtorSuggestList';
 import { readScmHandoff, removeScmHandoff } from '../../lib/scmHandoffStorage';
@@ -94,10 +95,10 @@ import {
   PaymentsTable, labelToApi, draftMethodFields, newPaymentDraft,
   missingMethodSubField, parseInstallmentMonths, type PaymentDraft,
 } from '../../vendor/scm/components/PaymentsTable';
-import { soDateGuardError, soStockLocationError } from '../../vendor/scm/lib/so-form-validate';
+import { soDateGuardError, soStockLocationError, soRequiredFieldErrors, soRequiredFieldsMessage } from '../../vendor/scm/lib/so-form-validate';
 import { useBranding } from '../../hooks/useBranding';
 import styles from './SalesOrderNew.module.css';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
 import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
@@ -117,7 +118,7 @@ const newLine = (deliveryDate: string | null = null): DraftLine => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
 });
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 export const SalesOrderNew = () => {
   const navigate = useNavigate();
@@ -334,9 +335,9 @@ export const SalesOrderNew = () => {
         description:    it.description ?? '',
         uom:            it.uom ?? 'UNIT',
         qty:            it.qty ?? 1,
-        unitPriceCenti: it.unit_price_centi ?? 0,
-        discountCenti:  it.discount_centi ?? 0,
-        unitCostCenti:  it.unit_cost_centi ?? 0,
+        unitPriceSen: it.unit_price_sen ?? 0,
+        discountSen:  it.discount_sen ?? 0,
+        unitCostSen:  it.unit_cost_sen ?? 0,
         variants:       (it.variants as Record<string, unknown>) ?? {},
         remark:         it.remark ?? '',
       })));
@@ -445,7 +446,7 @@ export const SalesOrderNew = () => {
         installmentMonthsLabel: p.installmentLabel || '',
         onlineType:             p.onlineTypeValue || '',
         approvalCode:           p.approvalCode || '',
-        amountCenti:            p.depositCenti > 0 ? p.depositCenti : 0,
+        amountSen:            p.depositSen > 0 ? p.depositSen : 0,
         /* Bug #3 (2026-06-24) — the card receipt scanned in the modal IS this
            deposit's slip. Tag the draft with the receipt's R2 key so the save
            records the deposit through the SO-create proof (receiptImageKey on
@@ -526,7 +527,7 @@ export const SalesOrderNew = () => {
           itemGroup:      l.itemGroup || 'others',
           description:    l.description,
           qty:            l.qty > 0 ? l.qty : 1,
-          unitPriceCenti: l.unitPriceCenti,
+          unitPriceSen: l.unitPriceSen,
           remark:         l.remark,
           ...((fabricCode || specialCodes.length > 0)
             ? { variants: { ...seeded.variants, ...fabricVariants, ...specialVariants } }
@@ -698,7 +699,7 @@ export const SalesOrderNew = () => {
           itemCode:       p.code,
           itemGroup:      category,
           description:    p.name,
-          unitPriceCenti: p.sell_price_sen ?? 0,
+          unitPriceSen: p.sell_price_sen ?? 0,
           variants:       inherited ? { ...inherited } : {},
           overriddenKeys: [],
         };
@@ -776,9 +777,9 @@ export const SalesOrderNew = () => {
     if (didUpdate) setLines(next);
   }, [lines]);
 
-  const subtotalCenti = useMemo(
+  const subtotalSen = useMemo(
     () => lines.reduce(
-      (s, l) => s + Math.max(0, l.qty * l.unitPriceCenti - l.discountCenti),
+      (s, l) => s + Math.max(0, l.qty * l.unitPriceSen - l.discountSen),
       0,
     ),
     [lines],
@@ -1174,7 +1175,7 @@ export const SalesOrderNew = () => {
     return { failed, skipped };
   };
 
-  const paymentIntents = () => paymentDrafts.filter((d) => d.amountCenti > 0 && !d.receiptImageKey);
+  const paymentIntents = () => paymentDrafts.filter((d) => d.amountSen > 0 && !d.receiptImageKey);
 
   const flushPaymentDrafts = async (docNo: string, drafts: PaymentDraft[]): Promise<{ failedDrafts: PaymentDraft[] }> => {
     const tasks = drafts
@@ -1193,7 +1194,7 @@ export const SalesOrderNew = () => {
           idempotencyKey:  d.idempotencyKey,
           paidAt:          d.paidAt,
           method,
-          amountCenti:     d.amountCenti,
+          amountSen:     d.amountSen,
           accountSheet:    d.accountSheet || null,
           approvalCode:    d.approvalCode || null,
           collectedBy:     d.collectedBy  || null,
@@ -1331,7 +1332,7 @@ export const SalesOrderNew = () => {
         return {
           rawText,
           qtyGuess: l.qty,
-          priceRmGuess: l.unitPriceCenti > 0 ? l.unitPriceCenti / 100 : null,
+          priceRmGuess: l.unitPriceSen > 0 ? l.unitPriceSen / 100 : null,
           skuMatch: l.itemCode
             ? {
                 code: l.itemCode,
@@ -1386,16 +1387,25 @@ export const SalesOrderNew = () => {
       });
       return;
     }
-    if (!debtorName.trim()) {
-      void notify({ title: 'Customer name is required.', tone: 'error' });
-      return;
-    }
-    if (!phone.trim()) {
-      void notify({
-        title: 'Phone number is required',
-        body: 'every sales order must have a contact number.',
-        tone: 'error',
-      });
+    /* One-pass required-field check (owner 2026-08-20 live QA: "为什么要慢慢爆呢"
+       — the form popped ONE missing field per click). Collect EVERY always-required
+       field the operator is missing and show them together. The CONDITIONAL guards
+       below (date sanity, scanned-SKU, sofa-mix, Processing-Date proceed gate, the
+       "State has no warehouse" config case, payment sub-fields) still run one at a
+       time, because each only applies once an earlier choice is made. Shared with
+       mobile via soRequiredFieldErrors so the required set can't drift. */
+    const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
+    const missingRequired = soRequiredFieldErrors({
+      customerName: debtorName,
+      phone,
+      hasNamedLine: validLines.length > 0,
+      asDraft,
+      hasVenue: !!effectiveVenueId,
+      hasSalesperson: !!salespersonId,
+      location: { companyCode: branding.companyCode, salesLocation, state, mappingsLoaded: !!stateWarehousesQ.data, asDraft },
+    });
+    if (missingRequired.length > 0) {
+      void notify({ ...soRequiredFieldsMessage(missingRequired), tone: 'error' });
       return;
     }
     // Date sanity (set-together / not-past / processing≤delivery) — shared with
@@ -1403,11 +1413,6 @@ export const SalesOrderNew = () => {
     const dateErr = soDateGuardError({ processingDate, deliveryDate, today });
     if (dateErr) {
       void notify({ ...dateErr, tone: 'error' });
-      return;
-    }
-    const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
-    if (validLines.length === 0) {
-      void notify({ title: 'Add at least one item via "+ Add Line Item".', tone: 'error' });
       return;
     }
     /* Scan-Order core rule (Task #73) — a NO-MATCH scanned line seeds an empty
@@ -1482,26 +1487,11 @@ export const SalesOrderNew = () => {
       }
     }
     /* Confirm gates (owner 2026-08-08) — a confirmed order needs a venue and a
-       salesperson; drafts stay freely saveable. The backend enforces both
-       (validation_failed); the pre-checks just say it in one sentence before
-       the round-trip. The SELF sentinel counts as a salesperson: the backend
-       stamps the caller's own staff row for it. */
-    if (!asDraft && !effectiveVenueId) {
-      void notify({
-        title: 'Pick a venue before confirming this order.',
-        body: 'The venue follows the picked salesperson. A draft can be saved without one.',
-        tone: 'error',
-      });
-      return;
-    }
-    if (!asDraft && !salespersonId) {
-      void notify({
-        title: 'Pick a salesperson before confirming this order.',
-        body: 'A draft can be saved without one.',
-        tone: 'error',
-      });
-      return;
-    }
+       salesperson; drafts stay freely saveable. Both are now collected in the
+       one-pass required-field check above (soRequiredFieldErrors), so the backend
+       stays the authoritative gate and the operator sees them alongside the other
+       missing fields rather than in two more separate dialogs. The SELF sentinel
+       counts as a salesperson: the backend stamps the caller's own staff row. */
     /* Stock-location gate (owner 2026-08-13, company 1 only) — the order must
        ship from a warehouse or AutoCount refuses the whole document. SHARED
        with mobile via soStockLocationError; the backend is the authoritative
@@ -1533,7 +1523,7 @@ export const SalesOrderNew = () => {
        exactly what to pick. Only checks amount-bearing rows (a zeroed/blank row
        is dropped at flush time). */
     const methodGaps = paymentDrafts
-      .map((d, i) => ({ row: i + 1, method: d.methodLabel, missing: d.amountCenti > 0 ? missingMethodSubField(d) : null }))
+      .map((d, i) => ({ row: i + 1, method: d.methodLabel, missing: d.amountSen > 0 ? missingMethodSubField(d) : null }))
       .filter((x) => x.missing !== null);
     if (methodGaps.length > 0) {
       const g = methodGaps[0]!;
@@ -1555,13 +1545,13 @@ export const SalesOrderNew = () => {
        upload (the receipt, on the header as receipt_image_key, IS the proof).
        flushPaymentDrafts skips it. A manually-added row is unaffected. */
     const receiptDeposit = paymentDrafts.find(
-      (d) => d.amountCenti > 0 && Boolean(d.receiptImageKey),
+      (d) => d.amountSen > 0 && Boolean(d.receiptImageKey),
     );
     const receiptDepositBody = receiptDeposit
       ? (() => {
           const { method } = labelToApi(receiptDeposit.methodLabel);
           return {
-            depositCenti:      receiptDeposit.amountCenti,
+            depositSen:      receiptDeposit.amountSen,
             paymentMethod:     method,
             merchantProvider:  receiptDeposit.merchantProvider || undefined,
             installmentMonths: parseInstallmentMonths(receiptDeposit.installmentMonthsLabel) ?? undefined,
@@ -1586,14 +1576,14 @@ export const SalesOrderNew = () => {
        would have re-opened the very deadlock this field exists to close, a
        slip-less deposit counting as RM0 against a Processing Date the operator
        can see is paid for. */
-    const pendingDepositCenti = paymentIntents()
-      .reduce((sum, d) => sum + d.amountCenti, 0);
+    const pendingDepositSen = paymentIntents()
+      .reduce((sum, d) => sum + d.amountSen, 0);
 
     create.mutate(
       {
         idempotencyKey: idemKey,
         ...receiptDepositBody,
-        pendingDepositCenti: pendingDepositCenti > 0 ? pendingDepositCenti : undefined,
+        pendingDepositSen: pendingDepositSen > 0 ? pendingDepositSen : undefined,
         /* DRAFT flow — backend reads `asDraft: true` to create the SO as 'DRAFT'
            not 'CONFIRMED'. Omitted on a normal Create, so that body is unchanged. */
         asDraft: asDraft || undefined,
@@ -1651,9 +1641,9 @@ export const SalesOrderNew = () => {
           description:    l.description,
           uom:            l.uom,
           qty:            l.qty,
-          unitPriceCenti: l.unitPriceCenti,
-          discountCenti:  l.discountCenti,
-          unitCostCenti:  l.unitCostCenti,
+          unitPriceSen: l.unitPriceSen,
+          discountSen:  l.discountSen,
+          unitCostSen:  l.unitCostSen,
           variants:       l.variants,
           remark:         l.remark,
           /* PR-E — per-item delivery date + cascade override flag. */
@@ -1663,6 +1653,9 @@ export const SalesOrderNew = () => {
       },
       {
         onSuccess: async (res: { docNo: string }) => {
+          /* THE ACCOUNTS MAY HAVE REFUSED IT, and until 2026-08-19 only a queue
+             behind a permission key knew. Never blocks — the order is saved. */
+          await notifyAcNotSent(notify, res, 'Sales order');
           /* Task #105 — Fire the queued payment drafts as follow-up POSTs.
              We don't gate navigation on success — if a payment fails the
              SO still exists, so we navigate to the Detail page where
@@ -1706,16 +1699,10 @@ export const SalesOrderNew = () => {
             { state: failed > 0 ? paymentRetryNavigationState('so', res.docNo, failedDrafts) : undefined },
           );
         },
-        onError:   (err) => {
-          /* Aggregated save-gate failure → list every reason (owner 2026-07-18),
-             same popup as the SO Detail + mobile paths. */
-          const problems = parseSaveProblems((err as { body?: string } | undefined)?.body);
-          if (problems && problems.length > 0) {
-            void notify({ title: saveProblemsTitle(problems.length), body: <SaveProblemsList problems={problems} />, tone: 'error' });
-          } else {
-            void notify({ title: 'Save failed', body: err instanceof Error ? err.message : 'Something went wrong.', tone: 'error' });
-          }
-        },
+        /* Aggregated save-gate failure → every reason at once (owner
+           2026-07-18); anything else keeps this page's own "Save failed" popup. */
+        onError: (err) => { void notifySaveProblems(notify, err,
+          (m) => { void notify({ title: 'Save failed', body: m, tone: 'error' }); }); },
       },
     );
   };
@@ -2289,7 +2276,7 @@ export const SalesOrderNew = () => {
             fontWeight: 800,
             color: 'var(--c-burnt)',
           }}>
-            Subtotal: {fmtRm(subtotalCenti)}
+            Subtotal: {fmtRm(subtotalSen)}
           </div>
         </div>
       </section>
@@ -2305,7 +2292,7 @@ export const SalesOrderNew = () => {
         docNo={null}
         payments={paymentDrafts}
         onChange={setPaymentDrafts}
-        grandTotalCenti={subtotalCenti}
+        grandTotalSen={subtotalSen}
         currency="MYR"
         slipUpload
         collectedByAllowedIds={paymentsCollectedByAllowedIds}

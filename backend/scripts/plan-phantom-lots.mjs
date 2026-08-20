@@ -81,27 +81,27 @@ try {
      Inventory screen shows. */
   const drift = await pg`
     WITH mov AS (
-      SELECT warehouse_id, product_code, COALESCE(variant_key,'') AS vkey, company_id,
+      SELECT warehouse_id, item_code, COALESCE(variant_key,'') AS vkey, company_id,
              SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
                                     WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty
                                     ELSE 0 END) AS mov_qty
         FROM scm.inventory_movements
-       GROUP BY warehouse_id, product_code, COALESCE(variant_key,''), company_id
+       GROUP BY warehouse_id, item_code, COALESCE(variant_key,''), company_id
     ), lot AS (
-      SELECT warehouse_id, product_code, COALESCE(variant_key,'') AS vkey, company_id,
+      SELECT warehouse_id, item_code, COALESCE(variant_key,'') AS vkey, company_id,
              SUM(qty_remaining) AS lot_qty
         FROM scm.inventory_lots
-       GROUP BY warehouse_id, product_code, COALESCE(variant_key,''), company_id
+       GROUP BY warehouse_id, item_code, COALESCE(variant_key,''), company_id
     )
     SELECT COALESCE(m.warehouse_id, l.warehouse_id) AS warehouse_id,
-           COALESCE(m.product_code, l.product_code) AS product_code,
+           COALESCE(m.item_code, l.item_code) AS item_code,
            COALESCE(m.vkey, l.vkey)                 AS vkey,
            COALESCE(m.company_id, l.company_id)     AS company_id,
            COALESCE(m.mov_qty, 0) AS mov_qty,
            COALESCE(l.lot_qty, 0) AS lot_qty
       FROM mov m
       FULL OUTER JOIN lot l
-        ON l.warehouse_id = m.warehouse_id AND l.product_code = m.product_code
+        ON l.warehouse_id = m.warehouse_id AND l.item_code = m.item_code
        AND l.vkey = m.vkey AND l.company_id IS NOT DISTINCT FROM m.company_id
      WHERE COALESCE(m.mov_qty, 0) <> COALESCE(l.lot_qty, 0)
      ORDER BY 2, 3`;
@@ -124,7 +124,7 @@ try {
         FROM scm.inventory_lots l
         LEFT JOIN scm.inventory_movements m ON m.id = l.movement_id
        WHERE l.warehouse_id = ${b.warehouse_id}
-         AND l.product_code = ${b.product_code}
+         AND l.item_code = ${b.item_code}
          AND COALESCE(l.variant_key,'') = ${b.vkey}
        ORDER BY l.received_at`;
 
@@ -133,7 +133,7 @@ try {
     const excess = num(b.lot_qty) - num(b.mov_qty);
 
     console.log("=".repeat(76));
-    console.log(`${b.product_code}${b.vkey ? `  [${b.vkey}]` : ""}  co=${b.company_id}`);
+    console.log(`${b.item_code}${b.vkey ? `  [${b.vkey}]` : ""}  co=${b.company_id}`);
     console.log(`  movement ledger ${rpad(num(b.mov_qty), 6)}    lot ledger ${rpad(num(b.lot_qty), 6)}    excess ${rpad(excess, 6)}`);
     console.log(`  lots: ${lots.length}  (${orphans.length} orphan — opened by no movement)\n`);
     for (const l of lots) {
@@ -190,7 +190,7 @@ try {
   console.log(`  provable orphan-lot buckets   : ${provable.length}`);
   console.log(`  inventory value overstated    : ${rm(provable.reduce((s, p) => s + p.value, 0))}`);
   console.log(`  buckets needing review        : ${review.length}`);
-  for (const r of review) console.log(`      ${pad(r.product_code, 26)} ${r.reasons[0]}`);
+  for (const r of review) console.log(`      ${pad(r.item_code, 26)} ${r.reasons[0]}`);
   console.log(`\nNothing was written. This script has no APPLY path by design — the repair`);
   console.log(`itself is a separate change, reviewed against this plan first.`);
 } catch (e) {

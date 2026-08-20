@@ -116,7 +116,7 @@ async function main() {
     return;
   }
   const lotCols = await colsOf(lotSchema, "inventory_lots");
-  for (const need of ["qty_remaining", "unit_cost_sen", "source_doc_type", "product_code", "warehouse_id"]) {
+  for (const need of ["qty_remaining", "unit_cost_sen", "source_doc_type", "item_code", "warehouse_id"]) {
     if (!lotCols.has(need)) {
       notice(`FATAL — inventory_lots has no ${need} column in ${lotSchema}. Cannot run. (Schema mismatch, not a data answer.)`);
       return;
@@ -141,7 +141,7 @@ async function main() {
     WITH costless AS (
       SELECT ${coSel},
              warehouse_id::text AS warehouse_id,
-             product_code,
+             item_code,
              ${vkSel} AS variant_key,
              UPPER(COALESCE(source_doc_type,'')) AS src,
              ${noSel},
@@ -150,12 +150,12 @@ async function main() {
         FROM ${L}
        WHERE qty_remaining > 0
          AND COALESCE(unit_cost_sen, 0) <= 0
-       GROUP BY warehouse_id, product_code, ${vkSel},
+       GROUP BY warehouse_id, item_code, ${vkSel},
                 UPPER(COALESCE(source_doc_type,'')), ${noSel}${hasCompany ? ", company_id" : ""}
     ),
     ref AS (
       SELECT warehouse_id::text AS warehouse_id,
-             product_code,
+             item_code,
              ${vkSel} AS variant_key,
              CASE WHEN SUM(CASE WHEN unit_cost_sen > 0 THEN qty_remaining ELSE 0 END) > 0
                   THEN SUM(CASE WHEN unit_cost_sen > 0 THEN qty_remaining * unit_cost_sen ELSE 0 END)
@@ -163,17 +163,17 @@ async function main() {
                   ELSE NULL END AS ref_avg_cost_sen
         FROM ${L}
        WHERE qty_remaining > 0
-       GROUP BY warehouse_id, product_code, ${vkSel}
+       GROUP BY warehouse_id, item_code, ${vkSel}
     )
-    SELECT c.company_id, c.warehouse_id, c.product_code, c.variant_key, c.src,
+    SELECT c.company_id, c.warehouse_id, c.item_code, c.variant_key, c.src,
            c.source_doc_no, c.product_name, c.costless_qty,
            r.ref_avg_cost_sen
       FROM costless c
       LEFT JOIN ref r
         ON r.warehouse_id = c.warehouse_id
-       AND r.product_code = c.product_code
+       AND r.item_code = c.item_code
        AND r.variant_key  = c.variant_key
-     ORDER BY c.costless_qty DESC, c.product_code ASC`);
+     ORDER BY c.costless_qty DESC, c.item_code ASC`);
 
   const isPermanent = (src) => src === "ADJUSTMENT" || src === "STOCK_TAKE";
   const isPending = (src) => src === "GRN";
@@ -194,7 +194,7 @@ async function main() {
       notice(`  sample (up to ${SAMPLE}, most units first):`);
       notice(`    ${pad("product", 22)} ${pad("variant", 10)} ${pad("co", 3)} ${pad("src", 11)} ${pad("units", 6)} ${pad("refAvgCost", 12)} warehouse`);
       for (const r of rs.slice(0, SAMPLE)) {
-        notice(`    ${pad(short(r.product_code, 22), 22)} ${pad(short(r.variant_key, 10), 10)} ${pad(r.company_id ?? "-", 3)} ${pad(short(r.src, 11), 11)} ${pad(r.costless_qty, 6)} ${pad(r.ref_avg_cost_sen == null ? "(unknown)" : rm(r.ref_avg_cost_sen), 12)} ${short(r.warehouse_id, 40)}`);
+        notice(`    ${pad(short(r.item_code, 22), 22)} ${pad(short(r.variant_key, 10), 10)} ${pad(r.company_id ?? "-", 3)} ${pad(short(r.src, 11), 11)} ${pad(r.costless_qty, 6)} ${pad(r.ref_avg_cost_sen == null ? "(unknown)" : rm(r.ref_avg_cost_sen), 12)} ${short(r.warehouse_id, 40)}`);
       }
       if (rs.length > SAMPLE) notice(`    ... and ${rs.length - SAMPLE} more.`);
     }

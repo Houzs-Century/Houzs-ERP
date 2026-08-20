@@ -1,17 +1,17 @@
 /* ── Zero-cost receipt guard ────────────────────────────────────────────────
    Houzs suppliers do not price a purchase order. The price appears on the
    supplier's GOODS RECEIVED document, so a PO line legitimately carries
-   unit_price_centi = 0 (live AutoCount: HOOKKA 2,264/2,264 PO lines unpriced,
+   unit_price_sen = 0 (live AutoCount: HOOKKA 2,264/2,264 PO lines unpriced,
    OHANA 100%, DORSETTLOFT 100%). The GRN create paths copy that price verbatim
    onto the receipt line, and from there nothing ever puts a cost back:
 
-     purchase_order_items.unit_price_centi = 0
-      -> grn_items.unit_price_centi = 0
+     purchase_order_items.unit_price_sen = 0
+      -> grn_items.unit_price_sen = 0
       -> postGrnAndRollup: unit_cost_sen = landedUnitCostMyr ?? toMyrSen(0, rate)
       -> the FIFO trigger's IN branch is COALESCE(NEW.unit_cost_sen, 0) — the
          weighted-average fallback exists ONLY in the ADJUSTMENT branch
       -> the OUT consumes that lot at RM0 COGS
-      -> DO line cost 0 -> sales_invoice_items.line_cost_centi 0
+      -> DO line cost 0 -> sales_invoice_items.line_cost_sen 0
       -> the margin report reads 100%.
 
    A zero that reaches a lot is invisible: nothing downstream distinguishes
@@ -55,7 +55,7 @@ import { isServiceLine } from '../shared/service-sku';
  *  freight is correctly not an offender. */
 export type ReceiptCostLine = {
   id?: string | null;
-  materialCode: string;
+  itemCode: string;
   qtyAccepted: number;
   unitCostSen: number;
   itemGroup?: string | null;
@@ -65,7 +65,7 @@ export type ReceiptCostLine = {
 
 export type UncostedReceiptLine = {
   id: string | null;
-  materialCode: string;
+  itemCode: string;
   qtyAccepted: number;
   /** What this SKU is known to have cost before — the evidence that the zero is
    *  a missing price rather than a free unit. */
@@ -117,15 +117,15 @@ export function findUncostedReceiptLines(
   for (const line of lines) {
     // A SERVICE line (freight) creates no inventory movement, so it can never
     // open a lot — its amount is pooled into the goods lines' landed cost.
-    if (isServiceLine({ itemGroup: line.itemGroup ?? null, itemCode: line.materialCode })) continue;
+    if (isServiceLine({ itemGroup: line.itemGroup ?? null, itemCode: line.itemCode })) continue;
     if (!(Number(line.qtyAccepted) > 0)) continue;
     if (Number(line.unitCostSen) > 0) continue;
     if (line.zeroCostAck === true) continue;
-    const known = knownCostSenByCode.get(normalizeMaterialCode(line.materialCode)) ?? 0;
+    const known = knownCostSenByCode.get(normalizeMaterialCode(line.itemCode)) ?? 0;
     if (!(known > 0)) continue;
     out.push({
       id: line.id ?? null,
-      materialCode: line.materialCode,
+      itemCode: line.itemCode,
       qtyAccepted: Number(line.qtyAccepted),
       knownUnitCostSen: known,
     });
@@ -194,23 +194,23 @@ export function refuseZeroCostReceipt(
    shown to the operator so they can see what the item normally costs. */
 export async function loadKnownPurchaseCostSen(
   sb: any,
-  materialCodes: string[],
+  itemCodes: string[],
   companyId: number | null,
 ): Promise<Map<string, number>> {
-  const codes = [...new Set(materialCodes.map((c) => (c ?? '').trim()).filter(Boolean))];
+  const codes = [...new Set(itemCodes.map((c) => (c ?? '').trim()).filter(Boolean))];
   const known = new Map<string, number>();
   if (codes.length === 0) return known;
   try {
     let q = sb.from('inventory_lots')
-      .select('product_code, unit_cost_sen, received_at')
-      .in('product_code', codes)
+      .select('item_code, unit_cost_sen, received_at')
+      .in('item_code', codes)
       .gt('unit_cost_sen', 0)
       .order('received_at', { ascending: false })
       .limit(2000);
     if (companyId != null) q = q.eq('company_id', companyId);
     const { data } = await q;
-    for (const r of (data ?? []) as Array<{ product_code: string; unit_cost_sen: number | null }>) {
-      const k = normalizeMaterialCode(r.product_code);
+    for (const r of (data ?? []) as Array<{ item_code: string; unit_cost_sen: number | null }>) {
+      const k = normalizeMaterialCode(r.item_code);
       // Rows arrive newest-first, so the first sighting of a code IS its most
       // recent priced receipt.
       if (!known.has(k) && Number(r.unit_cost_sen) > 0) known.set(k, Number(r.unit_cost_sen));
@@ -235,11 +235,11 @@ export async function checkReceiptCosts(
     (l) => Number(l.qtyAccepted) > 0
       && !(Number(l.unitCostSen) > 0)
       && l.zeroCostAck !== true
-      && !isServiceLine({ itemGroup: l.itemGroup ?? null, itemCode: l.materialCode }),
+      && !isServiceLine({ itemGroup: l.itemGroup ?? null, itemCode: l.itemCode }),
   );
   // Nothing is zero-priced — do not spend a query.
   if (candidates.length === 0) return null;
-  const known = await loadKnownPurchaseCostSen(sb, candidates.map((l) => l.materialCode), companyId);
+  const known = await loadKnownPurchaseCostSen(sb, candidates.map((l) => l.itemCode), companyId);
   const offenders = findUncostedReceiptLines(candidates, known);
   return offenders.length > 0 ? zeroCostReceiptResponse(offenders) : null;
 }

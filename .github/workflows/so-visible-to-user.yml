@@ -1,0 +1,54 @@
+name: Why can this person not find this SO (read-only)
+
+# For the report shape "Create Service Case is greyed out" / "I cannot find my SO".
+# The greyed button is a SYMPTOM: the form refuses to submit without a linked
+# order, so the real question is always why the picker found nothing.
+#
+# GET /api/assr/search-so reads two sources, and a bare SO-XXXXXX can only come
+# from the HOUZS AutoCount mirror — which assr.ts:1256 SKIPS ENTIRELY for a caller
+# who does not hold HOUZS. That guard exists on purpose (2026-07-22: a 2990-only
+# rep was seen reading HOUZS orders), so "not found" has three different causes
+# with three different fixes, and guessing between them costs someone a day.
+#
+# Manual trigger only, read-only, and it takes the SO number as an input so it
+# works for the NEXT report as well as this one.
+on:
+  workflow_dispatch:
+    inputs:
+      so_no:
+        description: "The SO number the person typed, exactly as they typed it (e.g. SO-005263)"
+        required: true
+        type: string
+      user:
+        description: "Who reported it — an email or part of their name (e.g. lucas). Optional but it answers the RBAC half."
+        required: false
+        type: string
+
+# Never the deploy's group: a diagnostic must not queue behind, or displace, a
+# release.
+concurrency:
+  group: so-visible-to-user
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/check-so-visible-to-user.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          SO_NO: ${{ inputs.so_no }}
+          USER_Q: ${{ inputs.user }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml.
+          NODE_OPTIONS: --dns-result-order=ipv4first

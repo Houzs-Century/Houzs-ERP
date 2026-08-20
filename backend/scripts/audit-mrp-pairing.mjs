@@ -243,19 +243,19 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
 
   /* ── 3. STOCK ─────────────────────────────────────────────────────────── */
   const balances = await sql`
-    SELECT product_code, warehouse_id, variant_key, qty
+    SELECT item_code, warehouse_id, variant_key, qty
       FROM scm.inventory_balances WHERE company_id = ${companyId}`;
   const stockByKey = new Map();
   const stockMetaByKey = new Map();
   for (const b of balances) {
-    const k = composite(b.warehouse_id ?? null, b.product_code, b.variant_key ?? "");
+    const k = composite(b.warehouse_id ?? null, b.item_code, b.variant_key ?? "");
     stockByKey.set(k, (stockByKey.get(k) ?? 0) + num(b.qty));
-    if (!stockMetaByKey.has(k)) stockMetaByKey.set(k, { wh: b.warehouse_id ?? null, code: b.product_code, vkey: b.variant_key ?? "" });
+    if (!stockMetaByKey.has(k)) stockMetaByKey.set(k, { wh: b.warehouse_id ?? null, code: b.item_code, vkey: b.variant_key ?? "" });
   }
 
   /* ── 4. PO SUPPLY — mrp.ts §4 (L677-730) ──────────────────────────────── */
   const poRaw = await sql`
-    SELECT pi.id AS po_item_id, pi.material_code, pi.item_group, pi.variants,
+    SELECT pi.id AS po_item_id, pi.item_code, pi.item_group, pi.variants,
            pi.qty, pi.received_qty, pi.delivery_date,
            pi.supplier_delivery_date_2, pi.supplier_delivery_date_3, pi.supplier_delivery_date_4,
            pi.warehouse_id, pi.so_item_id,
@@ -279,7 +279,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
       ?? effectiveDelivery(d2(r.expected_at), d2(r.h2), d2(r.h3), d2(r.h4))
       ?? null;
     const poWh = r.warehouse_id ?? r.purchase_location_id ?? null;
-    const bucketKey = composite(poWh, r.material_code, computeVariantKey(r.item_group, r.variants));
+    const bucketKey = composite(poWh, r.item_code, computeVariantKey(r.item_group, r.variants));
     const entry = { ...r, left, eta, poWh, bucketKey };
     poOpen.push(entry);
     poDrafts.push({ bucketKey, poNumber: r.po_number, eta, qtyLeft: left, supplierId: r.supplier_id, poItemId: r.po_item_id });
@@ -290,14 +290,14 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   const committed = new Map();
   if (openPoNumbers.length > 0) {
     const movs = await sql`
-      SELECT m.id, m.warehouse_id, m.product_code, m.variant_key, m.batch_no, m.qty, m.source_doc_id,
+      SELECT m.id, m.warehouse_id, m.item_code, m.variant_key, m.batch_no, m.qty, m.source_doc_id,
              UPPER(COALESCE(d.status::text,'')) AS do_status, d.is_dropship,
              COALESCE((SELECT SUM(c.qty_consumed) FROM scm.inventory_lot_consumptions c
                         WHERE c.movement_id = m.id), 0)::numeric AS consumed,
              EXISTS (SELECT 1 FROM scm.delivery_order_items di
                       WHERE di.delivery_order_id = d.id
                         AND di.committed_po_batch_no = m.batch_no
-                        AND di.item_code = m.product_code
+                        AND di.item_code = m.item_code
                         AND COALESCE(di.committed_variant_key,'') = COALESCE(m.variant_key,'')) AS line_committed
         FROM scm.inventory_movements m
         LEFT JOIN scm.delivery_orders d ON d.id = m.source_doc_id
@@ -309,10 +309,10 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
       if (m.is_dropship !== true && m.line_committed !== true) continue;
       const short = Math.max(0, Math.abs(num(m.qty)) - num(m.consumed));
       if (short <= 0) continue;
-      const k = `${composite(m.warehouse_id ?? null, m.product_code, m.variant_key ?? "")}|${m.batch_no}`;
+      const k = `${composite(m.warehouse_id ?? null, m.item_code, m.variant_key ?? "")}|${m.batch_no}`;
       const cur = committed.get(k);
       if (cur) cur.qty += short;
-      else committed.set(k, { qty: short, batchNo: m.batch_no, itemCode: m.product_code });
+      else committed.set(k, { qty: short, batchNo: m.batch_no, itemCode: m.item_code });
     }
   }
   /* applyCommittedSupply — ship-commitment.ts L345-372 */
@@ -557,7 +557,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   const rev = new Map(CATS.map((c) => [c, { lines: 0, units: 0, deliveredLock: 0, stored: 0, note: 0, mrp: 0, none: 0, noneUnits: 0 }]));
   const unpaired = [];
   for (const e of poOpen) {
-    const cat = catKey(prodByCode.get(e.material_code)?.category ?? catFromGroup(e.item_group));
+    const cat = catKey(prodByCode.get(e.item_code)?.category ?? catFromGroup(e.item_group));
     const b = rev.get(cat);
     b.lines += 1; b.units += e.left;
     const hasDelivered = deliveredPos.has(e.po_number);
@@ -580,7 +580,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice("  (a PO with no SO is legitimate when it is stock replenishment — the point is that");
   notice("   the system must be able to SAY which it is, not that every PO must have an SO.)");
   for (const u of unpaired.slice(0, 30)) {
-    notice(`      ${pad(u.po_number, 18)} ${pad(u.material_code, 26)} ${pad(u.cat, 11)} left ${pad(u.left, 5)} eta ${u.eta ?? "-"}`);
+    notice(`      ${pad(u.po_number, 18)} ${pad(u.item_code, 26)} ${pad(u.cat, 11)} left ${pad(u.left, 5)} eta ${u.eta ?? "-"}`);
   }
 
   /* stored-link coverage across ALL PO lines (open + closed), the owner's 47/20 figure */
@@ -607,8 +607,8 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
     if (!so) { mismatch.soGone += 1; continue; }
     const soKey = composite(so.warehouse_id ?? null, so.item_code, computeVariantKey(so.item_group, so.variants));
     if (soKey === e.bucketKey) continue;
-    const row = { po: e.po_number, code: e.material_code, soDoc: so.doc_no, soKey, poKey: e.bucketKey };
-    if (so.item_code !== e.material_code) mismatch.code.push(row);
+    const row = { po: e.po_number, code: e.item_code, soDoc: so.doc_no, soKey, poKey: e.bucketKey };
+    if (so.item_code !== e.item_code) mismatch.code.push(row);
     else if ((so.warehouse_id ?? null) !== (e.poWh ?? null)) mismatch.warehouse.push(row);
     else mismatch.variant.push(row);
   }
@@ -723,14 +723,14 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice(`   - consumed lot carries batch_no            : ${consStats.lot_batched}`);
   notice(`   - consumed lot has NO batch_no             : ${consStats.lot_unbatched}  <-- shipped goods whose source PO is UNKNOWABLE`);
   const untraceable = await sql`
-    SELECT d.do_number, c.product_code, SUM(c.qty_consumed)::numeric AS qty
+    SELECT d.do_number, c.item_code, SUM(c.qty_consumed)::numeric AS qty
       FROM scm.inventory_lot_consumptions c
       JOIN scm.inventory_lots l ON l.id = c.lot_id
       JOIN scm.delivery_orders d ON d.id = c.source_doc_id
      WHERE c.source_doc_type = 'DO' AND l.batch_no IS NULL
        AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'
-     GROUP BY d.do_number, c.product_code ORDER BY 3 DESC LIMIT 20`;
-  for (const u of untraceable) notice(`      ${pad(u.do_number, 20)} ${pad(u.product_code, 26)} qty ${u.qty}`);
+     GROUP BY d.do_number, c.item_code ORDER BY 3 DESC LIMIT 20`;
+  for (const u of untraceable) notice(`      ${pad(u.do_number, 20)} ${pad(u.item_code, 26)} qty ${u.qty}`);
   /* A FULLY shipped line leaves demand entirely (effQty 0), so layer (c) cannot
      apply to it. What can still float is the RESIDUAL of a partly-shipped line. */
   const partiallyShipped = results.filter((r) => (delMap.get(r.row.id) ?? 0) > 0);
@@ -798,7 +798,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   notice("      covered is back on the market: MRP must re-pair it or purchasing must re-order.)");
   for (const r of deadLinked.slice(0, 15)) {
     const so = demandById.get(r.so_item_id);
-    notice(`      ${pad(r.po_number, 18)} ${pad(r.material_code, 26)} qty ${pad(num(r.qty), 5)} -> live SO ${so?.doc_no}`);
+    notice(`      ${pad(r.po_number, 18)} ${pad(r.item_code, 26)} qty ${pad(num(r.qty), 5)} -> live SO ${so?.doc_no}`);
   }
   const deadAllocs = await sql`
     SELECT po.po_number, a.qty, si.doc_no, si.cancelled,
@@ -836,8 +836,8 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   const overClaimedLines = [];
   const catTotals = new Map(CATS.map((c) => [c, { openUnits: 0, spoken: 0, surplus: 0, lines: 0 }]));
   for (const e of poOpen) {
-    const cat = catKey(prodByCode.get(e.material_code)?.category ?? catFromGroup(e.item_group));
-    if (isServiceLine({ itemGroup: e.item_group, itemCode: e.material_code, category: cat })) continue;
+    const cat = catKey(prodByCode.get(e.item_code)?.category ?? catFromGroup(e.item_group));
+    if (isServiceLine({ itemGroup: e.item_group, itemCode: e.item_code, category: cat })) continue;
     const committedTake = committedByPoItem.get(e.po_item_id) ?? 0;
     const claimed = claimedByPoItem.get(e.po_item_id) ?? 0;
     const surplus = e.left - committedTake - claimed;
@@ -887,7 +887,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
     const links = [s.e.so_item_id, ...allocs.map((a) => a.so_item_id)].filter(Boolean);
     const doneLinks = links.map((id) => soStateById.get(id))
       .filter((r) => r && (r.cancelled || SO_DONE.has(r.so_status)));
-    const short = shortageByCode.get(s.e.material_code) ?? 0;
+    const short = shortageByCode.get(s.e.item_code) ?? 0;
     if (doneLinks.length > 0) {
       const d = doneLinks[0];
       return `SO-DONE (${d.doc_no} ${d.cancelled ? "line-cancelled" : d.so_status})${short > 0 ? ` + same SKU short ${short} elsewhere` : ""}`;
@@ -906,7 +906,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
     const tot = lines.reduce((x, s) => x + s.surplus, 0);
     notice(`   ${pad(poNo, 20)} surplus ${tot} unit(s) across ${lines.length} line(s)`);
     for (const s of lines.slice(0, 12)) {
-      notice(`      ${pad(s.e.material_code, 26)} ${pad(s.cat, 11)} qty ${pad(num(s.e.qty), 4)} recvd ${pad(num(s.e.received_qty), 4)} open ${pad(s.e.left, 4)} claimed ${pad(s.committedTake + s.claimed, 4)} SURPLUS ${pad(s.surplus, 4)} ${reasonOf(s)}`);
+      notice(`      ${pad(s.e.item_code, 26)} ${pad(s.cat, 11)} qty ${pad(num(s.e.qty), 4)} recvd ${pad(num(s.e.received_qty), 4)} open ${pad(s.e.left, 4)} claimed ${pad(s.committedTake + s.claimed, 4)} SURPLUS ${pad(s.surplus, 4)} ${reasonOf(s)}`);
     }
   }
   const accSurplus = surplusLines.filter((x) => x.cat === "ACCESSORY");
@@ -934,7 +934,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
     if (have - used > 1e-9) stockLeftByBucket.set(k, have - used);
   }
   const lotRows = await sql`
-    SELECT batch_no, product_code, warehouse_id, COALESCE(variant_key,'') AS vkey,
+    SELECT batch_no, item_code, warehouse_id, COALESCE(variant_key,'') AS vkey,
            SUM(qty_remaining)::numeric AS remaining
       FROM scm.inventory_lots
      WHERE company_id = ${companyId} AND qty_remaining > 0
@@ -942,7 +942,7 @@ async function auditCompany(companyId, allWarehouses, allStateMaps, whById) {
   const lotsByBucket = new Map();
   const leftoverBatchNos = new Set();
   for (const l of lotRows) {
-    const k = composite(l.warehouse_id ?? null, l.product_code, l.vkey);
+    const k = composite(l.warehouse_id ?? null, l.item_code, l.vkey);
     const arr = lotsByBucket.get(k) ?? [];
     arr.push(l); lotsByBucket.set(k, arr);
     if (l.batch_no) leftoverBatchNos.add(l.batch_no);

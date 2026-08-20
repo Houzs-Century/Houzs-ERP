@@ -67,6 +67,26 @@ const requireLayoutManager: MiddlewareHandler<{ Bindings: Env }> = async (c, nex
  */
 const TABLE_KEY_RE = /^[a-z0-9][a-z0-9.:_-]{0,79}$/i;
 
+/**
+ * Cross-company SHARED grids — the four Delivery/TMS queue boards, which render
+ * ONE queue over every company's rows (owner 2026-08-19). Per-company rows
+ * forked the same board's layout: whichever company a window was on picked the
+ * row, so flipping windows "reset" the board. For these keys the user's LIVE
+ * arrangement is pinned to ONE canonical company (the caller's lowest visible
+ * company id — deterministic per user, no magic constant), GET serves the
+ * NEWEST row wherever it was saved, and every save collapses the fork by
+ * deleting the same-key live rows under other companies. Company DEFAULTS and
+ * named layouts stay per-company on purpose: a default is a company thing.
+ * The same key list lives in frontend dataGridLayoutStorage.ts (minus the
+ * 'dg:' prefix), where it unscopes the localStorage entry.
+ */
+const SHARED_TABLE_KEYS = new Set([
+  "dg:dg-delivery-planning",
+  "dg:dg-date-arrangement-v2",
+  "dg:dg-trips-time-arrangement-v2",
+  "dg:dg-last-mile",
+]);
+
 /** Bounds. A layout is a handful of column keys, never a document. */
 const MAX_KEYS = 200;
 const MAX_KEY_LEN = 64;
@@ -196,13 +216,18 @@ app.get("/", async (c) => {
     const uid = userIdOf(c);
     try {
       const placeholders = ids.map(() => "?").join(", ");
+      /* User rows come from EVERY visible company, not just the active one:
+         the shared queue boards (SHARED_TABLE_KEYS) must serve the newest row
+         wherever the old per-company scoping left it. Non-shared user rows are
+         filtered back to the active company in the loop below, so per-tenant
+         lists behave exactly as before. */
       const rows = await c.env.DB.prepare(
         `SELECT id, company_id, user_id, name, table_key, layout, updated_at
            FROM table_layouts
           WHERE (user_id IS NULL AND company_id IN (${placeholders}))
-             OR (user_id = ? AND company_id = ?)`,
+             OR (user_id = ? AND company_id IN (${placeholders}))`,
       )
-        .bind(...ids, uid, activeCompanyId ?? 0)
+        .bind(...ids, uid, ...ids)
         .all<{
           id: number;
           company_id: number;
@@ -212,6 +237,9 @@ app.get("/", async (c) => {
           layout: string;
           updated_at: string | null;
         }>();
+      /* Newest-wins tracker for the shared keys' live rows (ISO timestamps —
+         lexicographic compare is chronological). */
+      const mineAt = new Map<string, string>();
       for (const row of rows.results ?? []) {
         const layout = parseLayout(row.layout);
         if (!layout) continue;
@@ -222,8 +250,19 @@ app.get("/", async (c) => {
             (defaultNames[String(row.company_id)] ??= {})[row.table_key] = row.name;
           }
         } else if (row.name == null) {
+          if (SHARED_TABLE_KEYS.has(row.table_key)) {
+            // Shared board: the NEWEST live row wins, whichever company slot
+            // the old per-company scoping parked it under.
+            const at = row.updated_at ?? "";
+            const seen = mineAt.get(row.table_key);
+            if (seen !== undefined && seen >= at) continue;
+            mineAt.set(row.table_key, at);
+          } else if (row.company_id !== activeCompanyId) {
+            continue; // per-tenant list — the active company's row only.
+          }
           mine[row.table_key] = { layout, updatedAt: row.updated_at ?? null };
         } else {
+          if (row.company_id !== activeCompanyId) continue;
           (myLayouts[row.table_key] ??= []).push({
             id: Number(row.id),
             name: row.name,
@@ -302,25 +341,69 @@ function readTarget(c: Ctx) {
   return { tableKey, companyId };
 }
 
-/** PUT /api/table-layouts/:tableKey — save MY layout for the active company. */
-app.put("/:tableKey", async (c) => {
+/** The canonical company a SHARED table key's live row is pinned to — the
+ *  caller's lowest VISIBLE company id, so it never depends on which company
+ *  the window happens to be on. */
+function pinnedCompanyIdFor(c: Ctx): number | null {
+  const companies = (c.get("companies") as { id: number }[] | undefined) ?? [];
+  const allowedIds = c.get("allowedCompanyIds") as number[] | undefined;
+  const ids = (allowedIds ? companies.filter((co) => allowedIds.includes(co.id)) : companies)
+    .map((co) => co.id)
+    .filter((id) => Number.isFinite(id));
+  return ids.length > 0 ? Math.min(...ids) : null;
+}
+
+/** Target for the LIVE-arrangement endpoints (PUT / DELETE /:tableKey) —
+ *  readTarget, except a shared key lands on the pinned company. The default and
+ *  named-layout endpoints keep readTarget: those stay company things. */
+function mineTarget(
+  c: Ctx,
+): { error: string } | { tableKey: string; companyId: number; shared: boolean } {
   const target = readTarget(c);
+  if ("error" in target) return { error: String(target.error) };
+  if (!SHARED_TABLE_KEYS.has(target.tableKey)) return { ...target, shared: false };
+  return { tableKey: target.tableKey, companyId: pinnedCompanyIdFor(c) ?? target.companyId, shared: true };
+}
+
+/** PUT /api/table-layouts/:tableKey — save MY layout for the active company
+ *  (a SHARED key lands on the pinned company instead, and the save collapses
+ *  any fork the old per-company scoping left behind). */
+app.put("/:tableKey", async (c) => {
+  const target = mineTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
   const uid = userIdOf(c);
   if (!uid) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
   const body = await c.req.json().catch(() => ({}));
   const layout = sanitizeLayout((body as { layout?: unknown }).layout);
   await upsert(c.env, target.companyId, uid, target.tableKey, layout, uid);
+  if (target.shared) {
+    // The pinned row is now the truth; live rows this user saved for the same
+    // key under any OTHER company are the stale halves of the fork.
+    await c.env.DB.prepare(
+      "DELETE FROM table_layouts WHERE table_key = ? AND user_id = ? AND name IS NULL AND company_id <> ?",
+    )
+      .bind(target.tableKey, uid, target.companyId)
+      .run();
+  }
   return c.json({ ok: true, layout });
 });
 
 /** DELETE /api/table-layouts/:tableKey — forget MY layout (the panel's Reset),
  *  so this table falls back to the company default again. */
 app.delete("/:tableKey", async (c) => {
-  const target = readTarget(c);
+  const target = mineTarget(c);
   if ("error" in target) return c.json({ error: target.error }, 400);
   const uid = userIdOf(c);
   if (!uid) return c.json({ error: "Your session has expired. Please sign in again." }, 401);
+  if (target.shared) {
+    // A shared board has ONE live arrangement — reset means every company slot.
+    await c.env.DB.prepare(
+      "DELETE FROM table_layouts WHERE table_key = ? AND user_id = ? AND name IS NULL",
+    )
+      .bind(target.tableKey, uid)
+      .run();
+    return c.json({ ok: true });
+  }
   await c.env.DB.prepare(
     // Their LIVE arrangement only — a reset must not take their saved layouts
     // with it.

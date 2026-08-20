@@ -85,13 +85,13 @@ async function main() {
   /* 2. Live on-hand per bucket. inventory_balances already stores variant_key,
         so only the SO side needs computeVariantKey. */
   const balances = await sql`
-    SELECT warehouse_id, product_code, COALESCE(variant_key, '') AS variant_key,
+    SELECT warehouse_id, item_code, COALESCE(variant_key, '') AS variant_key,
            SUM(qty)::numeric AS qty
       FROM scm.inventory_balances
-     GROUP BY warehouse_id, product_code, COALESCE(variant_key, '')`;
+     GROUP BY warehouse_id, item_code, COALESCE(variant_key, '')`;
   const onHand = new Map();
   for (const b of balances) {
-    const key = `${b.warehouse_id ?? WH_NONE}::${b.product_code}::${b.variant_key}`;
+    const key = `${b.warehouse_id ?? WH_NONE}::${b.item_code}::${b.variant_key}`;
     onHand.set(key, (onHand.get(key) ?? 0) + Number(b.qty ?? 0));
   }
   note(`inventory buckets with a balance row: ${onHand.size}`);

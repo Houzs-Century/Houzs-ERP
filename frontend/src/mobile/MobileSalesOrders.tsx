@@ -8,7 +8,7 @@ import { normalizeJobs, type ScanJobsResp } from "./MobileScan";
 import { MobileVirtualList } from "./MobileVirtualList";
 import { invalidateSoShared } from "./sharedInvalidate";
 import { confirmSoWithFreshVersion } from "./mobile-so-concurrency";
-import { fmtCenti } from "../lib/scm";
+import { fmtSen } from "../lib/scm";
 import { brandingLabel } from "../vendor/shared/so-branding-label";
 import { getBrandingCompanyCode } from "../lib/branding";
 import { resolveSoLocation } from "../lib/soLocation";
@@ -17,6 +17,7 @@ import { SearchProgress } from "../components/SearchProgress";
 import { SearchScopeHint } from "../components/SearchScopeHint";
 import { SourcePosRowMobile } from "./source-chips";
 import { poCellChips } from "../lib/soPoChips";
+import { useEnrichedSoListRows } from "../vendor/scm/lib/sales-order-queries";
 import { identityStorageKey } from "../lib/storageIdentity";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../hooks/useServerSearch";
 import "./mobile.css";
@@ -34,8 +35,8 @@ type SoRow = {
   first_item_category: string | null;
   customer_delivery_date: string | null; processing_date: string | null;
   so_date: string | null; created_at: string | null;
-  local_total_centi: number | null; total_revenue_centi: number | null; paid_total_centi: number | null;
-  balance_centi: number | null; balance_centi_live: number | null;
+  local_total_sen: number | null; total_revenue_sen: number | null; paid_total_sen: number | null;
+  balance_sen: number | null; balance_sen_live: number | null;
   /* Fulfilment status the list endpoint derives per SO (only rendered when the
      row actually carries it — a Draft/Cancelled SO has none). */
   planning_state: string | null;
@@ -56,9 +57,9 @@ type SoRow = {
    month names). Delegates to the shared helper so YYYY-MM-DD strings render in
    Asia/Kuala_Lumpur and never drift a day on an off-zone device. */
 const dm = (d: string | null | undefined) => formatDate(d);
-const total = (r: SoRow) => r.local_total_centi ?? r.total_revenue_centi ?? 0;
-const paid = (r: SoRow) => r.paid_total_centi ?? 0;
-const balance = (r: SoRow) => r.balance_centi_live ?? r.balance_centi ?? (total(r) - paid(r));
+const total = (r: SoRow) => r.local_total_sen ?? r.total_revenue_sen ?? 0;
+const paid = (r: SoRow) => r.paid_total_sen ?? 0;
+const balance = (r: SoRow) => r.balance_sen_live ?? r.balance_sen ?? (total(r) - paid(r));
 const isCancelled = (r: SoRow) => (r.status ?? "").toLowerCase() === "cancelled";
 const isDraft = (r: SoRow) => (r.status ?? "").toLowerCase() === "draft";
 const soDate = (r: SoRow) => r.so_date ?? r.created_at ?? null;
@@ -237,7 +238,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
     if (debouncedQ) p.set("q", debouncedQ);
     return p.toString();
   };
-  type SoListPage = { salesOrders?: SoRow[]; total?: number; page?: number; pageSize?: number; statusCounts?: Record<string, number>; aggregates?: { revenueCenti: number; outstandingCenti: number; paidCenti: number } };
+  type SoListPage = { salesOrders?: SoRow[]; total?: number; page?: number; pageSize?: number; statusCounts?: Record<string, number>; aggregates?: { revenueSen: number; outstandingSen: number; paidSen: number } };
   const {
     data, isLoading, isFetching, isPlaceholderData, error, refetch,
     fetchNextPage, hasNextPage, isFetchingNextPage,
@@ -262,6 +263,10 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
   });
   const listLoading = isLoading || searchTransition.isSearching;
   const rows = useMemo(() => data?.pages.flatMap((p) => p.salesOrders ?? []) ?? [], [data]);
+  // Deferred MRP enrichment for every loaded card (READY chips + readiness /
+  // planning badges), healed a beat later. Shared with desktop; the hook chunks
+  // the doc set at 100 so infinite scroll stays bounded (soListEnrichment.ts).
+  const enrichedRows = useEnrichedSoListRows(rows, !listLoading);
   const totalCount = data?.pages[0]?.total ?? 0;
 
   /* Summary bar totals — full-set rev/out from the server `aggregates` (page-0
@@ -277,13 +282,13 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
      simply omits the numbers instead of showing fake zeros. */
   const statusCounts = data?.pages[0]?.statusCounts;
   const summary = useMemo(() => {
-    if (aggregates) return { rev: aggregates.revenueCenti, out: aggregates.outstandingCenti, fullSet: true };
+    if (aggregates) return { rev: aggregates.revenueSen, out: aggregates.outstandingSen, fullSet: true };
     let rev = 0, out = 0;
     for (const r of rows) {
       if (isCancelled(r)) continue;
       rev += total(r);
-      /* Signed, matching the server's `aggregates.outstandingCenti` (which sums
-         balance_centi_live straight). Dropping negatives here made the fallback
+      /* Signed, matching the server's `aggregates.outstandingSen` (which sums
+         balance_sen_live straight). Dropping negatives here made the fallback
          path disagree with the primary one the moment over-collection became
          possible — the same figure reading differently depending on whether the
          backend answered with aggregates. */
@@ -540,13 +545,13 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
           <div style={{ display: "flex", alignItems: "center", gap: 9, flexWrap: "wrap", fontSize: 11.5, color: "var(--mut)", margin: "0 2px 11px" }}>
             <span><b style={{ color: "var(--ink)" }}>{totalCount}</b> orders</span>
             <span style={{ opacity: .4 }}>·</span>
-            <span className="money">{fmtCenti(summary.rev)} rev{summary.fullSet ? "" : " (loaded)"}</span>
+            <span className="money">{fmtSen(summary.rev)} rev{summary.fullSet ? "" : " (loaded)"}</span>
             {/* Non-zero either way — a net over-collection is not "nothing to
                 show", and it is red for the same reason a debt is. */}
             {summary.out !== 0 && <>
               <span style={{ opacity: .4 }}>·</span>
               <span className="money" style={{ color: "var(--red)" }}>
-                {fmtCenti(summary.out)} {summary.out < 0 ? "over-collected" : "outstanding"}{summary.fullSet ? "" : " (loaded)"}
+                {fmtSen(summary.out)} {summary.out < 0 ? "over-collected" : "outstanding"}{summary.fullSet ? "" : " (loaded)"}
               </span>
             </>}
           </div>
@@ -576,7 +581,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
           <>
             {rows.length > 0 && (
               <MobileVirtualList
-                items={rows}
+                items={enrichedRows}
                 getKey={(r) => r.doc_no}
                 estimateHeight={140}
                 renderItem={(r) => {
@@ -638,7 +643,7 @@ export function MobileSalesOrders({ onScan, onOpen, onNew, onNewCase }: { onScan
                   {/* Line 5 — created / total */}
                   <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 9, paddingTop: 9, borderTop: "1px solid var(--line2)" }}>
                     <span style={{ fontSize: 10, color: "var(--mut2)" }}>{dm(soDate(r))} · created</span>
-                    <span className="money" style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>{fmtCenti(total(r))}</span>
+                    <span className="money" style={{ fontSize: 14, fontWeight: 800, color: "var(--ink)" }}>{fmtSen(total(r))}</span>
                   </div>
                 </div>
               );

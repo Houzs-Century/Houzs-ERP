@@ -1,7 +1,7 @@
 // ----------------------------------------------------------------------------
 // Inventory variant key — the canonical "attribute composition" identity.
 //
-// Stock is bucketed by (warehouse_id, product_code, variant_key). Two lines
+// Stock is bucketed by (warehouse_id, item_code, variant_key). Two lines
 // with identical physical attributes produce the SAME key, so they pool into
 // the same on-hand bucket; any difference produces a different key, so they
 // are tracked separately.
@@ -24,9 +24,12 @@
 //
 // HOUZS VENDOR — Inventory/StockCard wave. Copied verbatim from
 // @2990s/shared/variant-key.ts. The Inventory hub + Stock Card only call
-// formatVariantKey, but the full module is pure (no imports) so it is vendored
-// whole to stay byte-for-byte with the source key contract.
+// formatVariantKey. It imports one pure sibling helper (normaliseTypographicQuotes
+// from ./mfg-pricing) so the key folds typographic inch marks exactly as pricing
+// does; otherwise vendored whole to stay byte-for-byte with the source key contract.
 // ----------------------------------------------------------------------------
+
+import { normaliseTypographicQuotes } from './mfg-pricing';
 
 export type InventoryItemGroup =
   | 'sofa'
@@ -84,7 +87,8 @@ const ATTRS_BY_GROUP: Record<string, Array<keyof VariantAttrs>> = {
   service: [],
 };
 
-const norm = (v: unknown): string => (v == null ? '' : String(v).trim().toLowerCase());
+const norm = (v: unknown): string =>
+  v == null ? '' : normaliseTypographicQuotes(String(v).trim().toLowerCase());
 
 /** Specials → a normalized, order-independent, comma-joined string. */
 const normSpecials = (specials: VariantAttrs['specials']): string => {

@@ -22,7 +22,7 @@ const line = (idx: number, category: string, modelId: string | null, o: LineOpts
   modelId,
   qty: o.qty ?? 1,
   productName: o.name,
-  productCode: o.code,
+  itemCode: o.code,
   pwpRequested: o.pwp ?? false,
   ...(o.isReward !== undefined ? { isReward: o.isReward } : {}),
   ...(o.sizeCode !== undefined ? { sizeCode: o.sizeCode } : {}),
