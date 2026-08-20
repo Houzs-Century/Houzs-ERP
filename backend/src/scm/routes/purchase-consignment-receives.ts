@@ -43,6 +43,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
   isCrossCompanySource, crossCompanyConversionBlocked } from '../lib/companyScope';
 import { todayMyt } from '../lib/my-time';
+import { changedLockedCols, identityLockedRefusal } from '../shared/header-inherited-lock';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 
 export const purchaseConsignmentReceives = new Hono<{ Bindings: Env; Variables: Variables }>();
@@ -463,6 +464,11 @@ export async function recomputePcoReceived(
    lines has a downstream PC Return (returned_qty > 0). There is no PC invoice in
    scope, so invoiced_qty is not consulted. Returns the blocking JSON, or null if
    the receive is free to edit. */
+/* Header field-level lock (owner 2026-08-20, §8 GAP-1) — like GRN, this header had
+   no downstream guard; supplier + currency freeze once a PC Return exists. */
+const PCR_IDENTITY_LOCK_COLS: ReadonlySet<string> = new Set<string>(['supplier_id', 'currency']);
+const PCR_IDENTITY_LABELS: Record<string, string> = { supplier_id: 'supplier', currency: 'currency' };
+
 async function pcReceiveHasDownstream(sb: any, receiveId: string): Promise<{ error: string; message: string } | null> {
   const { data, error } = await sb.from('purchase_consignment_receive_items')
     .select('returned_qty').eq('pc_receive_id', receiveId);
@@ -1158,6 +1164,21 @@ purchaseConsignmentReceives.patch('/:id', async (c) => {
   /* A cleared received-date posts "" and this loop wrote it through to the
      date column, which Postgres rejects and 500s the save. */
   coerceEmptyDates(updates);
+  /* Header inherited-field lock (owner 2026-08-20, §8 GAP-1): supplier + currency
+     freeze once a live PC Return exists; received date / delivery-note ref / notes
+     stay editable. This header previously had no downstream guard at all. */
+  {
+    const { data: before, error: bErr } = await scopeToCompanyId(sb.from('purchase_consignment_receives')
+      .select('supplier_id, currency').eq('id', id), co.companyId).maybeSingle();
+    if (bErr) return c.json({ error: 'update_failed', reason: bErr.message }, 500);
+    const locked = before ? changedLockedCols(PCR_IDENTITY_LOCK_COLS, updates, before as Record<string, unknown>) : [];
+    if (locked.length > 0 && (await pcReceiveHasDownstream(sb, id))) {
+      return c.json(identityLockedRefusal({
+        error: 'pc_receive_identity_locked', fields: locked, labels: PCR_IDENTITY_LABELS,
+        what: 'PC Receive', child: 'PC Return', ownFields: 'received date, delivery-note ref and notes',
+      }), 409);
+    }
+  }
   const { data, error } = await scopeToCompanyId(sb.from('purchase_consignment_receives').update(updates).eq('id', id), co.companyId).select(HEADER).maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json(NOT_THIS_COMPANY, 404);
