@@ -110,7 +110,7 @@ One guard, `scm.consignment.po_orders`, over the whole router — read and write
 | GET | `/:id` | Detail — header + items |
 | GET | `/:id/linked` | Downstream receives / returns, for the detail's links |
 | POST | `/` | Create — lands as `SUBMITTED` |
-| PATCH | `/:id` | Update the header. **Field-level inherited lock since 2026-08-20 (§8 GAP-1):** once a live PC Receive exists, `supplier_id` / `currency` / `purchase_location_id` freeze (409 `pco_identity_locked`); dates + notes stay editable. Was a whole-doc `pcoHasDownstream` 409 before. |
+| PATCH | `/:id` | Update the header. **Field-level inherited lock since 2026-08-20 (§8 GAP-1):** once a live PC Receive exists, `supplier_id` / `currency` / `purchase_location_id` freeze (409 `pco_identity_locked`); dates + notes stay editable. Was a whole-doc `pcoHasDownstream` 409 before. The lock **column set is sourced from the ONE rulebook** `backend/src/scm/shared/document-policy.ts` (`PCO_LOCK_COLS`), so it can't drift from the sibling documents. |
 | POST | `/:id/items` | Add a line |
 | PATCH | `/:id/items/:itemId` | Update a line |
 | DELETE | `/:id/items/:itemId` | Remove a line (child-lock applies) |
