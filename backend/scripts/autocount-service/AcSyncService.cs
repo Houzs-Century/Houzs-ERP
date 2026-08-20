@@ -2445,6 +2445,23 @@ class AcSyncService {
        one; a blank would be its own foreign key error. */
     if (p.ContainsKey("PurchaseLocation") && !string.IsNullOrEmpty(Str(p, "PurchaseLocation")))
       Set(() => doc.PurchaseLocation = Str(p, "PurchaseLocation"));
+    /* THE PURCHASE AGENT, and it is the reason CARRYING a field is not LANDING
+       one. /create-po assigns po.Agent itself (CreatePo above); this function
+       did not read the key at all, so /so-to-po could be handed a perfectly
+       good Agent and still save a purchase order without one. The ERP's value
+       is the constant AC_PURCHASE_AGENT, which exists because a blank is
+       FK_PO_PurchaseAgent on the save - dbo.PurchaseAgent, NOT the sales
+       agent's dbo.SalesAgent, and this route's source document is a SALES
+       order, so nothing the transfer brings across can fill it in.
+
+       GUARDED, unlike CreatePo's: this same function is what the four
+       conversions apply their header with, and enqueueConvert composes no Agent
+       at all. Str() of an absent key is "", so an unguarded assignment would
+       blank whatever the GRN or purchase invoice inherited from its source and
+       re-create the foreign key failure on documents that do not have this
+       problem today. */
+    if (p.ContainsKey("Agent") && !string.IsNullOrEmpty(Str(p, "Agent")))
+      Set(() => doc.Agent = Str(p, "Agent"));
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));

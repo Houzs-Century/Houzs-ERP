@@ -1058,7 +1058,7 @@ service side:
 
 | | |
 |---|---|
-| `composeSoToPo` | takes the number as its **first, required** argument and returns `DocNo`. Required, not optional: a caller that says nothing would silently keep AutoCount's counter with no compile error |
+| `composeSoToPo` | returns `DocNo`. It took the number as its own first, required argument until 2026-08-20, when the field-by-field master was replaced wholesale — see §7c3b-i. `DocNo` now arrives as part of the create payload it is handed, which is why no caller can omit it |
 | `dispatchOne` | backfills `body.DocNo` from `row.doc_no` for anything already queued. Cheaper than the creditor's backfill — the outbox row is already KEYED by the ERP's purchase-order number, so there is no join |
 | `AcSyncService.SoToPo` | carries the same `RequireDocNo` the two create routes carry, and assigns `po.DocNo` **directly** rather than through `PurchaseHeader`'s `Set()`, which logs and swallows. It also compares the saved `DocNo` against the one asked for and logs a disagreement |
 
@@ -1080,6 +1080,103 @@ options, and neither is ours to take:
 2. **Leave it.** One purchase order in the book whose number does not match the
    paperwork, reconciled through `linked_ac_docno` as everything did before D5
    was closed anywhere.
+
+#### 7c3b-i. The third field would have been the third outage — the whole master, 2026-08-20
+
+Two fields had reached the live account book wrong on this one route, and each
+was patched on its own: `CreditorCode` (§7c3a) and `DocNo` (§7c3b). They are the
+**same defect**. `enqueuePoCreate` builds the nine-field master with
+`composeCreatePo` and, on the transfer branch, threw the whole object away —
+`composeSoToPo` built its own.
+
+After both patches, **five were still missing**: `DocDate`, `Agent`, `Ref`,
+`Description`, `UDF`. The owner hit two of them walking a real purchase chain on
+2026-08-19:
+
+> 「为什么 Sales Order to PO，它的 Description2 不对的呢？再来，它的 Purchase
+> Location 也不对… 因为它是用 transfer from Sales Order 的嘛，为什么它没有把
+> Sales Order 的那些资料带过去呢？」
+
+`Description` is `purchase_orders.notes`. `Agent` is the dangerous one: it
+carries the constant `AC_PURCHASE_AGENT` behind `FK_PO_PurchaseAgent`, the same
+class of foreign key as the two failures above.
+
+**The fix is structural, not a third field.** `composeSoToPo` now takes the
+CREATE payload and spreads it:
+
+```ts
+composeSoToPo(master: AcCreatePoPayload, dtlKeys, details)
+  -> { ...master, DtlKeys, Details: <the DtlKey override shape> }
+```
+
+so a field added to `composeCreatePo` next month reaches a transfer without
+anyone remembering this function exists. `enqueuePoCreate`'s hand-merge of
+`CreditorCode` / `CreditorName` is gone with it — the master already carries
+them.
+
+**The one thing a transfer overrides, and why.** `Details`. A create's detail
+NAMES the item being bought (`ItemCode` / `Description` / `Desc2` / `Qty` /
+`UnitPrice`) because AutoCount holds no line yet. A transfer's detail addresses a
+line AutoCount already made: `AddSOToPOTransferDetail` brought the sales line
+across, price and all, and phase two reopens the saved document and applies the
+ERP's COST by `DtlKey`. Phase two reads **four** keys — `UnitPrice`, `Qty`,
+`Location`, `DeliveryDate` — so those are the only ones sent. A fifth would be
+composed, stored, POSTed and dropped by the host, which is the failure this
+whole section is made of. Nothing else is excluded.
+
+**`Agent` also needed the SERVICE side, and this is the "carrying is not
+landing" trap.** `PurchaseHeader` — the one header function `/so-to-po` and the
+four conversions apply — did not read `Agent` at all; only `CreatePo` assigned
+it. An `Agent` added to the transfer payload would have satisfied every ERP-side
+test and still saved a purchase order without one. `PurchaseHeader` now reads
+it, **guarded** (`ContainsKey` + non-empty) because `enqueueConvert` sends no
+`Agent` and `Str()` of an absent key is `""`.
+
+**And the alignment is now asserted rather than assumed.** `DtlKeys` and
+`Details` are zipped by position, and they are built by different code from
+different rows — `poTransferShape` counts ERP purchase-order lines,
+`composeDetails` collapses a sofa build into one AutoCount line (D9). Zipped
+short, the tail lines keep the CUSTOMER's price and the purchase order pays the
+wrong number while looking saved; `SoToPo`'s own guard compares the lines it
+CREATED against `DtlKeys` and does not catch it. `AcSoToPoAlignmentError`
+refuses instead.
+
+#### 7c3b-ii. Purchase Location — AutoCount has a header one, and the ERP had never sent it
+
+The second half of the owner's 2026-08-19 report, and it is **not** transfer-only
+— it was wrong on every purchase order the ERP has ever written.
+
+| | |
+|---|---|
+| AutoCount | `PurchaseHeader` assigns `doc.PurchaseLocation`, and it is the header function BOTH `/create-po` and `/so-to-po` call. Its own comment in `AcSyncService.cs` records that the field "has never been sent" |
+| the ERP | `scm.purchase_orders.purchase_location_id` (PR #77) — the PO's own ship-to warehouse, which `/submit` REFUSES a purchase order without unless every line names its own |
+
+So AutoCount was **defaulting** the purchase location on every ERP-written
+purchase order, which is exactly「不对」. `readPoHeader` now selects the column
+and resolves it to the `dbo.Location` code (the same id → code hop
+`withLocations` does for lines), and `composeCreatePo` sends it.
+
+**It is also the LINE default now, and that is the ERP's own precedence read the
+only direction it runs**: `warehouse_id ?? po.purchase_location_id`
+(`outstanding-po-lines.ts`), and `poWarehouseGap` treats a header warehouse as
+covering every line. Before this, a purchase order the ERP considers complete —
+header warehouse set, no per-line override — was refused with
+`MissingLocationError`. A line with neither is still refused, because then
+nobody has said where the goods go.
+
+**Sent OMITTED, never null.** The service's guard on this one key is
+`ContainsKey` AND non-empty, because a blank `PurchaseLocation` is its own
+foreign key error rather than an empty field. `mastersOf` opens it as a stock
+location for the same reason it opens `SalesLocation`: `PurchaseHeader` applies
+it through `Set()`, which **swallows**, so a warehouse code `dbo.Location` does
+not hold would leave the purchase order looking saved and carrying no location
+at all.
+
+**STILL OPEN: the PO EDIT cannot change it.** `/edit`'s header allow-list in
+`AcSyncService.cs` does not contain `PurchaseLocation`, so moving a purchase
+order's ship-to warehouse in the ERP after it has been written does not reach the
+account book. Same class as D8. Not fixed here — it needs a service change and a
+decision about whether a blank may travel.
 
 #### 7c3c. What the PURCHASE side accepts as a source type, and where a PO keeps its sales link
 

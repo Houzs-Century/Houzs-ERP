@@ -335,7 +335,13 @@ const SO_ITEM_COLS =
 /* scm.purchase_orders is SUPPLIER-keyed. It has no creditor_code, creditor_name,
    agent or ref: the creditor is scm.suppliers.code / .name behind supplier_id,
    and the other two do not exist at all on the ERP side. */
-const PO_HEADER_COLS = 'id, company_id, po_number, po_date, supplier_id, notes, linked_ac_docno';
+/* purchase_location_id is the PO's OWN ship-to warehouse (PR #77), and /submit
+   refuses a purchase order that has neither it nor a warehouse on every line
+   (mfg-purchase-orders.ts:4030). AutoCount has the same field on its purchase
+   header — `doc.PurchaseLocation`, AcSyncService.cs:2446 — and until this
+   column was selected the ERP had never sent one, so the book defaulted it. */
+const PO_HEADER_COLS =
+  'id, company_id, po_number, po_date, supplier_id, notes, purchase_location_id, linked_ac_docno';
 /* description2 is NOT optional here. The PO importer wrote the AutoCount sofa
    Desc2 verbatim onto every compartment row, and that stored text is what the
    D9 collapse echoes back. Leaving the column out of this list is what made the
@@ -402,6 +408,33 @@ async function withLocations(
     const code = typeof id === 'string' ? byId.get(id) ?? null : null;
     return code ? { ...l, location: code } : l;
   });
+}
+
+/**
+ * One warehouse id -> the `dbo.Location` code AutoCount keys its stock by.
+ *
+ * The single-row twin of `withLocations`, for a document's HEADER warehouse
+ * (`scm.purchase_orders.purchase_location_id`). Split out rather than folded
+ * into `withLocations` because the two answer different questions: that one
+ * resolves a SET of line warehouses and tolerates a line with none, this one
+ * resolves the order's own default.
+ *
+ * A FAILED READ THROWS, the same rule `readSalespersonName` states one function
+ * down: null here means "this purchase order has no ship-to warehouse", which
+ * `composeCreatePo` turns into a refusal naming a remedy, and an unreadable
+ * `scm.warehouses` must not be able to look like that.
+ */
+async function readWarehouseCode(sb: Sb, warehouseId: unknown): Promise<string | null> {
+  const id = typeof warehouseId === 'string' ? warehouseId.trim() : '';
+  if (!id) return null;
+  const row = await readOrThrow('warehouses',
+    sb.from('warehouses').select('id, code, name').eq('id', id).maybeSingle());
+  const w = row as { code?: string | null; name?: string | null } | null;
+  /* `code` first, `name` as the fallback — exactly what `withLocations` does, so
+     a warehouse row with a blank code resolves the same way on a header as it
+     does on a line. */
+  const code = ((w?.code ?? w?.name ?? '') as string).trim();
+  return code || null;
 }
 
 /**
@@ -680,6 +713,10 @@ async function readPoHeader(sb: Sb, poId: string) {
       sb.from('suppliers').select('code, name').eq('id', String(h.supplier_id)).maybeSingle())
     : null;
   const s = supplier as { code?: string | null; name?: string | null } | null;
+  /* The SAME id -> code hop `withLocations` does for the lines, one row instead
+     of a set. AutoCount's `dbo.Location` is keyed by the short code (KL, PG,
+     HQ...) and the ERP column is a `scm.warehouses` uuid. */
+  const purchaseLocation = await readWarehouseCode(sb, h.purchase_location_id);
   return {
     id: String(h.id ?? poId),
     /* Carried for the binding lookup, which narrows by the PO's OWN supplier:
@@ -694,6 +731,7 @@ async function readPoHeader(sb: Sb, poId: string) {
     agent: AC_PURCHASE_AGENT,
     ref: null,
     notes: (h.notes as string | null) ?? null,
+    purchase_location: purchaseLocation,
     linked_ac_docno: (h.linked_ac_docno as string | null) ?? null,
   };
 }
@@ -734,25 +772,29 @@ export async function enqueuePoCreate(
       docNo: header.po_number,
       docId: opts.poId,
       payload: {
-        /* FromDocNo resolves at DRAIN; composeSoToPo carries the rest.
+        /* ONE MASTER, TWO SHAPES. FromDocNo resolves at DRAIN; everything else a
+           transfer sends is `body` — the very object `composeCreatePo` built two
+           lines up — because `composeSoToPo` now takes it and spreads it.
 
-           THE SUPPLIER IS NOT IN "the rest", and that was the defect: on the
-           host 2026-08-17 09:15, `CreditorCode required for /so-to-po`.
-           composeSoToPo returns { DtlKeys, Details } and nothing else, so the
-           whole master went missing the moment the shape was a transfer —
-           `body`, built three lines up by composeCreatePo and carrying the
-           creditor, is thrown away on this branch. No join is needed to fix it:
-           readPoHeader resolved suppliers.code for the binding lookup above.
-           Guide §7c3a.
+           THAT IS THE FIX, and the reason it is not a third field being added.
+           This branch used to build its own master, and twice a field the create
+           had was missing from it, each found on a live document:
 
-           NEITHER WAS THE NUMBER: `DocNo` went out with the same throw-away, so
-           the first successful /so-to-po landed as `PO-009968` and not
-           `HC-PO-2608-001`. Divergence D5, closed — guide §7c3b. */
+             CreditorCode  host 2026-08-17 09:15, `CreditorCode required for
+                           /so-to-po` — reported by AutoCount as
+                           FK_PO_DisplayTerm, the PAYMENT TERM's key, because the
+                           term is defaulted from the supplier there was none of.
+             DocNo         host 2026-08-17 10:15, the first successful transfer
+                           landed as `PO-009968` and not `HC-PO-2608-001`
+                           (divergence D5, closed).
+
+           Both were patched one at a time and FIVE were still missing after —
+           DocDate, Agent, Ref, Description, UDF — which is what the owner hit on
+           2026-08-19: 「为什么 Sales Order to PO ... 没有把 Sales Order 的那些资料
+           带过去呢？」. Spreading the master is what stops there being a sixth.
+           Guide §7c3a, §7c3b, §7c3b-i. */
         body: (shape.kind === 'transfer'
-          ? { ...composeSoToPo(header.po_number, shape.dtlKeys, details), ...present({
-            CreditorCode: header.creditor_code,
-            CreditorName: header.creditor_name,
-          }) }
+          ? composeSoToPo(body, shape.dtlKeys, details)
           : body) as unknown as Record<string, unknown>,
         /* THE PARENT MUST EXIST FIRST — dispatchOne holds this as `waiting`,
            without burning an attempt, until the sales order has its number. */
