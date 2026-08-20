@@ -324,20 +324,47 @@ takes effect without a deploy (`:383-401`), snapshots the stage target
 
 Two independent clocks.
 
-**Case-level** — `SLA_HOURS_BY_PRIORITY` (`services/assr.ts:62-69`) is the
-single source of truth:
+**Case-level** — the source of truth is **`assr_priorities.sla_hours`**, the
+"SLA hrs" cell managers edit in Service Maintenance -> Priorities.
+`slaHoursForPriority(env, slug)` in `services/assr.ts` reads it; both SLA
+computations call that. Blank means "use the module default", which is
+`slaHoursFor()` over the hardcoded `SLA_HOURS_BY_PRIORITY` — the LAST-RESORT
+fallback, not the answer:
 
-| Priority | SLA hours |
+| Priority | fallback SLA hours |
 |---|---|
 | `urgent` | 24 |
 | `high` | 72 |
 | `normal` (default) | 168 (7 days) |
 | `low` | 336 (14 days) |
 
-`slaHoursFor()` (`:71-73`) defaults anything unknown to 168.
-`deadline_at = now + slaHours` at create (`:370-372`); changing priority via
-PATCH recomputes `deadline_at` off `created_at` unless the request also sets
-`deadline_at` or `sla_hours` explicitly (`:994-1006`).
+The fallback is also used when the row is missing, the stored value is not a
+positive whole number, or the read throws (wrapped in try/catch, same posture as
+`lookupStageTargetDays()`); `slaHoursFor()` defaults anything unknown to 168.
+There is deliberately **no `active` predicate** on the read — deactivating a
+priority must not swing the SLA of a case that still carries it.
+
+`deadline_at = now + slaHours` at create; changing priority via PATCH recomputes
+`deadline_at` off `created_at` unless the request also sets `deadline_at` or
+`sla_hours` explicitly. **Editing the cell does NOT recompute deadlines already
+on existing cases** — only new cases and priority changes pick it up (mig 065
+says the same).
+
+> **Until 2026-08-20 that cell was written and never read.** Both computations
+> called `slaHoursFor()` directly, so an edit saved, answered `{ ok: true }` and
+> changed nothing; the seeded values equal the constant, so it looked correct
+> until somebody edited one. `BUG-HISTORY.md` has the trace, and
+> `backend/tests/assrSlaHoursOverride.test.ts` is the guard.
+>
+> **Adding a priority still does not work**, and that is a different defect left
+> open: `assr_cases.priority` carries
+> `CHECK (priority IN ('low','normal','high','urgent'))`, so a
+> Service-Maintenance-added priority saves and lists but 500s every case create
+> that uses it. Widening it needs its own migration.
+
+`sla_hours` writes are validated on both `POST /lookups/priorities` and
+`PATCH /lookups/priorities/:id`: a positive whole number, or blank. Anything
+else is a 400 rather than a stored value nothing can use.
 
 **Per-stage** — `lookupStageTargetDays()` (`:126-160`) resolves in order:
 1. `assr_priority_stage_targets` joined to `assr_priorities` on the case's

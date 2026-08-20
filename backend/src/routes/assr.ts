@@ -372,6 +372,23 @@ function lookupTable(kind: string): string | null {
   return (LOOKUP_TABLES as Record<string, string>)[kind] ?? null;
 }
 
+/**
+ * `sla_hours` is now READ back by `slaHoursForPriority()`, so what gets stored
+ * here decides a real deadline. Blank stays legitimate — it means "use the
+ * module default", which is what the UI's own cell title promises — but a
+ * value that is not a positive whole number is junk, and storing it would put
+ * this cell straight back into the shape this fix exists to remove: saved with
+ * `{ ok: true }`, then silently ignored at read time.
+ *
+ * Returns the value to store, or `false` meaning "refuse with a 400".
+ */
+function normalizeSlaHours(raw: unknown): number | null | false {
+  if (raw === undefined || raw === null || raw === "") return null;
+  const n = typeof raw === "number" ? raw : Number(String(raw).trim());
+  if (!Number.isInteger(n) || n <= 0) return false;
+  return n;
+}
+
 app.get("/lookups/:kind", requireServiceCaseAccess(), async (c) => {
   const kind = c.req.param("kind");
   const table = lookupTable(kind);
@@ -411,7 +428,10 @@ app.post("/lookups/:kind", requirePermission("service_cases.manage"), async (c) 
   );
   const sortOrder = Number.isFinite(body.sort_order) ? Number(body.sort_order) : 0;
   if (kind === "priorities") {
-    const sla = Number.isFinite(body.sla_hours) ? Number(body.sla_hours) : null;
+    const sla = normalizeSlaHours(body.sla_hours);
+    if (sla === false) {
+      return c.json({ error: "sla_hours must be a positive whole number of hours, or blank" }, 400);
+    }
     await c.env.DB.prepare(
       `INSERT INTO assr_priorities (slug, name, sort_order, sla_hours)
        VALUES (?, ?, ?, ?) ON CONFLICT DO NOTHING`,
@@ -442,6 +462,15 @@ app.patch("/lookups/:kind/:id", requirePermission("service_cases.manage"), async
   const binds: any[] = [];
   for (const k of allowed) {
     if (k in body) {
+      if (k === "sla_hours") {
+        const sla = normalizeSlaHours(body.sla_hours);
+        if (sla === false) {
+          return c.json({ error: "sla_hours must be a positive whole number of hours, or blank" }, 400);
+        }
+        sets.push("sla_hours = ?");
+        binds.push(sla);
+        continue;
+      }
       sets.push(`${k} = ?`);
       binds.push(body[k] ?? null);
     }

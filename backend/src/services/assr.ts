@@ -69,8 +69,12 @@ export type Stage =
 
 type Priority = "low" | "normal" | "high" | "urgent";
 
-// Default SLA in hours per priority — single source of truth.
-// Mirrors the backfill in 012_assr_sla.sql so new + historical rows align.
+// Last-resort SLA in hours per priority. NOT the source of truth — that is
+// `assr_priorities.sla_hours`, which Service Maintenance edits (mig 065 calls
+// the column "optional override of slaHoursFor()"). This table exists so a
+// missing row, a blank cell or an unreachable lookup table can never crash a
+// create; it mirrors the backfill in 012_assr_sla.sql and the 065 seed so the
+// fallback and the seeded rows agree.
 const SLA_HOURS_BY_PRIORITY: Record<Priority, number> = {
   urgent: 24,
   high: 72,
@@ -80,6 +84,44 @@ const SLA_HOURS_BY_PRIORITY: Record<Priority, number> = {
 
 export function slaHoursFor(priority: string | null | undefined): number {
   return SLA_HOURS_BY_PRIORITY[(priority as Priority) || "normal"] ?? 168;
+}
+
+/**
+ * The SLA window for a priority slug, read from the lookup a manager edits.
+ *
+ * Until 2026-08-20 this was `slaHoursFor()` alone: Service Maintenance offered
+ * an SLA Hours cell, `routes/assr.ts` saved it, and NOTHING ever read it back —
+ * an edit returned `{ ok: true }` and changed nothing. That also made a
+ * manager-ADDED priority impossible to configure at all, since a new slug is
+ * absent from `SLA_HOURS_BY_PRIORITY` and silently took 168.
+ *
+ * No `active` predicate, deliberately, matching `lookupStageTargetDays()`:
+ * deactivating a priority must not swing the SLA of a case that still carries
+ * it back to the constant.
+ *
+ * Wrapped in try/catch for the same reason the stage-target lookup is — a
+ * config read must never be able to fail a case create.
+ */
+export async function slaHoursForPriority(
+  env: Env,
+  priority: string | null | undefined,
+): Promise<number> {
+  const slug = priority || "normal";
+  try {
+    const row = await env.DB.prepare(
+      `SELECT sla_hours FROM assr_priorities WHERE slug = ? LIMIT 1`,
+    )
+      .bind(slug)
+      .first<{ sla_hours: number | null }>();
+    const hours = Number(row?.sla_hours);
+    // Blank cell = "use the module default", which is what the UI's own
+    // rowTitle promises. A stored non-positive or non-finite value is junk
+    // rather than an instruction, so it takes the same path.
+    if (Number.isFinite(hours) && hours > 0) return hours;
+  } catch (e) {
+    console.warn("[assr.slaHoursForPriority] priority read failed:", e);
+  }
+  return slaHoursFor(slug);
 }
 
 // Maps stage → user-facing status (backward compat for legacy list
@@ -378,11 +420,13 @@ export async function createAssrCase(
   // Use first item_code for the legacy column
   const firstItem = input.items[0]?.item_code ?? null;
 
-  // SLA window from the case's priority (defaults to 'normal' = 168h
-  // when intake didn't pick one). Priority is stored as the slug on
-  // assr_cases.priority; mig 082 also drives per-stage targets off it.
+  // SLA window from the case's priority (defaults to 'normal' when intake
+  // didn't pick one). Read from assr_priorities on every create so a Service
+  // Maintenance edit takes effect without a deploy — same reason the default
+  // assignee below is read here rather than cached. Priority is stored as the
+  // slug on assr_cases.priority; mig 082 also drives per-stage targets off it.
   const prioritySlug = input.priority ?? "normal";
-  const slaHours = slaHoursFor(prioritySlug);
+  const slaHours = await slaHoursForPriority(env, prioritySlug);
   const deadlineAt = new Date(Date.now() + slaHours * 3600 * 1000).toISOString();
 
   // Optional default assignee — admin sets this in Settings → Service.
@@ -1170,7 +1214,7 @@ export async function patchAssrCase(
   // same request), recompute deadline_at off the case's created_at so the
   // SLA clock tracks the new priority band.
   if ("priority" in body && !("deadline_at" in body) && !("sla_hours" in body)) {
-    const newHours = slaHoursFor(body.priority);
+    const newHours = await slaHoursForPriority(env, body.priority);
     const row = await env.DB.prepare(
       `SELECT created_at FROM assr_cases WHERE id = ?`
     )
