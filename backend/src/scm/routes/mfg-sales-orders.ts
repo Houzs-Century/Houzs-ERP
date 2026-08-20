@@ -37,6 +37,7 @@ import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-o
    may only shrink. See lib/so-lifecycle-guards.ts. */
 import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
 import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
 /* The payment insert core, the Account Sheet rule and the payment column list
    moved to scm/lib so scan-so.ts's background writer reaches the same rules
    without importing a 12,000-line router. Re-exported below for the callers
@@ -549,7 +550,6 @@ async function soEditLocked(
   return soProcessingLocked(header) || await soPoLocked(sb, docNo);
 }
 
-
 /* The identity lock (which columns freeze once a DO / SI exists, and why
    `salesperson_id` no longer does) lives in shared/so-identity-lock.ts. */
 
@@ -887,7 +887,7 @@ function extractSofaComboLookupArgs(
    the detail SELECT (see slip_image_key/receipt_image_key at the
    `/:docNo` handler), NOT here. 2990 hit this 2026-06-26 (their mig 0200). */
 const HEADER =
-  'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, po_doc_no, venue, venue_id, ' +
+  'doc_no, transfer_to, so_date, branding, debtor_code, debtor_name, agent, sales_location, ref, venue, venue_id, ' +
   'address1, address2, address3, address4, phone, ' +
   'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, service_sen, local_total_sen, balance_sen, ' +
   /* Task #114 — per-category cost columns (migration 0079). Mirrors the
@@ -897,7 +897,7 @@ const HEADER =
   'total_cost_sen, total_revenue_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   'currency, status, remark2, remark3, remark4, note, sales_exemption_expiry, ' +
   /* PR #35 + #46 — extended PO + POS handover fields */
-  'customer_id, customer_po, customer_po_id, customer_po_date, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
+  'customer_id, customer_po_image_b64, customer_so_no, hub_id, hub_name, ' +
   /* Task #121 — customer_country snapshot auto-derived from customer_state
      via my_localities lookup on POST/PATCH (migration 0082). */
   'customer_state, customer_country, customer_delivery_date, processing_date, linked_do_doc_no, ' +
@@ -3497,7 +3497,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     }
   }
 
-
   /* Houzs venue_id guard — only a real uuid reaches the uuid column; a
      project_venues integer id or a `showroom:…` synthetic id becomes NULL and
      the venue TEXT column (resolvedVenueName) carries the venue. See
@@ -4983,7 +4982,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     agent: agentToStamp,
     sales_location: derivedSalesLocation ?? null,
     ref: (body.ref as string) ?? null,
-    po_doc_no: (body.poDocNo as string) ?? null,
     /* SO-SKU spec P5 — the resolved venue NAME (explicit body.venue wins,
        else looked up from the stamped venue_id) so the column finally lights. */
     venue: resolvedVenueName,
@@ -5106,7 +5104,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     amend_reason: (body.amendReason as string) ?? null,
     // PR #121 — POS-aligned Order Details fields
     customer_so_no: (body.customerSoNo as string) ?? null,
-    customer_po: (body.customerPo as string) ?? null,
     hub_id: (body.hubId as string) ?? null,
     hub_name: (body.hubName as string) ?? null,
     /* P1 (Owner 2026-06-03) — billing address from the POS handover, sent only
@@ -5393,6 +5390,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        Runs BEFORE stampCo so we can find the per-row company_id via the
        active-user fallback; stampCo then adds it. */
     await deriveLineBrandingFromProduct(sb, rowsWithDoc as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>, activeCompanyId(c) ?? null);
+    signalNullWarehouseRows('POST /mfg-sales-orders (create)', docNo, rowsWithDoc as unknown as Array<Record<string, unknown>>); // logs only, never blocks
     const { error: iErr } = await sb.from('mfg_sales_order_items').insert(stampCo(rowsWithDoc));
     if (iErr) { await rollbackPwpClaims(); await sb.from('mfg_sales_orders').delete().eq('doc_no', docNo); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
     /* Stamp the HEADER branding from the representative line's SKU (owner
@@ -5520,7 +5518,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
   captureIfSet('depositSen', body.depositSen);
   captureIfSet('processingDate', body.processingDate);
   captureIfSet('customerSoNo', body.customerSoNo);
-  captureIfSet('customerPo', body.customerPo);
   await recordSoAudit(sb, {
     docNo,
     action: 'CREATE',
@@ -5550,11 +5547,12 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
      NOT for a DRAFT. A draft is the scan job's guess awaiting an operator's
      verdict; it may be rewritten or thrown away, and neither belongs in a live
      account book. The DRAFT -> live transition below queues it instead. */
-  if ((body as { asDraft?: unknown }).asDraft !== true) {
-    await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null });
-  }
+  /* AND THE REFUSAL COMES BACK OUT — never as a 422 (the order is committed by
+     now); lib/ac-preflight.ts holds the block-or-warn ruling for every cause. */
+  const acNotSent = (body as { asDraft?: unknown }).asDraft === true ? []
+    : (await enqueueSoCreate(sb, { companyId, docNo, createdBy: c.get('houzsUser')?.id ?? null })).problems;
 
-  return c.json({ docNo }, 201);
+  return c.json({ docNo, ...(acNotSent.length ? { acNotSent } : {}) }, 201);
 }
 
 /* HTTP route — auth (router-level supabaseAuth) + the real Hono context wired
@@ -6593,7 +6591,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
 
   const map: Array<[string, string]> = [
     ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
-    ['salesLocation', 'sales_location'], ['ref', 'ref'], ['poDocNo', 'po_doc_no'],
+    ['salesLocation', 'sales_location'], ['ref', 'ref'],
     ['venue', 'venue'], ['venueId', 'venue_id'], ['branding', 'branding'], ['transferTo', 'transfer_to'],
     ['address1', 'address1'], ['address2', 'address2'], ['address3', 'address3'],
     ['address4', 'address4'], ['phone', 'phone'], ['note', 'note'],
@@ -6601,8 +6599,7 @@ export const patchMfgSalesOrderHeaderHandler = async (c: any) => {
     ['soDate', 'so_date'], ['currency', 'currency'],
     // PR #35 — new header fields
     ['customerId', 'customer_id'], ['customerState', 'customer_state'],
-    ['customerPo', 'customer_po'], ['customerPoId', 'customer_po_id'],
-    ['customerPoDate', 'customer_po_date'], ['customerPoImageB64', 'customer_po_image_b64'],
+    ['customerPoImageB64', 'customer_po_image_b64'],
     // PR #121 — customer's own SO number (their ERP ref)
     ['customerSoNo', 'customer_so_no'],
     ['hubId', 'hub_id'], ['hubName', 'hub_name'],
@@ -8132,6 +8129,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
       /* Owner 2026-07-23 — auto-derive branding from product catalog on the
          add-line path, same rule as SO CREATE (see createSalesOrderCore). */
       await deriveLineBrandingFromProduct(sb, moduleRows as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>, activeCompanyId(c) ?? null);
+      signalNullWarehouseRows('PATCH /mfg-sales-orders/:docNo/items (sofa split)', docNo, moduleRows as unknown as Array<Record<string, unknown>>); // logs only, never blocks
       const { data: moduleData, error: moduleError } = await sb
         .from('mfg_sales_order_items')
         .insert(stampCompany(moduleRows, c))
@@ -8187,6 +8185,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   /* Owner 2026-07-23 — auto-derive branding on the single-row add-line path. */
   const rowWithCid = { ...row, company_id: activeCompanyId(c) };
   await deriveLineBrandingFromProduct(sb, [rowWithCid] as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>, activeCompanyId(c) ?? null);
+  signalNullWarehouseRows('PATCH /mfg-sales-orders/:docNo/items (single row)', docNo, [rowWithCid] as unknown as Array<Record<string, unknown>>); // logs only, never blocks
   const { data, error } = await sb.from('mfg_sales_order_items').insert(rowWithCid).select('*').single();
   if (error) {
     /* Don't burn a PWP code on a failed insert — mirror create's rollbackPwpClaims. */
@@ -10374,8 +10373,7 @@ mfgSalesOrders.post('/:docNo/items/:itemId/photos', async (c) => {
     return c.json({ error: 'photo_bucket_not_configured' }, 500);
   }
 
-  // Verify the line exists + belongs to this SO. Cheaper to fail here
-  // than after a multi-MB upload to R2.
+  // Verify the line exists + belongs to this SO. Cheaper to fail here than after a multi-MB upload to R2.
   const { data: item, error: itemErr } = await sb
     .from('mfg_sales_order_items')
     .select('id, doc_no, item_code, photo_urls')
@@ -10739,8 +10737,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
   // Audit 2026-06-20 — self-scoped sales may only touch their OWN SO (mirror the line/header guards).
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
-  // Ensure the SO exists before inserting a child row (gives a cleaner
-  // 404 than a deferred FK violation).
+  // Ensure the SO exists before inserting a child row (gives a cleaner 404 than a deferred FK violation).
   const { data: so } = await sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo).maybeSingle();
   if (!so) return c.json({ error: 'sales_order_not_found' }, 404);
 

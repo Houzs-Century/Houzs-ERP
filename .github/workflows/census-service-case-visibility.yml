@@ -1,0 +1,44 @@
+name: Census — Service Case visibility (read-only)
+
+# Answers "who GAINS and who LOSES Service Case access" for the owner's
+# 2026-08-20 decision (docs/SERVICE-CASE-VISIBILITY-DECISION.md) without anyone
+# opening a SQL console. The numbers live only in production and the standing
+# rule forbids putting the DSN in front of a human for a SELECT, so the count
+# runs here against secrets.DATABASE_URL.
+#
+# READ-ONLY: SELECTs only, no DDL, no writes, no transaction. Exit 0 for every
+# legitimate answer — the ANSWER is the output; a red job would read as "the
+# check broke".
+#
+# Manual trigger only — a question, not a gate; never on a schedule.
+on:
+  workflow_dispatch:
+
+# Deliberately NOT the deploy's concurrency group: this touches nothing and must
+# never queue behind (or displace) a release.
+concurrency:
+  group: census-service-case-visibility
+  cancel-in-progress: true
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    # Same environment as the deploy, because that is where DATABASE_URL lives.
+    environment: Production
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: node scripts/census-service-case-visibility.mjs
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          # GitHub-hosted runners have no IPv6 egress; see deploy-staging.yml
+          # for the full Happy-Eyeballs reasoning. Harmless on an IPv4-only host.
+          NODE_OPTIONS: --dns-result-order=ipv4first

@@ -112,6 +112,13 @@ export function mastersOf(body: Record<string, unknown>): Record<string, unknown
     if (code && !locations.has(code)) locations.set(code, { Location: code });
   };
   addLoc(at('SalesLocation'));
+  /* The purchase-side twin, sent from 2026-08-20 (scm.purchase_orders.purchase_location_id
+     -> AutoCount's PurchaseLocation). Both service copies — `CreatePo`'s and
+     `PurchaseHeader`'s — apply it through Set(),
+     which SWALLOWS — so a warehouse code dbo.Location does not have would not
+     fail the document, it would silently not be on it. Opening the master here
+     is what makes the value land instead of disappearing. */
+  addLoc(at('PurchaseLocation'));
   for (const d of details) if (d?.Retire !== true) addLoc(d?.Location);
 
   /* THE DROPDOWN OPTIONS. Read off the UDF block the payload is sending, so

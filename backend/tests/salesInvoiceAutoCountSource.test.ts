@@ -182,7 +182,14 @@ describe('an invoice raised FROM a delivery order is enqueued, not recorded pare
        last_error "created with no source Delivery Order, so there is no source
        document to transfer from." */
     expect(row.status).toBe('pending');
-    expect(row.last_error).toBeNull();
+    /* NOT `toBeNull()` any more, and the reason is a real change rather than a
+       loosened test. Since 2026-08-20 a QUEUED conversion writes a note here
+       naming the header fields the ERP has no value for — the fixture invoice
+       carries no ref, phone or note — so `last_error` on a pending row no
+       longer means "something went wrong". What this test is actually about is
+       that the invoice was NOT filed as parentless, so it asks that: the row is
+       pending, and its reason is not the parentless sentence. */
+    expect(row.last_error ?? '').not.toContain('no source document to transfer from');
     expect(row.doc_type).toBe('IV');
     expect(row.payload.fromDoc).toEqual({ table: 'delivery_orders', keyCol: 'id', key: 'do-a' });
     expect(row.payload.writeback.table).toBe('sales_invoices');
