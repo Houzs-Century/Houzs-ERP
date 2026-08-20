@@ -46,18 +46,13 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
    another company's PO would post the stock IN, and its cost, into the active
    company's inventory and books.
 
-   Returns the refusal payload for the first offending PO, or null when every
-   referenced PO belongs to the active company (unresolved degrades to allowed,
-   like the rest of the scoping helpers). The two declared converters
+   Called inline via crossCompanySourceRefusal — the file-local wrapper this note
+   used to sit on was one line of delegation and went 2026-08-18. Returns the
+   refusal for the first offending PO, or null when every referenced PO is the
+   active company's (unresolved degrades to allowed). The two declared converters
    (/from-pos, /from-po-items) no longer use it: they scope their source reads,
    so a cross-company PO is not visible to them at all. */
-async function firstCrossCompanyPo(
-  sb: any,
-  c: any,
-  poIds: Array<string | null | undefined>,
-): Promise<{ blocked: ReturnType<typeof crossCompanyConversionBlocked> } | { loadError: string } | null> {
-  return crossCompanySourceRefusal(sb, c, 'purchase_orders', poIds, 'po_number');
-}
+import { assertSourceLinesInCompany } from '../lib/ref-in-company';
 import { parseLineNumbers, invalidLineNumberBody } from '../shared/line-numbers';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
@@ -1494,6 +1489,8 @@ grns.post('/', async (c) => {
       acceptedByPoItem.set(poItemId, (acceptedByPoItem.get(poItemId) ?? 0) + accepted);
     }
     if (acceptedByPoItem.size > 0) {
+      const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [...acceptedByPoItem.keys()]);
+      if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
       const { data: poItems } = await sb.from('purchase_order_items')
         .select('id, qty, received_qty, po:purchase_orders!inner ( status )').in('id', [...acceptedByPoItem.keys()]);
       /* Receivable-PO guard (audit gap #5) — a PO-linked line may only be
@@ -1541,7 +1538,7 @@ grns.post('/', async (c) => {
      carry an explicit warehouse — the intentional manual-receipt flow still
      works, it just can't land stock nowhere-in-particular. */
   {
-    const x = await firstCrossCompanyPo(sb, c, [(body.purchaseOrderId as string | undefined) ?? null]);
+    const x = await crossCompanySourceRefusal(sb, c, 'purchase_orders', [(body.purchaseOrderId as string | undefined) ?? null], 'po_number');
     if (x && 'loadError' in x) return refuseWithoutWriting(c, { error: 'load_failed', reason: x.loadError }, 500);
     if (x) return refuseWithoutWriting(c, x.blocked, 409);
   }
@@ -2938,6 +2935,8 @@ grns.post('/:id/items', async (c) => {
      Manual (no PO link) lines are uncapped. Same 409 the From-PO flows use. */
   const addLinePoItemId = (it.purchaseOrderItemId as string) ?? null;
   if (addLinePoItemId) {
+    const xl = await assertSourceLinesInCompany(sb, c, 'purchase_order_items', [addLinePoItemId]);
+    if (!xl.ok) return refuseWithoutWriting(c, xl.body, xl.status);
     const capLock = await qtyCapRefusal(sb, {
       table: 'purchase_order_items', id: addLinePoItemId,
       capColumn: 'qty', drawnColumns: ['received_qty'],

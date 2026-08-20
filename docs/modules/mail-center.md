@@ -134,3 +134,19 @@ ops-only, so a retry can reproduce the same send).
 
 - `backend/tests/emailOutbox.test.ts` — the queue's retry ladder
 - `docs/modules/` — sibling guides; `sales-order.md` is the shape to follow
+
+## Company scope on the outbox (2026-08-18)
+
+`GET /outbox`, its status roll-up, and `GET /outbox/:id` are scoped to the ACTIVE
+company. `email_outbox` has no `company_id` — its company column is
+`company_code` (mig 0094) — so the predicate is `activeCompanyCodePred(c)` from
+`backend/src/scm/lib/companyScope.ts`, which BINDS rather than interpolating and
+handles the three things that column actually holds: the code, NULL (= the base
+company, per 0094 and the cron drain), and a company id stringified by two
+callers that pass `String(row.company_id)` into `sendEmail`'s `companyCode`.
+
+**Mail admin is NOT a company scope.** `isMailAdmin` grants management rights
+over mailboxes; it never widened the company predicate and must not be made to.
+Before this, both reads returned every company's rows — including `body_html`,
+which carries the one-time `/invite/<token>` and `/reset/<token>` links minted in
+`routes/auth.ts`.
