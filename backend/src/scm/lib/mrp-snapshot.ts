@@ -11,7 +11,7 @@
 //
 // A ~15-min scheduled job and a manual Regenerate keep it fresh; the page shows
 // "as of <computedAt>". The snapshot is a CACHE, not a book of record (migration
-// 0309): when a company has no row, readMrpSnapshot returns null and the page
+// 0313): when a company has no row, readMrpSnapshot returns null and the page
 // falls back to live compute — so this is a NO-OP until first populated.
 // ----------------------------------------------------------------------------
 

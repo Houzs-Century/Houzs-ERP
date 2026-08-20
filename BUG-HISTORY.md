@@ -18,7 +18,7 @@ so the durable fix is to stop recomputing it on every open, which is how large
 ERPs run MRP (a scheduled / on-demand "planning run", read from a stored result).
 
 **Fix (option B, owner-chosen 2026-08-19: store + schedule(~15min) + manual).**
-- `scm.mrp_snapshots` (mig `0309`) — one jsonb row per company. CACHE, not a book
+- `scm.mrp_snapshots` (mig `0313`) — one jsonb row per company. CACHE, not a book
   of record; `DROP TABLE` reverses it.
 - `GET /mrp` serves the stored snapshot for the DEFAULT view (`isDefaultMrpView`:
   no category/warehouse filter, undated hidden) — **instant**; any filtered/undated

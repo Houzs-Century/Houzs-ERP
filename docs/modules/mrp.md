@@ -503,7 +503,7 @@ reads the stored result), refreshed on a schedule + a manual **Regenerate**, wit
 the page showing "as of &lt;time&gt;".
 
 - **Table** `scm.mrp_snapshots(company_id, result jsonb, computed_at, updated_at)`
-  — one row per company, migration `0309`. A **cache, not a book of record**:
+  — one row per company, migration `0313`. A **cache, not a book of record**:
   when a company has no row, `GET /mrp` falls back to live compute (so the feature
   is inert until first populated, and `DROP TABLE` reverses it).
 - **Served ONLY for the DEFAULT view** (no category/warehouse filter, undated

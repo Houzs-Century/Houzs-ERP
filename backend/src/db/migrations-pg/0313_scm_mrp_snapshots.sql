@@ -1,4 +1,4 @@
--- 0309_scm_mrp_snapshots — stored MRP planning result per company.
+-- 0313_scm_mrp_snapshots — stored MRP planning result per company.
 --
 -- WHY. Opening the MRP page ran the whole computeMrp engine live on every load
 -- (~4s). Owner decision 2026-08-19: MRP becomes a stored "planning run" (option

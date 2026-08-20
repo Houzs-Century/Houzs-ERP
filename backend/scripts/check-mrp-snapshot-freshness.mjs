@@ -16,7 +16,7 @@
 //                             is not firing, or refreshMrpSnapshot is erroring.
 //                             Read the Worker's [cron mrp-snapshot] logs.
 //   NO ROW (or no table)   -> not populated yet: before the first cron/Regenerate,
-//                             or before 0309 deployed. The MRP page falls back to
+//                             or before 0313 deployed. The MRP page falls back to
 //                             live compute, so this is "not yet on", not "broken".
 //                             Do NOT insert a row by hand — that forges the very
 //                             evidence this check exists to read.
@@ -61,10 +61,10 @@ try {
       FROM scm.mrp_snapshots
       ORDER BY company_id`;
   } catch (e) {
-    // 42P01 = undefined_table: 0309 has not reached this database yet. That is a
+    // 42P01 = undefined_table: 0313 has not reached this database yet. That is a
     // legitimate "not deployed" answer, not a broken check.
     if (e && e.code === "42P01") {
-      notice("MRP snapshot: table scm.mrp_snapshots does not exist yet (0309 not deployed). Page computes live.");
+      notice("MRP snapshot: table scm.mrp_snapshots does not exist yet (0313 not deployed). Page computes live.");
       process.exit(0);
     }
     throw e;
