@@ -26,6 +26,10 @@ import "./mobile.css";
  *   - assr_case   → service case list
  *   - product     → products module list
  *   - user        → members module list
+ *
+ * The five SCM documents (purchase order, GRN, delivery order, sales invoice,
+ * purchase invoice) have no mobile screen, so they are listed READ-ONLY rather
+ * than dropped — see the TYPE_LABEL block for what dropping them cost.
  */
 
 /** Typed navigation intent emitted when a hit is tapped. The shell decides
@@ -49,32 +53,46 @@ const dm = (d: string | null | undefined): string => {
   return s === "—" ? "" : s;
 };
 
-// The phone surface intentionally lists only the record types it has a screen
-// for. The procurement/fulfilment documents (purchase_order / grn /
-// delivery_order / sales_invoice / purchase_invoice) are desktop Cmd+K sources —
-// the mobile shell has no detail screen to route them to yet, so they are left
-// out of TYPE_ORDER (and never rendered) rather than shown as dead taps. The
-// label/colour maps stay total over SearchHitType so the shared type can grow
-// without breaking this file.
-const TYPE_ORDER: SearchHitType[] = [
-  "sales_order",
-  "project",
-  "assr_case",
-  "product",
-  "user",
-];
+/* DISPLAY ORDER, and the reason this map — not a second hand-written array —
+ * defines it.
+ *
+ * The phone has a detail screen for only five of the ten hit types. The
+ * procurement/fulfilment documents (purchase_order / grn / delivery_order /
+ * sales_invoice / purchase_invoice) are desktop Cmd+K sources with no mobile
+ * screen to route to, so a tap on one would be a dead tap.
+ *
+ * Until 2026-08-21 the answer was to leave those five out of a separate
+ * `TYPE_ORDER` array, i.e. to DROP the hits. That silently broke the screen:
+ * the "No matches" line below is gated on the RAW hit count, so searching a
+ * delivery-order number returned hits, suppressed the empty state, filtered
+ * every hit out, and rendered NOTHING — no result, no explanation. A phone that
+ * knows the document exists and shows a blank area is worse than one that says
+ * it found nothing.
+ *
+ * So every type renders now, and the ORDER is `Object.keys(TYPE_LABEL)`.
+ * TYPE_LABEL is typed `Record<SearchHitType, string>`, so tsc refuses a missing
+ * key: a new hit type added to the shared `SearchHitType` union CANNOT go
+ * unrendered again — the compiler makes you name it here, and naming it lists
+ * it. That is the whole point of deriving the order instead of maintaining a
+ * parallel array beside it.
+ *
+ * Openable types come first; the desktop-only five follow, rendered read-only
+ * (see `navFor` — a hit with no navigation intent is not a button). */
 const TYPE_LABEL: Record<SearchHitType, string> = {
+  // Openable on the phone.
   sales_order: "Sales Orders",
+  project: "Projects",
+  assr_case: "Service Cases",
+  product: "Products",
+  user: "People",
+  // Found, shown, but only openable on desktop.
   purchase_order: "Purchase Orders",
   grn: "GRNs",
   delivery_order: "Delivery Orders",
   sales_invoice: "Sales Invoices",
   purchase_invoice: "Purchase Invoices",
-  project: "Projects",
-  assr_case: "Service Cases",
-  product: "Products",
-  user: "People",
 };
+const TYPE_ORDER = Object.keys(TYPE_LABEL) as SearchHitType[];
 const TYPE_COLOR: Record<SearchHitType, string> = {
   sales_order: "#16695f",
   purchase_order: "#b76b00",
@@ -102,8 +120,9 @@ function navFor(hit: SearchHit): SearchNav | null {
       return { kind: "product", id: String(hit.id) };
     case "user":
       return { kind: "user", id: String(hit.id) };
-    // SCM documents have no mobile screen yet (and are excluded from TYPE_ORDER,
-    // so they never render here) — no navigation intent to emit.
+    // SCM documents have no mobile screen to route to. Returning null is what
+    // makes the card render read-only ("Open on desktop") instead of as a
+    // button — they ARE listed, they are just not tappable here.
     case "purchase_order":
     case "grn":
     case "delivery_order":
@@ -154,8 +173,8 @@ export function MobileSearch({
               ref={inputRef}
               value={q}
               onChange={(e) => setQ(e.target.value)}
-              placeholder="Search orders, projects, cases, products, people…"
-              aria-label="Search orders, projects, service cases, products and people"
+              placeholder="Search orders, documents, projects, cases, products, people…"
+              aria-label="Search orders, purchase and delivery documents, projects, service cases, products and people"
               autoCapitalize="none"
               autoCorrect="off"
               spellCheck={false}
@@ -172,7 +191,7 @@ export function MobileSearch({
       <div className="scroll" style={{ padding: 12, paddingBottom: 40 }}>
         {term.length === 0 && (
           <div style={{ padding: "40px 16px", textAlign: "center", color: "var(--mut2)", fontSize: 12.5 }}>
-            Start typing to search across sales orders, projects, service cases, products and people.
+            Start typing to search across sales orders, purchase and delivery documents, projects, service cases, products and people.
           </div>
         )}
         {term.length > 0 && term.length < GLOBAL_SEARCH_MIN_LENGTH && (
@@ -193,6 +212,11 @@ export function MobileSearch({
             {degradedNotice}
           </div>
         )}
+        {/* `groups` is built from TYPE_ORDER, which is now every SearchHitType,
+            so "no groups" and "no hits" are the same statement and this gate is
+            honest again. It was NOT before: TYPE_ORDER held five of the ten
+            types while this line read the raw hit count, so an SCM-only result
+            set suppressed the empty state and rendered nothing at all. */}
         {term.length >= GLOBAL_SEARCH_MIN_LENGTH && !loading && !error && hits.length === 0 && (
           <div role="status" aria-live="polite" style={{ padding: "40px 16px", textAlign: "center", color: "var(--mut2)", fontSize: 12.5 }}>
             {/* Must not claim absence when a source went unread — same rule as desktop. */}
@@ -210,31 +234,48 @@ export function MobileSearch({
               <span style={{ fontSize: 10, color: "var(--mut2)" }}>· {g.items.length}</span>
             </div>
             <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-              {g.items.map((hit) => (
-                <button
-                  key={`${hit.type}-${hit.id}`}
-                  className="card"
-                  onClick={() => {
-                    const nav = navFor(hit);
-                    if (nav) onNavigate(nav);
-                  }}
-                  style={{ textAlign: "left", padding: "11px 13px", borderLeft: `4px solid ${TYPE_COLOR[hit.type]}`, cursor: "pointer", fontFamily: "inherit" }}
-                >
-                  <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-                    <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
-                      <HighlightedText text={hit.title} query={term} />
-                    </span>
-                    {hit.date && (
-                      <span style={{ fontSize: 10.5, color: "var(--mut2)", flex: "none" }}>{dm(hit.date)}</span>
-                    )}
-                  </div>
-                  {hit.subtitle && (
-                    <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--mut)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      <HighlightedText text={hit.subtitle} query={term} />
+              {g.items.map((hit) => {
+                /* `navFor` is the ONE source of truth for "can this phone open
+                   it". A hit with no navigation intent renders as a plain
+                   <div>, not a <button>: showing the record is the fix, offering
+                   a tap that goes nowhere would be a different lie. */
+                const nav = navFor(hit);
+                const body = (
+                  <>
+                    <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
+                      <span style={{ fontSize: 13.5, fontWeight: 700, color: "var(--ink)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", minWidth: 0 }}>
+                        <HighlightedText text={hit.title} query={term} />
+                      </span>
+                      {hit.date && (
+                        <span style={{ fontSize: 10.5, color: "var(--mut2)", flex: "none" }}>{dm(hit.date)}</span>
+                      )}
                     </div>
-                  )}
-                </button>
-              ))}
+                    {hit.subtitle && (
+                      <div style={{ marginTop: 3, fontSize: 11.5, color: "var(--mut)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                        <HighlightedText text={hit.subtitle} query={term} />
+                      </div>
+                    )}
+                  </>
+                );
+                const cardStyle = { textAlign: "left" as const, padding: "11px 13px", borderLeft: `4px solid ${TYPE_COLOR[hit.type]}`, fontFamily: "inherit" };
+                return nav ? (
+                  <button
+                    key={`${hit.type}-${hit.id}`}
+                    className="card"
+                    onClick={() => onNavigate(nav)}
+                    style={{ ...cardStyle, cursor: "pointer" }}
+                  >
+                    {body}
+                  </button>
+                ) : (
+                  <div key={`${hit.type}-${hit.id}`} className="card" style={{ ...cardStyle, opacity: 0.82 }}>
+                    {body}
+                    <div style={{ marginTop: 5, fontSize: 10, fontWeight: 700, letterSpacing: ".04em", textTransform: "uppercase", color: "var(--mut2)" }}>
+                      Open on desktop
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           </div>
         ))}

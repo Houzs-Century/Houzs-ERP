@@ -32,14 +32,16 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Desktop list + detail | `frontend/src/pages/ServiceCases.tsx` | **8,032 lines** — list, calendar, create panel, detail panel, workflow card, stage accordion all in one file. Exports `ServiceCases` and `ServiceCaseDetail`. Do not open whole. |
 | Desktop "my cases" | `frontend/src/pages/MyCases.tsx` | Assignee-scoped card view (`MyCases`, `MyCaseDetail`). |
 | Desktop sub-views | `ServiceMetrics.tsx`, `ServiceSettings.tsx`, `ServiceLeadTimePortal.tsx` | Imported by `ServiceCases.tsx:79-81`. |
-| Mobile (list + detail + create) | `frontend/src/mobile/MobileServiceCase.tsx` | 3,042 lines. Tabbed detail (Overview / Stage / Info / Timeline), `NewCaseSheet` at `:1775`. |
+| Mobile (list + detail + create) | `frontend/src/mobile/MobileServiceCase.tsx` | Tabbed detail (Overview / Stage / Info / Timeline) + `NewCaseSheet`. |
+| Mobile READ-ONLY detail (Sales rep) | `frontend/src/mobile/MobileMyCaseDetail.tsx` | The mobile half of `/my-cases/:id`. Case + items + issue + the customer/sales/nudge conversation, and NO write control. Mounted in place of `CaseDetail` for `isSalesNonDirector`. |
 | Shared stage logic | `frontend/src/vendor/scm/lib/assr/stages.ts` | No React, no I/O. The one place the PIPELINE (order, supplier-only rule, sub-statuses) is defined. It no longer holds the words. |
 | Shared stage WORDS | `backend/src/scm/shared/assr-stage-labels.ts` + `frontend/src/vendor/scm/lib/assr-stage-labels.ts` | Byte-identical pair, refereed by `check-shared-mirrors.mjs --strict`. Every stage label — including `voided`, which the pipeline table correctly has no row for. |
 
 Desktop routes: `/assr`, `/assr/:id`, `/my-cases`, `/my-cases/:id`
 (`frontend/src/App.tsx:366-416`). Mobile mounts `MobileServiceCase` for
-`/assr` (`frontend/src/mobile/MobileApp.tsx:109,717`) and as the "Service"
-bottom tab (`:756`).
+`/assr` (`frontend/src/mobile/MobileApp.tsx`) and as the "Service" bottom tab —
+and a non-director Sales rep gets `MobileMyCaseDetail` in place of the editable
+detail, the mobile half of the desktop `/my-cases/:id` redirect.
 
 ### The 7-stage pipeline (and why a case sometimes runs 5)
 
@@ -743,9 +745,27 @@ on one of two routes that emit the same content is not enforced.
 |---|---|---|
 | Desktop routes `/assr`, `/assr/:id`, `/my-cases`, `/my-cases/:id` | `PageGuard page="service_cases" allowSales` | `App.tsx:369, 386, 402, 410` |
 | `PageGuard`'s `allowSales` | the **server's** answer — `capability(user, "org.sales.staff")` = `pmsAccess.isSalesUser`. **No longer the same classifier the API admits on**: `requireServiceCaseAccess` moved to the HOUZS company grant on 2026-08-20 and this term did not follow. See §6 *Row visibility*, last paragraph, for why and what closing it takes. | `frontend/src/auth/PageGuard.tsx`, `backend/src/services/capabilities.ts` |
-| Mobile Service tab admission | shell nav gate `allowed("/assr")` | `frontend/src/mobile/MobileApp.tsx:474` |
+| Mobile Service tab admission | shell nav gate `allowed("/assr")` | `frontend/src/mobile/MobileApp.tsx` |
+| **Mobile case DETAIL, non-director Sales rep** | `isSalesNonDirector(user)` — the SAME predicate the desktop route redirects on, imported not re-derived. A rep opens `MobileMyCaseDetail` (read-only + comment/nudge); everyone else opens the editable `CaseDetail`. The LIST and the create sheet are unaffected. | `frontend/src/mobile/MobileServiceCase.tsx`, `frontend/src/mobile/MobileMyCaseDetail.tsx` |
 | Mobile list query `enabled` | `can("service_cases.read") \|\| capability(user, "org.sales.staff") \|\| capability(user, "org.director")` — `canViewCases` | `frontend/src/mobile/MobileServiceCase.tsx` |
 
+> **The ruling had ONE enforcement point for 13 months, and it was desktop.**
+> Owner 2026-07-23: 「sales agent 不应该有 edit case 功能」. `App.tsx` redirected;
+> mobile mounted the FULL editable detail, and `isSalesNonDirector` had exactly
+> one mobile call site in the tree (`MobilePMS`, unrelated). Closed 2026-08-21 —
+> `docs/bugs/0483-a-sales-rep-could-not-edit-a-case-on-desktop-and-got-a-scree.md`.
+>
+> **The backend has never enforced it, and that is not the gap it looks like.**
+> Every write route is `requirePermission("service_cases.write")`, which knows
+> nothing about the Sales cohort. So what was live was decided by the permission
+> MATRIX, and it was read rather than assumed
+> (`backend/scripts/census-service-case-visibility.mjs` §5, run 32395787958):
+> **32 active non-director Sales staff, all on the role `Sales Person`, and
+> `service_cases.write` held by ZERO of them.** No rep could ever have edited a
+> case from the phone — the buttons all 403'd. The ruling IS enforced, by the
+> grant. **Do not "fix" this by changing a permission**: the grant already
+> implements the owner's rule, and changing one is his call.
+>
 > **The director divergence this section used to report is FIXED.** The mobile
 > predicate carried only two of the backend's three terms and omitted the
 > director branch, so a director holding neither `service_cases.read` nor Sales
@@ -774,7 +794,8 @@ module that means:
 | Row readers / formatters on the phone | — | **`frontend/src/mobile/assr-case-fields.ts`** — `get`, `caseNo`, `slaText`, `prettyStage`. Extracted from the screen so it stays under its size ceiling AND so they are testable | — |
 | SO typeahead on the phone | `CreatePanel` in `pages/ServiceCases.tsx` | **`frontend/src/mobile/MobileAssrSoField.tsx`** — `useSoSearch` + `SoSearchField`, used by both the create sheet and the detail | `GET /api/assr/search-so` |
 | Attachment upload / thumbs | `ServiceCases.tsx:2472-2498` | `MobileServiceCase.tsx:1890-1905` | `lib/assrAttachmentUpload.ts`, `lib/imagePipeline.ts` |
-| Access gating | `App.tsx` `PageGuard` | `MobileApp.tsx` nav gate + `MobileServiceCase.tsx:340` | backend capabilities (`services/capabilities.ts`) |
+| Access gating | `App.tsx` `PageGuard` | `MobileApp.tsx` nav gate + `MobileServiceCase.tsx` | backend capabilities (`services/capabilities.ts`) |
+| **The 2026-07-23 rule: a Sales rep may not EDIT a case** | `App.tsx` `SalesRepCaseDetailRoute` redirects `/assr/:id` -> `/my-cases/:id` | `MobileServiceCase.tsx` opens `MobileMyCaseDetail` instead of `CaseDetail` | **`auth/salesAccess.isSalesNonDirector`** — one predicate, imported by both. Pinned on BOTH surfaces by `auth/permissionDivergence.test.ts` |
 
 The history is not hypothetical: `stages.ts:1-16` exists because mobile once
 ignored the internal-resolution skip and mis-routed cases into the two
