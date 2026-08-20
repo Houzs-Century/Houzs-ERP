@@ -1528,9 +1528,18 @@ an empty order can never mix.
 **The client check is a SECOND implementation on purpose** — it must refuse
 before a request, and it reads free-text `itemGroup` where the server reads the
 catalogue enum. It has the same two forms: `hasSofaMixConflict` (flat) on the
-New-order surfaces, `sofaMixIntroduced(before, after)` on the Detail pages, both
-in `frontend/src/vendor/shared/so-variant-rule.ts`. A Detail page using the flat
+New-order surfaces, `sofaMixIntroduced(before, after)` on the EDIT surfaces, both
+in `frontend/src/vendor/shared/so-variant-rule.ts`. An EDIT surface using the flat
 form refuses saves the server would accept.
+
+**That is not hypothetical, and the phone was the last one holding it.**
+`frontend/src/mobile/MobileNewSO.tsx` renders new AND edit as one form, and its
+`save()` ran the flat form ABOVE the edit branch, so on an order written before
+the rule existed a rep could not save ANY change from the phone — not a phone
+number — while desktop's `SalesOrderDetail.tsx` had moved to the differential
+form in #2395. Fixed 2026-08-20: mobile now calls
+`sofaMixIntroduced(origItems, edited)`. `origItems` is empty on a create, so on
+that path the differential form IS the flat question and nothing changed there.
 
 **The enumeration is a TEST, not prose**: `backend/tests/mainMixOneHome.test.ts`.
 Its population is every unit in the two routers that runs `validateItemCodes`, so
@@ -2068,7 +2077,21 @@ must not strand).
 **Frontend twins (change together).** Desktop `SoLineCard` marks unmatched
 typed text with a red ring + "Not in the catalog" note (the text stays for
 correction; the parent save guards refuse the line). `SalesOrderNew` + `MobileNewSO` pre-check venue / salesperson on Create, and
-Save-as-draft skips both. **Neither pre-checks variants at CONFIRM** — that
+Save-as-draft skips both.
+
+> **"Is this me?" is ONE module, not one per screen** (2026-08-20). The
+> salesperson pre-check above only fires when the creator was not recognised on
+> the staff roster, and mobile matched email-then-name while desktop had moved to
+> `user_id` first in #2049 — of 140 production `scm.staff` rows 18 carry an email
+> and 102 carry `user_id`, and `user_id` is what the backend joins on
+> (`resolveOwnerStaffId`). So the MAJORITY of salespeople were not recognised as
+> themselves on the phone and could be refused by this very gate. The ladder now
+> lives in `frontend/src/vendor/scm/lib/self-staff.ts` (`resolveSelfStaff`:
+> user_id → bridge staff id → email → name) and both `SalesOrderNew` and
+> `MobileNewSO` call it; the desktop ladder was moved verbatim, so that screen is
+> unchanged. `SalesOrderDetail.tsx` still holds a third copy for the Add-Payment
+> "Collected By" default — knowingly, because switching it would change which
+> people that picker matches. **Neither pre-checks variants at CONFIRM** — that
 sentence used to read "pre-check variants (confirm rule, KIV-exempt)" and was
 wrong three ways: `SalesOrderNew.tsx` has no variant pre-check at all, and
 `MobileNewSO.tsx:1778` calls `missingVariantAxes` — the PROCEED rule, which is

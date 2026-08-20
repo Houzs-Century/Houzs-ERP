@@ -539,6 +539,26 @@ the control people learn to tick without reading. It is deliberately NOT a
 button on the refusal dialog: one click waiving a whole receipt is the reflex
 the gate exists to prevent.
 
+**Both remedies exist on the phone too (2026-08-20).** They did not until then,
+and that is the shape of the defect: `zeroCostAck` appeared NOWHERE in
+`frontend/src/mobile`, `MobileModuleDetail.tsx`'s `grns` case offered only Post
+and Cancel, and `MobileConvertWizard.tsx`'s own copy of the message ended "open
+the receipt on desktop". A receiver on the warehouse floor got a correct,
+readable refusal naming two fixes and neither of them on the screen in their
+hand. The refusal itself rendered fine on both surfaces — the gap was the remedy.
+
+- `frontend/src/mobile/MobileGrnZeroCost.tsx` is the phone's remedy: the 409
+  opens a bottom sheet with ONE CARD PER REFUSED LINE carrying a unit-price box
+  and a "Received free" tick with its reason, then writes each through the same
+  `PATCH /scm/grns/:id/items/:itemId` and re-runs `PATCH /scm/grns/:id/post`.
+  The per-line rule above is preserved literally: there is no waive-all control,
+  and Post stays disabled until every listed line carries a price or a tick.
+- `frontend/src/vendor/scm/lib/zero-cost-refusal.ts` is the one reader of the
+  409 body. `authed-fetch.ts` composes the operator's sentence through it
+  (moved, not rewritten) and now also attaches `status` + the raw body to the
+  thrown error — parsing the refusal and discarding the parse is what left a
+  surface able to show it and nothing else.
+
 | surface | field | route |
 | --- | --- | --- |
 | create a receipt | `items[].zeroCostAck`, `items[].zeroCostReason` | `POST /scm/grns` |
@@ -722,6 +742,7 @@ deliberately last because it is the largest handler in the file. One PR each.
 | Server pagination opt-in | `useGrnsPaged` | `mobile/MobileModuleList.tsx` `SERVER_PAGINATED` (`:327`) |
 | Detail fields | `pages/scm-v2/GoodsReceivedDetailV2.tsx` (read) + `GoodsReceivedDetail.tsx` (edit) | `mobile/MobileModuleDetail.tsx` config `:324` |
 | Post / Cancel actions | `GoodsReceivedDetail.tsx:416-459` | `mobile/MobileModuleDetail.tsx:535-542` |
+| Zero-cost refusal → the remedy | the per-line "Received free" tick + price box on `GoodsReceivedDetail.tsx` | `mobile/MobileGrnZeroCost.tsx`, opened by `mobile/MobileModuleDetail.tsx`'s action footer. The 409 body is parsed once, by the SHARED `vendor/scm/lib/zero-cost-refusal.ts`, which `vendor/scm/lib/authed-fetch.ts` also uses for the sentence — so the message and the remedy cannot name different lines |
 | PO→GRN conversion + per-line received qty | `pages/scm-v2/GrnFromPo.tsx` | `mobile/MobileConvertWizard.tsx` (`target: "grn"`) — note the surfaces differ **by design**: desktop can pick lines, mobile converts the whole PO (`:60-61`), and mobile posts `asDraft:true` rather than the auto-posting `/from-pos` (`:370-374`) |
 | Cache invalidation after a write | the hooks in `vendor/scm/lib/grn-queries.ts` (must include `['inventory']`) | `mobile/sharedInvalidate.ts:72` (`grns` roots + `STOCK_ROOTS`, which includes the SO roots) |
 
