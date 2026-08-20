@@ -16,6 +16,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { DO_SHIPPED_STATES, SI_TRANSFERABLE_DO_STATES } from "../src/scm/shared/do-shipped-states";
+import { siTransferRefusal } from "../src/scm/lib/do-line-remaining";
 import { SO_PROCESSING_DATE_LEGACY_COLUMNS } from "../src/scm/shared/so-processing-date";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -200,5 +201,43 @@ describe("the 2990 bulk importer carries the Processing Date rename", () => {
      assert it is non-empty here rather than letting a green run mean nothing. */
   test("the legacy-column list is not empty, or the check above proves nothing", () => {
     expect(SO_PROCESSING_DATE_LEGACY_COLUMNS.length).toBeGreaterThan(0);
+  });
+});
+
+/* ── 3. THE GATE MUST BE ABLE TO SEE A STATUS ────────────────────────────────
+   A guard reading a column its own SELECT never asked for does not fail loudly;
+   it fails as a refusal, on every request, for a reason the operator cannot act
+   on. `createSalesInvoiceFromDoLinesHandler` loads its source delivery through
+   the DO_HEADER projection, and DO_HEADER carried `state` and `customer_state`
+   but not `status` — so `siTransferRefusal(undefined)` would have answered
+   `do_not_transferable` for every multi-delivery Sales Invoice in the system.
+
+   That is this PR's own bug class turned on itself: a rule given one home and
+   then handed the wrong input. Pinned as a SOURCE fact because the handler
+   needs a live Postgres to run, and the property that failed is a projection,
+   not a value. */
+describe("the transferable gate is fed a real status", () => {
+  test("an ABSENT status is refused — which is why the projection matters", () => {
+    expect(siTransferRefusal(undefined)).not.toBeNull();
+    expect(siTransferRefusal(undefined)?.error).toBe("do_not_transferable");
+    expect(siTransferRefusal(null)?.error).toBe("do_not_transferable");
+  });
+
+  test("DO_HEADER selects `status`, so the gate above never sees undefined", () => {
+    const src = read("backend/src/scm/routes/sales-invoices.ts");
+    const m = src.match(/const DO_HEADER =([\s\S]*?);/);
+    expect(m).not.toBeNull();
+    const cols = m![1].replace(/\s*\+\s*/g, "").replace(/'/g, "")
+      .split(",").map((x) => x.trim()).filter(Boolean);
+    expect(cols).toContain("status");
+    // not satisfied by the look-alikes that were already there
+    expect(cols).toContain("customer_state");
+    expect(cols).toContain("state");
+  });
+
+  test("every transferable state passes the same gate", () => {
+    for (const s of SI_TRANSFERABLE_DO_STATES) expect(siTransferRefusal(s)).toBeNull();
+    expect(siTransferRefusal("CANCELLED")?.error).toBe("do_cancelled");
+    expect(siTransferRefusal("DRAFT")?.error).toBe("do_not_confirmed");
   });
 });

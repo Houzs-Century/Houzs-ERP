@@ -522,3 +522,46 @@ export function findOverInvoicedDoItems(
   }
   return out;
 }
+
+/* THE SERVER'S ANSWER TO "MAY THIS DELIVERY BE INVOICED", AND UNTIL 2026-08-18
+   THERE WAS NONE. The rule lived only in clients, so it had been re-derived four
+   times and the four disagreed:
+     · here — refused only CANCELLED, so the API and the mobile shell would
+       invoice anything else;
+     · resolveCandidateDoIds (do-line-remaining.ts) — everything except CANCELLED
+       and DRAFT;
+     · the desktop footer — a hand-typed ['signed','delivered'];
+     · the same page's line edit-lock — the five shipped states.
+   A restriction only one client enforces is not a restriction: the desktop
+   greyed the button out while the same transfer went through from a phone.
+
+   That narrowest spelling was also a MULTI-ORGANISATION defect rather than a
+   status one. It carries no company term and never did; it bit one organisation
+   because of DATA — 2990's source system has no "delivered" step, so its
+   deliveries sit at DISPATCHED, while HOUZS's AutoCount carry-overs arrived as
+   literal 'DELIVERED'. One build, one permission set, and 2990 was told the
+   transfer did not exist.
+
+   The owner ruled DISPATCHED/IN_TRANSIT/SIGNED/DELIVERED on 2026-08-18; #2485
+   widened it next day to every CONFIRMED delivery, LOADED included.
+   SI_TRANSFERABLE_DO_STATES is that rule's one home and here it is ENFORCED.
+   BOTH Sales-Invoice entry points call it — POST /from-dos and the append
+   path — because a gate enforced on one of two doors is a gate with a hole.
+   The create path refused exactly CANCELLED before this function; it now also
+   refuses DRAFT (#2485 keeps Confirm a prerequisite) and INVOICED (nothing
+   writes it). LOADED is NOT refused: that would invent a new restriction. */
+export function siTransferRefusal(status: string | null | undefined): { error: string; reason: string } | null {
+  const s = String(status ?? '').trim().toUpperCase();
+  if ((SI_TRANSFERABLE_DO_STATES as readonly string[]).includes(s)) return null;
+  if (s === 'CANCELLED') {
+    return { error: 'do_cancelled', reason: 'This delivery order was cancelled, so it cannot be invoiced. Raise a new delivery order to deliver these goods again.' };
+  }
+  if (s === 'DRAFT') {
+    return { error: 'do_not_confirmed', reason: 'This delivery order is still a draft — confirm it before raising a Sales Invoice.' };
+  }
+  /* INVOICED lands here deliberately. routes/unbilled-deliveries.ts:13 measured
+     that nothing in this codebase ever writes it, so the label means "somebody
+     set it", not "this was billed" — the generic sentence states the gate, which
+     is true, rather than asserting a billing fact the flag cannot support. */
+  return { error: 'do_not_transferable', reason: `A Sales Invoice can only be raised from a confirmed delivery order (${SI_TRANSFERABLE_DO_STATES.join(', ')}).` };
+}
