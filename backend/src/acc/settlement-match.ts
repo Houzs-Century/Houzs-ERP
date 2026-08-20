@@ -95,13 +95,30 @@ const dayGap = (a: string, b: string): number =>
  * swipe — so it returns nothing and a person decides.
  */
 function soleExactSubset(pool: PaymentCandidate[], targetSen: number): PaymentCandidate[] {
-  const MAX_PICK = 4;
-  const list = pool.slice(0, 12);
+  /* NO size limit on how many documents one swipe covers. The owner, asked
+     whether two was the ceiling: 他可能不止两张单加起来，可能超过两张. A customer
+     settling six orders in one go is one swipe like any other, and a cap of
+     four would have quietly failed to match it — the worst kind of limit,
+     because the screen would say "pick the right one" and give no reason.
+
+     Safe to be exhaustive HERE because the pool is already narrow: these are
+     only the payments carrying this statement line's own reference, which is
+     the swipe itself plus the occasional mis-keyed code. 14 of them is 16,383
+     subsets, which is nothing; beyond that the list is truncated rather than
+     allowed to grow exponentially, and 15 documents on one swipe is a line
+     worth a person's eye anyway. */
+  const list = pool.slice(0, 14);
+
+  /* The ordinary shape first, and without any search: every document of the
+     swipe carries the code and together they are the line. */
+  const all = list.reduce((s, p) => s + p.amountSen, 0);
+  if (all === targetSen && list.length === pool.length) return list;
+
   const found: PaymentCandidate[][] = [];
   const walk = (from: number, picked: PaymentCandidate[], sum: number) => {
     if (found.length > 1) return;
     if (picked.length > 0 && sum === targetSen) { found.push([...picked]); return; }
-    if (picked.length >= MAX_PICK || from >= list.length) return;
+    if (from >= list.length) return;
     for (let i = from; i < list.length; i += 1) {
       picked.push(list[i]!);
       walk(i + 1, picked, sum + list[i]!.amountSen);
@@ -123,12 +140,16 @@ function exactPairs(candidates: PaymentCandidate[], targetSen: number): string[]
      and the sum check accepts them; it simply was not SUGGESTED, so he had to
      find it himself.
 
-     Bounded like its opposite number on the bank side (acc/bank-match's
-     exactCombination): subsets of at most 4, and at most 5 answers, because a
-     screen offering more possibilities than that is not helping anybody. */
-  const MAX_PICK = 4;
+     Bounded, unlike soleExactSubset above, and for a reason: there the pool is
+     the payments carrying this line's own reference, so an exhaustive search is
+     over a handful of highly relevant rows. HERE the pool is every payment in
+     the date window, and "some six of these twenty happen to add up" is both
+     expensive to find and weak evidence when found — a coincidence, not a
+     swipe. Six deep is enough for the real shape (owner: 可能超过两张) without
+     turning the screen into a list of arithmetic accidents. */
+  const MAX_PICK = 6;
   const MAX_HINTS = 5;
-  const pool = candidates.slice(0, 24);
+  const pool = candidates.slice(0, 20);
   const hints: string[][] = [];
 
   const walk = (from: number, picked: PaymentCandidate[], sum: number) => {

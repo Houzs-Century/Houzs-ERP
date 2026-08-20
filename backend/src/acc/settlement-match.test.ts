@@ -319,3 +319,57 @@ describe('one swipe, one reference, several documents', () => {
     expect(d.bucket).toBe('NEEDS_CONFIRM');
   });
 });
+
+/* 他可能不止两张单加起来，可能超过两张 (owner, 2026-08-20). There is no ceiling
+   on how many documents one swipe covers, so there must be none in the matcher
+   either — a cap would fail silently, telling the operator to "pick the right
+   one" and giving him no reason why. */
+describe('a swipe covering many documents', () => {
+  const pay = (id: string, sen: number, code: string | null = 'A123'): PaymentCandidate =>
+    ({ source: 'SOPAY', id, docNo: `SO-${id}`, paidOn: '2026-08-01', amountSen: sen, approvalCode: code, customerName: null });
+
+  const byRef = (grossSen: number, pool: PaymentCandidate[]) => matchStatement(
+    { code: 'MBB', has_unique_ref: true, date_tolerance_days: 3 },
+    [{ lineNo: 1, txnDate: '2026-08-01', ref: 'A123', grossSen, feeSen: 0, netSen: grossSen }],
+    pool, new Set<string>(),
+  )[0]!;
+
+  it('auto-matches six documents on one code', () => {
+    const six = [pay('a', 10000), pay('b', 20000), pay('c', 30000), pay('d', 40000), pay('e', 50000), pay('f', 60000)];
+    const d = byRef(210000, six);
+    expect(d.bucket).toBe('MATCHED');
+    expect(d.matched).toHaveLength(6);
+  });
+
+  it('auto-matches ten', () => {
+    const ten = Array.from({ length: 10 }, (_, i) => pay(`p${i}`, 10000 + i * 1000));
+    const d = byRef(ten.reduce((s, p) => s + p.amountSen, 0), ten);
+    expect(d.bucket).toBe('MATCHED');
+    expect(d.matched).toHaveLength(10);
+  });
+
+  /* And still finds the subset when one of many carries a mis-keyed code. */
+  it('picks five out of six when the sixth is not part of it', () => {
+    const d = byRef(150000, [
+      pay('a', 10000), pay('b', 20000), pay('c', 30000),
+      pay('d', 40000), pay('e', 50000), pay('odd', 7700),
+    ]);
+    expect(d.bucket).toBe('MATCHED');
+    expect(d.matched.map((p) => p.id)).toEqual(['a', 'b', 'c', 'd', 'e']);
+    expect(d.clue).toMatch(/1 other payment\(s\)/);
+  });
+
+  /* The amount-only path is deliberately shallower — see the comment on
+     exactPairs — but it reaches well past two. */
+  it('hints at five documents when the code matched nothing', () => {
+    const d = matchStatement(
+      { code: 'GHL', has_unique_ref: false, date_tolerance_days: 3 },
+      [{ lineNo: 1, txnDate: '2026-08-01', ref: null, grossSen: 150000, feeSen: 0, netSen: 150000 }],
+      [pay('a', 10000, null), pay('b', 20000, null), pay('c', 30000, null), pay('d', 40000, null), pay('e', 50000, null)],
+      new Set<string>(),
+    )[0]!;
+    /* Largest first — that branch offers the window sorted by amount, which is
+       the order a person reads a list of candidates in. */
+    expect([...(d.suggested ?? [])].map((p) => p.id).sort()).toEqual(['a', 'b', 'c', 'd', 'e']);
+  });
+});
