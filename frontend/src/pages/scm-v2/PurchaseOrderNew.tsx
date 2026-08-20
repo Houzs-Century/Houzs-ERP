@@ -594,14 +594,10 @@ export const PurchaseOrderNew = () => {
       notify({ title: 'Pick a Creditor (supplier) first.', tone: 'error' });
       return;
     }
-    // PR #157 — Commander 2026-05-26: "这些没有 expected delivery date 和
-    // purchase location，为什么能生成 PO 呢？" Both fields are required on
-    // submit — they fan out to per-line warehouse + delivery date and are
-    // needed downstream for GRN. Defense-in-depth: API also rejects missing.
-    if (!expectedAt) {
-      notify({ title: 'Expected Delivery date is required.', tone: 'error' });
-      return;
-    }
+    // Owner 2026-08-20 ("越松越好"): Expected Delivery must NOT block opening a PO.
+    // A blank is accepted and the API defaults it to today (it still fans out to
+    // per-line delivery date). Purchase Location stays required (per-line warehouse
+    // = stock location, an integrity field).
     if (!purchaseLocationId) {
       notify({ title: 'Purchase Location is required.', tone: 'error' });
       return;
@@ -811,8 +807,8 @@ export const PurchaseOrderNew = () => {
               />
             </label>
             <label className={styles.field}>
-              <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Expected Delivery <span className={styles.req}>*</span></span>
-              <DateField fullWidth value={expectedAt} onChange={(iso) => setExpectedAt(iso)} className={styles.fieldInput} required/>
+              <span className={styles.fieldLabel}>Expected Delivery <span style={{ color: 'var(--fg-muted)', fontWeight: 400 }}>(defaults to today)</span></span>
+              <DateField fullWidth value={expectedAt} onChange={(iso) => setExpectedAt(iso)} className={styles.fieldInput}/>
             </label>
 
             {/* Mig 0026 — supplier-revised header delivery dates. Optional; the

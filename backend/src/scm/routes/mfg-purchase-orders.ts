@@ -37,6 +37,7 @@ import { VALID_CURRENCIES, VALID_KINDS } from '../lib/purchase-doc-vocab';
 import { resolveMaintenanceConfigForSupplier, poVariantPricingInput } from '../lib/po-pricing';
 import { poHasDownstream } from '../lib/downstream-lock';
 import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
+import { todayMyt } from '../lib/my-time';
 import { enqueuePoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { escapeForOr } from '../lib/postgrest-search';
@@ -1117,10 +1118,15 @@ export const createMfgPurchaseOrderHandler = async (c: any) => {
 
   // PR #157 — Commander 2026-05-26: Expected Delivery + Purchase Location are
   // required on submit. Both fields fan out to per-line warehouse + delivery
-  // date and are required downstream for GRN. Defense-in-depth: frontend also
-  // blocks the submit button until both are filled.
-  const expectedAt = body.expectedAt as string | undefined;
-  if (!expectedAt) return c.json({ error: 'expected_at_required' }, 400);
+  // date and are required downstream for GRN.
+  //
+  // Owner 2026-08-20 ("越松越好"): Expected Delivery must NOT block opening a PO.
+  // It stays populated (it still fans out to per-line delivery_date / GRN), but a
+  // blank now defaults to today — the same auto-today treatment po_date already
+  // gets — instead of a 400. dateOrNull("") → null, so absent and empty both fall
+  // to todayMyt(). Purchase Location stays required (it fans to per-line warehouse
+  // = stock location, an integrity field, not a pure-date nicety).
+  const expectedAt = dateOrNull(body.expectedAt) ?? todayMyt();
   const purchaseLocationId = body.purchaseLocationId as string | undefined;
   if (!purchaseLocationId) return c.json({ error: 'purchase_location_id_required' }, 400);
 
