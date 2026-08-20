@@ -2490,12 +2490,9 @@ mfgSalesOrders.get('/active-venue', async (c) => {
        that gets stamped is the text either way. */
     let venueId: string | null = null;
     try {
-      /* Company-scoped: project_venues carries company_id (mig 0093). Venue
-         NAMES are not unique across the two companies' masters, so an unscoped
-         name match could hand this company's dropdown the OTHER company's venue
-         id — and that id is what the SO then stores. Same rule the venue LIST
-         two files over already follows. Unmatched still degrades to null and the
-         resolved TEXT stands, which is the documented fallback below. */
+      /* Company-scoped (mig 0093): venue NAMES are not unique across the two
+         masters, so an unscoped match hands this company the OTHER company's
+         venue id — and that id is what the SO stores. See projects-pms.md. */
       const row = await c.env.DB.prepare(
         `SELECT id FROM project_venues
           WHERE lower(trim(name)) = lower(trim(?)) AND active = 1${activeCompanySql(c)} LIMIT 1`,
