@@ -39,6 +39,7 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { todayMyt } from '../lib/my-time';
 import { changedLockedCols, identityLockedRefusal } from '../shared/header-inherited-lock';
+import { CN_LOCK_COLS, CN_LOCK_LABELS } from '../shared/document-policy';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { paginateAll, chunkIn } from '../lib/paginate-all';
 import { escapeForOr } from '../lib/postgrest-search';
@@ -55,9 +56,10 @@ consignmentNotes.use('*', supabaseAuth);
    A Consignment Note locks (no line edit / no CANCELLED transition) once it has
    ANY non-cancelled Consignment Return referencing it. Mirrors doHasDownstream
    on the DO side, but there is no Sales Invoice in the consignment flow. */
-/* Header field-level lock (owner 2026-08-20, §8 GAP-1) — mirrors the DO. */
-const CN_IDENTITY_LOCK_COLS: ReadonlySet<string> = new Set<string>(['debtor_code', 'debtor_name', 'currency', 'sales_location', 'branding']);
-const CN_IDENTITY_LABELS: Record<string, string> = { debtor_code: 'customer code', debtor_name: 'customer', currency: 'currency', sales_location: 'sales location', branding: 'branding' };
+/* Header field-level lock — column set + labels from the ONE rulebook
+   (shared/document-policy.ts); mirrors the DO. */
+const CN_IDENTITY_LOCK_COLS = CN_LOCK_COLS;
+const CN_IDENTITY_LABELS = CN_LOCK_LABELS;
 
 async function noteHasDownstream(sb: any, noteId: string): Promise<{ error: string; message: string } | null> {
   const { count: crCount, error: crErr } = await sb.from('consignment_delivery_returns')
