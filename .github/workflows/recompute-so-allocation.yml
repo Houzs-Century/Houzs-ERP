@@ -5,7 +5,7 @@ name: Recompute SO stock allocation (DRY-RUN gated)
 # trace check's `ready-no-open-lots` class (2026-08-01: 19 stale READY lines
 # whose bucket holds zero open lots — nothing ever re-evaluated them, because
 # the allocator only fires post-ship/post-receipt and the older
-# recompute-2990-so-allocation workflow needs PostgREST secrets the Actions
+# recompute-2990-so-allocation workflow needed PostgREST secrets the Actions
 # environment does not carry).
 #
 # Transport: lib/pgrest-shim.mjs over DATABASE_URL (the restamp-do-actual-cost

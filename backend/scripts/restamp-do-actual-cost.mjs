@@ -8,7 +8,7 @@
 // ruling (2026-08-01): after the ledger is right, EVERY shipped DO must read
 // consistent — "已经错了的 DO ... 尽量统一掉吧，保持一致".
 //
-// REUSE, NOT REPLICATION (the recompute-2990-so-allocation.mjs discipline).
+// REUSE, NOT REPLICATION (the recompute-so-allocation.mjs discipline).
 // APPLY calls the REAL restampDoActualCost from
 // src/scm/routes/delivery-orders-mfg.ts — the exact function every ship /
 // line-edit / recost already runs — once per in-scope DO. Optionally
