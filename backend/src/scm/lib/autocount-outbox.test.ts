@@ -156,7 +156,7 @@ describe('the six flows each queue their operation', () => {
 
   test('1. SO create', async () => {
     const sb = withFlag('1', { mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...soItem }] });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(true);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.op).toBe('create_so');
     expect(row.doc_type).toBe('SO');
@@ -174,7 +174,7 @@ describe('the six flows each queue their operation', () => {
       mfg_sales_orders: [{ ...so, linked_ac_docno: 'SO-000021' }],
       mfg_sales_order_items: [{ ...soItem }],
     });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(false);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).queued).toBe(false);
     expect(outbox(sb)).toHaveLength(0);
   });
 
@@ -190,7 +190,7 @@ describe('the six flows each queue their operation', () => {
          comes back: PostgREST answers 42703 and the whole PO flow goes silent. */
       purchase_orders: ['creditor_code', 'creditor_name', 'agent', 'ref'],
     });
-    expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' })).toBe(true);
+    expect((await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' })).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.op).toBe('create_po');
     expect(row.doc_no).toBe('HC-PO-9');
@@ -259,7 +259,7 @@ describe('the six flows each queue their operation', () => {
       const sb = withFlag('1', {
         mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...soItem }],
       }, noDtlKey);
-      expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(false);
+      expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).queued).toBe(false);
       const rows = outbox(sb);
       expect(rows.filter((r) => r.status === 'pending')).toHaveLength(0);
       expect(rows).toHaveLength(1);
@@ -286,7 +286,7 @@ describe('the six flows each queue their operation', () => {
         purchase_orders: [{ ...po }], suppliers: [{ ...supplier }],
         purchase_order_items: [{ purchase_order_id: 'po-1', item_code: ERP_A, qty: 1, unit_price_sen: 1 }],
       }, { purchase_orders: ['po_number'] });
-      expect(await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' })).toBe(false);
+      expect((await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' })).queued).toBe(false);
       const rows = outbox(sb);
       expect(rows).toHaveLength(1);
       expect(rows[0].status).toBe('skipped');
@@ -295,7 +295,7 @@ describe('the six flows each queue their operation', () => {
 
     test('a read that finds NOTHING is still just nothing — no note, no row', async () => {
       const sb = withFlag('1', { mfg_sales_orders: [], mfg_sales_order_items: [] });
-      expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-404' })).toBe(false);
+      expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-404' })).queued).toBe(false);
       expect(outbox(sb)).toHaveLength(0);
     });
   });
@@ -542,7 +542,7 @@ describe('a removed line is retired in AutoCount, never just left out', () => {
         keyed({ id: 'so-item-2', item_code: 'Y09-(K)', linked_ac_dtlkey: null, cancelled: true }),
       ],
     });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(true);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.payload.body.Details).toHaveLength(1);
     expect(row.payload.body.Details[0].ItemCode).toBe('AERO-Y04 (K)');
@@ -667,7 +667,7 @@ describe('the salesperson reaches AutoCount even when `agent` is empty', () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...soItem }],
     });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(true);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).queued).toBe(true);
     expect(outbox(sb)[0].payload.body.Agent).toBe('Nurul Hidayah');
   });
 
@@ -725,7 +725,7 @@ describe('the salesperson reaches AutoCount even when `agent` is empty', () => {
       mfg_sales_orders: [{ ...so, salesperson_id: null }],
       mfg_sales_order_items: [{ ...soItem }],
     });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(false);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).queued).toBe(false);
     const [row] = outbox(sb);
     expect(row.status).toBe('skipped');
     expect(row.last_error).toContain('refused, nothing sent (MissingAgentError)');
@@ -742,7 +742,7 @@ describe('the salesperson reaches AutoCount even when `agent` is empty', () => {
     const sb = withFlag('1', {
       mfg_sales_orders: [{ ...so }], mfg_sales_order_items: [{ ...soItem }],
     }, { staff: ['name'] });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(false);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).queued).toBe(false);
     const [row] = outbox(sb);
     expect(row.status).toBe('skipped');
     expect(row.last_error).toContain('compose failed, nothing sent');
@@ -879,7 +879,7 @@ describe('every document the ERP creates carries the ERP number', () => {
       }],
       mfg_sales_order_items: [{ id: 'i1', doc_no: 'HC-SO-9', item_code: ERP_A, description: 'M', qty: 1, unit_price_sen: 100 }],
     });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).toBe(true);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-9' })).queued).toBe(true);
     expect((outbox(sb)[0].payload.body as Record<string, unknown>).DocNo).toBe('HC-SO-9');
   });
 });
@@ -1027,7 +1027,7 @@ describe('a sofa resolves through the binding recorded for its model', () => {
       mfg_sales_order_items: compartments.map((l) => ({ ...l })),
       supplier_material_bindings: [],
     });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(true);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.status).not.toBe('skipped');
     expect(row.payload.body.Details.map((d: { ItemCode: string }) => d.ItemCode))
@@ -1050,7 +1050,7 @@ describe('a sofa resolves through the binding recorded for its model', () => {
         supplier_id: 'sup-amn', supplier_sku: 'AMN-SF9028 SOFA', is_main_supplier: true,
       }],
     });
-    expect(await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).toBe(true);
+    expect((await enqueueSoCreate(sb as never, { companyId: 1, docNo: 'HC-SO-SOFA' })).queued).toBe(true);
     const [row] = outbox(sb);
     expect(row.status).not.toBe('skipped');
     expect(row.op).toBe('create_so');
@@ -1104,7 +1104,7 @@ describe('the columns the write-back reads are the columns the ERP writes', () =
 
   test('a create carries the venue, the line brand, the customer ref and the full address', async () => {
     const sb = seeded();
-    expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-A' })).toBe(true);
+    expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-A' })).queued).toBe(true);
     const body = outbox(sb)[0].payload.body as Record<string, unknown>;
     expect(body.UDF).toEqual({
       VENUE: '2990s PJ', BRANDING: 'DUNLOPILLO', ToPONo: 'THEIR-SO-88',
@@ -1139,7 +1139,7 @@ describe('the columns the write-back reads are the columns the ERP writes', () =
       mfg_sales_order_items: [{ ...item, warehouse_id: 'wh-pg' }],
       warehouses: [{ id: 'wh-pg', code: 'PG', name: 'PG WAREHOUSE' }],
     });
-    expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-A' })).toBe(true);
+    expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-A' })).queued).toBe(true);
     const body = outbox(sb)[0].payload.body as Record<string, unknown>;
     expect(body.SalesLocation).toBe('PG');
     expect(outbox(sb)[0].status).not.toBe('skipped');
@@ -1233,7 +1233,7 @@ describe('the three fields the extract carries and the write-back did not send',
           { so_doc_no: 'HC-SO-B', amount_sen: 100_00, is_deposit: false },
         ],
       });
-      expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).toBe(true);
+      expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).queued).toBe(true);
       const udf = (outbox(sb)[0].payload.body as Record<string, Record<string, string>>).UDF;
       expect(udf.BALANCE).toBe('200.00');
     });
@@ -1386,7 +1386,7 @@ describe('the three fields the extract carries and the write-back did not send',
           { so_doc_no: 'HC-SO-B', amount_sen: 100_00, is_deposit: false, account_sheet: 'CIMB', approval_code: '222', paid_at: '2026-08-02', id: 'p2' },
         ],
       });
-      expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).toBe(true);
+      expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).queued).toBe(true);
       const udf = (outbox(sb)[0].payload.body as Record<string, Record<string, string>>).UDF;
       expect(udf.PAYEMENT).toBe('(MAYBANK/111) (CIMB/222)');
     });
@@ -1482,7 +1482,7 @@ describe('the three fields the extract carries and the write-back did not send',
         item_group: 'bedframe',
         variants: { fabricCode: 'PC151-01', colourLabel: 'Sand', divanHeight: '8"', legHeight: '2"', gap: '12"' },
       });
-      expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).toBe(true);
+      expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).queued).toBe(true);
       const d = (outbox(sb)[0].payload.body as { Details: Array<Record<string, unknown>> }).Details[0];
       expect(d.Desc2).toBe('PC151-01 Sand / DIVAN 8" + LEG 2" / GAP 12"');
     });
@@ -1493,7 +1493,7 @@ describe('the three fields the extract carries and the write-back did not send',
         item_group: 'bedframe',
         variants: { fabricCode: 'PC151-01', gap: '12"', specials: ['X'.repeat(120)] },
       });
-      expect(await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).toBe(false);
+      expect((await enqueueSoCreate(client(sb), { companyId: 1, docNo: 'HC-SO-B' })).queued).toBe(false);
       const [row] = outbox(sb);
       expect(row.status).toBe('skipped');
       expect(row.last_error).toContain('refused, nothing sent (Desc2TooLongError)');
@@ -1551,7 +1551,7 @@ describe('the three fields the extract carries and the write-back did not send',
         }],
         warehouses: [{ id: 'wh-kl', code: 'KL', name: 'KL WAREHOUSE' }],
       });
-      expect(await enqueuePoCreate(client(sb), { companyId: 1, poId: 'po-b' })).toBe(true);
+      expect((await enqueuePoCreate(client(sb), { companyId: 1, poId: 'po-b' })).queued).toBe(true);
       const d = (outbox(sb)[0].payload.body as { Details: Array<Record<string, unknown>> }).Details[0];
       expect(d.DeliveryDate).toBe('2026-10-02');
     });
@@ -1631,7 +1631,7 @@ describe('every purchase order names a purchase agent (FK_PO_PurchaseAgent)', ()
 
   test('the payload carries the constant, never a null', async () => {
     const sb = seeded();
-    expect(await enqueuePoCreate(client(sb), { companyId: 1, poId: 'po-1' })).toBe(true);
+    expect((await enqueuePoCreate(client(sb), { companyId: 1, poId: 'po-1' })).queued).toBe(true);
     expect(outbox(sb)[0].payload.body.Agent).toBe('OTHERS');
   });
 
@@ -1654,7 +1654,7 @@ describe('every purchase order names a purchase agent (FK_PO_PurchaseAgent)', ()
     sb.tables.suppliers[0].code = null;
     /* false = "nothing was queued for AutoCount", the same answer every other
        refusal gives its caller; the visible half is the skipped row. */
-    expect(await enqueuePoCreate(client(sb), { companyId: 1, poId: 'po-1' })).toBe(false);
+    expect((await enqueuePoCreate(client(sb), { companyId: 1, poId: 'po-1' })).queued).toBe(false);
     const [row] = outbox(sb);
     expect(row.status).toBe('skipped');
     expect(row.last_error).toContain('FK_PO_Creditor');
@@ -1779,5 +1779,102 @@ describe("a conversion says nothing rather than blanking the target's reference"
     expect(row.status).toBe('pending');
     expect(row.payload.body.DocNo).toBe('HC-DO-1');
     expect(row.last_error).toContain('not found');
+  });
+});
+
+/* ── THE REFUSAL COMES BACK OUT OF THE REQUEST ──────────────────────────────
+   The worst shape on the list is the one where the operator believes the
+   document is in the accounts: the compose refuses, a `skipped` row is filed
+   into a queue behind its own permission key, and Save answers 201. The row is
+   what an ENGINEER reads and it has not changed. What is new is that the same
+   refusal is now RETURNED to the caller that is holding the operator's
+   response — no second read, no second opinion, the composer's own throw.
+
+   These fail on origin/main @839fcaed0 for the plainest possible reason: there
+   was nothing to return. */
+describe('an enqueue that refuses says so to the operator, not only to the queue', () => {
+  const po = {
+    id: 'po-1', po_number: 'HC-PO-9', po_date: '2026-08-10',
+    supplier_id: 'sup-1', notes: null, linked_ac_docno: null,
+  };
+  const poItem = (item: string) => ({
+    purchase_order_id: 'po-1', item_code: item, description: 'D',
+    qty: 1, unit_price_sen: 5000, warehouse_id: 'wh-1',
+  });
+  const warehouses = [{ id: 'wh-1', code: 'KL', name: 'KL WAREHOUSE' }];
+
+  test('a supplier with no AutoCount creditor code — skipped row AND a sentence', async () => {
+    const sb = withFlag('1', {
+      purchase_orders: [{ ...po }],
+      suppliers: [{ id: 'sup-1', code: null, name: 'Supplier' }],
+      purchase_order_items: [poItem(ERP_A)],
+      warehouses,
+    });
+    const out = await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' });
+    expect(out.queued).toBe(false);
+    // the engineer's half, unchanged
+    const rows = outbox(sb);
+    expect(rows).toHaveLength(1);
+    expect(rows[0].status).toBe('skipped');
+    expect(String(rows[0].last_error)).toContain('MissingCreditorError');
+    // the operator's half, which did not exist
+    expect(out.problems).toHaveLength(1);
+    expect(out.problems[0].message).toContain('has NOT reached the accounts');
+    expect(out.problems[0].message).toContain('Ask accounts');
+    /* And it names no document number, customer or amount — these sentences are
+       read by a person, but they are also the shape a log line copies. */
+    expect(out.problems[0].message).not.toContain('HC-PO-9');
+  });
+
+  test('a line the accounts hold under two items, for a creditor that owns neither', async () => {
+    const sb = withFlag('1', {
+      purchase_orders: [{ ...po }],
+      suppliers: [{ id: 'sup-1', code: '400-H004', name: 'Supplier' }],
+      purchase_order_items: [poItem('9028-1S')],
+      warehouses,
+    });
+    const out = await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' });
+    expect(out.queued).toBe(false);
+    expect(outbox(sb)[0].status).toBe('skipped');
+    expect(out.problems).toHaveLength(1);
+    expect(out.problems[0].line).toBe('9028-1S');
+    expect(out.problems[0].message).toContain('retired');
+  });
+
+  test('CONTROL — a PO the composer accepts queues and says NOTHING', async () => {
+    const sb = withFlag('1', {
+      purchase_orders: [{ ...po }],
+      suppliers: [{ id: 'sup-1', code: '400-H004', name: 'Supplier' }],
+      purchase_order_items: [poItem(ERP_A)],
+      warehouses,
+    });
+    const out = await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' });
+    expect(out.queued).toBe(true);
+    expect(out.problems).toEqual([]);
+  });
+
+  test('CONTROL — the flag OFF is not a refusal and must not warn anyone', async () => {
+    const sb = withFlag('off', {
+      purchase_orders: [{ ...po }],
+      suppliers: [{ id: 'sup-1', code: null, name: 'Supplier' }],
+      purchase_order_items: [poItem(ERP_A)],
+      warehouses,
+    });
+    const out = await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' });
+    expect(out.queued).toBe(false);
+    expect(out.problems).toEqual([]);
+    expect(outbox(sb)).toHaveLength(0);
+  });
+
+  test('CONTROL — a cutover-imported PO is already in the book, and says nothing', async () => {
+    const sb = withFlag('1', {
+      purchase_orders: [{ ...po, linked_ac_docno: 'PO-000123' }],
+      suppliers: [{ id: 'sup-1', code: null, name: 'Supplier' }],
+      purchase_order_items: [poItem(ERP_A)],
+      warehouses,
+    });
+    const out = await enqueuePoCreate(sb as never, { companyId: 1, poId: 'po-1' });
+    expect(out.queued).toBe(false);
+    expect(out.problems).toEqual([]);
   });
 });
