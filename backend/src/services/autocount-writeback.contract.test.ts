@@ -1307,6 +1307,24 @@ describe('/so-to-po carries the whole master', () => {
     expect(Object.keys(details[0]).filter((k) => !applied.has(k))).toEqual([]);
   });
 
+  test('and NO key is sent that the /so-to-po route does not read', async () => {
+    /* THE OTHER HALF OF "carrying is not landing", and the reason this block is
+       not just a key-parity test. Spreading the master could as easily have put
+       keys on the wire that the host drops on the floor — which is what the
+       whole payload did before `SoToPo` learned to read the creditor.
+
+       The route's readable surface is its OWN keys plus PurchaseHeader's, since
+       that is the header function it applies (AcSyncService.cs:2349). `UDF` is
+       excluded for the same reason the /create-po twin excludes it: it goes
+       through ApplyUdf, not through Str(p, "UDF"). `FromDocNo` is resolved at
+       drain and is in SoToPo's own key list already. */
+    const t = soToPoSb();
+    await enqueue(t);
+    const read = new Set([...headerKeys(CS_SO_TO_PO), ...headerKeys(CS_PURCHASE_HEADER)]);
+    const unread = Object.keys(storedBody(t)).filter((k) => !read.has(k) && k !== 'UDF');
+    expect(unread, `keys the host would silently drop: ${unread.join(', ')}`).toEqual([]);
+  });
+
   test('the AGENT the transfer now sends is one PurchaseHeader actually assigns', () => {
     /* CARRYING A FIELD IS NOT LANDING IT. `PurchaseHeader` is what /so-to-po
        calls for its header, and it did not read `Agent` at all — only
