@@ -43,18 +43,18 @@ async function main() {
   // Every OUT still short of its consume — the unfulfilled part of a shipment.
   // line_committed mirrors fn_reconcile_dropship_batch's per-line EXISTS (0230).
   const outs = await sql`
-    SELECT m.id, m.source_doc_no, m.product_code, m.variant_key, m.batch_no,
+    SELECT m.id, m.source_doc_no, m.item_code, m.variant_key, m.batch_no,
            m.warehouse_id, ABS(m.qty) AS out_qty, m.created_at,
            d.is_dropship, UPPER(COALESCE(d.status::text,'')) AS do_status,
            EXISTS (SELECT 1 FROM scm.delivery_order_items di
                     WHERE di.delivery_order_id = d.id
                       AND di.committed_po_batch_no = m.batch_no
-                      AND di.item_code = m.product_code
+                      AND di.item_code = m.item_code
                       AND COALESCE(di.committed_variant_key,'') = COALESCE(m.variant_key,'')) AS line_committed,
            EXISTS (SELECT 1 FROM scm.delivery_order_items di
                     WHERE di.delivery_order_id = d.id
                       AND di.committed_po_batch_no = m.batch_no
-                      AND di.item_code = m.product_code
+                      AND di.item_code = m.item_code
                       AND COALESCE(di.committed_variant_key,'') = COALESCE(m.variant_key,'')
                       AND di.committed_batch_strict = TRUE) AS strict_committed,
            COALESCE((SELECT SUM(c.qty_consumed) FROM scm.inventory_lot_consumptions c
@@ -86,7 +86,7 @@ async function main() {
   notice(`   - of the claimable, STRICT (dye lot)      : ${strictClaimable.length}  (${units(strictClaimable)} units)  -> batched reconcile ONLY; no 0154 fallback`);
   notice(`   - of the claimable, non-strict            : ${claimable.length - strictClaimable.length}  (${units(claimable) - units(strictClaimable)} units)  -> batched reconcile, AND 0154 repairs it if the PO never lands`);
   for (const r of [...strandedNoSignal, ...strandedNoBatch].slice(0, 25)) {
-    notice(`    ${pad(r.source_doc_no, 20)} ${pad(r.product_code, 22)} ${pad(r.variant_key, 12)} batch=${pad(r.batch_no ?? "(none)", 14)} dropship=${r.is_dropship === true ? "Y" : "N"} lineBound=${r.line_committed === true ? "Y" : "N"} short=${Number(r.out_qty) - Number(r.consumed)} ${String(r.created_at).slice(0, 10)}`);
+    notice(`    ${pad(r.source_doc_no, 20)} ${pad(r.item_code, 22)} ${pad(r.variant_key, 12)} batch=${pad(r.batch_no ?? "(none)", 14)} dropship=${r.is_dropship === true ? "Y" : "N"} lineBound=${r.line_committed === true ? "Y" : "N"} short=${Number(r.out_qty) - Number(r.consumed)} ${String(r.created_at).slice(0, 10)}`);
   }
 
   // (B) what MRP still offers, AFTER the 0230 deduction has taken its share.
@@ -97,25 +97,25 @@ async function main() {
   if (!claimable.length) notice("  no outstanding claimable commitments — the deduction has nothing to do right now.");
   else {
     const rows = await sql`
-      SELECT poi.material_code, poi.qty, poi.received_qty,
+      SELECT poi.item_code, poi.qty, poi.received_qty,
              po.po_number, UPPER(COALESCE(po.status::text,'')) AS po_status
         FROM scm.purchase_order_items poi
         JOIN scm.purchase_orders po ON po.id = poi.purchase_order_id
        WHERE UPPER(COALESCE(po.status::text,'')) NOT IN ('CANCELLED','DRAFT')
          AND (poi.qty - COALESCE(poi.received_qty,0)) > 0
-         AND poi.material_code IN ${sql([...new Set(claimable.map((r) => r.product_code))])}`;
+         AND poi.item_code IN ${sql([...new Set(claimable.map((r) => r.item_code))])}`;
     notice(`  open PO lines for the committed SKUs      : ${rows.length}`);
     // Committed is keyed by (SKU, batch = PO number) — the same pair the
     // deduction pairs on, so a commitment against PO-A is never shown as
     // reducing PO-B.
     const committedByPair = new Map();
     for (const r of claimable) {
-      const k = `${r.product_code}::${r.batch_no}`;
+      const k = `${r.item_code}::${r.batch_no}`;
       committedByPair.set(k, (committedByPair.get(k) ?? 0) + (Number(r.out_qty) - Number(r.consumed)));
     }
     const openByPair = new Map();
     for (const r of rows) {
-      const k = `${r.material_code}::${r.po_number}`;
+      const k = `${r.item_code}::${r.po_number}`;
       openByPair.set(k, (openByPair.get(k) ?? 0) + (Number(r.qty) - Number(r.received_qty ?? 0)));
     }
     notice(`    ${pad("SKU", 24)} ${pad("PO / batch", 20)} ${pad("committed", 10)} ${pad("openLeft", 9)} verdict`);
@@ -143,7 +143,7 @@ async function main() {
       if (c <= left) continue;
       const [code, batch] = k.split("::");
       const anyStrict = claimable.some(
-        (r) => r.product_code === code && r.batch_no === batch && r.strict_committed === true);
+        (r) => r.item_code === code && r.batch_no === batch && r.strict_committed === true);
       unmatched.push({ code, batch, qty: c - left, strict: anyStrict });
     }
     notice(`  UNMATCHED commitments (no open PO supply) : ${unmatched.length}`);

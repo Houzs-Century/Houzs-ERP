@@ -18,8 +18,10 @@ import { writeFailed } from './mutation-error';
 //   - serviceNotify (the non-React 409/error toast bridge) maps to the vendored
 //     dialog-service serviceNotify.
 
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMemo } from 'react';
+import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { API_URL, authedFetch, humanApiError } from './authed-fetch';
+import { applySoListMrpEnrichment, type EnrichableSoRow, type SoListMrpEnrichment } from '../../../lib/soListEnrichment';
 // The photo PROXY fallback streams raw bytes, which authedFetch would try to
 // JSON-parse — so it uses the shared correlated transport + token accessor
 // directly, exactly as slip.ts does for the same reason.
@@ -63,8 +65,8 @@ export const useMfgSalesOrders = (status?: string) =>
 // useMfgSalesOrders above (no page) still returns all 500 for the dead V1 page.
 // Status tab values in the UI are lowercase (draft/confirmed/cancelled) but the
 // mfg_sales_orders.status column stores UPPERCASE — uppercase here to match.
-export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string }) {
-  const { page, pageSize, status, q, sort } = params;
+export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number; status?: string; q?: string; sort?: string; enabled?: boolean }) {
+  const { page, pageSize, status, q, sort, enabled } = params;
   const usp = new URLSearchParams();
   usp.set('page', String(page));
   usp.set('pageSize', String(pageSize));
@@ -72,6 +74,11 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
   if (q && q.trim()) usp.set('q', q.trim());
   if (sort) usp.set('sort', sort);
   return useQuery({
+    // `enabled` (default true) lets the list page defer the FIRST fetch by one
+    // render until the DataTable's one-shot mount sort-report lands, so the
+    // initial query already carries any localStorage-restored `sort` instead of
+    // firing sort-less, getting aborted, and immediately re-firing with sort.
+    enabled: enabled ?? true,
     queryKey: ['mfg-sales-orders-paged', page, pageSize, status ?? '', q ?? '', sort ?? ''],
     // statusCounts carries ONE bucket per backend SO_STATUSES entry (lowercase:
     // draft/confirmed/in_production/ready_to_ship/shipped/delivered/invoiced/
@@ -79,7 +86,7 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
     // spellings), summing to `all`. Keys beyond the original four are optional
     // so a mid-deploy old backend (four-bucket shape) still typechecks — the
     // pages read every bucket with `?? 0`.
-    queryFn: ({ signal }) => authedFetch<{ salesOrders: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; draft: number; confirmed: number; cancelled: number } & Partial<Record<'in_production' | 'ready_to_ship' | 'shipped' | 'delivered' | 'invoiced' | 'closed' | 'on_hold' | 'other', number>>; aggregates?: { revenueCenti: number; outstandingCenti: number; paidCenti: number } }>(`/mfg-sales-orders?${usp.toString()}`, { signal }),
+    queryFn: ({ signal }) => authedFetch<{ salesOrders: any[]; total: number; page: number; pageSize: number; statusCounts: { all: number; draft: number; confirmed: number; cancelled: number } & Partial<Record<'in_production' | 'ready_to_ship' | 'shipped' | 'delivered' | 'invoiced' | 'closed' | 'on_hold' | 'other', number>>; aggregates?: { revenueSen: number; outstandingSen: number; paidSen: number } }>(`/mfg-sales-orders?${usp.toString()}`, { signal }),
     placeholderData: (prev: any) => prev,
     staleTime: 30_000,
     retry: retryUnlessClientError,
@@ -87,16 +94,91 @@ export function useMfgSalesOrdersPaged(params: { page: number; pageSize: number;
   });
 }
 
+/* Deferred SO-list enrichment — the MRP-derived fields the list no longer
+   computes on its critical path (READY source-PO chips + the readiness/planning
+   verdicts). Fired AFTER the list renders, for the docs it just showed, and
+   merged in by applySoListMrpEnrichment. Desktop (one page) and mobile (many
+   infinite-scroll pages) share this: the docs are chunked at 100 so the request
+   stays bounded no matter how far mobile scrolls, and each chunk is cached
+   independently (a page already fetched is not re-requested when the next
+   loads). The backend runs ONE company-wide computeMrp per request regardless
+   of the chunk size, so chunking costs only extra bounded row reads, never
+   extra allocation work. */
+const ENRICH_CHUNK = 100;
+
+export function useSoListMrpEnrichmentMap(
+  docNos: string[],
+  enabled: boolean,
+): { byDoc: Map<string, SoListMrpEnrichment>; isFetching: boolean } {
+  // Sort so the chunk cache keys are stable across renders (row order can shift
+  // under a re-sort without changing which docs are on screen).
+  const chunks = useMemo(() => {
+    const uniq = [...new Set(docNos.filter(Boolean))].sort();
+    const out: string[][] = [];
+    for (let i = 0; i < uniq.length; i += ENRICH_CHUNK) out.push(uniq.slice(i, i + ENRICH_CHUNK));
+    return out;
+  }, [docNos]);
+
+  const results = useQueries({
+    queries: chunks.map((chunk) => ({
+      enabled: enabled && chunk.length > 0,
+      queryKey: ['mfg-sales-orders-list-mrp-enrichment', chunk.join(',')],
+      queryFn: ({ signal }: { signal?: AbortSignal }) =>
+        authedFetch<{ enrichment: Record<string, SoListMrpEnrichment> }>(
+          `/mfg-sales-orders/list-mrp-enrichment?docNos=${encodeURIComponent(chunk.join(','))}`,
+          { signal },
+        ),
+      staleTime: 30_000,
+      retry: retryUnlessClientError,
+      retryDelay: 800,
+    })),
+  });
+
+  // Signature over the per-chunk update timestamps: rebuild the merged map only
+  // when a chunk's data actually changes, not on every parent render.
+  const sig = results.map((r) => r.dataUpdatedAt).join('|');
+  const isFetching = results.some((r) => r.isFetching);
+  const byDoc = useMemo(() => {
+    const map = new Map<string, SoListMrpEnrichment>();
+    for (const r of results) {
+      const e = r.data?.enrichment;
+      if (e) for (const [k, v] of Object.entries(e)) map.set(k, v);
+    }
+    return map;
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- `results` is read through its `sig` (per-chunk dataUpdatedAt); depending on the array itself would rebuild every render.
+  }, [sig]);
+
+  return { byDoc, isFetching };
+}
+
+/* The overlay both SO-list surfaces apply: take the rows the list endpoint
+   returned (SHIPPED chips + stored-status placeholders), fetch the deferred MRP
+   enrichment for their docs, and return the healed rows. One hook so desktop and
+   mobile cannot drift. */
+export function useEnrichedSoListRows<T extends EnrichableSoRow>(
+  rows: T[],
+  enabled: boolean,
+): T[] {
+  const docNos = useMemo(
+    () => rows.map((r) => r.doc_no).filter((x): x is string => !!x),
+    [rows],
+  );
+  const { byDoc } = useSoListMrpEnrichmentMap(docNos, enabled);
+  return useMemo(
+    () => rows.map((r) => applySoListMrpEnrichment(r, r.doc_no ? byDoc.get(r.doc_no) : undefined)),
+    [rows, byDoc],
+  );
+}
+
 // Dashboard summary mode (`?summary=1`) — the backend returns only the 6 cols
-// the lifecycle-bucket KPIs need (doc_no, status, proceeded_at, local_total_centi,
+// the lifecycle-bucket KPIs need (doc_no, status, local_total_sen,
 // created_at, so_date), non-DRAFT, company + sales-scope scoped, so the dashboard
 // isn't paying for 500 fully-hydrated rows. Bucketing stays in the FE (single
 // source of truth). Ported from 2990's useMfgSalesOrdersSummary.
 export type SoSummaryRow = {
   doc_no: string;
   status: string;
-  proceeded_at: string | null;
-  local_total_centi: number;
+  local_total_sen: number;
   created_at: string | null;
   so_date: string | null;
 };
@@ -119,7 +201,7 @@ export type ScmCustomerOrder = {
   status: string;
   so_date: string | null;
   created_at: string | null;
-  local_total_centi: number;
+  local_total_sen: number;
   line_count: number;
 };
 export type ScmCustomer = {
@@ -127,7 +209,7 @@ export type ScmCustomer = {
   name: string;
   phone: string | null;
   order_count: number;
-  lifetime_value_centi: number;
+  lifetime_value_sen: number;
   last_order_at: string;
   orders: ScmCustomerOrder[];
 };
@@ -203,7 +285,7 @@ export type SoPayment = {
   installment_months: number | null;
   online_type: string | null;
   approval_code: string | null;
-  amount_centi: number;
+  amount_sen: number;
   account_sheet: string | null;
   slip_key?: string | null;
   collected_by: string | null;
@@ -262,15 +344,35 @@ export const useCreateMfgSalesOrder = () => {
   });
 };
 
+/* `expectedStatus` is the server's compare-and-set on the status column: the
+   backend refuses with 409 `so_version_conflict` when it does not equal the
+   row's CURRENT status. So it must carry the status the operator was LOOKING
+   at, and the caller is the only thing that holds it.
+
+   It is REQUIRED, not optional, because it decides whether the CAS runs at all
+   (see CLAUDE.md, "a parameter that DECIDES something is required"). Pass an
+   explicit `null` where a surface genuinely does not know the current status —
+   the backend then skips the status half and the version CAS alone guards the
+   write.
+
+   IT MUST NOT BE READ BACK OUT OF THE QUERY CACHE. `onMutate` below paints the
+   TARGET status onto the detail + list caches, and react-query runs `onMutate`
+   BEFORE `mutationFn` — so a mutationFn that read the cache read its own
+   optimistic write and sent `expectedStatus === status`. Every transition off
+   a warm detail cache therefore failed the CAS and returned 409, which the
+   operator saw as "Status update failed — Someone else updated this order
+   while you were editing" on the very first click, with nobody else involved.
+   Cancel SO on the detail page was 100% reproducible; the list buttons happened
+   to work only because a cold detail cache made `onMutate`'s paint a no-op.
+   Pinned by sales-order-status-expected.test.tsx. */
 export const useUpdateMfgSalesOrderStatus = () => {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ docNo, status }: { docNo: string; status: string }) => {
+    mutationFn: async ({ docNo, status, expectedStatus }: { docNo: string; status: string; expectedStatus: string | null }) => {
       const version = await resolveLoadedSoVersion(qc, docNo);
-      const cached = qc.getQueryData<{ salesOrder?: { status?: string } }>(['mfg-sales-order-detail', docNo]);
       return authedFetch<{ salesOrder: unknown; version: number }>(`/mfg-sales-orders/${docNo}/status`, {
         method: 'PATCH',
-        body: JSON.stringify({ status, version, expectedStatus: cached?.salesOrder?.status }),
+        body: JSON.stringify({ status, version, expectedStatus: expectedStatus ?? undefined }),
       });
     },
     onMutate: async ({ docNo, status }) => {
@@ -431,7 +533,7 @@ export const useOverrideMfgSoLinePrice = () => {
       docNo: string; itemId: string; overridePriceSen: number; reason?: string;
     }) => {
       await runSoVersionedMutation(qc, docNo, 'price-override', ({ leaseToken }) =>
-        authedFetch<{ items: Array<{ id: string; unit_price_centi: number }> }>(
+        authedFetch<{ items: Array<{ id: string; unit_price_sen: number }> }>(
           `/mfg-sales-orders/${docNo}/items/${itemId}/override`,
           {
             method: 'POST',

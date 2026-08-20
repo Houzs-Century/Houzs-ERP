@@ -81,28 +81,28 @@ try {
 
   const drift = await pg`
     WITH mov AS (
-      SELECT warehouse_id, product_code, COALESCE(variant_key,'') AS vkey,
+      SELECT warehouse_id, item_code, COALESCE(variant_key,'') AS vkey,
              SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty
                                     WHEN 'ADJUSTMENT' THEN qty WHEN 'TRANSFER' THEN qty
                                     ELSE 0 END) AS mov_qty
         FROM scm.inventory_movements
-       GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')
+       GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')
     ), lot AS (
-      SELECT warehouse_id, product_code, COALESCE(variant_key,'') AS vkey,
+      SELECT warehouse_id, item_code, COALESCE(variant_key,'') AS vkey,
              SUM(qty_remaining) AS lot_qty
         FROM scm.inventory_lots
-       GROUP BY warehouse_id, product_code, COALESCE(variant_key,'')
+       GROUP BY warehouse_id, item_code, COALESCE(variant_key,'')
     )
-    SELECT m.warehouse_id, m.product_code, m.vkey, m.mov_qty, l.lot_qty
+    SELECT m.warehouse_id, m.item_code, m.vkey, m.mov_qty, l.lot_qty
       FROM mov m JOIN lot l
-        ON l.warehouse_id = m.warehouse_id AND l.product_code = m.product_code AND l.vkey = m.vkey
+        ON l.warehouse_id = m.warehouse_id AND l.item_code = m.item_code AND l.vkey = m.vkey
      WHERE l.lot_qty <> m.mov_qty
        AND m.mov_qty >= 0            -- a negative movement balance is a different fault
        AND l.lot_qty > m.mov_qty     -- only the lot-ledger-over-stated side
      ORDER BY 2, 3`;
 
   for (const b of drift) {
-    const label = `${b.product_code}${b.vkey ? ` [${b.vkey}]` : ""}`;
+    const label = `${b.item_code}${b.vkey ? ` [${b.vkey}]` : ""}`;
     console.log("=".repeat(76));
     console.log(label);
 
@@ -116,7 +116,7 @@ try {
             FROM scm.inventory_lots l
             LEFT JOIN scm.inventory_movements m ON m.id = l.movement_id
            WHERE l.warehouse_id = ${b.warehouse_id}
-             AND l.product_code = ${b.product_code}
+             AND l.item_code = ${b.item_code}
              AND COALESCE(l.variant_key,'') = ${b.vkey}
            ORDER BY l.received_at
            FOR UPDATE OF l`;
@@ -158,7 +158,7 @@ try {
           SELECT COALESCE(SUM(c.qty_consumed),0) AS q
             FROM scm.inventory_lot_consumptions c
             JOIN scm.inventory_lots l ON l.id = c.lot_id
-           WHERE l.warehouse_id = ${b.warehouse_id} AND l.product_code = ${b.product_code}
+           WHERE l.warehouse_id = ${b.warehouse_id} AND l.item_code = ${b.item_code}
              AND COALESCE(l.variant_key,'') = ${b.vkey}`;
 
         // 1 + 2. Re-point each orphan's consumptions onto open backed lots, oldest first.
@@ -186,13 +186,13 @@ try {
         // ── VERIFY, in-transaction, before this work is allowed to stand ──────
         const [after] = await sql`
           SELECT COALESCE(SUM(qty_remaining),0) AS lot_qty FROM scm.inventory_lots
-           WHERE warehouse_id = ${b.warehouse_id} AND product_code = ${b.product_code}
+           WHERE warehouse_id = ${b.warehouse_id} AND item_code = ${b.item_code}
              AND COALESCE(variant_key,'') = ${b.vkey}`;
         const [consAfter] = await sql`
           SELECT COALESCE(SUM(c.qty_consumed),0) AS q
             FROM scm.inventory_lot_consumptions c
             JOIN scm.inventory_lots l ON l.id = c.lot_id
-           WHERE l.warehouse_id = ${b.warehouse_id} AND l.product_code = ${b.product_code}
+           WHERE l.warehouse_id = ${b.warehouse_id} AND l.item_code = ${b.item_code}
              AND COALESCE(l.variant_key,'') = ${b.vkey}`;
 
         if (num(after.lot_qty) !== num(b.mov_qty)) {
@@ -214,7 +214,7 @@ try {
                             WHERE c.lot_id = l.id), 0) AS consumed
             FROM scm.inventory_lots l
            WHERE l.warehouse_id = ${b.warehouse_id}
-             AND l.product_code = ${b.product_code}
+             AND l.item_code = ${b.item_code}
              AND COALESCE(l.variant_key,'') = ${b.vkey}
              AND l.qty_received <> l.qty_remaining
                  + COALESCE((SELECT SUM(c.qty_consumed)

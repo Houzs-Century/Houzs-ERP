@@ -1,7 +1,7 @@
 // ----------------------------------------------------------------------------
 // Inventory variant key — the canonical "attribute composition" identity.
 //
-// Stock is bucketed by (warehouse_id, product_code, variant_key). Two lines
+// Stock is bucketed by (warehouse_id, item_code, variant_key). Two lines
 // with identical physical attributes produce the SAME key, so they pool into
 // the same on-hand bucket; any difference produces a different key, so they
 // are tracked separately.
@@ -22,6 +22,8 @@
 // no physical attributes set also resolves to '' so it does not fragment away
 // from the unclassified bucket.
 // ----------------------------------------------------------------------------
+
+import { normaliseTypographicQuotes } from './mfg-pricing';
 
 export type InventoryItemGroup =
   | 'sofa'
@@ -79,7 +81,8 @@ const ATTRS_BY_GROUP: Record<string, Array<keyof VariantAttrs>> = {
   service: [],
 };
 
-const norm = (v: unknown): string => (v == null ? '' : String(v).trim().toLowerCase());
+const norm = (v: unknown): string =>
+  v == null ? '' : normaliseTypographicQuotes(String(v).trim().toLowerCase());
 
 /** Specials → a normalized, order-independent, comma-joined string. */
 const normSpecials = (specials: VariantAttrs['specials']): string => {

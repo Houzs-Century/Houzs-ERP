@@ -1,8 +1,21 @@
+// ============================================================================
+// ⚠️  EXTERNAL CLIENT — no screen in THIS repo calls this route. That is
+//     expected, not evidence it is dead.
+//
+//     The consumer is the 2990 POS (pos.2990shome.com, repo wenwei4046/2990s),
+//     which has built against this API since the 2026-07-21 cutover. Neither
+//     repo compiles against the other, so a repo-wide "find usages" here
+//     returns nothing while the route is serving live tablet traffic.
+//
+//     Deleted as dead code on 2026-08-18 (#2422); the POS 404'd in production.
+//     Restored 2026-08-19 (#2459). Before removing it again, grep the POS repo.
+//     POS call sites: apps/pos/src/lib/sales-analysis-queries.ts:22,31
+// ============================================================================
 // /sales-analysis — read-only analytics for the Sales Analysis page.
 //
 // Ported from 2990 apps/api/src/routes/sales-analysis.ts. The heavy aggregation
 // lives in the pure vendored core (scm/shared/sales-analysis); this route only
-// loads rows (company_2 scoped) and shapes the response. Money is integer centi.
+// loads rows (company_2 scoped) and shapes the response. Money is integer sen.
 //
 // HOUZS ADAPTATIONS vs the 2990 source:
 //   • Company scoping — every transactional read is scoped to the active
@@ -63,15 +76,15 @@ salesAnalysis.use('*', supabaseAuth);
  * the header). Everything they sit on (geographic area, order stats, product
  * rankings) is real and is carried through untouched.
  *
- * `marginCenti` is OPTIONAL on these (and grossMarginPct on SaOverviewOut):
+ * `marginSen` is OPTIONAL on these (and grossMarginPct on SaOverviewOut):
  * present for a finance caller, ABSENT for everyone else — gateSaFinance below
  * deletes it. Two INDEPENDENT cuts land on one shape: demographics are dropped
  * for EVERYONE (Houzs captures none), margin only for a NON-FINANCE caller.
  */
-type SaCustomerOut = Omit<SaCustomerRow, 'race' | 'birthday' | 'gender' | 'marginCenti'> & { marginCenti?: number };
+type SaCustomerOut = Omit<SaCustomerRow, 'race' | 'birthday' | 'gender' | 'marginSen'> & { marginSen?: number };
 type VariantOut = Omit<VariantRank, 'demographics'>;   // VariantRank carries no margin
-type ModelOut = Omit<ModelRank, 'demographics' | 'variants' | 'marginCenti'>
-  & { variants: VariantOut[]; marginCenti?: number };
+type ModelOut = Omit<ModelRank, 'demographics' | 'variants' | 'marginSen'>
+  & { variants: VariantOut[]; marginSen?: number };
 
 /**
  * Active-company sofa combos (master scope: B2C default rows only, sales-side).
@@ -81,7 +94,10 @@ type ModelOut = Omit<ModelRank, 'demographics' | 'variants' | 'marginCenti'>
  * this route never re-prices, so the combo price merge is cosmetic here but
  * kept faithful to the billing path.
  */
-async function loadCompanyActiveSofaCombos(sb: any, c: any): Promise<SofaComboRow[]> {
+async function loadCompanyActiveSofaCombos(
+  sb: any,
+  c: any,
+): Promise<{ combos: SofaComboRow[]; error: { message?: string } | null }> {
   let q = sb
     .from('sofa_combo_pricing')
     .select('id, base_model, modules, tier, customer_id, prices_by_height, selling_prices_by_height, pwp_prices_by_height, label, effective_from, created_at, deleted_at, default_free_gifts')
@@ -89,8 +105,12 @@ async function loadCompanyActiveSofaCombos(sb: any, c: any): Promise<SofaComboRo
     .is('customer_id', null)
     .is('supplier_id', null);
   q = scopeToCompany(q, c);
-  const { data } = await q;
-  return ((data ?? []) as Array<{
+  /* Bind the error and hand it back. supabase-js does not throw, so a discarded
+     `error` makes a failed query indistinguishable from "this company has no
+     combos" — and a build that IS a combo would then be ranked as a custom
+     build. The caller turns this into load_failed like every other read here. */
+  const { data, error } = await q;
+  const combos = ((data ?? []) as Array<{
     id: string; base_model: string; modules: string[][]; tier: SofaPriceTier | null;
     customer_id: string | null; prices_by_height: Record<string, number | null>;
     selling_prices_by_height: Record<string, number | null>;
@@ -105,6 +125,7 @@ async function loadCompanyActiveSofaCombos(sb: any, c: any): Promise<SofaComboRo
     label: r.label, effectiveFrom: r.effective_from, createdAt: r.created_at, deletedAt: r.deleted_at,
     defaultFreeGifts: r.default_free_gifts ?? [],
   }));
+  return { combos, error: error ?? null };
 }
 
 /* ── Finance gate — MARGIN rides canViewScmFinance, not the access gate ───────
@@ -137,7 +158,7 @@ async function loadCompanyActiveSofaCombos(sb: any, c: any): Promise<SofaComboRo
    ModelOut (declared above, alongside the demographics cut) carry BOTH cuts —
    one type per shipped shape, not two competing ones. */
 type SaOverviewOut = Omit<OverviewResult, 'grossMarginPct'> & { grossMarginPct?: number | null };
-type SaMonthlyOut = Omit<MonthlyRow, 'marginCenti'> & { marginCenti?: number };
+type SaMonthlyOut = Omit<MonthlyRow, 'marginSen'> & { marginSen?: number };
 
 /** Strip every margin path in place for a non-finance caller. Takes the
  *  ALREADY-demographics-stripped products shape (ModelOut), i.e. exactly what
@@ -154,10 +175,10 @@ function gateSaFinance(
 ): void {
   if (canViewScmFinance(c)) return;
   delete payload.overview.grossMarginPct;
-  for (const m of payload.monthly) delete m.marginCenti;
-  for (const cu of payload.customers) delete cu.marginCenti;
+  for (const m of payload.monthly) delete m.marginSen;
+  for (const cu of payload.customers) delete cu.marginSen;
   for (const models of Object.values(payload.products.byCategory)) {
-    for (const m of models) delete m.marginCenti;
+    for (const m of models) delete m.marginSen;
   }
 }
 
@@ -178,7 +199,7 @@ salesAnalysis.get('/', async (c) => {
 
   type Raw = {
     doc_no: string; cross_category_source_doc_no: string | null; so_date: string;
-    total_revenue_centi: number | null; total_margin_centi: number | null; service_centi: number | null;
+    total_revenue_sen: number | null; total_margin_sen: number | null; service_sen: number | null;
     customer_id: string | null;
     city: string | null;
     customer_state: string | null;
@@ -190,7 +211,7 @@ salesAnalysis.get('/', async (c) => {
   const { data: orderRows, error: ordErr } = await paginateAll<Raw>((from, to) => {
     let q = sb
       .from('mfg_sales_orders')
-      .select('doc_no, cross_category_source_doc_no, so_date, total_revenue_centi, total_margin_centi, service_centi, customer_id, city, customer_state')
+      .select('doc_no, cross_category_source_doc_no, so_date, total_revenue_sen, total_margin_sen, service_sen, customer_id, city, customer_state')
       .not('status', 'in', '("CANCELLED","ON_HOLD")')
       .order('doc_no')
       .range(from, to);
@@ -203,9 +224,9 @@ salesAnalysis.get('/', async (c) => {
     docNo: r.doc_no,
     sourceDocNo: r.cross_category_source_doc_no ?? null,
     soDate: r.so_date,
-    totalRevenueCenti: Number(r.total_revenue_centi) || 0,
-    totalMarginCenti: Number(r.total_margin_centi) || 0,
-    serviceCenti: Number(r.service_centi) || 0,
+    totalRevenueSen: Number(r.total_revenue_sen) || 0,
+    totalMarginSen: Number(r.total_margin_sen) || 0,
+    serviceSen: Number(r.service_sen) || 0,
   }));
 
   const monthly: SaMonthlyOut[] = monthlyTrend(allOrders);
@@ -218,12 +239,12 @@ salesAnalysis.get('/', async (c) => {
   const docNos = scoped.map((row) => row.docNo);
   const deliveryByDoc = new Map<string, number>();
   if (docNos.length) {
-    const { data: delRows, error: delErr } = await chunkIn<{ doc_no: string; total_centi: number | null }>(
+    const { data: delRows, error: delErr } = await chunkIn<{ doc_no: string; total_sen: number | null }>(
       docNos,
       (batch, from, to) => {
         let q = sb
           .from('mfg_sales_order_items')
-          .select('doc_no, total_centi')
+          .select('doc_no, total_sen')
           .like('item_code', 'SVC-DELIVERY%')
           .eq('cancelled', false)
           .in('doc_no', batch)
@@ -235,7 +256,7 @@ salesAnalysis.get('/', async (c) => {
     );
     if (delErr) return c.json({ error: 'load_failed', reason: delErr.message }, 500);
     for (const r of delRows) {
-      deliveryByDoc.set(r.doc_no, (deliveryByDoc.get(r.doc_no) ?? 0) + (Number(r.total_centi) || 0));
+      deliveryByDoc.set(r.doc_no, (deliveryByDoc.get(r.doc_no) ?? 0) + (Number(r.total_sen) || 0));
     }
   }
 
@@ -282,8 +303,8 @@ salesAnalysis.get('/', async (c) => {
         state: area.state,
         city: area.city,
         orderCount: purchases,
-        ltvCenti: ords.reduce((s, o) => s + o.totalRevenueCenti, 0),
-        marginCenti: ords.reduce((s, o) => s + o.totalMarginCenti, 0),
+        ltvSen: ords.reduce((s, o) => s + o.totalRevenueSen, 0),
+        marginSen: ords.reduce((s, o) => s + o.totalMarginSen, 0),
         firstOrderDate: sorted[0]?.soDate ?? null,
         lastOrderDate: latest.soDate,
         isReturning: purchases > 1,
@@ -294,7 +315,11 @@ salesAnalysis.get('/', async (c) => {
   // Target profile — one row per company (keyed by company_id).
   let tq = sb.from('analysis_customer_targets').select('*');
   tq = scopeToCompany(tq, c);
-  const { data: tRow } = await tq.maybeSingle();
+  /* maybeSingle: NO row is legitimate (this company has set no targets yet).
+     A failed query is not, and without the error bound the two are the same
+     shape — the page would quietly show "no targets set". */
+  const { data: tRow, error: tErr } = await tq.maybeSingle();
+  if (tErr) return c.json({ error: 'load_failed', reason: tErr.message }, 500);
   const targets: TargetProfile = {
     ageRangeMin: tRow?.age_range_min ?? null,
     ageRangeMax: tRow?.age_range_max ?? null,
@@ -312,14 +337,14 @@ salesAnalysis.get('/', async (c) => {
     // Product lines for the scoped docs, excluding service (its own bucket).
     const { data: lineRows, error: lineErr } = await chunkIn<{
       doc_no: string; item_code: string | null; item_group: string | null;
-      qty: number | null; total_centi: number | null; line_cost_centi: number | null;
+      qty: number | null; total_sen: number | null; line_cost_sen: number | null;
       variants: Record<string, unknown> | null;
     }>(
       docNos,
       (batch, from, to) => {
         let q = sb
           .from('mfg_sales_order_items')
-          .select('doc_no, item_code, item_group, qty, total_centi, line_cost_centi, variants')
+          .select('doc_no, item_code, item_group, qty, total_sen, line_cost_sen, variants')
           .neq('item_group', 'service')
           .not('item_code', 'like', 'SVC-%')
           .eq('cancelled', false)
@@ -376,7 +401,8 @@ salesAnalysis.get('/', async (c) => {
     }
 
     // Sofa combos (company scope) + fabric-tier config for upgrade detection.
-    const combos = await loadCompanyActiveSofaCombos(sb, c);
+    const { combos, error: comboErr } = await loadCompanyActiveSofaCombos(sb, c);
+    if (comboErr) return c.json({ error: 'load_failed', reason: comboErr.message }, 500);
     const fabricIds = [...new Set(rawLines.map((r) => ((r.variants ?? {}) as Record<string, unknown>).fabricId).filter(Boolean).map(String))];
     const [fabricTiersById, addonConfig, modelOverrides, compartmentOverrides] = await Promise.all([
       loadFabricSellingTiersByIds(sb, fabricIds),
@@ -398,8 +424,8 @@ salesAnalysis.get('/', async (c) => {
         itemCode: r.item_code ?? '',
         itemGroup: r.item_group ?? '',
         qty: Number(r.qty) || 0,
-        totalCenti: Number(r.total_centi) || 0,
-        costCenti: Number(r.line_cost_centi) || 0,
+        totalSen: Number(r.total_sen) || 0,
+        costSen: Number(r.line_cost_sen) || 0,
         buildKey: (v.buildKey as string) ?? null,
         fabricId: (v.fabricId as string) ?? null,
         legHeight: (v.legHeight as string) ?? null,

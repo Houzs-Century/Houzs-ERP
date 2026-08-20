@@ -10,7 +10,7 @@
 // was actually paid, and may it be released. Plus the one thing only a
 // reconciliation can see:
 //
-//   DRIFT — the SO header's `paid_centi` stamp disagreeing with the SUM of its
+//   DRIFT — the SO header's `paid_sen` stamp disagreeing with the SUM of its
 //   payment ledger rows. The header is a stamp; the ledger is the record. When
 //   they differ, one of the two screens in this ERP is lying about money, and
 //   which one you happen to be looking at decides what you believe. Surfacing it
@@ -51,10 +51,10 @@ interface SoRow {
   so_date?: string | null;
   status?: string | null;
   debtor_name?: string | null;
-  local_total_centi?: number | null;
-  paid_centi?: number | null;
+  local_total_sen?: number | null;
+  paid_sen?: number | null;
 }
-interface PayRow { so_doc_no: string; amount_centi?: number | null }
+interface PayRow { so_doc_no: string; amount_sen?: number | null }
 
 const n = (v: unknown): number => {
   const x = Number(v);
@@ -83,7 +83,7 @@ arReconciliation.get('/reconciliation', async (c) => {
 
   let soQ = sb
     .from('mfg_sales_orders')
-    .select('doc_no, so_date, status, debtor_name, local_total_centi, paid_centi, salesperson_id')
+    .select('doc_no, so_date, status, debtor_name, local_total_sen, paid_sen, salesperson_id')
     .in('status', AR_STATUSES)
     .order('so_date', { ascending: false })
     .limit(2000);
@@ -99,52 +99,52 @@ arReconciliation.get('/reconciliation', async (c) => {
      customer has paid, which is the worst direction to be wrong in. */
   const docNos = new Set(sos.map((s) => s.doc_no));
   const { data: payData, error: payErr } = await paginateAll<PayRow>((from, to) =>
-    sb.from('mfg_sales_order_payments').select('so_doc_no, amount_centi').order('so_doc_no').range(from, to),
+    sb.from('mfg_sales_order_payments').select('so_doc_no, amount_sen').order('so_doc_no').range(from, to),
   );
   if (payErr) return c.json({ error: 'payments_load_failed', reason: payErr.message }, 500);
   const paidByDoc = new Map<string, number>();
   for (const p of payData ?? []) {
     if (!docNos.has(p.so_doc_no)) continue;
-    paidByDoc.set(p.so_doc_no, (paidByDoc.get(p.so_doc_no) ?? 0) + n(p.amount_centi));
+    paidByDoc.set(p.so_doc_no, (paidByDoc.get(p.so_doc_no) ?? 0) + n(p.amount_sen));
   }
 
   const rows = sos.map((s) => {
-    const totalCenti = n(s.local_total_centi);
-    const paidLedgerCenti = paidByDoc.get(s.doc_no) ?? 0;
-    const paidHeaderCenti = n(s.paid_centi);
-    const remainingCenti = Math.max(0, totalCenti - paidLedgerCenti);
+    const totalSen = n(s.local_total_sen);
+    const paidLedgerSen = paidByDoc.get(s.doc_no) ?? 0;
+    const paidHeaderSen = n(s.paid_sen);
+    const remainingSen = Math.max(0, totalSen - paidLedgerSen);
     // The gate is computed from the LEDGER, never the header stamp — the ledger
     // is the record of money actually received.
-    const gate = computeReleaseGate({ totalCenti, paidCenti: paidLedgerCenti });
+    const gate = computeReleaseGate({ totalSen, paidSen: paidLedgerSen });
     return {
       doc_no: s.doc_no,
       so_date: s.so_date ?? null,
       status: s.status ?? '',
       debtor_name: s.debtor_name ?? null,
-      total_centi: totalCenti,
-      paid_ledger_centi: paidLedgerCenti,
-      paid_header_centi: paidHeaderCenti,
-      remaining_centi: remainingCenti,
+      total_sen: totalSen,
+      paid_ledger_sen: paidLedgerSen,
+      paid_header_sen: paidHeaderSen,
+      remaining_sen: remainingSen,
       /* The header stamp vs the ledger. Reported, never reconciled here. */
-      drift_centi: paidHeaderCenti - paidLedgerCenti,
-      has_drift: paidHeaderCenti !== paidLedgerCenti,
+      drift_sen: paidHeaderSen - paidLedgerSen,
+      has_drift: paidHeaderSen !== paidLedgerSen,
       release_gate: {
         decision: gate.decision,
-        collect_on_delivery_centi: gate.collectOnDeliveryCenti,
+        collect_on_delivery_sen: gate.collectOnDeliverySen,
         reason: gate.reason,
       },
     };
   });
 
   const filtered = rows.filter((r) =>
-    (!onlyDrift || r.has_drift) && (!onlyOutstanding || r.remaining_centi > 0));
+    (!onlyDrift || r.has_drift) && (!onlyOutstanding || r.remaining_sen > 0));
 
   const summary = {
     orders: filtered.length,
-    outstandingCenti: filtered.reduce((s, r) => s + r.remaining_centi, 0),
+    outstandingSen: filtered.reduce((s, r) => s + r.remaining_sen, 0),
     withDrift: filtered.filter((r) => r.has_drift).length,
     held: filtered.filter((r) => r.release_gate.decision === 'HOLD').length,
-    collectOnDeliveryCenti: filtered.reduce((s, r) => s + r.release_gate.collect_on_delivery_centi, 0),
+    collectOnDeliverySen: filtered.reduce((s, r) => s + r.release_gate.collect_on_delivery_sen, 0),
     // Named so nobody reads this preview as full AR-005: bank-receipt matching
     // needs a feed that does not exist yet.
     receiptMatching: 'not available — no bank receipt feed is connected yet',
@@ -155,7 +155,7 @@ arReconciliation.get('/reconciliation', async (c) => {
 
 function emptySummary() {
   return {
-    orders: 0, outstandingCenti: 0, withDrift: 0, held: 0, collectOnDeliveryCenti: 0,
+    orders: 0, outstandingSen: 0, withDrift: 0, held: 0, collectOnDeliverySen: 0,
     receiptMatching: 'not available — no bank receipt feed is connected yet',
   };
 }

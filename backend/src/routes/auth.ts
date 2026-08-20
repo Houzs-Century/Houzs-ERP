@@ -4,11 +4,13 @@ import {
   hashPassword,
   verifyPassword,
   createSession,
+  mintSessionPass,
   deleteSession,
   pruneExpiredSessions,
   getUserBySession,
   generateToken,
   isoIn,
+  timingSafeEqualStr,
 } from "../services/auth";
 import { bustUserSessions } from "../services/sessionCache";
 import { isFinanceViewer, isProductCostViewer } from "../services/pmsAccess";
@@ -90,7 +92,8 @@ app.post("/bootstrap", async (c) => {
 
   const userId = result.meta.last_row_id as number;
   const token = await createSession(c.env, userId);
-  return c.json({ token, user_id: userId });
+  const sessionPass = await mintSessionPass(c.env, token, Date.now());
+  return c.json({ token, user_id: userId, ...(sessionPass ? { session_pass: sessionPass } : {}) });
 });
 
 /**
@@ -181,7 +184,8 @@ app.post("/login", async (c) => {
     .bind(user.id)
     .run();
   const token = await createSession(c.env, user.id);
-  return c.json({ token, user_id: user.id, staffId: await lookupStaffId(c.env, user.id) });
+  const sessionPass = await mintSessionPass(c.env, token, Date.now());
+  return c.json({ token, user_id: user.id, staffId: await lookupStaffId(c.env, user.id), ...(sessionPass ? { session_pass: sessionPass } : {}) });
 });
 
 /* staffId: the caller's scm.staff uuid. The 2990 POS signs in by email through
@@ -281,8 +285,9 @@ app.post("/totp/login", async (c) => {
     .bind(userId)
     .run();
   const token = await createSession(c.env, userId);
+  const sessionPass = await mintSessionPass(c.env, token, Date.now());
   // Same staffId contract as /login — the POS email path may be 2FA-gated.
-  return c.json({ token, user_id: userId, staffId: await lookupStaffId(c.env, userId) });
+  return c.json({ token, user_id: userId, staffId: await lookupStaffId(c.env, userId), ...(sessionPass ? { session_pass: sessionPass } : {}) });
 });
 
 /**
@@ -556,7 +561,8 @@ app.post("/accept-invite", async (c) => {
     .run();
 
   const token = await createSession(c.env, user.id);
-  return c.json({ token, user_id: user.id });
+  const sessionPass = await mintSessionPass(c.env, token, Date.now());
+  return c.json({ token, user_id: user.id, ...(sessionPass ? { session_pass: sessionPass } : {}) });
 });
 
 /**
@@ -580,7 +586,7 @@ app.get("/me", async (c) => {
   if (!token) return c.json({ error: "Unauthorized" }, 401);
 
   // Legacy shared key — service identity, no DB lookup.
-  if (c.env.DASHBOARD_API_KEY && token === c.env.DASHBOARD_API_KEY) {
+  if (c.env.DASHBOARD_API_KEY && timingSafeEqualStr(token, c.env.DASHBOARD_API_KEY)) {
     return c.json({
       user: {
         id: 0,

@@ -50,6 +50,7 @@
 import { computeVariantKey, type VariantAttrs } from '../shared';
 import { isServiceLine } from '../shared/service-sku';
 import { resolveExpectedBatchBySoItem } from './dropship-batch';
+import { chunkIn, UUID_CHUNK } from './paginate-all';
 import type { MrpResult } from '../routes/mrp';
 
 /* One bucket's forward trace: the source PO numbers (sorted, GRN-healed) plus
@@ -62,7 +63,9 @@ export type ReadySourceChip = {
   kind: 'po' | 'adjustment';  // adjustment → the UI renders "STOCK ADJ"
 };
 
-const CHUNK = 300;
+/* Sized in URL BYTES, not rows: every list this slices is uuids, and the old
+   literal 300 was ~11.7KB of `in.(…)` filter. See UUID_CHUNK. */
+const CHUNK = UUID_CHUNK;
 
 const bucketKey = (doId: string, code: string, vk: string | null): string =>
   `${doId}::${code}::${vk ?? ''}`;
@@ -162,7 +165,7 @@ async function classifyLots(
 
 /* ── FORWARD core: one ledger pass for a set of Delivery Orders ────────────── */
 export type DoShipmentTrace = {
-  /* `${doId}::${product_code}::${variant_key}` → trace (the ship's bucket key) */
+  /* `${doId}::${item_code}::${variant_key}` → trace (the ship's bucket key) */
   byBucket: Map<string, BucketTrace>;
   /* delivery_order_id → rolled-up trace (the DO / SI list cells) */
   byDo: Map<string, BucketTrace>;
@@ -193,29 +196,29 @@ export async function traceDoShipmentSources(
     // 1. Batched OUT movements (sofa allocated batch / drop-ship expected batch).
     try {
       const { data: movs } = await sb.from('inventory_movements')
-        .select('source_doc_id, product_code, variant_key, batch_no')
+        .select('source_doc_id, item_code, variant_key, batch_no')
         .eq('source_doc_type', 'DO')
         .eq('movement_type', 'OUT')
         .in('source_doc_id', chunk)
         .not('batch_no', 'is', null);
-      for (const m of (movs ?? []) as Array<{ source_doc_id: string | null; product_code: string | null; variant_key: string | null; batch_no: string | null }>) {
-        if (m.source_doc_id && m.product_code) addPo(m.source_doc_id, m.product_code, m.variant_key, m.batch_no);
+      for (const m of (movs ?? []) as Array<{ source_doc_id: string | null; item_code: string | null; variant_key: string | null; batch_no: string | null }>) {
+        if (m.source_doc_id && m.item_code) addPo(m.source_doc_id, m.item_code, m.variant_key, m.batch_no);
       }
     } catch { /* column/table absent — the consumption path still contributes */ }
     // 2. FIFO lot consumptions → consumed lots, classified (batch / GRN-heal / adjustment).
     try {
       const { data: cons } = await sb.from('inventory_lot_consumptions')
-        .select('source_doc_id, lot_id, product_code, variant_key, qty_consumed')
+        .select('source_doc_id, lot_id, item_code, variant_key, qty_consumed')
         .eq('source_doc_type', 'DO')
         .in('source_doc_id', chunk);
-      const consRows = (cons ?? []) as Array<{ source_doc_id: string | null; lot_id: string; product_code: string | null; variant_key: string | null; qty_consumed: number | null }>;
+      const consRows = (cons ?? []) as Array<{ source_doc_id: string | null; lot_id: string; item_code: string | null; variant_key: string | null; qty_consumed: number | null }>;
       const lotClass = await classifyLots(sb, consRows.map((r) => r.lot_id));
       for (const r of consRows) {
-        if (!r.source_doc_id || !r.product_code) continue;
+        if (!r.source_doc_id || !r.item_code) continue;
         const cls = lotClass.get(r.lot_id);
         if (!cls) continue;
-        if (cls.po) addPo(r.source_doc_id, r.product_code, r.variant_key, cls.po);
-        else if (cls.adjustment) addAdj(r.source_doc_id, r.product_code, r.variant_key, Math.abs(Number(r.qty_consumed ?? 0)));
+        if (cls.po) addPo(r.source_doc_id, r.item_code, r.variant_key, cls.po);
+        else if (cls.adjustment) addAdj(r.source_doc_id, r.item_code, r.variant_key, Math.abs(Number(r.qty_consumed ?? 0)));
       }
     } catch { /* consumption table absent — movement batches stand alone */ }
   }
@@ -232,7 +235,7 @@ export async function resolveDoSources(
   return (await traceDoShipmentSources(sb, doIds)).byDo;
 }
 
-/* DO / SI detail per line: `${product_code}::${variant_key}` → trace, one DO. */
+/* DO / SI detail per line: `${item_code}::${variant_key}` → trace, one DO. */
 export async function resolveDoLineSources(
   sb: any,
   deliveryOrderId: string,
@@ -247,7 +250,7 @@ export async function resolveDoLineSources(
 }
 
 /* SO line: mfg_sales_order_items.id → trace. Walk SO line → its DO line(s) →
-   the SAME (product_code, variant_key) bucket the ship wrote them under
+   the SAME (item_code, variant_key) bucket the ship wrote them under
    (movements are not keyed by so_item_id). */
 export async function soLineShippedSources(
   sb: any,
@@ -638,7 +641,7 @@ export async function soLineReadySourcePos(
     const whIds = [...new Set(buckets.map((b) => b.warehouseId).filter((x): x is string => Boolean(x)))];
     if (whIds.length === 0) return out;
     type LotRow = {
-      id: string; warehouse_id: string; product_code: string; variant_key: string | null;
+      id: string; warehouse_id: string; item_code: string; variant_key: string | null;
       qty_remaining: number | null; batch_no: string | null;
       source_doc_type: string | null; source_doc_id: string | null;
       received_at: string | null;
@@ -646,8 +649,8 @@ export async function soLineReadySourcePos(
     const lots: LotRow[] = [];
     for (let i = 0; i < codes.length; i += CHUNK) {
       let q = sb.from('inventory_lots')
-        .select('id, warehouse_id, product_code, variant_key, qty_remaining, batch_no, source_doc_type, source_doc_id, received_at')
-        .in('product_code', codes.slice(i, i + CHUNK))
+        .select('id, warehouse_id, item_code, variant_key, qty_remaining, batch_no, source_doc_type, source_doc_id, received_at')
+        .in('item_code', codes.slice(i, i + CHUNK))
         .in('warehouse_id', whIds)
         .gt('qty_remaining', 0)
         .order('received_at', { ascending: true })
@@ -668,7 +671,7 @@ export async function soLineReadySourcePos(
 
     const lotsByBucket = new Map<string, LotRow[]>();
     for (const l of lots) {
-      const k = `${l.warehouse_id}::${l.product_code}::${l.variant_key ?? ''}`;
+      const k = `${l.warehouse_id}::${l.item_code}::${l.variant_key ?? ''}`;
       const arr = lotsByBucket.get(k) ?? [];
       arr.push(l);
       lotsByBucket.set(k, arr);
@@ -753,9 +756,14 @@ export async function tracePoDeliveredLedger(
   if (poNumbers.length === 0) return { qtyByPoDo, qtyByPoDoCode, bucketsByPo, doIds };
   // 1. Consumptions FIRST (the primary qty source, no double count).
   try {
-    const { data: lots } = await sb.from('inventory_lots').select('id, batch_no').in('batch_no', poNumbers);
+    /* chunkIn — `poNumbers` is every PO on a LIST PAGE (po-so-coverage hands
+       this the page's whole PO set), so it went into the URL un-batched and past
+       the 1000-row cap un-paged. The two maps built from it are keyed, so the
+       merge is order-free. */
+    const { data: lots } = await chunkIn<{ id: string; batch_no: string | null }>(poNumbers, (batch, from, to) =>
+      sb.from('inventory_lots').select('id, batch_no').in('batch_no', batch).order('id').range(from, to));
     const lotPo = new Map<string, string>();
-    for (const l of (lots ?? []) as Array<{ id: string; batch_no: string | null }>) {
+    for (const l of lots) {
       if (l.id && l.batch_no) lotPo.set(l.id, l.batch_no);
     }
     const lotIds = [...lotPo.keys()];
@@ -763,31 +771,35 @@ export async function tracePoDeliveredLedger(
       const chunk = lotIds.slice(k, k + CHUNK);
       if (chunk.length === 0) continue;
       const { data: cons } = await sb.from('inventory_lot_consumptions')
-        .select('source_doc_id, lot_id, product_code, variant_key, qty_consumed')
+        .select('source_doc_id, lot_id, item_code, variant_key, qty_consumed')
         .eq('source_doc_type', 'DO').in('lot_id', chunk);
-      for (const r of (cons ?? []) as Array<{ source_doc_id: string | null; lot_id: string; product_code: string | null; variant_key: string | null; qty_consumed: number | null }>) {
+      for (const r of (cons ?? []) as Array<{ source_doc_id: string | null; lot_id: string; item_code: string | null; variant_key: string | null; qty_consumed: number | null }>) {
         const poNum = lotPo.get(r.lot_id) ?? null;
-        if (poNum && r.source_doc_id && r.product_code) {
-          consumedBuckets.add(`${poNum}::${r.source_doc_id}::${r.product_code}`);
+        if (poNum && r.source_doc_id && r.item_code) {
+          consumedBuckets.add(`${poNum}::${r.source_doc_id}::${r.item_code}`);
         }
-        bump(poNum, r.source_doc_id, r.product_code, Number(r.qty_consumed ?? 0));
-        addBucket(poNum, r.source_doc_id, r.product_code, r.variant_key);
+        bump(poNum, r.source_doc_id, r.item_code, Number(r.qty_consumed ?? 0));
+        addBucket(poNum, r.source_doc_id, r.item_code, r.variant_key);
       }
     }
   } catch { /* consumption / lot table absent — movement batches stand alone */ }
   // 2. Batched OUT movements — buckets always (the ship DID come from this PO);
   //    qty only where NO consumption covered the bucket (drop-ship).
   try {
-    const { data: movs } = await sb.from('inventory_movements')
-      .select('source_doc_id, product_code, variant_key, batch_no, qty')
-      .eq('source_doc_type', 'DO').eq('movement_type', 'OUT').in('batch_no', poNumbers);
-    for (const m of (movs ?? []) as Array<{ source_doc_id: string | null; product_code: string | null; variant_key: string | null; batch_no: string | null; qty: number | null }>) {
-      addBucket(m.batch_no, m.source_doc_id, m.product_code, m.variant_key);
-      if (m.batch_no && m.source_doc_id && m.product_code
-        && consumedBuckets.has(`${m.batch_no}::${m.source_doc_id}::${m.product_code}`)) {
+    /* chunkIn — same page-sized `poNumbers` as the lot read above. This one also
+       gains PAGING, which it needs more: OUT movements are the highest-volume
+       table here, so the un-paged form was dropping shipped qty past row 1000 —
+       an under-count of what a PO delivered. */
+    const { data: movs } = await chunkIn<{ source_doc_id: string | null; item_code: string | null; variant_key: string | null; batch_no: string | null; qty: number | null }>(poNumbers, (batch, from, to) => sb.from('inventory_movements')
+      .select('source_doc_id, item_code, variant_key, batch_no, qty')
+      .eq('source_doc_type', 'DO').eq('movement_type', 'OUT').in('batch_no', batch).order('id').range(from, to));
+    for (const m of movs) {
+      addBucket(m.batch_no, m.source_doc_id, m.item_code, m.variant_key);
+      if (m.batch_no && m.source_doc_id && m.item_code
+        && consumedBuckets.has(`${m.batch_no}::${m.source_doc_id}::${m.item_code}`)) {
         continue; // already counted via its lot consumption — skip to avoid 2x
       }
-      bump(m.batch_no, m.source_doc_id, m.product_code, Number(m.qty ?? 0));
+      bump(m.batch_no, m.source_doc_id, m.item_code, Number(m.qty ?? 0));
     }
   } catch { /* movements shape differs — consumption path still contributes */ }
   return { qtyByPoDo, qtyByPoDoCode, bucketsByPo, doIds };
@@ -824,20 +836,28 @@ export async function resolveDoSourceSos(
   const out = new Map<string, string[]>();
   if (ids.length === 0) return out;
   try {
-    const { data: lines } = await sb
+    /* chunkIn on both hops — `ids` is a whole DO LIST PAGE of uuids
+       (delivery-orders-mfg hands this `rows.map(r => r.id)`), and `soItemIds` is
+       one more uuid per line of it. resolveDoHeaderSources above already chunks
+       the identical read on the identical table; this path did not. Both results
+       feed keyed maps / per-DO Sets, so batching cannot change the answer. */
+    const { data: rows } = await chunkIn<{ delivery_order_id: string; so_item_id: string | null }>(ids, (batch, from, to) => sb
       .from('delivery_order_items')
       .select('delivery_order_id, so_item_id')
-      .in('delivery_order_id', ids);
-    const rows = (lines ?? []) as Array<{ delivery_order_id: string; so_item_id: string | null }>;
+      .in('delivery_order_id', batch)
+      .order('id')
+      .range(from, to));
     const soItemIds = [...new Set(rows.map((r) => r.so_item_id).filter((x): x is string => Boolean(x)))];
     if (soItemIds.length === 0) return out;
 
-    const { data: soItems } = await sb
+    const { data: soItems } = await chunkIn<{ id: string; doc_no: string | null }>(soItemIds, (batch, from, to) => sb
       .from('mfg_sales_order_items')
       .select('id, doc_no')
-      .in('id', soItemIds);
+      .in('id', batch)
+      .order('id')
+      .range(from, to));
     const docByItem = new Map<string, string>(
-      ((soItems ?? []) as Array<{ id: string; doc_no: string | null }>)
+      soItems
         .filter((r) => r.doc_no)
         .map((r) => [r.id, r.doc_no as string]),
     );

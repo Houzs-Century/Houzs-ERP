@@ -18,14 +18,18 @@
 // line links — not what the request asked for, so any future caller of POST /
 // gets the right answer without having to remember to pass anything.
 //
-// FOUR OUTCOMES, and the boundary between them is the whole safety argument:
+// THREE OUTCOMES, and the boundary between them is the whole safety argument:
 //
-//   enqueued            every line of this invoice came from ONE delivery
-//                       order. That is exactly the shape POST /from-dos
-//                       produces, and enqueueConvert names those lines by
-//                       DtlKey, so AutoCount transfers them and no others.
-//   merged-sources      lines from SEVERAL delivery orders. AutoCount transfers
-//                       from one source document; recorded, as /from-dos does.
+//   enqueued            every line of this invoice came from a delivery order —
+//                       one of them or several. enqueueConvert names those lines
+//                       by DtlKey and names every source document they came
+//                       from, so AutoCount transfers them and no others.
+//                       A fourth outcome, `merged-sources`, used to sit here:
+//                       lines from more than one delivery order were recorded
+//                       and never sent, because AddPartialTransferDetail refuses
+//                       a key array spanning two documents. The TARGET never
+//                       did — the service takes `FromDocNos` and groups the keys
+//                       per source — so the merge is enqueued like any other.
 //   mixed-source-lines  a source exists, but some line came from no delivery at
 //                       all. The ERP allows a standalone line on an invoice
 //                       (see unlinkedFromDoOffenders); AutoCount's transfer
@@ -51,7 +55,6 @@ export type SiAcSourceOutcome =
   | 'no-company'
   | 'unreadable'
   | 'enqueued'
-  | 'merged-sources'
   | 'mixed-source-lines'
   | 'parentless';
 
@@ -160,26 +163,6 @@ export async function recordSiAutoCountSource(
     return 'parentless';
   }
 
-  if (doIds.size > 1) {
-    const { data: numData, error: numErr } = await scopeToCompanyId(
-      sb.from('delivery_orders').select('id, do_number').in('id', [...doIds]),
-      companyId,
-    );
-    /* This read only NAMES the sources; the refusal is already decided by their
-       COUNT, so a failure degrades the message rather than the verdict — and it
-       says which it is instead of printing a row of question marks. */
-    const numbers = numErr
-      ? ['their numbers could not be read']
-      : ((numData ?? []) as Array<{ do_number: string | null }>)
-        .map((r) => r.do_number ?? '(no number)').sort();
-    /* Same sentence /from-dos writes, deliberately: 'AutoCount transfers from
-       ONE source document' is the NEEDLE that classifies a merged conversion
-       (AC_SKIP_KINDS 'no-autocount-shape'), and a reworded twin would land on
-       the owner's page as `unrecognised` with no remedy. */
-    await skip(`merged from ${doIds.size} Delivery Orders (${numbers.join(', ')}) — AutoCount transfers from ONE source document, so this invoice has no AutoCount counterpart`);
-    return 'merged-sources';
-  }
-
   const unlinked = lines.filter((l) => !l.do_item_id);
   if (unlinked.length > 0) {
     const codes = [...new Set(unlinked.map((l) => l.item_code ?? '(no item code)'))].sort();
@@ -187,10 +170,15 @@ export async function recordSiAutoCountSource(
     return 'mixed-source-lines';
   }
 
+  /* EVERY delivery order this invoice bills, not the first one.
+     `doIds.size > 1` used to be refused here with "AutoCount transfers from ONE
+     source document" — a sentence that stopped being true on 2026-08-16, when
+     the service learned `FromDocNos`. Taking `[0]` instead would be worse than
+     the refusal was: an invoice in the book billing one delivery out of three. */
   await enqueueConvert(sb, {
     companyId,
     op: 'do_to_iv',
-    from: { table: 'delivery_orders', keyCol: 'id', key: [...doIds][0]! },
+    from: [...doIds].map((id) => ({ table: 'delivery_orders' as const, keyCol: 'id', key: id })),
     to: { table: 'sales_invoices', keyCol: 'id', key: opts.invoiceId },
     docType: 'IV',
     docNo: opts.invoiceNumber,

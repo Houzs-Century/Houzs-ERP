@@ -18,6 +18,7 @@
 // prefill convenience (mirrors DeliveryOrderNew's ?fromSo).
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -45,13 +46,13 @@ import {
 import { SoLineCard, emptySoLine, type SoLineDraft } from '../../vendor/scm/components/SoLineCard';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 type DraftLine = SoLineDraft & { rid: string; doItemId?: string; condition?: string };
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 export const DeliveryReturnNew = () => {
   const navigate = useNavigate();
@@ -162,7 +163,7 @@ export const DeliveryReturnNew = () => {
     type Stash = {
       doItemId: string; itemCode: string; itemGroup: string | null;
       description: string | null; uom: string | null; qty: number; condition: string;
-      unitPriceCenti: number; discountCenti: number; unitCostCenti: number; variants: unknown;
+      unitPriceSen: number; discountSen: number; unitCostSen: number; variants: unknown;
     };
     const stash = fromPicks ? readScmHandoff<Stash[]>('drFromDoPicks') : null;
 
@@ -175,9 +176,9 @@ export const DeliveryReturnNew = () => {
         description: s.description ?? '',
         uom: s.uom ?? 'UNIT',
         qty: Number(s.qty ?? 1),
-        unitPriceCenti: Number(s.unitPriceCenti ?? 0),
-        discountCenti: Number(s.discountCenti ?? 0),
-        unitCostCenti: Number(s.unitCostCenti ?? 0),
+        unitPriceSen: Number(s.unitPriceSen ?? 0),
+        discountSen: Number(s.discountSen ?? 0),
+        unitCostSen: Number(s.unitCostSen ?? 0),
         variants: (s.variants as Record<string, unknown>) ?? {},
         remark: '',
         doItemId: s.doItemId,
@@ -193,9 +194,9 @@ export const DeliveryReturnNew = () => {
         description: (it.description as string) ?? '',
         uom: (it.uom as string) ?? 'UNIT',
         qty: Number(it.qty ?? 1),
-        unitPriceCenti: Number(it.unit_price_centi ?? 0),
-        discountCenti: 0,
-        unitCostCenti: Number(it.unit_cost_centi ?? 0),
+        unitPriceSen: Number(it.unit_price_sen ?? 0),
+        discountSen: 0,
+        unitCostSen: Number(it.unit_cost_sen ?? 0),
         variants: (it.variants as Record<string, unknown>) ?? {},
         remark: '',
         doItemId: (it.id as string) ?? undefined,
@@ -223,8 +224,8 @@ export const DeliveryReturnNew = () => {
     setLines((prev) => prev.map((l) => (l.rid === rid ? { ...l, ...patch } : l)));
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
 
-  const subtotalCenti = useMemo(
-    () => lines.reduce((s, l) => s + Math.max(0, l.qty * l.unitPriceCenti - l.discountCenti), 0),
+  const subtotalSen = useMemo(
+    () => lines.reduce((s, l) => s + Math.max(0, l.qty * l.unitPriceSen - l.discountSen), 0),
     [lines],
   );
 
@@ -282,9 +283,9 @@ export const DeliveryReturnNew = () => {
           uom: l.uom,
           qtyReturned: l.qty,
           condition: l.condition || 'NEW',
-          unitPriceCenti: l.unitPriceCenti,
-          discountCenti: l.discountCenti,
-          unitCostCenti: l.unitCostCenti,
+          unitPriceSen: l.unitPriceSen,
+          discountSen: l.discountSen,
+          unitCostSen: l.unitCostSen,
           variants: l.variants,
           doItemId: l.doItemId,
         })),
@@ -310,7 +311,7 @@ export const DeliveryReturnNew = () => {
             <div className={styles.actions}>
               {/* Pull lines from a Delivery Order — mirrors New GRN's "From Purchase Order". */}
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/delivery-returns/from-do')}>
-                <ArrowRightLeft {...ICON} /> From Delivery Order
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('do')}
               </Button>
               <Button variant="ghost" size="md" onClick={() => navigate('/scm/delivery-returns')}>
                 <X {...ICON} /> Cancel
@@ -531,7 +532,7 @@ export const DeliveryReturnNew = () => {
             }}>
               <span>Every return line must be picked from a delivered Delivery Order — start from a DO.</span>
               <Button variant="primary" size="md" onClick={() => navigate('/scm/delivery-returns/from-do')}>
-                <ArrowRightLeft {...ICON} /> Pick from a Delivery Order
+                <ArrowRightLeft {...ICON} /> {transferFromLabel('do')}
               </Button>
             </div>
           )}
@@ -540,7 +541,7 @@ export const DeliveryReturnNew = () => {
             borderTop: '1px solid var(--line)', fontFamily: 'var(--font-mark)', fontSize: 'var(--fs-20)',
             fontWeight: 800, color: 'var(--c-burnt)',
           }}>
-            Returned Value: {fmtRm(subtotalCenti)}
+            Returned Value: {fmtRm(subtotalSen)}
           </div>
         </div>
       </section>

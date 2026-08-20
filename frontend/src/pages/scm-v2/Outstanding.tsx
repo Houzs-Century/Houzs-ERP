@@ -10,7 +10,7 @@
 // ----------------------------------------------------------------------------
 
 import { todayMyt } from '../../vendor/scm/lib/dates';
-import { fmtCenti } from '../../vendor/shared/format';
+import { fmtSen } from '../../vendor/shared/format';
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { ClipboardList, FileText, Receipt, Truck, Undo2, ScrollText, PackagePlus } from 'lucide-react';
@@ -23,6 +23,7 @@ import {
 import { DataTable, type Column } from '../../components/DataTable';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const MODULES: { value: OutstandingModule; label: string; icon: React.ReactNode; route: (row: Record<string, unknown>) => string }[] = [
   // HOUZS VENDOR — "Open →" deep-links repointed onto Houzs's /scm/* routes
@@ -38,7 +39,7 @@ const MODULES: { value: OutstandingModule; label: string; icon: React.ReactNode;
 ];
 
 // Guarded centi→"RM …" — "—" for an absent/non-finite amount, never "RM NaN".
-const fmtRm = (centi: number | null | undefined): string => fmtCenti(centi);
+const fmtRm = (centi: number | null | undefined): string => fmtSen(centi);
 
 export const Outstanding = () => {
   const today = todayMyt();
@@ -62,11 +63,11 @@ export const Outstanding = () => {
           <div className={styles.actionsRow}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
               <span style={{ color: 'var(--fg-muted)' }}>From</span>
-              <input type="date" className={styles.searchInput} value={from} onChange={(e) => setFrom(e.target.value)} style={{ width: 150 }} />
+              <DateField fullWidth className={styles.searchInput} value={from} onChange={(iso) => setFrom(iso)} style={{ width: 150 }}/>
             </label>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-13)' }}>
               <span style={{ color: 'var(--fg-muted)' }}>To</span>
-              <input type="date" className={styles.searchInput} value={to} onChange={(e) => setTo(e.target.value)} style={{ width: 150 }} />
+              <DateField fullWidth className={styles.searchInput} value={to} onChange={(iso) => setTo(iso)} style={{ width: 150 }}/>
             </label>
             <div className={styles.statusChips}>
               <FilterChip label="Outstanding" active={mode === 'outstanding'} onClick={() => setMode('outstanding')} />
@@ -108,9 +109,9 @@ export const Outstanding = () => {
               <div style={{ fontSize: 'var(--fs-22)', fontWeight: 900, marginTop: 4 }}>
                 {s?.count ?? 0}
               </div>
-              {!!s?.total_outstanding_centi && s.total_outstanding_centi > 0 && (
+              {!!s?.total_outstanding_sen && s.total_outstanding_sen > 0 && (
                 <div style={{ fontSize: 'var(--fs-11)', opacity: 0.7, marginTop: 2 }}>
-                  {fmtRm(s.total_outstanding_centi)} outstanding
+                  {fmtRm(s.total_outstanding_sen)} outstanding
                 </div>
               )}
             </button>
@@ -170,7 +171,7 @@ const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
     { key: 'expected_at', label: 'Expected', kind: 'date' },
     { key: 'status',    label: 'Status' },
     { key: 'qty_outstanding', label: 'Qty Outstanding', kind: 'qty' },
-    { key: 'total_centi', label: 'Total', kind: 'money' },
+    { key: 'total_sen', label: 'Total', kind: 'money' },
   ],
   grn: [
     { key: 'grn_number', label: 'GRN No' },
@@ -181,23 +182,23 @@ const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
     { key: 'invoice_number', label: 'Invoice No' },
     { key: 'invoice_date',   label: 'Date', kind: 'date' },
     { key: 'due_date',       label: 'Due', kind: 'date' },
-    { key: 'total_centi',    label: 'Total', kind: 'money' },
-    { key: 'paid_centi',     label: 'Paid', kind: 'money' },
-    { key: 'outstanding_centi', label: 'Outstanding', kind: 'money' },
+    { key: 'total_sen',    label: 'Total', kind: 'money' },
+    { key: 'paid_sen',     label: 'Paid', kind: 'money' },
+    { key: 'outstanding_sen', label: 'Outstanding', kind: 'money' },
     { key: 'status',         label: 'Status' },
   ],
   pr: [
     { key: 'return_number', label: 'PR No' },
     { key: 'return_date',   label: 'Date', kind: 'date' },
     { key: 'status',        label: 'Status' },
-    { key: 'refund_centi',  label: 'Refund', kind: 'money' },
+    { key: 'refund_sen',  label: 'Refund', kind: 'money' },
   ],
   so: [
     { key: 'doc_no',     label: 'SO No' },
     { key: 'so_date',    label: 'Date', kind: 'date' },
     { key: 'debtor_name', label: 'Customer' },
     { key: 'status',     label: 'Status' },
-    { key: 'total_revenue_centi', label: 'Total', kind: 'money' },
+    { key: 'total_revenue_sen', label: 'Total', kind: 'money' },
   ],
   do: [
     { key: 'do_number',  label: 'DO No' },
@@ -211,9 +212,9 @@ const MODULE_COLUMNS: Record<OutstandingModule, ColSpec[]> = {
     { key: 'invoice_date',   label: 'Date', kind: 'date' },
     { key: 'due_date',       label: 'Due', kind: 'date' },
     { key: 'debtor_name',    label: 'Customer' },
-    { key: 'total_centi',    label: 'Total', kind: 'money' },
-    { key: 'paid_centi',     label: 'Paid', kind: 'money' },
-    { key: 'outstanding_centi', label: 'Outstanding', kind: 'money' },
+    { key: 'total_sen',    label: 'Total', kind: 'money' },
+    { key: 'paid_sen',     label: 'Paid', kind: 'money' },
+    { key: 'outstanding_sen', label: 'Outstanding', kind: 'money' },
     { key: 'status',         label: 'Status' },
   ],
 };

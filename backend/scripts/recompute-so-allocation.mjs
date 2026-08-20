@@ -94,7 +94,7 @@ async function readyNoOpenLots() {
        AND NOT EXISTS (
          SELECT 1 FROM scm.inventory_lots l
           WHERE l.company_id = so.company_id
-            AND l.product_code = i.item_code
+            AND l.item_code = i.item_code
             AND l.qty_remaining > 0
             AND (i.warehouse_id IS NULL OR l.warehouse_id = i.warehouse_id))
      ORDER BY i.doc_no, i.item_code`;

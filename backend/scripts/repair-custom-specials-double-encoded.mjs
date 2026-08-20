@@ -57,7 +57,7 @@ const TABLES = [
   { key: "so", table: "mfg_sales_order_items",
     join: "JOIN scm.mfg_sales_orders h ON h.doc_no = i.doc_no", doc: "i.doc_no", code: "i.item_code" },
   { key: "po", table: "purchase_order_items",
-    join: "JOIN scm.purchase_orders h ON h.id = i.purchase_order_id", doc: "h.po_number", code: "i.material_code" },
+    join: "JOIN scm.purchase_orders h ON h.id = i.purchase_order_id", doc: "h.po_number", code: "i.item_code" },
 ];
 
 /* A shape census, so the report says what is actually there rather than what we

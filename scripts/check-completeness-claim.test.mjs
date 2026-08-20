@@ -34,6 +34,7 @@ import {
   normalizeOutput,
   planCommand,
   proseLines,
+  stripLineNumber,
   tokenize,
 } from './lib/completeness-claim.mjs';
 
@@ -430,6 +431,152 @@ test('the diff is order-insensitive — rg walks in parallel and its order is no
 test('normalisation absorbs CRLF, trailing spaces and surrounding blank lines', () => {
   assert.deepEqual(normalizeOutput('\r\n a \t\r\nb  \n\n'), [' a', 'b']);
   assert.equal(diffOutput('a\r\nb', '\na\nb  \n\n').ok, true);
+});
+
+// ===========================================================================
+// 5b. THE COORDINATE. A `git grep -n` block embeds a LINE NUMBER per member,
+//     and an unrelated merge into a 12,000-line router shifts every one of
+//     them. The population did not change; only where it sits did. These pin
+//     BOTH directions — the forgiveness AND the teeth — because a gate that
+//     stops failing on a moved line is only correct if it still fails on an
+//     added one.
+// ===========================================================================
+
+/** The real shape of `git grep -n` output: path, line number, then the code. */
+const SITE = (file, line, text) => `${file}:${line}:${text}`;
+const CALL = '  missingVariantAxes(itemCode)';
+
+test('a call site that merely MOVES still PASSES — the merge shifted it, the PR did not', () => {
+  const pasted = [
+    SITE('backend/src/scm/lib/so-variant-check.ts', 56, CALL),
+    SITE('frontend/src/mobile/MobileNewSO.tsx', 1768, CALL),
+    SITE('frontend/src/pages/scm-v2/SalesOrderDetail.tsx', 601, CALL),
+  ].join('\n');
+  // Same three sites, same file, same code — main grew above each of them.
+  const afterMerge = [
+    SITE('backend/src/scm/lib/so-variant-check.ts', 92, CALL),
+    SITE('frontend/src/mobile/MobileNewSO.tsx', 2044, CALL),
+    SITE('frontend/src/pages/scm-v2/SalesOrderDetail.tsx', 655, CALL),
+  ].join('\n');
+
+  const d = diffOutput(pasted, afterMerge);
+  assert.equal(d.ok, true, 'a pure coordinate shift must not fail the gate');
+  assert.equal(d.pastedCount, 3);
+  assert.equal(d.actualCount, 3);
+});
+
+test('...but a call site that is ADDED still FAILS, even when every other one moved', () => {
+  const pasted = [
+    SITE('backend/src/scm/lib/so-variant-check.ts', 56, CALL),
+    SITE('frontend/src/mobile/MobileNewSO.tsx', 1768, CALL),
+  ].join('\n');
+  const afterMerge = [
+    SITE('backend/src/scm/lib/so-variant-check.ts', 92, CALL),      // moved
+    SITE('frontend/src/mobile/MobileNewSO.tsx', 2044, CALL),        // moved
+    SITE('frontend/src/pages/scm-v2/SalesOrderDetail.tsx', 601, CALL), // NEW — #1763
+  ].join('\n');
+
+  const d = diffOutput(pasted, afterMerge);
+  assert.equal(d.ok, false, 'a new member of the population must still fail');
+  assert.deepEqual(d.extra, [SITE('frontend/src/pages/scm-v2/SalesOrderDetail.tsx', 601, CALL)]);
+  assert.deepEqual(d.missing, []);
+});
+
+test('...and a call site that is REMOVED still FAILS', () => {
+  const pasted = [
+    SITE('backend/src/scm/lib/so-variant-check.ts', 56, CALL),
+    SITE('frontend/src/mobile/MobileNewSO.tsx', 1768, CALL),
+  ].join('\n');
+  const afterMerge = SITE('backend/src/scm/lib/so-variant-check.ts', 92, CALL);
+
+  const d = diffOutput(pasted, afterMerge);
+  assert.equal(d.ok, false);
+  assert.deepEqual(d.missing, [SITE('frontend/src/mobile/MobileNewSO.tsx', 1768, CALL)]);
+});
+
+test('the PATH is kept, so a site that moved to a DIFFERENT FILE still FAILS', () => {
+  const d = diffOutput(
+    SITE('frontend/src/mobile/MobileNewSO.tsx', 1768, CALL),
+    SITE('frontend/src/pages/scm-v2/SalesOrderDetail.tsx', 1768, CALL),
+  );
+  assert.equal(d.ok, false, 'only movement WITHIN a file is forgiven');
+});
+
+test('two sites in ONE file are still counted, so losing one of them FAILS', () => {
+  // Identical text, same file, different lines: after stripping the coordinate
+  // they collapse to the same key, and only the MULTISET count keeps them apart.
+  const pasted = [
+    SITE('frontend/src/mobile/MobileNewSO.tsx', 1768, CALL),
+    SITE('frontend/src/mobile/MobileNewSO.tsx', 2992, CALL),
+  ].join('\n');
+  assert.equal(diffOutput(pasted, pasted).ok, true);
+  assert.equal(
+    diffOutput(pasted, SITE('frontend/src/mobile/MobileNewSO.tsx', 1768, CALL)).ok,
+    false,
+    'dropping one of two same-file sites must fail',
+  );
+});
+
+test('a `grep -c` COUNT is never mistaken for a coordinate — there the number IS the claim', () => {
+  // `path:12` has no trailing colon, so it is not a `path:NNN:` coordinate.
+  assert.equal(stripLineNumber('backend/src/scm/routes/mfg-sales-orders.ts:12'),
+    'backend/src/scm/routes/mfg-sales-orders.ts:12');
+  assert.equal(
+    diffOutput('backend/src/a.ts:12', 'backend/src/a.ts:13').ok,
+    false,
+    'a changed count is a changed population',
+  );
+});
+
+test('stripLineNumber drops the coordinate and nothing else', () => {
+  assert.equal(stripLineNumber('a/b.ts:56:  foo()'), 'a/b.ts:  foo()');
+  // A colon INSIDE the matched code is content, not a coordinate.
+  assert.equal(stripLineNumber('a/b.ts:56:  const x = { a: 1 }'), 'a/b.ts:  const x = { a: 1 }');
+  // No number, no strip.
+  assert.equal(stripLineNumber('a/b.ts:  foo()'), 'a/b.ts:  foo()');
+  // A bare leading number has no path in front of it and is left alone.
+  assert.equal(stripLineNumber('56:  foo()'), '56:  foo()');
+});
+
+test('a BARE `NNN:` coordinate still FAILS, but is diagnosed instead of being baffling', () => {
+  // `grep -n pattern onefile` prints no path. A leading number with nothing in
+  // front of it cannot be told apart from content, so the gate does NOT forgive
+  // it — it explains it.
+  const d = diffOutput('56:  foo()\n77:  foo()', '92:  foo()\n120:  foo()');
+  assert.equal(d.ok, false, 'the gate must not silently forgive a bare number');
+  assert.equal(d.coordinatesOnly, true, 'but it must say that is all that differs');
+});
+
+test('coordinatesOnly stays FALSE when the population really changed', () => {
+  const d = diffOutput('56:  foo()', '92:  foo()\n120:  bar()');
+  assert.equal(d.ok, false);
+  assert.equal(d.coordinatesOnly, false, 'a real change must never be reported as a coordinate shift');
+});
+
+test('the whole gate passes a moved enumeration end to end, and fails an added one', () => {
+  const claim = 'itemCode threaded through every desktop + mobile call site.';
+  const block = (list) => `${claim}\n\n\`\`\`enumeration\n$ git grep -n "missingVariantAxes(" -- backend/src frontend/src\n${list}\n\`\`\``;
+  const pasted = [
+    SITE('backend/src/scm/lib/so-variant-check.ts', 56, CALL),
+    SITE('frontend/src/mobile/MobileNewSO.tsx', 1768, CALL),
+  ].join('\n');
+  const moved = [
+    SITE('backend/src/scm/lib/so-variant-check.ts', 92, CALL),
+    SITE('frontend/src/mobile/MobileNewSO.tsx', 2044, CALL),
+  ].join('\n');
+
+  const ok = evaluate({ title: '', body: block(pasted), labels: [], exec: stubExec(moved) });
+  assert.equal(ok.verdict, VERDICT.PASS);
+  assert.equal(ok.reason, REASON.VERIFIED);
+
+  const grew = evaluate({
+    title: '',
+    body: block(pasted),
+    labels: [],
+    exec: stubExec(`${moved}\n${SITE('frontend/src/pages/scm-v2/SalesOrderDetail.tsx', 601, CALL)}`),
+  });
+  assert.equal(grew.verdict, VERDICT.FAIL);
+  assert.equal(grew.reason, REASON.OUTPUT_MISMATCH);
 });
 
 test('an empty population is a legitimate enumeration', () => {

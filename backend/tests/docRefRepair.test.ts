@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { parseFromSosNote } from "../src/scm/routes/document-flow";
+import { parseProvenanceNote } from "../src/scm/routes/document-flow";
 import {
   companyPrefix,
   classifyToken,
@@ -405,11 +405,11 @@ describe("classifyIdRestamp — part `ids` (W1): the id-heal for numbers that al
   });
 });
 
-describe("rewriteFromSosNote — the rewrite must match what parseFromSosNote reads", () => {
+describe("rewriteFromSosNote — the rewrite must match what parseProvenanceNote reads", () => {
   const roundTrip = (note: string, map: Map<string, string>) => {
     const next = rewriteFromSosNote(note, map);
     // The script's parser and the route's parser must agree on the result.
-    expect(parseFromSosTokens(next)).toEqual(parseFromSosNote(next));
+    expect(parseFromSosTokens(next)).toEqual(parseProvenanceNote(next));
     return next;
   };
 
@@ -419,20 +419,20 @@ describe("rewriteFromSosNote — the rewrite must match what parseFromSosNote re
       new Map([["SO-2606-005", "2990-SO-2606-005"]]),
     );
     expect(next).toBe("From SOs: 2990-SO-2606-005, SO-2606-006");
-    expect(parseFromSosNote(next)).toEqual(["2990-SO-2606-005", "SO-2606-006"]);
+    expect(parseProvenanceNote(next)).toEqual(["2990-SO-2606-005", "SO-2606-006"]);
   });
 
   test("preserves the label's own casing, odd spacing and other lines", () => {
     const note = "  from so: SO-1 ,SO-2  \nDeliver to bay 3\n";
     const next = roundTrip(note, new Map([["SO-1", "2990-SO-1"], ["SO-2", "2990-SO-2"]]));
     expect(next).toBe("  from so: 2990-SO-1 ,2990-SO-2  \nDeliver to bay 3\n");
-    expect(parseFromSosNote(next)).toEqual(["2990-SO-1", "2990-SO-2"]);
+    expect(parseProvenanceNote(next)).toEqual(["2990-SO-1", "2990-SO-2"]);
   });
 
   test("a substring of another token is never rewritten by accident", () => {
     const next = roundTrip("From SOs: SO-1, SO-10", new Map([["SO-1", "2990-SO-1"]]));
     expect(next).toBe("From SOs: 2990-SO-1, SO-10");
-    expect(parseFromSosNote(next)).toEqual(["2990-SO-1", "SO-10"]);
+    expect(parseProvenanceNote(next)).toEqual(["2990-SO-1", "SO-10"]);
   });
 
   test("no replacements, a plain note, or empty input returns the input unchanged", () => {

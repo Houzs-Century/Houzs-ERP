@@ -52,8 +52,11 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import type { GrnFromPoPick } from './GrnFromPo';
 import styles from './SalesOrderDetail.module.css';
+import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import { PageHeader } from '../../components/Layout';
 import { resolveFxRate } from './fx-rate';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -103,7 +106,7 @@ type DraftLine = {
   rid:               string;
   purchaseOrderItemId: string | null;
   materialKind:      string;
-  materialCode:      string;
+  itemCode:      string;
   materialName:      string;
   /* Owner 2026-07-27 — the SUPPLIER's own code for this SKU: the PO line's
      snapshot (single-PO / picks paths) or the binding's at pick time (manual
@@ -120,7 +123,7 @@ type DraftLine = {
   qtyReceived:       number;
   qtyAccepted:       number;
   qtyRejected:       number;
-  unitPriceCenti:    number;
+  unitPriceSen:    number;
   notes:             string;
   /* Commander 2026-06-04 — optional per-line destination Rack (warehouse-scoped).
      Persists to grn_items.rack_id when the create payload forwards rackId. */
@@ -149,6 +152,7 @@ type GrnNewDraft = {
 
 export const GrnNew = () => {
   const navigate = useNavigate();
+  const notify = useNotify();
   const [params] = useSearchParams();
 
   // ── From-PO-multi picks (Commander 2026-05-29) — read ONCE on mount.
@@ -214,8 +218,11 @@ export const GrnNew = () => {
      refuses to rotate a key for, and it is live here rather than theoretical.
 
      THE RESIDUAL, STATED. Because the mount outlives the document, an operator
-     who closes the success dialog, re-authors the lines and submits AGAIN gets
-     the first GRN replayed — one document, not two. Accepted, not overlooked:
+     who closes the success dialog and submits AGAIN gets the first GRN back —
+     replayed if the lines are untouched, and refused with
+     idempotency_key_reused if they were re-authored, which names the status the
+     first submit finished with and sends them to refresh and check. Either way
+     one document, not two. Accepted, not overlooked:
      the lines are not reset on success, so a re-press submits the SAME goods and
      replay is the correct answer; raising a genuinely different receipt goes
      through the picker route (/scm/grns/from-po), which remounts this page and
@@ -313,7 +320,7 @@ export const GrnNew = () => {
         rid:                 `p${p.poItemId}`,
         purchaseOrderItemId: p.poItemId,
         materialKind:        'mfg_product',
-        materialCode:        p.itemCode,
+        itemCode:        p.itemCode,
         supplierSku:         p.supplierSku ?? null,
         materialName:        p.description ?? p.itemCode,
         itemGroup:           p.itemGroup || null,
@@ -322,7 +329,7 @@ export const GrnNew = () => {
         qtyReceived:         p._pickQty,
         qtyAccepted:         p._pickQty,
         qtyRejected:         0,
-        unitPriceCenti:      p.unitPriceCenti ?? 0,
+        unitPriceSen:      p.unitPriceSen ?? 0,
         notes:               '',
         rackId:              '',
       }));
@@ -353,7 +360,7 @@ export const GrnNew = () => {
         rid:                 `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
         purchaseOrderItemId: null,
         materialKind:        'mfg_product',
-        materialCode:        '',
+        itemCode:        '',
         materialName:        '',
         supplierSku:         null,
         itemGroup:           null,
@@ -362,7 +369,7 @@ export const GrnNew = () => {
         qtyReceived:         1,
         qtyAccepted:         1,
         qtyRejected:         0,
-        unitPriceCenti:      0,
+        unitPriceSen:      0,
         notes:               '',
         rackId:              '',
       }]);
@@ -376,7 +383,7 @@ export const GrnNew = () => {
           rid:               `r${it.id}`,
           purchaseOrderItemId: it.id,
           materialKind:      it.material_kind,
-          materialCode:      it.material_code,
+          itemCode:      it.item_code,
           materialName:      it.material_name,
           supplierSku:       (it.supplier_sku as string | null) ?? null,
           itemGroup:         it.item_group ?? null,
@@ -385,7 +392,7 @@ export const GrnNew = () => {
           qtyReceived:       outstanding,
           qtyAccepted:       outstanding,
           qtyRejected:       0,
-          unitPriceCenti:    it.unit_price_centi ?? 0,
+          unitPriceSen:    it.unit_price_sen ?? 0,
           notes:             '',
           rackId:            '',
         };
@@ -413,8 +420,8 @@ export const GrnNew = () => {
     navigate('/scm/grns/from-po');
   };
 
-  const subtotalCenti = useMemo(
-    () => lines.reduce((s, l) => s + l.qtyReceived * l.unitPriceCenti, 0),
+  const subtotalSen = useMemo(
+    () => lines.reduce((s, l) => s + l.qtyReceived * l.unitPriceSen, 0),
     [lines],
   );
 
@@ -424,13 +431,13 @@ export const GrnNew = () => {
      the chosen basis (QTY / VALUE / CBM). All in the GRN currency for display
      (the server stores MYR via the exchange rate). Keyed by rid. */
   const allocPreview = useMemo(() => {
-    const isSvc = (l: DraftLine) => isServiceLine({ itemGroup: l.itemGroup, itemCode: l.materialCode });
-    const goods = lines.filter((l) => l.materialCode.trim() && !isSvc(l));
+    const isSvc = (l: DraftLine) => isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode });
+    const goods = lines.filter((l) => l.itemCode.trim() && !isSvc(l));
     const chargePool = lines
-      .filter((l) => l.materialCode.trim() && isSvc(l))
-      .reduce((s, l) => s + l.qtyReceived * l.unitPriceCenti, 0);
+      .filter((l) => l.itemCode.trim() && isSvc(l))
+      .reduce((s, l) => s + l.qtyReceived * l.unitPriceSen, 0);
     const basisOf = (l: DraftLine): number => {
-      if (allocationMethod === 'VALUE') return l.qtyReceived * l.unitPriceCenti;
+      if (allocationMethod === 'VALUE') return l.qtyReceived * l.unitPriceSen;
       if (allocationMethod === 'CBM') return l.qtyReceived; // volume unknown client-side → qty proxy
       return l.qtyReceived;
     };
@@ -491,7 +498,7 @@ export const GrnNew = () => {
 
   // Commander 2026-05-29 — make the MANUAL item picker supplier-binding-aware,
   // exactly like New PO. Once a supplier is chosen the per-line Item Code
-  // datalist lists THAT supplier's bound SKUs (material_code + name + price);
+  // datalist lists THAT supplier's bound SKUs (item_code + name + price);
   // picking one fills name + unit price + itemGroup from the binding. When no
   // supplier is set yet we fall back to the free useMfgProducts search below.
   const supplierDetailQ = useSupplierDetail(supplierId);
@@ -504,7 +511,7 @@ export const GrnNew = () => {
   const skuByMaterialCode = useMemo(() => skuMapFromBindings(bindings), [bindings]);
   const supplierSkuOf = (l: DraftLine): string | null => {
     const code = supplierCodeFor(
-      { material_code: l.materialCode, supplier_sku: l.supplierSku },
+      { item_code: l.itemCode, supplier_sku: l.supplierSku },
       skuByMaterialCode,
     );
     return code === '—' ? null : code;
@@ -574,7 +581,7 @@ export const GrnNew = () => {
       rid:                 `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       purchaseOrderItemId: null,
       materialKind:        'mfg_product',
-      materialCode:        '',
+      itemCode:        '',
       materialName:        '',
       supplierSku:         null,
       itemGroup:           null,
@@ -583,7 +590,7 @@ export const GrnNew = () => {
       qtyReceived:         1,
       qtyAccepted:         1,
       qtyRejected:         0,
-      unitPriceCenti:      0,
+      unitPriceSen:      0,
       notes:               '',
       rackId:              '',
     }]);
@@ -594,7 +601,7 @@ export const GrnNew = () => {
   const pickItemForLine = (rid: string, code: string) => {
     const sku = (productsQ.data ?? []).find((p) => p.code === code);
     setLine(rid, {
-      materialCode: code,
+      itemCode: code,
       materialName: sku?.name ?? code,
       // Catalogue pick carries no supplier code — clear any stale one; the
       // render/payload fall back to the live binding for this supplier+code.
@@ -610,11 +617,11 @@ export const GrnNew = () => {
   // catalogue (categoryForCode) since bindings carry no category.
   const pickBindingForLine = (rid: string, b: typeof bindings[number]) => {
     setLine(rid, {
-      materialCode:   b.material_code,
+      itemCode:   b.item_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku ?? null,
-      unitPriceCenti: b.unit_price_centi,
-      itemGroup:      categoryForCode(b.material_code) ?? null,
+      unitPriceSen: b.unit_price_sen,
+      itemGroup:      categoryForCode(b.item_code) ?? null,
     });
   };
 
@@ -632,7 +639,7 @@ export const GrnNew = () => {
       return;
     }
     // Drop the blank starter line(s) — only real items (with a code) are saved.
-    const realLines = lines.filter((l) => l.materialCode.trim());
+    const realLines = lines.filter((l) => l.itemCode.trim());
     if (realLines.length === 0) {
       setDialog({ title: 'Add at least one item', body: 'Pick at least one SKU to receive.' });
       return;
@@ -667,7 +674,7 @@ export const GrnNew = () => {
         items: realLines.map((l) => ({
           purchaseOrderItemId: l.purchaseOrderItemId,
           materialKind:        l.materialKind,
-          materialCode:        l.materialCode,
+          itemCode:        l.itemCode,
           materialName:        l.materialName,
           // Owner 2026-07-27 — persist the supplier's own code exactly as the
           // form showed it (snapshot-first, else live binding) so the GRN line
@@ -679,7 +686,7 @@ export const GrnNew = () => {
           // rollup keep working with the simplified single-qty UI.
           qtyAccepted:         l.qtyReceived,
           qtyRejected:         0,
-          unitPriceCenti:      l.unitPriceCenti,
+          unitPriceSen:      l.unitPriceSen,
           notes:               l.notes || undefined,
           // Commander 2026-05-29 — persist the line's category + variant
           // selections (manual bedframe/sofa lines pick these below; PO-sourced
@@ -694,6 +701,15 @@ export const GrnNew = () => {
       // Non-draft → confirm immediately (the historical Receive & Post). A draft
       // is left at DRAFT for review; the detail page's Confirm runs the commit.
       if (!asDraft) await post.mutateAsync(createRes.id);
+      /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT. A goods receipt raised
+         from a purchase order is TRANSFERRED into AutoCount, and the transfer
+         route applies a narrower set of header fields than an edit does — so
+         the book can hold this receipt with no supplier delivery-note number
+         and no date of its own. Shown through the shared frame rather than
+         folded into the dialog below: what counts as "the accounts did not get
+         it" and how it is worded must not be re-decided per screen
+         (ac-not-sent.tsx's own header). Never blocks; the goods are received. */
+      await notifyAcNotSent(notify, createRes, 'Goods receipt');
       setDialog({
         title: `GRN ${createRes.grnNumber} ${asDraft ? 'saved as draft' : 'created'}`,
         body: asDraft
@@ -839,7 +855,7 @@ export const GrnNew = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Received Date</span>
-              <input type="date" value={receivedAt} onChange={(e) => setReceivedAt(e.target.value)} className={styles.fieldInput} />
+              <DateField fullWidth value={receivedAt} onChange={(iso) => setReceivedAt(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>
@@ -861,7 +877,7 @@ export const GrnNew = () => {
               exchangeRate={exchangeRate}
               onRateChange={(v) => { setRateTouched(true); setExchangeRate(v); }}
               disabled={currencyLocked}
-              rateHint={<>≈ {fmtRm(Math.round(subtotalCenti * rateNum), 'MYR')} recorded as inventory cost</>}
+              rateHint={<>≈ {fmtRm(Math.round(subtotalSen * rateNum), 'MYR')} recorded as inventory cost</>}
               styles={styles}
             />
             {/* Landed-cost allocation — choose how a SERVICE-line freight charge
@@ -883,7 +899,7 @@ export const GrnNew = () => {
               </span>
               {allocPreview.chargePool > 0 && (
                 <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)', marginTop: 2 }}>
-                  {fmtRm(allocPreview.chargePool, currency)} freight spread across {lines.filter((l) => l.materialCode.trim() && !isServiceLine({ itemGroup: l.itemGroup, itemCode: l.materialCode })).length} goods line(s)
+                  {fmtRm(allocPreview.chargePool, currency)} freight spread across {lines.filter((l) => l.itemCode.trim() && !isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode })).length} goods line(s)
                 </span>
               )}
             </label>
@@ -919,16 +935,25 @@ export const GrnNew = () => {
           <h2 className={styles.cardTitle}>Items</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
             {hasPicks
-              ? `${lines.length} line${lines.length === 1 ? '' : 's'} from picks · subtotal ${fmtRm(subtotalCenti, currency)}`
+              ? `${lines.length} line${lines.length === 1 ? '' : 's'} from picks · subtotal ${fmtRm(subtotalSen, currency)}`
               : selPoId
                 ? (poQ.isLoading
                     ? 'Loading PO items…'
-                    : lines.length === 0
-                      ? 'No outstanding lines on this PO (all qty already received)'
-                      : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalCenti, currency)}`)
+                    /* The ternary had no error arm and no honest empty arm: a
+                       FAILED PO read and a PO with work left both rendered as
+                       "all qty already received", and the operator receives
+                       nothing against a live order. An empty read proves only
+                       that the query found nothing — the read is company-scoped
+                       and scopeToCompany fails closed (scm/lib/companyScope.ts
+                       -> .in('company_id', []) returns [] with error: null). */
+                    : poQ.isError
+                      ? "We couldn't load this PO's lines — please refresh and try again."
+                      : lines.length === 0
+                        ? 'No outstanding lines came back for this PO. Open the purchase order and check its balance before treating it as received in full.'
+                        : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalSen, currency)}`)
                 : lines.length === 0
                   ? 'Manual receipt — pick a supplier above, then add items below'
-                  : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalCenti, currency)}`}
+                  : `${lines.length} line${lines.length === 1 ? '' : 's'} · subtotal ${fmtRm(subtotalSen, currency)}`}
             {/* Commander 2026-05-29 — same supplier-binding hint New PO shows:
                 once a supplier is chosen the manual picker filters to that
                 supplier's bound SKUs (or falls back to the full catalogue when
@@ -957,14 +982,14 @@ export const GrnNew = () => {
                picker (manual) / read-only code (PO-sourced), description, the
                per-category variant editor, then a fields row. */
             lines.map((l, idx) => {
-              const lineValueCenti = l.qtyReceived * l.unitPriceCenti;
+              const lineValueSen = l.qtyReceived * l.unitPriceSen;
               const variantSummary = buildVariantSummary(l.itemGroup, l.variants);
               /* Landed-cost allocation (Phase 1-A) — this goods line's share of the
                  freight pool + its landed unit cost (base + per-unit freight),
                  shown only when there's a charge to spread. Service lines get 0. */
-              const lineIsSvc = isServiceLine({ itemGroup: l.itemGroup, itemCode: l.materialCode });
-              const lineAllocCenti = allocPreview.allocByRid.get(l.rid) ?? 0;
-              const landedUnitCenti = l.unitPriceCenti + (l.qtyReceived > 0 ? Math.round(lineAllocCenti / l.qtyReceived) : 0);
+              const lineIsSvc = isServiceLine({ itemGroup: l.itemGroup, itemCode: l.itemCode });
+              const lineAllocSen = allocPreview.allocByRid.get(l.rid) ?? 0;
+              const landedUnitSen = l.unitPriceSen + (l.qtyReceived > 0 ? Math.round(lineAllocSen / l.qtyReceived) : 0);
               // Manual lines have no outstanding cap — qty inputs go uncapped.
               const cap = l.outstanding;
               const isManualLine = l.purchaseOrderItemId === null;
@@ -1018,18 +1043,18 @@ export const GrnNew = () => {
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
                       <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end' }}>
-                        <span className={styles.previewPrice}>{fmtRm(lineValueCenti, currency)}</span>
+                        <span className={styles.previewPrice}>{fmtRm(lineValueSen, currency)}</span>
                         {/* Landed-cost core — MYR cost preview for a foreign GRN. */}
                         {isForeign && (
                           <span style={{ fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>
-                            ≈ {fmtRm(Math.round(lineValueCenti * rateNum), 'MYR')}
+                            ≈ {fmtRm(Math.round(lineValueSen * rateNum), 'MYR')}
                           </span>
                         )}
                         {/* Landed-cost allocation — +freight & landed unit cost, on
                             goods lines only when there's a charge pool. */}
                         {allocPreview.chargePool > 0 && !lineIsSvc && (
                           <span style={{ fontSize: 'var(--fs-11)', color: 'var(--c-accent, #8a6d3b)', marginTop: 2 }}>
-                            +{fmtRm(lineAllocCenti, currency)} freight · landed {fmtRm(landedUnitCenti, currency)}/unit
+                            +{fmtRm(lineAllocSen, currency)} freight · landed {fmtRm(landedUnitSen, currency)}/unit
                           </span>
                         )}
                       </span>
@@ -1062,7 +1087,7 @@ export const GrnNew = () => {
                           <input
                             type="text"
                             list={`grn-products-${l.rid}`}
-                            value={l.materialCode}
+                            value={l.itemCode}
                             onChange={(e) => {
                               const code = e.target.value;
                               setProductQuery(code);
@@ -1071,7 +1096,7 @@ export const GrnNew = () => {
                               // and the code matches one of its bindings, fill
                               // name + unit price + itemGroup from the binding.
                               const bound = supplierId
-                                ? bindings.find((b) => b.material_code === code)
+                                ? bindings.find((b) => b.item_code === code)
                                 : undefined;
                               if (bound) { pickBindingForLine(l.rid, bound); return; }
                               // No supplier (or no binding for this code) → fall
@@ -1081,7 +1106,7 @@ export const GrnNew = () => {
                               // Free typing — keep what's typed so the field
                               // stays editable; a stale supplier code must not
                               // outlive the pick it belonged to.
-                              setLine(l.rid, { materialCode: code, supplierSku: null });
+                              setLine(l.rid, { itemCode: code, supplierSku: null });
                             }}
                             placeholder={supplierId && bindings.length > 0
                               ? 'Pick one of this supplier’s bound SKUs…'
@@ -1095,8 +1120,8 @@ export const GrnNew = () => {
                                 back to the gated full-catalogue search. */}
                             {supplierId && bindings.length > 0
                               ? sortByText(bindings).map((b) => (
-                                  <option key={b.id} value={b.material_code}>
-                                    {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_centi, b.currency)}
+                                  <option key={b.id} value={b.item_code}>
+                                    {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                                   </option>
                                 ))
                               : sortByText(productsQ.data ?? []).map((p) => (
@@ -1108,7 +1133,7 @@ export const GrnNew = () => {
                         <input
                           type="text"
                           readOnly
-                          value={l.materialCode}
+                          value={l.itemCode}
                           className={styles.fieldInput}
                           style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
@@ -1242,8 +1267,8 @@ export const GrnNew = () => {
                       <span className={styles.fieldLabel}>Unit Price ({currency})</span>
                       {/* Editable unit price — carried from the PO / manual entry,
                           adjustable at receiving time (Commander 2026-05-29). */}
-                      <MoneyInput bare valueSen={l.unitPriceCenti}
-                        onCommit={(sen) => setLine(l.rid, { unitPriceCenti: sen ?? 0 })}
+                      <MoneyInput bare valueSen={l.unitPriceSen}
+                        onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
                         inputClassName={styles.fieldInput} selectOnFocus />
                     </label>
                     <label className={styles.field}>
@@ -1251,7 +1276,7 @@ export const GrnNew = () => {
                       <input
                         type="text"
                         readOnly
-                        value={fmtRm(lineValueCenti, currency)}
+                        value={fmtRm(lineValueSen, currency)}
                         className={styles.fieldInput}
                         style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />
@@ -1330,17 +1355,17 @@ export const GrnNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
               <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700, borderTop: '1px solid var(--line)', paddingTop: 'var(--space-2)' }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
             {/* Landed-cost core — MYR inventory cost for a foreign GRN. */}
             {isForeign && (
               <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-13)', color: 'var(--fg-muted)', marginTop: 'var(--space-2)' }}>
                 <span>Inventory cost (MYR)</span>
-                <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(Math.round(subtotalCenti * rateNum), 'MYR')}</span>
+                <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(Math.round(subtotalSen * rateNum), 'MYR')}</span>
               </div>
             )}
           </div>

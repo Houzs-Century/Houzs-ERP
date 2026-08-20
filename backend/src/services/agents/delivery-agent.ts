@@ -47,14 +47,15 @@
 
 import type { Env } from '../../types';
 import { getSupabaseService } from '../../db/supabase';
-import { paginateAll } from '../../scm/lib/paginate-all';
+import { chunkIn, paginateAll } from '../../scm/lib/paginate-all';
+import { tallyStatusRows, type StatusTally } from '../../scm/lib/status-counts';
 import { todayMyt, mytDateOf } from '../../scm/lib/my-time';
+import { effectiveSoDelivery } from '../../scm/shared';
 import { summariseReadiness, type ReadinessLine } from '../../scm/lib/so-readiness';
 import { resolveLineCategories } from '../../scm/lib/so-readiness-category';
 import { derivePlanningState, type DeliveryState } from '../../scm/routes/delivery-planning';
 import { soDeliverableRemaining } from '../../scm/routes/delivery-orders-mfg';
 import { readAgentSetting, type ConfigParamRule } from '../agent-console';
-import { DO_STATUSES as SHARED_DO_STATUSES } from '../../scm/shared/do-shipped-states';
 import {
   loadRegionConfig,
   stateToRegions,
@@ -177,7 +178,7 @@ export interface PoolSo {
   /** amended_delivery_date ?? customer_delivery_date (the board's effective date). */
   effectiveDeliveryDate: string | null;
   daysLeft: number | null;
-  localTotalCenti: number;
+  localTotalSen: number;
 }
 
 interface DeliverySnapshot {
@@ -193,7 +194,7 @@ type SoHeaderRow = {
   customer_state: string | null; customer_country: string | null;
   customer_delivery_date: string | null; amended_delivery_date: string | null;
   processing_date: string | null;
-  local_total_centi: number | null;
+  local_total_sen: number | null;
 };
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -206,7 +207,7 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
      delivery_state / amended_delivery_date are NOT in the payment-totals view). */
   const { data: soRowsRaw, error: soErr } = await paginateAll<SoHeaderRow>((from, to) =>
     sb.from('mfg_sales_orders')
-      .select('doc_no, debtor_code, debtor_name, status, delivery_state, customer_state, customer_country, customer_delivery_date, amended_delivery_date, processing_date, local_total_centi')
+      .select('doc_no, debtor_code, debtor_name, status, delivery_state, customer_state, customer_country, customer_delivery_date, amended_delivery_date, processing_date, local_total_sen')
       .neq('status', 'DRAFT')
       .neq('status', 'CANCELLED')
       .order('customer_delivery_date', { ascending: true, nullsFirst: false })
@@ -220,18 +221,24 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
   if (docNos.length === 0) return { today, regionCfg, pool: [] };
 
   /* Per-line readiness (same select shape as the board's step 3). */
-  const { data: itemRowsRaw } = await paginateAll<{
+  /* chunkIn, not paginateAll: `docNos` above is every live SO in the tenant (the
+     read that built it has no date bound), and paginateAll bounds the response
+     while re-sending that whole doc list in every page's URL. Batching on doc_no
+     keeps each order's lines together, and the readiness map below is keyed by
+     doc_no, so nothing about the result moves. */
+  const { data: itemRowsRaw } = await chunkIn<{
     doc_no: string; item_group: string | null; item_code: string | null;
     stock_status: string | null; cancelled: boolean | null;
-  }>((from, to) =>
+  }>(docNos, (batch, from, to) =>
     sb.from('mfg_sales_order_items')
       .select('doc_no, item_group, item_code, stock_status, cancelled')
-      .in('doc_no', docNos)
+      .in('doc_no', batch)
       .eq('cancelled', false)
+      .order('doc_no')
       .range(from, to),
   );
   const linesByDoc = new Map<string, ReadinessLine[]>();
-  for (const it of (itemRowsRaw ?? [])) {
+  for (const it of itemRowsRaw) {
     if (!it.doc_no) continue;
     const arr = linesByDoc.get(it.doc_no) ?? [];
     arr.push({
@@ -264,7 +271,7 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
   const pool: PoolSo[] = soRows.map((r) => {
     const docNo = s(r.doc_no);
     const readiness = summariseReadiness(linesByDoc.get(docNo) ?? []);
-    const effectiveDD = r.amended_delivery_date ?? r.customer_delivery_date;
+    const effectiveDD = effectiveSoDelivery(r);
     const planningState = derivePlanningState({
       storedOverride: r.delivery_state,
       status: r.status,
@@ -287,7 +294,7 @@ async function loadDeliverySnapshot(sb: any): Promise<DeliverySnapshot> {
       regions,
       effectiveDeliveryDate: effectiveDD ?? null,
       daysLeft: daysUntil(today, effectiveDD),
-      localTotalCenti: Math.round(n(r.local_total_centi)),
+      localTotalSen: Math.round(n(r.local_total_sen)),
     };
   });
 
@@ -434,12 +441,12 @@ async function generateDeliveryProposalsCore(
         debtorName: group[0]!.debtorName,
         state: group[0]!.customerState,
         soCount: group.length,
-        valueCenti: group.reduce((sum, x) => sum + x.localTotalCenti, 0),
+        valueSen: group.reduce((sum, x) => sum + x.localTotalSen, 0),
         sos: group.map((x) => ({
           docNo: x.docNo,
           effectiveDeliveryDate: x.effectiveDeliveryDate,
           daysLeft: x.daysLeft,
-          valueCenti: x.localTotalCenti,
+          valueSen: x.localTotalSen,
         })),
       }))
       // Most date-pressed customer first (dateless customers last). 9999
@@ -449,7 +456,7 @@ async function generateDeliveryProposalsCore(
         const db2 = Math.min(...b.sos.map((x) => x.daysLeft ?? 9999));
         return da - db2;
       });
-    const valueCenti = sos.reduce((sum, x) => sum + x.localTotalCenti, 0);
+    const valueSen = sos.reduce((sum, x) => sum + x.localTotalSen, 0);
     const multi = customers.filter((cu) => cu.soCount > 1).length;
     proposals.push({
       kind: 'LOAD_PLAN',
@@ -460,12 +467,12 @@ async function generateDeliveryProposalsCore(
         date: snapshot.today,
         soCount: sos.length,
         customerCount: customers.length,
-        valueCenti,
+        valueSen,
         customers,
       },
       summary:
         `Load plan ${regionLabel.get(region) ?? region}: ${sos.length} ready-to-deliver SO(s) across ` +
-        `${customers.length} customer(s), worth ${rm(valueCenti)}` +
+        `${customers.length} customer(s), worth ${rm(valueSen)}` +
         (multi > 0 ? ` (${multi} customer(s) with multiple orders — keep each customer's orders on one trip)` : '') +
         `. Proposal only — schedule the trip(s) on the Delivery Planning board.`,
     });
@@ -529,45 +536,62 @@ export interface DeliveryBriefData {
     total: number;
     byPlanningState: Record<DeliveryState, number>;
     /** Ready-to-deliver (PENDING_SCHEDULE) buckets, largest value first. */
-    readyByRegion: Array<{ region: string; label: string; count: number; customers: number; valueCenti: number }>;
+    readyByRegion: Array<{ region: string; label: string; count: number; customers: number; valueSen: number }>;
     /** Ready-to-deliver by canonical customer-state code (SEL/KL/…/UNKNOWN). */
-    readyByState: Array<{ stateCode: string; count: number; valueCenti: number }>;
+    readyByState: Array<{ stateCode: string; count: number; valueSen: number }>;
   };
   overdueToDeliver: {
     count: number;
     rows: Array<{
       docNo: string; debtorName: string | null; region: string;
-      effectiveDeliveryDate: string | null; daysLeft: number | null; valueCenti: number;
+      effectiveDeliveryDate: string | null; daysLeft: number | null; valueSen: number;
     }>;
   };
-  doPipeline: { byStatus: Record<string, number> };
+  /** DO counts per raw status. `unavailableReason` non-null means the read
+   *  FAILED and `byStatus` is empty because nothing was counted — never read an
+   *  absent bucket as zero deliveries in that status. */
+  doPipeline: { byStatus: Record<string, number>; unavailableReason: string | null };
   podGaps: { count: number; rows: PodGapRow[] };
   trips: { today: TripBriefRow[]; tomorrow: TripBriefRow[] };
   openProposals: { total: number; byKind: Record<string, number> };
 }
 
-/* The DO lifecycle — pipeline buckets. IMPORTED from the state machine's own
-   declaration (scm/shared/do-shipped-states.ts, which delivery-orders-mfg.ts
-   reads for its PATCH status guard), because the copy that used to sit here had
-   quietly lost COMPLETED: the pipeline counted eight of the nine legal statuses
-   and reported the missing bucket as absent rather than as uncounted. */
-const DO_STATUSES: readonly string[] = SHARED_DO_STATUSES;
+/* The DO pipeline — counted from the ROWS, never by enumerating a status list.
+   This used to map a hand-held vocabulary and issue one
+   `count:'exact'` query per entry with `.eq('status', st)`. Two faults, both of
+   which this branch exists to end:
 
+   1. `delivery_orders.status` is a Postgres ENUM. The list it mapped
+      (scm/shared/do-shipped-states.ts DO_STATUSES) still carries 'COMPLETED',
+      which do_status has never had, so that one query sent a label Postgres
+      refuses to parse — `22P02 invalid input value for enum do_status:
+      "COMPLETED"` — exactly the 500 fixed on the SI and DO list endpoints.
+   2. The await destructured only `count` and dropped `error`, so
+      `if ((count ?? 0) > 0)` rendered the failed read as an ABSENT bucket. The
+      comment that stood here said the local copy was replaced because the
+      pipeline "reported the missing bucket as absent rather than as uncounted";
+      it went on doing precisely that.
+
+   Reading the column removes both halves at once: no literal is handed to the
+   enum, and a failed read is reported as unavailable instead of as zeros. It
+   also needs no status vocabulary at all, so there is no longer a second copy
+   of one here to drift. Statuses OUTSIDE the vocabulary (legacy spellings,
+   blanks) now appear too — under their own key, or UNKNOWN for a blank — which
+   is a change to what the brief shows and is the honest direction: they were
+   previously counted nowhere. */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-async function collectDoStatusCounts(sb: any): Promise<Record<string, number>> {
-  const byStatus: Record<string, number> = {};
-  await Promise.all(
-    DO_STATUSES.map(async (st) => {
-      try {
-        const { count } = await sb
-          .from('delivery_orders')
-          .select('id', { head: true, count: 'exact' })
-          .eq('status', st);
-        if ((count ?? 0) > 0) byStatus[st] = count ?? 0;
-      } catch { /* best-effort section */ }
-    }),
-  );
-  return byStatus;
+export async function collectDoStatusCounts(sb: any): Promise<StatusTally> {
+  try {
+    return tallyStatusRows(
+      await paginateAll<{ status: string | null }>((from, to) =>
+        sb.from('delivery_orders').select('status').range(from, to)),
+      () => 1,
+    );
+  } catch (e) {
+    /* Still contained — a throw here must not take the whole brief down — but
+       it is now REPORTED rather than swallowed into an empty pipeline. */
+    return { ok: false, reason: e instanceof Error ? e.message : String(e) };
+  }
 }
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -678,7 +702,7 @@ async function collectDeliveryBriefCore(
   const today = snapshot.today;
   const tomorrow = todayMyt(1);
 
-  const [byStatus, podGaps, tripsByDate, openProposals] = await Promise.all([
+  const [doCounts, podGaps, tripsByDate, openProposals] = await Promise.all([
     collectDoStatusCounts(sb),
     loadPodGaps(sb, today).catch((e) => {
       console.error('[delivery-agent] podGaps failed:', e);
@@ -690,6 +714,7 @@ async function collectDeliveryBriefCore(
     }),
     openProposalCounts(db),
   ]);
+  if (!doCounts.ok) console.error('[delivery-agent] DO pipeline counts failed:', doCounts.reason);
 
   const byPlanningState: Record<DeliveryState, number> = {
     PENDING_DELIVERY: 0, PENDING_SCHEDULE: 0, OVERDUE: 0, DELIVERED: 0,
@@ -700,12 +725,12 @@ async function collectDeliveryBriefCore(
   const regionLabel = new Map(
     snapshot.regionCfg.regions.map((r) => [r.key, r.label] as [string, string]),
   );
-  const regionAgg = new Map<string, { count: number; valueCenti: number; customers: Set<string> }>();
+  const regionAgg = new Map<string, { count: number; valueSen: number; customers: Set<string> }>();
   for (const so of snapshot.pool) {
     if (so.planningState !== 'PENDING_SCHEDULE') continue;
-    const agg = regionAgg.get(so.region) ?? { count: 0, valueCenti: 0, customers: new Set<string>() };
+    const agg = regionAgg.get(so.region) ?? { count: 0, valueSen: 0, customers: new Set<string>() };
     agg.count += 1;
-    agg.valueCenti += so.localTotalCenti;
+    agg.valueSen += so.localTotalSen;
     agg.customers.add(s(so.debtorCode) || s(so.debtorName) || so.docNo);
     regionAgg.set(so.region, agg);
   }
@@ -715,21 +740,21 @@ async function collectDeliveryBriefCore(
       label: regionLabel.get(region) ?? region,
       count: a.count,
       customers: a.customers.size,
-      valueCenti: a.valueCenti,
+      valueSen: a.valueSen,
     }))
-    .sort((a, b) => b.valueCenti - a.valueCenti);
+    .sort((a, b) => b.valueSen - a.valueSen);
 
-  const stateAgg = new Map<string, { count: number; valueCenti: number }>();
+  const stateAgg = new Map<string, { count: number; valueSen: number }>();
   for (const so of snapshot.pool) {
     if (so.planningState !== 'PENDING_SCHEDULE') continue;
-    const agg = stateAgg.get(so.stateCode) ?? { count: 0, valueCenti: 0 };
+    const agg = stateAgg.get(so.stateCode) ?? { count: 0, valueSen: 0 };
     agg.count += 1;
-    agg.valueCenti += so.localTotalCenti;
+    agg.valueSen += so.localTotalSen;
     stateAgg.set(so.stateCode, agg);
   }
   const readyByState = [...stateAgg.entries()]
-    .map(([stateCode, a]) => ({ stateCode, count: a.count, valueCenti: a.valueCenti }))
-    .sort((a, b) => b.valueCenti - a.valueCenti);
+    .map(([stateCode, a]) => ({ stateCode, count: a.count, valueSen: a.valueSen }))
+    .sort((a, b) => b.valueSen - a.valueSen);
 
   /* Overdue-to-deliver: the board's OVERDUE bucket (not ready + inside the
      3-day window / past the effective date), most negative days-left first. */
@@ -742,7 +767,7 @@ async function collectDeliveryBriefCore(
       region: so.region,
       effectiveDeliveryDate: so.effectiveDeliveryDate,
       daysLeft: so.daysLeft,
-      valueCenti: so.localTotalCenti,
+      valueSen: so.localTotalSen,
     }));
 
   const brief: DeliveryBriefData = {
@@ -755,7 +780,9 @@ async function collectDeliveryBriefCore(
       readyByState,
     },
     overdueToDeliver: { count: overdueRows.length, rows: overdueRows.slice(0, 20) },
-    doPipeline: { byStatus },
+    doPipeline: doCounts.ok
+      ? { byStatus: doCounts.byStatus, unavailableReason: null }
+      : { byStatus: {}, unavailableReason: doCounts.reason },
     podGaps: { count: podGaps.length, rows: podGaps.slice(0, 20) },
     trips: {
       today: tripsByDate.get(today) ?? [],

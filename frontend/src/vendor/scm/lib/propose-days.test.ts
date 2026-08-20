@@ -15,7 +15,7 @@ const p = (over: Partial<PackProposal>): PackProposal => ({
   lorryId: 'lorry-a',
   plate: 'VNB9058',
   sets: 1,
-  revenueCenti: 100_00,
+  revenueSen: 100_00,
   debtorName: 'Alice',
   ...over,
 });
@@ -23,12 +23,12 @@ const p = (over: Partial<PackProposal>): PackProposal => ({
 describe('groupProposalsByDay — day cards with no lorry dimension', () => {
   test('groups by (date, zone group), summing sets and revenue', () => {
     const days = groupProposalsByDay([
-      p({ ref: 'SO-1', sets: 2, revenueCenti: 500_00 }),
-      p({ ref: 'SO-2', sets: 3, revenueCenti: 700_00, lorryId: 'lorry-b', plate: 'WXY1234' }),
+      p({ ref: 'SO-1', sets: 2, revenueSen: 500_00 }),
+      p({ ref: 'SO-2', sets: 3, revenueSen: 700_00, lorryId: 'lorry-b', plate: 'WXY1234' }),
       p({ ref: 'SO-3', deliveryDate: '2026-08-11', group: 'JOHOR', zone: 'JOHOR' }),
     ]);
     expect(days).toHaveLength(2);
-    expect(days[0]).toMatchObject({ date: '2026-08-10', group: 'KLANG_VALLEY', sets: 5, revenueCenti: 1200_00 });
+    expect(days[0]).toMatchObject({ date: '2026-08-10', group: 'KLANG_VALLEY', sets: 5, revenueSen: 1200_00 });
     expect(days[0].orders.map((o) => o.ref)).toEqual(['SO-1', 'SO-2']);
     expect(days[1]).toMatchObject({ date: '2026-08-11', group: 'JOHOR' });
   });

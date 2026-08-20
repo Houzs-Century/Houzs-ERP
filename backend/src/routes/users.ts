@@ -2,6 +2,7 @@ import { Hono } from "hono";
 import type { Env } from "../types";
 import { createSession, generateToken, hashPassword, isoIn } from "../services/auth";
 import { bustUserSessions } from "../services/sessionCache";
+import { bustBannerForUser } from "../services/configCache";
 import { validatePasswordStrength } from "../services/passwordStrength";
 import {
   requirePermission,
@@ -42,6 +43,7 @@ async function activeCompanyEmailIdentity(
 }
 import { getDb } from "../db/client";
 import { resolveDatabaseUrl } from "../db/pg";
+import { allowedCompanyIds } from "../scm/lib/companyScope";  import { targetWithinActorCompanies } from "./lib/actor-company-gate";
 import {
   departments,
   invitations,
@@ -713,7 +715,7 @@ app.get("/:id/companies", requirePermission("users.read"), async (c) => {
  * Shared by PUT /:id/companies, POST /invite and PATCH /:id so the three write
  * paths never drift (see MEMORY: single logic layer / converge drifted copies).
  */
-async function setUserCompanies(
+export async function setUserCompanies(
   c: Context<{ Bindings: Env }>,
   userId: number,
   companyIds: number[],
@@ -726,14 +728,35 @@ async function setUserCompanies(
     ),
   );
   try {
-    // Validate against the canonical companies master (silent-drop unknowns).
+    /* Validate against the companies the CALLER themselves holds — not against
+       the whole master (silent-drop the rest).
+       `users.manage` is a flat, global permission: it carries no company
+       dimension, and this route has no self-guard (unlike PATCH /:id, which
+       refuses `id === me.id` at :1426). Validating against `SELECT id FROM
+       companies` therefore let any users.manage holder granted ONLY company 1
+       call this on their OWN id with [1, 2]; companyContext re-reads
+       user_companies on the very next request and would then accept
+       `X-Company-Id: 2`. That is self-service cross-tenant escalation — it hands
+       over the other company's entire book, read AND write.
+       A grantor can only ever pass on what they hold. `allowedCompanyIds`
+       degrades to `undefined` ONLY when the companies master is unreadable
+       (pre-migration / cold-start), where we keep the previous whole-master
+       behaviour so a single-company install still works; `[]` means the caller
+       holds nothing and may therefore grant nothing. See the three-state
+       sentinel in scm/lib/companyScope.ts. */
     let valid = requested;
     if (requested.length > 0) {
-      const r = await c.env.DB.prepare(`SELECT id FROM companies`).all<{
-        id: number | string;
-      }>();
-      const known = new Set((r.results ?? []).map((x) => Number(x.id)));
-      valid = requested.filter((cid) => known.has(cid));
+      const mine = allowedCompanyIds(c);
+      if (mine === undefined) {
+        const r = await c.env.DB.prepare(`SELECT id FROM companies`).all<{
+          id: number | string;
+        }>();
+        const known = new Set((r.results ?? []).map((x) => Number(x.id)));
+        valid = requested.filter((cid) => known.has(cid));
+      } else {
+        const known = new Set(mine);
+        valid = requested.filter((cid) => known.has(cid));
+      }
     }
 
     await c.env.DB.batch([
@@ -778,6 +801,10 @@ app.put("/:id/companies", requirePermission("users.manage"), async (c) => {
   if (target.length === 0) return c.json({ error: "User not found" }, 404);
 
   const valid = await setUserCompanies(c, id, incoming as number[]);
+  // Company grants drive the banner's companyCanSee filter — clear this user's
+  // snapshot (both scopes) so a poll inside the 300s TTL cannot serve the old
+  // company audience.
+  await bustBannerForUser(c.env, id);
   return c.json({ ok: true, companies: valid });
 });
 
@@ -889,15 +916,15 @@ app.get("/:id/profile-pic", async (c) => {
   const headers = new Headers();
   obj.writeHttpMetadata(headers);
 
-  // Measured 2026-08-01: /team fetches one of these per member (43 of them,
-  // ~1s each behind the connection limit), and at a flat max-age=300 every
-  // visit past five minutes re-fetched all of them. Avatar.tsx already sends
-  // the R2 key as ?k=, so a matching url can safely be pinned — see
-  // lib/avatar-cache.ts for why the equality check is load-bearing.
+  // Measured 2026-08-01: /team fetches one per member (43, ~1s each behind the
+  // connection limit); a flat max-age=300 re-fetched all past 5 min. Avatar.tsx
+  // sends the R2 key as ?k= so a matching url pins — see lib/avatar-cache.ts.
   headers.set(
     "cache-control",
     avatarCacheControl(c.req.query("k"), row.profile_pic_r2_key),
   );
+  // nosniff: block MIME-sniffing the server content-type into html/svg (parity: mail-center INLINE_SAFE).
+  headers.set("X-Content-Type-Options", "nosniff");
   return new Response(obj.body, { headers });
 });
 
@@ -1780,6 +1807,25 @@ app.patch("/:id", requirePermissionOrSalesDirector("users.manage"), async (c) =>
     await syncSalesRepFromUser(c.env, id, me.id);
   }
 
+  // The announcements banner filters by department_id / position_id / company
+  // grants (userCanSee / companyCanSee), and its KV snapshot now lives 300s
+  // (> the 60s poll) — so any edit that moves THIS user between audiences must
+  // clear their banner (BOTH scopes), or a poll would serve up to 5 minutes of
+  // stale targeting. Session bust alone does not cover this: it fires only on
+  // disable / role change, while a dept-only / position-only / company-only
+  // edit changes targeting without touching the session. Covers every such
+  // field in ONE place. Best-effort (bustBannerForUser swallows KV trouble).
+  const bannerTargetingChanged =
+    "department_id" in set ||
+    "position_id" in set ||
+    "role_id" in set ||
+    "status" in set ||
+    finalDeptIds !== null ||
+    hasCompanyChange;
+  if (bannerTargetingChanged) {
+    await bustBannerForUser(c.env, id);
+  }
+
   const changedKeys = [
     ...Object.keys(auditedSet),
     ...(finalDeptIds !== null ? ["department_ids"] : []),
@@ -1856,6 +1902,9 @@ app.delete("/:id", requirePermission("users.manage"), async (c) => {
   // (reads the live tokens) so a deleted/disabled user can't ride a still-cached
   // session for up to 60s.
   await bustUserSessions(c.env, id);
+  // A deleted/disabled user leaves the audience — clear their banner snapshot
+  // (both scopes) so nothing rides the 300s TTL after they are gone.
+  await bustBannerForUser(c.env, id);
   await db.delete(sessions).where(eq(sessions.user_id, id));
 
   // Hard-delete path — either explicit ?hard=1 or never-joined user.
@@ -2043,7 +2092,7 @@ app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
     .from(users)
     .where(eq(users.id, id))
     .limit(1);
-  if (rows.length === 0) return c.json({ error: "User not found" }, 404);
+  if (rows.length === 0) return c.json({ error: "User not found" }, 404);   const gate = await targetWithinActorCompanies(c, id); if (!gate.ok) return c.json(gate.body, 403);
   if (rows[0].status !== "active") {
     return c.json({ error: "User is not active — only active members can be viewed as" }, 400);
   }
@@ -2086,7 +2135,7 @@ app.post("/:id/impersonate", requirePermission("users.manage"), async (c) => {
  * docs/modules/team-members.md section 5. Rate-limited on the TARGET.
  */
 app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseInt(c.req.param("id"), 10);   const gate = await targetWithinActorCompanies(c, id); if (!gate.ok) return c.json(gate.body, 403);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
   const me = c.get("user");
 
@@ -2197,7 +2246,7 @@ app.post("/:id/reset-password", requirePermission("users.manage"), async (c) => 
  * re-enroll. The self-service disable (with a code) lives in routes/totp.ts.
  */
 app.post("/:id/totp/disable", requirePermission("users.manage"), async (c) => {
-  const id = parseInt(c.req.param("id"), 10);
+  const id = parseInt(c.req.param("id"), 10);   const gate = await targetWithinActorCompanies(c, id); if (!gate.ok) return c.json(gate.body, 403);
   if (!id) return c.json({ error: "Invalid ID." }, 400);
 
   const db = getDb(c.env);

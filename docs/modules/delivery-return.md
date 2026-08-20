@@ -177,7 +177,7 @@ resync is the first thing to try, not the last.
 | Table | Role |
 |---|---|
 | `scm.delivery_returns` | Header — `return_number`, `status`, `delivery_order_id`, `warehouse_id`, `company_id` |
-| `scm.delivery_return_items` | Lines — `do_item_id` (nullable, §5), `item_code`, `qty_returned`, `item_group`, `variants`, `unit_cost_centi` |
+| `scm.delivery_return_items` | Lines — `do_item_id` (nullable, §5), `item_code`, `qty_returned`, `item_group`, `variants`, `unit_cost_sen` |
 
 Status is compared **case-insensitively** in the resync
 (`(status ?? '').toUpperCase()`), so do not assume the column is already
@@ -188,6 +188,21 @@ conditional on `.neq('status','CANCELLED')` so a lost race echoes instead of
 reversing twice). **CANCELLED is FINAL**: any other transition out of it is 409
 `dr_cancelled_final` — the drain already ran, so un-cancelling would leave the
 books saying "returned" with an empty shelf. Raise a new return instead.
+
+### The incoming status is normalised before any gate reads it (2026-08-18)
+
+`patchDeliveryReturnStatusHandler` now folds the request's status once —
+`String(body.status).trim().toUpperCase()` — and every gate below reads the
+folded value. Before, the READ side uppercased the PERSISTED status while the
+gates compared the INCOMING one verbatim, so a client sending lowercase
+`cancelled` missed the idempotent echo, missed the atomic
+`.neq('status','CANCELLED')` single-flight, and **never called
+`resyncInventoryForReturn`** — the document read cancelled while the stock it
+returned stayed on the shelf. `delivery_return_status` is an enum, so in practice
+that request 500'd rather than persisting; the operator simply could not cancel.
+Same class as `SI_STATUS_CANON` on Sales Invoices, with stock in place of revenue.
+
+No status whitelist was added — see the caveat below; the enum is the vocabulary.
 
 ### The status set, and who writes it (2026-08-16)
 

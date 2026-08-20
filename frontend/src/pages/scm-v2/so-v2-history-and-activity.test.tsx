@@ -46,6 +46,11 @@ vi.mock("../../components/scm-v2/DocumentRelationshipMapModal", () => ({
   DocumentChoiceDialog: () => null,
 }));
 vi.mock("../../vendor/scm/components/PaymentsTable", () => ({ PaymentsTable: () => null }));
+/* The page reads ONE permission (`scm.so.attribute_other`, added 2026-08-17 — it
+   decides whether Edit opens on a DO/SI-locked order so its salesperson can be
+   changed), and `useAuth` throws outside its provider. Faked as a caller WITHOUT
+   it, so these tests keep exercising the behaviour they were written for. */
+vi.mock("../../auth/AuthContext", () => ({ useAuth: () => ({ can: () => false }) }));
 
 import SalesOrderDetailV2 from "./SalesOrderDetailV2";
 
@@ -61,9 +66,9 @@ const header = {
   debtor_name: "Ada",
   customer_type: "retail",
   currency: "MYR",
-  local_total_centi: 100000,
-  balance_centi: 0,
-  discount_centi: 0,
+  local_total_sen: 100000,
+  balance_sen: 0,
+  discount_sen: 0,
   phone: null,
   email: null,
 };

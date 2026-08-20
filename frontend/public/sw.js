@@ -57,7 +57,7 @@
 // self-evolving rules), review/correct, "Open in New SO" prefills. Needs the
 // ANTHROPIC_API_KEY worker secret; degrades to a friendly error without it.
 // v13 (2026-06-21): 2990 SCM sync wave 1 — SO/CSO self-scope auth guards
-// (6->13), PI/SI credit race-safe paid_centi, GRN over-receipt cap, combo
+// (6->13), PI/SI credit race-safe paid_sen, GRN over-receipt cap, combo
 // cost-edit no longer overwrites selling price, dead-table fix, negative-money
 // clamps, SO delivery-fee re-derive, authedFetch timeout, PDF tall-row keep.
 // v14 (2026-06-21): 2990 SCM sync wave 2 (features) — RuleTarget special

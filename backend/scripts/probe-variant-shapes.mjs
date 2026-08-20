@@ -58,7 +58,7 @@ async function main() {
     const bal = await sql`
       SELECT coalesce(b.variant_key,'') AS variant_key, w.name AS warehouse, b.qty
         FROM scm.inventory_balances b LEFT JOIN scm.warehouses w ON w.id = b.warehouse_id
-       WHERE b.company_id = ${CO} AND b.product_code = ${code} AND b.qty <> 0
+       WHERE b.company_id = ${CO} AND b.item_code = ${code} AND b.qty <> 0
        ORDER BY w.name, b.variant_key`;
     note(`\n--- inventory_balances variant_keys: ${bal.length} ---`);
     for (const b of bal) note(`  ${String(b.warehouse ?? '?').padEnd(30)} qty=${String(b.qty).padStart(4)}  key=${JSON.stringify(b.variant_key)}`);
@@ -68,7 +68,7 @@ async function main() {
              i.warehouse_id::text AS warehouse_id, i.so_item_id::text AS so_item_id,
              i.variants::text AS variants
         FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-       WHERE i.company_id = ${CO} AND i.material_code = ${code}
+       WHERE i.company_id = ${CO} AND i.item_code = ${code}
          AND upper(p.status) NOT IN ('CANCELLED','CLOSED','DRAFT')
        ORDER BY p.po_number`;
     note(`\n--- OPEN purchase order lines (statuses MRP counts as supply): ${po.length} ---`);

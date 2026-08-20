@@ -49,6 +49,7 @@ import {
   stampCompany,
 } from '../lib/companyScope';
 import { runScmPgCommand } from '../lib/pg-supabase-transaction';
+import { dateOrNull } from '../lib/date-coerce';
 
 export const poAmendments = new Hono<{ Bindings: Env; Variables: Variables }>();
 poAmendments.use('*', supabaseAuth);
@@ -121,8 +122,8 @@ poAmendments.get('/:id', async (c) => {
         'header_changes, old_header_snapshot, edited_at, edit_count, created_at, updated_at')
       .eq('id', id), c).maybeSingle(),
     sb.from('po_amendment_lines')
-      .select('id, amendment_id, purchase_order_item_id, change_type, new_material_code, ' +
-        'new_material_name, new_variants, new_qty, new_unit_price_centi, new_delivery_date, old_snapshot')
+      .select('id, amendment_id, purchase_order_item_id, change_type, new_item_code, ' +
+        'new_material_name, new_variants, new_qty, new_unit_price_sen, new_delivery_date, old_snapshot')
       .eq('amendment_id', id),
   ]);
   if (amdRes.error) return c.json({ error: 'load_failed', reason: amdRes.error.message }, 500);
@@ -162,7 +163,7 @@ poAmendments.post('/', async (c) => {
       newMaterialName?: string | null;
       newVariants?: unknown;
       newQty?: number | null;
-      newUnitPriceCenti?: number | null;
+      newUnitPriceSen?: number | null;
       newDeliveryDate?: string | null;
       oldSnapshot?: unknown;
     }>;
@@ -253,12 +254,15 @@ poAmendments.post('/', async (c) => {
       amendment_id:           amendment.id,
       purchase_order_item_id: l.purchaseOrderItemId ?? null,
       change_type:            String(l.changeType ?? '').toUpperCase(),
-      new_material_code:      l.newMaterialCode ?? null,
+      new_item_code:      l.newMaterialCode ?? null,
       new_material_name:      l.newMaterialName ?? null,
       new_variants:           (l.newVariants ?? null) as Record<string, unknown> | null,
       new_qty:                l.newQty ?? null,
-      new_unit_price_centi:   l.newUnitPriceCenti ?? null,
-      new_delivery_date:      l.newDeliveryDate ?? null,
+      new_unit_price_sen:   l.newUnitPriceSen ?? null,
+      // `??` is nullish — a blank <input type="date"> posts "" and would reach
+      // po_amendment_lines.new_delivery_date (DATE, mig 0194:87), 500ing the
+      // insert and rolling the header amendment back at :268.
+      new_delivery_date:      dateOrNull(l.newDeliveryDate),
       old_snapshot:           (l.oldSnapshot ?? null) as Record<string, unknown> | null,
     }));
     const { error: lineErr } = await sb.from('po_amendment_lines').insert(stampCompany(lineRows, c));
@@ -506,7 +510,7 @@ poAmendments.patch('/:id/reject', async (c) => {
      fresh PO can be raised. Existing slices (someone's deliberate split) are
      never touched, and a failure here never un-rejects the amendment — the
      release is reported, retryable via the allocation editor. */
-  const releasedToStock: Array<{ poItemId: string; materialCode: string; qty: number }> = [];
+  const releasedToStock: Array<{ poItemId: string; itemCode: string; qty: number }> = [];
   const releaseWarnings: string[] = [];
   if (amendment.source_so_amendment_id) {
     try {
@@ -517,7 +521,7 @@ poAmendments.patch('/:id/reject', async (c) => {
         .map((l) => l.purchase_order_item_id).filter((v): v is string => !!v))];
       if (itemIds.length > 0) {
         const { data: items } = await sb.from('purchase_order_items')
-          .select('id, qty, material_code')
+          .select('id, qty, item_code')
           .in('id', itemIds);
         const { data: allocRows } = await sb.from('purchase_order_item_allocations')
           .select('id, purchase_order_item_id, seq, qty, so_item_id')
@@ -527,7 +531,7 @@ poAmendments.patch('/:id/reject', async (c) => {
           const arr = byItem.get(a.purchase_order_item_id) ?? [];
           arr.push(a); byItem.set(a.purchase_order_item_id, arr);
         }
-        for (const it of (items ?? []) as Array<{ id: string; qty: number; material_code: string }>) {
+        for (const it of (items ?? []) as Array<{ id: string; qty: number; item_code: string }>) {
           const plan = planStockRelease(Number(it.qty ?? 0), byItem.get(it.id) ?? []);
           if (!plan) continue;
           const { error: insErr } = await sb.from('purchase_order_item_allocations').insert({
@@ -538,8 +542,8 @@ poAmendments.patch('/:id/reject', async (c) => {
             so_item_id: null,
             created_by: user.id,
           });
-          if (insErr) { releaseWarnings.push(`${it.material_code}: ${insErr.message}`); continue; }
-          releasedToStock.push({ poItemId: it.id, materialCode: it.material_code, qty: plan.qty });
+          if (insErr) { releaseWarnings.push(`${it.item_code}: ${insErr.message}`); continue; }
+          releasedToStock.push({ poItemId: it.id, itemCode: it.item_code, qty: plan.qty });
         }
         if (releasedToStock.length > 0) {
           await recordEntityAudit(sb, {
@@ -550,7 +554,7 @@ poAmendments.patch('/:id/reject', async (c) => {
             actor:      { id: c.get('houzsUser')?.id ?? null, name: c.get('houzsUser')?.name ?? null },
             companyId:  activeCompanyId(c) ?? null,
             fieldChanges: releasedToStock.map((r) => (
-              { field: 'allocationTarget', from: 'SO (revised away)', to: `STOCK · ${r.materialCode} × ${r.qty}` }
+              { field: 'allocationTarget', from: 'SO (revised away)', to: `STOCK · ${r.itemCode} × ${r.qty}` }
             )),
             note: `Supplier cannot follow SO revision ${amendment.source_so_amendment_no ?? ''} — un-allocated qty released to STOCK; MRP will re-show the corrected spec as shortage.`.replace('  ', ' '),
           });

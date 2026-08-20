@@ -19,7 +19,8 @@ import { CalendarClock, Plus, XCircle } from 'lucide-react';
 import { Button } from '../../components/Button';
 import { DataTable, type Column } from '../../components/DataTable';
 import { PageHeader } from '../../components/Layout';
-import { fmtDate } from '@2990s/shared';
+import { fmtDate, fmtSen } from '../../vendor/shared/format';
+import { useStaffLookup } from '../../hooks/useStaffLookup';
 import {
   useDpOrders,
   useCancelDpOrder,
@@ -68,6 +69,9 @@ export const DpOrders = () => {
   const cancelDp = useCancelDpOrder();
   const notify = useNotify();
   const askConfirm = useConfirm();
+  /* Salesperson column — the source SO's agent/salesperson_id resolved against
+     the staff roster, same helper as the SO list (never a raw UUID). */
+  const { nameOf: salespersonNameOf } = useStaffLookup();
 
   const [searchTerm, setSearchTerm] = useState('');
   const [showNewDp, setShowNewDp] = useState(false);
@@ -82,9 +86,10 @@ export const DpOrders = () => {
         r.dp_no, r.party_name, r.contact_name, r.contact_phone, r.remark,
         r.city, r.state, r.postcode, joinedAddress(r), sourceRef(r),
         dpJobTypeLabel(r.job_type), statusLabel('dpOrder', r.status),
+        r.so_venue, r.so_doc_no ? salespersonNameOf(r.so_agent, r.so_salesperson_id, '') : '',
       ].some((v) => (v ?? '').toLowerCase().includes(term)),
     );
-  }, [list.data, searchTerm]);
+  }, [list.data, searchTerm, salespersonNameOf]);
 
   const cancel = async (r: DpOrderRow) => {
     const ok = await askConfirm({
@@ -155,15 +160,42 @@ export const DpOrders = () => {
       getValue: (r) => r.contact_phone ?? '',
       render: (r) => r.contact_phone ?? '—',
     },
+    /* Sales context off the SOURCE SO (owner 2026-08-19, parity with the
+       planning board): only SO-sourced jobs carry it; manual / supplier /
+       project / case rows render a dash. */
+    {
+      key: 'salesperson', label: 'Salesperson', width: '140px',
+      getValue: (r) => (r.so_doc_no ? salespersonNameOf(r.so_agent, r.so_salesperson_id, '') : ''),
+      render: (r) => (r.so_doc_no ? salespersonNameOf(r.so_agent, r.so_salesperson_id, '—') : '—'),
+    },
+    {
+      key: 'venue', label: 'Venue', width: '140px',
+      getValue: (r) => r.so_venue ?? '',
+      render: (r) => r.so_venue?.trim() || '—',
+    },
     {
       key: 'requested_date', label: 'Requested', width: '110px',
       getValue: (r) => r.requested_date ?? '',
       render: (r) => <span style={{ whiteSpace: 'nowrap' }}>{r.requested_date ? fmtDate(r.requested_date) : '—'}</span>,
     },
     {
+      key: 'so_processing_date', label: 'Processing Date', width: '130px',
+      getValue: (r) => r.so_processing_date ?? '',
+      render: (r) => <span style={{ whiteSpace: 'nowrap' }}>{r.so_processing_date ? fmtDate(r.so_processing_date) : '—'}</span>,
+    },
+    {
       key: 'source', label: 'Source', width: '140px',
       getValue: (r) => sourceRef(r),
       render: (r) => sourceRef(r),
+    },
+    {
+      /* The source SO's grand total — n/a on non-SO rows (a job has no order
+         value; RM 0.00 would read as a paid-up order). */
+      key: 'total_amount', label: 'Total Amount', width: '130px', align: 'right',
+      getValue: (r) => (r.so_total_sen == null ? '' : r.so_total_sen / 100),
+      render: (r) => (r.so_total_sen == null
+        ? <span style={{ color: 'var(--fg-muted)' }}>—</span>
+        : <span style={{ fontFamily: 'var(--font-mark)', fontWeight: 700 }}>{fmtSen(r.so_total_sen)}</span>),
     },
     {
       key: 'trip', label: 'Trip', width: '90px',

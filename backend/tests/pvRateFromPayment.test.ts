@@ -82,24 +82,24 @@ function harness(tables: Record<string, Row[]>, breakTable?: string) {
         return new FakeQuery((tables[t] ||= []), t);
       },
       /* Route by function name. The audit pre-flight must report writable or every
-         handler 409s before reaching the settlement loop; settle_pi_paid_centi runs
+         handler 409s before reaching the settlement loop; settle_pi_paid_sen runs
          the REAL clamp rule (computePiSettlement — the pure function the SQL is a
          transcription of), so the applied figure the adoption keys off is the one
          production would produce. */
       rpc: async (fn: string, args: Row) => {
         if (fn === 'entity_audit_writable') return { data: true, error: null };
-        if (fn === 'settle_pi_paid_centi') {
+        if (fn === 'settle_pi_paid_sen') {
           const pi = (tables.purchase_invoices ?? []).find((p) => p.id === args.p_pi_id);
-          if (!pi) return { data: [{ applied_centi: 0, reason: 'not_found' }], error: null };
+          if (!pi) return { data: [{ applied_sen: 0, reason: 'not_found' }], error: null };
           const calc = computePiSettlement({
-            paidCenti: Number(pi.paid_centi ?? 0),
-            totalCenti: Number(pi.total_centi ?? 0),
+            paidSen: Number(pi.paid_sen ?? 0),
+            totalSen: Number(pi.total_sen ?? 0),
             status: pi.status,
-            deltaCenti: Number(args.p_delta ?? 0),
+            deltaSen: Number(args.p_delta ?? 0),
           });
-          if (!calc.skipped) { pi.paid_centi = calc.newPaidCenti; pi.status = calc.newStatus; }
+          if (!calc.skipped) { pi.paid_sen = calc.newPaidSen; pi.status = calc.newStatus; }
           return {
-            data: [{ applied_centi: calc.skipped ? 0 : calc.appliedCenti, new_paid_centi: pi.paid_centi, new_status: pi.status }],
+            data: [{ applied_sen: calc.skipped ? 0 : calc.appliedSen, new_paid_sen: pi.paid_sen, new_status: pi.status }],
             error: null,
           };
         }
@@ -122,11 +122,11 @@ function harness(tables: Record<string, Row[]>, breakTable?: string) {
    finding R2). The owner then pays for it at 0.619838, and that payment is the only
    place the true rate is written down. */
 const RMB_RATE = 0.619838;
-const FACE_CENTI = 2_162_500;
+const FACE_SEN = 2_162_500;
 /** What the lot SHOULD carry once the rate is known: round(¥21,625.00 × 0.619838)
  *  = 1_340_401 sen, i.e. RM 13,404.01 — down from the RM 21,625.00 the 1:1 basis
  *  had capitalised. */
-const EXPECTED_LOT_SEN = Math.round(FACE_CENTI * RMB_RATE);
+const EXPECTED_LOT_SEN = Math.round(FACE_SEN * RMB_RATE);
 
 const world = (over: {
   piCurrency?: string; piRate?: number; piPaid?: number; piStatus?: string;
@@ -137,19 +137,19 @@ const world = (over: {
       id: 'pv-1', pv_number: '2990-PV-2607-001', company_id: CO, status: 'DRAFT',
       voucher_date: '2026-07-30', payee_name: 'Shenzhen Vendor', credit_account_code: '1000',
       currency: over.pvCurrency ?? 'RMB', exchange_rate: over.pvRate ?? RMB_RATE,
-      purpose: over.pvPurpose ?? 'SUPPLIER_PAYMENT', total_centi: FACE_CENTI,
+      purpose: over.pvPurpose ?? 'SUPPLIER_PAYMENT', total_sen: FACE_SEN,
     }],
     payment_voucher_lines: [{
       id: 'pvl-1', pv_id: 'pv-1', line_no: 1, description: 'Sofa order',
-      debit_account_code: '2000', amount_centi: FACE_CENTI,
+      debit_account_code: '2000', amount_sen: FACE_SEN,
     }],
-    pv_allocations: [{ id: 'alloc-1', pv_id: 'pv-1', pi_id: 'pi-1', amount_centi: FACE_CENTI, applied_centi: 0 }],
+    pv_allocations: [{ id: 'alloc-1', pv_id: 'pv-1', pi_id: 'pi-1', amount_sen: FACE_SEN, applied_sen: 0 }],
     purchase_invoices: [{
       id: 'pi-1', invoice_number: '2990-PI-2607-004', company_id: CO,
       status: over.piStatus ?? 'POSTED',
       currency: over.piCurrency ?? 'RMB', exchange_rate: over.piRate ?? 1,
       grn_id: over.piGrnId === undefined ? 'grn-1' : over.piGrnId,
-      total_centi: FACE_CENTI, paid_centi: over.piPaid ?? 0,
+      total_sen: FACE_SEN, paid_sen: over.piPaid ?? 0,
     }],
 
     /* The costing side recostFromGrn actually walks: the GRN + its one line, the PI
@@ -158,20 +158,20 @@ const world = (over: {
        movements, DOs, SIs) is legitimately empty for a receipt nothing has sold yet. */
     grns: [{ id: 'grn-1', grn_number: '2990-GRN-2606-001', exchange_rate: 1, allocation_method: 'VALUE' }],
     grn_items: [{
-      id: 'gi-1', grn_id: 'grn-1', material_code: 'SOFA-A', item_group: null, variants: null,
-      unit_price_centi: FACE_CENTI, qty_accepted: 1, allocated_charge_centi: 0,
+      id: 'gi-1', grn_id: 'grn-1', item_code: 'SOFA-A', item_group: null, variants: null,
+      unit_price_sen: FACE_SEN, qty_accepted: 1, allocated_charge_sen: 0,
       purchase_order_item_id: null,
     }],
     purchase_invoice_items: [{
       id: 'pii-1', purchase_invoice_id: 'pi-1', grn_item_id: 'gi-1',
-      qty: 1, unit_price_centi: FACE_CENTI, allocated_charge_centi: 0,
+      qty: 1, unit_price_sen: FACE_SEN, allocated_charge_sen: 0,
     }],
     inventory_lots: [{
       id: 'lot-1', source_doc_type: 'GRN', source_doc_id: 'grn-1',
-      product_code: 'SOFA-A', variant_key: '', batch_no: null,
-      qty_received: 1, movement_id: 'mov-1', unit_cost_sen: FACE_CENTI,
+      item_code: 'SOFA-A', variant_key: '', batch_no: null,
+      qty_received: 1, movement_id: 'mov-1', unit_cost_sen: FACE_SEN,
     }],
-    inventory_movements: [{ id: 'mov-1', source_doc_type: 'GRN', source_doc_id: 'grn-1', unit_cost_sen: FACE_CENTI, total_cost_sen: FACE_CENTI }],
+    inventory_movements: [{ id: 'mov-1', source_doc_type: 'GRN', source_doc_id: 'grn-1', unit_cost_sen: FACE_SEN, total_cost_sen: FACE_SEN }],
     inventory_lot_consumptions: [],
 
     journal_entries: [], journal_entry_lines: [], entity_audit_log: [], suppliers: [],
@@ -194,7 +194,7 @@ const pvRateSummary = (t: Record<string, Row[]>) =>
 describe('the knock-off fills an UN-RATED foreign invoice and re-costs its GRN', () => {
   test('the invoice adopts the payment rate AND the FIFO lot is re-costed off the 1:1 basis', async () => {
     const t = world();
-    expect(lot(t).unit_cost_sen).toBe(FACE_CENTI); // the R2 mis-cost, before
+    expect(lot(t).unit_cost_sen).toBe(FACE_SEN); // the R2 mis-cost, before
 
     const res = await post(harness(t));
     expect(res.status).toBe(200);
@@ -208,7 +208,7 @@ describe('the knock-off fills an UN-RATED foreign invoice and re-costs its GRN',
     expect(body.rateAdopted).toEqual(['2990-PI-2607-004: rate 1 -> 0.619838 (from 2990-PV-2607-001)']);
     expect(body.rateMismatch).toBeUndefined();
     // The settlement itself still happened — the rate work is purely additive.
-    expect(pi(t).paid_centi).toBe(FACE_CENTI);
+    expect(pi(t).paid_sen).toBe(FACE_SEN);
     expect(pi(t).status).toBe('PAID');
   });
 
@@ -224,7 +224,7 @@ describe('the knock-off fills an UN-RATED foreign invoice and re-costs its GRN',
     expect(audits[0]!.field_changes).toEqual(expect.arrayContaining([
       { field: 'exchangeRate', from: 1, to: RMB_RATE },
       { field: 'rateSourcePv', from: null, to: '2990-PV-2607-001' },
-      { field: 'appliedCenti', from: null, to: FACE_CENTI },
+      { field: 'appliedSen', from: null, to: FACE_SEN },
     ]));
   });
 
@@ -245,7 +245,7 @@ describe('the knock-off fills an UN-RATED foreign invoice and re-costs its GRN',
     const res = await post(harness(t));
     expect(res.status).toBe(200);
     expect(pi(t).exchange_rate).toBe(RMB_RATE);
-    expect(lot(t).unit_cost_sen).toBe(FACE_CENTI); // untouched — nothing linked it
+    expect(lot(t).unit_cost_sen).toBe(FACE_SEN); // untouched — nothing linked it
   });
 });
 
@@ -268,7 +268,7 @@ describe('a COSTING FAILURE CANNOT FAIL THE PAYMENT', () => {
     expect(pi(t).exchange_rate).toBe(RMB_RATE);
     expect(body.rateAdopted).toHaveLength(1);
     // And the settlement still landed.
-    expect(pi(t).paid_centi).toBe(FACE_CENTI);
+    expect(pi(t).paid_sen).toBe(FACE_SEN);
   });
 
   test('a failure DEEPER in the cascade (the lot table) also cannot fail the payment', async () => {
@@ -288,7 +288,7 @@ describe('an invoice carrying a DIFFERENT deliberate rate is left exactly as it 
     const body = await res.json() as Row;
 
     expect(pi(t).exchange_rate).toBe(0.62); // untouched
-    expect(lot(t).unit_cost_sen).toBe(FACE_CENTI); // no cascade ran
+    expect(lot(t).unit_cost_sen).toBe(FACE_SEN); // no cascade ran
     expect(body.rateMismatch).toEqual(['2990-PI-2607-004: invoice rate 0.62, payment rate 0.619838 — invoice rate kept']);
     expect(body.rateAdopted).toBeUndefined();
     expect(rateAudits(t)).toHaveLength(0);
@@ -298,7 +298,7 @@ describe('an invoice carrying a DIFFERENT deliberate rate is left exactly as it 
       { field: 'fxRateMismatchOnPi', from: null, to: '2990-PI-2607-004: invoice rate 0.62, payment rate 0.619838 — invoice rate kept' },
     ]));
     // and the payment itself is unaffected
-    expect(pi(t).paid_centi).toBe(FACE_CENTI);
+    expect(pi(t).paid_sen).toBe(FACE_SEN);
   });
 });
 
@@ -309,23 +309,23 @@ describe('an ALL-MYR flow — the overwhelming majority — is completely untouc
     expect(res.status).toBe(200);
     const body = await res.json() as Row;
     expect(pi(t).exchange_rate).toBe(1);
-    expect(lot(t).unit_cost_sen).toBe(FACE_CENTI);
+    expect(lot(t).unit_cost_sen).toBe(FACE_SEN);
     expect(body.rateAdopted).toBeUndefined();
     expect(body.rateMismatch).toBeUndefined();
     expect(rateAudits(t)).toHaveLength(0);
     expect(pvRateSummary(t)).toBeUndefined(); // not even an FX audit row is added
-    expect(pi(t).paid_centi).toBe(FACE_CENTI); // the settlement still works
+    expect(pi(t).paid_sen).toBe(FACE_SEN); // the settlement still works
   });
 });
 
 describe('nothing applied means nothing adopted', () => {
   test('an already-fully-paid invoice clamps the allocation to 0 and its rate is left alone', async () => {
-    const t = world({ piPaid: FACE_CENTI });
+    const t = world({ piPaid: FACE_SEN });
     const res = await post(harness(t));
     expect(res.status).toBe(200);
     const body = await res.json() as Row;
     expect(pi(t).exchange_rate).toBe(1); // still the hole — no money reached it
-    expect(lot(t).unit_cost_sen).toBe(FACE_CENTI);
+    expect(lot(t).unit_cost_sen).toBe(FACE_SEN);
     expect(body.rateAdopted).toBeUndefined();
     expect(body.overAllocated).toHaveLength(1); // the clamp is still reported, as before
   });
@@ -335,7 +335,7 @@ describe('nothing applied means nothing adopted', () => {
     const res = await post(harness(t));
     expect(res.status).toBe(200);
     expect(pi(t).exchange_rate).toBe(1);
-    expect(lot(t).unit_cost_sen).toBe(FACE_CENTI);
+    expect(lot(t).unit_cost_sen).toBe(FACE_SEN);
   });
 
   test('a FREIGHT voucher settles no invoice at all, so no rate moves', async () => {
@@ -343,7 +343,7 @@ describe('nothing applied means nothing adopted', () => {
     const res = await post(harness(t));
     expect(res.status).toBe(200);
     expect(pi(t).exchange_rate).toBe(1);
-    expect(lot(t).unit_cost_sen).toBe(FACE_CENTI);
+    expect(lot(t).unit_cost_sen).toBe(FACE_SEN);
   });
 });
 
@@ -361,7 +361,7 @@ describe('CANCEL — the adopted rate is deliberately RETAINED, never reverted',
 
     // The AP settlement is unwound...
     expect(t.payment_vouchers[0]!.status).toBe('CANCELLED');
-    expect(pi(t).paid_centi).toBe(0);
+    expect(pi(t).paid_sen).toBe(0);
     // ...but the rate stays and the lot is NOT pushed back to the 1:1 mis-cost.
     expect(pi(t).exchange_rate).toBe(RMB_RATE);
     expect(lot(t).unit_cost_sen).toBe(EXPECTED_LOT_SEN);
@@ -382,6 +382,6 @@ describe('CANCEL — the adopted rate is deliberately RETAINED, never reverted',
     const res = await cancel(app);
     const body = await res.json() as Row;
     expect(body.fxRateRetained).toBeUndefined();
-    expect(pi(t).paid_centi).toBe(0);
+    expect(pi(t).paid_sen).toBe(0);
   });
 });

@@ -2,11 +2,14 @@ import { useEffect, useMemo, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { invalidateConvertShared } from "./sharedInvalidate";
 import { authedFetch } from "../vendor/scm/lib/authed-fetch";
+import { buildVariantSummary } from "../vendor/shared/variant-summary";
 import { idempotentInit, useIdempotencyKey } from "../lib/idempotency";
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
-import { fmtCenti } from "../lib/scm";
+import { fmtSen } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { SearchScopeHint } from "../components/SearchScopeHint";
+import { transferToLabel, transferFromLabel } from "../lib/convertScope";
+import { outstandingEmptyReason, type OutstandingScope } from "../lib/outstandingEmptyReason";
 import "./mobile.css";
 
 /* ---------------------------------------------------------------------------
@@ -60,24 +63,29 @@ type SourceKind = "so" | "do" | "po";
    • hasLinePicker  — SO→DO/PO, DO→SI pick lines + qty.
    • no line picker — GRN receives every PO line (whole-PO convert).
 
-   The spec (#convert) titles the screen "Convert to {target}" (convertTitle);
-   `docTitle` is the plain document name reused by the create button + error
-   notify. */
+   The screen title is the owner-approved "Transfer to <destination>", and both
+   it and the sub-line come from `transferToLabel` / `transferFromLabel` in
+   `lib/convertScope` rather than from literals here — desktop and mobile
+   wording each other is exactly what the shared generator exists to stop
+   (mobile used the full document name while desktop used the abbreviation, for
+   the same operation). `docTitle` is the plain document name reused by the create button +
+   error notify, and stays as-is: "Create Goods Receipt" is the English, while
+   the TRANSFER label is "Goods Received" per the approved table. */
 const META: Record<
   ConvertTarget,
   {
-    convertTitle: string; docTitle: string;
+    transferTitle: string; fromTitle: string; docTitle: string;
     eyebrow: string; source: SourceKind; sourceNoun: string; hasLinePicker: boolean;
   }
 > = {
-  do: { convertTitle: "Convert to Delivery Order", docTitle: "Delivery Order", eyebrow: "Logistics", source: "so", sourceNoun: "Sales Order", hasLinePicker: true },
-  si: { convertTitle: "Convert to Sales Invoice", docTitle: "Sales Invoice", eyebrow: "Finance", source: "do", sourceNoun: "Delivery Order", hasLinePicker: true },
-  grn: { convertTitle: "Convert to Goods Receipt", docTitle: "Goods Receipt", eyebrow: "Procurement", source: "po", sourceNoun: "Purchase Order", hasLinePicker: false },
-  po: { convertTitle: "Convert to Purchase Order", docTitle: "Purchase Order", eyebrow: "Procurement", source: "so", sourceNoun: "Sales Order", hasLinePicker: true },
+  do: { transferTitle: transferToLabel("do"), fromTitle: transferFromLabel("so"), docTitle: "Delivery Order", eyebrow: "Logistics", source: "so", sourceNoun: "Sales Order", hasLinePicker: true },
+  si: { transferTitle: transferToLabel("si"), fromTitle: transferFromLabel("do"), docTitle: "Sales Invoice", eyebrow: "Finance", source: "do", sourceNoun: "Delivery Order", hasLinePicker: true },
+  grn: { transferTitle: transferToLabel("grn"), fromTitle: transferFromLabel("po"), docTitle: "Goods Receipt", eyebrow: "Procurement", source: "po", sourceNoun: "Purchase Order", hasLinePicker: false },
+  po: { transferTitle: transferToLabel("po"), fromTitle: transferFromLabel("so"), docTitle: "Purchase Order", eyebrow: "Procurement", source: "so", sourceNoun: "Sales Order", hasLinePicker: true },
 };
 
 // ── Money / helpers ────────────────────────────────────────────────────────
-// Money is integer *_centi → shared fmtCenti() (includes the "RM " symbol).
+// Money is integer *_sen → shared fmtSen() (includes the "RM " symbol).
 // Dates via the shared TZ-aware numeric DD/MM/YYYY helper.
 const dm = (d: string | null | undefined) => formatDate(d);
 /** First defined-and-non-empty of the candidates (pg driver camelCases result
@@ -90,6 +98,16 @@ const pick = (row: any, ...keys: string[]) => {
   return undefined;
 };
 const str = (v: unknown): string => (v == null ? "" : String(v));
+/** The line's live variant summary — the SAME shared buildVariantSummary the
+ *  desktop pickers render through VariantDescription, so a sofa module reads
+ *  identically on the phone and on the desk ("BF-01 / SEAT 24 / LEG 6\"").
+ *  Dual-reads itemGroup/item_group and variants/… through `pick` like every
+ *  other field here. Returns '' when the line carries no variants. */
+const variantLineOf = (row: unknown): string =>
+  buildVariantSummary(
+    str(pick(row, "itemGroup", "item_group")) || null,
+    (pick(row, "variants") as Record<string, unknown> | undefined) ?? null,
+  );
 /** Clamp a typed qty to 1..max integer (guards NaN / out-of-range). */
 const clampQty = (raw: string, max: number): number => {
   const n = Math.floor(Number(String(raw).replace(/[^\d.]/g, "")));
@@ -101,25 +119,34 @@ const clampQty = (raw: string, max: number): number => {
 // ── Source-list row shapes (only the fields we read) ─────────────────────────
 type SoListRow = {
   doc_no: string; debtor_name: string | null; status: string | null;
-  so_date: string | null; local_total_centi: number | null; total_revenue_centi: number | null;
+  so_date: string | null; local_total_sen: number | null; total_revenue_sen: number | null;
 };
 type DoListRow = {
   id: string; do_number: string; debtor_name: string | null; status: string | null;
-  do_date: string | null; local_total_centi: number | null;
+  do_date: string | null; local_total_sen: number | null;
 };
 type PoListRow = {
   id: string; po_number: string; status: string | null; po_date: string | null;
-  total_centi: number | null; supplier?: { id?: string; code?: string; name?: string } | null;
+  total_sen: number | null; supplier?: { id?: string; code?: string; name?: string } | null;
 };
 
 // ── Convertible-line shapes (from the remaining GETs) ────────────────────────
+/* itemGroup + variants ride on ALL FOUR of these reads already — they are not a
+   new request. Verified against the handlers, not against a payload type:
+     · deliverable-so-lines  → soDeliverableRemaining, routes/delivery-orders-mfg.ts:2258 (itemGroup) / :2266 (variants)
+     · invoiceable-do-lines  → doLineRemaining,        lib/do-line-remaining.ts:292 (itemGroup) / :303 (variants)
+     · outstanding-so-items  → routes/mfg-purchase-orders.ts:694 (itemGroup) / :699 (variants)
+     · outstanding-po-items  → lib/outstanding-po-lines.ts:418 (variants)
+   The mobile wizard simply threw them away at the map. */
 type SoDeliverableLine = {
   soItemId: string; docNo: string; itemCode: string; description: string | null;
-  qty: number; remaining: number; unitPriceCenti: number; debtorName: string | null;
+  itemGroup: string | null; variants: unknown;
+  qty: number; remaining: number; unitPriceSen: number; debtorName: string | null;
 };
 type DoInvoiceableLine = {
   doItemId: string; doNumber: string; itemCode: string; description: string | null;
-  remaining: number; unitPriceCenti: number; debtorName: string | null;
+  itemGroup: string | null; variants: unknown;
+  remaining: number; unitPriceSen: number; debtorName: string | null;
 };
 // SO→PO — the OUTSTANDING axis (qty − po_qty_picked + sofa MRP rollup), from
 // /mfg-purchase-orders/outstanding-so-items (the SAME stock-aware shortage view
@@ -128,7 +155,8 @@ type DoInvoiceableLine = {
 // picked SO's doc_no client-side.
 type OutstandingSoLine = {
   soItemId: string; soDocNo: string; itemCode: string; description: string | null;
-  qty: number; poQtyPicked: number; remainingQty: number; unitPriceCenti: number;
+  itemGroup: string | null; variants: unknown;
+  qty: number; poQtyPicked: number; remainingQty: number; unitPriceSen: number;
 };
 // GRN — outstanding PO lines (qty − received_qty > 0) from
 // /grns/outstanding-po-items (the SAME source as the desktop GrnFromPo picker).
@@ -141,7 +169,7 @@ type OutstandingPoLine = {
   supplierSku: string | null;
   description: string | null; itemGroup: string | null; variants: unknown;
   deliveryDate: string | null; warehouseLocationId: string | null;
-  qty: number; receivedQty: number; remainingQty: number; unitPriceCenti: number;
+  qty: number; receivedQty: number; remainingQty: number; unitPriceSen: number;
 };
 
 // A GRN pick line in the local UI — the outstanding PO line + a per-line
@@ -151,7 +179,7 @@ type OutstandingPoLine = {
 type GrnPickLine = {
   poItemId: string; poId: string; supplierId: string;
   itemCode: string; supplierSku: string | null; description: string | null; itemGroup: string | null;
-  variants: unknown; unitPriceCenti: number;
+  variants: unknown; unitPriceSen: number;
   origQty: number;       // ordered qty
   remaining: number;     // outstanding (qty − received_qty)
   checked: boolean;
@@ -162,9 +190,18 @@ type GrnPickLine = {
 type PickLine = {
   lineId: string;        // soItemId | doItemId
   label: string;         // item code / description
+  /* Owner rule 2026-08-19 — "只要有 variants 的，你就应该要显示 variants".
+     A sofa model decomposes into modules that share a name, so `label` alone
+     renders three identical-looking rows and the operator cannot tell which one
+     he is converting. This is the SAME live buildVariantSummary string the
+     desktop pickers render through VariantDescription — computed at map time so
+     the row render stays pure. Empty ('') on a line with no variants, and the
+     row then omits the line entirely (mobile convention, see
+     MobileModuleDetail.tsx:491 — no "Standard" filler on a phone). */
+  variantLine: string;
   origQty: number;       // the source line's ordered qty (0 when the GET omits it)
   remaining: number;     // outstanding qty still convertible
-  unitPriceCenti: number;
+  unitPriceSen: number;
   checked: boolean;
   qty: string;           // as typed (the qty to convert this pass)
 };
@@ -314,9 +351,10 @@ export function MobileConvertWizard({
           .map<PickLine>((l) => ({
             lineId: l.soItemId,
             label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
+            variantLine: variantLineOf(l),
             origQty: Number(l.qty) || 0,
             remaining: Number(l.remainingQty) || 0,
-            unitPriceCenti: Number(l.unitPriceCenti) || 0,
+            unitPriceSen: Number(l.unitPriceSen) || 0,
             checked: true,
             qty: String(Number(l.remainingQty) || 0),
           }));
@@ -328,9 +366,10 @@ export function MobileConvertWizard({
         return (res.lines ?? []).map<PickLine>((l) => ({
           lineId: l.soItemId,
           label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
+          variantLine: variantLineOf(l),
           origQty: Number(l.qty) || 0,
           remaining: Number(l.remaining) || 0,
-          unitPriceCenti: Number(l.unitPriceCenti) || 0,
+          unitPriceSen: Number(l.unitPriceSen) || 0,
           checked: true,
           qty: String(Number(l.remaining) || 0),
         }));
@@ -344,9 +383,10 @@ export function MobileConvertWizard({
       return (res.lines ?? []).map<PickLine>((l) => ({
         lineId: l.doItemId,
         label: str(pick(l, "description")) || str(pick(l, "itemCode")) || "—",
+        variantLine: variantLineOf(l),
         origQty: Number(l.remaining) || 0,
         remaining: Number(l.remaining) || 0,
-        unitPriceCenti: Number(l.unitPriceCenti) || 0,
+        unitPriceSen: Number(l.unitPriceSen) || 0,
         checked: true,
         qty: String(Number(l.remaining) || 0),
       }));
@@ -366,8 +406,8 @@ export function MobileConvertWizard({
     () => lines.filter((l) => l.checked && clampQty(l.qty, l.remaining) >= 1),
     [lines],
   );
-  const pickedTotalCenti = useMemo(
-    () => picks.reduce((a, l) => a + l.unitPriceCenti * clampQty(l.qty, l.remaining), 0),
+  const pickedTotalSen = useMemo(
+    () => picks.reduce((a, l) => a + l.unitPriceSen * clampQty(l.qty, l.remaining), 0),
     [picks],
   );
 
@@ -382,9 +422,23 @@ export function MobileConvertWizard({
     enabled: target === "grn" && selectedPoIds.length > 0,
     queryKey: ["convert-grn-lines", [...selectedPoIds].sort().join(",")],
     queryFn: async () => {
-      const res = await authedFetch<{ items?: OutstandingPoLine[] }>(`/grns/outstanding-po-items`);
+      /* Scope the READ, not the result. This used to fetch the unscoped list and
+         filter by `selectedPoIds` here — and that list was capped at 500 raw PO
+         lines server-side, so a selected PO outside the window silently produced
+         zero lines (the owner's 2026-08-17 desktop screen, same endpoint, same
+         mechanism). The server now applies `?poId=` in SQL. The JS filter below
+         is kept as a belt-and-braces narrowing, not as the scope. */
+      const scoped = [...selectedPoIds].map((x) => str(x)).sort().join(',');
+      const res = await authedFetch<{ items?: OutstandingPoLine[]; scope?: OutstandingScope }>(
+        `/grns/outstanding-po-items?poId=${encodeURIComponent(scoped)}`,
+      );
       const set = new Set(selectedPoIds.map((x) => str(x)));
-      return (res.items ?? [])
+      /* `scope` is carried, not discarded. It is the WHY behind an empty list, and
+         mobile had the SAME defect the desktop screen was fixed for: it answered
+         "Nothing left to receive on the selected order(s)" — a claim about the
+         orders — from an absence of rows. One shared module now words both. */
+      const serverRows = res.items ?? [];
+      const lines = serverRows
         .filter((r) => set.has(str(r.poId)))
         .filter((r) => (Number(r.remainingQty) || 0) > 0)
         .map<GrnPickLine>((r) => ({
@@ -396,26 +450,42 @@ export function MobileConvertWizard({
           description: (pick(r, "description") as string | undefined) ?? null,
           itemGroup: (pick(r, "itemGroup") as string | undefined) ?? null,
           variants: r.variants ?? null,
-          unitPriceCenti: Number(r.unitPriceCenti) || 0,
+          unitPriceSen: Number(r.unitPriceSen) || 0,
           origQty: Number(r.qty) || 0,
           remaining: Number(r.remainingQty) || 0,
           checked: true,
           qty: String(Number(r.remainingQty) || 0),
         }));
+      return { lines, scope: res.scope ?? null, serverRowCount: serverRows.length };
     },
     staleTime: 15_000,
   });
   useEffect(() => {
-    if (grnLinesQuery.data) setGrnLines(grnLinesQuery.data);
+    if (grnLinesQuery.data) setGrnLines(grnLinesQuery.data.lines);
   }, [grnLinesQuery.data]);
+  /* The sentence for an empty list, from the same module the desktop picker uses.
+     There is no toolbar and no unsaved draft on this screen, and the JS narrowing
+     below is the same `?poId=` set the server already applied — so `scopedRowCount`
+     is the server count and `filtersActive` is false. Saying that here, rather
+     than passing a convenient boolean, is what keeps the two surfaces honest. */
+  const grnEmptyReason = outstandingEmptyReason({
+    isError: !!grnLinesQuery.error,
+    isLoading: grnLinesQuery.isLoading,
+    scope: grnLinesQuery.data?.scope ?? null,
+    serverRowCount: grnLinesQuery.data?.serverRowCount ?? 0,
+    scopedRowCount: grnLinesQuery.data?.serverRowCount ?? 0,
+    visibleRowCount: grnLines.length,
+    filtersActive: false,
+    poScopeActive: false,
+  });
   const setGrnLine = (id: string, patch: Partial<GrnPickLine>) =>
     setGrnLines((prev) => prev.map((l) => (l.poItemId === id ? { ...l, ...patch } : l)));
   const grnPicks = useMemo(
     () => grnLines.filter((l) => l.checked && clampQty(l.qty, l.remaining) >= 1),
     [grnLines],
   );
-  const grnPickedTotalCenti = useMemo(
-    () => grnPicks.reduce((a, l) => a + l.unitPriceCenti * clampQty(l.qty, l.remaining), 0),
+  const grnPickedTotalSen = useMemo(
+    () => grnPicks.reduce((a, l) => a + l.unitPriceSen * clampQty(l.qty, l.remaining), 0),
     [grnPicks],
   );
 
@@ -485,12 +555,12 @@ export function MobileConvertWizard({
             return {
               purchaseOrderItemId: l.poItemId,
               materialKind: "mfg_product",
-              materialCode: l.itemCode,
+              itemCode: l.itemCode,
               materialName: l.description || l.itemCode,
               qtyReceived: q,
               qtyAccepted: q,
               qtyRejected: 0,
-              unitPriceCenti: l.unitPriceCenti,
+              unitPriceSen: l.unitPriceSen,
               itemGroup: l.itemGroup,
               variants: l.variants,
             };
@@ -560,13 +630,13 @@ export function MobileConvertWizard({
           <span style={{ fontSize: 11, color: "#767b6e" }}>Step {step} of 2 · {stepLabel}</span>
         </div>
         <div className="ey" style={{ color: "#a16a2e", marginTop: 6 }}>{meta.eyebrow}</div>
-        <div className="scr-title" style={{ marginTop: 2 }}>{meta.convertTitle}</div>
+        <div className="scr-title" style={{ marginTop: 2 }}>{meta.transferTitle}</div>
         <div className="tnum" style={{ fontSize: 11.5, color: "#767b6e", marginTop: 3 }}>
           {/* Spec sub-line: "From {{source_doc_no}}" once a source is chosen;
-              before that, the invitation to pick one. */}
-          {sourceLabel
-            ? `From ${sourceLabel}`
-            : `Convert from ${meta.source === "po" ? "one or more Purchase Orders" : `a ${meta.sourceNoun}`}`}
+              before that, the invitation to pick one. The invitation is SINGULAR
+              even where the picker takes several sources — it names the source
+              document TYPE, not the count (owner rule, 2026-08-17). */}
+          {sourceLabel ? `From ${sourceLabel}` : meta.fromTitle}
         </div>
         {/* Step-progress bar (spec markup): filled brand segments up to the current step. */}
         <div style={{ display: "flex", gap: 5, marginTop: 11 }}>
@@ -640,6 +710,7 @@ export function MobileConvertWizard({
             loading={grnLinesQuery.isLoading}
             error={!!grnLinesQuery.error}
             lines={grnLines}
+            emptyReason={grnEmptyReason}
             deliveryNoteRef={deliveryNoteRef}
             notes={notes}
             onSetLine={setGrnLine}
@@ -657,12 +728,12 @@ export function MobileConvertWizard({
             {meta.hasLinePicker ? (
               <>
                 <span style={{ fontSize: 11.5, color: "#767b6e" }}>{picks.length} {picks.length === 1 ? "line" : "lines"}</span>
-                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtCenti(pickedTotalCenti)}</span>
+                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(pickedTotalSen)}</span>
               </>
             ) : (
               <>
                 <span style={{ fontSize: 11.5, color: "#767b6e" }}>{grnPicks.length} {grnPicks.length === 1 ? "line" : "lines"}</span>
-                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtCenti(grnPickedTotalCenti)}</span>
+                <span className="money" style={{ fontSize: 17, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(grnPickedTotalSen)}</span>
               </>
             )}
           </div>
@@ -723,7 +794,7 @@ function SourceStep({
                 <span className="so-k">Date</span>
                 <span className="so-v">{dm(r.po_date)}</span>
                 <span className="so-k">Total</span>
-                <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtCenti(r.total_centi)}</span>
+                <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtSen(r.total_sen)}</span>
               </div>
               {on && <Check />}
             </div>
@@ -741,8 +812,8 @@ function SourceStep({
         const docNo = kind === "so" ? str(r.doc_no) : str(r.do_number);
         const date = kind === "so" ? r.so_date : r.do_date;
         const totalC = kind === "so"
-          ? (r.local_total_centi ?? r.total_revenue_centi)
-          : r.local_total_centi;
+          ? (r.local_total_sen ?? r.total_revenue_sen)
+          : r.local_total_sen;
         return (
           <div key={id} onClick={() => onPickSingle(id)} className="so-row">
             <div className="so-row-head">
@@ -759,7 +830,7 @@ function SourceStep({
               <span className="so-k">Date</span>
               <span className="so-v">{dm(date)}</span>
               <span className="so-k">Total</span>
-              <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtCenti(totalC)}</span>
+              <span className="so-v money" style={{ fontSize: 14, fontWeight: 800, color: "#11140f" }}>{fmtSen(totalC)}</span>
             </div>
           </div>
         );
@@ -784,10 +855,22 @@ function LinesStep({
 
   const noun = target === "si" ? "invoice" : target === "po" ? "purchase" : "deliver";
   if (!lines.length) {
+    /* The GRN arm below was given a counted, per-document reason (#2372). THIS
+       arm — SI, PO and DO — was left saying "Nothing left to {noun} on this
+       document", which is the same claim from the same absence: the read is
+       company-scoped and scopeToCompany fails closed, so [] arrives with
+       error: null whether the work is done or the company could not be
+       resolved. Until this arm carries a line count of its own it has no
+       standing for a verdict, so it reports the read and points at the
+       document's own balance. */
     return (
       <>
         <ChangeSource onClick={onChangeSource} />
-        <Muted>Nothing left to {noun} on this document.</Muted>
+        <Muted>
+          No lines are showing to {noun} on this document. That is not the same as there
+          being nothing left — this list only covers the company you are working in. Open
+          the document and check its balance.
+        </Muted>
       </>
     );
   }
@@ -812,9 +895,16 @@ function LinesStep({
                 />
                 <span style={{ minWidth: 0, flex: 1 }}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.label}</span>
+                  {/* Owner rule 2026-08-19 — the variant summary, so three sofa
+                      modules under one model name are three DIFFERENT rows on
+                      the phone too. Wraps (no ellipsis): a truncated
+                      "BF-01 / SEAT 24 / LEG …" is the same ambiguity again. */}
+                  {l.variantLine && (
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}>{l.variantLine}</span>
+                  )}
                   {/* Spec #convert meta: "Outstanding ×{outstanding} of {qty}". */}
                   <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>
-                    Outstanding ×{l.remaining} of {ofQty} · {fmtCenti(l.unitPriceCenti)} each
+                    Outstanding ×{l.remaining} of {ofQty} · {fmtSen(l.unitPriceSen)} each
                   </span>
                 </span>
               </label>
@@ -850,7 +940,7 @@ function LinesStep({
                       +
                     </button>
                   </div>
-                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtCenti(l.unitPriceCenti * qtyNum)}</span>
+                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(l.unitPriceSen * qtyNum)}</span>
                 </div>
               )}
             </div>
@@ -868,11 +958,14 @@ function LinesStep({
 // creates a DRAFT — nothing moves stock until they post the receipt. Mirrors the
 // desktop GrnFromPo Pick-Qty picker (GrnFromPo.tsx:376-398) + the New-GRN form.
 function GrnLinesStep({
-  loading, error, lines, deliveryNoteRef, notes, onSetLine, onRef, onNotes, onChangeSource,
+  loading, error, lines, emptyReason, deliveryNoteRef, notes, onSetLine, onRef, onNotes, onChangeSource,
 }: {
   loading: boolean;
   error: boolean;
   lines: GrnPickLine[];
+  /** Why the list is empty, from `lib/outstandingEmptyReason` — the same module
+   *  the desktop picker uses. Null only when there is nothing to explain. */
+  emptyReason: string | null;
   deliveryNoteRef: string;
   notes: string;
   onSetLine: (id: string, patch: Partial<GrnPickLine>) => void;
@@ -883,10 +976,15 @@ function GrnLinesStep({
   if (loading) return <><ChangeSource onClick={onChangeSource} label="Change selection" /><Muted>Loading lines…</Muted></>;
   if (error) return <><ChangeSource onClick={onChangeSource} label="Change selection" /><Muted danger>Couldn't load the receivable lines. Please try again.</Muted></>;
   if (!lines.length) {
+    /* "Nothing left to receive on the selected order(s)" used to be hard-coded
+       here — a completion claim made from an absence of rows, on a read that is
+       company-scoped and FAILS CLOSED. The shared module only says the work is
+       finished when the server counted the order's lines and found none
+       outstanding; every other absence gets its own true sentence. */
     return (
       <>
         <ChangeSource onClick={onChangeSource} label="Change selection" />
-        <Muted>Nothing left to receive on the selected order(s).</Muted>
+        <Muted>{emptyReason ?? 'No receivable lines are showing for the selected order(s).'}</Muted>
       </>
     );
   }
@@ -903,6 +1001,7 @@ function GrnLinesStep({
           const ofQty = l.origQty > 0 ? l.origQty : l.remaining;
           const dec = () => onSetLine(l.poItemId, { qty: String(Math.max(1, qtyNum - 1)) });
           const inc = () => onSetLine(l.poItemId, { qty: String(clampQty(String(qtyNum + 1), l.remaining)) });
+          const variantLine = variantLineOf(l);
           return (
             <div key={l.poItemId} className="card" style={{ padding: "11px 12px", borderColor: l.checked ? "var(--teal)" : undefined }}>
               <label style={{ display: "flex", alignItems: "flex-start", gap: 10, cursor: "pointer" }}>
@@ -914,13 +1013,21 @@ function GrnLinesStep({
                 />
                 <span style={{ minWidth: 0, flex: 1 }}>
                   <span style={{ display: "block", fontSize: 13, fontWeight: 700, color: "#11140f", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{l.description || l.itemCode}</span>
+                  {/* Owner rule 2026-08-19 — RECEIVING is where getting the
+                      module wrong costs the most: the stock lands under a code
+                      whose variants nobody checked. GrnPickLine already carried
+                      itemGroup + variants (they are needed to CREATE the GRN
+                      line); only the render was missing them. */}
+                  {variantLine && (
+                    <span style={{ display: "block", marginTop: 2, fontSize: 11, color: "#767b6e" }}>{variantLine}</span>
+                  )}
                   {l.supplierSku && (
                     <span style={{ display: "block", marginTop: 2, fontSize: 11, fontWeight: 600, color: "#767b6e", fontFamily: "var(--font-mono, monospace)", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                       Supplier SKU: {l.supplierSku}
                     </span>
                   )}
                   <span className="tnum" style={{ display: "block", marginTop: 3, fontSize: 11, color: "#767b6e" }}>
-                    Outstanding ×{l.remaining} of {ofQty} · {fmtCenti(l.unitPriceCenti)} each
+                    Outstanding ×{l.remaining} of {ofQty} · {fmtSen(l.unitPriceSen)} each
                   </span>
                 </span>
               </label>
@@ -955,7 +1062,7 @@ function GrnLinesStep({
                       +
                     </button>
                   </div>
-                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtCenti(l.unitPriceCenti * qtyNum)}</span>
+                  <span className="tnum" style={{ fontSize: 13, fontWeight: 800, color: "#0c3f39" }}>{fmtSen(l.unitPriceSen * qtyNum)}</span>
                 </div>
               )}
             </div>
@@ -1010,8 +1117,13 @@ function humanize(msg: string): string {
     qty_exceeds_remaining: "One of the quantities is more than what's left to convert. Refresh and try again.",
     over_remaining: "One of the quantities is more than what's left to convert. Refresh and try again.",
     race_conflict: "Another operator just converted overlapping quantity. Refresh and try again.",
-    nothing_to_invoice: "This Goods Receipt is already fully invoiced.",
-    nothing_to_return: "This Goods Receipt is already fully returned.",
+    /* These three mirror the server's refusal messages, and they carried the
+       same claim it did: a 400 raised because a READ came back empty is not
+       evidence that the document is finished. Kept in step with grns.ts /
+       purchase-invoices.ts / purchase-returns.ts — if they drift, the same
+       document says two different things on two screens. */
+    nothing_to_invoice: "No billable lines came back for this Goods Receipt. Open it and check its invoiced balance before treating it as billed in full.",
+    nothing_to_return: "No returnable lines came back for this Goods Receipt. Open it and check its returned balance before treating it as returned in full.",
     /* migration 0280 — the zero-cost receipt gate. The per-line "Received free"
        tick lives on the desktop receipt screen, so this says where to go rather
        than leaving the operator at a code they cannot act on. */
@@ -1021,7 +1133,7 @@ function humanize(msg: string): string {
     grn_id_required: "Select a Goods Receipt first.",
     warehouse_required: "These Purchase Orders don't share one receive-into warehouse. Fix the PO line warehouses, or receive them per warehouse on the desktop.",
     po_not_receivable: "One of the selected Purchase Orders is no longer open for receipt. Refresh and try again.",
-    nothing_outstanding: "All selected Purchase Order lines are already fully received.",
+    nothing_outstanding: "No outstanding lines came back for the selected Purchase Order(s). Open the order and check its received balance before treating it as received in full.",
     supplier_required: "The selected lines are missing a supplier. Refresh and try again.",
     items_required: "Select at least one line to receive.",
     do_item_not_found: "One of the lines no longer exists. Refresh and try again.",

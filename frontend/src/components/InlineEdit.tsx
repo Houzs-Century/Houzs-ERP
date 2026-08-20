@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Check, X } from "lucide-react";
 import { cn } from "../lib/utils";
+import { DateField } from "../vendor/scm/components/DateField";
 
 type Status = "idle" | "saving" | "ok" | "error";
 
@@ -96,6 +97,23 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
           onBlur={() => commit()}
         />
       ) : (
+        type === "date" ? (
+          // Dates carry an explicit Save button (Nico 2026-08-20): blur/picker
+          // auto-commit stays, but the button makes saving visible — and is the
+          // retry handle when a commit fails. Shown only while draft ≠ saved.
+          <div className="flex items-center gap-2">
+            <DateField className={inputClass} value={draft} placeholder={placeholder} onChange={setDraft} onBlur={() => commit()} fullWidth/>
+            {draft !== (value == null ? "" : String(value)) && status !== "saving" && (
+              <button
+                type="button"
+                onClick={() => commit()}
+                className="shrink-0 rounded-md bg-primary px-3 py-2 text-[12px] font-semibold text-white transition-colors hover:bg-primary/90"
+              >
+                Save
+              </button>
+            )}
+          </div>
+        ) : (
         <input
           type={type}
           className={inputClass}
@@ -104,6 +122,7 @@ export function InlineEdit({ label, value, type = "text", onSave, placeholder, t
           onChange={(e) => setDraft(e.target.value)}
           onBlur={() => commit()}
         />
+        )
       )}
       {error && <div className="mt-1 text-[11px] text-err">{error}</div>}
     </div>

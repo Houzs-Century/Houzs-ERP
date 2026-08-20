@@ -30,6 +30,7 @@ import { Upload, X, AlertTriangle, CheckCircle2, Info } from "lucide-react";
 import { Button } from "./Button";
 import { api } from "../api/client";
 import { cn } from "../lib/utils";
+import { DateField } from "../vendor/scm/components/DateField";
 
 const FIELD = "w-full rounded-md border border-border bg-surface px-2.5 py-1.5 text-[12px] text-ink focus:border-primary focus:outline-none";
 const LABEL = "mb-1 block text-[10px] font-semibold uppercase tracking-brand text-ink-muted";
@@ -43,10 +44,10 @@ type ExtractedLine = {
   partNo: string | null;
   uom: string | null;
   qty: number | null;
-  unitPriceCenti: number | null;
+  unitPriceSen: number | null;
   discountPct: number | null;
-  amountCenti: number | null;
-  lineCenti: number;
+  amountSen: number | null;
+  lineSen: number;
 };
 
 type ExtractResponse = {
@@ -64,7 +65,7 @@ type ExtractResponse = {
     confidence: number | null;
     warnings: string[];
   };
-  totals: { linesCenti: number; printedTotalCenti: number | null; reconciles: boolean | null; deltaCenti: number | null };
+  totals: { linesSen: number; printedTotalSen: number | null; reconciles: boolean | null; deltaSen: number | null };
   lines: ExtractedLine[];
 };
 
@@ -81,21 +82,21 @@ export type RowState = ExtractedLine & { drop: boolean };
 /** Editing qty / unit price / discount CLEARS the printed amount.
  *
  *  The printed figure wins by default because the vendor's rounding is theirs
- *  (see workOrderLineCenti, services/fleet-status.ts). But the moment the
+ *  (see workOrderLineSen, services/fleet-status.ts). But the moment the
  *  operator corrects one of ITS INPUTS they are overriding the document, and
  *  keeping the old printed total would freeze the line at a number they just
  *  disagreed with — correct a misread RM5,600 to RM6,500 and nothing moves.
  *
  *  Dropping / renaming / re-sectioning a line does NOT override it: none of
  *  those change what the line costs. */
-const OVERRIDES_PRINTED: ReadonlyArray<keyof RowState> = ["qty", "unitPriceCenti", "discountPct"];
+const OVERRIDES_PRINTED: ReadonlyArray<keyof RowState> = ["qty", "unitPriceSen", "discountPct"];
 
 export function applyRowEdit(row: RowState, patch: Partial<RowState>): RowState {
   const overrides = OVERRIDES_PRINTED.some((k) => k in patch);
-  const next: RowState = { ...row, ...patch, ...(overrides ? { amountCenti: null } : {}) };
-  next.lineCenti = next.amountCenti != null
-    ? Math.max(0, Math.round(next.amountCenti))
-    : Math.max(0, Math.round((next.qty ?? 0) * (next.unitPriceCenti ?? 0) * (1 - (next.discountPct ?? 0) / 100)));
+  const next: RowState = { ...row, ...patch, ...(overrides ? { amountSen: null } : {}) };
+  next.lineSen = next.amountSen != null
+    ? Math.max(0, Math.round(next.amountSen))
+    : Math.max(0, Math.round((next.qty ?? 0) * (next.unitPriceSen ?? 0) * (1 - (next.discountPct ?? 0) / 100)));
   return next;
 }
 
@@ -143,8 +144,8 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
 
   const blankRow = (section: "PART" | "LABOUR"): RowState => ({
     section, lineNo: null, name: "", partNo: null, uom: null,
-    qty: 1, unitPriceCenti: null, discountPct: null, amountCenti: null,
-    lineCenti: 0, drop: false,
+    qty: 1, unitPriceSen: null, discountPct: null, amountSen: null,
+    lineSen: 0, drop: false,
   });
 
   const startManual = () => {
@@ -193,8 +194,8 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
   };
 
   const kept = rows.filter((r) => !r.drop);
-  const keptTotal = kept.reduce((s, r) => s + r.lineCenti, 0);
-  const printed = res?.totals.printedTotalCenti ?? null;
+  const keptTotal = kept.reduce((s, r) => s + r.lineSen, 0);
+  const printed = res?.totals.printedTotalSen ?? null;
 
   /* Recomputed from the CURRENT rows, not the response — the operator may have
      dropped or edited a line, and a banner that still describes the original
@@ -252,7 +253,7 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
         documentDate: docDate || undefined,
         /* labour rides the LINES, so the header scalar must stay 0 or the
            total counts it twice (the route 409s if it is not). */
-        labourCenti: 0,
+        labourSen: 0,
       });
       /* Sequential on purpose: the LABOUR guard reads the header, and the
          error that matters ("line 7 was rejected") is unreadable if six
@@ -265,9 +266,9 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
           partNo: r.partNo ?? undefined,
           uom: r.uom ?? undefined,
           qty: r.qty ?? 1,
-          unitPriceCenti: r.unitPriceCenti ?? 0,
+          unitPriceSen: r.unitPriceSen ?? 0,
           discountPct: r.discountPct ?? 0,
-          amountCenti: r.amountCenti ?? undefined,
+          amountSen: r.amountSen ?? undefined,
         });
       }
       onDone();
@@ -414,7 +415,7 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
         </div>
         <div>
           <label className={LABEL}>Document date</label>
-          <input type="date" className={FIELD} value={docDate} onChange={(e) => setDocDate(e.target.value)} />
+          <DateField fullWidth className={FIELD} value={docDate} onChange={(iso) => setDocDate(iso)}/>
         </div>
         <div>
           <label className={LABEL}>Advisor</label>
@@ -476,15 +477,15 @@ export function RepairDocumentImport({ vehicleId, plate, onDone, onCancel }: {
                     </td>
                     <td className="px-2 py-1">
                       <input type="number" step="0.01" className={cn(FIELD, "w-[96px] text-right")}
-                        value={r.unitPriceCenti == null ? "" : r.unitPriceCenti / 100}
-                        onChange={(e) => setRow(i, { unitPriceCenti: e.target.value === "" ? null : Math.round(Number(e.target.value) * 100) })} />
+                        value={r.unitPriceSen == null ? "" : r.unitPriceSen / 100}
+                        onChange={(e) => setRow(i, { unitPriceSen: e.target.value === "" ? null : Math.round(Number(e.target.value) * 100) })} />
                     </td>
                     <td className="px-2 py-1">
                       <input type="number" step="0.01" min="0" max="100" className={cn(FIELD, "w-[72px] text-right")}
                         value={r.discountPct ?? ""}
                         onChange={(e) => setRow(i, { discountPct: e.target.value === "" ? null : Number(e.target.value) })} />
                     </td>
-                    <td className="px-2 py-1 text-right font-medium tabular-nums text-ink">{money(r.lineCenti)}</td>
+                    <td className="px-2 py-1 text-right font-medium tabular-nums text-ink">{money(r.lineSen)}</td>
                   </tr>
                 ))}
               </tbody>

@@ -1,12 +1,12 @@
 // ----------------------------------------------------------------------------
-// StockCard — per-SKU drilldown at /inventory/stock-card/:productCode
+// StockCard — per-SKU drilldown at /inventory/stock-card/:itemCode
 // (Inv PR2). Optional ?warehouseId=… scopes the ledger + lots to one
 // warehouse; otherwise we sum across all warehouses.
 //
 // Read-only — no new tables, no new API endpoints. Reuses:
-//   useInventoryMovements({ productCode, warehouseId? })
-//   useInventoryLots(productCode, { warehouseId?, includeClosed? })
-//   useInventoryProductBreakdown(productCode) — per-warehouse balances
+//   useInventoryMovements({ itemCode, warehouseId? })
+//   useInventoryLots(itemCode, { warehouseId?, includeClosed? })
+//   useInventoryProductBreakdown(itemCode) — per-warehouse balances
 //
 // Layout (full page, PurchaseOrderDetail chrome):
 //   1. Header + back link
@@ -30,30 +30,14 @@ import {
   type InventoryMovement,
   type InventoryLot,
 } from '../../vendor/scm/lib/inventory-queries';
-import { adjustmentReasonLabel, fmtCenti, fmtDate as fmtDateShared, fmtQty } from '@2990s/shared';
+import { adjustmentReasonLabel, fmtSen, fmtDate, fmtDateTime, fmtQty } from '@2990s/shared';
 import { DataTable, type Column } from '../../components/DataTable';
 import styles from './Inventory.module.css';
 import chrome from './SalesOrderDetail.module.css';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (sen: number | null | undefined): string => fmtCenti(sen);
-
-const fmtDateTime = (iso: string | null | undefined): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  const date = fmtDateShared(d);
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} ${time}`;
-};
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  return fmtDateShared(d);
-};
+const fmtRm = (sen: number | null | undefined): string => fmtSen(sen);
 
 /** Best-effort route for a source doc on the ledger row. Inventory writes
  *  carry source_doc_id (the UUID of the originating GRN/DO/etc) — when
@@ -73,25 +57,25 @@ const docHrefFor = (m: InventoryMovement): string | null => {
 };
 
 export const StockCard = () => {
-  const { productCode = '' } = useParams<{ productCode: string }>();
+  const { itemCode = '' } = useParams<{ itemCode: string }>();
   const [searchParams, setSearchParams] = useSearchParams();
   const warehouseId = searchParams.get('warehouseId') || undefined;
   const [includeClosed, setIncludeClosed] = useState(false);
   const [lotsOpen, setLotsOpen] = useState(true);
 
   const warehousesQ = useWarehouses();
-  const breakdownQ = useInventoryProductBreakdown(productCode || null);
+  const breakdownQ = useInventoryProductBreakdown(itemCode || null);
   const movementsQ = useInventoryMovements({
-    productCode: productCode || undefined,
+    itemCode: itemCode || undefined,
     warehouseId,
   });
-  const lotsQ = useInventoryLots(productCode || null, {
+  const lotsQ = useInventoryLots(itemCode || null, {
     warehouseId,
     includeClosed,
   });
 
   const warehouses = warehousesQ.data ?? [];
-  const breakdownAll = (breakdownQ.data?.balances ?? []).filter((b) => b.product_code === productCode);
+  const breakdownAll = (breakdownQ.data?.balances ?? []).filter((b) => b.item_code === itemCode);
   // When filtered, only show the matching warehouse row in the summary stats.
   const breakdown = warehouseId
     ? breakdownAll.filter((b) => b.warehouse_id === warehouseId)
@@ -290,7 +274,7 @@ export const StockCard = () => {
           <div>
             <h1 className={chrome.title}>
               <Boxes size={20} strokeWidth={1.75} style={{ color: 'var(--c-burnt)' }} />
-              Stock Card · <span className={styles.codeChip} style={{ fontSize: 'var(--fs-18)' }}>{productCode}</span>
+              Stock Card · <span className={styles.codeChip} style={{ fontSize: 'var(--fs-18)' }}>{itemCode}</span>
             </h1>
             <p className={chrome.subtitle}>
               {productName ?? 'No movements yet for this SKU.'}

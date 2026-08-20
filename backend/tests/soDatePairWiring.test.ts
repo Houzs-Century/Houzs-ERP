@@ -60,7 +60,13 @@ describe('every SO / CO write path that touches a date calls the shared predicat
   });
 
   test('SO /status proceed — the path that writes the date without a header patch', () => {
-    expect(between(SO, "if (toStatus === 'IN_PRODUCTION')", 'patch.proceeded_at'))
+    /* The closing anchor is the DATE WRITE this pair rule guards. It used to be
+       `patch.proceeded_at`, the Proceed stamp that followed it — which stopped
+       existing on 2026-08-18 when the Processing Date was collapsed to one
+       storage. Anchoring on the write itself is what the test meant all along:
+       the refusal has to come BEFORE the date lands, not merely before some
+       neighbouring statement that happened to sit underneath it. */
+    expect(between(SO, "if (toStatus === 'IN_PRODUCTION')", 'patch[SO_PROCESSING_DATE_COLUMN] = resolved.date'))
       .toContain('soDatePairRefusal');
   });
 
@@ -123,7 +129,7 @@ describe('repair scripts are write paths too', () => {
    rule, with nothing anywhere saying so. */
 describe('the Processing Date is read out of a request body through the helper', () => {
   test('create auto-proceed', () => {
-    expect(between(SO, 'const procDateOnCreate =', 'const depositTotalCenti'))
+    expect(between(SO, 'const procDateOnCreate =', 'const depositTotalSen'))
       .toContain('readSoProcessingDateFromBody');
   });
 

@@ -66,9 +66,11 @@ declare module "hono" {
     companyId?: number;
     /** Active company code ('HOUZS' | '2990'). */
     companyCode?: string;
-    /** Companies this caller may see/act in. Phase 0e: the user's granted set
-     *  from `user_companies` when they have >=1 grant, else ALL active
-     *  companies (fail-open). Pre-activation this is left unset. */
+    /** Companies this caller may see/act in. Phase 0e, multi-company active:
+     *  the user's granted set from `user_companies` when they have >=1 grant;
+     *  `[]` (fail-CLOSED, §6.1) when a resolved user has ZERO grants; ALL
+     *  active companies only on a grant-read error (never lock out on a blip).
+     *  Single-company / pre-activation this is left unset. */
     allowedCompanyIds?: number[];
     /** All active companies — lets cross-company views map company_id -> code
      *  without a second round-trip. */
@@ -191,15 +193,26 @@ export const companyContext = createMiddleware<{ Bindings: Env }>(async (c, next
         );
         if (Number.isFinite(uid) && uid > 0) {
           const granted = await queryUserGrants(c.env, uid);
-          // FAIL OPEN: restrict ONLY when the user actually HAS >=1 grant row.
-          // No rows (or the table is absent — caught below) falls back to ALL
-          // active companies, so a user is never locked out by the mere
-          // presence of the feature.
           if (granted.length > 0) {
             const grantSet = new Set(granted);
             allowed = companies
               .filter((co) => grantSet.has(co.id))
               .map((co) => co.id);
+          } else {
+            // FAIL CLOSED (owner decision, docs/TENANT-ISOLATION-ROOT-FIX.md
+            // §6.1): multi-company is ACTIVE and this RESOLVED user holds ZERO
+            // `user_companies` grant rows — restrict them to NOTHING, never to
+            // every company. `[]` is the RESTRICTED-TO-NOTHING sentinel the
+            // scoping helpers already read (isRestrictedToNoCompany / the `1=0`
+            // / empty-`.in` MATCH_NOTHING paths in scm/lib/companyScope.ts), so
+            // a zero-grant user sees no company rather than all of them. This
+            // only fires on a CONFIRMED empty grant read: a DB error / absent
+            // table throws to the catch below and keeps the ALL-companies
+            // default (a transient blip must not lock everyone out), and an
+            // unresolvable uid skips this block entirely. Safe today because a
+            // live audit found 0 users with zero grants, so nobody is locked
+            // out — it is a safety default for the future.
+            allowed = [];
           }
         }
       } catch {

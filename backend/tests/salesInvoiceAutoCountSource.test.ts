@@ -123,7 +123,7 @@ const doHeader = (id: string, number: string): Row => ({
 const doLine = (id: string, doId: string, code: string): Row => ({
   id, delivery_order_id: doId, company_id: CO_A, item_code: code, item_group: null,
   description: null, description2: null, uom: 'UNIT', qty: 5,
-  unit_price_centi: 1000, unit_cost_centi: 500, discount_centi: 0, variants: null,
+  unit_price_sen: 1000, unit_cost_sen: 500, discount_sen: 0, variants: null,
   line_no: 0, linked_ac_dtlkey: Number(id.replace(/\D/g, '') || 1) + 1000,
 });
 
@@ -146,7 +146,7 @@ const baseTables = (): Record<string, Row[]> => ({
 });
 
 const line = (code: string, doItemId: string | null): Row => ({
-  itemCode: code, qty: 1, unitPriceCenti: 1000, unitCostCenti: 500, uom: 'UNIT',
+  itemCode: code, qty: 1, unitPriceSen: 1000, unitCostSen: 500, uom: 'UNIT',
   ...(doItemId ? { doItemId } : {}),
 });
 
@@ -182,7 +182,14 @@ describe('an invoice raised FROM a delivery order is enqueued, not recorded pare
        last_error "created with no source Delivery Order, so there is no source
        document to transfer from." */
     expect(row.status).toBe('pending');
-    expect(row.last_error).toBeNull();
+    /* NOT `toBeNull()` any more, and the reason is a real change rather than a
+       loosened test. Since 2026-08-20 a QUEUED conversion writes a note here
+       naming the header fields the ERP has no value for — the fixture invoice
+       carries no ref, phone or note — so `last_error` on a pending row no
+       longer means "something went wrong". What this test is actually about is
+       that the invoice was NOT filed as parentless, so it asks that: the row is
+       pending, and its reason is not the parentless sentence. */
+    expect(row.last_error ?? '').not.toContain('no source document to transfer from');
     expect(row.doc_type).toBe('IV');
     expect(row.payload.fromDoc).toEqual({ table: 'delivery_orders', keyCol: 'id', key: 'do-a' });
     expect(row.payload.writeback.table).toBe('sales_invoices');
@@ -208,7 +215,7 @@ describe('an invoice raised FROM a delivery order is enqueued, not recorded pare
   });
 });
 
-describe('the claim is CHECKED — the three shapes that genuinely cannot transfer', () => {
+describe('the claim is CHECKED — the two shapes that genuinely cannot transfer', () => {
   test('no source at all is still recorded parentless, with the same words', async () => {
     const t = baseTables();
     await create(harness(t).app, { items: [line('ADHOC', null)] });
@@ -218,16 +225,27 @@ describe('the claim is CHECKED — the three shapes that genuinely cannot transf
     expect(classifyAcSkip(row.last_error).kind).toBe('no-source-document');
   });
 
-  test('lines from SEVERAL delivery orders are recorded as a merged conversion', async () => {
+  test('lines from SEVERAL delivery orders are SENT, naming every source', async () => {
+    /* This used to assert `skipped` with "AutoCount transfers from ONE source
+       document". That sentence was true of AddPartialTransferDetail's key array
+       and never of the target: the service takes `FromDocNos`, FullTransfers the
+       array, and groups named keys per source document. An invoice covering two
+       delivery orders is a daily shape here, so refusing it left real revenue
+       out of the account book with only an outbox row to find it by.
+
+       WHAT WOULD MAKE THIS SILENTLY WRONG is taking `[...doIds][0]` — an invoice
+       in the book billing one delivery out of two — so the assertion is on the
+       COUNT and on both refs, not merely on the status. */
     const t = baseTables();
     await create(harness(t).app, { items: [line('M1', 'doi-a'), line('M2', 'doi-b')] });
     const row = outboxFor(t)[0]!;
-    expect(row.status).toBe('skipped');
-    expect(row.last_error).toContain('HC-DO-2608-001, HC-DO-2608-002');
-    /* Verbatim the phrase /from-dos writes — it is the needle that classifies a
-       merged conversion, and a reworded twin lands on the owner's page as
-       `unrecognised` with no remedy. */
-    expect(classifyAcSkip(row.last_error).kind).toBe('no-autocount-shape');
+    expect(row.op).toBe('do_to_iv');
+    expect(row.status).toBe('pending');
+    const refs = (row.payload as { fromDocs?: Array<{ key: string }> }).fromDocs ?? [];
+    expect(refs.map((r) => r.key).sort()).toEqual(['do-a', 'do-b']);
+    /* And NOT the single-source field, which the drain would read instead and
+       which would carry exactly one of the two. */
+    expect((row.payload as { fromDoc?: unknown }).fromDoc).toBeUndefined();
   });
 
   test('a linked line beside a standalone line is refused, and says which line', async () => {

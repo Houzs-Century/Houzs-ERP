@@ -143,7 +143,7 @@ async function main() {
            d.status::text        AS do_status,
            ${dropshipSel}        AS is_dropship,
            m.warehouse_id::text  AS warehouse_id,
-           m.product_code        AS product_code,
+           m.item_code        AS item_code,
            COALESCE(m.variant_key,'') AS variant_key,
            ${companySel},
            m.qty                 AS shipped_qty,
@@ -179,7 +179,7 @@ async function main() {
     notice(`  sample of SHORT-COSTED (up to ${SAMPLE}, oldest first):`);
     notice(`    ${pad("DO", 16)} ${pad("status", 11)} ${pad("dropship", 9)} ${pad("product", 20)} ${pad("shipped", 8)} ${pad("costed", 7)} ${pad("uncosted", 9)} ${pad("cost", 12)} created`);
     for (const r of shortCosted.slice(0, SAMPLE)) {
-      notice(`    ${pad(r.do_no ?? "-", 16)} ${pad(r.do_status ?? "-", 11)} ${pad(r.is_dropship ? "yes" : "no", 9)} ${pad(r.product_code ?? "-", 20)} ${pad(r.shipped_qty, 8)} ${pad(r.costed_qty, 7)} ${pad(r.uncosted_qty, 9)} ${pad(rm(r.total_cost_sen), 12)} ${dateOnly(r.created_at) ?? "-"}`);
+      notice(`    ${pad(r.do_no ?? "-", 16)} ${pad(r.do_status ?? "-", 11)} ${pad(r.is_dropship ? "yes" : "no", 9)} ${pad(r.item_code ?? "-", 20)} ${pad(r.shipped_qty, 8)} ${pad(r.costed_qty, 7)} ${pad(r.uncosted_qty, 9)} ${pad(rm(r.total_cost_sen), 12)} ${dateOnly(r.created_at) ?? "-"}`);
     }
     if (shortCosted.length > SAMPLE) notice(`    ... and ${shortCosted.length - SAMPLE} more.`);
     notice("");
@@ -209,30 +209,30 @@ async function main() {
   }
 
   // Distinct buckets to look up cover for.
-  const bucketKey = (r) => `${r.warehouse_id}::${r.product_code}::${r.variant_key}::${hasCompany ? r.company_id ?? "" : ""}`;
+  const bucketKey = (r) => `${r.warehouse_id}::${r.item_code}::${r.variant_key}::${hasCompany ? r.company_id ?? "" : ""}`;
   const buckets = new Map();
   for (const r of scope) if (!buckets.has(bucketKey(r))) buckets.set(bucketKey(r), r);
-  const productCodes = [...new Set(scope.map((r) => r.product_code).filter(Boolean).map(String))];
+  const itemCodes = [...new Set(scope.map((r) => r.item_code).filter(Boolean).map(String))];
 
   // Pull open lots for those products (chunked IN, positional params — values
   // bound, never inlined), then match buckets in JS on the full key.
   const lotCompanySel = (await colsOf(lotSchema, "inventory_lots")).has("company_id") ? "company_id" : "NULL::int AS company_id";
   const openLots = [];
-  for (let i = 0; i < productCodes.length; i += 100) {
-    const chunk = productCodes.slice(i, i + 100);
+  for (let i = 0; i < itemCodes.length; i += 100) {
+    const chunk = itemCodes.slice(i, i + 100);
     const ph = chunk.map((_, j) => `$${j + 1}`).join(",");
     const q =
-      `SELECT warehouse_id::text AS warehouse_id, product_code, COALESCE(variant_key,'') AS variant_key, ` +
+      `SELECT warehouse_id::text AS warehouse_id, item_code, COALESCE(variant_key,'') AS variant_key, ` +
       `${lotCompanySel === "company_id" ? "company_id" : "NULL::int AS company_id"}, ` +
       `qty_remaining, unit_cost_sen, received_at::text AS received_at ` +
-      `FROM ${L} WHERE qty_remaining > 0 AND product_code IN (${ph})`;
+      `FROM ${L} WHERE qty_remaining > 0 AND item_code IN (${ph})`;
     openLots.push(...(await pg.unsafe(q, chunk)));
   }
   // Aggregate lots per bucket: total open qty + oldest-lot unit cost (FIFO cost
   // the reconcile would apply first).
   const lotsByBucket = new Map();
   for (const l of openLots) {
-    const k = `${l.warehouse_id}::${l.product_code}::${l.variant_key}::${hasCompany ? l.company_id ?? "" : ""}`;
+    const k = `${l.warehouse_id}::${l.item_code}::${l.variant_key}::${hasCompany ? l.company_id ?? "" : ""}`;
     if (!buckets.has(k)) continue;
     const cur = lotsByBucket.get(k) ?? { open_qty: 0, lots: [] };
     cur.open_qty += Number(l.qty_remaining);
@@ -276,7 +276,7 @@ async function main() {
     notice(`  sample of PERMANENT-MISS (up to ${SAMPLE}, largest estimate first):`);
     notice(`    ${pad("DO", 16)} ${pad("product", 20)} ${pad("uncosted", 9)} ${pad("coverable", 10)} ${pad("openLots", 9)} ${pad("est.COGS", 12)} created`);
     for (const r of missRows.slice(0, SAMPLE)) {
-      notice(`    ${pad(r.do_no ?? "-", 16)} ${pad(r.product_code ?? "-", 20)} ${pad(r.uncosted_qty, 9)} ${pad(r.coverable, 10)} ${pad(r.open_qty, 9)} ${pad(rm(r.estSen), 12)} ${dateOnly(r.created_at) ?? "-"}`);
+      notice(`    ${pad(r.do_no ?? "-", 16)} ${pad(r.item_code ?? "-", 20)} ${pad(r.uncosted_qty, 9)} ${pad(r.coverable, 10)} ${pad(r.open_qty, 9)} ${pad(rm(r.estSen), 12)} ${dateOnly(r.created_at) ?? "-"}`);
     }
     if (missRows.length > SAMPLE) notice(`    ... and ${missRows.length - SAMPLE} more.`);
     notice("");

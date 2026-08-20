@@ -90,7 +90,7 @@ const itemAt = (i: number) => ({
   description: `SOFA XAMMAR ${i} module, a description long enough to wrap`,
   qty: 1,
   m3_milli: 1234,
-  unit_price_centi: 0,
+  unit_price_sen: 0,
   source_pos: ['2990-PO-2607-003'],
   racks: i % 2 ? ['A-12'] : [],
 });

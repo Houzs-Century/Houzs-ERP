@@ -19,15 +19,23 @@
 // still passes, just slower — which is exactly the shape that never gets found
 // by watching CI go green.
 //
-// It also records a REAL defect, measured 2026-08-14: the rule is a regex over
-// the file's raw text, so a file that merely MENTIONS `env.DB` in a comment is
-// exiled to the serial pool. Five of the 46 workers-pool files were there for
-// that reason alone — tests/companyScopeFailClosed.test.ts ("// Fake env.DB."),
-// tests/adminResetLink.test.ts, tests/reviewHighFindings.test.ts and the two
-// fair-report route tests. All import only vitest and plain source modules.
-// The test below states that as the current behaviour rather than asserting the
-// behaviour we would prefer, so tightening the rule is a deliberate change that
-// has to come here first.
+// It also recorded a REAL defect, measured 2026-08-14: the rule was a regex over
+// the file's RAW text, so a file that merely MENTIONED `env.DB` in a comment was
+// exiled to the serial pool — five of the then-46 workers-pool files were there
+// for that reason alone.
+//
+// CORRECTED 2026-08-17: that is FIXED and the paragraph above is history, not
+// current behaviour. `classifyTests` now scans `stripComments(source)`, and the
+// three files that paragraph named by hand — companyScopeFailClosed,
+// adminResetLink, reviewHighFindings — all classify LIGHT today. The split is
+// 42 workers / 332 light; re-measure rather than quoting those two numbers:
+//   node -e "import('./scripts/lib/classify-tests.mjs').then(async m => { const r = await m.classifyTests(process.cwd()); console.log(r.workers.length, r.light.length); })"
+//
+// Stripping is deliberately NOT total: it is string-aware, so `cloudflare:test`
+// inside a template-literal fixture still counts, which is why this file needs
+// its `@vitest-project` override above and why a gate-bearing suite can still be
+// exiled by one added string. That is what the merge-gating test at the foot of
+// this file guards.
 import assert from "node:assert/strict";
 import { test } from 'vitest';
 import fs from "node:fs/promises";
@@ -180,4 +188,93 @@ test("the real backend tree classifies, and the split is not degenerate", async 
      a second one arriving should be argued for in a diff, not discovered later. */
   assert.deepEqual(declared, ["tests/classifyTests.test.mjs"],
     "only the classifier's own test may override its own rule");
+});
+
+/* ── The classification is load-bearing for MERGE PROTECTION ────────────────
+   Added 2026-08-17.
+
+   `backend-typecheck` is one of the two required contexts, and it runs
+   `npm run test:light` — so a suite the classifier puts in the LIGHT project
+   blocks a merge, and the same suite in the WORKERS project only blocks the
+   deploy, because CLAUDE.md forbids making `backend-tests (N)` required (the
+   shard index moves with the shard count, and the `backend` roll-up is
+   legitimately `skipped` on a frontend-only PR).
+
+   That distinction is currently decided by a REGEX (`NEEDS_WORKERS`) over the
+   COMMENT-STRIPPED source. Nothing states which side a gate-bearing suite has to
+   land on, so a single added line mentioning `cloudflare:test` or `env.DB` in
+   code or in a string — a fixture, a fake env, an error message being asserted
+   on — moves it to the shards and silently un-gates it. A check that stops
+   running while CI stays green is the failure docs/staging-bench-rot-coe.md
+   records going unnoticed for three weeks.
+
+   (Stripping is why a COMMENT is safe. It was not always: the exile-by-prose
+   defect this file's header describes was real when measured, and stripComments
+   fixed it. Do not read that as "the text scan is careful now" — it is string-
+   aware on purpose, so a string literal still counts.)
+
+   This is not hypothetical in the other direction. `migrationNumbers.test.ts`
+   was in the WORKERS half on 2026-08-13, which is why #2121 merged a duplicate
+   `0284` four minutes into that test's own failure and production could not
+   take a backend deploy for ~30 minutes. It moved to the light half the next
+   day as a side effect of #2131 (`perf(ci): 565s -> 106s by not booting a
+   Workers runtime for tests that never use one`) — nobody was aiming for the
+   merge gate, and nobody recorded that it had been closed. CLAUDE.md still
+   called it "the open item" three days later.
+
+   So the protection is stated here rather than left to a side effect. Adding a
+   suite to this list is a claim that its assertion must stop a MERGE. */
+const MUST_GATE_MERGE = [
+  "tests/migrationNumbers.test.ts",
+  /* A bucket holding a label that is not in the enum makes the tab 500 AND its
+     count fall silently to 0 — 37 delivery orders were unreachable in
+     production on 2026-08-17 with every number on screen looking settled. It is
+     a merge gate for the same reason the duplicate-number test is: nothing
+     downstream catches it, and the deploy is perfectly healthy while the list
+     lies. */
+  "tests/statusBucketsEnumMembership.test.mjs",
+  /* The other half of the same fault, and the half that survived the first
+     sweep: a count read that FAILED served as 0. The bucket gate cannot see it
+     — it keys off the *_STATUS_BUCKETS naming convention, and the sixth list
+     (mfg-sales-orders) does not use one. Same reason for gating the merge: the
+     deploy is perfectly healthy while every filter pill reads zero beside a
+     full page of rows. */
+  "tests/statusCountsFailLoud.test.mjs",
+  /* Both hold the line against a DUPLICATE document. The runtime one pins that
+     a retry after a committed write still replays and that a claim is released
+     only on the route's own proof; the source one pins that no pre-write
+     refusal in grns.ts was missed. A regression in either is a second GRN, a
+     second stock IN and a second AutoCount enqueue — that must stop the merge,
+     not the deploy. */
+  "tests/idempotencyRefusalRelease.test.ts",
+  "tests/grnPreWriteRefusalsReleaseKey.test.ts",
+  /* The blank-date gate. Its whole reason to exist is that the previous
+     version of it passed on an unfixed tree, so a merge that reintroduces an
+     uncoerced date write has to be STOPPED, not reported after the fact. */
+  "tests/dateWriteCoercion.test.ts",
+  /* Import-once on the 2990 receiver. A regression here does not break a
+     screen: it silently replays 2990's older copy over an order the owner
+     edited in Houzs and blanks every Delivery Order line that pointed at those
+     SO lines. The deploy stays perfectly healthy while edits quietly revert,
+     which is precisely the shape that has to stop a MERGE. */
+  "tests/soMirrorImportOnce.test.ts",
+];
+
+test("every merge-gating suite is classified LIGHT, so a required job runs it", async () => {
+  const { light, workers } = await classifyTests(backendRoot);
+  const all = new Set([...light, ...workers]);
+  for (const suite of MUST_GATE_MERGE) {
+    /* Fail loudly if the file is renamed or deleted rather than passing
+       vacuously on a name nothing matches. */
+    assert.ok(all.has(suite), `${suite} is in MUST_GATE_MERGE but the classifier has never heard of it — was it renamed or deleted?`);
+    assert.ok(
+      light.includes(suite),
+      `${suite} carries an assertion that must BLOCK A MERGE, but the classifier put it in the WORKERS project, `
+      + `which runs in backend-tests (N) — not a required context. It would only fail the deploy, after the merge. `
+      + `That is exactly what let #2121 land a duplicate migration number on 2026-08-13. `
+      + `Find what made it look workerd-flavoured (NEEDS_WORKERS scans the comment-stripped source for cloudflare:test / env.DB — `
+      + `a string literal counts, a comment does not) and remove it, or declare "// @vitest-project light" above the first import `
+      + `if the suite genuinely needs neither, or move the assertion into a dependency-free script wired into backend-typecheck.`,
+    );
+  }
 });

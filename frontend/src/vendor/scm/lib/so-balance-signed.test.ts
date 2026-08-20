@@ -17,38 +17,38 @@ import {
 } from '../../../lib/branding';
 
 describe('deriveBalance is signed', () => {
-  test('the server-stamped balance_centi wins, negative included', () => {
-    // GET /:docNo computes this with soBalanceCenti and it is already signed;
+  test('the server-stamped balance_sen wins, negative included', () => {
+    // GET /:docNo computes this with soBalanceSen and it is already signed;
     // the client must pass it through rather than re-floor it.
-    expect(deriveBalance({ balance_centi: -25_000 })).toBe(-25_000);
-    expect(deriveBalance({ balance_centi: 0 })).toBe(0);
-    expect(deriveBalance({ balance_centi: 200_000 })).toBe(200_000);
+    expect(deriveBalance({ balance_sen: -25_000 })).toBe(-25_000);
+    expect(deriveBalance({ balance_sen: 0 })).toBe(0);
+    expect(deriveBalance({ balance_sen: 200_000 })).toBe(200_000);
   });
 
   test('the local fallback goes negative by exactly the excess', () => {
-    expect(deriveBalance({ local_total_centi: 400_000, paid_centi_total: 425_000 }))
+    expect(deriveBalance({ local_total_sen: 400_000, paid_sen_total: 425_000 }))
       .toBe(-25_000);
   });
 
   test('an exact payment is still zero, and an under-payment still positive', () => {
-    expect(deriveBalance({ local_total_centi: 400_000, paid_centi_total: 400_000 })).toBe(0);
-    expect(deriveBalance({ local_total_centi: 400_000, paid_centi_total: 200_000 })).toBe(200_000);
+    expect(deriveBalance({ local_total_sen: 400_000, paid_sen_total: 400_000 })).toBe(0);
+    expect(deriveBalance({ local_total_sen: 400_000, paid_sen_total: 200_000 })).toBe(200_000);
   });
 
   test('it sums the payments ledger when no paid total was stamped', () => {
     expect(deriveBalance(
-      { local_total_centi: 400_000 },
-      [{ amount_centi: 200_000 }, { amount_centi: 225_000 }],
+      { local_total_sen: 400_000 },
+      [{ amount_sen: 200_000 }, { amount_sen: 225_000 }],
     )).toBe(-25_000);
   });
 
   /* The floor that must STAY. A zero total is an order whose header has not
-     been recomputed — true of every AutoCount import, where total_revenue_centi
+     been recomputed — true of every AutoCount import, where total_revenue_sen
      is 0 on 2,687 of production's 2,824 live orders — not an order that has
      been credited. Without this guard the legacy book turns red overnight. */
   test('a zero total answers 0 rather than a huge false credit', () => {
-    expect(deriveBalance({ local_total_centi: 0, paid_centi_total: 990_000 })).toBe(0);
-    expect(deriveBalance({ paid_centi_total: 990_000 })).toBe(0);
+    expect(deriveBalance({ local_total_sen: 0, paid_sen_total: 990_000 })).toBe(0);
+    expect(deriveBalance({ paid_sen_total: 990_000 })).toBe(0);
   });
 });
 
@@ -76,7 +76,7 @@ function captureTextDraws(doc: JsPdf): TextDraw[] {
 const drawn = (draws: TextDraw[]): string => draws.map((d) => d.text).join(' | ');
 
 /** Render one SO and return every text draw. `paid` drives the totals block. */
-async function renderSo(localTotalCenti: number, paidCenti: number): Promise<TextDraw[]> {
+async function renderSo(localTotalSen: number, paidSen: number): Promise<TextDraw[]> {
   setBrandingCache({ ...DEFAULT_BRANDING, logoR2Key: '' }, 'HOUZS');
   const [{ jsPDF }, { default: autoTable }, { renderSalesOrderInto }] = await Promise.all([
     import('jspdf'),
@@ -96,22 +96,22 @@ async function renderSo(localTotalCenti: number, paidCenti: number): Promise<Tex
       debtor_name: 'Over Collect Sdn Bhd',
       agent: null, branding: null, venue: null, ref: null, po_doc_no: null, phone: null,
       address1: '2 Jalan Test', address2: null, address3: null, address4: null,
-      mattress_sofa_centi: 0, bedframe_centi: localTotalCenti,
-      accessories_centi: 0, others_centi: 0,
-      local_total_centi: localTotalCenti,
+      mattress_sofa_sen: 0, bedframe_sen: localTotalSen,
+      accessories_sen: 0, others_sen: 0,
+      local_total_sen: localTotalSen,
       line_count: 1, currency: 'MYR', note: null,
-      paid_centi_total: paidCenti,
+      paid_sen_total: paidSen,
     },
     [{
       id: 'item-1', item_group: 'BEDFRAME', item_code: 'SO-A',
       description: 'Sales order line 1', uom: 'UNIT', qty: 1,
-      unit_price_centi: localTotalCenti, discount_centi: 0,
-      total_centi: localTotalCenti, variants: null,
+      unit_price_sen: localTotalSen, discount_sen: 0,
+      total_sen: localTotalSen, variants: null,
     }],
     [{
       paid_at: '2026-08-16', method: 'cash', merchant_provider: null,
       installment_months: null, approval_code: 'APPROVAL-XYZ',
-      amount_centi: paidCenti, account_sheet: null,
+      amount_sen: paidSen, account_sheet: null,
       collected_by_name: 'Cashier One', note: null,
     }],
   );

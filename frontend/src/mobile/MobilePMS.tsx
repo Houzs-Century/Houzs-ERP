@@ -19,6 +19,8 @@ import { usePrompt } from "../vendor/scm/components/PromptDialog";
 import { formatCurrency, formatDate, todayInAppTz } from "../lib/utils";
 import { pmsStageLabel, pmsStageVariant, type PmsStageVariant } from "../vendor/scm/lib/pms-status";
 import "./mobile.css";
+import { fmtTime } from "../vendor/shared/format";
+import { DateField } from "../vendor/scm/components/DateField";
 
 /* ------------------------------------------------------------------ *
  * Mobile Project (PMS) — list + detail.
@@ -293,12 +295,8 @@ const dOnly = (d: string | null | undefined) => dm(d);
 // Time-only portion ("08:00"). Reads the literal HH:mm off the ISO string so
 // it doesn't shift with the device timezone; falls back to "—".
 const tOnly = (d: string | null | undefined) => {
-  if (!d) return "—";
-  const m = /T(\d{2}:\d{2})/.exec(d);
-  if (m) return m[1];
-  const dt = new Date(d);
-  if (isNaN(+dt)) return "—";
-  return dt.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false });
+  const m = d ? /T(\d{2}:\d{2})/.exec(d) : null;
+  return m ? m[1] : fmtTime(d);
 };
 // Uploader credit line: "Uploaded by {name} · {date time}" or a placeholder.
 const uploaderCredit = (photo: PhasePhoto | undefined) => {
@@ -2388,6 +2386,23 @@ function TaskRow({
     />
   ) : null;
 
+  // Defect List (owner 2026-07-16): a remark is COMPULSORY before each photo —
+  // tapping Attach prompts for it, then opens the picker. HOOKS ALL SIT ABOVE THE
+  // PILL-ROW RETURN: below it, a tick row called one hook more (React #310).
+  const isDefectList = (it.title || "").trim().toLowerCase().startsWith("defect list");
+  const pendingCaptionRef = useRef<string | undefined>(undefined);
+  const startAttach = async () => {
+    if (isDefectList) {
+      const remark = await prompt({
+        title: "Remark for this photo",
+        placeholder: "Describe the defect (required)",
+        validate: (v) => (v.trim() ? null : "Please write a remark before uploading."),
+      });
+      if (remark == null || !remark.trim()) return;
+      pendingCaptionRef.current = remark.trim();
+    }
+    fileRef.current?.click();
+  };
   // Payment / deposit pill rows: N/A / PENDING / PAID instead of the tick.
   if (it.pill_kind) {
     const opts: Array<[string, string]> =
@@ -2437,23 +2452,6 @@ function TaskRow({
 
   const reviewStatus = (it.review_status ?? "").toLowerCase();
   const awaitingReview = reviewStatus === "pending_review" || reviewStatus === "amended";
-  // Defect List (owner 2026-07-16): a remark is COMPULSORY before each photo —
-  // tapping Attach opens a required-remark prompt first, then the file picker,
-  // and the photo uploads carrying that remark.
-  const isDefectList = (it.title || "").trim().toLowerCase().startsWith("defect list");
-  const pendingCaptionRef = useRef<string | undefined>(undefined);
-  const startAttach = async () => {
-    if (isDefectList) {
-      const remark = await prompt({
-        title: "Remark for this photo",
-        placeholder: "Describe the defect (required)",
-        validate: (v) => (v.trim() ? null : "Please write a remark before uploading."),
-      });
-      if (remark == null || !remark.trim()) return;
-      pendingCaptionRef.current = remark.trim();
-    }
-    fileRef.current?.click();
-  };
   return (
     <div style={{ borderTop: "1px solid #eceee9" }}>
     <div className="docrow" style={{ flexWrap: "wrap", borderTop: "none", alignItems: "flex-start" }}>
@@ -3046,7 +3044,7 @@ function PhaseBlock({
           <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
             <label className="fld" style={{ flex: 1.4 }}>
               <span className="fld-l">{kind} date</span>
-              <input className="fld-i" type="date" value={date} disabled={busy} onChange={(e) => { setDate(e.target.value); void saveStart(e.target.value, time); }} />
+              <DateField fullWidth className="fld-i" value={date} disabled={busy} onChange={(iso) => { setDate(iso); void saveStart(iso, time); }}/>
             </label>
             <label className="fld" style={{ flex: 1 }}>
               <span className="fld-l">Start time</span>

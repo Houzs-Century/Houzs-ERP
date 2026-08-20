@@ -169,7 +169,7 @@ still need `edit` on `scm.sales.delivery`.
    2026-07-31 / 2026-08-01 / 2026-08-02).
 4. **Finance gate** (`:2322-2333`) — `canViewScmFinance(c)`; when false every
    `DO_FINANCE_KEYS` column (`:317-321`) is deleted from every row. Note
-   `local_total_centi` is deliberately NOT in that list: the DO total is visible
+   `local_total_sen` is deliberately NOT in that list: the DO total is visible
    to everyone, cost and margin are not.
 
 ### Main mutation paths
@@ -206,11 +206,11 @@ column lists are `HEADER` (`delivery-orders-mfg.ts:292-310`), `ITEM` (`:333-337`
 
 | Table | Role |
 |-------|------|
-| `scm.delivery_orders` | DO header. `do_number`, `so_doc_no`, `debtor_code/name`, `do_date`, `expected_delivery_at`, `customer_delivery_date`, `dispatched_at` / `signed_at` / `delivered_at`, `driver_id/name`, `vehicle`, `m3_total_milli`, address block, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_centi`, `total_cost_centi`, `total_margin_centi`, `line_count`, `warehouse_id`, `is_dropship`, `arrives_em_warehouse_date`, `pod_r2_key`, `signature_data`, `status`, `company_id`. |
-| `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_centi`, `discount_centi`, `line_total_centi`, `unit_cost_centi`, `line_cost_centi`, `line_margin_centi`, **`ship_cost_centi`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads). |
-| `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_centi`, `account_sheet`, `collected_by`. |
+| `scm.delivery_orders` | DO header. `do_number`, `so_doc_no`, `debtor_code/name`, `do_date`, `expected_delivery_at`, `customer_delivery_date`, `dispatched_at` / `signed_at` / `delivered_at`, `driver_id/name`, `vehicle`, `m3_total_milli`, address block, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `warehouse_id`, `is_dropship`, `arrives_em_warehouse_date`, `pod_r2_key`, `signature_data`, `status`, `company_id`. |
+| `scm.delivery_order_items` | DO lines. `so_item_id` (the SO link that drives warehouse resolution + remaining-qty caps), `item_code`, `item_group`, `qty`, `m3_milli`, `unit_price_sen`, `discount_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, **`ship_cost_sen`**, `variants`, `line_delivery_date`, `line_delivery_date_overridden`, `rack_id`, **`committed_po_batch_no`** (mig 0230 — the incoming PO this line shipped against before its goods arrived; the per-line claim signal the receipt reconcile reads). |
+| `scm.delivery_order_payments` | Payments taken at delivery. `method`, `merchant_provider`, `installment_months`, `online_type`, `approval_code`, `amount_sen`, `account_sheet`, `collected_by`. |
 | `scm.delivery_order_crew` | One row per DO (UNIQUE `do_id`): driver/helper/lorry FKs plus the assign-time name/IC/contact/plate snapshot. |
-| `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, product_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
+| `scm.inventory_movements` | Where the OUT lands. Keyed `(source_doc_type='DO', source_doc_id, item_code, variant_key, COALESCE(correction_seq,0))` by `uq_inv_mov_do_source_v2` (migration 0279; before that, `uq_inv_mov_do_source` without the correction slot), the partial unique index the reversal has to route around (`:4322-4328`). Full definition in §on idempotency below. |
 | `scm.mfg_sales_order_items` | Upstream: `warehouse_id` is the **authoritative** ship-from warehouse per line. |
 
 **Status vocabulary — read `backend/src/scm/shared/do-shipped-states.ts`, not
@@ -232,9 +232,18 @@ excluded, nothing ships *into* completion); `DO_STOCK_OUT_STATES` is the
 `DO_SHIPPED_STATES ∪ {COMPLETED}`. `tests/doShippedStatesMirror.test.ts` pins
 that relationship and the .mjs mirror.
 
-Filter buckets (`:2180-2185`): `open` = DRAFT+LOADED, `in_transit` =
-DISPATCHED+IN_TRANSIT, `delivered` = SIGNED+DELIVERED+INVOICED+COMPLETED,
-`cancelled` = CANCELLED.
+Filter buckets (`DO_STATUS_BUCKETS`): `open` = DRAFT+LOADED, `in_transit` =
+DISPATCHED+IN_TRANSIT, `delivered` = SIGNED+DELIVERED+INVOICED, `cancelled` =
+CANCELLED. Every member of `do_status` is in exactly one bucket, and no bucket
+holds a non-member — pinned by `backend/tests/statusBucketsEnumMembership.test.mjs`.
+
+> **FIXED 2026-08-17.** `delivered` carried `COMPLETED`, which is not an enum
+> member, so `?status=delivered` answered **500 `invalid input value for enum
+> do_status: "COMPLETED"`** and — worse — the delivered COUNT failed on the same
+> label and was being served as **0**. Measured in production that day: company 1
+> `all:27 open:0 in_transit:2 delivered:0 cancelled:0` (25 DOs in no tab),
+> company 2 `all:36 in_transit:23 delivered:0 cancelled:1` (12 in no tab). A
+> failed count now returns `500 status_counts_failed` instead of a zero.
 
 ### Who moves the DO status, and what each value blocks (2026-08-16)
 
@@ -250,7 +259,7 @@ status from a child document.
 | `LOADED` | `PATCH /:id/status` ("Mark loaded") | pre-ship |
 | `DISPATCHED` | create not-draft, or `PATCH /:id/status` | **The DRAFT-confirm hop, and the only status that emails the customer.** First entry into any shipped state fires the inventory OUT. |
 | `IN_TRANSIT`, `SIGNED`, `DELIVERED`, `INVOICED` | `PATCH /:id/status`; mobile POD | shipped states; stock has already left |
-| `COMPLETED` | **nothing writes it.** It is in the code vocabulary (`DO_STOCK_OUT_STATES`, the `delivered` filter bucket) but is NOT a member of the `do_status` enum in any schema file or migration — see the bug note below | read-only |
+| `COMPLETED` | **nothing writes it.** Still in the code vocabulary (`DO_STOCK_OUT_STATES`, `DO_STATUSES`) but NOT a member of the `do_status` enum in any schema file or migration. Removed from the `delivered` filter bucket 2026-08-17. **CORRECTED 2026-08-18** — this cell used to end "the JS-side sets compare a status already in hand, where a value that can never occur is inert", and that was FALSE: `services/agents/delivery-agent.ts` mapped `DO_STATUSES` into one `.eq('status', st)` query per entry, so `COMPLETED` *was* being handed to Postgres to parse. That consumer no longer enumerates the list at all (it counts the rows it reads), so the claim is now true of every remaining reader — but it was a second live 22P02 for a day, and it was found by a reviewer, not by the sweep that wrote the sentence | read-only |
 | `CANCELLED` | `PATCH /:id/status`, atomic branch | **FINAL.** `A cancelled Delivery Order cannot be reactivated — its stock was already returned. Create a new DO to deliver again.` (409 `do_cancelled_final`) |
 
 Refusals the operator sees, in the order they fire:
@@ -259,7 +268,7 @@ Refusals the operator sees, in the order they fire:
 |---|---|
 | unknown target (input upper-cased first) | `"<x>" is not a valid Delivery Order status.` (400 `invalid_status`) |
 | shipped → pre-ship | `This Delivery Order has already shipped, so it cannot be moved back to a not-shipped status. Cancel it and create a new Delivery Order instead.` (409) |
-| over-delivery re-check on first ship | `This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.` (409 `over_delivery`) |
+| over-delivery re-check on first ship (linked AND unlinked lines — PR #2522) | `This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.` (409 `over_delivery`) |
 | downstream lock (cancel, header PATCH, line add/edit) | `DO has a Delivery Return / Sales Invoice — delete or cancel it first to edit` (409) |
 | line shrink below consumption | `Cannot reduce qty to <n> — <m> unit(s) have already been invoiced or returned for this line. Cancel the related Invoice / Delivery Return first.` |
 | source-SO gate | `so_not_deliverable` — the SO `is still a draft / has been cancelled / is on hold` |
@@ -269,10 +278,25 @@ Pickup, Done Shipout, Arrives EM Warehouse, Done Delivered, Confirm, House Not
 Ready, Request Hold) — refusal: `delivery_substatus must be one of: … (or
 blank).` It is not part of the lifecycle above.
 
-> **BUG (reported, not fixed): `COMPLETED` is in the code vocabulary but not in
-> the DB enum.** `PATCH /:id/status {status:'COMPLETED'}` passes the app-side
-> whitelist and would be rejected by Postgres. Verified by grepping every
-> `CREATE TYPE` / `ADD VALUE` under `migrations-pg/` and `scripts/scm-schema/`.
+> **BUG (partially fixed 2026-08-17): `COMPLETED` is in the code vocabulary but
+> not in the DB enum.** `PATCH /:id/status {status:'COMPLETED'}` passes the
+> app-side whitelist and would be rejected by Postgres — **still true**. What was
+> fixed is the READ half: the value is out of `DO_STATUS_BUCKETS`, so the
+> delivered tab and its count no longer fail on it. Verified by grepping every
+> `CREATE TYPE` / `ADD VALUE` under `migrations-pg/` and `scripts/scm-schema/`,
+> now pinned by `backend/tests/statusBucketsEnumMembership.test.mjs`.
+>
+> **The second READ site, found 2026-08-18 and now fixed.** The Delivery Agent's
+> brief (`services/agents/delivery-agent.ts`, `collectDoStatusCounts`) imported
+> `DO_STATUSES` and issued one `count:'exact'` query per entry with
+> `.eq('status', st)` — so `COMPLETED` reached the enum column there too, and the
+> await destructured only `count`, discarding `error`, so `(count ?? 0) > 0` left
+> the failed bucket ABSENT from the pipeline. It now pages the `status` column
+> and counts the rows it read: no vocabulary is sent to Postgres, and a failed
+> read is reported as `doPipeline.unavailableReason` (with `byStatus` empty)
+> instead of as a missing bucket. Statuses outside the vocabulary now appear too,
+> under their own key or `UNKNOWN` for a blank — previously counted nowhere.
+> `do-shipped-states.ts` itself is untouched by this branch.
 >
 > **BUG (reported, not fixed): the Consignment Note's status PATCH has NO
 > whitelist.** `consignment-notes.ts`'s handler writes `body.status` verbatim —
@@ -340,13 +364,38 @@ about-to-ship qty exceeds its live remaining. This closes the DRAFT door: the
 create-path cap is gated `if (body.asDraft !== true)`, so a DRAFT DO lands its
 full qty uncapped — without this recheck, confirming it (or a second full draft)
 shipped the SO line twice (BUG-HISTORY 2026-07-25). Pure invariant in
-`lib/do-over-delivery.ts` (`findOverDeliveredSoItems`); ad-hoc/unlinked lines
-stay uncapped, exactly as at create.
+`lib/do-over-delivery.ts` (`findOverDeliveredSoItems`).
+
+Since 2026-08-20 (PR #2522) the same block ALSO runs the unlinked check
+(`findOverDeliveredUnlinkedItems`, keyed by `item_code`), so an unlinked line
+for an item the named SO already fully delivered is refused too — see the
+now-CLOSED blind-spot note below. A genuinely ad-hoc unlinked line (a code the
+SO never ordered) still stays uncapped, exactly as at create.
+
+> **Unlinked-line blind spot at this same chokepoint — CLOSED (wired 2026-08-20,
+> PR #2522).** `findOverDeliveredSoItems` keys by `so_item_id`, so a DO line with
+> NONE contributes nothing to the linked tally and is invisible to it, even
+> though it still ships stock. That is the `2990-DO-2607-005` shape: six lines,
+> all `so_item_id = null`, none counted against `2990-SO-2606-019`, so the
+> order's own goods went out twice (`docs/unlinked-line-duplicate-coe.md`). The
+> **create** and **add-line** paths already refused this (`findUnlinkedSoLines`);
+> the **CONFIRM** path now does too. The Status PATCH builds
+> `unlinkedByItemCode` from the DO's lines WITHOUT `so_item_id`, computes
+> `openByItemCode` by aggregating `soDeliverableRemaining` for the header's named
+> SO per ordered `item_code` (that engine excludes DRAFT + CANCELLED deliveries,
+> so THIS draft being confirmed is already out of the tally), and calls
+> `findOverDeliveredUnlinkedItems(unlinkedByItemCode, openByItemCode)` alongside
+> the existing linked check — returning **409 `over_delivery`** on either. An
+> unlinked line is flagged only when the named SO ordered that item code AND has
+> no open qty left, so a legitimate partial / multi-DO split still ships and an
+> ad-hoc line the SO never ordered is never flagged. Pinned end-to-end by
+> `backend/tests/doOverDeliveryUnlinkedRoute.test.ts` (the pure guard by
+> `lib/do-over-delivery.test.ts`).
 
 `deductInventoryForDo` (`:831`) is idempotent by two mechanisms: a pre-insert
 existence check on `(source_doc_type='DO', source_doc_id, movement_type='OUT')`
 (`:832-839`), and a partial UNIQUE index as the hard backstop against a race. It
-collapses identical `(warehouse_id, product_code, variant_key, batch_no)` lines
+collapses identical `(warehouse_id, item_code, variant_key, batch_no)` lines
 into one OUT row (`:881-905`).
 
 **The index, verbatim.** Until migration **0279** this was prod-only DDL that
@@ -356,7 +405,7 @@ appeared in no file in the repo — read live from `pg_indexes` on 2026-08-11
 ```sql
 CREATE UNIQUE INDEX uq_inv_mov_do_source
   ON scm.inventory_movements
-  USING btree (source_doc_type, source_doc_id, product_code, variant_key)
+  USING btree (source_doc_type, source_doc_id, item_code, variant_key)
   WHERE (source_doc_type = 'DO'::text)
 ```
 
@@ -370,7 +419,7 @@ no-op against production) so the schema can be read from the repo again.
 ```sql
 CREATE UNIQUE INDEX uq_inv_mov_do_source_v2
   ON scm.inventory_movements
-  USING btree (source_doc_type, source_doc_id, product_code, variant_key,
+  USING btree (source_doc_type, source_doc_id, item_code, variant_key,
                COALESCE(correction_seq, 0))
   WHERE (source_doc_type = 'DO'::text)
 ```
@@ -642,17 +691,17 @@ Everything is integer sen.
 
 | Column | Where | Frozen or live |
 |--------|-------|----------------|
-| `unit_price_centi`, `discount_centi`, `line_total_centi` | line | Live until the DO locks. |
-| `unit_cost_centi`, `line_cost_centi`, `line_margin_centi` | line | **Live — overwritten in place.** `restampDoActualCost` (`:527`) re-derives them from the actual booked movement cost per `(warehouse, product, variant, batch)` bucket (bucket math `:563-598`), and it re-runs at ship, on line-set change, and again via `recost.ts` when a supplier PI lands. |
-| **`ship_cost_centi`** | line | **FROZEN at ship.** `freezeShipCost(current, unitCost)` (`backend/src/scm/lib/fulfillment-costing.ts:44`) returns `undefined` — meaning "do not write the column" — whenever the value is already non-null. Called at `:615-616`. So the FIRST post-ship costing captures the true ship-time FIFO unit cost and no later recost can touch it. Column added by `backend/src/db/migrations-pg/0143_scm_do_ship_cost_snapshot.sql`. |
-| `local_total_centi` | header | Derived by `recomputeTotals` (`:399`) from the lines. Visible to everyone. |
-| per-category `*_centi` / `*_cost_centi`, `total_cost_centi`, `total_margin_centi`, `margin_pct_basis` | header | Derived; **finance-gated** (`DO_FINANCE_KEYS`, `:317-321`) on both list and detail. |
-| `amount_centi` | `delivery_order_payments` | The ledger. Not rolled into the DO header. |
+| `unit_price_sen`, `discount_sen`, `line_total_sen` | line | Live until the DO locks. |
+| `unit_cost_sen`, `line_cost_sen`, `line_margin_sen` | line | **Live — overwritten in place.** `restampDoActualCost` (`:527`) re-derives them from the actual booked movement cost per `(warehouse, product, variant, batch)` bucket (bucket math `:563-598`), and it re-runs at ship, on line-set change, and again via `recost.ts` when a supplier PI lands. |
+| **`ship_cost_sen`** | line | **FROZEN at ship.** `freezeShipCost(current, unitCost)` (`backend/src/scm/lib/fulfillment-costing.ts:44`) returns `undefined` — meaning "do not write the column" — whenever the value is already non-null. Called at `:615-616`. So the FIRST post-ship costing captures the true ship-time FIFO unit cost and no later recost can touch it. Column added by `backend/src/db/migrations-pg/0143_scm_do_ship_cost_snapshot.sql`. |
+| `local_total_sen` | header | Derived by `recomputeTotals` (`:399`) from the lines. Visible to everyone. |
+| per-category `*_sen` / `*_cost_sen`, `total_cost_sen`, `total_margin_sen`, `margin_pct_basis` | header | Derived; **finance-gated** (`DO_FINANCE_KEYS`, `:317-321`) on both list and detail. |
+| `amount_sen` | `delivery_order_payments` | The ledger. Not rolled into the DO header. |
 
 Why the freeze exists: the three-way cost comparison
 ① SO order-time cost → ② DO ship-time FIFO → ③ SI landed cost only survives if ②
 is snapshotted, because the in-place restamp collapses ② into ③ after a PI
-(`fulfillment-costing.ts:33-43`). `ship_cost_centi` is NULL on legacy DOs.
+(`fulfillment-costing.ts:33-43`). `ship_cost_sen` is NULL on legacy DOs.
 
 `recomputeTotals` (`:399`) **fails closed and never throws** (`:408-420`): a
 failed read aborts the roll-up with a log rather than writing a zeroed header,
@@ -798,3 +847,26 @@ absence is a known gap rather than a silent one:
   (`delivery-orders-mfg.ts:640-768`): it logs divergences to
   `entity_audit_log` and binds nothing — stored-link resolution still decides.
   (PR #1681 to flip it live is DRAFT, owner-gated.)
+
+## The transfer says at SAVE time what it could not carry (2026-08-20)
+
+This document reaches AutoCount by **TRANSFER**, not by a create, and the
+transfer route applies a **strictly narrower** set of header fields than an edit
+does — `SalesHeader` / `PurchaseHeader` only, plus one extra assignment on each
+purchase arm. So the account book can hold this document and still be missing
+fields it has: until 2026-08-20 the conversion payload carried the ERP's number
+and the account and nothing else, so every one of these landed under the DRAIN's
+date with a blanked reference.
+
+The payload now derives from `AcDownstreamSpec.facts` — the ONE description of
+this document, projected onto the keys this route can apply — so a field added
+there reaches the transfer with no further edit. What it still cannot carry, or
+what the ERP has no value for, is **said on the save**: the create handler
+returns `acNotSent` on its 201 and the New screen calls `notifyAcNotSent` before
+navigating, exactly as the sales- and purchase-order creates do (#2499). The
+problems carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and their title says the
+document ARRIVED and part of it did not — the other wording would send someone
+to raise it a second time into a book that already holds it. It never blocks.
+
+Full reasoning, and the per-field table of what each conversion used to drop:
+`docs/modules/autocount-writeback.md` §7c5.

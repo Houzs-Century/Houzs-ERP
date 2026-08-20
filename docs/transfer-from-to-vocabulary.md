@@ -29,10 +29,27 @@ and they are in different places:
 | 5 | URL convert params | `frontend/src/lib/convertScope.tsx` | `?doId=`, `?grnId=`, `?soDocNo=`, `?fromDo=` |
 | 6 | UI labels | the list and detail screens | "From SO", "From DO", "From PO", "Source", "Source PO", "Convert to …" |
 
-**The word "transfer" is almost never ours.** Where it does appear on a screen,
-it means something else: `PurchaseOrderDetailV2.tsx` renders a line column
-labelled **"Transfer to"** whose value is the destination **warehouse**, not a
-document. See §5(b).
+> **CORRECTED 2026-08-17.** This paragraph used to read: *"**The word "transfer"
+> is almost never ours.** Where it does appear on a screen, it means something
+> else: `PurchaseOrderDetailV2.tsx` renders a line column labelled **"Transfer
+> to"** whose value is the destination **warehouse**, not a document."* The
+> second sentence is true of that one screen and **false as a generalisation** —
+> it was written from the dead-file mistake corrected in §5(b), which had
+> excluded three live editors from the count.
+>
+> **"Transfer From/To" is ALREADY the ERP's word for document lineage on NINE
+> live screens** — six routed straight from `App.tsx`, three reached through the
+> `?edit=1` forward — always with the source/target document type in
+> parentheses:
+> "Transfer From (SO)" (DO listing, SI listing), "Transfer To (DO)" (Consignment
+> Orders), "Transfer From (Order)" (PC Receives), "Transfer From (Receive)" (PC
+> Returns), "Transfer To:" (GRN detail, PC Receive detail), "Transfer To" (SO
+> editor), "Transfer To (GRN)" (PO editor). Enumerate with
+> `git grep -n "Transfer From (\|Transfer To (\|Transfer To:" -- frontend/src`.
+>
+> `PurchaseOrderDetailV2`'s warehouse column is therefore the **outlier**, not
+> the rule — which inverts what this section concluded. The layered rename-cost
+> view is in `docs/modules/document-conversion.md` §9.
 
 ---
 
@@ -46,6 +63,27 @@ AutoCount records lineage on the **TARGET document's DETAIL rows**:
 | `FromDocNo` | the same four | that document's number |
 | `FromDocDtlKey` | the same four | the source LINE — **NULL throughout this book** |
 | `FullTransferFromDocList` | `DODTL` | the full list where one target row draws on several sources |
+| `FromSODtlKey` | **`PODTL`** | the source SALES-ORDER LINE — **populated**, see below |
+| `FromSODocList` | **`PODTL`** | that sales order's number |
+
+**ADDED 2026-08-17. The last two rows are the correction, and this section was
+wrong without them** — it said AutoCount puts lineage in ONE place, and a
+purchase order is the exception in both directions. `SO → PO` is not a member of
+AutoCount's general transfer family at all (its own `AddSOToPOTransferDetail`,
+its own validator, its own over-transfer table — see
+`docs/modules/autocount-writeback.md` §7c3c), and it records the link in the two
+columns above rather than in `FromDocType` / `FromDocNo`.
+
+**And it is the LINE key that is populated here, which is the opposite of the
+four tables above.** Measured in `backend/scripts/data/ac-fidelity-po-lines.json.gz`
+(`AED_HOUZS` read-only 2026-08-11, query at `export-ac-fidelity-truth.py:144`):
+**10,338 of 18,148** non-cancelled `PODTL` rows, over **7,467 of 9,080** purchase
+orders, carry a `FromSODtlKey`; 10,314 also carry a `FromSODocList`. The ERP has
+depended on this since the cutover — `backfill-po-ac-dtlkey.mjs` and
+`repair-dedication-from-autocount.mjs` both call it "the one line-to-line link
+AutoCount populates". So the sentence below about line-level lineage being
+unusable is true of `DODTL` / `IVDTL` / `GRDTL` / `PIDTL` and **false of
+`PODTL`**.
 
 **Reported from a live-book measurement taken 2026-08-16 by the session that
 raised this question — NOT re-measured by this survey:** 47,531 `DODTL` rows
@@ -87,7 +125,7 @@ is what the operator reads.
 
 | target | direction | HEADER column | LINE column | API field | UI label(s) |
 | --- | --- | --- | --- | --- | --- |
-| Purchase Order | ← Sales Order | **none** (a free-text `"From SOs: …"` note) | `purchase_order_items.so_item_id`, and `purchase_order_item_allocations.so_item_id` | `soItemId` | "From Sales Order" (button) |
+| Purchase Order | ← Sales Order | **none** (a free-text `"Transfer from Sales Order: …"` provenance note — a STORED DATA CONTRACT with 8 readers, document-conversion.md §10) | `purchase_order_items.so_item_id`, and `purchase_order_item_allocations.so_item_id` | `soItemId` | "From Sales Order" (button) |
 | GRN | ← Purchase Order | `grns.purchase_order_id` (NOT NULL) | `grn_items.purchase_order_item_id` | `purchaseOrderId` / `poId`, `purchaseOrderItemId` / `poItemId` | **"From PO"** |
 | Purchase Invoice | ← GRN | `purchase_invoices.grn_id` | `purchase_invoice_items.grn_item_id` | `grnId`, `grnItemId` | **"Source"** |
 | Purchase Invoice | ← PO (skip-level) | `purchase_invoices.purchase_order_id` | — | `purchaseOrderId` | — |
@@ -129,7 +167,7 @@ Both halves of this section are findings, not commentary.
 
 | column | evidence |
 | --- | --- |
-| `mfg_sales_orders.linked_do_doc_no` | writable through `linkedDoDocNo` and selected into the header payload; the only frontend occurrence is a type field in `frontend/src/pages/scm-v2/SalesOrderDetail.tsx`, which **nothing imports** (`App.tsx` routes the `*V2` twin) |
+| `mfg_sales_orders.linked_do_doc_no` | writable through `linkedDoDocNo` and selected into the header payload; the only frontend occurrence is a type field in `frontend/src/pages/scm-v2/SalesOrderDetail.tsx` — **which IS live** (`SalesOrderDetailV2` lazily mounts it at `?edit=1`; the "nothing imports it" claim here was wrong, see §5(b)'s correction). The column is still never RENDERED: `git grep -n "\.linked_do_doc_no" -- frontend/src` returns nothing |
 | `mfg_sales_orders.transfer_to` | written at SO create from `body.transferTo`, patchable, selected — and no live frontend reader |
 | `mfg_sales_orders.cross_category_source_doc_no` | backs a unique index used as an anti-double-dip guard; `crossCategory` has zero hits in `frontend/src` |
 | `autocount_delivery_orders.so_doc_nos` | the migration that adds it says in its own comment that it "stays NULL until a detail-enrichment pass lands" — declared, and never populated |
@@ -149,7 +187,7 @@ read:
 
 | UI | derived from |
 | --- | --- |
-| SO list "PO No." (`converted_po_nos`) | reverse scan of `purchase_order_items.so_item_id` + the `"From SOs:"` note |
+| SO list "PO No." (`converted_po_nos`) | reverse scan of `purchase_order_items.so_item_id` + the provenance note |
 | SO list "DO No." (`do_nos`) | reverse scan of `delivery_orders.so_doc_no` |
 | PO list "GRN No" (`transfer_to_grns`) | reverse scan of `grns.purchase_order_id` |
 | DO list "Invoiced to" (`invoiced_si_nos`) | reverse scan of `sales_invoice_items.do_item_id` |
@@ -206,9 +244,25 @@ customer's number when it is ours.
 Adopting AutoCount's words wholesale would collide head-on with the first row,
 which is the most user-visible of the five.
 
-Two dead files still carry the phrase and neither is imported:
-`GoodsReceivedDetail.tsx` ("Downstream 'Transfer To' breakdown") and
-`SalesOrderDetail.tsx` (`data-label="Transfer To"`).
+> **CORRECTED 2026-08-17.** This paragraph used to read: *"Two dead files still
+> carry the phrase and neither is imported: `GoodsReceivedDetail.tsx`
+> ("Downstream 'Transfer To' breakdown") and `SalesOrderDetail.tsx`
+> (`data-label="Transfer To"`)."* **Both are LIVE, and so is
+> `PurchaseOrderDetail.tsx`.** Each is the inline EDITOR for its document,
+> lazily imported by its own `*V2` twin and rendered whenever `?edit=1` lands on
+> the route — i.e. every time an operator presses Edit:
+>
+> | V1 file | mounted by | reached at |
+> |---|---|---|
+> | `SalesOrderDetail.tsx` | `SalesOrderDetailV2.tsx` | `/scm/sales-orders/:id?edit=1` |
+> | `GoodsReceivedDetail.tsx` | `GoodsReceivedDetailV2.tsx` | `/scm/grns/:id?edit=1` |
+> | `PurchaseOrderDetail.tsx` | `PurchaseOrderDetailV2.tsx` | `/scm/purchase-orders/:id?edit=1` |
+>
+> Verify with `git grep -n 'import("./SalesOrderDetail")' -- frontend/src`
+> rather than believing this line either. The original claim came from checking
+> `App.tsx` for a route and finding only the `*V2` twin; a lazy `import()`
+> inside a sibling page is invisible to that check. Consequence for §6: those
+> "Transfer To" labels are **in scope** for Option A, not exempt as dead code.
 
 ### (c) One concept, two API names inside one file
 

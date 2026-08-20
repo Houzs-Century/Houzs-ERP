@@ -14,7 +14,7 @@
 import { useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Plus, X } from "lucide-react";
-import { adjustmentReasonLabel, fmtDate as fmtDateShared, fmtQty } from "@2990s/shared";
+import { adjustmentReasonLabel, fmtDate, fmtDateTime, fmtQty } from "@2990s/shared";
 import { useWarehouses } from "../../vendor/scm/lib/inventory-queries";
 import {
   useInventoryMovements,
@@ -28,6 +28,7 @@ import { DataTable, type Column } from "../../components/DataTable";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { cn } from "../../lib/utils";
+import { DateField } from "../../vendor/scm/components/DateField";
 
 /* Warehouse pill tone — the handoff prescribes a coloured status dot per
    warehouse role: petrol for a real fulfilment warehouse (HQ / KL WH /
@@ -41,14 +42,6 @@ function warehouseToneOf(w: { code: string; name: string }): "petrol" | "brass" 
   return "petrol";
 }
 const TONE_HEX = { petrol: "#16695f", brass: "#a16a2e", red: "#b23a3a" } as const;
-
-const fmtDateTime = (iso: string): string => {
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  const date = fmtDateShared(d);
-  const time = d.toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
-  return `${date} ${time}`;
-};
 
 /* Reason → Badge tone. Design: warning for damage / loss / give-away,
    neutral for returns, success for corrections. Fall back to neutral. */
@@ -96,7 +89,7 @@ export function StockAdjustments() {
     if (!q) return all;
     return all.filter(
       (m) =>
-        m.product_code.toLowerCase().includes(q) ||
+        m.item_code.toLowerCase().includes(q) ||
         (m.product_name ?? "").toLowerCase().includes(q),
     );
   }, [data, search]);
@@ -176,10 +169,10 @@ export function StockAdjustments() {
       key: "sku",
       label: "SKU",
       alwaysVisible: true,
-      getValue: (m) => m.product_code,
+      getValue: (m) => m.item_code,
       render: (m) => (
         <span className="font-mono text-[12px] font-semibold text-primary-ink">
-          {m.product_code}
+          {m.item_code}
         </span>
       ),
     },
@@ -389,19 +382,19 @@ export function StockAdjustments() {
         </div>
         <label className="inline-flex items-center gap-2">
           <span className="text-[12px] font-semibold text-ink-secondary">From</span>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={dateFrom}
-            onChange={(e) => setDateFrom(e.target.value)}
+            onChange={(iso) => setDateFrom(iso)}
             className="h-10 w-[150px] rounded-lg border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
         </label>
         <label className="inline-flex items-center gap-2">
           <span className="text-[12px] font-semibold text-ink-secondary">To</span>
-          <input
-            type="date"
+          <DateField
+            fullWidth
             value={dateTo}
-            onChange={(e) => setDateTo(e.target.value)}
+            onChange={(iso) => setDateTo(iso)}
             className="h-10 w-[150px] rounded-lg border border-border bg-surface px-3 text-[13px] text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/20"
           />
         </label>

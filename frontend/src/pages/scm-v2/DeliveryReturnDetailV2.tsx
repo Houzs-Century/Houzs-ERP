@@ -75,8 +75,9 @@ import {
 import { PrintPreviewModal, useOpenPrintPreviewFromUrl, usePrintPreview } from "../../components/scm-v2/PrintPreviewModal";
 import type { PdfAction } from "../../vendor/scm/lib/pdf-common";
 import { cn } from "../../lib/utils";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
+import { transferFromColumnLabel } from "../../lib/convertScope";
 
 // ─── Row shapes (subset — see DeliveryReturnDetail.tsx for full 40-field
 // header) ────────────────────────────────────────────────────────────────
@@ -123,9 +124,9 @@ type DrHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
-  local_total_centi: number;
-  total_cost_centi: number;
-  total_margin_centi: number;
+  local_total_sen: number;
+  total_cost_sen: number;
+  total_margin_sen: number;
   line_count: number;
   currency: string;
   // Finance-gated cost / margin analytics (migration 0079). Present on the
@@ -134,14 +135,14 @@ type DrHeader = {
   // service bucket (see DR_FINANCE_KEYS server-side). Cost columns are
   // nullable for rows predating the cost backfill.
   margin_pct_basis?: number | null;
-  mattress_sofa_centi?: number | null;
-  bedframe_centi?: number | null;
-  accessories_centi?: number | null;
-  others_centi?: number | null;
-  mattress_sofa_cost_centi?: number | null;
-  bedframe_cost_centi?: number | null;
-  accessories_cost_centi?: number | null;
-  others_cost_centi?: number | null;
+  mattress_sofa_sen?: number | null;
+  bedframe_sen?: number | null;
+  accessories_sen?: number | null;
+  others_sen?: number | null;
+  mattress_sofa_cost_sen?: number | null;
+  bedframe_cost_sen?: number | null;
+  accessories_cost_sen?: number | null;
+  others_cost_sen?: number | null;
 };
 
 type DrItem = {
@@ -152,9 +153,9 @@ type DrItem = {
   uom: string;
   qty_returned: number;
   condition: string | null;
-  unit_price_centi: number;
-  discount_centi: number;
-  line_total_centi: number;
+  unit_price_sen: number;
+  discount_sen: number;
+  line_total_sen: number;
   cancelled?: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
@@ -166,15 +167,7 @@ type DrItem = {
 /* ONE shared centi formatter (vendor/shared/format.ts) — the page-local copy
    this replaces had no finite guard, so an absent / non-numeric cost rendered
    the literal "MYR NaN"; the shared helper renders "—" instead. */
-const fmtMoney = fmtMoneyCenti;
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
+const fmtMoney = fmtMoneySen;
 
 // Ref chain matches the DR list V2 — customer SO no > free-text ref.
 const refOf = (h: DrHeader): string =>
@@ -189,7 +182,7 @@ const doOf = (h: DrHeader): string => {
 const brandOf = (h: DrHeader): string => h.branding || "—";
 
 const refundOf = (h: DrHeader, items: DrItem[]): number =>
-  h.local_total_centi || items.reduce((s, l) => s + (l.line_total_centi ?? 0), 0);
+  h.local_total_sen || items.reduce((s, l) => s + (l.line_total_sen ?? 0), 0);
 
 // DR effective lifecycle:
 //   open      = PENDING + RECEIVED  (goods back, refund still owed)
@@ -555,7 +548,7 @@ export function DeliveryReturnDetailV2() {
             debtor_code: deliveryReturn.debtor_code,
             debtor_name: deliveryReturn.debtor_name,
             reason: deliveryReturn.reason,
-            refund_centi: deliveryReturn.local_total_centi,
+            refund_sen: deliveryReturn.local_total_sen,
             notes: deliveryReturn.note ?? deliveryReturn.notes,
             delivery_order_id: deliveryReturn.delivery_order_id,
             sales_invoice_id: null,
@@ -576,8 +569,8 @@ export function DeliveryReturnDetailV2() {
             description: it.description,
             qty_returned: it.qty_returned,
             condition: it.condition,
-            unit_price_centi: it.unit_price_centi,
-            refund_centi: it.line_total_centi,
+            unit_price_sen: it.unit_price_sen,
+            refund_sen: it.line_total_sen,
           })),
           { action }
         )
@@ -702,10 +695,10 @@ export function DeliveryReturnDetailV2() {
       label: "Unit price",
       width: "108px",
       align: "right",
-      getValue: (l) => l.unit_price_centi,
+      getValue: (l) => l.unit_price_sen,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {fmtMoney(l.unit_price_centi, deliveryReturn?.currency)}
+          {fmtMoney(l.unit_price_sen, deliveryReturn?.currency)}
         </span>
       ),
     },
@@ -714,10 +707,10 @@ export function DeliveryReturnDetailV2() {
       label: "Refund",
       width: "132px",
       align: "right",
-      getValue: (l) => l.line_total_centi,
+      getValue: (l) => l.line_total_sen,
       render: (l) => (
         <span className="font-money text-[13px] font-semibold text-err">
-          {fmtMoney(l.line_total_centi ?? 0, deliveryReturn?.currency)}
+          {fmtMoney(l.line_total_sen ?? 0, deliveryReturn?.currency)}
         </span>
       ),
     },
@@ -839,7 +832,7 @@ export function DeliveryReturnDetailV2() {
                   <>
                     <Divider />
                     <span>
-                      From DO{" "}
+                      {transferFromColumnLabel('do')}{" "}
                       <span className="font-mono font-semibold text-ink-secondary">
                         {doOf(deliveryReturn)}
                       </span>
@@ -975,7 +968,7 @@ export function DeliveryReturnDetailV2() {
                   muted={!deliveryReturn.email}
                 />
                 <Field
-                  label="From DO"
+                  label={transferFromColumnLabel('do')}
                   value={doOf(deliveryReturn)}
                   mono={doOf(deliveryReturn) !== "—"}
                   muted={doOf(deliveryReturn) === "—"}

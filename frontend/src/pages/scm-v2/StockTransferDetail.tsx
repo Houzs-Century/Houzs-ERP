@@ -21,7 +21,7 @@ import { SkeletonDetailPage } from '../../vendor/scm/components/Skeleton';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
-import { buildVariantSummary, fmtDate as fmtDateShared, fmtQty } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
+import { buildVariantSummary, fmtDate, fmtDateTime, fmtQty } from '@2990s/shared'; // Commander 2026-05-28 — Description 2
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import {
@@ -34,21 +34,13 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { EntityHistoryPanel } from './EntityHistoryPanel';
 import { STOCK_TRANSFER_AUDIT_LABELS } from './entity-audit-labels';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 type LineDraft = StockTransferItemInput & { _key: string };
 
 const newKey = () => `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-
-const fmtDateTime = (iso: string | null): string => {
-  if (!iso) return '—';
-  const d = new Date(iso);
-  if (!Number.isFinite(d.getTime())) return iso;
-  const date = fmtDateShared(d);
-  const time = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
-  return `${date} ${time}`;
-};
 
 export const StockTransferDetail = () => {
   const { id }   = useParams<{ id: string }>();
@@ -84,7 +76,7 @@ export const StockTransferDetail = () => {
     setNotes(t.notes ?? '');
     setLines(detail.data.lines.map((l) => ({
       _key:        newKey(),
-      productCode: l.product_code,
+      itemCode: l.item_code,
       productName: l.product_name ?? '',
       qty:         l.qty,
       notes:       l.notes ?? '',
@@ -189,7 +181,9 @@ export const StockTransferDetail = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Transfer Date</span>
-              <input type="date" value={transferDate} className={styles.fieldInput} disabled />
+              {/* Read-only: the transfer date is stamped on post and never
+                  edited here, so there is no onChange to give. */}
+              <DateField fullWidth value={transferDate} onChange={() => {}} className={styles.fieldInput} disabled/>
             </label>
 
             <label className={styles.field}>
@@ -221,7 +215,7 @@ export const StockTransferDetail = () => {
               )}
               {lines.map((ln) => (
                 <tr key={ln._key}>
-                  <td><span className={styles.codeCell}>{ln.productCode}</span></td>
+                  <td><span className={styles.codeCell}>{ln.itemCode}</span></td>
                   <td>{ln.productName || <span className={styles.muted}>—</span>}</td>
                   {/* "Description 2": variant/spec summary in its own column.
                       Prefers a stored description2, falls back to the computed

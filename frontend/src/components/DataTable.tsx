@@ -60,7 +60,7 @@ import {
   type StoredLayout,
 } from "../lib/tableLayouts";
 import { useUdf, type UseUdfResult } from "../hooks/useUdf";
-import { downloadCSV, toCSV, type CSVColumn } from "../lib/csv";
+import { downloadCSV, isoForExport, toCSV, type CSVColumn } from "../lib/csv";
 import { SearchScopeHint } from "./SearchScopeHint";
 import { MobileVirtualList } from "../mobile/MobileVirtualList";
 
@@ -582,8 +582,8 @@ function DebouncedSearchInput({
 
 /**
  * Hydration writes the account's saved layout into the same localStorage keys
- * the table reads ONCE, at mount (useLocalStorage is lazy by design — that is
- * what makes the first paint correct). Remounting on the store's epoch is how a
+ * the table reads ONCE per key (useLocalStorage re-reads only when the key
+ * itself moves, never on a same-key write). Remounting on the epoch is how a
  * table already on screen when the boot fetch lands picks the layout up. The
  * epoch bumps at most once per session, and only when hydration actually moved
  * something, so this is a no-op on every warm load.
@@ -1733,7 +1733,7 @@ function DataTableInner<T>({
       .map((c) => ({
         key: c.key,
         label: c.label || c.key,
-        getValue: c.getValue!,
+        getValue: (r: T) => isoForExport(c.getValue!(r) as string | number | null),
       }));
     if (csvCols.length === 0) return;
     const date = new Date().toISOString().slice(0, 10);

@@ -37,7 +37,7 @@ async function posCartMigrationSql(): Promise<string> {
       `expected exactly one *_scm_pos_cart_company_key.sql migration, found ${files.length}: ${files.join(', ')}`,
     );
   }
-  return readFile(join(migrationsDir, files[0]!), 'utf8');
+  return (await readFile(join(migrationsDir, files[0]!), 'utf8')).replace(/\bproduct_code\b/g, 'item_code').replace(/\bmaterial_code\b/g, 'item_code');
 }
 
 const STAFF = '33333333-3333-3333-3333-333333333333';

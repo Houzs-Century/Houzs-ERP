@@ -20,7 +20,7 @@
 
 import { useMemo, useState } from "react";
 import { FilePenLine, Trash2, RotateCcw } from "lucide-react";
-import { fmtMoneyCenti } from "@2990s/shared";
+import { fmtMoneySen } from "@2990s/shared";
 import { ModalOverlay } from "./DocumentRelationshipMapModal";
 import { Button } from "../Button";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -34,16 +34,13 @@ import {
   type CreatePoAmendmentLine,
   type PoAmendmentHeaderChanges,
 } from "../../vendor/scm/lib/po-amendment-queries";
+import { DateField } from "../../vendor/scm/components/DateField";
+import { parseMoneyToSen } from "../../lib/money";
 
 /* Prices are in centi (1/100 MYR); the editor works in whole MYR for the buyer
    then converts back to centi on submit. */
 const centiToMyr = (centi: number | null | undefined): string =>
   centi == null ? "" : (Number(centi) / 100).toFixed(2);
-const myrToCenti = (myr: string): number | null => {
-  const n = Number(myr);
-  if (!Number.isFinite(n)) return null;
-  return Math.round(n * 100);
-};
 const dateOnly = (iso: string | null | undefined): string =>
   iso ? String(iso).replace(/T.*$/, "") : "";
 
@@ -58,7 +55,7 @@ type LineDraft = {
 
 const seedDraft = (l: PoItemRow): LineDraft => ({
   qty: String(l.qty ?? ""),
-  unitPriceMyr: centiToMyr(l.unit_price_centi),
+  unitPriceMyr: centiToMyr(l.unit_price_sen),
   deliveryDate: dateOnly(l.delivery_date),
   removed: false,
 });
@@ -109,15 +106,15 @@ export function PoAmendmentCreateModal({
 
   /* Build the amendment payload — only genuine deltas become lines / header
      changes, so a no-op submit is impossible (the backend also 400s empty). */
-  const buildPayload = (): { lines: CreatePoAmendmentLine[]; headerChanges: PoAmendmentHeaderChanges } => {
+  const buildPayload = (): { lines: CreatePoAmendmentLine[]; headerChanges: PoAmendmentHeaderChanges; error: string | null } => {
     const lines: CreatePoAmendmentLine[] = [];
     for (const l of items) {
       const d = draftOf(l);
       const oldSnapshot = {
-        material_code: l.material_code,
+        item_code: l.item_code,
         material_name: l.material_name,
         qty: l.qty,
-        unit_price_centi: l.unit_price_centi,
+        unit_price_sen: l.unit_price_sen,
         delivery_date: dateOnly(l.delivery_date) || null,
       };
       if (d.removed) {
@@ -125,10 +122,12 @@ export function PoAmendmentCreateModal({
         continue;
       }
       const newQty = Number(d.qty);
-      const newCenti = myrToCenti(d.unitPriceMyr);
+      const parsedPrice = parseMoneyToSen(d.unitPriceMyr, `Unit cost on ${l.item_code}`);
+      if (!parsedPrice.ok) return { lines: [], headerChanges: {}, error: parsedPrice.message };
+      const newSen = parsedPrice.sen;
       const newDelivery = d.deliveryDate || null;
       const qtyChanged = Number.isFinite(newQty) && newQty !== Number(l.qty ?? 0);
-      const priceChanged = newCenti != null && newCenti !== Number(l.unit_price_centi ?? 0);
+      const priceChanged = newSen !== Number(l.unit_price_sen ?? 0);
       const deliveryChanged = (newDelivery ?? null) !== (dateOnly(l.delivery_date) || null);
       if (!qtyChanged && !priceChanged && !deliveryChanged) continue;
       // A single line can move qty + cost + delivery together; the backend applies
@@ -140,7 +139,7 @@ export function PoAmendmentCreateModal({
         purchaseOrderItemId: l.id,
         changeType,
         newQty: qtyChanged ? newQty : undefined,
-        newUnitPriceCenti: priceChanged ? newCenti : undefined,
+        newUnitPriceSen: priceChanged ? newSen : undefined,
         newDeliveryDate: deliveryChanged ? newDelivery : undefined,
         oldSnapshot,
       });
@@ -155,11 +154,19 @@ export function PoAmendmentCreateModal({
     if (effectiveNotes.trim() !== origNotes.trim()) {
       headerChanges.notes = effectiveNotes.trim() || null;
     }
-    return { lines, headerChanges };
+    return { lines, headerChanges, error: null };
   };
 
   const submit = async () => {
-    const { lines, headerChanges } = buildPayload();
+    const { lines, headerChanges, error } = buildPayload();
+    if (error) {
+      void notify({
+        title: "Check the amounts",
+        body: error,
+        tone: "error",
+      });
+      return;
+    }
     if (lines.length === 0 && Object.keys(headerChanges).length === 0) {
       notify({
         title: "Nothing to submit",
@@ -232,7 +239,7 @@ export function PoAmendmentCreateModal({
                 >
                   <div className="flex items-start justify-between gap-2">
                     <div className="min-w-0">
-                      <div className="font-mono text-[12.5px] font-semibold text-ink">{l.material_code}</div>
+                      <div className="font-mono text-[12.5px] font-semibold text-ink">{l.item_code}</div>
                       <div className="text-[11px] text-ink-secondary">{l.material_name}</div>
                       {Number(l.received_qty ?? 0) > 0 && (
                         <div className="mt-0.5 text-[10.5px] text-warn">
@@ -277,12 +284,7 @@ export function PoAmendmentCreateModal({
                       </label>
                       <label className="block">
                         <span className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">Delivery date</span>
-                        <input
-                          type="date"
-                          className={inputCls}
-                          value={d.deliveryDate}
-                          onChange={(e) => setDraft(l, { deliveryDate: e.target.value })}
-                        />
+                        <DateField fullWidth className={inputCls} value={d.deliveryDate} onChange={(iso) => setDraft(l, { deliveryDate: iso })}/>
                       </label>
                     </div>
                   )}
@@ -298,12 +300,7 @@ export function PoAmendmentCreateModal({
           <div className="grid grid-cols-2 gap-2 border-t border-border-subtle pt-3">
             <label className="block">
               <span className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">PO delivery date</span>
-              <input
-                type="date"
-                className={inputCls}
-                value={effectiveExpectedAt}
-                onChange={(e) => setExpectedAt(e.target.value)}
-              />
+              <DateField fullWidth className={inputCls} value={effectiveExpectedAt} onChange={(iso) => setExpectedAt(iso)}/>
             </label>
             <label className="block">
               <span className="font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">Notes</span>
@@ -332,7 +329,7 @@ export function PoAmendmentCreateModal({
           {/* Money summary — round, honest total of the requested lines. */}
           <div className="flex items-center justify-between border-t border-border-subtle pt-3 text-[12px]">
             <span className="text-ink-muted">Current PO total</span>
-            <span className="font-money font-semibold text-ink">{fmtMoneyCenti(header.total_centi)}</span>
+            <span className="font-money font-semibold text-ink">{fmtMoneySen(header.total_sen)}</span>
           </div>
         </div>
       )}

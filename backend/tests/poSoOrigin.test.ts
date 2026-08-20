@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { parseFromSosNote } from "../src/scm/routes/document-flow";
+import { parseProvenanceNote } from "../src/scm/routes/document-flow";
 import {
   buildStoredOrigins,
   buildDeliveredSoLock,
@@ -24,24 +24,24 @@ import {
 // (c) MRP floating coverage (floating) > (d) none → dash. These tests pin the
 // pure pieces + the SO↔PO symmetry.
 
-describe("parseFromSosNote", () => {
+describe("parseProvenanceNote", () => {
   test("extracts the SO doc numbers a bulk PO records in its note", () => {
-    expect(parseFromSosNote("From SOs: SO-2606-033, SO-2606-034"))
+    expect(parseProvenanceNote("From SOs: SO-2606-033, SO-2606-034"))
       .toEqual(["SO-2606-033", "SO-2606-034"]);
-    expect(parseFromSosNote("From SOs: SO-2606-033,SO-2606-034"))
+    expect(parseProvenanceNote("From SOs: SO-2606-033,SO-2606-034"))
       .toEqual(["SO-2606-033", "SO-2606-034"]);
   });
 
   test("accepts the singular 'From SO:' label and de-dupes", () => {
-    expect(parseFromSosNote("From SO: SO-9")).toEqual(["SO-9"]);
-    expect(parseFromSosNote("From SOs: SO-1, SO-1, SO-2")).toEqual(["SO-1", "SO-2"]);
+    expect(parseProvenanceNote("From SO: SO-9")).toEqual(["SO-9"]);
+    expect(parseProvenanceNote("From SOs: SO-1, SO-1, SO-2")).toEqual(["SO-1", "SO-2"]);
   });
 
   test("a plain note with no 'From SOs:' label, or empty input, yields nothing", () => {
-    expect(parseFromSosNote("Deliver to loading bay 3")).toEqual([]);
-    expect(parseFromSosNote("")).toEqual([]);
-    expect(parseFromSosNote(null)).toEqual([]);
-    expect(parseFromSosNote(undefined)).toEqual([]);
+    expect(parseProvenanceNote("Deliver to loading bay 3")).toEqual([]);
+    expect(parseProvenanceNote("")).toEqual([]);
+    expect(parseProvenanceNote(null)).toEqual([]);
+    expect(parseProvenanceNote(undefined)).toEqual([]);
   });
 });
 
@@ -103,7 +103,7 @@ describe("buildStoredOrigins (linkage B — the PO's stored raise-link origin, S
 // ─────────────────────────────────────────────────────────────────────────────
 describe("effectiveStoredLinks (allocations ∪ so_item_id, allocations win per line)", () => {
   const line = (id: string, code: string, so: string | null) =>
-    ({ id, material_code: code, so_item_id: so });
+    ({ id, item_code: code, so_item_id: so });
 
   test("a line with NO allocations keeps its single so_item_id (the 1:1 fast path)", () => {
     const eff = effectiveStoredLinks([line("L1", "BF-15", "so-1")], new Map());

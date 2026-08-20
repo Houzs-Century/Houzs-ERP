@@ -16,7 +16,7 @@ import {
 // LIKELY-DUPLICATE, (b) risk-rank the unexecuted-vs-executed shape FIRST, and
 // (c) tell a Q-vs-K sibling buy apart from a duplicate.
 
-const makoto = (code: string) => ({ itemCode: code, variantKey: "", qty: 5, unitPriceCenti: 265000 });
+const makoto = (code: string) => ({ itemCode: code, variantKey: "", qty: 5, unitPriceSen: 265000 });
 const pair023 = {
   id: "023", docNo: "2990-PO-2606-023", date: "2026-06-24", executed: false,
   lines: [makoto("MAKOTO-OLIVE"), makoto("MAKOTO-BRONZE")],
@@ -36,7 +36,7 @@ describe("multiset fingerprint", () => {
     expect(docLineMultisetKey([makoto("A")]))
       .not.toBe(docLineMultisetKey([{ ...makoto("A"), qty: 4 }]));
     expect(docLineMultisetKey([makoto("A")]))
-      .not.toBe(docLineMultisetKey([{ ...makoto("A"), unitPriceCenti: 265001 }]));
+      .not.toBe(docLineMultisetKey([{ ...makoto("A"), unitPriceSen: 265001 }]));
   });
 
   test("match pct counts multiplicity against the larger side", () => {
@@ -46,16 +46,16 @@ describe("multiset fingerprint", () => {
   });
 
   test("normalises code case/space so a hand-keyed twin still matches", () => {
-    expect(lineTupleKey({ itemCode: " makoto-olive ", variantKey: "", qty: 5, unitPriceCenti: 1 }))
-      .toBe(lineTupleKey({ itemCode: "MAKOTO-OLIVE", variantKey: "", qty: 5, unitPriceCenti: 1 }));
+    expect(lineTupleKey({ itemCode: " makoto-olive ", variantKey: "", qty: 5, unitPriceSen: 1 }))
+      .toBe(lineTupleKey({ itemCode: "MAKOTO-OLIVE", variantKey: "", qty: 5, unitPriceSen: 1 }));
   });
 });
 
 describe("sibling shape (Q-vs-K legitimacy)", () => {
   test("same qty+price multiset with fully disjoint codes is a sibling", () => {
     expect(isSiblingShape(
-      [{ itemCode: "ANGGN-Q", variantKey: "", qty: 10, unitPriceCenti: 90000 }],
-      [{ itemCode: "ANGGN-K", variantKey: "", qty: 10, unitPriceCenti: 90000 }],
+      [{ itemCode: "ANGGN-Q", variantKey: "", qty: 10, unitPriceSen: 90000 }],
+      [{ itemCode: "ANGGN-K", variantKey: "", qty: 10, unitPriceSen: 90000 }],
     )).toBe(true);
   });
 
@@ -68,8 +68,8 @@ describe("sibling shape (Q-vs-K legitimacy)", () => {
 
   test("different qty/price multisets are not siblings", () => {
     expect(isSiblingShape(
-      [{ itemCode: "A", variantKey: "", qty: 1, unitPriceCenti: 1 }],
-      [{ itemCode: "B", variantKey: "", qty: 2, unitPriceCenti: 1 }],
+      [{ itemCode: "A", variantKey: "", qty: 1, unitPriceSen: 1 }],
+      [{ itemCode: "B", variantKey: "", qty: 2, unitPriceSen: 1 }],
     )).toBe(false);
   });
 });
@@ -93,8 +93,8 @@ describe("pair classification + risk order", () => {
   });
 
   test("pairDuplicateCandidates finds 023/024 and sorts the unexecuted-of-executed first", () => {
-    const sibling1 = { id: "s1", docNo: "PO-S1", date: "2026-06-24", executed: true, lines: [{ itemCode: "Q", variantKey: "", qty: 1, unitPriceCenti: 5 }] };
-    const sibling2 = { id: "s2", docNo: "PO-S2", date: "2026-06-25", executed: true, lines: [{ itemCode: "K", variantKey: "", qty: 1, unitPriceCenti: 5 }] };
+    const sibling1 = { id: "s1", docNo: "PO-S1", date: "2026-06-24", executed: true, lines: [{ itemCode: "Q", variantKey: "", qty: 1, unitPriceSen: 5 }] };
+    const sibling2 = { id: "s2", docNo: "PO-S2", date: "2026-06-25", executed: true, lines: [{ itemCode: "K", variantKey: "", qty: 1, unitPriceSen: 5 }] };
     const out = pairDuplicateCandidates([pair023, pair024, sibling1, sibling2], { windowDays: 3 });
     expect(out).toHaveLength(2);
     expect(out[0].verdict).toBe("LIKELY-DUPLICATE");

@@ -118,7 +118,7 @@ posting.
    - Legacy (`:665-675`): `order invoice_date desc`, `.limit(500)`, scope, raw
      `status`, `scopeToCompany`.
    - Paginated (`:677-744`): sort whitelist
-     `invoice_date | invoice_number | debtor_name | status | total_centi` (`:682`)
+     `invoice_date | invoice_number | debtor_name | status | total_sen` (`:682`)
      with `invoice_number` as tiebreaker; bucket resolution via
      `SI_STATUS_BUCKETS` (`:542-547`); `q` ilikes over `invoice_number,
      so_doc_no, debtor_name, debtor_code, ref, branding, sales_location` plus
@@ -196,11 +196,49 @@ posting.
   parentless UNCONDITIONALLY, so every desktop from-DO invoice was filed as
   ERP-only — see BUG-HISTORY and `docs/modules/autocount-writeback.md` §7d.
 
+### Every line verb on an invoice is STRICTLY company-scoped — a stamp is not a gate
+
+All four line verbs resolve the invoice by `id`, which is a uuid and therefore
+globally unique — so the danger here is not an ambiguous key, it is that a uuid
+from the other company's books resolves perfectly well. Each one must prove the
+INVOICE is ours before touching a line:
+
+| verb | gate |
+| --- | --- |
+| `POST /:id/items` | `requireActiveCompanyId` + `scopeToCompanyId` |
+| `PATCH /:id/items/:itemId` | `requireActiveCompanyId` + `scopeToCompanyId` |
+| `DELETE /:id/items/:itemId` | `requireActiveCompanyId` + `scopeToCompanyId` |
+| `POST /:id/items/from-do/:doId` | `scopeToCompany` on the invoice AND on the source DO |
+
+`POST /:id/items` had none of it until 2026-08-19 — the other three were fixed in
+the 2026-08-13 sweep and this one was missed. What made it invisible is worth
+knowing, because the shape recurs: the insert carried
+`company_id: activeCompanyId(c)`, so the statement MENTIONED the company and read
+as scoped. **A stamp is not a predicate.** It wrote our company onto a line
+appended to their invoice, and the recompute, the AR/GL re-post and the AutoCount
+outbox row all followed from that line. This is the fifth blind spot named in
+`CLAUDE.md`; `check-company-scope.mjs` asserts against it in its own self-test.
+
+**Use the STRICT pair, not `scopeToCompany`, on a money write.** `scopeToCompany`
+DEGRADES to no predicate when the company is unresolved — correct for a read that
+must keep serving, wrong for a write that posts to a ledger.
+`requireActiveCompanyId` refuses with a 409 instead.
+
+**The gate goes BEFORE business validation.** Item-code validation used to run
+first, so a caller pointed at another company's invoice was told its *item code*
+was wrong — an answer about a document they cannot see. Same ordering rule the
+price-override handler in `mfg-sales-orders.ts` adopted on 2026-07-22.
+
+Covered by `backend/tests/companyScopeSalesInvoiceMoney.test.ts`, which mounts the
+exported handlers against a fake PostgREST client and asserts BOTH directions plus
+"nothing was written" — a refusal that still inserted would pass a status-only
+check.
+
 ### `recomputePaid` (`:1730-1775`) — read this before touching payments
 
 Fails **closed**: a failed payments read or header read aborts with a log rather
 than writing `paid = 0` (`:1738-1752`). The comment records why — folding a
-transient blip into 0 does not merely understate `paid_centi`, it drives the
+transient blip into 0 does not merely understate `paid_sen`, it drives the
 status ladder, so a fully PAID invoice silently reverted to SENT and re-entered
 the AR chase. DRAFT and CANCELLED are frozen out of the ladder entirely
 (`:1760`).
@@ -232,7 +270,7 @@ Unlike the DO and the GRN, **half of this document's statuses are machine-set**:
 | `SENT` | the confirm branch; create-not-draft; **and `recomputePaid` writes it back** when the paid total rolls back to 0 | both |
 | `PARTIALLY_PAID` | `recomputePaid` only | **automatic**, on payment add/delete |
 | `PAID` | `recomputePaid` only | **automatic** |
-| `OVERDUE` | **no writer exists in `backend/src`.** It is a legal target of the transition table and is read by the collection agent, but nothing in this repo computes or writes it. UNKNOWN whether an external job does | — |
+| `OVERDUE` | **no writer exists in `backend/src`.** It is a legal target of the transition table and is read by the collection agent, but nothing in this repo computes or writes it. UNKNOWN whether an external job does. Since 2026-08-17 it is at least VISIBLE if one arrives: it sits in the `sent` filter bucket, where it was in none | — |
 | `CANCELLED` | the status PATCH handler | manual |
 
 `recomputePaid` deliberately refuses to touch a DRAFT or CANCELLED invoice, so a
@@ -263,17 +301,32 @@ The authoritative in-code column lists are `HEADER` (`sales-invoices.ts:187-198`
 
 | Table | Role |
 |-------|------|
-| `scm.sales_invoices` | SI header. `invoice_number`, `so_doc_no`, **`delivery_order_id`** (the DO link), `debtor_code/name`, `invoice_date`, `due_date`, `currency`, `subtotal_centi`, `discount_centi`, `tax_centi`, `total_centi`, **`paid_centi`**, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_centi`, `total_cost_centi`, `total_margin_centi`, `line_count`, `status`, `sent_at` / `paid_at` / `confirmed_at`, `company_id`. |
-| `scm.sales_invoice_items` | SI lines. `so_item_id`, **`do_item_id`** (what the remaining-pool maths joins on), `item_code`, `item_group`, `qty`, `unit_price_centi`, `discount_centi`, `tax_centi`, `line_total_centi`, `unit_cost_centi`, `line_cost_centi`, `line_margin_centi`, `variants`. |
-| `scm.sales_invoice_payments` | Payments ledger. Same method vocabulary as the DO ledger. `recomputePaid` sums `amount_centi` over this table. |
+| `scm.sales_invoices` | SI header. `invoice_number`, `so_doc_no`, **`delivery_order_id`** (the DO link), `debtor_code/name`, `invoice_date`, `due_date`, `currency`, `subtotal_sen`, `discount_sen`, `tax_sen`, `total_sen`, **`paid_sen`**, `salesperson_id`, `branding`, `venue_id`, per-category revenue + cost subtotals, `local_total_sen`, `total_cost_sen`, `total_margin_sen`, `line_count`, `status`, `sent_at` / `paid_at` / `confirmed_at`, `company_id`. |
+| `scm.sales_invoice_items` | SI lines. `so_item_id`, **`do_item_id`** (what the remaining-pool maths joins on), `item_code`, `item_group`, `qty`, `unit_price_sen`, `discount_sen`, `tax_sen`, `line_total_sen`, `unit_cost_sen`, `line_cost_sen`, `line_margin_sen`, `variants`. |
+| `scm.sales_invoice_payments` | Payments ledger. Same method vocabulary as the DO ledger. `recomputePaid` sums `amount_sen` over this table. |
 | `scm.customer_credits` | Overpay / cancelled-invoice credit. Written by `applyCustomerCreditToSi`, `creditFromCancelledSi`, `reverseCancelledSiCredit`, `reconcileSiOverpay` (`backend/src/scm/lib/customer-credits.ts`). |
-| `journal_entries` + `journal_entry_lines` | GL. Dr **1100** (AR) / Cr **4000** (Sales Revenue) = `total_centi`, keyed on `(source_type='SI', source_doc_no=invoice_number)` so it can never double-post (`sales-invoices.ts:10-14`). |
+| `journal_entries` + `journal_entry_lines` | GL. Dr **1100** (AR) / Cr **4000** (Sales Revenue) = `total_sen`, keyed on `(source_type='SI', source_doc_no=invoice_number)` so it can never double-post (`sales-invoices.ts:10-14`). |
 | `scm.delivery_orders` / `scm.delivery_order_items` | Upstream. The DO's `has_children` lock counts non-cancelled SIs. |
 
-Status vocabulary: canonical set at `:552-567`. Filter buckets (`:542-547`):
-`sent` = DRAFT+SENT+ISSUED, `partial` = PARTIALLY_PAID+PARTIAL,
-`paid` = PAID+COMPLETED, `cancelled` = CANCELLED. Note `sent` deliberately
-includes DRAFT.
+Status vocabulary: canonical set at `SI_STATUS_CANON`. Filter buckets
+(`SI_STATUS_BUCKETS`): `sent` = DRAFT+SENT+OVERDUE, `partial` = PARTIALLY_PAID,
+`paid` = PAID, `cancelled` = CANCELLED. Note `sent` deliberately includes DRAFT.
+Every member of `sales_invoice_status` is in exactly one bucket and no bucket
+holds a non-member — pinned by
+`backend/tests/statusBucketsEnumMembership.test.mjs`.
+
+> **FIXED 2026-08-17, two faults in one map.** (1) The buckets carried `ISSUED`,
+> `PARTIAL` and `COMPLETED` under a comment calling them a "backward-compatible
+> fallback". They are not members of the enum, so no row can ever have held one,
+> and each made its tab **500 `invalid input value for enum
+> sales_invoice_status`** while its count failed silently to 0 (production, both
+> companies: `total=1` with `{sent:0, partial:0, paid:0, cancelled:0}`). The
+> three spellings survive on the WRITE path via `SI_STATUS_CANON`, which is where
+> an input alias belongs. (2) `OVERDUE` was in NO bucket, so an overdue invoice
+> counted in `all` and appeared in no tab; it is in `sent` now — the bucket
+> `SalesInvoicesListV2`'s `statusFor()` already put it in by fallback, and an
+> overdue invoice is an issued, unpaid one. A count that cannot be read now
+> returns `500 status_counts_failed` rather than 0.
 
 ---
 
@@ -292,7 +345,7 @@ What the SI moves instead is **money and the ledger**:
 
 | Event | What is written |
 |-------|-----------------|
-| Create (non-draft) or DRAFT→SENT confirm | `postSiRevenue` → Dr 1100 / Cr 4000 for `total_centi` (`:946`, `:1978`) |
+| Create (non-draft) or DRAFT→SENT confirm | `postSiRevenue` → Dr 1100 / Cr 4000 for `total_sen` (`:946`, `:1978`) |
 | Line or total change on a live invoice | `resyncSiRevenue` → void + repost (`:1510`, `:1627`, `:1679`) |
 | Cancel | `reverseSiRevenue` (`:2095`) + `creditFromCancelledSi` (`:2122`) |
 | Reopen | `postSiRevenue` (`:2139`) + `reverseCancelledSiCredit` (`:2162`) |
@@ -389,12 +442,12 @@ Everything is integer sen.
 
 | Column | Where | Frozen or live |
 |--------|-------|----------------|
-| `unit_price_centi`, `discount_centi`, `tax_centi`, `line_total_centi` | line | Live **only while DRAFT**. Frozen the moment the invoice is issued (§6). |
-| `unit_cost_centi`, `line_cost_centi`, `line_margin_centi` | line | **Live — overwritten in place** by `restampSiFromDo` (`backend/src/scm/lib/recost.ts:113`), which the GRN/PI recost cascade calls whenever a supplier invoice lands. This is the ③ "landed cost" leg of the three-way comparison; it is deliberately allowed to move after issue because it is internal cost, not the customer-facing price. |
-| `subtotal_centi`, `discount_centi`, `tax_centi`, `total_centi` | header | Derived by `recomputeTotals` (`:264`); `total_centi` is what the GL posts. |
-| `paid_centi` | header | Derived by `recomputePaid` (`:1730`) from `sales_invoice_payments`. Never hand-set on the route paths — with ONE legacy exception: when the `apply_customer_credit_to_si` RPC is absent, `applyCustomerCreditToSiLegacy` (`customer-credits.ts:248-257`) hand-writes it in an optimistic-concurrency loop; callers then run `recomputePaid` so it converges. |
-| per-category `*_centi` / `*_cost_centi`, `total_cost_centi`, `total_margin_centi`, `margin_pct_basis` | header | Derived; **finance-gated** (`SI_FINANCE_KEYS`, `:205-209`). `total_centi`, `local_total_centi` and `paid_centi` are NOT gated — everyone sees what is owed. |
-| `amount_centi` | `sales_invoice_payments` | The ledger rows `paid_centi` sums. |
+| `unit_price_sen`, `discount_sen`, `tax_sen`, `line_total_sen` | line | Live **only while DRAFT**. Frozen the moment the invoice is issued (§6). |
+| `unit_cost_sen`, `line_cost_sen`, `line_margin_sen` | line | **Live — overwritten in place** by `restampSiFromDo` (`backend/src/scm/lib/recost.ts:113`), which the GRN/PI recost cascade calls whenever a supplier invoice lands. This is the ③ "landed cost" leg of the three-way comparison; it is deliberately allowed to move after issue because it is internal cost, not the customer-facing price. |
+| `subtotal_sen`, `discount_sen`, `tax_sen`, `total_sen` | header | Derived by `recomputeTotals` (`:264`); `total_sen` is what the GL posts. |
+| `paid_sen` | header | Derived by `recomputePaid` (`:1730`) from `sales_invoice_payments`. Never hand-set on the route paths — with ONE legacy exception: when the `apply_customer_credit_to_si` RPC is absent, `applyCustomerCreditToSiLegacy` (`customer-credits.ts:248-257`) hand-writes it in an optimistic-concurrency loop; callers then run `recomputePaid` so it converges. |
+| per-category `*_sen` / `*_cost_sen`, `total_cost_sen`, `total_margin_sen`, `margin_pct_basis` | header | Derived; **finance-gated** (`SI_FINANCE_KEYS`, `:205-209`). `total_sen`, `local_total_sen` and `paid_sen` are NOT gated — everyone sees what is owed. |
+| `amount_sen` | `sales_invoice_payments` | The ledger rows `paid_sen` sums. |
 
 `recomputeTotals` (`:264`) **fails closed and never throws** (`:254-263`): a read
 it cannot vouch for must not become a written total, and it aborts by logging
@@ -461,3 +514,26 @@ Watch as data grows:
 
 Cross-module context: `docs/perf-optimization-plan.md`. Route/permission
 inventory: `docs/generated/`.
+
+## The transfer says at SAVE time what it could not carry (2026-08-20)
+
+This document reaches AutoCount by **TRANSFER**, not by a create, and the
+transfer route applies a **strictly narrower** set of header fields than an edit
+does — `SalesHeader` / `PurchaseHeader` only, plus one extra assignment on each
+purchase arm. So the account book can hold this document and still be missing
+fields it has: until 2026-08-20 the conversion payload carried the ERP's number
+and the account and nothing else, so every one of these landed under the DRAIN's
+date with a blanked reference.
+
+The payload now derives from `AcDownstreamSpec.facts` — the ONE description of
+this document, projected onto the keys this route can apply — so a field added
+there reaches the transfer with no further edit. What it still cannot carry, or
+what the ERP has no value for, is **said on the save**: the create handler
+returns `acNotSent` on its 201 and the New screen calls `notifyAcNotSent` before
+navigating, exactly as the sales- and purchase-order creates do (#2499). The
+problems carry `AC_SENT_INCOMPLETE`, not `AC_NOT_SENT`, and their title says the
+document ARRIVED and part of it did not — the other wording would send someone
+to raise it a second time into a book that already holds it. It never blocks.
+
+Full reasoning, and the per-field table of what each conversion used to drop:
+`docs/modules/autocount-writeback.md` §7c5.

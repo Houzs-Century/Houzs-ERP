@@ -25,7 +25,7 @@ import { useMemo, useState, type CSSProperties } from 'react';
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Save, X, CheckSquare, Square, Filter } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash, fmtMoneyCenti } from '@2990s/shared';
+import { fmtDateOrDash, fmtMoneySen } from '@2990s/shared';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
 import {
   useOutstandingSoItems,
@@ -40,10 +40,11 @@ import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDial
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 /* DataGrid localStorage layout key (commander 2026-05-28). */
 const STORAGE_KEY = 'po-from-so.layout.v1';
@@ -92,7 +93,7 @@ export const PurchaseOrderFromSo = () => {
   const navigate = useNavigate();
   const itemsQ   = useOutstandingSoItems();
 
-  /* Commander 2026-05-29 — when opened from a PO ("Convert from SO" / "Add Line
+  /* Commander 2026-05-29 — when opened from a PO ("Transfer from Sales Order" / "Add Line
      Item"), ?poId scopes this picker to that PO: it locks to the PO's supplier
      and, on save, APPENDS the picked SO lines to that PO (instead of creating
      new POs), then returns to the PO. */
@@ -424,11 +425,11 @@ export const PurchaseOrderFromSo = () => {
         const pickQty = p?.picked ? p.qty : effectiveRemaining(r);
         return (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
-            {fmtRm(pickQty * r.unitPriceCenti)}
+            {fmtRm(pickQty * r.unitPriceSen)}
           </span>
         );
       },
-      sortFn: (a, b) => a.remainingQty * a.unitPriceCenti - b.remainingQty * b.unitPriceCenti,
+      sortFn: (a, b) => a.remainingQty * a.unitPriceSen - b.remainingQty * b.unitPriceSen,
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- column accessors derive from the pick/qty state already in deps; listing the helpers would only rebuild the columns for no behavioural change
   ], [picks, draftQtyById]);
@@ -436,7 +437,7 @@ export const PurchaseOrderFromSo = () => {
   // ── Add to PO ────────────────────────────────────────────────────────
   // Commander 2026-05-29 — two modes:
   //   • PO-scoped (?poId): APPEND the picked lines straight to that PO, then
-  //     return to the PO detail page (Convert from SO / Add Line Item).
+  //     return to the PO detail page (Transfer from Sales Order / Add Line Item).
   //   • Default: stash the picks + feed the New PO form (/scm/purchase-orders/new).
   const onSave = () => {
     if (pickedCount === 0) { setDialog({ title: 'Nothing picked', body: 'Tick at least one SO line first.' }); return; }
@@ -505,21 +506,9 @@ export const PurchaseOrderFromSo = () => {
       >
         {DATE_FIELD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
-      <input
-        type="date"
-        value={dateFrom}
-        onChange={(e) => setDateFrom(e.target.value)}
-        style={FILTER_INPUT}
-        aria-label="Date from"
-      />
+      <DateField value={dateFrom} onChange={(iso) => setDateFrom(iso)} style={FILTER_INPUT} aria-label="Date from"/>
       <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-11)' }}>→</span>
-      <input
-        type="date"
-        value={dateTo}
-        onChange={(e) => setDateTo(e.target.value)}
-        style={FILTER_INPUT}
-        aria-label="Date to"
-      />
+      <DateField value={dateTo} onChange={(iso) => setDateTo(iso)} style={FILTER_INPUT} aria-label="Date to"/>
       {(category !== 'all' || dateFrom || dateTo) && (
         <button
           type="button"
@@ -601,10 +590,24 @@ export const PurchaseOrderFromSo = () => {
         /* A failed read must NEVER render as the sentence below. "We couldn't
            load the lines" and "there are no lines left to do" are opposite
            facts, and the operator acts on the second one by walking away from
-           work that is still outstanding. */
+           work that is still outstanding.
+
+           NEITHER MAY AN EMPTY ONE (owner 2026-08-17). This screen used to
+           report an empty result as a finished job — "every line has been
+           fully ...". An empty result is only ever evidence that THE QUERY
+           FOUND NOTHING: the read is scoped to the active company and
+           scopeToCompany FAILS CLOSED (scm/lib/companyScope.ts ->
+           .in('company_id', []) returns [] with error: null), PostgREST
+           truncates at db-max-rows without saying so, and a swallowed read
+           error is shaped identically to an empty one. The same claim was
+           removed from the from-PO picker in #2367 and reintroduced five
+           commits later, which is why backend/scripts/check-empty-state-claims.mjs
+           now gates it instead of a comment asking nicely. */
         emptyMessage={itemsQ.isError
           ? "We couldn't load the outstanding lines, so this list is incomplete. That is not the same as there being none left — please refresh and try again."
-          : "No outstanding SO lines — every line has been converted (or there are no SOs)."}
+          : items.length > 0
+            ? `None of the ${items.length} outstanding SO line(s) that loaded match the filters on this screen. Clear the filters to see them.`
+            : "This search came back with no outstanding SO lines. That is not the same as everything having been converted — the list only covers the company you are working in, and lines it cannot see look identical to lines that are done. Open the sales order and check its balance before treating this as nothing left to purchase."}
       />
 
       {dialog && (

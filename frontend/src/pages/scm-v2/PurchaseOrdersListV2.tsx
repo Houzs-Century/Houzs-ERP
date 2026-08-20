@@ -8,7 +8,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   Plus,
@@ -54,6 +54,7 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import {
   usePurchaseOrdersPaged,
+  useEnrichedPoListRows,
   usePurchaseOrderDetail,
   useCancelPurchaseOrder,
   fetchPurchaseOrderDetail,
@@ -65,7 +66,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { convertToLink } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
@@ -86,13 +87,7 @@ type StatusTab =
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-const fmtRm = (centi: number): string => fmtCenti(centi);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "").replace(/-/g, "/");
-  return s;
-};
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 const supplierNameOf = (r: PoHeaderRow): string =>
   r.supplier?.name || r.supplier_id || "—";
@@ -100,10 +95,10 @@ const supplierNameOf = (r: PoHeaderRow): string =>
 const supplierCodeOf = (r: PoHeaderRow): string => r.supplier?.code || "—";
 
 /* Items summary for the list column + Excel export (owner 2026-08-05) — the
-   list embed already carries (material_code, qty) per line; render the same
+   list embed already carries (item_code, qty) per line; render the same
    compact "CODE×qty · CODE×qty" the expansion details. */
 const itemsSummaryOf = (r: PoHeaderRow): string =>
-  (r.items ?? []).map((it) => `${it.material_code}×${it.qty}`).join(" · ");
+  (r.items ?? []).map((it) => `${it.item_code}×${it.qty}`).join(" · ");
 
 /* Purchase Location display (owner 2026-08-05) — warehouse NAME, code fallback. */
 const locationOf = (r: PoHeaderRow): string =>
@@ -115,9 +110,9 @@ const locationOf = (r: PoHeaderRow): string =>
 const supplierSkusOf = (r: PoHeaderRow): string =>
   (r.items ?? []).map((it) => it.supplier_sku?.trim() || "—").join(" · ");
 
-// Committed value = total_centi (subtotal + tax); the PO's face value.
+// Committed value = total_sen (subtotal + tax); the PO's face value.
 const totalOf = (r: PoHeaderRow): number =>
-  r.total_centi ?? r.subtotal_centi ?? 0;
+  r.total_sen ?? r.subtotal_sen ?? 0;
 
 // PO lifecycle: DRAFT → SUBMITTED → PARTIALLY_RECEIVED → RECEIVED, plus
 // CANCELLED. Bucket them for the pills; the raw status still surfaces in
@@ -506,7 +501,7 @@ function DetailDrawer({
                   // fulfillment cols) merged: a PO drawer needs both the fabric/
                   // colour line AND the received-vs-ordered progress.
                   const { primary, secondary } = orderLineIdentity({
-                    code: l.material_code,
+                    code: l.item_code,
                     description: l.description || l.material_name,
                     variant:
                       buildVariantSummary(l.item_group ?? "others", l.variants ?? null) ||
@@ -552,7 +547,7 @@ function DetailDrawer({
                         {balance > 0 ? balance : "—"}
                       </span>
                       <span className="text-right font-money text-[12.5px] font-semibold text-ink">
-                        {fmtRm(l.line_total_centi ?? 0)}
+                        {fmtRm(l.line_total_sen ?? 0)}
                       </span>
                     </div>
                   );
@@ -595,7 +590,7 @@ function DetailDrawer({
                         icon={<CheckCircle2 size={14} />}
                         onClick={onConvertGrn}
                       >
-                        Convert to GRN
+                        {transferToLabel('grn')}
                       </Button>
                     )}
                   </>
@@ -656,10 +651,10 @@ function TotalRow({ k, v, strong }: { k: string; v: string; strong?: boolean }) 
 }
 
 // Table column key → backend sort-whitelist column. PO backend whitelist is
-// { po_date, po_number, status, total_centi }; only `total` differs from its
+// { po_date, po_number, status, total_sen }; only `total` differs from its
 // backend name. Non-whitelisted columns (supplier / expected) carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
-  total: "total_centi",
+  total: "total_sen",
 };
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
@@ -683,16 +678,16 @@ function PoLinesExpansion({ id }: { id: string }) {
     ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => ({
     itemGroup: l.item_group ?? null,
-    code: l.material_code ?? null,
+    code: l.item_code ?? null,
     description: l.description || l.material_name || null,
     description2: l.description2 ?? null,
     variants: l.variants ?? null,
     qty: Number(l.qty ?? 0),
-    amountCenti: l.line_total_centi ?? 0,
-    assignedSos: byCode.get((l.material_code ?? "").trim()) ?? [],
-    sourceLinked: linkedSkus.has((l.material_code ?? "").trim()),
-    provenance: provByCode.get((l.material_code ?? "").trim()) ?? [],
-    deliveredDos: deliveredMap.get((l.material_code ?? "").trim()) ?? [],
+    amountSen: l.line_total_sen ?? 0,
+    assignedSos: byCode.get((l.item_code ?? "").trim()) ?? [],
+    sourceLinked: linkedSkus.has((l.item_code ?? "").trim()),
+    provenance: provByCode.get((l.item_code ?? "").trim()) ?? [],
+    deliveredDos: deliveredMap.get((l.item_code ?? "").trim()) ?? [],
   }));
   return (
     <div className="flex flex-col gap-2">
@@ -765,8 +760,12 @@ export function PurchaseOrdersListV2() {
     isLoading || isPlaceholderData || Boolean(error) || searchTransition.resultsAreStale;
   const cancelPo = useCancelPurchaseOrder();
 
-  // Server already filtered + sorted this page — render verbatim.
-  const rows = (data?.purchaseOrders ?? []) as PoHeaderRow[];
+  // Server already filtered + sorted this page — render verbatim. The MRP-derived
+  // columns (Assigned SO / Delivered) arrive from the deferred enrichment endpoint
+  // a beat later and are merged in here, so opening the list no longer waits on a
+  // company-wide computeMrp (perf/po-grn-list-mrp-off-load).
+  const serverRows = (data?.purchaseOrders ?? []) as PoHeaderRow[];
+  const rows = useEnrichedPoListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? {
     all: 0,
@@ -855,7 +854,7 @@ export function PurchaseOrdersListV2() {
   const goEdit = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}?edit=1`);
   const goPrint = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}?print=1`);
   const goFullPage = (r: PoHeaderRow) => navigate(`/scm/purchase-orders/${r.id}`);
-  // Convert to GRN routes to the reviewable From-PO picker pre-scoped to this
+  // Transfer to Goods Received routes to the reviewable From-PO picker pre-scoped to this
   // PO (?poId=<id>); the picker pre-ticks the PO's outstanding lines so the
   // operator reviews a ready draft and only Save creates the GRN.
   const goGrnFromPo = (r: PoHeaderRow) =>
@@ -1059,7 +1058,7 @@ export function PurchaseOrdersListV2() {
       getValue: (r) => itemsSummaryOf(r),
       render: (r) => (
         <span
-          title={(r.items ?? []).map((it) => `${it.material_code} × ${it.qty}`).join("\n")}
+          title={(r.items ?? []).map((it) => `${it.item_code} × ${it.qty}`).join("\n")}
           className="block min-w-0 truncate font-mono text-[11.5px] text-ink-secondary"
         >
           {itemsSummaryOf(r) || "—"}
@@ -1076,7 +1075,7 @@ export function PurchaseOrdersListV2() {
       getValue: (r) => supplierSkusOf(r),
       render: (r) => (
         <span
-          title={(r.items ?? []).map((it) => `${it.material_code} → ${it.supplier_sku?.trim() || "—"}`).join("\n")}
+          title={(r.items ?? []).map((it) => `${it.item_code} → ${it.supplier_sku?.trim() || "—"}`).join("\n")}
           className="block min-w-0 truncate font-mono text-[11.5px] text-ink-secondary"
         >
           {supplierSkusOf(r) || "—"}
@@ -1247,7 +1246,7 @@ export function PurchaseOrdersListV2() {
                   icon={<ArrowRightLeft size={14} />}
                   onClick={goFromSo}
                 >
-                  From Sales Order
+                  {transferFromLabel('so')}
                 </Button>
                 <div className="flex items-stretch">
                   <Button

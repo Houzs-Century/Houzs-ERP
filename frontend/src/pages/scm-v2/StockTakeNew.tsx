@@ -39,6 +39,7 @@ import {
 } from '../../vendor/scm/lib/stock-queries';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -96,7 +97,7 @@ export const StockTakeNew = () => {
     if (scopeType === 'CODE_PREFIX') {
       const p = scopeValue.trim().toUpperCase();
       if (!p) return list.length;
-      return list.filter((b) => b.product_code.toUpperCase().startsWith(p)).length;
+      return list.filter((b) => b.item_code.toUpperCase().startsWith(p)).length;
     }
     /* NONZERO (phase 1): same approximation the other scopes use — the server
        resolves per-variant buckets; here we count SKUs whose balance ≠ 0 so
@@ -220,12 +221,7 @@ export const StockTakeNew = () => {
 
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Take Date *</span>
-              <input
-                type="date"
-                value={takeDate}
-                onChange={(e) => setTakeDate(e.target.value)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={takeDate} onChange={(iso) => setTakeDate(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>

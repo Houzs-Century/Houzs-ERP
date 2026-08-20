@@ -48,15 +48,15 @@ export type FabricTrackingRow = {
   price_tier: FabricTier | null;
   sofa_price_tier: FabricTier | null;
   bedframe_price_tier: FabricTier | null;
-  price_centi: number;
-  soh_centi: number;
-  po_outstanding_centi: number;
-  last_month_usage_centi: number;
-  one_week_usage_centi: number;
-  two_weeks_usage_centi: number;
-  one_month_usage_centi: number;
-  shortage_centi: number;
-  reorder_point_centi: number;
+  price_sen: number;
+  soh_sen: number;
+  po_outstanding_sen: number;
+  last_month_usage_sen: number;
+  one_week_usage_sen: number;
+  two_weeks_usage_sen: number;
+  one_month_usage_sen: number;
+  shortage_sen: number;
+  reorder_point_sen: number;
   supplier: string | null;
   supplier_code: string | null;
   lead_time_days: number;
@@ -141,7 +141,7 @@ export function useUpdateFabricTier() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: async (args: { id: string; field: FabricTierField; tier: FabricTier }) => {
-      return authedFetch<{ ok: true; affectedProducts: number; fabricCode: string | null }>(
+      return authedFetch<{ ok: true; affectedProducts: number | null; fabricCode: string | null }>(
         `/fabric-tracking/${args.id}/tier`,
         {
           method: 'PATCH',
@@ -152,11 +152,21 @@ export function useUpdateFabricTier() {
     onSuccess: (res, vars) => {
       qc.invalidateQueries({ queryKey: ['fabric-tracking'] });
       qc.invalidateQueries({ queryKey: ['mfg-products'] });  // price display might shift
-      if (res.affectedProducts > 0) {
-        const tierLabel = vars.tier.replace('PRICE_', 'P');
-        const fieldLabel = vars.field === 'bedframePriceTier' ? 'bedframe' : 'sofa';
-        // Light-touch in-app toast via the app-wide NotifyDialog (serviceNotify bridge).
-        serviceNotify({
+      const tierLabel = vars.tier.replace('PRICE_', 'P');
+      const fieldLabel = vars.field === 'bedframePriceTier' ? 'bedframe' : 'sofa';
+      // Light-touch in-app toast via the app-wide NotifyDialog (serviceNotify bridge).
+      if (res.affectedProducts === null) {
+        /* The tier DID change; only the propagation count could not be read.
+           Saying nothing would read as "nothing was affected", which is the
+           same silence a `count ?? 0` produced on the server. */
+        void serviceNotify({
+          title: `Tier updated → ${tierLabel}`,
+          body:
+            `The tier change was saved. How many ${fieldLabel} products it affects could not be read, ` +
+            `so no number is shown.`,
+        });
+      } else if (res.affectedProducts > 0) {
+        void serviceNotify({
           title: `Tier updated → ${tierLabel}`,
           body:
             `${res.affectedProducts} ${fieldLabel} product${res.affectedProducts === 1 ? '' : 's'} ` +
@@ -255,7 +265,7 @@ export type NewFabric = {
   bedframePriceTier?: FabricTier;
   supplierCode?: string;
   series?: string;
-  priceCenti?: number;
+  priceSen?: number;
   // Migration 0124/0125 — also create the customer-pickable fabric_library entry.
   label?: string;
   colours?: Array<{ colourId?: string; label: string; swatchHex?: string }>;

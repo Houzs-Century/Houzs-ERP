@@ -90,7 +90,7 @@ async function main() {
   const { findColour } = buildFabricColourIndex(fcRows);
 
   const rows = await sql`
-    SELECT gi.id::text AS id, g.grn_number, gi.material_code AS code, gi.variants AS gv,
+    SELECT gi.id::text AS id, g.grn_number, gi.item_code AS code, gi.variants AS gv,
            pi.variants AS pv, pi.description2 AS pd2, pi.linked_ac_dtlkey AS pdtl, p.po_number
       FROM scm.grn_items gi
       JOIN scm.grns g ON g.id = gi.grn_id

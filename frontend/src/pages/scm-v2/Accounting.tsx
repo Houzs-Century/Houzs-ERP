@@ -39,17 +39,18 @@ import {
   type ControlCheckRow,
 } from './accounting-phase1-queries';
 import { DataTable, type Column } from '../../components/DataTable';
-import { fmtCenti } from '../../vendor/shared/format';
+import { fmtSen } from '../../vendor/shared/format';
 import { byText } from '../../vendor/scm/lib/sort-options';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtDateOrDash } from '@2990s/shared';
+import { fmtDateOrDash } from '../../vendor/shared/format';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 // The ONE guarded centi→"RM …" formatter — returns "—" for an absent/non-finite
 // amount, never "RM NaN". Kept under the local name so callsites are unchanged.
-const fmt = (sen: number | null | undefined) => fmtCenti(sen);
+const fmt = (sen: number | null | undefined) => fmtSen(sen);
 
 type Tab = 'coa' | 'je' | 'gl' | 'tb' | 'ar' | 'ap' | 'check';
 
@@ -427,7 +428,7 @@ const NewJournalForm = ({ onDone }: { onDone: () => void }) => {
     <div style={cardStyle} className="space-y-3">
       <div style={{ fontWeight: 700 }}>New manual journal (draft — posting is a separate step)</div>
       <div style={{ display: 'flex', gap: 'var(--space-2)', flexWrap: 'wrap' }}>
-        <input type="date" style={fieldStyle} value={entryDate} onChange={(e) => setEntryDate(e.target.value)} />
+        <DateField style={fieldStyle} value={entryDate} onChange={(iso) => setEntryDate(iso)}/>
         <input style={{ ...fieldStyle, flex: 1, minWidth: 240 }} placeholder="Narration (what is this entry?)"
           value={narration} onChange={(e) => setNarration(e.target.value)} />
       </div>
@@ -735,7 +736,7 @@ const ArAgingTab = () => {
 
   return (
     <>
-      <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_centi, 0)} />
+      <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_sen, 0)} />
       <DataTable<ArAgingRow>
         tableId="accounting-ar-aging"
         layoutFamily="accounting-ar-aging"
@@ -751,8 +752,8 @@ const ArAgingTab = () => {
           { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => r.due_date ?? '—' },
           {
             key: 'outstanding', label: 'Outstanding', align: 'right', width: '140px',
-            getValue: (r) => r.outstanding_centi / 100,
-            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_centi)}</span>,
+            getValue: (r) => r.outstanding_sen / 100,
+            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_sen)}</span>,
           },
           { key: 'days_overdue', label: 'Days Overdue', align: 'right', width: '120px', getValue: (r) => r.days_overdue, render: (r) => (r.days_overdue > 0 ? r.days_overdue : '—') },
           { key: 'bucket', label: 'Bucket', width: '110px', getValue: (r) => r.aging_bucket, render: (r) => <BucketPill bucket={r.aging_bucket} /> },
@@ -770,7 +771,7 @@ const ApAgingTab = () => {
 
   return (
     <>
-      <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_centi, 0)} />
+      <BucketSummary totals={totals} grandTotal={rows.reduce((s, r) => s + r.outstanding_sen, 0)} />
       <DataTable<ApAgingRow>
         tableId="accounting-ap-aging"
         layoutFamily="accounting-ap-aging"
@@ -793,8 +794,8 @@ const ApAgingTab = () => {
           { key: 'due', label: 'Due', width: '110px', getValue: (r) => r.due_date ?? '', render: (r) => r.due_date ?? '—' },
           {
             key: 'outstanding', label: 'Outstanding', align: 'right', width: '140px',
-            getValue: (r) => r.outstanding_centi / 100,
-            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_centi)}</span>,
+            getValue: (r) => r.outstanding_sen / 100,
+            render: (r) => <span style={{ fontWeight: 700 }}>{fmt(r.outstanding_sen)}</span>,
           },
           { key: 'days_overdue', label: 'Days Overdue', align: 'right', width: '120px', getValue: (r) => r.days_overdue, render: (r) => (r.days_overdue > 0 ? r.days_overdue : '—') },
           { key: 'bucket', label: 'Bucket', width: '110px', getValue: (r) => r.aging_bucket, render: (r) => <BucketPill bucket={r.aging_bucket} /> },
@@ -807,9 +808,9 @@ const ApAgingTab = () => {
 /* ── Helpers ─────────────────────────────────────────────────────────── */
 type Bucket = 'CURRENT' | '1-30' | '31-60' | '61-90' | '90+';
 
-const bucketTotals = <T extends { aging_bucket: Bucket; outstanding_centi: number }>(rows: T[]) => {
+const bucketTotals = <T extends { aging_bucket: Bucket; outstanding_sen: number }>(rows: T[]) => {
   const out: Record<Bucket, number> = { 'CURRENT': 0, '1-30': 0, '31-60': 0, '61-90': 0, '90+': 0 };
-  for (const r of rows) out[r.aging_bucket] += r.outstanding_centi;
+  for (const r of rows) out[r.aging_bucket] += r.outstanding_sen;
   return out;
 };
 

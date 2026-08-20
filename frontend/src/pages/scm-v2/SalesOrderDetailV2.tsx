@@ -17,8 +17,9 @@
 // The old ledger-style SalesOrderDetail.tsx stays in the tree; App.tsx route
 // swap on /scm/sales-orders/:docNo decides which one users see.
 
-import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { lazy, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
+import { LazySlot } from "../../components/LazySlot";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
   ArrowLeft,
@@ -55,6 +56,9 @@ import {
 import { AuditHistoryPanel } from "../../components/audit/AuditHistoryPanel";
 import { SO_AUDIT_LABELS } from "./so-audit-labels";
 import { fmtDateTime } from "../../vendor/shared/format";
+import { brandingLabel } from "../../vendor/shared/so-branding-label";
+import { getBrandingCompanyCode } from "../../lib/branding";
+import { useAuth as useHouzsAuth } from "../../auth/AuthContext";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useStaffLookup } from "../../hooks/useStaffLookup";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
@@ -70,7 +74,7 @@ import {
 } from "../../lib/paymentRetryHandoff";
 import { cn, formatDate } from "../../lib/utils";
 import { SoLinePhotoStrip } from "../../components/scm-v2/SoLinePhotoStrip";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import {
   isLocked as isSoLocked,
@@ -95,11 +99,12 @@ type SoHeader = {
   ref: string | null;
   branding: string | null;
   first_item_branding: string | null;
+  first_item_category: string | null;
   status: string;
-  local_total_centi: number;
-  balance_centi: number;
-  paid_centi: number;
-  discount_centi?: number;
+  local_total_sen: number;
+  balance_sen: number;
+  paid_sen: number;
+  discount_sen?: number;
   phone: string | null;
   email: string | null;
   address1: string | null;
@@ -114,7 +119,6 @@ type SoHeader = {
   // The processing-date column the lock reads. Label, API field and column are
   // finally the same word (mig 0284 renamed it from internal_expected_dd).
   processing_date?: string | null;
-  proceeded_at?: string | null;
   // Server-derived SO-lock / amendment flags (see the /:docNo detail handler).
   // has_children = a non-cancelled DO/SI references this SO (hard lock);
   // amendment_eligible = processing-locked but still amendable; has_open_amendment
@@ -131,19 +135,19 @@ type SoHeader = {
   // DETAIL payload for every caller (only the LIST endpoint strips these —
   // #574); the UI gates the Totals·Margin card behind project_finance_viewer.
   // Cost columns are nullable for rows predating the cost backfill.
-  total_cost_centi?: number | null;
-  total_margin_centi?: number | null;
+  total_cost_sen?: number | null;
+  total_margin_sen?: number | null;
   margin_pct_basis?: number | null;
-  mattress_sofa_centi?: number | null;
-  bedframe_centi?: number | null;
-  accessories_centi?: number | null;
-  others_centi?: number | null;
-  service_centi?: number | null;
-  mattress_sofa_cost_centi?: number | null;
-  bedframe_cost_centi?: number | null;
-  accessories_cost_centi?: number | null;
-  others_cost_centi?: number | null;
-  service_cost_centi?: number | null;
+  mattress_sofa_sen?: number | null;
+  bedframe_sen?: number | null;
+  accessories_sen?: number | null;
+  others_sen?: number | null;
+  service_sen?: number | null;
+  mattress_sofa_cost_sen?: number | null;
+  bedframe_cost_sen?: number | null;
+  accessories_cost_sen?: number | null;
+  others_cost_sen?: number | null;
+  service_cost_sen?: number | null;
 };
 
 type SoItem = {
@@ -153,9 +157,9 @@ type SoItem = {
   description2: string | null;
   uom: string;
   qty: number;
-  unit_price_centi: number;
-  discount_centi: number;
-  total_centi: number;
+  unit_price_sen: number;
+  discount_sen: number;
+  total_sen: number;
   cancelled: boolean;
   item_group?: string;
   variants?: Record<string, unknown> | null;
@@ -193,22 +197,20 @@ type SoItem = {
    format.ts). The page-local copy this replaces had no finite guard, so an
    absent / non-numeric cost rendered the literal "MYR NaN" at the user; the
    shared helper renders "—" for a number the ERP does not have. */
-const fmtMoney = fmtMoneyCenti;
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  // Present as dd/mm/yyyy per Malaysian convention.
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
+const fmtMoney = fmtMoneySen;
 
 const refOf = (h: SoHeader): string =>
   h.po_doc_no || h.customer_so_no || h.ref || "—";
 
+/* HEADER FIRST, then the SAME shared rule the SO list falls back to — byte-for-
+   byte the list's brandOf. Owner 2026-08-18: "我要表头啊", so a filled header
+   still wins on both companies; what changes here is the FALLBACK. This page
+   used to end `|| "—"` over the raw brand TEXT, so an order with no header and a
+   rep line carrying no brand text — every sofa — printed a dash while the list
+   beside it printed a brand. */
 const brandOf = (h: SoHeader): string =>
-  h.branding || h.first_item_branding || "—";
+  (h.branding ?? "").trim() ||
+  brandingLabel(h.first_item_category, h.first_item_branding, getBrandingCompanyCode());
 
 const STATUS_TONE: Record<
   string,
@@ -401,21 +403,21 @@ function ActivityRow({
 
 function OrderTotalCard({
   header,
-  subtotalCenti,
-  discountCenti,
-  totalCenti,
+  subtotalSen,
+  discountSen,
+  totalSen,
 }: {
   header: SoHeader;
-  subtotalCenti: number;
-  discountCenti: number;
-  totalCenti: number;
+  subtotalSen: number;
+  discountSen: number;
+  totalSen: number;
 }) {
-  /* The auto-derived delivery fee is inside `totalCenti` but was not itemised,
+  /* The auto-derived delivery fee is inside `totalSen` but was not itemised,
      so an all-FOC order read "Subtotal 0 → Total 250" with nothing explaining
      the 250 (owner, 2026-08-07: "为什么会有 rm250?"). Derived as the remainder
      rather than read from a header field so the row is exactly the gap the
      reader is staring at, whatever fee components the server folds in. */
-  const feeCenti = totalCenti - (subtotalCenti - discountCenti);
+  const feeSen = totalSen - (subtotalSen - discountSen);
   const st = statusFor(header.status);
   return (
     <div className="rounded-lg bg-sidebar px-5 py-5 text-sidebar-ink shadow-stone">
@@ -423,7 +425,7 @@ function OrderTotalCard({
         Order total
       </div>
       <div className="mt-1.5 font-money text-[30px] font-bold leading-none tracking-tight text-white">
-        {fmtMoney(totalCenti, header.currency)}
+        {fmtMoney(totalSen, header.currency)}
       </div>
       <div className="mt-3 flex items-center gap-2">
         <span
@@ -442,15 +444,15 @@ function OrderTotalCard({
       </div>
 
       <div className="mt-4 space-y-2 border-t border-white/10 pt-4">
-        <TotalLine k="Subtotal" v={fmtMoney(subtotalCenti, header.currency)} />
-        <TotalLine k="Discount" v={fmtMoney(discountCenti, header.currency)} />
-        {feeCenti > 0 && (
-          <TotalLine k="Delivery fee" v={fmtMoney(feeCenti, header.currency)} />
+        <TotalLine k="Subtotal" v={fmtMoney(subtotalSen, header.currency)} />
+        <TotalLine k="Discount" v={fmtMoney(discountSen, header.currency)} />
+        {feeSen > 0 && (
+          <TotalLine k="Delivery fee" v={fmtMoney(feeSen, header.currency)} />
         )}
         <TotalLine k="SST" v="Inclusive" muted />
         <TotalLine
           k="Total"
-          v={fmtMoney(totalCenti, header.currency)}
+          v={fmtMoney(totalSen, header.currency)}
           strong
         />
       </div>
@@ -512,24 +514,31 @@ const SalesOrderDetailInlineEditor = lazy(() =>
 
 // ─── Main page ─────────────────────────────────────────────────────────────
 
-/* Thin router — the only hook it calls is useSearchParams, so Rules of Hooks
+/* Thin router — the only hooks it calls are useSearchParams and useLocation
+   (both unconditional, at the top), so Rules of Hooks
    are respected when the ?edit=1 flip swaps between the read-only body and
    the lazy inline editor (the two children have different hook counts;
    letting either side call hooks conditionally inside the same function
    would break on navigation). */
 export function SalesOrderDetailV2() {
   const [params] = useSearchParams();
+  const location = useLocation();
   /* `payments=1` used to forward to the legacy editor; since 2026-08-09 the
      read page hosts the SAME PaymentsTable component (owner: "点选 collect
      payment … 全部 UI 都不一样" — one page, one look; the flag now just seeds
      the payments Edit toggle below). Only full `edit=1` swaps bodies. */
   if (params.get("edit") === "1") {
+    /* Scoped, not bare: a boundary keyed on the document this slot is editing,
+       so a failed editor chunk shows the panel in place of the editor and
+       clears when the operator moves to another document, instead of leaning
+       on a boundary in a file this one cannot see. */
     return (
-      <Suspense
+      <LazySlot
+        resetKey={`so-editor:${location.pathname}`}
         fallback={<div className="p-8 text-[13px] text-ink-muted">Loading editor…</div>}
       >
         <SalesOrderDetailInlineEditor />
-      </Suspense>
+      </LazySlot>
     );
   }
   return <SalesOrderDetailV2ReadOnly />;
@@ -565,22 +574,22 @@ function SalesOrderDetailV2ReadOnly() {
   const st = salesOrder ? statusFor(salesOrder.status) : null;
 
   // Totals — subtotal from live items; discount from header (aggregate); total
-  // = header.local_total_centi if the API stamped it, else recomputed.
-  const subtotalCenti = useMemo(
-    () => items.reduce((s, l) => s + l.total_centi + l.discount_centi, 0),
+  // = header.local_total_sen if the API stamped it, else recomputed.
+  const subtotalSen = useMemo(
+    () => items.reduce((s, l) => s + l.total_sen + l.discount_sen, 0),
     [items]
   );
-  const discountCenti = useMemo(
+  const discountSen = useMemo(
     () =>
-      salesOrder?.discount_centi ??
-      items.reduce((s, l) => s + l.discount_centi, 0),
-    [items, salesOrder?.discount_centi]
+      salesOrder?.discount_sen ??
+      items.reduce((s, l) => s + l.discount_sen, 0),
+    [items, salesOrder?.discount_sen]
   );
-  const totalCenti =
-    salesOrder?.local_total_centi ?? subtotalCenti - discountCenti;
+  const totalSen =
+    salesOrder?.local_total_sen ?? subtotalSen - discountSen;
 
   const focCount = useMemo(
-    () => items.filter((l) => l.unit_price_centi === 0 && l.total_centi === 0).length,
+    () => items.filter((l) => l.unit_price_sen === 0 && l.total_sen === 0).length,
     [items]
   );
 
@@ -595,6 +604,17 @@ function SalesOrderDetailV2ReadOnly() {
     : false;
   const canAmend = salesOrder ? soAmendmentEligible(salesOrder, hardLocked) : false;
   const hasOpenAmend = Boolean(salesOrder?.has_open_amendment);
+  /* Owner 2026-08-17 — a hard-locked order still opens for the ONE change a
+     DO / SI does not snapshot: who owns it. The editor keeps every other field
+     disabled (SalesOrderDetail's `inputsDisabled` still reads the lock), so
+     this door leads to exactly one dropdown. Without it, handing a delivered
+     order to a resigning rep's replacement meant Override — which unlocks the
+     whole order, addresses and lines included. */
+  const canAttributeOther = useHouzsAuth().can("scm.so.attribute_other");
+  const editDisabled = hardLocked && !canAttributeOther;
+  const lockedEditHint = hardLocked && canAttributeOther
+    ? "This order is locked by a downstream Delivery Order / Sales Invoice — only the Salesperson can still be changed."
+    : "This order is locked — it already has a downstream Delivery Order / Sales Invoice.";
   const editLabel = canAmend
     ? hasOpenAmend
       ? "View amendment"
@@ -657,7 +677,11 @@ function SalesOrderDetailV2ReadOnly() {
         `Cancel sales order ${salesOrder.doc_no}? This cannot be undone.`
       )
     ) {
-      updateStatus.mutate({ docNo: salesOrder.doc_no, status: "cancelled" });
+      updateStatus.mutate({
+        docNo: salesOrder.doc_no,
+        status: "cancelled",
+        expectedStatus: salesOrder.status,
+      });
     }
   };
   /* History (owner 2026-08-13: "点history的时候没有反应").
@@ -814,10 +838,10 @@ function SalesOrderDetailV2ReadOnly() {
       label: "Unit price",
       width: "108px",
       align: "right",
-      getValue: (l) => l.unit_price_centi,
+      getValue: (l) => l.unit_price_sen,
       render: (l) => (
         <span className="font-money text-[13px] text-ink-secondary">
-          {fmtMoney(l.unit_price_centi, salesOrder?.currency)}
+          {fmtMoney(l.unit_price_sen, salesOrder?.currency)}
         </span>
       ),
     },
@@ -826,9 +850,9 @@ function SalesOrderDetailV2ReadOnly() {
       label: "Disc",
       width: "88px",
       align: "right",
-      getValue: (l) => l.discount_centi,
+      getValue: (l) => l.discount_sen,
       render: (l) => {
-        const isFoc = l.unit_price_centi === 0 && l.total_centi === 0;
+        const isFoc = l.unit_price_sen === 0 && l.total_sen === 0;
         if (isFoc) {
           return (
             <Badge tone="warning" size="xs">
@@ -836,10 +860,10 @@ function SalesOrderDetailV2ReadOnly() {
             </Badge>
           );
         }
-        if (l.discount_centi > 0) {
+        if (l.discount_sen > 0) {
           return (
             <span className="font-money text-[13px] text-ink-secondary">
-              {fmtMoney(l.discount_centi, salesOrder?.currency)}
+              {fmtMoney(l.discount_sen, salesOrder?.currency)}
             </span>
           );
         }
@@ -851,10 +875,10 @@ function SalesOrderDetailV2ReadOnly() {
       label: "Amount",
       width: "132px",
       align: "right",
-      getValue: (l) => l.total_centi,
+      getValue: (l) => l.total_sen,
       render: (l) => (
         <span className="font-money text-[13px] font-semibold text-ink">
-          {fmtMoney(l.total_centi, salesOrder?.currency)}
+          {fmtMoney(l.total_sen, salesOrder?.currency)}
         </span>
       ),
     },
@@ -1129,10 +1153,10 @@ function SalesOrderDetailV2ReadOnly() {
               variant="primary"
               icon={<Edit3 size={14} />}
               onClick={goEdit}
-              disabled={hardLocked}
+              disabled={editDisabled}
               title={
                 hardLocked
-                  ? "This order is locked — it already has a downstream Delivery Order / Sales Invoice."
+                  ? lockedEditHint
                   : canAmend
                     ? "This order is processing-locked — changes go through the SO Amendment workflow."
                     : undefined
@@ -1154,7 +1178,7 @@ function SalesOrderDetailV2ReadOnly() {
             Order total
           </div>
           <div className="mt-1 font-money text-[26px] font-bold leading-none tracking-tight text-ink">
-            {fmtMoney(totalCenti, salesOrder.currency)}
+            {fmtMoney(totalSen, salesOrder.currency)}
           </div>
           <div className="mt-1.5 text-[12px] text-ink-muted">
             {items.length} line{items.length === 1 ? "" : "s"} · {st?.blurb}
@@ -1350,7 +1374,7 @@ function SalesOrderDetailV2ReadOnly() {
                   <PaymentsTable
                     key={salesOrder.doc_no}
                     docNo={salesOrder.doc_no}
-                    grandTotalCenti={salesOrder.local_total_centi ?? 0}
+                    grandTotalSen={salesOrder.local_total_sen ?? 0}
                     currency={salesOrder.currency}
                     locked={!canEditPayments}
                     draftUnlocked={soStatus === "draft"}
@@ -1376,9 +1400,9 @@ function SalesOrderDetailV2ReadOnly() {
             <div className="hidden lg:sticky lg:top-[124px] space-y-3 md:block">
               <OrderTotalCard
                 header={salesOrder}
-                subtotalCenti={subtotalCenti}
-                discountCenti={discountCenti}
-                totalCenti={totalCenti}
+                subtotalSen={subtotalSen}
+                discountSen={discountSen}
+                totalSen={totalSen}
               />
 
               {/* Owner 2026-07-17: the Totals·Margin (Revenue/Cost/Margin) card
@@ -1512,7 +1536,8 @@ function SalesOrderDetailV2ReadOnly() {
           <button
             type="button"
             onClick={goEdit}
-            disabled={hardLocked}
+            disabled={editDisabled}
+            title={hardLocked ? lockedEditHint : undefined}
             className="inline-flex h-11 flex-1 items-center justify-center gap-1.5 rounded-lg bg-primary text-[13.5px] font-bold text-white shadow-sm hover:bg-primary-ink disabled:opacity-40"
           >
             <Edit3 size={16} /> {editLabel}
@@ -1592,11 +1617,11 @@ function SalesOrderDetailV2ReadOnly() {
           },
           {
             label: "Order total",
-            value: fmtMoney(salesOrder.local_total_centi, salesOrder.currency),
+            value: fmtMoney(salesOrder.local_total_sen, salesOrder.currency),
           },
           {
             label: "Balance",
-            value: fmtMoney(salesOrder.balance_centi, salesOrder.currency),
+            value: fmtMoney(salesOrder.balance_sen, salesOrder.currency),
           },
         ]}
         {...print.handlers}

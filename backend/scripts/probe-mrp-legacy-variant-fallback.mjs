@@ -32,11 +32,12 @@
  *
  * WHY BUCKET ARITHMETIC IS EXACT AND NOT AN APPROXIMATION. MRP's greedy walk
  * drains two pools (stock, then the PO queue) line by line, so a bucket's TOTAL
- * shortage is order-independent: max(0, need - stock - poSupply). The page runs
- * includeUndated=false (mrp.ts:1278) and undated lines sort LAST (byDateAsc puts
- * nulls after every date), so undated demand can only consume what the dated
- * lines left behind -> the visible shortage is exactly
- * max(0, DATED need - stock - poSupply). applyCommittedSupply
+ * shortage is order-independent: max(0, need - stock - poSupply). Undated lines
+ * sort LAST (byDateAsc puts nulls after every date), so undated demand can only
+ * consume what the dated lines left behind -> the DATED shortage is exactly
+ * max(0, DATED need - stock - poSupply), and that holds whichever way
+ * includeUndated is set (it is display-only; default SHOWN since 2026-08-18, so
+ * the page's visible shortage now includes the undated rows' own shortfall). applyCommittedSupply
  * (lib/ship-commitment.ts:350-377) moves units out of the PO pool and into
  * stockAddBack under the SAME bucketKey, so (stock + poSupply) per bucket is
  * unchanged by commitments; it also drops zero-qty entries, which is what makes
@@ -183,13 +184,13 @@ async function runCompany(CO) {
 
   // ── stock (mrp.ts:605-612) ────────────────────────────────────────────────
   const bal = await sql`
-    SELECT product_code, warehouse_id::text AS warehouse_id,
+    SELECT item_code, warehouse_id::text AS warehouse_id,
            coalesce(variant_key,'') AS variant_key, qty::numeric AS qty
       FROM scm.inventory_balances
      WHERE company_id = ${CO}::bigint`;
   const stockByKey = new Map();
   for (const b of bal) {
-    const k = composite(b.warehouse_id ?? null, b.product_code, b.variant_key ?? "");
+    const k = composite(b.warehouse_id ?? null, b.item_code, b.variant_key ?? "");
     stockByKey.set(k, (stockByKey.get(k) ?? 0) + n(b.qty));
   }
 
@@ -197,7 +198,7 @@ async function runCompany(CO) {
   const poRaw = await sql`
     SELECT p.po_number, p.status::text AS status,
            p.purchase_location_id::text AS purchase_location_id,
-           i.material_code, i.item_group, i.variants AS variants,
+           i.item_code, i.item_group, i.variants AS variants,
            i.qty::numeric AS qty, coalesce(i.received_qty,0)::numeric AS received_qty,
            i.warehouse_id::text AS warehouse_id
       FROM scm.purchase_order_items i
@@ -221,12 +222,12 @@ async function runCompany(CO) {
     if (left <= 0) continue;
     const poWh = r.warehouse_id ?? r.purchase_location_id ?? null;
     const vkey = computeVariantKey(r.item_group, r.variants ?? null);
-    const k = composite(poWh, r.material_code, vkey);
+    const k = composite(poWh, r.item_code, vkey);
     openPoLines += 1; openPoUnits += left;
-    const poCat = catByCode.get(r.material_code) ?? catFromGroup(r.item_group);
+    const poCat = catByCode.get(r.item_code) ?? catFromGroup(r.item_group);
     if (vkey === "") {
       emptyKeyPoLines += 1; emptyKeyPoUnits += left;
-      const m = emptyPoMeta.get(k) ?? { whId: poWh, code: r.material_code, units: 0, cats: new Set(), variantBearing: 0 };
+      const m = emptyPoMeta.get(k) ?? { whId: poWh, code: r.item_code, units: 0, cats: new Set(), variantBearing: 0 };
       m.units += left;
       m.cats.add(poCat ?? "(uncatalogued)");
       if (VARIANT_BEARING.has(poCat ?? "")) {

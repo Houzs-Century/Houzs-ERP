@@ -14,6 +14,8 @@ import {
   letterheadLogoKey,
 } from "../services/branding";
 import { formatPhone } from "../scm/shared/phone";
+import { fmtDate, fmtDateTime } from "../scm/shared/format";
+import { assrStageLabel } from "../scm/shared/assr-stage-labels";
 
 // Formal service-case document modeled on a standard Malaysian business
 // invoice/service report:
@@ -50,33 +52,12 @@ function esc(s: unknown): string {
 // parse as UTC midnight, so the +8h shift never moves their calendar day.
 const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
 
-function fmtDate(s: string | null | undefined): string {
-  if (!s) return "—";
-  const d = new Date(s);
-  if (isNaN(d.getTime())) {
-    const parts = s.slice(0, 10).split("-");
-    if (parts.length === 3 && parts[0].length === 4) return `${parts[2]}/${parts[1]}/${parts[0]}`;
-    return s.slice(0, 10);
-  }
-  const shifted = new Date(d.getTime() + MYT_OFFSET_MS);
-  const dd = String(shifted.getUTCDate()).padStart(2, "0");
-  const mm = String(shifted.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = shifted.getUTCFullYear();
-  return `${dd}/${mm}/${yyyy}`;
-}
-
-function fmtDateTime(s: string | null | undefined): string {
-  if (!s) return "—";
-  const parsed = new Date(s);
-  if (isNaN(parsed.getTime())) return s.slice(0, 16).replace("T", " ");
-  const d = new Date(parsed.getTime() + MYT_OFFSET_MS);
-  const dd = String(d.getUTCDate()).padStart(2, "0");
-  const mm = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const yyyy = d.getUTCFullYear();
-  const hh = String(d.getUTCHours()).padStart(2, "0");
-  const min = String(d.getUTCMinutes()).padStart(2, "0");
-  return `${dd}/${mm}/${yyyy} ${hh}:${min}`;
-}
+// fmtDate / fmtDateTime come from scm/shared/format — the one date rule. The
+// hand-rolled +8h copies that used to live here produced the same DD/MM/YYYY,
+// which is exactly why they survived: agreeing today is not the same as being
+// one rule, and the ASSR copy of fmtDateTime had ALREADY drifted (it lacked the
+// naive-wall-clock branch the Projects copy grew on 2026-08-12, so a crew time
+// typed as 11:00 printed as 19:00).
 
 // "Printed 2026/07/30 11:05 PM" — the sign-off footer's print stamp
 // (Nico 2026-07-30: yyyy/mm/dd [hh:mm @AM/PM]). MYT like fmtDateTime.
@@ -92,22 +73,12 @@ function printedStamp(): string {
   return `${yyyy}/${mm}/${dd} ${h12}:${min} ${ampm}`;
 }
 
-const STAGE_LABEL: Record<string, string> = {
-  pending_review: "Pending Review",
-  under_verification: "Under Verification",
-  pending_solution: "Pending Solution",
-  pending_supplier_pickup: "Supplier Pickup / Return",
-  pending_item_ready: "Pending Item Ready",
-  pending_delivery_service: "Pending Delivery / Service",
-  completed: "Completed",
-  voided: "Voided — Not Valid",
-  registration: "Pending Review",
-  triage: "Under Verification",
-  action: "Pending Solution",
-  logistics: "Pending Item Pickup",
-  resolution: "Pending Delivery / Service",
-  closed: "Completed",
-};
+/* The stage wording moved to scm/shared/assr-stage-labels.ts (assrStageLabel).
+   This map was one of FIVE hand-written copies, and the note below — written
+   when RESOLUTION_LABEL was unified — applied word for word to the map that
+   used to sit right here and was not applied to it. The customer portal's copy
+   had no `voided` arm at all and printed the raw slug, while this one printed
+   "Voided — Not Valid". */
 
 /* Owner-approved wording (2026-08-11). Kept identical in all three
    copies of this map — backend print, desktop StatusDot, mobile — because
@@ -387,7 +358,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
   const servicePillLabel = cs.resolution_method
     ? RESOLUTION_LABEL[cs.resolution_method] || cs.resolution_method
     : "—";
-  const statusPillLabel = STAGE_LABEL[cs.stage] || cs.stage;
+  const statusPillLabel = assrStageLabel(cs.stage);
   // Void reason prints beneath the status when the case is voided
   // (Nico 2026-07-29) so the recipient sees why it was rejected.
   const voidReason = cs.stage === "voided" && (cs as any).void_reason
@@ -998,7 +969,7 @@ app.get("/:id", requirePermission("service_cases.read"), async (c) => {
     </div>
     ${voidReason ? `
     <div style="margin: 3mm 0 0; border: 0.5pt solid #c0392b; background: #fdf2f0; border-radius: 1.5mm; padding: 2.4mm 3mm;">
-      <div style="font-size: 8.8pt; letter-spacing: .08em; text-transform: uppercase; color: #c0392b; font-weight: 700;">Voided — Not Valid · Reason</div>
+      <div style="font-size: 8.8pt; letter-spacing: .08em; text-transform: uppercase; color: #c0392b; font-weight: 700;">${esc(assrStageLabel("voided"))} · Reason</div>
       <div style="font-size: 11.2pt; color: #7a2018; margin-top: 0.8mm;">${esc(voidReason)}</div>
     </div>` : ""}
 

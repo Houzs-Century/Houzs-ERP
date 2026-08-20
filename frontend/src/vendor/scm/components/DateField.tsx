@@ -9,7 +9,7 @@
 // the OS calendar picker. The on-the-wire contract is unchanged: `value` is an
 // ISO `YYYY-MM-DD` string (or '') and `onChange` emits the same.
 
-import { useState, useRef, useId } from 'react';
+import { useState, useRef, useId, type CSSProperties } from 'react';
 import { Calendar } from 'lucide-react';
 import styles from './DateField.module.css';
 
@@ -36,6 +36,17 @@ export type DateFieldProps = {
   /** Soft informational highlight (orange border + cream fill) — e.g. a value
    *  auto-inherited from a parent doc. Distinct from `invalid` (red error). */
   highlight?: boolean;
+  /** Inline style, merged onto the wrapper. The raw `<input type="date">`
+   *  sites this component replaced carried their validation and
+   *  inherited-value borders as inline `style`, and carrying those over
+   *  verbatim is what let 170-odd fields move in one pass without each one
+   *  being re-designed. `invalid` / `highlight` still win where both are set,
+   *  because they are the reviewed spellings of the same two states. */
+  style?: CSSProperties;
+  /** Fired when the text box loses focus, after the display snaps back to the
+   *  canonical value. */
+  onBlur?: () => void;
+  required?: boolean;
 };
 
 /** "2026-05-31" → "31/05/2026". Returns '' for empty/malformed. */
@@ -74,6 +85,9 @@ export function DateField({
   'aria-label': ariaLabel,
   invalid = false,
   highlight = false,
+  style,
+  onBlur,
+  required = false,
 }: DateFieldProps) {
   // `editing` is non-null only while the text box has focus; the rest of the
   // time the display is derived straight from the canonical ISO `value`, so the
@@ -102,10 +116,10 @@ export function DateField({
       className={`${styles.wrap} ${fullWidth ? styles.fullWidth : ''} ${disabled ? styles.disabled : ''} ${className ?? ''}`}
       style={
         invalid
-          ? { borderColor: 'var(--c-festive-b, #B8331F)' }
+          ? { ...style, borderColor: 'var(--c-festive-b, #B8331F)' }
           : highlight
-            ? { borderColor: 'var(--c-orange)', background: 'var(--c-cream)' }
-            : undefined
+            ? { ...style, borderColor: 'var(--c-orange)', background: 'var(--c-cream)' }
+            : style
       }
     >
       <input
@@ -119,6 +133,7 @@ export function DateField({
         title={title}
         aria-label={ariaLabel}
         disabled={disabled}
+        required={required}
         value={display}
         onFocus={() => setEditing(isoToDmy(value))}
         onChange={(e) => {
@@ -129,7 +144,7 @@ export function DateField({
           const iso = parseDmy(trimmed);
           if (iso) onChange(iso); // invalid/partial: hold until it parses or blur snaps back
         }}
-        onBlur={() => setEditing(null)}
+        onBlur={() => { setEditing(null); onBlur?.(); }}
       />
       <button
         type="button"
@@ -155,7 +170,17 @@ export function DateField({
         value={value || ''}
         min={min}
         max={max}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          // A calendar pick is a COMPLETED entry, but it lands on this hidden
+          // input — the visible text box never focuses on this path, so it
+          // never blurs, and a blur-committing host (InlineEdit saves on blur)
+          // silently dropped the pick (2026-08-20: a Service-case Supplier
+          // Pickup Date chosen via the icon showed in the field, never saved).
+          // Fire the same completion signal, one tick later so the host sees
+          // this change's state flushed before it commits.
+          setTimeout(() => onBlur?.(), 0);
+        }}
       />
     </span>
   );

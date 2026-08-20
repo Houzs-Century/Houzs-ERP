@@ -28,13 +28,14 @@ import { useMemo, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { X, Sparkles, CheckSquare, Square, PlayCircle } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { fmtDateOrDash } from '@2990s/shared';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import { useMfgProducts, type MfgProductRow } from '../../vendor/scm/lib/mfg-products-queries';
 import { useCreateMfgSalesOrder } from '../../vendor/scm/lib/sales-order-queries';
 import { DataGrid, type DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -84,7 +85,7 @@ type GenLine = {
   /* Sent to the server as the line price. The server recomputes and rejects
      the whole SO if the client value drifts >0.5%, so for priced products we
      echo their own price (test products are unpriced → 0 is safe). */
-  unitPriceCenti?: number;
+  unitPriceSen?: number;
 };
 type SoSpec = {
   customerName: string;
@@ -175,7 +176,7 @@ const specToBody = (s: SoSpec) => ({
     itemGroup: l.itemGroup,
     description: l.description,
     qty: l.qty,
-    unitPriceCenti: l.unitPriceCenti ?? 0,
+    unitPriceSen: l.unitPriceSen ?? 0,
     variants: l.variants,
   })),
 });
@@ -251,7 +252,7 @@ export const SoFromProducts = () => {
       return {
         customerName: manualCustomer.trim(), combo: 'Mattress only',
         processingDate: manualProc, deliveryDate: manualDeliv,
-        lines: [{ itemCode: p.code, itemGroup: group, description: p.name, qty: v.qty, variants: null, unitPriceCenti: p.price1_sen ?? 0 }],
+        lines: [{ itemCode: p.code, itemGroup: group, description: p.name, qty: v.qty, variants: null, unitPriceSen: p.price1_sen ?? 0 }],
       };
     });
     void runBatch(specs);
@@ -433,8 +434,7 @@ export const SoFromProducts = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Base date (processing window starts here)</span>
-              <input type="date" value={baseDate} min={todayMY()}
-                onChange={(e) => setBaseDate(e.target.value)} className={styles.fieldInput} />
+              <DateField fullWidth value={baseDate} min={todayMY()} onChange={(iso) => setBaseDate(iso)} className={styles.fieldInput}/>
             </label>
           </div>
 
@@ -508,11 +508,11 @@ export const SoFromProducts = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Processing date</span>
-              <input type="date" value={manualProc} min={todayMY()} onChange={(e) => setManualProc(e.target.value)} className={styles.fieldInput} />
+              <DateField fullWidth value={manualProc} min={todayMY()} onChange={(iso) => setManualProc(iso)} className={styles.fieldInput}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Delivery date</span>
-              <input type="date" value={manualDeliv} min={todayMY()} onChange={(e) => setManualDeliv(e.target.value)} className={styles.fieldInput} />
+              <DateField fullWidth value={manualDeliv} min={todayMY()} onChange={(iso) => setManualDeliv(iso)} className={styles.fieldInput}/>
             </label>
           </div>
 

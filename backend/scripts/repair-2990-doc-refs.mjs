@@ -216,7 +216,7 @@ import {
   classifySourceRef,
   classifyIdRestamp,
   parseFromSosTokens,
-  rewriteFromSosNote,
+  rewriteFromSosNote, provenanceNoteSqlPattern,
 } from "./lib/doc-ref-repair-core.mjs";
 import {
   classifyGrnInboundGap,
@@ -315,7 +315,7 @@ async function planNotes(codeById) {
     SELECT id, po_number, company_id, notes
       FROM scm.purchase_orders
      WHERE notes IS NOT NULL
-       AND notes ~* 'From SOs?:'
+       AND notes ~* ${provenanceNoteSqlPattern()}
      ORDER BY po_number`;
   log("");
   log(`=== A1  purchase_orders.notes — POs carrying a "From SOs:" note: ${pos.length} ===`);
@@ -1059,13 +1059,13 @@ async function bucketSums(deletable) {
   const sums = new Map();
   for (const c of deletable) {
     const m = c.movement;
-    const key = `${m.company_id}::${m.warehouse_id}::${m.product_code}::${m.variant_key}`;
+    const key = `${m.company_id}::${m.warehouse_id}::${m.item_code}::${m.variant_key}`;
     if (sums.has(key)) continue;
     const r = await pg`
       SELECT COALESCE(SUM(CASE movement_type WHEN 'IN' THEN qty WHEN 'OUT' THEN -qty ELSE qty END), 0)::int AS s
         FROM scm.inventory_movements
        WHERE company_id = ${m.company_id} AND warehouse_id::text = ${m.warehouse_id}
-         AND product_code = ${m.product_code} AND COALESCE(variant_key, '') = ${m.variant_key}`;
+         AND item_code = ${m.item_code} AND COALESCE(variant_key, '') = ${m.variant_key}`;
     sums.set(key, Number(r[0].s));
   }
   return sums;
@@ -1077,7 +1077,7 @@ function printDedupe(res, committed) {
   for (const c of res.deletable) {
     const m = c.movement;
     log(`  ${verb} movement ${m.id}  (${c.dup.group}) — full-row twin on the real document: ${c.verdict.matches.join(", ")}`);
-    log(`    old values: ${m.movement_type} qty=${m.qty} unit_cost_sen=${m.unit_cost_sen} total_cost_sen=${m.total_cost_sen} co=${m.company_id} wh=${m.warehouse_id} product=${m.product_code} variant="${m.variant_key}" batch=${m.batch_no ?? "-"} source=${m.source_doc_type} ${m.source_doc_no} dangling_id=${m.doc_id} created_at=${m.created_at?.toISOString?.() ?? m.created_at}`);
+    log(`    old values: ${m.movement_type} qty=${m.qty} unit_cost_sen=${m.unit_cost_sen} total_cost_sen=${m.total_cost_sen} co=${m.company_id} wh=${m.warehouse_id} product=${m.item_code} variant="${m.variant_key}" batch=${m.batch_no ?? "-"} source=${m.source_doc_type} ${m.source_doc_no} dangling_id=${m.doc_id} created_at=${m.created_at?.toISOString?.() ?? m.created_at}`);
     for (const k of c.consumptions) {
       log(`    ${verb} consumption ${k.id}: qty=${k.qty_consumed} @ ${k.unit_cost_sen} sen (total ${k.total_cost_sen}) from lot ${k.lot_id}${k.lot_exists ? ` — lot qty_remaining ${k.lot_remaining} += ${k.qty_consumed} (RESTORED; the duplicate had double-decremented it)` : " — LOT MISSING, nothing to restore (reported)"}`);
     }
@@ -1086,7 +1086,7 @@ function printDedupe(res, committed) {
   for (const c of res.refused) {
     const m = c.movement;
     log(`  REFUSED movement ${m.id} (${c.verdict.verdict}) — collides on the index but NO full-row twin (type/qty differ); owner review, not deleted.`);
-    log(`    row: ${m.movement_type} qty=${m.qty} product=${m.product_code} variant="${m.variant_key}"; counterparts on the real doc: ${c.counterparts.map((x) => `${x.id} ${x.movement_type} qty=${x.qty}`).join("; ") || "(none)"}`);
+    log(`    row: ${m.movement_type} qty=${m.qty} product=${m.item_code} variant="${m.variant_key}"; counterparts on the real doc: ${c.counterparts.map((x) => `${x.id} ${x.movement_type} qty=${x.qty}`).join("; ") || "(none)"}`);
   }
 }
 
@@ -1104,7 +1104,7 @@ async function planDedupe(codeById) {
     const sums = await bucketSums(res.deletable);
     const projected = projectDedupeBucketImpact(
       res.deletable.map((c) => ({
-        bucketKey: `${c.movement.company_id}::${c.movement.warehouse_id}::${c.movement.product_code}::${c.movement.variant_key}`,
+        bucketKey: `${c.movement.company_id}::${c.movement.warehouse_id}::${c.movement.item_code}::${c.movement.variant_key}`,
         movementType: c.movement.movement_type,
         qty: c.movement.qty,
       })),
@@ -1166,14 +1166,14 @@ async function planGrnGap() {
     // Per-line accepted (net of returns), with the line facts the owner needs
     // to see WHICH line is short.
     const lines = await pg`
-      SELECT gi.id, gi.material_code, gi.material_name, gi.qty_accepted,
+      SELECT gi.id, gi.item_code, gi.material_name, gi.qty_accepted,
              COALESCE(gi.returned_qty, 0)::int AS returned_qty,
-             gi.unit_price_centi, gi.variants, gi.item_group
-        FROM scm.grn_items gi WHERE gi.grn_id = ${g.id}::uuid ORDER BY gi.material_code, gi.id`;
+             gi.unit_price_sen, gi.variants, gi.item_group
+        FROM scm.grn_items gi WHERE gi.grn_id = ${g.id}::uuid ORDER BY gi.item_code, gi.id`;
     // The GRN's own IN movements, grouped into the DISTINCT buckets + costs
     // that prove (or refuse) the insert.
     const movs = await pg`
-      SELECT id::text AS id, movement_type, warehouse_id::text AS warehouse_id, product_code, product_name,
+      SELECT id::text AS id, movement_type, warehouse_id::text AS warehouse_id, item_code, product_name,
              COALESCE(variant_key, '') AS variant_key, batch_no, qty, unit_cost_sen, company_id, notes, created_at
         FROM scm.inventory_movements
        WHERE source_doc_type = 'GRN' AND source_doc_id = ${g.id}::uuid
@@ -1185,21 +1185,21 @@ async function planGrnGap() {
          isServiceLine) — counting them into accepted qty is exactly how the
          2026-08-02 regression inserted a phantom SVC-TRANS.CHARGES lot on
          2990-GRN-2606-001. Excluded here AND in the audit's 3a lens. */
-      if (isServiceLineMirror({ itemGroup: l.item_group, itemCode: l.material_code })) {
-        log(`    line ${l.id} ${l.material_code} (group=${l.item_group ?? "-"}) — SERVICE line, never stocked; EXCLUDED from the gap math.`);
+      if (isServiceLineMirror({ itemGroup: l.item_group, itemCode: l.item_code })) {
+        log(`    line ${l.id} ${l.item_code} (group=${l.item_group ?? "-"}) — SERVICE line, never stocked; EXCLUDED from the gap math.`);
         continue;
       }
-      const p = byProduct.get(l.material_code) ?? { lineQty: 0, lines: [], buckets: new Map(), marker: false };
+      const p = byProduct.get(l.item_code) ?? { lineQty: 0, lines: [], buckets: new Map(), marker: false };
       p.lineQty += Math.max(0, Number(l.qty_accepted ?? 0) - Number(l.returned_qty ?? 0));
       p.lines.push(l);
-      byProduct.set(l.material_code, p);
+      byProduct.set(l.item_code, p);
     }
     for (const m of movs) {
-      if (isServiceLineMirror({ itemCode: m.product_code })) {
-        log(`    WARNING movement ${m.id} is a SERVICE-coded receipt (${m.product_code}, ${m.movement_type} qty=${m.qty}) — a defect this part must not plan around; reverse it via part=service-lot-reverse.`);
+      if (isServiceLineMirror({ itemCode: m.item_code })) {
+        log(`    WARNING movement ${m.id} is a SERVICE-coded receipt (${m.item_code}, ${m.movement_type} qty=${m.qty}) — a defect this part must not plan around; reverse it via part=service-lot-reverse.`);
         continue;
       }
-      const p = byProduct.get(m.product_code) ?? { lineQty: 0, lines: [], buckets: new Map(), marker: false };
+      const p = byProduct.get(m.item_code) ?? { lineQty: 0, lines: [], buckets: new Map(), marker: false };
       const key = `${m.warehouse_id}::${m.variant_key}::${m.batch_no ?? ""}::${m.company_id}`;
       const b = p.buckets.get(key) ?? {
         warehouseId: m.warehouse_id, variantKey: m.variant_key, batchNo: m.batch_no ?? null,
@@ -1210,15 +1210,15 @@ async function planGrnGap() {
       b.rows.push(m);
       p.buckets.set(key, b);
       if ((m.notes ?? "").includes(GRN_GAP_MARKER)) p.marker = true;
-      byProduct.set(m.product_code, p);
+      byProduct.set(m.item_code, p);
     }
 
     for (const [code, p] of byProduct) {
       const buckets = [...p.buckets.values()].map((b) => ({ ...b, unitCosts: [...b.unitCosts] }));
-      const v = classifyGrnInboundGap({ productCode: code, lineQty: p.lineQty, buckets });
+      const v = classifyGrnInboundGap({ itemCode: code, lineQty: p.lineQty, buckets });
       log(`    product ${code}: accepted-net=${v.lineQty}  movements=${v.movQty}  delta=${v.delta}  -> ${v.verdict}`);
       for (const l of p.lines) {
-        log(`      line ${l.id}  accepted=${l.qty_accepted} returned=${l.returned_qty}  unit_price_centi=${l.unit_price_centi}  group=${l.item_group ?? "-"}`);
+        log(`      line ${l.id}  accepted=${l.qty_accepted} returned=${l.returned_qty}  unit_price_sen=${l.unit_price_sen}  group=${l.item_group ?? "-"}`);
       }
       for (const b of buckets) {
         log(`      movement bucket wh=${b.warehouseId} variant="${b.variantKey}" batch=${b.batchNo ?? "-"} co=${b.companyId}: qty=${b.movQty} unitCosts=[${b.unitCosts.join(", ")}]`);
@@ -1231,7 +1231,7 @@ async function planGrnGap() {
       } else if (v.verdict === "no-sibling") {
         // Live run 2026-08-01: the short line wrote NO movement at all, so
         // there is no sibling to copy. Fall back to the LINE'S OWN landed
-        // cost — round(unit_price_centi x GRN exchange_rate), the same
+        // cost — round(unit_price_sen x GRN exchange_rate), the same
         // toMyrSen path grns.ts uses — and to the GRN's own single-valued
         // facts for the bucket (deriveGrnLineBasis: refused when the product
         // has several lines, no warehouse resolves, or the cost is zero).
@@ -1265,7 +1265,7 @@ async function planGrnGap() {
       log(`            bucket: warehouse=${ins.warehouseId} variant="${ins.variantKey}" batch=${ins.batchNo ?? "NULL"} company=${ins.companyId}`);
       log(`            source: GRN ${g.grn_number} (${g.id}); created_at=now — the FIFO trigger opens a ${ins.qty}-unit lot at this cost on insert`);
       plan.push({
-        grnId: g.id, grnNumber: g.grn_number, productCode: code,
+        grnId: g.id, grnNumber: g.grn_number, itemCode: code,
         productName: buckets[0]?.productName ?? p.lines[0]?.material_name ?? code,
         ...ins,
       });
@@ -1286,25 +1286,25 @@ async function applyGrnGap(plan) {
       const fresh = await tx`
         WITH l AS (
           SELECT SUM(GREATEST(0, COALESCE(qty_accepted, 0) - COALESCE(returned_qty, 0)))::int AS line_qty
-            FROM scm.grn_items WHERE grn_id = ${p.grnId}::uuid AND material_code = ${p.productCode}
+            FROM scm.grn_items WHERE grn_id = ${p.grnId}::uuid AND item_code = ${p.itemCode}
         ), m AS (
           SELECT COALESCE(SUM(CASE WHEN movement_type = 'IN' THEN qty ELSE -qty END), 0)::int AS mov_qty
             FROM scm.inventory_movements
-           WHERE source_doc_type = 'GRN' AND source_doc_id = ${p.grnId}::uuid AND product_code = ${p.productCode}
+           WHERE source_doc_type = 'GRN' AND source_doc_id = ${p.grnId}::uuid AND item_code = ${p.itemCode}
         )
         SELECT l.line_qty - m.mov_qty AS delta FROM l, m`;
       const delta = Number(fresh[0]?.delta ?? 0);
       if (delta !== p.qty) {
-        log(`  SKIPPED ${p.grnNumber} ${p.productCode}: delta is now ${delta}, plan said ${p.qty} — re-run the dry run.`);
+        log(`  SKIPPED ${p.grnNumber} ${p.itemCode}: delta is now ${delta}, plan said ${p.qty} — re-run the dry run.`);
         return;
       }
       const inserted = await tx`
         INSERT INTO scm.inventory_movements (
-          movement_type, warehouse_id, product_code, product_name, variant_key,
+          movement_type, warehouse_id, item_code, product_name, variant_key,
           qty, unit_cost_sen, source_doc_type, source_doc_id, source_doc_no,
           batch_no, notes, performed_by, company_id
         ) VALUES (
-          'IN', ${p.warehouseId}::uuid, ${p.productCode}, ${p.productName}, ${p.variantKey},
+          'IN', ${p.warehouseId}::uuid, ${p.itemCode}, ${p.productName}, ${p.variantKey},
           ${p.qty}, ${p.unitCostSen}, 'GRN', ${p.grnId}::uuid, ${p.grnNumber},
           ${p.batchNo}, ${`${GRN_GAP_MARKER}: ${p.grnNumber} accepted ${p.qty} more than its IN movements booked (audit 3a); inserted at the sibling movement's landed cost`},
           NULL, ${p.companyId}
@@ -1315,7 +1315,7 @@ async function applyGrnGap(plan) {
       if (lot.length !== 1 || Number(lot[0].qty_remaining) !== p.qty || Number(lot[0].unit_cost_sen) !== p.unitCostSen) {
         throw new Error(`FIFO trigger did not open the expected lot for movement ${inserted[0].id} (got ${JSON.stringify(lot)}) — rolled back`);
       }
-      log(`  APPLIED ${p.grnNumber} ${p.productCode}: movement ${inserted[0].id} qty=${p.qty} @ ${p.unitCostSen} sen; lot ${lot[0].id} opened (received=${lot[0].qty_received}, remaining=${lot[0].qty_remaining})`);
+      log(`  APPLIED ${p.grnNumber} ${p.itemCode}: movement ${inserted[0].id} qty=${p.qty} @ ${p.unitCostSen} sen; lot ${lot[0].id} opened (received=${lot[0].qty_received}, remaining=${lot[0].qty_remaining})`);
       done += 1;
     });
   }
@@ -1333,20 +1333,20 @@ async function planServiceLotReverse() {
   log("");
   log(`=== A11 service-lot-reverse — movement ${REVERSE_MOVEMENT_ID}, lot ${REVERSE_LOT_ID} ===`);
   const movRows = await pg`
-    SELECT m.id::text AS id, m.movement_type, m.product_code, m.qty, m.unit_cost_sen,
+    SELECT m.id::text AS id, m.movement_type, m.item_code, m.qty, m.unit_cost_sen,
            m.source_doc_type, m.source_doc_id::text AS source_doc_id, m.source_doc_no,
            m.warehouse_id::text AS warehouse_id, m.company_id, m.notes, m.created_at
       FROM scm.inventory_movements m WHERE m.id = ${REVERSE_MOVEMENT_ID}::uuid`;
   const lotRows = await pg`
-    SELECT l.id::text AS id, l.product_code, l.qty_received, l.qty_remaining, l.unit_cost_sen,
+    SELECT l.id::text AS id, l.item_code, l.qty_received, l.qty_remaining, l.unit_cost_sen,
            l.source_doc_type, l.source_doc_id::text AS source_doc_id, l.batch_no,
            l.movement_id::text AS movement_id, l.received_at
       FROM scm.inventory_lots l WHERE l.id = ${REVERSE_LOT_ID}::uuid`;
   const mov = movRows[0] ?? null;
   const lot = lotRows[0] ?? null;
-  if (mov) log(`  movement: ${mov.movement_type} ${mov.product_code} qty=${mov.qty} @ ${mov.unit_cost_sen} sen  src=${mov.source_doc_type} ${mov.source_doc_no ?? mov.source_doc_id}  wh=${mov.warehouse_id} co=${mov.company_id}  notes=${JSON.stringify(mov.notes ?? null)}`);
+  if (mov) log(`  movement: ${mov.movement_type} ${mov.item_code} qty=${mov.qty} @ ${mov.unit_cost_sen} sen  src=${mov.source_doc_type} ${mov.source_doc_no ?? mov.source_doc_id}  wh=${mov.warehouse_id} co=${mov.company_id}  notes=${JSON.stringify(mov.notes ?? null)}`);
   else log(`  movement ${REVERSE_MOVEMENT_ID}: NOT FOUND`);
-  if (lot) log(`  lot: ${lot.product_code} received=${lot.qty_received} remaining=${lot.qty_remaining} @ ${lot.unit_cost_sen} sen  src=${lot.source_doc_type} ${lot.source_doc_id}  batch=${lot.batch_no ?? "-"}  movement_id=${lot.movement_id ?? "-"}`);
+  if (lot) log(`  lot: ${lot.item_code} received=${lot.qty_received} remaining=${lot.qty_remaining} @ ${lot.unit_cost_sen} sen  src=${lot.source_doc_type} ${lot.source_doc_id}  batch=${lot.batch_no ?? "-"}  movement_id=${lot.movement_id ?? "-"}`);
   else log(`  lot ${REVERSE_LOT_ID}: NOT FOUND`);
   const [lotCons, movCons] = await Promise.all([
     pg`SELECT COUNT(*)::int AS n FROM scm.inventory_lot_consumptions WHERE lot_id = ${REVERSE_LOT_ID}::uuid`,
@@ -1354,12 +1354,12 @@ async function planServiceLotReverse() {
   ]);
   const v = planServiceLotReversal({
     movement: mov ? {
-      id: mov.id, movementType: mov.movement_type, productCode: mov.product_code,
+      id: mov.id, movementType: mov.movement_type, itemCode: mov.item_code,
       qty: Number(mov.qty), unitCostSen: Number(mov.unit_cost_sen ?? 0),
       sourceDocType: mov.source_doc_type, sourceDocId: mov.source_doc_id,
     } : null,
     lot: lot ? {
-      id: lot.id, productCode: lot.product_code,
+      id: lot.id, itemCode: lot.item_code,
       qtyReceived: Number(lot.qty_received), qtyRemaining: Number(lot.qty_remaining),
       sourceDocType: lot.source_doc_type, sourceDocId: lot.source_doc_id,
     } : null,
@@ -1422,7 +1422,7 @@ async function deliveredServiceBySoItem(soLineIds) {
   if (doLines.length === 0) return out;
   const doIds = [...new Set(doLines.map((r) => r.do_id))];
   const cons = await pg`
-    SELECT c.source_doc_id::text AS do_id, c.product_code,
+    SELECT c.source_doc_id::text AS do_id, c.item_code,
            COALESCE(l.batch_no, p.po_number) AS po
       FROM scm.inventory_lot_consumptions c
       JOIN scm.inventory_lots l ON l.id = c.lot_id
@@ -1430,14 +1430,14 @@ async function deliveredServiceBySoItem(soLineIds) {
       LEFT JOIN scm.purchase_orders p ON p.id = g.purchase_order_id
      WHERE c.source_doc_type = 'DO' AND c.source_doc_id::text = ANY(${doIds})`;
   const movs = await pg`
-    SELECT source_doc_id::text AS do_id, product_code, batch_no AS po
+    SELECT source_doc_id::text AS do_id, item_code, batch_no AS po
       FROM scm.inventory_movements
      WHERE source_doc_type = 'DO' AND movement_type = 'OUT'
        AND source_doc_id::text = ANY(${doIds}) AND batch_no IS NOT NULL`;
   const posByDoCode = new Map();
   for (const r of [...cons, ...movs]) {
     if (!r.po) continue;
-    const k = `${r.do_id}::${String(r.product_code ?? "").trim().toUpperCase()}`;
+    const k = `${r.do_id}::${String(r.item_code ?? "").trim().toUpperCase()}`;
     const set = posByDoCode.get(k) ?? new Set();
     set.add(r.po);
     posByDoCode.set(k, set);
@@ -1503,7 +1503,7 @@ async function planFifoAttribute() {
     log(`    named SOs: ${namedSos.join(", ")}`);
 
     const poLines = await pg`
-      SELECT i.id::text AS id, i.material_code, i.qty, i.so_item_id::text AS so_item_id, i.created_at,
+      SELECT i.id::text AS id, i.item_code, i.qty, i.so_item_id::text AS so_item_id, i.created_at,
              COALESCE(a.n, 0)::int AS allocation_count
         FROM scm.purchase_order_items i
         LEFT JOIN (SELECT purchase_order_item_id, count(*)::int AS n
@@ -1529,7 +1529,7 @@ async function planFifoAttribute() {
       poStatus: p.status,
       poLines: poLines.map((l) => ({
         id: l.id,
-        itemCode: l.material_code,
+        itemCode: l.item_code,
         qty: Number(l.qty),
         soItemId: l.so_item_id,
         allocationCount: Number(l.allocation_count),
@@ -1630,7 +1630,7 @@ async function planFifoAttrRepair() {
     log(`  ${p.po_number} (company ${p.company_id}, status ${p.status})`);
     // The PO's lines + allocation rows (SO doc resolved for the prints).
     const lineRows = await pg`
-      SELECT i.id::text AS id, i.material_code, i.item_group, i.variants, i.qty, i.unit_price_centi
+      SELECT i.id::text AS id, i.item_code, i.item_group, i.variants, i.qty, i.unit_price_sen
         FROM scm.purchase_order_items i
        WHERE i.purchase_order_id = ${p.id}::uuid
        ORDER BY i.created_at, i.id`;
@@ -1670,10 +1670,10 @@ async function planFifoAttrRepair() {
     // EXECUTED (received or delivered). The same fingerprint the read-only
     // detector (check-duplicate-documents.mjs) prints.
     const selfKey = docLineMultisetKey(lineRows.map((l) => ({
-      itemCode: l.material_code,
+      itemCode: l.item_code,
       variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
       qty: Number(l.qty ?? 0),
-      unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+      unitPriceSen: l.unit_price_sen == null ? null : Number(l.unit_price_sen),
     })));
     let duplicateOf = null;
     if (p.supplier_id) {
@@ -1688,13 +1688,13 @@ async function planFifoAttrRepair() {
         const gap = dateGapDays(p.po_date, t.po_date);
         if (gap == null || gap > 3) continue;
         const tLines = await pg`
-          SELECT material_code, item_group, variants, qty, unit_price_centi
+          SELECT item_code, item_group, variants, qty, unit_price_sen
             FROM scm.purchase_order_items WHERE purchase_order_id = ${t.id}::uuid`;
         const tKey = docLineMultisetKey(tLines.map((l) => ({
-          itemCode: l.material_code,
+          itemCode: l.item_code,
           variantKey: variantKeyMirror(l.item_group, l.variants ?? null),
           qty: Number(l.qty ?? 0),
-          unitPriceCenti: l.unit_price_centi == null ? null : Number(l.unit_price_centi),
+          unitPriceSen: l.unit_price_sen == null ? null : Number(l.unit_price_sen),
         })));
         if (tKey !== selfKey) continue;
         const tDelivered = await pg`
@@ -1820,7 +1820,7 @@ async function planSoWarehouse(codeById) {
       JOIN scm.delivery_orders d ON d.id = di.delivery_order_id
       JOIN scm.inventory_movements m
         ON m.source_doc_type = 'DO' AND m.source_doc_id = d.id
-       AND m.movement_type = 'OUT' AND m.product_code = di.item_code
+       AND m.movement_type = 'OUT' AND m.item_code = di.item_code
      WHERE di.so_item_id::text = ANY(${lineIds})
        AND UPPER(COALESCE(d.status::text,'')) <> 'CANCELLED'`;
   const doWhByLine = new Map();

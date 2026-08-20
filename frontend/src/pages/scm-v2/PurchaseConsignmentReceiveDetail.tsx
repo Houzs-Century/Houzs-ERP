@@ -55,6 +55,7 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -85,8 +86,8 @@ type HeaderDraft = {
    Edit mode; PCO-sourced lines keep them read-only. */
 type LineDraft = {
   qty: number;            // maps to qty_received
-  unitPriceCenti: number;
-  discountCenti: number;
+  unitPriceSen: number;
+  discountSen: number;
   deliveryDate: string | null;
   materialName: string;
   itemGroup: string | null;
@@ -95,12 +96,12 @@ type LineDraft = {
 
 type GrnItemRow = Record<string, unknown> & {
   id: string;
-  material_code: string;
+  item_code: string;
   material_name: string;
   qty_received: number;
-  unit_price_centi: number;
-  discount_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen: number;
+  discount_sen?: number;
+  line_total_sen?: number;
   delivery_date?: string | null;
   item_group?: string | null;
   material_kind?: string | null;
@@ -126,8 +127,8 @@ const headerSnapshot = (g: any): HeaderDraft => ({
 
 const lineSnapshot = (it: GrnItemRow): LineDraft => ({
   qty:            it.qty_received,
-  unitPriceCenti: it.unit_price_centi,
-  discountCenti:  it.discount_centi ?? 0,
+  unitPriceSen: it.unit_price_sen,
+  discountSen:  it.discount_sen ?? 0,
   deliveryDate:   it.delivery_date ?? null,
   materialName:   it.description ?? it.material_name ?? '',
   itemGroup:      it.item_group ?? null,
@@ -173,6 +174,43 @@ export const PurchaseConsignmentReceiveDetail = () => {
     }
   }, [isLocked, isEditing]);
 
+  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
+     until 2026-08-17, so the loading render called fewer hooks than the loaded
+     one and React threw #310 ("rendered more hooks than during the previous
+     render") the moment the query resolved — a blank "Something went wrong
+     loading this page." on a direct URL / refresh. Arriving from the list hid
+     it: react-query already had the detail cached, so the isPending branch
+     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
+     grn; it can only ever be CALLED from the preview dialog, which does not
+     exist until the record has loaded. */
+  const deliverPrintPdf = (action: PdfAction) => {
+    if (!grn) return;
+    // A consignment receive has no QC accept/reject — accepted = received.
+    const pdfHeader = {
+      grn_number: grn.grn_number,
+      status: String(grn.status),
+      received_at: grn.received_at ?? '',
+      delivery_note_ref: grn.delivery_note_ref ?? null,
+      notes: grn.notes ?? null,
+      posted_at: grn.posted_at ?? null,
+      supplier: grn.supplier ?? undefined,
+    };
+    const pdfItems = items.map((it) => ({
+      item_code: it.item_code,
+      material_name: it.material_name,
+      qty_received: it.qty_received,
+      qty_accepted: it.qty_received,
+      qty_rejected: 0,
+      rejection_reason: null,
+      unit_price_sen: it.unit_price_sen,
+    }));
+    return import('../../vendor/scm/lib/grn-pdf')
+      .then(({ generateGrnPdf }) =>
+        generateGrnPdf(pdfHeader as never, pdfItems as never, { docTitle: 'CONSIGNMENT RECEIVE', docNoLabel: 'Receive No', action }))
+      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+
   if (detail.isPending) {
     return <SkeletonDetailPage />;
   }
@@ -194,42 +232,15 @@ export const PurchaseConsignmentReceiveDetail = () => {
   const visibleItems = items;
   const lineOf = (it: GrnItemRow): LineDraft => lineDrafts[it.id] ?? lineSnapshot(it);
   const lineTotalOf = (it: GrnItemRow): number => {
-    if (!isEditing) return it.line_total_centi ?? (it.qty_received * it.unit_price_centi - (it.discount_centi ?? 0));
+    if (!isEditing) return it.line_total_sen ?? (it.qty_received * it.unit_price_sen - (it.discount_sen ?? 0));
     const d = lineOf(it);
-    return d.qty * d.unitPriceCenti - d.discountCenti;
+    return d.qty * d.unitPriceSen - d.discountSen;
   };
   const itemsSubtotal = visibleItems.reduce((s, it) => s + lineTotalOf(it), 0);
-  const grandTotal = itemsSubtotal + (grn.tax_centi ?? 0);
+  const grandTotal = itemsSubtotal + (grn.tax_sen ?? 0);
   const totalQty = visibleItems.reduce((s, it) => s + (isEditing ? lineOf(it).qty : (it.qty_received ?? 0)), 0);
 
   const headerView = headerDraft ?? headerSnapshot(grn);
-
-  const deliverPrintPdf = (action: PdfAction) => {
-    // A consignment receive has no QC accept/reject — accepted = received.
-    const pdfHeader = {
-      grn_number: grn.grn_number,
-      status: String(grn.status),
-      received_at: grn.received_at ?? '',
-      delivery_note_ref: grn.delivery_note_ref ?? null,
-      notes: grn.notes ?? null,
-      posted_at: grn.posted_at ?? null,
-      supplier: grn.supplier ?? undefined,
-    };
-    const pdfItems = items.map((it) => ({
-      material_code: it.material_code,
-      material_name: it.material_name,
-      qty_received: it.qty_received,
-      qty_accepted: it.qty_received,
-      qty_rejected: 0,
-      rejection_reason: null,
-      unit_price_centi: it.unit_price_centi,
-    }));
-    return import('../../vendor/scm/lib/grn-pdf')
-      .then(({ generateGrnPdf }) =>
-        generateGrnPdf(pdfHeader as never, pdfItems as never, { docTitle: 'CONSIGNMENT RECEIVE', docNoLabel: 'Receive No', action }))
-      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
-  };
-  const print = usePrintPreview(deliverPrintPdf);
 
   const setHeaderField = (k: keyof HeaderDraft, v: string) => {
     setHeaderDraft((h) => ({ ...(h ?? headerSnapshot(grn)), [k]: v }));
@@ -289,15 +300,15 @@ export const PurchaseConsignmentReceiveDetail = () => {
         );
         const changed =
           d.qty !== it.qty_received ||
-          d.unitPriceCenti !== it.unit_price_centi ||
-          d.discountCenti !== (it.discount_centi ?? 0) ||
+          d.unitPriceSen !== it.unit_price_sen ||
+          d.discountSen !== (it.discount_sen ?? 0) ||
           (d.deliveryDate ?? null) !== (it.delivery_date ?? null) ||
           identityChanged;
         if (changed) {
           await updateItem.mutateAsync({
             grnId: grn.id, itemId: it.id,
-            qty: d.qty, unitPriceCenti: d.unitPriceCenti,
-            discountCenti: d.discountCenti, deliveryDate: d.deliveryDate,
+            qty: d.qty, unitPriceSen: d.unitPriceSen,
+            discountSen: d.discountSen, deliveryDate: d.deliveryDate,
             /* T12 — only manual lines send identity/variants; the server
                recomputes description2 + resyncs inventory. */
             ...(manual ? {
@@ -416,7 +427,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
           <div style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
             {visibleItems.map((it, idx) => {
               const d = lineOf(it);
-              const lineValueCenti = lineTotalOf(it);
+              const lineValueSen = lineTotalOf(it);
               const variantSummary = buildVariantSummary(it.item_group ?? null, it.variants as Record<string, unknown> | null)
                 || it.description
                 || it.material_name;
@@ -453,7 +464,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
                       {it.item_group && <ItemGroupPill group={it.item_group} />}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                      <span className={styles.previewPrice}>{fmtRm(lineValueCenti, grn.currency)}</span>
+                      <span className={styles.previewPrice}>{fmtRm(lineValueSen, grn.currency)}</span>
                       {isEditing && (
                         <button
                           type="button"
@@ -491,7 +502,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Item Code (Internal)</span>
                       <input
-                        type="text" readOnly value={it.material_code}
+                        type="text" readOnly value={it.item_code}
                         className={styles.fieldInput}
                         style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />
@@ -524,7 +535,7 @@ export const PurchaseConsignmentReceiveDetail = () => {
                       <div style={{ fontFamily: 'var(--font-button)', fontSize: 'var(--fs-11)', fontWeight: 700, letterSpacing: '0.16em', textTransform: 'uppercase', color: 'var(--fg-muted)', marginBottom: 'var(--space-2)' }}>{d.itemGroup} Variants</div>
                       <PcVariantEditor
                         category={d.itemGroup ?? ''}
-                        itemCode={it.material_code}
+                        itemCode={it.item_code}
                         variants={(d.variants ?? {}) as Record<string, unknown>}
                         onChange={(k, v) => setVariant(it, k, v)}
                         fabrics={fabrics}
@@ -585,11 +596,11 @@ export const PurchaseConsignmentReceiveDetail = () => {
                       <span className={styles.fieldLabel}>Unit Price ({grn.currency})</span>
                       {isEditing ? (
                         <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
-                          valueSen={d.unitPriceCenti} disabled={isLocked}
-                          onCommit={(sen) => setLine(it, { unitPriceCenti: sen ?? 0 })} />
+                          valueSen={d.unitPriceSen} disabled={isLocked}
+                          onCommit={(sen) => setLine(it, { unitPriceSen: sen ?? 0 })} />
                       ) : (
                         <input
-                          type="text" readOnly value={fmtRm(it.unit_price_centi, grn.currency)}
+                          type="text" readOnly value={fmtRm(it.unit_price_sen, grn.currency)}
                           className={styles.fieldInput}
                           style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
@@ -599,12 +610,12 @@ export const PurchaseConsignmentReceiveDetail = () => {
                       <span className={styles.fieldLabel}>Discount</span>
                       {isEditing ? (
                         <MoneyInput bare selectOnFocus inputClassName={styles.fieldInput}
-                          valueSen={d.discountCenti} disabled={isLocked}
-                          onCommit={(sen) => setLine(it, { discountCenti: sen ?? 0 })} />
+                          valueSen={d.discountSen} disabled={isLocked}
+                          onCommit={(sen) => setLine(it, { discountSen: sen ?? 0 })} />
                       ) : (
                         <input
                           type="text" readOnly
-                          value={(it.discount_centi ?? 0) > 0 ? fmtRm(it.discount_centi, grn.currency) : '—'}
+                          value={(it.discount_sen ?? 0) > 0 ? fmtRm(it.discount_sen, grn.currency) : '—'}
                           className={styles.fieldInput}
                           style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
@@ -613,10 +624,12 @@ export const PurchaseConsignmentReceiveDetail = () => {
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Delivery Date</span>
                       {isEditing ? (
-                        <input
-                          type="date" className={styles.fieldInput}
-                          value={d.deliveryDate ?? ''} disabled={isLocked}
-                          onChange={(e) => setLine(it, { deliveryDate: e.target.value || null })}
+                        <DateField
+                          fullWidth
+                          className={styles.fieldInput}
+                          value={d.deliveryDate ?? ''}
+                          disabled={isLocked}
+                          onChange={(iso) => setLine(it, { deliveryDate: iso || null })}
                         />
                       ) : (
                         <input
@@ -746,8 +759,13 @@ const SupplierCard = ({
           <div />
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Received Date</span>
-            <input type="date" className={styles.fieldInput} value={draft.receivedAt} disabled={locked}
-              onChange={(e) => onField('receivedAt', e.target.value)} />
+            <DateField
+              fullWidth
+              className={styles.fieldInput}
+              value={draft.receivedAt}
+              disabled={locked}
+              onChange={(iso) => onField('receivedAt', iso)}
+            />
           </label>
           <label className={styles.field}>
             <span className={styles.fieldLabel}>Delivery Note Ref</span>

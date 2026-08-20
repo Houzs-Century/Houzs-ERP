@@ -27,6 +27,7 @@ import { useEffect, useMemo, useRef, useState, type CSSProperties } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { readScmHandoff, writeScmHandoff } from '../../lib/scmHandoffStorage';
 import { readConvertScope, UnrecognisedScopeNotice } from '../../lib/convertScope';
+import { outstandingEmptyReason } from '../../lib/outstandingEmptyReason';
 import { Save, X, CheckSquare, Square, Filter } from 'lucide-react';
 import { Button } from '@2990s/design-system';
 import { VariantDescription } from '../../vendor/scm/components/VariantDescription';
@@ -41,11 +42,12 @@ import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 /* DataGrid localStorage layout key. */
 const STORAGE_KEY = 'grn-from-po.layout.v1';
@@ -90,7 +92,6 @@ export type GrnFromPoPick = OutstandingPoItem & { _pickQty: number };
 
 export const GrnFromPo = () => {
   const navigate = useNavigate();
-  const itemsQ   = useOutstandingPoItems();
 
   /* Commander 2026-05-31 — "Partially Convert" from the PO list lands here with
      ?poId=<id>, scoping the picker to ONE PO's outstanding lines so the operator
@@ -107,6 +108,12 @@ export const GrnFromPo = () => {
     [searchParams],
   );
   const poIdSet = scope.keys;
+
+  /* The scope now goes to the SERVER. It used to be applied here, in the
+     browser, over a list the server had already capped at 500 raw PO lines —
+     so scoping could only narrow that window and never recover a PO which fell
+     outside it. That is the owner's 2026-08-17 zero-row screen. */
+  const itemsQ = useOutstandingPoItems(useMemo(() => [...poIdSet], [poIdSet]));
 
   /* Commander 2026-05-31 — APPEND mode. When a POSTED GRN's edit page sends the
      operator here with ?appendToGrn=<grnId>, this picker no longer feeds the
@@ -134,7 +141,11 @@ export const GrnFromPo = () => {
   // In-app result dialog (validation only now — the grid feeds the form).
   const [dialog, setDialog] = useState<{ title: string; body: string; goTo?: string } | null>(null);
 
-  const items = useMemo(() => itemsQ.data ?? [], [itemsQ.data]);
+  const items = useMemo(() => itemsQ.data?.items ?? [], [itemsQ.data]);
+  /* The WHY behind an empty grid. Older cached payloads have no `scope`, so it
+     is nullable and `outstandingEmptyReason` treats null as "I cannot name a
+     scoped reason" rather than as "nothing is scoped". */
+  const serverScope = itemsQ.data?.scope ?? null;
 
   /* The New GRN form stashes its current draft (grnNewDraft) before sending us
      here. Build a per-poItemId drafted-qty map so the same PO line can't be
@@ -160,16 +171,25 @@ export const GrnFromPo = () => {
   const effRemaining = (r: OutstandingPoItem): number =>
     r.remainingQty - (draftQtyById.get(r.poItemId) ?? 0);
 
+  /* THE SCREEN'S OWN NARROWING, split out so the empty state can tell it apart
+     from the toolbar and from the unsaved draft. Three different causes with
+     three different fixes: clear a filter, go back and save the draft, or drop
+     the PO scope. Folded together, a row the SCOPE dropped was reported as a row
+     the operator's own draft had already taken. */
+  const scopedRows = useMemo(() => items.filter((r) => {
+    if (poIdSet.size > 0 && !poIdSet.has(r.poId)) return false;
+    // Append mode — only this GRN's supplier (and warehouse, if the GRN is
+    // warehouse-bound) so the receipt stays one-supplier / one-warehouse.
+    if (appendGrn) {
+      if (appendGrn.supplier_id && r.supplierId !== appendGrn.supplier_id) return false;
+      if (appendGrn.warehouse_id && r.warehouseLocationId !== appendGrn.warehouse_id) return false;
+    }
+    return true;
+  }), [items, poIdSet, appendGrn]);
+
   // ── Filtered rows fed to the grid ────────────────────────────────────
   const rows = useMemo(() => {
-    return items.filter((r) => {
-      if (poIdSet.size > 0 && !poIdSet.has(r.poId)) return false;
-      // Append mode — only this GRN's supplier (and warehouse, if the GRN is
-      // warehouse-bound) so the receipt stays one-supplier / one-warehouse.
-      if (appendGrn) {
-        if (appendGrn.supplier_id && r.supplierId !== appendGrn.supplier_id) return false;
-        if (appendGrn.warehouse_id && r.warehouseLocationId !== appendGrn.warehouse_id) return false;
-      }
+    return scopedRows.filter((r) => {
       if (effRemaining(r) <= 0) return false;
       if (category !== 'all' && (r.itemGroup ?? '').toLowerCase() !== category) return false;
       if (dateFrom || dateTo) {
@@ -181,9 +201,10 @@ export const GrnFromPo = () => {
       return true;
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [items, draftQtyById, category, dateField, dateFrom, dateTo, poIdSet, appendGrn]);
+  }, [scopedRows, draftQtyById, category, dateField, dateFrom, dateTo]);
 
-  /* Commander 2026-05-31 — "Convert to GR 应该进入 Draft 状态，不要直接 Create."
+  /* Commander 2026-05-31, on the PO → Goods Received transfer —
+     "应该进入 Draft 状态，不要直接 Create."
      When the operator converts ONE PO from the list (?poId=<id>), land here with
      that PO's outstanding lines PRE-TICKED at their full remaining qty, so the
      screen is a ready-to-review draft (mirrors the DO→SI convert). They eyeball
@@ -420,11 +441,11 @@ export const GrnFromPo = () => {
         const pickQty = p?.picked ? p.qty : effRemaining(r);
         return (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
-            {fmtRm(pickQty * r.unitPriceCenti)}
+            {fmtRm(pickQty * r.unitPriceSen)}
           </span>
         );
       },
-      sortFn: (a, b) => a.remainingQty * a.unitPriceCenti - b.remainingQty * b.unitPriceCenti,
+      sortFn: (a, b) => a.remainingQty * a.unitPriceSen - b.remainingQty * b.unitPriceSen,
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- column accessors derive from the pick/qty state already in deps; listing the helpers would only rebuild the columns for no behavioural change
   ], [picks]);
@@ -452,13 +473,13 @@ export const GrnFromPo = () => {
           await addGrnItem.mutateAsync({
             grnId:               appendToGrn,
             purchaseOrderItemId: r.poItemId,
-            materialCode:        r.itemCode,
+            itemCode:        r.itemCode,
             supplierSku:         r.supplierSku ?? undefined,
             materialName:        r.description ?? r.itemCode,
             itemGroup:           r.itemGroup || undefined,
             variants:            (r.variants as Record<string, unknown> | null) ?? undefined,
             qty:                 r._pickQty,
-            unitPriceCenti:      r.unitPriceCenti,
+            unitPriceSen:      r.unitPriceSen,
             deliveryDate:        r.deliveryDate ?? undefined,
           });
         }
@@ -514,21 +535,9 @@ export const GrnFromPo = () => {
       >
         {DATE_FIELD_OPTIONS.map((o) => <option key={o.value} value={o.value}>{o.label}</option>)}
       </select>
-      <input
-        type="date"
-        value={dateFrom}
-        onChange={(e) => setDateFrom(e.target.value)}
-        style={FILTER_INPUT}
-        aria-label="Date from"
-      />
+      <DateField value={dateFrom} onChange={(iso) => setDateFrom(iso)} style={FILTER_INPUT} aria-label="Date from"/>
       <span style={{ color: 'var(--fg-muted)', fontSize: 'var(--fs-11)' }}>→</span>
-      <input
-        type="date"
-        value={dateTo}
-        onChange={(e) => setDateTo(e.target.value)}
-        style={FILTER_INPUT}
-        aria-label="Date to"
-      />
+      <DateField value={dateTo} onChange={(iso) => setDateTo(iso)} style={FILTER_INPUT} aria-label="Date to"/>
       {(category !== 'all' || dateFrom || dateTo) && (
         <button
           type="button"
@@ -602,7 +611,14 @@ export const GrnFromPo = () => {
           Reviewing{' '}
           <code>
             {poIdSet.size === 1
-              ? (items.find((r) => poIdSet.has(r.poId))?.poDocNo ?? 'this PO')
+              /* Prefer the server's `scope`, which names the PO even when it has
+                 no outstanding lines. Reading the doc number off `items` alone
+                 fell back to the anonymous "this PO" in exactly the case the
+                 operator most needs it named — the empty one. That is the banner
+                 in the owner's 2026-08-17 screenshot. */
+              ? (serverScope?.pos[0]?.poDocNo
+                  ?? items.find((r) => poIdSet.has(r.poId))?.poDocNo
+                  ?? 'this PO')
               : `${poIdSet.size} POs`}
           </code>
           {' '}— outstanding lines are pre-filled. Adjust qty, then Save to create the GRN.{' '}
@@ -631,13 +647,27 @@ export const GrnFromPo = () => {
         toolbar={toolbar}
         groupBanner={false}
         isLoading={itemsQ.isLoading}
-        /* A failed read must NEVER render as the sentence below. "We couldn't
-           load the lines" and "there are no lines left to do" are opposite
-           facts, and the operator acts on the second one by walking away from
-           work that is still outstanding. */
-        emptyMessage={itemsQ.isError
-          ? "We couldn't load the outstanding lines, so this list is incomplete. That is not the same as there being none left — please refresh and try again."
-          : "No outstanding PO lines — every line has been received (or there are no outstanding POs)."}
+        /* AN EMPTY RESULT MUST SAY WHY IT IS EMPTY. This used to be one sentence
+           — "every line has been received (or there are no outstanding POs)" —
+           covering five different situations and asserting the work was DONE in
+           all of them. The owner hit it on a PO that had never been received.
+
+           An empty result is only ever evidence that THE QUERY FOUND NOTHING;
+           "everything is received" is a stronger claim this page has no standing
+           to make, since the read is scoped to the active company and fails
+           closed when that company cannot be resolved. The reasons now live in
+           one shared module (which keeps #2367's wording for the unscoped case)
+           so the mobile wizard cannot disagree with this screen. */
+        emptyMessage={outstandingEmptyReason({
+          isError: itemsQ.isError,
+          isLoading: itemsQ.isLoading,
+          scope: serverScope,
+          serverRowCount: items.length,
+          scopedRowCount: scopedRows.length,
+          visibleRowCount: rows.length,
+          filtersActive: category !== 'all' || Boolean(dateFrom) || Boolean(dateTo),
+          poScopeActive: poIdSet.size > 0,
+        }) ?? ''}
       />
 
       {dialog && (

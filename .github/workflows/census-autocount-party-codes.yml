@@ -1,0 +1,86 @@
+name: census-autocount-party-codes
+
+# Census the AutoCount party codes the ERP holds. READ-ONLY.
+#
+# HC-PO-2608-001 / HC-GR-2608-001 / HC-PI-2608-001 are booked in AED_HOUZS
+# against creditor 400-H004, which AutoCount holds as HAO HUA FURNITURE. The ERP
+# purchase order behind them names HOOKKA INDUSTRIES SDN. BHD. The documents are
+# on the wrong creditor, and no layer refused it because no layer compares the
+# name: readPoHeader sends scm.suppliers.code verbatim, and /ensure-masters'
+# CreditorExists() treats "the book has this code" as the whole question.
+#
+# So the owner's question is how many MORE are wrong. That field is hand-entered
+# with no validation. This prints the ERP half, one line per record, code first,
+# sorted by code, so it lines up against the host's own
+#   SELECT AccNo, CompanyName FROM Creditor
+#   SELECT AccNo, CompanyName FROM Debtor
+#
+# SECTION 6 IS THE DELIVERABLE. Every supplier that carries a code, both
+# companies, one row each, sorted by code, as a markdown table with the book's
+# AccNo and CompanyName left EMPTY for a human to fill in, plus a MATCH KEY
+# column and the exact UPDATE each row would need, unexecuted. The owner's rule
+# for afterwards is 「把我们 ERP 里面的 creditor code 换成 AutoCount 的，如果你看到
+# 一样的名字就换」 — same name, change it; no match or more than one match, leave
+# it and list it.
+#
+# It measures. It does not repair, and must not learn to: which code is correct
+# for HOOKKA INDUSTRIES is the owner's call against the AutoCount masters, and a
+# wrong "correction" books the documents to a third company.
+#
+# Copied from census-fabric-colour.yml, which HAS run successfully
+# (2026-08-13). NOT from recompute-2990-so-allocation.yml, which reaches for
+# SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY, secrets that do not exist in this
+# repo, and has therefore never run — see CLAUDE.md.
+#
+# See backend/scripts/census-autocount-party-codes.mjs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "Database"
+        required: true
+        default: "prod"
+        type: choice
+        options: [prod, staging]
+      company:
+        description: 'company_id or code, or "all" (1 = HOUZS, 2 = 2990)'
+        required: false
+        default: "all"
+        type: string
+      max_rows:
+        description: "cap per list, so one huge table cannot bury the rest"
+        required: false
+        default: "1000"
+        type: string
+
+# Its own group. A diagnostic must not queue behind — or displace — a release.
+concurrency:
+  group: census-autocount-party-codes
+  cancel-in-progress: false
+
+jobs:
+  census:
+    runs-on: ubuntu-latest
+    defaults: { run: { working-directory: backend } }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm ci
+      - name: Census
+        env:
+          DATABASE_URL: ${{ inputs.target == 'prod' && secrets.DATABASE_URL || secrets.STAGING_DATABASE_URL }}
+          COMPANY: ${{ inputs.company }}
+          MAX_ROWS: ${{ inputs.max_rows }}
+        # pipefail, or `tee` swallows the exit code and an unreachable database
+        # reports as a clean run.
+        run: |
+          set -o pipefail
+          node scripts/census-autocount-party-codes.mjs | tee party-code-census.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: census-autocount-party-codes
+          path: backend/party-code-census.txt
+          retention-days: 90

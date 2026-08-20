@@ -18,7 +18,9 @@
    node:test, no dependencies — run by `npm run test:scale-contract`. */
 import { test } from "vitest";
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -59,7 +61,19 @@ test("neither check exits 1 on drift alone", () => {
      ABOVE the branch. That exit is right and must stay: the deadlock this test
      exists to prevent comes from DRIFT, which another author's merge causes, and
      a malformed tag is in the diff of whoever wrote it. `if (checkOnly)` is
-     asserted to exist first, so a rename cannot silently empty the slice. */
+     asserted to exist first, so a rename cannot silently empty the slice.
+
+     >>> CORRECTED 2026-08-17. The last clause — "a malformed tag is in the diff
+     of whoever wrote it" — is FALSE, and it cost a repo-wide CI blackout. The
+     tag lives in BUG-HISTORY.md, the one file every code PR must append to, so
+     once a bad tag MERGES it is in everybody's tree. Commit 6c9f8cbd landed one
+     at 04:00:21Z; until #2351 repaired it at 04:59:53Z, five of five PR-branch
+     CI runs were red and three of those branches had nothing to do with it —
+     and because the generator exited before writing, nobody could regenerate
+     their way out either. `gen-bug-index.mjs` now charges a bad tag only to the
+     change that INTRODUCED it, exactly as check-file-size.mjs does for an
+     inherited ceiling violation. The behavioural test below pins that. This
+     assertion is unaffected: that exit still is not in the checkOnly branch. */
   for (const g of GENERATORS) {
     const src = read(g);
     const at = src.indexOf("if (checkOnly)");
@@ -70,4 +84,111 @@ test("neither check exits 1 on drift alone", () => {
       assert.match(before, /--strict/, `${g}: an exit(1) in the check path that --strict does not guard`);
     }
   }
+});
+
+/* ---------------------------------------------------------------------------
+   A BAD `<!-- area: -->` TAG MUST BLAME THE CHANGE THAT INTRODUCED IT.
+
+   Run against a purpose-built repo rather than by matching source, because the
+   property is about what the generator DOES with a merge base — and the last
+   time this was asserted by reading source, the source-shape assertion passed
+   while the behaviour caused an hour of repo-wide red.
+
+   `audit:bug-index` runs inside `backend-typecheck`, which IS a required status
+   check, so this is the difference between one author fixing their typo and
+   every open PR being blocked. --------------------------------------------- */
+
+const GOOD_TAG = "Repo tooling: tests, ratchets, generators";
+
+function scratchLedgerRepo(t) {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "bugindex-"));
+  t.onTestFinished(() => fs.rmSync(dir, { recursive: true, force: true }));
+  fs.mkdirSync(path.join(dir, "backend", "scripts"), { recursive: true });
+  fs.mkdirSync(path.join(dir, "docs", "generated"), { recursive: true });
+  fs.copyFileSync(path.join(SCRIPTS, "gen-bug-index.mjs"), path.join(dir, "backend", "scripts", "gen-bug-index.mjs"));
+  const git = (...args) => execFileSync("git", args, { cwd: dir, stdio: ["ignore", "pipe", "pipe"] });
+  git("init", "-q");
+  git("config", "user.email", "t@t");
+  git("config", "user.name", "t");
+  return { dir, git };
+}
+
+const entry = (title, tag) => `## ${title} [low]\n\n<!-- area: ${tag} -->\n\n**Symptom.** x.\n`;
+
+function runGenerator(dir) {
+  const r = spawnSync(process.execPath, [path.join(dir, "backend", "scripts", "gen-bug-index.mjs")], {
+    cwd: dir,
+    encoding: "utf8",
+  });
+  return { status: r.status, err: r.stderr ?? "" };
+}
+
+test("a bad area tag INHERITED from the merge base is reported, not charged", (t) => {
+  const { dir, git } = scratchLedgerRepo(t);
+  const ledger = path.join(dir, "BUG-HISTORY.md");
+
+  fs.writeFileSync(ledger, entry("Someone else's entry", "Not An Area") + "\n" + entry("Ordinary", GOOD_TAG));
+  git("add", "-A"); git("commit", "-qm", "base");
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
+
+  // This branch appends a perfectly clean entry of its own.
+  fs.writeFileSync(ledger, entry("My entry", GOOD_TAG) + "\n" + fs.readFileSync(ledger, "utf8"));
+  git("add", "-A"); git("commit", "-qm", "mine");
+
+  const r = runGenerator(dir);
+  assert.equal(r.status, 0, `inherited bad tag must NOT fail the run:\n${r.err}`);
+  assert.match(r.err, /NOT charged to this change/);
+  assert.match(r.err, /Someone else's entry/);
+  // ...and the index must still BUILD, so the author can regenerate.
+  assert.ok(fs.existsSync(path.join(dir, "docs", "generated", "bug-index.md")),
+    "an inherited bad tag must not stop the generator writing its output");
+});
+
+test("...but a bad area tag this change INTRODUCES still fails, exit 1", (t) => {
+  const { dir, git } = scratchLedgerRepo(t);
+  const ledger = path.join(dir, "BUG-HISTORY.md");
+
+  fs.writeFileSync(ledger, entry("Ordinary", GOOD_TAG));
+  git("add", "-A"); git("commit", "-qm", "clean base");
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
+
+  fs.writeFileSync(ledger, entry("My typo", "Not An Area") + "\n" + fs.readFileSync(ledger, "utf8"));
+  git("add", "-A"); git("commit", "-qm", "mine");
+
+  const r = runGenerator(dir);
+  assert.equal(r.status, 1, "a tag introduced by this change must fail");
+  assert.match(r.err, /this change adds 1 entr/);
+  assert.match(r.err, /My typo/);
+});
+
+test("with the tag broken on main AND a second added here, only MINE is charged", (t) => {
+  const { dir, git } = scratchLedgerRepo(t);
+  const ledger = path.join(dir, "BUG-HISTORY.md");
+
+  fs.writeFileSync(ledger, entry("Theirs", "Not An Area") + "\n" + entry("Ordinary", GOOD_TAG));
+  git("add", "-A"); git("commit", "-qm", "base");
+  git("update-ref", "refs/remotes/origin/main", "HEAD");
+
+  fs.writeFileSync(ledger, entry("Mine", "Not An Area") + "\n" + fs.readFileSync(ledger, "utf8"));
+  git("add", "-A"); git("commit", "-qm", "mine");
+
+  const r = runGenerator(dir);
+  assert.equal(r.status, 1);
+  /* The identity matters, not just the verdict: counting tag STRINGS gets the
+     exit code right and names whichever entry happens to come second. */
+  assert.match(r.err, /this change adds 1 entr[\s\S]*"Mine"/, "the charged entry must be the one this change added");
+  assert.match(r.err, /NOT charged to this change[\s\S]*"Theirs"/, "the inherited entry must be reported, not charged");
+});
+
+test("an unresolvable merge base charges everything — a gate that cannot tell must not pass", (t) => {
+  const { dir, git } = scratchLedgerRepo(t);
+  const ledger = path.join(dir, "BUG-HISTORY.md");
+
+  fs.writeFileSync(ledger, entry("Theirs", "Not An Area") + "\n" + entry("Ordinary", GOOD_TAG));
+  git("add", "-A"); git("commit", "-qm", "only commit");
+  // No refs/remotes/origin/main at all.
+
+  const r = runGenerator(dir);
+  assert.equal(r.status, 1, "with no merge base, a bad tag must be charged");
+  assert.match(r.err, /cannot tell whose fault it is/);
 });

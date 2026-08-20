@@ -27,7 +27,7 @@
 //     mutates any scm.* or projects row, and neither contacts a customer.
 //   - Deterministic — no LLM calls, no invented numbers. The ai_focus paragraph
 //     over the brief is the lead's shared-brain pass, stored later (NULL here).
-//   - Money is integer sen end-to-end (scm columns are *_centi = sen; payloads /
+//   - Money is integer sen end-to-end (scm columns are *_sen = sen; payloads /
 //     brief expose them as *Sen).
 //
 // DB access, following house patterns:
@@ -163,20 +163,20 @@ type SoHeader = {
   salesperson_id: string | null;
   venue: string | null;
   venue_id: string | null;
-  total_revenue_centi: number | null;
-  total_cost_centi: number | null;
-  total_margin_centi: number | null;
-  local_total_centi: number | null;
-  mattress_sofa_centi: number | null;
-  bedframe_centi: number | null;
-  accessories_centi: number | null;
-  others_centi: number | null;
-  service_centi: number | null;
-  mattress_sofa_cost_centi: number | null;
-  bedframe_cost_centi: number | null;
-  accessories_cost_centi: number | null;
-  others_cost_centi: number | null;
-  service_cost_centi: number | null;
+  total_revenue_sen: number | null;
+  total_cost_sen: number | null;
+  total_margin_sen: number | null;
+  local_total_sen: number | null;
+  mattress_sofa_sen: number | null;
+  bedframe_sen: number | null;
+  accessories_sen: number | null;
+  others_sen: number | null;
+  service_sen: number | null;
+  mattress_sofa_cost_sen: number | null;
+  bedframe_cost_sen: number | null;
+  accessories_cost_sen: number | null;
+  others_cost_sen: number | null;
+  service_cost_sen: number | null;
 };
 
 /** One SO reduced to its dimensions + headline money (all sen). */
@@ -206,9 +206,9 @@ async function loadSoFacts(sb: any, windowDays: number): Promise<SoFact[]> {
     sb.from('mfg_sales_orders')
       .select(
         'doc_no, status, so_date, branding, customer_state, customer_country, salesperson_id, venue, venue_id, ' +
-        'total_revenue_centi, total_cost_centi, total_margin_centi, local_total_centi, ' +
-        'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, service_centi, ' +
-        'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, service_cost_centi',
+        'total_revenue_sen, total_cost_sen, total_margin_sen, local_total_sen, ' +
+        'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, service_sen, ' +
+        'mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, service_cost_sen',
       )
       .neq('status', 'DRAFT')
       .neq('status', 'CANCELLED')
@@ -246,9 +246,9 @@ async function loadSoFacts(sb: any, windowDays: number): Promise<SoFact[]> {
   ]);
 
   return rows.map((r): SoFact => {
-    const revenueSen = Math.round(n(r.total_revenue_centi));
-    const costSen = Math.round(n(r.total_cost_centi));
-    const marginSen = r.total_margin_centi != null ? Math.round(n(r.total_margin_centi)) : revenueSen - costSen;
+    const revenueSen = Math.round(n(r.total_revenue_sen));
+    const costSen = Math.round(n(r.total_cost_sen));
+    const marginSen = r.total_margin_sen != null ? Math.round(n(r.total_margin_sen)) : revenueSen - costSen;
 
     const brandRaw = s(r.branding).trim();
     const stateCode = resolveStateCode(r.customer_state) ?? resolveStateCode(r.customer_country) ?? 'UNKNOWN';
@@ -269,11 +269,11 @@ async function loadSoFacts(sb: any, windowDays: number): Promise<SoFact[]> {
       salespersonFilled: spId.length > 0,
       venueFilled: vId.length > 0 || vText.length > 0,
       cat: {
-        mattressSofa: [Math.round(n(r.mattress_sofa_centi)), Math.round(n(r.mattress_sofa_cost_centi))],
-        bedframe: [Math.round(n(r.bedframe_centi)), Math.round(n(r.bedframe_cost_centi))],
-        accessories: [Math.round(n(r.accessories_centi)), Math.round(n(r.accessories_cost_centi))],
-        others: [Math.round(n(r.others_centi)), Math.round(n(r.others_cost_centi))],
-        service: [Math.round(n(r.service_centi)), Math.round(n(r.service_cost_centi))],
+        mattressSofa: [Math.round(n(r.mattress_sofa_sen)), Math.round(n(r.mattress_sofa_cost_sen))],
+        bedframe: [Math.round(n(r.bedframe_sen)), Math.round(n(r.bedframe_cost_sen))],
+        accessories: [Math.round(n(r.accessories_sen)), Math.round(n(r.accessories_cost_sen))],
+        others: [Math.round(n(r.others_sen)), Math.round(n(r.others_cost_sen))],
+        service: [Math.round(n(r.service_sen)), Math.round(n(r.service_cost_sen))],
       },
     };
   });

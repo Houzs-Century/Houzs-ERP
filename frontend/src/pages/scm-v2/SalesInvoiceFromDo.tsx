@@ -42,11 +42,11 @@ import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDial
 import { ItemGroupPill } from '../../vendor/scm/lib/category-badges';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
-import { fmtMoneyCenti } from '@2990s/shared';
+import { fmtMoneySen } from '@2990s/shared';
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 const STORAGE_KEY = 'pr-g.si-from-do-lines.layout.v1';
 
@@ -75,7 +75,7 @@ export const SalesInvoiceFromDo = () => {
   const navigate = useNavigate();
   const linesQ = useInvoiceableDoLines();
 
-  /* "Convert to SI" on a Delivery Order lands here with ?doId=<id> so the
+  /* "Transfer to Sales Invoice" on a Delivery Order lands here with ?doId=<id> so the
      operator sees the note they were just looking at, not every open DO in the
      company. The parameter was being constructed by both callers and dropped
      here until 2026-08-16. No parameter → the full picker, which is what the
@@ -289,11 +289,11 @@ export const SalesInvoiceFromDo = () => {
         const pickQty = p?.picked ? p.qty : r.remaining;
         return (
           <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-12)' }}>
-            {fmtRm(pickQty * r.unitPriceCenti)}
+            {fmtRm(pickQty * r.unitPriceSen)}
           </span>
         );
       },
-      sortFn: (a, b) => a.remaining * a.unitPriceCenti - b.remaining * b.unitPriceCenti,
+      sortFn: (a, b) => a.remaining * a.unitPriceSen - b.remaining * b.unitPriceSen,
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps -- column accessors derive from the pick/qty state already in deps; listing the helpers would only rebuild the columns for no behavioural change
   ], [picks, lockedCustomer]);
@@ -318,9 +318,9 @@ export const SalesInvoiceFromDo = () => {
           description: r.description,
           uom: r.uom,
           qty: v.qty,
-          unitPriceCenti: r.unitPriceCenti,
-          discountCenti: r.discountCenti,
-          unitCostCenti: r.unitCostCenti,
+          unitPriceSen: r.unitPriceSen,
+          discountSen: r.discountSen,
+          unitCostSen: r.unitCostSen,
           variants: r.variants,
         };
       })
@@ -420,12 +420,24 @@ export const SalesInvoiceFromDo = () => {
         /* A failed read must NEVER render as the sentence below. "We couldn't
            load the lines" and "there are no lines left to do" are opposite
            facts, and the operator acts on the second one by walking away from
-           work that is still outstanding. */
+           work that is still outstanding.
+
+           NEITHER MAY AN EMPTY ONE (owner 2026-08-17). This screen used to
+           report an empty result as a finished job — "every line has been
+           fully ...". An empty result is only ever evidence that THE QUERY
+           FOUND NOTHING: the read is scoped to the active company and
+           scopeToCompany FAILS CLOSED (scm/lib/companyScope.ts ->
+           .in('company_id', []) returns [] with error: null), PostgREST
+           truncates at db-max-rows without saying so, and a swallowed read
+           error is shaped identically to an empty one. The same claim was
+           removed from the from-PO picker in #2367 and reintroduced five
+           commits later, which is why backend/scripts/check-empty-state-claims.mjs
+           now gates it instead of a comment asking nicely. */
         emptyMessage={linesQ.isError
           ? "We couldn't load the outstanding lines, so this list is incomplete. That is not the same as there being none left — please refresh and try again."
-          : scope.keys.size > 0
-            ? "Nothing left to invoice on the Delivery Order you came from — every line of it has been fully invoiced or returned. Other Delivery Orders may still have lines; use Show all above."
-            : "No invoiceable Delivery Order lines — every line has been fully invoiced or returned (or there are no Delivery Orders)."}
+          : allRows.length > 0
+            ? `None of the ${allRows.length} invoiceable Delivery Order line(s) that loaded belong to the note you came from. Use Show all above to see the rest — this says nothing about whether that note still owes an invoice.`
+            : "This search came back with no invoiceable Delivery Order lines. That is not the same as everything having been invoiced or returned — the list only covers the company you are working in, and lines it cannot see look identical to lines that are done. Open the delivery order and check its balance before treating this as nothing left to invoice."}
       />
 
       {dialog && (

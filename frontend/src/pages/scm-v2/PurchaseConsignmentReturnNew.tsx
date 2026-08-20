@@ -15,6 +15,7 @@
 // Purchase Consignment Order, OR free manual entry. Numbering is PCT-…
 // ----------------------------------------------------------------------------
 
+import { transferFromLabel } from '../../lib/convertScope';
 import { todayMyt } from '../../vendor/scm/lib/dates';
 import { useEffect, useMemo, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -40,6 +41,7 @@ import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
@@ -82,12 +84,12 @@ type DraftLine = {
   rid:            string;
   grnItemId:      string | null;
   materialKind:   string;
-  materialCode:   string;
+  itemCode:   string;
   materialName:   string;
   itemGroup:      string | null;
   variants:       Record<string, unknown> | null;
   qtyReturned:    number;
-  unitPriceCenti: number;
+  unitPriceSen: number;
   reason:         string;
   notes:          string;
 };
@@ -96,12 +98,12 @@ const newLine = (): DraftLine => ({
   rid:            `m${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   grnItemId:      null,
   materialKind:   'mfg_product',
-  materialCode:   '',
+  itemCode:   '',
   materialName:   '',
   itemGroup:      null,
   variants:       null,
   qtyReturned:    1,
-  unitPriceCenti: 0,
+  unitPriceSen: 0,
   reason:         '',
   notes:          '',
 });
@@ -155,9 +157,9 @@ export const PurchaseConsignmentReturnNew = () => {
     if (!fromPicks || picksLoaded) return;
     type Stash = {
       receiveItemId: string; pcReceiveId: string; supplierId: string | null;
-      materialKind: string; materialCode: string; materialName: string;
+      materialKind: string; itemCode: string; materialName: string;
       itemGroup: string | null; description: string | null; uom: string | null;
-      qty: number; unitPriceCenti: number; variants: unknown;
+      qty: number; unitPriceSen: number; variants: unknown;
     };
     const stash = readScmHandoff<Stash[]>('pcrnFromReceivePicks');
     if (!stash || stash.length === 0) return;
@@ -166,12 +168,12 @@ export const PurchaseConsignmentReturnNew = () => {
       rid:            `p${s.receiveItemId}`,
       grnItemId:      s.receiveItemId,
       materialKind:   s.materialKind,
-      materialCode:   s.materialCode,
+      itemCode:   s.itemCode,
       materialName:   s.materialName,
       itemGroup:      s.itemGroup,
       variants:       (s.variants as Record<string, unknown> | null) ?? null,
       qtyReturned:    Number(s.qty ?? 0),
-      unitPriceCenti: Number(s.unitPriceCenti ?? 0),
+      unitPriceSen: Number(s.unitPriceSen ?? 0),
       reason:         '',
       notes:          '',
     })));
@@ -193,12 +195,12 @@ export const PurchaseConsignmentReturnNew = () => {
         rid:            `r${it.id}`,
         grnItemId:      it.id,
         materialKind:   it.material_kind,
-        materialCode:   it.material_code,
+        itemCode:   it.item_code,
         materialName:   it.material_name,
         itemGroup:      it.item_group ?? null,
         variants:       (it.variants as Record<string, unknown> | null) ?? null,
         qtyReturned:    it.qty_rejected ?? 0,
-        unitPriceCenti: it.unit_price_centi ?? 0,
+        unitPriceSen: it.unit_price_sen ?? 0,
         reason:         it.rejection_reason ?? '',
         notes:          '',
       }));
@@ -215,12 +217,12 @@ export const PurchaseConsignmentReturnNew = () => {
       rid:            `r${it.id}`,
       grnItemId:      null,
       materialKind:   it.material_kind,
-      materialCode:   it.material_code,
+      itemCode:   it.item_code,
       materialName:   it.material_name,
       itemGroup:      it.item_group ?? null,
       variants:       (it.variants as Record<string, unknown> | null) ?? null,
       qtyReturned:    0,
-      unitPriceCenti: it.unit_price_centi ?? 0,
+      unitPriceSen: it.unit_price_sen ?? 0,
       reason:         '',
       notes:          '',
     }));
@@ -232,8 +234,8 @@ export const PurchaseConsignmentReturnNew = () => {
   const dropLine = (rid: string) => setLines((prev) => prev.filter((l) => l.rid !== rid));
   const addLine  = () => setLines((prev) => [...prev, newLine()]);
 
-  const subtotalCenti = useMemo(
-    () => lines.filter((l) => l.qtyReturned > 0).reduce((s, l) => s + l.qtyReturned * l.unitPriceCenti, 0),
+  const subtotalSen = useMemo(
+    () => lines.filter((l) => l.qtyReturned > 0).reduce((s, l) => s + l.qtyReturned * l.unitPriceSen, 0),
     [lines],
   );
 
@@ -250,7 +252,7 @@ export const PurchaseConsignmentReturnNew = () => {
   const pickItemForLine = (rid: string, code: string) => {
     const sku = (productsQ.data ?? []).find((p) => p.code === code);
     setLine(rid, {
-      materialCode: code,
+      itemCode: code,
       materialName: sku?.name ?? code,
       itemGroup:    sku?.category ? sku.category.toLowerCase() : null,
     });
@@ -271,7 +273,7 @@ export const PurchaseConsignmentReturnNew = () => {
     return s ? `${s.code} · ${s.name}` : '';
   }, [grn, po, suppliersQ.data, supplierId]);
 
-  const validLines = lines.filter((l) => l.materialCode.trim() && l.qtyReturned > 0);
+  const validLines = lines.filter((l) => l.itemCode.trim() && l.qtyReturned > 0);
   const canSave = !!supplierId && validLines.length > 0;
 
   const onSave = async () => {
@@ -289,11 +291,11 @@ export const PurchaseConsignmentReturnNew = () => {
           grnItemId:      l.grnItemId,
           pcReceiveItemId: l.grnItemId,
           materialKind:   l.materialKind,
-          materialCode:   l.materialCode,
+          itemCode:   l.itemCode,
           materialName:   l.materialName,
           qtyReturned:    l.qtyReturned,
-          unitPriceCenti: l.unitPriceCenti,
-          lineRefundCenti: l.qtyReturned * l.unitPriceCenti,
+          unitPriceSen: l.unitPriceSen,
+          lineRefundSen: l.qtyReturned * l.unitPriceSen,
           reason:         l.reason || undefined,
           notes:          l.notes || undefined,
           itemGroup:      l.itemGroup,
@@ -321,7 +323,7 @@ export const PurchaseConsignmentReturnNew = () => {
         actions={
           <div className={styles.actions}>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-consignment-returns/from-receive')}>
-              <ArrowRightLeft {...ICON} /> From Purchase Consignment Receive
+              <ArrowRightLeft {...ICON} /> {transferFromLabel('pcr')}
             </Button>
             <Button variant="ghost" size="md" onClick={() => navigate('/scm/purchase-consignment-returns')}>
               <X {...ICON} /> Cancel
@@ -353,7 +355,7 @@ export const PurchaseConsignmentReturnNew = () => {
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Return Date *</span>
-              <input type="date" value={returnDate} onChange={(e) => setReturnDate(e.target.value)} className={styles.fieldInput} required />
+              <DateField fullWidth value={returnDate} onChange={(iso) => setReturnDate(iso)} className={styles.fieldInput} required/>
             </label>
 
             <label className={styles.field}>
@@ -382,7 +384,7 @@ export const PurchaseConsignmentReturnNew = () => {
         <div className={styles.cardHeader}>
           <h2 className={styles.cardTitle}>Items to Return</h2>
           <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-            {validLines.length} line{validLines.length === 1 ? '' : 's'} · refund {fmtRm(subtotalCenti)}
+            {validLines.length} line{validLines.length === 1 ? '' : 's'} · refund {fmtRm(subtotalSen)}
           </span>
         </div>
         <div className={styles.cardBody} style={{ display: 'flex', flexDirection: 'column', gap: 'var(--space-3)' }}>
@@ -396,7 +398,7 @@ export const PurchaseConsignmentReturnNew = () => {
             </p>
           ) : (
             lines.map((l, idx) => {
-              const lineRefundCenti = l.qtyReturned * l.unitPriceCenti;
+              const lineRefundSen = l.qtyReturned * l.unitPriceSen;
               const variantSummary = buildVariantSummary(l.itemGroup, l.variants);
               const isManualLine = isManual && l.grnItemId === null;
               const showVariantEditor =
@@ -442,7 +444,7 @@ export const PurchaseConsignmentReturnNew = () => {
                       {l.itemGroup && <ItemGroupPill group={l.itemGroup} />}
                     </div>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                      <span className={styles.previewPrice}>{fmtRm(lineRefundCenti)}</span>
+                      <span className={styles.previewPrice}>{fmtRm(lineRefundSen)}</span>
                       <button
                         type="button"
                         onClick={() => dropLine(l.rid)}
@@ -469,13 +471,13 @@ export const PurchaseConsignmentReturnNew = () => {
                           <input
                             type="text"
                             list={`pct-products-${l.rid}`}
-                            value={l.materialCode}
+                            value={l.itemCode}
                             onChange={(e) => {
                               const code = e.target.value;
                               setProductQuery(code);
                               const match = (productsQ.data ?? []).find((p) => p.code === code);
                               if (match) { pickItemForLine(l.rid, code); return; }
-                              setLine(l.rid, { materialCode: code });
+                              setLine(l.rid, { itemCode: code });
                             }}
                             placeholder="Type ≥2 chars to search SKUs by code or name…"
                             className={styles.fieldInput}
@@ -491,7 +493,7 @@ export const PurchaseConsignmentReturnNew = () => {
                         <input
                           type="text"
                           readOnly
-                          value={l.materialCode}
+                          value={l.itemCode}
                           className={styles.fieldInput}
                           style={{ fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                         />
@@ -529,7 +531,7 @@ export const PurchaseConsignmentReturnNew = () => {
                       }}>{l.itemGroup} Variants</div>
                       <PcVariantEditor
                         category={l.itemGroup ?? ''}
-                        itemCode={l.materialCode}
+                        itemCode={l.itemCode}
                         variants={(l.variants ?? {}) as Record<string, unknown>}
                         onChange={setVariant}
                         fabrics={fabrics}
@@ -548,8 +550,8 @@ export const PurchaseConsignmentReturnNew = () => {
                     </label>
                     <label className={styles.field}>
                       <span className={styles.fieldLabel}>Unit Price (MYR)</span>
-                      <MoneyInput bare valueSen={l.unitPriceCenti}
-                        onCommit={(sen) => setLine(l.rid, { unitPriceCenti: sen ?? 0 })}
+                      <MoneyInput bare valueSen={l.unitPriceSen}
+                        onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0 })}
                         inputClassName={styles.fieldInput} selectOnFocus />
                     </label>
                     <label className={styles.field}>
@@ -564,7 +566,7 @@ export const PurchaseConsignmentReturnNew = () => {
                       <input
                         type="text"
                         readOnly
-                        value={fmtRm(lineRefundCenti)}
+                        value={fmtRm(lineRefundSen)}
                         className={styles.fieldInput}
                         style={{ textAlign: 'right', fontFamily: 'var(--font-mono)', background: 'var(--c-cream)', color: 'var(--fg-muted)' }}
                       />
@@ -608,11 +610,11 @@ export const PurchaseConsignmentReturnNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
               <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen)}</span>
             </div>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-16)', fontWeight: 700, borderTop: '1px solid var(--line)', paddingTop: 'var(--space-2)' }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen)}</span>
             </div>
           </div>
         </section>

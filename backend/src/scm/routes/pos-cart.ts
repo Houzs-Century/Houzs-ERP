@@ -1,3 +1,16 @@
+// ============================================================================
+// ⚠️  EXTERNAL CLIENT — no screen in THIS repo calls this route. That is
+//     expected, not evidence it is dead.
+//
+//     The consumer is the 2990 POS (pos.2990shome.com, repo wenwei4046/2990s),
+//     which has built against this API since the 2026-07-21 cutover. Neither
+//     repo compiles against the other, so a repo-wide "find usages" here
+//     returns nothing while the route is serving live tablet traffic.
+//
+//     Deleted as dead code on 2026-08-18 (#2422); the POS 404'd in production.
+//     Restored 2026-08-19 (#2459). Before removing it again, grep the POS repo.
+//     POS call sites: apps/pos/src/lib/cart-sync.ts:14,55
+// ============================================================================
 // ----------------------------------------------------------------------------
 // /pos-cart — the salesperson's live in-progress POS cart (ported from 2990's,
 // issue #385). Company-scoped for the Houzs merged backend (company_2 = 2990).

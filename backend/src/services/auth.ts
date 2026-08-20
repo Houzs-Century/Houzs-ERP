@@ -16,8 +16,9 @@ import {
   isSessionFallbackEnabled,
   sessionFallbackTtlMs,
 } from "./sessionCache";
-import { isScopedProjectUser } from "./projectAcl";
 import { applySalesJdOverride } from "./salesJdAccess";
+import { issueSessionPass, sessionSigningSecret } from "./session-pass";
+import { sidFor, revokeSession } from "./session-revocation";
 import { resolvePositionPolicy, positionGrantsWildcard } from "./positionPolicy";
 
 // ── Crypto helpers ────────────────────────────────────────
@@ -265,8 +266,40 @@ export async function createSession(
   return token;
 }
 
+/**
+ * Mint a signed staff pass for a session that was just created, or null.
+ *
+ * STAGE 2 of the signed-session rollout. Called from the login routes right
+ * after createSession. It returns null — issuing nothing — when the signing
+ * secret is unset (the feature is OFF; the deployment pays literally nothing,
+ * not even a DB read) or the user cannot be loaded. When the secret IS set it
+ * loads the full AuthUser ONCE and signs its authorization snapshot; a login is
+ * rare, so this one read is not the per-request cost the pass exists to remove.
+ *
+ * The pass is returned ALONGSIDE the existing opaque token, never instead of
+ * it. Nothing verifies the pass yet — stage 3 does. So this is inert on the
+ * request path: a client that stores and sends the pass changes no server
+ * behaviour until the middleware is taught to read it.
+ */
+export async function mintSessionPass(
+  env: Env,
+  token: string,
+  nowMs: number,
+): Promise<string | null> {
+  const secret = sessionSigningSecret(env);
+  if (!secret) return null;
+  const user = await getUserBySession(env, token);
+  if (!user) return null;
+  const sid = await sidFor(token);
+  return issueSessionPass(user, secret, nowMs, sid);
+}
+
 export async function deleteSession(env: Env, token: string): Promise<void> {
   await env.DB.prepare(`DELETE FROM sessions WHERE token = ?`).bind(token).run();
+  // Void this session's SIGNED PASS. A pass verifies with no DB read, so
+  // deleting the session row does not log it out — the revocation board is what
+  // does. Best-effort; the pass also self-expires in 8h.
+  await revokeSession(env, await sidFor(token), Date.now());
   // Bust the cached user immediately so logout / forced-expiry takes effect now
   // rather than waiting out the 60s TTL. Also forget the in-memory liveness
   // fallback so a same-isolate logout cannot be re-served during a DB blip
@@ -391,32 +424,11 @@ async function hydrateAuthUser(env: Env, row: any): Promise<AuthUser> {
     permissions.push("*");
     permissionsSet.add("*");
   }
-  // Owner 2026-07-15 — hydrate the brand allow-list not only for `scope_to_pic`
-  // roles but for the whole code-keyed project-scoped cohort (isScopedProjectUser
-  // = scope_to_pic OR a non-director Sales user). Some Sales positions lack the
-  // scope_to_pic flag; without brands the project list's PIC arm can't match and
-  // they'd fall back to attendee-only. Classify off the STABLE ORG FIELDS
-  // already on `row` (position_name / department_name) + the parsed permissions.
-  const brandScoped = isScopedProjectUser({
-    scope_to_pic: scoped,
-    permissions_set: permissionsSet,
-    position_name: row.position_name ?? null,
-    department_name: row.department_name ?? null,
-  } as AuthUser);
-  let brandScope: string[] | null = null;
-  if (brandScoped) {
-    const ids = managerId ? [row.id, managerId] : [row.id];
-    // env.DB (not getDb): auth must keep working on the D1 fallback used by
-    // the test suite and the rollback path, where no DATABASE_URL is bound.
-    // DISTINCT dedups brands listed on both the rep and the manager.
-    const placeholders = ids.map(() => "?").join(", ");
-    const res = await env.DB.prepare(
-      `SELECT DISTINCT brand FROM user_brands WHERE user_id IN (${placeholders})`
-    )
-      .bind(...ids)
-      .all<{ brand: string }>();
-    brandScope = (res.results ?? []).map((r) => r.brand);
-  }
+  // brand_scope was the per-user brand allow-list for the project row-level ACL.
+  // That ACL was removed (owner decision 2026-08-19), so nothing reads it any
+  // more; it is left on the envelope as a vestigial null rather than reshaping
+  // the signed-session claims contract in the same change.
+  const brandScope: string[] | null = null;
   // Page-access SOURCE (owner-directed 2026-07-18, services/positionPolicy.ts):
   // ONE authoritative policy for ALL 17 positions — the old matrix + a separate
   // sales rule are BOTH gone for a positioned user.

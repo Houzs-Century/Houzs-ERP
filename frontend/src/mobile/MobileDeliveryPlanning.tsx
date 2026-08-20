@@ -12,7 +12,7 @@ import {
   useDeliveryPlanningLines,
   type PlanningLineItem,
 } from "../vendor/scm/lib/delivery-planning-queries";
-import { fmtCenti } from "../lib/scm";
+import { fmtSen } from "../lib/scm";
 import { formatDate } from "../lib/utils";
 import { useAuth } from "../auth/AuthContext";
 import { canOperateDeliveryOrders } from "../auth/salesAccess";
@@ -53,9 +53,9 @@ type BoardRow = {
   branding: string | null;
   status: string | null;
   delivery_state: Bucket;
-  balance_centi: number | null;
-  balance_centi_live: number | null;
-  local_total_centi: number | null;
+  balance_sen: number | null;
+  balance_sen_live: number | null;
+  local_total_sen: number | null;
   so_date: string | null;
   customer_delivery_date: string | null;
   amended_delivery_date: string | null;
@@ -735,7 +735,7 @@ function StopCard({
   const st = trackState(o, isToday);
   const [chipBg, chipFg] = STATE_COLORS[st];
   const seqBg = seqBgFor(st);
-  const bal = o.balance_centi_live ?? o.balance_centi ?? 0;
+  const bal = o.balance_sen_live ?? o.balance_sen ?? 0;
   const fullyPaid = bal <= 0;
   const cust = o.debtor_name || o.so_doc_no || EM;
   const subId = latestDo(o)?.do_number || o.so_doc_no || EM;
@@ -912,7 +912,7 @@ function StopCard({
             className="tnum"
             style={{ fontSize: 16, fontWeight: 800, color: "#8a4b12" }}
           >
-            {fmtCenti(bal)}
+            {fmtSen(bal)}
           </span>
         </div>
       )}
@@ -1193,7 +1193,7 @@ function StopDetail({
   const [chipBg, chipFg] = STATE_COLORS[st];
   const doRef = latestDo(order);
   const doId = doRef?.id || null;
-  const bal = order.balance_centi_live ?? order.balance_centi ?? 0;
+  const bal = order.balance_sen_live ?? order.balance_sen ?? 0;
   const fullyPaid = bal <= 0;
   const eff = dm(effDateOf(order));
   const timeWindow = (order.time_range && order.time_range.trim()) || "";
@@ -1283,6 +1283,14 @@ function StopDetail({
     onSuccess: async () => {
       await invalidate();
     },
+    /* A failed "On the way" said NOTHING either — same silent-tap gap the
+       "Mark arrived" onError below closes. Surface it the same way. */
+    onError: async (e) => {
+      await notify({
+        title: "Couldn't start the delivery",
+        body: e instanceof Error ? e.message : "Something went wrong. Please try again.",
+      });
+    },
   });
 
   /* "Arrived" — stamps delivery_orders.arrival_at with the CURRENT time.
@@ -1329,6 +1337,14 @@ function StopDetail({
     },
     onSuccess: async () => {
       await invalidate();
+    },
+    /* A failed "POD complete" was silent too — the driver taps, the button
+       returns, and the delivery never gets marked done. Match the arrive path. */
+    onError: async (e) => {
+      await notify({
+        title: "Couldn't complete the delivery",
+        body: e instanceof Error ? e.message : "Something went wrong. Please try again.",
+      });
     },
   });
 
@@ -1867,7 +1883,7 @@ function StopDetail({
               className="tnum"
               style={{ fontSize: 19, fontWeight: 800, color: "#8a4b12" }}
             >
-              {fmtCenti(bal)}
+              {fmtSen(bal)}
             </span>
           </div>
         )}
@@ -2022,7 +2038,7 @@ function GoodsToDeliverCard({ order }: { order: BoardRow }) {
 // A TIMESTAMPTZ ISO → the value <input type="datetime-local"> wants.
 const toDtLocal = (iso: string | null | undefined): string =>
   iso ? String(iso).slice(0, 16) : "";
-// A YYYY-MM-DD date-ish string → the value <input type="date"> wants.
+// A YYYY-MM-DD date-ish string → the ISO value DateField takes.
 const toDateInput = (d: string | null | undefined): string =>
   d ? String(d).slice(0, 10) : "";
 
@@ -2150,21 +2166,11 @@ function DeliveryFieldsCard({
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">Shipout date (EM/SG)</span>
-            <input
-              type="date"
-              value={form.shipoutDate}
-              onChange={(e) => set("shipoutDate", e.target.value)}
-              style={inputStyle}
-            />
+            <DateField value={form.shipoutDate} onChange={(iso) => set("shipoutDate", iso)} style={inputStyle}/>
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">Customer delivered date</span>
-            <input
-              type="date"
-              value={form.customerDeliveredDate}
-              onChange={(e) => set("customerDeliveredDate", e.target.value)}
-              style={inputStyle}
-            />
+            <DateField value={form.customerDeliveredDate} onChange={(iso) => set("customerDeliveredDate", iso)} style={inputStyle}/>
           </label>
           <label style={{ display: "block", marginBottom: 10 }}>
             <span className="fld-l">ETA / arriving port (EM/SG)</span>
@@ -2425,3 +2431,5 @@ function TrackButton({
     </button>
   );
 }
+
+import { DateField } from "../vendor/scm/components/DateField";

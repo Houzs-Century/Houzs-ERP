@@ -92,7 +92,7 @@ async function resetFixture(sql: Sql): Promise<void> {
 
     CREATE TABLE scm.purchase_order_items (
       id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-      material_code text,
+      item_code text,
       so_item_id uuid REFERENCES scm.mfg_sales_order_items(id) ON DELETE SET NULL
     );
     CREATE TABLE scm.delivery_order_items (
@@ -118,7 +118,7 @@ async function seedBuild(sql: Sql): Promise<{ oldIds: string[]; links: Record<st
   const lhf = rows.find((r) => r.item_code === 'BOOQIT-1B(LHF)')!.id;
   const cnr = rows.find((r) => r.item_code === 'BOOQIT-CNR')!.id;
   const [po] = await sql<Array<{ id: string }>>`
-    insert into scm.purchase_order_items (material_code, so_item_id)
+    insert into scm.purchase_order_items (item_code, so_item_id)
     values ('BOOQIT-1B(LHF)', ${lhf}) returning id`;
   const [doItem] = await sql<Array<{ id: string }>>`
     insert into scm.delivery_order_items (item_code, so_item_id)

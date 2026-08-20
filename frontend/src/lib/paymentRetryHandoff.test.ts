@@ -25,16 +25,16 @@ afterEach(() => {
 describe("payment retry handoff", () => {
   test("preserves exact failed rows and their original idempotency keys", () => {
     bindBrowserStorageIdentity(7);
-    const first = { ...newPaymentDraft(), amountCenti: 1000 };
-    const second = { ...newPaymentDraft(), amountCenti: 2000 };
+    const first = { ...newPaymentDraft(), amountSen: 1000 };
+    const second = { ...newPaymentDraft(), amountSen: 2000 };
     expect(writePaymentRetryHandoff("so", "SO-1", [first, second])).toBe(true);
     expect(readPaymentRetryHandoff("so", "SO-1")?.drafts).toEqual([first, second]);
   });
 
   test("removes only a confirmed row and clears the handoff after the last one", () => {
     bindBrowserStorageIdentity(7);
-    const first = { ...newPaymentDraft(), amountCenti: 1000 };
-    const second = { ...newPaymentDraft(), amountCenti: 2000 };
+    const first = { ...newPaymentDraft(), amountSen: 1000 };
+    const second = { ...newPaymentDraft(), amountSen: 2000 };
     writePaymentRetryHandoff("so", "SO-1", [first, second]);
     expect(completePaymentRetryDraft("so", "SO-1", first.idempotencyKey!)).toEqual([second]);
     expect(readPaymentRetryHandoff("so", "SO-1")?.drafts).toEqual([second]);
@@ -46,8 +46,8 @@ describe("payment retry handoff", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-07-20T00:00:00Z"));
     bindBrowserStorageIdentity(7);
-    const first = { ...newPaymentDraft(), amountCenti: 1000 };
-    const second = { ...newPaymentDraft(), amountCenti: 2000 };
+    const first = { ...newPaymentDraft(), amountSen: 1000 };
+    const second = { ...newPaymentDraft(), amountSen: 2000 };
     writePaymentRetryHandoff("so", "SO-1", [first, second]);
     expect(Object.keys(localStorage).filter((key) => key.includes("soPaymentRetry"))).toHaveLength(2);
 
@@ -60,7 +60,7 @@ describe("payment retry handoff", () => {
 
   test("does not expose or clear a handoff for another document", () => {
     bindBrowserStorageIdentity(7);
-    const draft = { ...newPaymentDraft(), amountCenti: 1000 };
+    const draft = { ...newPaymentDraft(), amountSen: 1000 };
     writePaymentRetryHandoff("si", "SI-1", [draft]);
     expect(readPaymentRetryHandoff("si", "SI-2")).toBeNull();
     clearPaymentRetryHandoff("si", "SI-2");
@@ -69,8 +69,8 @@ describe("payment retry handoff", () => {
 
   test("keeps independent retry rows for multiple documents of one kind", () => {
     bindBrowserStorageIdentity(7);
-    const first = { ...newPaymentDraft(), amountCenti: 1000 };
-    const second = { ...newPaymentDraft(), amountCenti: 2000 };
+    const first = { ...newPaymentDraft(), amountSen: 1000 };
+    const second = { ...newPaymentDraft(), amountSen: 2000 };
     writePaymentRetryHandoff("so", "SO-1", [first]);
     writePaymentRetryHandoff("so", "SO-2", [second]);
 
@@ -82,7 +82,7 @@ describe("payment retry handoff", () => {
 
   test("provides a validated navigation-state fallback when session storage is unavailable", () => {
     bindBrowserStorageIdentity(7);
-    const draft = { ...newPaymentDraft(), amountCenti: 1000 };
+    const draft = { ...newPaymentDraft(), amountSen: 1000 };
     const state = paymentRetryNavigationState("si", "SI-1", [draft]);
     expect(readPaymentRetryNavigationState(state, "si", "SI-1")).toEqual([draft]);
     expect(readPaymentRetryNavigationState(state, "so", "SI-1")).toEqual([]);
@@ -94,15 +94,15 @@ describe("payment retry handoff", () => {
 
   test("fails closed when a retry row lacks an idempotency key", () => {
     bindBrowserStorageIdentity(7);
-    const { idempotencyKey: _missing, ...invalid } = { ...newPaymentDraft(), amountCenti: 1000 };
+    const { idempotencyKey: _missing, ...invalid } = { ...newPaymentDraft(), amountSen: 1000 };
     expect(writePaymentRetryHandoff("so", "SO-1", [invalid as never])).toBe(false);
     expect(readPaymentRetryHandoff("so", "SO-1")).toBeNull();
   });
 
   test("fails closed when two rows claim the same payment intent", () => {
     bindBrowserStorageIdentity(7);
-    const first = { ...newPaymentDraft(), amountCenti: 1000 };
-    const duplicate = { ...first, uid: "different-ui-row", amountCenti: 2000 };
+    const first = { ...newPaymentDraft(), amountSen: 1000 };
+    const duplicate = { ...first, uid: "different-ui-row", amountSen: 2000 };
     expect(writePaymentRetryHandoff("so", "SO-1", [first, duplicate])).toBe(false);
     expect(readPaymentRetryHandoff("so", "SO-1")).toBeNull();
   });
@@ -113,7 +113,7 @@ describe("payment retry handoff", () => {
     // and the server has not accepted yet; a routine session expiry is not
     // permission to destroy the only record of them.
     bindBrowserStorageIdentity(7);
-    const draft = { ...newPaymentDraft(), amountCenti: 45_000 };
+    const draft = { ...newPaymentDraft(), amountSen: 45_000 };
     writePaymentRetryHandoff("so", "SO-1", [draft]);
 
     clearAllScmHandoffs();
@@ -129,7 +129,7 @@ describe("payment retry handoff", () => {
     adoptActiveCompanyForUser(7);
     setActiveCompanyId(3);
     bindBrowserStorageIdentity(7);
-    const draft = { ...newPaymentDraft(), amountCenti: 12_500 };
+    const draft = { ...newPaymentDraft(), amountSen: 12_500 };
     writePaymentRetryHandoff("si", "SI-9", [draft]);
 
     // The switcher's sequence: drop the transient handoffs, then change tenant.
@@ -144,8 +144,8 @@ describe("payment retry handoff", () => {
   });
 
   test("plans edits from the frozen baseline without deleting or reviving concurrent rows", () => {
-    const original = { ...newPaymentDraft(), uid: "persisted-1", amountCenti: 1000, idempotencyKey: undefined };
-    const addedHere = { ...newPaymentDraft(), uid: "new-here", amountCenti: 2000 };
+    const original = { ...newPaymentDraft(), uid: "persisted-1", amountSen: 1000, idempotencyKey: undefined };
+    const addedHere = { ...newPaymentDraft(), uid: "new-here", amountSen: 2000 };
     const plan = planPaymentDraftFlush(
       ["persisted-1", "deleted-elsewhere"],
       ["persisted-1", "added-elsewhere"],

@@ -1,12 +1,17 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Plus, Copy, Trash2, UserX, UserCheck, X, KeyRound, Pencil, Check, Tag, RefreshCw, Search, ArrowUp, ArrowDown, ChevronsUpDown, ChevronRight, ChevronDown, Printer, LayoutGrid, List, Phone, Mail, AtSign, ArrowLeft, SlidersHorizontal, Eye, EyeOff, Users, ShieldCheck, Network, Building2, LogIn, type LucideIcon } from "lucide-react";
+import { Plus, Copy, Trash2, UserX, UserCheck, X, KeyRound, Pencil, Check, RefreshCw, Search, ArrowUp, ArrowDown, ChevronsUpDown, ChevronRight, ChevronDown, Printer, LayoutGrid, List, Phone, Mail, AtSign, ArrowLeft, SlidersHorizontal, Eye, EyeOff, Users, ShieldCheck, Network, Building2, LogIn, type LucideIcon } from "lucide-react";
 import { PageHeader } from "../components/Layout";
 import { TabStrip, type TabOption } from "../components/TabStrip";
 import { Button } from "../components/Button";
 import { ColorPicker } from "../components/ColorPicker";
 import { Panel, PanelSection } from "../components/Panel";
 import { StatusDot } from "../components/StatusDot";
+/* The house searchable dropdown (owner 2026-07-27, "全部下拉的 option 都要加上
+   搜索功能"), vendored where the long option lists first appeared. Team's people
+   pickers are the same problem, so they use the same control. */
+import { SearchableSelect } from "../vendor/scm/components/SearchableSelect";
+import { ORG_PICKER_CLS, isDescendantOf, managerOptions } from "./team/orgChartPickers";
 import { Avatar } from "../components/Avatar";
 import { useQuery } from "../hooks/useQuery";
 import { useQueryClient } from "@tanstack/react-query";
@@ -36,6 +41,7 @@ import { PositionsTab } from "./Positions";
 import { MailboxesTab } from "./MailboxesTab";
 import { PhoneInput } from "../vendor/scm/components/PhoneInput";
 import { PrintPreviewModal, usePrintPreview } from "../components/scm-v2/PrintPreviewModal";
+import { fmtDate } from "../vendor/shared/format";
 
 type TeamTabValue =
   | "hub"
@@ -72,10 +78,7 @@ const QUICK_SEGMENTS = [
 
 // yyyy/mm/dd for the date columns — same normalisation as the SO list's
 // fmtDate, plus space-separated Postgres timestamps ("2026-07-22 09:14:33").
-const fmtDay = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  return iso.replace(/[T ].*$/, "").replace(/-/g, "/");
-};
+const fmtDay = fmtDate;
 
 // Full department set for a member (mig 0020) — primary first, falling back to
 // the single primary on older backends that don't send department_ids.
@@ -706,7 +709,6 @@ function MembersTab({
   );
 
   // Per-user brand picker — opens a small modal scoped to one member.
-  const [brandsFor, setBrandsFor] = useState<TeamMember | null>(null);
   // Member being edited in the side panel (name/email/phone/org + actions).
   const [editing, setEditing] = useState<TeamMember | null>(null);
   // Member whose full-screen detail is open. Stored by id so it re-reads
@@ -1843,7 +1845,6 @@ function MembersTab({
             await removeUser(viewing);
             setViewingId(null);
           }}
-          onEditBrands={() => setBrandsFor(viewing)}
         />
       ) : (
       <>
@@ -2416,24 +2417,8 @@ function MembersTab({
             await removeUser(u);
             setEditing(null);
           }}
-          onEditBrands={(u) => {
-            setEditing(null);
-            setBrandsFor(u);
-          }}
           multiCompany={multiCompany}
           companies={companyOpts}
-        />
-      )}
-
-      {brandsFor && (
-        <UserBrandsPanel
-          user={brandsFor}
-          onClose={() => setBrandsFor(null)}
-          onSaved={() => {
-            setBrandsFor(null);
-            // No need to reload members — brand list lives in its own
-            // endpoint and isn't in /api/users payload.
-          }}
         />
       )}
 
@@ -2501,7 +2486,6 @@ function MemberDetail({
   onResendInvite,
   onToggleStatus,
   onRemove,
-  onEditBrands,
 }: {
   user: TeamMember;
   members: TeamMember[];
@@ -2518,7 +2502,6 @@ function MemberDetail({
   onResendInvite: () => void;
   onToggleStatus: () => void | Promise<void>;
   onRemove: () => void | Promise<void>;
-  onEditBrands: () => void;
 }) {
   const reports = members
     .filter((m) => m.manager_id === user.id)
@@ -2578,8 +2561,7 @@ function MemberDetail({
 
   /* Tab state · ?view=overview (default) | ?view=org-performance. URL-state
      so a deep-link or refresh lands on the right tab; the existing default
-     (no query string) still lands on Overview. Brands & Commission stays on
-     the side-drawer (onEditBrands) — not promoted to a tab. */
+     (no query string) still lands on Overview. */
   const [searchParams, setSearchParams] = useSearchParams();
   const view: "overview" | "org-performance" =
     searchParams.get("view") === "org-performance" ? "org-performance" : "overview";
@@ -2722,11 +2704,6 @@ function MemberDetail({
               <Button variant="brass" className="w-full" icon={<Pencil size={13} />} onClick={onEdit}>
                 Edit member
               </Button>
-              {canManage && (
-                <button type="button" onClick={onEditBrands} className={actionCls}>
-                  <Tag size={13} /> Brand access…
-                </button>
-              )}
               {canManage && user.status !== "invited" && (
                 <button type="button" onClick={onSendReset} className={actionCls}>
                   <KeyRound size={13} /> Reset password
@@ -2861,22 +2838,6 @@ function MemberDetail({
                 ))}
               </div>
             )}
-            <div className="border-t border-border-subtle pt-2.5">
-              <span className="mb-1.5 block text-[10px] font-medium uppercase tracking-wide text-ink-muted">
-                Brand access
-              </span>
-              {user.brands.length === 0 ? (
-                <span className="text-[12px] text-ink-muted">No brand restriction</span>
-              ) : (
-                <div className="flex flex-wrap gap-1">
-                  {user.brands.map((b) => (
-                    <Badge key={b} tone="neutral" size="xs" caseless>
-                      {b}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-            </div>
           </DetailCol>
 
           <DetailCol title="Timeline">
@@ -3031,7 +2992,6 @@ function EditMemberPanel({
   onResendInvite,
   onToggleStatus,
   onRemove,
-  onEditBrands,
   multiCompany,
   companies,
 }: {
@@ -3047,7 +3007,6 @@ function EditMemberPanel({
   onResendInvite: (u: TeamMember) => void;
   onToggleStatus: (u: TeamMember) => void | Promise<void>;
   onRemove: (u: TeamMember) => void | Promise<void>;
-  onEditBrands: (u: TeamMember) => void;
   multiCompany: boolean;
   companies: CompanyOpt[];
 }) {
@@ -3357,25 +3316,24 @@ function EditMemberPanel({
       <PanelSection title="Organisation">
         <div>
           <label className={labelCls}>Primary department</label>
-          <select
-            value={deptId}
-            onChange={(e) => {
-              const next = e.target.value ? Number(e.target.value) : "";
+          <SearchableSelect
+            className={inputCls}
+            ariaLabel="Primary department"
+            placeholder="— None —"
+            value={String(deptId)}
+            onChange={(v) => {
+              const next = v ? Number(v) : "";
               setDeptId(next);
               setPositionId(""); // positions are department-scoped — reset
               // The primary is always part of the membership set.
               if (next !== "")
                 setDeptIds((prev) => (prev.includes(next) ? prev : [...prev, next]));
             }}
-            className={inputCls}
-          >
-            <option value="">— None —</option>
-            {departments.map((d) => (
-              <option key={d.id} value={d.id}>
-                {d.name}
-              </option>
-            ))}
-          </select>
+            options={[
+              { value: "", label: "— None —" },
+              ...departments.map((d) => ({ value: String(d.id), label: d.name })),
+            ]}
+          />
           <div className="mt-1 text-[10px] text-ink-muted">
             Drives the member's colour and position scope.
           </div>
@@ -3435,38 +3393,37 @@ function EditMemberPanel({
         </div>
         <div>
           <label className={labelCls}>Position</label>
-          <select
-            value={positionId}
-            onChange={(e) => setPositionId(e.target.value ? Number(e.target.value) : "")}
+          <SearchableSelect
             className={inputCls}
-          >
-            <option value="">— None —</option>
-            {positions
-              .filter((p) => deptId === "" || !p.department_id || p.department_id === deptId)
-              .map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-          </select>
+            ariaLabel="Position"
+            placeholder="— None —"
+            value={String(positionId)}
+            onChange={(v) => setPositionId(v ? Number(v) : "")}
+            options={[
+              { value: "", label: "— None —" },
+              ...positions
+                .filter((p) => deptId === "" || !p.department_id || p.department_id === deptId)
+                .map((p) => ({ value: String(p.id), label: p.name }))
+                .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" })),
+            ]}
+          />
           <div className="mt-1 text-[10px] text-ink-muted">
             Controls which pages this member can see (least-privilege per position).
           </div>
         </div>
         <div>
           <label className={labelCls}>Role</label>
-          <select
-            value={roleId}
-            onChange={(e) => setRoleId(e.target.value ? Number(e.target.value) : "")}
+          <SearchableSelect
             className={inputCls}
+            ariaLabel="Role"
+            placeholder="— Pick a role —"
             disabled={roleList.length === 0}
-          >
-            {roleList.map((r) => (
-              <option key={r.id} value={r.id}>
-                {r.name}
-              </option>
-            ))}
-          </select>
+            value={String(roleId)}
+            onChange={(v) => setRoleId(v ? Number(v) : "")}
+            options={roleList
+              .map((r) => ({ value: String(r.id), label: r.name }))
+              .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" }))}
+          />
           <div className="mt-1 text-[10px] text-ink-muted">
             Controls what this member can DO (actions + admin). Position above
             controls what they can SEE. "Super Admin" grants everything.
@@ -3514,22 +3471,25 @@ function EditMemberPanel({
         )}
         <div>
           <label className={labelCls}>Reports to</label>
-          <select
-            value={managerId}
-            onChange={(e) => setManagerId(e.target.value ? Number(e.target.value) : "")}
+          <SearchableSelect
             className={inputCls}
-          >
-            <option value="">— None —</option>
-            {members
-              .filter((m) => m.id !== user.id && m.status !== "disabled")
-              .slice()
-              .sort((a, b) => (a.name || a.email).localeCompare(b.name || b.email))
-              .map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name || m.email}
-                </option>
-              ))}
-          </select>
+            ariaLabel="Reports to"
+            placeholder="— None —"
+            value={String(managerId)}
+            onChange={(v) => setManagerId(v ? Number(v) : "")}
+            options={[
+              { value: "", label: "— None —" },
+              ...members
+                .filter((m) => m.id !== user.id && m.status !== "disabled")
+                .map((m) => ({
+                  value: String(m.id),
+                  label: m.department_name
+                    ? `${m.name || m.email} · ${m.department_name}`
+                    : m.name || m.email,
+                }))
+                .sort((a, b) => a.label.localeCompare(b.label, undefined, { sensitivity: "base" })),
+            ]}
+          />
         </div>
         <div>
           <label className={labelCls}>Set password</label>
@@ -3621,9 +3581,6 @@ function EditMemberPanel({
       </div>
 
       <PanelSection title="Account">
-        <button type="button" onClick={() => onEditBrands(user)} className={actionCls}>
-          <Tag size={13} /> Brand access…
-        </button>
         {user.status !== "invited" && (
           <button type="button" onClick={() => onSendReset(user)} className={actionCls}>
             <KeyRound size={13} /> Send password reset link
@@ -3650,168 +3607,10 @@ function EditMemberPanel({
   );
 }
 
-/**
- * Per-user brand allow-list editor (mig 049). Drives whether scoped
- * sales users see a project (intersected with their PIC scope).
- * Rendered as a side panel; reuses the chip-toggle UX from Roles.
- */
-function UserBrandsPanel({
-  user,
-  onClose,
-  onSaved,
-}: {
-  user: TeamMember;
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const toast = useToast();
-  const [busy, setBusy] = useState(false);
-  const [brands, setBrands] = useState<string[] | null>(null);
-
-  // Canonical brand list from the project_brands lookup.
-  const brandOpts = useQuery<{ data: string[] }>("/api/projects/brands?names_only=1", () =>
-    api.get("/api/projects/brands?names_only=1")
-  );
-  // Current allow-list for this user.
-  const current = useQuery<{ brands: string[] }>("/api/users/:/brands",
-    () => api.get(`/api/users/${user.id}/brands`),
-    [user.id]
-  );
-
-  // Hydrate local state once the fetch lands.
-  if (brands === null && current.data) {
-    setBrands(current.data.brands);
-  }
-
-  const allBrands = brandOpts.data?.data ?? [];
-  const selected = brands ?? [];
-
-  function toggle(b: string) {
-    setBrands((prev) => {
-      const cur = prev ?? [];
-      return cur.includes(b) ? cur.filter((x) => x !== b) : [...cur, b];
-    });
-  }
-
-  async function save() {
-    setBusy(true);
-    try {
-      await api.put(`/api/users/${user.id}/brands`, { brands: selected });
-      toast.success(
-        selected.length === 0
-          ? `Cleared ${user.name || user.email}'s brand list`
-          : `Updated ${user.name || user.email}'s brands`
-      );
-      onSaved();
-    } catch (e: any) {
-      toast.error(e?.message || "Save failed");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <Panel
-      open
-      onClose={onClose}
-      title={user.name || user.email}
-      subtitle="Brand allow-list"
-      width={420}
-      footer={
-        <div className="flex items-center justify-end gap-2">
-          <button
-            onClick={onClose}
-            className="rounded-md border border-border bg-surface px-3 py-2 text-[12px] text-ink-secondary"
-          >
-            Cancel
-          </button>
-          <Button
-            variant="primary"
-            onClick={save}
-            disabled={busy || current.loading}
-          >
-            {busy ? "Saving…" : "Save"}
-          </Button>
-        </div>
-      }
-    >
-      <PanelSection title="Brands">
-        <div className="text-[11px] leading-snug text-ink-muted">
-          When this user's role is sales-scoped, they only see projects
-          whose brand is on this list (AND-ed with the PIC one-hop rule).
-          Their direct reports inherit the same scope through{" "}
-          <span className="font-mono">manager_id</span>.
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          {current.loading && (
-            <div className="flex flex-wrap gap-1.5">
-              {Array.from({ length: 4 }).map((_, i) => (
-                <Skeleton key={i} className="h-5 w-16" />
-              ))}
-            </div>
-          )}
-          {!current.loading && allBrands.length === 0 && (
-            <div className="text-[11px] text-ink-muted">
-              No brands defined yet. Add some under Project Maintenance →
-              Brands.
-            </div>
-          )}
-          {!current.loading &&
-            allBrands.map((b) => {
-              const on = selected.includes(b);
-              return (
-                <button
-                  key={b}
-                  type="button"
-                  onClick={() => toggle(b)}
-                  className={cn(
-                    "rounded-full border px-2.5 py-1 font-mono text-[10px] font-semibold uppercase tracking-wider transition-colors",
-                    on
-                      ? "border-accent bg-accent text-white"
-                      : "border-border bg-surface text-ink-secondary hover:border-accent/40 hover:text-accent"
-                  )}
-                >
-                  {b}
-                </button>
-              );
-            })}
-        </div>
-        <div className="mt-1 text-[10px] text-ink-muted">
-          {selected.length === 0
-            ? "Empty list — this user sees no projects when sales-scoped."
-            : `${selected.length} brand${selected.length === 1 ? "" : "s"} selected.`}
-        </div>
-      </PanelSection>
-    </Panel>
-  );
-}
-
 // ──────────────────────────────────────────────────────────
 // Org hierarchy helpers
 // ──────────────────────────────────────────────────────────
 
-/**
- * Returns true if `candidateId` sits somewhere in `ancestorId`'s reporting
- * subtree — i.e. appointing them as ancestor's manager would create a loop.
- * Used only to hide bad options in the picker; the backend still validates.
- */
-function isDescendantOf(
-  candidateId: number,
-  ancestorId: number,
-  users: TeamMember[]
-): boolean {
-  const byId = new Map(users.map((u) => [u.id, u]));
-  const seen = new Set<number>();
-  let cursor: number | null = candidateId;
-  while (cursor != null && !seen.has(cursor)) {
-    seen.add(cursor);
-    const node: TeamMember | undefined = byId.get(cursor);
-    if (!node) return false;
-    if (node.manager_id === ancestorId) return true;
-    cursor = node.manager_id;
-  }
-  return false;
-}
 
 // One departmental box in the org chart (a dept with non-root members, or the
 // "Unassigned" catch-all). Shared between OrgChartTab (which owns per-box
@@ -4941,44 +4740,30 @@ function OrgCard({
             <label className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
               Reports to
             </label>
-            <select
-              autoFocus
-              defaultValue={user.manager_id ?? ""}
-              onChange={(e) => {
-                const v = e.target.value;
-                onPickManager(user.id, v ? Number(v) : null);
-              }}
-              className="h-8 w-full cursor-pointer rounded-md border border-border bg-surface px-2 text-[11px] text-ink outline-none focus:border-primary"
-            >
-              <option value="">— No manager —</option>
-              {users
-                .filter((m) => m.id !== user.id && !isDescendantOf(m.id, user.id, users))
-                .map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name || m.email}
-                  </option>
-                ))}
-            </select>
+            <SearchableSelect
+              className={ORG_PICKER_CLS}
+              ariaLabel="Reports to"
+              placeholder="— No manager —"
+              value={String(user.manager_id ?? "")}
+              onChange={(v) => onPickManager(user.id, v ? Number(v) : null)}
+              options={managerOptions(user, users)}
+            />
           </div>
           <div>
             <label className="mb-1 block font-mono text-[9px] font-semibold uppercase tracking-brand text-ink-muted">
               Primary department
             </label>
-            <select
-              value={user.department_id ?? ""}
-              onChange={(e) => {
-                const v = e.target.value;
-                onChangeDept(user.id, v ? Number(v) : null);
-              }}
-              className="h-8 w-full cursor-pointer rounded-md border border-border bg-surface px-2 text-[11px] text-ink outline-none focus:border-primary"
-            >
-              <option value="">— No department —</option>
-              {departments.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.name}
-                </option>
-              ))}
-            </select>
+            <SearchableSelect
+              className={ORG_PICKER_CLS}
+              ariaLabel="Primary department"
+              placeholder="— No department —"
+              value={String(user.department_id ?? "")}
+              onChange={(v) => onChangeDept(user.id, v ? Number(v) : null)}
+              options={[
+                { value: "", label: "— No department —" },
+                ...departments.map((d) => ({ value: String(d.id), label: d.name })),
+              ]}
+            />
           </div>
           {onChangeDivision && (
             <div>

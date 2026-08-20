@@ -112,13 +112,13 @@ const soHeader = (over: Row = {}): Row => ({
   address1: '12 Jalan Mawar', city: 'Skudai', postcode: '81300', customer_state: 'Johor',
   customer_so_no: 'HC14032', customer_type: 'Retail', building_type: null,
   payment_method: 'Cash', merchant_provider: null, approval_code: null,
-  deposit_centi: 50000, customer_delivery_date: null,
+  deposit_sen: 50000, customer_delivery_date: null,
   ...over,
 });
 
 const soItem = (over: Row = {}): Row => ({
   doc_no: 'SO-2607-001', item_group: 'bedframe', item_code: 'BC-K',
-  qty: 1, unit_price_centi: 139000, variants: null, cancelled: false, line_no: 0,
+  qty: 1, unit_price_sen: 139000, variants: null, cancelled: false, line_no: 0,
   ...over,
 });
 
@@ -135,7 +135,7 @@ describe('buildCorrectedSlipFromSo — an untouched SO must produce ZERO diff', 
     // The slip said RM1200; the pricing engine booked RM1390. priceRmGuess must
     // stay the AI's read, or the distiller learns a price the operator never wrote.
     const ai = extractedSlip();
-    const out = buildCorrectedSlipFromSo(ai, soHeader(), [soItem({ unit_price_centi: 139000 })]);
+    const out = buildCorrectedSlipFromSo(ai, soHeader(), [soItem({ unit_price_sen: 139000 })]);
     expect((out?.lines as Row[])[0].priceRmGuess).toBe(1200);
   });
 

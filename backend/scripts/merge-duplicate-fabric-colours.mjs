@@ -109,7 +109,7 @@ async function main() {
   const cols = await sql`SELECT fabric_id, colour_id, label, active
                            FROM scm.fabric_colours WHERE company_id = ${CO}`;
   const trk = await sql`SELECT fabric_code, fabric_description, price_tier, sofa_price_tier,
-                               bedframe_price_tier, price_centi, supplier, supplier_code, is_active
+                               bedframe_price_tier, price_sen, supplier, supplier_code, is_active
                           FROM scm.fabric_trackings WHERE company_id = ${CO}`;
   const trkBy = new Map(trk.map((r) => [normColour(r.fabric_code), r]));
   note(`\nfabric_colours: ${cols.length} (${cols.filter((c) => c.active === false).length} already superseded)`);

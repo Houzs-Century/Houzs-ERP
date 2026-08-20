@@ -10,7 +10,7 @@
 // (pc-receive hooks) and navigation points at /purchase-consignment-receive.
 //
 // Dropped from the GRN clone (per scope): the From-PO header button + the
-// right-click "Convert to PI / PR" actions (consignment receiving doesn't feed
+// right-click transfer-to-Purchase-Invoice / Purchase-Return actions (consignment receiving doesn't feed
 // real purchase-invoice / purchase-return flows — the parallel Purchase
 // Consignment Return flow handles returns). The Transfer-From (PO) column is
 // relabelled to the source Purchase Consignment Order.
@@ -30,17 +30,18 @@ import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import { statusLabel } from '../../vendor/scm/lib/status-pill';
-import { fmtDateOrDash, buildVariantSummary, fmtMoneyCenti } from '@2990s/shared';
+import { fmtDateOrDash, buildVariantSummary, fmtMoneySen } from '@2990s/shared';
 import styles from './Suppliers.module.css';
 import { PageHeader } from '../../components/Layout';
 import { FilterPills } from '../../components/FilterPills';
+import { transferFromColumnLabel } from "../../lib/convertScope";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 // Colours + labels come from the canonical lib/status-pill map via <StatusPill>.
 const STATUS_CHIPS = ['all', 'POSTED', 'CLOSED', 'CANCELLED'] as const;
 
-const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtMoney = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 const PCR_LIST_STORAGE_KEY = 'pc-receive-list.layout.v1';
 
@@ -50,7 +51,7 @@ type GrnRow = Record<string, unknown> & {
   status: string;
   received_at: string | null;
   delivery_note_ref: string | null;
-  total_centi?: number;
+  total_sen?: number;
   currency?: string;
   supplier?: { id: string; code: string; name: string } | null;
   purchase_consignment_order?: { id: string; pc_number: string } | null;
@@ -86,7 +87,7 @@ const buildColumns = (): DataGridColumn<GrnRow>[] => [
     sortFn: (a, b) => (a.supplier?.code ?? '').localeCompare(b.supplier?.code ?? ''),
   },
   {
-    key: 'pc_number', label: 'Transfer From (Order)', width: 160, sortable: true, groupable: true,
+    key: 'pc_number', label: transferFromColumnLabel('pco'), width: 160, sortable: true, groupable: true,
     accessor: (g) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{g.purchase_consignment_order?.pc_number ?? '—'}</span>,
     searchValue: (g) => g.purchase_consignment_order?.pc_number ?? '',
     /* Accessor is JSX → export the source order doc-no string. */
@@ -106,16 +107,16 @@ const buildColumns = (): DataGridColumn<GrnRow>[] => [
     searchValue: (g) => g.delivery_note_ref ?? '',
   },
   {
-    key: 'total_centi', label: 'Total', width: 130, sortable: true, align: 'right', groupable: false,
+    key: 'total_sen', label: 'Total', width: 130, sortable: true, align: 'right', groupable: false,
     accessor: (g) => (
       <span style={{ fontFamily: 'var(--font-mark)', color: '#16695f', fontWeight: 800 }}>
-        {fmtMoney(Number(g.total_centi ?? 0), g.currency)}
+        {fmtMoney(Number(g.total_sen ?? 0), g.currency)}
       </span>
     ),
-    searchValue: (g) => fmtMoney(Number(g.total_centi ?? 0), g.currency),
+    searchValue: (g) => fmtMoney(Number(g.total_sen ?? 0), g.currency),
     /* Accessor is JSX → export the NUMBER in ringgit so Excel can SUM it. */
-    exportValue: (g) => Number(g.total_centi ?? 0) / 100,
-    sortFn: (a, b) => Number(a.total_centi ?? 0) - Number(b.total_centi ?? 0),
+    exportValue: (g) => Number(g.total_sen ?? 0) / 100,
+    sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
   },
   {
     key: 'status', label: 'Status', width: 130, sortable: true, groupable: true,
@@ -131,15 +132,15 @@ const buildColumns = (): DataGridColumn<GrnRow>[] => [
 /* ── Drill-down — per-line breakdown for one receive ── */
 type GrnItem = Record<string, unknown> & {
   id: string;
-  material_code?: string | null;
+  item_code?: string | null;
   material_name?: string | null;
   description?: string | null;
   item_group?: string | null;
   variants?: Record<string, unknown> | null;
   qty?: number | null;
   qty_received?: number | null;
-  unit_price_centi?: number | null;
-  line_total_centi?: number | null;
+  unit_price_sen?: number | null;
+  line_total_sen?: number | null;
   source_po_number?: string | null;
   received_at?: string | null;
 };
@@ -147,12 +148,12 @@ type GrnItem = Record<string, unknown> & {
 const buildDrilldownColumns = (currency: string): DataGridColumn<GrnItem>[] => [
   {
     key: 'item_code', label: 'Item Code', width: 130,
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.material_code ?? '—'}</span>,
-    searchValue: (it) => it.material_code ?? '',
-    sortFn: (a, b) => (a.material_code ?? '').localeCompare(b.material_code ?? ''),
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{it.item_code ?? '—'}</span>,
+    searchValue: (it) => it.item_code ?? '',
+    sortFn: (a, b) => (a.item_code ?? '').localeCompare(b.item_code ?? ''),
   },
   {
-    key: 'source_po', label: 'Transfer From (Order)', width: 160,
+    key: 'source_po', label: transferFromColumnLabel('po'), width: 160,
     accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f', fontVariantNumeric: 'tabular-nums' }}>{it.source_po_number ?? '—'}</span>,
     searchValue: (it) => it.source_po_number ?? '',
     sortFn: (a, b) => (a.source_po_number ?? '').localeCompare(b.source_po_number ?? ''),
@@ -178,15 +179,15 @@ const buildDrilldownColumns = (currency: string): DataGridColumn<GrnItem>[] => [
   },
   {
     key: 'unit_price', label: 'Unit Price', width: 110, align: 'right',
-    accessor: (it) => fmtMoney(Number(it.unit_price_centi ?? 0), currency),
-    searchValue: (it) => String(it.unit_price_centi ?? 0),
-    sortFn: (a, b) => Number(a.unit_price_centi ?? 0) - Number(b.unit_price_centi ?? 0),
+    accessor: (it) => fmtMoney(Number(it.unit_price_sen ?? 0), currency),
+    searchValue: (it) => String(it.unit_price_sen ?? 0),
+    sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
   },
   {
     key: 'line_total', label: 'Line Total', width: 120, align: 'right',
-    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_total_centi ?? 0), currency)}</span>,
-    searchValue: (it) => String(it.line_total_centi ?? 0),
-    sortFn: (a, b) => Number(a.line_total_centi ?? 0) - Number(b.line_total_centi ?? 0),
+    accessor: (it) => <span style={{ fontWeight: 700, color: '#16695f' }}>{fmtMoney(Number(it.line_total_sen ?? 0), currency)}</span>,
+    searchValue: (it) => String(it.line_total_sen ?? 0),
+    sortFn: (a, b) => Number(a.line_total_sen ?? 0) - Number(b.line_total_sen ?? 0),
   },
   {
     key: 'received_at', label: 'Receive Date', width: 120,
@@ -216,7 +217,7 @@ const ExpandedLines = ({ grn }: { grn: GrnRow }) => {
     return <div style={{ padding: '8px 12px', fontSize: 'var(--fs-11)', color: 'var(--fg-muted)' }}>No line items.</div>;
   }
   let subtotal = 0;
-  for (const it of items) subtotal += Number(it.line_total_centi ?? 0);
+  for (const it of items) subtotal += Number(it.line_total_sen ?? 0);
 
   const columns = buildDrilldownColumns(currency);
 

@@ -32,6 +32,7 @@ import { backfillSoPayments } from '../../acc/payments';
 import { computeDailyBank } from '../../acc/daily-bank';
 import { systemTakings, postCashOverShort } from '../../acc/daily-close';
 import { resolveRoles, piLines, DEFAULT_ROLE_CODES } from '../../acc/rules';
+import { dateOrNull } from '../lib/date-coerce';
 
 /* THE GENERAL LEDGER HAD NO PERMISSION CHECK AT ALL — eleven routes, zero
    `hasHouzsPerm` calls, including four that WRITE to the ledger: a hand-written
@@ -149,7 +150,10 @@ accounting.post('/journal-entries', async (c) => {
   let body: any;
   try { body = await c.req.json(); } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  const entryDate = body.entryDate ?? todayMyt();
+  /* `??` is NULLISH — a cleared <input type="date"> posts "", which sails past
+     it into journal_entries.entry_date (`date NOT NULL`) and 500s the post.
+     Blank takes the same path an absent key already takes: today. */
+  const entryDate = dateOrNull(body.entryDate) ?? todayMyt();
   /* Hand-written journals are ALWAYS 'MANUAL'. The old route trusted
      body.sourceType, which let an operator mint an entry that impersonates a
      document type ('SI', 'PV', …) — colliding with the real document's
@@ -337,7 +341,7 @@ export type PostPiResult =
 export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<PostPiResult> {
   const { data: piRaw, error } = await sb
     .from('purchase_invoices')
-    .select('id, invoice_number, invoice_date, supplier_id, total_centi, currency, exchange_rate, company_id, migrated_no_stock, suppliers(code, name)')
+    .select('id, invoice_number, invoice_date, supplier_id, total_sen, currency, exchange_rate, company_id, migrated_no_stock, suppliers(code, name)')
     .eq('invoice_number', invoiceNumber)
     .single();
   if (error || !piRaw) return { ok: false, status: 'invoice_not_found' };
@@ -359,21 +363,21 @@ export async function postPiAccounting(sb: any, invoiceNumber: string): Promise<
     invoice_number: string;
     invoice_date: string;
     supplier_id: string | null;
-    total_centi: number;
+    total_sen: number;
     currency: string | null;
     exchange_rate: string | number | null;
     company_id: number | null;
     suppliers: { code: string | null; name: string | null } | null;
   };
 
-  /* Multi-currency AP (migration 0082) — the PI's total_centi is in the PI's OWN
+  /* Multi-currency AP (migration 0082) — the PI's total_sen is in the PI's OWN
      currency (RMB / USD / SGD / MYR). The GL must be MYR, so convert AT POST TIME:
      exchange_rate = MYR per 1 unit of `currency` (1 for MYR). The PI row is
      untouched — only the JE legs below carry the converted amount. For an MYR PI
      the rate is 1, so this is a no-op (totalSen unchanged) and existing MYR GL
      behaviour is byte-for-byte identical. The single Dr/Cr pair post the SAME
      figure, so the JE always balances. */
-  const foreignTotalSen = Number(pi.total_centi);
+  const foreignTotalSen = Number(pi.total_sen);
   if (foreignTotalSen <= 0) return { ok: false, status: 'zero_total' };
   const totalSen = toMyrSen(foreignTotalSen, pi.exchange_rate); // MYR posted to the GL
 
@@ -515,15 +519,15 @@ export async function resyncPiAccounting(
      today. */
   const { data: pi, error: piErr } = await sb
     .from('purchase_invoices')
-    .select('total_centi, exchange_rate')
+    .select('total_sen, exchange_rate')
     .eq('invoice_number', invoiceNumber)
     .maybeSingle();
   if (piErr) return { ok: false, status: 'resync_read_failed', reason: `pi: ${piErr.message}` };
-  const piRow = pi as { total_centi?: number; exchange_rate?: string | number | null } | null;
+  const piRow = pi as { total_sen?: number; exchange_rate?: string | number | null } | null;
   // Migration 0082 — the posted JE is in MYR; compare against the MYR-equivalent
   // of the (foreign) PI total so a foreign PI doesn't churn a void+repost every
-  // edit. MYR ⇒ rate 1, so newTotal === total_centi (unchanged behaviour).
-  const newTotal = toMyrSen(Number(piRow?.total_centi ?? 0), safeRate(piRow?.exchange_rate));
+  // edit. MYR ⇒ rate 1, so newTotal === total_sen (unchanged behaviour).
+  const newTotal = toMyrSen(Number(piRow?.total_sen ?? 0), safeRate(piRow?.exchange_rate));
   if (Number(active.total_debit_sen) === newTotal) return { ok: true, status: 'unchanged' };
 
   // Total changed → void the stale JE, then re-post at the new amount.
@@ -789,10 +793,10 @@ accounting.get('/control-check', async (c) => {
     const drift: Drift[] = [];
     if (role === 'AR') {
       const { data: docs, error } = await sb.from('sales_invoices')
-        .select('invoice_number, total_centi, status, migrated_no_stock')
+        .select('invoice_number, total_sen, status, migrated_no_stock')
         .eq('company_id', companyId);
       if (error) return { role, accountCode, error: error.message };
-      for (const d of (docs ?? []) as Array<{ invoice_number: string; total_centi: number; status: string | null; migrated_no_stock: boolean | null }>) {
+      for (const d of (docs ?? []) as Array<{ invoice_number: string; total_sen: number; status: string | null; migrated_no_stock: boolean | null }>) {
         const s = (d.status ?? '').toUpperCase();
         const je = jeByDoc.get(d.invoice_number);
         if (d.migrated_no_stock === true || s === 'DRAFT' || s === 'CANCELLED') {
@@ -800,7 +804,7 @@ accounting.get('/control-check', async (c) => {
           jeByDoc.delete(d.invoice_number);
           continue;
         }
-        const docTotal = Number(d.total_centi ?? 0);
+        const docTotal = Number(d.total_sen ?? 0);
         if (!je) {
           if (docTotal > 0) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: 0, diffSen: -docTotal, note: 'document has no active journal' });
         } else {
@@ -810,10 +814,10 @@ accounting.get('/control-check', async (c) => {
       }
     } else {
       const { data: docs, error } = await sb.from('purchase_invoices')
-        .select('invoice_number, total_centi, exchange_rate, status, migrated_no_stock')
+        .select('invoice_number, total_sen, exchange_rate, status, migrated_no_stock')
         .eq('company_id', companyId);
       if (error) return { role, accountCode, error: error.message };
-      for (const d of (docs ?? []) as Array<{ invoice_number: string; total_centi: number; exchange_rate: string | number | null; status: string | null; migrated_no_stock: boolean | null }>) {
+      for (const d of (docs ?? []) as Array<{ invoice_number: string; total_sen: number; exchange_rate: string | number | null; status: string | null; migrated_no_stock: boolean | null }>) {
         const s = (d.status ?? '').toUpperCase();
         const je = jeByDoc.get(d.invoice_number);
         if (d.migrated_no_stock === true || s === 'DRAFT' || s === 'CANCELLED') {
@@ -824,7 +828,7 @@ accounting.get('/control-check', async (c) => {
         /* PI posts on demand — a confirmed PI with no journal is NORMAL here,
            not drift (the AP aging is the place that surfaces unposted PIs). */
         if (!je) continue;
-        const docTotal = toMyrSen(Number(d.total_centi ?? 0), safeRate(d.exchange_rate));
+        const docTotal = toMyrSen(Number(d.total_sen ?? 0), safeRate(d.exchange_rate));
         if (je.jeTotal !== docTotal) drift.push({ docNo: d.invoice_number, docTotalSen: docTotal, jeTotalSen: je.jeTotal, diffSen: je.jeTotal - docTotal, note: 'journal total differs from document total (MYR)' });
         jeByDoc.delete(d.invoice_number);
       }

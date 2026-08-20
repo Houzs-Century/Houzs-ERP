@@ -307,3 +307,60 @@ describe("createMirrorMapper / shared masters (scm.staff has no company_id)", ()
     expect(out.venue_id).toBeNull();
   });
 });
+
+describe("derived *_centi -> *_sen aliases (migration 0305 vs the 2990 drainer)", () => {
+  /* THE INCIDENT THESE PIN (2026-08-19). Migration 0305 renamed every money
+     column (amount_centi -> amount_sen and 29 siblings on the SO trio) while
+     2990 — a separate repository on its own deploy schedule — kept POSTing the
+     old names. applyMap's dest filter dropped them all: the payments upsert
+     died on amount_sen's NOT NULL, retried by 2990's drainer every 10s, and
+     header/item money went NULL silently under a 200. The aliases are DERIVED
+     from the dest schema, so the next rename is covered the day it deploys —
+     nobody has to know this file exists. */
+  const mapper = createMirrorMapper({ mfg_sales_order_payments: { prefixCols: ["so_doc_no"] } });
+  const DB = fakeDB([
+    { col: "id", dtype: "uuid" },
+    { col: "so_doc_no", dtype: "text" },
+    { col: "amount_sen", dtype: "bigint" },
+    { col: "method", dtype: "text" },
+  ]);
+
+  it("renames a stale amount_centi onto amount_sen instead of dropping it", async () => {
+    const out = mapper.applyMap(
+      { id: "p1", so_doc_no: "SO-1", amount_centi: 336500, method: "cash" },
+      await mapper.tableMap(DB, "mfg_sales_order_payments"),
+    );
+    expect(out.amount_sen).toBe(336500);
+    expect("amount_centi" in out).toBe(false);
+  });
+
+  it("keeps the NEW spelling when a payload carries both", async () => {
+    const out = mapper.applyMap(
+      { id: "p1", so_doc_no: "SO-1", amount_sen: 100, amount_centi: 999, method: "cash" },
+      await mapper.tableMap(DB, "mfg_sales_order_payments"),
+    );
+    expect(out.amount_sen).toBe(100);
+  });
+
+  it("explicit config aliases win over a derived pair for the same key", async () => {
+    const m2 = createMirrorMapper({
+      t: { aliasCols: { amount_centi: "method" } }, // deliberate override
+    });
+    const out = m2.applyMap(
+      { id: "x", amount_centi: "bank" },
+      await m2.tableMap(DB, "t"),
+    );
+    expect(out.method).toBe("bank");
+    expect("amount_sen" in out).toBe(false);
+  });
+
+  it("is inert for a column family the dest does not carry", async () => {
+    const NO_SEN = fakeDB([{ col: "id", dtype: "uuid" }, { col: "note", dtype: "text" }]);
+    const out = mapper.applyMap(
+      { id: "x", amount_centi: 5, note: "n" },
+      await mapper.tableMap(NO_SEN, "mfg_sales_order_payments_no_sen"),
+    );
+    expect("amount_centi" in out).toBe(false); // dropped by the dest filter, as before
+    expect("amount_sen" in out).toBe(false);   // and NOT invented
+  });
+});

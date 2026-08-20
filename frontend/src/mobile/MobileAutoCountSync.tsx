@@ -1,37 +1,44 @@
 import { useCallback, useState } from "react";
 import {
+  AC_COUNTS_PARTIAL_LINE,
   AC_DEFAULT_STATE,
   AC_DOC_TYPES,
+  AC_EARLIER_SENDS_NOTE,
   AC_FILTER_STATES,
   AC_FILTER_STATE_LABEL,
   AC_LOAD_FAILED_LINE,
   AC_NOT_ASKED_NOTE,
-  AC_ONLY_SUPERSEDED_LINE,
-  AC_REQUEUED_NOTE,
+  AC_ONLY_REPLACED_LINE,
+  AC_REPLACED_GROUP_NOTE,
+  AC_REPLACED_NOTE,
   AC_SEND_AGAIN_BUSY_LABEL,
   AC_SEND_AGAIN_LABEL,
   AC_STATE_PLAIN_MEANING,
-  AC_SUPERSEDED_NOTE,
   AC_TECHNICAL_LABEL,
   acAge,
   acDocTypePlural,
   acDocTypeCounts,
+  acEarlierSendsHeading,
   acEmptyLine,
+  acGroupByDocument,
+  acGroupsOfType,
   acHeadline,
+  acListCountLine,
   acListTitle,
+  acReplacedHeading,
   acRowDetail,
   acRowStandsAt,
-  acRowsOfType,
-  acSplitSuperseded,
+  acSplitReplaced,
   acStateCount,
   acStateLabel,
   acStateTone,
-  acSupersededHeading,
   acWritebackLine,
   useAcExpandedRows,
+  useAcReplacedGroup,
   useAcRequeue,
-  useAcSupersededGroup,
+  useAcSendHistory,
   useAutoCountOutbox,
+  type AcDocGroup,
   type AcDocType,
   type AcFilterState,
   type AcOutboxRow,
@@ -69,6 +76,11 @@ import "./mobile.css";
  * document search are plain component state, matching every other mobile screen.
  * The two strips live in `.hdr`, which mobile.css already pins, so they stay put
  * while the list scrolls.
+ *
+ * ONE CARD PER DOCUMENT since 2026-08-17, alongside the desktop and from the
+ * same helper (acGroupByDocument): "为什么在 AutoCount 里面一张 Sales Order 会出现
+ * 两次呢?" The card is the document, its newest send says where it stands, and
+ * every earlier send is folded under it.
  *
  * Send again is here too, and it has to be: a rule or a control on one surface
  * and not the other is the recurring bug class this repo names. Same shared
@@ -178,17 +190,54 @@ function WhatWasSaid({ said }: { said: AcSaid }) {
   );
 }
 
+/**
+ * A document's earlier sends, folded under it — the desktop twin's
+ * `EarlierSends`, in this file's idiom. The audit trail is kept; it is simply
+ * not the list.
+ */
+function EarlierSends({ sends, maxAttempts }: { sends: AcOutboxRow[]; maxAttempts: number }) {
+  return (
+    <div style={{ padding: "8px 10px", background: "var(--bg)", borderTop: "1px solid var(--line)" }}>
+      <p style={{ margin: "0 0 6px", fontSize: 11, lineHeight: 1.5, color: "var(--mut)" }}>
+        {AC_EARLIER_SENDS_NOTE}
+      </p>
+      {sends.map((s) => (
+        <div
+          key={s.id}
+          data-ac-send=""
+          style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 5 }}
+        >
+          <StateBadge state={s.state} />
+          <span
+            style={{
+              minWidth: 0, flex: 1, fontSize: 10.5, color: "var(--mut2)",
+              whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
+            }}
+          >
+            {acRowStandsAt(s, maxAttempts)}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function OutboxCard(
-  { row, maxAttempts, sending, note, open, onToggle, onSendAgain }: {
-    row: AcOutboxRow;
+  { group, maxAttempts, sending, note, open, onToggle, historyOpen, onToggleHistory, onSendAgain }: {
+    group: AcDocGroup;
     maxAttempts: number;
     sending: boolean;
     note: AcRequeueNote | undefined;
     open: boolean;
     onToggle: () => void;
+    historyOpen: boolean;
+    onToggleHistory: () => void;
     onSendAgain: () => void;
   },
 ) {
+  /* The card is the DOCUMENT and its newest send says where it stands — same
+     rule as the desktop, from the same helper. */
+  const row = group.current;
   const tone = acStateTone(row.state);
   const c = TONE_COLOR[tone];
   /* Cleared the moment the re-send is accepted — see the desktop twin. */
@@ -284,11 +333,41 @@ function OutboxCard(
           )}
           {detail.showRequeuedNote && (
             <p style={{ margin: 0, fontSize: 11.5, lineHeight: 1.5, color: "var(--mut)" }}>
-              {AC_REQUEUED_NOTE}
+              {AC_REPLACED_NOTE}
             </p>
           )}
           {detail.said && <WhatWasSaid said={detail.said} />}
         </div>
+      )}
+
+      {/* The send history, folded, and only where there is one. */}
+      {group.earlier.length > 0 && (
+        <>
+          <button
+            type="button"
+            aria-expanded={historyOpen}
+            onClick={onToggleHistory}
+            style={{
+              display: "flex", alignItems: "center", gap: 5, width: "100%", textAlign: "left",
+              fontFamily: "inherit", fontSize: 11, fontWeight: 700, color: "var(--mut)",
+              background: "transparent", border: "none", borderTop: "1px solid var(--line)",
+              padding: "6px 10px", cursor: "pointer",
+            }}
+          >
+            <span
+              aria-hidden
+              className="chev"
+              style={{
+                flex: "none", lineHeight: 1, display: "inline-block",
+                transform: historyOpen ? "rotate(90deg)" : undefined,
+              }}
+            >
+              ›
+            </span>
+            {acEarlierSendsHeading(group.earlier.length)}
+          </button>
+          {historyOpen && <EarlierSends sends={group.earlier} maxAttempts={maxAttempts} />}
+        </>
       )}
 
       {/* Accepted, refused, or never answered — all three land on the row, and
@@ -332,15 +411,19 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
   const reload = q.reload;
   const requeue = useAcRequeue(useCallback(() => { reload(); }, [reload]));
   const expanded = useAcExpandedRows();
-  const history = useAcSupersededGroup();
+  const sendHistory = useAcSendHistory();
+  const history = useAcReplacedGroup();
   const headline = acHeadline(d);
   const maxAttempts = d?.meta.max_attempts ?? 6;
-  const loaded = d?.rows ?? [];
+  /* ONE CARD PER DOCUMENT, from the same helper the desktop uses. A phone has
+     less room than a screen for the same sales order four times over, not
+     more. */
+  const loaded = acGroupByDocument(d?.rows ?? []);
   const typeCounts = acDocTypeCounts(loaded);
-  const rows = acRowsOfType(loaded, docType);
-  /* History folds away here too — a phone has less room to spend on rows whose
-     documents already went through, not more. Same helper, same default. */
-  const split = acSplitSuperseded(rows, state);
+  const groups = acGroupsOfType(loaded, docType);
+  /* History folds away here too — a phone has less room to spend on documents
+     that already went through, not more. Same helper, same default. */
+  const split = acSplitReplaced(groups, state);
 
   return (
     <div className="hz-m" style={{ position: "relative", display: "flex", flexDirection: "column", height: "100%", background: "var(--app-bg)" }}>
@@ -450,42 +533,54 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
 
             <div style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 10, marginBottom: 8 }}>
               <b style={{ fontSize: 13, color: "var(--ink)" }}>{acListTitle(state, docType)}</b>
+              {/* The SAME sentence the desktop prints. It used to be "6 of 17"
+                  here and "6 of 17 documents" there — two hand-written strings
+                  making two different claims about one number. */}
               <span style={{ fontSize: 10.5, color: "var(--mut)", fontVariantNumeric: "tabular-nums" }}>
-                {rows.length} of {d.counts.total}
+                {acListCountLine(groups.length, d.counts.total)}
               </span>
             </div>
 
-            {d.truncated && (
+            {(d.truncated || !d.counts_complete) && (
               <div style={{ fontSize: 11, color: "var(--amber)", background: "var(--amber-bg)", borderRadius: 9, padding: "8px 10px", marginBottom: 11 }}>
-                Only the most recent documents are shown. The status counts still cover every one;
-                the type counts cover what is on screen.
+                {d.truncated && (
+                  <p style={{ margin: 0 }}>
+                    Only the most recent documents are shown. The status counts still cover every
+                    one; the type counts cover what is on screen.
+                  </p>
+                )}
+                {!d.counts_complete && (
+                  <p style={{ margin: d.truncated ? "5px 0 0" : 0 }}>{AC_COUNTS_PARTIAL_LINE}</p>
+                )}
               </div>
             )}
 
-            {rows.length === 0 ? (
+            {groups.length === 0 ? (
               <div style={{ textAlign: "center", padding: "34px 12px", fontSize: 12, color: "var(--mut)" }}>
                 {acEmptyLine(d, state)}
               </div>
             ) : split.live.length === 0 ? (
               <div style={{ textAlign: "center", padding: "34px 12px", fontSize: 12, color: "var(--mut)" }}>
-                {AC_ONLY_SUPERSEDED_LINE}
+                {AC_ONLY_REPLACED_LINE}
               </div>
             ) : (
               <MobileVirtualList
                 items={split.live}
-                getKey={(r) => r.id}
+                getKey={(g) => g.key}
                 gap={8}
                 estimateHeight={62}
                 ariaLabel={`${split.live.length} loaded documents. Only visible cards are mounted; scroll to browse this loaded set.`}
-                renderItem={(r) => (
+                renderItem={(g) => (
                   <OutboxCard
-                    row={r}
+                    group={g}
                     maxAttempts={maxAttempts}
-                    sending={requeue.sendingId === r.id}
-                    note={requeue.notes[r.id]}
-                    open={expanded.isOpen(r)}
-                    onToggle={() => expanded.toggle(r)}
-                    onSendAgain={() => void requeue.sendAgain(r.id)}
+                    sending={requeue.sendingId === g.current.id}
+                    note={requeue.notes[g.current.id]}
+                    open={expanded.isOpen(g.current)}
+                    onToggle={() => expanded.toggle(g.current)}
+                    historyOpen={sendHistory.isOpen(g)}
+                    onToggleHistory={() => sendHistory.toggle(g)}
+                    onSendAgain={() => void requeue.sendAgain(g.current.id)}
                   />
                 )}
               />
@@ -493,7 +588,7 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
 
             {/* THE RECORD, FOLDED — under the live cards, never among them, and
                 not built at all until it is opened. */}
-            {split.superseded.length > 0 && (
+            {split.replaced.length > 0 && (
               <div style={{ marginTop: 11, border: "1px dashed var(--line)", borderRadius: 11, background: "var(--card)" }}>
                 <button
                   type="button"
@@ -515,28 +610,30 @@ export function MobileAutoCountSync({ onBack }: { onBack: () => void }) {
                   >
                     ›
                   </span>
-                  {acSupersededHeading(split.superseded.length)}
+                  {acReplacedHeading(split.replaced.length)}
                 </button>
                 {history.open && (
                   <div style={{ borderTop: "1px solid var(--line)", padding: "9px 11px" }}>
                     <p style={{ margin: "0 0 8px", fontSize: 11, lineHeight: 1.5, color: "var(--mut)" }}>
-                      {AC_SUPERSEDED_NOTE}
+                      {AC_REPLACED_GROUP_NOTE}
                     </p>
                     <MobileVirtualList
-                      items={split.superseded}
-                      getKey={(r) => r.id}
+                      items={split.replaced}
+                      getKey={(g) => g.key}
                       gap={8}
                       estimateHeight={62}
-                      ariaLabel={`${split.superseded.length} superseded rows, kept as a record.`}
-                      renderItem={(r) => (
+                      ariaLabel={`${split.replaced.length} replaced documents, kept as a record.`}
+                      renderItem={(g) => (
                         <OutboxCard
-                          row={r}
+                          group={g}
                           maxAttempts={maxAttempts}
-                          sending={requeue.sendingId === r.id}
-                          note={requeue.notes[r.id]}
-                          open={expanded.isOpen(r)}
-                          onToggle={() => expanded.toggle(r)}
-                          onSendAgain={() => void requeue.sendAgain(r.id)}
+                          sending={requeue.sendingId === g.current.id}
+                          note={requeue.notes[g.current.id]}
+                          open={expanded.isOpen(g.current)}
+                          onToggle={() => expanded.toggle(g.current)}
+                          historyOpen={sendHistory.isOpen(g)}
+                          onToggleHistory={() => sendHistory.toggle(g)}
+                          onSendAgain={() => void requeue.sendAgain(g.current.id)}
                         />
                       )}
                     />

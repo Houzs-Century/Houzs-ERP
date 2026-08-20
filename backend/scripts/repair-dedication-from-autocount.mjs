@@ -51,7 +51,7 @@ async function main() {
   const fromSo = new Map(snap.rows.map((r) => [String(r.DtlKey), String(r.FromSODtlKey)]));
   log(`mode=${APPLY ? "APPLY" : "DRY-RUN"}; AutoCount snapshot ${snap.exportedAt}, ${snap.rows.length} PO lines carry a FromSODtlKey`);
 
-  const po = await sql`SELECT i.id, p.po_number doc, i.material_code code, i.linked_ac_dtlkey k, i.so_item_id
+  const po = await sql`SELECT i.id, p.po_number doc, i.item_code code, i.linked_ac_dtlkey k, i.so_item_id
       FROM scm.purchase_order_items i JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
      WHERE p.company_id = 1 AND i.linked_ac_dtlkey IS NOT NULL`;
   const so = await sql`SELECT i.id, i.doc_no, i.item_code, i.linked_ac_dtlkey k
@@ -109,7 +109,7 @@ async function main() {
     const bad = await tx`SELECT COUNT(*)::int c FROM scm.purchase_order_items i
         JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
         JOIN scm.mfg_sales_order_items s ON s.id = i.so_item_id
-       WHERE p.company_id = 1 AND upper(btrim(i.material_code)) <> upper(btrim(s.item_code))`;
+       WHERE p.company_id = 1 AND upper(btrim(i.item_code)) <> upper(btrim(s.item_code))`;
     if (bad[0].c) throw new Error(`REFUSED: ${bad[0].c} dedications would point at a different item code. Rolled back.`);
     log(`code check: 0 dedications point at a different item code`);
   });

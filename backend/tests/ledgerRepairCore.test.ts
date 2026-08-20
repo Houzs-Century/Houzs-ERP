@@ -33,7 +33,7 @@ describe("classifyGrnInboundGap (W2) — a missing IN is inserted only when its 
   });
 
   test("THE WOUND: 501 accepted vs one 500-unit movement plans a 1-unit insert at the sibling's landed cost", () => {
-    const v = classifyGrnInboundGap({ productCode: "MATT-X", lineQty: 501, buckets: [bucket()] });
+    const v = classifyGrnInboundGap({ itemCode: "MATT-X", lineQty: 501, buckets: [bucket()] });
     expect(v.verdict).toBe("insert");
     expect(v.insert).toEqual({
       qty: 1,
@@ -46,21 +46,21 @@ describe("classifyGrnInboundGap (W2) — a missing IN is inserted only when its 
   });
 
   test("idempotence: after the insert the delta recomputes to zero and the verdict is balanced", () => {
-    const v = classifyGrnInboundGap({ productCode: "MATT-X", lineQty: 501, buckets: [bucket({ movQty: 501 })] });
+    const v = classifyGrnInboundGap({ itemCode: "MATT-X", lineQty: 501, buckets: [bucket({ movQty: 501 })] });
     expect(v.verdict).toBe("balanced");
   });
 
   test("movements EXCEEDING lines is an over-post, not something an insert can fix", () => {
-    expect(classifyGrnInboundGap({ productCode: "P", lineQty: 499, buckets: [bucket()] }).verdict).toBe("over-posted");
+    expect(classifyGrnInboundGap({ itemCode: "P", lineQty: 499, buckets: [bucket()] }).verdict).toBe("over-posted");
   });
 
   test("no sibling movement means no provable bucket or cost — refused", () => {
-    expect(classifyGrnInboundGap({ productCode: "P", lineQty: 3, buckets: [] }).verdict).toBe("no-sibling");
+    expect(classifyGrnInboundGap({ itemCode: "P", lineQty: 3, buckets: [] }).verdict).toBe("no-sibling");
   });
 
   test("two distinct buckets cannot say which one is short — refused", () => {
     const v = classifyGrnInboundGap({
-      productCode: "P",
+      itemCode: "P",
       lineQty: 10,
       buckets: [bucket({ movQty: 5 }), bucket({ variantKey: "SIZE:K", movQty: 4 })],
     });
@@ -69,7 +69,7 @@ describe("classifyGrnInboundGap (W2) — a missing IN is inserted only when its 
 
   test("siblings disagreeing on unit cost cannot prove the price — refused", () => {
     const v = classifyGrnInboundGap({
-      productCode: "P",
+      itemCode: "P",
       lineQty: 6,
       buckets: [bucket({ movQty: 5, unitCosts: [100, 200] })],
     });
@@ -284,7 +284,7 @@ describe("LOCKSTEP mirrors — the script-side copies must equal the app's real 
 });
 
 describe("deriveGrnLineBasis (W2 fallback) — the line's own landed cost, single-valued facts or refusal", () => {
-  const line = { unit_price_centi: 55000, item_group: "mattress", variants: null };
+  const line = { unit_price_sen: 55000, item_group: "mattress", variants: null };
 
   test("THE LIVE WOUND: no sibling movement — the line's own price x rate becomes the basis", () => {
     const v = deriveGrnLineBasis({
@@ -305,7 +305,7 @@ describe("deriveGrnLineBasis (W2 fallback) — the line's own landed cost, singl
 
   test("a foreign-currency line converts at the GRN's rate (the toMyrSen path)", () => {
     const v = deriveGrnLineBasis({
-      lines: [{ ...line, unit_price_centi: 10000 }],
+      lines: [{ ...line, unit_price_sen: 10000 }],
       qty: 2, headerWarehouseId: "wh", exchangeRate: 4.45,
       grnMovementWarehouses: [], grnMovementBatches: [], companyId: 2,
     });
@@ -326,12 +326,12 @@ describe("deriveGrnLineBasis (W2 fallback) — the line's own landed cost, singl
   });
 
   test("a zero price is not a basis — refused, same rule as pickCostBasis", () => {
-    expect(deriveGrnLineBasis({ lines: [{ ...line, unit_price_centi: 0 }], qty: 1, headerWarehouseId: "wh", exchangeRate: 1, companyId: 2 }).verdict).toBe("zero-cost");
+    expect(deriveGrnLineBasis({ lines: [{ ...line, unit_price_sen: 0 }], qty: 1, headerWarehouseId: "wh", exchangeRate: 1, companyId: 2 }).verdict).toBe("zero-cost");
   });
 
   test("the variant key comes from the line's own variants via the lockstep mirror", () => {
     const v = deriveGrnLineBasis({
-      lines: [{ unit_price_centi: 100, item_group: "sofa", variants: { fabricCode: "FVI", legHeight: "5" } }],
+      lines: [{ unit_price_sen: 100, item_group: "sofa", variants: { fabricCode: "FVI", legHeight: "5" } }],
       qty: 1, headerWarehouseId: "wh", exchangeRate: 1,
       grnMovementWarehouses: [], grnMovementBatches: [], companyId: 2,
     });
@@ -512,11 +512,11 @@ describe("planSurplusCorrection (round 3) — restore remaining = received - con
 
 describe("classifyDuplicateMovement (part=dedupe) — deletion needs a FULL-ROW twin, not just an index collision", () => {
   const dup = {
-    companyId: 2, productCode: "XAM-1", variantKey: "", warehouseId: "wh-1",
+    companyId: 2, itemCode: "XAM-1", variantKey: "", warehouseId: "wh-1",
     movementType: "OUT", qty: 2,
   };
   const twin = (over: Record<string, unknown> = {}) => ({
-    movementId: "real-1", companyId: 2, productCode: "XAM-1", variantKey: "",
+    movementId: "real-1", companyId: 2, itemCode: "XAM-1", variantKey: "",
     warehouseId: "wh-1", movementType: "OUT", qty: 2, ...over,
   });
 
@@ -531,7 +531,7 @@ describe("classifyDuplicateMovement (part=dedupe) — deletion needs a FULL-ROW 
   });
 
   test("company / product / variant / warehouse must all match too", () => {
-    for (const over of [{ companyId: 1 }, { productCode: "OTHER" }, { variantKey: "K" }, { warehouseId: "wh-2" }]) {
+    for (const over of [{ companyId: 1 }, { itemCode: "OTHER" }, { variantKey: "K" }, { warehouseId: "wh-2" }]) {
       expect(classifyDuplicateMovement({ duplicate: dup, counterparts: [twin(over)] }).verdict, JSON.stringify(over)).toBe("no-counterpart");
     }
   });
@@ -604,13 +604,13 @@ describe("isServiceLineMirror — lockstep with the real isServiceLine", () => {
 describe("planServiceLotReversal — the phantom SVC receipt reversal, guarded", () => {
   const movement = {
     id: "205e9f06-a5a3-4b04-bc60-47ba469cb547",
-    movementType: "IN", productCode: "SVC-TRANS.CHARGES",
+    movementType: "IN", itemCode: "SVC-TRANS.CHARGES",
     qty: 1, unitCostSen: 187500,
     sourceDocType: "GRN", sourceDocId: "grn-1",
   };
   const lot = {
     id: "d264f343-5657-4318-876f-01bce3d84717",
-    productCode: "SVC-TRANS.CHARGES",
+    itemCode: "SVC-TRANS.CHARGES",
     qtyReceived: 1, qtyRemaining: 1,
     sourceDocType: "GRN", sourceDocId: "grn-1",
   };
@@ -634,7 +634,7 @@ describe("planServiceLotReversal — the phantom SVC receipt reversal, guarded",
 
   test("a GOODS movement refuses — this part only reverses the service defect", () => {
     expect(planServiceLotReversal({
-      movement: { ...movement, productCode: "MAKOTO-OLIVE" }, lot: { ...lot, productCode: "MAKOTO-OLIVE" },
+      movement: { ...movement, itemCode: "MAKOTO-OLIVE" }, lot: { ...lot, itemCode: "MAKOTO-OLIVE" },
       lotConsumptions: 0, movementConsumptions: 0,
     }).verdict).toBe("not-service");
     expect(planServiceLotReversal({

@@ -39,6 +39,7 @@ import { readScmHandoff, removeScmHandoff, writeScmHandoff } from '../../lib/scm
 import { useMfgProducts, useMaintenanceConfig, useSpecialAddons } from '../../vendor/scm/lib/mfg-products-queries';
 import { activeOptions, maintPickerValues } from '@2990s/shared';
 import { useFabricTrackings, fabricOptionLabel } from '../../vendor/scm/lib/fabric-queries';
+import { missingRequiredVariants } from '../../vendor/scm/components/SoLineCard';
 import { useWarehouses } from '../../vendor/scm/lib/inventory-queries';
 import { sortByText, sortByNumeric, byText } from '../../vendor/scm/lib/sort-options';
 import {
@@ -50,8 +51,10 @@ import { MoneyInput } from '../../vendor/scm/components/MoneyInput';
 import { SpecialOrders } from '../../vendor/scm/components/SpecialOrders';
 import { ActionResultDialog } from '../../vendor/scm/components/ActionResultDialog';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
+import { notifyAcNotSent } from '../../vendor/scm/lib/ac-not-sent';
 import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON    = { size: 16, strokeWidth: 1.75 } as const;
 const SM_ICON = { size: 14, strokeWidth: 1.75 } as const;
@@ -75,12 +78,12 @@ type DraftLine = {
   rid: string;
   bindingId?: string;
   materialKind: MaterialKind;
-  materialCode: string;
+  itemCode: string;
   materialName: string;
   supplierSku?: string;
   qty: number;
-  unitPriceCenti: number;
-  discountCenti?: number;
+  unitPriceSen: number;
+  discountSen?: number;
   deliveryDate?: string;
   /* Mig 0026 — supplier-revised per-line delivery dates (optional). The
      supplier pushes the date back; effective = MAX over non-null of
@@ -89,7 +92,7 @@ type DraftLine = {
   supplierDeliveryDate3?: string;
   supplierDeliveryDate4?: string;
   warehouseId?: string;
-  /* PR #126 — set when materialCode matches an mfg_product so the row knows
+  /* PR #126 — set when itemCode matches an mfg_product so the row knows
      which variant editor to render (sofa / bedframe / mattress). Lowercase
      to match SoLineCard's itemGroup convention. */
   category?: string;
@@ -111,10 +114,10 @@ type DraftLine = {
 const newLine = (): DraftLine => ({
   rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
   materialKind: 'mfg_product',
-  materialCode: '',
+  itemCode: '',
   materialName: '',
   qty: 1,
-  unitPriceCenti: 0,
+  unitPriceSen: 0,
   variants: {},
 });
 
@@ -225,11 +228,11 @@ export const PurchaseOrderNew = () => {
         ...l,
         bindingId:      b.id,
         materialKind:   b.material_kind,
-        materialCode:   b.material_code,
+        itemCode:   b.item_code,
         materialName:   b.material_name,
         supplierSku:    b.supplier_sku,
-        unitPriceCenti: b.unit_price_centi,
-        category:       categoryForCode(b.material_code) ?? l.category,
+        unitPriceSen: b.unit_price_sen,
+        category:       categoryForCode(b.item_code) ?? l.category,
       } : l)));
       setPendingItemPick(null);
     }
@@ -240,13 +243,13 @@ export const PurchaseOrderNew = () => {
 
   // Item-first companion effect — once supplier resolves (commander clicked a
   // hint banner link, or picked manually after typing an item), backfill any
-  // line whose materialCode matches a binding but lacks a bindingId. Mirrors
+  // line whose itemCode matches a binding but lacks a bindingId. Mirrors
   // pickBinding without forcing commander to re-type the code.
   useEffect(() => {
     if (!supplierId || bindings.length === 0) return;
     setLines((prev) => prev.map((l) => {
-      if (l.bindingId || !l.materialCode) return l;
-      const b = bindings.find((x) => x.material_code === l.materialCode);
+      if (l.bindingId || !l.itemCode) return l;
+      const b = bindings.find((x) => x.item_code === l.itemCode);
       if (!b) return l;
       return {
         ...l,
@@ -254,8 +257,8 @@ export const PurchaseOrderNew = () => {
         materialKind:   b.material_kind,
         materialName:   b.material_name,
         supplierSku:    b.supplier_sku,
-        unitPriceCenti: l.unitPriceCenti || b.unit_price_centi,
-        category:       l.category ?? categoryForCode(b.material_code),
+        unitPriceSen: l.unitPriceSen || b.unit_price_sen,
+        category:       l.category ?? categoryForCode(b.item_code),
       };
     }));
     // Banner has done its job once a supplier is chosen.
@@ -299,11 +302,11 @@ export const PurchaseOrderNew = () => {
       if (supplierId) {
         return (suppliers.data ?? []).find((s) => s.id === supplierId)?.code ?? null;
       }
-      const existing = lines.find((l) => l.materialCode.trim());
+      const existing = lines.find((l) => l.itemCode.trim());
       if (!existing) return null;
       const b = existing.bindingId
         ? bindings.find((x) => x.id === existing.bindingId)
-        : bindings.find((x) => x.material_code === existing.materialCode);
+        : bindings.find((x) => x.item_code === existing.itemCode);
       // bindings only resolve once a supplierId is set, so this is mostly a
       // no-op when supplierId is empty — the explicit-creditor branch above is
       // the real guard. Returned for completeness.
@@ -347,10 +350,10 @@ export const PurchaseOrderNew = () => {
     const mapped: DraftLine[] = keep.map((p) => ({
       rid: `l${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
       materialKind: 'mfg_product',
-      materialCode: p.itemCode,
+      itemCode: p.itemCode,
       materialName: p.description ?? p.itemCode,
       qty: p._pickQty ?? (p.remainingQty > 0 ? p.remainingQty : p.qty),
-      unitPriceCenti: 0,
+      unitPriceSen: 0,
       variants: (p.variants ?? {}) as Record<string, unknown>,
       category: categoryForCode(p.itemCode),
       deliveryDate: p.lineDeliveryDate ?? p.deliveryDate ?? undefined,
@@ -359,7 +362,7 @@ export const PurchaseOrderNew = () => {
       soItemId: p.soItemId,
     }));
     // Replace the initial blank line if the form is still empty; else append.
-    setLines((prev) => (prev.some((l) => l.materialCode.trim()) ? [...prev, ...mapped] : mapped));
+    setLines((prev) => (prev.some((l) => l.itemCode.trim()) ? [...prev, ...mapped] : mapped));
 
     /* Commander 2026-05-29 — carry the SO's header context onto the PO so the
        buyer doesn't re-key it: "为什么 convert 进来不会把 SO 的 Purchase
@@ -464,30 +467,30 @@ export const PurchaseOrderNew = () => {
 
   /* Phase 3 (2026-05-29) — Auto-fill a PO line's unit COST from the SUPPLIER's
      own price table (binding.price_matrix) + that supplier's maintenance
-     surcharges, instead of the flat binding.unit_price_centi. Falls back to
+     surcharges, instead of the flat binding.unit_price_sen. Falls back to
      the flat binding price when there's no binding / matrix / maint, and is a
      no-op (returns the line's current cost) when the operator has manually
      overridden the price (priceTouched). Combos are OUT OF SCOPE this phase —
      PO lines are per-SKU, so there's no combo override here. */
   const recomputeLineCost = (line: DraftLine): number => {
-    // Find the line's binding: by id when known, else by material_code.
+    // Find the line's binding: by id when known, else by item_code.
     const binding = line.bindingId
       ? bindings.find((b) => b.id === line.bindingId)
-      : bindings.find((b) => b.material_code === line.materialCode);
-    if (!binding) return line.unitPriceCenti;
+      : bindings.find((b) => b.item_code === line.itemCode);
+    if (!binding) return line.unitPriceSen;
     // No maint config loaded yet (or none seeded) → don't crash / zero out;
     // computeMfgPoUnitCost still returns the matrix/flat base with no
     // surcharges, which is the right fallback.
     const category = (line.category?.toUpperCase() ?? '') as
       'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE' | '';
-    if (!category) return binding.unit_price_centi;
+    if (!category) return binding.unit_price_sen;
     const v = line.variants;
     const specials = Array.isArray(v.specials) ? (v.specials as string[]) : [];
     const breakdown = computeMfgPoUnitCost(
       {
         category,
         priceMatrix:    (binding.price_matrix ?? null) as PoPriceMatrix,
-        unitPriceCenti: binding.unit_price_centi,
+        unitPriceSen: binding.unit_price_sen,
         fabricTier:     fabricTierForLine(line),
         // Sofa seat SIZE lives on variants.seatHeight; sofa leg height is the
         // same variants.legHeight field (the editor only renders one leg input).
@@ -517,11 +520,11 @@ export const PurchaseOrderNew = () => {
     setLine(rid, {
       bindingId:      b.id,
       materialKind:   b.material_kind,
-      materialCode:   b.material_code,
+      itemCode:   b.item_code,
       materialName:   b.material_name,
       supplierSku:    b.supplier_sku,
-      unitPriceCenti: b.unit_price_centi,
-      category:       categoryForCode(b.material_code),
+      unitPriceSen: b.unit_price_sen,
+      category:       categoryForCode(b.item_code),
       // Phase 3 — picking a (new) SKU re-arms supplier-price auto-fill; the
       // auto-pricing effect below then overwrites the flat seed with the
       // matrix + maintenance cost (mirrors SoLineCard re-enabling on re-pick).
@@ -565,9 +568,9 @@ export const PurchaseOrderNew = () => {
       const next = prev.map((l) => {
         if (l.priceTouched) return l;
         const cost = recomputeLineCost(l);
-        if (cost === l.unitPriceCenti) return l;
+        if (cost === l.unitPriceSen) return l;
         changed = true;
-        return { ...l, unitPriceCenti: cost };
+        return { ...l, unitPriceSen: cost };
       });
       return changed ? next : prev;
     });
@@ -576,9 +579,9 @@ export const PurchaseOrderNew = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bindings, fabrics, maint, lines]);
 
-  const subtotalCenti = useMemo(
+  const subtotalSen = useMemo(
     () => lines.reduce(
-      (s, l) => s + Math.max(0, l.qty * l.unitPriceCenti - (l.discountCenti ?? 0)),
+      (s, l) => s + Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0)),
       0,
     ),
     [lines],
@@ -592,28 +595,44 @@ export const PurchaseOrderNew = () => {
       notify({ title: 'Pick a Creditor (supplier) first.', tone: 'error' });
       return;
     }
-    // PR #157 — Commander 2026-05-26: "这些没有 expected delivery date 和
-    // purchase location，为什么能生成 PO 呢？" Both fields are required on
-    // submit — they fan out to per-line warehouse + delivery date and are
-    // needed downstream for GRN. Defense-in-depth: API also rejects missing.
-    if (!expectedAt) {
-      notify({ title: 'Expected Delivery date is required.', tone: 'error' });
-      return;
-    }
+    // Owner 2026-08-20 ("越松越好"): Expected Delivery must NOT block opening a PO.
+    // A blank is accepted and the API defaults it to today (it still fans out to
+    // per-line delivery date). Purchase Location stays required (per-line warehouse
+    // = stock location, an integrity field).
     if (!purchaseLocationId) {
       notify({ title: 'Purchase Location is required.', tone: 'error' });
       return;
     }
-    const validLines = lines.filter((l) => l.materialCode.trim() && l.qty > 0);
+    const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0);
+    /* PO variant gate (owner 2026-08-20). A supplier cannot make a sofa/bedframe
+       without the spec, so CONFIRMING a PO requires the core variant axes
+       (fabric / gaps / divan+leg+seat height) on every such line; Special Orders
+       stays OPTIONAL. Reuses the SAME missingRequiredVariants rule as the SO
+       proceed-gate so the two surfaces can never drift. A DRAFT skips it. All
+       gaps are collected and shown together (owner: never one-at-a-time). */
+    if (!asDraft) {
+      const variantGaps = validLines
+        .map((l) => ({ code: l.itemCode, miss: missingRequiredVariants(l.category, l.variants, l.itemCode) }))
+        .filter((x) => x.miss.length > 0);
+      if (variantGaps.length > 0) {
+        notify({
+          title: 'Complete the product options before confirming this PO:',
+          body: variantGaps.map((x) => `• ${x.code}: ${x.miss.join(', ')}`).join('\n')
+            + '\n\nThe supplier needs these to know what to make. (Special Orders stay optional.)',
+          tone: 'error',
+        });
+        return;
+      }
+    }
     const items: NewPoItem[] = validLines.map((l) => ({
       materialKind:   l.materialKind,
-      materialCode:   l.materialCode,
-      materialName:   l.materialName || l.materialCode,
+      itemCode:   l.itemCode,
+      materialName:   l.materialName || l.itemCode,
       supplierSku:    l.supplierSku,
       qty:            l.qty,
-      unitPriceCenti: l.unitPriceCenti,
+      unitPriceSen: l.unitPriceSen,
       bindingId:      l.bindingId,
-      discountCenti:  l.discountCenti,
+      discountSen:  l.discountSen,
       deliveryDate:   l.deliveryDate || undefined,
       /* Mig 0026 — per-line supplier-revised delivery dates. */
       supplierDeliveryDate2: l.supplierDeliveryDate2 || undefined,
@@ -657,7 +676,16 @@ export const PurchaseOrderNew = () => {
       create.mutate(
         confirmOverConvert ? { ...basePayload, confirmOverConvert } : basePayload,
         {
-          onSuccess: (res) => navigate(`/scm/purchase-orders/${res.id}`),
+          onSuccess: async (res) => {
+            /* THE ACCOUNTS MAY HAVE REFUSED IT, and nothing said so before
+               2026-08-19: the reason went into a queue behind a permission key
+               buyers do not hold. BEFORE the navigation, so the page change
+               cannot swallow it. Never blocks — the order exists and the remedy
+               (a creditor code, a duplicate item to retire) is master data this
+               buyer does not own. */
+            await notifyAcNotSent(notify, res, 'Purchase order');
+            navigate(`/scm/purchase-orders/${res.id}`);
+          },
           onError: async (err) => {
             const e = err as { status?: number; body?: string } | null;
             if (
@@ -669,7 +697,7 @@ export const PurchaseOrderNew = () => {
                 const b = JSON.parse(e.body.slice(e.body.indexOf('{'))) as
                   { soItemId?: string; requested?: number; remaining?: number };
                 const ln = lines.find((l) => l.soItemId === b.soItemId);
-                const code = ln?.materialCode || ln?.materialName || 'This line';
+                const code = ln?.itemCode || ln?.materialName || 'This line';
                 detail = `${code}: ordering ${b.requested}, but this Sales Order line only needs ${b.remaining} more.`;
               } catch { /* keep the generic fallback */ }
               const proceed = await serviceConfirm({
@@ -773,12 +801,7 @@ export const PurchaseOrderNew = () => {
             </label>
             <label className={styles.field}>
               <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Date <span className={styles.req}>*</span></span>
-              <input
-                type="date"
-                value={poDate}
-                onChange={(e) => setPoDate(e.target.value)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={poDate} onChange={(iso) => setPoDate(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>
@@ -794,14 +817,8 @@ export const PurchaseOrderNew = () => {
               />
             </label>
             <label className={styles.field}>
-              <span className={`${styles.fieldLabel} ${styles.fieldLabelReq}`}>Expected Delivery <span className={styles.req}>*</span></span>
-              <input
-                type="date"
-                value={expectedAt}
-                onChange={(e) => setExpectedAt(e.target.value)}
-                className={styles.fieldInput}
-                required
-              />
+              <span className={styles.fieldLabel}>Expected Delivery <span style={{ color: 'var(--fg-muted)', fontWeight: 400 }}>(defaults to today)</span></span>
+              <DateField fullWidth value={expectedAt} onChange={(iso) => setExpectedAt(iso)} className={styles.fieldInput}/>
             </label>
 
             {/* Mig 0026 — supplier-revised header delivery dates. Optional; the
@@ -809,30 +826,15 @@ export const PurchaseOrderNew = () => {
                 carry their own revised date. */}
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Supplier Date 2</span>
-              <input
-                type="date"
-                value={supplierDeliveryDate2}
-                onChange={(e) => setSupplierDeliveryDate2(e.target.value)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={supplierDeliveryDate2} onChange={(iso) => setSupplierDeliveryDate2(iso)} className={styles.fieldInput}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Supplier Date 3</span>
-              <input
-                type="date"
-                value={supplierDeliveryDate3}
-                onChange={(e) => setSupplierDeliveryDate3(e.target.value)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={supplierDeliveryDate3} onChange={(iso) => setSupplierDeliveryDate3(iso)} className={styles.fieldInput}/>
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Supplier Date 4</span>
-              <input
-                type="date"
-                value={supplierDeliveryDate4}
-                onChange={(e) => setSupplierDeliveryDate4(e.target.value)}
-                className={styles.fieldInput}
-              />
+              <DateField fullWidth value={supplierDeliveryDate4} onChange={(iso) => setSupplierDeliveryDate4(iso)} className={styles.fieldInput}/>
             </label>
 
             <label className={styles.field}>
@@ -943,7 +945,7 @@ export const PurchaseOrderNew = () => {
                   >
                     {b.supplier.code} · {b.supplier.name}
                   </button>
-                  {' '}({fmtRm(b.unit_price_centi, b.currency)})
+                  {' '}({fmtRm(b.unit_price_sen, b.currency)})
                 </span>
               ))}
             </div>
@@ -974,7 +976,7 @@ export const PurchaseOrderNew = () => {
               sections: identity (item + supplier code), description,
               variants (per category), pricing. */}
           {lines.map((l, idx) => {
-            const lineTotalCenti = Math.max(0, l.qty * l.unitPriceCenti - (l.discountCenti ?? 0));
+            const lineTotalSen = Math.max(0, l.qty * l.unitPriceSen - (l.discountSen ?? 0));
             const categoryLabel = l.category?.toUpperCase() ?? 'UNSET';
             // PR #135 — drop mattress from the variant editor list.
             // Commander 2026-05-26: "mattress variant 还有 branding 为什么要带
@@ -1024,7 +1026,7 @@ export const PurchaseOrderNew = () => {
                     )}
                   </div>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-3)' }}>
-                    <span className={styles.previewPrice}>{fmtRm(lineTotalCenti, currency)}</span>
+                    <span className={styles.previewPrice}>{fmtRm(lineTotalSen, currency)}</span>
                     <button
                       type="button"
                       onClick={() => dropLine(l.rid)}
@@ -1050,12 +1052,12 @@ export const PurchaseOrderNew = () => {
                     <input
                       type="text"
                       list={`bindings-${l.rid}`}
-                      value={l.materialCode}
+                      value={l.itemCode}
                       onChange={(e) => {
                         const code = e.target.value;
                         // Bound match wins (autofills supplier SKU + price).
                         const match = supplierId
-                          ? bindings.find((b) => b.material_code === code)
+                          ? bindings.find((b) => b.item_code === code)
                           : undefined;
                         if (match) { pickBinding(l.rid, match); return; }
                         // No binding (no supplier yet, OR supplier has no binding
@@ -1063,7 +1065,7 @@ export const PurchaseOrderNew = () => {
                         // from the master SKU list so the row isn't left blank.
                         const sku = (allSkus.data ?? []).find((p) => p.code === code);
                         setLine(l.rid, {
-                          materialCode: code,
+                          itemCode: code,
                           materialName: sku?.name ?? l.materialName,
                           bindingId: undefined,
                           category: sku?.category.toLowerCase() ?? categoryForCode(code),
@@ -1082,8 +1084,8 @@ export const PurchaseOrderNew = () => {
                           the full catalogue so the picker is never dead. */}
                       {supplierId && bindings.length > 0
                         ? sortByText(bindings).map((b) => (
-                            <option key={b.id} value={b.material_code}>
-                              {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_centi, b.currency)}
+                            <option key={b.id} value={b.item_code}>
+                              {b.material_name} · {b.supplier_sku} · {fmtRm(b.unit_price_sen, b.currency)}
                             </option>
                           ))
                         : sortByText(allSkus.data ?? []).map((p) => (
@@ -1098,7 +1100,7 @@ export const PurchaseOrderNew = () => {
                     <span className={styles.fieldLabel}>Supplier SKU</span>
                     {/* PR #134 — Bi-directional picker: typing/picking a
                         supplier_sku reverse-fills the matching binding's
-                        internal materialCode + name + price (same as
+                        internal itemCode + name + price (same as
                         picking from the Item Code side). Commander: "怎么
                         不能选 Supplier Code 呢". Requires supplier picked
                         first (we only know which bindings to search). */}
@@ -1128,7 +1130,7 @@ export const PurchaseOrderNew = () => {
                     <datalist id={`supplier-skus-${l.rid}`}>
                       {supplierId && sortByText(bindings).map((b) => (
                         <option key={b.id} value={b.supplier_sku || ''}>
-                          {b.material_code} · {b.material_name} · {fmtRm(b.unit_price_centi, b.currency)}
+                          {b.item_code} · {b.material_name} · {fmtRm(b.unit_price_sen, b.currency)}
                         </option>
                       ))}
                     </datalist>
@@ -1320,8 +1322,8 @@ export const PurchaseOrderNew = () => {
                         overwriting this line. */}
                     <MoneyInput
                       bare
-                      valueSen={l.unitPriceCenti}
-                      onCommit={(sen) => setLine(l.rid, { unitPriceCenti: sen ?? 0, priceTouched: true })}
+                      valueSen={l.unitPriceSen}
+                      onCommit={(sen) => setLine(l.rid, { unitPriceSen: sen ?? 0, priceTouched: true })}
                       inputClassName={styles.fieldInput}
                       selectOnFocus
                     />
@@ -1330,18 +1332,18 @@ export const PurchaseOrderNew = () => {
                     <span className={styles.fieldLabel}>Discount ({currency})</span>
                     <MoneyInput
                       bare
-                      valueSen={l.discountCenti ?? 0}
-                      onCommit={(sen) => setLine(l.rid, { discountCenti: sen ?? 0 })}
+                      valueSen={l.discountSen ?? 0}
+                      onCommit={(sen) => setLine(l.rid, { discountSen: sen ?? 0 })}
                       inputClassName={styles.fieldInput}
                       selectOnFocus
                     />
                   </label>
                   <label className={styles.field}>
                     <span className={styles.fieldLabel}>Delivery Date</span>
-                    <input
-                      type="date"
+                    <DateField
+                      fullWidth
                       value={l.deliveryDate ?? ''}
-                      onChange={(e) => setLine(l.rid, { deliveryDate: e.target.value })}
+                      onChange={(iso) => setLine(l.rid, { deliveryDate: iso })}
                       className={styles.fieldInput}
                     />
                   </label>
@@ -1394,7 +1396,7 @@ export const PurchaseOrderNew = () => {
           <div className={styles.cardBody}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 'var(--fs-14)', marginBottom: 'var(--space-2)' }}>
               <span>Subtotal</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
             <div style={{
               display: 'flex',
@@ -1405,7 +1407,7 @@ export const PurchaseOrderNew = () => {
               paddingTop: 'var(--space-2)',
             }}>
               <span>Total</span>
-              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalCenti, currency)}</span>
+              <span style={{ fontFamily: 'var(--font-mono)' }}>{fmtRm(subtotalSen, currency)}</span>
             </div>
           </div>
         </section>

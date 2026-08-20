@@ -48,6 +48,7 @@ import {
   useStateDeliveryRegions,
   useSetStateDeliveryRegions,
 } from '../../vendor/scm/lib/delivery-planning-regions-queries';
+import { SalespersonHandover } from './SalespersonHandover';
 import { sortByText } from '../../vendor/scm/lib/sort-options';
 import {
   useLocalities, distinctStates,
@@ -196,6 +197,10 @@ const LoadError = ({ what, error }: { what: string; error: unknown }) => (
      (replaces the old flat 2933-row States/Cities/Postcodes table). */
 
 const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType<typeof useOpenSections> }) => {
+  /* Separate from `canEdit` on purpose: re-attributing an order is a sales
+     permission, not a reference-data one, and the two are held by different
+     people (a coordinator maintains localities; a director moves orders). */
+  const canAttributeOther = useHouzsAuth().can('scm.so.attribute_other');
   const mappings = useStateWarehouseMappings();
   const warehouses = useWarehouses();
   const localities = useLocalities();
@@ -1057,6 +1062,15 @@ const MaintenanceBody = ({ canEdit, open }: { canEdit: boolean; open: ReturnType
       <CollapsibleSection id="dropdowns" title="Dropdowns" open={open.isOpen('dropdowns')} onToggle={() => open.toggle('dropdowns')}>
         <DropdownsSection canEdit={canEdit} />
       </CollapsibleSection>
+
+      {/* Salesperson handover (owner 2026-08-17, on a resignation). Gated on the
+          same permission the API enforces, so a maintainer who may not
+          re-attribute orders is not shown a tool that would 403. */}
+      {canAttributeOther && (
+        <CollapsibleSection id="handover" title="Salesperson Handover" open={open.isOpen('handover')} onToggle={() => open.toggle('handover')}>
+          <SalespersonHandover />
+        </CollapsibleSection>
+      )}
     </div>
   );
 };

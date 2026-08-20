@@ -18,6 +18,7 @@ import { REQUEUE_NOTE_PREFIX } from '../lib/autocount-outbox-status';
 import { AC_REQUEUE_MEANING } from '../lib/autocount-requeue';
 import { resetWritebackFlagCache } from '../lib/autocount-writeback-flag';
 import {
+  AC_DOC_SCAN_MAX,
   listAutocountOutboxHandler,
   requeueAutocountOutboxHandler,
   REQUEUED_LIKE,
@@ -94,6 +95,7 @@ interface Body {
   allowed?: readonly string[];
   writeback?: { value: string | null; on: boolean; scope: string };
   counts?: Record<string, number>;
+  counts_complete?: boolean;
   oldest_pending?: { doc_type: string; doc_no: string; op: string; attempts: number } | null;
   rows?: Array<Record<string, unknown>>;
   truncated?: boolean;
@@ -375,8 +377,114 @@ describe('GET /autocount-outbox — the switch and the empty queue', () => {
     expect(countsOf(body)).toEqual({
       pending: 0, sent: 0, failed: 0, skipped: 0, requeued: 0, attention: 0, total: 0,
     });
+    /* Zero because there is nothing, not because the scan gave up. */
+    expect(body.counts_complete).toBe(true);
     expect(body.oldest_pending).toBeNull();
     expect(rowsOf(body)).toEqual([]);
+  });
+});
+
+/* ───────────────────────────────────────────────────────────────────────────
+   THE COUNTS ARE DOCUMENTS, NOT SENDS.
+
+   Owner, 2026-08-16, on the live page: "为什么在 AutoCount 里面一张 Sales Order 会
+   出现两次呢?" HC-SO-2608-002 took four of six rows under In AutoCount / Sales
+   orders while AED_HOUZS holds exactly one of it, and the header read
+   "6 of 17 documents" over a list of SENDS. scm.autocount_outbox is append-only
+   and writes one row per intended operation (0277), so a document created and
+   then edited three times IS four rows — the counts were the wrong unit.
+   ─────────────────────────────────────────────────────────────────────────── */
+describe('GET /autocount-outbox — one document counted once', () => {
+  /** His four rows: the create, then three edits, all accepted. */
+  const fourSends = [
+    row({ id: 's1', op: 'create_so', doc_no: 'HC-SO-2608-002', status: 'sent',
+      created_at: '2026-08-14T17:25:00.000Z' }),
+    row({ id: 's2', op: 'edit', doc_no: 'HC-SO-2608-002', status: 'sent',
+      created_at: '2026-08-16T08:30:12.000Z' }),
+    row({ id: 's3', op: 'edit', doc_no: 'HC-SO-2608-002', status: 'sent',
+      created_at: '2026-08-16T08:31:05.000Z' }),
+    row({ id: 's4', op: 'edit', doc_no: 'HC-SO-2608-002', status: 'sent',
+      created_at: '2026-08-16T08:31:40.000Z' }),
+  ];
+
+  it('counts one sales order once, however many times it was sent', async () => {
+    const { body } = await get(harness({ outbox: fourSends }));
+    expect(countsOf(body).sent).toBe(1);
+    expect(countsOf(body).total).toBe(1);
+    /* The SENDS are all still there — the audit trail is the whole point of an
+       append-only queue, and the page folds them, it does not drop them. */
+    expect(rowsOf(body)).toHaveLength(4);
+  });
+
+  /* A DOCUMENT NUMBER IS NOT A DOCUMENT. 0277's CHECK admits six types and the
+     same number can belong to two of them; folding those together would LOSE
+     one. The key is the pair, which is autocount_outbox_doc_idx's own. */
+  it('keeps two types carrying one number apart', async () => {
+    const { body } = await get(harness({
+      outbox: [
+        row({ id: 'so', doc_type: 'SO', doc_no: '2608-002', status: 'sent' }),
+        row({ id: 'do', doc_type: 'DO', doc_no: '2608-002', status: 'sent' }),
+      ],
+    }));
+    expect(countsOf(body).sent).toBe(2);
+    expect(countsOf(body).total).toBe(2);
+  });
+
+  /* A document that arrived and was later edited into a refusal IS in the
+     account book AND does need attention, and both chips would list it. The
+     counts therefore do NOT sum to the total, on purpose. */
+  it('counts a document under every state it has a send in', async () => {
+    const { body } = await get(harness({
+      outbox: [
+        row({ id: 'a', doc_no: 'HC-SO-2608-002', status: 'sent',
+          created_at: '2026-08-14T00:00:00.000Z' }),
+        row({ id: 'b', op: 'edit', doc_no: 'HC-SO-2608-002', status: 'failed', attempts: 6,
+          last_error: 'Gave up after 6 attempts.', created_at: '2026-08-16T00:00:00.000Z' }),
+      ],
+    }));
+    expect(countsOf(body)).toMatchObject({ sent: 1, failed: 1, attention: 1, total: 1 });
+  });
+
+  it('says whether it managed to scan the whole queue', async () => {
+    const { body } = await get(harness({ outbox: fourSends }));
+    expect(body.counts_complete).toBe(true);
+  });
+
+  /* A COUNT THAT DID NOT SEE EVERY ROW MUST NOT READ AS A FACT. The scan pages
+     through the queue and stops at AC_DOC_SCAN_MAX; past that the numbers are a
+     floor and the response says so, rather than reporting the prefix it managed
+     to read as the whole company. Slow-ish by construction — it is asserting a
+     boundary that only exists at scale — and the alternative is an untested
+     branch that turns an undercount into a fact the day the queue outgrows the
+     cap. */
+  it('refuses to call a partial scan a count', async () => {
+    const overCap = Array.from(
+      { length: AC_DOC_SCAN_MAX + 1 },
+      (_, i) => row({ id: `n${i}`, doc_no: `SO-${i}`, status: 'sent' }),
+    );
+    const { body } = await get(harness({ outbox: overCap }), '?limit=1');
+    expect(body.counts_complete).toBe(false);
+    /* Still the best answer available, and right for everything it reached. */
+    expect(countsOf(body).sent).toBe(AC_DOC_SCAN_MAX);
+  });
+
+  /* The re-queue marker still decides the state, and it is still read by the
+     SHARED classifier rather than restated — a document whose only send is a
+     replaced refusal is Replaced, not Held back. */
+  it('applies the re-queue marker per send, not per document', async () => {
+    const marker = `${REQUEUE_NOTE_PREFIX} 2026-08-16T02:00:00.000Z -> outbox ob-new] refused, nothing sent (ItemCodeError): x`;
+    const { body } = await get(harness({
+      outbox: [
+        row({ id: 'old', doc_no: 'HC-DO-2608-001', doc_type: 'DO', status: 'skipped',
+          last_error: marker, created_at: '2026-08-16T01:00:00.000Z' }),
+        row({ id: 'new', doc_no: 'HC-DO-2608-001', doc_type: 'DO', status: 'skipped',
+          last_error: 'refused, nothing sent (ItemCodeError): x',
+          created_at: '2026-08-16T03:00:00.000Z' }),
+      ],
+    }));
+    /* ONE document, and it is in both states: one send was replaced, the other
+       is an open refusal that somebody still has to work. */
+    expect(countsOf(body)).toMatchObject({ skipped: 1, requeued: 1, attention: 1, total: 1 });
   });
 });
 

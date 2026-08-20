@@ -53,11 +53,56 @@ both were bought:
    the old words for good, which is why the fix has to be in how the page RENDERS
    a note and not only in what the writer produces.
 
-**A superseded row is a record, not a task.** `requeued` rows are folded out of
-the list under *"N superseded rows, kept as a record"* on both surfaces
-(`acSplitSuperseded`) — except under the **Sent again** filter, where the reader
-asked for them and they are the list. The status counts on the chips are
-untouched: they are the server's, exact and whole-company.
+**A replaced document is a record, not a task.** A document whose newest send is
+`requeued` is folded out of the list under *"N replaced documents, kept as a
+record"* on both surfaces (`acSplitReplaced`) — except under the **Replaced**
+filter, where the reader asked for them and they are the list. The status counts
+on the chips are untouched: they are the server's, exact and whole-company.
+
+---
+
+## 0a. The unit of the screen is the DOCUMENT, and the words are not the button's
+
+**Added 2026-08-17, after the owner read two more defects off the live page.**
+Both are in this section because both are display contract: nothing about which
+row the ERP writes changed.
+
+### One row per document, not one per send
+
+*"为什么在 AutoCount 里面一张 Sales Order 会出现两次呢?"* — `HC-SO-2608-002` took
+four of the six rows under **In AutoCount → Sales orders** while `AED_HOUZS` holds
+exactly one of it. `scm.autocount_outbox` is append-only and writes one row per
+intended operation (0277), so a document created and then edited three times IS
+four rows and always will be. The queue was right; the screen had the wrong unit.
+
+| | |
+| --- | --- |
+| **What identifies a document** | `doc_type` + `doc_no`, the pair `autocount_outbox_doc_idx (company_id, doc_type, doc_no)` was created to answer with. NOT `doc_no` alone — six types, and the same number can belong to two of them, so a bare number would LOSE a document. NOT `doc_id` — 0277 declares it nullable and untyped so an outbox row survives its document being reworked, and a key that may be absent is not a key. Company is not in the key: the whole response is one company. |
+| **Which send draws the row** | the NEWEST, by `created_at`. Under a status filter that is the newest send matching the filter, which is the honest answer to the question the filter asked. |
+| **Where the other sends go** | behind *"N earlier sends for this document"*, on both surfaces (`data-ac-send`), folded on arrival. They are the audit trail — 0277 exists so "what did we tell AutoCount, when, and what did it answer" is a SELECT a year later — and none of them is dropped. |
+| **What the counts count** | DOCUMENTS, on both chip strips and in the line under them. The type chips count distinct documents in the loaded page (`acDocTypeCounts`); the status chips are the server's `counts`, which count distinct `doc_type + doc_no` over the whole company. They do NOT sum to the total, deliberately: a document that arrived and was later edited into a refusal is counted by **In AutoCount** and by **Not accepted**, because both are true of it and both chips list it. |
+| **A count that did not finish** | `counts_complete: false`, and the page says *"the numbers on the chips are at least this many and possibly more"*. The scan pages through the queue and stops at `AC_DOC_SCAN_MAX`; an undercount must never read as a count. |
+
+### The state is Replaced, and the button is Send again
+
+*"你写 Send Again,明明都已经进去了,为什么还要 Send Again？"* — the badge carried the
+same two words as the BUTTON on the same screen, on seven of seventeen rows, on
+exactly the rows where pressing it is the one thing a reader must not do.
+
+| where | it says |
+| --- | --- |
+| the badge and the filter chip | **Replaced** |
+| the one-line status (`acRowStatusLine`) | *Replaced by a newer send* |
+| the headline on the row (`AC_REPLACED_LINE`) | *Replaced by a newer send — nothing to do on this one* |
+| behind the opener (`AC_REPLACED_NOTE`) | *This is the record of the first refusal, not something to act on — the document is queued or in AutoCount under a newer send.* |
+| the fold (`acReplacedHeading`) | *N replaced documents, kept as a record* |
+
+The rule underneath: **a state is something that happened TO the record and is
+never named with the imperative of a control beside it.** `AC_SEND_AGAIN_LABEL`
+is unchanged and still reads *Send again*, which is why the badge may not. The
+server's own vocabulary — `requeued`, the `[re-queued …]` marker — stays on the
+server; `re-queue`, `supersede` and `row` are all asserted absent from these
+strings by `frontend/src/lib/autocountOutbox.test.ts`.
 
 ---
 
@@ -125,7 +170,7 @@ why the button exists at all.
 | `dtlkey-subset` | A conversion took a **strict subset** of the parent's lines and some source line has no `DtlKey`, so the ERP cannot name the subset. Sending it without one would make AutoCount transfer *every* outstanding line — goods moving in the book that did not move here. | **No.** The ERP never composed an instruction, so there is nothing to send again — see §6. | Backfill `linked_ac_dtlkey` on the **source** document, then raise this document again. |
 | `no-source-document` | A Delivery Order / GRN / Invoice / Purchase Invoice was created with **no parent**. | **NEVER.** See §4. | Nothing. It stays ERP-only, permanently. |
 | `mixed-source-lines` | The document carries lines that came from **no source document** beside lines that did — the ERP allows a standalone line on an invoice, AutoCount's transfer would produce one MISSING them and understate the revenue in the book. | **No.** Nothing was composed, and re-asking would not change the document's shape. | Raise the delivered lines from the Delivery Order and the standalone lines as their own invoice. |
-| `no-autocount-shape` | A conversion merged **several** source documents into one (a DO from two SOs, a GRN batched from three POs). The ERP records it rather than inventing documents. | Not today, and **not by Send again** — the ERP composed nothing, so there is nothing to re-send (§6). See §5: the AutoCount service side learned to do this on 2026-08-16, the ERP side has not followed. | Raise the matching document in AutoCount by hand, or split the ERP document. |
+| `no-autocount-shape` | **HISTORICAL — nothing new lands here.** A conversion that merged **several** source documents into one (a DO from two SOs, a GRN batched from three POs), recorded before 2026-08-18. Merged conversions are sent now: the service took `FromDocNos` from 2026-08-16 and the ERP followed, naming every source. | **No**, and it never will — the ERP composed nothing for these rows, so there is nothing to re-send (§6). A merge raised since then is an ordinary `pending` row. | Raise the matching document in AutoCount by hand. The backlog of rows carrying this reason is a one-off to work through, not a standing task. |
 | `edit-before-counterpart` | A downstream document was edited while the conversion that creates it was still queued. That conversion will transfer the **source** document's lines, not this edit. | Not by this button. | Save the document again once the conversion has drained. |
 | `cancelled-before-send` | The document was cancelled in the ERP while its create was still queued, so the create was withdrawn. | No, and nothing is wrong. | Nothing. Neither document ever reached the account book. |
 | `grn-mislinked` | A goods receipt's `linked_ac_docno` is its **purchase order's** AutoCount number, not its own — a cutover convention. Sending a cancel or an edit would name the wrong document in a live book. | No. | The real GR numbers are on the PO in `linked_ac_grn_docnos`; a PO received in several deliveries has several, and choosing is a decision, not a lookup. |
@@ -263,15 +308,28 @@ needs it, it has to be raised there by hand, against a source document.
 
 ## 5. Open items — recorded so they are not re-discovered
 
-1. **The ERP still refuses merged conversions the AutoCount service now
-   accepts.** As of 2026-08-16 `AcSyncService` groups transfer keys by source
-   document and invokes the transfer once per group, so a DO from several SOs is
-   native on that side. The SIX ERP call sites that record a merged conversion
-   (`delivery-orders-mfg.ts`, `grns.ts` ×2, `sales-invoices.ts`,
-   `purchase-invoices.ts`, and `scm/lib/si-autocount-source.ts` since
-   2026-08-17) still write a `skipped` row. Whether the ERP should
-   follow is an owner decision, not a cleanup — until it is made, §2's
-   `no-autocount-shape` row is accurate.
+1. ~~**The ERP still refuses merged conversions the AutoCount service now
+   accepts.**~~ **CLOSED 2026-08-18.** The owner made the call in as many words
+   — *"不能 sync 的所有，你就解决掉、统一掉"* — so this stopped being an open
+   decision and became the work. All six call sites now name every source
+   instead of recording a `skipped` row: `delivery-orders-mfg.ts`, `grns.ts` ×2
+   (the batch receive and the per-bucket one), `sales-invoices.ts`,
+   `purchase-invoices.ts`, and `scm/lib/si-autocount-source.ts`.
+
+   `enqueueConvert` takes `AcDocRef | AcDocRef[]`; one source still writes
+   `payload.fromDoc` so a payload composed today is identical to one composed
+   last week, several write `payload.fromDocs` and the drain resolves them into
+   `FromDocNos`. **A merge whose sources are not all in the book yet WAITS** —
+   it does not send the subset, because AutoCount holding one sales order's
+   lines under a delivery order that covers two is worse than a queued row.
+
+   One thing had to be fixed underneath it, and it is the part worth reading:
+   `conversionIsPartial` compared ONE parent's line count against the total
+   taken from all of them. That was unreachable while only single-source
+   conversions could enqueue, and with a merge it answers "whole document" for a
+   partial one — the D14 blind transfer, one level up. It counts per parent now
+   (`autocount-outbox.test.ts`, *"an unnameable subset is REFUSED"*, proven red
+   against the old comparison).
 2. **`masters-not-opened` never classifies.** The route only runs
    `classifyAcSkip` on rows whose status is `skipped`, and the drain writes that
    message onto a `failed` row. So the kind exists, its remedy is written, and no
@@ -290,7 +348,17 @@ needs it, it has to be raised there by hand, against a source document.
 5. **`Invalid transfer item.` on `HC-DO-2608-001` / `-002` is unexplained.** The
    recorded cause (line keys spanning two source documents) is refuted for both
    — see the measurement in §4. Open on the AutoCount side.
-6. **Nothing asks the account book whether a `failed` document landed.** The one
+6. **The document counts are a SCAN, not a `count(distinct …)`.** The route pages
+   through `scm.autocount_outbox` for the whole company (`id, doc_type, doc_no,
+   status`, plus the ids matching the re-queue marker) and reduces to distinct
+   `doc_type + doc_no`, because PostgREST cannot express a distinct count and the
+   alternatives — a view or an RPC — would restate `acOutboxState` in SQL, which
+   is the third-opinion drift §2's classifier exists to prevent. It stops at
+   `AC_DOC_SCAN_MAX` (20,000 rows) and answers `counts_complete: false` past that.
+   The queue held 17 rows on 2026-08-16, four days after the write-back went live;
+   when it approaches the cap this needs to become SQL, and the honest flag is
+   what keeps the page truthful until it does.
+7. **Nothing asks the account book whether a `failed` document landed.** The one
    residual risk on any re-send is a document that was accepted and whose reply
    was lost. A read-only probe on the ERP's own `DocNo` — which every create and
    every conversion now sends — would settle it before the queue writes, and

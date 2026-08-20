@@ -36,7 +36,8 @@
 //   SalesDocument.PartialTransfer(TransferFrom, String, String, String, Decimal, Decimal)
 //   SalesDocument.PartialTransfer(TransferFrom, String, String, String, Decimal, Decimal, Int64)
 //   SalesDocument.InternalFullTransfer / InternalPartialTransfer / AddPartialTransferRow
-//   DeliveryOrder.AddPartialTransferDetail(String, Int64[], Boolean)   <- what ran until now
+//   DeliveryOrder.AddPartialTransferDetail(String, Int64[], Boolean)   <- the sales-side
+//        primitive, and the purchase side's FALLBACK since 2026-08-17 (Convert_ GR/PI)
 //   DeliveryOrder.AddPartialTransferDetail(String, Int64, Boolean)
 //   DeliveryOrder.get_IsTransferFromSupported() / get_IsTransfered() / get_Transferable()
 //   SalesDocument.add_OnSalesDocumentTransferConflict(SalesDocumentTransferConflictDelegate)
@@ -51,13 +52,24 @@
 // service does not call it; it exists here as a warning about how easily the
 // remainder bookkeeping gets wrong.
 //
-// NOTHING HERE IS TYPED AGAINST THOSE SIGNATURES. RunTransfer binds them by the
-// parameter NAMES in the assembly's own metadata and logs every overload it
-// finds, because this file compiles nowhere but the office host and neither
-// FullTransferOption's shape nor PartialTransfer's argument order can be
-// established from off it. The reasoning is written out above
-// TryDocumentedTransfer. LogTransferApi re-takes the dump above on every
-// service start, so the next reader does not have to trust this comment.
+// RunTransfer BINDS BY PARAMETER NAME, not by position. It reads the assembly's
+// own metadata and logs every overload it finds, because this file compiles
+// nowhere but the office host and neither FullTransferOption's shape nor
+// PartialTransfer's argument order can be established from off it. The reasoning
+// is written out above TryDocumentedTransfer. LogTransferApi re-takes the dump
+// above on every service start, so the next reader does not have to trust this
+// comment.
+//
+// ONE EXCEPTION, ADDED 2026-08-17, and it is stated here because this paragraph
+// used to read "NOTHING HERE IS TYPED AGAINST THOSE SIGNATURES" and that is no
+// longer true. Convert_'s GR and PI arms call the three-argument
+// FullTransfer(String[], TransferFrom, FullTransferOption) DIRECTLY, statically
+// typed, inside a try/catch that falls back to AddPartialTransferDetail. It is
+// typed because it is the only shape that has ever moved a purchase-side
+// conversion into the live book (host, 2026-08-17 23:09), and it was arrived at
+// by compiling on the host — including one failed build, CS0117 on the enum
+// member, which is exactly the round trip late binding exists to avoid. The
+// late-bound path is unchanged and still serves every other shape.
 //
 // The vendor's own pages, which set the debtor/creditor and the document date
 // on the target BEFORE calling the transfer — the order Convert_ now follows:
@@ -493,6 +505,24 @@ class AcSyncService {
        line was transferred from, so it is the cheapest single answer to "is
        the convert-from link there". */
     "FromDocType", "FromDocNo", "FromDocDtlKey", "FullTransferFromDocList",
+    /* THE PURCHASE ORDER KEEPS ITS SALES SOURCE IN ITS OWN TWO COLUMNS, and
+       asking PODTL for FromDocType alone is asking the wrong question. Measured
+       in the committed live-book extract (backend/scripts/data/
+       ac-fidelity-po-lines.json.gz, AED_HOUZS read-only 2026-08-11, the query at
+       export-ac-fidelity-truth.py:144): 10,338 of 18,148 non-cancelled PODTL
+       rows, over 7,467 of 9,080 purchase orders, carry a FromSODtlKey, and
+       10,314 of those also carry a FromSODocList. Not one of them was written by
+       this service — they are AutoCount's OWN "transfer from Sales Order",
+       raised in its UI before the cutover. The ERP already treats FromSODtlKey
+       as the one line-to-line link AutoCount populates (backfill-po-ac-dtlkey.mjs,
+       repair-dedication-from-autocount.mjs).
+
+       So the four names above are the DOWNSTREAM shape — DODTL / IVDTL / GRDTL /
+       PIDTL, where FromDocDtlKey is NULL throughout this book and only the
+       document-level pair is real. On a PO it is the other way round: the LINE
+       key is the populated one. Reading both is what makes "is the convert-from
+       link there" answerable on either side. */
+    "FromSODtlKey", "FromSODocList",
     "EstimatedDeliveryDate", "PrintOut",
   };
 
@@ -706,6 +736,55 @@ class AcSyncService {
     return outp;
   }
 
+  /* ── "convert from", read back off the purchase order we just wrote ───────
+     THE QUESTION THIS ANSWERS, in the owner's words 2026-08-17:
+     「他的 documentation convert from 的那个有做到没有?」
+
+     Nobody has ever looked at the right columns. Every report on this route has
+     read FromDocType / FromDocNo, found the type blank, and concluded the link
+     was half-written — but on a PURCHASE ORDER those are not the columns
+     AutoCount populates for a sales source. Its own UI writes FromSODtlKey and
+     FromSODocList, on 10,338 of this book's 18,148 non-cancelled PODTL rows.
+     Whether AddSOToPOTransferDetail writes them too is UNKNOWN as this is
+     written, and it is one SELECT away — so the SELECT runs on every /so-to-po
+     and the next request settles it, with no human, no remote desktop and no
+     query pasted into a chat window (CLAUDE.md: build the check).
+
+     All six lineage fields, per line, and the columns go through
+     ExistingColumns so a book that lacks one reports "no such column" instead of
+     "null". Read-only, and wrapped: a diagnostic must never cost a purchase
+     order that is already saved. */
+  static void LogPoSourceLink(string docNo) {
+    if (string.IsNullOrEmpty(docNo)) return;
+    try {
+      __DBLINE__
+      using (var cn = new System.Data.SqlClient.SqlConnection(db.ConnectionString)) {
+        cn.Open();
+        var missing = new List<string>();
+        var wanted = new string[] {
+          "DtlKey", "FromSODtlKey", "FromSODocList", "FromDocType", "FromDocNo", "FromDocDtlKey",
+        };
+        var lines = ReadMany(cn, "PODTL", wanted,
+          "DocKey = (SELECT DocKey FROM [PO] WHERE DocNo = @d)", docNo, missing);
+        if (missing.Count > 0)
+          Log("  so-to-po source link: PODTL has no " + string.Join(", ", missing.ToArray()) +
+              " in this book - the absence is the column, not the value");
+        if (lines.Count == 0) { Log("  so-to-po source link: no PODTL rows read back for " + docNo); return; }
+        foreach (var row in lines) {
+          var bits = new List<string>();
+          foreach (var w in wanted) {
+            if (!row.ContainsKey(w)) continue;
+            var v = row[w];
+            bits.Add(w + "=" + (v == null ? "NULL" : v.ToString().Trim()));
+          }
+          Log("  so-to-po source link " + docNo + ": " + string.Join("  ", bits.ToArray()));
+        }
+      }
+    } catch (Exception ex) {
+      Log("  so-to-po source link could not be read: " + ex.Message);
+    }
+  }
+
   static List<Dictionary<string, object>> CreatedLines(string dtlTable, string docNo) {
     var hdr = dtlTable.Substring(0, dtlTable.Length - 3);
     var outp = new List<Dictionary<string, object>>();
@@ -844,6 +923,16 @@ class AcSyncService {
     po.DocDate = Date(p, "DocDate") ?? DateTime.Today;
     po.CreditorCode = Str(p, "CreditorCode");
     po.CreditorName = Str(p, "CreditorName");
+    /* THE SHIP-TO WAREHOUSE ON THE HEADER. This route does NOT go through
+       PurchaseHeader - it sets its own master, which is exactly why the field
+       had to be added in two places and not one. Same guard as PurchaseHeader's
+       copy and for the same reason: ContainsKey AND non-empty, because "" is
+       not a row in dbo.Location and a blank here is a foreign key error rather
+       than an empty field. The ERP sends it from
+       scm.purchase_orders.purchase_location_id and omits the key when it has
+       none, so the guard is the ERP's contract read back. */
+    if (p.ContainsKey("PurchaseLocation") && !string.IsNullOrEmpty(Str(p, "PurchaseLocation")))
+      Set(() => po.PurchaseLocation = Str(p, "PurchaseLocation"));
     Set(() => po.Agent = Str(p, "Agent"));
     Set(() => po.Ref = Str(p, "Ref"));
     Set(() => po.Description = Str(p, "Description"));
@@ -910,7 +999,19 @@ class AcSyncService {
 
      DO-011260 is not a counter-example. It was created by qa-convert.ps1, whose
      payload carries a debtor; nothing about "the old order worked once" survives
-     that. */
+     that.
+
+     THE PURCHASE SIDE IS NOW PROVEN TOO, 2026-08-17 23:09, and it took a second
+     thing on top of the account: the typed three-argument FullTransfer. The GR
+     arm below carries that log verbatim. What closed it:
+
+       HC-GR-2608-001  (from HC-PO-2608-001, DtlKeys 908162 / 908164)
+       HC-PI-2608-001  (from HC-GR-2608-001, DtlKeys 908167 / 908169)
+
+     so all six ERP document types now exist in AED_HOUZS under the ERP's own
+     numbers. The purchase arms keep PurchaseHeader on BOTH sides of the transfer
+     - the reason is written at the trailing call - and that asymmetry with the
+     sales arms is now a measured shape rather than an unverified guess. */
   static string Convert_(string fromType, string toType, Dictionary<string, object> p) {
     var s = Session();
     var fromDocNo = Str(p, "FromDocNo");
@@ -1020,36 +1121,117 @@ class AcSyncService {
         case "GR": {
           var cmd = AutoCount.Invoicing.Purchase.GoodsReceivedNote.GoodsReceivedNoteCommand.Create(s, s.DBSetting);
           var doc = cmd.AddNew();
-          /* This conversion has failed since 2026-08-12 with
+          /* This conversion failed from 2026-08-12 to 2026-08-17 with
                IndexOutOfRangeException: There is no row at position -1
              inside GeneralPurchasePartialTransferDetail..ctor - a master lookup
              returning -1 and used as an index. The frame names its arguments but
              not their VALUES, so they go in the log before the call. */
           Log("  po-to-gr: fromType=" + fromType + " transferMaster=true keys=[" + string.Join(",", Array.ConvertAll(dtlKeys, k => k.ToString())) + "]");
-          // transferMaster MUST be true on the purchase side. That flag copies the
-          // source PO's header master (supplier/currency/terms) onto the target; with
-          // false the GRN is built with no supplier, the purchase detail ctor looks
-          // that row up in the master table, IndexOf returns -1, and Save() dies with
-          // "there is no row at position -1". The sales classes tolerate false, so they
-          // are left alone — DO-011260 and DO-011262 were both created that way.
-          //
-          // SetMaster now assigns CreditorCode EXPLICITLY before the transfer, which is
-          // the carry-across of the PROVEN sales-side cause. The flag stays true because
-          // that is what has been running, and dropping it would be a second
-          // unverifiable change inside one call.
-          //
-          // NOT SYMMETRICAL WITH THE SALES ARMS, DELIBERATELY. PurchaseHeader stays
-          // AFTER the transfer. On the sales side moving the header before it is proven
-          // (00:55:30 on the host); here it is not, and it is not a free move: with
-          // transferMaster:true the transfer copies the SOURCE PO's master - supplier,
-          // currency, DisplayTerm - over the target, so a PurchaseHeader that ran first
-          // would be partly overwritten by it, and today's ordering is what lets the
-          // ERP's DocNo and DisplayTerm win. /po-to-gr has never once succeeded, so
-          // there is no run to compare against either way. Changing this needs the host.
-          // Run status does not belong in a comment:
-          // docs/generated/autocount-coverage.md is the one place that states it.
-          x.Primitive = () => { foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true); };
+          /* ── THE CALL THAT FINALLY MOVED IT, and it is FullTransfer ──────────
+             PROVEN on the host 2026-08-17 23:09, verbatim from
+             C:\Temp\ac-sync-service.log:
+
+               23:09:04  transfer: AddPartialTransferDetail per source document - the ERP named 2 line(s) and no quantity, so FullTransfer (which would move every outstanding line) is not used
+               23:09:04  target creditor before transfer = [400-H004]
+               23:09:04  trying purchase FullTransfer from=HC-PO-2608-001 tf=PurchaseOrder
+               23:09:04  purchase FullTransfer OK
+
+             POST /po-to-gr then answered ok with docNo HC-GR-2608-001 and
+             DtlKeys 908162 / 908164, and POST /gr-to-pi with HC-PI-2608-001 and
+             908167 / 908169. Those are the first purchase-side conversions this
+             service has ever put in AED_HOUZS.
+
+             THE FIRST LOG LINE CONTRADICTS THE THIRD, and that is honest rather
+             than tidy: RunTransfer decides the shape and says AddPartialTransfer-
+             Detail, then this block - which IS the primitive it hands to - tries
+             FullTransfer first and keeps the primitive as its fallback. The
+             wording stays because it is what the operator greps and because
+             pretending the two agree would hide divergence D16 below.
+
+             THE OLD COMMENT HERE WAS WRONG AND IS CORRECTED. It blamed
+             transferMaster:false for the IndexOutOfRangeException - "the GRN is
+             built with no supplier, the ctor's master lookup returns -1". The
+             host log refutes it: every failed attempt logged the flag as TRUE and
+             threw anyway.
+
+               2026-08-16 09:54:26   po-to-gr: fromType=PO transferMaster=true keys=[906268]
+               2026-08-16 09:54:26 ERROR /po-to-gr: System.IndexOutOfRangeException: There is no row at position -1.
+
+             The flag was never the cause. The cause is the SALES side's cause -
+             the target had no account before the transfer - and the low-level
+             primitive reports that as a contentless throw where FullTransfer
+             names it. transferMaster stays true because it is what has been
+             running and what ran on the successful build, not because it fixed
+             anything.
+
+             THE ENUM MEMBER IS GoodsReceiveNote, WITH NO 'd'. The first build of
+             this block failed CS0117 on `GoodsReceivedNote` - which is how the
+             enclosing SDK CLASS is spelled, so the wrong one reads right. The
+             members, reflected off AutoCount.Purchase.dll with FlattenHierarchy:
+             PurchaseRequest=0, RequestForQuotation=1, PurchaseOrder=2,
+             PurchaseInvoice=3, GoodsReceiveNote=4, SalesOrder=5,
+             PurchaseConsignment=6, PurchaseConsignmentReturn=7.
+
+             DUPLICATED IN THE PI ARM BELOW rather than factored into a helper.
+             `doc` is a different concrete SDK class in each arm, so a shared
+             method would have to take `dynamic` and every call in it would become
+             runtime-bound - a different binding mechanism from the one that is
+             proven, on a file that compiles nowhere but the office machine.
+
+             WARNING - DIVERGENCE D16, THIS CAN OVER-TRANSFER. FullTransfer moves EVERY
+             outstanding line on the source, and this path is reached when the ERP
+             has NAMED a subset. On the proven run the two sets were equal (the PO
+             had exactly the 2 lines the GRN took), so nothing was over-received.
+             A genuine partial receipt - 2 of 5 lines - would write all 5 into the
+             live account book. Registered as D16 in
+             src/services/autocount-writeback.contract.test.ts and written up in
+             docs/modules/autocount-writeback.md 7c4; the log line below is what
+             makes it findable in the meantime. It is NOT fixed here because the
+             only shape ever observed to work on this side is this one. */
+          x.Primitive = () => {
+            PurchaseHeader(doc, p);
+            /* GUARDED - the one deviation from the host build's bytes, and the
+               reason is that Str() turns an ABSENT key into "". The host test
+               supplied CreditorCode by hand, so the unguarded assignment was
+               never exercised without one; on an outbox row that carries no
+               creditor it would blank whatever SetMaster's book fallback had just
+               read off the source document, and re-create the exact empty-account
+               failure this whole block exists to fix. On the proven run the value
+               was "400-H004" and the guard is a no-op, so the observed behaviour
+               is unchanged. Same idiom as PurchaseHeader's own DocNo line. */
+            if (!string.IsNullOrEmpty(Str(p, "CreditorCode"))) Set(() => doc.CreditorCode = Str(p, "CreditorCode"));
+            Log("  target creditor before transfer = [" + doc.CreditorCode + "]");
+            var __ptf = fromType == "PO" ? AutoCount.Invoicing.Purchase.TransferFrom.PurchaseOrder
+                                         : AutoCount.Invoicing.Purchase.TransferFrom.GoodsReceiveNote;
+            Log("  D16: purchase FullTransfer moves EVERY outstanding line on " + fromDocNo +
+                ", and the ERP named " + dtlKeys.Length + " line(s). Equal sets today; a real partial would over-receive.");
+            try {
+              Log("  trying purchase FullTransfer from=" + fromDocNo + " tf=" + __ptf);
+              doc.FullTransfer(new string[]{ fromDocNo }, __ptf, AutoCount.Invoicing.FullTransferOption.FullDetails);
+              Log("  purchase FullTransfer OK");
+            } catch (Exception __pe) {
+              Log("  purchase FullTransfer refused: " + __pe.GetType().Name + ": " + __pe.Message.Trim() + " - falling back");
+              foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
+            }
+          };
           RunTransfer(doc, x);
+          /* THE TRAILING PurchaseHeader STAYS, and that is a decision rather than
+             an oversight - the primitive above now applies the header BEFORE the
+             transfer as well, so this is the second of two calls.
+
+             It stays for three reasons. (1) It is what the build that WORKED ran:
+             the host build of 2026-08-17T15:05:51Z carried both calls and produced
+             HC-GR-2608-001 and HC-PI-2608-001; dropping one is a change no run
+             covers. (2) FullTransfer copies the SOURCE document's master onto the
+             target, so a header applied only before it can be partly overwritten -
+             and the ERP is master for DocNo, DisplayTerm, Ref, Description and
+             PurchaseLocation. This call is what makes the ERP's values the ones
+             that survive, which is why both GRN and PI carry the ERP's own number.
+             (3) It is idempotent HERE: every field it touches is a plain property
+             assignment through Set(), and a CONVERSION payload carries no UDF at
+             all (enqueueConvert composes DocNo/DocDate/Ref/account/DtlKeys), so
+             ApplyUdf returns on its first line. The sales arms' "two calls would
+             write the UDFs twice" reason does not reach this path. */
           PurchaseHeader(doc, p);
           Set(() => doc.SupplierDONo = Str(p, "SupplierDONo"));
           doc.Save();
@@ -1058,8 +1240,30 @@ class AcSyncService {
         case "PI": {
           var cmd = AutoCount.Invoicing.Purchase.PurchaseInvoice.PurchaseInvoiceCommand.Create(s, s.DBSetting);
           var doc = cmd.AddNew();
-          // see the GR case above — purchase side needs transferMaster = true
-          x.Primitive = () => { foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true); };
+          /* THE SAME BLOCK AS THE GR ARM, deliberately duplicated - read that
+             one for the proof, the corrected transferMaster claim, the enum
+             spelling and divergence D16. `doc` is a PurchaseInvoice here and a
+             GoodsReceivedNote there, so sharing this would mean `dynamic` and
+             runtime binding in place of the binding that is proven. fromType is
+             "GR" on this arm, so __ptf resolves to GoodsReceiveNote. */
+          x.Primitive = () => {
+            PurchaseHeader(doc, p);
+            // guarded for the same reason as the GR arm: Str() of an absent key is ""
+            if (!string.IsNullOrEmpty(Str(p, "CreditorCode"))) Set(() => doc.CreditorCode = Str(p, "CreditorCode"));
+            Log("  target creditor before transfer = [" + doc.CreditorCode + "]");
+            var __ptf = fromType == "PO" ? AutoCount.Invoicing.Purchase.TransferFrom.PurchaseOrder
+                                         : AutoCount.Invoicing.Purchase.TransferFrom.GoodsReceiveNote;
+            Log("  D16: purchase FullTransfer moves EVERY outstanding line on " + fromDocNo +
+                ", and the ERP named " + dtlKeys.Length + " line(s). Equal sets today; a real partial would over-receive.");
+            try {
+              Log("  trying purchase FullTransfer from=" + fromDocNo + " tf=" + __ptf);
+              doc.FullTransfer(new string[]{ fromDocNo }, __ptf, AutoCount.Invoicing.FullTransferOption.FullDetails);
+              Log("  purchase FullTransfer OK");
+            } catch (Exception __pe) {
+              Log("  purchase FullTransfer refused: " + __pe.GetType().Name + ": " + __pe.Message.Trim() + " - falling back");
+              foreach (var g in keysByDoc) doc.AddPartialTransferDetail(fromType, g.Value.ToArray(), true);
+            }
+          };
           RunTransfer(doc, x);
           PurchaseHeader(doc, p);
           Set(() => doc.SupplierInvoiceNo = Str(p, "SupplierInvoiceNo"));
@@ -1397,6 +1601,55 @@ class AcSyncService {
           Log("  SDK " + t.Name + ": NO " + want + " (searched with FlattenHierarchy, so inherited members ARE included)");
       }
     } catch (Exception ex) { Log("  SDK api dump failed: " + ex.Message); }
+  }
+
+  /* ── what the PURCHASE side can NAME as a source, and what it ACCEPTS ─────
+     These are two different questions and answering the first as if it were the
+     second is what produced the /so-to-po refusal on 2026-08-17:
+
+       so-to-po: typed AddPartialTransferDetail("SO") refused
+                 (FromDocType must be RQ.)
+
+     AutoCount.Invoicing.Purchase.TransferFrom is documented as carrying a
+     SalesOrder member, so a sales-order source IS expressible in the purchase
+     namespace - and PurchaseOrderPartialTransferDetail still enumerates exactly
+     one accepted fromDocType, RQ, and says so in the message. The enum is the
+     NAMESPACE's vocabulary (every purchase target shares it, and
+     TransferHelper.Create / LoadWantToFullTransferData take it); which subset a
+     given TARGET accepts is validated inside that target's own
+     *PartialTransferDetail constructor. The two do not disagree.
+
+     What is written above is READ OFF A LOG LINE AND A DOC PAGE, so this method
+     re-takes it from the assemblies themselves, once per process: every member
+     of the enum, the doc-type string the vendor's own TransferFromToDocumentType
+     maps it to, and what DocumentTypeToTransferFrom does with "SO". Costs one
+     reflection pass, writes nothing, and turns the paragraph above into a fact
+     the next reader can check instead of a claim they have to believe. */
+  static bool LoggedPurchaseVocab;
+
+  static void LogPurchaseTransferVocabulary() {
+    if (LoggedPurchaseVocab) return;
+    LoggedPurchaseVocab = true;
+    try {
+      var t = typeof(AutoCount.Invoicing.Purchase.TransferFrom);
+      foreach (var name in Enum.GetNames(t)) {
+        var v = Enum.Parse(t, name);
+        string docType;
+        try {
+          docType = AutoCount.Invoicing.Purchase.TransferHelper.TransferFromToDocumentType(
+            (AutoCount.Invoicing.Purchase.TransferFrom) v);
+        } catch (Exception ex) { docType = "<threw " + ex.GetType().Name + ">"; }
+        Log("  purchase TransferFrom." + name + " = " + Convert.ToInt64(v) + " -> docType '" + docType + "'");
+      }
+    } catch (Exception ex) { Log("  purchase TransferFrom enum could not be read: " + ex.Message); }
+    try {
+      var tf = AutoCount.Invoicing.Purchase.TransferHelper.DocumentTypeToTransferFrom("SO");
+      Log("  purchase DocumentTypeToTransferFrom(\"SO\") = " + tf +
+          " - the vocabulary CAN name a sales source; whether a given target ACCEPTS it is the target's own check");
+    } catch (Exception ex) {
+      Log("  purchase DocumentTypeToTransferFrom(\"SO\") THREW " + ex.GetType().FullName + ": " + ex.Message.Trim() +
+          " - then the purchase side cannot even name a sales source and AddSOToPOTransferDetail is the only door");
+    }
   }
 
   /* IsTransferFromSupported - the pre-flight this service never made.
@@ -1901,6 +2154,21 @@ class AcSyncService {
      A purchase order is not: the ERP decides what it buys, and guessing would
      transfer sales lines nobody ordered from this supplier. */
   static string SoToPo(Dictionary<string, object> p) {
+    /* THE ERP NUMBERS THIS DOCUMENT TOO — divergence D5, and this route was the
+       last one it was open on. Measured on the live book 2026-08-17 10:15, the
+       first /so-to-po that ever succeeded:
+
+         so-to-po PO-009968: 2 transferred, 2 line(s) costed in phase two
+
+       while the ERP calls that same purchase order HC-PO-2608-001. Every other
+       type already carries our number — HC-SO-2608-001/2/3, HC-DO-2608-001/2,
+       HC-SI-2608-001 are all in AED_HOUZS under those numbers — so the purchase
+       order was the one document in the chain whose two sides no one could
+       reconcile. The same RequireDocNo the two CREATE routes carry, for the same
+       reason written out above it: a document AutoCount numbered for us can only
+       be addressed through linked_ac_docno, and the paperwork says something
+       else. */
+    RequireDocNo(p, "/so-to-po");
     var s = Session();
     var fromDocNo = Str(p, "FromDocNo");
     if (string.IsNullOrEmpty(fromDocNo)) throw new Exception("FromDocNo required");
@@ -1960,6 +2228,16 @@ class AcSyncService {
     var cmd = AutoCount.Invoicing.Purchase.PurchaseOrder.PurchaseOrderCommand.Create(s, s.DBSetting);
     var po = cmd.AddNew();
     po.CreditorCode = creditor;
+    /* DIRECTLY, not through PurchaseHeader's Set(). PurchaseHeader further down
+       does apply a DocNo the payload carries — that is not new — but it does it
+       inside Set(), which LOGS AND SWALLOWS. A DocNo that failed to apply would
+       leave AutoCount's own number on the document and answer ok, which is the
+       defect this route already paid for once with a NULL Qty. Assigned here it
+       is a plain assignment on a fresh document, exactly as CreatePo does it,
+       and BEFORE the transfer — the vendor's order for master fields, and the
+       order proven on the sales side at 00:55:30. PurchaseHeader re-assigns the
+       same string later, which is a no-op. */
+    po.DocNo = Str(p, "DocNo");
     Set(() => po.CreditorName = Str(p, "CreditorName"));
     /* PHASE ONE: transfer, then SAVE. Nothing else.
 
@@ -1992,8 +2270,36 @@ class AcSyncService {
            AddSOToPOTransferDetail(Int64)
 
        — the first is TOLD the type and records it; the second has nowhere to
-       take one from. AutoCount's own transfer relationship reads that column, so
-       a PO written by the second is linked on one side only.
+       take one from.
+
+       CORRECTED 2026-08-17, and the correction is the point. This block used to
+       end "AutoCount's own transfer relationship reads that column, so a PO
+       written by the second is linked on one side only." That sentence was
+       reasoning from the SALES side's shape, and it was never measured on a
+       purchase order. THE ANSWER, when the typed call was finally made, was that
+       AutoCount refuses a sales type here at all:
+
+         so-to-po: typed AddPartialTransferDetail("SO") refused
+                   (FromDocType must be RQ.)
+
+       Into a PurchaseOrder the general primitive accepts exactly ONE source, and
+       that is the vendor's design rather than an oversight: SO -> PO is shipped
+       as a PARALLEL mechanism everywhere in this SDK, never as a member of the
+       general transfer family — AddSOToPOTransferDetail beside
+       AddPartialTransferDetail, CheckAndGetValidSOTransferItem beside
+       CheckAndGetValidPartialTransferItem, GetOverTransferTableForSOToPO beside
+       GetOverTransferTable, plus GetPendingTransferredPOQtyFromSOSQL,
+       IsSODtlPartialTransferedToPO and QueryTransferedSODTL_That_XferToPO
+       (sdk-api-reference.txt). AO -> PO is shipped the same way.
+
+       AND THE LINK IS RECORDED IN THE PURCHASE SIDE'S OWN COLUMNS. PODTL carries
+       FromSODtlKey and FromSODocList, and in this book they are populated on
+       10,338 of 18,148 non-cancelled lines over 7,467 of 9,080 purchase orders —
+       every one of them written by AutoCount's own UI, not by us
+       (ac-fidelity-po-lines.json.gz, AED_HOUZS 2026-08-11). FromDocType is the
+       DOWNSTREAM tables' column. So "FromDocType is NULL on a PO" is not by
+       itself evidence of a missing link; the two columns that would be are the
+       ones this service has never read. It reads them now, below.
 
        transferMaster is FALSE here, unlike the purchase-side conversions. That
        flag copies the SOURCE document's master, and this source is a SALES
@@ -2001,12 +2307,12 @@ class AcSyncService {
        below sets the creditor explicitly, which is what /po-to-gr needed
        transferMaster for and this route does not.
 
-       FALLING BACK IS THE POINT. AddPartialTransferDetail with a sales type on a
-       purchase document is not in sdk-api-reference.txt as a supported pairing,
-       and this file cannot be compiled or run anywhere but the office host. If
-       it throws, the old call runs and the document is written exactly as it is
-       written today — one-sided link and all. The worst case is what we already
-       have; the best case is the link AutoCount actually reads. */
+       THE TYPED CALL STAYS, and so does the fallback. It is one throw from a
+       constructor before anything is added to the document — which is why the
+       10:15 run still produced a correct two-line purchase order — and it is the
+       measurement that keeps "must be RQ" a re-taken fact rather than a sentence
+       in a comment. If a later AutoCount build accepts it, the log says so on
+       the first request. The worst case is what already works. */
     /* THE SAME DIAGNOSTICS THE FOUR CONVERSIONS NOW GET. This route shares
        their failure mode - it transfers sales lines into a purchase document
        through the same SDK machinery - and it had the same blind spots: no
@@ -2021,6 +2327,7 @@ class AcSyncService {
        Details[].Qty, which phase two below applies line by line. A consolidated
        purchase never reaches this route. */
     LogTransferApi(po);
+    LogPurchaseTransferVocabulary();
     PreflightTransferFromSupported(po);
     SubscribeTransferDiagnostics(po);
     /* The SO-SPECIFIC validator, not the general one Convert_ uses. SO -> PO is
@@ -2044,12 +2351,25 @@ class AcSyncService {
       typedTransfer = true;
     } catch (Exception ex) {
       Log("so-to-po: typed AddPartialTransferDetail(\"SO\") refused (" + ex.Message
-        + ") - falling back to AddSOToPOTransferDetail, which leaves FromDocType null");
+        + ") - falling back to AddSOToPOTransferDetail. That leaves PODTL.FromDocType null,"
+        + " which is the DOWNSTREAM tables' column; the purchase side's own link is"
+        + " FromSODtlKey / FromSODocList and LogPoSourceLink below reports whether it landed");
     }
     if (!typedTransfer) foreach (var k in keys) po.AddSOToPOTransferDetail(k);
     PurchaseHeader(po, p);
     po.Save();
     var docNo = po.DocNo;
+    /* DID THE NUMBER WE SENT SURVIVE? Read off the saved document rather than
+       trusting the assignment: `po.DocNo` is what the entity holds, and AutoCount
+       is entitled to renumber on Save through a DocNoFormat. The mismatch is
+       LOGGED, not thrown — the purchase order exists either way and the ERP must
+       be told the number the book actually gave it, exactly as CreatedLines'
+       catch argues. Throwing here would lose the DocNo of a document that is
+       already in a live account book. */
+    if (!string.Equals(docNo, Str(p, "DocNo"), StringComparison.Ordinal))
+      Log("  so-to-po: the ERP asked for DocNo '" + Str(p, "DocNo") + "' and the book saved '" + docNo +
+          "' - the two systems will disagree on this document's number until someone looks");
+    LogPoSourceLink(docNo);
 
     /* PHASE TWO: reopen and apply what the ERP agreed with the supplier.
 
@@ -2111,6 +2431,34 @@ class AcSyncService {
 
   static void SalesHeader(dynamic doc, Dictionary<string, object> p) {
     AllowZeroValue(doc);
+    /* ── THE CUSTOMER, ON THE DOCUMENT ITSELF ────────────────────────────────
+       Added 2026-08-20, and the reason is that CARRYING a field is not LANDING
+       one. These four are in Edit()'s allow-list and were in NO slot on the
+       transfer route, so a delivery order or sales invoice reaching the book by
+       conversion carried whatever AutoCount defaulted off the fixed debtor
+       account 300-C002 - while this system's own design note says the opposite:
+       "Fixed AutoCount debtor account; the customer's real name is written over
+       it" (autocount-writeback.ts:43-44). On /create-so it is. On the two sales
+       conversions it never was, because SalesHeader is all they get.
+
+       The property names are CreateSo's own - so.DebtorName, so.Attention,
+       so.Phone1 (the payload key there is "Phone", the PROPERTY is Phone1) -
+       and Edit() reaches the same four on a DO and an invoice through
+       reflection, so they exist on those classes too.
+
+       GUARDED, every one. Str() of an absent key is "", and an unguarded
+       assignment here would blank the book's own value for any caller that
+       sends nothing - which is exactly the D4 failure being fixed, reintroduced
+       from the other side. Set() on top of that, because a class that does not
+       expose one of them must cost the field and never the document. */
+    if (p.ContainsKey("DebtorName") && !string.IsNullOrEmpty(Str(p, "DebtorName")))
+      Set(() => doc.DebtorName = Str(p, "DebtorName"));
+    if (p.ContainsKey("Attention") && !string.IsNullOrEmpty(Str(p, "Attention")))
+      Set(() => doc.Attention = Str(p, "Attention"));
+    if (p.ContainsKey("Phone1") && !string.IsNullOrEmpty(Str(p, "Phone1")))
+      Set(() => doc.Phone1 = Str(p, "Phone1"));
+    if (p.ContainsKey("Note") && !string.IsNullOrEmpty(Str(p, "Note")))
+      Set(() => doc.Note = Str(p, "Note"));
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));
@@ -2135,6 +2483,23 @@ class AcSyncService {
        one; a blank would be its own foreign key error. */
     if (p.ContainsKey("PurchaseLocation") && !string.IsNullOrEmpty(Str(p, "PurchaseLocation")))
       Set(() => doc.PurchaseLocation = Str(p, "PurchaseLocation"));
+    /* THE PURCHASE AGENT, and it is the reason CARRYING a field is not LANDING
+       one. /create-po assigns po.Agent itself (CreatePo above); this function
+       did not read the key at all, so /so-to-po could be handed a perfectly
+       good Agent and still save a purchase order without one. The ERP's value
+       is the constant AC_PURCHASE_AGENT, which exists because a blank is
+       FK_PO_PurchaseAgent on the save - dbo.PurchaseAgent, NOT the sales
+       agent's dbo.SalesAgent, and this route's source document is a SALES
+       order, so nothing the transfer brings across can fill it in.
+
+       GUARDED, unlike CreatePo's: this same function is what the four
+       conversions apply their header with, and enqueueConvert composes no Agent
+       at all. Str() of an absent key is "", so an unguarded assignment would
+       blank whatever the GRN or purchase invoice inherited from its source and
+       re-create the foreign key failure on documents that do not have this
+       problem today. */
+    if (p.ContainsKey("Agent") && !string.IsNullOrEmpty(Str(p, "Agent")))
+      Set(() => doc.Agent = Str(p, "Agent"));
     var dt = Date(p, "DocDate"); if (dt.HasValue) Set(() => doc.DocDate = dt.Value);
     if (p.ContainsKey("DocNo") && !string.IsNullOrEmpty(Str(p, "DocNo"))) Set(() => doc.DocNo = Str(p, "DocNo"));
     Set(() => doc.Ref = Str(p, "Ref"));
@@ -2300,6 +2665,14 @@ class AcSyncService {
     var created = new List<string>();
     var existed = new List<string>();
     var failed = new List<Dictionary<string, object>>();
+    /* A master the book ALREADY HOLDS UNDER A DIFFERENT NAME. It is neither
+       created nor failed - the document goes out - so it needs a third list, or
+       the finding has nowhere to live.
+       `nameUnverified` is the can't-happen branch kept honest: an account that
+       exists but whose CompanyName could not be read was NOT compared, and an
+       unmeasured comparison must never be counted as agreement. */
+    var mismatched = new List<Dictionary<string, object>>();
+    var nameUnverified = new List<string>();
 
     foreach (var o in List(p, "Items")) {
       var it = o as Dictionary<string, object>;
@@ -2409,7 +2782,24 @@ class AcSyncService {
        have fails the same foreign key a missing item does, and takes the whole
        PO with it. Same shape as the Location that FK'd on the live book; the
        only reason it was not found the same way is that no PO has been pushed
-       yet. */
+       yet.
+
+       AND THE CODE RESOLVING IS NOT THE SAME QUESTION AS THE CODE BEING RIGHT.
+       This loop used to ask CreditorExists(acc), which is `GetCreditor(acc) !=
+       null`: it fetched the creditor, read a boolean off it and threw away the
+       CompanyName it had in its hand. So a code that resolves to the WRONG
+       company was byte-for-byte indistinguishable from one that resolves to the
+       right company, at every layer, and HC-PO-2608-001 / HC-GR-2608-001 /
+       HC-PI-2608-001 were booked against 400-H004 - HAO HUA FURNITURE in the
+       book - for a purchase order the ERP names HOOKKA INDUSTRIES SDN. BHD.
+       Nothing refused it because nothing ever looked.
+
+       IT REPORTS AND IT MUST NEVER REFUSE. The ERP routinely holds a shorter
+       trading name than the book's registered one, so a refusal here would
+       block legitimate documents in bulk - and this comparison exists for the
+       accounting error underneath, which a human resolves against the AutoCount
+       masters, not for the spelling. The comparison is made where both names
+       exist at once, which is here and nowhere else. */
     foreach (var o in List(p, "Creditors")) {
       var it = o as Dictionary<string, object>;
       if (it == null) continue;
@@ -2417,7 +2807,27 @@ class AcSyncService {
       if (acc.Length == 0) continue;
       try {
         var da = AutoCount.ARAP.Creditor.CreditorDataAccess.Create(s, s.DBSetting);
-        if (CreditorExists(da, acc)) { existed.Add("creditor:" + acc); continue; }
+        string bookName;
+        if (CreditorFound(da, acc, out bookName)) {
+          existed.Add("creditor:" + acc);
+          var erpName = Str(it, "CompanyName");
+          if (bookName == null) {
+            nameUnverified.Add("creditor:" + acc);
+            Log("  ensure-masters could not read CompanyName for creditor " + acc + " - NOT compared");
+          } else if (erpName.Length > 0
+                     && !string.Equals(erpName, acc, StringComparison.OrdinalIgnoreCase)
+                     /* mastersOf falls back to the CODE when the payload carries
+                        no CreditorName, so comparing that against a company name
+                        is meaningless and would report on documents that said
+                        nothing. Skipped, never counted as agreement. */
+                     && NormParty(erpName) != NormParty(bookName)) {
+            mismatched.Add(new Dictionary<string, object> {
+              { "master", "creditor:" + acc }, { "erp", erpName }, { "book", bookName },
+            });
+            Log("  ensure-masters MISMATCH creditor " + acc + " erp=" + erpName + " book=" + bookName);
+          }
+          continue;
+        }
         var e = da.NewCreditor();
         e.AccNo = acc;
         Set(() => e.CompanyName = Or(Str(it, "CompanyName"), acc));
@@ -2515,6 +2925,12 @@ class AcSyncService {
       { "created", created },
       { "existed", existed },
       { "failed", failed },
+      /* NOT part of `ok`, deliberately. A name disagreement is a thing for a
+         human to settle against the AutoCount masters; refusing the document
+         over it would block legitimate purchases every day, because the ERP's
+         name is a trading name far more often than it is an error. */
+      { "mismatched", mismatched },
+      { "nameUnverified", nameUnverified },
     };
     /* A partial answer is still an answer: the caller needs to know WHICH master
        it may not name, and a bare 500 would lose that. */
@@ -2538,8 +2954,49 @@ class AcSyncService {
   static bool DebtorExists(AutoCount.ARAP.Debtor.DebtorDataAccess da, string acc) {
     try { return da.GetDebtor(acc) != null; } catch { return false; }
   }
-  static bool CreditorExists(AutoCount.ARAP.Creditor.CreditorDataAccess da, string acc) {
-    try { return da.GetCreditor(acc) != null; } catch { return false; }
+  /* THE NAME AS WELL AS THE BOOLEAN. This used to be CreditorExists(), which
+     fetched the creditor, read `!= null` off it and discarded everything else -
+     including the CompanyName it had in its hand, which is the only fact that
+     can tell a right code from a wrong one.
+
+     Returns TRUE when the book holds the account. `bookName` is its CompanyName,
+     or NULL when the account exists and the name could not be read - the caller
+     must not compare against null, and must not read it as agreement either.
+     FALSE is the only answer that opens a new creditor, so the create path
+     behaves exactly as it did before.
+
+     THE PROPERTY IS READ BY REFLECTION on purpose. `sdk-api-reference.txt` was
+     dumped with DeclaredOnly and does not cover CreditorDataAccess at all, so
+     the return type of GetCreditor is not established here and this file cannot
+     be compiled anywhere but the host. Reflection compiles whatever the SDK
+     turns out to expose, and a property that is somehow absent degrades to "not
+     compared" rather than to a false MISMATCH on every document. */
+  static bool CreditorFound(AutoCount.ARAP.Creditor.CreditorDataAccess da, string acc, out string bookName) {
+    bookName = null;
+    try {
+      var e = da.GetCreditor(acc);
+      if (e == null) return false;
+      try {
+        var prop = e.GetType().GetProperty("CompanyName");
+        if (prop != null) {
+          var raw = prop.GetValue(e, null);
+          bookName = raw == null ? "" : raw.ToString();
+        }
+      } catch { bookName = null; }
+      return true;
+    } catch { return false; }
+  }
+
+  /* Case, punctuation and whitespace removed, so `HOOKKA MANUFACTURING SDN.
+     BHD.` and `HOOKKA MANUFACTURING SDN BHD` are the same party and never
+     report. A guard that fires on spelling is a guard nobody reads, and the
+     one thing worse than no report is one that is always on. Same rule the
+     census applies on the ERP side (census-autocount-party-codes.mjs). */
+  static string NormParty(string v) {
+    if (string.IsNullOrEmpty(v)) return "";
+    var sb = new System.Text.StringBuilder(v.Length);
+    foreach (var ch in v.ToUpperInvariant()) if (char.IsLetterOrDigit(ch)) sb.Append(ch);
+    return sb.ToString();
   }
   static bool LocationExists(AutoCount.Stock.Location.LocationMaintenance lm, string code) {
     try { return lm.GetLocation(code) != null; } catch { return false; }

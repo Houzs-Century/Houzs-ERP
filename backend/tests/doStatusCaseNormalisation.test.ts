@@ -27,6 +27,7 @@
 import { Hono } from 'hono';
 import { describe, expect, test } from 'vitest';
 import { patchDeliveryOrderStatusHandler } from '../src/scm/routes/delivery-orders-mfg';
+import { DO_STATUSES } from '../src/scm/shared/do-shipped-states';
 
 const CO = 1;
 type Row = Record<string, any>;
@@ -114,10 +115,16 @@ describe('DO status PATCH — case normalisation', () => {
   });
 
   test('every canonical status is accepted in lower, upper and mixed case', async () => {
-    // Pinning the whole set, not just the two that broke: the next call site to
-    // be written will not necessarily pick one of those two.
-    const statuses = ['DRAFT', 'LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED', 'COMPLETED', 'CANCELLED'];
-    for (const s of statuses) {
+    /* Pinning the whole set, not just the two that broke: the next call site to
+       be written will not necessarily pick one of those two.
+
+       IMPORTED, not re-typed. This line used to be a hand copy that carried
+       'COMPLETED' — a FOURTH mirror of a value scm.do_status does not have (see
+       shared/do-shipped-states.ts for how prod refuted it). A test that re-types
+       the vocabulary it is pinning cannot catch the vocabulary being wrong; it
+       just agrees with whichever copy it was born from. Reading the declaration
+       means this test now fails if the handler and the declaration ever part. */
+    for (const s of DO_STATUSES) {
       for (const variant of [s, s.toLowerCase(), s[0] + s.slice(1).toLowerCase()]) {
         const res = await patchStatus(harness({ delivery_orders: shippedDo() }), 'do-1', variant);
         expect(await rejectedAsInvalidStatus(res), `${variant} should be accepted`).toBe(false);
@@ -133,7 +140,12 @@ describe('DO status PATCH — case normalisation', () => {
   test('a genuinely unknown status is STILL rejected — this is what audit gap #4 guards', async () => {
     // Normalising case must not become "accept anything". A typo that is not a
     // real status has to keep failing, or the guard is gone rather than fixed.
-    for (const bogus of ['shipped', 'CANCELED', 'done', 'CANCELLED_BY_MISTAKE']) {
+    /* 'COMPLETED' is in this list as of 2026-08-18, and it is the interesting
+       one. It was in DO_STATUSES, so this guard PASSED it — and the UPDATE then
+       hit Postgres, which rejected the label and answered 500. A whitelist that
+       admits a value the column cannot hold is not a whitelist; it just moves
+       the refusal somewhere it reads as a server fault. */
+    for (const bogus of ['shipped', 'CANCELED', 'done', 'CANCELLED_BY_MISTAKE', 'COMPLETED', 'completed']) {
       const res = await patchStatus(harness({ delivery_orders: shippedDo() }), 'do-1', bogus);
       expect(await rejectedAsInvalidStatus(res), `${bogus} should be refused`).toBe(true);
     }

@@ -48,9 +48,10 @@ import {
 } from "../vendor/scm/lib/so-dropdown-options-queries";
 import { paymentMethodCodeForValue } from "../vendor/scm/lib/payment-methods";
 import { missingMethodSubField } from "../vendor/scm/components/PaymentsTable";
-import { fmtCenti } from "../lib/scm";
+import { fmtSen } from "../lib/scm";
 import { useIdempotencyKey } from "../lib/idempotency";
 import { PaymentInfoBlock, type RecordedPaymentLike } from "./PaymentInfoBlock";
+import { DateField } from "../vendor/scm/components/DateField";
 
 /* A persisted payment as either mobile surface holds it. Superset of
    RecordedPaymentLike; the casing pairs cover the postgres.js / PostgREST drift
@@ -58,7 +59,7 @@ import { PaymentInfoBlock, type RecordedPaymentLike } from "./PaymentInfoBlock";
 export type RecordedPayment = RecordedPaymentLike & {
   id: string;
   version: number;
-  amount_centi: number | null;
+  amount_sen: number | null;
   collected_by?: string | null;
   slip_key?: string | null;
   slipKey?: string | null;
@@ -95,7 +96,7 @@ const monthsToPlan = (months: number | null | undefined): string => {
 const CODE_TO_PAY_METHOD: Record<string, PayMethodLabel> = {
   cash: "Cash", transfer: "Online", merchant: "Merchant", installment: "Installment",
 };
-const toCenti = (s: string) => Math.round((parseFloat(String(s).replace(/,/g, "")) || 0) * 100);
+const toSen = (s: string) => Math.round((parseFloat(String(s).replace(/,/g, "")) || 0) * 100);
 
 type Opt = { value: string; label: string };
 /* Owner 2026-07-16 ("Acc sheet 亂填?") — DESKTOP PARITY, was missing on mobile.
@@ -288,7 +289,7 @@ export function AddPaymentSheet({
     () => (editPayment?.paid_at ?? "").slice(0, 10) || todayMyt(),
   );
   const [amount, setAmount] = useState(
-    () => (editPayment ? ((editPayment.amount_centi ?? 0) / 100).toFixed(2) : "0.00"),
+    () => (editPayment ? ((editPayment.amount_sen ?? 0) / 100).toFixed(2) : "0.00"),
   );
   const [account, setAccount] = useState(editPayment?.account_sheet ?? "");
   const [approval, setApproval] = useState(editPayment?.approval_code ?? "");
@@ -338,7 +339,7 @@ export function AddPaymentSheet({
     }
   };
 
-  const amtOk = toCenti(amount) > 0;
+  const amtOk = toSen(amount) > 0;
   /* Method ⇒ sub-field cascade, via the SHARED desktop rule (missingMethodSubField,
      PaymentsTable) rather than a mobile re-implementation: Merchant needs a Bank
      + Plan, Online needs a Sub-Type. The server enforces the same on write
@@ -368,7 +369,7 @@ export function AddPaymentSheet({
     const body: Record<string, unknown> = {
       paidAt: date,
       method: code,
-      amountCenti: toCenti(amount),
+      amountSen: toSen(amount),
       accountSheet: account.trim() || null,
       approvalCode: approval.trim() || null,
       collectedBy: collectedBy || null,
@@ -419,7 +420,7 @@ export function AddPaymentSheet({
             <div style={{ display: "flex", gap: 9 }}>
               <label className="fld" style={{ flex: 1.1 }}>
                 <span className="fld-l">Date</span>
-                <input className="fld-i" type="date" value={date} onChange={(e) => setDate(e.target.value)} />
+                <DateField fullWidth className="fld-i" value={date} onChange={(iso) => setDate(iso)}/>
               </label>
               <label className="fld" style={{ flex: 1.1 }}>
                 <span className="fld-l">Amount</span>
@@ -703,7 +704,7 @@ export function RecordedPaymentsList({
           <PaymentInfoBlock payment={p} />
           <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
             {slipKeyOf(p) ? <SlipLink docNo={docNo} paymentId={p.id} /> : null}
-            <span className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "#0c3f39" }}>{fmtCenti(p.amount_centi)}</span>
+            <span className="money" style={{ fontSize: 12.5, fontWeight: 700, color: "#0c3f39" }}>{fmtSen(p.amount_sen)}</span>
             {/* Attach / replace the proof — see openAttachPicker: gated by
                 `canEdit` only, never by the same-day window. */}
             {canEdit && (

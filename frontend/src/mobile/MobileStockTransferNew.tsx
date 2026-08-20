@@ -9,6 +9,7 @@ import {
 import { useNotify } from "../vendor/scm/components/NotifyDialog";
 import { useIdempotencyKey } from "../lib/idempotency";
 import { MobileSkuPicker, type PickedSku } from "./MobileSkuPicker";
+import { DateField } from "../vendor/scm/components/DateField";
 
 /* ------------------------------------------------------------------ *
  * Mobile New Stock Transfer — From -> To (must differ) + date + notes,
@@ -18,7 +19,7 @@ import { MobileSkuPicker, type PickedSku } from "./MobileSkuPicker";
  * useCreateStockTransfer + useInventoryBuckets; no backend change.
  * ------------------------------------------------------------------ */
 
-type LineDraft = { _key: string; productCode: string; productName: string; variantKey?: string; qty: number };
+type LineDraft = { _key: string; itemCode: string; productName: string; variantKey?: string; qty: number };
 
 // Humanise a variant_key ("fabriccode=bf-16|gap=16|legheight=2") into a compact
 // bucket label. '' = the unclassified / plain-SKU bucket.
@@ -40,7 +41,7 @@ function MobileTransferLine({
   setQty: (key: string, qty: number) => void;
   removeLine: (key: string) => void;
 }) {
-  const bucketsQ = useInventoryBuckets(line.productCode || null, fromWarehouseId || null);
+  const bucketsQ = useInventoryBuckets(line.itemCode || null, fromWarehouseId || null);
   const variantBuckets = useMemo(() => {
     const m = new Map<string, number>();
     for (const b of (bucketsQ.data ?? [])) m.set(b.variant_key ?? "", (m.get(b.variant_key ?? "") ?? 0) + b.qty);
@@ -55,7 +56,7 @@ function MobileTransferLine({
     <div className="st-line">
       <div className="lh">
         <div>
-          <div className="sku">{lineIdentity({ code: line.productCode, description: line.productName }).primary}</div>
+          <div className="sku">{lineIdentity({ code: line.itemCode, description: line.productName }).primary}</div>
         </div>
         <button className="x" onClick={() => removeLine(line._key)} aria-label="Remove line">×</button>
       </div>
@@ -64,7 +65,7 @@ function MobileTransferLine({
         style={{ marginTop: 8, fontSize: 13 }}
         value={line.variantKey === undefined ? UNPICKED : line.variantKey}
         onChange={(e) => setVariant(line._key, e.target.value === UNPICKED ? undefined : e.target.value)}
-        disabled={!fromWarehouseId || !line.productCode}
+        disabled={!fromWarehouseId || !line.itemCode}
       >
         <option value={UNPICKED} disabled>
           {!fromWarehouseId ? "Pick source first"
@@ -130,8 +131,8 @@ export function MobileStockTransferNew({
   const sameWarehouse = Boolean(fromWarehouseId && toWarehouseId && fromWarehouseId === toWarehouseId);
   // A line is valid only once its variant BUCKET is picked (variantKey set) —
   // moving stock without it would desync the FIFO bucket + MRP.
-  const validLines = lines.filter((l) => l.productCode.trim() && l.qty > 0 && l.variantKey !== undefined);
-  const needsBucket = lines.some((l) => l.productCode.trim() && l.qty > 0 && l.variantKey === undefined);
+  const validLines = lines.filter((l) => l.itemCode.trim() && l.qty > 0 && l.variantKey !== undefined);
+  const needsBucket = lines.some((l) => l.itemCode.trim() && l.qty > 0 && l.variantKey === undefined);
   const canCreate =
     !!fromWarehouseId && !!toWarehouseId && !sameWarehouse && !!transferDate &&
     validLines.length > 0 && !needsBucket && !create.isPending;
@@ -144,7 +145,7 @@ export function MobileStockTransferNew({
   // time (the desktop StockTransferNew has no such dedup either).
   const addSku = (sku: PickedSku) => {
     setPickerOpen(false);
-    setLines((prev) => [...prev, { _key: newKey(), productCode: sku.itemCode, productName: sku.name, qty: 1 }]);
+    setLines((prev) => [...prev, { _key: newKey(), itemCode: sku.itemCode, productName: sku.name, qty: 1 }]);
   };
   const setVariant = (key: string, variantKey: string | undefined) =>
     setLines((prev) => prev.map((l) => (l._key === key ? { ...l, variantKey } : l)));
@@ -161,7 +162,7 @@ export function MobileStockTransferNew({
         toWarehouseId,
         transferDate,
         notes: notes.trim() || undefined,
-        items: validLines.map((l) => ({ productCode: l.productCode, productName: l.productName, variantKey: l.variantKey, qty: l.qty })),
+        items: validLines.map((l) => ({ itemCode: l.itemCode, productName: l.productName, variantKey: l.variantKey, qty: l.qty })),
       },
       {
         onSuccess: (r) => {
@@ -209,7 +210,7 @@ export function MobileStockTransferNew({
         <div className="st-whrow">
           <div className="st-fld">
             <span className="st-fl">Date</span>
-            <input type="date" className="cal-sel" value={transferDate} onChange={(e) => setTransferDate(e.target.value)} />
+            <DateField fullWidth className="cal-sel" value={transferDate} onChange={(iso) => setTransferDate(iso)}/>
           </div>
           <div className="st-fld">
             <span className="st-fl">Notes</span>

@@ -26,7 +26,7 @@ const DSN = process.env.DATABASE_URL;
 if (!DSN) { console.error('need DATABASE_URL'); process.exit(2); }
 const CO = Number(process.env.COMPANY || 2);
 const DEBTOR = (process.env.DEBTOR || 'James Pak').trim();
-const TOTAL_CENTI = process.env.TOTAL_CENTI ? Number(process.env.TOTAL_CENTI) : null;
+const TOTAL_SEN = process.env.TOTAL_SEN ? Number(process.env.TOTAL_SEN) : null;
 
 const sql = postgres(DSN, { ssl: 'require', prepare: false, max: 1 });
 const note = (m) => console.log(process.env.GITHUB_ACTIONS ? `::notice::${m}` : m);
@@ -117,7 +117,7 @@ async function main() {
 
   note(`\n${'='.repeat(78)}\nB. The named order — company ${CO}, debtor ILIKE '%${DEBTOR}%'`);
   const heads = await sql`
-    SELECT doc_no, status, branding, debtor_name, local_total_centi, balance_centi,
+    SELECT doc_no, status, branding, debtor_name, local_total_sen, balance_sen,
            so_date::text AS so_date,
            processing_date::text AS processing_date,
            proceeded_at::text AS proceeded_at,
@@ -127,14 +127,14 @@ async function main() {
       FROM scm.mfg_sales_orders
      WHERE company_id = ${CO}::bigint
        AND debtor_name ILIKE ${'%' + DEBTOR + '%'}
-       ${TOTAL_CENTI == null ? sql`` : sql`AND local_total_centi = ${TOTAL_CENTI}::bigint`}
+       ${TOTAL_SEN == null ? sql`` : sql`AND local_total_sen = ${TOTAL_SEN}::bigint`}
      ORDER BY so_date DESC NULLS LAST, doc_no`;
   note(`  header matches: ${heads.length}`);
 
   for (const h of heads) {
     note(`\n  ${'-'.repeat(72)}`);
     note(`  ${h.doc_no}  status=${h.status}  branding=${h.branding ?? '(null)'}`);
-    note(`    total_centi=${h.local_total_centi}  (= RM ${(Number(h.local_total_centi) / 100).toFixed(2)})  balance_centi=${h.balance_centi}`);
+    note(`    total_sen=${h.local_total_sen}  (= RM ${(Number(h.local_total_sen) / 100).toFixed(2)})  balance_sen=${h.balance_sen}`);
     note(`    so_date=${h.so_date}  processing_date=${h.processing_date ?? '(null)'}  proceeded_at=${h.proceeded_at ?? '(NULL → ALLOC-GATED)'}`);
     note(`    customer_delivery_date=${h.customer_delivery_date ?? '(null)'}  line_count=${h.line_count}`);
     note(`    remark2=${JSON.stringify(h.remark2)}  remark3=${JSON.stringify(h.remark3)}  remark4=${JSON.stringify(h.remark4)}`);
@@ -182,7 +182,7 @@ async function main() {
                coalesce(b.variant_key,'') AS variant_key, b.qty
           FROM scm.inventory_balances b
           LEFT JOIN scm.warehouses w ON w.id = b.warehouse_id
-         WHERE b.company_id = ${CO}::bigint AND b.product_code = ${l.item_code} AND b.qty <> 0
+         WHERE b.company_id = ${CO}::bigint AND b.item_code = ${l.item_code} AND b.qty <> 0
          ORDER BY w.name, b.variant_key`;
       note(`        on-hand rows for ${l.item_code}: ${bal.length}`);
       for (const b of bal) {
@@ -195,7 +195,7 @@ async function main() {
                coalesce(i.delivery_date::text, p.expected_at::text, '') AS eta
           FROM scm.purchase_order_items i
           JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
-         WHERE i.company_id = ${CO}::bigint AND i.material_code = ${l.item_code}
+         WHERE i.company_id = ${CO}::bigint AND i.item_code = ${l.item_code}
            AND upper(p.status::text) NOT IN ('CANCELLED','CLOSED','DRAFT')
          ORDER BY p.po_number`;
       note(`        open PO lines for ${l.item_code}: ${po.length}`);
@@ -230,7 +230,7 @@ async function main() {
         SELECT movement_type::text AS movement_type, qty, coalesce(variant_key,'') AS variant_key,
                source_doc_type, source_doc_no, created_at::text AS created_at
           FROM scm.inventory_movements
-         WHERE company_id = ${CO}::bigint AND product_code = ${l.item_code}
+         WHERE company_id = ${CO}::bigint AND item_code = ${l.item_code}
          ORDER BY created_at DESC
          LIMIT 10`;
       note(`        last ${mv.length} inventory movement(s) for ${l.item_code}:`);
@@ -243,18 +243,18 @@ async function main() {
        the drill renders come from these. */
     const codes = [...new Set(live.map((x) => x.item_code).filter(Boolean))];
     const lots = codes.length === 0 ? [] : await sql`
-      SELECT l.batch_no, l.product_code, coalesce(l.variant_key,'') AS variant_key,
+      SELECT l.batch_no, l.item_code, coalesce(l.variant_key,'') AS variant_key,
              l.qty_remaining, l.source_doc_type, w.name AS warehouse,
              l.received_at::text AS received_at
         FROM scm.inventory_lots l
         LEFT JOIN scm.warehouses w ON w.id = l.warehouse_id
        WHERE l.company_id = ${CO}::bigint
          AND l.qty_remaining > 0
-         AND l.product_code IN ${sql(codes)}
-       ORDER BY l.product_code, l.received_at`;
+         AND l.item_code IN ${sql(codes)}
+       ORDER BY l.item_code, l.received_at`;
     note(`\n    --- open inventory lots for this order's codes: ${lots.length} ---`);
     for (const t of lots) {
-      note(`      ${String(t.product_code).padEnd(22)} batch=${String(t.batch_no ?? '(null)').padEnd(20)} left=${String(t.qty_remaining).padStart(4)} src=${t.source_doc_type ?? '-'} wh=${t.warehouse ?? '?'} recv=${t.received_at ?? '-'}`);
+      note(`      ${String(t.item_code).padEnd(22)} batch=${String(t.batch_no ?? '(null)').padEnd(20)} left=${String(t.qty_remaining).padStart(4)} src=${t.source_doc_type ?? '-'} wh=${t.warehouse ?? '?'} recv=${t.received_at ?? '-'}`);
     }
   }
 

@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'vitest';
-import { normalizeDoc, lineCenti, reconcile } from '../src/scm/routes/scan-lorry-invoice';
+import { normalizeDoc, lineSen, reconcile } from '../src/scm/routes/scan-lorry-invoice';
 
 /**
  * The extraction contract for workshop repair documents.
@@ -71,7 +71,7 @@ describe('normalizeDoc — coercion, because the model omits fields and sends th
   test('an out-of-range discount is DROPPED, not clamped — a misread column must not zero a line', () => {
     const d = normalizeDoc({ lines: [{ description: 'x', qty: 1, unitPriceRm: 100, discountPct: 150 }] });
     expect(d.lines[0]!.discountPct).toBeNull();
-    expect(lineCenti(d.lines[0]!)).toBe(10_000); // full price, not 0
+    expect(lineSen(d.lines[0]!)).toBe(10_000); // full price, not 0
   });
   test('a non-ISO or day-first date is refused rather than stored wrong', () => {
     expect(normalizeDoc({ docDate: '15/7/2026' }).docDate).toBeNull();
@@ -93,14 +93,14 @@ describe('normalizeDoc — coercion, because the model omits fields and sends th
 describe('reconcile — the check that catches a dropped line', () => {
   test('no printed total means UNCHECKED (null), which is not the same as agreed', () => {
     const r = reconcile(normalizeDoc({ lines: [{ description: 'x', qty: 1, unitPriceRm: 100 }] }));
-    expect(r.printedCenti).toBeNull();
+    expect(r.printedSen).toBeNull();
     expect(r.matches).toBeNull();
   });
   test('a dropped line fails the check', () => {
     const short = { ...WJO00403, lines: WJO00403.lines.filter((l) => l.lineNo !== 5 || l.section !== 'PART') };
     const r = reconcile(normalizeDoc(short));
     expect(r.matches).toBe(false);
-    expect(r.deltaCenti).toBe(-637_500); // the missing RM6,375 cylinder head
+    expect(r.deltaSen).toBe(-637_500); // the missing RM6,375 cylinder head
   });
   test("a vendor's own rounding of a sen does not fail the check", () => {
     const doc = normalizeDoc({
@@ -125,10 +125,10 @@ describe('the whole document, end to end', () => {
     expect(doc.lines.filter((l) => l.section === 'LABOUR')).toHaveLength(1);
 
     const r = reconcile(doc);
-    expect(r.linesCenti).toBe(2_220_850);
-    expect(r.printedCenti).toBe(2_220_850);
+    expect(r.linesSen).toBe(2_220_850);
+    expect(r.printedSen).toBe(2_220_850);
     expect(r.matches).toBe(true);
-    expect(r.deltaCenti).toBe(0);
+    expect(r.deltaSen).toBe(0);
   });
 
   test('and it still reconciles when the vendor prints no line amounts at all', () => {
@@ -137,7 +137,7 @@ describe('the whole document, end to end', () => {
        silently disagree with the paper depending on the vendor's template. */
     const noAmounts = { ...WJO00403, lines: WJO00403.lines.map((l) => ({ ...l, amountRm: null })) };
     const r = reconcile(normalizeDoc(noAmounts));
-    expect(r.linesCenti).toBe(2_220_850);
+    expect(r.linesSen).toBe(2_220_850);
     expect(r.matches).toBe(true);
   });
 });

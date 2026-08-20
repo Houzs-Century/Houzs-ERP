@@ -63,10 +63,13 @@ import type { MfgProductRow } from "../../vendor/scm/lib/mfg-products-queries";
 import { useSetBreadcrumbs } from "../../hooks/useBreadcrumbs";
 import { useConfirm } from "../../vendor/scm/components/ConfirmDialog";
 import { useNotify } from "../../vendor/scm/components/NotifyDialog";
+import { notifyAcNotSent } from "../../vendor/scm/lib/ac-not-sent";
 import { cn } from "../../lib/utils";
 import { useStaffLookup, UUID_RE } from "../../hooks/useStaffLookup";
 import { useStateWarehouseMappings } from "../../vendor/scm/lib/state-warehouse-queries";
 import { splitE164, combineE164 } from "../../vendor/shared/phone";
+import { DateField } from "../../vendor/scm/components/DateField";
+import { fmtDate } from "../../vendor/shared/format";
 
 // ─── Types ──────────────────────────────────────────────────────────────────
 
@@ -85,12 +88,7 @@ const todayIso = (): string => {
   return `${yy}-${mm}-${dd}`;
 };
 
-const isoToDmy = (iso: string): string => {
-  if (!iso) return "";
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})/.exec(iso);
-  if (!m) return iso;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
+const isoToDmy = fmtDate;
 
 /* Fresh empty DO line — the shared empty SO line + a stable rid so the local
    list can add / edit / diff inline (mirrors SalesOrderNew.newLine). */
@@ -162,6 +160,15 @@ function TextInput({
   className?: string;
   disabled?: boolean;
 }) {
+/* type="date" routes to DateField, not to a native date input: the native
+   one renders in the OPERATING SYSTEM's locale, so the same field read
+   DD/MM/YYYY on one machine and MM/DD/YYYY on another. Same ISO contract
+   in and out. */
+  if (type === "date") {
+    return (
+      <DateField value={value} onChange={onChange} placeholder={placeholder} disabled={disabled} className={className} fullWidth/>
+    );
+  }
   return (
     <input
       type={type}
@@ -598,9 +605,9 @@ export function DeliveryOrderNewV2() {
     description: l.description,
     uom: l.uom,
     qty: l.qty,
-    unitPriceCenti: l.unitPriceCenti,
-    discountCenti: l.discountCenti,
-    unitCostCenti: l.unitCostCenti,
+    unitPriceSen: l.unitPriceSen,
+    discountSen: l.discountSen,
+    unitCostSen: l.unitCostSen,
     variants: l.variants,
     remark: l.remark,
     deliveryDate: l.lineDeliveryDate ?? "",
@@ -627,9 +634,9 @@ export function DeliveryOrderNewV2() {
           description: String(s.description ?? ""),
           uom: String(s.uom ?? "UNIT"),
           qty: Number(s.qty ?? 1),
-          unitPriceCenti: Number(s.unitPriceCenti ?? 0),
-          discountCenti: Number(s.discountCenti ?? 0),
-          unitCostCenti: Number(s.unitCostCenti ?? 0),
+          unitPriceSen: Number(s.unitPriceSen ?? 0),
+          discountSen: Number(s.discountSen ?? 0),
+          unitCostSen: Number(s.unitCostSen ?? 0),
           variants:
             s.variants && typeof s.variants === "object"
               ? (s.variants as Record<string, unknown>)
@@ -708,9 +715,9 @@ export function DeliveryOrderNewV2() {
         description: it.description ?? "",
         uom: it.uom ?? "UNIT",
         qty: it.remaining,
-        unitPriceCenti: it.unitPriceCenti,
-        discountCenti: it.discountCenti,
-        unitCostCenti: it.unitCostCenti,
+        unitPriceSen: it.unitPriceSen,
+        discountSen: it.discountSen,
+        unitCostSen: it.unitCostSen,
         variants:
           it.variants && typeof it.variants === "object"
             ? (it.variants as Record<string, unknown>)
@@ -766,9 +773,9 @@ export function DeliveryOrderNewV2() {
         description: String(it.description ?? ""),
         uom: String(it.uom ?? "UNIT"),
         qty: Number(it.qty ?? 1),
-        unitPriceCenti: Number(it.unit_price_centi ?? 0),
-        discountCenti: Number(it.discount_centi ?? 0),
-        unitCostCenti: Number(it.unit_cost_centi ?? 0),
+        unitPriceSen: Number(it.unit_price_sen ?? 0),
+        discountSen: Number(it.discount_sen ?? 0),
+        unitCostSen: Number(it.unit_cost_sen ?? 0),
         variants:
           it.variants && typeof it.variants === "object"
             ? (it.variants as Record<string, unknown>)
@@ -830,7 +837,7 @@ export function DeliveryOrderNewV2() {
           itemCode: p.code,
           itemGroup: category,
           description: p.name,
-          unitPriceCenti: p.sell_price_sen ?? 0,
+          unitPriceSen: p.sell_price_sen ?? 0,
           variants: inherited ? { ...inherited } : {},
         };
       }),
@@ -903,8 +910,16 @@ export function DeliveryOrderNewV2() {
          right (DeliveryOrderNew.tsx:294) and this one never got it. */
       { ...buildBody(), idempotencyKey: idemKey, asDraft: draft || undefined, status: draft ? "DRAFT" : "LOADED" },
       {
-        onSuccess: (res) => {
+        onSuccess: async (res) => {
           setFlash(draft ? "Saved as draft" : "Delivery order created");
+          /* THE ACCOUNTS MAY HAVE IT WITHOUT ALL OF IT. A DO raised from a
+             sales order is TRANSFERRED into AutoCount, and the transfer route
+             applies a narrower set of header fields than an edit does — so the
+             book can hold this delivery order with no reference and no date of
+             its own. Said here, BEFORE the navigation, for the reason
+             PurchaseOrderNew records: a route change tears the dialog down.
+             Never blocks; the DO exists and the goods have gone. */
+          await notifyAcNotSent(notify, res, "Delivery order");
           if (res?.id) {
             navigate(`/scm/delivery-orders/${res.id}`);
           } else {

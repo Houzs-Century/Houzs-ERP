@@ -25,7 +25,13 @@ const productionSoListColumns = (source) => {
   };
   visit(file);
   assert.ok(initializer, "production HEADER declaration was not found");
-  return `${stringExpressionValue(initializer).replace(/,\s*customer_po_image_b64/, "")}, proceeded_at, paid_total_centi, balance_centi_live`
+  /* The suffix LIST_COLS appends to HEADER, hand-copied — so a change to it
+     shows up here as a red test rather than as a benchmark quietly measuring a
+     projection production stopped issuing. `proceeded_at` was in this suffix
+     until 2026-08-18; note that removing it from the route WITHOUT removing it
+     here left this test GREEN while describing the wrong world, which is why
+     it is spelled out rather than derived. */
+  return `${stringExpressionValue(initializer).replace(/,\s*customer_po_image_b64/, "")}, paid_total_sen, balance_sen_live`
     .split(", ")
     .map((column) => column.trim());
 };

@@ -33,7 +33,8 @@ Verified against `main` @ `8f8427ed`. Line citations are that commit.
 | Desktop "my cases" | `frontend/src/pages/MyCases.tsx` | Assignee-scoped card view (`MyCases`, `MyCaseDetail`). |
 | Desktop sub-views | `ServiceMetrics.tsx`, `ServiceSettings.tsx`, `ServiceLeadTimePortal.tsx` | Imported by `ServiceCases.tsx:79-81`. |
 | Mobile (list + detail + create) | `frontend/src/mobile/MobileServiceCase.tsx` | 3,042 lines. Tabbed detail (Overview / Stage / Info / Timeline), `NewCaseSheet` at `:1775`. |
-| Shared stage logic | `frontend/src/vendor/scm/lib/assr/stages.ts` | 178 lines, no React, no I/O. The one place the pipeline is defined. |
+| Shared stage logic | `frontend/src/vendor/scm/lib/assr/stages.ts` | No React, no I/O. The one place the PIPELINE (order, supplier-only rule, sub-statuses) is defined. It no longer holds the words. |
+| Shared stage WORDS | `backend/src/scm/shared/assr-stage-labels.ts` + `frontend/src/vendor/scm/lib/assr-stage-labels.ts` | Byte-identical pair, refereed by `check-shared-mirrors.mjs --strict`. Every stage label — including `voided`, which the pipeline table correctly has no row for. |
 
 Desktop routes: `/assr`, `/assr/:id`, `/my-cases`, `/my-cases/:id`
 (`frontend/src/App.tsx:366-416`). Mobile mounts `MobileServiceCase` for
@@ -45,6 +46,12 @@ bottom tab (`:756`).
 `frontend/src/vendor/scm/lib/assr/stages.ts` (`ASSR_STAGES`) is the canonical
 ordered table; the backend's `ALL_STAGES` (`backend/src/services/assr.ts`)
 carries the same seven plus the terminal `voided` below.
+
+`ASSR_STAGES` owns the ORDER, not the WORDS. Each row's `long` is read from
+`assr-stage-labels.ts`, which is where every surface — the portal, the printed
+report, desktop and mobile — gets its stage wording. The two questions were
+fused until 2026-08-18 and that is what produced the `voided` bug recorded
+below.
 
 **Order changed 2026-08-11 (Nico): Solution now comes BEFORE Verification** —
 decide the fix first, then inspect/verify.
@@ -64,6 +71,15 @@ decide the fix first, then inspect/verify.
 not warranty-covered, parallel to `completed`, never a step. It is in the
 backend `Stage` union and in `ALL_STAGES` (so `transitionStage` accepts it) but
 absent from `ASSR_STAGES`, so no surface renders it as a stage chip.
+
+That last fact used to have a bad consequence, because `ASSR_STAGES` also owned
+the stage WORDS: a surface needing a word for a non-step had to invent one. The
+customer portal's `customerStatusFor` never grew a `voided` arm and fell through
+to `default: { label: stage }`, so the portal printed the raw slug `voided` — and
+since `portal.ts` builds the salesperson stepper by mapping `ALL_STAGES` through
+it, that slug appeared as a step label on EVERY sales-portal view. The words now
+live in `assr-stage-labels.ts`, which answers for every value the column can
+hold, step or not; `ASSR_STAGES` still (correctly) has no `voided` row.
 `statusForStage` maps both `completed` and `voided` to "Closed". The difference
 that matters: BOTH stamp `closed_at` and stop the SLA clock, but only
 `completed` stamps `completion_date` and feeds the satisfaction survey — a
@@ -145,6 +161,42 @@ to collide on.
 The desktop comment at `ServiceCases.tsx` saying *"server still accepts a null
 category"* is **stale** — the server `hasCategory` guard is the authority now.
 
+### The SO picker: a refusal used to render as "no results"
+
+*Create Service Case* stays disabled until a Sales Order is linked, so **the SO
+picker is the gate on the whole form**. When it finds nothing, the button is grey
+and the person is stuck — and until 2026-08-19 the screen could not say why.
+
+`useSoSearch` destructured only `{ data, isFetching }` from its `useQuery` and
+returned `data?.results ?? []`. **The error was dropped**, so a refusal rendered
+byte-identical to an honest empty answer. That matters because `GET
+/api/assr/search-so` can come back empty for three unrelated reasons:
+
+| | cause | fix |
+| --- | --- | --- |
+| 1 | `requireServiceCaseAccess()` 403s the caller | see the gate note below |
+| 2 | the caller does not hold HOUZS, so `assr.ts:1256` skips the AutoCount mirror where a bare `SO-XXXXXX` lives | grant it on the Team screen |
+| 3 | the order is not in the mirror, or its `doc_no` is spelled differently | `?since=` backfill — see `docs/modules/system-health.md` |
+
+The hook now returns `error` and the picker renders it **instead of** the
+not-found line. `check-silent-mutations` enforces this for `useMutation`, not
+`useQuery`, which is how it survived.
+
+**The gate is TEXT, and that is the part nobody thinks to check.**
+`canAccessServiceCases` (`assr.ts:98-106`) admits the `service_cases.read` holder
+**or** `isSalesUser` **or** `isDirectorUser`, and `isSalesUser`
+(`services/pmsAccess.ts:146-152`) tests `position_name` against `/^sales/i` and
+`department_name` for the substring "sales". So a real salesperson whose position
+or department field is blank, or spelled another way ("Executive Sales" fails
+`/^sales/i`), is refused — and their permission list looks perfectly fine.
+
+**Worked example, 2026-08-19.** A salesperson could not raise a case against
+`SO-005263`. Two hypotheses were raised and both were guesses, because the screen
+carried nothing that separated them. The read-only diagnostic
+(`Actions -> Why can this person not find this SO`) settled it: he held HOUZS,
+his position read "Sales Executive" and his department "Sales Department", so the
+gate admitted him — the order was simply never collected into the mirror. Cause 3.
+
 ### Complaint date is automatic and locked
 
 - Server stamps it: `createAssrCase` accepts an explicit `complained_date`
@@ -213,6 +265,7 @@ is the ones that matter; the full machine-checked gate list is
 | GET | `/api/assr/export.csv`, `/:id/timeline.csv` | `requireServiceCaseAccess()` `:1103`, `:2714` | Exports |
 | POST/DELETE | `/:id/track-link`, `/:id/supplier-link`, `/:id/survey-token` | `service_cases.write` `:1765`, `:1842`, `:1890` | Mint / revoke portal tokens |
 | PUT | `/:id/attachments`, `/:id/attachments/thumb` | `service_cases.write` `:2881`, `:2928` | R2 upload (+ thumb) |
+| GET | `/attachments/:key{.+}` | scope via `caseInCallerScope` `:3212` | Streams the R2 object. Sends `X-Content-Type-Options: nosniff` (PR #2522) so the server-derived content-type cannot be MIME-sniffed into html/svg — parity with `mail-center.ts`'s INLINE_SAFE serve. |
 | POST/PATCH | `/:id/logistics`, `/:id/items`, `/:id/notes` | `service_cases.write` `:3051`, `:2799`, `:2656` | Child records |
 | PUT/POST/PATCH/DELETE | `/settings`, `/lookups/:kind*` | `service_cases.manage` `:321-475` | Admin config (read is `:296` / `:371`) |
 | POST | `/bulk/archive`, `/bulk/unarchive`, `/bulk/assign`, `/run-escalation` | `service_cases.manage` `:1025`, `:1042`, `:1058`, `:2057` | Bulk + manual SLA sweep |
@@ -531,7 +584,8 @@ module that means:
 
 | Change | Desktop | Mobile | Shared |
 |---|---|---|---|
-| Stage pipeline, stage labels, supplier-only rule, sub-statuses | `pages/ServiceCases.tsx` (`DETAIL_STAGES` `:5036`, `getActiveStages` `:5058`) | `mobile/MobileServiceCase.tsx` (`STAGES` `:74`, `activeMStages` `:78`, `PHASE_DEFS` `:83`) | **`vendor/scm/lib/assr/stages.ts`** — put the rule HERE; both surfaces already import it |
+| Stage pipeline, supplier-only rule, sub-statuses | `pages/ServiceCases.tsx` (`DETAIL_STAGES`, `getActiveStages`) | `mobile/MobileServiceCase.tsx` (`STAGES`, `activeMStages`, `PHASE_DEFS`) | **`vendor/scm/lib/assr/stages.ts`** — put the rule HERE; both surfaces already import it |
+| Stage LABELS (what any reader sees for a stage) | `pages/ServiceCases.tsx`, `pages/MyCases.tsx`, `portal/pages/PortalSupplierCase.tsx` | `mobile/MobileServiceCase.tsx` (`prettyStage`) | **`vendor/scm/lib/assr-stage-labels.ts`** and its byte-identical backend twin — the words had five hand-written homes and the customer-facing one printed a raw slug |
 | Intake required fields | `ServiceCases.tsx:2857-2872` (disabled gate) + `:2425-2467` (submit) | `MobileServiceCase.tsx:1921` (`valid`) + `:1858-1890` (payload) | server guard `backend/src/routes/assr.ts:1548-1566` — change this FIRST |
 | Enum option lists (priority / issue category / resolution / verification / QC) | `ServiceCases.tsx` lookups `:2251-2260`, `:2956-2968` | `MobileServiceCase.tsx:92-118` hardcoded fallbacks + `useLookupNames`/`useLookupSlugs` `:215` | `/api/assr/lookups/:kind` is the source; the constants are only a pre-fetch fallback |
 | Patchable fields | `InlineEdit` sites in `ServiceCases.tsx` | `EditableAcc` field list `MobileServiceCase.tsx:1197` | `PATCH_FIELDS` `backend/src/services/assr.ts:785-830` |
@@ -553,3 +607,21 @@ supplier-only stages with the wrong progress denominator.
   `do_date` or own-team `inspection_visit_at` also surface as fleet jobs on the
   delivery board.
 - `BUG-HISTORY.md` — read the Service Case entries before touching this module.
+
+## The pre-auth intake endpoints are scoped to their SECRET's company (2026-08-18)
+
+`GET /api/assr-form-intake/status-export` and `POST /api/assr-form-intake/delivery-dates`
+are pre-auth by design — Google's servers call them, there is no session and no
+`X-Company-Id`, so `companyContext` never runs. That is why neither could be
+given a caller's predicate, and why both ran unscoped across BOTH companies: the
+export returned `customer_name`, `phone`, `addr1-4` and `complaint_issue` for
+every non-archived case, and `/delivery-dates` resolved a case by `assr_no` —
+which is not unique across companies — and UPDATEd it.
+
+The rule now: **each shared secret carries its own company.** `FORM_INTAKE_KEY`
+and `SHEET_SYNC_KEY` are both Houzs Century artifacts (the staff service-request
+form and the HC Delivery sheet), so both map to `HOUZS` in
+`INTAKE_KEY_COMPANY` (`backend/src/routes/assrFormIntake.ts`). A future 2990
+sheet gets its OWN key and its own row there; it must never be handed one of
+these two. A readable companies master with no row for the code is a
+MISCONFIGURATION and answers 503 — it does not fall back to "no predicate".

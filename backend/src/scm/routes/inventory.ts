@@ -13,9 +13,9 @@
 //                                                ?category=BEDFRAME&warehouseId&search
 //                                                ?showAll=true → LEFT JOIN every SKU
 //   GET   /inventory/movements                — ledger (filtered)
-//   GET   /inventory/lots/:productCode        — FIFO lots for one product
+//   GET   /inventory/lots/:itemCode        — FIFO lots for one product
 //   GET   /inventory/batches                  — open lots grouped by (warehouse, batch)
-//                                                ?warehouseId&productCode (Stage 2 sofa batch view)
+//                                                ?warehouseId&itemCode (Stage 2 sofa batch view)
 //   GET   /inventory/cogs                     — COGS stream (consumption flat list)
 //   GET   /inventory/value                    — inventory valuation (qty × cost)
 //   GET   /inventory/reservations             — open lots + the READY SO demand
@@ -40,7 +40,7 @@ import { enrichVariantKeyRowsWithFabricSupplierCode } from '../lib/fabric-suppli
 import {
   isConsignmentLotSource, isMakeToOrderCategory, distributeAssignedToLots,
 } from '../lib/inventory-movements';
-import { computeVariantKey, effectiveDelivery, isServiceLine, type VariantAttrs } from '../shared';
+import { computeVariantKey, effectiveDelivery, effectiveSoDelivery, isServiceLine, type VariantAttrs } from '../shared';
 import { warehouseLabel } from '../lib/warehouse-label';
 import { computeMrp, mrpStockAssignment, stockAssignmentKey } from './mrp';
 import { loadLeadBuffers } from '../../services/agents/procurement-learning';
@@ -68,20 +68,20 @@ import { canViewScmFinance } from '../lib/houzs-perms';
    rather than by re-declaring the shared vocabulary. Checked against
    scm/lib/finance-keys.ts on 2026-08-15: SEVEN of these eight columns appear
    in NO canonical list — unit_cost_sen, total_cost_sen, value_sen, cost_sen,
-   avg_cost_sen, margin_sen, main_supplier_price_centi. They are STOCK
+   avg_cost_sen, margin_sen, main_supplier_price_sen. They are STOCK
    VALUATION columns and `_sen`-denominated, while the document vocabulary
-   (SO_FINANCE_KEYS / SO_ITEM_FINANCE_KEYS) is `_centi`. Different table,
+   (SO_FINANCE_KEYS / SO_ITEM_FINANCE_KEYS) is `_sen`. Different table,
    different denomination — folding them into the shared list would make it
    wrong for the documents that list exists for.
 
-   The ONE overlap is `unit_cost_centi`, which IS in SO_ITEM_FINANCE_KEYS.
+   The ONE overlap is `unit_cost_sen`, which IS in SO_ITEM_FINANCE_KEYS.
    Kept here deliberately: this route emits it on inventory rows too, and a
    subset that silently omitted it would leak a cost the SO path strips.
    If this list ever loses its `_sen` columns, delete it and import instead. */
 const INVENTORY_FINANCE_KEYS = [
   'unit_cost_sen', 'total_cost_sen', 'value_sen', 'cost_sen', 'avg_cost_sen',
   // eslint-disable-next-line no-restricted-syntax -- per-document subset; see the note above the declaration
-  'main_supplier_price_centi', 'margin_sen', 'unit_cost_centi',
+  'main_supplier_price_sen', 'margin_sen', 'unit_cost_sen',
 ] as const;
 
 /** Drop the finance columns from a row set. Caller decides WHETHER. */
@@ -363,12 +363,12 @@ export const listInventoryHandler = async (c: any) => {
   const showAll = c.req.query('showAll') === 'true';
 
   const tableName = showAll ? 'v_inventory_all_skus' : 'inventory_balances';
-  // showAll = catalog rollup (one row per SKU incl. zero, product_code level).
-  // default = live balances, now one row per (warehouse, product_code,
+  // showAll = catalog rollup (one row per SKU incl. zero, item_code level).
+  // default = live balances, now one row per (warehouse, item_code,
   // variant_key) so the UI can break a SKU into its attribute-composition rows.
   const cols = showAll
-    ? 'warehouse_id, warehouse_code, warehouse_name, product_code, product_name, category, size_label, qty, last_movement_at, value_sen, main_supplier_code, main_supplier_name'
-    : 'warehouse_id, product_code, variant_key, product_name, qty, last_movement_at';
+    ? 'warehouse_id, warehouse_code, warehouse_name, item_code, product_name, category, size_label, qty, last_movement_at, value_sen, main_supplier_code, main_supplier_name'
+    : 'warehouse_id, item_code, variant_key, product_name, qty, last_movement_at';
 
   // PostgREST's default 1000-row cap silently truncates stock balances —
   // partial stock reads like MISSING stock (showAll returns 17,115 rows live).
@@ -378,7 +378,7 @@ export const listInventoryHandler = async (c: any) => {
   const { data, error } = await paginateAll((from, to) => {
     let q = sb.from(tableName).select(cols);
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
-    if (s) q = q.or(`product_code.ilike.%${s}%,product_name.ilike.%${s}%`);
+    if (s) q = q.or(`item_code.ilike.%${s}%,product_name.ilike.%${s}%`);
     if (showAll && category && category !== 'all') q = q.eq('category', category);
     // multi-company: BOTH reads are per-company now. inventory_balances has
     // carried company_id since mig 0084; the showAll SKU rollup
@@ -389,7 +389,7 @@ export const listInventoryHandler = async (c: any) => {
     // degrades to no predicate when the active company is unresolved
     // (pre-migration / cold-start), so single-company Houzs is unchanged.
     q = scopeToCompany(q, c);
-    return q.order('product_code').range(from, to);
+    return q.order('item_code').range(from, to);
   });
   if (error) {
     if (/relation .* does not exist/i.test(error.message) || /column .* does not exist/i.test(error.message)) {
@@ -401,9 +401,15 @@ export const listInventoryHandler = async (c: any) => {
   /* Show active warehouses PLUS consignment/showroom warehouses (those are kept
      is_active=false so they stay out of the normal GRN/DO pickers) — so consigned
      stock sitting at a showroom is visible in Inventory. (2026-06-05) */
-  const { data: whs } = await sb.from('warehouses')
+  /* SCOPED like every other read in this handler. This one was missed: the
+     balances above are scoped, but the warehouse master was not, so the response
+     carried the OTHER company's warehouse codes, names and — the part that
+     mattered — their warehouse UUIDs. Those ids are what POST /stock-transfers
+     takes from a request body, so this read was the practical enabler for a
+     cross-company stock movement. Same helper as GET /warehouses (:127). */
+  const { data: whs } = await scopeToCompany(sb.from('warehouses')
     .select('id, code, name, is_consignment')
-    .or('is_active.eq.true,is_consignment.eq.true');
+    .or('is_active.eq.true,is_consignment.eq.true'), c);
   return c.json({ balances: data ?? [], warehouses: whs ?? [] });
 };
 
@@ -478,7 +484,7 @@ async function deliveredReturnedBySoItem(
 }
 
 /* ── Product totals (AutoCount-style list view) — PR #38 ─────────────────
-   One row per product_code with summed qty across all warehouses + main
+   One row per item_code with summed qty across all warehouses + main
    supplier. Double-click a row in the UI to drill into per-warehouse
    breakdown via GET /inventory?showAll=true&search=... */
 inventory.get('/products', async (c) => {
@@ -498,9 +504,9 @@ inventory.get('/products', async (c) => {
   const { data, error } = await paginateAll((from, to) => {
     let q = sb.from('v_inventory_product_totals').select('*');
     q = scopeToCompany(q, c); // multi-company: isolate product totals to the active company (view exposes company_id, mig 0106)
-    if (s) q = q.or(`product_code.ilike.%${s}%,product_name.ilike.%${s}%`);
+    if (s) q = q.or(`item_code.ilike.%${s}%,product_name.ilike.%${s}%`);
     if (category && category !== 'all') q = q.eq('category', category);
-    return q.order('product_code').range(from, to);
+    return q.order('item_code').range(from, to);
   });
   if (error) {
     if (/relation .* does not exist/i.test(error.message)) {
@@ -510,7 +516,7 @@ inventory.get('/products', async (c) => {
   }
 
   /* Owner 2026-07-24 six-column planning model (supersedes the reserve-7d/14d
-     picture). Each SKU row (one per product_code, across variants) carries:
+     picture). Each SKU row (one per item_code, across variants) carries:
        stock             = on-hand now (warehouse-scoped when warehouseId set)
        incoming_qty      = outstanding PO qty ARRIVING WITHIN ~30 DAYS (effective ETA)
        incoming_pos      = the covering PO(s) + ETA for that incoming qty (drill)
@@ -524,7 +530,7 @@ inventory.get('/products', async (c) => {
      so the DELIVERED-exclusion logic (deliveredReturnedBySoItem, below) is
      unchanged. */
   const products = (data ?? []) as Array<Record<string, unknown>>;
-  const codes = products.map((p) => String(p.product_code));
+  const codes = products.map((p) => String(p.item_code));
   /* GET /products. DELIBERATELY NOT shared/so-terminal-states.ts, which carries
      SIX. This four-status set omits DRAFT and SHIPPED, so a draft or shipped
      order still counts as open demand HERE while MRP and the allocator treat it
@@ -557,17 +563,17 @@ inventory.get('/products', async (c) => {
   // Warehouse-scoped Stock override (ask A) — only populated when a warehouse is
   // chosen; otherwise the company-wide totals view figure stands.
   const whStock = new Map<string, number>();
-  // OWNED value per product_code, summed from the open FIFO lots below (excluding
+  // OWNED value per item_code, summed from the open FIFO lots below (excluding
   // consignment-sourced lots). This OVERRIDES the value column in BOTH the
   // company-wide and warehouse-scoped cases so the list value never counts
   // consignment stock — matching the Stock Breakdown drawer's owned subtotal and
   // the Analytics figures (owner rule, BUG-HISTORY 2026-07-25).
   const ownedValueSen = new Map<string, number>();
-  // OWNED qty per product_code (consignment lots excluded), so the list's avg
+  // OWNED qty per item_code (consignment lots excluded), so the list's avg
   // unit cost divides owned value by OWNED qty — not total_qty (which still
   // counts consignment units and would dilute the average) (owner 2026-07-25).
   const ownedQty = new Map<string, number>();
-  /* HELD (consignment-sourced) open-lot qty per product_code — the other half of
+  /* HELD (consignment-sourced) open-lot qty per item_code — the other half of
      the lot ledger, read straight from the lots (see the split below). */
   const heldQty = new Map<string, number>();
   /* HELD (consignment) value — reported SEPARATELY, never inside inventory
@@ -575,7 +581,7 @@ inventory.get('/products', async (c) => {
      consignment value". */
   const heldValueSen = new Map<string, number>();
   /* On-hand standing in a NON-SELLING warehouse (showroom / display / service),
-     per product_code. Feeds `sellable_surplus_qty` below so the list's Dead/Spare
+     per item_code. Feeds `sellable_surplus_qty` below so the list's Dead/Spare
      badge stops calling a display piece idle. */
   const nonSellingQty = new Map<string, number>();
 
@@ -586,10 +592,10 @@ inventory.get('/products', async (c) => {
     // scopes, so it no longer reads v_inventory_value (which counts consignment).
     if (warehouseId) {
       const { data: bal } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
-        .from('inventory_balances').select('product_code, qty'), c)
-        .eq('warehouse_id', warehouseId).in('product_code', batch).range(from, to));
-      for (const r of (bal ?? []) as Array<{ product_code: string; qty: number }>) {
-        whStock.set(r.product_code, (whStock.get(r.product_code) ?? 0) + Number(r.qty ?? 0));
+        .from('inventory_balances').select('item_code, qty'), c)
+        .eq('warehouse_id', warehouseId).in('item_code', batch).range(from, to));
+      for (const r of (bal ?? []) as Array<{ item_code: string; qty: number }>) {
+        whStock.set(r.item_code, (whStock.get(r.item_code) ?? 0) + Number(r.qty ?? 0));
       }
     }
 
@@ -604,10 +610,10 @@ inventory.get('/products', async (c) => {
       : [...nonSellingIds];
     if (scopedNonSelling.length > 0) {
       const { data: nsBal } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
-        .from('inventory_balances').select('product_code, qty'), c)
-        .in('warehouse_id', scopedNonSelling).in('product_code', batch).range(from, to));
-      for (const r of (nsBal ?? []) as Array<{ product_code: string; qty: number }>) {
-        nonSellingQty.set(r.product_code, (nonSellingQty.get(r.product_code) ?? 0) + Number(r.qty ?? 0));
+        .from('inventory_balances').select('item_code, qty'), c)
+        .in('warehouse_id', scopedNonSelling).in('item_code', batch).range(from, to));
+      for (const r of (nsBal ?? []) as Array<{ item_code: string; qty: number }>) {
+        nonSellingQty.set(r.item_code, (nonSellingQty.get(r.item_code) ?? 0) + Number(r.qty ?? 0));
       }
     }
 
@@ -657,9 +663,9 @@ inventory.get('/products', async (c) => {
     // ~30 days").
     const { data: poItems } = await chunkIn(codes, (batch, from, to) => scopeToCompany(sb
       .from('purchase_order_items')
-      .select('material_code, qty, received_qty, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, warehouse_id, po:purchase_orders!inner(po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id)'), c)
-      .in('material_code', batch).range(from, to));
-    for (const r of (poItems ?? []) as Array<{ material_code: string; qty: number; received_qty: number | null; delivery_date: string | null; supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null; warehouse_id: string | null; po: { po_number: string; status: string; expected_at: string | null; supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null; purchase_location_id: string | null } | Array<{ po_number: string; status: string; expected_at: string | null; supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null; purchase_location_id: string | null }> | null }>) {
+      .select('item_code, qty, received_qty, delivery_date, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, warehouse_id, po:purchase_orders!inner(po_number, status, expected_at, supplier_delivery_date_2, supplier_delivery_date_3, supplier_delivery_date_4, purchase_location_id)'), c)
+      .in('item_code', batch).range(from, to));
+    for (const r of (poItems ?? []) as Array<{ item_code: string; qty: number; received_qty: number | null; delivery_date: string | null; supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null; warehouse_id: string | null; po: { po_number: string; status: string; expected_at: string | null; supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null; purchase_location_id: string | null } | Array<{ po_number: string; status: string; expected_at: string | null; supplier_delivery_date_2: string | null; supplier_delivery_date_3: string | null; supplier_delivery_date_4: string | null; purchase_location_id: string | null }> | null }>) {
       const po = Array.isArray(r.po) ? r.po[0] : r.po;
       if (!po || !PO_LIVE.has(po.status)) continue;
       const left = Number(r.qty ?? 0) - Number(r.received_qty ?? 0);
@@ -671,8 +677,8 @@ inventory.get('/products', async (c) => {
         ?? null;
       const eta = rawEta ? rawEta.slice(0, 10) : null;
       if (!eta || eta > d30) continue; // near-term window only
-      incoming.set(r.material_code, (incoming.get(r.material_code) ?? 0) + left);
-      const arr = incomingPos.get(r.material_code) ?? [];
+      incoming.set(r.item_code, (incoming.get(r.item_code) ?? 0) + left);
+      const arr = incomingPos.get(r.item_code) ?? [];
       const existing = arr.find((x) => x.po_number === po.po_number);
       if (existing) {
         existing.qty += left;
@@ -680,7 +686,7 @@ inventory.get('/products', async (c) => {
       } else {
         arr.push({ po_number: po.po_number, eta, qty: left });
       }
-      incomingPos.set(r.material_code, arr);
+      incomingPos.set(r.item_code, arr);
     }
 
     const { data: lots } = await chunkIn(codes, (batch, from, to) => {
@@ -689,41 +695,41 @@ inventory.get('/products', async (c) => {
         // source_doc_type/no classify each lot OWNED vs CONSIGNMENT; remaining_value_sen
         // (= qty_remaining * unit_cost_sen) is the per-lot owned-value basis, identical
         // to the drawer's buildStockBreakdown formula.
-        .select('product_code, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c) // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
-        .in('product_code', batch);
+        .select('item_code, received_at, qty_remaining, remaining_value_sen, source_doc_type, source_doc_no'), c) // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
+        .in('item_code', batch);
       if (warehouseId) lq = lq.eq('warehouse_id', warehouseId); // ask A — oldest lot within this warehouse
       return lq.range(from, to);
     });
-    for (const r of (lots ?? []) as Array<{ product_code: string; received_at: string | null; qty_remaining: number | null; remaining_value_sen: number | null; source_doc_type: string | null; source_doc_no: string | null }>) {
+    for (const r of (lots ?? []) as Array<{ item_code: string; received_at: string | null; qty_remaining: number | null; remaining_value_sen: number | null; source_doc_type: string | null; source_doc_no: string | null }>) {
       // Owner rule (BUG-HISTORY 2026-07-25): consignment stock shows QUANTITY but
       // is EXCLUDED from inventory VALUE. Classify by the lot SOURCE (never the
       // warehouse flag) and sum OWNED value only, so the list value column matches
       // the Stock Breakdown drawer's owned subtotal and the Analytics figures.
       if (!isConsignmentLotSource(r.source_doc_type, r.source_doc_no)) {
-        ownedValueSen.set(r.product_code, (ownedValueSen.get(r.product_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
-        ownedQty.set(r.product_code, (ownedQty.get(r.product_code) ?? 0) + Number(r.qty_remaining ?? 0));
+        ownedValueSen.set(r.item_code, (ownedValueSen.get(r.item_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
+        ownedQty.set(r.item_code, (ownedQty.get(r.item_code) ?? 0) + Number(r.qty_remaining ?? 0));
         /* AGE from OWNED lots only. It used to read every open lot, so a row
            with zero owned stock aged by somebody else's consignment pieces —
            sorting by Age then buried the goods that had really sat longest.
            Owner, 2026-08-06: "age 的计算为什么不是根据库存？当我 sort 的时候…
            我就看不到到底是哪一个东西放得最久". No owned lot → no age. */
         if (r.received_at) {
-          const cur = oldestLot.get(r.product_code);
-          if (!cur || r.received_at < cur) oldestLot.set(r.product_code, r.received_at);
+          const cur = oldestLot.get(r.item_code);
+          if (!cur || r.received_at < cur) oldestLot.set(r.item_code, r.received_at);
         }
       } else {
         /* HELD read from the lots directly, not derived as (movement stock −
            owned lots). The derived form mixed the two ledgers, so whenever they
            disagreed the held figure absorbed the difference and reported a
            consignment quantity that no document supports. */
-        heldQty.set(r.product_code, (heldQty.get(r.product_code) ?? 0) + Number(r.qty_remaining ?? 0));
-        heldValueSen.set(r.product_code, (heldValueSen.get(r.product_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
+        heldQty.set(r.item_code, (heldQty.get(r.item_code) ?? 0) + Number(r.qty_remaining ?? 0));
+        heldValueSen.set(r.item_code, (heldValueSen.get(r.item_code) ?? 0) + Number(r.remaining_value_sen ?? 0));
       }
     }
   }
 
   const enriched = products.map((p) => {
-    const code = String(p.product_code);
+    const code = String(p.item_code);
     /* SERVICE SKUs hold no stock — a delivery fee is not a thing on a shelf.
        They were nonetheless getting the SO-demand aggregates summed onto them,
        so SVC-DELIVERY read "Scheduled −18 · Unscheduled 20 · Spare −38" as if
@@ -875,13 +881,13 @@ function byDateAsc(a: string | null, b: string | null): number {
    Migration 0095. One row per warehouse + attribute composition, with qty
    (from balances) + value (from open FIFO lots) + a readable variant label
    resolved client-side. This is what powers the SKU → attribute-rows view. */
-inventory.get('/breakdown/:productCode', async (c) => {
+inventory.get('/breakdown/:itemCode', async (c) => {
   const sb = c.get('supabase');
-  const productCode = c.req.param('productCode');
+  const itemCode = c.req.param('itemCode');
 
   const { data: bal, error: balErr } = await sb.from('inventory_balances')
     .select('warehouse_id, variant_key, qty, last_movement_at')
-    .eq('product_code', productCode)
+    .eq('item_code', itemCode)
     .eq('company_id', activeCompanyId(c));
   if (balErr) {
     if (/relation .* does not exist/i.test(balErr.message) || /column .* does not exist/i.test(balErr.message)) {
@@ -897,7 +903,7 @@ inventory.get('/breakdown/:productCode', async (c) => {
   // (= qty_remaining * unit_cost_sen). Bounded — single product, one query.
   const { data: lots } = await scopeToCompany(sb.from('v_inventory_lots_open')
     .select('warehouse_id, variant_key, remaining_value_sen, source_doc_type, source_doc_no')
-    .eq('product_code', productCode), c); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
+    .eq('item_code', itemCode), c); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
   // The warehouse is_consignment flag still rides along for display grouping, but it
   // NEVER gates value — value is owned-only by lot SOURCE (a PCR mis-posted into a
   // normal warehouse would otherwise leak into owned value; BUG-HISTORY 2026-07-25).
@@ -920,7 +926,7 @@ inventory.get('/breakdown/:productCode', async (c) => {
         warehouse_name: w?.name ?? null,
         is_consignment: !!w?.is_consignment,
         variant_key: vk,
-        product_code: productCode,
+        item_code: itemCode,
         qty: Number(b.qty ?? 0),
         value_sen: valMap.get(`${b.warehouse_id}|${vk}`) ?? 0,
         last_movement_at: b.last_movement_at ?? null,
@@ -936,18 +942,18 @@ inventory.get('/breakdown/:productCode', async (c) => {
 inventory.get('/movements', async (c) => {
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
-  const productCode = c.req.query('productCode');
+  const itemCode = c.req.query('itemCode');
   const docType = c.req.query('docType');
   const dateFrom = c.req.query('dateFrom');
   const dateTo = c.req.query('dateTo');
   const limit = Math.min(500, Number(c.req.query('limit') ?? 200));
 
   let q = sb.from('inventory_movements')
-    .select('id, movement_type, warehouse_id, product_code, product_name, qty, unit_cost_sen, total_cost_sen, source_doc_type, source_doc_id, source_doc_no, reason_code, notes, performed_by, created_at')
+    .select('id, movement_type, warehouse_id, item_code, product_name, qty, unit_cost_sen, total_cost_sen, source_doc_type, source_doc_id, source_doc_no, reason_code, notes, performed_by, created_at')
     .order('created_at', { ascending: false })
     .limit(limit);
   if (warehouseId) q = q.eq('warehouse_id', warehouseId);
-  if (productCode) q = q.eq('product_code', productCode);
+  if (itemCode) q = q.eq('item_code', itemCode);
   if (docType) q = q.eq('source_doc_type', docType);
   if (dateFrom) q = q.gte('created_at', dateFrom);
   if (dateTo) q = q.lte('created_at', `${dateTo}T23:59:59Z`);
@@ -963,14 +969,14 @@ inventory.get('/movements', async (c) => {
 });
 
 /* ── FIFO lots drilldown for one product ─────────────────────────────── */
-inventory.get('/lots/:productCode', async (c) => {
+inventory.get('/lots/:itemCode', async (c) => {
   const sb = c.get('supabase');
-  const productCode = c.req.param('productCode');
+  const itemCode = c.req.param('itemCode');
   const warehouseId = c.req.query('warehouseId');
   const includeClosed = c.req.query('includeClosed') === 'true';
 
   const tbl = includeClosed ? 'inventory_lots' : 'v_inventory_lots_open';
-  let q = sb.from(tbl).select('*').eq('product_code', productCode);
+  let q = sb.from(tbl).select('*').eq('item_code', itemCode);
   if (warehouseId) q = q.eq('warehouse_id', warehouseId);
   q = scopeToCompany(q, c); // FIFO lots are per-company (both table + view carry company_id).
   const { data, error } = await q.order('received_at', { ascending: true });
@@ -991,18 +997,18 @@ inventory.get('/lots/:productCode', async (c) => {
    Shape: one row per (warehouse_id, batch_no) with its component SKUs:
      { warehouseId, warehouseName, batchNo, supplierId, supplierName,
        receivedAt (earliest), totalRemaining,
-       components: [{ productCode, variantKey, productName, qtyRemaining,
+       components: [{ itemCode, variantKey, productName, qtyRemaining,
                       unitCostSen, receivedAt }] }
-   ?warehouseId filters; ?productCode keeps only batches that still hold that SKU.
+   ?warehouseId filters; ?itemCode keeps only batches that still hold that SKU.
    batch_no IS NULL lots (free GRN / un-batched stock) are excluded by design —
    only produced-to-PO stock carries a batch. */
 inventory.get('/batches', async (c) => {
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
-  const productCode = c.req.query('productCode');
+  const itemCode = c.req.query('itemCode');
 
   let q = sb.from('v_inventory_lots_open')
-    .select('warehouse_id, batch_no, product_code, variant_key, product_name, qty_remaining, unit_cost_sen, received_at')
+    .select('warehouse_id, batch_no, item_code, variant_key, product_name, qty_remaining, unit_cost_sen, received_at')
     .not('batch_no', 'is', null)
     .gt('qty_remaining', 0);
   q = scopeToCompany(q, c); // multi-company: isolate batches to the active company (view exposes company_id, mig 0106)
@@ -1011,7 +1017,7 @@ inventory.get('/batches', async (c) => {
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
 
   type Lot = {
-    warehouse_id: string; batch_no: string; product_code: string;
+    warehouse_id: string; batch_no: string; item_code: string;
     variant_key: string | null; product_name: string | null;
     qty_remaining: number; unit_cost_sen: number | null; received_at: string | null;
   };
@@ -1039,7 +1045,7 @@ inventory.get('/batches', async (c) => {
   }
 
   type Component = {
-    productCode: string; variantKey: string | null; productName: string | null;
+    itemCode: string; variantKey: string | null; productName: string | null;
     qtyRemaining: number; unitCostSen: number; receivedAt: string | null;
   };
   type Batch = {
@@ -1065,13 +1071,13 @@ inventory.get('/batches', async (c) => {
       };
       byBatch.set(key, b);
     }
-    // Merge same (product_code, variant_key) lots within a batch into one component.
-    const existing = b.components.find((c2) => c2.productCode === r.product_code && (c2.variantKey ?? '') === (r.variant_key ?? ''));
+    // Merge same (item_code, variant_key) lots within a batch into one component.
+    const existing = b.components.find((c2) => c2.itemCode === r.item_code && (c2.variantKey ?? '') === (r.variant_key ?? ''));
     if (existing) {
       existing.qtyRemaining += r.qty_remaining;
     } else {
       b.components.push({
-        productCode: r.product_code,
+        itemCode: r.item_code,
         variantKey: r.variant_key,
         productName: r.product_name,
         qtyRemaining: r.qty_remaining,
@@ -1085,7 +1091,7 @@ inventory.get('/batches', async (c) => {
   }
 
   let batches = [...byBatch.values()];
-  if (productCode) batches = batches.filter((b) => b.components.some((c2) => c2.productCode === productCode));
+  if (itemCode) batches = batches.filter((b) => b.components.some((c2) => c2.itemCode === itemCode));
   // FIFO order — oldest batch first (matches outbound consumption preference).
   batches.sort((a, b) => (a.receivedAt ?? '').localeCompare(b.receivedAt ?? ''));
 
@@ -1105,7 +1111,7 @@ inventory.get('/cogs', async (c) => {
   }
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
-  const productCode = c.req.query('productCode');
+  const itemCode = c.req.query('itemCode');
   const from = c.req.query('from');
   const to = c.req.query('to');
 
@@ -1115,7 +1121,7 @@ inventory.get('/cogs', async (c) => {
     let q = sb.from('v_cogs_entries').select('*');
     q = scopeToCompany(q, c); // multi-company: isolate COGS stream to the active company (view exposes company_id, mig 0106)
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
-    if (productCode) q = q.eq('product_code', productCode);
+    if (itemCode) q = q.eq('item_code', itemCode);
     if (from) q = q.gte('consumed_at', from);
     if (to)   q = q.lte('consumed_at', `${to}T23:59:59Z`);
     return q.range(pFrom, pTo);
@@ -1139,7 +1145,7 @@ inventory.get('/value', async (c) => {
     let q = sb.from('v_inventory_value').select('*');
     q = scopeToCompany(q, c); // multi-company: isolate valuation to the active company (view exposes company_id, mig 0106)
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
-    return q.order('product_code').range(from, to);
+    return q.order('item_code').range(from, to);
   });
   if (error) return c.json({ error: 'load_failed', reason: error.message }, 500);
   return c.json({ value: data ?? [] });
@@ -1166,7 +1172,7 @@ inventory.get('/analytics', async (c) => {
       // source_doc_type/no ride along so consignment-sourced lots can be excluded
       // from every VALUE figure below (owner rule, BUG-HISTORY 2026-07-25) — the
       // same classification the list value column and the Stock Breakdown drawer use.
-      .select('product_code, product_name, qty_remaining, remaining_value_sen, received_at, warehouse_id, source_doc_type, source_doc_no');
+      .select('item_code, product_name, qty_remaining, remaining_value_sen, received_at, warehouse_id, source_doc_type, source_doc_no');
     lotsQ = scopeToCompany(lotsQ, c); // multi-company: isolate open lots to the active company (view exposes company_id, mig 0106)
     if (warehouseId) lotsQ = lotsQ.eq('warehouse_id', warehouseId);
     return lotsQ.range(from, to);
@@ -1178,7 +1184,7 @@ inventory.get('/analytics', async (c) => {
   // ABC aren't computed off a truncated COGS window.
   const { data: cogs, error: cogsErr } = await paginateAll((from, to) => {
     let cogsQ = sb.from('v_cogs_entries')
-      .select('product_code, total_cost_sen, consumed_at, warehouse_id');
+      .select('item_code, total_cost_sen, consumed_at, warehouse_id');
     cogsQ = scopeToCompany(cogsQ, c); // multi-company: isolate COGS stream to the active company (view exposes company_id, mig 0106)
     if (warehouseId) cogsQ = cogsQ.eq('warehouse_id', warehouseId);
     return cogsQ.range(from, to);
@@ -1228,7 +1234,7 @@ inventory.get('/analytics', async (c) => {
     const val = Number(l.remaining_value_sen ?? 0);
     if (bucket) { bucket.qty += qty; bucket.valueSen += val; }
     totalValueSen += val;
-    const code = String(l.product_code ?? '');
+    const code = String(l.item_code ?? '');
     const p = prod.get(code) ?? { name: String(l.product_name ?? code), qty: 0, valueSen: 0 };
     p.qty += qty; p.valueSen += val;
     prod.set(code, p);
@@ -1250,7 +1256,7 @@ inventory.get('/analytics', async (c) => {
   const lastSold = new Map<string, string>();
   let trailingCogsTotal = 0;
   for (const e of cogsRows) {
-    const code = String(e.product_code ?? '');
+    const code = String(e.item_code ?? '');
     const at = String(e.consumed_at ?? '');
     const prev = lastSold.get(code);
     if (!prev || at > prev) lastSold.set(code, at);
@@ -1272,7 +1278,7 @@ inventory.get('/analytics', async (c) => {
   const deadStock = [...sellable.entries()]
     .filter(([code]) => !(trailingCogs.get(code) ?? 0))
     .map(([code, p]) => ({
-      product_code: code, product_name: p.name, qty: p.qty, valueSen: p.valueSen,
+      item_code: code, product_name: p.name, qty: p.qty, valueSen: p.valueSen,
       lastSoldAt: lastSold.get(code) ?? null,
     }))
     .sort((a, b) => b.valueSen - a.valueSen);
@@ -1281,7 +1287,7 @@ inventory.get('/analytics', async (c) => {
   const codes = new Set<string>([...prod.keys(), ...trailingCogs.keys()]);
   const ranked = [...codes]
     .map((code) => ({
-      product_code: code,
+      item_code: code,
       product_name: prod.get(code)?.name ?? code,
       cogsSen: trailingCogs.get(code) ?? 0,
       onHandValueSen: prod.get(code)?.valueSen ?? 0,
@@ -1349,14 +1355,14 @@ inventory.get('/reconcile', async (c) => {
    so a manual DECREASE adjustment can target the EXACT bucket it takes stock
    from — never into a non-existent or wrong-attribute/-batch bucket. ?warehouseId
    scopes to one warehouse. */
-inventory.get('/buckets/:productCode', async (c) => {
+inventory.get('/buckets/:itemCode', async (c) => {
   const sb = c.get('supabase');
-  const productCode = c.req.param('productCode');
+  const itemCode = c.req.param('itemCode');
   const warehouseId = c.req.query('warehouseId');
 
   let q = sb.from('v_inventory_lots_open')
     .select('warehouse_id, variant_key, batch_no, product_name, qty_remaining')
-    .eq('product_code', productCode);
+    .eq('item_code', itemCode);
   q = scopeToCompany(q, c); // multi-company: isolate stock buckets to the active company (view exposes company_id, mig 0106)
   if (warehouseId) q = q.eq('warehouse_id', warehouseId);
   const { data, error } = await q;
@@ -1410,11 +1416,11 @@ inventory.get('/buckets/:productCode', async (c) => {
 
    No allocation timestamp exists in the schema, so "reserved since" is the
    reserving SO's created_at — an honest proxy for the age of the claim, not a
-   fabricated allocation time. ?warehouseId / ?productCode narrow the scan. */
+   fabricated allocation time. ?warehouseId / ?itemCode narrow the scan. */
 inventory.get('/reservations', async (c) => {
   const sb = c.get('supabase');
   const warehouseId = c.req.query('warehouseId');
-  const productCode = c.req.query('productCode');
+  const itemCode = c.req.query('itemCode');
 
   // 1. Open lots (company-scoped) — the stock actually sitting on the shelf.
   //    source_doc_type / source_doc_no ride along so each lot can be classified
@@ -1422,17 +1428,17 @@ inventory.get('/reservations', async (c) => {
   //    warehouse flag, which leaks PCR stock mis-posted into a normal warehouse
   //    into owned value (BUG-HISTORY 2026-07-25). `id` lets the client key a lot.
   const { data: lotRows, error: lotErr } = await paginateAll<{
-    id: string; product_code: string; product_name: string | null; variant_key: string | null;
+    id: string; item_code: string; product_name: string | null; variant_key: string | null;
     warehouse_id: string; batch_no: string | null; qty_remaining: number | null;
     unit_cost_sen: number | null; received_at: string | null;
     source_doc_type: string | null; source_doc_no: string | null;
   }>((from, to) => {
     let q = sb.from('v_inventory_lots_open')
-      .select('id, product_code, product_name, variant_key, warehouse_id, batch_no, qty_remaining, unit_cost_sen, received_at, source_doc_type, source_doc_no')
+      .select('id, item_code, product_name, variant_key, warehouse_id, batch_no, qty_remaining, unit_cost_sen, received_at, source_doc_type, source_doc_no')
       .gt('qty_remaining', 0);
     q = scopeToCompany(q, c); // open lots are per-company (view exposes company_id, mig 0106)
     if (warehouseId) q = q.eq('warehouse_id', warehouseId);
-    if (productCode) q = q.eq('product_code', productCode);
+    if (itemCode) q = q.eq('item_code', itemCode);
     return q.order('received_at', { ascending: true }).range(from, to);
   });
   if (lotErr) return c.json({ error: 'load_failed', reason: lotErr.message }, 500);
@@ -1539,7 +1545,7 @@ inventory.get('/reservations', async (c) => {
   const byBucket = new Map<string, Claim[]>();  // key: `${warehouse_id}|${item_code}|${variant_key}`
   for (const r of readyRows) {
     const so = Array.isArray(r.so) ? r.so[0] : r.so;
-    const deliveryDate = (so?.amended_delivery_date ?? so?.customer_delivery_date) ?? null;
+    const deliveryDate = so ? effectiveSoDelivery(so) : null;
     const bn = r.allocated_batch_no ?? null;
     const claim: Claim = { docNo: r.doc_no, soCreatedAt: so?.created_at ?? null, qtyReady: Number(r.stock_qty_ready ?? 0), deliveryDate, viaBatch: Boolean(bn) };
     if (bn) {
@@ -1554,10 +1560,10 @@ inventory.get('/reservations', async (c) => {
   const { data: whs } = await sb.from('warehouses').select('id, code, name');
   const whMap = new Map((whs ?? []).map((w: { id: string; code: string; name: string }) => [w.id, w]));
 
-  // 3b. SKU category per product_code (set-based) — drives the make-to-order
+  // 3b. SKU category per item_code (set-based) — drives the make-to-order
   //     dead-stock emphasis (SOFA/BEDFRAME free stock is abnormal; MATTRESS free
   //     stock is normal). Null-safe: a lot for an uncatalogued code stays neutral.
-  const lotCodes = [...new Set(lots.map((l) => l.product_code).filter(Boolean))];
+  const lotCodes = [...new Set(lots.map((l) => l.item_code).filter(Boolean))];
   const categoryByCode = new Map<string, string | null>();
   if (lotCodes.length > 0) {
     const { data: prods } = await chunkIn(lotCodes, (batch, from, to) => scopeToCompany(sb
@@ -1598,7 +1604,7 @@ inventory.get('/reservations', async (c) => {
     // Group the FIFO-ordered lots by their MRP bucket key (warehouse|code|variant).
     const lotsByBucket = new Map<string, typeof lots>();
     for (const l of lots) {
-      const k = stockAssignmentKey(l.warehouse_id, l.product_code, l.variant_key ?? '');
+      const k = stockAssignmentKey(l.warehouse_id, l.item_code, l.variant_key ?? '');
       (lotsByBucket.get(k) ?? lotsByBucket.set(k, []).get(k)!).push(l);
     }
     for (const [k, bucketLots] of lotsByBucket.entries()) {
@@ -1636,9 +1642,9 @@ inventory.get('/reservations', async (c) => {
        batchless QUANTITY claims (FIFO can serve those from any lot of the
        bucket, this one included). Another batch's locked claims still never
        reach it, and an unbatched lot keeps the full bucket view it had. */
-    const bucketClaims = byBucket.get(`${l.warehouse_id}|${l.product_code}|${vk}`) ?? [];
+    const bucketClaims = byBucket.get(`${l.warehouse_id}|${l.item_code}|${vk}`) ?? [];
     const claims = l.batch_no
-      ? [...(byBatch.get(`${l.batch_no}|${l.product_code}`) ?? []), ...bucketClaims.filter((cl) => !cl.viaBatch)]
+      ? [...(byBatch.get(`${l.batch_no}|${l.item_code}`) ?? []), ...bucketClaims.filter((cl) => !cl.viaBatch)]
       : bucketClaims;
     // Collapse to one entry per SO doc; reserved-since = earliest claiming SO.
     const byDoc = new Map<string, Claim>();
@@ -1657,13 +1663,13 @@ inventory.get('/reservations', async (c) => {
     const mrpAsg = assignedByLotId.get(l.id);
     const assignedQty = mrpAsg?.assigned ?? 0;
     const freeQty = mrpAsg ? mrpAsg.free : qtyRemaining;
-    const category = categoryByCode.get(l.product_code) ?? null;
+    const category = categoryByCode.get(l.item_code) ?? null;
     return {
       id: l.id,
       warehouse_id: l.warehouse_id,
       warehouse_code: w?.code ?? null,
       warehouse_name: w?.name ?? null,
-      product_code: l.product_code,
+      item_code: l.item_code,
       product_name: l.product_name,
       variant_key: vk,
       batch_no: l.batch_no,

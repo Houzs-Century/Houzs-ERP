@@ -140,6 +140,38 @@ export function ProjectGantt({
     return out;
   }, [sections, sectionProgress, tasks]);
 
+  // Pre-compute week labels.
+  const weeks = useMemo(() => {
+    const out: { label: string; offsetDays: number }[] = [];
+    for (let w = 0; w < range.totalWeeks; w++) {
+      const day = addDays(range.start, w * 7);
+      out.push({
+        label: `${day.getUTCDate()}/${day.getUTCMonth() + 1}`,
+        offsetDays: w * 7,
+      });
+    }
+    return out;
+  }, [range]);
+
+  // Holiday bands depend only on the date range, not on any lane — so compute
+  // the holiday-day list ONCE here instead of re-scanning every day for every
+  // lane in the render below (was O(lanes × days): ~3,650 getHolidaysOn calls
+  // for a 1-year × 10-lane chart, every render).
+  const holidayBands = useMemo(() => {
+    const out: { i: number; title: string }[] = [];
+    for (let i = 0; i < range.totalDays; i++) {
+      const hols = getHolidaysOn(isoOnly(addDays(range.start, i)));
+      if (hols.length > 0) out.push({ i, title: hols.map((h) => h.name).join(", ") });
+    }
+    return out;
+  }, [range]);
+
+  // ALL HOOKS ABOVE THIS LINE. These two useMemos sat below the empty states
+  // until 2026-08-17, so a chart that rendered "no tasks yet" first and then
+  // gained a task called two more hooks on the second render than the first —
+  // React error #310. `range` is memoised above and never depends on either
+  // guard, so hoisting them changes nothing about what they compute.
+  //
   // Empty states
   if (tasks.length === 0) {
     return (
@@ -178,32 +210,6 @@ export function ProjectGantt({
     if (!t.due_date || t.status !== "pending") return false;
     return t.due_date < today;
   }
-
-  // Pre-compute week labels.
-  const weeks = useMemo(() => {
-    const out: { label: string; offsetDays: number }[] = [];
-    for (let w = 0; w < range.totalWeeks; w++) {
-      const day = addDays(range.start, w * 7);
-      out.push({
-        label: `${day.getUTCDate()}/${day.getUTCMonth() + 1}`,
-        offsetDays: w * 7,
-      });
-    }
-    return out;
-  }, [range]);
-
-  // Holiday bands depend only on the date range, not on any lane — so compute
-  // the holiday-day list ONCE here instead of re-scanning every day for every
-  // lane in the render below (was O(lanes × days): ~3,650 getHolidaysOn calls
-  // for a 1-year × 10-lane chart, every render).
-  const holidayBands = useMemo(() => {
-    const out: { i: number; title: string }[] = [];
-    for (let i = 0; i < range.totalDays; i++) {
-      const hols = getHolidaysOn(isoOnly(addDays(range.start, i)));
-      if (hols.length > 0) out.push({ i, title: hols.map((h) => h.name).join(", ") });
-    }
-    return out;
-  }, [range]);
 
   // ── Render ────────────────────────────────────────────────
   return (

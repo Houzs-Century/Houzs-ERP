@@ -209,6 +209,87 @@ export function activeCompanySql(c: CompanyScopeCtx, col = "company_id"): string
   return "";
 }
 
+/** A parameterised company predicate for a table keyed by company CODE. */
+export interface CompanyCodePredicate {
+  /** ` AND (...)` fragment to append to a WHERE, or "" to degrade. */
+  sql: string;
+  /** The values for the `?` placeholders in `sql`, in order. */
+  binds: string[];
+}
+
+/**
+ * PER-COMPANY for a table whose company column is the company CODE (text), not
+ * the numeric company_id — today that is `email_outbox.company_code` (mig 0094)
+ * and nothing else.
+ *
+ * BINDS, NOT INLINE. Every other raw-SQL helper here interpolates because it is
+ * interpolating VALIDATED INTEGERS. A company CODE is a string, and a string
+ * that reaches SQL by interpolation is a habit this file should not teach even
+ * once, so this one returns its values to be bound.
+ *
+ * THREE THINGS THE COLUMN ACTUALLY HOLDS, all of which had to be handled for
+ * the predicate to be a filter rather than a blanker. Read before simplifying:
+ *
+ *  1. The CODE ('HOUZS' / '2990'). What sendEmail is documented to store, and
+ *     what the security-critical rows carry: routes/auth.ts:374 (member_invite)
+ *     and :448 (password_reset) both pass defaultCompanyCodeForHost(...).
+ *  2. NULL. Most senders never pass companyCode at all (services/assrAlerts.ts,
+ *     services/projectReminders.ts, services/clientErrors.ts,
+ *     services/assrEscalation.ts, routes/settings.ts), so the column falls to
+ *     NULL. Migration 0094 defines that state: "NULL = legacy row -> HOUZS
+ *     identity", and the cron drain (services/email.ts:458) resolves it exactly
+ *     that way. So the BASE company owns the NULL rows — attributing them
+ *     anywhere else would be inventing a fact the drain contradicts.
+ *  3. The company_id AS TEXT. scm/lib/do-email.ts:180 and
+ *     scm/routes/mfg-purchase-orders.ts:4288 both pass
+ *     `String(row.company_id)`, i.e. "1" / "2", into a column that wants a
+ *     code. That is a real defect in its own right (it makes those emails'
+ *     From display name the bare number — see the BUG-HISTORY entry) and it is
+ *     NOT this helper's job to fix, but a predicate that ignored it would hide
+ *     every DO and PO email from BOTH companies' outbox rather than scope it.
+ *     So the ACTIVE company's own id-as-text is accepted alongside its code.
+ *
+ * The id-as-text alternative is dropped if any OTHER company's CODE is that
+ * same literal — a company literally coded "2" must not be reachable from the
+ * company whose id is 2. Impossible today ('HOUZS'/'2990'); cheap to hold.
+ */
+export function activeCompanyCodePred(
+  c: CompanyScopeCtx,
+  col = "company_code",
+): CompanyCodePredicate {
+  // UNRESOLVED (pre-migration / D1 test mirror / cold-start) → no predicate, so
+  // single-company Houzs serves unchanged. Same first branch as activeCompanySql.
+  if (allowedCompanyIds(c) === undefined) return { sql: "", binds: [] };
+
+  const id = Number(activeCompanyId(c));
+  const hasId = Number.isInteger(id) && id > 0;
+  const code = c.get("companyCode") as string | undefined;
+
+  const values: string[] = [];
+  if (typeof code === "string" && code.trim()) values.push(code.trim());
+  if (hasId) {
+    const others = ((c.get("companies") as CompanyRow[] | undefined) ?? []).filter(
+      (r) => Number(r.id) !== id,
+    );
+    if (!others.some((r) => String(r.code) === String(id))) values.push(String(id));
+  }
+
+  // RESOLVED but nothing to match on — the RESTRICTED-TO-NOTHING `[]` state, or
+  // a multi-company caller with no usable switcher header during a master blip.
+  // FAIL CLOSED, exactly as activeCompanySql does.
+  if (values.length === 0) return { sql: " AND 1=0", binds: [] };
+
+  const base = houzsCompanyId(c);
+  const ownsNull = base != null && hasId && base === id;
+  const inList = values.map(() => "?").join(", ");
+  return {
+    sql: ownsNull
+      ? ` AND (${col} IN (${inList}) OR ${col} IS NULL)`
+      : ` AND ${col} IN (${inList})`,
+    binds: values,
+  };
+}
+
 /**
  * THE BASE COMPANY, resolved from `companies.code === 'HOUZS'` on context — no
  * hardcoded id (the bigint differs across staging/prod).
@@ -424,7 +505,7 @@ export function withCompanyCode<T extends Record<string, unknown>>(
  *  carry no prefix at all, which read as anonymous next to `2990-DO-2608-001`.
  *  `HC-` is the house code the owner chose. Every other company keeps `<CODE>-`.
  */
-const BASE_COMPANY_CODE = "HOUZS";
+export const BASE_COMPANY_CODE = "HOUZS";
 const DOC_PREFIX_BY_COMPANY: Record<string, string> = {
   [BASE_COMPANY_CODE]: "HC-",
 };
@@ -732,10 +813,24 @@ export function crossCompanyConversionBlocked(
  * not resolve to "allowed". This is deliberately stricter than the rest of the
  * file, which degrades open — and the difference is the point.
  *
+ * ALSO GUARDS SOURCE **LINES**, not just source headers — pass `null` for
+ * docNoColumn. The header-level guard turned out to be only half the rule: on
+ * the purchase side the caller supplies a source LINE id per item
+ * (`purchaseOrderItemId` / `grnItemId` / `pcOrderItemId` / `pcReceiveItemId`)
+ * and the rollup writers address it as `.eq('id', <bodyId>)` with no predicate
+ * at all, so eight handlers proved the HEADER and then wrote `received_qty` /
+ * `invoiced_qty` / `returned_qty` onto whichever company owned the LINE. Every
+ * one of those line tables carries a NOT NULL `company_id` (migs 0083 / 0090),
+ * so the same rule applies unchanged — it simply had nothing to name, because a
+ * line has no document number of its own. `null` makes the refusal say "That
+ * document", which is what an operator can act on; passing the line's UUID as
+ * the doc number would be worse than saying nothing.
+ *
  * @param table       the source table, e.g. 'purchase_orders'
  * @param idColumn    its primary key, e.g. 'id'
  * @param docNoColumn the human document number to NAME in the refusal — an
- *                    operator cannot act on a uuid
+ *                    operator cannot act on a uuid. `null` for a LINE table,
+ *                    which has no such column.
  */
 export async function crossCompanySourceRefusal(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -743,7 +838,7 @@ export async function crossCompanySourceRefusal(
   c: CompanyScopeCtx,
   table: string,
   ids: Array<string | null | undefined>,
-  docNoColumn: string,
+  docNoColumn: string | null,
   idColumn = "id",
 ): Promise<
   | { blocked: ReturnType<typeof crossCompanyConversionBlocked> }
@@ -754,14 +849,14 @@ export async function crossCompanySourceRefusal(
   if (unique.length === 0) return null;
   const { data, error } = await sb
     .from(table)
-    .select(`${idColumn}, ${docNoColumn}, company_id`)
+    .select(docNoColumn ? `${idColumn}, ${docNoColumn}, company_id` : `${idColumn}, company_id`)
     .in(idColumn, unique);
   if (error) return { loadError: error.message };
   for (const row of (data ?? []) as Array<Record<string, unknown>>) {
     if (isCrossCompanySource(row.company_id, c)) {
       return {
         blocked: crossCompanyConversionBlocked(
-          (row[docNoColumn] as string | null) ?? null,
+          docNoColumn ? (row[docNoColumn] as string | null) ?? null : null,
           row.company_id,
           c,
         ),

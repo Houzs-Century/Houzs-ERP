@@ -31,7 +31,6 @@ export const CANCELLABLE_STATUSES: readonly string[] = [
 export type SoDetailGateHeader = {
   status?: string | null;
   has_children?: boolean | null;
-  proceeded_at?: string | null;
   processing_date?: string | null;
   /* Server-computed: a live (non-cancelled) Purchase Order already claims one of
      this SO's lines — 2990 only (owner 2026-08-12). NOT derivable client-side —
@@ -41,10 +40,10 @@ export type SoDetailGateHeader = {
      so the gate degrades to the date rule alone. */
   po_locked?: boolean | null;
   amendment_eligible?: boolean | null;
-  balance_centi?: number | null;
-  paid_centi_total?: number | null;
-  local_total_centi?: number | null;
-  total_revenue_centi?: number | null;
+  balance_sen?: number | null;
+  paid_sen_total?: number | null;
+  local_total_sen?: number | null;
+  total_revenue_sen?: number | null;
 };
 
 const upper = (s: string | null | undefined): string => (s ?? '').toUpperCase();
@@ -70,14 +69,29 @@ export function isLocked(
    Owner 2026-07-16 — the lock now fires on the processing date passing for any
    non-DRAFT / non-CANCELLED SO. A Processing Date can only be SET on an order that
    meets its company's deposit rule (Houzs 30%, 2990 50% — owner 2026-07-31) plus
-   customer name + full delivery address + delivery date, and IS production's
-   "ready to build" signal, so once it elapses the order
+   customer name + full delivery address + delivery date, and IS the signal that
+   RELEASES the order to purchasing (owner 2026-08-18), so once it elapses the order
    is committed whether or not the explicit Proceed (IN_PRODUCTION) toggle was ever
    pressed. The prior rule ALSO required `proceeded_at` (only stamped at
    IN_PRODUCTION), which let a CONFIRMED SO past its processing date stay directly
-   editable. DRAFT / CANCELLED stay editable; when status is absent we fall back to
-   the `proceeded_at` marker so we never over-lock a status-blind header. Mirrors
-   the backend soProcessingLocked exactly.
+   editable. DRAFT / CANCELLED stay editable. Mirrors the backend
+   soProcessingLocked exactly.
+
+   THE STATUS-BLIND FALLBACK IS GONE (owner 2026-08-18 — one Processing Date
+   across frontend, backend and database). This function used to end
+   `return Boolean(header.proceeded_at)`, reached only when `status` was absent,
+   and the reason given was "so we never over-lock a status-blind header": with
+   no status we cannot tell a DRAFT from a CONFIRMED, and over-locking a DRAFT
+   blocks an edit the operator is entitled to make, with no way round it.
+
+   That protection is PRESERVED, not dropped, and by a stronger mechanism than a
+   second column: `status` is now REQUIRED on SoDetailGateHeader, so a caller
+   that has not got one cannot reach here at all — it fails to compile instead of
+   silently consulting a different fact. The runtime empty-string case answers
+   "not locked", which is the same side the old marker was chosen to protect.
+   Nothing rendered changes: the detail payload has always carried `status`
+   (HEADER in backend/src/scm/routes/mfg-sales-orders.ts includes it), so the
+   deleted line was unreachable in production, not a second opinion.
 
    Owner 2026-08-12 — the same soft lock now has a SECOND road: `po_locked`, set
    by the server when a live PO already claims one of this SO's lines (2990
@@ -86,13 +100,19 @@ export function isLocked(
    and a CANCELLED one releases via cancelling the PO, not by editing the SO. So
    there is no state where po_locked is true and the date exemptions should win.
    Mirrors the backend pair soProcessingLocked || soPoLocked. */
-export function procLockActive(header: SoDetailGateHeader): boolean {
+export function procLockActive(
+  /* `status` is REQUIRED here and optional on SoDetailGateHeader, which the
+     money helpers below also take. Narrowing it at the one gate that DECIDES on
+     it is what makes "a caller without a status cannot ask this question" a
+     compile error rather than a comment. */
+  header: SoDetailGateHeader & { status: string | null },
+): boolean {
   if (header.po_locked === true) return true;
   const orig = (header.processing_date ?? '').slice(0, 10);
   if (orig === '' || !(orig < todayMyt())) return false;
   const status = (header.status ?? '').toUpperCase();
-  if (status) return status !== 'DRAFT' && status !== 'CANCELLED';
-  return Boolean(header.proceeded_at);
+  if (!status) return false;
+  return status !== 'DRAFT' && status !== 'CANCELLED';
 }
 
 /* amendmentEligible — the SO is processing-locked (already PO'd) but still
@@ -106,24 +126,24 @@ export function amendmentEligible(header: SoDetailGateHeader, locked: boolean): 
 }
 
 /* deriveBalance — balance in centi, SIGNED: negative means over-collected
-   (owner 2026-08-16). Prefers the server-stamped balance_centi, which GET
-   /:docNo computes with soBalanceCenti and which is already signed; otherwise
-   total (local_total ?? total_revenue) minus paid (paid_centi_total, falling
+   (owner 2026-08-16). Prefers the server-stamped balance_sen, which GET
+   /:docNo computes with soBalanceSen and which is already signed; otherwise
+   total (local_total ?? total_revenue) minus paid (paid_sen_total, falling
    back to the sum of the payments ledger).
 
    The floor is gone, but only where a total is KNOWN. A zero total means the
    header has not been recomputed (true of every AutoCount-imported order,
-   where total_revenue_centi is 0), not that the customer owes nothing — so it
+   where total_revenue_sen is 0), not that the customer owes nothing — so it
    still answers 0 rather than painting the whole legacy book red. Same rule,
-   and the same reason, as soBalanceCenti on the server. */
+   and the same reason, as soBalanceSen on the server. */
 export function deriveBalance(
   header: SoDetailGateHeader,
-  payments?: ReadonlyArray<{ amount_centi?: number | null }>,
+  payments?: ReadonlyArray<{ amount_sen?: number | null }>,
 ): number {
-  if (header.balance_centi != null) return header.balance_centi;
-  const total = header.local_total_centi ?? header.total_revenue_centi ?? 0;
-  const paid = header.paid_centi_total
-    ?? (payments ? payments.reduce((s, p) => s + (p.amount_centi ?? 0), 0) : 0);
+  if (header.balance_sen != null) return header.balance_sen;
+  const total = header.local_total_sen ?? header.total_revenue_sen ?? 0;
+  const paid = header.paid_sen_total
+    ?? (payments ? payments.reduce((s, p) => s + (p.amount_sen ?? 0), 0) : 0);
   if (!(total > 0)) return 0;
   return total - paid;
 }

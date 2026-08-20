@@ -48,6 +48,7 @@ import {
   type FairPnlResponse,
   type FairCostByCategory,
 } from '../../vendor/scm/lib/fair-report-queries';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 // ── money / number formatting ────────────────────────────────────────────────
 /** Table-cell money — no currency prefix, 2 decimals, zero/null → em dash so a
@@ -140,11 +141,11 @@ function accumulate(prev: OptionMaps, rows: FairDims[]): OptionMaps {
 }
 
 const catRows = (c: FairCostByCategory): [string, number][] => [
-  ['Mattress / Sofa', c.mattress_sofa_cost_centi],
-  ['Bedframe', c.bedframe_cost_centi],
-  ['Accessories', c.accessories_cost_centi],
-  ['Others', c.others_cost_centi],
-  ['Service', c.service_cost_centi],
+  ['Mattress / Sofa', c.mattress_sofa_cost_sen],
+  ['Bedframe', c.bedframe_cost_sen],
+  ['Accessories', c.accessories_cost_sen],
+  ['Others', c.others_cost_sen],
+  ['Service', c.service_cost_sen],
 ];
 
 // ── CSV export ────────────────────────────────────────────────────────────────
@@ -344,11 +345,11 @@ export const FairReport = () => {
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Date from</span>
-            <input type="date" className={inputCls} value={filters.dateFrom ?? ''} onChange={(e) => setParam('date_from', e.target.value)} />
+            <DateField fullWidth className={inputCls} value={filters.dateFrom ?? ''} onChange={(iso) => setParam('date_from', iso)}/>
           </label>
           <label className="flex flex-col gap-1">
             <span className="text-[10px] font-semibold uppercase tracking-brand text-ink-muted">Date to</span>
-            <input type="date" className={inputCls} value={filters.dateTo ?? ''} onChange={(e) => setParam('date_to', e.target.value)} />
+            <DateField fullWidth className={inputCls} value={filters.dateTo ?? ''} onChange={(iso) => setParam('date_to', iso)}/>
           </label>
           <SelectFilter label="Branding" value={filters.branding ?? ''} onChange={(v) => setParam('branding', v)}
             options={opts.brandings.map((b) => ({ value: b, label: b }))} allLabel="All brands" />
@@ -422,12 +423,12 @@ function KpiRow({ data, rows }: { data: FairReportData; rows: FairReportRows }) 
   }
   if (data.stage === 'so') {
     const s = data.summary;
-    const paid = ((rows as FairSoRow[]) ?? []).reduce((a, r) => a + Number(r.paid_total_centi ?? 0), 0);
+    const paid = ((rows as FairSoRow[]) ?? []).reduce((a, r) => a + Number(r.paid_total_sen ?? 0), 0);
     return (
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard rail="bg-primary" label="Total Orders" value={s.orders.toLocaleString('en-MY')} subtitle="Confirmed, matching filter" />
-        <StatCard rail="bg-accent-bright" label="Revenue" value={rm(s.total_amount_centi)} subtitle={`${pct(s.margin_pct)} margin`} />
-        <StatCard rail="bg-err" label="Outstanding" value={rm(s.total_balance_centi)} tone="error" subtitle={`${s.below_deposit_count} below deposit`} />
+        <StatCard rail="bg-accent-bright" label="Revenue" value={rm(s.total_amount_sen)} subtitle={`${pct(s.margin_pct)} margin`} />
+        <StatCard rail="bg-err" label="Outstanding" value={rm(s.total_balance_sen)} tone="error" subtitle={`${s.below_deposit_count} below deposit`} />
         <StatCard rail="bg-synced" label="Paid" value={rm(paid)} tone="success" subtitle="Deposits collected" />
       </div>
     );
@@ -437,10 +438,10 @@ function KpiRow({ data, rows }: { data: FairReportData; rows: FairReportRows }) 
     return (
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
         <StatCard rail="bg-primary" label="Delivered Orders" value={s.deliveries.toLocaleString('en-MY')} subtitle="DOs in this filter" />
-        <StatCard rail="bg-accent-bright" label="SO-time Cost" value={rm(s.total_so_cost_centi)} subtitle="Cost estimated at order" />
-        <StatCard rail="bg-err" label="DO Cost (ship-time)" value={rm(s.total_do_cost_centi)} subtitle="Frozen FIFO at delivery" />
-        <StatCard rail="bg-synced" label="Cost Drift" value={signedMoney(s.cost_delta_centi)}
-          tone={s.cost_delta_centi > 0 ? 'error' : s.cost_delta_centi < 0 ? 'success' : 'default'}
+        <StatCard rail="bg-accent-bright" label="SO-time Cost" value={rm(s.total_so_cost_sen)} subtitle="Cost estimated at order" />
+        <StatCard rail="bg-err" label="DO Cost (ship-time)" value={rm(s.total_do_cost_sen)} subtitle="Frozen FIFO at delivery" />
+        <StatCard rail="bg-synced" label="Cost Drift" value={signedMoney(s.cost_delta_sen)}
+          tone={s.cost_delta_sen > 0 ? 'error' : s.cost_delta_sen < 0 ? 'success' : 'default'}
           subtitle={s.legacy_count ? `${s.legacy_count} legacy (pre-FIFO)` : 'Delivery delay impact'} />
       </div>
     );
@@ -449,10 +450,10 @@ function KpiRow({ data, rows }: { data: FairReportData; rows: FairReportRows }) 
     const p = data.summary;
     return (
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <StatCard rail="bg-primary" label="Fair Revenue" value={rm(p.total_revenue_centi)} subtitle={`${p.orders} confirmed orders`} />
-        <StatCard rail="bg-accent-bright" label="Gross Profit" value={rm(p.gross_profit_centi)} subtitle={`${pct(p.gross_margin_pct)} · COGS ${rm(p.total_cogs_centi)}`} />
-        <StatCard rail="bg-err" label="Overhead" value={rm(p.overheads.total_overhead_centi)} subtitle={`Transport + merchandise + commission${p.overheads.commission_is_boost ? ' · boost' : ''}`} />
-        <StatCard rail="bg-synced" label="Net Profit" value={rm(p.net_profit_centi)} tone={p.net_profit_centi >= 0 ? 'success' : 'error'} subtitle={`${pct(p.net_margin_pct)} net margin`} />
+        <StatCard rail="bg-primary" label="Fair Revenue" value={rm(p.total_revenue_sen)} subtitle={`${p.orders} confirmed orders`} />
+        <StatCard rail="bg-accent-bright" label="Gross Profit" value={rm(p.gross_profit_sen)} subtitle={`${pct(p.gross_margin_pct)} · COGS ${rm(p.total_cogs_sen)}`} />
+        <StatCard rail="bg-err" label="Overhead" value={rm(p.overheads.total_overhead_sen)} subtitle={`Transport + merchandise + commission${p.overheads.commission_is_boost ? ' · boost' : ''}`} />
+        <StatCard rail="bg-synced" label="Net Profit" value={rm(p.net_profit_sen)} tone={p.net_profit_sen >= 0 ? 'success' : 'error'} subtitle={`${pct(p.net_margin_pct)} net margin`} />
       </div>
     );
   }
@@ -460,8 +461,8 @@ function KpiRow({ data, rows }: { data: FairReportData; rows: FairReportRows }) 
   return (
     <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
       <StatCard rail="bg-primary" label="Invoices" value={s.invoices.toLocaleString('en-MY')} subtitle="SIs in this filter" />
-      <StatCard rail="bg-accent-bright" label="Invoiced Amount" value={rm(s.total_invoiced_centi)} subtitle="Billed to date" />
-      <StatCard rail="bg-err" label="Landed (SI) Cost" value={rm(s.total_si_cost_centi)} subtitle="Store-card after PI lands" />
+      <StatCard rail="bg-accent-bright" label="Invoiced Amount" value={rm(s.total_invoiced_sen)} subtitle="Billed to date" />
+      <StatCard rail="bg-err" label="Landed (SI) Cost" value={rm(s.total_si_cost_sen)} subtitle="Store-card after PI lands" />
       <StatCard rail="bg-synced" label="Invoiced Margin" value={pct(s.margin_pct)} tone="success" subtitle="Invoiced − landed" />
     </div>
   );
@@ -506,19 +507,19 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
                 <td className={td}><span className={`${mono} text-ink-secondary`}>{r.order_form ?? '—'}</span></td>
                 <td className={td}>{r.salesperson ?? '—'}</td>
                 <td className={td}>{r.branding ?? '—'}</td>
-                <td className={tdR}>{cell(r.amount_centi)}</td>
-                <td className={tdR}>{cell(r.selling_centi)}</td>
-                <td className={tdR}>{cell(r.service_rev_centi)}</td>
+                <td className={tdR}>{cell(r.amount_sen)}</td>
+                <td className={tdR}>{cell(r.selling_sen)}</td>
+                <td className={tdR}>{cell(r.service_rev_sen)}</td>
                 {showCat && <>
-                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.mattress_sofa_cost_centi)}</td>
-                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.bedframe_cost_centi)}</td>
-                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.accessories_cost_centi)}</td>
-                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.others_cost_centi)}</td>
-                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.service_cost_centi)}</td>
+                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.mattress_sofa_cost_sen)}</td>
+                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.bedframe_cost_sen)}</td>
+                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.accessories_cost_sen)}</td>
+                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.others_cost_sen)}</td>
+                  <td className={`${tdR} bg-surface-2`}>{cell(r.cost_by_category.service_cost_sen)}</td>
                 </>}
-                <td className={`${tdR} font-semibold`}>{cell(r.total_so_cost_centi)}</td>
+                <td className={`${tdR} font-semibold`}>{cell(r.total_so_cost_sen)}</td>
                 <td className={`${tdR} ${(r.margin_pct ?? 0) >= 0 ? 'text-synced' : 'text-err'} font-medium`}>{pct(r.margin_pct)}</td>
-                <td className={tdR}>{cell(r.balance_centi)}</td>
+                <td className={tdR}>{cell(r.balance_sen)}</td>
                 <td className={td}><span className="text-[11.5px] text-ink-secondary">{r.payment_methods.join(' + ') || '—'}</span></td>
                 {showTender && <>
                   <td className={`${tdR} bg-primary-soft/15`}>{cell(r.deposit_by_tender.Cash)}</td>
@@ -536,13 +537,13 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
             <tfoot>
               <tr className="border-t-2 border-border bg-surface-2 font-semibold">
                 <td className={`${td} uppercase text-[10px] tracking-brand text-ink-muted`} colSpan={7}>Filtered totals · {sum.orders} orders</td>
-                <td className={tdR}>{cell(sum.total_amount_centi)}</td>
-                <td className={tdR}>{cell(sum.total_selling_centi)}</td>
-                <td className={tdR}>{cell(sum.total_service_rev_centi)}</td>
+                <td className={tdR}>{cell(sum.total_amount_sen)}</td>
+                <td className={tdR}>{cell(sum.total_selling_sen)}</td>
+                <td className={tdR}>{cell(sum.total_service_rev_sen)}</td>
                 {showCat && <><td className={tdR} colSpan={5} /></>}
-                <td className={tdR}>{cell(sum.total_so_cost_centi)}</td>
+                <td className={tdR}>{cell(sum.total_so_cost_sen)}</td>
                 <td className={`${tdR} ${(sum.margin_pct ?? 0) >= 0 ? 'text-synced' : 'text-err'}`}>{pct(sum.margin_pct)}</td>
-                <td className={tdR}>{cell(sum.total_balance_centi)}</td>
+                <td className={tdR}>{cell(sum.total_balance_sen)}</td>
                 <td className={td} />
                 {showTender && <>
                   <td className={tdR}>{cell(sum.tender_totals.Cash)}</td>
@@ -587,10 +588,10 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
                 <td className={td}><span className={`${mono} text-primary-ink`}>{r.do_no}</span>{r.do_cost_is_legacy && <span className="ml-1 rounded bg-ink-muted/15 px-1 py-0.5 text-[9px] font-semibold uppercase text-ink-muted">Legacy</span>}</td>
                 <td className={td}><span className={`${mono} text-ink-secondary`}>{r.so_no ?? '—'}</span></td>
                 <td className={tdR}>{r.qty}</td>
-                <td className={tdR}>{cell(r.so_amount_centi)}</td>
-                <td className={tdR}>{cell(r.total_so_cost_centi)}</td>
-                <td className={`${tdR} font-semibold`}>{cell(r.total_do_cost_centi)}</td>
-                <td className={`${tdR} ${r.cost_delta_centi > 0 ? 'text-err' : r.cost_delta_centi < 0 ? 'text-synced' : ''} font-medium`}>{signedMoney(r.cost_delta_centi)}</td>
+                <td className={tdR}>{cell(r.so_amount_sen)}</td>
+                <td className={tdR}>{cell(r.total_so_cost_sen)}</td>
+                <td className={`${tdR} font-semibold`}>{cell(r.total_do_cost_sen)}</td>
+                <td className={`${tdR} ${r.cost_delta_sen > 0 ? 'text-err' : r.cost_delta_sen < 0 ? 'text-synced' : ''} font-medium`}>{signedMoney(r.cost_delta_sen)}</td>
                 <td className={tdR}>{pct(r.do_margin_pct)}</td>
                 {showDrift && <td className={`${tdR} ${(r.do_margin_pct ?? 0) < (r.so_margin_pct ?? 0) ? 'text-err' : 'text-synced'} font-medium`}>{pts(r.do_margin_pct, r.so_margin_pct)}</td>}
                 <td className={tdR}><ChevronRight size={15} className="text-ink-muted" /></td>
@@ -604,9 +605,9 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
                 <td className={`${td} uppercase text-[10px] tracking-brand text-ink-muted`} colSpan={6}>Delivered · {sum.deliveries} orders</td>
                 <td className={tdR} />
                 <td className={tdR} />
-                <td className={tdR}>{cell(sum.total_so_cost_centi)}</td>
-                <td className={tdR}>{cell(sum.total_do_cost_centi)}</td>
-                <td className={`${tdR} ${sum.cost_delta_centi > 0 ? 'text-err' : sum.cost_delta_centi < 0 ? 'text-synced' : ''}`}>{signedMoney(sum.cost_delta_centi)}</td>
+                <td className={tdR}>{cell(sum.total_so_cost_sen)}</td>
+                <td className={tdR}>{cell(sum.total_do_cost_sen)}</td>
+                <td className={`${tdR} ${sum.cost_delta_sen > 0 ? 'text-err' : sum.cost_delta_sen < 0 ? 'text-synced' : ''}`}>{signedMoney(sum.cost_delta_sen)}</td>
                 <td className={tdR} />
                 {showDrift && <td className={tdR} />}
                 <td className={tdR} />
@@ -655,14 +656,14 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
                 <td className={td}><span className={`${mono} text-primary-ink`}>{r.so_no}</span></td>
                 <td className={td}>{r.salesperson ?? '—'}</td>
                 <td className={td}>{r.branding ?? '—'}</td>
-                <td className={tdR}>{cell(r.revenue_centi)}</td>
+                <td className={tdR}>{cell(r.revenue_sen)}</td>
                 {showThree && <>
-                  <td className={`${tdR} bg-surface-2`}>{cell(r.so_cost_centi)}</td>
-                  <td className={`${tdR} bg-surface-2`}>{r.do_cost_centi == null ? '—' : cell(r.do_cost_centi)}</td>
-                  <td className={`${tdR} bg-surface-2`}>{r.si_cost_centi == null ? '—' : cell(r.si_cost_centi)}</td>
+                  <td className={`${tdR} bg-surface-2`}>{cell(r.so_cost_sen)}</td>
+                  <td className={`${tdR} bg-surface-2`}>{r.do_cost_sen == null ? '—' : cell(r.do_cost_sen)}</td>
+                  <td className={`${tdR} bg-surface-2`}>{r.si_cost_sen == null ? '—' : cell(r.si_cost_sen)}</td>
                 </>}
-                <td className={`${tdR} font-semibold`}>{cell(r.effective_cost_centi)}<span className="ml-1 rounded bg-ink-muted/15 px-1 py-0.5 text-[9px] font-semibold uppercase text-ink-muted">{r.effective_cost_stage}</span></td>
-                <td className={`${tdR} ${r.gross_profit_centi >= 0 ? 'text-synced' : 'text-err'} font-medium`}>{cell(r.gross_profit_centi)}</td>
+                <td className={`${tdR} font-semibold`}>{cell(r.effective_cost_sen)}<span className="ml-1 rounded bg-ink-muted/15 px-1 py-0.5 text-[9px] font-semibold uppercase text-ink-muted">{r.effective_cost_stage}</span></td>
+                <td className={`${tdR} ${r.gross_profit_sen >= 0 ? 'text-synced' : 'text-err'} font-medium`}>{cell(r.gross_profit_sen)}</td>
                 <td className={`${tdR} ${(r.margin_pct ?? 0) >= 0 ? 'text-synced' : 'text-err'} font-medium`}>{pct(r.margin_pct)}</td>
               </tr>
             ))}
@@ -672,10 +673,10 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
             <tfoot>
               <tr className="border-t-2 border-border bg-surface-2 font-semibold">
                 <td className={`${td} uppercase text-[10px] tracking-brand text-ink-muted`} colSpan={5}>Fair totals · {sum.orders} orders</td>
-                <td className={tdR}>{cell(sum.total_revenue_centi)}</td>
-                {showThree && <><td className={tdR}>{cell(sum.total_so_cost_centi)}</td><td className={tdR}>{cell(sum.total_do_cost_centi)}</td><td className={tdR}>{cell(sum.total_si_cost_centi)}</td></>}
-                <td className={tdR}>{cell(sum.total_cogs_centi)}</td>
-                <td className={`${tdR} ${sum.gross_profit_centi >= 0 ? 'text-synced' : 'text-err'}`}>{cell(sum.gross_profit_centi)}</td>
+                <td className={tdR}>{cell(sum.total_revenue_sen)}</td>
+                {showThree && <><td className={tdR}>{cell(sum.total_so_cost_sen)}</td><td className={tdR}>{cell(sum.total_do_cost_sen)}</td><td className={tdR}>{cell(sum.total_si_cost_sen)}</td></>}
+                <td className={tdR}>{cell(sum.total_cogs_sen)}</td>
+                <td className={`${tdR} ${sum.gross_profit_sen >= 0 ? 'text-synced' : 'text-err'}`}>{cell(sum.gross_profit_sen)}</td>
                 <td className={`${tdR} ${(sum.gross_margin_pct ?? 0) >= 0 ? 'text-synced' : 'text-err'}`}>{pct(sum.gross_margin_pct)}</td>
               </tr>
             </tfoot>
@@ -711,9 +712,9 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
               <td className={td}>{r.branding ?? '—'}</td>
               <td className={td}><span className={`${mono} text-primary-ink`}>{r.inv_no}</span></td>
               <td className={td}><span className={`${mono} text-ink-secondary`}>{r.so_no ?? '—'}</span></td>
-              <td className={tdR}>{cell(r.invoiced_centi)}</td>
-              {showProg && <><td className={tdR}>{cell(r.so_cost_centi)}</td><td className={tdR}>{cell(r.do_cost_centi)}</td></>}
-              <td className={`${tdR} font-semibold`}>{cell(r.si_cost_centi)}</td>
+              <td className={tdR}>{cell(r.invoiced_sen)}</td>
+              {showProg && <><td className={tdR}>{cell(r.so_cost_sen)}</td><td className={tdR}>{cell(r.do_cost_sen)}</td></>}
+              <td className={`${tdR} font-semibold`}>{cell(r.si_cost_sen)}</td>
               <td className={`${tdR} ${(r.margin_pct ?? 0) >= 0 ? 'text-synced' : 'text-err'} font-medium`}>{pct(r.margin_pct)}</td>
               <td className={tdR}><ChevronRight size={15} className="text-ink-muted" /></td>
             </tr>
@@ -724,9 +725,9 @@ function StageTable({ data, stage, hidden, loading, onOpen }: {
           <tfoot>
             <tr className="border-t-2 border-border bg-surface-2 font-semibold">
               <td className={`${td} uppercase text-[10px] tracking-brand text-ink-muted`} colSpan={6}>Invoiced · {sum.invoices} orders</td>
-              <td className={tdR}>{cell(sum.total_invoiced_centi)}</td>
-              {showProg && <><td className={tdR}>{cell(sum.total_so_cost_centi)}</td><td className={tdR}>{cell(sum.total_do_cost_centi)}</td></>}
-              <td className={tdR}>{cell(sum.total_si_cost_centi)}</td>
+              <td className={tdR}>{cell(sum.total_invoiced_sen)}</td>
+              {showProg && <><td className={tdR}>{cell(sum.total_so_cost_sen)}</td><td className={tdR}>{cell(sum.total_do_cost_sen)}</td></>}
+              <td className={tdR}>{cell(sum.total_si_cost_sen)}</td>
               <td className={`${tdR} ${(sum.margin_pct ?? 0) >= 0 ? 'text-synced' : 'text-err'}`}>{pct(sum.margin_pct)}</td>
               <td className={tdR} />
             </tr>
@@ -763,10 +764,10 @@ function StageCards({ data, stage, loading, onOpen }: {
             </div>
             <div className="mt-1.5 text-[12px] text-ink-secondary">{r.venue ?? '—'} · <span className="tabular-nums">{formatDate(r.so_date)}</span> · {r.salesperson ?? '—'}</div>
             <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border/60 pt-3">
-              {stat('Amount', cell(r.amount_centi))}{stat('Selling', cell(r.selling_centi))}{stat('SO Cost', cell(r.total_so_cost_centi))}
+              {stat('Amount', cell(r.amount_sen))}{stat('Selling', cell(r.selling_sen))}{stat('SO Cost', cell(r.total_so_cost_sen))}
             </div>
             <div className="mt-3 flex items-center gap-2 text-[11.5px]">
-              <span className="text-ink-secondary">Balance <b className="tabular-nums">{rm(r.balance_centi)}</b></span>
+              <span className="text-ink-secondary">Balance <b className="tabular-nums">{rm(r.balance_sen)}</b></span>
               {r.below_deposit && <span className="rounded bg-primary-soft px-1.5 py-0.5 text-[9.5px] font-bold uppercase text-primary">Below deposit</span>}
               <span className="ml-auto inline-flex items-center gap-0.5 font-medium text-primary">Open <ChevronRight size={13} /></span>
             </div>
@@ -788,7 +789,7 @@ function StageCards({ data, stage, loading, onOpen }: {
             </div>
             <div className="mt-1.5 text-[12px] text-ink-secondary">{r.venue ?? '—'} · <span className="tabular-nums">{formatDate(r.delivery_date)}</span> · SO {r.so_no ?? '—'}</div>
             <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border/60 pt-3">
-              {stat('SO Cost', cell(r.total_so_cost_centi))}{stat('DO Cost', cell(r.total_do_cost_centi))}{stat('Cost Δ', signedMoney(r.cost_delta_centi))}
+              {stat('SO Cost', cell(r.total_so_cost_sen))}{stat('DO Cost', cell(r.total_do_cost_sen))}{stat('Cost Δ', signedMoney(r.cost_delta_sen))}
             </div>
             <div className="mt-3 flex items-center text-[11.5px]"><span className="ml-auto inline-flex items-center gap-0.5 font-medium text-primary">Open <ChevronRight size={13} /></span></div>
           </div>
@@ -812,7 +813,7 @@ function StageCards({ data, stage, loading, onOpen }: {
             </div>
             <div className="mt-1.5 text-[12px] text-ink-secondary">{r.venue ?? '—'} · <span className="tabular-nums">{formatDate(r.so_date)}</span> · {r.salesperson ?? '—'}</div>
             <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border/60 pt-3">
-              {stat('Revenue', cell(r.revenue_centi))}{stat(`COGS (${r.effective_cost_stage})`, cell(r.effective_cost_centi))}{stat('Gross', cell(r.gross_profit_centi))}
+              {stat('Revenue', cell(r.revenue_sen))}{stat(`COGS (${r.effective_cost_stage})`, cell(r.effective_cost_sen))}{stat('Gross', cell(r.gross_profit_sen))}
             </div>
             <div className="mt-3 flex items-center text-[11.5px]"><span className="ml-auto inline-flex items-center gap-0.5 font-medium text-primary">Open <ChevronRight size={13} /></span></div>
           </div>
@@ -832,7 +833,7 @@ function StageCards({ data, stage, loading, onOpen }: {
           </div>
           <div className="mt-1.5 text-[12px] text-ink-secondary">{r.venue ?? '—'} · <span className="tabular-nums">{formatDate(r.invoice_date)}</span> · SO {r.so_no ?? '—'}</div>
           <div className="mt-3 grid grid-cols-3 gap-2 border-t border-border/60 pt-3">
-            {stat('Invoiced', cell(r.invoiced_centi))}{stat('SO Cost', cell(r.so_cost_centi))}{stat('Landed', cell(r.si_cost_centi))}
+            {stat('Invoiced', cell(r.invoiced_sen))}{stat('SO Cost', cell(r.so_cost_sen))}{stat('Landed', cell(r.si_cost_sen))}
           </div>
           <div className="mt-3 flex items-center text-[11.5px]"><span className="ml-auto inline-flex items-center gap-0.5 font-medium text-primary">Open <ChevronRight size={13} /></span></div>
         </div>
@@ -943,10 +944,10 @@ function FairDrawer({ docNo, onClose }: { docNo: string | null; onClose: () => v
                           {secondary && <div className="text-ink-muted">{secondary}</div>}
                         </td>
                         <td className={tdR}>{l.qty ?? '—'}</td>
-                        <td className={tdR}>{cell(l.unit_price_centi)}</td>
-                        <td className={tdR}>{cell(l.amount_centi)}</td>
-                        <td className={`${tdR} text-ink-muted`}>{cell(l.unit_cost_centi)}</td>
-                        <td className={`${tdR} text-ink-muted`}>{cell(l.line_cost_centi)}</td>
+                        <td className={tdR}>{cell(l.unit_price_sen)}</td>
+                        <td className={tdR}>{cell(l.amount_sen)}</td>
+                        <td className={`${tdR} text-ink-muted`}>{cell(l.unit_cost_sen)}</td>
+                        <td className={`${tdR} text-ink-muted`}>{cell(l.line_cost_sen)}</td>
                       </tr>
                       );
                     })}
@@ -957,12 +958,12 @@ function FairDrawer({ docNo, onClose }: { docNo: string | null; onClose: () => v
 
               {/* summary grid */}
               <div className="mt-4 grid grid-cols-2 gap-2 sm:grid-cols-3">
-                <MiniStat k="Amount" v={rm(d.amount_centi)} />
-                <MiniStat k="Selling" v={rm(d.selling_centi)} />
-                <MiniStat k="Service Rev." v={rm(d.service_rev_centi)} />
-                <MiniStat k="Total Cost" v={rm(d.total_so_cost_centi)} />
+                <MiniStat k="Amount" v={rm(d.amount_sen)} />
+                <MiniStat k="Selling" v={rm(d.selling_sen)} />
+                <MiniStat k="Service Rev." v={rm(d.service_rev_sen)} />
+                <MiniStat k="Total Cost" v={rm(d.total_so_cost_sen)} />
                 <MiniStat k="Margin" v={pct(d.margin_pct)} tone={(d.margin_pct ?? 0) >= 0 ? 'good' : 'bad'} />
-                <MiniStat k="Balance" v={rm(d.balance_centi)} />
+                <MiniStat k="Balance" v={rm(d.balance_sen)} />
               </div>
 
               {/* cost by category */}
@@ -974,7 +975,7 @@ function FairDrawer({ docNo, onClose }: { docNo: string | null; onClose: () => v
                   </div>
                 ))}
                 <div className="flex items-center justify-between bg-surface-2 px-3 py-2 text-[12.5px] font-semibold">
-                  <span>Total SO Cost</span><span className="tabular-nums">{rm(d.total_so_cost_centi)}</span>
+                  <span>Total SO Cost</span><span className="tabular-nums">{rm(d.total_so_cost_sen)}</span>
                 </div>
               </div>
 
@@ -986,7 +987,7 @@ function FairDrawer({ docNo, onClose }: { docNo: string | null; onClose: () => v
                   <div key={i} className="flex items-center gap-3 rounded-lg border border-border px-3 py-2.5">
                     <span className="min-w-[74px] text-[12.5px] font-semibold text-ink">{p.tender ?? '—'}</span>
                     <span className="flex-1 text-[11px] text-ink-muted">{merchantLine(p)}</span>
-                    <span className="text-[12.5px] font-semibold tabular-nums">{cell(p.amount_centi)}</span>
+                    <span className="text-[12.5px] font-semibold tabular-nums">{cell(p.amount_sen)}</span>
                   </div>
                 ))}
               </div>
@@ -1042,9 +1043,9 @@ function buildExport(data: NonNullable<FairReportData>): { headers: string[]; bo
       headers: ['Date', 'Venue', 'Project', 'SO No', 'Order Form', 'Salesperson', 'Branding', 'Amount', 'Selling', 'Service Rev', 'Mattress/Sofa Cost', 'Bedframe Cost', 'Accessories Cost', 'Others Cost', 'Service Cost', 'Total SO Cost', 'Margin %', 'Balance', 'Payment', 'Cash', 'Merchant', 'Installment', 'Online', 'Below Deposit'],
       body: data.rows.map((r) => [
         formatDate(r.so_date), r.venue, r.project, r.so_no, r.order_form, r.salesperson, r.branding,
-        c(r.amount_centi), c(r.selling_centi), c(r.service_rev_centi),
-        c(r.cost_by_category.mattress_sofa_cost_centi), c(r.cost_by_category.bedframe_cost_centi), c(r.cost_by_category.accessories_cost_centi), c(r.cost_by_category.others_cost_centi), c(r.cost_by_category.service_cost_centi),
-        c(r.total_so_cost_centi), r.margin_pct == null ? '' : r.margin_pct.toFixed(1), c(r.balance_centi), r.payment_methods.join(' + '),
+        c(r.amount_sen), c(r.selling_sen), c(r.service_rev_sen),
+        c(r.cost_by_category.mattress_sofa_cost_sen), c(r.cost_by_category.bedframe_cost_sen), c(r.cost_by_category.accessories_cost_sen), c(r.cost_by_category.others_cost_sen), c(r.cost_by_category.service_cost_sen),
+        c(r.total_so_cost_sen), r.margin_pct == null ? '' : r.margin_pct.toFixed(1), c(r.balance_sen), r.payment_methods.join(' + '),
         c(r.deposit_by_tender.Cash), c(r.deposit_by_tender.Merchant), c(r.deposit_by_tender.Installment), c(r.deposit_by_tender.Online), r.below_deposit ? 'Yes' : '',
       ]),
     };
@@ -1055,8 +1056,8 @@ function buildExport(data: NonNullable<FairReportData>): { headers: string[]; bo
       headers: ['Delivery Date', 'Venue', 'Project', 'Branding', 'DO No', 'Linked SO', 'Qty', 'SO Amount', 'Total SO Cost', 'Total DO Cost', 'Cost Delta', 'SO Margin %', 'DO Margin %', 'Legacy'],
       body: data.rows.map((r) => [
         formatDate(r.delivery_date), r.venue, r.project, r.branding, r.do_no, r.so_no, r.qty,
-        r.so_amount_centi == null ? '' : c(r.so_amount_centi),
-        c(r.total_so_cost_centi), c(r.total_do_cost_centi), c(r.cost_delta_centi),
+        r.so_amount_sen == null ? '' : c(r.so_amount_sen),
+        c(r.total_so_cost_sen), c(r.total_do_cost_sen), c(r.cost_delta_sen),
         r.so_margin_pct == null ? '' : r.so_margin_pct.toFixed(1), r.do_margin_pct == null ? '' : r.do_margin_pct.toFixed(1), r.do_cost_is_legacy ? 'Yes' : '',
       ]),
     };
@@ -1067,8 +1068,8 @@ function buildExport(data: NonNullable<FairReportData>): { headers: string[]; bo
       headers: ['Date', 'Venue', 'Project', 'SO No', 'Salesperson', 'Branding', 'Revenue', 'SO Cost', 'DO Cost', 'SI Cost', 'COGS', 'Cost Stage', 'Gross Profit', 'Margin %'],
       body: data.rows.map((r) => [
         formatDate(r.so_date), r.venue, r.project, r.so_no, r.salesperson, r.branding,
-        c(r.revenue_centi), c(r.so_cost_centi), r.do_cost_centi == null ? '' : c(r.do_cost_centi), r.si_cost_centi == null ? '' : c(r.si_cost_centi),
-        c(r.effective_cost_centi), r.effective_cost_stage, c(r.gross_profit_centi), r.margin_pct == null ? '' : r.margin_pct.toFixed(1),
+        c(r.revenue_sen), c(r.so_cost_sen), r.do_cost_sen == null ? '' : c(r.do_cost_sen), r.si_cost_sen == null ? '' : c(r.si_cost_sen),
+        c(r.effective_cost_sen), r.effective_cost_stage, c(r.gross_profit_sen), r.margin_pct == null ? '' : r.margin_pct.toFixed(1),
       ]),
     };
   }
@@ -1077,7 +1078,7 @@ function buildExport(data: NonNullable<FairReportData>): { headers: string[]; bo
     headers: ['Invoice Date', 'Venue', 'Project', 'Branding', 'Invoice No', 'Linked SO', 'Invoiced', 'SO Cost', 'DO Cost', 'Landed (SI) Cost', 'Margin %'],
     body: data.rows.map((r) => [
       formatDate(r.invoice_date), r.venue, r.project, r.branding, r.inv_no, r.so_no,
-      c(r.invoiced_centi), c(r.so_cost_centi), c(r.do_cost_centi), c(r.si_cost_centi), r.margin_pct == null ? '' : r.margin_pct.toFixed(1),
+      c(r.invoiced_sen), c(r.so_cost_sen), c(r.do_cost_sen), c(r.si_cost_sen), r.margin_pct == null ? '' : r.margin_pct.toFixed(1),
     ]),
   };
 }

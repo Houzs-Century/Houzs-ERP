@@ -38,7 +38,7 @@ const world = ({ invoices, jes = [], jeLines = [], missing = {} }: World = {}) =
           invoice_date: '2026-08-01',
           debtor_code: 'C-001',
           debtor_name: 'Ah Meng Furnishing',
-          total_centi: 388800,
+          total_sen: 388800,
           company_id: 1,
           status: 'ISSUED',
         },
@@ -108,7 +108,7 @@ describe('postSiRevenue — booking the revenue once', () => {
   });
 
   it('refuses a zero-total invoice rather than booking an empty entry', async () => {
-    const sb = world({ invoices: [{ id: 'si-1', invoice_number: INV, invoice_date: '2026-08-01', debtor_code: 'C', debtor_name: 'C', total_centi: 0, company_id: 1, status: 'ISSUED' }] });
+    const sb = world({ invoices: [{ id: 'si-1', invoice_number: INV, invoice_date: '2026-08-01', debtor_code: 'C', debtor_name: 'C', total_sen: 0, company_id: 1, status: 'ISSUED' }] });
     expect(await postSiRevenue(sb, INV)).toMatchObject({ ok: false, status: 'zero_total' });
     expect(sb.tables.journal_entries).toHaveLength(0);
   });
@@ -190,7 +190,7 @@ describe('resyncSiRevenue — keeping the GL equal to the invoice', () => {
   it('voids the stale entry and re-posts at the NEW total', async () => {
     const sb = world();
     await postSiRevenue(sb, INV);
-    sb.tables.sales_invoices[0]!.total_centi = 500000;
+    sb.tables.sales_invoices[0]!.total_sen = 500000;
 
     expect(await resyncSiRevenue(sb, INV)).toMatchObject({ ok: true, status: 'resynced' });
     const live = siJes(sb).filter((j) => !j.reversed);
@@ -201,13 +201,13 @@ describe('resyncSiRevenue — keeping the GL equal to the invoice', () => {
   it('a DRAFT invoice never posts revenue', async () => {
     // Posting happens on confirm. Editing a draft's lines must not leak revenue
     // into the GL for an invoice nobody has issued.
-    const sb = world({ invoices: [{ id: 'si-1', invoice_number: INV, invoice_date: '2026-08-01', debtor_code: 'C', debtor_name: 'C', total_centi: 388800, company_id: 1, status: 'DRAFT' }] });
+    const sb = world({ invoices: [{ id: 'si-1', invoice_number: INV, invoice_date: '2026-08-01', debtor_code: 'C', debtor_name: 'C', total_sen: 388800, company_id: 1, status: 'DRAFT' }] });
     expect(await resyncSiRevenue(sb, INV)).toMatchObject({ ok: true, status: 'not_posted' });
     expect(sb.tables.journal_entries).toHaveLength(0);
   });
 
   it('a CANCELLED invoice never re-posts revenue', async () => {
-    const sb = world({ invoices: [{ id: 'si-1', invoice_number: INV, invoice_date: '2026-08-01', debtor_code: 'C', debtor_name: 'C', total_centi: 388800, company_id: 1, status: 'CANCELLED' }] });
+    const sb = world({ invoices: [{ id: 'si-1', invoice_number: INV, invoice_date: '2026-08-01', debtor_code: 'C', debtor_name: 'C', total_sen: 388800, company_id: 1, status: 'CANCELLED' }] });
     expect(await resyncSiRevenue(sb, INV)).toMatchObject({ ok: true, status: 'not_posted' });
     expect(sb.tables.journal_entries).toHaveLength(0);
   });

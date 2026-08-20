@@ -563,15 +563,29 @@ try {
     );
   }
   if (poItemCols.has("warehouse_id")) {
-    const [{ n }] = await pg`
-      SELECT count(*)::int AS n
+    /* CORRECTED 2026-08-20. This section used to say "a purchase order has no
+       header location to inherit (composeCreatePo passes defaultLocation:
+       null)" and count every warehouse-less LINE as a refused document. Both
+       halves were wrong: scm.purchase_orders carries purchase_location_id (PR
+       #77) and composeCreatePo now passes it as the line default — the ERP's own
+       precedence, `warehouse_id ?? po.purchase_location_id`
+       (outstanding-po-lines.ts:382). So the number that matters is lines whose
+       header cannot cover them, which is what the WHERE clause now asks. The
+       two counts are printed side by side rather than one replacing the other:
+       "how many lines name no warehouse" is still the number an operator is
+       filling in, and "how many are actually refused" is the number of
+       documents that cannot go. */
+    const [{ lineless, refused }] = await pg`
+      SELECT count(*)::int AS lineless,
+             count(*) FILTER (WHERE p.purchase_location_id IS NULL)::int AS refused
         FROM scm.purchase_order_items i
         JOIN scm.purchase_orders p ON p.id = i.purchase_order_id
        WHERE i.warehouse_id IS NULL AND p.linked_ac_docno IS NULL`;
     notice(
-      `PO LINE STOCK LOCATION: ${n} line(s) on unlinked POs carry no warehouse_id. A purchase order ` +
-        `has no header location to inherit (composeCreatePo passes defaultLocation: null), so every ` +
-        `one of these refuses its whole document with MissingLocationError.`,
+      `PO LINE STOCK LOCATION: ${lineless} line(s) on unlinked POs carry no warehouse_id, and ` +
+        `${refused} of those sit on a PO with no purchase_location_id either. Only that second ` +
+        `number refuses its document with MissingLocationError; the rest inherit the PO header's ` +
+        `ship-to warehouse, which is also now sent as AutoCount's own PurchaseLocation.`,
     );
   }
 

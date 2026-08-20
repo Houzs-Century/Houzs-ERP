@@ -33,7 +33,7 @@ const PO_DETAIL = {
     status: "open",
     expected_at: "2026-08-15",
     notes: "Deliver to Kepong warehouse — call ahead.",
-    total_centi: 1834000,
+    total_sen: 1834000,
   },
   items: [
     {
@@ -41,7 +41,7 @@ const PO_DETAIL = {
       material_code: "WD-TEAK-25",
       material_name: "Teak board 25mm (per m²)",
       qty: 40,
-      unit_price_centi: 18500,
+      unit_price_sen: 18500,
       delivery_date: "2026-08-15",
     },
     {
@@ -49,7 +49,7 @@ const PO_DETAIL = {
       material_code: "FB-LINEN-SAND",
       material_name: "Linen upholstery — Sand (per metre)",
       qty: 120,
-      unit_price_centi: 4200,
+      unit_price_sen: 4200,
       delivery_date: "2026-08-10",
     },
     {
@@ -57,7 +57,7 @@ const PO_DETAIL = {
       material_code: "HW-HINGE-SOFT",
       material_name: "Soft-close hinge set",
       qty: 200,
-      unit_price_centi: 950,
+      unit_price_sen: 950,
       delivery_date: null,
     },
   ],

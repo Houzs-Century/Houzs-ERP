@@ -29,7 +29,7 @@ import {
   ArrowLeft, FileText, Pencil, Plus, Printer, Save, Ban, RotateCcw, ChevronDown,
 } from 'lucide-react';
 import { Button } from '@2990s/design-system';
-import { buildVariantSummary, fmtDateOrDash, fmtMoneyCenti, orderLineIdentity } from '@2990s/shared';
+import { buildVariantSummary, fmtDateOrDash, fmtMoneySen, orderLineIdentity } from '@2990s/shared';
 import { PhoneInput } from '../../vendor/scm/components/PhoneInput';
 import { StatusPill } from '../../vendor/scm/components/StatusPill';
 import {
@@ -59,13 +59,14 @@ import styles from './SalesOrderDetail.module.css';
 import { PageHeader } from '../../components/Layout';
 import { PrintPreviewModal, usePrintPreview } from '../../components/scm-v2/PrintPreviewModal';
 import type { PdfAction } from '../../vendor/scm/lib/pdf-common';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 16, strokeWidth: 1.75 } as const;
 
 const STATUS_FLOW = ['LOADED', 'DISPATCHED', 'IN_TRANSIT', 'SIGNED', 'DELIVERED', 'INVOICED', 'CANCELLED'] as const;
 type CnStatus = typeof STATUS_FLOW[number];
 
-const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneyCenti(centi, currency);
+const fmtRm = (centi: number, currency = 'MYR'): string => fmtMoneySen(centi, currency);
 
 type CnHeader = {
   id: string;
@@ -100,7 +101,7 @@ type CnHeader = {
   emergency_contact_name: string | null;
   emergency_contact_phone: string | null;
   emergency_contact_relationship: string | null;
-  local_total_centi: number;
+  local_total_sen: number;
   line_count: number;
   currency: string;
 };
@@ -114,19 +115,19 @@ type CnItem = {
   description2: string | null;
   uom: string;
   qty: number;
-  unit_price_centi: number;
-  discount_centi: number;
-  line_total_centi: number;
+  unit_price_sen: number;
+  discount_sen: number;
+  line_total_sen: number;
   /* FINANCE-gated (CN_ITEM_FINANCE_KEYS server-side) — OMITTED from the detail
      payload for a non-finance caller (canViewScmFinance), hence optional. This
      page renders no cost/margin, so there is nothing to cut here. NOTE:
-     draftFromItem below collapses a missing unit_cost_centi to 0 and the save
+     draftFromItem below collapses a missing unit_cost_sen to 0 and the save
      echoes it back — the route's line PATCH therefore IGNORES a client cost
      from a non-finance caller and keeps the stored one, which is what stops the
      strip from wiping the line's cost basis (#632; see consignment-notes.ts). */
-  unit_cost_centi?: number;
-  line_cost_centi?: number;
-  line_margin_centi?: number;
+  unit_cost_sen?: number;
+  line_cost_sen?: number;
+  line_margin_sen?: number;
   variants: Record<string, unknown> | null;
   remark: string | null;
 };
@@ -137,9 +138,9 @@ const draftFromItem = (it: CnItem): SoLineDraft => ({
   description: it.description ?? '',
   uom: it.uom ?? 'UNIT',
   qty: it.qty ?? 1,
-  unitPriceCenti: it.unit_price_centi ?? 0,
-  discountCenti: it.discount_centi ?? 0,
-  unitCostCenti: it.unit_cost_centi ?? 0,
+  unitPriceSen: it.unit_price_sen ?? 0,
+  discountSen: it.discount_sen ?? 0,
+  unitCostSen: it.unit_cost_sen ?? 0,
   variants: (it.variants as Record<string, unknown>) ?? {},
   remark: it.remark ?? '',
 });
@@ -254,16 +255,16 @@ export const ConsignmentNoteDetail = () => {
     updateItem.mutateAsync({
       id: header!.id, itemId: lineId,
       itemCode: d.itemCode, itemGroup: d.itemGroup, description: d.description,
-      uom: d.uom, qty: d.qty, unitPriceCenti: d.unitPriceCenti, discountCenti: d.discountCenti,
-      unitCostCenti: d.unitCostCenti, variants: d.variants, remark: d.remark,
+      uom: d.uom, qty: d.qty, unitPriceSen: d.unitPriceSen, discountSen: d.discountSen,
+      unitCostSen: d.unitCostSen, variants: d.variants, remark: d.remark,
     });
 
   const commitAddLine = (d: SoLineDraft) =>
     addItem.mutateAsync({
       id: header!.id,
       itemCode: d.itemCode, itemGroup: d.itemGroup, description: d.description,
-      uom: d.uom, qty: d.qty, unitPriceCenti: d.unitPriceCenti, discountCenti: d.discountCenti,
-      unitCostCenti: d.unitCostCenti, variants: d.variants, remark: d.remark,
+      uom: d.uom, qty: d.qty, unitPriceSen: d.unitPriceSen, discountSen: d.discountSen,
+      unitCostSen: d.unitCostSen, variants: d.variants, remark: d.remark,
     });
 
   const saveEdit = () => {
@@ -299,6 +300,24 @@ export const ConsignmentNoteDetail = () => {
     });
   };
 
+  /* HOOKS MUST ALL BE ABOVE THE GUARDS BELOW. usePrintPreview sat under them
+     until 2026-08-17, so the loading render called fewer hooks than the loaded
+     one and React threw #310 ("rendered more hooks than during the previous
+     render") the moment the query resolved — a blank "Something went wrong
+     loading this page." on a direct URL / refresh. Arriving from the list hid
+     it: react-query already had the detail cached, so the isPending branch
+     never rendered first. `deliverPrintPdf` therefore has to tolerate a null
+     header; it can only ever be CALLED from the preview dialog, which does not
+     exist until the record has loaded. */
+  const deliverPrintPdf = (action: PdfAction) => {
+    if (!header) return;
+    return import('../../vendor/scm/lib/delivery-order-pdf')
+      .then(({ generateDeliveryOrderPdf }) =>
+        generateDeliveryOrderPdf(header as never, items as never, { docTitle: 'CONSIGNMENT NOTE', docNoLabel: 'CN No', showPicking: false, action }))
+      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
+  };
+  const print = usePrintPreview(deliverPrintPdf);
+
   if (detail.isPending) {
     return <SkeletonDetailPage />;
   }
@@ -318,14 +337,6 @@ export const ConsignmentNoteDetail = () => {
 
   const isLocked = lockedStatuses.includes(header.status);
   const isCancelled = header.status === 'CANCELLED';
-
-  const deliverPrintPdf = (action: PdfAction) => {
-    return import('../../vendor/scm/lib/delivery-order-pdf')
-      .then(({ generateDeliveryOrderPdf }) =>
-        generateDeliveryOrderPdf(header as never, items as never, { docTitle: 'CONSIGNMENT NOTE', docNoLabel: 'CN No', showPicking: false, action }))
-      .catch((e) => notify({ title: 'PDF generation failed', body: e instanceof Error ? e.message : 'Something went wrong.', tone: 'error' }));
-  };
-  const print = usePrintPreview(deliverPrintPdf);
 
   const handleCancel = async () => {
     if (!(await askConfirm({
@@ -356,7 +367,7 @@ export const ConsignmentNoteDetail = () => {
           <div className={styles.actions}>
           <div className={styles.totalRail}>
             <span className={styles.totalRailLabel}>Total</span>
-            <span className={styles.totalRailValue}>{fmtRm(header.local_total_centi, header.currency)}</span>
+            <span className={styles.totalRailValue}>{fmtRm(header.local_total_sen, header.currency)}</span>
           </div>
           <StatusPill docType="do" status={header.status} />
           <RelationshipMapButton type="cdo" id={id} />
@@ -372,7 +383,7 @@ export const ConsignmentNoteDetail = () => {
               { label: 'Consignee', value: header.debtor_name || '—' },
               { label: 'Note date', value: fmtDateOrDash(header.do_date) },
               { label: 'Items', value: `${header.line_count} line${header.line_count === 1 ? '' : 's'}` },
-              { label: 'Goods value', value: fmtRm(header.local_total_centi, header.currency) },
+              { label: 'Goods value', value: fmtRm(header.local_total_sen, header.currency) },
             ]}
             {...print.handlers}
           />
@@ -517,9 +528,9 @@ export const ConsignmentNoteDetail = () => {
                     })()}
                   </td>
                   <td className={styles.tableRight}>{it.qty}</td>
-                  <td className={styles.tableRight}>{fmtRm(it.unit_price_centi, header.currency)}</td>
-                  <td className={styles.tableRight}>{it.discount_centi > 0 ? fmtRm(it.discount_centi, header.currency) : '—'}</td>
-                  <td className={styles.priceCell}>{fmtRm(it.line_total_centi, header.currency)}</td>
+                  <td className={styles.tableRight}>{fmtRm(it.unit_price_sen, header.currency)}</td>
+                  <td className={styles.tableRight}>{it.discount_sen > 0 ? fmtRm(it.discount_sen, header.currency) : '—'}</td>
+                  <td className={styles.priceCell}>{fmtRm(it.line_total_sen, header.currency)}</td>
                 </tr>
               ))}
             </tbody>
@@ -691,14 +702,20 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Salesperson</span>
               <span className={styles.selectWrap}>
-                <select className={styles.fieldSelect} value={form.salespersonId}
-                  disabled={inputsDisabled} onChange={(e) => set('salespersonId', e.target.value)}>
-                  <option value="">— Pick staff —</option>
-                  {sortByText(staffList).map((s) => <option key={s.id} value={s.id}>{s.name} ({s.staffCode})</option>)}
-                  {form.salespersonId && !staffList.some((s) => s.id === form.salespersonId) && (
-                    <option value={form.salespersonId}>(former staff)</option>
-                  )}
-                </select>
+                <SearchableSelect
+                  className={styles.fieldSelect}
+                  ariaLabel="Salesperson"
+                  placeholder="— Pick staff —"
+                  value={form.salespersonId}
+                  onChange={(v) => set('salespersonId', v)}
+                  disabled={inputsDisabled}
+                  options={[
+                    ...sortByText(staffList).map((s) => ({ value: s.id, label: `${s.name} (${s.staffCode})` })),
+                    ...(form.salespersonId && !staffList.some((s) => s.id === form.salespersonId)
+                      ? [{ value: form.salespersonId, label: '(former staff)' }]
+                      : []),
+                  ]}
+                />
                 <ChevronDown size={14} strokeWidth={1.75} className={styles.selectChevron} />
               </span>
             </label>
@@ -713,8 +730,13 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
           <div className={styles.formGrid4}>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Note Date</span>
-              <input type="date" className={styles.fieldInput} value={form.doDate}
-                disabled={inputsDisabled} onChange={(e) => set('doDate', e.target.value)} />
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.doDate}
+                disabled={inputsDisabled}
+                onChange={(iso) => set('doDate', iso)}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Driver</span>
@@ -747,13 +769,23 @@ const CustomerCardInner = forwardRef<CustomerCardHandle, CustomerCardProps>(({
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Expected Delivery</span>
-              <input type="date" className={styles.fieldInput} value={form.expectedDeliveryAt}
-                disabled={inputsDisabled} onChange={(e) => set('expectedDeliveryAt', e.target.value)} />
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.expectedDeliveryAt}
+                disabled={inputsDisabled}
+                onChange={(iso) => set('expectedDeliveryAt', iso)}
+              />
             </label>
             <label className={styles.field}>
               <span className={styles.fieldLabel}>Customer Delivery Date</span>
-              <input type="date" className={styles.fieldInput} value={form.customerDeliveryDate}
-                disabled={inputsDisabled} onChange={(e) => set('customerDeliveryDate', e.target.value)} />
+              <DateField
+                fullWidth
+                className={styles.fieldInput}
+                value={form.customerDeliveryDate}
+                disabled={inputsDisabled}
+                onChange={(iso) => set('customerDeliveryDate', iso)}
+              />
             </label>
             <label className={styles.field} style={{ gridColumn: 'span 2' }}>
               <span className={styles.fieldLabel}>Note</span>

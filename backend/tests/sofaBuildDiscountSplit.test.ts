@@ -9,7 +9,7 @@ import { distributeBuildDiscount, distributeProportionally } from '../src/scm/sh
  * price). The build is then split into one row per module, and all three split
  * sites used to put the ENTIRE discount on module 0 — whose unit price is only
  * its own share. senOrZero (`Number.isFinite(v) ? v : 0`) passes negatives
- * straight through, so module 0's total_centi went negative.
+ * straight through, so module 0's total_sen went negative.
  *
  * Every downstream document then CLAMPED that negative away —
  * `Math.max(0, (qty * unit) - discount)` at delivery-orders-mfg.ts:4016 (the

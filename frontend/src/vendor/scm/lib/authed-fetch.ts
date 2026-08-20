@@ -21,12 +21,13 @@
 // ---------------------------------------------------------------------------
 
 import { serviceConfirm } from './dialog-service';
+import { describeRefusal } from './refusal-detail';
 // Imported, NOT re-inlined as localStorage.getItem('auth:token'). Houzs stores
 // session-only logins (Remember me unchecked, and the owner's view-as hand-off)
 // in sessionStorage, so a localStorage-only read returns "" for a perfectly
 // authenticated user and every /scm/* page throws not_authenticated. This is
 // the vendor auth boundary — it is exactly where the host's answer belongs.
-import { readAuthToken } from '../../../lib/authToken';
+import { readAuthToken, readAuthPass } from '../../../lib/authToken';
 import {
   consumeCorrelated,
   correlateError,
@@ -221,6 +222,10 @@ async function confirmShortStock(raw: string): Promise<boolean> {
 
 export async function authedFetch<T>(path: string, init?: RequestInit): Promise<T> {
   const token = readAuthToken();
+  // Stage 3: the signed staff pass, sent beside the token so the SCM list
+  // reads (the slowest surface) can authorize without a DB round trip. Absent
+  // -> the server takes the DB path. Bound to the token server-side.
+  const pass = readAuthPass();
   /* This throw reaches the operator through ~90 `err.message` sinks across the
      SCM tree, and it fires on every read/write once the token is missing or has
      expired mid-session — so it was the highest-frequency machine-code leak in
@@ -239,6 +244,7 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
   const headers = {
     ...(init?.headers ?? {}),
     authorization: `Bearer ${token}`,
+    ...(pass ? { 'x-session-pass': pass } : {}),
     ...companyHeader(),
     ...(typeof init?.body === 'string' ? { 'content-type': 'application/json' } : {}),
   };
@@ -358,10 +364,10 @@ export async function authedFetch<T>(path: string, init?: RequestInit): Promise<
       try {
         const b = JSON.parse(text.slice(Math.max(0, text.indexOf('{')))) as {
           message?: string; remedy?: string[];
-          lines?: Array<{ materialCode: string; qtyAccepted: number; knownUnitCostSen: number }>;
+          lines?: Array<{ itemCode: string; qtyAccepted: number; knownUnitCostSen: number }>;
         };
         const lines = (b.lines ?? [])
-          .map((l) => `• ${l.materialCode} x${l.qtyAccepted}\n   normally about RM${(Number(l.knownUnitCostSen) / 100).toFixed(2)} each`)
+          .map((l) => `• ${l.itemCode} x${l.qtyAccepted}\n   normally about RM${(Number(l.knownUnitCostSen) / 100).toFixed(2)} each`)
           .join('\n');
         const how = (b.remedy ?? []).map((r) => `— ${r}`).join('\n');
         msg = [b.message ?? msg, lines, how].filter(Boolean).join('\n\n');
@@ -461,8 +467,17 @@ const ERROR_CODE_MESSAGES: Record<string, string> = {
   // re-read this if a surface ever needs a subject-specific line.
   idempotency_in_flight:
     "This is already going through — give it a moment, then refresh to check. Please don't send it again.",
+  /* NEVER reword this into "nothing was saved, press Save again". The
+     middleware returns this code purely because the payload's hash differs
+     from the claim's, and the claim may hold a COMMITTED 201 (the body's
+     `completed_status` says which) — so this sentence cannot promise a clean
+     slate, and an instruction to resubmit books a second GRN, a second stock
+     IN and a second AutoCount enqueue. Refreshing is what SURFACES the
+     document that may already exist. A refusal that genuinely wrote nothing
+     never reaches here: the route releases the claim (markIdempotencyNoWrite)
+     and the corrected resubmit just works. */
   idempotency_key_reused:
-    'This request key was already used with different details. Refresh before trying again.',
+    'An earlier submission with different details already finished under this request key. Refresh and check what was recorded before sending it again.',
   idempotency_key_conflict:
     'This request key is already owned by another operation. Refresh and try again.',
   idempotency_unavailable:
@@ -571,18 +586,80 @@ export function humanApiError(status: number, body: string): string {
       const mapped = ERROR_CODE_MESSAGES[j.error];
       if (mapped) return mapped;
     }
-    // 2. Server reason, but only if it's already a plain sentence (no internals).
-    const r = (typeof j.reason === 'string' ? j.reason : typeof j.message === 'string' ? j.message : '') as string;
-    // Skip nested JSON blobs (e.g. the raw GoTrue "session_not_found" body the
-    // auth middleware forwards verbatim in `reason`) — those must never reach an
-    // operator. The `{`-prefix + `error_code` guards catch them; 401s then fall
-    // through to the friendly "session has expired" status message below.
-    if (
-      r && r.length < 200 && !r.trim().startsWith('{') && !isErrorCode(r) &&
-      !/violates|constraint|null value|column|relation|syntax|PGRST|error_code|\b\d{5}\b/i.test(r)
-    ) {
-      return r;
-    }
+    // 1b. STRUCTURED REFUSAL — the server named the input, the value AND the
+    //     legal set, and we used to throw all three away. `variant_not_allowed`
+    //     (backend allowed-options-check.ts:81-86) is the one that cost a
+    //     salesperson a bedframe line: no curated entry, no `reason`, no
+    //     `message`, so it fell to the 400 catch-all and told him nothing.
+    //
+    //     Placed AFTER the curated map on purpose. A curated sentence is
+    //     hand-written for the operator and often names the exact box
+    //     (extra_addon_needs_description is the best example in the tree), so it
+    //     must keep winning; this only fires where the alternative is the
+    //     status-code catch-all. And it keys off the body's SHAPE, not a list of
+    //     codes, so the next structured refusal renders without anyone
+    //     remembering to add it here — which is the defect being fixed, not
+    //     just this one instance of it. Anything it cannot say honestly returns
+    //     null and falls through to the generic sentence below, unchanged.
+    const detail = describeRefusal(j);
+    if (detail) return detail;
+    // 2. The server's own sentence, but only if it's already plain (no internals).
+    //
+    //    `message` IS TRIED FIRST, AND THE ORDER IS THE FIX. It used to be
+    //    `reason ?? message`, from when `reason` was the only field a refusal
+    //    carried. It is not any more: this tree's fail-closed refusals ship BOTH
+    //    halves — `message` written for the operator, `reason` copied from the
+    //    driver — and `reason` is therefore, by construction, the half most
+    //    likely to be PostgREST text that the hygiene filter below is right to
+    //    drop. Preferring it meant the driver's string was chosen, discarded,
+    //    and the sentence beside it never looked at: the server had explained
+    //    itself, the client held the explanation, and the operator was shown
+    //    "The system hit a problem." That is what a Purchase Invoice create
+    //    answered on production, 2026-08-19 (backend purchase-invoices.ts:774,
+    //    :785, :809 — `unlinkedCheckFailedResponse`, `load_failed`).
+    //
+    //    Both are still candidates and the filter still judges each one on its
+    //    own, so a `message` that is itself a blob, a code or SQL simply falls
+    //    through to `reason` exactly as before — nothing that used to render
+    //    stops rendering.
+    //
+    //    Skip nested JSON blobs (e.g. the raw GoTrue "session_not_found" body
+    //    the auth middleware forwards verbatim in `reason`) — those must never
+    //    reach an operator. The `{`-prefix + `error_code` guards catch them;
+    //    401s then fall through to the friendly "session has expired" status
+    //    message below.
+    const isPlain = (r: string) =>
+      !!r && r.length < 200 && !r.trim().startsWith('{') && !isErrorCode(r) &&
+      !/violates|constraint|null value|column|relation|syntax|PGRST|error_code|\b\d{5}\b/i.test(r);
+
+    /* THE DIAGNOSTIC TAIL, DROPPED INSTEAD OF THE WHOLE SENTENCE.
+       Sixteen fail-closed refusals in this tree write the operator's sentence
+       and then staple the driver's own words onto the end of it in brackets —
+       `…so this invoice was NOT saved … Please try again (column grn_items.foo
+       does not exist).` (backend return-unlinked-lines.ts:294, and the same
+       shape in allowed-options-check, do-line-remaining, downstream-lock,
+       qty-cap, service-line-guard, sku-usage, so-confirm-gate, the two unlinked
+       edit guards, derive-do-so-item-id and three route-level lock checks).
+       The filter above is right about the bracket and was wrong about the
+       sentence: it judged the pair as one string and threw away BOTH, so a
+       refusal that had explained itself in full rendered as "The system hit a
+       problem." Fixing it here rather than in sixteen strings is deliberate —
+       the next one written will be the same shape, and this is the only place
+       that sees the string at the moment it is judged.
+       Only a TRAILING bracket is removed, only when the whole string failed and
+       the remainder passes, and only ever by DELETION — a mid-sentence aside
+       ("Goods Receipt -> Transfer to Purchase Invoice") is untouched, and a
+       remainder that is still internals is still dropped. Nothing that renders
+       today stops rendering. */
+    const withoutTail = (r: string) => r.replace(/\s*\([^()]*\)\s*(\.?)\s*$/, '$1').trim();
+    const sayable = (raw: unknown): string | null => {
+      if (typeof raw !== 'string') return null;
+      if (isPlain(raw)) return raw;
+      const trimmed = withoutTail(raw);
+      return trimmed !== raw && isPlain(trimmed) ? trimmed : null;
+    };
+    const said = sayable(j.message) ?? sayable(j.reason);
+    if (said) return said;
   } catch { /* body wasn't JSON — fall through to the status map */ }
   if (status === 401) return 'Your session has expired — please sign in again.';
   if (status === 403) return "You don't have permission to do that.";

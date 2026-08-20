@@ -22,6 +22,7 @@
 // tests can hit this without Supabase. ----------------------------------------
 
 import { normalizeCompartmentCode } from '../shared/sofa-build';
+import { normaliseTypographicQuotes } from '../shared/mfg-pricing';
 
 export type AllowedOptionsLite = {
   sizes?:                 string[] | null;
@@ -78,15 +79,67 @@ export type VariantsLite = {
   colourId?:      string | null;
 } | null | undefined;
 
+/** One input BEHIND a refused field that the operator can actually edit.
+ *  Only present when `field` is COMPUTED — see `derivedFrom` below. */
+export type AllowedCheckErrorPart = { field: string; value: string };
+
 export type AllowedCheckError = {
   error:   'variant_not_allowed';
   field:   string;
   value:   string;
   allowed: string[];
+  /** ADDITIVE (2026-08-18), and the reason the bedframe message can be written
+   *  at all. `total_height` is not something the salesperson types — it is
+   *  divan + leg + gap, computed by the editor (SoLineCard.tsx:430-437) and
+   *  written into the draft; the form has NO Total Height input. So a refusal
+   *  that names only `total_height` names a field he cannot reach, and the
+   *  client cannot invent the decomposition because the body never carried it.
+   *
+   *  Present ONLY on a computed field, and always with EVERY input behind it
+   *  (value `''` when the line didn't send that one), so the client can name
+   *  all three boxes even when only one is filled. Absent on every field the
+   *  operator types directly — its absence is what tells the client "this one
+   *  IS the box to change". No existing key changes meaning. */
+  derivedFrom?: AllowedCheckErrorPart[];
 };
 
 const hasRestriction = (pool: string[] | null | undefined): pool is string[] => {
   return Array.isArray(pool) && pool.length > 0;
+};
+
+/* ─── Pool membership ─────────────────────────────────────────────────────
+   EXACT FIRST, THEN QUOTE-INSENSITIVE, and that ordering is the whole safety
+   argument — it is the same one `findOption` in mfg-pricing.ts:198-205 makes,
+   reusing that module's single `normaliseTypographicQuotes` definition rather
+   than growing a second one.
+
+   THE MEASUREMENT (prod, 2026-08-17, probe run 32048732641). All 10 BEDFRAME
+   Models that restrict `total_heights` share ONE 16-value pool, and it is
+   glyph-inconsistent: the even values 10..28 carry an ASCII inch mark (U+0022)
+   while 17/19/23/27 carry U+201C and 21/25 carry U+201D. The `gaps` pool on the
+   same Models splits the same way — 7 ASCII, 10 curly. The editor can only ever
+   emit ASCII (SoLineCard.tsx:436 is a template literal ending `"`), and this
+   gate compared with a raw `Array.includes`, i.e. `===` on strings. So EVERY
+   ODD TOTAL was refused by a pool that visibly lists that number. Counting only
+   the gaps the picker can actually offer, 94 of 280 divan x leg x gap
+   combinations refused ON THE QUOTE CHARACTER ALONE — a permanent 400 on a
+   line the operator had no way to correct, and a message that would have read
+   `17" is not allowed. Allowed: …, 17“, …`.
+
+   `17"` and `17“` are the same physical height. Refusing one is a typing
+   accident in a maintenance row, not a business rule, so folding them is not a
+   weakening: an exact hit is still preferred, so nothing that matches today can
+   change meaning, and only a value that matches NOTHING today — and therefore
+   already 400s — can start matching. WHICH values a Model permits is untouched.
+
+   Deliberately narrow, exactly as the pricing engine chose: quote characters
+   only. No trim, no case folding — those are separate behaviour changes, and
+   this same string family also composes `variant_key`, the inventory bucket
+   identity. */
+const inPool = (pool: string[], value: string): boolean => {
+  if (pool.includes(value)) return true;
+  const wanted = normaliseTypographicQuotes(value);
+  return pool.some((p) => normaliseTypographicQuotes(p) === wanted);
 };
 
 const toSpecialsArray = (s: string[] | string | null | undefined): string[] => {
@@ -125,7 +178,7 @@ export function checkAllowedOptions(
     (product.category === 'BEDFRAME' || product.category === 'MATTRESS')
     && product.size_code
     && hasRestriction(opts.sizes)
-    && !opts.sizes.includes(product.size_code)
+    && !inPool(opts.sizes, product.size_code)
   ) {
     return {
       error: 'variant_not_allowed',
@@ -157,7 +210,7 @@ export function checkAllowedOptions(
           : '';
         if (!moduleId) continue;
         const code = normalizeCompartmentCode(moduleId);
-        if (code && !opts.compartments.includes(code)) {
+        if (code && !inPool(opts.compartments, code)) {
           return {
             error: 'variant_not_allowed',
             field: 'compartment',
@@ -169,7 +222,7 @@ export function checkAllowedOptions(
     } else {
       const dashAt = product.code.indexOf('-');
       const compartment = dashAt > 0 ? product.code.slice(dashAt + 1).trim() : '';
-      if (compartment && !opts.compartments.includes(compartment)) {
+      if (compartment && !inPool(opts.compartments, compartment)) {
         return {
           error: 'variant_not_allowed',
           field: 'compartment',
@@ -184,7 +237,7 @@ export function checkAllowedOptions(
   const v = variants ?? {};
 
   if (v.divanHeight && hasRestriction(opts.divan_heights)
-      && !opts.divan_heights.includes(v.divanHeight)) {
+      && !inPool(opts.divan_heights, v.divanHeight)) {
     return {
       error: 'variant_not_allowed',
       field: 'divan_height',
@@ -193,19 +246,30 @@ export function checkAllowedOptions(
     };
   }
 
+  /* total_height is COMPUTED, never typed — divan + leg + gap, written into the
+     draft by SoLineCard.tsx:439-445, with no Total Height input on the form. So
+     this is the one refusal that must hand the client the inputs behind it;
+     without `derivedFrom` the only honest message names a box that does not
+     exist. Every part is listed even when empty, so the message can name all
+     three boxes while showing values only for the ones that are filled. */
   if (v.totalHeight && hasRestriction(opts.total_heights)
-      && !opts.total_heights.includes(v.totalHeight)) {
+      && !inPool(opts.total_heights, v.totalHeight)) {
     return {
       error: 'variant_not_allowed',
       field: 'total_height',
       value: v.totalHeight,
       allowed: opts.total_heights,
+      derivedFrom: [
+        { field: 'divan_height', value: v.divanHeight ?? '' },
+        { field: 'leg_height',   value: v.legHeight ?? v.sofaLegHeight ?? '' },
+        { field: 'gap',          value: v.gap ?? '' },
+      ],
     };
   }
 
   // gap (BEDFRAME) — no price contribution, but on/off-able per Model.
   if (v.gap && hasRestriction(opts.gaps)
-      && !opts.gaps.includes(v.gap)) {
+      && !inPool(opts.gaps, v.gap)) {
     return {
       error: 'variant_not_allowed',
       field: 'gap',
@@ -219,7 +283,7 @@ export function checkAllowedOptions(
   // Model regardless of category.
   const legPick = v.legHeight ?? v.sofaLegHeight ?? null;
   if (legPick && hasRestriction(opts.leg_heights)
-      && !opts.leg_heights.includes(legPick)) {
+      && !inPool(opts.leg_heights, legPick)) {
     return {
       error: 'variant_not_allowed',
       field: 'leg_height',
@@ -231,7 +295,7 @@ export function checkAllowedOptions(
   // Sofa: seatHeight maps to allowed_options.sizes (sofa "size" = seat
   // height in commander's parlance — same chip list).
   if (product.category === 'SOFA' && v.seatHeight && hasRestriction(opts.sizes)
-      && !opts.sizes.includes(v.seatHeight)) {
+      && !inPool(opts.sizes, v.seatHeight)) {
     return {
       error: 'variant_not_allowed',
       field: 'seat_size',
@@ -247,10 +311,10 @@ export function checkAllowedOptions(
   // pick made the picker send a value that round-trips fine in the UI but 400s
   // here as variant_not_allowed.
   if (hasRestriction(opts.specials)) {
-    const allowedTrimmed = new Set(opts.specials.map((s) => String(s).trim()));
+    const allowedTrimmed = opts.specials.map((s) => String(s).trim());
     const picks = toSpecialsArray(v.specials ?? v.special);
     for (const p of picks) {
-      if (!allowedTrimmed.has(p)) {
+      if (!inPool(allowedTrimmed, p)) {
         return {
           error: 'variant_not_allowed',
           field: 'specials',
@@ -265,7 +329,7 @@ export function checkAllowedOptions(
   // Model. opts.fabrics holds fabric_colours.colour_id values; the line carries
   // it as fabricCode (canonical) or colourId (POS picker). Empty pool = no gate.
   const fabricPick = v.fabricCode ?? v.colourId ?? null;
-  if (fabricPick && hasRestriction(opts.fabrics) && !opts.fabrics.includes(fabricPick)) {
+  if (fabricPick && hasRestriction(opts.fabrics) && !inPool(opts.fabrics, fabricPick)) {
     return {
       error: 'variant_not_allowed',
       field: 'fabric',

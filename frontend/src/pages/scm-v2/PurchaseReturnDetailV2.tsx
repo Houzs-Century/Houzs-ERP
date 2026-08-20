@@ -4,7 +4,7 @@
 // Credit expected (synced/green because it's money coming back).
 
 import { useMemo, type ReactNode } from "react";
-import { buildVariantSummary, fmtMoneyCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtDate, fmtMoneySen, orderLineIdentity } from "@2990s/shared";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { scmListReturnTo } from "../../lib/scmListReturn";
 import {
@@ -51,7 +51,7 @@ type PrHeader = {
   return_date: string | null;
   reason: string | null;
   credit_note_ref?: string | null;
-  refund_centi?: number;
+  refund_sen?: number;
   notes?: string | null;
   currency: string;
   supplier?: {
@@ -73,7 +73,6 @@ type PrHeader = {
 
 type PrItem = {
   id: string;
-  material_code?: string | null;
   item_code?: string | null;
   description?: string | null;
   description2?: string | null;
@@ -83,25 +82,17 @@ type PrItem = {
   qty?: number;
   qty_returned?: number;
   condition?: string | null;
-  unit_price_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen?: number;
+  line_total_sen?: number;
   warehouse_code?: string | null;
 };
 
-const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneyCenti(centi, currency);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  const s = iso.replace(/T.*$/, "");
-  const m = /^(\d{4})[-/](\d{2})[-/](\d{2})$/.exec(s);
-  if (!m) return s;
-  return `${m[3]}/${m[2]}/${m[1]}`;
-};
+const fmtMoney = (centi: number, currency = "MYR"): string => fmtMoneySen(centi, currency);
 
 const supplierNameOf = (h: PrHeader): string => h.supplier?.name || "—";
 const supplierCodeOf = (h: PrHeader): string => h.supplier?.code || "—";
 const sourceOf = (h: PrHeader): string => h.grn?.grn_number || h.purchase_order?.po_number || "—";
-const refundOf = (h: PrHeader): number => h.refund_centi ?? 0;
+const refundOf = (h: PrHeader): number => h.refund_sen ?? 0;
 
 type Effective = "draft" | "posted" | "completed" | "cancelled";
 const effectiveOf = (h: PrHeader): Effective => {
@@ -308,7 +299,7 @@ export function PurchaseReturnDetailV2() {
       key: "item",
       label: "Item",
       alwaysVisible: true,
-      getValue: (l) => l.material_code || l.item_code || "",
+      getValue: (l) => l.item_code || l.item_code || "",
       /* Item CODE first, then the variant subtitle; description dropped (owner 2026-07-24) — the shared order-line rule
          (vendor/shared/line-identity.ts). Swept on SHAPE, not vocabulary. The
          WAREHOUSE pill is not a duplicate and stays — its row is kept when only
@@ -316,7 +307,7 @@ export function PurchaseReturnDetailV2() {
          getValue above. */
       render: (l) => {
         const { primary, secondary } = orderLineIdentity({
-          code: l.material_code || l.item_code,
+          code: l.item_code || l.item_code,
           description: l.description,
           variant: buildVariantSummary(l.item_group ?? "others", l.variants) || (l.description2 ?? ""),
         });
@@ -363,9 +354,9 @@ export function PurchaseReturnDetailV2() {
       label: "Unit price",
       width: "108px",
       align: "right",
-      getValue: (l) => l.unit_price_centi ?? 0,
+      getValue: (l) => l.unit_price_sen ?? 0,
       render: (l) => (
-        <span className="font-money text-[13px] text-ink-secondary">{fmtMoney(l.unit_price_centi ?? 0, purchaseReturn?.currency)}</span>
+        <span className="font-money text-[13px] text-ink-secondary">{fmtMoney(l.unit_price_sen ?? 0, purchaseReturn?.currency)}</span>
       ),
     },
     {
@@ -373,9 +364,9 @@ export function PurchaseReturnDetailV2() {
       label: "Credit",
       width: "132px",
       align: "right",
-      getValue: (l) => l.line_total_centi ?? 0,
+      getValue: (l) => l.line_total_sen ?? 0,
       render: (l) => (
-        <span className="font-money text-[13px] font-semibold text-synced">{fmtMoney(l.line_total_centi ?? 0, purchaseReturn?.currency)}</span>
+        <span className="font-money text-[13px] font-semibold text-synced">{fmtMoney(l.line_total_sen ?? 0, purchaseReturn?.currency)}</span>
       ),
     },
   ];

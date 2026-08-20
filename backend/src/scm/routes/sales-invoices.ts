@@ -8,7 +8,7 @@
 //
 // REVENUE: a Sales Invoice records revenue the moment it is created/confirmed.
 // The POST handler calls the shared idempotent poster (post-si-revenue) which
-// writes Dr 1100 (AR) / Cr 4000 (Sales Revenue) = total_centi into
+// writes Dr 1100 (AR) / Cr 4000 (Sales Revenue) = total_sen into
 // journal_entries + journal_entry_lines, keyed on (source_type='SI',
 // source_doc_no=invoice_number) so it can never double-post. Posting failures
 // never roll back the invoice (audit-DLQ pattern).
@@ -44,6 +44,7 @@ import { scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
   isCrossCompanySource, crossCompanyConversionBlocked,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY } from '../lib/companyScope';
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
+import { dateOrNull, coerceEmptyDates } from '../lib/date-coerce';
 import { postUnpostedSiPayments, reverseSiPayment } from '../../acc/payments';
 import { insertSiPaymentRow } from '../lib/si-payment-row';
 import { postSiRevenue, reverseSiRevenue, resyncSiRevenue } from '../lib/post-si-revenue';
@@ -51,15 +52,17 @@ import { mintMonthlyDocNo, insertWithDocNoRetry } from '../lib/doc-no';
 import { todayMyt } from '../lib/my-time';
 import { resolveSalesScopeIds, salesDocOutOfScope } from '../lib/salesScope';
 import { escapeForOr, phoneSearchOrParts } from '../lib/postgrest-search';
+import { readStatusCounts } from '../lib/status-counts';
 import { canViewAllSales, canViewScmFinance } from '../lib/houzs-perms';
 import { SO_ITEM_FINANCE_KEYS } from '../lib/finance-keys';
-import { doLineRemaining, doRemainingByItemId, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, type DoRemainingLine } from '../lib/do-line-remaining';
+import { doLineRemaining, doRemainingByItemId, checkSiOverRemaining, checkSiReopenOverRemaining, findOverInvoicedDoItems, resolveCandidateDoIds, custKeyOf, remainingUnavailableResponse, type DoRemainingLine } from '../lib/do-line-remaining';
+import { siShadowRefusal, unlinkedEditRefusal } from '../lib/unlinked-line-edit-guard';
 import { resolveSiHeaderSources, resolveDoLineSources } from '../lib/source-po-trace';
 import { validateItemCodes, unknownItemCodeResponse } from '../lib/validate-item-codes';
 import { applyCustomerCreditToSi, creditFromCancelledSi, reverseCancelledSiCredit, reconcileSiOverpay } from '../lib/customer-credits';
 import { recordEntityAudit, diffFields, compactChanges, fieldChange, statusChange } from '../lib/entity-audit';
 import { SI_LINE_AUDIT_FIELDS, SI_LINE_AUDIT_SELECT } from '../lib/entity-audit-fields';
-import { enqueueConvert, recordConvertSkipped, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { enqueueConvert, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
 import { recordSiAutoCountSource } from '../lib/si-autocount-source';
 import { refuseMigratedSources } from '../lib/migrated-chain';
 
@@ -173,7 +176,7 @@ async function recordSiCreate(
   try {
     const { data } = await sb.from('sales_invoices')
       .select('id, invoice_number, status, company_id, debtor_code, debtor_name, so_doc_no, ' +
-        'delivery_order_id, invoice_date, due_date, currency, salesperson_id, total_centi, paid_centi')
+        'delivery_order_id, invoice_date, due_date, currency, salesperson_id, total_sen, paid_sen')
       .eq('id', siId).maybeSingle();
     row = (data ?? null) as Record<string, unknown> | null;
   } catch { /* best-effort */ }
@@ -198,7 +201,7 @@ async function recordSiCreate(
       fieldChange('currency', null, row.currency ?? null),
       fieldChange('salespersonId', null, row.salesperson_id ?? null),
       /* INTEGER SEN, straight off the column. */
-      fieldChange('totalCenti', null, row.total_centi ?? null),
+      fieldChange('totalSen', null, row.total_sen ?? null),
       fieldChange('lineCount', null, lineCount),
     ]),
   });
@@ -208,25 +211,25 @@ async function recordSiCreate(
 const HEADER =
   'id, invoice_number, so_doc_no, delivery_order_id, debtor_code, debtor_name, ' +
   'invoice_date, due_date, customer_delivery_date, currency, ' +
-  'subtotal_centi, discount_centi, tax_centi, total_centi, paid_centi, ' +
+  'subtotal_sen, discount_sen, tax_sen, total_sen, paid_sen, ' +
   'salesperson_id, agent, email, customer_type, building_type, branding, venue, venue_id, ref, ' +
   'customer_so_no, po_doc_no, sales_location, customer_state, customer_country, note, ' +
   'address1, address2, city, state, postcode, phone, ' +
   'emergency_contact_name, emergency_contact_phone, emergency_contact_relationship, ' +
-  'mattress_sofa_centi, bedframe_centi, accessories_centi, others_centi, service_centi, ' +
-  'mattress_sofa_cost_centi, bedframe_cost_centi, accessories_cost_centi, others_cost_centi, service_cost_centi, ' +
-  'local_total_centi, total_cost_centi, total_margin_centi, margin_pct_basis, line_count, ' +
+  'mattress_sofa_sen, bedframe_sen, accessories_sen, others_sen, service_sen, ' +
+  'mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, service_cost_sen, ' +
+  'local_total_sen, total_cost_sen, total_margin_sen, margin_pct_basis, line_count, ' +
   'status, notes, sent_at, paid_at, confirmed_at, created_at, created_by, updated_at';
 
 /* FINANCE-GATED header keys — cost / margin / per-category revenue+cost
    subtotals. All are in HEADER (so they travel in the SI list payload) but must
    reach ONLY a finance-viewer (lib/houzs-perms.canViewScmFinance). Stripped from
    every row for a non-finance caller. Invoice totals shown to everyone
-   (total_centi / local_total_centi / paid_centi) are NOT listed here. */
+   (total_sen / local_total_sen / paid_sen) are NOT listed here. */
 const SI_FINANCE_KEYS = [
-  'mattress_sofa_centi', 'bedframe_centi', 'accessories_centi', 'others_centi', 'service_centi',
-  'mattress_sofa_cost_centi', 'bedframe_cost_centi', 'accessories_cost_centi', 'others_cost_centi', 'service_cost_centi',
-  'total_cost_centi', 'total_margin_centi', 'margin_pct_basis',
+  'mattress_sofa_sen', 'bedframe_sen', 'accessories_sen', 'others_sen', 'service_sen',
+  'mattress_sofa_cost_sen', 'bedframe_cost_sen', 'accessories_cost_sen', 'others_cost_sen', 'service_cost_sen',
+  'total_cost_sen', 'total_margin_sen', 'margin_pct_basis',
 ] as const;
 
 /* Strip the finance keys from every row in place unless the caller may see
@@ -242,13 +245,13 @@ function gateSiFinance(rows: unknown, showFinance: boolean): void {
 
 const ITEM =
   'id, sales_invoice_id, so_item_id, do_item_id, item_code, item_group, description, description2, ' +
-  'uom, qty, unit_price_centi, discount_centi, tax_centi, line_total_centi, ' +
-  'unit_cost_centi, line_cost_centi, line_margin_centi, variants, notes, created_at';
+  'uom, qty, unit_price_sen, discount_sen, tax_sen, line_total_sen, ' +
+  'unit_cost_sen, line_cost_sen, line_margin_sen, variants, notes, created_at';
 
 /* KEPT LOCAL, deliberately — do NOT "converge" SI_FINANCE_KEYS onto
    SO_FINANCE_KEYS. It is the finance-shaped subset of THIS file's HEADER select.
-   The SI carries service_centi / service_cost_centi (it invoices service lines)
-   but NOT deposit_centi — a deposit is taken on the ORDER, not on the invoice,
+   The SI carries service_sen / service_cost_sen (it invoices service lines)
+   but NOT deposit_sen — a deposit is taken on the ORDER, not on the invoice,
    which is why SO_FINANCE_KEYS gates deposit and this list has nothing to gate.
    Importing the SO's list would make this gate depend on a vocabulary this
    document does not speak. The per-LINE keys ARE shared: byte-identical across
@@ -257,7 +260,7 @@ const ITEM =
 
 const PAYMENT_COLS =
   'id, sales_invoice_id, paid_at, method, merchant_provider, installment_months, ' +
-  'online_type, approval_code, amount_centi, account_sheet, collected_by, note, ' +
+  'online_type, approval_code, amount_sen, account_sheet, collected_by, note, ' +
   'created_at, created_by';
 
 const nextNum = async (sb: any, c: any): Promise<string> => {
@@ -269,7 +272,7 @@ const nextNum = async (sb: any, c: any): Promise<string> => {
 
 /* Re-derive the SI header's per-category revenue/cost totals + grand total from
    its line items. Mirrors the DO recomputeTotals plain per-category rollup. Also
-   keeps subtotal_centi / total_centi in sync (they back the GL posting + the
+   keeps subtotal_sen / total_sen in sync (they back the GL posting + the
    legacy payments path). Called after every item mutation.
 
    Fails CLOSED and never throws (2026-07-17) — same contract as the SO's
@@ -284,13 +287,13 @@ const nextNum = async (sb: any, c: any): Promise<string> => {
    2026-07-17 (fix/zeroing-twins). */
 async function recomputeTotals(sb: any, salesInvoiceId: string) {
   const { data: items, error: itemsErr } = await sb.from('sales_invoice_items')
-    .select('item_code, item_group, line_total_centi, line_cost_centi')
+    .select('item_code, item_group, line_total_sen, line_cost_sen')
     .eq('sales_invoice_id', salesInvoiceId);
   /* A failed READ is not an empty invoice, and `?? []` cannot tell them apart:
      supabase-js resolves a failed select to { data: null, error } and does NOT
-     throw, so a transient blip used to fold nothing and write subtotal_centi /
-     total_centi / every category bucket to ZERO on an invoice whose lines were
-     intact. total_centi backs the GL, and postSiRevenue treats a zero total as
+     throw, so a transient blip used to fold nothing and write subtotal_sen /
+     total_sen / every category bucket to ZERO on an invoice whose lines were
+     intact. total_sen backs the GL, and postSiRevenue treats a zero total as
      `zero_total` — a status its callers deliberately swallow — so the zeroing
      ALSO silently skipped the AR/revenue posting entirely. The ERROR is the
      signal, never the emptiness: a genuinely empty invoice (last line deleted)
@@ -303,9 +306,9 @@ async function recomputeTotals(sb: any, salesInvoiceId: string) {
   }
   let mattressSofa = 0, bedframe = 0, accessories = 0, others = 0, service = 0, total = 0, totalCost = 0;
   let mattressSofaCost = 0, bedframeCost = 0, accessoriesCost = 0, othersCost = 0, serviceCost = 0;
-  for (const it of (items ?? []) as Array<{ item_code: string | null; item_group: string | null; line_total_centi: number | null; line_cost_centi: number | null }>) {
-    const lineTotal = Number(it.line_total_centi ?? 0);
-    const lineCost  = Number(it.line_cost_centi ?? 0);
+  for (const it of (items ?? []) as Array<{ item_code: string | null; item_group: string | null; line_total_sen: number | null; line_cost_sen: number | null }>) {
+    const lineTotal = Number(it.line_total_sen ?? 0);
+    const lineCost  = Number(it.line_cost_sen ?? 0);
     total += lineTotal;
     totalCost += lineCost;
     const g = (it.item_group ?? '').toLowerCase();
@@ -317,11 +320,11 @@ async function recomputeTotals(sb: any, salesInvoiceId: string) {
   }
   /* Fold any header-level discount/tax into the grand total. These columns are
      currently never written (all discount/tax is per-line, already inside
-     line_total_centi), so this is a no-op today — but it stops a future
+     line_total_sen), so this is a no-op today — but it stops a future
      header-discount UI that populates them from silently overstating the posted
-     revenue (total_centi backs the GL). subtotal_centi stays the line sum. */
+     revenue (total_sen backs the GL). subtotal_sen stays the line sum. */
   const { data: siHdr, error: hdrErr } = await sb.from('sales_invoices')
-    .select('discount_centi, tax_centi').eq('id', salesInvoiceId).maybeSingle();
+    .select('discount_sen, tax_sen').eq('id', salesInvoiceId).maybeSingle();
   /* A failed read here reads as "no header discount/tax" and would write a
      total that silently ignores both. A header that genuinely carries neither
      is error === null with nulls, and still legitimately folds in zero. */
@@ -330,28 +333,28 @@ async function recomputeTotals(sb: any, salesInvoiceId: string) {
     console.error('[si-recompute] header discount/tax read failed — header left unchanged:', salesInvoiceId, hdrErr.message);
     return;
   }
-  const headerDiscount = Math.max(0, Number(siHdr?.discount_centi ?? 0));
-  const headerTax = Math.max(0, Number(siHdr?.tax_centi ?? 0));
+  const headerDiscount = Math.max(0, Number(siHdr?.discount_sen ?? 0));
+  const headerTax = Math.max(0, Number(siHdr?.tax_sen ?? 0));
   const grand = Math.max(0, total - headerDiscount + headerTax);
   const margin = grand - totalCost;
   const { error: updErr } = await sb.from('sales_invoices').update({
-    mattress_sofa_centi: mattressSofa,
-    bedframe_centi: bedframe,
-    accessories_centi: accessories,
-    others_centi: others,
-    service_centi: service,
-    mattress_sofa_cost_centi: mattressSofaCost,
-    bedframe_cost_centi: bedframeCost,
-    accessories_cost_centi: accessoriesCost,
-    others_cost_centi: othersCost,
-    service_cost_centi: serviceCost,
-    local_total_centi: grand,
-    total_cost_centi: totalCost,
-    total_margin_centi: margin,
+    mattress_sofa_sen: mattressSofa,
+    bedframe_sen: bedframe,
+    accessories_sen: accessories,
+    others_sen: others,
+    service_sen: service,
+    mattress_sofa_cost_sen: mattressSofaCost,
+    bedframe_cost_sen: bedframeCost,
+    accessories_cost_sen: accessoriesCost,
+    others_cost_sen: othersCost,
+    service_cost_sen: serviceCost,
+    local_total_sen: grand,
+    total_cost_sen: totalCost,
+    total_margin_sen: margin,
     margin_pct_basis: grand > 0 ? Math.round((margin / grand) * 10000) : 0,
     line_count: (items ?? []).length,
-    subtotal_centi: total,
-    total_centi: grand,
+    subtotal_sen: total,
+    total_sen: grand,
     updated_at: new Date().toISOString(),
   }).eq('id', salesInvoiceId);
   /* The write's own result was discarded until 2026-07-17, so a rejected UPDATE
@@ -366,10 +369,10 @@ async function recomputeTotals(sb: any, salesInvoiceId: string) {
 /* Build one sales_invoice_items insert row from a client line payload. */
 function buildItemRow(salesInvoiceId: string, it: Record<string, unknown>, lineNo?: number | null) {
   const qty = Number(it.qty ?? 1);
-  const unitPrice = Number(it.unitPriceCenti ?? 0);
-  const discount = Number(it.discountCenti ?? 0);
-  const tax = Number(it.taxCenti ?? 0);
-  const unitCost = Number(it.unitCostCenti ?? 0);
+  const unitPrice = Number(it.unitPriceSen ?? 0);
+  const discount = Number(it.discountSen ?? 0);
+  const tax = Number(it.taxSen ?? 0);
+  const unitCost = Number(it.unitCostSen ?? 0);
   /* Clamp at 0 — the operator's screen already does (SalesInvoiceNew.tsx:250-252
      computes Math.max(0, qty*price − disc) per line). Without the clamp a line
      whose discount exceeds its gross recorded a NEGATIVE total: the operator saw
@@ -391,13 +394,13 @@ function buildItemRow(salesInvoiceId: string, it: Record<string, unknown>, lineN
     description2: buildVariantSummary(String(itemGroup ?? ''), (variants as Record<string, unknown> | null) ?? null) || (it.description2 as string) || null,
     uom: (it.uom as string) ?? 'UNIT',
     qty,
-    unit_price_centi: unitPrice,
-    discount_centi: discount,
-    tax_centi: tax,
-    line_total_centi: lineTotal,
-    unit_cost_centi: unitCost,
-    line_cost_centi: lineCost,
-    line_margin_centi: lineTotal - lineCost,
+    unit_price_sen: unitPrice,
+    discount_sen: discount,
+    tax_sen: tax,
+    line_total_sen: lineTotal,
+    unit_cost_sen: unitCost,
+    line_cost_sen: lineCost,
+    line_margin_sen: lineTotal - lineCost,
     variants,
     /* Migration 0058 — carry the dedicated variant-breakdown columns onto the SI
        line (sales_invoice_items has all 8). Source is the convert payload `it`. */
@@ -412,12 +415,6 @@ function buildItemRow(salesInvoiceId: string, it: Record<string, unknown>, lineN
     notes: (it.notes as string) ?? null,
     ...(typeof lineNo === 'number' ? { line_no: lineNo } : {}),
   };
-}
-
-/* LINE-LEVEL, QUANTITY-BASED DO → Sales Invoice remaining. Wraps the shared
-   Pending formula: remaining_to_invoice = delivered − invoiced − returned. */
-async function doInvoiceableRemaining(sb: any, doIds: string[]): Promise<Map<string, DoRemainingLine>> {
-  return doLineRemaining(sb, doIds);
 }
 
 /* The migrated refusal for every path that can attach a DELIVERY to an invoice.
@@ -460,65 +457,8 @@ async function migratedRefusalForDeliveries(
   };
 }
 
-/* Remaining-to-invoice write guard. */
-async function checkSiOverRemaining(
-  sb: any,
-  lines: Array<Record<string, unknown>>,
-  excludeByDoItem?: Map<string, number>,
-): Promise<{ error: string; lines: Array<{ doItemId: string; requested: number; remaining: number }> } | null> {
-  const wanted = new Map<string, number>();
-  for (const it of lines) {
-    const doItemId = (it.doItemId as string | undefined) ?? null;
-    if (!doItemId) continue;
-    wanted.set(doItemId, (wanted.get(doItemId) ?? 0) + Number(it.qty ?? 0));
-  }
-  if (wanted.size === 0) return null;
-  const remainingMap = await doRemainingByItemId(sb, [...wanted.keys()]);
-  const offenders: Array<{ doItemId: string; requested: number; remaining: number }> = [];
-  for (const [doItemId, requested] of wanted) {
-    const cap = (remainingMap.get(doItemId) ?? 0) + (excludeByDoItem?.get(doItemId) ?? 0);
-    if (requested > cap) offenders.push({ doItemId, requested, remaining: cap });
-  }
-  return offenders.length > 0 ? { error: 'over_remaining', lines: offenders } : null;
-}
-
-/* FIX 3 (fix/si-cancel-revenue-qty) — a from-DO Sales Invoice (its header carries
-   delivery_order_id) must LINK its DO-derived lines via do_item_id, so they count
-   against the DO's Pending pool (do-line-remaining) and respect the
-   remaining-to-invoice ceiling. An UNLINKED line whose item code STILL has Pending
-   qty on the source DO is the double-invoice vector: the link was dropped, so both
-   the ceiling and the pool are bypassed and the same delivered goods can be billed
-   again. Such a line must instead be added through the DO picker so it links.
-
-   Genuinely-new manual lines ride free — the owner's ruling is that a Sales Invoice
-   MAY carry direct/standalone lines. We only block the clear shadow case (item on
-   the DO with Pending qty); a manual line for an item NOT on the DO, or one whose
-   DO line is already fully invoiced (remaining 0), is left alone. Returns the
-   offending item codes (empty = nothing to block, and no DB round-trip when there
-   are no unlinked lines — the common from-DO path is all-linked). */
-async function unlinkedFromDoOffenders(
-  sb: any,
-  doId: string,
-  lines: Array<Record<string, unknown>>,
-): Promise<string[]> {
-  const unlinked = lines.filter((l) => !l.doItemId && l.itemCode);
-  if (unlinked.length === 0) return [];
-  const { data: doItemRows } = await sb.from('delivery_order_items')
-    .select('id, item_code').eq('delivery_order_id', doId);
-  const rows = (doItemRows ?? []) as Array<{ id: string; item_code: string | null }>;
-  if (rows.length === 0) return [];
-  const remainingMap = await doRemainingByItemId(sb, rows.map((r) => r.id));
-  const pendingCodes = new Set<string>();
-  for (const r of rows) {
-    if (r.item_code && (remainingMap.get(r.id) ?? 0) > 0) pendingCodes.add(r.item_code.trim().toUpperCase());
-  }
-  const offenders = new Set<string>();
-  for (const l of unlinked) {
-    const code = String(l.itemCode).trim().toUpperCase();
-    if (pendingCodes.has(code)) offenders.add(String(l.itemCode));
-  }
-  return [...offenders];
-}
+/* FIX 3's shadow check now lives in unlinked-line-edit-guard (siShadowRefusal),
+   shared with the line PATCH that had no check at all. */
 
 /* ── Invoice price vs the AGREED ORDER price — WARN, never block ───────────
    Nothing downstream of the SO compares the two. The happy path is already
@@ -544,32 +484,32 @@ async function unlinkedFromDoOffenders(
    would false-positive constantly. One query, and only when linked lines exist. */
 const SI_PRICE_DRIFT_THRESHOLD = 0.005;
 
-type SiPriceWarning = { itemCode: string; invoicedCenti: number; orderedCenti: number };
+type SiPriceWarning = { itemCode: string; invoicedSen: number; orderedSen: number };
 
 async function siPriceDriftWarnings(
   sb: any,
   lines: Array<Record<string, unknown>>,
 ): Promise<SiPriceWarning[]> {
-  const linked = lines.filter((l) => l.doItemId && l.unitPriceCenti !== undefined);
+  const linked = lines.filter((l) => l.doItemId && l.unitPriceSen !== undefined);
   if (linked.length === 0) return [];
   const { data } = await sb.from('delivery_order_items')
-    .select('id, item_code, unit_price_centi')
+    .select('id, item_code, unit_price_sen')
     .in('id', [...new Set(linked.map((l) => String(l.doItemId)))]);
-  const byId = new Map<string, { item_code: string | null; unit_price_centi: number | null }>();
-  for (const r of (data ?? []) as Array<{ id: string; item_code: string | null; unit_price_centi: number | null }>) {
+  const byId = new Map<string, { item_code: string | null; unit_price_sen: number | null }>();
+  for (const r of (data ?? []) as Array<{ id: string; item_code: string | null; unit_price_sen: number | null }>) {
     byId.set(r.id, r);
   }
   const out: SiPriceWarning[] = [];
   for (const l of linked) {
     const src = byId.get(String(l.doItemId));
     if (!src) continue;
-    const ordered = Math.round(Number(src.unit_price_centi ?? 0));
-    const invoiced = Math.round(Number(l.unitPriceCenti ?? 0));
+    const ordered = Math.round(Number(src.unit_price_sen ?? 0));
+    const invoiced = Math.round(Number(l.unitPriceSen ?? 0));
     /* An agreed price of 0 has no ratio to drift from (and a free/gift line is a
        real thing here) — nothing to say about it. */
     if (!(ordered > 0) || !Number.isFinite(invoiced)) continue;
     if (Math.abs(invoiced - ordered) / ordered <= SI_PRICE_DRIFT_THRESHOLD) continue;
-    out.push({ itemCode: String(l.itemCode ?? src.item_code ?? ''), invoicedCenti: invoiced, orderedCenti: ordered });
+    out.push({ itemCode: String(l.itemCode ?? src.item_code ?? ''), invoicedSen: invoiced, orderedSen: ordered });
   }
   return out;
 }
@@ -581,7 +521,7 @@ async function siPriceDriftWarnings(
    under the 0.5% gate is invisible at that precision anyway. */
 function siPriceWarningMessage(warnings: SiPriceWarning[]): string {
   const parts = warnings.map(
-    (w) => `${w.itemCode} is invoiced at ${fmtRM(w.invoicedCenti / 100)} but the order price is ${fmtRM(w.orderedCenti / 100)}`,
+    (w) => `${w.itemCode} is invoiced at ${fmtRM(w.invoicedSen / 100)} but the order price is ${fmtRM(w.orderedSen / 100)}`,
   );
   return `${parts.join('; ')}. Check the price before sending this invoice.`;
 }
@@ -596,14 +536,16 @@ function withPriceWarnings<T extends object>(res: T, warnings: SiPriceWarning[])
 }
 
 /* Filter-pill bucket → the raw sales_invoices.status values it covers. Single
-   source of truth for BOTH the status-count queries and the list `status`
-   filter. sent / partial / paid are MULTI-status buckets; cancelled is 1:1. The
-   FE sends the BUCKET NAME as `status`; a raw DB status still works
-   (backward-compatible fallback). */
+   source of truth for the status-count queries AND the list `status` filter; the
+   FE sends the BUCKET NAME (a raw DB status still works). EVERY VALUE IS AN ENUM
+   MEMBER AND EVERY MEMBER IS IN A BUCKET — a non-member 500s the tab and used to
+   zero its count; a member in no bucket is a row in no tab. Pinned, with the
+   2026-08-17 prod evidence, by tests/statusBucketsEnumMembership.test.mjs: ISSUED / PARTIAL / COMPLETED
+   were never members (INPUT-only via SI_STATUS_CANON), OVERDUE was bucketless and joins `sent`, as the FE did. */
 const SI_STATUS_BUCKETS: Record<string, string[]> = {
-  sent: ['DRAFT', 'SENT', 'ISSUED'],
-  partial: ['PARTIALLY_PAID', 'PARTIAL'],
-  paid: ['PAID', 'COMPLETED'],
+  sent: ['DRAFT', 'SENT', 'OVERDUE'],
+  partial: ['PARTIALLY_PAID'],
+  paid: ['PAID'],
   cancelled: ['CANCELLED'],
 };
 
@@ -820,7 +762,7 @@ salesInvoices.get('/', async (c) => {
   const psRaw = Number(c.req.query('pageSize'));
   const pageSize = Number.isFinite(psRaw) && psRaw > 0 ? Math.min(100, Math.max(1, Math.trunc(psRaw))) : 50;
 
-  const SORT_COLS = new Set(['invoice_date', 'invoice_number', 'debtor_name', 'status', 'total_centi']);
+  const SORT_COLS = new Set(['invoice_date', 'invoice_number', 'debtor_name', 'status', 'total_sen']);
   const [rawCol, rawDir] = (c.req.query('sort') ?? 'invoice_date:desc').split(':');
   const sortCol = SORT_COLS.has(rawCol) ? rawCol : 'invoice_date';
   const sortAsc = rawDir === 'asc';
@@ -873,13 +815,10 @@ salesInvoices.get('/', async (c) => {
     countBase().in('status', SI_STATUS_BUCKETS.paid),
     countBase().in('status', SI_STATUS_BUCKETS.cancelled),
   ]);
-  const statusCounts = {
-    all: allC.count ?? 0,
-    sent: sentC.count ?? 0,
-    partial: partialC.count ?? 0,
-    paid: paidC.count ?? 0,
-    cancelled: cancelledC.count ?? 0,
-  };
+  // A count that could not be READ is reported, never served as 0; an empty bucket still answers 0 (lib/status-counts.ts).
+  const counted = readStatusCounts({ all: allC, sent: sentC, partial: partialC, paid: paidC, cancelled: cancelledC });
+  if (!counted.ok) return c.json({ error: 'status_counts_failed', reason: counted.reason }, 500);
+  const statusCounts = counted.counts;
 
   await stampSoDates(sb, data);
   await stampDoNumber(sb, data);
@@ -894,10 +833,14 @@ salesInvoices.get('/invoiceable-do-lines', async (c) => {
   const sb = c.get('supabase');
   // Company scope (owner 2026-08-10 audit) — without it the no-doIds path
   // enumerated every company's delivery orders into this picker.
-  const doIds = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
-  if (doIds.length === 0) return c.json({ lines: [] });
-  const remainingMap = await doInvoiceableRemaining(sb, doIds);
-  const lines = [...remainingMap.values()].filter((l) => l.remaining > 0);
+  const candidates = await resolveCandidateDoIds(sb, c.req.query('doIds'), activeCompanyId(c));
+  // NOT `{ lines: [] }` — an empty picker claims every delivered line is already
+  // invoiced, and a failed read may not make that claim. Refuse to render.
+  if (!candidates.ok) return c.json({ error: 'load_failed', reason: candidates.reason }, 500);
+  if (candidates.doIds.length === 0) return c.json({ lines: [] });
+  const remaining = await doLineRemaining(sb, candidates.doIds);
+  if (!remaining.ok) return c.json({ error: 'load_failed', reason: remaining.reason }, 500);
+  const lines = [...remaining.lines.values()].filter((l) => l.remaining > 0);
   return c.json({ lines });
 });
 
@@ -979,7 +922,7 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
 
   {
     const over = await checkSiOverRemaining(sb, items);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
 
   /* A delivery carried over from AutoCount is invoiced by the migrated-invoice
@@ -1002,14 +945,9 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
   {
     const fromDoId = (body.deliveryOrderId as string | undefined) ?? null;
     if (fromDoId) {
-      const shadow = await unlinkedFromDoOffenders(sb, fromDoId, items);
-      if (shadow.length > 0) {
-        return c.json({
-          error: 'unlinked_do_line',
-          message: `These items are still pending on the source Delivery Order and must be added through "Add from Delivery Order" so the delivered quantity is tracked: ${shadow.join(', ')}.`,
-          itemCodes: shadow,
-        }, 409);
-      }
+      const shadow = await siShadowRefusal(sb, fromDoId, items, (codes) =>
+        `These items are still pending on the source Delivery Order and must be added through "Add from Delivery Order" so the delivered quantity is tracked: ${codes.join(', ')}.`);
+      if (shadow) return c.json(shadow, 409);
     }
   }
 
@@ -1058,7 +996,7 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
      The confirm transition (PATCH /:id/status DRAFT→SENT) does the posting. */
   const isDraft = (body as { asDraft?: unknown }).asDraft === true;
 
-  const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; invoice_number: string; debtor_code: string | null; debtor_name: string | null; total_centi: number | null; paid_centi: number | null }>(
+  const { data: header, error: hErr } = await insertWithDocNoRetry<{ id: string; invoice_number: string; debtor_code: string | null; debtor_name: string | null; total_sen: number | null; paid_sen: number | null }>(
     () => nextNum(sb, c),
     (invoiceNumber) => sb.from('sales_invoices').insert({
     company_id: activeCompanyId(c), // multi-company: stamp the active company
@@ -1067,9 +1005,9 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
     delivery_order_id: (body.deliveryOrderId as string) ?? null,
     debtor_code: (body.debtorCode as string) ?? null,
     debtor_name: debtorName,
-    invoice_date: (body.invoiceDate as string) ?? todayMyt(),
-    due_date: (body.dueDate as string) ?? null,
-    customer_delivery_date: (body.customerDeliveryDate as string) ?? null,
+    invoice_date: dateOrNull(body.invoiceDate) ?? todayMyt(),
+    due_date: dateOrNull(body.dueDate),
+    customer_delivery_date: dateOrNull(body.customerDeliveryDate),
     address1: (body.address1 as string) ?? null,
     address2: (body.address2 as string) ?? null,
     city: (body.city as string) ?? null,
@@ -1103,7 +1041,7 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
     }).select(HEADER).single(),
   );
   if (hErr) return c.json({ error: 'insert_failed', reason: hErr.message }, 500);
-  const h = header as unknown as { id: string; invoice_number: string; debtor_code: string | null; debtor_name: string | null; total_centi: number | null; paid_centi: number | null };
+  const h = header as unknown as { id: string; invoice_number: string; debtor_code: string | null; debtor_name: string | null; total_sen: number | null; paid_sen: number | null };
 
   if (items.length > 0) {
     const rows = items.map((it, lineNo) => buildItemRow(h.id, it, lineNo));
@@ -1125,7 +1063,14 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
       .filter((x): x is string => !!x);
     if (pickedDoItemIds.length > 0) {
       const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
-      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck);
+      /* Recheck unreadable -> roll back, and never under the race message.
+         lib/do-line-remaining.ts's header argues the trade-off in full. */
+      if (!recheck.ok) {
+        await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
+        await sb.from('sales_invoices').delete().eq('id', h.id);
+        return c.json(remainingUnavailableResponse(recheck.reason), 503);
+      }
+      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck.remaining);
       if (over.length > 0) {
         // Undo: lines then header. Nothing else has happened yet — revenue is
         // posted further down, so there is no ledger entry to reverse.
@@ -1189,16 +1134,16 @@ export const createSalesInvoiceHandler = async (c: Context<{ Bindings: Env; Vari
   let creditApplied = 0;
   if (h.debtor_code) {
     try {
-      const { data: latest } = await sb.from('sales_invoices').select('total_centi, paid_centi').eq('id', h.id).maybeSingle();
-      const total = Number((latest as { total_centi: number } | null)?.total_centi ?? 0);
-      const paid  = Number((latest as { paid_centi: number } | null)?.paid_centi ?? 0);
+      const { data: latest } = await sb.from('sales_invoices').select('total_sen, paid_sen').eq('id', h.id).maybeSingle();
+      const total = Number((latest as { total_sen: number } | null)?.total_sen ?? 0);
+      const paid  = Number((latest as { paid_sen: number } | null)?.paid_sen ?? 0);
       const due   = Math.max(0, total - paid);
       const res = await applyCustomerCreditToSi(sb, {
         debtorCode: h.debtor_code,
         debtorName: h.debtor_name,
         siId: h.id,
         siNumber: h.invoice_number,
-        remainingDueCenti: due,
+        remainingDueSen: due,
         createdBy: user.id,
       });
       creditApplied = res.applied;
@@ -1265,7 +1210,11 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
     if (mig.refusal) return c.json(mig.refusal, 409);
   }
 
-  const remainingMap = await doInvoiceableRemaining(sb, doIds);
+  const remainingResult = await doLineRemaining(sb, doIds);
+  /* Pre-write refusal — every qty below is capped by `line.remaining`, and an
+     empty map surfaced as a 404 blaming the pick for a database error. */
+  if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
+  const remainingMap = remainingResult.lines;
 
   const customers = new Set<string>();
   const customerNames = new Set<string>();
@@ -1380,9 +1329,9 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
     description2: line.description2,
     uom: line.uom,
     qty: pickQtyById.get(line.doItemId)!,
-    unitPriceCenti: line.unitPriceCenti,
-    discountCenti: line.discountCenti,
-    unitCostCenti: line.unitCostCenti,
+    unitPriceSen: line.unitPriceSen,
+    discountSen: line.discountSen,
+    unitCostSen: line.unitCostSen,
     variants: line.variants,
     /* Migration 0058 — carry the dedicated variant-breakdown columns onto the SI line. */
     gapInches: line.gapInches,
@@ -1410,7 +1359,13 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
       .filter((x): x is string => !!x);
     if (pickedDoItemIds.length > 0) {
       const recheck = await doRemainingByItemId(sb, pickedDoItemIds);
-      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck);
+      // Recheck unreadable -> roll back, under the honest reason (as POST / above).
+      if (!recheck.ok) {
+        await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
+        await sb.from('sales_invoices').delete().eq('id', h.id);
+        return c.json(remainingUnavailableResponse(recheck.reason), 503);
+      }
+      const over = findOverInvoicedDoItems(pickedDoItemIds, recheck.remaining);
       if (over.length > 0) {
         await sb.from('sales_invoice_items').delete().eq('sales_invoice_id', h.id);
         await sb.from('sales_invoices').delete().eq('id', h.id);
@@ -1431,35 +1386,25 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
     `Converted from ${distinctDoNumbers.length > 1 ? 'Delivery Orders' : 'Delivery Order'} ${distinctDoNumbers.join(', ')}`,
   );
 
-  /* ERP -> AutoCount DO->Invoice. One source DO only; an invoice merging
-     several DOs has no AutoCount shape and is recorded as skipped instead. */
-  if (doIds.length === 1) {
-    await enqueueConvert(sb, {
+  /* ERP -> AutoCount DO->Invoice, MERGED OR NOT. An invoice covering several
+     delivery orders names them all; AcSyncService takes FromDocNos. What this
+     used to skip on was the primitive's single-source key array, which the
+     service now works around by grouping per source document. */
+  const ac = doIds.length ? await enqueueConvert(sb, {
       companyId: activeCompanyId(c),
       op: 'do_to_iv',
-      from: { table: 'delivery_orders', keyCol: 'id', key: doIds[0] },
+      from: doIds.map((id) => ({ table: 'delivery_orders' as const, keyCol: 'id', key: id })),
       to: { table: 'sales_invoices', keyCol: 'id', key: h.id },
       docType: 'IV',
       docNo: h.invoice_number,
       docId: h.id,
       createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  } else {
-    await recordConvertSkipped(sb, {
-      companyId: activeCompanyId(c),
-      op: 'do_to_iv',
-      docType: 'IV',
-      docNo: h.invoice_number,
-      docId: h.id,
-      reason: `merged from ${doIds.length} Delivery Orders (${distinctDoNumbers.join(', ')}) — AutoCount transfers from ONE source document, so this invoice has no AutoCount counterpart`,
-      createdBy: c.get('houzsUser')?.id ?? null,
-    });
-  }
+  }) : null;
 
   /* LEAK GUARD (DRAFT) — no AR/GL revenue, no customer credit on a DRAFT SI.
      Both move to the confirm transition (PATCH /:id/status DRAFT→SENT). */
   if (isDraft) {
-    return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue: { posted: false, status: 'draft' }, creditApplied: 0 }, 201);
+    return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue: { posted: false, status: 'draft' }, creditApplied: 0, ...(ac?.problems.length ? { acNotSent: ac.problems } : {}) }, 201);
   }
 
   let revenue: { posted: boolean; jeNo?: string; status: string } = { posted: false, status: 'skipped' };
@@ -1480,16 +1425,16 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
 
   let creditApplied = 0;
   try {
-    const { data: latest } = await sb.from('sales_invoices').select('total_centi, paid_centi, debtor_code, debtor_name').eq('id', h.id).maybeSingle();
-    const l = latest as { total_centi: number | null; paid_centi: number | null; debtor_code: string | null; debtor_name: string | null } | null;
+    const { data: latest } = await sb.from('sales_invoices').select('total_sen, paid_sen, debtor_code, debtor_name').eq('id', h.id).maybeSingle();
+    const l = latest as { total_sen: number | null; paid_sen: number | null; debtor_code: string | null; debtor_name: string | null } | null;
     if (l?.debtor_code) {
-      const due = Math.max(0, Number(l.total_centi ?? 0) - Number(l.paid_centi ?? 0));
+      const due = Math.max(0, Number(l.total_sen ?? 0) - Number(l.paid_sen ?? 0));
       const res = await applyCustomerCreditToSi(sb, {
         debtorCode: l.debtor_code,
         debtorName: l.debtor_name,
         siId: h.id,
         siNumber: h.invoice_number,
-        remainingDueCenti: due,
+        remainingDueSen: due,
         createdBy: user.id,
       });
       creditApplied = res.applied;
@@ -1500,7 +1445,7 @@ export const createSalesInvoiceFromDoLinesHandler = async (c: Context<{ Bindings
   }
 
   if (creditApplied > 0) await recomputePaid(sb, h.id);
-  return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue, creditApplied }, 201);
+  return c.json({ id: h.id, invoiceNumber: h.invoice_number, revenue, creditApplied, ...(ac?.problems.length ? { acNotSent: ac.problems } : {}) }, 201);
 };
 salesInvoices.post('/from-dos', createSalesInvoiceFromDoLinesHandler);
 
@@ -1549,17 +1494,23 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
   }
 
   // LINE-level half of the same source document, under the same predicate.
-  const { data: doItems } = await scopeToCompany(sb.from('delivery_order_items').select(
+  const { data: doItems, error: doItemsErr } = await scopeToCompany(sb.from('delivery_order_items').select(
     'id, item_code, item_group, description, description2, uom, qty, ' +
-    'unit_price_centi, discount_centi, unit_cost_centi, variants, notes, ' +
+    'unit_price_sen, discount_sen, unit_cost_sen, variants, notes, ' +
     'gap_inches, divan_height_inches, divan_price_sen, leg_height_inches, leg_price_sen, ' +
     'custom_specials, line_suffix, special_order_price_sen',
   ).eq('delivery_order_id', doId)
     .order('line_no', { ascending: true, nullsFirst: false })
     .order('created_at'), c);
 
+  /* NEITHER read may reach the code below as "no lines": unreadable candidates
+     become 409 `do_fully_invoiced` ("already invoiced in full") and an unreadable
+     ceiling became a silent 200 with nothing appended. Refuse before both. */
+  if (doItemsErr) return c.json(remainingUnavailableResponse(`delivery_order_items: ${doItemsErr.message}`), 503);
   const doLines = (doItems as Array<Record<string, unknown>> | null) ?? [];
-  const remainingMap = await doRemainingByItemId(sb, doLines.map((it) => it.id as string));
+  const remainingResult = await doRemainingByItemId(sb, doLines.map((it) => it.id as string));
+  if (!remainingResult.ok) return c.json(remainingUnavailableResponse(remainingResult.reason), 503);
+  const remainingMap = remainingResult.remaining;
   const { data: maxNoRow } = await sb
     .from('sales_invoice_items')
     .select('line_no')
@@ -1581,9 +1532,9 @@ export const appendDoLinesToSalesInvoiceHandler = async (c: any) => {
       description2: it.description2,
       uom: it.uom,
       qty: Math.min(Number(it.qty ?? 0), remaining),
-      unitPriceCenti: it.unit_price_centi,
-      discountCenti: it.discount_centi,
-      unitCostCenti: it.unit_cost_centi,
+      unitPriceSen: it.unit_price_sen,
+      discountSen: it.discount_sen,
+      unitCostSen: it.unit_cost_sen,
       variants: it.variants,
       notes: it.notes,
       /* Migration 0058 — carry the dedicated variant-breakdown columns (supabase-js
@@ -1700,13 +1651,11 @@ salesInvoices.patch('/:id', async (c) => {
     ['debtorCode', 'debtor_code'], ['debtorName', 'debtor_name'], ['agent', 'agent'],
     ['salesLocation', 'sales_location'], ['ref', 'ref'], ['poDocNo', 'po_doc_no'],
     ['venue', 'venue'], ['venueId', 'venue_id'], ['branding', 'branding'],
-    ['address1', 'address1'], ['address2', 'address2'],
+    ['address1', 'address1'], ['address2', 'address2'], ['note', 'note'], ['notes', 'notes'],
     ['city', 'city'], ['state', 'state'], ['postcode', 'postcode'], ['phone', 'phone'],
-    ['note', 'note'], ['notes', 'notes'],
     ['invoiceDate', 'invoice_date'], ['dueDate', 'due_date'], ['currency', 'currency'],
     ['customerState', 'customer_state'], ['customerCountry', 'customer_country'],
-    ['customerSoNo', 'customer_so_no'],
-    ['customerDeliveryDate', 'customer_delivery_date'],
+    ['customerSoNo', 'customer_so_no'], ['customerDeliveryDate', 'customer_delivery_date'],
     ['email', 'email'], ['customerType', 'customer_type'],
     ['salespersonId', 'salesperson_id'], ['buildingType', 'building_type'],
     ['emergencyContactName', 'emergency_contact_name'],
@@ -1726,7 +1675,8 @@ salesInvoices.patch('/:id', async (c) => {
   }
   if (Object.keys(updates).length === 1) return c.json({ ok: true, changed: 0 });
 
-  const { data, error } = await sb.from('sales_invoices').update(updates).eq('id', id).select('id').maybeSingle();
+  /* "" -> NULL: an unfilled date input would otherwise fail this whole UPDATE. */
+  const { data, error } = await sb.from('sales_invoices').update(coerceEmptyDates(updates)).eq('id', id).select('id').maybeSingle();
   if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
   if (!data) return c.json({ error: 'not_found' }, 404);
 
@@ -1753,19 +1703,18 @@ salesInvoices.patch('/:id', async (c) => {
 });
 
 // ── Item CRUD ─────────────────────────────────────────────────────────────
-salesInvoices.post('/:id/items', async (c) => {
+// STRICT like PATCH/DELETE here; named so a test can mount it. What a company STAMP hid: docs/modules/sales-invoice.md.
+export const appendSalesInvoiceItemHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id');
+  const co = requireActiveCompanyId(c); if (!co.ok) return c.json(co.refusal, 409);
   let it: Record<string, unknown>;
   try { it = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
   if (!it.itemCode) return c.json({ error: 'item_code_required' }, 400);
-
-  {
-    const codeCheck = await validateItemCodes(sb, [it.itemCode as string], activeCompanyId(c));
-    if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
-  }
-
-  const { data: header } = await sb.from('sales_invoices').select('id, invoice_number, status, delivery_order_id').eq('id', id).maybeSingle();
-  if (!header) return c.json({ error: 'not_found' }, 404);
+  // TENANCY BEFORE the item-code check: that answered about an invoice they cannot see.
+  const { data: header } = await scopeToCompanyId(sb.from('sales_invoices').select('id, invoice_number, status, delivery_order_id').eq('id', id), co.companyId).maybeSingle();
+  if (!header) return c.json(NOT_THIS_COMPANY, 404);
+  const codeCheck = await validateItemCodes(sb, [it.itemCode as string], co.companyId);
+  if (!codeCheck.ok) return c.json(unknownItemCodeResponse(codeCheck.unknown), 409);
   if (((header as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
     return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before adding lines.' }, 409);
   }
@@ -1778,7 +1727,7 @@ salesInvoices.post('/:id/items', async (c) => {
 
   {
     const over = await checkSiOverRemaining(sb, [it]);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
 
   /* Same refusal as every other path that can attach a delivery line. */
@@ -1794,14 +1743,9 @@ salesInvoices.post('/:id/items', async (c) => {
   {
     const fromDoId = (header as { delivery_order_id?: string | null }).delivery_order_id ?? null;
     if (fromDoId && !it.doItemId) {
-      const shadow = await unlinkedFromDoOffenders(sb, fromDoId, [it]);
-      if (shadow.length > 0) {
-        return c.json({
-          error: 'unlinked_do_line',
-          message: `${shadow.join(', ')} is still pending on the source Delivery Order — add it through "Add from Delivery Order" so the delivered quantity is tracked.`,
-          itemCodes: shadow,
-        }, 409);
-      }
+      const shadow = await siShadowRefusal(sb, fromDoId, [it], (codes) =>
+        `${codes.join(', ')} is still pending on the source Delivery Order — add it through "Add from Delivery Order" so the delivered quantity is tracked.`);
+      if (shadow) return c.json(shadow, 409);
     }
   }
 
@@ -1819,7 +1763,7 @@ salesInvoices.post('/:id/items', async (c) => {
   const priceWarnings = await siPriceDriftWarnings(sb, [it]);
 
   const row = buildItemRow(id, it, nextLineNo);
-  const { data, error } = await sb.from('sales_invoice_items').insert({ ...row, company_id: activeCompanyId(c) }).select(ITEM).single();
+  const { data, error } = await sb.from('sales_invoice_items').insert({ ...row, company_id: co.companyId }).select(ITEM).single();
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
   await recomputeTotals(sb, id);
   await recomputePaid(sb, id);
@@ -1848,7 +1792,8 @@ salesInvoices.post('/:id/items', async (c) => {
   } catch (e) { /* eslint-disable-next-line no-console */ console.error('[si-revenue] post-add-line resync failed:', e); }
   await queueAcSiEdit(c, id);
   return c.json(withPriceWarnings({ item: data }, priceWarnings), 201);
-});
+};
+salesInvoices.post('/:id/items', appendSalesInvoiceItemHandler);
 
 salesInvoices.patch('/:id/items/:itemId', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const itemId = c.req.param('itemId');
@@ -1863,11 +1808,13 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
 
+  // Source DO, read on the gate query below and used by the re-point guard.
+  let siFromDoId: string | null = null;
   {
     /* The gate for the whole handler: every line write below keys on
        (itemId, sales_invoice_id), so proving the INVOICE is ours proves the
        chain. Unscoped, the status gate below read the OTHER company's status. */
-    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status').eq('id', id), co.companyId).maybeSingle();
+    const { data: hd } = await scopeToCompanyId(sb.from('sales_invoices').select('status, delivery_order_id').eq('id', id), co.companyId).maybeSingle();
     if (!hd) return c.json(NOT_THIS_COMPANY, 404);
     if (hd && ((hd as { status: string }).status ?? '').toUpperCase() === 'CANCELLED') {
       return c.json({ error: 'invoice_cancelled', message: 'This invoice is cancelled — reopen it before editing lines.' }, 409);
@@ -1876,6 +1823,7 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     if (hd && isIssuedSi((hd as { status: string }).status)) {
       return c.json({ error: 'invoice_issued', message: SI_ISSUED_LINE_MESSAGE }, 409);
     }
+    siFromDoId = (hd as { delivery_order_id?: string | null } | null)?.delivery_order_id ?? null;
   }
 
   if (it.itemCode !== undefined) {
@@ -1903,13 +1851,13 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
   if (it.qty !== undefined && prev.do_item_id && qty > Number(prev.qty)) {
     const exclude = new Map<string, number>([[prev.do_item_id as string, Number(prev.qty)]]);
     const over = await checkSiOverRemaining(sb, [{ doItemId: prev.do_item_id, qty }], exclude);
-    if (over) return c.json(over, 409);
+    if (over) return c.json(over.body, over.status);
   }
-  const unitPrice = it.unitPriceCenti !== undefined ? Number(it.unitPriceCenti) : Number(prev.unit_price_centi);
-  const discount = it.discountCenti !== undefined ? Number(it.discountCenti) : Number(prev.discount_centi);
-  const tax = it.taxCenti !== undefined ? Number(it.taxCenti) : Number(prev.tax_centi ?? 0);
+  const unitPrice = it.unitPriceSen !== undefined ? Number(it.unitPriceSen) : Number(prev.unit_price_sen);
+  const discount = it.discountSen !== undefined ? Number(it.discountSen) : Number(prev.discount_sen);
+  const tax = it.taxSen !== undefined ? Number(it.taxSen) : Number(prev.tax_sen ?? 0);
   /* A caller who cannot READ the cost must not WRITE it. GET /:id strips
-     unit_cost_centi for a non-finance caller (#600), so a client that seeds its
+     unit_cost_sen for a non-finance caller (#600), so a client that seeds its
      line draft off the detail payload and echoes it back would round-trip the
      stripped field as a genuine 0 and wipe the line's cost basis — the DR bug
      #632, on the SI. Latent today (the routed SalesInvoiceDetailV2 has no line
@@ -1917,17 +1865,17 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
      un-repointed 2990 POS/admin app is a live consumer of these APIs. Keep the
      stored cost instead; a finance caller is unaffected. DO NOT relax this to a
      bare `!== undefined` — that test IS the trap. */
-  const unitCost = (canViewScmFinance(c) && it.unitCostCenti !== undefined)
-    ? Number(it.unitCostCenti)
-    : Number(prev.unit_cost_centi);
+  const unitCost = (canViewScmFinance(c) && it.unitCostSen !== undefined)
+    ? Number(it.unitCostSen)
+    : Number(prev.unit_cost_sen);
   /* Same 0-clamp as buildItemRow — the edit path must not be able to persist a
      negative line the create path refuses. */
   const lineTotal = Math.max(0, (qty * unitPrice) - discount + tax);
   const lineCost = qty * unitCost;
 
   const updates: Record<string, unknown> = {
-    qty, unit_price_centi: unitPrice, discount_centi: discount, tax_centi: tax, unit_cost_centi: unitCost,
-    line_total_centi: lineTotal, line_cost_centi: lineCost, line_margin_centi: lineTotal - lineCost,
+    qty, unit_price_sen: unitPrice, discount_sen: discount, tax_sen: tax, unit_cost_sen: unitCost,
+    line_total_sen: lineTotal, line_cost_sen: lineCost, line_margin_sen: lineTotal - lineCost,
   };
   for (const [from, to] of [
     ['itemCode', 'item_code'], ['itemGroup', 'item_group'], ['description', 'description'],
@@ -1939,6 +1887,18 @@ salesInvoices.patch('/:id/items/:itemId', async (c) => {
     const effGroup = (it.itemGroup ?? prev.item_group) as string | null | undefined;
     const effVariants = (it.variants ?? prev.variants) as Record<string, unknown> | null | undefined;
     updates['description2'] = buildVariantSummary(String(effGroup ?? ''), effVariants ?? null) || null;
+  }
+
+  /* The EDIT half of FIX 3 — see unlinked-line-edit-guard for why (the cap above
+     is gated on prev.do_item_id, so a re-typed unlinked code double-bills). */
+  {
+    const repoint = await unlinkedEditRefusal(sb, 'sales-invoice', {
+      parentId: siFromDoId,
+      storedLink: (prev as { do_item_id?: string | null }).do_item_id ?? null,
+      storedCode: (prev as { item_code?: string | null }).item_code ?? null,
+      patchCode: it.itemCode,
+    });
+    if (repoint) return c.json(repoint, 409);
   }
 
   const { error } = await scopeToCompanyId(sb.from('sales_invoice_items').update(updates).eq('id', itemId), co.companyId);
@@ -2086,20 +2046,20 @@ const paymentCreateSchema = z.object({
   installmentMonths:  z.number().int().min(0).max(60).optional().nullable(),
   onlineType:         z.string().trim().min(1).optional().nullable(),
   approvalCode:       z.string().optional().nullable(),
-  amountCenti:        z.number().int().nonnegative(),
+  amountSen:        z.number().int().nonnegative(),
   accountSheet:       z.string().optional().nullable(),
   collectedBy:        z.string().uuid().optional().nullable(),
   note:               z.string().optional().nullable(),
 });
 
-/* Roll the SI paid_centi + status (PARTIALLY_PAID / PAID) from the persisted
+/* Roll the SI paid_sen + status (PARTIALLY_PAID / PAID) from the persisted
    payments ledger. Mirrors the DO ledger; never moves a CANCELLED invoice.
    Fails CLOSED and never throws — same contract as recomputeTotals above. */
 async function recomputePaid(sb: any, salesInvoiceId: string) {
   const { data: pays, error: paysErr } = await sb.from('sales_invoice_payments')
-    .select('amount_centi').eq('sales_invoice_id', salesInvoiceId);
+    .select('amount_sen').eq('sales_invoice_id', salesInvoiceId);
   /* A failed READ is not an unpaid invoice. `?? []` folded a transient blip into
-     paid = 0, which does not merely understate paid_centi — it drives the status
+     paid = 0, which does not merely understate paid_sen — it drives the status
      ladder below, so a fully PAID invoice silently reverted to SENT and re-entered
      the AR chase. An invoice that genuinely has no payments resolves error === null
      with data === [], and MUST still fall through to write paid = 0. */
@@ -2108,25 +2068,25 @@ async function recomputePaid(sb: any, salesInvoiceId: string) {
     console.error('[si-recompute-paid] payments read failed — paid/status left unchanged:', salesInvoiceId, paysErr.message);
     return;
   }
-  const paid = (pays ?? []).reduce((s: number, p: { amount_centi: number }) => s + Number(p.amount_centi ?? 0), 0);
-  const { data: cur, error: curErr } = await sb.from('sales_invoices').select('total_centi, status').eq('id', salesInvoiceId).maybeSingle();
+  const paid = (pays ?? []).reduce((s: number, p: { amount_sen: number }) => s + Number(p.amount_sen ?? 0), 0);
+  const { data: cur, error: curErr } = await sb.from('sales_invoices').select('total_sen, status').eq('id', salesInvoiceId).maybeSingle();
   /* Distinct from `!cur` below: that is a genuinely missing invoice (error null,
      data null). This is "we could not find out", and the status ladder must not
-     run on a total_centi we never read. */
+     run on a total_sen we never read. */
   if (curErr) {
     /* eslint-disable-next-line no-console */
     console.error('[si-recompute-paid] header read failed — paid/status left unchanged:', salesInvoiceId, curErr.message);
     return;
   }
   if (!cur) return;
-  const c0 = cur as { total_centi: number; status: string };
-  const updates: Record<string, unknown> = { paid_centi: paid, updated_at: new Date().toISOString() };
+  const c0 = cur as { total_sen: number; status: string };
+  const updates: Record<string, unknown> = { paid_sen: paid, updated_at: new Date().toISOString() };
   /* LEAK GUARD (DRAFT) — never auto-advance a DRAFT invoice's status off the
      payments rollup. A DRAFT stays DRAFT until it is explicitly confirmed; the
      `else` branch below would otherwise silently flip it to SENT on a line edit.
      CANCELLED is likewise frozen. */
   if (c0.status !== 'CANCELLED' && c0.status !== 'DRAFT') {
-    if (paid >= c0.total_centi && c0.total_centi > 0) {
+    if (paid >= c0.total_sen && c0.total_sen > 0) {
       updates.status = 'PAID';
       updates.paid_at = new Date().toISOString();
     } else if (paid > 0) {
@@ -2147,11 +2107,11 @@ export const postSalesInvoicePaymentHandler = async (c: any) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
 
   /* company-scope: money IN. Unscoped, a payment against company B's invoice was
-     filed under company A and recomputePaid then moved B's paid_centi and AR
+     filed under company A and recomputePaid then moved B's paid_sen and AR
      status. Selecting company_id is not comparing it. */
   const { data: doc } = await scopeToCompany(
     sb.from('sales_invoices')
-      .select('id, status, invoice_number, company_id, paid_centi').eq('id', id), c,
+      .select('id, status, invoice_number, company_id, paid_sen').eq('id', id), c,
   ).maybeSingle();
   if (!doc) return c.json({ error: 'sales_invoice_not_found' }, 404);
   if ((doc as { status?: string }).status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'SI is cancelled' }, 409);
@@ -2168,7 +2128,7 @@ export const postSalesInvoicePaymentHandler = async (c: any) => {
   const { data, error } = await insertSiPaymentRow(sb, {
     salesInvoiceId: id, companyId: activeCompanyId(c), paidAt: p.paidAt,
     method: p.method, merchantProvider: p.merchantProvider, installmentMonths: p.installmentMonths,
-    onlineType: p.onlineType, approvalCode: p.approvalCode, amountCenti: p.amountCenti,
+    onlineType: p.onlineType, approvalCode: p.approvalCode, amountSen: p.amountSen,
     accountSheet: p.accountSheet, collectedBy: p.collectedBy, note: p.note, createdBy: user.id,
   });
   if (error) return c.json({ error: 'insert_failed', reason: error.message }, 500);
@@ -2177,14 +2137,14 @@ export const postSalesInvoicePaymentHandler = async (c: any) => {
   try { await reconcileSiOverpay(sb, id); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[customer-credit] overpay reconcile failed (post):', e); }
 
-  /* Money IN. paidCenti is read AFTER recomputePaid so the from->to pair is the
+  /* Money IN. paidSen is read AFTER recomputePaid so the from->to pair is the
      real ledger total either side of this payment, not the requested amount
      twice. Both are the INTEGER SEN. Best-effort read: an unresolved `to` still
      leaves a row naming who paid what and when. */
   {
-    const head = doc as { invoice_number?: string | null; company_id?: number | null; paid_centi?: number | null };
-    const { data: after } = await sb.from('sales_invoices').select('paid_centi, status').eq('id', id).maybeSingle();
-    const post = (after ?? null) as { paid_centi?: number | null; status?: string | null } | null;
+    const head = doc as { invoice_number?: string | null; company_id?: number | null; paid_sen?: number | null };
+    const { data: after } = await sb.from('sales_invoices').select('paid_sen, status').eq('id', id).maybeSingle();
+    const post = (after ?? null) as { paid_sen?: number | null; status?: string | null } | null;
     await recordEntityAudit(sb, {
       entityType: 'SALES_INVOICE',
       entityId: id,
@@ -2195,8 +2155,8 @@ export const postSalesInvoicePaymentHandler = async (c: any) => {
       statusSnapshot: post?.status ?? null,
       note: 'Payment recorded',
       fieldChanges: compactChanges([
-        fieldChange('paidCenti', Number(head.paid_centi ?? 0), post?.paid_centi ?? null),
-        fieldChange('paymentAmountCenti', null, p.amountCenti),
+        fieldChange('paidSen', Number(head.paid_sen ?? 0), post?.paid_sen ?? null),
+        fieldChange('paymentAmountSen', null, p.amountSen),
         fieldChange('paymentMethod', null, p.method),
         fieldChange('paidAt', null, p.paidAt),
       ]),
@@ -2223,9 +2183,9 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: row } = await scopeToCompanyId(sb.from('sales_invoice_payments')
-    .select('sales_invoice_id, amount_centi, method, paid_at').eq('id', paymentId), co.companyId).maybeSingle();
+    .select('sales_invoice_id, amount_sen, method, paid_at').eq('id', paymentId), co.companyId).maybeSingle();
   if (!row) return c.json(NOT_THIS_COMPANY, 404);
-  const doomed = row as { sales_invoice_id: string; amount_centi?: number | null; method?: string | null; paid_at?: string | null };
+  const doomed = row as { sales_invoice_id: string; amount_sen?: number | null; method?: string | null; paid_at?: string | null };
   if (doomed.sales_invoice_id !== id) return c.json({ error: 'payment_doc_mismatch' }, 400);
   /* A CREDIT payment cannot be deleted. Applying credit writes TWO rows in one
      transaction (scm.apply_customer_credit_to_si): this payment row, and a
@@ -2244,7 +2204,7 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
         'the credit to the customer in one step.',
     }, 409);
   }
-  const { data: inv } = await scopeToCompanyId(sb.from('sales_invoices').select('status, invoice_number, company_id, paid_centi').eq('id', id), co.companyId).maybeSingle();
+  const { data: inv } = await scopeToCompanyId(sb.from('sales_invoices').select('status, invoice_number, company_id, paid_sen').eq('id', id), co.companyId).maybeSingle();
   if (!inv) return c.json(NOT_THIS_COMPANY, 404);
   if ((inv as { status?: string } | null)?.status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'SI is cancelled' }, 409);
   const { error } = await scopeToCompanyId(sb.from('sales_invoice_payments').delete().eq('id', paymentId), co.companyId);
@@ -2261,9 +2221,9 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
      is the INVOICE and it still exists — DELETE on this entity type means the
      document itself was destroyed, and a reader must not be told that. */
   {
-    const head = (inv ?? null) as { invoice_number?: string | null; company_id?: number | null; paid_centi?: number | null } | null;
-    const { data: after } = await sb.from('sales_invoices').select('paid_centi, status').eq('id', id).maybeSingle();
-    const post = (after ?? null) as { paid_centi?: number | null; status?: string | null } | null;
+    const head = (inv ?? null) as { invoice_number?: string | null; company_id?: number | null; paid_sen?: number | null } | null;
+    const { data: after } = await sb.from('sales_invoices').select('paid_sen, status').eq('id', id).maybeSingle();
+    const post = (after ?? null) as { paid_sen?: number | null; status?: string | null } | null;
     await recordEntityAudit(sb, {
       entityType: 'SALES_INVOICE',
       entityId: id,
@@ -2274,8 +2234,8 @@ salesInvoices.delete('/:id/payments/:paymentId', async (c) => {
       statusSnapshot: post?.status ?? null,
       note: 'Payment deleted',
       fieldChanges: compactChanges([
-        fieldChange('paidCenti', Number(head?.paid_centi ?? 0), post?.paid_centi ?? null),
-        fieldChange('paymentAmountCenti', Number(doomed.amount_centi ?? 0), null),
+        fieldChange('paidSen', Number(head?.paid_sen ?? 0), post?.paid_sen ?? null),
+        fieldChange('paymentAmountSen', Number(doomed.amount_sen ?? 0), null),
         fieldChange('paymentMethod', doomed.method ?? null, null),
         fieldChange('paidAt', doomed.paid_at ?? null, null),
       ]),
@@ -2359,13 +2319,13 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
     const { data: confirmed, error: cErr } = await scopeToCompanyId(sb.from('sales_invoices')
       .update({ status: 'SENT', sent_at: now, confirmed_at: now, updated_at: now })
       .eq('id', id), co.companyId).eq('status', 'DRAFT')
-      .select('id, status, invoice_number, debtor_code, debtor_name, total_centi, paid_centi')
+      .select('id, status, invoice_number, debtor_code, debtor_name, total_sen, paid_sen')
       .maybeSingle();
     if (cErr) return c.json({ error: 'update_failed', reason: cErr.message }, 500);
     // Lost the race — another submit already confirmed it. Idempotent echo, no
     // second posting (postSiRevenue is idempotent anyway, but skip the work).
     if (!confirmed) return c.json({ salesInvoice: { id, status: 'SENT' } });
-    const d = confirmed as { id: string; status: string; invoice_number: string; debtor_code: string | null; debtor_name: string | null; total_centi: number | null; paid_centi: number | null };
+    const d = confirmed as { id: string; status: string; invoice_number: string; debtor_code: string | null; debtor_name: string | null; total_sen: number | null; paid_sen: number | null };
 
     /* POST revenue now (was skipped on draft create). Idempotent + best-effort. */
     const post = await postSiRevenue(sb, d.invoice_number);
@@ -2376,7 +2336,7 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
 
     /* The moment the invoice becomes real to the customer AND to the ledger. The
        .eq('status','DRAFT') gate above means only the call that actually flipped
-       it reaches here, so exactly one POST row is written per confirm. totalCenti
+       it reaches here, so exactly one POST row is written per confirm. totalSen
        is the INTEGER SEN posted to AR. */
     await recordEntityAudit(sb, {
       entityType: 'SALES_INVOICE',
@@ -2389,8 +2349,8 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
       note: post.ok ? undefined : `AR/GL revenue post FAILED: ${post.status}`,
       fieldChanges: compactChanges([
         ...statusChange('DRAFT', 'SENT'),
-        fieldChange('totalCenti', null, Number(d.total_centi ?? 0)),
-        fieldChange('paidCenti', null, Number(d.paid_centi ?? 0)),
+        fieldChange('totalSen', null, Number(d.total_sen ?? 0)),
+        fieldChange('paidSen', null, Number(d.paid_sen ?? 0)),
         fieldChange('revenuePosted', null, post.ok),
       ]),
     });
@@ -2398,15 +2358,15 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
     /* Auto-apply customer credit now (was skipped on draft create). */
     if (d.debtor_code) {
       try {
-        const { data: latest } = await sb.from('sales_invoices').select('total_centi, paid_centi').eq('id', id).maybeSingle();
-        const total = Number((latest as { total_centi: number } | null)?.total_centi ?? 0);
-        const paid  = Number((latest as { paid_centi: number } | null)?.paid_centi ?? 0);
+        const { data: latest } = await sb.from('sales_invoices').select('total_sen, paid_sen').eq('id', id).maybeSingle();
+        const total = Number((latest as { total_sen: number } | null)?.total_sen ?? 0);
+        const paid  = Number((latest as { paid_sen: number } | null)?.paid_sen ?? 0);
         const res = await applyCustomerCreditToSi(sb, {
           debtorCode: d.debtor_code,
           debtorName: d.debtor_name,
           siId: id,
           siNumber: d.invoice_number,
-          remainingDueCenti: Math.max(0, total - paid),
+          remainingDueSen: Math.max(0, total - paid),
           createdBy: c.get('user')?.id,
         });
         if (res.applied > 0) await recomputePaid(sb, id);
@@ -2427,29 +2387,28 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
      been invoiced elsewhere while this invoice sat cancelled. */
   const isReopen = prevStatus === 'CANCELLED' && status !== 'CANCELLED';
   if (isReopen && status === 'SENT') {
-    const { data: reopenLines } = await sb
-      .from('sales_invoice_items')
-      .select('do_item_id, qty')
-      .eq('sales_invoice_id', id);
-    const linesForCheck = ((reopenLines ?? []) as Array<{ do_item_id: string | null; qty: number }>)
-      .filter((l) => l.do_item_id)
-      .map((l) => ({ doItemId: l.do_item_id as string, qty: l.qty }));
-    const over = await checkSiOverRemaining(sb, linesForCheck);
+    /* The READ that builds the line list is part of this guard, so it lives with
+       it in the lib — swallowed here, it fed the ceiling an empty list and the
+       reopen sailed through at the full delivered quantity. */
+    const over = await checkSiReopenOverRemaining(sb, id);
+    /* An unreadable ledger refuses the reopen with the 503, not this 409:
+       "invoiced elsewhere" when a read timed out sends him hunting a duplicate. */
+    if (over?.status === 503) return c.json(over.body, 503);
     if (over) {
       return c.json({
         error: 'over_remaining',
         message: 'Cannot reopen — the delivered quantity has since been invoiced elsewhere. The DO lines no longer have room for this invoice.',
-        lines: over.lines,
+        lines: over.body.lines,
       }, 409);
     }
   }
 
-  let data: { id: string; status: string; invoice_number: string; paid_centi: number | null; debtor_code: string | null; debtor_name: string | null } | null;
+  let data: { id: string; status: string; invoice_number: string; paid_sen: number | null; debtor_code: string | null; debtor_name: string | null } | null;
   if (status === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('sales_invoices')
       .update({ status, ...ts })
       .eq('id', id), co.companyId).neq('status', 'CANCELLED')
-      .select('id, status, invoice_number, paid_centi, debtor_code, debtor_name')
+      .select('id, status, invoice_number, paid_sen, debtor_code, debtor_name')
       .maybeSingle();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     if (!updated) {
@@ -2460,7 +2419,7 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
     const { data: updated, error } = await scopeToCompanyId(sb.from('sales_invoices')
       .update({ status, ...ts })
       .eq('id', id), co.companyId)
-      .select('id, status, invoice_number, paid_centi, debtor_code, debtor_name')
+      .select('id, status, invoice_number, paid_sen, debtor_code, debtor_name')
       .single();
     if (error) return c.json({ error: 'update_failed', reason: error.message }, 500);
     data = updated as typeof data;
@@ -2484,7 +2443,7 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
   });
 
   if (status === 'CANCELLED') {
-    const d = data as { invoice_number: string; paid_centi: number | null; debtor_code: string | null; debtor_name: string | null };
+    const d = data as { invoice_number: string; paid_sen: number | null; debtor_code: string | null; debtor_name: string | null };
     const rev = await reverseSiRevenue(sb, d.invoice_number);
     if (!rev.ok) {
       // eslint-disable-next-line no-console
@@ -2494,7 +2453,7 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
     /* A SEPARATE row from the CANCEL above, not a duplicate of it: that was a
        document-status event, this is the AR/GL contra, and a cancel whose
        reversal failed must be distinguishable from one whose reversal landed.
-       paidCenti is the INTEGER SEN that becomes a customer credit below. */
+       paidSen is the INTEGER SEN that becomes a customer credit below. */
     await recordEntityAudit(sb, {
       entityType: 'SALES_INVOICE',
       entityId: id,
@@ -2506,10 +2465,10 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
       note: rev.ok ? `AR/GL reversal: ${rev.status}` : `AR/GL reversal FAILED: ${rev.status} — ${rev.reason ?? 'no reason given'}`,
       fieldChanges: compactChanges([
         fieldChange('reversalOk', null, rev.ok),
-        fieldChange('paidCentiCredited', null, Number(d.paid_centi ?? 0)),
+        fieldChange('paidSenCredited', null, Number(d.paid_sen ?? 0)),
       ]),
     });
-    if (Number(d.paid_centi ?? 0) > 0) {
+    if (Number(d.paid_sen ?? 0) > 0) {
       try {
         const user = c.get('user');
         await creditFromCancelledSi(sb, {
@@ -2517,7 +2476,7 @@ export const patchSalesInvoiceStatusHandler = async (c: any) => {
           siNumber: d.invoice_number,
           debtorCode: d.debtor_code,
           debtorName: d.debtor_name,
-          paidCenti: Number(d.paid_centi),
+          paidSen: Number(d.paid_sen),
           createdBy: user?.id,
         });
       } catch (e) {
@@ -2599,9 +2558,9 @@ salesInvoices.patch('/:id/status', patchSalesInvoiceStatusHandler);
 // that POST a single amount). Records into the payments ledger + rolls status.
 salesInvoices.patch('/:id/payment', async (c) => {
   const sb = c.get('supabase'); const id = c.req.param('id'); const user = c.get('user');
-  let body: { amountCenti?: number; notes?: string };
+  let body: { amountSen?: number; notes?: string };
   try { body = (await c.req.json()) as typeof body; } catch { return c.json({ error: 'invalid_json' }, 400); }
-  const amount = Number(body.amountCenti ?? 0);
+  const amount = Number(body.amountSen ?? 0);
   if (!Number.isFinite(amount) || amount <= 0) return c.json({ error: 'invalid_amount' }, 400);
 
   /* company-scope: the same money event as POST /:id/payments through the legacy
@@ -2609,7 +2568,7 @@ salesInvoices.patch('/:id/payment', async (c) => {
      onto another company's invoice and rolled that invoice's paid status. */
   const { data: cur } = await scopeToCompany(
     sb.from('sales_invoices')
-      .select('status, invoice_number, company_id, paid_centi').eq('id', id), c,
+      .select('status, invoice_number, company_id, paid_sen').eq('id', id), c,
   ).maybeSingle();
   if (!cur) return c.json({ error: 'not_found' }, 404);
   if ((cur as { status: string }).status === 'CANCELLED') return c.json({ error: 'not_payable', message: 'SI is cancelled' }, 409);
@@ -2622,7 +2581,7 @@ salesInvoices.patch('/:id/payment', async (c) => {
     sales_invoice_id: id,
     paid_at: todayMyt(),
     method: 'cash',
-    amount_centi: amount,
+    amount_sen: amount,
     note: body.notes ?? null,
     created_by: user.id,
   });
@@ -2634,14 +2593,14 @@ salesInvoices.patch('/:id/payment', async (c) => {
      overpaid amount was silently lost (no OVERPAY credit row). */
   try { await reconcileSiOverpay(sb, id); }
   catch (e) { /* eslint-disable-next-line no-console */ console.error('[customer-credit] overpay reconcile failed (quick-pay):', e); }
-  const { data } = await sb.from('sales_invoices').select('id, paid_centi, status').eq('id', id).maybeSingle();
+  const { data } = await sb.from('sales_invoices').select('id, paid_sen, status').eq('id', id).maybeSingle();
 
   /* Same money event as POST /:id/payments, reached through the legacy quick-pay
      screen. It writes the same ledger, so it writes the same audit row — an
      entry point the history cannot see is a gap in it. */
   {
-    const head = cur as { invoice_number?: string | null; company_id?: number | null; paid_centi?: number | null };
-    const post = (data ?? null) as { paid_centi?: number | null; status?: string | null } | null;
+    const head = cur as { invoice_number?: string | null; company_id?: number | null; paid_sen?: number | null };
+    const post = (data ?? null) as { paid_sen?: number | null; status?: string | null } | null;
     await recordEntityAudit(sb, {
       entityType: 'SALES_INVOICE',
       entityId: id,
@@ -2652,8 +2611,8 @@ salesInvoices.patch('/:id/payment', async (c) => {
       statusSnapshot: post?.status ?? null,
       note: 'Payment recorded (quick pay)',
       fieldChanges: compactChanges([
-        fieldChange('paidCenti', Number(head.paid_centi ?? 0), post?.paid_centi ?? null),
-        fieldChange('paymentAmountCenti', null, amount),
+        fieldChange('paidSen', Number(head.paid_sen ?? 0), post?.paid_sen ?? null),
+        fieldChange('paymentAmountSen', null, amount),
         fieldChange('paymentMethod', null, 'cash'),
       ]),
     });

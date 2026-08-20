@@ -70,7 +70,11 @@ const LEDGER: Array<{
   { module: 'routes/consignment-returns.ts', source: consignmentReturns, inline: 1, durable: 0, deferred: 0 },
   { module: 'routes/delivery-orders-mfg.ts', source: deliveryOrdersMfg, inline: 3, durable: 0, deferred: 0 },
   { module: 'routes/delivery-returns.ts', source: deliveryReturns, inline: 3, durable: 0, deferred: 0 },
-  { module: 'routes/grns.ts', source: grns, inline: 6, durable: 0, deferred: 0 },
+  /* grns.ts moved 6 -> 5 inline and 0 -> 1 durable on 2026-08-20: the line
+     DELETE now runs inside runScmPgCommand, so its queue row commits with the
+     stock reversal. The other five GRN routes are unchanged; postGrnHandler is
+     deliberately last. docs/ALLOCATION-DURABILITY-PLAN.md. */
+  { module: 'routes/grns.ts', source: grns, inline: 5, durable: 1, deferred: 0 },
   { module: 'routes/inventory-adjustments.ts', source: inventoryAdjustments, inline: 1, durable: 0, deferred: 0 },
   { module: 'routes/mfg-sales-orders.ts', source: mfgSalesOrders, inline: 7, durable: 3, deferred: 1 },
   { module: 'routes/purchase-consignment-receives.ts', source: purchaseConsignmentReceives, inline: 1, durable: 0, deferred: 0 },
@@ -97,12 +101,12 @@ describe('durable allocation coverage is stated honestly', () => {
     const durable = LEDGER.reduce((sum, entry) => sum + entry.durable, 0);
     const inline = LEDGER.reduce((sum, entry) => sum + entry.inline, 0);
     const deferred = LEDGER.reduce((sum, entry) => sum + entry.deferred, 0);
-    expect(durable).toBe(4);
-    expect(inline).toBe(33);
+    expect(durable).toBe(5);
+    expect(inline).toBe(32);
     expect(deferred).toBe(1);
     /* The trigger count is unchanged: deferring one moved it between columns,
        it did not remove it. 34 are still best-effort (33 inline + 1 deferred). */
-    expect(inline + deferred).toBe(34);
+    expect(inline + deferred).toBe(33);
     expect(durable + inline + deferred).toBe(38);
   });
 

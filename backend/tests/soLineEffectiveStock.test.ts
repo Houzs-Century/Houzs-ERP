@@ -14,6 +14,8 @@
  */
 import { describe, it, expect } from 'vitest';
 import mfgSalesOrders from '../src/scm/routes/mfg-sales-orders.ts?raw';
+import listEnrichmentRoute from '../src/scm/routes/mfg-sales-orders-list-enrichment.ts?raw';
+import listEnrichmentLib from '../src/scm/lib/so-list-mrp-enrichment.ts?raw';
 import { effectiveLineStockStatus } from '../src/scm/lib/so-line-effective-stock';
 import { summariseReadiness } from '../src/scm/lib/so-readiness';
 
@@ -111,11 +113,20 @@ describe('the rollup the owner reads, fed the two ways', () => {
 /* Source assertions, the same idiom stockAllocationDurabilityScope.test.ts uses.
    The rule above is only worth anything if the LIST goes through it — the whole
    defect was a surface holding a second opinion, and a green unit test on a
-   helper nobody calls is exactly how that ships again. */
+   helper nobody calls is exactly how that ships again.
+
+   SINCE 2026-08-18 the MRP-corrected verdict is DEFERRED off the list load: the
+   list paints with the STORED status (null coverage) and the effective verdict
+   arrives from GET /mfg-sales-orders/list-mrp-enrichment a beat later. The union
+   rule is unchanged — the effective status is still fed the SAME live coverage
+   through the SAME shared module — it just runs in the enrichment path now, so
+   these pins follow it there. */
 describe('the SO list rolls up the shared rule, not a raw stored column', () => {
-  it('the list readiness rollup is fed the effective status, not the stored column', () => {
-    // The rollup's input is built by the shared module, with the live coverage.
-    expect(mfgSalesOrders).toContain('readinessLinesByDoc(itemRows ?? [], mrpForList ? mrpLineCoverage(mrpForList) : null)');
+  it('the list first-paint rollup uses the shared module with stored status (MRP deferred)', () => {
+    /* First paint: null live coverage → the stored value stands (the fail-soft
+       branch of effectiveLineStockStatus), still through the shared module,
+       never a hand-built ReadinessLine. */
+    expect(mfgSalesOrders).toContain('readinessLinesByDoc(itemRows, null)');
     /* The pre-fix shape: the handler building ReadinessLine rows itself off the
        raw stored column. If any of these comes back the board has its own
        opinion again, which is the whole defect. */
@@ -123,16 +134,29 @@ describe('the SO list rolls up the shared rule, not a raw stored column', () => 
     expect(mfgSalesOrders).not.toContain('stock_status: it.stock_status });');
   });
 
+  it('the deferred enrichment feeds the SAME shared rule the LIVE coverage', () => {
+    /* The effective (MRP-corrected) verdict did not disappear — it moved to the
+       enrichment assembler, still through readinessLinesByDoc, still fed the
+       live coverage. A hand-built ReadinessLine here would be the second opinion
+       wearing a new coat. */
+    expect(listEnrichmentLib).toContain('readinessLinesByDoc(items, coverage)');
+    expect(listEnrichmentLib).not.toContain('stock_status: it.stock_status');
+  });
+
   it('both line-detail handlers publish the verdict, so the pill cannot compute its own', () => {
     // GET /:docNo and GET /:docNo/items — two handlers, one rule.
     expect(mfgSalesOrders.split('stock_status_effective:').length - 1).toBe(2);
   });
 
-  it('the MRP result the rollup reads is the one the handler already awaited', () => {
-    /* Not decoration: if this ever becomes a SECOND computeMrp the column costs
-       a full MRP run per list render, which is the thing the perf work on this
-       endpoint exists to remove. mrpLineCoverage is a pure flatten. */
-    expect(mfgSalesOrders).toContain('const mrpForList = await mrpForListProm;');
-    expect(mfgSalesOrders.split('computeMrp(').length - 1).toBe(2); // one per handler family, unchanged
+  it('the list no longer runs computeMrp — the deferred endpoint does, exactly once', () => {
+    /* The whole point of the deferral: opening the list must not pay a full MRP
+       run. The list keeps only the detail-family computeMrp (soCoverage, for
+       GET /:docNo + /:docNo/items); the list-load call is gone. */
+    expect(mfgSalesOrders).not.toContain('mrpForListProm');
+    expect(mfgSalesOrders.split('computeMrp(').length - 1).toBe(1); // detail family only
+    /* The enrichment endpoint runs it once, OFF the list's critical path, and
+       flattens it with the pure mrpLineCoverage — never a second computeMrp. */
+    expect(listEnrichmentRoute.split('computeMrp(').length - 1).toBe(1);
+    expect(listEnrichmentRoute).toContain('mrpLineCoverage(mrp)');
   });
 });

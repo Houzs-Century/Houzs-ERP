@@ -198,7 +198,7 @@ async function main() {
       if (rq.receivedSource === RECEIVED_INDETERMINATE) throw new Error(`no per-line received qty for ${doc} ${l.ItemCode}`);
       const recv = Math.round(rq.receivedQty);
       const qty = Math.round(Number(l.Qty ?? 0));
-      const priceCenti = Math.round(Number(l.UnitPrice ?? 0) * 100);
+      const priceSen = Math.round(Number(l.UnitPrice ?? 0) * 100);
       const deliveryDate = acDeliveryDate(l);
       const group = prodCat.get(norm(l.erp)) ?? "others";
 
@@ -253,7 +253,7 @@ async function main() {
               code, description: l.Description, desc2: l.Desc2, group,
               name: (prodByCode.get(code.toUpperCase()) || {}).name || code,
               supplierSku: `${l.ItemCode} ${cmp}`,
-              qty, recv, priceCenti: first ? priceCenti : 0,
+              qty, recv, priceSen: first ? priceSen : 0,
               wh, soItemId, dtlKey: acDtlKey(l), deliveryDate, variants, note: null,
             });
             first = false;
@@ -270,7 +270,7 @@ async function main() {
         items.push({
           code, description: l.Description, desc2: l.Desc2, group,
           name: (prodByCode.get(code.toUpperCase()) || {}).name || code,
-          supplierSku: l.ItemCode, qty, recv, priceCenti, wh, soItemId,
+          supplierSku: l.ItemCode, qty, recv, priceSen, wh, soItemId,
           dtlKey: acDtlKey(l), deliveryDate,
           variants: { seatHeight: ps.size || null, colourLabel: colour || null, specials: ps.specials },
           note: "SOFA UNPARSED — 按图/原文补件: " + (ps.why.join("; ") || "unreadable"),
@@ -284,7 +284,7 @@ async function main() {
       items.push({
         code: l.erp, description: l.Description, desc2: l.Desc2, group,
         name: (prodByCode.get(String(l.erp).toUpperCase()) || {}).name || l.Description || l.erp,
-        supplierSku: l.ItemCode, qty, recv, priceCenti,
+        supplierSku: l.ItemCode, qty, recv, priceSen,
         wh, soItemId, dtlKey: acDtlKey(l), deliveryDate, variants: null, note: null,
       });
     }
@@ -320,7 +320,7 @@ async function main() {
   for (const p of plan) {
     const poNo = "HC-" + p.acDoc;
     await sql.begin(async (tx) => {
-      const subtotal = p.items.reduce((s2, it) => s2 + it.qty * it.priceCenti, 0);
+      const subtotal = p.items.reduce((s2, it) => s2 + it.qty * it.priceSen, 0);
       /* The PO screen's EXPECTED DELIVERY reads the HEADER, and this import only
          ever wrote the per-line date, so every migrated PO showed a blank
          delivery date while AutoCount had one on all 579 lines. Derive it the
@@ -328,22 +328,22 @@ async function main() {
       const headerEta = p.items.map((it) => it.deliveryDate).filter(Boolean).sort()[0] ?? null;
       const [hdr] = await tx`INSERT INTO scm.purchase_orders
           (po_number, linked_ac_docno, supplier_id, status, po_date, expected_at, purchase_location_id, currency,
-           subtotal_centi, tax_centi, total_centi, revision, company_id, created_by, notes)
+           subtotal_sen, tax_sen, total_sen, revision, company_id, created_by, notes)
         VALUES (${poNo}, ${p.acDoc}, ${p.supId}, ${p.status}, ${p.docDate ?? sql`CURRENT_DATE`}, ${headerEta},
                 ${p.items[0]?.wh ?? null}, 'MYR', ${subtotal}, 0, ${subtotal}, 1, 1, ${SYS_USER},
                 ${"imported from AutoCount " + p.acDoc + " (already received; stock came in with the balance snapshot)"})
         RETURNING id`;
       for (const it of p.items) {
         await tx`INSERT INTO scm.purchase_order_items
-            (purchase_order_id, material_kind, material_code, material_name, supplier_sku,
+            (purchase_order_id, material_kind, item_code, material_name, supplier_sku,
              description, description2, notes,
-             qty, received_qty, unit_price_centi, line_total_centi, item_group, uom,
+             qty, received_qty, unit_price_sen, line_total_sen, item_group, uom,
              custom_specials, variants,
              warehouse_id, so_item_id, company_id, delivery_date, from_mrp, linked_ac_dtlkey)
           VALUES (${hdr.id}, 'mfg_product', ${it.code}, ${it.name ?? it.description}, ${it.supplierSku ?? null},
                   ${it.description}, ${it.desc2},
                   ${it.note ? (it.desc2 ? it.desc2 + " | " + it.note : it.note) : (it.desc2 || null)},
-                  ${it.qty}, ${it.recv}, ${it.priceCenti}, ${it.qty * it.priceCenti}, ${it.group},
+                  ${it.qty}, ${it.recv}, ${it.priceSen}, ${it.qty * it.priceSen}, ${it.group},
                   ${it.group === "bedframe" ? "SET" : "UNIT"},
                   ${it.variants && it.variants.specials && it.variants.specials.length ? sql.json(it.variants.specials) : null},
                   ${it.variants ? sql.json(it.variants) : null},

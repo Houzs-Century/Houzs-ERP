@@ -64,15 +64,23 @@ export type PlanningOrder = {
   debtor_code: string | null;
   debtor_name: string | null;
   phone: string | null;
+  /* Sales context (owner 2026-08-19) — who sold it + the sales venue. `agent`
+     is free text (sometimes a raw UUID); resolve to a display name via
+     useStaffLookup(agent, salesperson_id), never render either raw. null on
+     ASSR / DP rows; project rows fill `venue` with the PMS event venue.
+     Optional (`?`) so a cached pre-upgrade payload still typechecks. */
+  agent?: string | null;
+  salesperson_id?: string | null;
+  venue?: string | null;
   branding: string | null;
   status: string;
   delivery_state: DeliveryState;
   delivery_state_override: string | null;
-  balance_centi: number;
+  balance_sen: number;
   /* Live balance (= local_total − Σpayments, from the SO-list payment-totals
-     view); null when the view has no row → fall back to balance_centi. */
-  balance_centi_live: number | null;
-  local_total_centi: number;
+     view); null when the view has no row → fall back to balance_sen. */
+  balance_sen_live: number | null;
+  local_total_sen: number;
   so_date: string | null;
   /* The customer's ORIGINAL delivery date — never overwritten (migration 0199). */
   customer_delivery_date: string | null;
@@ -259,9 +267,9 @@ export type PlanningLineItem = {
   description2: string | null;
   uom: string | null;
   qty: number | null;
-  unit_price_centi: number | null;
-  discount_centi: number | null;
-  total_centi: number | null;
+  unit_price_sen: number | null;
+  discount_sen: number | null;
+  total_sen: number | null;
   variants: Record<string, unknown> | null;
   stock_status: string | null;
   cancelled: boolean | null;
@@ -572,6 +580,16 @@ export type DpOrderRow = {
   remark: string | null;
   created_at: string;
   updated_at: string;
+  /* Sales context off the SOURCE SO (owner 2026-08-19) — stamped server-side on
+     SO-sourced jobs only; null on manual / supplier / project / case rows.
+     Resolve so_agent / so_salesperson_id to a name via useStaffLookup, never
+     render either raw. Optional (`?`) so a cached pre-upgrade payload still
+     typechecks. */
+  so_agent?: string | null;
+  so_salesperson_id?: string | null;
+  so_venue?: string | null;
+  so_processing_date?: string | null;
+  so_total_sen?: number | null;
 };
 export function useDpOrders() {
   return useQuery({
@@ -662,7 +680,7 @@ export type ScheduleDeliveryVars = {
   /* Fleet A3: the captured cost (integer sen) when the chosen lorry is a 3PL
      carrier (OUTSOURCE). Written on a trip CREATE; ignored for an own-fleet
      lorry. This is the seam Module C's rate-card will compute against. */
-  threePlCostCenti?: number | null;
+  threePlCostSen?: number | null;
   /* Display-only, for optimistic UI (never posted). */
   driverNameOptimistic?: string | null;
   lorryPlateOptimistic?: string | null;
@@ -683,7 +701,7 @@ export type ScheduleDeliveryResult = {
 export function useScheduleDelivery() {
   const qc = useQueryClient();
   return useMutation<ScheduleDeliveryResult, Error, ScheduleDeliveryVars, { snapshots: Array<[readonly unknown[], PlanningResponse]> }>({
-    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, helper1Id, helper2Id, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS, threePlCostCenti }) => {
+    mutationFn: ({ type, id, scheduleDate, deliveryState, driverId, lorryId, helper1Id, helper2Id, jobKind, warehouseId, tripId, tripDate, stopNo, etaOffsetS, legDistanceM, legDurationS, threePlCostSen }) => {
       /* Only include keys the caller actually set, so an unrelated field is never
          nulled out by an inline single-field edit. */
       const body: Record<string, unknown> = {};
@@ -701,7 +719,7 @@ export function useScheduleDelivery() {
       if (etaOffsetS !== undefined) body.etaOffsetS = etaOffsetS;
       if (legDistanceM !== undefined) body.legDistanceM = legDistanceM;
       if (legDurationS !== undefined) body.legDurationS = legDurationS;
-      if (threePlCostCenti !== undefined) body.threePlCostCenti = threePlCostCenti;
+      if (threePlCostSen !== undefined) body.threePlCostSen = threePlCostSen;
       return authedFetch<ScheduleDeliveryResult>(`/delivery-planning/${type}/${id}/schedule`, {
         method: 'PATCH', body: JSON.stringify(body),
       });

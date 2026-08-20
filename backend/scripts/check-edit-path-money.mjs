@@ -9,7 +9,7 @@
 //
 // DEFECT 1 — editing a shipped Delivery Order never reaches the stock ledger.
 //   resyncInventoryForDo writes DELTA movements into the SAME
-//   (source_doc_type='DO', source_doc_id, product_code, variant_key) bucket the
+//   (source_doc_type='DO', source_doc_id, item_code, variant_key) bucket the
 //   first ship already wrote. Production carries PARTIAL UNIQUE indexes on that
 //   key (uq_inv_mov_do_source and three siblings) which exist in NO file in this
 //   repo, so every delta on an already-shipped bucket is rejected and the ledger
@@ -18,7 +18,7 @@
 // DEFECT 2 — the amendment path reprices a MIGRATED order to catalogue.
 //   recomputeOneLine is called with 14 positional arguments; the 15th,
 //   trustOperatorSelling, defaults to false, so approving even a qty-only
-//   amendment rewrites unit_price_centi to mfg_products.sell_price_sen. Section
+//   amendment rewrites unit_price_sen to mfg_products.sell_price_sen. Section
 //   6 counts how many migrated orders are exposed and how many of their lines
 //   are priced 0 by design (the sofa sibling shape that a catalogue rewrite
 //   would destroy).
@@ -89,7 +89,7 @@ try {
   let withCorrectionSlot = [];
   for (const r of idx) {
     const isUnique = /CREATE UNIQUE/i.test(r.indexdef);
-    const onSourceKey = /source_doc_type[\s\S]*source_doc_id[\s\S]*product_code[\s\S]*variant_key/i.test(r.indexdef);
+    const onSourceKey = /source_doc_type[\s\S]*source_doc_id[\s\S]*item_code[\s\S]*variant_key/i.test(r.indexdef);
     if (isUnique && onSourceKey) {
       uniqueOnSourceKey.push(r.indexname);
       if (/correction_seq/i.test(r.indexdef)) withCorrectionSlot.push(r.indexname);
@@ -99,7 +99,7 @@ try {
   }
   console.log("");
   if (uniqueOnSourceKey.length === 0) {
-    notice("1. VERDICT: NO unique index on (source_doc_type, source_doc_id, product_code, variant_key). Defect 1's premise is REFUTED — delta rows would insert.");
+    notice("1. VERDICT: NO unique index on (source_doc_type, source_doc_id, item_code, variant_key). Defect 1's premise is REFUTED — delta rows would insert.");
   } else {
     const plain = uniqueOnSourceKey.filter((n) => !withCorrectionSlot.includes(n));
     notice(`1. VERDICT: ${uniqueOnSourceKey.length} UNIQUE index(es) on the source key: ${uniqueOnSourceKey.join(", ")}.`);
@@ -200,7 +200,7 @@ try {
        WHERE NOT (i.item_code ILIKE 'SVC-%' OR lower(COALESCE(i.item_group,'')) = 'service')
        GROUP BY 1, 2, 3
     ), moves AS (
-      SELECT m.source_doc_id AS doc_id, m.product_code AS item_code,
+      SELECT m.source_doc_id AS doc_id, m.item_code AS item_code,
              SUM(CASE WHEN m.movement_type = 'OUT' THEN ABS(m.qty) ELSE 0 END)::numeric
            - SUM(CASE WHEN m.movement_type = 'IN'  THEN ABS(m.qty) ELSE 0 END)::numeric AS net_out
         FROM scm.inventory_movements m
@@ -296,13 +296,13 @@ try {
      count the buckets that already hold more than one row. Any type with a
      non-zero count can never carry this index; a TABLE-WIDE one is impossible if
      any type is non-zero. */
-  head("5. Duplicate (source_doc_type, source_doc_id, product_code, variant_key) buckets");
+  head("5. Duplicate (source_doc_type, source_doc_id, item_code, variant_key) buckets");
   const dup = await pg`
     SELECT source_doc_type,
            COUNT(*)::int AS dup_buckets,
            SUM(n)::int   AS rows_in_them
       FROM (
-        SELECT source_doc_type, source_doc_id, product_code, COALESCE(variant_key,'') AS vk, COUNT(*)::int AS n
+        SELECT source_doc_type, source_doc_id, item_code, COALESCE(variant_key,'') AS vk, COUNT(*)::int AS n
           FROM scm.inventory_movements
          GROUP BY 1,2,3,4
         HAVING COUNT(*) > 1
@@ -320,7 +320,7 @@ try {
   const dupWithMt = await pg`
     SELECT source_doc_type, COUNT(*)::int AS dup_buckets
       FROM (
-        SELECT source_doc_type, source_doc_id, product_code, COALESCE(variant_key,'') AS vk, movement_type, COUNT(*)::int AS n
+        SELECT source_doc_type, source_doc_id, item_code, COALESCE(variant_key,'') AS vk, movement_type, COUNT(*)::int AS n
           FROM scm.inventory_movements
          GROUP BY 1,2,3,4,5
         HAVING COUNT(*) > 1
@@ -355,12 +355,12 @@ try {
     notice(`6a. ${m.migrated} migrated SO(s) (linked_ac_docno set). ${m.with_dd} of them already carry processing_date — those are the ones that can reach the amendment path TODAY.`);
 
     const lineTable = (await hasTable("mfg_sales_order_items")) ? "mfg_sales_order_items" : null;
-    if (lineTable && (await hasCol(lineTable, "unit_price_centi"))) {
+    if (lineTable && (await hasCol(lineTable, "unit_price_sen"))) {
       /* Lines join their header by (doc_no, company_id) — mfg_sales_order_items
          carries no header id FK; every script in this tree joins it that way. */
       const [z] = await pg`
         SELECT COUNT(*)::int AS lines,
-               COUNT(*) FILTER (WHERE COALESCE(i.unit_price_centi,0) = 0)::int AS zero_priced
+               COUNT(*) FILTER (WHERE COALESCE(i.unit_price_sen,0) = 0)::int AS zero_priced
           FROM scm.mfg_sales_order_items i
           JOIN scm.mfg_sales_orders h
             ON h.doc_no = i.doc_no AND h.company_id = i.company_id
@@ -379,7 +379,7 @@ try {
       const byGroup = await pg`
         SELECT COALESCE(NULLIF(lower(trim(i.item_group)), ''), '(none)') AS grp,
                COUNT(*)::int AS lines,
-               COUNT(*) FILTER (WHERE COALESCE(i.unit_price_centi,0) = 0)::int AS zero_priced
+               COUNT(*) FILTER (WHERE COALESCE(i.unit_price_sen,0) = 0)::int AS zero_priced
           FROM scm.mfg_sales_order_items i
           JOIN scm.mfg_sales_orders h
             ON h.doc_no = i.doc_no AND h.company_id = i.company_id
@@ -391,7 +391,7 @@ try {
       console.log("");
       notice(`6c. Of the 0-priced migrated lines, ${sofaZero} are SOFA — the lead-module/sibling shape where a catalogue rewrite bills the same set several times over. The rest are lines the import carried without a price; preserving them is still correct, but it is a different fact.`);
     } else {
-      notice("6b. Could not measure 0-priced migrated lines: line table / unit_price_centi column not found under the expected names.");
+      notice("6b. Could not measure 0-priced migrated lines: line table / unit_price_sen column not found under the expected names.");
     }
   }
 

@@ -1,11 +1,10 @@
 import type { Env } from "../types";
 import { recomputeAutoCostLines } from "./projectCostRates";
-import { scopeNotExpiredSql } from "./projectAcl";
 import { isSensitiveChecklistItem, isSetupDismantleSection } from "./pmsAccess";
 import { todayMyt } from "../scm/lib/my-time";
 import { canonicalizeMyState } from "../scm/lib/canonical-state";
 import { canonicalizeVenue } from "../scm/lib/canonical-venue";
-import { deriveProjectCode, deriveProjectName } from "./project-naming";
+import { deriveProjectCode, deriveProjectName, syncedNameForOrganizerChange } from "./project-naming";
 export { deriveProjectCode, deriveProjectName };
 
 /** Disambiguate against existing codes by appending -2, -3, … */
@@ -415,30 +414,13 @@ const PATCH_FIELDS = [
 // SEREMBAN, KUANTAN, etc.) get rolled up to their state at write
 // time and during data backfills.
 export const MALAYSIA_STATES = [
-  "JOHOR",
-  "KEDAH",
-  "KELANTAN",
-  "KL",
-  "LABUAN",
-  "MELAKA",
-  "NEGERI SEMBILAN",
-  "PAHANG",
-  "PENANG",
-  "PERAK",
-  "PERLIS",
-  "PUTRAJAYA",
-  "SABAH",
-  "SARAWAK",
-  "SELANGOR",
-  "TERENGGANU",
+  "JOHOR", "KEDAH", "KELANTAN", "KL", "LABUAN", "MELAKA", "NEGERI SEMBILAN",
+  "PAHANG", "PENANG", "PERAK", "PERLIS", "PUTRAJAYA", "SABAH", "SARAWAK",
+  "SELANGOR", "TERENGGANU",
 ] as const;
 
 export const PAYMENT_STATUSES = [
-  "not_started",
-  "deposit_paid",
-  "paid",
-  "refund_pending",
-  "refunded",
+  "not_started", "deposit_paid", "paid", "refund_pending", "refunded",
 ] as const;
 
 export async function patchProject(
@@ -499,6 +481,15 @@ export async function patchProject(
   // Fold showroom-venue aliases to canonical on edit too (front door, same as create).
   if ("venue" in body) {
     body.venue = canonicalizeVenue(body.venue as string | null);
+  }
+
+  // Organizer edits follow through to the display name (owner 2026-08-17) —
+  // swap rules in project-naming.ts. An explicit name in the same patch wins.
+  if ("organizer" in body && !("name" in body)) {
+    const cur = await env.DB.prepare(`SELECT name, organizer FROM projects WHERE id = ?`)
+      .bind(id).first<{ name: string | null; organizer: string | null }>();
+    const synced = syncedNameForOrganizerChange(cur?.name, cur?.organizer, body.organizer as string | null);
+    if (synced) body.name = synced;
   }
 
   const sets: string[] = [];
@@ -1253,20 +1244,6 @@ export interface ListProjectsFilters {
   include_archived?: boolean;
   sort_by?: string;
   sort_dir?: "asc" | "desc";
-  /** ACL allow-list. If present, only projects with pic_id IN this list
-   *  are returned. Empty array means "nothing" (scoped user with no PIC
-   *  in their line → zero results, which is correct). */
-  pic_scope?: number[];
-  /** Brand allow-list — paired with pic_scope for sales-dept scoping
-   *  (migration 048). Empty array means the scoped user has no brand
-   *  coverage → zero results. Undefined means no brand ACL applies. */
-  brand_scope?: string[];
-  /** Scoped rep's own user id. When set (only for scope_to_pic reps,
-   *  paired with pic_scope), OR-in the sales-attendee arm so a rep on a
-   *  project's Sales Attending list sees it even when they aren't the PIC
-   *  — mirrors the /calendar/events attendee arm (mig 087). Undefined for
-   *  admins / directors / unscoped roles (they never carry pic_scope). */
-  attendee_user_id?: number;
   /** "My pending tasks" filter (role-based). When set, only return
    *  projects that have at least one PENDING checklist item with this
    *  role_label (e.g. "BD", "PURCHASER", "DRIVER", "SALES PIC",
@@ -1811,48 +1788,11 @@ export async function listProjects(env: Env, f: ListProjectsFilters) {
     const like = `%${f.search}%`;
     binds.push(like, like, like, like, like, like);
   }
-  // Row-level ACL for a scoped rep (pic_scope present ⇒ getProjectScope was
-  // non-null, i.e. a scope_to_pic sales/CS rep). Mirrors BOTH the
-  // /calendar/events assignment scoping AND services/projectAcl.canSeeProject
-  // so the list, the calendar, and the detail all agree on what a scoped rep
-  // may see (no row that 404s on open; no openable row missing from the list):
-  //   · PIC arm      — the project's PIC (COALESCE(pic_id, created_by) for
-  //                    legacy pre-039 rows) is in their [self, manager] line
-  //                    AND the project's brand is in their department allow-list
-  //                    AND the project is still inside the PIC grace window.
-  //                    This is exactly canSeeProject's inPicLine + brand + grace.
-  //   · Attendee arm — they are on the project's Sales Attending list
-  //                    (project_sales_attendees → sales_reps.user_id, mig 087) —
-  //                    the same linkage the calendar's attendee arm uses.
-  //                    Unconditional (no brand / grace gate), exactly like the
-  //                    calendar: being an attendee is itself an assignment.
-  // Fail-closed: a scoped rep with neither a PIC line nor an attendee record
-  // yields an empty OR set → `1 = 0` → an empty list, never the full list.
-  if (f.pic_scope) {
-    const scopeArms: string[] = [];
-    if (f.pic_scope.length > 0 && f.brand_scope && f.brand_scope.length > 0) {
-      // Fall back to created_by when pic_id is NULL so legacy projects
-      // (pre-migration 039) still attach to their creator's team. Brand-less
-      // projects are intentionally invisible to scoped users — admins fix by
-      // setting the brand. Grace: PIC visibility expires PIC_GRACE_DAYS after
-      // the project ends (owner: "完了的四天之后").
-      scopeArms.push(
-        `(COALESCE(p.pic_id, p.created_by) IN (${f.pic_scope.map(() => "?").join(",")})` +
-        ` AND ${scopeNotExpiredSql}` +
-        ` AND p.brand IS NOT NULL AND p.brand IN (${f.brand_scope.map(() => "?").join(",")}))`
-      );
-      binds.push(...f.pic_scope, ...f.brand_scope);
-    }
-    if (f.attendee_user_id != null) {
-      scopeArms.push(
-        `EXISTS (SELECT 1 FROM project_sales_attendees psa` +
-        ` JOIN sales_reps sr ON sr.id = psa.sales_rep_id` +
-        ` WHERE psa.project_id = p.id AND sr.user_id = ?)`
-      );
-      binds.push(f.attendee_user_id);
-    }
-    where.push(scopeArms.length ? `(${scopeArms.join(" OR ")})` : "1 = 0");
-  }
+  // Row-level PIC/brand visibility ACL removed (owner decision 2026-08-19):
+  // within a company, any user with the projects permission sees ALL that
+  // company's projects. Visibility is governed only by the projects page-access
+  // gate and the company predicate (p.company_id above); crew scoping
+  // (assigned_user_id) is a separate axis and stays.
   const whereSql = where.length ? `WHERE ${where.join(" AND ")}` : "";
 
   const page = f.page && f.page > 0 ? f.page : 1;

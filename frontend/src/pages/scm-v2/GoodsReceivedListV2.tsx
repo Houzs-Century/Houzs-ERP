@@ -4,7 +4,7 @@
 // outstanding/owed.
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { buildVariantSummary, fmtCenti, orderLineIdentity } from "@2990s/shared";
+import { buildVariantSummary, fmtSen, fmtDate, orderLineIdentity } from "@2990s/shared";
 import { formatPhone } from "@2990s/shared/phone";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import {
@@ -48,6 +48,7 @@ import { SearchScopeHint } from "../../components/SearchScopeHint";
 import { useDebouncedSearchTerm, useSearchResultTransition } from "../../hooks/useServerSearch";
 import {
   useGrnsPaged,
+  useEnrichedGrnListRows,
   useGrnDetail,
   usePostGrn,
   useCancelGrn,
@@ -57,7 +58,7 @@ import { useNotify } from "../../vendor/scm/components/NotifyDialog";
 import { useChoice } from "../../vendor/scm/components/ChoiceDialog";
 import { useQueryClient } from "@tanstack/react-query";
 import { cn } from "../../lib/utils";
-import { convertToLink } from "../../lib/convertScope";
+import { convertToLink, transferToLabel, transferFromLabel, transferFromColumnLabel } from "../../lib/convertScope";
 import { isCancelledDocStatus } from "../../lib/scm";
 import { ResizableDetailDrawer } from "../../components/ResizableDetailDrawer";
 
@@ -67,7 +68,7 @@ type GrnRow = {
   status: string;
   received_at: string | null;
   delivery_note_ref: string | null;
-  total_centi?: number;
+  total_sen?: number;
   currency?: string;
   notes?: string | null;
   supplier?: { id: string; code: string; name: string; contact_person?: string | null; phone?: string | null; email?: string | null; address?: string | null } | null;
@@ -89,7 +90,6 @@ type GrnRow = {
 
 type GrnItem = {
   id: string;
-  material_code?: string | null;
   item_code?: string | null;
   description?: string | null;
   description2?: string | null;
@@ -98,28 +98,31 @@ type GrnItem = {
   uom?: string;
   qty?: number;
   received_qty?: number;
-  unit_price_centi?: number;
-  line_total_centi?: number;
+  unit_price_sen?: number;
+  line_total_sen?: number;
   warehouse_code?: string | null;
 };
 
 type StatusTab = "all" | "draft" | "posted" | "cancelled";
 
-const fmtRm = (centi: number): string => fmtCenti(centi);
-
-const fmtDate = (iso: string | null | undefined): string => {
-  if (!iso) return "—";
-  return iso.replace(/T.*$/, "").replace(/-/g, "/");
-};
+const fmtRm = (centi: number): string => fmtSen(centi);
 
 const supplierNameOf = (r: GrnRow): string => r.supplier?.name || "—";
 const supplierCodeOf = (r: GrnRow): string => r.supplier?.code || "—";
 const poOf = (r: GrnRow): string => r.purchase_order?.po_number || "—";
-const totalOf = (r: GrnRow): number => r.total_centi ?? 0;
+const totalOf = (r: GrnRow): number => r.total_sen ?? 0;
 
+// grns.status → filter bucket. Must match GRN_STATUS_BUCKETS server-side
+// (backend/src/scm/routes/grns.ts), which is what the tab COUNTS are computed
+// from — a row bucketed differently here is shown in one tab and counted in
+// another. CLOSED is spelled out rather than left to the fallback below: it is
+// a real enum member (grn_status = DRAFT / POSTED / CLOSED / CANCELLED) and it
+// files under `posted` because its stock IN stands — only CANCELLED had its
+// receipt reversed.
 const STATUS_TONE: Record<string, { tone: "success" | "warning" | "error" | "neutral"; label: string; bucket: StatusTab }> = {
   DRAFT:     { tone: "warning", label: "Draft",     bucket: "draft" },
   POSTED:    { tone: "success", label: "Posted",    bucket: "posted" },
+  CLOSED:    { tone: "neutral", label: "Closed",    bucket: "posted" },
   CANCELLED: { tone: "error",   label: "Cancelled", bucket: "cancelled" },
 };
 
@@ -216,7 +219,7 @@ function CardsGrid({ rows, onOpen }: { rows: GrnRow[]; onOpen: (r: GrnRow) => vo
             </div>
             <div className="mt-3.5 flex items-end justify-between border-t border-border-subtle pt-3">
               <div className="min-w-0">
-                <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">From PO</div>
+                <div className="font-mono text-[9.5px] font-semibold uppercase tracking-brand text-ink-muted">{transferFromColumnLabel('po')}</div>
                 <div className="mt-0.5 truncate font-mono text-[12px] font-semibold text-ink-secondary">{poOf(r)}</div>
               </div>
               <span className="font-money text-[15px] font-bold text-ink">{fmtRm(totalOf(r))}</span>
@@ -285,7 +288,7 @@ function DetailDrawer({
               </div>
 
               <dl className="mt-5 grid grid-cols-2 gap-x-4 gap-y-3 rounded-lg border border-border bg-surface-2 px-4 py-4">
-                <MetaItem k="From PO" v={poOf(row)} mono />
+                <MetaItem k={transferFromColumnLabel('po')} v={poOf(row)} mono />
                 <MetaItem k="Received at" v={fmtDate(row.received_at)} />
                 <MetaItem k="Delivery note" v={row.delivery_note_ref || "—"} mono={!!row.delivery_note_ref} />
                 <MetaItem k="Currency" v={row.currency || "MYR"} />
@@ -322,7 +325,7 @@ function DetailDrawer({
                 {!detailQ.isLoading && items.length === 0 && <div className="px-4 py-8 text-center text-[12px] text-ink-muted">No lines</div>}
                 {items.map((l, i) => {
                   const { primary, secondary } = orderLineIdentity({
-                    code: l.material_code || l.item_code,
+                    code: l.item_code || l.item_code,
                     description: l.description,
                     variant:
                       buildVariantSummary(l.item_group ?? "others", l.variants ?? null) ||
@@ -341,8 +344,8 @@ function DetailDrawer({
                       )}
                     </div>
                     <span className="text-right font-money text-[12.5px] text-ink-secondary">{l.received_qty ?? l.qty ?? 0}</span>
-                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtRm(l.unit_price_centi ?? 0)}</span>
-                    <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtRm(l.line_total_centi ?? 0)}</span>
+                    <span className="text-right font-money text-[12.5px] text-ink-secondary">{fmtRm(l.unit_price_sen ?? 0)}</span>
+                    <span className="text-right font-money text-[12.5px] font-semibold text-ink">{fmtRm(l.line_total_sen ?? 0)}</span>
                   </div>
                   );
                 })}
@@ -370,14 +373,14 @@ function DetailDrawer({
                   if (!row.fully_invoiced) {
                     return (
                       <Button variant="primary" icon={<Receipt size={14} />} onClick={onConvertToPi}>
-                        Convert to PI
+                        {transferToLabel('pi')}
                       </Button>
                     );
                   }
                   if (!row.fully_returned) {
                     return (
                       <Button variant="secondary" icon={<RotateCcw size={14} />} onClick={onConvertToPr}>
-                        Convert to PR
+                        {transferToLabel('pr')}
                       </Button>
                     );
                   }
@@ -430,10 +433,10 @@ function TotalRow({ k, v, strong }: { k: string; v: string; strong?: boolean }) 
 }
 
 // Table column key → backend sort-whitelist column. GRN backend whitelist is
-// { received_at, grn_number, status, total_centi }; only `total` differs from
+// { received_at, grn_number, status, total_sen }; only `total` differs from
 // its backend name. Non-whitelisted columns carry `disableSort`.
 const SORT_COL_MAP: Record<string, string> = {
-  total: "total_centi",
+  total: "total_sen",
 };
 
 // ─── Row drill-down (DataTable `expandable`) ──────────────────────────────────
@@ -454,15 +457,15 @@ function GrnLinesExpansion({ id }: { id: string }) {
   const items =
     ((detailQ.data as { items?: DrillItemFields[] } | undefined)?.items ?? []);
   const lines: DocumentDrillLine[] = items.map((l) => {
-    const code = (l.material_code || l.item_code || "").trim();
+    const code = (l.item_code || l.item_code || "").trim();
     return {
       itemGroup: l.item_group ?? null,
-      code: l.material_code || l.item_code || null,
+      code: l.item_code || l.item_code || null,
       description: l.description ?? null,
       description2: l.description2 ?? null,
       variants: l.variants ?? null,
       qty: Number(l.received_qty ?? l.qty ?? 0),
-      amountCenti: l.line_total_centi ?? 0,
+      amountSen: l.line_total_sen ?? 0,
       assignedSos: byCode.get(code) ?? [],
       sourceLinked: linkedSkus.has(code),
       provenance: provByCode.get(code) ?? [],
@@ -534,8 +537,12 @@ export function GoodsReceivedListV2() {
   const postGrn = usePostGrn();
   const cancelGrn = useCancelGrn();
 
-  // Server already filtered + sorted this page — render verbatim.
-  const rows = (data?.grns ?? []) as GrnRow[];
+  // Server already filtered + sorted this page — render verbatim. The MRP-derived
+  // columns (Assigned SO / Delivered) arrive from the deferred enrichment endpoint
+  // a beat later and are merged in here, so opening the list no longer waits on a
+  // company-wide computeMrp (perf/po-grn-list-mrp-off-load).
+  const serverRows = (data?.grns ?? []) as GrnRow[];
+  const rows = useEnrichedGrnListRows(serverRows, !listLoading);
   const total = data?.total ?? 0;
   const counts = data?.statusCounts ?? { all: 0, draft: 0, posted: 0, cancelled: 0 };
 
@@ -728,7 +735,7 @@ export function GoodsReceivedListV2() {
     },
     {
       key: "po",
-      label: "From PO",
+      label: transferFromColumnLabel('po'),
       width: "128px",
       disableSort: true,
       getValue: (r) => poOf(r),
@@ -847,7 +854,7 @@ export function GoodsReceivedListV2() {
             primaryAction={
               <div className="flex items-stretch gap-2">
                 <Button variant="secondary" icon={<ArrowRightLeft size={14} />} onClick={goFromPo}>
-                  From Purchase Order
+                  {transferFromLabel('po')}
                 </Button>
                 <div className="flex items-stretch">
                   <Button variant="primary" icon={<Plus size={14} />} onClick={goNewGrn} className="rounded-r-none">

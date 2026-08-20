@@ -1,4 +1,4 @@
-/* The "Convert to X" buttons that navigated and scoped nothing (2026-08-16).
+/* The "Transfer to X" buttons that navigated and scoped nothing (2026-08-16).
  *
  * These are not "does the page call useSearchParams" assertions — each test
  * MOUNTS the real picker under a real router at the real URL its real caller
@@ -51,7 +51,7 @@ const doLine = (over: Record<string, unknown>) => ({
   debtorCode: "C1", debtorName: "Ada", itemCode: "MAT-1", itemGroup: "mattress",
   description: "Mattress", description2: null, uom: "UNIT",
   delivered: 5, invoiced: 0, returned: 0, remaining: 5,
-  unitPriceCenti: 10000, unitCostCenti: 5000, discountCenti: 0, variants: null,
+  unitPriceSen: 10000, unitCostSen: 5000, discountSen: 0, variants: null,
   ...over,
 });
 
@@ -63,7 +63,7 @@ const TWO_DOS = [
   doLine({ doItemId: "i-2", deliveryOrderId: "do-2", doNumber: "HC-DO-0002" }),
 ];
 
-describe('DO → SI: "Convert to SI" lands on the note you came from', () => {
+describe('DO → SI: "Transfer to Sales Invoice" lands on the note you came from', () => {
   it("shows only the scoped Delivery Order, not the whole company's", () => {
     invoiceableDoLines.mockReturnValue(loaded(TWO_DOS));
     at(convertToLink("doToSi", "do-1"), <SalesInvoiceFromDo />);
@@ -99,7 +99,7 @@ describe('DO → SI: "Convert to SI" lands on the note you came from', () => {
 const soLine = (over: Record<string, unknown>) => ({
   soItemId: "x", docNo: "HC-SO-0001", debtorCode: "C1", debtorName: "Ada",
   itemCode: "MAT-1", itemGroup: "mattress", description: "Mattress", description2: null,
-  uom: "UNIT", qty: 5, unitPriceCenti: 10000, unitCostCenti: 5000, discountCenti: 0,
+  uom: "UNIT", qty: 5, unitPriceSen: 10000, unitCostSen: 5000, discountSen: 0,
   variants: null, delivered: 0, returned: 0, remaining: 5,
   ...over,
 });
@@ -144,7 +144,7 @@ const grnLine = (over: Record<string, unknown>) => ({
   supplierId: "sup-1", supplierName: "Acme", supplierCode: "ACME", poDocNo: null,
   receivedAt: "2026-08-01", currency: "MYR", exchangeRate: 1,
   itemCode: "MAT-1", itemGroup: "mattress", description: "Mattress",
-  variants: null, remaining: 5, unitPriceCenti: 10000,
+  variants: null, remaining: 5, unitPriceSen: 10000,
   ...over,
 });
 
@@ -155,7 +155,7 @@ const TWO_GRNS = [
   grnLine({ grnItemId: "g-2", grnId: "grn-2", grnDocNo: "HC-GR-0002" }),
 ];
 
-describe('GRN → PI: "Convert to PI" lands on the note you came from', () => {
+describe('GRN → PI: "Transfer to Purchase Invoice" lands on the note you came from', () => {
   it("shows only the scoped note", () => {
     outstandingGrnItems.mockReturnValue(loaded(TWO_GRNS));
     at(convertToLink("grnToPi", "grn-1"), <PurchaseInvoiceFromGrn />);

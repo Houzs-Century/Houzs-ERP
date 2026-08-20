@@ -26,7 +26,7 @@
 // `priceSen` surcharges — exactly what `computeMfgLinePrice` did BEFORE
 // PR #265 split selling onto `sellingPriceSen`. `costSen` is kept only as a
 // per-option fallback (a half-migrated config still yields a cost rather than
-// 0). `computeMfgLineCost` is wired into the API `unit_cost_centi` snapshot on
+// 0). `computeMfgLineCost` is wired into the API `unit_cost_sen` snapshot on
 // SO create/update (recomputeFromSnapshot → mfg-sales-orders route).
 // ----------------------------------------------------------------------------
 
@@ -143,7 +143,7 @@ export type MfgPricingInput = {
 };
 
 /** Result mirrors the HOOKKA 5-component breakdown plus the fabric add-on.
- *  Sen integers throughout — match the schema's `*_sen` / `*_centi`
+ *  Sen integers throughout — match the schema's `*_sen` / `*_sen`
  *  conventions (1 sen = 1 cent of MYR). */
 export type MfgPricingBreakdown = {
   basePriceSen:               number;
@@ -162,6 +162,48 @@ export type MfgPricingBreakdown = {
 
 const sum = (...n: number[]): number => n.reduce((a, b) => a + b, 0);
 
+/* ─── Typographic quotes ──────────────────────────────────────────────────
+   THE INCH MARK IS TYPED THREE DIFFERENT WAYS AND THEY ARE DIFFERENT STRINGS.
+   Every pool value here is compared with `===`, so `18"` (U+0022) and `18“`
+   (U+201C, what a phone keyboard or a paste from Word produces) are simply two
+   unrelated keys. Measured on prod 2026-08-17: 2990's live totalHeights pool
+   carries `17“`, `19“`, `25”` and `27“` alongside straight-quoted `18"` and
+   `26"`, and one document line stores its gap as `12“`. A line whose spelling
+   does not match the pool's silently prices the surcharge at 0 — the same
+   failure mode as the missing `totalHeight` argument, arriving by a different
+   road.
+
+   NORMALISATION IS A FALLBACK, NEVER A REPLACEMENT, and that ordering is the
+   whole safety argument. An exact hit is always preferred, so no line that
+   already matches can be re-priced by this change — including the pools that
+   carry the SAME height twice under different spellings and DIFFERENT prices
+   (supplier 07204b99 has `19“` at both RM40 and RM120). Only a value that
+   matches nothing today — and therefore prices at 0 today — can start matching.
+
+   Deliberately narrow: quote characters only. No trim, no case folding. Those
+   would be a second, unrelated behaviour change hiding inside a typography fix,
+   and this same string family also composes `variant_key`, which is the
+   inventory bucket identity. */
+const QUOTE_MAP: Record<string, string> = {
+  '“': '"', '”': '"', '„': '"', '‟': '"', '″': '"', 'ʺ': '"',
+  '‘': "'", '’': "'", '‚': "'", '‛': "'", '′': "'", 'ʹ': "'",
+};
+/** Fold typographic quote/prime characters onto their ASCII equivalents. */
+export const normaliseTypographicQuotes = (s: string): string =>
+  s.replace(/[‘’‚‛“”„‟′″ʹʺ]/g, (c) => QUOTE_MAP[c] ?? c);
+
+/** Exact match first; only then a quote-insensitive one. Returns undefined when
+ *  neither finds anything, exactly as `find` did. */
+const findOption = (
+  pool: MfgPricedOption[],
+  value: string,
+): MfgPricedOption | undefined => {
+  const exact = pool.find((o) => o.value === value);
+  if (exact) return exact;
+  const wanted = normaliseTypographicQuotes(value);
+  return pool.find((o) => normaliseTypographicQuotes(o.value) === wanted);
+};
+
 /** COST surcharge lookup (Commander 2026-05-28 definitive model). Backend
  *  maintenance `priceSen` IS the cost, so the cost compute reads `priceSen`
  *  (mirroring what `computeMfgLinePrice` did before PR #265). `costSen` is
@@ -173,7 +215,7 @@ const lookupCost = (
   value: string | null | undefined,
 ): number => {
   if (!pool || !value) return 0;
-  const hit = pool.find((o) => o.value === value);
+  const hit = findOption(pool, value);
   if (!hit) return 0;
   return hit.priceSen ?? hit.costSen ?? 0;
 };
@@ -188,7 +230,7 @@ const lookupSelling = (
   value: string | null | undefined,
 ): number => {
   if (!pool || !value) return 0;
-  const hit = pool.find((o) => o.value === value);
+  const hit = findOption(pool, value);
   return hit?.sellingPriceSen ?? 0;
 };
 
@@ -204,7 +246,7 @@ const sumSpecialsSelling = (
   if (!pool || !picks || picks.length === 0) return 0;
   let total = 0;
   for (const p of picks) {
-    const hit = pool.find((o) => o.value === p);
+    const hit = findOption(pool, p);
     if (hit) total += hit.sellingPriceSen ?? 0;
   }
   return total;
@@ -220,7 +262,7 @@ const sumSpecialsCost = (
   if (!pool || !picks || picks.length === 0) return 0;
   let total = 0;
   for (const p of picks) {
-    const hit = pool.find((o) => o.value === p);
+    const hit = findOption(pool, p);
     if (hit) total += hit.priceSen ?? hit.costSen ?? 0;
   }
   return total;
@@ -357,8 +399,8 @@ export function computeMfgLinePrice(
   // NOT read product.basePriceSen / price1Sen / seatHeightPrices here.
   //
   // The COST side (`computeMfgLineCost` below) is UNCHANGED — it still reads
-  // those product price fields as the cost base, so unit_cost_centi /
-  // line_margin_centi keep working exactly as before.
+  // those product price fields as the cost base, so unit_cost_sen /
+  // line_margin_sen keep working exactly as before.
   //
   // `source` still labels the tier the SELLING surcharges would resolve under
   // (sofa seat row / bedframe price tier) so the breakdown shape is preserved.
@@ -531,7 +573,7 @@ export function computeMfgLineCost(
 // When creating a Purchase Order, each line's unit COST auto-fills from the
 // SUPPLIER'S OWN price table (`supplier_material_bindings.price_matrix`) plus
 // that supplier's maintenance surcharges — instead of the old flat copy of
-// `binding.unit_price_centi`. Rules (commander-confirmed):
+// `binding.unit_price_sen`. Rules (commander-confirmed):
 //   - Base = the binding's price_matrix (per category shape below).
 //   - Tier default = P2; use P1 only when the line's fabric resolves to
 //     PRICE_1 AND a P1 cell exists (the tier rule already lives inside
@@ -550,7 +592,7 @@ export function computeMfgLineCost(
 
 /** Raw price_matrix as it arrives off the binding row (JSONB). Bedframe =
  *  `{P1?,P2?}` (sen); sofa = `{ "<seatSize>": {P1?,P2?,P3?} }` (sen). Null on
- *  rows / categories that use the flat `unit_price_centi`
+ *  rows / categories that use the flat `unit_price_sen`
  *  (mattress / accessory / service). */
 export type PoPriceMatrix = Record<string, unknown> | null;
 
@@ -564,12 +606,12 @@ const asSen = (v: unknown): number | null =>
  *  delegate. Pure — no I/O, safe in Workers and React.
  *
  *  - BEDFRAME: basePriceSen = matrix.P2; price1Sen = matrix.P1. When BOTH are
- *    missing → basePriceSen = `unitPriceCenti` (flat fallback).
+ *    missing → basePriceSen = `unitPriceSen` (flat fallback).
  *  - SOFA: build seatHeightPrices from each `[size, cell]` — one row per
  *    populated tier (P2→PRICE_2, P1→PRICE_1, P3→PRICE_3). basePriceSen =
- *    `unitPriceCenti` so `computeMfgLineCost` falls back to flat when the
+ *    `unitPriceSen` so `computeMfgLineCost` falls back to flat when the
  *    matrix is empty / the picked seat size isn't found.
- *  - MATTRESS / ACCESSORY / SERVICE: basePriceSen = `unitPriceCenti`.
+ *  - MATTRESS / ACCESSORY / SERVICE: basePriceSen = `unitPriceSen`.
  *
  *  Tier handling (P2 default, P1 only on PRICE_1 + P1 present) lives inside
  *  `computeMfgLineCost`; we just pass `fabricTier` through. */
@@ -578,7 +620,7 @@ export function computeMfgPoUnitCost(
     category: 'BEDFRAME' | 'SOFA' | 'MATTRESS' | 'ACCESSORY' | 'SERVICE';
     priceMatrix: PoPriceMatrix;
     /** Flat fallback (accessory / mattress / service + empty matrix). */
-    unitPriceCenti: number;
+    unitPriceSen: number;
     fabricTier?: MfgFabricTier | null;
     qty?: number;
     seatSize?: string | null;
@@ -603,7 +645,7 @@ export function computeMfgPoUnitCost(
     product = {
       category:     'BEDFRAME',
       // Both missing → fall back to the flat binding price.
-      basePriceSen: p2 ?? (p1 == null ? input.unitPriceCenti : null),
+      basePriceSen: p2 ?? (p1 == null ? input.unitPriceSen : null),
       price1Sen:    p1,
     };
   } else if (input.category === 'SOFA') {
@@ -624,12 +666,12 @@ export function computeMfgPoUnitCost(
       category:     'SOFA',
       // Flat fallback when the matrix is empty or the picked seat size has no
       // row — computeMfgLineCost falls back to basePriceSen in that case.
-      basePriceSen: input.unitPriceCenti,
+      basePriceSen: input.unitPriceSen,
       seatHeightPrices: seatHeightPrices.length > 0 ? seatHeightPrices : null,
     };
   } else {
     // MATTRESS / ACCESSORY / SERVICE — single flat price per SKU.
-    product = { category: input.category, basePriceSen: input.unitPriceCenti };
+    product = { category: input.category, basePriceSen: input.unitPriceSen };
   }
 
   return computeMfgLineCost(

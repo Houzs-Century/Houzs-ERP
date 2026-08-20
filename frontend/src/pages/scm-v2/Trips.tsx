@@ -94,6 +94,7 @@ import { LiveTripMap, type LiveMarker } from '../../vendor/scm/components/LiveTr
 import { useTripLatestLocations } from '../../vendor/scm/lib/trip-locations-queries';
 import { useNotify } from '../../vendor/scm/components/NotifyDialog';
 import { useConfirm } from '../../vendor/scm/components/ConfirmDialog';
+import { DateField } from "../../vendor/scm/components/DateField";
 
 const ICON = { size: 14, strokeWidth: 1.75 } as const;
 
@@ -593,7 +594,7 @@ export function Trips() {
               <ul style={{ margin: 0, paddingLeft: 18, fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
                 {assign.overflow.map((o) => (
                   <li key={o.key}>
-                    <strong>{o.date}</strong> · {o.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : o.group} · {o.orders.join(', ')} — {o.sets} sets · {fmtRm(o.revenueCenti)}
+                    <strong>{o.date}</strong> · {o.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : o.group} · {o.orders.join(', ')} — {o.sets} sets · {fmtRm(o.revenueSen)}
                   </li>
                 ))}
                 {assign.unassigned.map((u, i) => (
@@ -766,11 +767,10 @@ export function Trips() {
           headerControls={
             <>
               {/* REQUIRED picked date — the map always shows exactly one day. */}
-              <input
-                type="date"
+              <DateField
                 required
                 value={mapDate}
-                onChange={(e) => { if (e.target.value) { setMapDate(e.target.value); setMapFocus(null); } }}
+                onChange={(iso) => { if (iso) { setMapDate(iso); setMapFocus(null); } }}
                 title="The day the map shows"
                 style={{ ...selStyle, width: 140 }}
               />
@@ -850,7 +850,7 @@ const RunCard = ({ run, onApply, applyBusy, onFocus, focused = false }: {
         {run.group === 'KLANG_VALLEY' ? 'Klang Valley (mixed)' : run.group}
       </span>
       <span style={{ fontSize: 'var(--fs-12)', color: 'var(--fg-muted)' }}>
-        {run.stops.length} stop(s) · {run.sets} sets · {fmtRm(run.revenueCenti)}
+        {run.stops.length} stop(s) · {run.sets} sets · {fmtRm(run.revenueSen)}
       </span>
       {run.overCapacity && <MiniBadge tone="danger">Over capacity</MiniBadge>}
       {run.windowViolations > 0 && <MiniBadge tone="warn">{run.windowViolations} window issue(s)</MiniBadge>}

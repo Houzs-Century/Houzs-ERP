@@ -5,11 +5,12 @@
 // ----------------------------------------------------------------------------
 
 import { useCallback } from 'react';
-import { fmtDateOrDash } from '@2990s/shared';
+import { fmtDateOrDash } from '../../vendor/shared/format';
 import { DetailListingShell } from '../../components/scm-v2/DetailListingShell';
 import { useDeliveryOrderDetailListing, type DetailListingRow } from '../../vendor/scm/lib/reports-queries';
 import type { DataGridColumn } from '../../vendor/scm/components/DataGrid';
 import styles from './SalesOrderDetailListing.module.css';
+import { transferFromColumnLabel } from "../../lib/convertScope";
 
 type DoRow = DetailListingRow & {
   do_number?: string;
@@ -21,8 +22,8 @@ type DoRow = DetailListingRow & {
   m3_milli?: number;
   city?: string | null;
   state?: string | null;
-  line_total_centi?: number;
-  discount_centi?: number;
+  line_total_sen?: number;
+  discount_sen?: number;
   uom?: string;
   item_group?: string | null;
 };
@@ -62,12 +63,12 @@ export const DeliveryOrderDetailListing = () => {
       filterType: 'date', dateValue: (r) => (r.do_date ?? r.line_date) as string | null,
     },
     {
-      key: 'so_doc_no', label: 'Transfer From (SO)', width: 110, sortable: true, groupable: true,
+      key: 'so_doc_no', label: transferFromColumnLabel('so'), width: 110, sortable: true, groupable: true,
       accessor: (r) => r.so_doc_no ?? '—',
       searchValue: (r) => r.so_doc_no ?? '',
     },
     {
-      key: 'debtor_code', label: 'Debtor Code', width: 110, sortable: true, groupable: true,
+      key: 'debtor_code', label: 'Customer', width: 110, sortable: true, groupable: true,
       accessor: (r) => r.debtor_code ?? '—',
       searchValue: (r) => r.debtor_code ?? '',
     },
@@ -136,21 +137,21 @@ export const DeliveryOrderDetailListing = () => {
     },
     {
       key: 'unit_price', label: 'Unit Price', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.unit_price_centi),
-      searchValue: (r) => fmtRm(r.unit_price_centi),
-      sortFn: (a, b) => Number(a.unit_price_centi ?? 0) - Number(b.unit_price_centi ?? 0),
+      accessor: (r) => fmtRm(r.unit_price_sen),
+      searchValue: (r) => fmtRm(r.unit_price_sen),
+      sortFn: (a, b) => Number(a.unit_price_sen ?? 0) - Number(b.unit_price_sen ?? 0),
     },
     {
       key: 'discount', label: 'Discount', width: 100, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.discount_centi),
-      searchValue: (r) => fmtRm(r.discount_centi),
-      sortFn: (a, b) => Number(a.discount_centi ?? 0) - Number(b.discount_centi ?? 0),
+      accessor: (r) => fmtRm(r.discount_sen),
+      searchValue: (r) => fmtRm(r.discount_sen),
+      sortFn: (a, b) => Number(a.discount_sen ?? 0) - Number(b.discount_sen ?? 0),
     },
     {
       key: 'line_total', label: 'Line Total', width: 110, align: 'right', sortable: true,
-      accessor: (r) => fmtRm(r.total_centi),
-      searchValue: (r) => fmtRm(r.total_centi),
-      sortFn: (a, b) => Number(a.total_centi ?? 0) - Number(b.total_centi ?? 0),
+      accessor: (r) => fmtRm(r.total_sen),
+      searchValue: (r) => fmtRm(r.total_sen),
+      sortFn: (a, b) => Number(a.total_sen ?? 0) - Number(b.total_sen ?? 0),
     },
     {
       key: 'status', label: 'Status', width: 120, sortable: true, groupable: true,
@@ -177,7 +178,7 @@ export const DeliveryOrderDetailListing = () => {
         const docStatuses = new Map<string, string>();
         for (const r of rows) {
           uniqueDocs.add(r.doc_no);
-          revenue += Number(r.total_centi ?? 0);
+          revenue += Number(r.total_sen ?? 0);
           docStatuses.set(r.doc_no, String(r.status ?? ''));
         }
         // Sum the LINE totals per doc whose status is still in-flight.
@@ -185,7 +186,7 @@ export const DeliveryOrderDetailListing = () => {
           const status = docStatuses.get(r.doc_no) ?? '';
           if (status === 'DELIVERED' || status === 'INVOICED' || status === 'CANCELLED') continue;
           const cur = outstandingByDoc.get(r.doc_no) ?? 0;
-          outstandingByDoc.set(r.doc_no, cur + Number(r.total_centi ?? 0));
+          outstandingByDoc.set(r.doc_no, cur + Number(r.total_sen ?? 0));
         }
         const outstanding = [...outstandingByDoc.values()].reduce((s, v) => s + v, 0);
         return {
