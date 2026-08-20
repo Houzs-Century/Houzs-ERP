@@ -725,7 +725,28 @@ numbers, the readonly wall lifts so staff can edit them) — and the receiver we
 on replaying 2990's older copy over those edits. Worse than losing the edit: it
 replaced the item set with a DELETE-then-INSERT, and
 `delivery_order_items.so_item_id` is `ON DELETE SET NULL`, so every replay
-blanked the Delivery Order lines that named those SO lines.
+blanked the Delivery Order lines that named those SO lines. Ten such lines
+across four documents were live on 2026-08-20, **whole documents at a time**,
+which is the shape only a whole-item-set replacement produces.
+
+**How busy is this receiver, actually — measure, do not assume.** 2990's own
+`public.sync_outbox` is readable from CI with the credentials this repo already
+holds, and `mirror-drift-sentinel.mjs` (workflow **Mirror drift sentinel**)
+prints it: on 2026-08-20 it read `source=69 mirrored=102 pending=0 sent=0
+done=102 stuck=0 lastDelivery=2026-08-19T08:42:39Z`. So the queue is drained and
+has delivered nothing for a day — the outbox is fed by triggers on 2990's OWN
+tables, and post-cutover almost nothing writes there.
+
+Two consequences worth knowing before you reason about this route:
+
+- **An empty queue is a state, not a guarantee.** Any 2990-side change, or any
+  row that fails and returns to `pending`, re-arms it. That is why import-once
+  is the fix rather than "the mirror is quiet now".
+- **A "the edit stuck" test proves nothing while the queue is idle.** It would
+  also be true of a dormant mirror. The conclusive signal is the
+  `[so-mirror] skipped_existing` log line firing for that doc while the value
+  survives; the outbox reading above is how you tell whether a delivery was even
+  offered during the window.
 
 **Every refusal is 200, deliberately.** 2990's drainer keys on HTTP status;
 non-2xx keeps the outbox row PENDING and retries forever, so one refused order
@@ -736,6 +757,38 @@ delivered message we chose not to apply.
 the header it just wrote before returning 500, so the retry redoes the whole
 document instead of finding a header-only order and skipping it. Pinned by
 `backend/tests/soMirrorImportOnce.test.ts`, which is in `MUST_GATE_MERGE`.
+
+**Every decline is RECORDED — `scm.so_mirror_skips`, migration 0311.** This is
+what makes the refusal provable rather than merely claimed, and it exists
+because of the reading above: while the queue is idle a surviving edit proves
+nothing, so the missing fact was "was a delivery even offered?".
+
+| column | |
+|---|---|
+| `(company_id, doc_no, action)` | primary key. `action` is `skipped_existing` or `refused_delete` |
+| `hits` | how many deliveries have been declined for that pair |
+| `first_seen` / `last_seen` | `last_seen` is the one an acceptance test turns on |
+
+One row per pair, **never one per delivery** — the drainer retries every 10s, so
+append-per-event would grow by 8,640 rows a day per wedged document. The ceiling
+is (2990 orders) x 2.
+
+**Reading it:** `node backend/scripts/check-so-mirror-skips.mjs`, workflow **So
+mirror skips**. An edit that survived while that doc's `last_seen` moved inside
+your wait window is proof import-once held; an edit that survived while it did
+not move says only that the mirror was quiet.
+
+Two properties worth not breaking:
+
+- **The write is wrapped and never fatal.** Same rule as mig 0302's delete
+  audit: turning a correct refusal into a 500 would put the outbox row back to
+  PENDING and wedge the queue, which is the exact failure the 200 avoids. A
+  failed record is logged, and the refusal still stands.
+- **The reader asserts the COLUMN SHAPE, not a row count.** 0311 is `CREATE
+  TABLE IF NOT EXISTS`, so a pre-existing table of that name and a different
+  shape would be skipped in silence and the INSERT would fail against it
+  forever. An empty table and a wrong table both count zero; only the shape
+  check tells them apart.
 
 ### The doc number is NOT a tenant key — every `/:docNo/*` read must say so
 
@@ -2170,6 +2223,44 @@ keep that order stable. A component that genuinely disappears is still deleted,
 and still takes its link, which is correct: the line it named is gone. This is
 also the precondition for ever exposing an editable delivery charge — without
 it, every edit manufactures an orphan.
+
+**Where the operator types it (2026-08-20).** The reduction had a server road
+and no door: the line PATCH accepted a bounded discount, the rebuild kept it
+(#2490) on a row that now keeps its id (0310) — but `SoLineCard.tsx` rendered
+`discountSen` only as a READ-ONLY "− Discount" row that appears once the value
+is already above zero. Its editable inputs were description, remark, qty, unit
+price, delivery date, variants and photos; `$ Override price` writes
+`unit_price_sen`, not a discount. So the only writer of a delivery-line discount
+was the POS voucher split, and an operator could not reduce a fee at all.
+
+Now the SAME amount cell does it, because that is where the operator already
+tried: on a `SVC-DELIVERY*` line the cell SHOWS the line net and WRITES the
+difference as `discountSen` (`frontend/src/vendor/scm/lib/delivery-fee-amount.ts`,
+executed by `delivery-fee-amount.test.ts`). Type the amount you want charged —
+250 → 125 books a 125 discount, and the printed SO still reads unit 250 /
+discount 125 / total 125. Three properties are deliberate: **the semantics are
+TARGET, not discount** (on a 250 fee, wanting 200 books 50 — 250 → 125 is a
+coincidence that hides the difference, which is why a test pins 200); **a higher
+figure books no discount**, since a fee rise needs its own `SVC-DELIVERY-ADD`
+line rather than a negative discount with nothing naming the money; and **a
+blank or unreadable box writes nothing**, because `Number('')` is 0 and that
+would read as charge-nothing and waive the fee on the way to retyping it. A real
+waiver is still typed as `0`. Non-fee lines are untouched — the cell remains the
+unit price, on the same `canEditPrice` gate.
+
+**All three faults were on THIS side — it was not the mirror.** An earlier draft
+of this section blamed the `2990-*` revert on the SO mirror replaying its copy.
+#2518 withdrew that with a measurement: 2990's `sync_outbox` shows its last
+successful delivery at **2026-08-19T08:42:39Z** with an empty queue, while both
+`SVC-DELIVERY` deletes on 2990-SO-2608-033 (2026-08-20 01:41 and 02:40, mig
+0302's forensic log) postdate it and carry `application_name = PostgREST 14.5` —
+the fee rebuild, not the mirror, which reaches Postgres through postgres.js and
+appears nowhere in that log. The three faults were `discount_sen: 0` written
+over an accepted discount (#2490), the rebuild replacing rows so they changed id
+(#2514), and the discount having no input (#2516). The mirror's
+DELETE-then-INSERT is still real and still worth import-once (#2515) — it is the
+only known mechanism that orphans a WHOLE document's DO lines at once — but it
+explains the repaired delivery links, not a reverted fee.
 
 **The legacy fallback.** `recomputeTotals` still reads the header fee back for
 a line-less SO — that exists ONLY for legacy (pre-P2 / mirror-imported) rows
