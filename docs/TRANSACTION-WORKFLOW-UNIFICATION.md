@@ -166,3 +166,31 @@ implementation".
 - **Amount = 0: KEEP the zero-cost-receipt protection, make "Received free" a clean
   one-tick path.** Do not remove the guard (it prevents valuation corruption from a
   previously-priced SKU booked at 0); make the intentional-free path frictionless.
+- **Sales Invoice lines: READ-ONLY, header editable (owner 2026-08-20).** SI lines
+  inherit from the DO (what actually shipped); the "Edit" button is wired to a
+  DEAD `?edit=1` today. Fix: Edit becomes a HEADER-only edit (date / notes / payment);
+  lines + variants stay read-only (they already render the variant summary). Do NOT
+  add a line/variant editor to SI (industry standard: an invoice's lines are locked
+  to the delivery).
+
+## 7. Variant SEE + EDIT — findings (traced 2026-08-20) and fixes
+
+Two modes, per the owner's model, confirmed:
+- **Read-only** shows the variant summary, computed LIVE by the shared
+  `buildVariantSummary` (`vendor/shared/variant-summary.ts:140`) with `description2`
+  as fallback. **Every document already shows it — consistent.**
+- **Edit** mounts a variant PICKER. Two shared editors exist and are already used by
+  most docs: `SoLineCard` (customer side: SO, DO-new, SI-new, consignment) and
+  `PoLineCard` (supplier side: PO-detail, PI). GAPS:
+  1. **SI-detail mounts NO editor** — the dead Edit button above. Fix per the
+     decision (header-only edit; lines stay read-only).
+  2. **GRN hand-rolls a weaker `VariantSelect`** (`GoodsReceivedDetail.tsx:93`):
+     bedframe has NO fabric picker, sofa fabric is a free-text `<input>` instead of
+     the `FabricColourCombobox` SO/PO use. Fix: mount the shared `PoLineCard` so GRN
+     variant fidelity matches PO. DEFECT.
+  3. DO edits via a different route (`/delivery-orders/new?edit=`) not inline —
+     behaviour matches, entry path differs; align in Phase 2 (note, not a defect).
+- **Unification lever:** point GRN + SI at the EXISTING shared editors; do not invent
+  new components. Optionally replace the per-page `buildVariantSummary || description2`
+  render wrappers with the shared `VariantDescription` component (exists, currently
+  used only on convert pickers) for one display path.
