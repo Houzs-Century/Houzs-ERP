@@ -1,6 +1,6 @@
 ## The document counter re-issued numbers the account book already held [high]
 
-<!-- area: SCM -->
+<!-- area: AutoCount sync + write-back -->
 
 **Symptom.** On 2026-08-20 four documents the ERP raised were refused by
 AutoCount with `Primary Key Error`. In plain terms: 单据号码被重复发出 —— ERP 又
