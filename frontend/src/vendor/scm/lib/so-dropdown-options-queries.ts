@@ -153,22 +153,36 @@ export const FALLBACK_OPTIONS: Record<SoDropdownCategory, SoDropdownOption[]> = 
     { id: 'fallback-rel-colleague', category: 'relationship', value: 'Colleague', label: 'Colleague', sortOrder: 7, active: true },
     { id: 'fallback-rel-other',     category: 'relationship', value: 'Other',     label: 'Other',     sortOrder: 8, active: true },
   ],
+  /* THREE, not four. Mig 0037 DEACTIVATED the L1 'Installment' row — an EPP
+     receipt is Method = Merchant plus an installment_plan tenure — so the API
+     serves three. This list is what every surface shows while that API is
+     loading or empty, and it offered a fourth, retired method the operator
+     could pick and save. The row itself still exists (deactivated) and stays
+     locked by PAYMENT_METHOD_CORE_VALUES, which is why that list is still four:
+     the lock is about what may be DELETED, this is about what may be CHOSEN.
+     Pinned against the migration by so-dropdown-options-queries.test.ts. */
   payment_method: [
     { id: 'fallback-pm-merchant',    category: 'payment_method', value: 'Merchant',    label: 'Merchant',                sortOrder: 1, active: true },
     { id: 'fallback-pm-online',      category: 'payment_method', value: 'Online',      label: 'Bank transfer / DuitNow', sortOrder: 2, active: true },
-    { id: 'fallback-pm-installment', category: 'payment_method', value: 'Installment', label: 'Installment',             sortOrder: 3, active: true },
-    { id: 'fallback-pm-cash',        category: 'payment_method', value: 'Cash',        label: 'Cash',                    sortOrder: 4, active: true },
+    { id: 'fallback-pm-cash',        category: 'payment_method', value: 'Cash',        label: 'Cash',                    sortOrder: 3, active: true },
   ],
+  /* The twelve banks mig 0037 seeds, in ITS sort order. This list held nine and
+     was missing Pinelabs / AEON / HSBC — all three appear on real receipts, and
+     an operator on a cold load simply could not choose them. Pinned against the
+     migration by so-dropdown-options-queries.test.ts. */
   payment_merchant: [
-    { id: 'fallback-pmer-mbb',        category: 'payment_merchant', value: 'MBB',        label: 'MBB',        sortOrder: 1, active: true },
-    { id: 'fallback-pmer-cimb',       category: 'payment_merchant', value: 'CIMB',       label: 'CIMB',       sortOrder: 2, active: true },
-    { id: 'fallback-pmer-public',     category: 'payment_merchant', value: 'Public',     label: 'Public',     sortOrder: 3, active: true },
-    { id: 'fallback-pmer-hlb',        category: 'payment_merchant', value: 'HLB',        label: 'HLB',        sortOrder: 4, active: true },
-    { id: 'fallback-pmer-rhb',        category: 'payment_merchant', value: 'RHB',        label: 'RHB',        sortOrder: 5, active: true },
-    { id: 'fallback-pmer-bankislam',  category: 'payment_merchant', value: 'Bank Islam', label: 'Bank Islam', sortOrder: 6, active: true },
-    { id: 'fallback-pmer-bsn',        category: 'payment_merchant', value: 'BSN',        label: 'BSN',        sortOrder: 7, active: true },
-    { id: 'fallback-pmer-alliance',   category: 'payment_merchant', value: 'Alliance',   label: 'Alliance',   sortOrder: 8, active: true },
-    { id: 'fallback-pmer-ambank',     category: 'payment_merchant', value: 'AmBank',     label: 'AmBank',     sortOrder: 9, active: true },
+    { id: 'fallback-pmer-mbb',        category: 'payment_merchant', value: 'MBB',        label: 'MBB',         sortOrder: 1,  active: true },
+    { id: 'fallback-pmer-cimb',       category: 'payment_merchant', value: 'CIMB',       label: 'CIMB',        sortOrder: 2,  active: true },
+    { id: 'fallback-pmer-public',     category: 'payment_merchant', value: 'Public',     label: 'Public',      sortOrder: 3,  active: true },
+    { id: 'fallback-pmer-hlb',        category: 'payment_merchant', value: 'HLB',        label: 'HLB',         sortOrder: 4,  active: true },
+    { id: 'fallback-pmer-alliance',   category: 'payment_merchant', value: 'Alliance',   label: 'Alliance',    sortOrder: 5,  active: true },
+    { id: 'fallback-pmer-pinelabs',   category: 'payment_merchant', value: 'Pinelabs',   label: 'Pinelabs',    sortOrder: 6,  active: true },
+    { id: 'fallback-pmer-rhb',        category: 'payment_merchant', value: 'RHB',        label: 'RHB',         sortOrder: 7,  active: true },
+    { id: 'fallback-pmer-bankislam',  category: 'payment_merchant', value: 'Bank Islam', label: 'Bank Islam',  sortOrder: 8,  active: true },
+    { id: 'fallback-pmer-bsn',        category: 'payment_merchant', value: 'BSN',        label: 'BSN',         sortOrder: 9,  active: true },
+    { id: 'fallback-pmer-ambank',     category: 'payment_merchant', value: 'AmBank',     label: 'AmBank',      sortOrder: 10, active: true },
+    { id: 'fallback-pmer-aeon',       category: 'payment_merchant', value: 'AEON',       label: 'AEON',        sortOrder: 11, active: true },
+    { id: 'fallback-pmer-hsbc',       category: 'payment_merchant', value: 'HSBC',       label: 'HSBC',        sortOrder: 12, active: true },
   ],
   online_type: [
     { id: 'fallback-ot-banktransfer', category: 'online_type', value: 'Bank Transfer', label: 'Bank Transfer', sortOrder: 1, active: true },
