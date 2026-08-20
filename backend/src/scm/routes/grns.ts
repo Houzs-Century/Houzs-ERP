@@ -3425,8 +3425,7 @@ grns.patch('/:id/items/:itemId', async (c) => {
    item's received_qty by qty_accepted (clamp ≥0) and re-evaluating the parent
    PO status. This fixes the PO staying RECEIVED after a GRN line is removed.
    Blocked by the GRN child-lock (any downstream PI/PR). */
-/* Runs inside runScmPgCommand. `sb` is a PARAMETER, not a c.get('supabase')
-   read: that read is what would put a write outside the transaction. */
+/* Inside runScmPgCommand; `sb` is a PARAMETER so no write escapes the txn. */
 async function deleteGrnLineCommandHandler(c: any, sb: any): Promise<Response> {
   const grnId = c.req.param('id'); const itemId = c.req.param('itemId');
   const user = c.get('user');
@@ -3575,10 +3574,8 @@ async function deleteGrnLineCommandHandler(c: any, sb: any): Promise<Response> {
             performed_by: user.id,
             notes: 'GRN line deleted — reversing receipt',
           }], activeCompanyId(c));
-          /* Stock went back out -> re-walk SO allocation. DURABLE: the queue
-             row commits with the OUT above, so a crash cannot leave stock moved
-             and lines still READY. NOT caught: a failed enqueue must fail the
-             delete. docs/modules/grn.md 7c. */
+          /* DURABLE: queues with the OUT above, and is NOT caught - a failed
+             enqueue must fail the delete. docs/modules/grn.md 7c. */
           await scheduleStockAllocationAfterCommand(c, sb, `grn-line-delete:${grnId}`);
         }
       } catch { /* best-effort */ }
@@ -3590,8 +3587,6 @@ async function deleteGrnLineCommandHandler(c: any, sb: any): Promise<Response> {
   return c.body(null, 204);
 }
 
-/* FIRST GRN route inside the PG command transaction: line delete, stock OUT,
-   audit, outbox and allocation request commit together or not at all. Costs a
-   503 where DATABASE_URL is absent - refusing beats half-writing a reversal.
-   Other five routes unchanged. docs/modules/grn.md 7c. */
+/* First GRN route in the PG command txn; 503s without DATABASE_URL by design.
+   docs/modules/grn.md 7c. */
 grns.delete('/:id/items/:itemId', async (c) => runScmPgCommand(c, (sb) => deleteGrnLineCommandHandler(c, sb)));
