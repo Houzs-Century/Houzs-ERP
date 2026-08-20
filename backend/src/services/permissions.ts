@@ -344,9 +344,25 @@ export function droppedPermissions(json: string | null | undefined): string[] {
  *
  *   grep -rF '"<key>"' backend/src frontend/src --include=*.ts --include=*.tsx
  *
- * All 17 `retired` keys below return ZERO hits outside the dead D1 migration
- * tree — no `requirePermission`, no `requireAnyPermission`, no `can()`, no
- * `.includes()` check, and no frontend use of any kind. The modules they were
+ * All 17 `retired` keys below carry ZERO GATES — no `requirePermission`, no
+ * `requireAnyPermission`, no `can()`, no `.includes()` check, and no frontend
+ * use of any kind.
+ *
+ * **They are not entirely unread, and that matters.** Two scripts under
+ * `backend/scripts/` parse a role's stored `permissions` array with their OWN
+ * parser instead of `parsePermissions`, so they SEE what the running system
+ * drops:
+ *   - `backfill-role-page-access.mjs` (`parsePerms`, no isValidPermission
+ *     filter) derived mig 073's `role_page_access` rows FROM these keys —
+ *     `trips.manage` / `planner.run` gave a role FULL logistics,
+ *     `sales_orders.write` FULL orders, `delivery_orders.write` FULL delivery
+ *     orders. It is one-shot and has already run, so that grant is now a stored
+ *     `role_page_access` row standing on a key nothing else honours.
+ *   - `census-service-case-visibility.mjs` deliberately keeps every stored
+ *     string, so its model of a user's permissions is WIDER than the running
+ *     system's.
+ * Neither is a runtime gate. Both are reasons not to assume "dropped" means
+ * "never had an effect". The modules they were
  * written for are gone: there is no `/api/trips`, no `/api/planner` and no
  * top-level `/api/reports` mount in `src/index.ts`, and the customer/supplier
  * portals that DO exist are gated by CAPABILITY TOKENS

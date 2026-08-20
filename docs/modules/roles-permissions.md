@@ -151,10 +151,17 @@ Tables: `roles` (`permissions` is a JSON string array), `users.role_id`,
    booleans the server already decided. `permissions.ts`'s header pointed at a
    "frontend permission registry" until 2026-08-20 — a pointer at something that
    has never existed, which invites exactly the second copy the ruling forbids.
-2. **`backend/scripts/census-service-case-visibility.mjs:78-90` deliberately
-   omits the `isValidPermission` filter**, so its model of a user's permissions
-   is WIDER than the running system's. Do not read its output as what a user
-   actually holds.
+2. **Two scripts parse role permissions with their OWN parser and therefore SEE
+   what the app drops.** `census-service-case-visibility.mjs:78-90` deliberately
+   omits the `isValidPermission` filter, so its model of a user's permissions is
+   WIDER than the running system's — do not read its output as what a user
+   actually holds. `backfill-role-page-access.mjs` (`parsePerms`) does the same,
+   and it is the reason "dropped" must not be read as "never had an effect": mig
+   073's `role_page_access` rows were DERIVED from these keys, so `trips.manage`
+   / `planner.run` handed a role FULL logistics, `sales_orders.write` FULL
+   orders and `delivery_orders.write` FULL delivery orders. That script is
+   one-shot and has already run, so those page grants are now stored rows
+   standing on keys nothing else honours.
 3. **A `*` holder is not a normal user.** `hasPermission` short-circuits on `*`,
    so a wildcard caller passes every gate and can never reproduce a
    missing-catalogue-entry bug. `service_cases.approve` went unnoticed for weeks
