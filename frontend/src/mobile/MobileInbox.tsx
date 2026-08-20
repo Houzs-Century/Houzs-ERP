@@ -80,7 +80,9 @@ export function MobileInbox({
   onOpen?: (item: NotificationItem) => void;
   onBack?: () => void;
 }) {
-  const { feed, totalUnread, unreadByProject, loadFailed, reload } = useNotifications();
+  /* `unreadByProject` still drives each row's unread dot — only the mark-read
+     LOOP moved to the provider, not the read of who is unread. */
+  const { feed, totalUnread, unreadByProject, loadFailed, reload, markAllRead } = useNotifications();
   const [marking, setMarking] = useState(false);
 
   const { today, earlier } = useMemo(() => {
@@ -103,18 +105,31 @@ export function MobileInbox({
     return { today, earlier };
   }, [feed]);
 
+  /* The LOOP moved to useNotifications (`markAllRead`) so the desktop
+     Notifications page can perform the same action instead of having no write
+     at all. This screen keeps only its own busy flag and its own way of saying
+     it went wrong.
+
+     It used to end each request with `.catch(() => {})`. A bulk mark-read that
+     failed for every project then looked exactly like one that worked — the
+     spinner stopped, the feed reloaded, and the badge simply stayed up with no
+     explanation. The shared action returns counts; this is what renders them. */
+  const [markError, setMarkError] = useState<string | null>(null);
   const markAll = async () => {
     if (marking) return;
-    const ids = Object.entries(unreadByProject)
-      .filter(([, n]) => (n ?? 0) > 0)
-      .map(([id]) => Number(id));
-    if (!ids.length) return;
     setMarking(true);
+    setMarkError(null);
     try {
-      await Promise.all(
-        ids.map((id) => api.post(`/api/projects/${id}/read`, {}).catch(() => {}))
-      );
-      await reload();
+      const { ok, failed } = await markAllRead();
+      if (failed > 0) {
+        setMarkError(
+          ok > 0
+            ? `Marked ${ok}, but ${failed} couldn't be marked read. Pull to refresh and try again.`
+            : "Couldn't mark these read. Pull to refresh and try again.",
+        );
+      }
+    } catch (e) {
+      setMarkError(e instanceof Error ? e.message : "Couldn't mark these read.");
     } finally {
       setMarking(false);
     }
@@ -154,6 +169,11 @@ export function MobileInbox({
             {marking ? "Marking…" : "Mark all read"}
           </button>
         </div>
+        {markError && (
+          <div style={{ marginTop: 8, fontSize: 11.5, lineHeight: 1.35, color: "var(--red, #b23a3a)" }}>
+            {markError}
+          </div>
+        )}
       </header>
 
       <div className="scroll hz-scroll" style={{ padding: 14, paddingBottom: 120 }}>

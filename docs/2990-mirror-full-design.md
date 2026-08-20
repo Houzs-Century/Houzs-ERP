@@ -553,7 +553,7 @@ active company.
 
 ### Houzs — one one-shot script (NOT a migration)
 
-**`backend/scripts/purge-handcopied-amendment.mjs`** — deletes the single hand-copied
+**`backend/scripts/purge-handcopied-amendment.mjs` [planned]** — deletes the single hand-copied
 `so_amendments` row. Per the repo rule, data changes are scripts, not numbered migrations.
 
 *Verdict on that row: delete it.* It has no outbox lineage, its `amendment_no` is bare

@@ -225,3 +225,90 @@ export function mergeBaseLedger(repoRoot) {
     },
   };
 }
+
+// ---------------------------------------------------------------------------
+// The OLD path, and why it needs a guard of its own
+// ---------------------------------------------------------------------------
+
+/**
+ * The signpost left behind at the ledger's old path.
+ *
+ * WHY THIS IS GUARDED AT ALL. On 2026-08-20 #2567 split the ledger into
+ * `docs/bugs/` and left ~40 lines of signpost here. On 2026-08-21 the whole
+ * 24,000-line ledger was BACK at this path on `main`, and no check went red.
+ *
+ * The mechanism, reproduced rather than guessed at. A branch that forked BEFORE
+ * #2567 still carries `BUG-HISTORY.md merge=union` in its own `.gitattributes`,
+ * and a merge applies the attributes of the tree the merge is running IN. So
+ * `git merge origin/main` on such a branch hits the one hunk where the branch
+ * appended an entry and `main` replaced the file, resolves it by KEEPING BOTH
+ * SIDES, prints `Auto-merging BUG-HISTORY.md`, and EXITS 0. The result is the
+ * branch's entry, then every line #2567 deleted, then the signpost at the
+ * bottom. It is a plausible-looking file produced by a successful command, which
+ * is why review did not catch it either: #2568 merged it into `main`, and its
+ * own entry then existed ONLY in the resurrected file.
+ *
+ * Removing the attribute from `main` — which #2567 already did — cannot fix
+ * this, because the attribute that applies lives in the OTHER branch's tree.
+ * Nothing on `main` can reach into a branch that forked a day ago. What `main`
+ * CAN do is refuse to accept the result, which is what this is.
+ */
+export const SIGNPOST_PATH = "BUG-HISTORY.md";
+
+/**
+ * Judge the content of `BUG-HISTORY.md`. Pure: no I/O, so the CLI can self-test
+ * it against synthetic samples before trusting it against the tree.
+ *
+ * @param {string} text          the signpost file's content
+ * @param {Iterable<string>} entryTitles  every entry's heading line, from docs/bugs/
+ * @returns {{kind: string, line: number, text: string}[]} empty means clean
+ *
+ * THREE RULES, and each one is an exact identity rather than a threshold. A
+ * line-count ceiling was the obvious guard and is the wrong one: it is a number
+ * somebody has to maintain, and the first time the signpost legitimately grows
+ * the fix on offer is to raise it — which is how a ratchet stops ratcheting.
+ *
+ *   entry-heading        a line opening `## `, which is what EVERY reader in
+ *                        this repo treats as the start of an entry
+ *                        (ENTRY_HEADING_RX, gen-bug-history, the round-trip
+ *                        test, the working-agreement gate). If a `## ` line is
+ *                        here, ledger content is here.
+ *   known-entry-title    a line that IS one of the ledger's own titles, with any
+ *                        heading level or none. Catches a resurrection whose
+ *                        heading level got mangled on the way in, which `## `
+ *                        alone would miss.
+ *   not-a-signpost       the file no longer names `docs/bugs`. Without this the
+ *                        cheapest way to pass the two rules above is to empty
+ *                        the file, and an empty file breaks the ~60 comments in
+ *                        `backend/`, `frontend/` and `docs/` that cite this path
+ *                        by name — the entire reason #2567 kept it.
+ *
+ * The cost, stated: a `## ` sub-heading can no longer be used INSIDE the
+ * signpost. Use `###` or bold. That is a real restriction on ~40 lines of prose,
+ * accepted because `## ` at line start is the one shape this repo has already
+ * given a meaning to.
+ */
+export function signpostViolations(text, entryTitles) {
+  const body = String(text).replace(/\r\n/g, "\n");
+  const titles = new Set();
+  for (const t of entryTitles) {
+    const norm = String(t).replace(/^#+\s*/, "").trim();
+    if (norm) titles.add(norm);
+  }
+
+  const out = [];
+  const lines = body.split("\n");
+  for (const [i, line] of lines.entries()) {
+    if (/^##\s+\S/.test(line)) {
+      out.push({ kind: "entry-heading", line: i + 1, text: line });
+      continue;
+    }
+    const norm = line.replace(/^#+\s*/, "").trim();
+    if (norm && titles.has(norm)) out.push({ kind: "known-entry-title", line: i + 1, text: line });
+  }
+
+  if (!body.includes(BUG_DIR)) {
+    out.push({ kind: "not-a-signpost", line: 0, text: `the file never names ${BUG_DIR}` });
+  }
+  return out;
+}

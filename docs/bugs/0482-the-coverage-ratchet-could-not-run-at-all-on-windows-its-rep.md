@@ -3,11 +3,12 @@
 <!-- area: Repo tooling: tests, ratchets, generators -->
 
 **Symptom.** On the OS this repo is developed on, `coverage-ratchet --check`
-measured the report correctly and then enforced **nothing**:
+measured the report correctly and then enforced **nothing**. Reading
+`frontend/coverage/coverage-final.json` [generated] — 641 files, produced by the
+frontend suite and gitignored — the run said:
 
 ```
 REPO_ROOT = C:\C:\Users\User\Desktop\...\checker-repair
-read frontend/coverage/coverage-final.json: 641 files
 
 area          lines  covered     pct   floor  files  no-test  floor
 ------------  -----  -------  ------  ------  -----  -------  -----

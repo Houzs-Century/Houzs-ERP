@@ -5,8 +5,8 @@ import { invalidateDoShared, invalidateInventoryShared, invalidateSoShared } fro
 import {
   useMfgDeliveryOrderDetail,
   useMfgDeliveryOrdersPaged,
+  useUpdateMfgDeliveryOrderStatus,
 } from "../vendor/scm/lib/delivery-order-queries";
-import { authedFetch } from "../vendor/scm/lib/authed-fetch";
 import { uploadSlipFull, ALLOWED_SLIP_MIMES } from "../vendor/scm/lib/slip";
 import { useConfirm } from "../vendor/scm/components/ConfirmDialog";
 import { useAuth } from "../auth/AuthContext";
@@ -74,6 +74,7 @@ const isCancelled = (status: string | null): boolean => (status ?? "").toUpperCa
 export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: () => void; onDone?: () => void }) {
   const qc = useQueryClient();
   const confirm = useConfirm();
+  const updateStatus = useUpdateMfgDeliveryOrderStatus();
   /* DO OPERATE gate — mirrors the desktop DeliveryOrderDetailV2 `canWriteDo`
      (canOperateDeliveryOrders) and the SAME gate the delivery-planning board +
      MobileModuleDetail status actions use. Confirming a delivery DEDUCTS STOCK +
@@ -146,6 +147,13 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
     if (deliveredCount < items.length) {
       notes.push(`Only ${deliveredCount} of ${items.length} items are ticked.`);
     }
+    /* NAMED, NOT REFUSED. A customer can decline to sign and a phone can be
+       denied a location fix indoors — the server already treats a bad reading
+       as droppable rather than fatal, so blocking the close here would be
+       stricter than the rule the business actually runs on. What was wrong was
+       the SILENCE: this screen offered a signature pad and then filed the
+       delivery either way without saying which had happened. */
+    if (!hasSignature) notes.push("No customer signature has been captured.");
     if (!(await confirm({
       title: `Mark ${h.do_number ?? docNo} delivered?`,
       body: notes.length ? notes.join(" ") : undefined,
@@ -185,19 +193,26 @@ export function MobilePOD({ docNo, onBack, onDone }: { docNo: string; onBack: ()
       const sig = hasSignature
         ? (() => { try { return sigRef.current?.toDataURL("image/png") ?? ""; } catch { return ""; } })()
         : "";
-      await authedFetch(`/delivery-orders-mfg/${encodeURIComponent(doId)}/status`, {
-        method: "PATCH",
-        body: JSON.stringify({
-          status: "DELIVERED",
-          ...(sig ? { signatureData: sig } : {}),
-          ...(podKey ? { podKey } : {}),
+      /* THROUGH THE SHARED HOOK, not a raw fetch. This call used to bypass
+         `useUpdateMfgDeliveryOrderStatus` because that hook was typed
+         `{ id, status }` and could not carry any of the three fields below —
+         which is exactly why the desktop detail page, the desktop list drawer
+         and MobileDeliveryPlanning all closed deliveries with no evidence at
+         all. The hook now takes `evidence`, so the capability lives in one
+         place and every surface can reach it. See DoDeliveryEvidence. */
+      await updateStatus.mutateAsync({
+        id: doId,
+        status: "DELIVERED",
+        evidence: {
+          signatureData: sig || undefined,
+          podKey: podKey ?? undefined,
           /* Mig 0249. This reading was taken and thrown away on every delivery
              since this screen shipped — the header used to end "GPS stays
              client-side (no server column)". Sent only when the driver actually
              captured one; a denial or an indoor dead spot must never block a
              delivery from closing. */
           ...(gps ? { podLat: gps.lat, podLng: gps.lng, podAccuracyM: gps.accuracyM ?? undefined, podLocatedAt: gps.atIso } : {}),
-        }),
+        },
       });
       await qc.invalidateQueries({ queryKey: ["mobile-so-list-paged"] });
       // Delivering moves stock + flips the DO + touches SO readiness — refresh

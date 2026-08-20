@@ -7,7 +7,7 @@ The tree held 135 route modules, 279 pg `.sql` files and `0281`. The file that
 exists to be authoritative about migrations was missing 116 of them.
 
 **Root cause (traced, not guessed)** - `gen-codebase-map.mjs:162` read
-`backend/vitest.config.ts` by hardcoded name, to derive table 2's "read by
+`backend/vitest.config.ts` [gone] by hardcoded name, to derive table 2's "read by
 backend vitest" column. `#925` (2026-07-22 10:03) renamed that file to
 `vitest.config.mts` as part of a toolchain upgrade. `#963` had written the
 generator at 2026-07-21 22:28 — so it crashed with `ENOENT` from **eleven hours
