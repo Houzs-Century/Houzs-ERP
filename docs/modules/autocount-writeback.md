@@ -1276,8 +1276,8 @@ survive."* The ERP sent nothing, so the empty string won over the real values
 
 **No caller ever passed a date or a reference.** `enqueueConvert` spread them in
 `if (opts.docDate)` / `if (opts.ref)`, and all eight production call sites pass
-neither — `delivery-orders-mfg.ts:3576` and `:4216`, `grns.ts:1974` and `:2356`,
-`purchase-invoices.ts:1691` and `:1891`, `sales-invoices.ts:1394`,
+neither — `delivery-orders-mfg.ts:3576` and `:4216`, `grns.ts:1961` and `:2343`,
+`purchase-invoices.ts:1692` and `:1892`, `sales-invoices.ts:1394`,
 `si-autocount-source.ts:178`. So the conditional was dead and every conversion
 landed under the drain's date.
 

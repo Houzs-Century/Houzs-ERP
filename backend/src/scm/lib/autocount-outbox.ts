@@ -893,8 +893,8 @@ export async function enqueueConvert(
            This block used to build the header itself, and the two keys it had
            were dead: `DocDate` / `Ref` were spread in behind `if (opts.docDate)`
            / `if (opts.ref)` and NO caller passes either, all eight verified
-           (delivery-orders-mfg.ts:3576, :4216; grns.ts:1974, :2356;
-           purchase-invoices.ts:1691, :1891; sales-invoices.ts:1394;
+           (delivery-orders-mfg.ts:3576, :4216; grns.ts:1961, :2343;
+           purchase-invoices.ts:1692, :1892; sales-invoices.ts:1394;
            si-autocount-source.ts:178). So every conversion since the cutover
            landed under the DRAIN's date with a blanked Ref, and the GRN and
            purchase invoice threw away the supplier's own document number.
