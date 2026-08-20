@@ -19,9 +19,37 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-/** Repo root, derived from this file's location — never a cwd guess. */
-export const REPO_ROOT = path.resolve(path.dirname(new URL(import.meta.url).pathname), '..');
+/**
+ * Repo root, derived from this file's location — never a cwd guess.
+ *
+ * `fileURLToPath`, NOT `new URL(import.meta.url).pathname`. A file URL's
+ * `pathname` is a URL path, and on Windows that is `/C:/Users/...` with a
+ * LEADING SLASH — `path.resolve` reads the slash as "absolute" and prefixes the
+ * current drive, producing:
+ *
+ *   REPO_ROOT = C:\C:\Users\User\Desktop\...\checker-repair
+ *
+ * Nothing under that exists, so `listAreaFiles` returned 0 files for every area
+ * and `coverage-baseline.json` was simply not found. It also percent-ENCODES —
+ * a checkout under a path with a space arrives as `%20` and fails the same way
+ * on Linux. `fileURLToPath` is the primitive that decodes both.
+ *
+ * The blast radius was the whole ratchet, on the only OS this repo is developed
+ * on: Linux CI is unaffected (a POSIX file URL's pathname already IS the path),
+ * so the gate looked healthy while being absent locally. Same class as the
+ * ESLint `.bin` shim and as `coverage-ratchet.mjs`'s own `file://` entry-point
+ * bug two hundred lines away — a check that cannot run must not be able to
+ * report a pass.
+ *
+ * Checked 2026-08-21: `git grep "new URL(import.meta.url)"` finds this line and
+ * nothing else in the repo. Every other `import.meta.url` site passes a URL
+ * OBJECT straight to `node:fs` (`readFileSync(new URL("./data/x.json",
+ * import.meta.url))`), which fs converts correctly on both platforms, and there
+ * is no remaining `file://${...}` string concatenation anywhere.
+ */
+export const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 
 /**
  * A ratcheted area.
@@ -61,6 +89,44 @@ export const AREAS = [
   },
   { id: 'frontend/src', dir: 'frontend/src', exts: ['.ts', '.tsx'], project: 'frontend' },
 ];
+
+/* SELF-TEST AT LOAD — the same property every checker in this repo carries: it
+   REFUSES to report rather than report from something dead.
+ *
+ * For a pattern-based checker the dead thing is a regex that cannot match. Here
+ * it is a REPO_ROOT that does not point at the repo, and the failure reads
+ * exactly the same way: every scan comes back empty, every count is zero, and
+ * the gate says it is fine. That is not hypothetical — it is what this file did
+ * on Windows until 2026-08-21.
+ *
+ * Two assertions, both cheap enough to run on every import (the two vitest
+ * configs import this module too, and a wrong root there means wrong
+ * `coverage.include` globs):
+ *   1. this very file is where REPO_ROOT says it is — the identity check that
+ *      `C:\C:\...` fails outright;
+ *   2. every ratcheted area's directory exists — so a root that is plausible but
+ *      wrong, or an area renamed on disk without renaming it here, is loud.
+ *
+ * THROWN, not process.exit: this is a library, and a throw fails a script, a
+ * vitest config and a `node --test` run alike, with the reason attached. */
+{
+  const problems = [];
+  const self = path.join(REPO_ROOT, 'scripts', 'coverage-areas.mjs');
+  if (!fs.existsSync(self)) problems.push(`REPO_ROOT does not contain this file (looked for ${self})`);
+  for (const area of AREAS) {
+    const dir = path.join(REPO_ROOT, area.dir);
+    if (!fs.existsSync(dir)) problems.push(`area "${area.id}": ${dir} does not exist`);
+  }
+  if (problems.length) {
+    throw new Error(
+      `coverage-areas: REPO_ROOT is not the repository — refusing to report.\n` +
+        `  REPO_ROOT = ${REPO_ROOT}\n` +
+        problems.map((p) => `  · ${p}`).join('\n') +
+        `\n  Every area would scan zero files and every floor would be met by nothing.\n` +
+        `  A gate that cannot see its subject must not be able to report a pass.`,
+    );
+  }
+}
 
 /** Directories that hold no executable source of ours. */
 const EXCLUDED_DIRS = new Set(['node_modules', 'dist', 'data', '__snapshots__']);
