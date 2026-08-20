@@ -99,7 +99,7 @@ import { deriveLineBrandingFromProduct, deriveHeaderBrandingFromLines } from '..
 import { enrichLinesWithFabricSupplierCode } from '../lib/fabric-supplier-code';
 import { correctedSizeDescription, loadSizeSkuMap } from '../lib/size-variant-description';
 import {
-  scopeToCompany, activeCompanyId, stampCompany, companyDocPrefix,
+  scopeToCompany, activeCompanyId, activeCompanySql, stampCompany, companyDocPrefix,
   isMirroredDocNo, mintsIntoMirroredNamespace, houzsOwns2990,
   MIRRORED_SO_READONLY, MIRRORED_SO_CREATE_BLOCKED,
   requireActiveCompanyId, scopeToCompanyId, NOT_THIS_COMPANY,
@@ -2490,9 +2490,15 @@ mfgSalesOrders.get('/active-venue', async (c) => {
        that gets stamped is the text either way. */
     let venueId: string | null = null;
     try {
+      /* Company-scoped: project_venues carries company_id (mig 0093). Venue
+         NAMES are not unique across the two companies' masters, so an unscoped
+         name match could hand this company's dropdown the OTHER company's venue
+         id — and that id is what the SO then stores. Same rule the venue LIST
+         two files over already follows. Unmatched still degrades to null and the
+         resolved TEXT stands, which is the documented fallback below. */
       const row = await c.env.DB.prepare(
         `SELECT id FROM project_venues
-          WHERE lower(trim(name)) = lower(trim(?)) AND active = 1 LIMIT 1`,
+          WHERE lower(trim(name)) = lower(trim(?)) AND active = 1${activeCompanySql(c)} LIMIT 1`,
       )
         .bind(binding.venueName)
         .first<{ id?: number | null }>();
