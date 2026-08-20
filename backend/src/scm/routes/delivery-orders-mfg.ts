@@ -54,8 +54,8 @@ import { computeVariantKey, isServiceLine, effectiveSoDelivery, type VariantAttr
 import { loadIncomingLines, subtractOutstanding, allocateExpectedBatches } from '../lib/do-live-allocator';
 import { loadCommittedShipments } from '../lib/committed-shipments';
 import { syncSoDeliveredFromDo } from '../lib/so-delivery-sync';
-import { findOverDeliveredSoItems } from '../lib/do-over-delivery';
-import { findUnlinkedSoLines, unlinkedSoLinesResponse } from '../lib/do-unlinked-so-lines';
+import { findOverDeliveredSoItems, findOverDeliveredUnlinkedItems } from '../lib/do-over-delivery';
+import { findUnlinkedSoLines, unlinkedSoLinesResponse, itemCodeKey } from '../lib/do-unlinked-so-lines';
 import { unlinkedScanRefusal } from '../lib/unlinked-line-edit-guard';
 import { maybeSendDeliveryOrderEmail } from '../lib/do-email';
 import { warehouseLabel } from '../lib/warehouse-label';
@@ -4264,8 +4264,8 @@ deliveryOrdersMfg.put('/:id/crew', async (c) => {
   let body: Record<string, unknown>;
   try { body = (await c.req.json()) as Record<string, unknown>; } catch { return c.json({ error: 'invalid_json' }, 400); }
 
-  /* Per-company write (DO header + crew upsert). Service-role bypasses RLS, so without
-     this gate `id` alone was the boundary — company-A could overwrite company-B's crew. */
+  /* Per-company write (DO header + crew upsert). Service-role bypasses RLS, so `id`
+     alone was the boundary. 404 not 403 on purpose — "exists, but not yours" leaks. */
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: doRow, error: doErr } = await scopeToCompanyId(sb.from('delivery_orders')
@@ -5383,7 +5383,7 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   const co = requireActiveCompanyId(c);
   if (!co.ok) return c.json(co.refusal, 409);
   const { data: cur } = await scopeToCompanyId(
-    sb.from('delivery_orders').select('status').eq('id', id), co.companyId,
+    sb.from('delivery_orders').select('status, so_doc_no').eq('id', id), co.companyId,
   ).maybeSingle();
   if (!cur) return c.json(NOT_THIS_COMPANY, 404);
   const prevStatus = (cur as { status: string }).status;
@@ -5468,40 +5468,63 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
     ts.pod_located_at = typeof body.podLocatedAt === 'string' && body.podLocatedAt ? body.podLocatedAt : now;
   }
 
-  /* Over-delivery guard on FIRST ship (pre-ship -> shipped). The create path
-     caps this (Audit gap #3, the asDraft-gated recheck) but a DRAFT DO SKIPS
-     that cap and can land its full qty; the DRAFT->shipped confirm below is the
-     single point where a draft's stock actually leaves, so the SAME cap is
-     re-checked HERE, before the flip and the OUT. Reject 409 if any linked SO
-     line would ship past its live remaining. Ad-hoc (unlinked) lines stay
-     uncapped, exactly as at create. Read-only: no flip, no stock moved yet. */
+  /* Over-delivery guard on FIRST ship (pre-ship -> shipped). A DRAFT DO skips
+     the create-path cap (asDraft-gated) and can land its full qty, so the same
+     cap is re-checked HERE — the single point a draft's stock leaves — before
+     the flip. 409 if a line ships past the SO's live remaining. Read-only. */
   if (SHIPPED_STATES.includes(toStatus) && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
     const { data: shipLines } = await sb.from('delivery_order_items')
-      .select('so_item_id, qty').eq('delivery_order_id', id);
+      .select('so_item_id, item_code, qty').eq('delivery_order_id', id);
+    const rows = (shipLines ?? []) as Array<{ so_item_id: string | null; item_code: string | null; qty: number | null }>;
+    /* Linked lines key by so_item_id; a line WITHOUT one is invisible to that
+       check yet still ships stock (the 2990-DO-2607-005 hole) — it goes to the
+       item-code tally instead. */
     const linkedQty = new Map<string, number>();
-    for (const l of (shipLines ?? []) as Array<{ so_item_id: string | null; qty: number }>) {
-      if (l.so_item_id) linkedQty.set(l.so_item_id, (linkedQty.get(l.so_item_id) ?? 0) + Number(l.qty ?? 0));
+    const unlinkedByItemCode = new Map<string, number>();
+    for (const l of rows) {
+      if (l.so_item_id) {
+        linkedQty.set(l.so_item_id, (linkedQty.get(l.so_item_id) ?? 0) + Number(l.qty ?? 0));
+      } else if (l.item_code) {
+        unlinkedByItemCode.set(l.item_code, (unlinkedByItemCode.get(l.item_code) ?? 0) + Number(l.qty ?? 0));
+      }
     }
+    const overDeliveryRefusal = {
+      error: 'over_delivery',
+      message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.',
+    };
     if (linkedQty.size > 0) {
       const remaining = await soRemainingByItemId(sb, [...linkedQty.keys()]);
       const over = findOverDeliveredSoItems(linkedQty, remaining);
       if (over.length > 0) {
-        return c.json({
-          error: 'over_delivery',
-          message: 'This delivery would ship more than the Sales Order ordered — another DO already covers it. Refresh and check the Sales Order.',
-          conflicts: over,
-        }, 409);
+        return c.json({ ...overDeliveryRefusal, conflicts: over }, 409);
+      }
+    }
+    /* Unlinked lines vs the NAMED SO's open qty per code. soDeliverableRemaining
+       excludes DRAFT + CANCELLED, so THIS draft is already out of the tally
+       ("this DO excluded"). A partial / multi-DO split stays within open qty and
+       ships; a code the SO never ordered is ad-hoc and never flagged. */
+    if (unlinkedByItemCode.size > 0) {
+      const soDocNo = (cur as { so_doc_no?: string | null }).so_doc_no ?? null;
+      if (soDocNo) {
+        const remainingMap = await soDeliverableRemaining(sb, [soDocNo]);
+        const openByItemCode = new Map<string, number>();
+        for (const line of remainingMap.values()) {
+          const key = itemCodeKey(line.itemCode);
+          if (!key) continue;
+          openByItemCode.set(key, (openByItemCode.get(key) ?? 0) + line.remaining);
+        }
+        const overCodes = findOverDeliveredUnlinkedItems(unlinkedByItemCode, openByItemCode);
+        if (overCodes.length > 0) {
+          return c.json({ ...overDeliveryRefusal, conflicts: overCodes }, 409);
+        }
       }
     }
   }
 
-  /* Bug #3/#11 — ATOMIC cancel guard. The read-then-write above has a TOCTOU
-     window: two concurrent cancels can both read a non-cancelled status and both
-     fall through to reverse inventory (double-reverse). For the CANCELLED
-     transition we make the write conditional on the row still being non-cancelled
-     (status != CANCELLED) and treat "no row returned" as "someone else already
-     cancelled" → idempotent echo, NO second reversal. Postgres serialises the two
-     UPDATEs, so exactly one wins the row and fires the single reversal. */
+  /* Bug #3/#11 — ATOMIC cancel guard. Two concurrent cancels can both read a
+     non-cancelled status and both reverse inventory (double-reverse). For CANCELLED
+     the write is conditional on status != CANCELLED; "no row returned" = someone
+     else already cancelled → idempotent echo, NO second reversal (Postgres serialises). */
   let data: { id: string; status: string } | null;
   if (toStatus === 'CANCELLED') {
     const { data: updated, error } = await scopeToCompanyId(sb.from('delivery_orders')
@@ -5523,91 +5546,68 @@ export const patchDeliveryOrderStatusHandler = async (c: any) => {
   }
 
   /* Inventory OUT — fire on the first transition into ANY shipped state.
-     deductInventoryForDo is idempotent (existence check + UNIQUE index), so a
-     DO that jumps straight to SIGNED/DELIVERED still deducts exactly once, and
-     re-advancing through later shipped states never double-deducts.
-     DRAFT CONFIRM (2026-06-24) — the Confirm action is exactly DRAFT→DISPATCHED:
-     DISPATCHED ∈ SHIPPED_STATES so the deduction (skipped on draft create) fires
-     HERE, the single chokepoint. This is the commit moving create→confirm. */
+     deductInventoryForDo is idempotent (existence check + UNIQUE index), so a jump
+     to SIGNED/DELIVERED still deducts once. DRAFT CONFIRM (2026-06-24) is exactly
+     DRAFT→DISPATCHED, so the deduction skipped at draft-create fires HERE. */
   let movementErrors: string[] = [];
   let emailNotice: string | null = null;
   if (SHIPPED_STATES.includes(toStatus)) {
     movementErrors = await deductInventoryForDo(sb, id, user.id);
-    /* Mirror the create path: once stock goes out, re-check the source SO for
-       full coverage and auto-advance to DELIVERED (best-effort). A DRAFT confirm
-       reaches this for the first time here, so the SO sync that was skipped on
-       draft-create runs now. Idempotent + best-effort. */
+    /* Mirror the create path: re-check the source SO for full coverage and
+       auto-advance to DELIVERED. A DRAFT confirm reaches this first here. Best-effort. */
     if (prevStatus === 'DRAFT') {
       const { data: doRow } = await sb.from('delivery_orders').select('so_doc_no').eq('id', id).maybeSingle();
       await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user.id);
     }
 
-    /* Customer DO email (owner trigger "A", 2026-07-17) — the DRAFT-confirm
-       half of the same event the create path fires on.
-       NARROWER than the deduction above, deliberately: the owner ruled "send on
-       CONFIRMED, NOT on delivered". The deduction fires on any shipped state
-       because stock leaves whichever way the DO gets there; the EMAIL says "your
-       order is on its way", which is false once it has arrived. So it fires only
-       on entering DISPATCHED from a pre-ship status — a DO that jumps
-       DRAFT→DELIVERED (the mobile POD path) deducts stock here but does NOT
-       email, because the goods are already with the customer.
-       Once-per-DO by construction, not merely by the stamp: the guard at :3708
-       bars a shipped DO from returning to a pre-ship status, so this transition
-       cannot repeat. Gated OFF and fail-closed inside; best-effort. */
+    /* Customer DO email (owner trigger "A", 2026-07-17). Owner ruled "send on
+       CONFIRMED, NOT on delivered": the deduction fires on any shipped state, but
+       the email ("your order is on its way") is false once arrived, so it fires
+       only on entering DISPATCHED from a pre-ship status — a DRAFT→DELIVERED POD
+       deducts here but does NOT email. Once-per-DO (the :3708 shipped→pre-ship
+       guard bars repeats). Gated OFF and fail-closed inside; best-effort. */
     if (toStatus === 'DISPATCHED' && DO_PRESHIP_STATUSES.has((prevStatus ?? '').toUpperCase())) {
       emailNotice = await maybeSendDeliveryOrderEmail(sb, c.env, id);
     }
   }
 
-  /* Requirement #3 — if a DO is explicitly marked DELIVERED, re-check its SO
-     for full coverage and auto-advance the SO to DELIVERED (best-effort). */
+  /* Requirement #3 — a DO marked DELIVERED auto-advances its fully-covered SO. Best-effort. */
   if (toStatus === 'DELIVERED') {
     const { data: doRow } = await sb.from('delivery_orders').select('so_doc_no').eq('id', id).maybeSingle();
     await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user.id);
   }
 
-  /* Bug #1 — cancelling a DO AUTO-REVERSES the stock OUT: the create/dispatch
-     wrote an OUT (source_doc_type:'DO'), so cancel must put the goods back on the
-     shelf. We do NOT use reverseMovements here: its balancing IN reuses the DO's
-     (source_doc_type, source_doc_id, item_code, variant_key) key, which the
-     partial UNIQUE index uq_inv_mov_do_source (prod-only DDL, verified live; keyed WITHOUT
-     movement_type) rejects → the insert silently fails and the shipped stock is
-     left permanently deducted. reverseInventoryForDo writes a FIFO-neutral
-     positive ADJUSTMENT (unindexed by the DO source key, carrying variant_key) so
-     the reversal actually lands. Idempotent (ADJUSTMENT existence check) +
-     best-effort (a movement failure never un-cancels the DO). */
+  /* Bug #1 — cancelling a DO AUTO-REVERSES the stock OUT. Not reverseMovements:
+     its balancing IN reuses the DO source key the partial UNIQUE index
+     uq_inv_mov_do_source (prod-only DDL, keyed WITHOUT movement_type) rejects, so
+     the insert silently fails and stock stays deducted. reverseInventoryForDo
+     writes a FIFO-neutral positive ADJUSTMENT instead. Idempotent + best-effort. */
   if (toStatus === 'CANCELLED') {
-    /* REPORTED, not just best-effort: the response already carries
-       movementErrors and on this branch it was never populated. The catch stays
-       — an unexpected throw must not un-cancel the DO. */
+    /* REPORTED, not just best-effort: this branch never populated movementErrors.
+       The catch stays — an unexpected throw must not un-cancel the DO. */
     try {
       movementErrors.push(...(await reverseInventoryForDo(sb, id, user.id)));
     } catch (e) {
       movementErrors.push(`DO reversal threw: ${(e as Error)?.message ?? 'unknown'}`);
     }
-    /* REC P4 — put the physical rack stock back (mirror of the dispatch
-       stock-out). Best-effort + idempotent; never blocks the cancel. */
+    /* REC P4 — put the physical rack stock back. Best-effort; never blocks cancel. */
     try {
       const { data: doRow } = await scopeToCompanyId(sb.from('delivery_orders').select('do_number, company_id').eq('id', id), co.companyId).maybeSingle();
       const doNo = (doRow as { do_number?: string } | null)?.do_number ?? null;
       if (doNo) await returnDoRacksOnCancel(sb, id, doNo, user.id, (doRow as { company_id?: number | null } | null)?.company_id ?? null);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[do-rack] cancel reversal failed:', e); }
-    /* SO #4 — this DO's cancellation may release its SO from DELIVERED back to a
-       partial/booked status. Recompute the SO's delivery status from live
-       delivered qtys (bidirectional + idempotent). Best-effort. */
+    /* SO #4 — this DO's cancel may release its SO from DELIVERED; recompute live. Best-effort. */
     try {
       const { data: doRow } = await sb.from('delivery_orders').select('so_doc_no').eq('id', id).maybeSingle();
       await syncSoDeliveredFromDo(sb, [(doRow as { so_doc_no?: string } | null)?.so_doc_no], user.id);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-sync] post-do-cancel failed:', e); }
-    /* DO cancel reversed stock — re-walk SO lines so previously-PENDING orders
-       can flip back to READY now that stock is available again. Best-effort. */
+    /* DO cancel freed stock — re-walk SO lines so PENDING orders flip back to READY. Best-effort. */
     try {
       const { recomputeSoStockAllocation } = await import('../lib/so-stock-allocation');
       await recomputeSoStockAllocation(sb);
     } catch (e) { /* eslint-disable-next-line no-console */ console.error('[so-allocation] post-do-cancel failed:', e); }
-    /* ERP -> AutoCount cancel. Reached only for a DO the downstream lock let
-       through (doHasDownstream, checked above) — the same rule AutoCount
-       applies, so this can never ask it to cancel an invoiced delivery. */
+    /* ERP -> AutoCount cancel. Reached only past doHasDownstream (checked above),
+       so this can never ask AutoCount to cancel an invoiced delivery. */
     const { data: doRow } = await sb.from('delivery_orders').select('do_number').eq('id', id).maybeSingle();
     await enqueueCancel(sb, {
       companyId: co.companyId,

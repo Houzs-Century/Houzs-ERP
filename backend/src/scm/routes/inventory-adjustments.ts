@@ -36,7 +36,8 @@ import {
 import { supabaseAuth } from '../middleware/auth';
 import { recomputeSoStockAllocation } from '../lib/so-stock-allocation';
 import { reconcileUncostedAfterIn } from '../lib/oversell-retrocost';
-import { activeCompanyId, scopeToCompany } from '../lib/companyScope';
+import { activeCompanyId, requireActiveCompanyId, scopeToCompany } from '../lib/companyScope';
+import { assertWarehouseInCompany } from '../lib/ref-in-company';
 import { recordEntityAudit, compactChanges, fieldChange, assertAuditWritable, auditUnavailableBody } from '../lib/entity-audit';
 import { resolveCallerStaffId } from '../lib/salesScope';
 import type { Env, Variables } from '../env';
@@ -63,6 +64,16 @@ inventoryAdjustments.post('/', async (c) => {
 
   const warehouseId = String(body.warehouseId);
   const itemCode = String(body.itemCode);
+
+  /* THE WAREHOUSE IS A BODY FIELD, and this handler is the manual stock
+     ADJUSTMENT — it writes an inventory_movements row and can OPEN a lot. The
+     lot/balance reads below are all company-scoped, which meant a foreign
+     warehouse id read as "no stock here" and an INCREASE then landed goods in
+     the other company's warehouse anyway. See lib/ref-in-company.ts. */
+  const whCo = requireActiveCompanyId(c);
+  if (!whCo.ok) return c.json(whCo.refusal, 409);
+  const whCheck = await assertWarehouseInCompany(sb, warehouseId, whCo.companyId);
+  if (!whCheck.ok) return c.json(whCheck.body, whCheck.status);
   const itemGroup = (body.itemGroup as string | undefined) ?? null;
   const variants = (body.variants as Record<string, unknown> | null | undefined) ?? null;
   const batchNo = ((body.batchNo as string | undefined) ?? '').trim() || null;

@@ -68,6 +68,7 @@ import {
 } from "../db/schema";
 import { and, eq, sql } from "drizzle-orm";
 import { activeCompanyId, activeCompanySql, requireActiveCompanyId } from "../scm/lib/companyScope";
+import { refuseForeignChild, refuseForeignProject } from "./lib/project-company-gate";
 
 /* The context the extracted handlers below receive. They are exported so the
    route tests can drive them directly; the shape is exactly what app.get/post
@@ -81,11 +82,21 @@ const app = new Hono<{ Bindings: Env }>();
 // and creates stamp company_id, CONDITIONALLY (skipped when the companies
 // master is unresolved: pre-migration, the D1 test mirror, or a DB
 // cold-start) so single-company Houzs keeps serving unchanged. This is the
-// same raw-SQL idiom as routes/sales.ts. Child tables (checklist / sections /
-// attachments / activity / finance) are always read through their parent
-// project_id, so the project row is the single source of company truth;
-// their own company_id (added by 0093) is a schema-parity backstop filled by
-// the PG DEFAULT.
+// same raw-SQL idiom as routes/sales.ts.
+//
+// ⚠️ CORRECTED 2026-08-18. This paragraph used to assert that child tables
+// "are ALWAYS read through their parent project_id". That was FALSE, and it was
+// load-bearing false: it is the sentence that made ~30 handlers look safe
+// without anyone re-reading them, and migration 0292 repeated it back. It holds
+// only where the URL CARRIES the parent. A large family addresses the CHILD by
+// its own id — /finance/lines/:lineId, /checklist/:itemId, /sections/:sectionId,
+// /defects/:defectId, /team/:teamId, /attachments/:attId, /stock-transfers/:tid
+// — and no middleware supplies a project_id, so each was a bare `WHERE id = ?`
+// against a service-role client: one tenant editing the other's P&L, checklist
+// and defect list by uuid. THE RULE NOW, enforced by lib/project-company-gate.ts
+// rather than by this comment: a handler taking a CHILD id proves that child is
+// in the active company BEFORE anything else, and a handler taking a PARENT id
+// and creating under it proves the parent.
 
 /**
  * Server-side finance/payment gate (Sales-department visibility, rules 3 & 5).
@@ -2457,6 +2468,7 @@ app.patch("/:id", requirePermission("projects.write"), async (c) => {
 app.post("/:id/notes", requireAnyPermission(["projects.write", "projects.chat"]), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{ note: string }>();
   if (!body.note?.trim()) return c.json({ error: "note is required" }, 400);
@@ -2945,6 +2957,7 @@ app.post("/:id/finance/lines", requirePermission("projects.write"), async (c) =>
   const denied = denyFinance(c); if (denied) return denied;
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{
     kind?: string;
@@ -2995,6 +3008,7 @@ app.patch("/finance/lines/:lineId", requirePermission("projects.write"), async (
   const denied = denyFinance(c); if (denied) return denied;
   const lineId = parseInt(c.req.param("lineId"), 10);
   if (isNaN(lineId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_finance_lines", lineId); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<Record<string, any>>();
   const ok = await patchLedgerLine(c.env, lineId, body, user?.id ?? 0);
@@ -3006,6 +3020,7 @@ app.delete("/finance/lines/:lineId", requirePermission("projects.write"), async 
   const denied = denyFinance(c); if (denied) return denied;
   const lineId = parseInt(c.req.param("lineId"), 10);
   if (isNaN(lineId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_finance_lines", lineId); if (foreign) return foreign; }
   const user = c.get("user");
   const ok = await archiveLedgerLine(c.env, lineId, user?.id ?? 0);
   if (!ok) return c.json({ error: "Not found" }, 404);
@@ -3322,6 +3337,7 @@ app.put("/:id/payment/proof", requirePermission("projects.write"), async (c) => 
 app.post("/:id/stock-transfers", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{
     direction?: string;
@@ -3373,6 +3389,7 @@ app.put("/:id/stock-transfers/upload", requirePermission("projects.write"), asyn
 app.post("/stock-transfers/:tid/confirm", requirePermission("projects.write"), async (c) => {
   const tid = parseInt(c.req.param("tid"), 10);
   if (isNaN(tid)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_stock_transfers", tid); if (foreign) return foreign; }
   const user = c.get("user");
   // Resolve project_id + direction before confirming so the activity
   // entry survives even if the transfer is then deleted.
@@ -3400,6 +3417,7 @@ app.post("/stock-transfers/:tid/confirm", requirePermission("projects.write"), a
 app.post("/stock-transfers/:tid/unconfirm", requirePermission("projects.write"), async (c) => {
   const tid = parseInt(c.req.param("tid"), 10);
   if (isNaN(tid)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_stock_transfers", tid); if (foreign) return foreign; }
   const user = c.get("user");
   const xfer = await c.env.DB.prepare(
     `SELECT project_id, direction FROM project_stock_transfers WHERE id = ?`
@@ -3424,6 +3442,7 @@ app.post("/stock-transfers/:tid/unconfirm", requirePermission("projects.write"),
 app.delete("/stock-transfers/:tid", requirePermission("projects.write"), async (c) => {
   const tid = parseInt(c.req.param("tid"), 10);
   if (isNaN(tid)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_stock_transfers", tid); if (foreign) return foreign; }
   await archiveStockTransfer(c.env, tid);
   return c.json({ ok: true });
 });
@@ -3433,6 +3452,7 @@ app.delete("/stock-transfers/:tid", requirePermission("projects.write"), async (
 app.post("/:id/checklist", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{
     title?: string;
@@ -3466,6 +3486,7 @@ app.post("/:id/checklist", requirePermission("projects.write"), async (c) => {
 app.patch("/checklist/:itemId", requireAnyPermission(["projects.write", "projects.checklist.tick"]), async (c) => {
   const itemId = parseInt(c.req.param("itemId"), 10);
   if (isNaN(itemId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_checklist", itemId); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<Record<string, any>>();
   // Notes-only edits (the mobile item remark box on Deco/Coffee Table &
@@ -3493,6 +3514,7 @@ app.patch("/checklist/:itemId", requireAnyPermission(["projects.write", "project
 app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "projects.checklist.tick"]), async (c) => {
   const itemId = parseInt(c.req.param("itemId"), 10);
   if (isNaN(itemId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_checklist", itemId); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{ status?: string }>();
   const status = body.status as "pending" | "done" | "na" | "blocked";
@@ -3567,6 +3589,7 @@ app.post("/checklist/:itemId/status", requireAnyPermission(["projects.write", "p
 app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "projects.checklist.tick"]), async (c) => {
   const itemId = parseInt(c.req.param("itemId"), 10);
   if (isNaN(itemId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_checklist", itemId); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{ action?: string; reason?: string; note?: string }>();
   const action = body.action as "submit" | "reject" | "amend" | "approve" | "comment";
@@ -3657,6 +3680,7 @@ app.post("/checklist/:itemId/review", requireAnyPermission(["projects.write", "p
 app.post("/:id/sections", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const body = await c.req.json<{ name?: string; sort_order?: number }>();
   const name = (body.name || "").trim();
   if (!name) return c.json({ error: "name is required" }, 400);
@@ -3683,6 +3707,7 @@ app.post("/:id/sections", requirePermission("projects.write"), async (c) => {
 app.patch("/sections/:sectionId", requirePermission("projects.write"), async (c) => {
   const sectionId = parseInt(c.req.param("sectionId"), 10);
   if (isNaN(sectionId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_checklist_sections", sectionId); if (foreign) return foreign; }
   const body = await c.req.json<{
     name?: string;
     sort_order?: number;
@@ -3718,6 +3743,7 @@ app.patch("/sections/:sectionId", requirePermission("projects.write"), async (c)
 app.delete("/sections/:sectionId", requirePermission("projects.write"), async (c) => {
   const sectionId = parseInt(c.req.param("sectionId"), 10);
   if (isNaN(sectionId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_checklist_sections", sectionId); if (foreign) return foreign; }
   // project_checklist.section_id was ON DELETE SET NULL, but the D1->PG load
   // dropped it to NO ACTION — so a bare delete throws once the section still has
   // tasks. Null them first so tasks fall back to "Uncategorised".
@@ -3735,6 +3761,7 @@ app.delete("/sections/:sectionId", requirePermission("projects.write"), async (c
 app.put("/:id/sections/reorder", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const body = await c.req.json<{ ids?: unknown }>();
   if (!Array.isArray(body.ids) || !body.ids.every((n) => Number.isInteger(n))) {
     return c.json({ error: "ids must be an array of integers" }, 400);
@@ -3777,6 +3804,7 @@ app.put(
   async (c) => {
     const itemId = parseInt(c.req.param("itemId"), 10);
     if (isNaN(itemId)) return c.json({ error: "Invalid ID" }, 400);
+    { const foreign = await refuseForeignChild(c, "project_checklist", itemId); if (foreign) return foreign; }
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     const item = await c.env.DB.prepare(
@@ -3902,6 +3930,7 @@ app.delete(
   async (c) => {
     const attId = parseInt(c.req.param("attId"), 10);
     if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
+    { const foreign = await refuseForeignChild(c, "project_checklist_attachments", attId); if (foreign) return foreign; }
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     if (!hasPermission(granted, "projects.write")) {
@@ -3959,6 +3988,7 @@ app.patch(
   async (c) => {
     const attId = parseInt(c.req.param("attId"), 10);
     if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
+    { const foreign = await refuseForeignChild(c, "project_checklist_attachments", attId); if (foreign) return foreign; }
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     const body = await c.req.json<{ caption?: string | null }>();
@@ -4011,6 +4041,7 @@ app.post(
   async (c) => {
     const attId = parseInt(c.req.param("attId"), 10);
     if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
+    { const foreign = await refuseForeignChild(c, "project_checklist_attachments", attId); if (foreign) return foreign; }
     const user = c.get("user");
     const granted = user?.permissions_set ?? user?.permissions;
     const role = (user?.role_name ?? "").toLowerCase();
@@ -4231,6 +4262,7 @@ app.put(
 app.post("/:id/defects", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{
     phase?: string;
@@ -4267,6 +4299,7 @@ app.post("/:id/defects", requirePermission("projects.write"), async (c) => {
 app.patch("/defects/:defectId", requirePermission("projects.write"), async (c) => {
   const defectId = parseInt(c.req.param("defectId"), 10);
   if (isNaN(defectId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_defects", defectId); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<Record<string, any>>();
   const ok = await patchDefect(c.env, defectId, body, user?.id ?? 0);
@@ -4277,6 +4310,7 @@ app.patch("/defects/:defectId", requirePermission("projects.write"), async (c) =
 app.delete("/defects/:defectId", requirePermission("projects.write"), async (c) => {
   const defectId = parseInt(c.req.param("defectId"), 10);
   if (isNaN(defectId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_defects", defectId); if (foreign) return foreign; }
   await archiveDefect(c.env, defectId);
   return c.json({ ok: true });
 });
@@ -4303,6 +4337,7 @@ app.put("/:id/defects/photo", requirePermission("projects.write"), async (c) => 
 app.post("/:id/sales-reports", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const body = await c.req.json<{
     title?: string;
@@ -4335,6 +4370,7 @@ app.post("/:id/sales-reports", requirePermission("projects.write"), async (c) =>
 app.delete("/sales-reports/:reportId", requirePermission("projects.write"), async (c) => {
   const reportId = parseInt(c.req.param("reportId"), 10);
   if (isNaN(reportId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_sales_reports", reportId); if (foreign) return foreign; }
   await archiveSalesReport(c.env, reportId, true);
   return c.json({ ok: true });
 });
@@ -4368,6 +4404,7 @@ app.post("/:id/sales-reports/resync", requirePermission("projects.write"), async
 app.delete("/checklist/:itemId", requirePermission("projects.write"), async (c) => {
   const itemId = parseInt(c.req.param("itemId"), 10);
   if (isNaN(itemId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_checklist", itemId); if (foreign) return foreign; }
   const user = c.get("user");
   const ok = await deleteChecklistItem(c.env, itemId, user?.id ?? 0);
   if (!ok) return c.json({ error: "Not found" }, 404);
@@ -4379,6 +4416,7 @@ app.delete("/checklist/:itemId", requirePermission("projects.write"), async (c) 
 app.post("/:id/team", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const body = await c.req.json<{ user_id?: number; role?: string }>();
   if (!body.user_id) return c.json({ error: "Please choose a team member." }, 400);
   try {
@@ -4398,6 +4436,7 @@ app.post("/:id/team", requirePermission("projects.write"), async (c) => {
 app.delete("/team/:teamId", requirePermission("projects.write"), async (c) => {
   const teamId = parseInt(c.req.param("teamId"), 10);
   if (isNaN(teamId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_team", teamId); if (foreign) return foreign; }
   await c.env.DB.prepare(`DELETE FROM project_team WHERE id = ?`).bind(teamId).run();
   return c.json({ ok: true });
 });
@@ -4413,6 +4452,7 @@ app.delete("/team/:teamId", requirePermission("projects.write"), async (c) => {
 app.post("/:id/sales-attendees", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   // Owner 2026-07-20: reversed the 2026-07-18 block — a Sales Director may now
   // change Sales Attending, like everyone else holding projects.write.
@@ -4454,6 +4494,7 @@ app.delete(
     const id = parseInt(c.req.param("id"), 10);
     const repId = parseInt(c.req.param("repId"), 10);
     if (isNaN(id) || isNaN(repId)) return c.json({ error: "Invalid ID" }, 400);
+    { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
     const user = c.get("user");
     // Owner 2026-07-20: reversed the 2026-07-18 block — a Sales Director may now
     // remove Sales Attending too, like everyone else holding projects.write.
@@ -4500,6 +4541,7 @@ const PROJECT_ATTACH_ROLES = new Set(["sales", "driver", "design", "office"]);
 app.put("/:id/attachments", requirePermission("projects.write"), async (c) => {
   const id = parseInt(c.req.param("id"), 10);
   if (isNaN(id)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignProject(c, id); if (foreign) return foreign; }
   const user = c.get("user");
   const category = (c.req.query("category") || "other").toLowerCase();
   const ext = (c.req.query("ext") || "").toLowerCase();
@@ -4550,6 +4592,9 @@ app.get("/attachments/:key{.+}", async (c) => {
   return new Response(obj.body as ReadableStream, {
     headers: {
       "Content-Type": obj.httpMetadata?.contentType || "application/octet-stream",
+      // Block MIME-sniffing the server-derived content-type back into
+      // html/svg (parity with mail-center.ts's INLINE_SAFE serve).
+      "X-Content-Type-Options": "nosniff",
       "Cache-Control": "public, max-age=86400",
     },
   });
@@ -4558,6 +4603,7 @@ app.get("/attachments/:key{.+}", async (c) => {
 app.post("/attachments/:attId/archive", requirePermission("projects.write"), async (c) => {
   const attId = parseInt(c.req.param("attId"), 10);
   if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_attachments", attId); if (foreign) return foreign; }
   await c.env.DB.prepare(
     `UPDATE project_attachments SET archived_at = datetime('now') WHERE id = ?`
   )
@@ -4572,6 +4618,7 @@ app.post("/attachments/:attId/archive", requirePermission("projects.write"), asy
 app.patch("/attachments/:attId", requirePermission("projects.write"), async (c) => {
   const attId = parseInt(c.req.param("attId"), 10);
   if (isNaN(attId)) return c.json({ error: "Invalid ID" }, 400);
+  { const foreign = await refuseForeignChild(c, "project_attachments", attId); if (foreign) return foreign; }
   const body = await c.req.json<{
     file_name?: string | null;
     category?: string | null;
@@ -4767,6 +4814,7 @@ app.get("/calendar/events", requirePageAccess("projects.calendar"), async (c) =>
 // Unknown columns are ignored. Missing name → row skipped.
 
 app.post("/import/csv", requirePermission("projects.manage"), async (c) => {
+  // company-scope: the two UPDATEs at :5066 and :5081 key on result.id, and result comes from createProject at :5038 — services/projects.ts INSERTs only (no upsert, no ON CONFLICT), so that row was created BY THIS REQUEST and stamped with activeCompanyId at :5050. A row you just minted needs no predicate to prove it is yours. Verified 2026-08-19.
   const user = c.get("user");
   const text = await c.req.text();
   const parsed = parseCsv(text);

@@ -90,6 +90,7 @@ company-prefixed). View + grid-sort prefs are identity-scoped
 | POST | `/api/users/:id/reset-password` | Email a 1h reset link (never shown in UI). |
 | POST | `/api/users/:id/impersonate` | Staging-only; probe `GET /api/users/impersonation-enabled`. |
 | GET | `/api/presence` | Online ids — drives presence dots + the Presence column. |
+| GET | `/api/users/:id/profile-pic` | Streams the member's avatar bytes from R2. Sends `X-Content-Type-Options: nosniff` (PR #2522) so the server-derived content-type cannot be MIME-sniffed into html/svg — parity with `mail-center.ts`'s INLINE_SAFE serve. Cache-control is `avatarCacheControl(?k, key)`. |
 
 Member rows already return everything the table renders — id, email, name,
 status(+reason), role, manager, department(+ids/color), division, position,
@@ -216,6 +217,31 @@ which made "send a link" a state change:
 
 Rate-limited on the TARGET, because an admin button that sends mail to a
 colleague is also a way to spam that colleague.
+
+## Staff pickers are company-scoped, and there are THREE of them (2026-08-18)
+
+`scm.staff` has no `company_id` (mig 0089 lists it as shared reference data), so
+a staff row's company is DERIVED from that person's Team grants —
+`backend/src/scm/lib/staffCompanyScope.ts`. The applied pass,
+`scopeStaffRowsToActiveCompany`, used to be a file-local function in
+`scm/routes/staff.ts`, which is why `scm/routes/hr.ts` `GET /pickers` never used
+it and returned every active staff row platform-wide while its four siblings in
+the same query batch were each company-scoped. It now lives in the lib and all
+three pickers go through it: `GET /staff`, `GET /staff/pickable`, `GET /hr/pickers`.
+
+A caller of the pass must SELECT `user_id`: it is the link the derivation reads,
+and a row without it is treated as UNLINKED and attributed to the 2990 mirror
+source.
+
+`GET /staff/by-ids` stays deliberately unscoped — the caller must already hold
+the ids, so it cannot enumerate — but note it returns email and phone, which is
+why an unscoped LIST endpoint beside it was a full directory disclosure.
+
+`PATCH /staff/by-user/:userId/showroom` now proves the TARGET PERSON is in the
+caller's company before writing. The warehouse half was already scoped; the write
+keys on `user_id` alone because there is no `company_id` on `scm.staff` to
+predicate on, so the membership check is what bounds it. An UNPARK sends no
+warehouse at all, so the warehouse check could never have stood in for this.
 
 ## Taking over an account — the actor's grants are the boundary
 

@@ -265,6 +265,7 @@ is the ones that matter; the full machine-checked gate list is
 | GET | `/api/assr/export.csv`, `/:id/timeline.csv` | `requireServiceCaseAccess()` `:1103`, `:2714` | Exports |
 | POST/DELETE | `/:id/track-link`, `/:id/supplier-link`, `/:id/survey-token` | `service_cases.write` `:1765`, `:1842`, `:1890` | Mint / revoke portal tokens |
 | PUT | `/:id/attachments`, `/:id/attachments/thumb` | `service_cases.write` `:2881`, `:2928` | R2 upload (+ thumb) |
+| GET | `/attachments/:key{.+}` | scope via `caseInCallerScope` `:3212` | Streams the R2 object. Sends `X-Content-Type-Options: nosniff` (PR #2522) so the server-derived content-type cannot be MIME-sniffed into html/svg — parity with `mail-center.ts`'s INLINE_SAFE serve. |
 | POST/PATCH | `/:id/logistics`, `/:id/items`, `/:id/notes` | `service_cases.write` `:3051`, `:2799`, `:2656` | Child records |
 | PUT/POST/PATCH/DELETE | `/settings`, `/lookups/:kind*` | `service_cases.manage` `:321-475` | Admin config (read is `:296` / `:371`) |
 | POST | `/bulk/archive`, `/bulk/unarchive`, `/bulk/assign`, `/run-escalation` | `service_cases.manage` `:1025`, `:1042`, `:1058`, `:2057` | Bulk + manual SLA sweep |
@@ -606,3 +607,21 @@ supplier-only stages with the wrong progress denominator.
   `do_date` or own-team `inspection_visit_at` also surface as fleet jobs on the
   delivery board.
 - `BUG-HISTORY.md` — read the Service Case entries before touching this module.
+
+## The pre-auth intake endpoints are scoped to their SECRET's company (2026-08-18)
+
+`GET /api/assr-form-intake/status-export` and `POST /api/assr-form-intake/delivery-dates`
+are pre-auth by design — Google's servers call them, there is no session and no
+`X-Company-Id`, so `companyContext` never runs. That is why neither could be
+given a caller's predicate, and why both ran unscoped across BOTH companies: the
+export returned `customer_name`, `phone`, `addr1-4` and `complaint_issue` for
+every non-archived case, and `/delivery-dates` resolved a case by `assr_no` —
+which is not unique across companies — and UPDATEd it.
+
+The rule now: **each shared secret carries its own company.** `FORM_INTAKE_KEY`
+and `SHEET_SYNC_KEY` are both Houzs Century artifacts (the staff service-request
+form and the HC Delivery sheet), so both map to `HOUZS` in
+`INTAKE_KEY_COMPANY` (`backend/src/routes/assrFormIntake.ts`). A future 2990
+sheet gets its OWN key and its own row there; it must never be handed one of
+these two. A readable companies master with no row for the code is a
+MISCONFIGURATION and answers 503 — it does not fall back to "no predicate".

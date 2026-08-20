@@ -119,3 +119,19 @@ Baseline tables from the 2990 dump; grown by:
 - `docs/modules/warehouses.md` — the warehouse master + the R3 cost rule.
 - `BUG-HISTORY.md` — 2026-08-08 "Performed by: Unknown user"; 2026-07-25 R3
   cost-less lot; audit #826 item 5 tenancy fixes.
+
+## The count warehouse is proved before anything is snapshotted (2026-08-18)
+
+`POST /stock-takes` takes `warehouseId` from the request body. It now calls
+`assertWarehouseInCompany` (`backend/src/scm/lib/ref-in-company.ts`) before
+`fetchScopedSkus`, so another company's warehouse answers **404** rather than
+producing a count sheet — and cannot be probed for its SKU list either.
+
+A comment in `fetchScopedSkus` used to state that `v_inventory_all_skus`
+"intentionally aggregates across companies and has NO company_id column". That is
+false: migration 0156 rebuilt that view as a CONFIRMED LIVE LEAK and appends
+`w.company_id` as its last column, saying in its own header that it did so "so
+the route can `.eq('company_id', <active>)` it". The read is scoped now as well.
+
+A test fixture that drives create must therefore carry a `warehouses` row in the
+active company — see `backend/tests/stockTakeAccountable.test.ts`.
