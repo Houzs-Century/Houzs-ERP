@@ -256,13 +256,13 @@ export interface ErpPoHeader {
    * `withLocations` does for the lines.
    *
    * IT IS A HEADER FIELD ON BOTH SIDES, which is what an earlier comment here
-   * denied. AutoCount's purchase documents carry `doc.PurchaseLocation` and
-   * `PurchaseHeader` — the ONE function both /create-po and /so-to-po call for
-   * their header — assigns it (AcSyncService.cs:934-935 is /create-po's copy,
-   * :2456-2457 is PurchaseHeader's); PurchaseHeader's own comment records
-   * that the ERP "has never been sent" one, so the book has been defaulting it
-   * on every purchase order the ERP ever wrote. Owner 2026-08-19: 「它的
-   * Purchase Location 也不对」.
+   * denied. AutoCount's purchase documents carry `PurchaseLocation`, assigned in
+   * TWO places because the purchase side does not share one header function:
+   * `CreatePo` sets its own master (AcSyncService.cs:934-935) and
+   * `PurchaseHeader` (:2456-2457) is what /so-to-po and the four conversions
+   * apply. `PurchaseHeader`'s own comment records that the ERP "has never been
+   * sent" one, so the book has been defaulting it on every purchase order the
+   * ERP ever wrote. Owner 2026-08-19: 「它的 Purchase Location 也不对」.
    *
    * The ERP treats it as the DEFAULT for every line and a line's own
    * `warehouse_id` OVERRIDES it (outstanding-po-lines.ts:382,
@@ -402,10 +402,11 @@ export interface AcCreatePoPayload {
   Agent: string | null;
   Ref: string | null;
   Description: string | null;
-  /** See `ErpPoHeader.purchase_location`. OMITTED, never null: `PurchaseHeader`
-   *  is `ContainsKey`-gated AND non-empty-gated on this one key
-   *  (AcSyncService.cs:934 and :2456) precisely because a blank is its own foreign key
-   *  error, so `composeCreatePo` leaves the key off when the ERP has none. */
+  /** See `ErpPoHeader.purchase_location`. OMITTED, never null: BOTH service
+   *  copies gate this one key on `ContainsKey` AND non-empty
+   *  (AcSyncService.cs:934 and :2456) precisely because a blank is its own
+   *  foreign key error, so `composeCreatePo` leaves the key off when the ERP
+   *  has none. */
   PurchaseLocation?: string;
   UDF: Record<string, string>;
   Details: AcDetail[];
@@ -1269,7 +1270,7 @@ export function composeCreatePo(
 ): AcCreatePoPayload {
   const creditorCode = tidy(header.creditor_code);
   if (!creditorCode) throw new MissingCreditorError(header.po_number);
-  /* Through the same map the LINE locations go through (composeDetails:993), so
+  /* Through the same map the LINE locations go through (composeDetails:994), so
      the header and its lines cannot end up spelling one warehouse two ways. */
   const purchaseLocation = bookSpellingOrOwn(header.purchase_location, LOCATION_MAP);
   return {
@@ -1295,8 +1296,8 @@ export function composeCreatePo(
        assigned in TWO places because /create-po does not share a header
        function with the rest — `CreatePo` sets its own master
        (AcSyncService.cs:934-935), and `PurchaseHeader` (:2456-2457) is what
-       /so-to-po (:2359) and the four conversions apply. `PurchaseHeader`'s own comment
-       records that the ERP "has never been sent" one, so AutoCount has been
+       /so-to-po (:2359) and the four conversions apply. `PurchaseHeader`'s own
+       comment records that the ERP "has never been sent" one, so AutoCount has been
        defaulting the purchase location on every ERP-written purchase order
        since the cutover.
 

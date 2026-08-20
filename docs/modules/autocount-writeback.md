@@ -1176,8 +1176,8 @@ all.
 not call `PurchaseHeader`; it sets `DocNo`, `DocDate`, the creditor, `Agent`,
 `Ref`, `Description` and the UDFs itself. Adding `PurchaseLocation` only to
 `PurchaseHeader` left the CREATE arm sending a key the host never read — the
-same *carrying is not landing* trap this section warns about for `Agent`, walked
-into two paragraphs later. The contract test now asserts the key is READ on
+same *carrying is not landing* trap §7c3b-i names for `Agent`, walked into in
+the same change that named it. The contract test now asserts the key is READ on
 **both** routes (`headerKeys(CS_CREATE_PO)` and
 `headerKeys(CS_PURCHASE_HEADER)`), which is what caught it.
 
