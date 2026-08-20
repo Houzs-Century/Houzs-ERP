@@ -105,7 +105,7 @@ existing SO should require `priceAuthored` too is a judgement about how staff us
 that screen, so it is the owner's call rather than a provable defect. Flagged
 here rather than changed.
 
-**Ref.** PR #PR2, 2026-08-20.
+**Ref.** PR #2565, 2026-08-20.
 ## A pre-rule sofa-mix order could not be edited AT ALL from the phone [high]
 
 <!-- area: Sales orders + pricing -->
