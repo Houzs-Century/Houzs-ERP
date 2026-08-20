@@ -11,6 +11,26 @@ Company-scoped, no exceptions to be invented later:
 | Warehouse | own company |
 | Showroom | own company |
 
+## The actual test: is the FUNCTION centralised?
+
+> "这个 TMS 是 centralise 的啊 所以统一的 servicecase 也是 centralise 的 除了
+> salesperson 不 centralise 而已"
+
+That is the rule, and everything below is an instance of it. Do not classify a
+new module by whether the thing is physical, or by whether a `company_id` column
+exists — ask whether the FUNCTION is run centrally or per company.
+
+| | centralised? | scope |
+| --- | --- | --- |
+| Fleet / TMS | YES — one dispatch desk, one maintenance desk | cross-company |
+| Service Case | YES — one service desk | cross-company, **except the salesperson dimension** |
+| Venue / Warehouse / Showroom | NO — each belongs to a company's books and raises that company's revenue documents | per company |
+
+Service Case is the instructive one: a module can be centralised AND still carry
+one scoped dimension. Reading "Service Case is centralised" as "no scoping at
+all" would be as wrong as scoping the whole thing. The exception is named, and
+it is the salesperson — see SERVICE-CASE-VISIBILITY-DECISION.md.
+
 ## This is NOT "physical things are shared"
 
 The fleet tables are cross-company ON PURPOSE and say so in their own migration
