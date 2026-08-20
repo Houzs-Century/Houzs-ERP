@@ -985,10 +985,10 @@ describe('a stock location is mandatory on a CREATE and untouched on an EDIT', (
      order carries `purchase_location_id` (PR #77) and /submit refuses one that
      has neither it nor a warehouse on every line
      (mfg-purchase-orders.ts:4019), and AutoCount's purchase header carries
-     `PurchaseLocation`, which `PurchaseHeader` assigns for both /create-po and
-     /so-to-po (AcSyncService.cs:934-935 and :2456-2457). So there IS something
-     to inherit, and
-     the ERP's own precedence is line-then-header (outstanding-po-lines.ts:382).
+     `PurchaseLocation`, assigned by `CreatePo` for /create-po
+     (AcSyncService.cs:934-935) and by `PurchaseHeader` for /so-to-po
+     (:2456-2457). So there IS something to inherit, and the ERP's own
+     precedence is line-then-header (outstanding-po-lines.ts:382).
      What survives is the genuine refusal: neither side named a warehouse. */
   test('a warehouse-less line on a warehouse-less PO is still refused — nobody said where the goods go', () => {
     expect(() => composeCreatePo({
@@ -1016,8 +1016,9 @@ describe('a stock location is mandatory on a CREATE and untouched on an EDIT', (
   });
 
   test('a PO with no purchase location OMITS the key rather than sending a blank', () => {
-    /* `PurchaseHeader`'s guard is ContainsKey AND non-empty
-       (AcSyncService.cs:934 and :2456) because "" is its own foreign key error. A
+    /* The service's guard on this key — in both copies — is ContainsKey AND
+       non-empty (AcSyncService.cs:934 and :2456) because "" is its own foreign
+       key error. A
        present-null would reach it through Str() as exactly that blank. */
     const p = composeCreatePo({
       po_number: 'HC-PO-1', po_date: null, creditor_code: '400-H004',

@@ -952,8 +952,9 @@ describe('a document opens every master it names — warehouse and dropdowns too
   });
 
   test('the PURCHASE header\'s warehouse too, not only the sales header\'s', () => {
-    /* `PurchaseHeader` applies PurchaseLocation through Set(), which SWALLOWS
-       (AcSyncService.cs:2446-2447), so a warehouse code dbo.Location does not
+    /* The service applies PurchaseLocation through Set(), which SWALLOWS —
+       both copies, `CreatePo`'s (AcSyncService.cs:935) and `PurchaseHeader`'s
+       (:2457) — so a warehouse code dbo.Location does not
        have would leave the purchase order looking saved and carrying no
        location at all — the silent half of the failure the owner reported on
        2026-08-19. Opening the master is what makes the value land. */
