@@ -44,6 +44,7 @@ class Query {
   private upsertOpts: { onConflict?: string; ignoreDuplicates?: boolean } | null = null;
   private wantSingle = false;
   private limitN: number | null = null;
+  private window: [number, number] | null = null;
   private done = false;
   private result: { data: any; error: null } | null = null;
 
@@ -55,6 +56,10 @@ class Query {
   lte() { return this; }
   order(col: string, opts?: { ascending?: boolean }) { this.orders.push({ col, asc: opts?.ascending !== false }); return this; }
   limit(n: number) { this.limitN = n; return this; }
+  /* PostgREST's `Range` window, which the paged reads chain. Modelled — not a
+     no-op — so a caller that pages is actually exercised here rather than
+     silently handed the whole set. */
+  range(from: number, to: number) { this.window = [from, to]; return this; }
   maybeSingle() { this.wantSingle = true; return this; }
   single() { this.wantSingle = true; return this; }
   update(payload: any) { this.op = 'update'; this.payload = payload; return this; }
@@ -100,6 +105,7 @@ class Query {
     let out = [...filtered];
     for (const o of [...this.orders].reverse()) out.sort((a, b) => cmp(a[o.col], b[o.col]) * (o.asc ? 1 : -1));
     if (this.limitN != null) out = out.slice(0, this.limitN);
+    if (this.window) out = out.slice(this.window[0], this.window[1] + 1);
     return (this.result = { data: this.wantSingle ? (out[0] ?? null) : out, error: null });
   }
 

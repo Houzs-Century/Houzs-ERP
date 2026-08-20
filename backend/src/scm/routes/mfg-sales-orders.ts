@@ -37,6 +37,7 @@ import { doNosBySalesOrder, type DeliveryOrderNoRow } from '../lib/so-delivery-o
    may only shrink. See lib/so-lifecycle-guards.ts. */
 import { SO_STATUSES, SO_STATUS_RANK, soStatusTransitionError, soDiscardBlocked } from '../lib/so-lifecycle-guards';
 import { enqueueSoCreate, enqueueCancel, enqueueEdit, retiredLineOf, type AcRetiredLine } from '../lib/autocount-outbox';
+import { signalNullWarehouseRows } from '../lib/null-warehouse-signal';
 /* The payment insert core, the Account Sheet rule and the payment column list
    moved to scm/lib so scan-so.ts's background writer reaches the same rules
    without importing a 12,000-line router. Re-exported below for the callers
@@ -548,7 +549,6 @@ async function soEditLocked(
 ): Promise<boolean> {
   return soProcessingLocked(header) || await soPoLocked(sb, docNo);
 }
-
 
 /* The identity lock (which columns freeze once a DO / SI exists, and why
    `salesperson_id` no longer does) lives in shared/so-identity-lock.ts. */
@@ -3497,7 +3497,6 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
     }
   }
 
-
   /* Houzs venue_id guard — only a real uuid reaches the uuid column; a
      project_venues integer id or a `showroom:…` synthetic id becomes NULL and
      the venue TEXT column (resolvedVenueName) carries the venue. See
@@ -5391,6 +5390,7 @@ async function createSalesOrderCore(c: SoCreateContext): Promise<SoCreateOutcome
        Runs BEFORE stampCo so we can find the per-row company_id via the
        active-user fallback; stampCo then adds it. */
     await deriveLineBrandingFromProduct(sb, rowsWithDoc as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>, activeCompanyId(c) ?? null);
+    signalNullWarehouseRows('POST /mfg-sales-orders (create)', docNo, rowsWithDoc as unknown as Array<Record<string, unknown>>); // logs only, never blocks
     const { error: iErr } = await sb.from('mfg_sales_order_items').insert(stampCo(rowsWithDoc));
     if (iErr) { await rollbackPwpClaims(); await sb.from('mfg_sales_orders').delete().eq('doc_no', docNo); return c.json({ error: 'items_insert_failed', reason: iErr.message }, 500); }
     /* Stamp the HEADER branding from the representative line's SKU (owner
@@ -8129,6 +8129,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
       /* Owner 2026-07-23 — auto-derive branding from product catalog on the
          add-line path, same rule as SO CREATE (see createSalesOrderCore). */
       await deriveLineBrandingFromProduct(sb, moduleRows as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>, activeCompanyId(c) ?? null);
+      signalNullWarehouseRows('PATCH /mfg-sales-orders/:docNo/items (sofa split)', docNo, moduleRows as unknown as Array<Record<string, unknown>>); // logs only, never blocks
       const { data: moduleData, error: moduleError } = await sb
         .from('mfg_sales_order_items')
         .insert(stampCompany(moduleRows, c))
@@ -8184,6 +8185,7 @@ mfgSalesOrders.post('/:docNo/items', async (c) => {
   /* Owner 2026-07-23 — auto-derive branding on the single-row add-line path. */
   const rowWithCid = { ...row, company_id: activeCompanyId(c) };
   await deriveLineBrandingFromProduct(sb, [rowWithCid] as unknown as Array<{ item_code?: string | null; branding?: string | null; company_id?: number | null }>, activeCompanyId(c) ?? null);
+  signalNullWarehouseRows('PATCH /mfg-sales-orders/:docNo/items (single row)', docNo, [rowWithCid] as unknown as Array<Record<string, unknown>>); // logs only, never blocks
   const { data, error } = await sb.from('mfg_sales_order_items').insert(rowWithCid).select('*').single();
   if (error) {
     /* Don't burn a PWP code on a failed insert — mirror create's rollbackPwpClaims. */
@@ -10371,8 +10373,7 @@ mfgSalesOrders.post('/:docNo/items/:itemId/photos', async (c) => {
     return c.json({ error: 'photo_bucket_not_configured' }, 500);
   }
 
-  // Verify the line exists + belongs to this SO. Cheaper to fail here
-  // than after a multi-MB upload to R2.
+  // Verify the line exists + belongs to this SO. Cheaper to fail here than after a multi-MB upload to R2.
   const { data: item, error: itemErr } = await sb
     .from('mfg_sales_order_items')
     .select('id, doc_no, item_code, photo_urls')
@@ -10736,8 +10737,7 @@ mfgSalesOrders.post('/:docNo/payments', async (c) => {
   // Audit 2026-06-20 — self-scoped sales may only touch their OWN SO (mirror the line/header guards).
   if (await selfScopedSalesBlocked(c, docNo)) return c.json({ error: 'not_found' }, 404);
 
-  // Ensure the SO exists before inserting a child row (gives a cleaner
-  // 404 than a deferred FK violation).
+  // Ensure the SO exists before inserting a child row (gives a cleaner 404 than a deferred FK violation).
   const { data: so } = await sb.from('mfg_sales_orders').select('doc_no').eq('doc_no', docNo).maybeSingle();
   if (!so) return c.json({ error: 'sales_order_not_found' }, 404);
 
