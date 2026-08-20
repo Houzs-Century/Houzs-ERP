@@ -357,6 +357,30 @@ reopened this on 2026-08-18 shows a Sales Order header reading `Aug 16, 2026`
 next to a line row reading `Sep 12, 2026` — a string this repo authors nowhere
 and cannot control.
 
+**And then the same shape one layer down, inside the fix.** All 175 native date
+inputs were converted the same day and a gate shipped with them — and both the
+sweep and the gate keyed on a **literal** `type="date"`, so two spellings of the
+identical OS-locale bug went straight through. `<input type="datetime-local">`
+renders its *date half* in the OS locale by exactly the same mechanism, and the
+`raw-date-input` pattern cannot match it (`["']date["']` needs the closing quote
+immediately after `date`). Six survived, and the sharpest pair was on one
+screen: in the delivery-planning drawer **Arrival** and **Departure** were
+native `datetime-local` while **Shipout Date**, directly beneath them in the
+same column, was already a `DateField` — the owner's own complaint, reproduced
+one field apart inside the component built to end it. Two more spellings hid the type from
+every rule keyed on a quote after `type=`: `type={f.type === "date" ? "date" :
+"text"}` (an *expression*), and `const type = … ? "date" : "text"` with
+`type={type}` (a *variable*, one line up). Both survived the June build, the
+August sweep, **and** the gate that sweep shipped. The second was **user
+reachable with no code change** — `"date"` is a first-class `UdfFieldType`, so
+every operator who added a date column to a table got a native OS-locale input
+in the grid. Fixed 2026-08-18 with `DateTimeField` (the date half goes through
+`DateField`; the time half stays a native `type="time"`, which carries no
+day/month ambiguity), plus `raw-datetime-input`, `computed-date-input-type`
+and `date-input-type-in-a-variable` in the gate. The lesson is narrower than "write it down once": **a gate is only
+as wide as the spellings it imagines**, so each rule now names what it cannot
+see.
+
 **Why prose failed here specifically.** The rule was not forgotten. It was
 written down, in the right words, by the right person, in the file most likely to
 be read — and then reproduced anyway, because *there was no import that would
