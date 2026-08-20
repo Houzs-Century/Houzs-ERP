@@ -277,6 +277,29 @@ included, and the gate is enforced at both Sales-Invoice entry points rather
 than only in the client. `docs/modules/sales-invoice.md` carries the three 409
 codes.
 
+**THE OWNER RULED ON `LOADED`, 2026-08-20 — 不要拦 —— 人自己知道.** Asked directly
+whether the system should refuse to invoice a delivery still marked LOADED, he
+said no: 「发票是invoice？等送完货了我们才自己convert to invoice啊」 /
+「我们自己开啊 manually开的不是吗」. The invoice is raised by hand, by someone who
+knows whether the goods arrived, so the system does not second-guess them.
+
+Read this before "unifying" the two status sets, because they differ by exactly
+LOADED and look like one rule written twice:
+
+| question | declaration | LOADED |
+| --- | --- | --- |
+| may this be BILLED? | `DO_NOT_INVOICEABLE_STATES` = DRAFT, CANCELLED | **invoiceable** |
+| have the goods LEFT? | `DO_NOT_DELIVERED_STATES` = DRAFT, LOADED, CANCELLED | not delivered |
+
+The Pending engine (`do-line-remaining.ts`) takes a REQUIRED
+`DoPendingBasis` of `'invoiceable' | 'delivered'` so no caller inherits the wrong
+one. **#2485's own justification does not reach LOADED** — it argued "stock was
+already deducted at dispatch", true of DISPATCHED/IN_TRANSIT and false of LOADED.
+The rule holds because the owner chose it, not because that argument covered it;
+`backend/tests/loadedStaysInvoiceable.test.ts` pins it, and pins that #2557's
+DELIVERED exclusion is still intact.
+
+
 The shape, so the section still says something: `DO_SHIPPED_STATES` is the
 **write trigger** (first entry fires the OUT — `COMPLETED` is deliberately
 excluded, nothing ships *into* completion); `DO_STOCK_OUT_STATES` is the

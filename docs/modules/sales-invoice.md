@@ -108,8 +108,18 @@ Three 409s, and the codes matter to API callers:
 | `do_not_confirmed` | still a DRAFT; #2485 keeps Confirm a prerequisite |
 | `do_not_transferable` | any other status, `INVOICED` included (nothing writes it, so the label means "somebody set it") |
 
-`LOADED` is deliberately NOT refused — #2485 widened the rule to every CONFIRMED
-delivery. The batch path's `DO_HEADER` projection must keep selecting `status`;
+`LOADED` is deliberately NOT refused. #2485 widened the rule to every CONFIRMED
+delivery on 2026-08-19; #2557 took LOADED back out of the server's PICKER on
+2026-08-20 as a side effect of a stock fix, leaving the button offered and the
+lines unavailable; and the owner settled it the same day — **不要拦 ——
+人自己知道**, 「我们自己开啊 manually开的不是吗」. The invoice is raised by hand
+by someone who knows whether the goods arrived, so the system does not
+second-guess them. The picker, this gate and the write-path cap all now read
+the `'invoiceable'` basis of `do-line-remaining.ts`, so they cannot disagree
+again; `backend/tests/loadedStaysInvoiceable.test.ts` fails by name if LOADED is
+re-excluded. NOTE that #2485's argument — "stock was already deducted at
+dispatch" — is false for LOADED: the rule stands on the owner's choice, not on
+that reasoning. The batch path's `DO_HEADER` projection must keep selecting `status`;
 it did not at first, and the guard then refused every batch invoice
 (`backend/tests/oneSystemTwoOrganisations.test.ts` pins both halves).
 | PATCH | `/:id` | `:1319` | Header edit (ISSUED-gated, see §6). |
