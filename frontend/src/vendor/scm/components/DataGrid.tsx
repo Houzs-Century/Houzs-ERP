@@ -45,7 +45,7 @@ import {
   DEFAULT_DATA_GRID_LAYOUT,
   type DataGridLayout, isSharedDataGridStorageKey,
   materializeDataGridLayout,
-  readDataGridLayout,
+  useCompanyScopedDataGridLayout,
   writeDataGridLayout,
 } from './dataGridLayoutStorage';
 import { readDataGridFilters, writeDataGridFilters } from './dataGridFilterStorage';
@@ -395,7 +395,7 @@ function DataGridInner<T>({
   const sharedAcrossCompanies = isSharedDataGridStorageKey(storageKey);
   const scopedStorageKey = !sharedAcrossCompanies && activeCompany != null ? `${storageKey}::c${activeCompany}` : storageKey;
   const legacyStorageKey = activeCompany != null ? (sharedAcrossCompanies ? `${storageKey}::c${activeCompany}` : storageKey) : undefined;
-  const [storedLayout, setLayoutRaw] = useState<Layout>(() => readDataGridLayout(scopedStorageKey, legacyStorageKey));
+  const [storedLayout, setLayoutRaw] = useCompanyScopedDataGridLayout(scopedStorageKey, legacyStorageKey);
 
   /* ── Account-level layouts (lib/tableLayouts.ts) ──────────────────────────
      The same store the DataTable lists use, so this grid gets the same two

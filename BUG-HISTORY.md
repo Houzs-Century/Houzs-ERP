@@ -35,6 +35,274 @@ a stale file — so a `regen` merge driver takes either side and rebuilds from
 source, which is the only correct answer.
 
 Ref: 2026-08-18.
+## The Sales Orders list served ZERO rows to every account in both companies — the auth bridge ran twice and permissions came back empty [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 8 月 18 号傍晚起，销售订单列表对两家公司的每一个帐号都是空的，连老板的全权
+帐号也一样，一直到隔天早上 11 点多才好——整整 11 个钟头，而且是上班时间。原因不在单据，
+单据一直都在：同一个网址 `/mfg-sales-orders` 被挂了两次，负责「认人」的那段程式就跑了
+两遍。它本来是一次性的翻译——把真正的使用者收起来，再把身份换成系统帐号；跑第二遍时，
+它把系统帐号当成使用者去读，结果读出一个空的身份，权限全没了。系统没有报错，只是安静
+地判定「你什么都不能看」，列表就滤到 0 张。
+
+**Symptom.** From 2026-08-18 16:00Z until 2026-08-19 03:12:56Z (11h13m, ending
+11:12 MYT — during working hours), `GET /api/scm/mfg-sales-orders` returned zero
+rows for **every** account in **both** companies, the owner's `*` wildcard
+included. Nothing threw and nothing appeared in the console; the grid drew an
+empty list.
+
+**Root cause.** Recorded from #2461's commit message and the test it ships, not
+re-derived here. Two routers are mounted at the same `/mfg-sales-orders` prefix
+in `backend/src/scm/index.ts` — the deferred list-enrichment router added
+2026-08-18, then the main SO router — and each declares its own
+`use('*', supabaseAuth)`. Hono runs the first mount's middleware, matches no
+handler for the list path, falls through to the second mount, and runs the auth
+bridge a SECOND time. The bridge is a one-way translation: it stashes the real
+Houzs caller on `houzsUser`, then REPLACES `user` with the pinned `scm.staff`
+system uuid. On the second pass it read that pinned uuid as if it were the Houzs
+caller, so `Number("00000000-0000-4000-8000-000000000001")` gave `NaN` and
+`houzsUser` came back with no id and no permissions. `canViewAllSales` went
+false for everyone and `resolveSalesScopeIds` fail-closed to the match-nothing
+staff uuid, so every list read went out as
+`salesperson_id=in.(00000000-0000-0000-0000-000000000000)`.
+
+**Fix.** Make the bridge idempotent: if `user` is already the pinned staff uuid
+the translation has already run and a second pass has nothing left to do. Fixed
+there rather than by un-double-mounting the prefix, because "no prefix is ever
+mounted twice" is not something a route file can promise. Test:
+`backend/tests/scmAuthBridgeIdempotent.test.ts` — one, two and three passes.
+
+**Why this entry exists now, four days late.** It did not have one. `grep -c
+"auth bridge" BUG-HISTORY.md` returned **0** and `scmAuthBridgeIdempotent`
+returned **0** on 2026-08-20, while three OTHER entries for the same day's
+symptom were present. The fix that carries a test was the one missing from the
+ledger. See the entry directly below.
+
+**Ref.** #2461 (`f6bb1345`, merged 2026-08-19T03:12:56Z); logged
+`chore/one-symptom-four-causes`, 2026-08-20.
+
+## One empty Sales Orders list, four incompatible root causes in this file — recorded as unresolved, not reconciled [high]
+
+<!-- area: Sales orders + pricing -->
+
+**白话.** 同一件事——8 月 18 号销售订单列表空白、HOUZS 明明有 2,726 张单——这个档案里
+现在有四个不同的原因，互相打架。最要命的是：两条说那支检查脚本「证明」问题出在 Supabase
+对外那层（PostgREST），第三条说同一支脚本「已经排除」了那个可能。同一个工具，相反的结论。
+这里不假装知道哪个对。**下次列表再空，四条一起读完再动手**，不要照碰到的第一条就去重启
+Supabase——那可能是在修一个根本不存在的毛病。
+
+**Symptom (shared by all four).** 2026-08-18: the Sales Orders list rendered
+"No sales orders yet" for a company holding 2,726 real orders. The frontend
+masked the underlying failure, so the console was clean.
+
+**The four accounts, and what each rests on.**
+
+| Blames | Evidence it cites |
+|---|---|
+| Hosted PostgREST serving the recreated view stale after 0305's DROP+CREATE; a Supabase project restart recovered it | `backend/scripts/check-so-list-empty.mjs`: direct pg 2,726 vs hosted PostgREST 0 |
+| `?status=all` filtering on a status no order carries, plus a page past the end 500'ing | the SAME script, which it says **RULED OUT** the view and PostgREST theories: `service_role` read all 2,726 *through* the recreated view |
+| Hosted PostgREST serving the recreated views stale (second entry, same mechanism as the first) | the same script again, read as proving the 0 is emitted by the PostgREST layer |
+| The auth bridge running twice, permissions resolving empty | #2461's commit and `backend/tests/scmAuthBridgeIdempotent.test.ts` |
+
+**The contradiction, stated plainly.** Two entries cite
+`check-so-list-empty.mjs` as PROVING the PostgREST layer emitted the zero. A
+third cites the same script as RULING THAT OUT. Both readings cannot be right
+about the same run.
+
+**What is NOT claimed here.** Which of the four is correct; whether more than one
+fault was live in an overlapping window (the timestamps allow it — #2461 puts the
+start at 16:00Z, and 0305 applied at 16:27:59Z, twenty-eight minutes later); or
+what actually ended the outage — a Supabase restart and #2461's merge are both
+recorded as the recovery.
+
+**Why it is written as an open contradiction.** CLAUDE.md: *a contradiction is a
+finding — STOP, do not bridge it.* A COE was drafted (#2453) that resolved it by
+assertion and got both the duration and the cause wrong; it was closed on
+2026-08-20 rather than left to be believed. Marking three entries "superseded"
+would have been the same mistake in smaller handwriting — there is no evidence
+they are wrong, only evidence they disagree.
+
+**What would settle it.** A replay of `check-so-list-empty.mjs` is not enough,
+because it cannot reach 2026-08-18's state. The decidable half is the ORDER:
+Cloudflare request logs for `/mfg-sales-orders` across 16:00Z–16:28Z would show
+whether the zero predates 0305's view rebuild. If it does, the PostgREST theory
+cannot be the ORIGINAL cause whatever else it explains.
+
+**Ref.** `chore/one-symptom-four-causes`, 2026-08-20. Closes out #2453 (closed
+unmerged). Related: `docs/so-list-postgrest-stale-coe.md`.
+
+## A calendar pick landed on the hidden input and the visible box never blurred [medium]
+
+<!-- area: Service cases (ASSR) -->
+
+**白话.** Service case 的日期栏（比如 Supplier Pickup Date）如果是点日历小图标选的，
+日期会显示在框里，但其实没存进去——刷新回来就没了。手动打字输入的反而能存。原因：这
+类栏位是「离开输入框（blur）那一刻才保存」，而日历选择走的是一个隐藏的原生日期输入，
+可见的文本框全程没获得过焦点，也就永远不会 blur，保存永远不触发。修法＝日历选完本身
+就是一次完整录入，选完直接发出同一个保存信号。
+
+**Symptom.** Nico, 2026-08-20, ASSR/2608-003 (stage Pending Supplier Return):
+「这个supplier pickup date不能Save」— the field showed 18/08/2026, picked via
+the calendar icon; Customer Pickup Date on the same panel, typed by hand, saved
+fine, which is what made one field look broken and its twin look healthy.
+
+**Root cause (traced in source).** `InlineEdit`
+(`frontend/src/components/InlineEdit.tsx`) commits on the text input's blur:
+`<DateField … onBlur={() => commit()} />`. `DateField`
+(`frontend/src/vendor/scm/components/DateField.tsx`) routes the calendar
+through a HIDDEN native `<input type="date">` (`showPicker()` anchored to the
+icon button, `tabIndex={-1}`); its `onChange` called only `onChange(iso)`. The
+visible text input — the only element wired to `onBlur` — never receives focus
+on the picker path, so `commit()` never runs. The draft state updates, the date
+renders, and nothing is saved.
+
+**Fix.** The hidden input's `onChange` now also fires the completion signal,
+deferred one tick (`setTimeout(0)`) so a host that commits its own state
+(InlineEdit commits its `draft`) sees this change's state flushed first.
+Blur-after-typing is unchanged; a host that passes no `onBlur` is unaffected.
+## DataTable carried DataGrid's layout defect — and one worse: it overwrote the saved layout [medium]
+
+<!-- area: Frontend + mobile -->
+
+**白话.** 修 DataGrid「布局每次打开都重置」时(#2463)发现 DataTable(SO 列表这类表格)底层的 `useLocalStorage` 有同一个病:挂载时读一次 key,公司解析出来、key 换成带公司前缀的那一刻,它不重读——而且更糟,它的写回逻辑会立刻把旧 key 的值写进新 key,**把用户存好的布局盖掉**。SO 列表今天没病发,是因为这条路径挂载时公司通常已经解析好,外加服务器端布局水合兜底;但这是运气不是保障。owner 验证 SO 列表时拍板「DataTable 也加上」。
+
+**Root cause.** `useLocalStorage` seeds with a one-shot `useState` initialiser and
+its write effect runs on `[key, value]`. When the key MOVES after mount (DataTable
+layout keys gain a `c<company>:` prefix once `/auth/me` resolves the active
+company), the state keeps the OLD key's value and the write effect immediately
+copies it over the NEW key's saved value. DataGrid's twin defect (previous entry,
+#2463) only failed to re-read; this one also **destroys the saved arrangement**.
+
+**Fix.** In the hook itself, where DataTable's layout facets (hidden/shown/order/
+sort/widths/mview) inherit it: on a genuine key change, re-read (with the legacy
+fallback, so pre-scoping carry-over still works) and skip that pass's write; a
+same-key re-render never re-reads, so an on-screen edit is never clobbered.
+
+**Proven, not assumed.** With the fix stashed, 4 of the 6 new tests fail
+(`useLocalStorage.test.ts`, `DataTableLayoutCompanyKey.test.tsx` — the latter is
+DataGrid's company-key suite ported to the real DataTable); restored, 56/56 across
+the three suites including DataTable's existing one.
+
+**Ref.** PR (branch `fix/uselocalstorage-key-reread`), 2026-08-20. Sibling of #2463/#2471.
+
+## The four conversions transferred the document and left its own fields behind [high]
+
+<!-- area: AutoCount sync + write-back -->
+
+**白话.** ERP 把送货单、收货单、发票 transfer 进 AutoCount 的时候，只送了单号跟客户/
+供应商，单据自己的资料——日期、Ref、备注、供应商的送货单号/发票号、收货仓库——全部没
+跟着过去。AutoCount 不会报错，它就默默地：日期填今天（其实是 cron 跑的那天），Ref 跟
+备注写空白。采购这两条更惨：AutoCount 本来已经从上一张单抄好了，我们送一个空的过去，
+把人家抄好的盖掉。同一个洞在 `/so-to-po` 已经被抓到两次，每次只补一个栏位，补完还是漏
+五个。这次不再补第六个：整张单据只写一份「它有什么」，两条路各自从那一份取自己用得到
+的；以后新加栏位自动跟着走，加了一个两边都用不到的，测试会直接把名字喊出来。
+
+**Symptom.** Owner, 2026-08-19, walking a live Sales Order → PO → GRN →
+Purchase Invoice chain, asking about the purchase order: 「为什么 Sales Order to
+PO，它的 Description2 不对的呢？再来，它的 Purchase Location 也不对… 因为它是用
+transfer from Sales Order 的嘛，为什么它没有把 Sales Order 的那些资料带过去呢？」
+Asked about `/so-to-po`; true of all five transfer routes, and nobody had looked
+at the other four.
+
+**Root cause (traced in source).** `enqueueConvert`
+(`backend/src/scm/lib/autocount-outbox.ts`) built the conversion payload by hand
+— `DocNo`, the account, `DtlKeys`, and `DocDate` / `Ref` spread in behind
+`if (opts.docDate)` / `if (opts.ref)`. **No caller passes either**, all eight
+verified: `delivery-orders-mfg.ts:3576` and `:4216`, `grns.ts:1961` and `:2343`,
+`purchase-invoices.ts:1692` and `:1892`, `sales-invoices.ts:1394`,
+`si-autocount-source.ts:178`. So the conditional was dead code and every
+conversion since the cutover landed under the drain's date. Meanwhile the ERP's
+full description of the same document already existed — `DOWNSTREAM[t].header`
+— and was used by `/edit` only.
+
+Dropped per target: DO and Sales Invoice — `DocDate`, `Ref`, `DebtorName`,
+`Attention`, `Phone1`, `Note`. GRN — `DocDate`, `Ref`, `Description`,
+`SupplierDONo`, `PurchaseLocation`. Purchase Invoice — `DocDate`, `Ref`,
+`Description`, `SupplierInvoiceNo`.
+
+**Nothing was refused, which is why it survived a week of live documents.**
+`Ref`, `Description`, `SupplierDONo` and `SupplierInvoiceNo` are assigned
+UNCONDITIONALLY (`AcSyncService.cs:2426-2427`, `:2450-2451`, `:1226`, `:1259`)
+and `Str` of an absent key is `""` (`:3212`), so they were BLANKED, not
+defaulted. On the two purchase arms that is destructive rather than incomplete:
+`PurchaseHeader` runs again AFTER the transfer (`:1225`, `:1258`) precisely so
+the ERP's values beat what `FullTransfer` copied off the source, and the ERP's
+silence overwrote the source's real values with empty.
+
+The same hole had been patched TWICE on `/so-to-po`, one field at a time, each
+after a live document failed — `CreditorCode` 2026-08-17 09:15 (`FK_PO_DisplayTerm`,
+the payment term's key, because the term defaults from a supplier there was none
+of) and `DocNo` at 10:15 (the first successful transfer landed as `PO-009968`
+instead of `HC-PO-2608-001`). Five were still missing after the second.
+
+**Fix.** `AcDownstreamSpec.facts` is now the ONE description of a downstream
+document, and both routes are PROJECTIONS of it —
+`downstreamEditHeader` onto `AC_EDIT_HEADER_KEYS` (`Edit()`'s reflection
+allow-list) and `downstreamTransferHeader` onto `AC_TRANSFER_HEADER_KEYS[type]`
+(what `SalesHeader` / `PurchaseHeader` apply, plus each purchase arm's own
+trailing assignment). `present()` still strips blanks at the projection, so an
+absent value stays an absent key. A field added to `facts` reaches the transfer
+with no edit to `enqueueConvert`, and one that reaches NO route fails the build
+naming the key.
+
+The dropped fields split into two classes that need different fixes, and reading
+them as one is what would have made `Agent` a third no-op patch. Class (a) — the
+service would apply it and the ERP did not send it — is fixed by sending:
+`DocDate`, `Ref`, `Description`, `SupplierDONo`, `SupplierInvoiceNo`,
+`PurchaseLocation`. Class (b) — the route has NO SLOT — was `DebtorName`,
+`Attention`, `Phone1`, `Note`, so **`SalesHeader` was given guarded slots for all
+four**, which is what finally makes a transferred delivery order carry the
+customer's name instead of whatever AutoCount defaults off the fixed `300-C002`
+account (`autocount-writeback.ts:43-44` states that as the design; on this route
+it never was).
+
+**Purchase Location, per document.** `scm.grns.warehouse_id` exists and the list
+column it feeds is labelled "Purchase Location" (`grns.ts:1050`) — we have one,
+AutoCount takes one, it is sent, resolved uuid → `dbo.Location` code.
+`scm.purchase_invoices` has none, so nothing is fabricated: the guard on
+`PurchaseHeader` leaves whatever the transfer copied off the GRN, which is the
+right answer. The purchase ORDER's header location is PR #2523's.
+
+**The omission is reported now, not silent, and through the channel #2499 built
+rather than a second one.** A value the ERP has none of is omitted rather than
+blanked (a blank is a foreign key error on a master field). `enqueueConvert` now
+returns `AcEnqueueOutcome` — the shape the two create routes already return —
+the four routes spread the problems into their 201 as `acNotSent`, and
+`DeliveryOrderNewV2` / `GrnNew` / `PurchaseInvoiceNew` / `SalesInvoiceNew` call
+`notifyAcNotSent` before navigating. The verdict is the OTHER one, so it carries
+its own code `AC_SENT_INCOMPLETE` and its own title — "saved and sent, but not
+every field on it reached the accounts". The not-sent wording would be false
+here, and telling someone their goods receipt is ERP-only sends them to raise it
+again into a book that already holds it. Never blocks; tone stays `info`.
+The row keeps its own copy: `acNotCarriedReason(…)` in `last_error` on a
+`pending` row (`acNeedsAttention` branches on status, so it does not read as
+stuck), and `payload.notCarried` as the durable half, because the drain clears
+`last_error` on success while the blank in the book stays true. The sentences
+separate "the ERP document has none" from "this transfer has no field for it",
+because only the first is fixable by the person holding the document.
+`si-autocount-source.ts:178` is the one call site not wired to a dialog — it
+returns a string enum, not a response body — and it still records on the row.
+
+**Still open.** D17: the sales arms have no `SalesLocation` slot in
+`SalesHeader` at all, and `scm.delivery_orders` / `scm.sales_invoices` carry TWO
+note columns — `note`, mapped to AutoCount's `Note`, and `notes`, mapped nowhere
+— so which one is the book's `Description` is the owner's call. Costs nothing
+today: those arms build with `transferMaster: false` (`AcSyncService.cs:1096`),
+so the `""` overwrites nothing.
+
+**Ref.** this PR, 2026-08-20. D4 struck from the divergence register — its own
+evidence had rotted (it cited `autocount-outbox.ts:254` for a function four
+hundred lines away, and "sends only { DocDate, Ref }" predated DocNo, the
+account codes and DtlKeys) and all four of its payload tests were `test.skip`
+asserting the BUG as their expectation, so nothing went red while the shape
+changed underneath them. Replaced by live parity tests in
+`backend/src/services/autocount-writeback.contract.test.ts` that hold each
+conversion's payload against the document's own master, and by the structural
+guard `a header fact reaches a route, or the build says which one does not`.
+Guide §7c5. **The host binary must be rebuilt** (`deploy-on-host.ps1`) for the
+four `SalesHeader` slots; the ERP half lands with the merge and an old binary
+ignores the keys.
 ## SO -> PO transfer threw the whole header away, so five fields never left the ERP [high]
 
 <!-- area: AutoCount sync + write-back -->
@@ -2524,6 +2792,13 @@ same way — by a person who cannot do their job.
 
 ## Sales Orders list showed "No sales orders yet" for a 2,726-order company — hosted PostgREST served a recreated view STALE [high]
 
+> **DISPUTED — read the other three before acting on this one.** This day's empty
+> Sales Orders list has FOUR incompatible root causes recorded in this file, and two
+> of them cite `backend/scripts/check-so-list-empty.mjs` for OPPOSITE conclusions about
+> the PostgREST layer. Nothing here is retracted — it is not reconciled. See *One empty
+> Sales Orders list, four incompatible root causes in this file* at the top of this file.
+
+
 <!-- area: Sales orders + pricing -->
 
 **白话.** 8 月 18 号凌晨（约 00:23 大马时间）改钱的字段（_centi 改 _sen）那次上线之后，销售单列表变成「还没有销售单」——其实那家公司有 2,726 张单。因为是半夜没人看到，整整挂了一天没人报。真正的原因不在我们的单据，单据一直都在；是 Supabase 那台负责对外的服务（PostgREST）在视图被重建之后，还在用旧的连线回答「0 张」。重启一次 Supabase 项目就好了。已经在上线脚本加了提醒：以后哪次上线重建了视图，日志会大声叫人去检查列表、必要时回收连线。
@@ -2535,6 +2810,45 @@ same way — by a person who cannot do their job.
 **Fix.** A full Supabase project restart recycled PostgREST's connection state and the list returned to 2,726 (confirmed on the ENDPOINT body — in-Worker probe read count=2726, then the real endpoint returned 121 KB of orders; NOT from the UI, which held a stale react-query snapshot). Gated recycle workflow shipped as #2450 (`reload-postgrest-schema.yml`). This closeout removes the two temporary `/api/scm/_diag` probe routes (#2457/#2460), writes `docs/so-list-postgrest-stale-coe.md`, and adds durable prevention: prefer `CREATE OR REPLACE VIEW` for additive changes (option A), and a conditional NON-mutating deploy WARNING in `pg-migrate.mjs` that fires only when the applied batch DROP/CREATE'd a view, naming the recycle escalation (`reload-postgrest-schema.yml` recycle=true). The auto-recycle-in-deploy path was left as the existing manual gated workflow + a P-7 runbook rule in `scm-view-trap-coe.md`, because an unconditional recycle on every deploy is its own risk.
 
 **Ref.** This PR (chore/so-incident-closeout), 2026-08-19. See `docs/so-list-postgrest-stale-coe.md` and `backend/docs/scm-view-trap-coe.md` P-7.
+## Every grid read its layout under the wrong key until the company arrived [medium]
+
+**Symptom.** Owner, 2026-08-19: *"Delivery planning 一直会自动 reset layout"* — a
+saved column arrangement gone on every open.
+
+**Root cause (traced, not guessed).** `DataGrid` seeds its layout with
+
+```ts
+const [storedLayout, setLayoutRaw] = useState<Layout>(
+  () => readDataGridLayout(scopedStorageKey, legacyStorageKey));
+```
+
+`useState`'s initialiser runs ONCE, at mount, with whatever `scopedStorageKey`
+was at first paint — and that key is company-scoped:
+`activeCompany != null ? \`${storageKey}::c${activeCompany}\` : storageKey`
+(the per-tenant bucketing added 2026-07-24 for "在 2990 改 column 会影响 Houzs").
+
+**The company is not known at first paint.** `adoptActiveCompanyForUser` runs
+when `/auth/me` returns; on a tab with no `?company=` seed it flips the value
+from null to the user's durable pick and `emit()`s. So the grid READ the
+unscoped `dg-<key>` — usually empty, i.e. default columns — while every later
+WRITE went to `dg-<key>::c<company>`, because `scopedStorageKey` was current by
+then. Nothing was ever lost: the arrangement sat in the scoped key that nothing
+read back.
+
+**Fix.** Re-read when the key moves, guarded by the key it was last read for so
+it fires only on a genuine change (company resolving, or a tenant switch) and
+never re-reads over an edit made under the same key.
+
+**Why it looked like a Delivery Planning bug.** That page lists both tenants and
+is the one the owner arranges most, but the defect is in `DataGrid` — every grid
+in the app had it.
+
+**Proven, not assumed.** Removing the effect turns 2 of the 3 new tests red
+(`DataGridLayoutCompanyKey.test.tsx`); restoring it makes them green. The third
+pins the guard: a same-key re-render must NOT re-read, or an edit on screen
+would be clobbered.
+
+**Ref.** PR (branch `fix/datagrid-layout-company-key`), 2026-08-19.
 
 ## The Service Case SO picker cannot say WHY it found nothing [medium]
 
@@ -2566,6 +2880,13 @@ digits-only re-search that separates *absent* from *spelled differently*.
 
 **Ref.** `chore/tenant-isolation-probe`, 2026-08-19.
 ## Sales Orders list showed "no orders" for a company that has 2,726 of them — `?status=all` filtered on a status no order carries, and a page past the end 500'd [high]
+
+> **DISPUTED — read the other three before acting on this one.** This day's empty
+> Sales Orders list has FOUR incompatible root causes recorded in this file, and two
+> of them cite `backend/scripts/check-so-list-empty.mjs` for OPPOSITE conclusions about
+> the PostgREST layer. Nothing here is retracted — it is not reconciled. See *One empty
+> Sales Orders list, four incompatible root causes in this file* at the top of this file.
+
 
 <!-- area: Sales orders + pricing -->
 
@@ -2678,6 +2999,13 @@ on every successful deploy, so any view recreate self-heals. Best-effort and las
 **Ref.** fix/auto-reload-postgrest-on-deploy, 2026-08-19 (follows #2450).
 
 ## Sales Orders list stayed EMPTY after the money-rename deploy — hosted PostgREST kept serving the recreated views stale [high]
+
+> **DISPUTED — read the other three before acting on this one.** This day's empty
+> Sales Orders list has FOUR incompatible root causes recorded in this file, and two
+> of them cite `backend/scripts/check-so-list-empty.mjs` for OPPOSITE conclusions about
+> the PostgREST layer. Nothing here is retracted — it is not reconciled. See *One empty
+> Sales Orders list, four incompatible root causes in this file* at the top of this file.
+
 
 <!-- area: Sales orders + pricing -->
 

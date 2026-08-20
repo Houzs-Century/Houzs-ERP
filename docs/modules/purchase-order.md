@@ -931,6 +931,19 @@ Owner 2026-08-19. The rule and the block-or-warn reasoning live in
 `docs/modules/autocount-writeback.md` §6b; the sentences in
 `backend/src/scm/lib/ac-preflight.ts`.
 
+`ac-preflight.ts` carries a SECOND verdict from 2026-08-20, and it is not this
+one. `AC_NOT_SENT` means *the accounts do not have this document*;
+`AC_SENT_INCOMPLETE` (`acNotCarriedProblems`) means *they DO have it, and a
+field on it did not come with it* — the case that only arises on the four
+TRANSFERRED documents, whose route applies a strictly narrower header than an
+edit does. Two codes and not one, because filing the second under the first
+would tell an operator their goods receipt is ERP-only when the book already
+holds it, which sends them to raise it twice. Nothing on a sales order or a
+purchase order raises `AC_SENT_INCOMPLETE`; it is named here only so the two
+are not confused when reading that module.
+See `docs/modules/autocount-writeback.md` §7c5.
+
+
 All three PO create anchors — `POST /` (`createMfgPurchaseOrderHandler`),
 `POST /from-sos` (per created PO), and `PATCH /:id/confirm` — now return
 `acNotSent: SaveProblem[]` when the AutoCount composer refused the order. The key

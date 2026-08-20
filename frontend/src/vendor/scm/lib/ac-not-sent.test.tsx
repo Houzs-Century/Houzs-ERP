@@ -7,7 +7,8 @@
 import { describe, expect, test } from 'vitest';
 import {
   acNotSentProblemsOf, acNotSentTitle, notifyAcNotSent,
-  AC_NOT_SENT_KEY, AC_NOT_SENT_TONE,
+  acSentIncompleteTitle, acTitleFor,
+  AC_NOT_SENT_KEY, AC_NOT_SENT_TONE, AC_SENT_INCOMPLETE_CODE,
 } from './ac-not-sent';
 
 const PROBLEM = {
@@ -103,5 +104,68 @@ describe('showing it', () => {
       await notifyAcNotSent(s.notify, res, 'Sales order');
       expect(s.calls).toEqual([]);
     }
+  });
+});
+
+/* ── THE SECOND VERDICT ──────────────────────────────────────────────────────
+   A TRANSFERRED document reaches the accounts and can still arrive without some
+   of its fields: `SalesHeader` / `PurchaseHeader` apply a strictly narrower set
+   than `/edit` does, and a value the ERP has none of is omitted rather than
+   sent blank. That is a different fact from "the accounts have not got it", and
+   showing it under the other title would send someone to re-raise a receipt the
+   book already holds. */
+describe('it IS in the accounts, and part of it is not', () => {
+  const INCOMPLETE = {
+    code: AC_SENT_INCOMPLETE_CODE,
+    message: 'Saved, and this goods receipt IS in the accounts — but not all of it: '
+      + 'SupplierDONo: the ERP document has none, so AutoCount keeps its own.',
+  };
+
+  test('the title says it arrived, and that not all of it did', () => {
+    const t = acSentIncompleteTitle('Goods receipt');
+    expect(t).toContain('Goods receipt');
+    expect(t).toContain('sent');
+    /* THE CONTROL. The other title's sentence would be false here, and a false
+       reassurance is worse than none — it is what sends a person to enter the
+       document a second time. */
+    expect(t).not.toContain('have not got it');
+    expect(t.toLowerCase()).not.toContain('failed');
+  });
+
+  test('the frame is chosen by the problems, not by the caller', () => {
+    expect(acTitleFor([INCOMPLETE], 'Goods receipt')).toBe(acSentIncompleteTitle('Goods receipt'));
+    expect(acTitleFor([PROBLEM], 'Purchase order')).toBe(acNotSentTitle('Purchase order'));
+  });
+
+  /* MIXED FALLS TO THE SAFER HEADLINE. Someone who checks a document that is
+     actually there loses a minute; someone who does not check one that is
+     missing loses it from the books. */
+  test('a response carrying both verdicts uses the not-sent headline', () => {
+    expect(acTitleFor([INCOMPLETE, PROBLEM], 'Invoice')).toBe(acNotSentTitle('Invoice'));
+  });
+
+  test('an empty list has no headline to choose and still opens nothing', async () => {
+    expect(acTitleFor([], 'Invoice')).toBe(acNotSentTitle('Invoice'));
+    const calls: Array<{ title: string }> = [];
+    await notifyAcNotSent(async (o) => { calls.push({ title: o.title }); }, { acNotSent: [] }, 'Invoice');
+    expect(calls).toEqual([]);
+  });
+
+  test('a transferred document opens ONE dialog, under the arrived-incomplete title', async () => {
+    const calls: Array<{ title: string; tone?: string }> = [];
+    await notifyAcNotSent(
+      async (o) => { calls.push({ title: o.title, tone: o.tone }); },
+      { acNotSent: [INCOMPLETE] },
+      'Goods receipt',
+    );
+    expect(calls).toHaveLength(1);
+    expect(calls[0].title).toBe(acSentIncompleteTitle('Goods receipt'));
+    /* Still not the error tone: nothing failed. */
+    expect(calls[0].tone).toBe(AC_NOT_SENT_TONE);
+  });
+
+  test('the code is the one the backend writes', () => {
+    expect(AC_SENT_INCOMPLETE_CODE).toBe('ac_sent_incomplete');
+    expect(AC_NOT_SENT_KEY).toBe('acNotSent');
   });
 });
