@@ -19,6 +19,55 @@ wrong answers here (see MASTER-DATA-SCOPE-RULE.md, "Correction on the record").
 | **B. Centralised** | one desk / one pool serves both companies | Fleet + TMS (migs 0202/0203/0204 say so in their own headers) |
 | **C. Centralised, one scoped dimension** | central desk, but one axis still follows a person | Service Case — salesperson only |
 
+## FIRST PASS, 2026-08-20 — from each guide's OWN words
+
+Method: grep every `docs/modules/*.md` for its own scope language
+("company-scoped", "cross-company", "per company", "NOT used to scope", "both
+companies"). Evidence is the module's own documentation, not an inference from
+column names. Re-run to refresh:
+
+```
+for f in docs/modules/*.md; do echo "$(basename $f .md): $(grep -ihoE   'cross-company|centralis|company-scoped|per company|NOT used to scope|both companies' $f   | sort -u | tr '
+' ';')"; done
+```
+
+### A — PER COMPANY (14, guide says company-scoped / per company)
+
+accounting · autocount-writeback · delivery-rate-card · document-conversion ·
+grn · payment-voucher · purchase-consignment-order · purchase-order ·
+purchase-order-amendment · purchase-return · sales-invoice · team-members ·
+warehouses · projects-pms
+
+`warehouses` and `projects-pms` also carry the owner's ruling directly: venue,
+warehouse and showroom follow the company.
+
+### B — CENTRALISED (guide says cross-company, or the migration does)
+
+fleet-maintenance — strongest evidence in the repo: migs 0202/0203/0204 state
+`company_id` is stamped for provenance and NOT used to scope reads.
+global-search — cross-company by construction.
+stock-take — guide says cross-company; CONFIRM against the read path.
+
+### C — CENTRALISED WITH ONE SCOPED DIMENSION (the Service Case shape)
+
+These name BOTH "cross-company" and "company-scoped" in the same guide, which is
+the signature of a central function carrying one scoped axis:
+
+service-case — CONFIRMED by the owner; the axis is salesperson.
+delivery-tms · so-handover · sales-order · document-traceability · mrp ·
+scan-to-so — all show the mixed signature. **Each needs its axis NAMED.** A
+module in this bucket whose exception is not written down will be read as either
+fully open or fully scoped, and both are wrong.
+
+### UNCLASSIFIED — the guide says nothing (8)
+
+address-cascade · announcements · combo-pricing · delivery-order ·
+delivery-return · mail-center · quote · system-health
+
+Silence is not evidence of either answer. These need the read described below.
+`system-health` is owner-only (`requirePermission("*")`) so it is probably
+centralised by design, but "probably" is not a classification.
+
 ## Why a column count cannot answer this
 
 Measured 2026-08-20: counting `company_id` / `scopeToCompany` mentions per SCM
