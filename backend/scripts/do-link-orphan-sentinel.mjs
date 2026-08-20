@@ -70,6 +70,27 @@ try {
        AND d.status::text <> 'CANCELLED'
        AND di.so_item_id IS NULL`;
 
+  /* 1b. WHICH lines — because the ALARM has told the reader to "cross-check the
+         SO-line deletes printed above" since the day it was written, while
+         printing only a COUNT. There was nothing to cross-check against, so the
+         instruction could not be followed by anyone, ever.
+
+         Naming the documents is what turns this from an alert into a diagnosis:
+         the leading theory (2026-08-20) is that the SVC-DELIVERY rebuild at
+         mfg-sales-orders.ts:6436 deletes and reinserts the delivery-charge line,
+         and ON DELETE SET NULL blanks any DO line pointing at the old one. That
+         theory predicts these rows are DELIVERY-CHARGE lines. If they are beds
+         and mattresses, it is wrong — which is the point of printing them. */
+  const orphanRows = await pg`
+    SELECT d.doc_no AS do_doc_no, d.so_doc_no, di.item_code, di.qty
+      FROM scm.delivery_orders d
+      JOIN scm.delivery_order_items di ON di.delivery_order_id = d.id
+     WHERE d.so_doc_no IS NOT NULL
+       AND d.status::text <> 'CANCELLED'
+       AND di.so_item_id IS NULL
+     ORDER BY d.doc_no, di.item_code
+     LIMIT 50`;
+
   /* 2. The shape the fallback CANNOT see: no per-line link AND no so_doc_no on
         the header, so neither reading can attribute the shipment. Zero today.
         This is a stricter alarm than (1) — any of these is already causing a
@@ -99,6 +120,12 @@ try {
      LIMIT 20`.catch(() => []); // table absent until 0302 deploys — not an alarm
 
   console.log(`orphan DO lines (header names the SO): ${orphans} across ${docs} document(s) [baseline ${BASELINE_ORPHANS}]`);
+  if (orphanRows.length > 0) {
+    console.log(`  the orphaned lines (up to 50) — item_code is the cross-check:`);
+    for (const r of orphanRows) {
+      console.log(`    ${r.do_doc_no ?? "-"}  from ${r.so_doc_no ?? "-"}  ${r.item_code ?? "-"}  qty ${r.qty ?? "?"}`);
+    }
+  }
   console.log(`unattributable lines (no link, no so_doc_no, stock moved): ${invisible}`);
   console.log(`SO-line deletes in the last 25h: ${recentDeletes.length}`);
   for (const d of recentDeletes) {
