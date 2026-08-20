@@ -77,7 +77,7 @@ be satisfied from elsewhere in a 15,000-line file. Source-scanning follows
 `soMaintenanceGate.test.ts`: rendering these sites would couple the test to the
 page's router, lazy boundaries and query client.
 
-**Ref.** PR #PR1, 2026-08-20.
+**Ref.** PR #2561, 2026-08-20.
 
 ## BUG CLASS - unscoped-query-by-omission: forgetting the company predicate and choosing to omit it are the same text [high]
 
