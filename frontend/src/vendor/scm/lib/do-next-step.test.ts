@@ -44,21 +44,23 @@ describe('siTransferBlockReason', () => {
     expect(SI_TRANSFERABLE_DO_STATUSES).toEqual(['loaded', 'dispatched', 'in_transit', 'signed', 'delivered']);
   });
 
-  it('DERIVES that list from the shared declaration — it is not typed here', () => {
-    /* The other half of this fix, and the half a membership assertion alone
-       cannot protect. Two hand-typed lists are what caused the original bug:
-       ['signed','delivered'] on the desktop while the server picker accepted
-       everything but CANCELLED/DRAFT, so one organisation — whose deliveries sit
-       at DISPATCHED because its source system has no "delivered" step — was told
-       the transfer did not exist.
+  it('AGREES with the shared declaration — this module only lower-cases it', () => {
+    /* A REFEREE, and it is worth being exact about what it can and cannot see.
 
-       So the assertion is not "these five strings". It is "this module does not
-       decide membership at all": it lower-cases SI_TRANSFERABLE_DO_STATES from
-       shared/do-shipped-states.ts, which the backend gate
-       (routes/sales-invoices.ts), the server's DO picker (lib/do-line-remaining.ts)
-       and the phone's convert wizard all read too, and whose frontend twin
-       check-shared-mirrors.mjs --strict holds byte-identical. Re-type the list
-       here and this fails even if the strings happen to match today. */
+       WHAT IT CATCHES: the shared declaration and this module's view of it
+       drifting apart in VALUE — someone edits SI_TRANSFERABLE_DO_STATES and
+       this module keeps answering the old set, or vice versa.
+
+       WHAT IT CANNOT CATCH, measured rather than assumed: re-typing the list
+       here with the same five strings. That was tried while resolving this
+       merge and all 13 tests stayed green, so an assertion of the SHAPE would
+       have been a claim this file cannot support. The structural pin — that
+       do-next-step.ts imports the declaration and does not re-type the status
+       list — is a SOURCE check and it lives in
+       backend/tests/oneSystemTwoOrganisations.test.ts, which reads this file.
+       Re-typed there, that suite goes red (proven, not assumed). It is not
+       repeated here, because a rule with two homes is the defect this whole
+       change is about. */
     expect([...SI_TRANSFERABLE_DO_STATUSES])
       .toEqual(SI_TRANSFERABLE_DO_STATES.map((x) => x.toLowerCase()));
   });
