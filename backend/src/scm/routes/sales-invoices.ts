@@ -86,18 +86,12 @@ import { refuseMigratedSources } from '../lib/migrated-chain';
    literal 'DELIVERED'. One build, one permission set, and 2990 was told the
    transfer did not exist.
 
-   The owner's ruling (2026-08-18) was DISPATCHED, IN_TRANSIT, SIGNED, DELIVERED;
-   #2485 widened it the next day to every CONFIRMED delivery — LOADED included,
-   DRAFT and CANCELLED still out. SI_TRANSFERABLE_DO_STATES is that rule's one
-   home; this function is where it is ENFORCED, and clients render the reason
-   rather than deciding it.
-
-   THIS FUNCTION MAY ONLY NARROW WHAT THE HANDLER ALREADY REFUSED WHERE THE
-   NARROWING IS THE OWNER'S. Before it existed the create path refused exactly
-   `status === 'CANCELLED'`. It now also refuses DRAFT (no committed lines or
-   stock yet — #2485 keeps Confirm as a prerequisite) and INVOICED (not a state
-   anything writes; see below). LOADED is deliberately NOT refused: doing so
-   would have invented a restriction no handler ever had. */
+   The owner ruled DISPATCHED/IN_TRANSIT/SIGNED/DELIVERED on 2026-08-18; #2485
+   widened it next day to every CONFIRMED delivery, LOADED included.
+   SI_TRANSFERABLE_DO_STATES is that rule's one home and here it is ENFORCED.
+   The create path refused exactly CANCELLED before this function; it now also
+   refuses DRAFT (#2485 keeps Confirm a prerequisite) and INVOICED (nothing
+   writes it). LOADED is NOT refused: that would invent a new restriction. */
 function siTransferRefusal(status: string | null | undefined): { error: string; reason: string } | null {
   const s = String(status ?? '').trim().toUpperCase();
   if ((SI_TRANSFERABLE_DO_STATES as readonly string[]).includes(s)) return null;
