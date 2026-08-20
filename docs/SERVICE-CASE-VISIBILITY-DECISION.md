@@ -67,8 +67,11 @@ already how `requireServiceCaseAccess` is applied.
 
 ## Two things to check BEFORE writing the code
 
-- **The `assrUnrestricted` tier must not narrow.** Office/director callers see
-  everything today; nothing here should take that away.
+- **The `assrUnrestricted` tier must not narrow — and here is the REASON, in the
+  owner's words: "要不然 office 的帮不到 sales 处理东西了."** Office staff see
+  everything because their job is to work a case on a salesperson's behalf. A
+  later reader tempted to "tighten permissions" here would be removing the thing
+  the tier exists for. This is a requirement, not an accident of history.
 - **Measure who gains access.** This widens what Sales can see. Count the
   affected users and cases first, with a read-only workflow, and put the number
   in the PR — this repo does not ship access changes on reasoning alone.
