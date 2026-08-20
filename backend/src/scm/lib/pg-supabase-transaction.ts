@@ -350,10 +350,18 @@ export const pgTransactionSupabase = (sql: Sql) => ({
          every line PATCH, and those PATCHes run in this transaction wrapper. The
          function's own pg_advisory_xact_lock is what serializes concurrent
          rebuilds of the same SO — holding it inside the caller's transaction is
-         exactly the intent (it releases at commit/rollback). */
+         exactly the intent (it releases at commit/rollback).
+
+         It RETURNS false without writing when p_expect_state — the operator-owned
+         fee state the caller derived from — has moved under that lock (0314). The
+         caller re-derives and calls again, and in THIS path that retry is
+         guaranteed to converge: the advisory xact lock the first call took is
+         held for the rest of this transaction, so nothing can move the state
+         under attempt two. Returned as `data` rather than raised, precisely so a
+         stale derivation does not roll the whole command back. */
       try {
-        await sql.unsafe(
-          'SELECT scm.rebuild_mfg_so_delivery_lines($1::text, $2::text, $3::bigint, $4::jsonb)',
+        const rows = await sql.unsafe<Array<{ rebuild_mfg_so_delivery_lines: boolean }>>(
+          'SELECT scm.rebuild_mfg_so_delivery_lines($1::text, $2::text, $3::bigint, $4::jsonb, $5::jsonb) AS rebuild_mfg_so_delivery_lines',
           [
             args.p_doc_no,
             args.p_source_doc_no,
@@ -369,9 +377,11 @@ export const pgTransactionSupabase = (sql: Sql) => ({
             // value once with OID 3802 — the exact fix commandParameter() above
             // already applies to every other jsonb column on this shim.
             sql.json((args.p_rows ?? []) as never),
+            // Same rule for the expectation object. null means "do not check".
+            args.p_expect_state == null ? null : sql.json(args.p_expect_state as never),
           ] as never[],
         );
-        return { data: null, error: null };
+        return { data: rows[0]?.rebuild_mfg_so_delivery_lines ?? true, error: null };
       } catch (e) {
         return { data: null, error: { message: e instanceof Error ? e.message : String(e) } };
       }

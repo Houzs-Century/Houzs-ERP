@@ -72,6 +72,11 @@ import {
   SVC_DELIVERY_ADD,
 } from '../shared/service-sku';
 import {
+  applyDeliveryFeeRebuild,
+  buildDeliveryRebuildRows,
+  DELIVERY_REBUILD_MAX_ATTEMPTS,
+} from '../lib/so-delivery-fee-rebuild';
+import {
   buildDeliveryFeeServiceLines,
   computeAddonServiceLines,
   recoverOperatorDeliveryState,
@@ -6293,6 +6298,12 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
        customer_id is re-pointed to the new customer.
      • the cross-category DELIVERY fee (a SERVICE line whose rate depends on the
        customer's other orders) is RE-DETECTED — see redetectCrossCategoryDelivery. */
+/* A rebuild the 0314 RPC REFUSED because the SVC-DELIVERY* lines moved between
+   the derivation's read and the function's advisory lock. Neither an error nor
+   "no fee": the inputs went stale, so the whole derivation is re-run. */
+const STALE_DERIVATION = Symbol('so-delivery-stale-derivation');
+type DeliveryFeeCoreResult = { isFollowup: boolean; sourceDocNo: string | null; total: number } | null;
+
 /* Core delivery-fee recompute — re-derives the authoritative delivery FEE from
    the SO's CURRENT items, for a CALLER-SUPPLIED cross-category sourceDocNo. It
    does NOT auto-match a source: the caller decides whether to re-run the
@@ -6306,13 +6317,15 @@ mfgSalesOrders.post('/:docNo/items/:itemId/override', async (c) => {
    below); a genuinely fee-less SO returns null BEFORE recomputeTotals (the
    caller is responsible for any totals refresh), so nothing here ever STARTS a
    fee on a backend-authored SO. Best-effort: logs DB errors, never throws. */
-async function recomputeDeliveryFeeCore(
+async function recomputeDeliveryFeeAttempt(
   sb: any, docNo: string, sourceDocNo: string | null, c: any,
-): Promise<{ isFollowup: boolean; sourceDocNo: string | null; total: number } | null> {
+): Promise<DeliveryFeeCoreResult | typeof STALE_DERIVATION> {
+  /* `id` is selected because it KEYS the staleness expectation (0314): the RPC
+     re-reads these same rows under its lock and compares by row id. */
   const { data: lineRows } = await sb.from('mfg_sales_order_items')
-    .select('item_code, item_group, total_sen, unit_price_sen, discount_sen, qty, line_no, variants')
+    .select('id, item_code, item_group, total_sen, unit_price_sen, discount_sen, qty, line_no, variants')
     .eq('doc_no', docNo).eq('cancelled', false);
-  const lines = (lineRows ?? []) as Array<{ item_code: string; item_group: string | null; total_sen: number | null; unit_price_sen: number | null; discount_sen: number | null; qty: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
+  const lines = (lineRows ?? []) as Array<{ id: string; item_code: string; item_group: string | null; total_sen: number | null; unit_price_sen: number | null; discount_sen: number | null; qty: number | null; line_no: number | null; variants: Record<string, unknown> | null }>;
   const deliveryLines = lines.filter((l) => isDeliveryFeeServiceCode(l.item_code));
   /* Owner ruling 2026-08-07 ("全部都会有 SKU 的 … 怎么可以走后门呢?"): every
      ringgit on a Sales Order is a LINE. The header delivery_fee_sen is a
@@ -6427,97 +6440,45 @@ async function recomputeDeliveryFeeCore(
     .select('debtor_name, venue, customer_delivery_date, company_id').eq('doc_no', docNo).maybeSingle();
   const h = (hdr ?? {}) as { debtor_name?: string | null; venue?: string | null; customer_delivery_date?: string | null; company_id?: number | null };
 
-  /* Re-derive the SVC-DELIVERY* lines and stamp the header as ONE atomic RPC
-     (0214, ported from 2990's 0211). SO Detail Save fires line PATCHes IN
-     PARALLEL and each ends here; as two statements (delete, then insert) two
-     rebuilds interleaved and DOUBLED the fee on the bill (SO-2606-043
-     2026-06-28, SO-2607-010 2026-07-12) — READ COMMITTED hides the first
-     transaction's rows from the second DELETE — so the RPC takes a per-doc_no
-     advisory xact lock. It also REUSES each fee line rather than replacing it
-     (0310): a DO can carry a fee line and so_item_id is ON DELETE SET NULL
-     (0235), so replacing one silently blanked that DO's link, leaving a
-     same-item_code row that looked untouched. Lines pair per item_code by
-     POSITION here (CROSS appears twice on a follow-up) — keep `specs` order. */
-  {
-    const lineDateToday = todayMyt();
-    // disc = preserved operator discount, clamped to THIS rebuilt line's own total.
-    const rows = specs.map((spec, i) => {
-      const disc = Math.min(discountByCode.get(spec.itemCode) ?? 0, spec.totalSen), net = spec.totalSen - disc;
-      return {
-      doc_no: docNo,                                    // ⚠️ NOT NULL — omitting it silently dropped the line (the bug)
-      line_no: keptMaxLineNo >= 0 ? keptMaxLineNo + 1 + i : null,
-      line_date: lineDateToday,
-      debtor_name: h.debtor_name ?? null,
-      item_group: 'service',
-      item_code: spec.itemCode,
-      description: spec.description,
-      description2: null,
-      remark: spec.remark ?? null,
-      uom: 'UNIT',
-      qty: spec.qty,
-      unit_price_sen: spec.unitPriceSen,
-      discount_sen: disc,
-      total_sen: net,
-      total_inc_sen: net,
-      balance_sen: net,
-      variants: null,
-      unit_cost_sen: 0,
-      line_cost_sen: 0,
-      line_margin_sen: net,
-      divan_price_sen: 0,
-      leg_price_sen: 0,
-      special_order_price_sen: 0,
-      custom_specials: null,
-      line_delivery_date: h.customer_delivery_date ?? null,
-      line_delivery_date_overridden: false,
-      warehouse_id: null,
-      branding: null,
+  /* The write half lives in lib/so-delivery-fee-rebuild.ts — it owns the 0214
+     lock contract, the 0310 line reuse and the 0314 staleness refusal, and it
+     is the reason this function is an ATTEMPT rather than the whole job. */
+  const outcome = await applyDeliveryFeeRebuild(sb, {
+    docNo,
+    sourceDocNo,
+    rows: buildDeliveryRebuildRows(specs, {
+      docNo,
+      keptMaxLineNo,
+      discountByCode,
+      debtorName: h.debtor_name ?? null,
       venue: h.venue ?? null,
-      stock_status: 'READY',
-      }; });
-    /* company_id is NOT passed: the RPC reads it off the SO header, so a rebuilt
-       line can never land in another company (mig 0083 made it NOT NULL). */
-    const netFeeSen = rows.reduce((s, r) => s + Number(r.total_sen ?? 0), 0); // header mirrors the LINES: net after discounts (owner 2026-08-07)
-    const { error: rebuildErr } = await sb.rpc('rebuild_mfg_so_delivery_lines', {
-      p_doc_no: docNo,
-      p_source_doc_no: sourceDocNo,
-      p_delivery_fee_sen: netFeeSen,
-      p_rows: rows,
-    });
-    if (rebuildErr) {
-      if (sb?.__atomicCommand === true) throw new Error(`Delivery line rebuild failed: ${rebuildErr.message}`);
-      /* eslint-disable-next-line no-console */ console.error('[so-redetect] delivery line rebuild failed:', rebuildErr.message);
-    } else {
-      /* Owner 2026-08-12 — this rebuild ADDS, REPRICES and DELETES SVC-DELIVERY*
-         lines on a live order, and until now it did so with no trace whatsoever.
-         2990-SO-2608-017 grew a RM250 delivery line at 01:38 and its History
-         showed only the SO's creation: the money moved and the timeline stayed
-         silent. It is automation, not a person, so it logs as source
-         'automation' exactly like the POS deposit and the free-gift reconcile —
-         "nobody did it" is a legitimate audit answer, "it never happened" is
-         not.
-
-         Only a real move is recorded (an unchanged re-derivation runs on every
-         line edit and would otherwise flood the timeline). Best-effort by
-         recordSoAudit's design; the fee is already committed either way. */
-      const priorFeeSen = deliveryLines.reduce((s, l) => s + Number(l.total_sen ?? 0), 0);
-      if (priorFeeSen !== netFeeSen) {
-        await recordSoAudit(sb, {
-          docNo,
-          action: priorFeeSen === 0 ? 'ADD_LINE' : (netFeeSen === 0 ? 'DELETE_LINE' : 'UPDATE_LINE'),
-          source: 'automation',
-          note: 'Auto: delivery fee lines re-derived',
-          fieldChanges: [
-            { field: 'itemCode', to: 'SVC-DELIVERY' },
-            { field: 'deliveryFeeSen', from: priorFeeSen, to: netFeeSen },
-          ],
-        });
-      }
-    }
-  }
+      customerDeliveryDate: h.customer_delivery_date ?? null,
+    }),
+    liveLines: deliveryLines,
+  });
+  if (outcome.status === 'stale') return STALE_DERIVATION;
 
   await recomputeTotals(sb, docNo, c);
   return { isFollowup, sourceDocNo, total: fee.total };
+}
+
+/* READ, THEN LOCK was the defect. `recomputeDeliveryFeeAttempt` reads the fee
+   lines and only then calls the RPC that takes the per-doc_no advisory lock, so
+   two line PATCHes from ONE Save (runSoLineWrites fans the dirty-line stage out
+   with Promise.allSettled) could both derive from the same pre-edit snapshot and
+   the second write put the operator's reduction back — quoted RM 125, invoiced
+   RM 250. Migration 0314 makes the RPC refuse a derivation whose inputs moved;
+   this loop is the other half, re-reading and deriving again.
+
+   Exhaustion writes NOTHING, deliberately: the same posture as the failed
+   header read above ("a failed read is not 'no fee'"). Something else is
+   actively rewriting these lines and will re-derive after itself. */
+async function recomputeDeliveryFeeCore(
+  sb: any, docNo: string, sourceDocNo: string | null, c: any,
+): Promise<DeliveryFeeCoreResult> {
+  void DELIVERY_REBUILD_MAX_ATTEMPTS; // the retry lands in the next commit
+  const res = await recomputeDeliveryFeeAttempt(sb, docNo, sourceDocNo, c);
+  return res === STALE_DERIVATION ? null : res;
 }
 
 /* Re-detect the cross-category delivery fee against a (re-resolved) customer —

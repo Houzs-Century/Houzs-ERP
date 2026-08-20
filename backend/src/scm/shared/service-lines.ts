@@ -139,6 +139,45 @@ export function recoverOperatorDeliveryState(
   return { additionalSen, discountByCode };
 }
 
+/** The operator-owned fee state a derivation was computed FROM, in the shape
+ *  migration 0314's `p_expect_state` re-reads under the rebuild's advisory
+ *  lock. Keyed by row id so the comparison is order-free:
+ *
+ *      { "<uuid>": [item_code, qty, unit_price_sen, discount_sen] }
+ *
+ *  This exists because the lock was in the wrong place. `rebuild_mfg_so_-
+ *  delivery_lines` locks per doc_no, but `recomputeDeliveryFeeCore` READS the
+ *  fee lines first and calls it after — so two line PATCHes from ONE Save
+ *  (`runSoLineWrites` fans the dirty-line stage out with `Promise.allSettled`)
+ *  could both derive from a pre-discount snapshot, and the second write put the
+ *  operator's 125 back to 250. The lock made that ordering deterministic, not
+ *  impossible. Passing what we read turns read-then-lock into
+ *  lock-read-compare-write.
+ *
+ *  Every number is truncated to an integer here because the SQL side casts to
+ *  bigint before building its jsonb: `1` has to match `1`, never `1.00`.
+ *
+ *  Returns null when any line arrives without an id — the expectation would be
+ *  unbuildable and a WRONG one would refuse every rebuild forever. The caller
+ *  treats null as "no expectation" (pre-0314 behaviour) and says so in the log;
+ *  `id` is the primary key of the row we just selected, so this is a branch
+ *  that should never run. */
+export function deliveryFeeStateKey(
+  deliveryLines: Array<{ id?: string | null; item_code: string; qty?: number | null; unit_price_sen?: number | null; discount_sen?: number | null }>,
+): Record<string, [string, number, number, number]> | null {
+  const int = (v: unknown): number => {
+    const n = Math.trunc(Number(v ?? 0));
+    return Number.isFinite(n) ? n : 0;
+  };
+  const out: Record<string, [string, number, number, number]> = {};
+  for (const l of deliveryLines) {
+    const id = l.id == null ? '' : String(l.id);
+    if (!id) return null;
+    out[id] = [l.item_code, int(l.qty), int(l.unit_price_sen), int(l.discount_sen)];
+  }
+  return out;
+}
+
 export function buildDeliveryFeeServiceLines(
   fee: SoDeliveryFeeResult,
   crossCategorySourceDocNo?: string | null,
