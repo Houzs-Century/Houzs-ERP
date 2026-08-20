@@ -69,7 +69,7 @@ const notice = (msg) =>
 const pg = postgres(url, { ssl: "require", prepare: false, max: 1 });
 
 try {
-  const [flag, counts, oldest, failed, requeuedFailed, skipped] = await Promise.all([
+  const [flag, counts, byOp, oldest, failed, requeuedFailed, skipped] = await Promise.all([
     /* THE SWITCH ITSELF, not a sentence about it. Until this line existed the
        script described `scm.autocount_writeback` in prose and never read it, so
        "is the write-back on" could only be answered from a document — and the
@@ -85,6 +85,28 @@ try {
               count(*)::int AS n,
               count(*) FILTER (WHERE last_error LIKE ${`${REQUEUE_NOTE_PREFIX}%`})::int AS requeued
          FROM scm.autocount_outbox GROUP BY status ORDER BY status`,
+    /* WHICH OPERATIONS HAVE EVER GONE THROUGH, and which have only ever been
+       asked. This is the question the status totals cannot answer: `sent: 47`
+       says the queue works and says NOTHING about whether an EDIT has ever
+       changed a document in the account book — and on 2026-08-18 the generated
+       coverage table still recorded `edit` as never demonstrated while 40-odd
+       ERP call sites enqueued it. A per-op split turns "has this operation ever
+       worked in production" from an assertion into a row.
+
+       The newest host build per op comes with it (migration 0304): an operation
+       that last succeeded under a build nobody runs any more has not been
+       proven against the one that is running. */
+    pg`SELECT op,
+              count(*)::int                                        AS n,
+              count(*) FILTER (WHERE status = 'sent')::int          AS sent,
+              count(*) FILTER (WHERE status = 'failed')::int        AS failed,
+              count(*) FILTER (WHERE status = 'skipped')::int       AS skipped,
+              count(*) FILTER (WHERE status = 'pending')::int       AS pending,
+              max(sent_at)                                         AS last_sent,
+              max(host_built_at)                                   AS newest_host_build
+         FROM scm.autocount_outbox
+        GROUP BY op
+        ORDER BY op`,
     /* EVERY pending row, WITH last_error. A retrying row carries the reason its
        last attempt failed, and that reason is the whole diagnosis — 4xx fails
        immediately, so a row that is still RETRYING means the request reached
@@ -188,6 +210,46 @@ try {
           ? ` (${settled.length + requeuedFailed.length} of those have been re-queued)`
           : ""),
     );
+  }
+
+  /* PER OPERATION — the question the totals cannot answer.
+     `sent: 47` says the queue works. It does not say whether an EDIT has ever
+     changed a document in the account book, and that is the operation the ERP
+     performs most once it is master. Printed for every op the queue has ever
+     held, plus the ones it has NEVER held, because an operation with no row at
+     all is the strongest form of "never proven" and a table that omits it reads
+     like a clean bill. */
+  if (byOp.length || total === 0) {
+    const seen = new Map(byOp.map((r) => [r.op, r]));
+    const ALL_OPS = [
+      "create_so", "create_po", "so_to_do", "so_to_po",
+      "po_to_gr", "do_to_iv", "gr_to_pi", "cancel", "edit",
+    ];
+    notice("PER OPERATION — has this one ever reached the account book through the QUEUE?");
+    for (const op of ALL_OPS) {
+      const r = seen.get(op);
+      if (!r) {
+        notice(`  - ${op.padEnd(10)} NEVER ENQUEUED — no row of any status`);
+        continue;
+      }
+      const build = r.newest_host_build
+        ? ` host build ${new Date(r.newest_host_build).toISOString().slice(0, 16)}`
+        : " host build not recorded";
+      notice(
+        `  - ${op.padEnd(10)} ${r.sent > 0 ? `SENT ${r.sent}` : "NEVER SENT"}` +
+          ` (of ${r.n}: failed ${r.failed}, skipped ${r.skipped}, pending ${r.pending})` +
+          (r.last_sent ? ` last ${new Date(r.last_sent).toISOString().slice(0, 16)}` : "") +
+          build,
+      );
+    }
+    /* Any op the queue holds that the list above does not name. A ninth
+       operation would otherwise be invisible here, and this script is one of
+       the two readers of that table. */
+    for (const r of byOp) {
+      if (!ALL_OPS.includes(r.op)) {
+        notice(`  - ${String(r.op).padEnd(10)} (not in this script's op list) sent ${r.sent} of ${r.n}`);
+      }
+    }
   }
 
   /* FAILED is the one that means a document diverged — the OUTSTANDING ones.
