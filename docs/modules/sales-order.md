@@ -12,7 +12,9 @@
 > `warehouse_id` (the header's free-text `sales_location` snapshot is being
 > unified onto it by a staged backfill migration), and the customer's own
 > reference is `ref` (owner ruling #2429; `customer_so_no` is a transitional
-> fallback and `po_doc_no`/`customer_po*` are dead columns pending a staged drop).
+> fallback and the dead `po_doc_no` / `customer_po` / `customer_po_id` /
+> `customer_po_date` columns — 0%-filled, census-verified — are DROPPED from the
+> SO header by migration 0310).
 > No column was renamed in this registration — the two renames are reviewed
 > follow-ups because they need a backfill / a view-guarded drop.
 

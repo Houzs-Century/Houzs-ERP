@@ -117,7 +117,7 @@ reports.get('/sales-order-detail-listing', async (c) => {
         divan_height_inches, leg_height_inches, custom_specials,
         mfg_sales_orders!inner (
           doc_no, so_date, debtor_code, debtor_name, agent, branding, venue, ref,
-          po_doc_no, phone, address1, address2, address3, address4,
+          phone, address1, address2, address3, address4,
           currency, status, remark2, remark3, remark4, note,
           sales_exemption_expiry, approval_code,
           local_total_sen, balance_sen, deposit_sen,
@@ -125,7 +125,7 @@ reports.get('/sales-order-detail-listing', async (c) => {
           mattress_sofa_cost_sen, bedframe_cost_sen, accessories_cost_sen, others_cost_sen, service_cost_sen,
           total_cost_sen, total_margin_sen, margin_pct_basis,
           customer_delivery_date, processing_date, target_date,
-          customer_state, customer_country, customer_po, customer_po_id, customer_po_date, customer_so_no,
+          customer_state, customer_country, customer_so_no,
           hub_name
         )
       `);
